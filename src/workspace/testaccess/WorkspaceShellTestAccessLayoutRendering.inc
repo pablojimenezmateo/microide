@@ -447,6 +447,11 @@
     const auto popup = shell.ActiveEditorBlamePopupLayout();
     return popup.has_value() ? std::make_optional(popup->rect) : std::nullopt;
   }
+  // Drops the live hover target without a prepared frame: what any change between
+  // a frame's prep and its paint looks like to the card.
+  static void ClearEditorHoverTargetForTest(WorkspaceShell& shell) {
+    shell.active_editor_hover_target_.reset();
+  }
   static std::optional<SDL_FRect> ActiveEditorBlamePopupCopyShaRect(WorkspaceShell& shell) {
     const auto popup = shell.ActiveEditorBlamePopupLayout();
     return popup.has_value() ? std::make_optional(popup->copy_sha_rect) : std::nullopt;

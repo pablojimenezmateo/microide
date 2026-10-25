@@ -850,7 +850,26 @@ the rects are printed on failure. 12 full shard runs and 30 runs of the test
 alone passed; if a pane-tall rect inside the pane ever shows, the message names
 it.
 
-### TD-2026-10-22-377 — a stale strip on the split divider after typing in a split, on CI's ASan QA lane only. [OPEN]
+### TD-2026-10-22-377 — a stale strip on the split divider after typing in a split, on CI's ASan QA lane only. [RESOLVED 2026-10-25]
+
+**Resolved 2026-10-25.** The run's artifact (`logs-qa-asan`) still held the
+evidence: the strip is the blame card's frame -- `[615, 307, 280, 122]`, the card
+of the bottom pane's line 1 under Xvfb's resting pointer (720, 450), which comes
+up right after `split-down` on a build slow enough for it to beat the next
+keystroke. Typing `x` removed it; frame 17 repainted the panes and tab strips
+under it, and the two strips between them (the divider, the 5 px gap) kept its
+border and fill. Frame prep decides the card's damage from what it laid out, but
+paint laid the card out again on its own (`ActiveEditorHoverPopupLayout()` from
+`RenderEditorHoverPopup`), so one frame could paint a card its prep had not
+accounted for, or drop one prep had kept -- with nothing repainting it. The card
+is now laid out once at prep (`PreparedFrameState::painted_hover_popup`, the
+hover types moved to `workspace/EditorHoverTypes.h` for it) and every render of
+the frame paints that one. Test: `WorkspaceShell/EveryRenderOfAFramePaintsThePreparedHoverCard`
+(a frame rendered as the verifier renders it, with the live hover gone between
+prep and paint: 280x122 px differ without the fix); the QA flow
+`blame-card-follows-its-line` now types under the card too. Which change between
+prep and paint the CI run hit is not known -- typing under the card is clean
+locally on both builds -- and no longer matters to the pixels.
 
 Found by `split-and-close` on the qa-asan job of run 39704723441 (once; the
 scenario is not retried for a redraw finding). Open `scheduler.cpp`, split

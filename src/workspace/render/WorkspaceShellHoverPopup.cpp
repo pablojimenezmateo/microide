@@ -122,7 +122,7 @@ void DrawHoverPopupLines(const render::TextRenderer& text_renderer,
 
 }  // namespace
 
-std::optional<WorkspaceShell::EditorHoverPopupLayout> WorkspaceShell::ActiveEditorHoverPopupLayout()
+std::optional<EditorHoverPopupLayout> WorkspaceShell::ActiveEditorHoverPopupLayout()
     const {
   if (MenuSurfaceCapturingMouse()) {
     return std::nullopt;
@@ -493,7 +493,9 @@ void WorkspaceShell::DrawTwoBlockHoverCard(SDL_Renderer* renderer,
 }
 
 void WorkspaceShell::RenderEditorHoverPopup(SDL_Renderer* renderer) const {
-  const auto popup = ActiveEditorHoverPopupLayout();
+  // The card frame prep laid out and accounted the damage for, never one laid
+  // out again here (PreparedFrameState::painted_hover_popup).
+  const std::optional<EditorHoverPopupLayout>& popup = frame_state_.painted_hover_popup;
   if (!popup.has_value()) {
     return;
   }

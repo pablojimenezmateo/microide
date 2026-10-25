@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "editor/EditorViewRenderer.h"
+#include "workspace/EditorHoverTypes.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/state/WorkspaceInteractionState.h"
 #include "workspace/state/WorkspaceProjectState.h"
@@ -56,8 +57,13 @@ struct PreparedFrameState {
   std::optional<SDL_FRect> painted_hover_rect;
   std::optional<SDL_FRect> painted_tooltip_rect;
   std::size_t painted_tooltip_text_hash = 0;  // the same card can name another tab
-  // The editor hover card painted (hover docs, diagnostics, the blame card).
-  std::optional<SDL_FRect> painted_hover_popup_rect;
+  // The editor hover card (hover docs, diagnostics, the blame card), laid out at
+  // prep: what this frame paints -- every render of it, partial clips and the
+  // verifier's full one alike -- and what the next prep compares with. Paint laid
+  // the card out again itself, so a card prep had damaged nothing for could be
+  // painted, or one it had kept dropped, and its pixels outside the frame's clips
+  // stayed on screen (TD-2026-10-22-377: a blame card left on a split's divider).
+  std::optional<EditorHoverPopupLayout> painted_hover_popup;
   // Per editor pane, the (viewport, content revision) painted.
   std::array<std::uint64_t, kMaxEditorGroups> painted_pane_content{};
   // Per editor pane, the (viewport, content, scroll position) painted.

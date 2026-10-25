@@ -246,6 +246,124 @@ void TestWorkspaceShellEditorBlameCardGoesWithItsLine() {
                                 DescribePixelDiff(moved));
 }
 
+// Typing into the blamed line takes the card with the blame, under a still
+// pointer, and the frame repaints all of it (TD-2026-10-22-377's flow; the defect
+// it found is pinned by the next test).
+void TestWorkspaceShellEditorBlameCardGoesWhenItsLineIsEdited() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "line 1\nline 2\nline 3\nline 4\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add editor blame fixture", "editor blame fixture");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 0);
+  const auto overlay = WaitForActiveEditorBlameOverlay(shell, 1);
+  Expect(overlay.has_value() && overlay->lines.size() == 1, "the fixture should have inline blame");
+  if (!overlay.has_value() || overlay->lines.empty()) {
+    return;
+  }
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const auto& blame_line = overlay->lines[0];
+  const float bx = blame_line.rect.x + 4.0f;
+  const float by = blame_line.rect.y + blame_line.rect.h * 0.5f;
+  const auto shown = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight, DispatchEvents(shell, {MouseMotionEvent(bx, by)}), pin_caret);
+  Expect(WorkspaceShellTestAccess::ActiveEditorBlamePopupRect(shell).has_value(),
+         "hovering blame text should open the blame card");
+  Expect(shown.identical(), "showing the card should paint what a full repaint paints; " +
+                                DescribePixelDiff(shown));
+
+  const auto typed = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight, DispatchEvents(shell, {TextInputEvent("x")}), pin_caret);
+  Expect(!WorkspaceShellTestAccess::ActiveEditorBlamePopupRect(shell).has_value(),
+         "an edited line has no blame, so no card");
+  Expect(typed.identical(), "typing into the blamed line should take the card off screen; " +
+                                DescribePixelDiff(typed));
+}
+
+// Every render of one frame paints the hover card frame prep laid out, whatever
+// changes after prep. Paint laid the card out again itself, so a frame whose prep
+// kept the card (and damaged nothing for it) could paint without it -- its pixels
+// outside the frame's clips stayed on screen, while the verifier's full render of
+// the same frame had no card (TD-2026-10-22-377, CI's qa-asan: a blame card left
+// on a split's divider). Here the live hover target goes between prep and paint,
+// a partial clip elsewhere is painted, and the full render of the same frame must
+// match it.
+void TestWorkspaceShellEveryRenderOfAFramePaintsThePreparedHoverCard() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "line 1\nline 2\nline 3\nline 4\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add editor blame fixture", "editor blame fixture");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 0);
+  const auto overlay = WaitForActiveEditorBlameOverlay(shell, 1);
+  Expect(overlay.has_value() && overlay->lines.size() == 1, "the fixture should have inline blame");
+  if (!overlay.has_value() || overlay->lines.empty()) {
+    return;
+  }
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const auto& blame_line = overlay->lines[0];
+  const float bx = blame_line.rect.x + 4.0f;
+  const float by = blame_line.rect.y + blame_line.rect.h * 0.5f;
+  const auto shown = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight, DispatchEvents(shell, {MouseMotionEvent(bx, by)}), pin_caret);
+  Expect(WorkspaceShellTestAccess::ActiveEditorBlamePopupRect(shell).has_value() && shown.identical(),
+         "hovering blame text shows the card; " + DescribePixelDiff(shown));
+
+  // One frame, rendered as Application and the redraw verifier render it.
+  pin_caret();
+  const WorkspaceShell::FrameToken token = shell.PrepareFrameOnce(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  WorkspaceShellTestAccess::ClearEditorHoverTargetForTest(shell);
+  const SDL_FRect strip = WorkspaceShellTestAccess::CurrentLayout(shell).tab_strip;
+  const SDL_Rect clip{static_cast<int>(strip.x), static_cast<int>(strip.y), 40, static_cast<int>(strip.h)};
+  SDL_SetRenderClipRect(canvas.renderer(), &clip);
+  shell.RenderClip(token, canvas.renderer(), kWidth, kHeight,
+                   SDL_FRect{strip.x, strip.y, 40.0f, strip.h});
+  SDL_SetRenderClipRect(canvas.renderer(), nullptr);
+  SDL_FlushRenderer(canvas.renderer());
+  SDL_Surface* retained = SDL_DuplicateSurface(canvas.surface());
+  shell.RenderClip(token, canvas.renderer(), kWidth, kHeight);
+  SDL_FlushRenderer(canvas.renderer());
+  const render::PixelDiffResult same_frame = DiffSurfaces(retained, canvas.surface());
+  SDL_DestroySurface(retained);
+  Expect(same_frame.identical(),
+         "the full render of a frame should paint the card its prep laid out, as the partial one "
+         "left it; " + DescribePixelDiff(same_frame));
+}
+
 // TD-2026-10-24-389: the inline-blame overlay was built while the active pane
 // painted, so everything that resolved against it between frames -- the hover card,
 // a click on Copy SHA, prep's damage for the card -- read the previous paint's. It
@@ -647,6 +765,10 @@ void RegisterWorkspaceShellEditorBlameTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorBlameOverlayIsBuiltAtFramePrep);
   AddTest(tests, "WorkspaceShell/EditorBlameCardGoesWithItsLine",
           TestWorkspaceShellEditorBlameCardGoesWithItsLine);
+  AddTest(tests, "WorkspaceShell/EditorBlameCardGoesWhenItsLineIsEdited",
+          TestWorkspaceShellEditorBlameCardGoesWhenItsLineIsEdited);
+  AddTest(tests, "WorkspaceShell/EveryRenderOfAFramePaintsThePreparedHoverCard",
+          TestWorkspaceShellEveryRenderOfAFramePaintsThePreparedHoverCard);
   AddTest(tests, "WorkspaceShell/EditorBlameIsFixedForAPreparedFrame",
           TestWorkspaceShellEditorBlameIsFixedForAPreparedFrame);
   AddTest(tests, "WorkspaceShell/EditorBlameLoadsForCleanTrackedFile",

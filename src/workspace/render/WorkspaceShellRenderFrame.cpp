@@ -1361,12 +1361,16 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     // The editor hover card goes when its target does -- the pointer leaving for
     // the tab strip cleared the blame card's target and repainted only the strip
     // (QA monkey, seed 7).
-    std::optional<SDL_FRect> hover_popup_rect;
-    if (const auto popup = ActiveEditorHoverPopupLayout(); popup.has_value()) {
-      hover_popup_rect = MakeRect(popup->rect.x - 2.0f, popup->rect.y - 2.0f, popup->rect.w + 4.0f,
-                                  popup->rect.h + 4.0f);
-    }
-    repaint_if_moved(frame_state_.painted_hover_popup_rect, hover_popup_rect);
+    const auto card_rect = [](const std::optional<EditorHoverPopupLayout>& popup) -> std::optional<SDL_FRect> {
+      if (!popup.has_value()) {
+        return std::nullopt;
+      }
+      return MakeRect(popup->rect.x - 2.0f, popup->rect.y - 2.0f, popup->rect.w + 4.0f, popup->rect.h + 4.0f);
+    };
+    std::optional<EditorHoverPopupLayout> hover_popup = ActiveEditorHoverPopupLayout();
+    std::optional<SDL_FRect> painted_hover_popup_rect = card_rect(frame_state_.painted_hover_popup);
+    repaint_if_moved(painted_hover_popup_rect, card_rect(hover_popup));
+    frame_state_.painted_hover_popup = std::move(hover_popup);
   }
   // The editor (and the compare/merge editable panes) paint the caret only while
   // the editor OWNS the blinking caret -- the condition under which the blink

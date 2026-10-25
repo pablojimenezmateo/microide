@@ -187,7 +187,7 @@
   // lenses -- across every pane, and had no direct coverage at all: it is
   // reachable in production only from mouse motion at real coordinates, and the
   // one test that touched it asserted on the view model rather than on a hit.
-  static std::optional<WorkspaceShell::EditorHoverTarget> EditorHoverTargetAtPosition(
+  static std::optional<EditorHoverTarget> EditorHoverTargetAtPosition(
       const WorkspaceShell& shell, float x, float y) {
     return shell.EditorHoverTargetAtPosition(x, y);
   }

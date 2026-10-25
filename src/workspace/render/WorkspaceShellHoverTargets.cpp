@@ -167,7 +167,7 @@ std::optional<editor::CodeLensDecoration> CodeLensForViewport(
 
 }  // namespace
 
-std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHoverTargetForViewport(
+std::optional<EditorHoverTarget> WorkspaceShell::DiagnosticHoverTargetForViewport(
     const editor::TextViewport& viewport,
     const TextGridInteractionLayout& interaction,
     std::span<const editor::PublishedDiagnostic> diagnostics,
@@ -214,7 +214,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
   return std::nullopt;
 }
 
-std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTargetForLine(
+std::optional<EditorHoverTarget> WorkspaceShell::PluginHoverTargetForLine(
     const std::filesystem::path& path,
     std::string_view line,
     std::size_t grid_row,
@@ -314,7 +314,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
   };
 }
 
-std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTargetForViewport(
+std::optional<EditorHoverTarget> WorkspaceShell::PluginHoverTargetForViewport(
     const editor::TextViewport& viewport,
     const TextGridInteractionLayout& interaction,
     float x,
@@ -337,7 +337,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
                                   *line_index, viewport.tab_size(), interaction, x, y);
 }
 
-std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHoverTargetAtPosition(
+std::optional<EditorHoverTarget> WorkspaceShell::DiagnosticHoverTargetAtPosition(
     float x,
     float y) const {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::DiagnosticHoverTargetAtPosition");
@@ -482,7 +482,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
   return std::nullopt;
 }
 
-std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTargetAtPosition(
+std::optional<EditorHoverTarget> WorkspaceShell::PluginHoverTargetAtPosition(
     float x,
     float y) const {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::PluginHoverTargetAtPosition");
@@ -565,7 +565,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
   return std::nullopt;
 }
 
-std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DebugValueHoverTargetForViewport(
+std::optional<EditorHoverTarget> WorkspaceShell::DebugValueHoverTargetForViewport(
     const editor::TextViewport& viewport,
     const TextGridInteractionLayout& interaction,
     float x,
@@ -671,7 +671,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DebugValueHover
   };
 }
 
-std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DebugValueHoverTargetAtPosition(
+std::optional<EditorHoverTarget> WorkspaceShell::DebugValueHoverTargetAtPosition(
     float x,
     float y) const {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::DebugValueHoverTargetAtPosition");
@@ -721,7 +721,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DebugValueHover
   return std::nullopt;
 }
 
-std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::EditorHoverTargetAtPosition(
+std::optional<EditorHoverTarget> WorkspaceShell::EditorHoverTargetAtPosition(
     float x,
     float y) const {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::EditorHoverTargetAtPosition");

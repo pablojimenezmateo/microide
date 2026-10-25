@@ -247,8 +247,11 @@ void TestArchitectureFileSizes() {
              // snapshot into one fingerprint that also covers the overrides.
              // 1694: PrimarySurfaceFocusTarget, dead once overlays restore the
              // focus they were opened from.
+             // 1657: the editor hover types (DebugHoverValue, EditorHoverTarget,
+             // EditorHoverPopupLayout) moved to workspace/EditorHoverTypes.h, so
+             // PreparedFrameState can hold the card prep lays out.
              return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShellMembers.inc",
-                                                     1694);
+                                                     1657);
            });
 
   AssertRuleResultsPass(results);

@@ -193,9 +193,10 @@ def flow_find_goto_edges(app: q.App) -> None:
 def flow_blame_card_follows_its_line(app: q.App) -> None:
     """The blame card goes when its line stops being the blamed one, with the
     pointer still: focus moving to the other pane of a split (inline blame is the
-    active pane's), and the caret leaving the line by a key. Each time the card is
-    gone from the ui and the frame that removed it is checked by the redraw
-    verifier (the card's pixels once stayed: QA monkey, editor profile)."""
+    active pane's), the caret leaving the line by a key, and typing into the line
+    (an edited line has no blame). Each time the card is gone from the ui and the
+    frame that removed it is checked by the redraw verifier (the card's pixels once
+    stayed: QA monkey, editor profile; and over a split's divider, CI qa-asan)."""
     write(app, "blame2/lines.txt", "".join(f"line {i}\n" for i in range(1, 40)))
     git(app, "add", "-A")
     git(app, "commit", "-q", "-m", "qa: blame two")
@@ -224,6 +225,15 @@ def flow_blame_card_follows_its_line(app: q.App) -> None:
     app.key("Down")
     step(app, "the caret leaves the line", 0.6)
     app.expect(_card(app).get("kind") != "blame", f"the card goes when the caret leaves its line ({_card(app)})")
+    app.key("Up")
+    step(app, "back on line 3", 1.2)
+    if not app.wait_until(card_up, 6.0, "the blame card a third time"):
+        return
+    app.type("x")
+    step(app, "type into the blamed line", 0.6)
+    app.expect(_card(app).get("kind") != "blame", f"the card goes when its line is edited ({_card(app)})")
+    app.key("ctrl+z")
+    step(app, "undo", 0.3)
 
 
 FLOWS: dict[str, Callable[[q.App], None]] = {
