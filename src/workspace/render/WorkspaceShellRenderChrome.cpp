@@ -335,21 +335,9 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   for (const VisibleStatusItem& item : status_items) {
     // Tone tints the item background even when not hovered (so a warning/error
     // status reads at a glance); hover still lifts it to row_highlight.
-    SDL_Color tone_fill = theme_.chrome_background;
-    switch (item.item.tone) {
-      case StatusItemTone::Error:
-        tone_fill = theme_.diagnostic_error;
-        break;
-      case StatusItemTone::Warning:
-        tone_fill = theme_.diagnostic_warning;
-        break;
-      case StatusItemTone::Info:
-        tone_fill = theme_.diagnostic_info;
-        break;
-      case StatusItemTone::Default:
-        break;
-    }
-    const bool has_tone = item.item.tone != StatusItemTone::Default;
+    const SDL_Color tone_fill =
+        StatusToneColor(theme_, item.item.tone, theme_.chrome_background);
+    const bool has_tone = item.item.tone != StatusTone::Default;
     // Only command-bound items are clickable, so only they earn the hover lift.
     // A bare path/status segment must not advertise clickability it doesn't have
     // (this also keeps the breadcrumb's hover/cursor/click regions in agreement).

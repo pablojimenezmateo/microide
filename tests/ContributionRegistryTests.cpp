@@ -51,7 +51,7 @@ using microide::workspace::ResolveKeybindings;
 using microide::workspace::ResolveStatusItems;
 using microide::workspace::SerializeSettingValue;
 using microide::workspace::StatusItemCache;
-using microide::workspace::StatusItemTone;
+using microide::workspace::StatusTone;
 using microide::workspace::WorkspaceFileIconRegistry;
 using microide::workspace::WorkspaceThemeRegistry;
 using microide::workspace::SettingType;
@@ -967,7 +967,7 @@ return ide.plugin({
   Expect(!views.empty(), "ResolveStatusItems should return the enriched item");
   const auto& item = views.front();
   Expect(item.icon == "dot", "icon should round-trip");
-  Expect(item.tone == StatusItemTone::Warning, "tone should resolve to Warning");
+  Expect(item.tone == StatusTone::Warning, "tone should resolve to Warning");
   Expect(item.command == "rich.status.cancel", "command should round-trip");
   Expect(item.progress > 0.49f && item.progress < 0.51f, "progress should round-trip ~0.5");
 }

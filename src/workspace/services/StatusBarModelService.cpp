@@ -303,7 +303,7 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
       problems.command_arg = "problems";
       problems.visible = true;
       problems.tone =
-          errors > 0 ? StatusBarSegmentTone::Error : StatusBarSegmentTone::Warning;
+          errors > 0 ? StatusTone::Error : StatusTone::Warning;
     } else {
       editor_segments_cache_.errors = 0;
       editor_segments_cache_.warnings = 0;
@@ -318,7 +318,7 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     // frame reuses the capacity rather than allocating both strings again.
     editor_segments_cache_.lsp_text.clear();
     editor_segments_cache_.lsp_tooltip.clear();
-    StatusBarSegmentTone lsp_tone = StatusBarSegmentTone::Default;
+    StatusTone lsp_tone = StatusTone::Default;
     operations.active_lsp_status_strings(false, editor_segments_cache_.lsp_text,
                                          editor_segments_cache_.lsp_tooltip, lsp_tone);
     if (!editor_segments_cache_.lsp_text.empty()) {

@@ -267,7 +267,7 @@ void WorkspaceShell::RefreshStatusBar() {
               },
           .active_lsp_status_strings =
               [this](bool ensure_started, std::string& text, std::string& tooltip,
-                     StatusBarSegmentTone& tone) {
+                     StatusTone& tone) {
                 ActiveLspStatusStrings(ensure_started, text, tooltip, tone);
               },
           .startup_mode_text = startup_mode_text,

@@ -361,7 +361,7 @@ struct StatusBarSegmentViewModel {
   bool clickable = false;
   std::string_view command;      // empty => read-only segment
   std::string_view command_arg;  // single optional argument
-  StatusBarSegmentTone tone = StatusBarSegmentTone::Default;
+  StatusTone tone = StatusTone::Default;
 };
 
 // The spec fixes the segment list at five left and three right, so a heap vector

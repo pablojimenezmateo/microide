@@ -6,6 +6,8 @@
 #include <string>
 #include <string_view>
 
+#include "workspace/StatusTone.h"
+
 namespace microide::workspace {
 
 enum class StatusBarSegmentId : std::uint8_t {
@@ -43,16 +45,6 @@ constexpr std::string_view StatusBarSegmentName(StatusBarSegmentId id) {
   return "unknown";
 }
 
-// Semantic severity/state of a segment, derived where the value is known
-// (StatusBarModelService) so the render path never re-parses display text to
-// pick a color.
-enum class StatusBarSegmentTone : std::uint8_t {
-  Default = 0,
-  Info,
-  Warning,
-  Error,
-};
-
 struct StatusBarSegmentValue {
   std::string text;
   std::string tooltip;
@@ -65,7 +57,7 @@ struct StatusBarSegmentValue {
   std::string command;
   std::string command_arg;
   bool visible = false;
-  StatusBarSegmentTone tone = StatusBarSegmentTone::Default;
+  StatusTone tone = StatusTone::Default;
 
   bool clickable() const { return !command.empty(); }
 };
@@ -94,7 +86,7 @@ class StatusBarService {
     std::string_view command;
     std::string_view command_arg;
     bool visible = false;
-    StatusBarSegmentTone tone = StatusBarSegmentTone::Default;
+    StatusTone tone = StatusTone::Default;
   };
 
   // Assign INTO the stored segment instead of replacing it.

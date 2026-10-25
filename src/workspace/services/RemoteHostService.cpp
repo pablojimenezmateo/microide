@@ -1662,9 +1662,9 @@ void RemoteHostService::PublishStatusSegment() {
                (ports == 0 ? std::string() : " · " + std::to_string(ports) + (ports == 1 ? " port" : " ports"));
   value.tooltip = tooltip + "Remote: Show Status";
   value.command = "remote-status";
-  value.tone = rank(state) >= 3   ? StatusBarSegmentTone::Error
-               : rank(state) == 2 ? StatusBarSegmentTone::Warning
-                                  : StatusBarSegmentTone::Default;
+  value.tone = rank(state) >= 3   ? StatusTone::Error
+               : rank(state) == 2 ? StatusTone::Warning
+                                  : StatusTone::Default;
   operations_.set_status_segment(std::move(value));
 }
 

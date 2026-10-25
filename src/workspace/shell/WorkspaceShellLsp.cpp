@@ -84,18 +84,18 @@ const LspClient::ReadinessSnapshot& WorkspaceShell::MenuLspReadiness() const {
 }
 
 void WorkspaceShell::ActiveLspStatusStrings(bool ensure_started, std::string& text,
-                                            std::string& tooltip, StatusBarSegmentTone& tone) {
+                                            std::string& tooltip, StatusTone& tone) {
   LspService::LspStatusSeverity severity = LspService::LspStatusSeverity::Idle;
   lsp_service_.ActiveLspStatusStrings(ensure_started, text, tooltip, &severity);
   switch (severity) {
     case LspService::LspStatusSeverity::Idle:
-      tone = StatusBarSegmentTone::Default;
+      tone = StatusTone::Default;
       break;
     case LspService::LspStatusSeverity::Busy:
-      tone = StatusBarSegmentTone::Info;
+      tone = StatusTone::Info;
       break;
     case LspService::LspStatusSeverity::Error:
-      tone = StatusBarSegmentTone::Error;
+      tone = StatusTone::Error;
       break;
   }
 }

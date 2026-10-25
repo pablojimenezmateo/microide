@@ -26,7 +26,7 @@ class StatusBarModelService {
     std::function<std::optional<std::string>(const std::filesystem::path&)> read_head_branch;
     // Fills text + tooltip and, in the fourth argument, the semantic tone derived
     // from typed LSP readiness state (so the model never re-scans the label text).
-    std::function<void(bool, std::string&, std::string&, StatusBarSegmentTone&)>
+    std::function<void(bool, std::string&, std::string&, StatusTone&)>
         active_lsp_status_strings;
     std::string_view startup_mode_text;
     std::string_view startup_mode_tooltip;

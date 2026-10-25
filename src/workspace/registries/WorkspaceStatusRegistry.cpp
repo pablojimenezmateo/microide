@@ -9,17 +9,17 @@ namespace microide::workspace {
 
 namespace {
 
-StatusItemTone ToneFromString(std::string_view tone) {
+StatusTone ToneFromString(std::string_view tone) {
   if (tone == "error") {
-    return StatusItemTone::Error;
+    return StatusTone::Error;
   }
   if (tone == "warning") {
-    return StatusItemTone::Warning;
+    return StatusTone::Warning;
   }
   if (tone == "info") {
-    return StatusItemTone::Info;
+    return StatusTone::Info;
   }
-  return StatusItemTone::Default;
+  return StatusTone::Default;
 }
 
 }  // namespace

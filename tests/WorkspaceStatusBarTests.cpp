@@ -20,7 +20,7 @@ using microide::workspace::LayoutMode;
 using microide::workspace::LayoutModeInputs;
 using microide::workspace::RenderViewModelBuilder;
 using microide::workspace::StatusBarSegmentId;
-using microide::workspace::StatusBarSegmentTone;
+using microide::workspace::StatusTone;
 using microide::workspace::StatusBarSegmentValue;
 using microide::workspace::StatusBarService;
 using microide::workspace::WorkspaceContext;
@@ -153,7 +153,7 @@ void TestStatusBarPropagatesSemanticTone() {
                          .tooltip = {},
                          .command = "sidebar-show",
                          .visible = true,
-                         .tone = StatusBarSegmentTone::Error,
+                         .tone = StatusTone::Error,
                      });
 
   const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 280.0f, 160.0f,
@@ -163,7 +163,7 @@ void TestStatusBarPropagatesSemanticTone() {
   Expect(vm.right_segments.size() == 1, "only the Problems segment should be present");
   Expect(vm.right_segments[0].id == StatusBarSegmentId::Problems,
          "the single segment should be Problems");
-  Expect(vm.right_segments[0].tone == StatusBarSegmentTone::Error,
+  Expect(vm.right_segments[0].tone == StatusTone::Error,
          "builder must propagate the semantic tone so the render path never re-parses text");
 }
 
@@ -181,10 +181,10 @@ void TestStatusBarLspToneFromTypedSeverityNotLabelText() {
     return microide::project::GitAvailability::NotARepository;
   };
   ops.active_lsp_status_strings = [](bool, std::string& text, std::string& tooltip,
-                                     StatusBarSegmentTone& tone) {
+                                     StatusTone& tone) {
     text = "LSP: clangd Not Ready";  // contains "Ready" as a substring
     tooltip = "language server failed to start";
-    tone = StatusBarSegmentTone::Error;
+    tone = StatusTone::Error;
   };
 
   model.Refresh(service, ops, context.current_project_state, &viewport);
@@ -192,7 +192,7 @@ void TestStatusBarLspToneFromTypedSeverityNotLabelText() {
   const auto& lsp = service.Segment(StatusBarSegmentId::Lsp);
   Expect(lsp.visible, "the Lsp segment should be visible with a non-empty status");
   Expect(lsp.text == "LSP: clangd Not Ready", "the label text should pass through verbatim");
-  Expect(lsp.tone == StatusBarSegmentTone::Error,
+  Expect(lsp.tone == StatusTone::Error,
          "tone must follow the typed severity (Error), not a 'Ready' substring match");
 }
 
@@ -216,10 +216,10 @@ void TestStatusBarSteadyRefreshDoesNotAllocate() {
   // Long enough to be past std::string's small-string buffer, which is the whole
   // point: an SSO-sized label would pass this test on the old code too.
   ops.active_lsp_status_strings = [](bool, std::string& text, std::string& tooltip,
-                                     StatusBarSegmentTone& tone) {
+                                     StatusTone& tone) {
     text = "LSP: clangd indexing the workspace";
     tooltip = "language server is indexing the workspace, some results may be partial";
-    tone = StatusBarSegmentTone::Info;
+    tone = StatusTone::Info;
   };
 
   // Two warm-up refreshes: the first fills every memo and every slot buffer, the
@@ -240,7 +240,7 @@ void TestStatusBarSteadyRefreshDoesNotAllocate() {
   Expect(service.Segment(StatusBarSegmentId::Lsp).tooltip ==
              "language server is indexing the workspace, some results may be partial",
          "the settled refresh should still publish the segment tooltip");
-  Expect(service.Segment(StatusBarSegmentId::Lsp).tone == StatusBarSegmentTone::Info,
+  Expect(service.Segment(StatusBarSegmentId::Lsp).tone == StatusTone::Info,
          "the settled refresh should still publish the segment tone");
 }
 
@@ -263,7 +263,7 @@ void TestStatusBarRepoAvailabilityReflectsInSessionGitInit() {
     return repo_valid ? microide::project::GitAvailability::Repository
                       : microide::project::GitAvailability::NotARepository;
   };
-  ops.active_lsp_status_strings = [](bool, std::string&, std::string&, StatusBarSegmentTone&) {};
+  ops.active_lsp_status_strings = [](bool, std::string&, std::string&, StatusTone&) {};
 
   model.Refresh(service, ops, context.current_project_state, nullptr);
   Expect(service.Segment(StatusBarSegmentId::Project).text == "no-scm",
@@ -313,7 +313,7 @@ void TestStatusBarRendersUnknownGitAvailabilityAsUnknown() {
   ops.git_availability = [](const std::filesystem::path&) {
     return microide::project::GitAvailability::Unknown;
   };
-  ops.active_lsp_status_strings = [](bool, std::string&, std::string&, StatusBarSegmentTone&) {};
+  ops.active_lsp_status_strings = [](bool, std::string&, std::string&, StatusTone&) {};
 
   model.Refresh(service, ops, context.current_project_state, nullptr);
   const auto& segment = service.Segment(StatusBarSegmentId::Project);
@@ -345,7 +345,7 @@ void TestStatusBarNamesBranchFromHeadBeforeFirstGitSnapshot() {
   ops.git_availability = [](const std::filesystem::path&) {
     return microide::project::GitAvailability::Repository;
   };
-  ops.active_lsp_status_strings = [](bool, std::string&, std::string&, StatusBarSegmentTone&) {};
+  ops.active_lsp_status_strings = [](bool, std::string&, std::string&, StatusTone&) {};
   std::size_t head_reads = 0;
   ops.read_head_branch = [&](const std::filesystem::path&) -> std::optional<std::string> {
     ++head_reads;

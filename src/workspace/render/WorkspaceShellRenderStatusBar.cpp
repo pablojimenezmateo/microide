@@ -23,28 +23,15 @@ void WorkspaceShell::RenderStatusBar(SDL_Renderer* renderer,
   DrawFilledRect(renderer, vm.rect, theme_.chrome_background);
   DrawFilledRect(renderer, MakeRect(vm.rect.x, vm.rect.y, vm.rect.w, 1.0f), theme_.border);
 
-  const auto tone_color = [&](StatusBarSegmentTone tone, SDL_Color fallback) -> SDL_Color {
-    switch (tone) {
-      case StatusBarSegmentTone::Error:
-        return theme_.diagnostic_error;
-      case StatusBarSegmentTone::Warning:
-        return theme_.diagnostic_warning;
-      case StatusBarSegmentTone::Info:
-        return theme_.diagnostic_info;
-      case StatusBarSegmentTone::Default:
-      default:
-        return fallback;
-    }
-  };
   const auto segment_color = [&](const StatusBarSegmentViewModel& seg) -> SDL_Color {
     // Diagnostic segments are colored by semantic tone (set in
     // StatusBarModelService) so the count/state -- not the display text -- picks
     // the color. Clickable segments then take the accent color on top of that.
     switch (seg.id) {
       case StatusBarSegmentId::Problems:
-        return tone_color(seg.tone, theme_.diagnostic_warning);
+        return StatusToneColor(theme_, seg.tone, theme_.diagnostic_warning);
       case StatusBarSegmentId::Lsp:
-        return tone_color(seg.tone, theme_.chrome_text_secondary);
+        return StatusToneColor(theme_, seg.tone, theme_.chrome_text_secondary);
       default:
         break;
     }

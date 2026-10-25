@@ -5,15 +5,13 @@
 #include <string>
 #include <vector>
 
+#include "workspace/StatusTone.h"
 #include "plugin/PluginHost.h"
 
 namespace microide::workspace {
 
 enum class StatusAlignment { Left, Right };
 
-// Tone of a plugin status item, derived from the contributed "tone" string at
-// resolve time so the render path never re-parses strings.
-enum class StatusItemTone { Default, Info, Warning, Error };
 
 struct StatusItemView {
   std::string id;
@@ -25,7 +23,7 @@ struct StatusItemView {
   // render path); empty = none. `tone` tints the item background. `command` runs
   // on click when non-empty. `progress` < 0 means no bar, else clamped [0, 1].
   std::string icon;
-  StatusItemTone tone = StatusItemTone::Default;
+  StatusTone tone = StatusTone::Default;
   std::string command;
   float progress = -1.0f;
   std::string plugin_id;

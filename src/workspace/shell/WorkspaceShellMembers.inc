@@ -1524,7 +1524,7 @@
   LspClient::ReadinessSnapshot ActiveLspReadinessSnapshot(bool ensure_started = true);
   // Frame-memoized, never-starting readiness for the menu paint/hit-test paths.
   const LspClient::ReadinessSnapshot& MenuLspReadiness() const;
-  void ActiveLspStatusStrings(bool ensure_started, std::string& text, std::string& tooltip, StatusBarSegmentTone& tone);
+  void ActiveLspStatusStrings(bool ensure_started, std::string& text, std::string& tooltip, StatusTone& tone);
   void BeginTrackedLspRequest();
   void FinishTrackedLspRequest();
   LspClient* LspClientForViewport(const editor::TextViewport& viewport,

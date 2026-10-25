@@ -2,6 +2,7 @@
 
 #include "render/ScopedRenderClip.h"
 #include "render/SurfacePrimitives.h"
+#include "workspace/StatusTone.h"
 #include "workspace/WorkspaceUiText.h"
 #include "workspace/render/TabStripAnimation.h"
 #include "workspace/shell/WorkspaceShell.h"
@@ -81,6 +82,21 @@ inline void FillRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color co
 
 inline void OutlineRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
   render::OutlineRect(renderer, rect, color);
+}
+
+// The colour a status tone paints with, or `fallback` for the default tone.
+inline SDL_Color StatusToneColor(const render::Theme& theme, StatusTone tone, SDL_Color fallback) {
+  switch (tone) {
+    case StatusTone::Error:
+      return theme.diagnostic_error;
+    case StatusTone::Warning:
+      return theme.diagnostic_warning;
+    case StatusTone::Info:
+      return theme.diagnostic_info;
+    case StatusTone::Default:
+      break;
+  }
+  return fallback;
 }
 
 inline ButtonColors ResolveButtonColors(const render::Theme& theme,
