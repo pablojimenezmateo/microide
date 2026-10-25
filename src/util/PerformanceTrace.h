@@ -24,12 +24,10 @@ namespace microide::util {
 //
 // Prefer the summary when hunting a hotspot: streaming does a write+flush inside
 // the parent scope, so it distorts exactly the numbers you are reading.
-class PerformanceTrace {
+class PerformanceTrace : public TraceChannelFacade<PerformanceTrace> {
  public:
   static TraceChannel& Channel();
 
-  static bool Enabled() { return Channel().Enabled(); }
-  static bool SummaryEnabled() { return Channel().AggregateEnabled(); }
   // True only in streaming mode. Guard a bespoke stderr line with this rather
   // than Enabled(), or a summary-only run pays for output it never wanted.
   static bool StreamEnabled() { return Channel().StreamEnabled(); }
@@ -49,25 +47,6 @@ class PerformanceTrace {
       Channel().RecordSample(label, static_cast<double>(duration_ns) / 1'000'000.0);
     }
   }
-
-  static void ResetSummary() { Channel().ResetAggregate(); }
-  static std::vector<TraceChannel::AggregateEntry> SummarySnapshot() {
-    return Channel().AggregateSnapshot();
-  }
-  static void WriteSummary(std::FILE* out) { Channel().WriteAggregate(out); }
-  // Idempotent: the shutdown path and the atexit backstop both call this.
-  static void DumpSummaryOnce() { Channel().DumpAggregateOnce(); }
-
-  class Scope {
-   public:
-    explicit Scope(std::string_view label) : scope_(Channel(), label) {}
-
-    Scope(const Scope&) = delete;
-    Scope& operator=(const Scope&) = delete;
-
-   private:
-    TraceScope scope_;
-  };
 
   // Assembles a `Base(key=value,key=value)` label, doing the string work only
   // when the channel is on.

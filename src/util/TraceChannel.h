@@ -164,4 +164,33 @@ class TraceScope {
   int depth_ = 0;
 };
 
+// The static face every tracer shows over its own channel: on/off queries, the
+// ranked summary, and an RAII Scope. `Derived` supplies `static TraceChannel&
+// Channel()`. PerformanceTrace and StartupTrace each spelled all of this out.
+template <typename Derived>
+class TraceChannelFacade {
+ public:
+  static bool Enabled() { return Derived::Channel().Enabled(); }
+  static bool SummaryEnabled() { return Derived::Channel().AggregateEnabled(); }
+
+  static void ResetSummary() { Derived::Channel().ResetAggregate(); }
+  static std::vector<TraceChannel::AggregateEntry> SummarySnapshot() {
+    return Derived::Channel().AggregateSnapshot();
+  }
+  static void WriteSummary(std::FILE* out) { Derived::Channel().WriteAggregate(out); }
+  // Idempotent: the shutdown path and the atexit backstop both call this.
+  static void DumpSummaryOnce() { Derived::Channel().DumpAggregateOnce(); }
+
+  class Scope {
+   public:
+    explicit Scope(std::string_view label) : scope_(Derived::Channel(), label) {}
+
+    Scope(const Scope&) = delete;
+    Scope& operator=(const Scope&) = delete;
+
+   private:
+    TraceScope scope_;
+  };
+};
+
 }  // namespace microide::util
