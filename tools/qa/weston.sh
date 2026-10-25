@@ -18,9 +18,12 @@ fi
 command -v apt >/dev/null || { echo "weston.sh: no apt to fetch weston" >&2; exit 1; }
 mkdir -p "$DEB"
 # The headless backend needs weston, libweston and libseat; the RDP/VNC backends'
-# libraries are left out (their modules are never loaded).
-(cd "$DEB" && apt download weston "libweston-[0-9]*-0" libseat1 >/dev/null 2>&1) ||
-  (cd "$DEB" && apt download weston libweston-13-0 libseat1 >/dev/null)
+# libraries are left out (their modules are never loaded). libweston's package
+# carries its major version (libweston-13-0, libweston-14-0, ...): read it off
+# weston's own dependencies instead of naming one release's.
+libweston="$(apt-cache depends weston 2>/dev/null | sed -n 's/.*Depends: \(libweston-[0-9]*-0\)$/\1/p' | head -1)"
+[[ -n "$libweston" ]] || { echo "weston.sh: weston's package names no libweston" >&2; exit 1; }
+(cd "$DEB" && apt download weston "$libweston" libseat1 >/dev/null)
 for deb in "$DEB"/*.deb; do
   dpkg -x "$deb" "$ROOT"
 done
