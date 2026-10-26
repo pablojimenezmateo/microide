@@ -18,6 +18,7 @@
 #include <type_traits>
 
 #include "render/AsciiGlyphAtlas.h"
+#include "render/DebugTextBackend.h"
 #include "render/GlyphClusterAtlas.h"
 #include "render/SurfaceTextureCache.h"
 #include "render/GlyphSurfaceFormat.h"
@@ -64,17 +65,32 @@ static_assert(!std::is_copy_constructible_v<microide::render::AsciiGlyphAtlas>,
               "AsciiGlyphAtlas owns an SDL_Texture");
 static_assert(!std::is_copy_constructible_v<microide::render::GlyphClusterAtlas>,
               "GlyphClusterAtlas owns an SDL_Surface and hands out pointers into its slot map");
+static_assert(!std::is_copy_constructible_v<microide::render::StringTextureCache>,
+              "StringTextureCache owns SDL_Textures and threads an intrusive LRU through its nodes");
 static_assert(!std::is_copy_constructible_v<microide::render::SurfaceTextureCache>,
               "SurfaceTextureCache owns SDL_Textures and must stay non-copyable");
 
 
 struct TextRendererTestAccess {
+  // Gives `renderer` a pool of its own whose first backend is `backend`, bound
+  // (with no SDL renderer, at scale 1) and resolved, as a first frame would.
   static void SetBackend(microide::render::TextRenderer& renderer,
                          std::unique_ptr<microide::render::TextRendererBackend> backend) {
-    renderer.backend_ = std::move(backend);
-    renderer.attempted_optional_backend_ = true;
-    renderer.ClearWidthCache();
-    renderer.width_cache_initialized_ = false;
+    using microide::render::TextRendererBackend;
+    auto handed = std::make_shared<std::unique_ptr<TextRendererBackend>>(std::move(backend));
+    renderer.pool_ = std::make_shared<microide::render::TextBackendPool>(
+        [handed](SDL_Renderer*) -> std::unique_ptr<TextRendererBackend> {
+          if (*handed != nullptr) {
+            return std::move(*handed);
+          }
+          return std::make_unique<microide::render::DebugTextBackend>();
+        });
+    renderer.pool_->Bind(nullptr, 1.0f, 1.0f);
+    renderer.initialized_ = true;
+    (void) renderer.AcquireBackend();
+  }
+  static std::size_t TextureCacheSize(const microide::render::TextRenderer& renderer) {
+    return renderer.texture_cache_.size();
   }
 };
 
@@ -143,11 +159,13 @@ class CountingTextBackend final : public microide::render::TextRendererBackend {
   }
 
   void DrawString(SDL_Renderer* renderer,
+                  microide::render::StringTextureCache& cache,
                   float x,
                   float y,
                   SDL_Color color,
                   std::string_view text) override {
     (void) renderer;
+    (void) cache;
     draw_calls_.push_back(DrawCall{
         .x = x,
         .y = y,
@@ -159,12 +177,14 @@ class CountingTextBackend final : public microide::render::TextRendererBackend {
   }
 
   void DrawStringOn(SDL_Renderer* renderer,
+                    microide::render::StringTextureCache& cache,
                     float x,
                     float y,
                     SDL_Color color,
                     SDL_Color background,
                     std::string_view text) override {
     (void) renderer;
+    (void) cache;
     draw_calls_.push_back(DrawCall{
         .x = x,
         .y = y,
@@ -542,6 +562,7 @@ void TestEphemeralRunsMatchTheCachedCompositePath() {
 
   auto backend = microide::render::SdlTtfTextBackend::Create(canvas.renderer());
   Expect(backend != nullptr, "ephemeral-run test should build the real SDL_ttf backend");
+  microide::render::StringTextureCache texture_cache;
 
   const SDL_Color color{0x9c, 0xdc, 0xfe, 0xff};
   // Multi-cell digit strings of every width the gutter produces, so a rounding
@@ -570,9 +591,9 @@ void TestEphemeralRunsMatchTheCachedCompositePath() {
       if (ephemeral) {
         const microide::render::TextRun run{
             .x = 6.0f, .y = 5.0f, .color = color, .text = text};
-        backend->DrawEphemeralRuns(canvas.renderer(), &run, 1);
+        backend->DrawEphemeralRuns(canvas.renderer(), texture_cache, &run, 1);
       } else {
-        backend->DrawString(canvas.renderer(), 6.0f, 5.0f, color, text);
+        backend->DrawString(canvas.renderer(), texture_cache, 6.0f, 5.0f, color, text);
       }
       SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
       Expect(pixels != nullptr, "ephemeral-run test should read back software pixels");
@@ -2289,6 +2310,159 @@ void TestMeasureWidthCacheClearsWhenPresentationScaleChanges() {
          "scale changes should force a fresh backend measurement");
 }
 
+// A backend that records the font it was asked for, so pool tests can tell which
+// renderer draws with which backend and whether a size change was made in place.
+class FontTrackingBackend final : public microide::render::TextRendererBackend {
+ public:
+  const char* Name() const override { return "font-tracking"; }
+  void SetPresentationScale(float scale_x, float scale_y) override {
+    (void) scale_y;
+    scale_x_ = scale_x;
+  }
+  void SetFontPointSize(float points) override { point_size_ = points; }
+  bool SetFontFamily(std::string_view family) override {
+    if (family_ == family) {
+      return false;
+    }
+    family_ = std::string(family);
+    return true;
+  }
+  float CharWidth() const override { return point_size_ * scale_x_; }
+  float LineHeight() const override { return 2.0f * point_size_ * scale_x_; }
+  float MeasureWidth(std::string_view text) const override {
+    ++measure_width_calls_;
+    return static_cast<float>(text.size()) * CharWidth();
+  }
+  void DrawString(SDL_Renderer*, microide::render::StringTextureCache&, float, float, SDL_Color,
+                  std::string_view) override {}
+
+  std::size_t measure_width_calls() const { return measure_width_calls_; }
+
+ private:
+  float point_size_ = microide::render::kDefaultFontPointSize;
+  float scale_x_ = 1.0f;
+  std::string family_;
+  mutable std::size_t measure_width_calls_ = 0;
+};
+
+struct FontTrackingPool {
+  std::shared_ptr<std::size_t> created = std::make_shared<std::size_t>(0);
+  std::shared_ptr<microide::render::TextBackendPool> pool =
+      std::make_shared<microide::render::TextBackendPool>(
+          [created = created](SDL_Renderer*) -> std::unique_ptr<microide::render::TextRendererBackend> {
+            ++*created;
+            return std::make_unique<FontTrackingBackend>();
+          });
+};
+
+// The chrome, the editor and the terminal each have a renderer, and by default
+// all three ask for one font. One backend per renderer filled three identical
+// atlases and glyph caches (TD-2026-10-26-394): renderers sharing a pool share a
+// backend while their fonts match, and only while they do.
+void TestTextBackendPoolSharesABackendWhileFontsMatch() {
+  FontTrackingPool fixture;
+  microide::render::TextRenderer chrome(fixture.pool);
+  microide::render::TextRenderer editor(fixture.pool);
+  editor.SetFontPointSize(microide::render::kDefaultFontPointSize);  // what the shell does
+  chrome.EnsureInitialized(nullptr);
+  editor.EnsureInitialized(nullptr);
+  Expect(*fixture.created == 1 && fixture.pool->LiveBackendCount() == 1,
+         "two renderers asking for the default font should share one backend, created " +
+             std::to_string(*fixture.created));
+  Expect(editor.CharWidth() == chrome.CharWidth(), "a shared backend has one set of metrics");
+
+  Expect(editor.SetFontPointSize(20.0f), "a new size changes the editor's glyphs");
+  Expect(fixture.pool->LiveBackendCount() == 2, "a different font gets a backend of its own");
+  Expect(editor.CharWidth() == 20.0f && chrome.CharWidth() == 13.0f,
+         "the editor's size must not reach the chrome through a shared backend: editor " +
+             std::to_string(editor.CharWidth()) + ", chrome " + std::to_string(chrome.CharWidth()));
+
+  // Alone on its backend, the editor resizes it rather than opening another.
+  Expect(editor.SetFontPointSize(24.0f), "a second size change changes the glyphs again");
+  Expect(*fixture.created == 2 && editor.CharWidth() == 24.0f,
+         "a renderer that is a backend's only user changes it in place, created " +
+             std::to_string(*fixture.created));
+  Expect(!editor.SetFontPointSize(24.0f), "an unchanged size is not a change");
+
+  Expect(editor.SetFontPointSize(microide::render::kDefaultFontPointSize),
+         "returning to the chrome's font changes the glyphs");
+  Expect(fixture.pool->LiveBackendCount() == 1 && *fixture.created == 2,
+         "a font that matches again shares again, and the backend it left is released");
+
+  // A family change reaches only the renderer that asked for it.
+  Expect(chrome.SetFontFamily("Mono B"), "a new family changes the chrome's glyphs");
+  Expect(fixture.pool->LiveBackendCount() == 2, "the chrome's new family takes its own backend");
+  Expect(editor.SetFontFamily("Mono B"), "the editor follows to the same family");
+  Expect(fixture.pool->LiveBackendCount() == 1 && *fixture.created == 3,
+         "the same family at the same size is shared again");
+}
+
+// Sharing a backend shares its glyphs, not its composites. The chrome's labels and
+// the editor's rows in one bounded cache evicted each other: a scroll through wide
+// CJK rows re-rasterized chrome labels every frame and lost the cache's node
+// recycling (editor_cjk_scroll_paint, +15% allocations, TD-2026-10-26-394).
+void TestTextBackendPoolKeepsEachRenderersCompositesApart() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(320, 80);
+  const auto pool = std::make_shared<microide::render::TextBackendPool>();
+  microide::render::TextRenderer chrome(pool);
+  microide::render::TextRenderer editor(pool);
+  chrome.EnsureInitialized(canvas.renderer());
+  editor.EnsureInitialized(canvas.renderer());
+  Expect(chrome.BackendName() == "sdl3_ttf", "the test should exercise the SDL_ttf backend");
+  Expect(pool->LiveBackendCount() == 1, "both renderers draw with one backend");
+
+  const SDL_Color white{255, 255, 255, 255};
+  chrome.DrawString(canvas.renderer(), 4.0f, 4.0f, white, "File");
+  editor.DrawString(canvas.renderer(), 4.0f, 24.0f, white, "\xE4\xB8\xAD\xE6\x96\x87 row");
+  editor.DrawString(canvas.renderer(), 4.0f, 44.0f, white, "int value = 0;");
+  Expect(TextRendererTestAccess::TextureCacheSize(chrome) == 1 &&
+             TextRendererTestAccess::TextureCacheSize(editor) == 2,
+         "each renderer caches only what it drew: chrome " +
+             std::to_string(TextRendererTestAccess::TextureCacheSize(chrome)) + ", editor " +
+             std::to_string(TextRendererTestAccess::TextureCacheSize(editor)));
+
+  // The editor's font change rebuilds the editor's composites, not the chrome's.
+  editor.SetFontPointSize(20.0f);
+  editor.DrawString(canvas.renderer(), 4.0f, 44.0f, white, "int value = 0;");
+  Expect(TextRendererTestAccess::TextureCacheSize(chrome) == 1 &&
+             TextRendererTestAccess::TextureCacheSize(editor) == 1,
+         "a font change clears only its own renderer's composites");
+}
+
+// A size set before the pool is bound is the size the first frame draws at,
+// whichever renderer binds the pool.
+void TestTextBackendPoolResolvesEarlyRequestsOnBind() {
+  FontTrackingPool fixture;
+  microide::render::TextRenderer chrome(fixture.pool);
+  microide::render::TextRenderer editor(fixture.pool);
+  editor.SetFontPointSize(18.0f);
+  Expect(*fixture.created == 0, "nothing is created before the pool is bound");
+  chrome.EnsureInitialized(nullptr);
+  editor.EnsureInitialized(nullptr);
+  Expect(editor.CharWidth() == 18.0f && chrome.CharWidth() == 13.0f,
+         "each renderer draws at the size it asked for before the first frame");
+  Expect(*fixture.created == 2, "two fonts, two backends");
+}
+
+// One renderer's EnsureInitialized rescales a backend another renderer also
+// draws with; the other renderer's memoized widths are stale from that moment.
+void TestTextBackendPoolRescaleInvalidatesEverySharersWidthCache() {
+  FontTrackingPool fixture;
+  microide::render::TextRenderer chrome(fixture.pool);
+  microide::render::TextRenderer editor(fixture.pool);
+  chrome.EnsureInitialized(nullptr, 1.0f, 1.0f);
+  editor.EnsureInitialized(nullptr, 1.0f, 1.0f);
+  const float before = editor.MeasureWidth("status");
+  const std::size_t generation = editor.MetricsGeneration();
+
+  chrome.EnsureInitialized(nullptr, 2.0f, 2.0f);
+  Expect(editor.MetricsGeneration() != generation,
+         "a rescale by another renderer must move this renderer's metrics generation");
+  Expect(editor.MeasureWidth("status") == 2.0f * before,
+         "a width memoized before another renderer's rescale must not be returned after it");
+}
+
 void TestMeasureWidthCacheStatsTrackQueriesAndHits() {
   microide::render::TextRenderer renderer;
   auto backend = std::make_unique<CountingTextBackend>();
@@ -2325,7 +2499,8 @@ class MonospacedishTextBackend final : public microide::render::TextRendererBack
     }
     return static_cast<float>(text.size()) * 7.0f;
   }
-  void DrawString(SDL_Renderer*, float, float, SDL_Color, std::string_view) override {}
+  void DrawString(SDL_Renderer*, microide::render::StringTextureCache&, float, float, SDL_Color,
+                  std::string_view) override {}
 
   std::size_t measure_width_calls() const { return measure_width_calls_; }
 
@@ -3254,6 +3429,14 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer invalidates width cache on scale changes",
           TestMeasureWidthCacheClearsWhenPresentationScaleChanges);
+  AddTest(tests, "TextRenderer backend pool shares a backend while fonts match",
+          TestTextBackendPoolSharesABackendWhileFontsMatch);
+  AddTest(tests, "TextRenderer backend pool keeps each renderer's composites apart",
+          TestTextBackendPoolKeepsEachRenderersCompositesApart);
+  AddTest(tests, "TextRenderer backend pool resolves early font requests on bind",
+          TestTextBackendPoolResolvesEarlyRequestsOnBind);
+  AddTest(tests, "TextRenderer backend pool rescale invalidates every sharer's width cache",
+          TestTextBackendPoolRescaleInvalidatesEverySharersWidthCache);
   AddTest(tests,
           "TextRenderer cache stats track width queries and hits",
           TestMeasureWidthCacheStatsTrackQueriesAndHits);

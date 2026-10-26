@@ -332,6 +332,9 @@
   static float TextCharWidth(WorkspaceShell& shell) { return shell.editor_text_renderer_.CharWidth(); }
   static float TextLineHeight(WorkspaceShell& shell) { return shell.editor_text_renderer_.LineHeight(); }
   static float ChromeTextLineHeight(WorkspaceShell& shell) { return shell.text_renderer_.LineHeight(); }
+  static std::size_t LiveTextBackendCount(WorkspaceShell& shell) {
+    return shell.text_renderer_.backend_pool()->LiveBackendCount();
+  }
   // What the blame wake's handler does: finished blame becomes visible. A test
   // polling an overlay with no event loop pumps this in its wait.
   static bool ApplyGitBlameResults(WorkspaceShell& shell) {

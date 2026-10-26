@@ -375,20 +375,14 @@ void WorkspaceShell::ApplyTerminalFontPreferences() {
   last_applied_terminal_font_settings_revision_ = settings_revision;
 
   const int size = std::clamp(util::ParseIntOr(GetSettingValue("terminal.font_size"), 13), 8, 32);
-  bool changed = false;
-  // SetFontPointSize always drops the renderer's width cache, so calling it on
-  // an unchanged size would re-measure every glyph every frame the terminal is
-  // shown. Only touch it when the resolved size actually moved.
-  if (size != last_applied_terminal_font_size_) {
-    last_applied_terminal_font_size_ = size;
-    terminal_text_renderer_.SetFontPointSize(static_cast<float>(size));
-    changed = true;
-  }
-  if (terminal_text_renderer_.SetFontFamily(
-          GetSettingValue("terminal.font_family").value_or(""))) {
-    changed = true;
-  }
-  if (changed) {
+  terminal_text_renderer_.SetFontPointSize(static_cast<float>(size));
+  terminal_text_renderer_.SetFontFamily(GetSettingValue("terminal.font_family").value_or(""));
+  // The generation also moves on the first frame a terminal shows, when its
+  // renderer trades the stand-in backend for a real one: that grid needs the
+  // real cell metrics as much as a font change does.
+  if (const std::size_t generation = terminal_text_renderer_.MetricsGeneration();
+      generation != terminal_grid_metrics_generation_) {
+    terminal_grid_metrics_generation_ = generation;
     // Cell metrics moved: force a terminal re-grid (rows/cols) and repaint. A font
     // change does not move the panel rect, so drop the cached rect to make the
     // resize guard in PrepareFrameOnce re-run ResizeTerminalToPanel off the new

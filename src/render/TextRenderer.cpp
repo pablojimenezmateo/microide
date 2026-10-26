@@ -1,19 +1,12 @@
 #include "render/TextRenderer.h"
 
-#include <SDL3/SDL_log.h>
-
 #include <algorithm>
 #include <optional>
 #include <vector>
 
-#include "render/DebugTextBackend.h"
 #include "util/PerformanceCounters.h"
 #include "util/StartupTrace.h"
 #include "util/StringUtil.h"
-
-#if MICROIDE_HAS_SDL3_TTF
-#include "render/SdlTtfTextBackend.h"
-#endif
 
 namespace microide::render {
 
@@ -23,91 +16,78 @@ constexpr std::size_t kWidthCacheCapacity = 4096;
 
 }  // namespace
 
-TextRenderer::TextRenderer()
-    : backend_(std::make_unique<DebugTextBackend>()) {}
+TextRenderer::TextRenderer() : TextRenderer(std::make_shared<TextBackendPool>()) {}
+
+TextRenderer::TextRenderer(std::shared_ptr<TextBackendPool> pool) : pool_(std::move(pool)) {
+  (void) pool_->Acquire(font_, backend_);
+  ClearCaches();
+}
 
 TextRenderer::~TextRenderer() = default;
 
 void TextRenderer::EnsureInitialized(SDL_Renderer* renderer,
                                      float presentation_scale_x,
                                      float presentation_scale_y) {
-  if (!attempted_optional_backend_) {
+  pool_->Bind(renderer, presentation_scale_x, presentation_scale_y);
+  if (!initialized_) {
     util::StartupTrace::Scope trace_scope("TextRenderer::EnsureInitialized");
-    attempted_optional_backend_ = true;
-
-#if MICROIDE_HAS_SDL3_TTF
-    if (auto backend = SdlTtfTextBackend::Create(renderer); backend != nullptr) {
-      backend_ = std::move(backend);
-      if (requested_point_size_.has_value()) {
-        backend_->SetFontPointSize(*requested_point_size_);
-      }
-      if (requested_family_.has_value()) {
-        (void)backend_->SetFontFamily(*requested_family_);
-      }
-    } else {
-      SDL_Log("microide text: SDL_ttf backend unavailable; falling back to SDL debug text");
-    }
-#else
-    (void) renderer;
-    SDL_Log("microide text: built without SDL_ttf; falling back to SDL debug text");
-#endif
+    initialized_ = true;
+    (void) AcquireBackend();
   }
-
-  if (backend_ != nullptr) {
-    backend_->SetPresentationScale(presentation_scale_x, presentation_scale_y);
-  }
-
-  const std::string backend_name = backend_ != nullptr ? std::string(backend_->Name()) : "unknown";
-  if (!width_cache_initialized_ || width_cache_backend_name_ != backend_name ||
-      width_cache_scale_x_ != presentation_scale_x || width_cache_scale_y_ != presentation_scale_y) {
-    ClearWidthCache();
-    width_cache_backend_name_ = backend_name;
-    width_cache_scale_x_ = presentation_scale_x;
-    width_cache_scale_y_ = presentation_scale_y;
-    width_cache_initialized_ = true;
-  }
+  ValidateCaches();
 }
 
-void TextRenderer::SetFontPointSize(float points) {
-  requested_point_size_ = points;
-  if (backend_ == nullptr) {
-    return;
+bool TextRenderer::SetFontPointSize(float points) {
+  const float point_size = FontRequest::ClampPointSize(points);
+  if (font_.point_size == point_size) {
+    return false;
   }
-  backend_->SetFontPointSize(points);
-  // Glyph advances change with the point size, so the measured-width cache is
-  // stale; drop it and re-anchor metrics on the next query.
-  ClearWidthCache();
-  width_cache_initialized_ = false;
+  FontRequest font = font_;
+  font.point_size = point_size;
+  return RequestFont(std::move(font));
 }
 
 bool TextRenderer::SetFontFamily(std::string_view family) {
-  requested_family_ = std::string(family);
-  if (backend_ == nullptr) {
+  if (font_.family == family) {
     return false;
   }
-  if (!backend_->SetFontFamily(family)) {
+  FontRequest font = font_;
+  font.family = std::string(family);
+  return RequestFont(std::move(font));
+}
+
+bool TextRenderer::RequestFont(FontRequest font) {
+  if (font == font_) {
     return false;
   }
-  // A different typeface changes every glyph advance; invalidate the width cache.
-  ClearWidthCache();
-  width_cache_initialized_ = false;
-  return true;
+  font_ = std::move(font);
+  // Before the pool is bound this keeps the stand-in, and the request is
+  // resolved by the first EnsureInitialized.
+  return AcquireBackend();
+}
+
+bool TextRenderer::AcquireBackend() {
+  const bool changed = pool_->Acquire(font_, backend_);
+  if (changed) {
+    ClearCaches();
+  }
+  return changed;
 }
 
 std::vector<std::string> TextRenderer::AvailableFontFamilies() const {
-  return backend_ != nullptr ? backend_->AvailableFontFamilies() : std::vector<std::string>{};
+  return backend_->AvailableFontFamilies();
 }
 
 float TextRenderer::CharWidth() const {
-  return backend_ != nullptr ? backend_->CharWidth() : 8.0f;
+  return backend_->CharWidth();
 }
 
 float TextRenderer::LineHeight() const {
-  return backend_ != nullptr ? backend_->LineHeight() : 14.0f;
+  return backend_->LineHeight();
 }
 
 TextClipPadding TextRenderer::ClipPadding() const {
-  return backend_ != nullptr ? backend_->ClipPadding() : TextClipPadding{};
+  return backend_->ClipPadding();
 }
 
 float TextRenderer::MeasureWidth(std::string_view text) const {
@@ -127,8 +107,7 @@ float TextRenderer::MeasureWidth(std::string_view text) const {
     util::AddPerformanceCounter(util::PerfCounterId::RenderTextWidthCacheQueries);
     const std::string_view clipped =
         text.substr(0, util::Utf8ByteBudgetPrefixLength(text, kMaxMeasureBytes));
-    return backend_ != nullptr ? backend_->MeasureWidth(clipped)
-                               : static_cast<float>(clipped.size()) * 8.0f;
+    return backend_->MeasureWidth(clipped);
   }
 
   // Measurements the backend answers arithmetically are not memoized at all: the
@@ -138,17 +117,15 @@ float TextRenderer::MeasureWidth(std::string_view text) const {
   // cache was being filled with document text and evicting the labels whose
   // measurement actually shapes (TD-2026-08-30-269). Counted as a hit so the
   // hit-rate statistic keeps meaning "measurements that did not shape".
-  if (backend_ != nullptr) {
-    if (const std::optional<float> cheap = backend_->MeasureWidthIfCheap(text);
-        cheap.has_value()) {
-      ++width_cache_queries_;
-      ++width_cache_hits_;
-      util::AddPerformanceCounter(util::PerfCounterId::RenderTextWidthCacheQueries);
-      util::AddPerformanceCounter(util::PerfCounterId::RenderTextWidthCacheHits);
-      return *cheap;
-    }
+  if (const std::optional<float> cheap = backend_->MeasureWidthIfCheap(text); cheap.has_value()) {
+    ++width_cache_queries_;
+    ++width_cache_hits_;
+    util::AddPerformanceCounter(util::PerfCounterId::RenderTextWidthCacheQueries);
+    util::AddPerformanceCounter(util::PerfCounterId::RenderTextWidthCacheHits);
+    return *cheap;
   }
 
+  ValidateCaches();
   ++width_cache_queries_;
   util::AddPerformanceCounter(util::PerfCounterId::RenderTextWidthCacheQueries);
   const auto cached = width_cache_.find(text);
@@ -158,14 +135,13 @@ float TextRenderer::MeasureWidth(std::string_view text) const {
     return cached->second;
   }
 
-  const float width = backend_ != nullptr ? backend_->MeasureWidth(text)
-                                          : static_cast<float>(text.size()) * 8.0f;
+  const float width = backend_->MeasureWidth(text);
   RememberMeasuredWidth(std::string(text), width);
   return width;
 }
 
 std::string_view TextRenderer::BackendName() const {
-  return backend_ != nullptr ? backend_->Name() : "unknown";
+  return backend_->Name();
 }
 
 std::string TextRenderer::TruncateToWidth(std::string_view text, float max_width) const {
@@ -241,26 +217,29 @@ void TextRenderer::DrawString(SDL_Renderer* renderer,
                               float y,
                               SDL_Color color,
                               std::string_view text) const {
-  if (backend_ == nullptr || renderer == nullptr || text.empty()) {
+  if (renderer == nullptr || text.empty()) {
     return;
   }
-  backend_->DrawString(renderer, x, y, color, text);
+  ValidateCaches();
+  backend_->DrawString(renderer, texture_cache_, x, y, color, text);
 }
 
 void TextRenderer::DrawRuns(SDL_Renderer* renderer, const TextRun* runs,
                             std::size_t count) const {
-  if (backend_ == nullptr || renderer == nullptr || runs == nullptr || count == 0) {
+  if (renderer == nullptr || runs == nullptr || count == 0) {
     return;
   }
-  backend_->DrawRuns(renderer, runs, count);
+  ValidateCaches();
+  backend_->DrawRuns(renderer, texture_cache_, runs, count);
 }
 
 void TextRenderer::DrawEphemeralRuns(SDL_Renderer* renderer, const TextRun* runs,
                                      std::size_t count) const {
-  if (backend_ == nullptr || renderer == nullptr || runs == nullptr || count == 0) {
+  if (renderer == nullptr || runs == nullptr || count == 0) {
     return;
   }
-  backend_->DrawEphemeralRuns(renderer, runs, count);
+  ValidateCaches();
+  backend_->DrawEphemeralRuns(renderer, texture_cache_, runs, count);
 }
 
 void TextRenderer::DrawStringOn(SDL_Renderer* renderer,
@@ -269,15 +248,26 @@ void TextRenderer::DrawStringOn(SDL_Renderer* renderer,
                                 SDL_Color color,
                                 SDL_Color background,
                                 std::string_view text) const {
-  if (backend_ == nullptr || renderer == nullptr || text.empty()) {
+  if (renderer == nullptr || text.empty()) {
     return;
   }
-  backend_->DrawStringOn(renderer, x, y, color, background, text);
+  ValidateCaches();
+  backend_->DrawStringOn(renderer, texture_cache_, x, y, color, background, text);
 }
 
-void TextRenderer::ClearWidthCache() const {
+void TextRenderer::ValidateCaches() const {
+  if (width_cache_backend_ != backend_.get() ||
+      width_cache_scale_epoch_ != pool_->ScaleEpoch()) {
+    ClearCaches();
+  }
+}
+
+void TextRenderer::ClearCaches() const {
   width_cache_.clear();
   width_cache_order_.clear();
+  texture_cache_.Clear();
+  width_cache_backend_ = backend_.get();
+  width_cache_scale_epoch_ = pool_->ScaleEpoch();
   // Metrics changed (or first init): signal external MeasureWidth-derived caches to drop.
   ++metrics_generation_;
 }

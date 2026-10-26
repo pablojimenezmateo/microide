@@ -29,17 +29,12 @@ class SdlTtfTextBackend final : public TextRendererBackend {
 
   // Non-copyable, stated rather than inherited. It already was -- the
   // `std::unique_ptr<AsciiGlyphAtlas>` member deletes the implicit copy -- but
-  // that is incidental, and this is the one class in the directory where the
-  // incidental version is not good enough: besides the SDL_Texture and TTF_Font
-  // handles a copy would double-free, the glyph cache is an INTRUSIVE LRU
-  // (`lru_head_`/`lru_tail_` and every entry's `lru_prev`/`lru_next`/`key` point
-  // into this object's own map nodes). A copy would carry those into the SOURCE's
-  // nodes and write through them on its next eviction -- the use-after-free the
-  // editor's visible-line layout cache shipped with (TD-2026-09-07-291). Turning
-  // that member into a shared_ptr is an ordinary refactor and would silently make
-  // this copyable again; the four siblings in this directory
-  // (AsciiGlyphAtlas, SurfaceTextureCache, ScopedRenderClip, SceneTexturePresenter)
-  // all say it outright, and TextRendererTests static_asserts it.
+  // that is incidental: a copy would double-free the SDL_Texture and TTF_Font
+  // handles, and turning that member into a shared_ptr is an ordinary refactor
+  // that would silently make this copyable again. The siblings in this directory
+  // (AsciiGlyphAtlas, StringTextureCache, SurfaceTextureCache, ScopedRenderClip,
+  // SceneTexturePresenter) all say it outright, and TextRendererTests
+  // static_asserts it. Renderers share one instance through TextBackendPool.
   SdlTtfTextBackend& operator=(const SdlTtfTextBackend&) = delete;
 
   const char* Name() const override { return "sdl3_ttf"; }
@@ -63,6 +58,7 @@ class SdlTtfTextBackend final : public TextRendererBackend {
     return static_cast<float>(text.size()) * char_width_;
   }
   void DrawString(SDL_Renderer* renderer,
+                  StringTextureCache& cache,
                   float x,
                   float y,
                   SDL_Color color,
@@ -70,82 +66,25 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   // Batches an entire row's runs into a single SDL_RenderGeometry call on the
   // GPU atlas path (per-vertex colour, so a multi-colour line is one submit);
   // falls back to the base per-run DrawString loop otherwise.
-  void DrawRuns(SDL_Renderer* renderer, const TextRun* runs, std::size_t count) override;
+  void DrawRuns(SDL_Renderer* renderer, StringTextureCache& cache, const TextRun* runs,
+                std::size_t count) override;
   // Ephemeral runs never enter the string-texture cache. On the GPU renderer they
   // take the same batched-geometry path as DrawRuns; on the software renderer,
   // where SDL_RenderGeometry regresses, they are drawn one glyph at a time
   // straight from the atlas texture (colour-modulated coverage, so the pixels are
   // the composite path's pixels without building or uploading a composite).
-  void DrawEphemeralRuns(SDL_Renderer* renderer, const TextRun* runs, std::size_t count) override;
+  void DrawEphemeralRuns(SDL_Renderer* renderer, StringTextureCache& cache, const TextRun* runs,
+                         std::size_t count) override;
   // DrawStringOn is intentionally not overridden: this backend does not paint a
   // glyph background, so the base-class default (which ignores `background` and
   // forwards to DrawString) is exactly the desired behaviour.
 
  private:
-  struct CacheKeyView {
-    std::string_view text;
-    SDL_Color color{};
-  };
-
-  struct CacheKey {
-    std::string text;
-    SDL_Color color{};
-
-    operator CacheKeyView() const noexcept {
-      return CacheKeyView{
-          .text = text,
-          .color = color,
-      };
-    }
-  };
-
-  struct CacheKeyHash {
-    using is_transparent = void;
-
-    std::size_t operator()(const CacheKey& key) const noexcept {
-      return (*this)(static_cast<CacheKeyView>(key));
-    }
-
-    std::size_t operator()(const CacheKeyView& key) const noexcept;
-  };
-
-  struct CacheKeyEqual {
-    using is_transparent = void;
-
-    bool operator()(const CacheKey& lhs, const CacheKey& rhs) const noexcept {
-      return (*this)(static_cast<CacheKeyView>(lhs), static_cast<CacheKeyView>(rhs));
-    }
-
-    bool operator()(const CacheKey& lhs, const CacheKeyView& rhs) const noexcept {
-      return (*this)(static_cast<CacheKeyView>(lhs), rhs);
-    }
-
-    bool operator()(const CacheKeyView& lhs, const CacheKey& rhs) const noexcept {
-      return (*this)(lhs, static_cast<CacheKeyView>(rhs));
-    }
-
-    bool operator()(const CacheKeyView& lhs, const CacheKeyView& rhs) const noexcept;
-  };
-
-  struct CacheEntry {
-    SDL_Texture* texture = nullptr;
-    int width = 0;
-    int height = 0;
-    // Intrusive LRU. The order used to be a `std::list<CacheKey>`, so every
-    // insert allocated a list node AND a second copy of the key's string — two
-    // allocations per cache MISS, on a path where scrolling through fresh
-    // content misses on every row (TD-2026-08-14-224). `unordered_map` never
-    // moves its elements, so links into them stay valid across rehash.
-    const CacheKey* key = nullptr;  // back-pointer into the map, for eviction
-    CacheEntry* lru_prev = nullptr;
-    CacheEntry* lru_next = nullptr;
-  };
-
   SdlTtfTextBackend() = default;
 
   bool Initialize(SDL_Renderer* renderer);
   // Re-applies `font_point_size_` to the primary + fallback fonts at the current
-  // presentation scale, then clears caches and refreshes metrics. Shared by the
+  // presentation scale, then clears the glyph atlases and refreshes metrics. Shared by the
   // presentation-scale and font-size entry points.
   void ApplyFontSizeAtCurrentScale();
   // The DPI pair TTF_SetFontSizeDPI is driven with, derived from the current
@@ -175,7 +114,7 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   };
   static PixelMetrics MeasurePixelMetrics(TTF_Font* font, const MetricsKey& key);
   void RefreshMetrics();
-  void ClearCache();
+  void ClearGlyphAtlases();
   // Open `path` as the primary font, applying hinting/kerning; on success closes
   // the previous primary font and adopts the new one. Returns false (leaving the
   // current font untouched) when the path fails to open. Shared by Initialize and
@@ -225,15 +164,9 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   // glyph cluster rendered on its own cell span (util::GridCellWidth cells), so
   // the pixels agree with the cell arithmetic every caller positions by.
   SDL_Surface* BuildGridCompositeSurface(std::string_view text, SDL_Color color);
-  CacheEntry* ResolveEntry(std::string_view text, SDL_Color color);
-  void LruUnlink(CacheEntry& entry);
-  void LruPushBack(CacheEntry& entry);
-  void LruTouch(CacheEntry& entry) {
-    if (lru_tail_ != &entry) {
-      LruUnlink(entry);
-      LruPushBack(entry);
-    }
-  }
+  // The composite for (text, color) from the caller's cache, built and inserted on a miss.
+  const StringTextureCache::Entry* ResolveEntry(StringTextureCache& cache, std::string_view text,
+                                                SDL_Color color);
   // Upload the ASCII coverage atlas once, as one texture. Renderer-agnostic: the
   // texture is what both atlas draw paths sample, the batched SDL_RenderGeometry
   // one (GPU) and the per-glyph SDL_RenderTexture one (software). Returns false
@@ -256,10 +189,6 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   // run). This is the software-renderer counterpart of the geometry path: N small
   // blits, but no surface build, no texture upload, and no cache eviction.
   bool DrawAsciiRunFromAtlas(float x, float y, SDL_Color color, std::string_view text);
-  // Approximate VRAM footprint of a cached entry (RGBA texture: w * h * 4). Used
-  // to bound the cache by bytes, not just entry count -- a few thousand wide
-  // whole-string textures can pin far more VRAM than the entry cap implies.
-  static std::size_t EntryByteCost(int width, int height);
 
   SDL_Renderer* renderer_ = nullptr;
   TTF_Font* font_ = nullptr;
@@ -278,19 +207,10 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   // Project-configurable glyph point size (the `editor.font_size` setting). The
   // default matches the setting/registry default; runtime changes route through
   // SetFontPointSize. Applied at the current presentation scale via TTF DPI.
-  float font_point_size_ = 13.0f;
+  float font_point_size_ = kDefaultFontPointSize;
   float presentation_scale_x_ = 1.0f;
   float presentation_scale_y_ = 1.0f;
   bool ttf_initialized_ = false;
-  using CacheMap = std::unordered_map<CacheKey, CacheEntry, CacheKeyHash, CacheKeyEqual>;
-  CacheMap cache_;
-  // Least / most recently used ends of the intrusive list threaded through
-  // CacheEntry. Same shape as TextLayoutCache's visible-line LRU.
-  CacheEntry* lru_head_ = nullptr;
-  CacheEntry* lru_tail_ = nullptr;
-  // Running sum of EntryByteCost over every live cache_ entry; kept in lockstep
-  // with cache_ so eviction can enforce a VRAM budget without rescanning.
-  std::size_t cache_bytes_ = 0;
 
   // The pixel format the renderer stores textures in, resolved at init. Glyph
   // composites (and the coverage atlas they are blitted from) are built in this
@@ -299,12 +219,12 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   SDL_PixelFormat texture_format_ = SDL_PIXELFORMAT_RGBA32;
 
   // Colour-independent coverage atlas for ASCII composites. Built lazily on the
-  // first ASCII miss and rebuilt (via ClearCache) when the font size changes.
+  // first ASCII miss and rebuilt (via ClearGlyphAtlases) when the font size changes.
   std::unique_ptr<AsciiGlyphAtlas> ascii_atlas_;
 
   // Colour-independent coverage atlas for the non-ASCII clusters of a grid
   // composite, so a repeated code point is rasterized once per font rather
-  // than once per occurrence (TD-2026-09-06-289a). Reset by ClearCache
+  // than once per occurrence (TD-2026-09-06-289a). Reset by ClearGlyphAtlases
   // alongside ascii_atlas_, since coverage is only reusable at one size.
   std::unique_ptr<GlyphClusterAtlas> cluster_atlas_;
 
@@ -312,7 +232,7 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   // renderer driver and selects between the two atlas paths (batched geometry vs
   // per-glyph blits); `glyph_atlas_enabled_` is the MICROIDE_RENDER_GLYPH_ATLAS
   // switch, on unless it is set to "0". The texture is the ascii_atlas_ surface
-  // uploaded once; it is destroyed alongside ascii_atlas_ in ClearCache
+  // uploaded once; it is destroyed alongside ascii_atlas_ in ClearGlyphAtlases
   // (font-size change). The geometry scratch buffers are reused across runs to
   // avoid per-run allocation.
   bool is_gpu_renderer_ = false;

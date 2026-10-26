@@ -449,7 +449,51 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-26-394 — the editor and the chrome build two identical glyph atlases by default. [OPEN — optimization]
+### TD-2026-10-26-394 — the editor and the chrome build two identical glyph atlases by default. [RESOLVED 2026-10-26]
+
+**Fixed:** the chrome, editor and terminal `TextRenderer`s draw from one
+`render::TextBackendPool` (the shell builds the editor's and the terminal's from the
+chrome's `backend_pool()`). The pool hands every renderer that asks for the same
+`FontRequest` (family, clamped size) the same backend: one set of fonts, metrics, ASCII
+atlas and cluster atlas. A renderer that asks for another font gets a backend of its own
+and gives it up when its font matches again. The pool holds weak references, so a
+backend lives exactly as long as some renderer draws with it, and a renderer that is a
+backend's only user resizes it in place instead of opening a new one. The pool owns the
+presentation scale too, and its `ScaleEpoch` tells every sharer when another renderer's
+`EnsureInitialized` rescaled their backend, so no renderer returns a width it memoized at
+the old scale.
+
+**What sharing must not share:** the first cut shared the whole backend, including its
+whole-string texture cache, and `editor_cjk_scroll_paint` failed the gate on allocations
+(11,076 -> 12,723, +15%, deterministic). That cache's contents are not duplicated between
+renderers, because chrome labels and document rows have nothing in common. So one cache
+for both only halved the capacity: a sweep through wide CJK rows evicted a chrome label
+about once a frame (+161 misses) and lost the eviction path's node recycling (5,641 ->
+4,876 recycled, each loss a fresh map node plus key string). The cache is now
+`render::StringTextureCache`, moved verbatim out of `SdlTtfTextBackend`. Each
+`TextRenderer` owns one and passes it to every backend draw. It is cleared at the same
+choke point as the width memo (`TextRenderer::ClearCaches`): backend switch, font
+change, scale epoch.
+
+**A/B against 9201d8d6 (main), perf-runner-v1, 10 iterations, interleaved:**
+`EnsureAsciiAtlas` 10.3M -> 2.15M instructions in `large_file_open_first_paint`
+(callgrind), the number this entry was opened with. Allocations are identical to main in
+every scenario checked (`editor_cjk_scroll_paint` 11,076, `editor_scroll_fresh_content_large`
+814, `editor_tab_derived_cache_residency` 398, `editor_soft_wrap_long_line_scroll` 288,
+and the five near their timing envelope). Timings are within round-to-round noise.
+`editor_typing_minified_line` read 0.9% slower in all three rounds, but its measured phase
+executes fewer instructions at HEAD (219.28M vs 219.59M), so that is code layout, not
+work. The wall-time half of the original +0.25 ms does not show in the gated p50, because
+the shell persists across iterations and builds the atlas once, in warmup. The full gate
+passes.
+
+Tests: `TextRenderer backend pool *` (sharing and splitting, in-place resize, a request
+before bind, a rescale by another sharer, composites kept per renderer on the real
+SDL_ttf backend), and `ControlUiQuery/LargeEditorFontKeepsTheChromeSize` (one live backend
+at the default sizes, two after `editor.font_size 24`, one again after 13).
+
+Original entry:
+
 
 Since 8df85a3a (2026-10-19) the editor area draws with its own `TextRenderer` at
 `editor.font_size` and the chrome with another at the UI size. That was a correct fix:
@@ -3249,7 +3293,12 @@ surviving `microide-server` whose socket dir is under `/tmp/mip.` keeps it
 fixed. Worth deciding separately whether an on-demand server should still exit
 when its socket directory has been deleted, since nothing can reach it then.
 
-### TD-2026-10-08-331 — remote trial leftovers: host-file copies show a local path, `type` reports success on a refused edit, a tab tooltip may stick. [PARTLY RESOLVED 2026-10-08 — only the tooltip report remains]
+### TD-2026-10-08-331 — remote trial leftovers: host-file copies show a local path, `type` reports success on a refused edit, a tab tooltip may stick. [CLOSED 2026-10-26 — the tooltip report closed by the project owner; everything else RESOLVED 2026-10-08]
+
+**Closed 2026-10-26 (project owner):** the sticking tab tooltip is closed without a
+change. It was seen only under Xvfb, where leave events can be missing, and was never
+reproduced on a real display. Reopen it with a real-display reproduction if it shows up
+again.
 
 **Decided 2026-10-09 (project owner):** the sticking tab tooltip is being checked by the
 owner on a real display; no change until that reproduces outside Xvfb.
@@ -3267,7 +3316,7 @@ Resolved 2026-10-08:
   line) — the command line's rule — while shortcut, menu and button rejections
   toast because nothing else would show them. Two paths differ on purpose.
 
-Still open: the sticking tab tooltip (seen only under Xvfb).
+The sticking tab tooltip (seen only under Xvfb) was closed on 2026-10-26, above.
 
 Original report:
 

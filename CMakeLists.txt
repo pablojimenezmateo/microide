@@ -562,6 +562,8 @@ set(MICROIDE_CORE_SOURCES
   src/plugin/PluginHostSnapshot.cpp
   src/plugin/PluginHostSaveParticipants.cpp
   src/render/DebugTextBackend.cpp
+  src/render/StringTextureCache.cpp
+  src/render/TextBackendPool.cpp
   src/render/TextRenderer.cpp
   src/render/TextRendererBackend.cpp
   src/render/Theme.cpp
@@ -874,7 +876,7 @@ target_compile_definitions(microide_core PRIVATE
   MICROIDE_VERSION="${PROJECT_VERSION}"
 )
 if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
-  # TextRenderer.cpp (a core TU) compiles against the TTF backend header under
+  # TextBackendPool.cpp (a core TU) compiles against the TTF backend header under
   # this define; link the TTF target for its include dirs. The backend .cpp files
   # themselves stay per-binary (see each target below).
   target_compile_definitions(microide_core PRIVATE MICROIDE_HAS_SDL3_TTF=1)
@@ -2077,6 +2079,8 @@ add_executable(microide_diff_bench
   src/project/GitBranchOperations.cpp
   src/project/GitCommitExecutor.cpp
   src/render/DebugTextBackend.cpp
+  src/render/StringTextureCache.cpp
+  src/render/TextBackendPool.cpp
   src/render/TextRenderer.cpp
   src/render/TextRendererBackend.cpp
   src/render/Theme.cpp

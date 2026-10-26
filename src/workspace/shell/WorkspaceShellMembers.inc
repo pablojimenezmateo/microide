@@ -2003,16 +2003,19 @@
   // status bar, overlays, panels) at the fixed UI size, and editor_text_renderer_
   // the editor area's document grid (panes, compare, merge) at `editor.font_size`.
   // One renderer for both made a large editor font overflow every fixed-height
-  // chrome row (QA sweeps-matrix, "light theme, large font").
+  // chrome row (QA sweeps-matrix, "light theme, large font"). All three glyph
+  // renderers share the chrome's backend pool, so while their fonts match they draw
+  // with one backend: one atlas and one glyph cache, not three (TD-2026-10-26-394).
   render::TextRenderer text_renderer_;
-  render::TextRenderer editor_text_renderer_;
+  render::TextRenderer editor_text_renderer_{text_renderer_.backend_pool()};
   // Dedicated glyph renderer for the terminal grid so `terminal.font_size` /
   // `terminal.font_family` are independent of the editor font. Lazily initialized only
-  // when the bottom panel first shows a terminal, so a session that never opens one pays
-  // no second glyph atlas. All terminal cell/cursor/grid metrics read from this renderer;
+  // when the bottom panel first shows a terminal, so a session that never opens one never
+  // resolves its font; one whose font matches the chrome's draws with the chrome's backend. All terminal cell/cursor/grid metrics read from this renderer;
   // the shared bottom-panel layout helpers branch to it via PanelTextRenderer().
-  render::TextRenderer terminal_text_renderer_;
-  int last_applied_terminal_font_size_ = -1;
+  render::TextRenderer terminal_text_renderer_{text_renderer_.backend_pool()};
+  // terminal_text_renderer_.MetricsGeneration() the terminal was last re-gridded at.
+  std::size_t terminal_grid_metrics_generation_ = 0;
   // Settings-store revision at the last ApplyTerminalFontPreferences apply. The
   // function runs every prepared frame a terminal is shown; gating on the revision
   // keeps the steady-state path allocation-free (no per-frame GetSettingValue).

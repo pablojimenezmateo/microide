@@ -8,7 +8,16 @@
 #include <string_view>
 #include <vector>
 
+#include "render/StringTextureCache.h"
+
 namespace microide::render {
+
+// The glyph point size a backend opens its font at, and the range a requested
+// size is clamped to. The range mirrors the `editor.font_size` setting (8..32),
+// so a stored project value can never drive a backend outside a sane glyph range.
+inline constexpr float kDefaultFontPointSize = 13.0f;
+inline constexpr float kMinFontPointSize = 8.0f;
+inline constexpr float kMaxFontPointSize = 32.0f;
 
 struct TextClipPadding {
   float left = 0.0f;
@@ -71,27 +80,33 @@ class TextRendererBackend {
     (void) text;
     return std::nullopt;
   }
+  // Every draw takes the calling renderer's StringTextureCache: a backend is
+  // shared by the renderers that draw in its font, the composites they draw are
+  // not (see StringTextureCache). A backend that builds no composites ignores it.
   virtual void DrawString(SDL_Renderer* renderer,
+                          StringTextureCache& cache,
                           float x,
                           float y,
                           SDL_Color color,
                           std::string_view text) = 0;
   virtual void DrawStringOn(SDL_Renderer* renderer,
+                            StringTextureCache& cache,
                             float x,
                             float y,
                             SDL_Color color,
                             SDL_Color background,
                             std::string_view text) {
     (void) background;
-    DrawString(renderer, x, y, color, text);
+    DrawString(renderer, cache, x, y, color, text);
   }
   // Draw a sequence of positioned runs. The default is one DrawString per run;
   // backends may override to batch them into a single GPU submission. Runs are
   // co-planar and non-overlapping, so batching does not change visible output.
-  virtual void DrawRuns(SDL_Renderer* renderer, const TextRun* runs, std::size_t count) {
+  virtual void DrawRuns(SDL_Renderer* renderer, StringTextureCache& cache, const TextRun* runs,
+                        std::size_t count) {
     for (std::size_t i = 0; i < count; ++i) {
       if (!runs[i].text.empty()) {
-        DrawString(renderer, runs[i].x, runs[i].y, runs[i].color, runs[i].text);
+        DrawString(renderer, cache, runs[i].x, runs[i].y, runs[i].color, runs[i].text);
       }
     }
   }
@@ -107,8 +122,9 @@ class TextRendererBackend {
   // A backend that can position glyphs individually should draw these straight
   // from its coverage atlas and touch no cache. The default forwards to DrawRuns,
   // which is correct for any backend that cannot.
-  virtual void DrawEphemeralRuns(SDL_Renderer* renderer, const TextRun* runs, std::size_t count) {
-    DrawRuns(renderer, runs, count);
+  virtual void DrawEphemeralRuns(SDL_Renderer* renderer, StringTextureCache& cache,
+                                 const TextRun* runs, std::size_t count) {
+    DrawRuns(renderer, cache, runs, count);
   }
 };
 

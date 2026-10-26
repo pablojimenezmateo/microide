@@ -504,9 +504,16 @@ void TestLargeEditorFontKeepsTheChromeSize() {
   UiFixture fixture;
   const float chrome_line = TestAccess::ChromeTextLineHeight(fixture.shell);
   const float editor_line = TestAccess::TextLineHeight(fixture.shell);
+  // At the default sizes the chrome and the editor draw with one backend: one glyph
+  // atlas, not two (TD-2026-10-26-394).
+  Expect(TestAccess::LiveTextBackendCount(fixture.shell) == 1,
+         "the default fonts should share one text backend, live: " +
+             std::to_string(TestAccess::LiveTextBackendCount(fixture.shell)));
   Expect(TestAccess::SetSettingValue(fixture.shell, "editor.font_size", "24"), "set the editor font size");
   fixture.shell.Render(fixture.canvas.renderer(), UiFixture::kWidth, UiFixture::kHeight);
   (void)fixture.shell.ConsumePendingRenderInvalidation();
+  Expect(TestAccess::LiveTextBackendCount(fixture.shell) == 2,
+         "a different editor size takes a backend of its own");
   Expect(TestAccess::TextLineHeight(fixture.shell) > editor_line * 1.5f,
          "the editor font grows: " + std::to_string(TestAccess::TextLineHeight(fixture.shell)));
   Expect(TestAccess::ChromeTextLineHeight(fixture.shell) == chrome_line,
@@ -531,6 +538,11 @@ void TestLargeEditorFontKeepsTheChromeSize() {
   Expect(caret["line"].AsInt() == 1 && caret["column"].AsInt() == 6,
          "the click lands where the editor font put column 6: line " +
              std::to_string(caret["line"].AsInt()) + " column " + std::to_string(caret["column"].AsInt()));
+  Expect(TestAccess::SetSettingValue(fixture.shell, "editor.font_size", "13"), "restore the editor font size");
+  fixture.shell.Render(fixture.canvas.renderer(), UiFixture::kWidth, UiFixture::kHeight);
+  Expect(TestAccess::LiveTextBackendCount(fixture.shell) == 1 &&
+             TestAccess::TextLineHeight(fixture.shell) == editor_line,
+         "back at the chrome's size the editor shares the chrome's backend again");
 }
 
 // What `pointer` and `key` change reaches the screen: they hand the shell an event

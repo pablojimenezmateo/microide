@@ -6,10 +6,12 @@
 namespace microide::render {
 
 void DebugTextBackend::DrawString(SDL_Renderer* renderer,
+                                  StringTextureCache& cache,
                                   float x,
                                   float y,
                                   SDL_Color color,
                                   std::string_view text) {
+  (void) cache;  // SDL draws debug text directly; there is no composite to cache
   if (renderer == nullptr || text.empty()) {
     return;
   }

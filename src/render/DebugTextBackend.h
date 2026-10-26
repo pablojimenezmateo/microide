@@ -22,6 +22,7 @@ class DebugTextBackend final : public TextRendererBackend {
     return MeasureWidth(text);
   }
   void DrawString(SDL_Renderer* renderer,
+                  StringTextureCache& cache,
                   float x,
                   float y,
                   SDL_Color color,

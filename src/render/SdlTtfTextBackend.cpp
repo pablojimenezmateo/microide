@@ -8,7 +8,6 @@
 
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -34,40 +33,8 @@ namespace microide::render {
 
 namespace {
 
-// Bounds for the runtime-configurable font point size. These mirror the
-// `editor.font_size` setting range (8..32) so a stored project value can never
-// drive the backend outside a sane glyph range.
-constexpr float kMinFontPointSize = 8.0f;
-constexpr float kMaxFontPointSize = 32.0f;
-// Cache stores whole-string composites. Editor content can produce more unique
-// (text, color) pairs than the legacy per-glyph cache, so the upper bound is
-// larger than the 2048 used when each entry held a single glyph.
-constexpr std::size_t kMaxCacheEntries = 4096;
-// Upper bound on approximate cached-texture VRAM. The entry cap alone does not
-// bound memory: whole-string composites have arbitrary width, so a few thousand
-// wide entries can pin hundreds of MB. Eviction enforces whichever bound (count
-// or bytes) binds first. In normal use most text goes through the ASCII atlas,
-// so the cache stays small and neither bound is hit.
-constexpr std::size_t kMaxCacheBytes = 48ull * 1024 * 1024;
 constexpr float kMinPresentationScale = 0.1f;
 
-// Give a recycled cache key a capacity that the NEXT row is likely to fit too.
-//
-// The eviction path hands the victim's map node back so the key string's buffer
-// is reused instead of freed and re-allocated (TD-2026-08-15-236). That only
-// pays off if the buffer refits: a string sized exactly to the row it last held
-// fits the next row only when that row is no longer, which on real text is a
-// coin flip. Rounding to a power of two collapses the cache's key buffers onto a
-// handful of sizes; `ResolveEntry` was the #1 allocator of six render-frame
-// phases with the exact sizing.
-//
-// libstdc++'s 15-byte SSO covers short runs, so the floor starts above it.
-void ReserveRoundedKeyCapacity(std::string& key_text, std::size_t needed) {
-  if (key_text.capacity() >= needed) {
-    return;
-  }
-  key_text.reserve(std::bit_ceil(std::max<std::size_t>(needed, 32)));
-}
 // The glyphs of an ASCII run drawn from the atlas, placed exactly where the
 // composite surface would put them: each non-space character's atlas slot at the
 // integer cell offset lround(index * cell_width_px), clipped to the run's surface
@@ -105,12 +72,6 @@ bool ForEachAtlasGlyph(AsciiGlyphAtlas& atlas, std::string_view text, float cell
 
 }  // namespace
 
-std::size_t SdlTtfTextBackend::EntryByteCost(int width, int height) {
-  const std::size_t w = width > 0 ? static_cast<std::size_t>(width) : 0;
-  const std::size_t h = height > 0 ? static_cast<std::size_t>(height) : 0;
-  return w * h * 4;
-}
-
 std::unique_ptr<SdlTtfTextBackend> SdlTtfTextBackend::Create(SDL_Renderer* renderer) {
   auto backend = std::unique_ptr<SdlTtfTextBackend>(new SdlTtfTextBackend());
   if (!backend->Initialize(renderer)) {
@@ -120,7 +81,7 @@ std::unique_ptr<SdlTtfTextBackend> SdlTtfTextBackend::Create(SDL_Renderer* rende
 }
 
 SdlTtfTextBackend::~SdlTtfTextBackend() {
-  ClearCache();
+  ClearGlyphAtlases();
   CloseFonts();
   if (ttf_initialized_) {
     TTF_Quit();
@@ -228,9 +189,10 @@ void SdlTtfTextBackend::ApplyFontSizeAtCurrentScale() {
       TTF_SetFontSizeDPI(fallback_font, font_point_size_, hdpi, vdpi);
     }
   }
-  // ClearCache also drops the ASCII coverage atlas and the GPU atlas texture, so
-  // both the composite and batched-text paths rebuild against the new glyph size.
-  ClearCache();
+  // Both the composite and batched-text paths rebuild against the new glyph size.
+  // The composites built from them are the renderers' (StringTextureCache), and
+  // each renderer drops its own when it sees the glyphs change.
+  ClearGlyphAtlases();
   RefreshMetrics();
 }
 
@@ -413,6 +375,7 @@ float SdlTtfTextBackend::MeasureWidth(std::string_view text) const {
 }
 
 void SdlTtfTextBackend::DrawString(SDL_Renderer* renderer,
+                                   StringTextureCache& cache,
                                    float x,
                                    float y,
                                    SDL_Color color,
@@ -421,7 +384,7 @@ void SdlTtfTextBackend::DrawString(SDL_Renderer* renderer,
     return;
   }
 
-  CacheEntry* entry = ResolveEntry(text, color);
+  const StringTextureCache::Entry* entry = ResolveEntry(cache, text, color);
   if (entry == nullptr || entry->texture == nullptr) {
     return;
   }
@@ -442,7 +405,7 @@ void SdlTtfTextBackend::DrawString(SDL_Renderer* renderer,
   SDL_RenderTexture(renderer_, entry->texture, nullptr, &destination);
 }
 
-void SdlTtfTextBackend::ClearCache() {
+void SdlTtfTextBackend::ClearGlyphAtlases() {
   ascii_atlas_.reset();
   cluster_atlas_.reset();
   if (atlas_texture_ != nullptr) {
@@ -451,16 +414,6 @@ void SdlTtfTextBackend::ClearCache() {
     atlas_texture_width_ = 0;
     atlas_texture_height_ = 0;
   }
-  for (auto& [_, entry] : cache_) {
-    if (entry.texture != nullptr) {
-      SDL_DestroyTexture(entry.texture);
-      entry.texture = nullptr;
-    }
-  }
-  cache_.clear();
-  lru_head_ = nullptr;
-  lru_tail_ = nullptr;
-  cache_bytes_ = 0;
 }
 
 bool SdlTtfTextBackend::CanUseFastAscii(std::string_view text) const {
@@ -1230,27 +1183,6 @@ void SdlTtfTextBackend::EnsureFallbackFontsLoaded() const {
   const_cast<SdlTtfTextBackend*>(this)->LoadFallbackFonts();
 }
 
-std::size_t SdlTtfTextBackend::CacheKeyHash::operator()(const CacheKeyView& key) const noexcept {
-  auto mix = [](std::size_t seed, std::size_t value) {
-    return seed ^ (value + 0x9e3779b9ULL + (seed << 6) + (seed >> 2));
-  };
-
-  std::size_t h = std::hash<std::string_view>{}(key.text);
-  const std::uint32_t packed_foreground =
-      (static_cast<std::uint32_t>(key.color.r) << 24) |
-      (static_cast<std::uint32_t>(key.color.g) << 16) |
-      (static_cast<std::uint32_t>(key.color.b) << 8) |
-      static_cast<std::uint32_t>(key.color.a);
-  h = mix(h, packed_foreground);
-  return h;
-}
-
-bool SdlTtfTextBackend::CacheKeyEqual::operator()(const CacheKeyView& lhs,
-                                                  const CacheKeyView& rhs) const noexcept {
-  return lhs.text == rhs.text && lhs.color.r == rhs.color.r && lhs.color.g == rhs.color.g &&
-         lhs.color.b == rhs.color.b && lhs.color.a == rhs.color.a;
-}
-
 bool SdlTtfTextBackend::EnsureAtlasTexture() {
   if (atlas_texture_ != nullptr) {
     return true;
@@ -1397,17 +1329,17 @@ bool SdlTtfTextBackend::DrawAsciiRunFromAtlas(float x, float y, SDL_Color color,
   return true;
 }
 
-void SdlTtfTextBackend::DrawEphemeralRuns(SDL_Renderer* renderer, const TextRun* runs,
-                                          std::size_t count) {
+void SdlTtfTextBackend::DrawEphemeralRuns(SDL_Renderer* renderer, StringTextureCache& cache,
+                                          const TextRun* runs, std::size_t count) {
   // The GPU renderer has a strictly better path for these than per-glyph blits,
   // and it is the same one DrawRuns uses: one submit for the whole set.
   if (is_gpu_renderer_) {
-    DrawRuns(renderer, runs, count);
+    DrawRuns(renderer, cache, runs, count);
     return;
   }
   if (renderer == nullptr || renderer != renderer_ || !glyph_atlas_enabled_ ||
       !EnsureAtlasTexture() || atlas_texture_width_ <= 0 || atlas_texture_height_ <= 0) {
-    TextRendererBackend::DrawRuns(renderer, runs, count);
+    TextRendererBackend::DrawRuns(renderer, cache, runs, count);
     return;
   }
 
@@ -1424,16 +1356,17 @@ void SdlTtfTextBackend::DrawEphemeralRuns(SDL_Renderer* renderer, const TextRun*
     }
     // Translucent, non-ASCII, or a glyph the atlas does not cover: the cached
     // composite is the only faithful path, and it is what this run used to take.
-    DrawString(renderer, run.x, run.y, run.color, run.text);
+    DrawString(renderer, cache, run.x, run.y, run.color, run.text);
   }
   util::AddPerformanceCounter(util::PerfCounterId::RenderGlyphAtlasRuns, atlas_runs);
 }
 
-void SdlTtfTextBackend::DrawRuns(SDL_Renderer* renderer, const TextRun* runs, std::size_t count) {
+void SdlTtfTextBackend::DrawRuns(SDL_Renderer* renderer, StringTextureCache& cache,
+                                 const TextRun* runs, std::size_t count) {
   // Fall back to the per-run composite path unless the GPU batched path is armed.
   if (renderer == nullptr || renderer != renderer_ || !glyph_atlas_enabled_ ||
       !is_gpu_renderer_ || !EnsureAtlasTexture() || atlas_texture_width_ <= 0 || atlas_texture_height_ <= 0) {
-    TextRendererBackend::DrawRuns(renderer, runs, count);
+    TextRendererBackend::DrawRuns(renderer, cache, runs, count);
     return;
   }
 
@@ -1461,7 +1394,7 @@ void SdlTtfTextBackend::DrawRuns(SDL_Renderer* renderer, const TextRun* runs, st
       geom_vertices_.resize(mark);
       geom_indices_.resize(mark / 4 * 6);
     }
-    DrawString(renderer, run.x, run.y, run.color, run.text);
+    DrawString(renderer, cache, run.x, run.y, run.color, run.text);
   }
 
   if (!geom_vertices_.empty()) {
@@ -1476,8 +1409,9 @@ void SdlTtfTextBackend::DrawRuns(SDL_Renderer* renderer, const TextRun* runs, st
   }
 }
 
-SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view text,
-                                                               SDL_Color color) {
+const StringTextureCache::Entry* SdlTtfTextBackend::ResolveEntry(StringTextureCache& cache,
+                                                                std::string_view text,
+                                                                SDL_Color color) {
   // Bound the rendered text length. The surface/texture built below is sized to
   // text.size() * cell_width (BuildAsciiCompositeSurface, or the whole-string
   // TTF_RenderText_Blended fallback), so a single caller passing a megabyte string
@@ -1489,16 +1423,9 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
   if (text.size() > kMaxRenderTextChars) {
     text = text.substr(0, kMaxRenderTextChars);
   }
-  const CacheKeyView key_view{
-      .text = text,
-      .color = color,
-  };
-  if (auto it = cache_.find(key_view); it != cache_.end()) {
-    util::AddPerformanceCounter(util::PerfCounterId::RenderTextTextureCacheHits);
-    LruTouch(it->second);
-    return &it->second;
+  if (const StringTextureCache::Entry* cached = cache.Find(text, color); cached != nullptr) {
+    return cached;
   }
-  util::AddPerformanceCounter(util::PerfCounterId::RenderTextTextureCacheMisses);
 
   // ASCII strings render through a cell-positioned composite (per-glyph blits
   // into a single surface) so the resulting texture is one whole-string draw
@@ -1533,136 +1460,10 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
   }
   SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
 
-  CacheEntry entry;
-  entry.texture = texture;
-  entry.width = surface->w;
-  entry.height = surface->h;
+  const int width = surface->w;
+  const int height = surface->h;
   SDL_DestroySurface(surface);
-
-  const std::size_t entry_bytes = EntryByteCost(entry.width, entry.height);
-
-  // Evict FIRST when this insert would put the cache over either budget, and
-  // build into the victim's node instead of erasing it and emplacing a fresh one.
-  //
-  // The pair is the steady state, not a corner: a scroll through fresh content
-  // misses on every row, and once the VRAM budget binds every miss IS an eviction
-  // — measured at 685 misses and 685 evictions across one scroll scenario. So the
-  // erase-then-emplace cost a map node plus a fresh copy of the row's own text,
-  // per row, per frame, and freed the identical pair one row later. `extract`
-  // hands the node back with the key string's capacity intact; assigning over it
-  // reuses that too (TD-2026-08-15-236).
-  //
-  // The `!cache_.empty()` guard is the counterpart of the trailing loop's `> 1`:
-  // a single composite that alone exceeds kMaxCacheBytes must not evict itself
-  // and dangle the pointer this returns. Here it cannot — the victim is chosen
-  // before the new entry is in the map.
-  CacheMap::node_type recycled;
-  if (!cache_.empty() &&
-      (cache_.size() + 1 > kMaxCacheEntries || cache_bytes_ + entry_bytes > kMaxCacheBytes)) {
-    CacheEntry* victim = lru_head_;
-    if (victim != nullptr && victim->key != nullptr) {
-      // `find` before `extract`: the key lives inside the node, so looking it up
-      // by reference after the node has moved would hash freed memory.
-      const auto victim_it = cache_.find(*victim->key);
-      LruUnlink(*victim);
-      if (victim_it != cache_.end()) {
-        util::AddPerformanceCounter(util::PerfCounterId::RenderTextTextureCacheEvictions);
-        cache_bytes_ -= EntryByteCost(victim_it->second.width, victim_it->second.height);
-        if (victim_it->second.texture != nullptr) {
-          SDL_DestroyTexture(victim_it->second.texture);
-        }
-        recycled = cache_.extract(victim_it);
-      }
-    }
-  }
-
-  CacheMap::iterator map_it;
-  if (!recycled.empty()) {
-    // `text` is a view of the caller's row text, never of a key in this map (we
-    // are here because `find` missed), so overwriting the node's key cannot
-    // invalidate it.
-    ReserveRoundedKeyCapacity(recycled.key().text, text.size());
-    recycled.key().text.assign(text);
-    recycled.key().color = color;
-    recycled.mapped() = entry;
-    util::AddPerformanceCounter(util::PerfCounterId::RenderTextTextureCacheRecycled);
-    map_it = cache_.insert(std::move(recycled)).position;
-  } else {
-    CacheKey key;
-    ReserveRoundedKeyCapacity(key.text, text.size());
-    key.text.assign(text);
-    key.color = color;
-    const auto [it, inserted] = cache_.emplace(std::move(key), entry);
-    map_it = it;
-    if (!inserted) {
-      // Unreachable in practice — we are here because `find` missed — but the
-      // assignment below overwrites the LRU links, so the existing entry has to
-      // leave the list before it stops describing where it sits in it.
-      LruUnlink(map_it->second);
-      cache_bytes_ -= EntryByteCost(map_it->second.width, map_it->second.height);
-      if (map_it->second.texture != nullptr) {
-        SDL_DestroyTexture(map_it->second.texture);
-      }
-      map_it->second = entry;
-    }
-  }
-  cache_bytes_ += entry_bytes;
-  map_it->second.key = &map_it->first;
-  LruPushBack(map_it->second);
-
-  // Evict oldest entries until both the count and VRAM budgets are satisfied.
-  // Keep at least the just-inserted entry (>1 guard) so a single oversized
-  // composite that alone exceeds kMaxCacheBytes never evicts itself, which would
-  // dangle the returned pointer.
-  while (cache_.size() > 1 &&
-         (cache_.size() > kMaxCacheEntries || cache_bytes_ > kMaxCacheBytes)) {
-    CacheEntry* victim = lru_head_;
-    if (victim == nullptr || victim->key == nullptr) {
-      break;
-    }
-    // `find` before `erase`, not `erase(key)`: the key lives inside the node the
-    // erase destroys, so passing a reference to it is a use-after-free waiting
-    // for an implementation that hashes late.
-    const auto evict_it = cache_.find(*victim->key);
-    LruUnlink(*victim);
-    if (evict_it != cache_.end()) {
-      util::AddPerformanceCounter(util::PerfCounterId::RenderTextTextureCacheEvictions);
-      cache_bytes_ -= EntryByteCost(evict_it->second.width, evict_it->second.height);
-      if (evict_it->second.texture != nullptr) {
-        SDL_DestroyTexture(evict_it->second.texture);
-      }
-      cache_.erase(evict_it);
-    }
-  }
-
-  return &map_it->second;
-}
-
-void SdlTtfTextBackend::LruUnlink(CacheEntry& entry) {
-  if (entry.lru_prev != nullptr) {
-    entry.lru_prev->lru_next = entry.lru_next;
-  } else if (lru_head_ == &entry) {
-    lru_head_ = entry.lru_next;
-  }
-  if (entry.lru_next != nullptr) {
-    entry.lru_next->lru_prev = entry.lru_prev;
-  } else if (lru_tail_ == &entry) {
-    lru_tail_ = entry.lru_prev;
-  }
-  entry.lru_prev = nullptr;
-  entry.lru_next = nullptr;
-}
-
-void SdlTtfTextBackend::LruPushBack(CacheEntry& entry) {
-  entry.lru_prev = lru_tail_;
-  entry.lru_next = nullptr;
-  if (lru_tail_ != nullptr) {
-    lru_tail_->lru_next = &entry;
-  }
-  lru_tail_ = &entry;
-  if (lru_head_ == nullptr) {
-    lru_head_ = &entry;
-  }
+  return cache.Insert(text, color, texture, width, height);
 }
 
 }  // namespace microide::render
