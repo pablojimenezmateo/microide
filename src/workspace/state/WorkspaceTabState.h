@@ -647,6 +647,9 @@ struct TerminalPaneState {
   // absolute-row mirrors below (scroll_row, selection, last_command_start_row) when
   // scrollback is trimmed, so they track the same content instead of jumping.
   std::uint64_t observed_scrollback_trim_total = 0;
+  // Last-observed session.RowShiftSequence(): rows a host terminal's gap fill
+  // inserted mid-buffer move the mirrors below that gap down by what was inserted.
+  std::uint64_t observed_row_shift_sequence = 0;
   // How this pane was launched, kept so an exited session (a dropped ssh link,
   // a shell that was killed) can be relaunched in place with the same cwd and
   // command rather than opened as a fresh tab that loses its position.

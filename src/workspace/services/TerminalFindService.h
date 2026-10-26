@@ -104,6 +104,8 @@ class TerminalFindService {
   bool scanned_case_sensitive_ = false;
   bool scanned_whole_word_ = false;
   std::uint64_t scanned_trim_total_ = 0;
+  // TerminalSession::RowShiftSequence() as of the last scan.
+  std::uint64_t scanned_row_shift_sequence_ = 0;
   std::size_t scanned_stable_row_end_ = 0;
 
   // Reused across rows and across scans, so a steady-state rescan allocates

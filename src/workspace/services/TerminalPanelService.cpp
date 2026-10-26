@@ -385,6 +385,7 @@ bool TerminalPanelService::RelaunchActivePane() {
   pane->follow_tail = true;
   pane->scroll_row = 0;
   pane->observed_scrollback_trim_total = 0;
+  pane->observed_row_shift_sequence = 0;
   pane->has_last_command = false;
   pane->pending_input.clear();
   pane->pending_input_truncated = false;

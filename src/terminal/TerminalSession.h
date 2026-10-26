@@ -224,6 +224,21 @@ class TerminalSession {
   // on the alternate screen, while a request is out, once the host has nothing
   // older, or when the scrollback is at this client's own cap.
   void RequestOlderHostHistory();
+  // Fill a gap rule among rows [first_row, first_row + rows) with the host lines
+  // it withheld (term/scrollback), newest first and a page at a time -- what the
+  // view shows of a gap is fetched when it is on screen, the way the top already
+  // fetches older pages. The lines go in where the rule was, so every row below
+  // it moves down: RowShiftsSince reports by how much. No-op off a host terminal,
+  // on the alternate screen, while a fill is out, for a gap the host no longer
+  // holds, or at this client's scrollback cap.
+  void RequestHostGapFill(std::size_t first_row, std::size_t rows);
+  // Rows inserted into the middle of the buffer (gap fills): RowShiftSequence()
+  // counts them, and RowShiftsSince(n) returns those after the n-th, oldest first.
+  // False when n is older than the short log reaches; a view that far behind
+  // re-anchors instead. A trim or a prepended page moves no absolute row, so
+  // neither is reported here (the trim total carries those).
+  std::uint64_t RowShiftSequence() const;
+  bool RowShiftsSince(std::uint64_t sequence, std::vector<TerminalHostHistory::RowShift>& out) const;
   // Carry on over a new channel to the same host terminal (a reconnect), keeping
   // the mirror: the channel was attached with host_resume_point().
   void ReattachHost(std::shared_ptr<TerminalHostChannel> channel);
@@ -507,6 +522,8 @@ class TerminalSession {
   std::size_t host_primary_stash_screen_lines_ = 0;
   TerminalHostHistory host_history_;
   void PrependHostHistory(std::uint64_t first, std::vector<TerminalLine> lines);
+  void FillHostGap(std::uint64_t gap_id, std::uint64_t before, std::uint64_t first,
+                   std::vector<TerminalLine> lines);
   std::function<void()> output_observer_;
   TerminalPredictionOverlay prediction_;
   TerminalPredictionOverlay::View PredictionViewLocked();

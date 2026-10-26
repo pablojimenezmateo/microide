@@ -3445,8 +3445,27 @@ Phase 2a task 7.4 left three pieces of the host-terminal protocol:
   handle the decrease. The mirror's first line is tracked in host lines across
   trims (`TerminalHostHistory`: a gap rule counts its lines, a "connection lost"
   note counts none), and a mirror's row numbering starts at 2^40 so a prepend can
-  never underflow. `RemoteTerminal/ScrollingUpFetchesOlderHostHistory`. Not done: a
-  selection copied across a gap rule copies the rule, not the withheld lines.
+  never underflow. `RemoteTerminal/ScrollingUpFetchesOlderHostHistory`. ~~Not done: a
+  selection copied across a gap rule copies the rule, not the withheld lines.~~
+  **Done 2026-10-26, the shape recorded below.** A gap rule on screen asks for the
+  lines it withheld: frame prep calls `TerminalSession::RequestHostGapFill` over the
+  visible rows, which fetches the newest `min(count, 500)` of them by host index
+  (`TerminalHostHistory::HostIndexOfRow`: first line, row distance, and every earlier
+  gap's excess) and puts them where the rule was, shrinking the rule by what came in.
+  Gaps carry a stable id, so an answer that arrives after other fills moved its gap
+  still finds it, and a gap the host answers empty for is marked and not asked for
+  again. The positional signal the rebase lacked is `RowShiftsSince`: each fill
+  records "rows after absolute row R moved down by k" in a short log, and
+  `RebaseActiveTerminalForScrollbackTrim` applies it to the view, the selection and
+  the last command's row before it handles trims. Terminal find rescans from the
+  top on a shift, as it does on a prepended page. The TerminalSession facade did not
+  need the host-mirror split first: the fill lives in `TerminalSessionHost.cpp`
+  beside the frame apply. Tests: `TerminalHost/AGapRuleOnScreenFillsWithTheHostLinesItWithheld`
+  (three pages, line-for-line equal to the host, the shifts sum to the lines
+  inserted), `TerminalHost/AGapTheHostNoLongerHoldsIsAskedForOnce`, and
+  `WorkspaceShell/TerminalGapOnScreenFillsAndTheSelectionFollows` (a selection across
+  the rule copies the text; fails without the rebase). The mirror and its channel
+  moved to `tests/support/TerminalHostMirror.h` so the shell test drives a real pane.
   **Assessed 2026-10-13, left with its shape recorded:** the VS Code-like fix is to
   fill a gap when it scrolls into view (as the top already fetches older pages),
   which also fixes the copy: `RequestOlderHostHistory()` becomes
@@ -8394,6 +8413,21 @@ What is left on this path, and deliberately not done here: the same relative pat
 is still materialized about five times across parse → repository state → sidebar
 snapshot → view model. Collapsing that needs an interned path table shared by all
 four stages, which is a design change rather than a fix.
+
+**Decided 2026-10-26 (WON'T DO, measured).** Re-measured on
+`git_sidebar_refresh_many_untracked` (1,500 untracked files): the allocation trace
+puts 10,500 of the phase's 11,495 allocations at seven copies per path (parse 1,
+repository state 3 including the tree-badge map's key, snapshot 1, the sidebar's
+absolute path 1, the view model's two labels). Callgrind over the measured phase:
+10.5M instructions in process (git's own process excluded), `operator new` 22% of
+them, the shell-thread presentation (`CachedGitSidebarPresentation`) 42%, the parse
+and state build on the refresh worker 43%. Interning would remove most of the 22%,
+about half of it on the worker, for a refresh that runs on file changes and never
+per keystroke: ~0.5 ms of CPU at 1,500 changed files. The price is turning
+`relative_path` from an owning string into a view with a shared-lifetime anchor
+through the 19 files of the staging, discard and commit paths, where a dangling
+path is a stage of the wrong file. Not worth it at that number; revisit if a refresh
+of this size shows up on the shell thread's latency.
 
 ### TD-2026-08-14-227 — every `LineBlob` producer sized its offset table and let the byte buffer double its way there. [RESOLVED 2026-08-14, same session it was filed.]
 

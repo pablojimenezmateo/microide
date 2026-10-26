@@ -92,9 +92,13 @@ void TerminalFindService::Refresh(TerminalPaneState* tab) {
   // at the tail must not jump the selection back to the top. Captured after the
   // trim rebase below so it is in the same row space as the rescanned matches.
   std::optional<terminal::TerminalSearchMatch> previous;
-  // History prepended above (a host terminal's older page) is rows the settled
-  // matches never saw: scan again from the top.
-  if (same_scan && tab->session.ScrollbackTrimTotal() < scanned_trim_total_) {
+  // History prepended above (a host terminal's older page), or a gap filled in
+  // the middle, is rows the settled matches never saw: scan again from the top.
+  // The sequence is read before the scan, so a fill that lands during it is
+  // seen by the next refresh.
+  const std::uint64_t row_shift_sequence = tab->session.RowShiftSequence();
+  if (same_scan && (tab->session.ScrollbackTrimTotal() < scanned_trim_total_ ||
+                    row_shift_sequence != scanned_row_shift_sequence_)) {
     same_scan = false;
   }
   if (same_scan) {
@@ -133,6 +137,7 @@ void TerminalFindService::Refresh(TerminalPaneState* tab) {
   scanned_case_sensitive_ = case_sensitive_;
   scanned_whole_word_ = whole_word_;
   scanned_trim_total_ = scan.trim_total;
+  scanned_row_shift_sequence_ = row_shift_sequence;
   scanned_stable_row_end_ = scan.stable_row_end;
   truncated_ = scan.truncated;
 

@@ -1,11 +1,13 @@
 #include "TestSupport.h"
 #include "TerminalSessionTestAccess.h"
+#include "support/TerminalHostMirror.h"
 
 #include "terminal/TerminalHostFrameBuilder.h"
 #include "terminal/TerminalHostWire.h"
 #include "terminal/TerminalSession.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -23,85 +25,6 @@ using terminal::TerminalInputEvent;
 using terminal::TerminalLine;
 using terminal::TerminalSession;
 
-std::string LineText(const TerminalLine& line) {
-  std::string text;
-  for (const auto& cell : line.cells) {
-    text += cell.DisplayText().empty() ? std::string(" ") : std::string(cell.DisplayText());
-  }
-  while (!text.empty() && text.back() == ' ') {
-    text.pop_back();
-  }
-  return text;
-}
-
-class RecordingChannel final : public terminal::TerminalHostChannel {
- public:
-  void Send(const TerminalInputEvent& event) override { events.push_back(event); }
-  void Resize(std::size_t rows, std::size_t columns) override {
-    resized_rows = rows;
-    resized_columns = columns;
-  }
-  void Close() override { closed = true; }
-
-  std::vector<TerminalInputEvent> events;
-  std::size_t resized_rows = 0;
-  std::size_t resized_columns = 0;
-  bool closed = false;
-};
-
-// A host session, a client session in host mode, and the builder between them;
-// every Sync goes through the real encoder and decoder.
-struct Mirror {
-  TerminalSession host;
-  TerminalSession client;
-  std::shared_ptr<RecordingChannel> channel = std::make_shared<RecordingChannel>();
-  TerminalHostFrameBuilder builder;
-  TerminalSession::HostCapture capture;
-  TerminalHostFrame frame;
-  std::size_t last_frame_bytes = 0;
-
-  Mirror(std::size_t rows, std::size_t columns) {
-    TerminalSessionTestAccess::Reset(host, rows, columns);
-    TerminalSessionTestAccess::Reset(client, rows, columns);
-    TerminalSessionTestAccess::SetRunning(host, true);
-    TerminalSessionTestAccess::EnterHostMode(client, channel);
-  }
-  ~Mirror() { client.Stop(); }
-
-  void Write(std::string_view bytes) { TerminalSessionTestAccess::AppendOutput(host, bytes); }
-
-  bool Sync(std::size_t budget = 1u << 30, std::uint64_t echo_ack = 0) {
-    host.CaptureForHost(builder.capture_from(), builder.capture_lines_before_screen(500), capture);
-    builder.Build(capture, budget, frame);
-    frame.echo_ack = echo_ack;
-    std::string wire;
-    EncodeTerminalHostFrame(wire, frame);
-    last_frame_bytes = wire.size();
-    std::optional<TerminalHostFrame> decoded = DecodeTerminalHostFrame(wire);
-    Expect(decoded.has_value(), "a built frame decodes");
-    return decoded.has_value() && client.ApplyHostFrame(std::move(*decoded));
-  }
-
-  // The client shows exactly what the host does: every line, the cursor and the modes.
-  void ExpectSame(const std::string& what) {
-    const std::vector<TerminalLine> host_lines = host.SnapshotLines();
-    const std::vector<TerminalLine> client_lines = client.SnapshotLines();
-    Expect(host_lines.size() == client_lines.size(),
-           what + ": line count " + std::to_string(client_lines.size()) + " vs host " +
-               std::to_string(host_lines.size()));
-    for (std::size_t i = 0; i < std::min(host_lines.size(), client_lines.size()); ++i) {
-      Expect(terminal::SameLine(host_lines[i], client_lines[i]),
-             what + ": line " + std::to_string(i) + " is '" + LineText(client_lines[i]) +
-                 "', host '" + LineText(host_lines[i]) + "'");
-    }
-    Expect(host.cursor_row() == client.cursor_row() && host.cursor_column() == client.cursor_column(),
-           what + ": cursor " + std::to_string(client.cursor_row()) + "," +
-               std::to_string(client.cursor_column()) + " vs host " +
-               std::to_string(host.cursor_row()) + "," + std::to_string(host.cursor_column()));
-    Expect(host.using_alternate_screen() == client.using_alternate_screen(),
-           what + ": the same screen");
-  }
-};
 
 // A bell on the host reaches the client once, in the next frame — not in every
 // frame after it.
@@ -397,6 +320,89 @@ void TestCreditWindowWithholdsScrollbackAsOneCountedGap() {
          "the visible screen arrives even with no credit");
 }
 
+// A gap rule is a promise that the host had those lines; on screen it is now a
+// request for them (TD-2026-10-08-326). Filled newest first a page at a time,
+// the rule shrinking as it goes, the lines land where the rule was -- in order,
+// once -- and every row below moves down by what came in, which is what a view
+// anchored there rebases by.
+void TestAGapRuleOnScreenFillsWithTheHostLinesItWithheld() {
+  Mirror mirror(3, 20);
+  mirror.host.SetMaxScrollbackLines(5000);
+  mirror.client.SetMaxScrollbackLines(5000);
+  mirror.channel->history_source = &mirror.host;
+  Expect(mirror.Sync(), "sync");
+  mirror.Write("kept\r\n");
+  Expect(mirror.Sync(), "the first line arrives in full");
+  constexpr int kWithheld = 1200;
+  for (int i = 0; i < kWithheld; ++i) {
+    mirror.Write("flood " + std::to_string(i) + "\r\n");
+  }
+  Expect(mirror.Sync(/*budget=*/0), "a frame with no credit withholds the scrolled lines");
+  std::uint64_t withheld = 0;
+  for (const auto& run : mirror.frame.scrollback) {
+    withheld += run.kind == TerminalHostRun::Kind::Gap ? run.count : 0;
+  }
+  Expect(withheld > 1000, "most of the flood is withheld behind the rule");
+  Expect(mirror.Sync(), "and the next frame sends nothing older");
+  const auto rule_row = [&]() -> std::optional<std::size_t> {
+    const std::vector<TerminalLine> lines = mirror.client.SnapshotLines();
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+      if (LineText(lines[i]).find("lines not transferred") != std::string::npos) {
+        return i;
+      }
+    }
+    return std::nullopt;
+  };
+  Expect(rule_row().has_value(), "the withheld lines are one rule");
+
+  const std::uint64_t sequence = mirror.client.RowShiftSequence();
+  std::size_t pages = 0;
+  while (const std::optional<std::size_t> row = rule_row()) {
+    if (++pages > 10) {
+      break;
+    }
+    mirror.client.RequestHostGapFill(*row, 3);
+  }
+  Expect(!rule_row().has_value(), "the rule is gone once its lines are in");
+  Expect(pages == 3 && mirror.channel->history_requests == 3,
+         "1,200 withheld lines come in three pages of at most 500, got " + std::to_string(pages));
+  mirror.ExpectSame("after the gap fills");
+
+  std::vector<terminal::TerminalHostHistory::RowShift> shifts;
+  Expect(mirror.client.RowShiftsSince(sequence, shifts) && shifts.size() == 3,
+         "each page is a row shift");
+  std::uint64_t added = 0;
+  for (const auto& shift : shifts) {
+    added += shift.added;
+  }
+  Expect(added == withheld - 1, "together they insert the withheld lines in place of the one rule: " +
+                                   std::to_string(added) + " for " + std::to_string(withheld));
+
+  // Nothing left to ask for: a request is not sent.
+  mirror.client.RequestHostGapFill(0, mirror.client.SnapshotLines().size());
+  Expect(mirror.channel->history_requests == 3, "with no rule on screen nothing is asked");
+}
+
+// A gap the host no longer holds (trimmed while the lines were withheld) is
+// asked for once: the empty answer marks it, and it is not asked for again.
+void TestAGapTheHostNoLongerHoldsIsAskedForOnce() {
+  Mirror mirror(3, 20);
+  mirror.channel->history_source = &mirror.host;
+  Expect(mirror.Sync(), "sync");
+  for (int i = 0; i < 40; ++i) {
+    mirror.Write("flood " + std::to_string(i) + "\r\n");
+  }
+  Expect(mirror.Sync(/*budget=*/0), "the scrolled lines are withheld");
+  mirror.host.SetMaxScrollbackLines(0);  // the host drops its history
+  mirror.Write("more\r\n");
+  Expect(mirror.Sync(), "the next frame applies");
+  const std::size_t held = mirror.client.SnapshotLines().size();
+  mirror.client.RequestHostGapFill(0, held);
+  mirror.client.RequestHostGapFill(0, held);
+  Expect(mirror.channel->history_requests == 1, "asked once, then known to be gone: " +
+                                                     std::to_string(mirror.channel->history_requests));
+}
+
 // A screen that grows upward takes host lines back off the client's scrollback,
 // counted in HOST lines — and a gap rule stands for many. The rule at the tail
 // shrinks by the lines that are back on screen; it is not popped as one line
@@ -624,6 +630,10 @@ void RegisterTerminalHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TerminalHost/ClientMirrorsAResize", TestClientMirrorsAResize);
   AddTest(tests, "TerminalHost/CreditWindowWithholdsScrollbackAsOneCountedGap",
           TestCreditWindowWithholdsScrollbackAsOneCountedGap);
+  AddTest(tests, "TerminalHost/AGapRuleOnScreenFillsWithTheHostLinesItWithheld",
+          TestAGapRuleOnScreenFillsWithTheHostLinesItWithheld);
+  AddTest(tests, "TerminalHost/AGapTheHostNoLongerHoldsIsAskedForOnce",
+          TestAGapTheHostNoLongerHoldsIsAskedForOnce);
   AddTest(tests, "TerminalHost/AGrowingScreenTakesBackHostLinesFromAGapRule",
           TestAGrowingScreenTakesBackHostLinesFromAGapRule);
   AddTest(tests, "TerminalHost/HostModeInputBecomesSemanticEvents",

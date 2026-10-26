@@ -652,6 +652,10 @@ void WorkspaceShell::SetBottomPanelScrollRow(int scroll_row,
       if (clamped_scroll == 0 && max_scroll > 0) {
         terminal_tab->session.RequestOlderHostHistory();
       }
+      // And a gap rule on screen asks for the lines it withheld, so scrolling over
+      // one shows (and copies) the text rather than the rule. A no-op locally.
+      terminal_tab->session.RequestHostGapFill(static_cast<std::size_t>(clamped_scroll),
+                                               static_cast<std::size_t>(std::max(0, visible_rows)));
     }
     return;
   }
@@ -738,6 +742,35 @@ void WorkspaceShell::RebaseActiveTerminalForScrollbackTrim() {
   auto* terminal_tab = ActiveTerminalPane();
   if (terminal_tab == nullptr) {
     return;
+  }
+  // A gap filled in the middle of a host terminal's scrollback moves every row
+  // below it down by the lines it inserted (and nothing above it), so the view and
+  // the selection stay on the text they were on. Applied first, in the row space
+  // last observed: a shift names an absolute row, which trims do not move.
+  if (const std::uint64_t sequence = terminal_tab->session.RowShiftSequence();
+      sequence != terminal_tab->observed_row_shift_sequence) {
+    std::vector<terminal::TerminalHostHistory::RowShift> shifts;
+    if (terminal_tab->session.RowShiftsSince(terminal_tab->observed_row_shift_sequence, shifts)) {
+      const std::uint64_t base = terminal_tab->observed_scrollback_trim_total;
+      for (const terminal::TerminalHostHistory::RowShift& shift : shifts) {
+        const auto moved = [&](std::uint64_t row) { return base + row > shift.after_row; };
+        if (terminal_tab->scroll_row > 0 &&
+            moved(static_cast<std::uint64_t>(terminal_tab->scroll_row))) {
+          terminal_tab->scroll_row += static_cast<int>(shift.added);
+        }
+        for (auto* point : {&terminal_tab->selection_anchor, &terminal_tab->selection_head}) {
+          if (point->has_value() && moved((*point)->row)) {
+            (*point)->row += static_cast<std::size_t>(shift.added);
+          }
+        }
+        if (terminal_tab->has_last_command && moved(terminal_tab->last_command_start_row)) {
+          terminal_tab->last_command_start_row += static_cast<std::size_t>(shift.added);
+        }
+      }
+    }
+    // Further behind than the log: nothing to rebase by, so the view keeps its
+    // row numbers and the next frame clamps them.
+    terminal_tab->observed_row_shift_sequence = sequence;
   }
   const std::uint64_t total = terminal_tab->session.ScrollbackTrimTotal();
   if (total == terminal_tab->observed_scrollback_trim_total) {

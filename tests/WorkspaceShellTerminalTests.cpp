@@ -2,6 +2,7 @@
 
 #include "support/RetainedRedraw.h"
 #include "support/SoftwareCanvas.h"
+#include "support/TerminalHostMirror.h"
 
 #include "TerminalSessionTestAccess.h"
 #include "util/JsonValue.h"
@@ -1115,6 +1116,82 @@ void TestWorkspaceShellTerminalDragSelectsTranscriptText() {
          "dragging across terminal cells should create a selection");
   Expect(WorkspaceShellTestAccess::ActiveTerminalSelectedText(shell) == "select",
          "terminal drag selection should capture the selected transcript text");
+}
+
+// A host terminal's gap rule on screen fetches the lines it withheld, and the view
+// and the selection follow the rows the fill moves: a selection from above the
+// rule to below it copied the rule's "N lines not transferred", where the host had
+// the text all along (TD-2026-10-08-326).
+void TestWorkspaceShellTerminalGapOnScreenFillsAndTheSelectionFollows() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::SetPanelContentTerminal(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  Mirror mirror(session, 3, 40);
+  mirror.host.SetMaxScrollbackLines(5000);
+  session.SetMaxScrollbackLines(5000);
+  mirror.channel->history_source = &mirror.host;
+  Expect(mirror.Sync(), "sync");
+  mirror.Write("kept above\r\n");
+  Expect(mirror.Sync(), "the line above the gap arrives");
+  for (int i = 0; i < 300; ++i) {
+    mirror.Write("flood " + std::to_string(i) + "\r\n");
+  }
+  Expect(mirror.Sync(/*budget=*/0), "the flood is withheld behind a rule");
+  mirror.Write("below the gap\r\n");
+  // Enough after it that a view at the tail does not show the rule.
+  for (int i = 0; i < 100; ++i) {
+    mirror.Write("tail " + std::to_string(i) + "\r\n");
+  }
+  Expect(mirror.Sync(), "and the lines below it arrive");
+
+  const auto row_of = [&](std::string_view needle) -> std::optional<std::size_t> {
+    const std::vector<terminal::TerminalLine> lines = session.SnapshotLines();
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+      if (LineText(lines[i]).find(needle) != std::string::npos) {
+        return i;
+      }
+    }
+    return std::nullopt;
+  };
+  const std::optional<std::size_t> kept = row_of("kept above");
+  const std::optional<std::size_t> below = row_of("below the gap");
+  Expect(kept.has_value() && below.has_value() && row_of("lines not transferred").has_value(),
+         "a rule between two real lines");
+  if (!kept.has_value() || !below.has_value()) {
+    return;
+  }
+  // A first frame, as the pane has before anyone selects in it: it observes the
+  // mirror's trim total (which a host mirror starts high, see kRowBase).
+  SoftwareCanvas canvas(1280, 720);
+  shell.Render(canvas.renderer(), 1280, 720);
+  (void)shell.ConsumePendingRenderInvalidation();
+  WorkspaceShellTestAccess::SetActiveTerminalSelectionForTest(
+      shell, workspace::TerminalSelectionPoint{.row = *kept, .column = 0},
+      workspace::TerminalSelectionPoint{.row = *below, .column = 13});
+  Expect(WorkspaceShellTestAccess::ActiveTerminalSelectedText(shell).find("lines not transferred") !=
+             std::string::npos,
+         "before the fill the selection runs across the rule");
+
+  // The view shows the rule: frame prep asks for its lines, the next frame rebases.
+  WorkspaceShellTestAccess::SetActiveTerminalFollowTail(shell, false);
+  WorkspaceShellTestAccess::SetActiveTerminalScrollRow(shell, static_cast<int>(*kept));
+  for (int frame = 0; frame < 4; ++frame) {
+    shell.Render(canvas.renderer(), 1280, 720);
+    (void)shell.ConsumePendingRenderInvalidation();
+  }
+  Expect(!row_of("lines not transferred").has_value(), "the rule's lines came in");
+  const std::string selected = WorkspaceShellTestAccess::ActiveTerminalSelectedText(shell);
+  Expect(selected.rfind("kept above", 0) == 0 && selected.find("flood 0") != std::string::npos &&
+             selected.find("flood 299") != std::string::npos &&
+             selected.find("below the gap") != std::string::npos &&
+             selected.find("lines not transferred") == std::string::npos,
+         "the selection followed its rows and copies the text the rule stood for: '" +
+             selected.substr(0, 80) + "' ... '" +
+             selected.substr(selected.size() > 80 ? selected.size() - 80 : 0) + "'");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalScrollRow(shell) == static_cast<int>(*kept),
+         "a view anchored above the gap stays where it was");
 }
 
 // The ui query's `terminal` geometry is the one the mouse path resolves against:
@@ -2650,6 +2727,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalCtrlSlashReachesTheShell);
   AddTest(tests, "WorkspaceShell/TerminalDragSelectsTranscriptText",
           TestWorkspaceShellTerminalDragSelectsTranscriptText);
+  AddTest(tests, "WorkspaceShell/TerminalGapOnScreenFillsAndTheSelectionFollows",
+          TestWorkspaceShellTerminalGapOnScreenFillsAndTheSelectionFollows);
   AddTest(tests, "WorkspaceShell/UiTerminalGeometryResolvesCells",
           TestWorkspaceShellUiTerminalGeometryResolvesCells);
   AddTest(tests, "WorkspaceShell/TerminalDoubleClickSelectsWordTripleClickSelectsLine",
