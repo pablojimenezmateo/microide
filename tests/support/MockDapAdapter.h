@@ -234,9 +234,11 @@ while True:
             continue
         if gdb15_wedged:
             import subprocess
-            wedged_child = subprocess.Popen(
-                [sys.executable, "-c",
-                 "import signal, time\nsignal.signal(signal.SIGINT, signal.SIG_DFL)\nwhile True: time.sleep(0.05)"])
+            # `sleep`, not a second Python: a child interpreter failed to start on
+            # CI's runner ("Failed to import the site module"), leaving no program to
+            # interrupt. SIGINT's default action ends `sleep`, which is all the
+            # stand-in debuggee needs.
+            wedged_child = subprocess.Popen(["sleep", "600"])
             event("process", {"name": "spin", "systemProcessId": wedged_child.pid,
                               "isLocalProcess": True, "startMethod": "launch"})
             event("thread", {"reason": "started", "threadId": 1})
