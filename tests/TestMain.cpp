@@ -84,6 +84,7 @@ void RegisterRowDecorationBuilderTests(std::vector<TestCase>& tests);
 void RegisterTerminalWordSelectionTests(std::vector<TestCase>& tests);
 void RegisterThemeTests(std::vector<TestCase>& tests);
 void RegisterTextRendererTests(std::vector<TestCase>& tests);
+void RegisterLineBlobTests(std::vector<TestCase>& tests);
 void RegisterTextViewportTests(std::vector<TestCase>& tests);
 void RegisterTextLayoutTests(std::vector<TestCase>& tests);
 void RegisterPieceTreeTests(std::vector<TestCase>& tests);
@@ -270,6 +271,7 @@ void RegisterShellTests(std::vector<TestCase>& tests) {
   RegisterRowDecorationBuilderTests(tests);
   RegisterTextRendererTests(tests);
   RegisterThemeTests(tests);
+  RegisterLineBlobTests(tests);
   RegisterTextViewportTests(tests);
   RegisterTextLayoutTests(tests);
   RegisterPieceTreeTests(tests);

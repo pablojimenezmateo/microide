@@ -179,7 +179,9 @@ void TextViewportUndoHistory::CoalesceAdjacentDisjoint(std::vector<Entry>& entri
         // (TD-2026-09-20-301).
         //
         // Prepending the child onto the accumulated blob instead reuses its
-        // buffer, which grows geometrically like any string.
+        // buffer, and LineBlob keeps front slack for exactly this, so a prepend
+        // costs the child's size and nothing of the aggregate's: the group is
+        // linear in bytes as well as in allocations.
         //
         // The per-child view states are overwritten wholesale by
         // FinishActiveGroup (`agg.before_state`/`after_state` come from the

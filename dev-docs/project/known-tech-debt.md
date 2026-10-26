@@ -4758,7 +4758,20 @@ side being COPIED was the accumulated one, which can only happen if the small
 child is the merge target. Two reasoned hypotheses, one two-line probe; the probe
 was the cheap step and should have been first.
 
-**What is left.** The merge is still O(total bytes) in memmove per child, so a
+**The memmove: RESOLVED 2026-10-26.** Not by keeping the children disjoint (the
+container search in `MergeChildIntoDisjoint` reads the coalesced ranges, so
+deferring the fold would have changed what an overlapping child merges into), but
+in the blob. `LineBlob` is double-ended: its byte buffer and line table keep front
+slack, a prepend writes into it without moving the content, and a regrow leaves at
+least as much front slack as there is content. Each byte therefore moves O(1)
+times however many prepends follow. A/B against 924b2b63, three rounds:
+`editor_multi_caret_edit_burst` 28.4 -> 25.6 ms, `editor_toggle_comment_large_selection`
+4.11 -> 3.92 ms, the rest within noise, allocations +6 of 21,078 (the regrows).
+Tests: `LineBlob/MatchesAVectorModelUnderEveryOperation` (4,000 mixed operations
+against a vector model) and `LineBlob/PrependDoesNotMoveTheContent`, which fails
+on the old blob (10,000 moves in 10,000 prepends).
+
+**What was left.** The merge is still O(total bytes) in memmove per child, so a
 group of N children is O(N²) in copying even though it is now O(N) in
 allocations. The measured 5.93 ms for 1,201 regions is most of the way there and
 the remaining term is memmove rather than malloc, but at the 10,000-cursor cap

@@ -1375,6 +1375,7 @@ add_executable(microide_tests
   tests/PersistedRecordWriteQueueTests.cpp
   tests/SyntaxDefinitionLoaderTests.cpp
   tests/TextRendererTests.cpp
+  tests/LineBlobTests.cpp
   tests/TextViewportTests.cpp
   tests/TextLayoutTests.cpp
   tests/PieceTreeTests.cpp
