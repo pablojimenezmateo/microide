@@ -1024,13 +1024,15 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
     // the very next run and failed at +50% against a 25% envelope.
     //
     // The floor converts the gate to a flat absolute allowance in that regime. At
-    // 64 KiB the allowance is 80 KiB, which absorbs several pages of allocator
-    // jitter while still failing a scenario that newly retains ~80 KiB per
-    // iteration (8 MB over a hundred operations). 90 of 93 baselines record exactly
-    // zero growth, so nearly the whole suite gates on that flat allowance; the two
-    // that genuinely grow (2.75 MB and 1.61 MB per iteration) are 30-40x above it
-    // and gate on the percentage as intended.
-    constexpr double kRssNoiseFloorBytes = 64.0 * 1024.0;
+    // 96 KiB the allowance is 120 KiB, which absorbs the allocator's page jitter
+    // while still failing a scenario that newly retains ~120 KiB per iteration
+    // (12 MB over a hundred operations). It was 64 KiB (80 KiB allowance) until
+    // multi_project_switch, retaining a real ~55 KiB, read 53, 54 and 65 KiB on
+    // three idle runs and 88 KiB on a fourth: red by eight pages of jitter
+    // (TD-2026-10-26-393). Nearly the whole suite records zero growth and gates on
+    // this flat allowance; the few that genuinely grow (MBs per iteration) are far
+    // above it and gate on the percentage as intended.
+    constexpr double kRssNoiseFloorBytes = 96.0 * 1024.0;
     const auto add_rss = [&](std::string_view name, double expected, double actual,
                              double tolerance_percent) {
       return AddMetric(&result, name, std::max(expected, kRssNoiseFloorBytes), actual,

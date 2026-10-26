@@ -144,7 +144,7 @@ measured. Two more metrics close that:
   whatever ran earlier and is not attributable to the scenario. Growth is. Steadier
   than wall but not as deterministic as an allocation count (page granularity,
   allocator arena behaviour), so its tolerance sits between the two: **25 %**, with
-  a 64 KiB noise floor so a near-zero baseline cannot turn a few pages of jitter
+  a 96 KiB noise floor so a near-zero baseline cannot turn a few pages of jitter
   into an unbounded regression. Per-scenario overrides live in
   `Scenario::tolerance_rss_percent` — **in code, not in the JSON**, because
   `--update-baseline` rewrites every tolerance in a baseline file from the scenario.

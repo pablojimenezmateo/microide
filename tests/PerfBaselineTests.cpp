@@ -419,10 +419,11 @@ void TestPerfBaselineDeclinesTheResidentGateOnAShortRun() {
     return perf::MetricComparison{};
   };
 
-  // The real numbers from the entry.
+  // The entry's numbers (80,555 and 113,869), doubled to stay above the resident
+  // noise floor (96 KiB since TD-2026-10-26-393) -- the ratio is what matters here.
   perf::BaselineRecord baseline = MakeBaseline();
   baseline.has_rss_metrics = true;
-  baseline.metrics.mean_rss_growth_bytes = 80'555.0;
+  baseline.metrics.mean_rss_growth_bytes = 161'110.0;
   baseline.tolerances.rss_mean_percent = 25.0;
   baseline.iterations = 10;
 
@@ -430,7 +431,7 @@ void TestPerfBaselineDeclinesTheResidentGateOnAShortRun() {
   // the envelope -- the point is that the comparison is meaningless, not that the
   // arithmetic is wrong.
   const perf::BaselineComparison short_run =
-      perf::CompareToBaseline(baseline, run_of(6, 113'869.0));
+      perf::CompareToBaseline(baseline, run_of(6, 227'738.0));
   const perf::MetricComparison short_metric = resident(short_run);
   Expect(!short_metric.passed, "the raw arithmetic must still say the reading is out of envelope");
   Expect(!short_metric.enforced, "but a six-iteration run must not be gated against a ten's baseline");
@@ -444,14 +445,14 @@ void TestPerfBaselineDeclinesTheResidentGateOnAShortRun() {
   // Everything else in the same short run stays gated. Allocation counts do not
   // care how many iterations were averaged, and exempting them would turn a
   // --iterations=6 run into a run with no gate at all.
-  perf::Aggregate short_with_alloc_regression = run_of(6, 113'869.0);
+  perf::Aggregate short_with_alloc_regression = run_of(6, 227'738.0);
   short_with_alloc_regression.metrics.p50_allocations = 5'000.0;
   Expect(!perf::CompareToBaseline(baseline, short_with_alloc_regression).passed,
          "declining the resident gate must not disarm the allocation gates beside it");
 
   // At the recorded count the gate is live in both directions.
   const perf::BaselineComparison at_count =
-      perf::CompareToBaseline(baseline, run_of(10, 113'869.0));
+      perf::CompareToBaseline(baseline, run_of(10, 227'738.0));
   Expect(resident(at_count).enforced && !at_count.passed,
          "at the baseline's own iteration count the same reading must fail");
   Expect(resident(at_count).note.empty(),
@@ -463,7 +464,7 @@ void TestPerfBaselineDeclinesTheResidentGateOnAShortRun() {
   // it can only produce false greens, never false reds -- but said out loud,
   // because a gate nobody knows is loose is how a baseline set goes vacuous.
   const perf::BaselineComparison long_run =
-      perf::CompareToBaseline(baseline, run_of(25, 113'869.0));
+      perf::CompareToBaseline(baseline, run_of(25, 227'738.0));
   Expect(resident(long_run).enforced && !long_run.passed,
          "a longer run stays gated: it cannot be fooled high by the settling passes");
   Expect(long_run.metrics.size() == at_count.metrics.size(),
@@ -477,7 +478,7 @@ void TestPerfBaselineDeclinesTheResidentGateOnAShortRun() {
   perf::BaselineRecord unversioned = baseline;
   unversioned.iterations = 0;
   const perf::BaselineComparison legacy =
-      perf::CompareToBaseline(unversioned, run_of(6, 113'869.0));
+      perf::CompareToBaseline(unversioned, run_of(6, 227'738.0));
   Expect(resident(legacy).enforced && !legacy.passed,
          "a baseline with no recorded iteration count must gate as it always did");
 
@@ -485,7 +486,7 @@ void TestPerfBaselineDeclinesTheResidentGateOnAShortRun() {
   // and most of the tests in this file) be treated as a zero-iteration run.
   perf::Aggregate summary_only;
   summary_only.scenario_name = "test";
-  summary_only.metrics.mean_rss_growth_bytes = 113'869.0;
+  summary_only.metrics.mean_rss_growth_bytes = 227'738.0;
   const perf::BaselineComparison replayed = perf::CompareToBaseline(baseline, summary_only);
   Expect(resident(replayed).enforced && !replayed.passed,
          "an aggregate with no per-iteration detail must not read as a short run");

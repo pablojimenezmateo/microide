@@ -462,7 +462,7 @@ sweep outside the C++ heap (bisected to 8df85a3a). Next: let the two renderers s
 backend, atlas and cache while their family and size match, and split them when the
 editor font changes. A render-layer design change, so not done in the gate pass.
 
-### TD-2026-10-26-393 — the full perf gate fails on perf-runner-v1. [LARGELY RESOLVED 2026-10-26 — one gate-policy question left]
+### TD-2026-10-26-393 — the full perf gate fails on perf-runner-v1. [RESOLVED 2026-10-26 — three full gates in a row pass]
 
 `tools/perf-gate.sh` on this box (`perf-runner-v1`) had recorded FAIL since at least
 2026-10-25, with 11 scenarios red. Nothing tracked it; it lived only in a session note.
@@ -495,9 +495,15 @@ gate PASSED. A second full gate failed only `multi_project_switch` on
 `mean_rss_growth_bytes`: 88 KB against the 64 KiB floor's 80 KB allowance. Three more
 runs read 53, 54 and 65 KB. Its real retention is about 55 KB (33 KB when recorded in
 August, a few pages more), and a 25% envelope at that size occasionally catches page
-jitter. Left open because the fix is a gate policy choice: raise the suite-wide floor,
-which loosens about 90 zero-growth gates, or give this scenario its own tolerance, which
-the harness discourages because a rebaseline drops it.
+jitter. The project owner chose to raise the suite-wide floor from 64 to 96 KiB (allowance 120 KiB;
+`kRssNoiseFloorBytes`). `PerfBaseline/DeclinesTheResidentGateOnAShortRun` scales its
+incident numbers above the new floor at the same ratio.
+
+The next gate then failed only `editor_multi_caret_edit_burst`'s p95/max. Its baseline
+(2026-09-20) recorded p50 24.4 ms, and every run since reads 28.3-28.9: the tail had
+almost no room. Against aa0cdf86, its baseline commit, base and HEAD both read
+28.6-28.9 ms, so this is the machine, not the code. It was re-recorded, and three full
+gates in a row then PASSED.
 
 ### TD-2026-10-25-392 — CI's QA lanes are red on most pushes; `multi-caret-pairs` fails on X11 CI and passes locally. [OPEN -- eighteen causes fixed 2026-10-25/26]
 
