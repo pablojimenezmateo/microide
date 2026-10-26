@@ -505,7 +505,7 @@ almost no room. Against aa0cdf86, its baseline commit, base and HEAD both read
 28.6-28.9 ms, so this is the machine, not the code. It was re-recorded, and three full
 gates in a row then PASSED.
 
-### TD-2026-10-25-392 — CI's QA lanes are red on most pushes; `multi-caret-pairs` fails on X11 CI and passes locally. [OPEN -- eighteen causes fixed 2026-10-25/26]
+### TD-2026-10-25-392 — CI's QA lanes are red on most pushes; `multi-caret-pairs` fails on X11 CI and passes locally. [RESOLVED 2026-10-26 -- eighteen causes fixed; CI's QA lanes clean]
 
 **2026-10-25, three causes found and fixed:**
 
@@ -693,8 +693,11 @@ retries and no notes at all: the gdb `pause` notes are gone with TD-2026-10-21-3
   now a required QA tool, installed by both workflows. Clean 6/6 on the release
   and ASan builds, and 4/4 with four ASan copies at once.
 
-Close this entry once a run of CI's QA lanes comes back green with no flaky
-retries and no driver notes.
+**Resolved 2026-10-26.** The next CI run (83e68bd2: `checks` 40313289229, `qa-deep`
+40313289226) came back with every QA lane fully clean: X11 `qa` 218/218 plus the
+monkey, `qa-asan` 218/218 plus seeds 1-4, `qa-wayland` 216/216. There were no
+failures, no flaky retries and no driver notes in any of them. (Its `clang-build`
+failed on a helper left unused by the save-normalization change, fixed separately.)
 
 Found 2026-10-25 while checking whether TD-368 could close (its condition: "a
 few CI qa lanes stay green"). They have not. From 2026-10-21 to 2026-10-25,
@@ -1553,7 +1556,12 @@ Found writing the QA `plugin-api` flow:
   "Ctrl+Alt+J", ... })` registers nothing and logs nothing (Ctrl+Alt+J is Insert
   Snippet). The plugin log should say which binding took the chord.
 
-### TD-2026-10-20-368 — on Xvfb, keystrokes after a click are sometimes lost under a loaded suite. [LIKELY RESOLVED 2026-10-22]
+### TD-2026-10-20-368 — on Xvfb, keystrokes after a click are sometimes lost under a loaded suite. [RESOLVED 2026-10-26]
+
+**Resolved 2026-10-26.** Its closing condition held: CI's X11 lanes ran clean with the
+TD-2026-10-25-392 changes in (the ordering guard covering every control command, key
+presses and pointer input, and keys reading their own modifiers). No keystroke was lost
+in any QA lane of the run that closed that entry.
 
 **2026-10-22: a cause found and fixed (c0fdc8d1).** `key()` and `type()` passed
 `--window` to xdotool, and libxdo then uses XTEST only when that window already has

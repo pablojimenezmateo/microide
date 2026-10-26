@@ -8,7 +8,6 @@
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <cstdio>
-#include <fstream>
 #include <iostream>
 #include <optional>
 #include <stdexcept>
@@ -17,42 +16,6 @@
 
 namespace microide::tests::perf {
 namespace {
-
-std::string ReadFileTextOrThrow(const std::filesystem::path& path) {
-  std::ifstream input(path, std::ios::binary);
-  if (!input) {
-    throw std::runtime_error("failed to read file: " + path.string());
-  }
-  return std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
-}
-
-void WriteFileTextOrThrow(const std::filesystem::path& path, std::string_view content) {
-  std::ofstream output(path, std::ios::binary | std::ios::trunc);
-  if (!output) {
-    throw std::runtime_error("failed to write file: " + path.string());
-  }
-  output << content;
-  if (!output.good()) {
-    throw std::runtime_error("failed to flush file: " + path.string());
-  }
-}
-
-class FixtureRestoreGuard {
- public:
-  FixtureRestoreGuard(std::filesystem::path path, std::string original)
-      : path_(std::move(path)), original_(std::move(original)) {}
-
-  ~FixtureRestoreGuard() {
-    try {
-      WriteFileTextOrThrow(path_, original_);
-    } catch (...) {
-    }
-  }
-
- private:
-  std::filesystem::path path_;
-  std::string original_;
-};
 
 std::optional<std::pair<std::size_t, std::size_t>> FindTokenLineColumn(const editor::TextViewport& vp,
                                                                       std::string_view token) {
