@@ -1023,6 +1023,17 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
             const ProjectWorkspaceState& state = context_.current_project_state;
             // As the last prepared frame composed it (the platform window's too).
             root["windowTitle"] = util::JsonValue(frame_state_.window_title);
+            // Settled: no git refresh running or kept by the pacer, the snapshot not
+            // stale and the last one applied. The git view's rows move when a refresh
+            // lands, so a driver clicks them only once this holds -- a row read just
+            // before an outside commit's refresh landed was clicked after it, on the
+            // folder row that had moved under it (QA branch-review, Wayland).
+            util::JsonObject git;
+            git["settled"] = util::JsonValue(!state.sidebar.git.refreshing &&
+                                             !automatic_git_refresh_pacer_.pending() &&
+                                             !git_repository_service_.IsRefreshing() &&
+                                             !git_repository_service_.CurrentSummary().stale);
+            root["git"] = util::JsonValue(std::move(git));
             if (state.overlay.visible) {
               util::JsonObject& overlay = std::get<util::JsonObject>(root["overlay"].v);
               overlay["count"] = util::JsonValue(static_cast<std::int64_t>(OverlayItemCount()));

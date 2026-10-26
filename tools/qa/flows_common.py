@@ -21,6 +21,7 @@ def write(app: q.App, relative: str, content: str) -> Path:
     path = app.project / relative
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
+    app.outside_change_pending = True
     return path
 
 
@@ -100,6 +101,7 @@ def dismiss(app: q.App) -> None:
 def git_run(app: q.App, *args: str) -> subprocess.CompletedProcess:
     """`git` in the project, for a caller that needs the exit status."""
     assert app.project is not None
+    app.outside_change_pending = True  # read-only ones too: cheaper than telling them apart
     return subprocess.run(["git", "-C", str(app.project), *args], capture_output=True, text=True, check=False)
 
 

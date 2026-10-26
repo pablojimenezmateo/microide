@@ -112,6 +112,8 @@ BACKEND = os.environ.get("MQA_BACKEND", "x11")
 # timeout is multiplied by it (a coverage build ran `control-list` past the 3 s a
 # fast build answers in 50 ms).
 SLOW_FACTOR = float(os.environ.get("MQA_SLOW_FACTOR", "1"))
+# The git view's elements: their rows move whenever a git refresh lands.
+GIT_VIEW_ELEMENTS = ("row:git/", "button:git/", "field:git/")
 # Integer output scale for the Wayland backend: 2 is a HiDPI screen.
 WAYLAND_SCALE = int(os.environ.get("MQA_WAYLAND_SCALE", "1"))
 # weston: on PATH, or unpacked by tools/qa/weston.sh under this root.
@@ -223,6 +225,10 @@ class App:
     _launches: int = 0
     _reported_bad_utf8: bool = False
     _extra_args: list[str] = field(default_factory=list)
+    # A flow changed the project or ran `git` outside the app (flows_common's
+    # write/git_run) since the git view last settled: the watcher may not have
+    # seen it yet, so wait_git_settled asks for the refresh itself.
+    outside_change_pending: bool = False
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -713,7 +719,11 @@ class App:
         return [(c["line"], c["column"]) for c in self.buffer().get("cursors", [])]
 
     def wait_for(self, name: str, timeout: float = 5.0) -> dict[str, Any] | None:
-        """Waits for the element called `name` to be on screen."""
+        """Waits for the element called `name` to be on screen. A git view element
+        is read once that view has settled (wait_git_settled), so its rect is the
+        one a click made next will find."""
+        if name.startswith(GIT_VIEW_ELEMENTS):
+            self.wait_git_settled(timeout)
         found: dict[str, Any] = {}
 
         def present() -> bool:
@@ -1171,7 +1181,23 @@ class App:
         x, y, w, h = element["rect"]
         return x + w / 2, y + h / 2
 
+    def wait_git_settled(self, timeout: float = 5.0) -> bool:
+        """Waits until the git view has applied its refreshes with nothing more
+        coming (`ui` -> git.settled): its rows move when a refresh lands. After a
+        change made outside the app (outside_change_pending) it first asks for one
+        -- the watcher may not have seen the change yet -- since that is what makes
+        the rows read afterwards final. Only then: `git-refresh` also re-reads the
+        files and reloads clean buffers, which would stand in for the watcher in a
+        flow that checks it."""
+        if self.outside_change_pending:
+            self.outside_change_pending = False
+            self.send("git-refresh")
+        return self.wait_until(lambda: bool((self.ui().get("git") or {}).get("settled")), timeout,
+                               "the git view to settle")
+
     def click_named(self, name: str, **kwargs: Any) -> dict[str, Any]:
+        if name.startswith(GIT_VIEW_ELEMENTS):
+            self.wait_git_settled()
         element = self.element(name)
         self.click(*self.center(element), **kwargs)
         return element

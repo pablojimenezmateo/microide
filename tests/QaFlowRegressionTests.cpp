@@ -2210,8 +2210,14 @@ void TestAnAutomaticGitRefreshInsideTheIntervalIsKept() {
   // Well inside the interval the first one started.
   WriteFile(root / "b.txt", "b changed\n");
   TestAccess::RequestAutomaticGitSidebarRefresh(shell);
+  // The `ui` query's git.settled is what a driver waits on before reading rows.
+  const auto settled = [&]() { return TestAccess::ControlUi(shell)["git"]["settled"].AsBool(); };
+  Expect(!settled(), "a kept refresh leaves the git view unsettled");
   Expect(wait_for_modified("b.txt"),
          "a refresh asked for inside the interval should still run once it ends");
+  Expect(WaitUntil(settled, kGitSidebarWaitTimeout, std::chrono::milliseconds(10),
+                   [&]() { TestAccess::ConsumeGitSidebarRefresh(shell); }),
+         "and once it has landed, the git view is settled");
 }
 
 // edit-transforms: saving a new file in a repository repainted the tree's rows but

@@ -234,5 +234,32 @@ class PointerInputBarrierTests(unittest.TestCase):
                 app.click(400, 300)
                 self.assertEqual(app._buttons_pending, 2, "a press inside reaches the app")
 
+
+class GitSettleTests(unittest.TestCase):
+    """The git view's rows move when a refresh lands, so a git element is read
+    once it has settled; a refresh is asked for only after an outside change
+    (`git-refresh` also reloads clean buffers, standing in for the watcher)."""
+
+    def _app(self, settled_after: int) -> q.App:
+        app = q.App.__new__(q.App)
+        app.outside_change_pending = False
+        app.send = Mock(return_value={"ok": True})
+        app.expect = Mock()
+        answers = iter([False] * settled_after + [True] * 10)
+        app.ui = Mock(side_effect=lambda: {"git": {"settled": next(answers)}})
+        return app
+
+    def test_settling_asks_for_a_refresh_only_after_an_outside_change(self):
+        with patch.object(q.time, "sleep"):
+            app = self._app(settled_after=2)
+            self.assertTrue(app.wait_git_settled())
+            app.send.assert_not_called()
+            self.assertEqual(app.ui.call_count, 3, "it waits through the unsettled answers")
+
+            app.outside_change_pending = True
+            self.assertTrue(app.wait_git_settled())
+            app.send.assert_called_once_with("git-refresh")
+            self.assertFalse(app.outside_change_pending)
+
 if __name__ == "__main__":
     unittest.main()
