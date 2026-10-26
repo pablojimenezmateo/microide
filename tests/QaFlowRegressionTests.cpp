@@ -557,6 +557,37 @@ void TestBannerReloadRepaintsTheCleanTab() {
          "Reload should take the disk's text");
 }
 
+// QA monkey (qa-asan, seed 3, step 255): a tab strip's overflow chip ("<6") lit
+// under the pointer at paint time, but the hover probe motion damages by listed
+// only the strip's tabs, so the pointer leaving the chip repainted nothing and an
+// unrelated partial frame kept it lit.
+void TestThePointerLeavingATabOverflowChipRepaintsIt() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("t00.txt", "zero\n");
+  for (int i = 1; i < 16; ++i) {
+    const std::filesystem::path file =
+        fixture.root / ("t" + std::to_string(i) + "_a_long_name_so_the_strip_overflows.txt");
+    WriteFile(file, "tab\n");
+    TestAccess::OpenFile(fixture.shell, file);
+  }
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  const auto overflow = TestAccess::EditorTabOverflowControls(fixture.shell);
+  Expect(overflow.hidden_left > 0, "the last tab active hides tabs on the strip's left");
+  if (overflow.hidden_left == 0) {
+    return;
+  }
+  const SDL_FRect chip = overflow.left_button;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(chip.x + chip.w / 2.0f,
+                                                                      chip.y + chip.h / 2.0f)}),
+                      "the pointer moving onto the overflow chip");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(chip.x + chip.w / 2.0f,
+                                                                      chip.y + chip.h + 200.0f)}),
+                      "the pointer leaving it for the editor");
+}
+
 // QA monkey (qa-asan, seed 4, step 150): the pointer moving onto the banner's
 // close button lit it at paint time while the motion damaged nothing there, so
 // the next partial frame (a keystroke in the sidebar) left it unlit. The banner's
@@ -3665,6 +3696,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/FindWidgetReplaceRepaintsTheDirtyTab",
           TestFindWidgetReplaceRepaintsTheDirtyTab);
   AddTest(tests, "QaFlowRegression/BannerReloadRepaintsTheCleanTab", TestBannerReloadRepaintsTheCleanTab);
+  AddTest(tests, "QaFlowRegression/ThePointerLeavingATabOverflowChipRepaintsIt",
+          TestThePointerLeavingATabOverflowChipRepaintsIt);
   AddTest(tests, "QaFlowRegression/ThePointerOnABannerButtonRepaintsItsHover",
           TestThePointerOnABannerButtonRepaintsItsHover);
   AddTest(tests, "QaFlowRegression/TabDragDropPreviewPaints", TestTabDragDropPreviewPaints);

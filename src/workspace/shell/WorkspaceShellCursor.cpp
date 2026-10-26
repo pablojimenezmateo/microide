@@ -25,6 +25,19 @@ namespace {
 
 constexpr float kWindowFrameHitThickness = 6.0f;
 
+// A strip's overflow chip ("<3", "5>") under the point: it lights on hover like a
+// tab, so the hover probe must name it (QA monkey, qa-asan seed 3).
+std::optional<SDL_FRect> OverflowChipAt(const TabStripOverflowControls& overflow, float x,
+                                        float y) {
+  if (overflow.hidden_left > 0 && Contains(overflow.left_button, x, y)) {
+    return overflow.left_button;
+  }
+  if (overflow.hidden_right > 0 && Contains(overflow.right_button, x, y)) {
+    return overflow.right_button;
+  }
+  return std::nullopt;
+}
+
 SDL_HitTestResult ResizeHitTestResult(bool left, bool right, bool top, bool bottom) {
   if (top && left) {
     return SDL_HITTEST_RESIZE_TOPLEFT;
@@ -1034,13 +1047,15 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
 
   // Project tab strip.
   if (layout.project_tab_strip.w > 0.0f && Contains(layout.project_tab_strip, x, y)) {
-    for (const VisibleStripTab& tab :
-         tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip)) {
+    const auto& project_tabs = tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
+    for (const VisibleStripTab& tab : project_tabs) {
       if (Contains(tab.rect, x, y)) {
         return tab.rect;
       }
     }
-    return std::nullopt;
+    return OverflowChipAt(
+        tab_strip_chrome_.ComputeProjectTabOverflowControls(layout.project_tab_strip, project_tabs),
+        x, y);
   }
 
   // Per-group editor tab strips.
@@ -1051,12 +1066,14 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
       if (strip.w <= 0.0f || strip.h <= 0.0f || !Contains(strip, x, y)) {
         continue;
       }
-      for (const VisibleStripTab& tab : tab_strip_chrome_.ComputeVisibleTabsForGroup(gi, strip)) {
+      const auto& tabs = tab_strip_chrome_.ComputeVisibleTabsForGroup(gi, strip);
+      for (const VisibleStripTab& tab : tabs) {
         if (Contains(tab.rect, x, y)) {
           return tab.rect;
         }
       }
-      return std::nullopt;
+      return OverflowChipAt(tab_strip_chrome_.ComputeTabOverflowControlsForGroup(gi, strip, tabs),
+                            x, y);
     }
   }
 
@@ -1198,13 +1215,21 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
                  kWorkspaceBottomPanelHeaderHeight);
     if (Contains(panel_header, x, y)) {
-      for (const VisibleStripTab& tab : tab_strip_service_.ComputeVisibleBottomPanelTabs(
-               context_.current_project_state, panel_header, layout_mode_service_.CurrentMode(),
-               [this](std::string_view text) { return text_renderer_.MeasureWidth(text); },
-               output_channels_.Channels())) {
+      const auto& panel_tabs = tab_strip_service_.ComputeVisibleBottomPanelTabs(
+          context_.current_project_state, panel_header, layout_mode_service_.CurrentMode(),
+          [this](std::string_view text) { return text_renderer_.MeasureWidth(text); },
+          output_channels_.Channels());
+      for (const VisibleStripTab& tab : panel_tabs) {
         if (Contains(tab.rect, x, y)) {
           return tab.rect;
         }
+      }
+      if (const auto chip = OverflowChipAt(
+              tab_strip_service_.ComputeBottomPanelTabOverflowControls(
+                  context_.current_project_state, panel_header, layout_mode_service_.CurrentMode(),
+                  panel_tabs, output_channels_.Channels()),
+              x, y)) {
+        return chip;
       }
       // The header's buttons (new terminal, maximize/restore) light up too.
       const LayoutMode mode = layout_mode_service_.CurrentMode();
