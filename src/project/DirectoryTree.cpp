@@ -355,13 +355,11 @@ void DirectoryTree::RebuildEntries() {
     return;
   }
 
-  auto matcher = std::make_shared<IgnoreMatcher>();
-  matcher->SetRoot(root_);
-  // Seed the same defaults + user excludes the index/finder use, so VCS metadata,
-  // dependency, and build-output dirs render grayed (ignored) here rather than as
-  // normal entries — and stay consistent with what the finder indexes.
-  matcher->AddDefaultRules();
-  matcher->AddExcludeGlobs(exclude_globs_);
+  // The same chain the index/finder walk from, so VCS metadata, dependency, and
+  // build-output dirs render grayed (ignored) here rather than as normal entries --
+  // and stay consistent with what the finder indexes.
+  const std::shared_ptr<const IgnoreMatcher> matcher =
+      IgnoreMatcher::ForProjectRoot(root_, exclude_globs_);
   entries_.push_back(TreeEntry{
       .path = root_,
       .label = DisplayName(root_),

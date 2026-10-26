@@ -1,6 +1,7 @@
 #include "platform/FileWatcher.h"
 
 #include "platform/DescriptorRetire.h"
+#include "platform/DirectoryWalk.h"
 #include "util/PathMatch.h"
 #include "util/PerformanceTrace.h"
 
@@ -55,35 +56,25 @@ std::vector<std::filesystem::path> CollectRecursiveWatchPaths(
       continue;
     }
 
-    std::error_code error;
-    constexpr auto options = std::filesystem::directory_options::skip_permission_denied;
-    for (std::filesystem::recursive_directory_iterator it(root, options, error), end;
-         !error && it != end; it.increment(error)) {
+    const WalkStatus status = WalkDirectoryTree(root, WalkOptions{}, [&](const WalkEntry& entry) {
       if (max_entries != 0 && ++visited > max_entries) {
         budget_exhausted = true;
-        break;
+        return WalkAction::Stop;
       }
-      std::error_code status_error;
-      const PathType type = EntryPathType(*it, status_error);
-      if (status_error) {
-        continue;
+      if (entry.type == PathType::Missing) {
+        return WalkAction::Continue;
       }
-      // Guarded normalization: a directory iterator hands back an already-normal
-      // path, and `lexically_normal()` is ~12 allocations even when it changes
-      // nothing (TD-2026-08-10-174). This ran unguarded on every entry.
-      std::filesystem::path path_scratch;
-      const std::filesystem::path& path = util::NormalizedPathView(it->path(), path_scratch);
-      if (filter && !filter(path, type)) {
-        if (type == PathType::Directory) {
-          it.disable_recursion_pending();
-        }
-        continue;
+      const std::filesystem::path path(entry.path);
+      if (filter && !filter(path, entry.type)) {
+        return WalkAction::Prune;
       }
-      if (type == PathType::Directory) {
+      if (entry.type == PathType::Directory) {
         watch_paths.push_back(path);
       }
-    }
-    if (error) {
+      return WalkAction::Continue;
+    });
+    // A subtree the walk could not read is a subtree nothing watches.
+    if (status.root_unreadable || status.incomplete) {
       requires_polling = true;
     }
   }

@@ -32,6 +32,10 @@ class ProjectTraversalFilter {
   // pruned from indexing/watching. Directories that return false are also pruned
   // from recursion by the caller (disable_recursion_pending).
   bool Includes(const std::filesystem::path& path, platform::PathType type);
+  // The same question about a path's native text, which is what a
+  // WalkDirectoryTree entry carries: nothing is built per entry, only once per
+  // directory on its first entry.
+  bool Includes(std::string_view path_native, platform::PathType type);
 
   // Convenience for the inotify registration path, which only ever asks about
   // directories.
@@ -40,6 +44,9 @@ class ProjectTraversalFilter {
   }
 
  private:
+  // Both public forms, once the text is known to be lexically normal.
+  bool IncludesNormalized(std::string_view normalized_text, platform::PathType type);
+
   // Everything cached per directory the walk enters. Both members answer a
   // question whose answer is the same for every entry in that directory, and both
   // used to be recomputed per ENTRY.
@@ -63,8 +70,7 @@ class ProjectTraversalFilter {
   // per walk). Returns null for an entry that sits directly in the project root,
   // which has no ancestor chain to check and needs no cache entry; the caller uses
   // the root matcher then.
-  DirectoryState* StateForParentDirectoryText(std::string_view directory_native,
-                                              const std::filesystem::path& normalized_child);
+  DirectoryState* StateForParentDirectoryText(std::string_view directory_native);
 
   std::filesystem::path root_;
   // `root_.native()`, computed once. `Includes` compares a candidate's own text

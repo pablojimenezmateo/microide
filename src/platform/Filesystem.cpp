@@ -6,6 +6,7 @@
 
 #include <sys/stat.h>
 
+#include "platform/DirectoryWalk.h"
 #include "util/PathMatch.h"
 
 namespace microide::platform {
@@ -117,7 +118,7 @@ std::vector<TreeSnapshotEntry> CaptureTreeSnapshot(const std::vector<std::filesy
     }
     snapshot.push_back(TreeSnapshotEntry{
         // Both call sites hand in an already-normal path (a normalized root, or
-        // a directory-iterator entry); the guard keeps the no-op off the walk.
+        // an entry of a walk from one); the guard keeps the no-op off the walk.
         .path = util::NormalizedPath(path),
         .type = type,
         .size = size,
@@ -138,35 +139,25 @@ std::vector<TreeSnapshotEntry> CaptureTreeSnapshot(const std::vector<std::filesy
       continue;
     }
 
-    std::error_code error;
-    constexpr auto options = std::filesystem::directory_options::skip_permission_denied;
-    for (std::filesystem::recursive_directory_iterator it(root, options, error), end;
-         !error && it != end; it.increment(error)) {
+    (void) WalkDirectoryTree(root, WalkOptions{}, [&](const WalkEntry& entry) {
       if (max_entries != 0 && ++visited > max_entries) {
         budget_exhausted = true;
-        break;
+        return WalkAction::Stop;
       }
-      std::error_code status_error;
-      const PathType type = EntryPathType(*it, status_error);
-      if (status_error) {
-        continue;
+      if (entry.type == PathType::Missing) {
+        return WalkAction::Continue;
       }
-      // Guarded normalization: see EntryPathType's note. A directory iterator's
-      // path is already normal, and the unguarded call was ~12 allocations per
-      // entry of every poll re-walk.
-      std::filesystem::path path_scratch;
-      const std::filesystem::path& path = util::NormalizedPathView(it->path(), path_scratch);
-      if (filter && !filter(path, type)) {
-        if (type == PathType::Directory) {
-          it.disable_recursion_pending();
-        }
-        continue;
+      // The filter speaks `path`, so the entry pays for one here; the walk itself
+      // built none.
+      const std::filesystem::path path(entry.path);
+      if (filter && !filter(path, entry.type)) {
+        return WalkAction::Prune;
       }
-      if (type == PathType::Directory) {
-        continue;
+      if (entry.type != PathType::Directory) {
+        append_entry(path, entry.type);
       }
-      append_entry(path, type);
-    }
+      return WalkAction::Continue;
+    });
   }
 
   if (budget_exhausted && truncated != nullptr) {

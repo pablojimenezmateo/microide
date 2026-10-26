@@ -29,12 +29,20 @@ class IgnoreMatcher {
   // whole-tree walk built a layer per DIRECTORY, so a query at depth 4 walked four
   // matchers to reach one non-empty rule set — and a real tree has a handful of
   // `.gitignore` files among thousands of directories. Now the chain has one layer
-  // per ignore file. The three walks that each spelled this out (the traversal
-  // filter, the project file scanner, the sidebar tree) share it here rather than
-  // keeping three copies that could disagree about what a directory inherits.
+  // per ignore file. The walks that each spelled this out (the traversal filter,
+  // the sidebar tree, and the project file scanner before it used the filter)
+  // share it here rather than keeping copies that could disagree about what a
+  // directory inherits.
   static std::shared_ptr<const IgnoreMatcher> ForDirectory(
       const std::shared_ptr<const IgnoreMatcher>& parent,
       const std::filesystem::path& directory);
+
+  // The root of a project's chain: its `.gitignore`, the built-in defaults over
+  // it, and the user's excludes over both, in that precedence. Every walk that
+  // decides what a project contains starts from this one, so they cannot disagree
+  // about the top of the chain.
+  static std::shared_ptr<IgnoreMatcher> ForProjectRoot(
+      const std::filesystem::path& root, const std::vector<std::string>& exclude_globs);
 
   bool SetRoot(const std::filesystem::path& root);
   void LoadIgnoreFile(const std::filesystem::path& path);

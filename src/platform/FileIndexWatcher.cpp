@@ -1,6 +1,7 @@
 #include "platform/FileIndexWatcher.h"
 
 #include "platform/DescriptorRetire.h"
+#include "platform/DirectoryWalk.h"
 #include "platform/Filesystem.h"
 #include "project/ProjectTraversalFilter.h"
 #include "util/Log.h"
@@ -140,6 +141,11 @@ bool ShouldSkipWatchedDirectory(const std::filesystem::path& directory,
   return filter != nullptr && filter->ShouldSkipDirectory(directory);
 }
 
+bool ShouldSkipWatchedDirectory(std::string_view directory_native,
+                                project::ProjectTraversalFilter* filter) {
+  return filter != nullptr && !filter->Includes(directory_native, platform::PathType::Directory);
+}
+
 bool TryBuildTrackedRelativePath(const std::filesystem::path& absolute_path,
                                  const std::filesystem::path& root,
                                  std::filesystem::path& relative_path) {
@@ -159,25 +165,87 @@ bool TryBuildTrackedRelativePath(const std::filesystem::path& absolute_path,
   return true;
 }
 
-// Called once per KEPT directory (post-prune, pre-descend) by the walk below.
-// The native backend registers an inotify watch here, which is what lets the
-// watch registration and the file scan share one traversal instead of running
-// two identical ones over the same tree.
-using DirectoryVisitor = std::function<void(const std::filesystem::path&)>;
+// Called once per KEPT directory (post-prune, pre-descend) by the walk below,
+// with the directory's path text. The native backend registers an inotify watch
+// here, which is what lets the watch registration and the file scan share one
+// traversal instead of running two identical ones over the same tree.
+using DirectoryVisitor = std::function<void(std::string_view)>;
 
-// Build an initial IndexUpdateBatch by scanning root recursively, pruning excluded
-// directories (VCS/build/deps/nested-.gitignore) and files, and stopping once
-// `max_entries` kept files have been collected (batch.truncated is then set).
-// Shared tree walk: append a CreatedOrModified change for every tracked regular file
-// under `walk_root`, with paths relative to `index_root`, stopping once `changes`
-// reaches `max_entries`. Returns true if that budget was hit (truncated). Both the
-// initial full scan and the incremental subtree scans (moved-in dir, overflow
-// recovery) go through here so the ignore/prune/relative-path rules stay identical.
+// Each kept regular file, by absolute path and by path relative to the index
+// root. Returns false once no more files are wanted.
+using TrackedFileVisitor =
+    std::function<bool(const std::filesystem::path& absolute, std::filesystem::path relative)>;
+
+// The tracked tree under `walk_root`, which is what the index holds and the
+// watchers watch: excluded directories (VCS/build/deps/nested-.gitignore) pruned
+// before they are entered, so they cost nothing; every kept directory to
+// `on_directory` (when set); every kept regular file to `on_file`, relative to
+// `index_root`. Once `on_file` has had enough, the walk goes on for the
+// directories alone if `on_directory` wants them, and ends otherwise.
+//
+// The one walk behind the initial scan, the incremental subtree scans (moved-in
+// dir, overflow recovery) and the poll snapshot, so a baseline seeded from an
+// initial batch and a snapshot taken later describe the same file set by
+// construction rather than by two loops kept alike.
+void WalkTrackedTree(const std::filesystem::path& walk_root,
+                     const std::filesystem::path& index_root,
+                     project::ProjectTraversalFilter* filter,
+                     const std::atomic<bool>* stop_requested,
+                     const DirectoryVisitor& on_directory,
+                     const TrackedFileVisitor& on_file) {
+  bool files_wanted = true;
+  (void) platform::WalkDirectoryTree(
+      walk_root, platform::WalkOptions{}, [&](const platform::WalkEntry& entry) {
+        if (stop_requested != nullptr && stop_requested->load(std::memory_order_acquire)) {
+          return platform::WalkAction::Stop;
+        }
+        if (entry.type == platform::PathType::Directory) {
+          if (ShouldSkipWatchedDirectory(entry.path, filter)) {
+            return platform::WalkAction::Prune;
+          }
+          if (on_directory) {
+            on_directory(entry.path);
+          }
+          return platform::WalkAction::Continue;
+        }
+        if (entry.type != platform::PathType::RegularFile || !files_wanted) {
+          return platform::WalkAction::Continue;
+        }
+        // File-level ignore check (parity with the finder/tree) FIRST, on the
+        // entry's text: an ignored file whose parent directory was not itself
+        // pruned is still excluded, and most of what a walk sees is that case. On
+        // this repo the walk visits ~52,000 entries and keeps 8,000 -- the other
+        // 44,000 are individually ignored files (fuzz corpora, generated fixtures)
+        // in directories that are not themselves ignored. Only a kept file builds
+        // a path, and the poll walk runs every interval, forever.
+        if (filter != nullptr && !filter->Includes(entry.path, platform::PathType::RegularFile)) {
+          return platform::WalkAction::Continue;
+        }
+        const std::filesystem::path abs_path(entry.path);
+        std::filesystem::path rel;
+        if (!TryBuildTrackedRelativePath(abs_path, index_root, rel)) {
+          return platform::WalkAction::Continue;
+        }
+        if (!on_file(abs_path, std::move(rel))) {
+          files_wanted = false;
+          if (!on_directory) {
+            return platform::WalkAction::Stop;
+          }
+        }
+        return platform::WalkAction::Continue;
+      });
+}
+
+// Append a CreatedOrModified change for every tracked regular file under
+// `walk_root`, stopping once `changes` reaches `max_entries`. Returns true if that
+// budget was hit (truncated).
 //
 // `on_directory`, when set, is invoked for every directory the filter keeps. Every
 // caller that wanted the directory set wanted the file set from the same tree at
 // the same moment (project open, a moved-in subtree, overflow recovery), and each
-// was walking twice to get them.
+// was walking twice to get them. A tree whose file count exceeds the budget still
+// has its directories walked in full for it, exactly as the separate registration
+// walk used to do.
 bool CollectTrackedCreations(const std::filesystem::path& walk_root,
                              const std::filesystem::path& index_root,
                              project::ProjectTraversalFilter* filter,
@@ -186,80 +254,19 @@ bool CollectTrackedCreations(const std::filesystem::path& walk_root,
                              std::vector<IndexUpdateBatch::Change>* changes,
                              const DirectoryVisitor& on_directory = {}) {
   bool truncated = false;
-  std::error_code error;
-  constexpr auto options = std::filesystem::directory_options::skip_permission_denied;
-  // Reused across the whole walk: `NormalizedPathView` only writes into it for an
-  // oddly-spelled entry, which a directory iterator does not produce. The owning
-  // `NormalizedPath` form here was a path COPY -- two allocations per file of the
-  // tree -- to reproduce its own input.
-  std::filesystem::path normalize_scratch;
-  for (std::filesystem::recursive_directory_iterator it(walk_root, options, error), end;
-       !error && it != end; it.increment(error)) {
-    if (stop_requested != nullptr && stop_requested->load(std::memory_order_acquire)) {
-      break;
-    }
-    std::error_code status_error;
-    // EntryPathType, not status(): the type readdir already reported, instead of
-    // one newfstatat per entry of the whole tree (see platform/Filesystem.h).
-    const platform::PathType type = platform::EntryPathType(*it, status_error);
-    if (status_error) {
-      continue;
-    }
-    if (type == platform::PathType::Directory) {
-      // Prune excluded subtrees before descending so they cost zero budget.
-      if (ShouldSkipWatchedDirectory(it->path(), filter)) {
-        it.disable_recursion_pending();
-        continue;
-      }
-      if (on_directory) {
-        on_directory(it->path());
-      }
-      continue;
-    }
-    if (type != platform::PathType::RegularFile) {
-      continue;
-    }
-    if (truncated) {
-      continue;  // file budget spent; still walking so watches keep being registered
-    }
-    const std::filesystem::path& abs_path = util::NormalizedPathView(it->path(), normalize_scratch);
-    // File-level ignore check (parity with the finder/tree) FIRST: an ignored file
-    // whose parent directory was not itself pruned is still excluded from the
-    // index, and most of what a walk sees is that case. On this repo the walk
-    // visits ~52,000 entries and keeps 8,000 — the other 44,000 are individually
-    // ignored files (fuzz corpora, generated fixtures) sitting in directories that
-    // are not themselves ignored, so they cannot be pruned.
-    //
-    // `Includes` derives its own relative view and allocates nothing.
-    // `TryBuildTrackedRelativePath` materializes a `std::filesystem::path`, which
-    // libstdc++ builds with an eager component list — two allocations. Running it
-    // before the rejection meant paying both for every ignored file. Both are pure
-    // predicates, so the order is free to change; every rejection either one made
-    // before, it still makes.
-    if (filter != nullptr && !filter->Includes(abs_path, platform::PathType::RegularFile)) {
-      continue;
-    }
-    std::filesystem::path rel;
-    if (!TryBuildTrackedRelativePath(abs_path, index_root, rel)) {
-      continue;
-    }
-    if (changes->size() >= max_entries) {
-      truncated = true;
-      // Without a directory visitor there is nothing left to collect, so stop.
-      // With one, the walk continues for watches only: a tree whose file count
-      // exceeds the budget still has to be watched in full, exactly as the
-      // separate registration walk used to do.
-      if (!on_directory) {
-        return true;
-      }
-      continue;
-    }
-    IndexUpdateBatch::Change change;
-    change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
-    change.entry.relative_path = std::move(rel);
-    StampEntryMetadata(abs_path, change.entry);
-    changes->push_back(std::move(change));
-  }
+  WalkTrackedTree(walk_root, index_root, filter, stop_requested, on_directory,
+                  [&](const std::filesystem::path& absolute, std::filesystem::path relative) {
+                    if (changes->size() >= max_entries) {
+                      truncated = true;
+                      return false;
+                    }
+                    IndexUpdateBatch::Change change;
+                    change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
+                    change.entry.relative_path = std::move(relative);
+                    StampEntryMetadata(absolute, change.entry);
+                    changes->push_back(std::move(change));
+                    return true;
+                  });
   return truncated;
 }
 
@@ -298,17 +305,17 @@ class PollStopSignal {
   bool stopped_ = false;
 };
 
-// One tree walk producing the poll backend's snapshot (relative path -> mtime+size).
-// Filtering is deliberately identical to CollectTrackedCreations (directory prune,
-// tracked-relative check, file-level ignore), so a baseline seeded from an initial
-// batch and a snapshot taken here describe the same file set.
+// One tree walk producing the poll backend's snapshot (relative path -> mtime+size),
+// over the same tracked tree as CollectTrackedCreations (WalkTrackedTree), so a
+// baseline seeded from an initial batch and a snapshot taken here describe the same
+// file set.
 //
 // `out_directory_signature` (optional) accumulates a hash of every KEPT directory
 // the walk visited. The snapshot itself holds regular files only, so an empty
 // directory created or removed between two polls is invisible in the diff; the
 // signature is what lets the poll backend still report `tree_structure_changed`.
-// It is combined commutatively (recursive_directory_iterator order is not
-// contractual) and costs one hash of an existing string per directory.
+// It is combined commutatively (a directory's listing order is not contractual)
+// and costs one hash of an existing string per directory.
 detail::FileIndexSnapshot BuildPollSnapshot(const std::filesystem::path& root,
                                             const std::vector<std::string>& exclude_globs,
                                             std::uint64_t* out_directory_signature = nullptr) {
@@ -321,50 +328,23 @@ detail::FileIndexSnapshot BuildPollSnapshot(const std::filesystem::path& root,
   detail::FileIndexSnapshot result;
   std::uint64_t directory_signature = 0;
   project::ProjectTraversalFilter filter(root, exclude_globs);
-  std::error_code error;
-  constexpr auto opts = std::filesystem::directory_options::skip_permission_denied;
-  std::filesystem::path normalize_scratch;
-  for (std::filesystem::recursive_directory_iterator it(root, opts, error), end;
-       !error && it != end; it.increment(error)) {
-    std::error_code status_error;
-    const platform::PathType type = platform::EntryPathType(*it, status_error);
-    if (status_error) {
-      continue;
-    }
-    if (type == platform::PathType::Directory) {
-      if (ShouldSkipWatchedDirectory(it->path(), &filter)) {
-        it.disable_recursion_pending();
-        continue;
-      }
-      if (out_directory_signature != nullptr) {
-        // Commutative combine (sum), so the walk order never changes the answer.
-        // The odd multiplier keeps a rename that permutes names from cancelling.
-        directory_signature +=
-            std::hash<std::string_view>{}(std::string_view(it->path().native())) * 0x9E3779B9ull +
-            0x632BE59Bull;
-      }
-      continue;
-    }
-    if (type != platform::PathType::RegularFile) {
-      continue;
-    }
-    // Same shape as CollectTrackedCreations above, for the same reason and with
-    // more force: this loop runs every poll interval, forever, so an ignored file
-    // costs its two relative-path allocations again on every scan. Reject first,
-    // materialize after. The path view avoids the owning copy of an input that is
-    // already normal.
-    const std::filesystem::path& abs_path = util::NormalizedPathView(it->path(), normalize_scratch);
-    if (!filter.Includes(abs_path, platform::PathType::RegularFile)) {
-      continue;
-    }
-    std::filesystem::path rel;
-    if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
-      continue;
-    }
-    const std::optional<FileMetadata> metadata = ReadFileMetadata(abs_path);
-    result[std::move(rel)] = {metadata ? metadata->mtime : std::filesystem::file_time_type{},
-                            metadata ? metadata->size : 0};
+  DirectoryVisitor sign_directory;
+  if (out_directory_signature != nullptr) {
+    sign_directory = [&directory_signature](std::string_view directory) {
+      // Commutative combine (sum), so the walk order never changes the answer.
+      // The odd multiplier keeps a rename that permutes names from cancelling.
+      directory_signature +=
+          std::hash<std::string_view>{}(directory) * 0x9E3779B9ull + 0x632BE59Bull;
+    };
   }
+  WalkTrackedTree(root, root, &filter, /*stop_requested=*/nullptr, sign_directory,
+                  [&result](const std::filesystem::path& absolute, std::filesystem::path relative) {
+                    const std::optional<FileMetadata> metadata = ReadFileMetadata(absolute);
+                    result[std::move(relative)] = {
+                        metadata ? metadata->mtime : std::filesystem::file_time_type{},
+                        metadata ? metadata->size : 0};
+                    return true;
+                  });
   if (out_directory_signature != nullptr) {
     *out_directory_signature = directory_signature;
   }
@@ -678,7 +658,7 @@ struct FileIndexWatcher::Impl {
     bool added = false;
     bool watches_ok = AddSingleWatch(dir, filter, added);
 
-    const DirectoryVisitor register_watch = [&](const std::filesystem::path& subdir_path) {
+    const DirectoryVisitor register_watch = [&](std::string_view subdir_text) {
       if (!watches_ok) {
         return;
       }
@@ -686,7 +666,7 @@ struct FileIndexWatcher::Impl {
         watches_ok = false;  // budget exhausted -> partial-tree degradation
         return;
       }
-      std::filesystem::path subdir = util::NormalizedPath(subdir_path);
+      std::filesystem::path subdir = util::NormalizedPath(std::filesystem::path(subdir_text));
       const int sub_wd = inotify_add_watch(inotify_fd, subdir.c_str(), kInotifyMask);
       if (sub_wd < 0) {
         if (errno == ENOSPC) {

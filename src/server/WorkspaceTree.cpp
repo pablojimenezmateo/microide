@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "persistence/PersistedRecordReader.h"
+#include "platform/DirectoryWalk.h"
 #include "persistence/PersistedRecordWriter.h"
 #include "platform/ProcessLauncher.h"
 #include "project/GitMetadataSource.h"
@@ -256,39 +257,29 @@ std::optional<std::vector<std::string>> WorkspaceTree::ContentSet(bool* git, std
     return std::nullopt;
   }
   project::ProjectTraversalFilter filter(root_);
-  std::filesystem::recursive_directory_iterator it(
-      root_, std::filesystem::directory_options::skip_permission_denied, ec);
-  if (ec) {
-    *error = "cannot read " + root_.string() + ": " + ec.message();
+  const platform::WalkStatus status =
+      platform::WalkDirectoryTree(root_, platform::WalkOptions{}, [&](const platform::WalkEntry& entry) {
+        // A link is shipped as what it is, never as its target's tree: classify by
+        // the entry itself (symlink_status), so a link to a directory is a file
+        // here and is not descended.
+        const bool directory = entry.type == platform::PathType::Directory && !entry.is_symlink;
+        const platform::PathType type =
+            directory ? platform::PathType::Directory : platform::PathType::RegularFile;
+        if (!filter.Includes(entry.path, type)) {
+          return platform::WalkAction::Prune;
+        }
+        if (directory) {
+          return platform::WalkAction::Continue;  // a file set: directories are implied
+        }
+        // Lexically, from the text: the walk spells every entry as the root plus
+        // its relative part.
+        paths.push_back(std::filesystem::path(entry.path).lexically_relative(root_).generic_string());
+        return paths.size() > options_.max_files ? platform::WalkAction::Stop
+                                                 : platform::WalkAction::Continue;
+      });
+  if (status.root_unreadable || status.incomplete) {
+    *error = "cannot read " + root_.string() + ": " + status.error.message();
     return std::nullopt;
-  }
-  for (const std::filesystem::recursive_directory_iterator end; it != end; it.increment(ec)) {
-    if (ec) {
-      *error = "cannot read " + root_.string() + ": " + ec.message();
-      return std::nullopt;
-    }
-    const std::filesystem::file_status status = it->symlink_status(ec);
-    if (ec) {
-      ec.clear();
-      continue;
-    }
-    const bool directory = std::filesystem::is_directory(status);
-    const platform::PathType type =
-        directory ? platform::PathType::Directory : platform::PathType::RegularFile;
-    if (!filter.Includes(it->path(), type)) {
-      if (directory) {
-        it.disable_recursion_pending();
-      }
-      continue;
-    }
-    if (directory) {
-      continue;  // a file set: directories are implied by their contents
-    }
-    // Lexically: `relative()` canonicalizes, which resolves a link to its target.
-    paths.push_back(it->path().lexically_relative(root_).generic_string());
-    if (paths.size() > options_.max_files) {
-      break;
-    }
   }
   return paths;
 }

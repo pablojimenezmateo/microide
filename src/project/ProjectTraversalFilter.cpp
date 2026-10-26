@@ -19,33 +19,35 @@ ProjectTraversalFilter::ProjectTraversalFilter(std::filesystem::path root,
     root_ = root_.parent_path();
   }
   root_native_ = root_.native();
-  auto root_matcher = std::make_shared<IgnoreMatcher>();
-  root_matcher->SetRoot(root_);
-  // Defaults after the root .gitignore so they take precedence; user excludes last
-  // so an explicit "!name/" re-include wins over both.
-  root_matcher->AddDefaultRules();
-  root_matcher->AddExcludeGlobs(extra_excludes);
-  root_matcher_ = std::move(root_matcher);
+  root_matcher_ = IgnoreMatcher::ForProjectRoot(root_, extra_excludes);
 }
 
 bool ProjectTraversalFilter::Includes(const std::filesystem::path& path, platform::PathType type) {
+  // `lexically_normal()` is ~12 allocations and a no-op for the normalized paths
+  // a walk hands us (TD-2026-08-10-174), so it only runs for an unusually spelled
+  // input.
+  if (util::PathTextNeedsNormalizing(path.native())) {
+    return IncludesNormalized(path.lexically_normal().native(), type);
+  }
+  return IncludesNormalized(path.native(), type);
+}
+
+bool ProjectTraversalFilter::Includes(std::string_view path_native, platform::PathType type) {
+  if (util::PathTextNeedsNormalizing(path_native)) {
+    return IncludesNormalized(std::filesystem::path(path_native).lexically_normal().native(), type);
+  }
+  return IncludesNormalized(path_native, type);
+}
+
+bool ProjectTraversalFilter::IncludesNormalized(std::string_view normalized_text,
+                                                platform::PathType type) {
   if (root_.empty()) {
     return true;
   }
   util::AddPerformanceCounter(util::PerfCounterId::ProjectIgnoreFilterQueries);
   // This runs ONCE PER FILESYSTEM ENTRY of every index walk, the poll re-walk, the
-  // inotify registration, the sidebar tree and the project scanner — so the whole
-  // body below is written to derive its answer from views into the caller's own
-  // path text rather than from `path` temporaries. `lexically_normal()` alone is
-  // ~12 allocations and a no-op for the normalized paths a directory iterator
-  // hands us (TD-2026-08-10-174), so it only runs for an unusually spelled input.
-  std::filesystem::path normalized_storage;
-  const std::filesystem::path* normalized = &path;
-  if (util::PathTextNeedsNormalizing(path.native())) {
-    normalized_storage = path.lexically_normal();
-    normalized = &normalized_storage;
-  }
-  const std::string_view normalized_text = normalized->native();
+  // inotify registration, the sidebar tree and the project scanner -- so the whole
+  // body below derives its answer from views into the caller's own path text.
   if (normalized_text == root_native_) {
     return true;
   }
@@ -53,9 +55,8 @@ bool ProjectTraversalFilter::Includes(const std::filesystem::path& path, platfor
   // (lexically_relative would yield a "../…" relative that the old prefix
   // derivation accepted). Reject it outright so a watcher/scanner/helper event for an
   // out-of-root file cannot pass the filter and feed out-of-root indexing.
-  // Both sides are already normalized (`normalized` just above, root_ in the
-  // constructor), so use the allocation-free variant.
-  if (!util::NormalizedPathEqualsOrWithin(*normalized, root_)) {
+  // Both sides are normalized, so the allocation-free form applies.
+  if (!util::NormalizedPathTextEqualsOrWithin(normalized_text, root_native_)) {
     return false;
   }
 
@@ -68,8 +69,8 @@ bool ProjectTraversalFilter::Includes(const std::filesystem::path& path, platfor
     return true;
   }
 
-  DirectoryState* const state = StateForParentDirectoryText(
-      util::NormalizedParentDirectoryView(normalized_text), *normalized);
+  DirectoryState* const state =
+      StateForParentDirectoryText(util::NormalizedParentDirectoryView(normalized_text));
   const IgnoreMatcher& matcher = state != nullptr ? *state->matcher : *root_matcher_;
 
   // Ancestor chain first, because it is one cached byte after the first entry in
@@ -79,8 +80,8 @@ bool ProjectTraversalFilter::Includes(const std::filesystem::path& path, platfor
   //
   // Walk the chain by trimming `relative` at each separator, innermost first — the
   // same sequence `parent_path()` would yield, without a path per ancestor.
-  // (Ignored directories are also pruned via disable_recursion_pending in the
-  // walk, so this is defense-in-depth for the callers that ask about one path.)
+  // (Ignored directories are also pruned by the walk, so this is defense-in-depth
+  // for the callers that ask about one path.)
   // The answer depends only on the parent directory, so it is computed once per
   // directory rather than once per entry: this loop used to be ~70 % of a
   // whole-tree scan, running the whole rule set once per path component of every
@@ -114,7 +115,7 @@ bool ProjectTraversalFilter::Includes(const std::filesystem::path& path, platfor
 }
 
 ProjectTraversalFilter::DirectoryState* ProjectTraversalFilter::StateForParentDirectoryText(
-    std::string_view directory_native, const std::filesystem::path& normalized_child) {
+    std::string_view directory_native) {
   // The two answers that dominate a walk — "this entry sits directly in the
   // project root" and "this directory's state is already cached" — are both
   // reachable from the candidate's own text, so neither builds a path or a key.
@@ -127,9 +128,9 @@ ProjectTraversalFilter::DirectoryState* ProjectTraversalFilter::StateForParentDi
     return &existing->second;
   }
   // First entry seen in this directory: build the matcher through the general
-  // form, which owns the recursion, the .gitignore load and the key insert.
-  // `normalized_child`'s parent is normalized because `normalized_child` is.
-  MatcherForParentDirectory(normalized_child.parent_path());
+  // form, which owns the recursion, the .gitignore load and the key insert. The
+  // directory's text is normalized because the entry's is.
+  MatcherForParentDirectory(std::filesystem::path(directory_native));
   const auto inserted = directory_states_.find(directory_native);
   // MatcherForParentDirectory returns the root matcher without caching when the
   // directory is the root or has no relative path; both leave the chain empty, so

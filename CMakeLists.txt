@@ -360,6 +360,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/platform/DescriptorRetire.cpp
   src/platform/FileIndexWatcher.cpp
   src/platform/FileWatcher.cpp
+  src/platform/DirectoryWalk.cpp
   src/platform/Filesystem.cpp
   src/platform/FsOps.cpp
   src/platform/HostIntegration.cpp
@@ -1570,6 +1571,7 @@ add_executable(microide_kernel_tests
   tests/FileIndexWatcherTests.cpp
   tests/FileReadServiceTests.cpp
   tests/FileTreeOpsTests.cpp
+  tests/DirectoryWalkTests.cpp
   tests/FilesystemTests.cpp
   tests/FlatDedupSetTests.cpp
   tests/GenerationTests.cpp
@@ -2063,6 +2065,7 @@ add_executable(microide_diff_bench
   src/platform/RuntimePaths.cpp
   src/platform/Subprocess.cpp
   src/platform/SubprocessSandbox.cpp
+  src/platform/DirectoryWalk.cpp
   src/platform/Filesystem.cpp
   src/platform/AsyncSubprocess.cpp
   src/platform/ProcessLauncher.cpp
@@ -2119,6 +2122,8 @@ add_executable(microide_search_bench
   src/project/GlobMatch.cpp
   src/project/IgnoreMatcher.cpp
   src/project/ProjectFileScanner.cpp
+  src/project/ProjectTraversalFilter.cpp
+  src/platform/DirectoryWalk.cpp
   src/project/ProjectSearchService.cpp
   src/util/TaskExecutor.cpp
   tools/ProjectSearchBench.cpp

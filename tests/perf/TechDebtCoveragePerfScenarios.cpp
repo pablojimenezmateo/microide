@@ -44,6 +44,7 @@
 #include "platform/Filesystem.h"
 #include "plugin/PluginHost.h"
 #include "plugin/PluginRegistryInterop.h"
+#include "project/ProjectFileScanner.h"
 #include "project/ProjectTraversalFilter.h"
 #include "util/PerformanceCounters.h"
 #include "util/TextFileIO.h"
@@ -978,6 +979,40 @@ const ScenarioRegistration g_perf_project_traversal_filter_deep_tree({Scenario{
     .tolerance_p95_percent = tolerance::kJitterWallP95,
     .tolerance_max_percent = tolerance::kJitterWallMax,
     .run = RunProjectTraversalFilterDeepTree,
+}});
+
+// The two scenarios above measure the filter's per-entry decision on paths built
+// in memory. Neither walks a directory, so the walk itself -- the readdir, the
+// classification, the per-entry path the old iterator built, which together were
+// the larger half of a whole-tree scan once the filter was fixed
+// (TD-2026-08-17-257) -- had no number at all. This is the project scan behind
+// the sidebar Refresh, over a real tree on disk: the shared walk, the shared
+// filter, the relative paths it returns.
+void RunProjectFileScanKernelTree(ScenarioContext& context) {
+  const std::filesystem::path fixture = "tests/perf/fixtures/kernel_sized_project";
+  if (!RequireFixture(context, fixture, "project_file_scan_kernel_tree")) {
+    return;
+  }
+  std::size_t scanned = 0;
+  context.Measure("project.file_scan_kernel_tree", [&]() {
+    scanned = project::CollectProjectFiles(fixture, project::ProjectFileScanMode::IncludeHidden)
+                  .size();
+  });
+  if (scanned < 1000) {
+    throw std::runtime_error("project_file_scan_kernel_tree: the scan found " +
+                             std::to_string(scanned) + " files, the fixture holds 1,200");
+  }
+}
+
+const ScenarioRegistration g_perf_project_file_scan_kernel_tree({Scenario{
+    .name = "project_file_scan_kernel_tree",
+    .smoke = false,
+    .baseline_gated = true,
+    // Iteration 0 reads the tree into the page cache; the rest measure the walk.
+    .warmup_iterations = 1,
+    .tolerance_p95_percent = tolerance::kJitterWallP95,
+    .tolerance_max_percent = tolerance::kJitterWallMax,
+    .run = RunProjectFileScanKernelTree,
 }});
 
 

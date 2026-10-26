@@ -71,6 +71,15 @@ bool IgnoreMatcher::SetRoot(const std::filesystem::path& root) {
   return true;
 }
 
+std::shared_ptr<IgnoreMatcher> IgnoreMatcher::ForProjectRoot(
+    const std::filesystem::path& root, const std::vector<std::string>& exclude_globs) {
+  auto matcher = std::make_shared<IgnoreMatcher>();
+  matcher->SetRoot(root);
+  matcher->AddDefaultRules();
+  matcher->AddExcludeGlobs(exclude_globs);
+  return matcher;
+}
+
 void IgnoreMatcher::AddDefaultRules() {
   // Directory-only, basename-matched (no '/') rules, so each name is pruned at any
   // depth exactly as the equivalent ".name/" line in a .gitignore would be.

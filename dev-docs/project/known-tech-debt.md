@@ -7440,7 +7440,7 @@ is an interaction should assert the interaction had an effect, in the phase, by
 name. Re-run the slack check after any pass that removes allocations — it is a
 few lines over `--report-json` and it is the only thing that sees a collapse.
 
-### TD-2026-08-17-257 — the file-index walk is single-threaded and is now ~90 % of the time to a usable project. [LARGELY RESOLVED 2026-08-17 — but not by the fix this entry proposed, and the reason is that the entry ruled out the real cost on bad evidence. Parallelism remains open and is now the wrong next step.]
+### TD-2026-08-17-257 — the file-index walk is single-threaded and is now ~90 % of the time to a usable project. [readdir walk RESOLVED 2026-10-26; LARGELY RESOLVED 2026-08-17 — but not by the fix this entry proposed, and the reason is that the entry ruled out the real cost on bad evidence. Parallelism remains open and is now the wrong next step.]
 
 **What this entry got wrong, and how.** It said "Not the ignore filter's decision
 either; `project_traversal_filter_scan` gates that phase at zero allocations."
@@ -7472,7 +7472,24 @@ shortening it further buys nothing on this machine's time-to-first-frame. What i
 would still buy is CPU (priority 3) and headroom on trees much larger than this
 one — which is a materially weaker case than the one this entry opened with.
 
-**What is left, measured.** With the filter fixed, iteration is now the larger
+**The readdir walk: RESOLVED 2026-10-26.** `platform::WalkDirectoryTree`
+(`platform/DirectoryWalk.h`) does depth-first, pre-order `openat`/`fdopendir`/
+`readdir` (every descriptor `O_CLOEXEC`), classifies from `d_type` with an
+`fstatat` only for a link or an unreported type, and keeps one reused path buffer.
+The visitor gets a `string_view` and `ProjectTraversalFilter::Includes` takes one,
+so a path is built only for a kept entry. Every whole-tree walk goes through it:
+the file index's scans and poll snapshot (`WalkTrackedTree`), the tree watcher's
+watch paths and snapshot, the project scanner, and the server's content set. Six
+copies of the iterator, prune, type and error handling are now one. The new gated
+scenario `project_file_scan_kernel_tree` (the sidebar Refresh scan, over the
+1,200-file fixture) A/B against 9201d8d6, three interleaved rounds: **0.763 ->
+0.505 ms, 12,483 -> 2,878 allocations**. The filter scenarios are unchanged
+(`project_traversal_filter_scan` 0.33 -> 0.32 ms). Tests: `DirectoryWalk/*`
+(equivalence with `recursive_directory_iterator`, types and links, prune, stop,
+follow, depth, unreadable directories, the Leave pairing). Parallelism stays
+filed as below, for the reasons below.
+
+**What was left, measured.** With the filter fixed, iteration is now the larger
 half: `recursive_directory_iterator` costs ~1.7 us per entry against ~0.66 us for
 a hand-rolled `opendir`/`readdir` walk with `d_type` and a reused path buffer
 (84,345 entries: 142 ms vs 56 ms, three passes each). On the pruned walk that is
@@ -7549,6 +7566,19 @@ Measured over three runs, each driving four to five scans through
 this — only a call counter, so a slow refresh was unattributable — and now has
 one. `util::NormalizedFileNameView` was added as the companion to the existing
 `NormalizedParentDirectoryView`.
+
+**Resolved 2026-10-26 (with TD-2026-08-17-257's walk).** The scanner is a
+`platform::TreeWalkVisitor` over `WalkDirectoryTree`, and what it keeps is
+`ProjectTraversalFilter`'s decision. Its own `IgnoreMatcher` chain is gone. What
+stays the scanner's own: the hidden-name mode, following directory symlinks under
+the `SymlinkLoopGuard` (one `Scope` per entered directory, popped in `Leave`), the
+entry budget and the status flags. The file index's initial scan, its subtree scans
+and the poll snapshot are one `WalkTrackedTree` with two visitors, rather than two
+loops "deliberately identical" by hand. The root of every chain is
+`IgnoreMatcher::ForProjectRoot` (the filter and the sidebar tree each seeded it
+themselves).
+
+Original note:
 
 **Still open in the same file, deliberately.** `CollectFiles` runs its own
 `IgnoreMatcher` chain rather than `ProjectTraversalFilter`, and

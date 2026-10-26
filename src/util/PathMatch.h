@@ -27,26 +27,25 @@ namespace microide::util {
 // filesystem entry of every index walk.
 //
 // Passing a NON-normalized path here is a caller bug, not UB: the answer then
-// simply reflects the textual form ("a/./b" is not seen as within "a/b").
-[[nodiscard]] inline bool NormalizedPathEqualsOrWithin(const std::filesystem::path& candidate,
-                                                       const std::filesystem::path& root) {
-  const std::filesystem::path::string_type& candidate_text = candidate.native();
-  const std::filesystem::path::string_type& root_text = root.native();
+// simply reflects the textual form ("a/./b" is not seen as within "a/b"). The
+// text form is the same question about two paths' native spellings.
+[[nodiscard]] inline bool NormalizedPathTextEqualsOrWithin(std::string_view candidate_text,
+                                                           std::string_view root_text) {
   if (candidate_text.empty() || root_text.empty()) {
     return false;
   }
   if (candidate_text == root_text) {
     return true;
   }
-  const auto is_separator = [](std::filesystem::path::value_type c) {
+  const auto is_separator = [](char c) {
     return c == '/';
   };
   // A "." root is the current directory, whose members are spelled without any
   // "./" prefix once normalized ("./x" normalizes to "x"), so the prefix compare
   // below would miss them. Every relative path that does not climb out is within.
   if (root_text.size() == 1 && root_text[0] == '.') {
-    if (candidate.is_absolute()) {
-      return false;
+    if (is_separator(candidate_text.front())) {
+      return false;  // absolute
     }
     const bool climbs_out = candidate_text.size() >= 2 && candidate_text[0] == '.' &&
                             candidate_text[1] == '.' &&
@@ -60,6 +59,11 @@ namespace microide::util {
   // A root that already ends in a separator ("/", "C:\") needs no extra one; any
   // other root must be followed by a separator so "/a/bc" is not "within" "/a/b".
   return is_separator(root_text.back()) || is_separator(candidate_text[root_text.size()]);
+}
+
+[[nodiscard]] inline bool NormalizedPathEqualsOrWithin(const std::filesystem::path& candidate,
+                                                       const std::filesystem::path& root) {
+  return NormalizedPathTextEqualsOrWithin(candidate.native(), root.native());
 }
 
 // True when `candidate` denotes the same location as `normalized_reference`, which

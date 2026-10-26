@@ -4,8 +4,9 @@
 #include <memory>
 #include <system_error>
 
+#include "platform/DirectoryWalk.h"
 #include "platform/Filesystem.h"
-#include "project/IgnoreMatcher.h"
+#include "project/ProjectTraversalFilter.h"
 #include "project/SymlinkLoopGuard.h"
 #include "util/PathMatch.h"
 #include "util/PerformanceTrace.h"
@@ -15,153 +16,77 @@ namespace microide::project {
 
 namespace {
 
-bool IsHiddenRelativeName(std::string_view relative_text) {
-  const std::string_view name = util::NormalizedFileNameView(relative_text);
-  return !name.empty() && name.front() == '.';
-}
+// The project scan as a walk visitor. What to keep is ProjectTraversalFilter's
+// decision, the one every whole-tree walk shares; this used to run its own
+// IgnoreMatcher chain beside it, "deliberately identical" by hand (TD-2026-08-17-256).
+// What is the scanner's own: the hidden-name mode, following directory symlinks
+// under a loop guard, the entry budget, and the relative paths it returns.
+class ScanVisitor final : public platform::TreeWalkVisitor {
+ public:
+  ScanVisitor(const std::filesystem::path& root, ProjectFileScanMode mode,
+              const std::vector<std::string>& exclude_globs, bool follow_out_of_root_symlinks,
+              std::size_t entry_budget, std::vector<std::filesystem::path>& files,
+              ProjectFileScanStatus& status)
+      : root_native_(root.native()),
+        mode_(mode),
+        filter_(root, exclude_globs),
+        loop_guard_(root, /*enforce_containment=*/!follow_out_of_root_symlinks),
+        entry_budget_(entry_budget),
+        files_(files),
+        status_(status) {}
 
-void CollectFiles(const std::filesystem::path& root,
-                  const std::filesystem::path& directory,
-                  const std::shared_ptr<const IgnoreMatcher>& matcher,
-                  ProjectFileScanMode mode,
-                  std::vector<std::filesystem::path>& files,
-                  SymlinkLoopGuard& loop_guard,
-                  int depth,
-                  std::size_t& visited,
-                  std::size_t entry_budget,
-                  ProjectFileScanStatus& status) {
-  if (depth > platform::kMaxTreeWalkDepth) {
-    // Too deep: stop descending rather than risk a stack overflow. The subtree
-    // beneath this point is dropped, so the resulting list is a prefix.
-    status.truncated_by_depth = true;
-    return;
-  }
-  // Handle the directory-open error explicitly (rather than relying on
-  // skip_permission_denied to swallow it silently) so a directory we cannot read
-  // is REPORTED as permission-limited instead of vanishing without a trace. The
-  // skip behavior is preserved: on any open error we simply do not descend.
-  std::error_code error;
-  std::filesystem::directory_iterator iterator(directory, error);
-  std::filesystem::directory_iterator end;
-  if (error) {
-    if (error == std::errc::permission_denied || error == std::errc::operation_not_permitted) {
-      status.permission_limited = true;
-    } else if (directory == root) {
-      // The root itself became unreadable between the caller's validation and now.
-      status.error = true;
-    } else {
-      status.permission_limited = true;
-    }
-    return;
-  }
-
-  // Reused across this directory's entries rather than allocated per entry; see
-  // the relative-text derivation below for what they are for.
-  std::filesystem::path relative_storage;
-
-  while (!error && iterator != end) {
-    if (visited >= entry_budget) {
+  platform::WalkAction Visit(const platform::WalkEntry& entry) override {
+    if (visited_ >= entry_budget_) {
       // Entry budget exhausted: stop indexing an unaffordably large tree. The
       // list returned so far is only a prefix of the real tree.
-      status.truncated_by_budget = true;
-      return;
+      status_.truncated_by_budget = true;
+      return platform::WalkAction::Stop;
     }
-    ++visited;
-    // A REFERENCE into the iterator's own entry. Taking a copy cost two
-    // allocations per filesystem entry (libstdc++ builds a path's component list
-    // eagerly) for a value nothing outlives the loop body with — the recursion
-    // below opens its own iterator and leaves this one untouched.
-    const std::filesystem::path& path = iterator->path();
-    // Use the non-throwing overloads: is_directory()/is_regular_file() follow the
-    // symlink and stat it, which THROWS filesystem_error on ELOOP (a symlink cycle
-    // or an over-40-deep chain). The scan runs on the shell thread with no catch, so
-    // the throwing overload turned a self-referential symlink — input the codebase
-    // explicitly expects, hence SymlinkLoopGuard — into a std::terminate. Classify
-    // safely and skip the entry on error, mirroring DirectoryTree::AppendDirectory.
-    std::error_code type_error;
-    const bool is_directory = iterator->is_directory(type_error);
-    if (type_error) {
-      iterator.increment(error);
-      continue;
+    ++visited_;
+    const bool is_directory = entry.type == platform::PathType::Directory;
+    if (mode_ == ProjectFileScanMode::ExcludeHidden && entry.name.starts_with('.')) {
+      return platform::WalkAction::Prune;
     }
-
-    // .git/.svn/build-output/etc. are pruned by the seeded matcher below (default
-    // rules), so no name is special-cased here.
-    //
-    // This ran `path.lexically_normal().lexically_relative(root.lexically_normal())`
-    // per entry: two normalizations at ~12 allocations each — one of them of the
-    // ROOT, which is constant and is now normalized once by the caller — plus a
-    // component-walking relative. A directory iterator hands back
-    // `directory / name`, which is already normal and already textually under the
-    // root, so the relative part is the root prefix removed and nothing else. The
-    // authoritative form stays as the fallback for an input that is not.
-    std::string_view relative_text;
-    if (!util::PathTextNeedsNormalizing(path.native()) &&
-        util::NormalizedPathEqualsOrWithin(path, root)) {
-      relative_text = util::NormalizedRelativeView(path.native(), root.native());
-    } else {
-      relative_storage = path.lexically_normal().lexically_relative(root);
-      relative_text = relative_storage.native();
-    }
-    if (relative_text.empty()) {
-      iterator.increment(error);
-      continue;
-    }
-
-    if (mode == ProjectFileScanMode::ExcludeHidden && IsHiddenRelativeName(relative_text)) {
-      iterator.increment(error);
-      continue;
-    }
-
-    // `relative_text` stays the entry's own (native) spelling — that is what gets
-    // stored. `matcher_relative_text` is the forward-slash spelling IgnoreMatcher
-    // speaks, which the native text already is. Keeping them as two names is the
-    // point: overwriting the one view with the other stored the matcher's spelling
-    // in the index.
-    std::string_view matcher_relative_text = relative_text;
-
     if (is_directory) {
-      // Decide the directory's own ignore status with the PARENT matcher first: a rule
-      // loaded from `dir/.gitignore` can never change `dir`'s own status (Rule::Matches
-      // bails via the base==relative guard), so the decision is identical either way.
-      // Only build the child matcher + stat/open `dir/.gitignore` for directories we
-      // actually descend into — otherwise every ignored dir (node_modules, build, .git,
-      // target, dist, __pycache__) pays a rules-vector copy + 2 syscalls per refresh just
-      // to be discarded. Mirrors DirectoryTree::AppendDirectory.
-      if (matcher->IgnoredEntryNormalized(matcher_relative_text, true)) {
-        iterator.increment(error);
-        continue;
+      if (!filter_.Includes(entry.path, platform::PathType::Directory)) {
+        return platform::WalkAction::Prune;
       }
-      // Inherit the parent matcher as a shared layer and add only this
-      // directory's own .gitignore — no copy of the inherited rules
-      // (TD-2026-07-17A-055), and no layer at all when there is nothing to add.
-      const std::shared_ptr<const IgnoreMatcher> child_matcher =
-          IgnoreMatcher::ForDirectory(matcher, path);
-      std::error_code link_error;
-      const bool is_symlink = iterator->is_symlink(link_error);
-      const SymlinkLoopGuard::Scope scope = loop_guard.TryEnter(path, is_symlink && !link_error);
-      if (scope.entered()) {
-        CollectFiles(root, path, child_matcher, mode, files, loop_guard, depth + 1, visited,
-                     entry_budget, status);
+      // A real directory cannot start a cycle and enters untracked; a symlinked
+      // one is followed only to a target inside the root that is not already on
+      // this branch. Leave pops the scope, so the branch is exactly the stack.
+      SymlinkLoopGuard::Scope scope =
+          loop_guard_.TryEnter(std::filesystem::path(entry.path), entry.is_symlink);
+      if (!scope.entered()) {
+        return platform::WalkAction::Prune;
       }
-      iterator.increment(error);
-      continue;
+      branch_.push_back(std::move(scope));
+      return platform::WalkAction::Continue;
     }
-
-    if (matcher->IgnoredEntryNormalized(matcher_relative_text, false)) {
-      iterator.increment(error);
-      continue;
+    if (entry.type == platform::PathType::RegularFile &&
+        filter_.Includes(entry.path, platform::PathType::RegularFile)) {
+      // The walk spells every entry as the (normalized) root plus its relative
+      // part, so the relative path is the prefix removed.
+      files_.emplace_back(util::NormalizedRelativeView(entry.path, root_native_));
     }
-
-    std::error_code regular_error;
-    if (iterator->is_regular_file(regular_error) && !regular_error) {
-      // Already lexically normal (see the derivation above), so no second
-      // normalize — and from the NATIVE view, not the matcher's.
-      files.emplace_back(relative_text);
-    }
-    iterator.increment(error);
+    return platform::WalkAction::Continue;
   }
-}
+
+  void Leave(const platform::WalkEntry& directory) override {
+    (void) directory;
+    branch_.pop_back();
+  }
+
+ private:
+  std::string_view root_native_;
+  ProjectFileScanMode mode_;
+  ProjectTraversalFilter filter_;
+  SymlinkLoopGuard loop_guard_;
+  std::vector<SymlinkLoopGuard::Scope> branch_;
+  std::size_t entry_budget_;
+  std::size_t visited_ = 0;
+  std::vector<std::filesystem::path>& files_;
+  ProjectFileScanStatus& status_;
+};
 
 }  // namespace
 
@@ -195,19 +120,19 @@ std::vector<std::filesystem::path> CollectProjectFiles(const std::filesystem::pa
   // expensive thing the scan did.
   const std::filesystem::path normalized_root = util::NormalizedPath(absolute_root);
 
-  auto matcher = std::make_shared<IgnoreMatcher>();
-  matcher->SetRoot(normalized_root);
-  // Defaults after the root .gitignore (take precedence), user excludes last.
-  matcher->AddDefaultRules();
-  matcher->AddExcludeGlobs(exclude_globs);
-
   std::vector<std::filesystem::path> files;
-  SymlinkLoopGuard loop_guard(normalized_root,
-                              /*enforce_containment=*/!follow_out_of_root_symlinks);
-  std::size_t visited = 0;
   ProjectFileScanStatus status;
-  CollectFiles(normalized_root, normalized_root, matcher, mode, files, loop_guard, 1, visited,
-               entry_budget, status);
+  ScanVisitor visitor(normalized_root, mode, exclude_globs, follow_out_of_root_symlinks,
+                      entry_budget, files, status);
+  const platform::WalkStatus walk = platform::WalkDirectoryTree(
+      normalized_root, platform::WalkOptions{.follow_directory_symlinks = true}, visitor);
+  // The root itself became unreadable between the validation above and the walk.
+  status.error = status.error || walk.root_unreadable;
+  // A directory that could not be opened is REPORTED, not silently missing, whatever
+  // the reason it could not be.
+  status.permission_limited = status.permission_limited || walk.permission_limited ||
+                              walk.incomplete;
+  status.truncated_by_depth = status.truncated_by_depth || walk.truncated_by_depth;
   std::sort(files.begin(), files.end(), [](const auto& lhs, const auto& rhs) {
     return lhs.native() < rhs.native();
   });

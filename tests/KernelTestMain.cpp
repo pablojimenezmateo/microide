@@ -17,6 +17,7 @@ void RegisterTestSupportTests(std::vector<TestCase>& tests);
 void RegisterCompareModelPropertyTests(std::vector<TestCase>& tests);
 void RegisterCompareModelTests(std::vector<TestCase>& tests);
 void RegisterDirectoryTreeTests(std::vector<TestCase>& tests);
+void RegisterDirectoryWalkTests(std::vector<TestCase>& tests);
 void RegisterFilesystemTests(std::vector<TestCase>& tests);
 void RegisterGlobMatchTests(std::vector<TestCase>& tests);
 void RegisterGitBranchOperationsTests(std::vector<TestCase>& tests);
@@ -116,6 +117,7 @@ void RegisterKernelTests(std::vector<TestCase>& tests) {
   RegisterCompareModelPropertyTests(tests);
   RegisterCompareModelTests(tests);
   RegisterDirectoryTreeTests(tests);
+  RegisterDirectoryWalkTests(tests);
   RegisterFilesystemTests(tests);
   RegisterGlobMatchTests(tests);
   RegisterGitBranchOperationsTests(tests);
