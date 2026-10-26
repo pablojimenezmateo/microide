@@ -2738,7 +2738,32 @@ LTO on the static build, `-Os` for PCRE2, PCRE2 without JIT on the server (host
 search is not interactive per keystroke), `-ffunction-sections -Wl,--gc-sections`.
 Not done: the size costs one install round trip, not runtime.
 
-### TD-2026-10-13-338 — the LTO build leaves trivial accessors out of line. [OPEN — step 1 done; steps 2-3 need perf-runner-v1]
+### TD-2026-10-13-338 — the LTO build leaves trivial accessors out of line. [OPEN — steps 1-2 done; step 3 is the owner's call]
+
+**Step 2 done 2026-10-26 on perf-runner-v1** (this box; see TD-2026-10-26-393). Three
+`microide_perf` builds of one commit (ca7b5420), identical but for optimization: A, the
+perf preset (`-O2 -flto`); B, `-O3` (compile and LTO link); C, `-O2` with
+`--param=inline-unit-growth=200` (default 40, compile and link). Three interleaved
+rounds of the full suite, 10 iterations, idle box, no gate failures in any run.
+
+| variant | p50 CPU, geomean over 120 scenarios vs A | `.text` |
+|---|---|---|
+| A `-O2` | 1.000 | 8.68 MB |
+| B `-O3` | 0.985 | 10.09 MB (+16%) |
+| C inline-unit-growth=200 | 0.980 | 13.76 MB (+59%) |
+
+Allocation counts are identical (geomean 1.000). A against itself varies by a median of
+1.4% round to round (p90 3.7%), so both suite-wide gains are at the noise level. The real
+wins are a handful of scenarios. B: `debug_pane_hittest_geometry` 0.64,
+`debug_breakpoints_model_rebuild` 0.87. C: `debug_value_tree_rebuild` 0.82,
+`editor_column_selection_burst` 0.87. (C's 0.60 on `perf_gate_canary` is the gate's
+synthetic probe, not product code.) Both have slight losses too: up to 1.05 for B
+(`settings_rows_rebuild`) and 1.03 for C. Recommendation for step 3: neither flag pays for
+its code growth across the suite. Make the project-owned hot accessors from step 1
+(`AddPerformanceCounter`, `Scope::Scope`, `Contains`, `PositionLess`) inlinable by
+definition, and profile the few scenarios above for their own hot calls. Changing the
+build flags moves every timing baseline, so that stays the project owner's decision.
+
 
 **Step 1 done 2026-10-25, without `perf record`** (`kernel.perf_event_paranoid` is 4
 on the development box): callgrind (valgrind unpacked from the distribution's
