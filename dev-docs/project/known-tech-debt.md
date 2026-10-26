@@ -2738,7 +2738,17 @@ LTO on the static build, `-Os` for PCRE2, PCRE2 without JIT on the server (host
 search is not interactive per keystroke), `-ffunction-sections -Wl,--gc-sections`.
 Not done: the size costs one install round trip, not runtime.
 
-### TD-2026-10-13-338 — the LTO build leaves trivial accessors out of line. [OPEN — steps 1-2 done; step 3 is the owner's call]
+### TD-2026-10-13-338 — the LTO build leaves trivial accessors out of line. [DECIDED 2026-10-26 — no build-flag change; only the definition-level inlining remains]
+
+**Decided 2026-10-26 (project owner):** neither `-O3` nor a raised
+`inline-unit-growth` is worth it. Both gave at most 1.5-2% suite-wide CPU, within this
+box's noise, for 16% and 59% more code (the A/B below). The perf preset stays `-O2 -flto`
+with GCC's default inlining parameters; do not reopen the flag question without new
+evidence. What remains is the definition-level option: make the project-owned hot
+accessors (`AddPerformanceCounter`, `Scope::Scope`, `Contains`, `PositionLess`)
+inlinable by definition, and profile the few scenarios that moved for their own hot
+calls.
+
 
 **Step 2 done 2026-10-26 on perf-runner-v1** (this box; see TD-2026-10-26-393). Three
 `microide_perf` builds of one commit (ca7b5420), identical but for optimization: A, the
@@ -2758,11 +2768,7 @@ wins are a handful of scenarios. B: `debug_pane_hittest_geometry` 0.64,
 `debug_breakpoints_model_rebuild` 0.87. C: `debug_value_tree_rebuild` 0.82,
 `editor_column_selection_burst` 0.87. (C's 0.60 on `perf_gate_canary` is the gate's
 synthetic probe, not product code.) Both have slight losses too: up to 1.05 for B
-(`settings_rows_rebuild`) and 1.03 for C. Recommendation for step 3: neither flag pays for
-its code growth across the suite. Make the project-owned hot accessors from step 1
-(`AddPerformanceCounter`, `Scope::Scope`, `Contains`, `PositionLess`) inlinable by
-definition, and profile the few scenarios above for their own hot calls. Changing the
-build flags moves every timing baseline, so that stays the project owner's decision.
+(`settings_rows_rebuild`) and 1.03 for C. Step 3, flags versus definitions: decided above.
 
 
 **Step 1 done 2026-10-25, without `perf record`** (`kernel.perf_event_paranoid` is 4
