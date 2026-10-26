@@ -15838,7 +15838,20 @@ static_asserted the two constant pairs that must stay equal
 `kCommitWorkflowFieldInset`). What is left open:
 
 - **TD-2026-07-25-001 — `snippet_many_mirror_edit` regressed ~7.6% p50 from code
-  layout, not from any semantic change. OPEN (needs direct profiling).**
+  layout, not from any semantic change. [CLOSED 2026-10-26 — no regression left to
+  find.]** Measured on perf-runner-v1, three interleaved rounds at 10 iterations:
+  the scenario's own baseline commit (fb5e7878, 2026-08-17, built with d123ee73's
+  `environ` fix) reads 12.74 ms, and HEAD reads 12.25 ms, 3.8% faster. The 11.09 ms
+  in the baseline describes the machine as it was then, the way TD-2026-10-26-393
+  found for eleven other scenarios. The July comparison (a branch against its
+  origin/main) is not reproducible any more: the code it measured has been rewritten
+  since. Profiled now with callgrind, the measured phase is 216.5M instructions:
+  `ReplaceInMirrors` -> `ApplyRangeEdit` 186M, of which `BuildRangeHistoryEntry`
+  112M (two `ReadCaretNeighborhood` piece-tree reads per edit, ~2,560 instructions
+  each, over 18,150 mirror edits) and `PieceTree::Split` 100M. That is the shape the
+  scenario exists to measure, with no outlier in it. Allocations read 3,513 against
+  the baseline's 3,453 (+1.7%, deterministic, inside the gate), which the timing
+  baseline should be re-recorded with on the next deliberate rebaseline.
   `tools/perf-compare.py origin/main` over all 89 scenarios showed a balanced picture
   (mean p50 delta **+0.45%**, 42 slower / 45 faster) with real wins — `file_finder_cold`
   −5.2% p50 / −11.2% p95, plus `lsp_message_framing`, `lsp_publish_diagnostics_parse`,
