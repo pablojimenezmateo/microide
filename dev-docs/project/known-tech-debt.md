@@ -508,6 +508,26 @@ editor font changes. A render-layer design change, so not done in the gate pass.
 
 ### TD-2026-10-26-393 — the full perf gate fails on perf-runner-v1. [RESOLVED 2026-10-26 — three full gates in a row pass]
 
+**Addendum 2026-10-26, the 22 advisory baselines.** The gate printed 12 "ADVISORY (NOT
+ENFORCED)" rows on every run, `diff_next_hunk_large_file` at 3.6x its baseline among
+them. Those baselines' timing halves were recorded on an advisory runner
+(`timing_is_advisory`), so nothing gated them, and a slowdown under one would read as
+"another machine" forever (TD-2026-08-11-184). Taken base-vs-HEAD with the scenario's
+own baseline commit (fb5e7878, 2026-08-17) built on this box: `diff_next_hunk_large_file`
+146 -> 190 ms, `diff_stage_hunk_large_patch` 35.7 -> 41.9, `diff_stage_selected_lines`
+30.9 -> 35.4. Bisected over the 1,416 commits on wall time to **2e899bcc** ("serve the
+window layout and pane rects from input-keyed memos"), 148 -> 193 ms. The instruction
+counts (callgrind, measured phase 4.60G vs 4.63G) and simulated cache misses are the
+same, and the extra time is all inside `SDL_RenderPresent`, where the software renderer
+runs its queued draws. A frame dump at present 200 of each build shows why: **before
+2e899bcc the scenario drew no sidebar.** The flag-driven layout was stale, and the git
+sidebar the scenario shows was laid out at width 0. The memo, a pure function of its
+inputs, draws it (288k pixels a frame more of fills, 157M fewer of compare surface).
+The "regression" is the scenario measuring the frame it sets up, so nothing is reverted.
+All 22 advisory baselines were re-recorded on this box (every one allocates at or
+below its old baseline, so the deterministic half only tightened), and two fresh gate
+runs over them pass with timing enforced.
+
 `tools/perf-gate.sh` on this box (`perf-runner-v1`) had recorded FAIL since at least
 2026-10-25, with 11 scenarios red. Nothing tracked it; it lived only in a session note.
 Every one was taken base-vs-HEAD: the base commit that last recorded its baseline, built
