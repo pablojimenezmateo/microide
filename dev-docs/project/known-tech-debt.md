@@ -449,7 +449,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-25-392 — CI's QA lanes are red on most pushes; `multi-caret-pairs` fails on X11 CI and passes locally. [OPEN -- twelve causes fixed 2026-10-25]
+### TD-2026-10-25-392 — CI's QA lanes are red on most pushes; `multi-caret-pairs` fails on X11 CI and passes locally. [OPEN -- fifteen causes fixed 2026-10-25/26]
 
 **2026-10-25, three causes found and fixed:**
 
@@ -574,6 +574,34 @@ retry, and waits that timed out. Both are fixed:
   The driver asks before every X11 press, wheel and move, after the earlier
   input is taken, and expects events only where they will arrive. Seeds 1-4
   then ran with no notes, on the release and ASan builds.
+
+**2026-10-26, fourth CI run (06cc7367: `checks` 40279720488, `qa-deep`
+40279720540).** X11 `qa` came back fully clean: 218/218 and the monkey, with no
+flaky retries and no driver notes. There were no driver notes anywhere. Three
+things remained, all fixed:
+
+- **Monkey seed 3 (`qa-asan`) was hover damage again.** A tab strip's overflow
+  chip ("<6") lights under the pointer, but `HoveredInteractiveRect` listed only
+  the strip's tabs. The pointer leaving the chip repainted nothing, and an
+  unrelated partial frame kept it lit. The chips of all three strips (project,
+  editor groups, bottom panel) are in the probe now.
+  `QaFlowRegression/ThePointerLeavingATabOverflowChipRepaintsIt`.
+- **`huge-file` (`qa-asan`, flaky) was an unscaled budget.** `_timed` compared
+  raw wall-clock time with a release-build budget (Ctrl+End on 64 MiB, 2.0 s:
+  3.06 s measured), on a build where `MQA_SLOW_FACTOR` already stretches every
+  wait because the app and each polling control client (the same ASan binary)
+  run that much slower. Budgets scale by it too. The release lanes keep factor 1,
+  so the real budget is unchanged.
+- **`branch-review` (`qa-wayland`, flaky) was a stale row.** The git view's rows
+  move when a refresh lands. The flow read `r1.txt`'s rect while the refresh for
+  its outside commit was still due, and the click landed on the `notes` folder
+  row that had moved under it (the next finding lists the folder collapsed). The
+  `ui` query now reports `git.settled`: no refresh running or kept by the pacer,
+  and the snapshot fresh and applied. The driver's `wait_for` and `click_named`
+  wait for it on any git view element, asking for a `git-refresh` first only
+  after the flow changed files or ran `git` outside the app. The watcher may not
+  have seen such a change yet, and `git-refresh` also reloads clean buffers, so it
+  is not sent otherwise.
 
 Close this entry once a run of CI's QA lanes comes back green with no flaky
 retries and no driver notes.
