@@ -16365,8 +16365,21 @@ The prior day's 70-finding audit closed 60 fixes; these 10 remained deferred/won
   synchronously on the workspace thread.** Dedicated async pass. Overlaps
   **TD-2026-07-17-047**.
 - **TD-2026-07-16-39 — encoded raster surfaces publish layout dimensions before decode
-  knows the real image size.** Dedicated cross-layer pass; related to the raster
-  budget work (**TD-2026-07-17-043/092**, fixed).
+  knows the real image size. [RESOLVED 2026-10-26]** Dedicated cross-layer pass;
+  related to the raster budget work (**TD-2026-07-17-043/092**, fixed).
+  **Resolved:** worse than filed. `width`/`height` beside a PNG are optional, so an
+  image published without them was laid out at 0x0 forever: an inline inset one
+  pixel tall and a preview that could not scroll. And nothing woke the loop when a
+  decode finished, so the "Rendering…" placeholder stayed until some unrelated
+  repaint. `SurfaceTextureCache` now records every successful decode's pixel size
+  and pushes a wake on its own channel. The dispatcher's `RasterDecodeEvent` runs
+  `ApplyDecodedRasterSizes`, which writes the size into every project's
+  `PluginSurfaceStore` (`ApplyRasterSize`, in place, revision bumped) and repaints
+  the editor surface and the panel. A republish of bytes already decoded takes the
+  known size before it reaches the store (`ApplyKnownRasterSize`), so an identical
+  republish cannot put 0x0 back. Tests: `PluginSurfacePreview/DecodedRasterIsLaidOutAtItsOwnSize`
+  (fails without the dispatcher branch), `SurfaceTextureCache/DecodeReportsTheEncodedSizeAndWakes`,
+  `PluginSurfaceStore/ApplyRasterSizeLaysEveryShowingSurfaceOut`.
 ### Deep audit tranche 7 — LSP/DAP/session/git/search/workflow bugs (2026-07-13)
 
 This tranche continues the cross-subsystem bug hunt without fixing code. It focuses on ownership,

@@ -9,8 +9,11 @@
 #include <list>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <vector>
+
+#include "util/Waker.h"
 
 namespace microide::project {
 class ProjectBackgroundExecutor;
@@ -81,6 +84,30 @@ class SurfaceTextureCache {
   // complete into the sink but their results are ignored.
   void Clear();
 
+  // A raster's real pixel size, which only its decode knows: an encoded image's
+  // dimensions are in its bytes, and the ones a plugin declares beside them may be
+  // missing or wrong (TD-2026-07-16-39).
+  struct RasterSize {
+    std::uint64_t hash = 0;
+    int width = 0;
+    int height = 0;
+  };
+
+  // Shell thread, before the first Request. Every successful decode pushes a wake on
+  // `channel` once its size is ready to take, so the shell can lay the surface out
+  // at that size and repaint it without waiting for an unrelated event. 0 (the
+  // default) disables the wake.
+  void SetWakeChannel(util::WakeChannel channel);
+  util::WakeChannel wake_channel() const { return wake_channel_; }
+
+  // Shell thread. The sizes of the rasters decoded since the last call, in decode
+  // order. Independent of Upload: a size is known as soon as the decode finishes,
+  // whether or not anything has painted the raster yet.
+  std::vector<RasterSize> TakeDecodedSizes();
+  // Shell thread. `hash`'s decoded size, if a decode has produced one that is
+  // still held (uploaded, or taken and awaiting its upload).
+  std::optional<RasterSize> DecodedSize(std::uint64_t hash) const;
+
   std::size_t cached_count() const { return entries_.size(); }
   std::size_t vram_bytes() const { return vram_bytes_; }
   // Diagnostic: number of retained permanent-failure markers. Bounded by
@@ -139,6 +166,10 @@ class SurfaceTextureCache {
     // (TD-2026-07-17A-043). Guarded by `mutex`.
     std::size_t in_flight_encoded_bytes = 0;
     std::size_t encoded_budget_bytes = kMaxInFlightEncodedBytes;
+    // Sizes of successful decodes not yet taken by TakeDecodedSizes, and the
+    // channel each one wakes. Guarded by `mutex`.
+    std::vector<RasterSize> decoded_sizes;
+    util::WakeChannel wake_channel = 0;
   };
 
   void EvictToBudget();
@@ -152,6 +183,14 @@ class SurfaceTextureCache {
   std::shared_ptr<DecodeSink> sink_;
   std::size_t vram_budget_bytes_;
   std::size_t vram_bytes_ = 0;
+
+  // Sizes TakeDecodedSizes handed out whose decode Upload has not consumed yet, so
+  // DecodedSize can answer between the two. Erased as Upload takes each decode,
+  // which bounds it by the sink's own backlog.
+  std::unordered_map<std::uint64_t, RasterSize> awaiting_upload_sizes_;
+  // The shell thread's copy of the sink's wake channel: the event dispatcher reads
+  // it per event, which must not take the sink's mutex.
+  util::WakeChannel wake_channel_ = 0;
 
   // hash -> uploaded texture. lru_ holds hashes most-recently-used at the front.
   std::unordered_map<std::uint64_t, Entry> entries_;

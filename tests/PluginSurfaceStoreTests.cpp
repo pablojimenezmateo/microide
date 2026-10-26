@@ -3,6 +3,7 @@
 #include "editor/PluginSurfaceStore.h"
 
 #include <filesystem>
+#include <variant>
 #include <utility>
 
 namespace microide::tests {
@@ -167,6 +168,38 @@ void TestRetargetAndClearPathPrefix() {
          "the deleted path has no anchored surfaces");
 }
 
+// TD-2026-07-16-39: a raster's decoded size replaces the declared one in every
+// surface showing that image, in place (the anchor index keeps pointing at it).
+void TestApplyRasterSizeLaysEveryShowingSurfaceOut() {
+  PluginSurfaceStore store;
+  SurfaceContent undeclared = RasterSurface(5, SurfacePreviewSlot::None);
+  undeclared.body = RasterHandle{.content_hash = 5, .width = 0, .height = 0};
+  undeclared.intrinsic_width = 0;
+  undeclared.intrinsic_height = 0;
+  undeclared.anchor = SurfaceAnchor{.path = "/proj/a.cpp", .line = 3};
+  store.ReplaceForOwnerSurface("plug", "img", undeclared);
+  store.ReplaceForOwnerSurface("other", "same-img", undeclared);
+  store.ReplaceForOwnerSurface("plug", "different", RasterSurface(6, SurfacePreviewSlot::None));
+  const std::uint64_t before = store.revision();
+
+  Expect(store.ApplyRasterSize(5, 120, 80), "the decoded size changes the surfaces showing it");
+  Expect(store.revision() != before, "and moves the revision");
+  for (const auto& [owner, id] : {std::pair{"plug", "img"}, std::pair{"other", "same-img"}}) {
+    const SurfaceContent* content = store.Find(owner, id);
+    const auto* raster = std::get_if<RasterHandle>(&content->body);
+    Expect(content->intrinsic_width == 120.0f && content->intrinsic_height == 80.0f &&
+               raster->width == 120 && raster->height == 80,
+           "every surface showing the image is laid out at its decoded size");
+  }
+  Expect(store.Find("plug", "different")->intrinsic_height == 16.0f,
+         "a surface showing another image keeps its size");
+  const auto anchored = store.AnchoredSurfacesForPath("/proj/a.cpp");
+  Expect(anchored.size() == 2 && anchored[0].content->intrinsic_height == 80.0f,
+         "the anchor index sees the new size without a rebuild");
+  Expect(!store.ApplyRasterSize(5, 120, 80), "the same size again is not a change");
+  Expect(!store.ApplyRasterSize(99, 10, 10), "an image no surface shows changes nothing");
+}
+
 void RegisterPluginSurfaceStoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginSurfaceStore/RetargetAndClearPathPrefix", TestRetargetAndClearPathPrefix);
   AddTest(tests, "PluginSurfaceStore/ReplaceFindAndIdempotency", TestReplaceFindAndIdempotency);
@@ -179,6 +212,8 @@ void RegisterPluginSurfaceStoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginSurfaceStore/RevisionBumps", TestRevisionBumps);
   AddTest(tests, "PluginSurfaceStore/PerOwnerSurfaceCountIsBounded",
           TestPerOwnerSurfaceCountIsBounded);
+  AddTest(tests, "PluginSurfaceStore/ApplyRasterSizeLaysEveryShowingSurfaceOut",
+          TestApplyRasterSizeLaysEveryShowingSurfaceOut);
 }
 
 }  // namespace microide::tests

@@ -8,6 +8,20 @@
 
 namespace microide::editor {
 
+bool ApplyRasterSizeTo(SurfaceContent& content, std::uint64_t content_hash, int width,
+                       int height) {
+  auto* raster = std::get_if<RasterHandle>(&content.body);
+  if (raster == nullptr || raster->content_hash != content_hash ||
+      (raster->width == width && raster->height == height)) {
+    return false;
+  }
+  raster->width = width;
+  raster->height = height;
+  content.intrinsic_width = static_cast<float>(width);
+  content.intrinsic_height = static_cast<float>(height);
+  return true;
+}
+
 std::string PluginSurfaceStore::PathKey(const std::filesystem::path& path) {
   return NormalizedPathKey(path);
 }
@@ -191,6 +205,26 @@ bool PluginSurfaceStore::SetPreviewSlot(std::string_view owner, std::string_view
   }
   ++revision_;
   return true;
+}
+
+bool PluginSurfaceStore::ApplyRasterSize(std::uint64_t content_hash, int width, int height) {
+  if (content_hash == 0 || width <= 0 || height <= 0) {
+    return false;
+  }
+  bool changed = false;
+  for (auto& [owner, surfaces] : by_owner_) {
+    for (auto& [surface_id, content] : surfaces) {
+      if (ApplyRasterSizeTo(content, content_hash, width, height)) {
+        changed = true;
+      }
+    }
+  }
+  // The anchor index and the preview list hold pointers to the contents, not
+  // copies, so only the revision moves.
+  if (changed) {
+    ++revision_;
+  }
+  return changed;
 }
 
 void PluginSurfaceStore::Clear() {

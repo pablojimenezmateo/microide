@@ -14,6 +14,7 @@
 #include "workspace/coordinators/WorkspaceSidebarMouseCoordinator.h"
 #include "workspace/coordinators/WorkspaceTabMouseCoordinator.h"
 #include "workspace/shell/WorkspaceShell.h"
+#include "workspace/PluginRasterSize.h"
 #include "workspace/WorkspaceFileDrop.h"
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 #include "workspace/control/ControlUiQuery.h"
@@ -255,6 +256,7 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
           .control_event_type = shell->control_event_type_,
           .plugin_thread_event_type = shell->plugin_thread_event_type_,
           .highlight_prefetch_event_type = shell->highlight_prefetch_event_type_,
+          .raster_decode_event_type = shell->surface_texture_cache_.wake_channel(),
       },
       WorkspaceEventDispatcher::State{
           .window_has_input_focus = shell->context_.interaction_state.window_has_input_focus,
@@ -290,6 +292,15 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
               [shell]() { return shell->git_blame_service_.ApplyReadyResults(); },
           .consume_highlight_prefetch_results =
               [shell]() { shell->ConsumeHighlightPrefetchResults(); },
+          .apply_decoded_raster_sizes =
+              [shell]() {
+                // A placeholder may be waiting for this image wherever it shows: an
+                // inline inset in the editor, or the bottom panel's preview.
+                if (ApplyDecodedRasterSizes(shell->surface_texture_cache_, shell->context_)) {
+                  shell->RequestEditorSurfaceRedraw();
+                  shell->RequestBottomPanelContentRedraw();
+                }
+              },
           .consume_lsp_callbacks =
               [shell]() { shell->ConsumeLspCallbacks(); },
           .consume_dap_callbacks =

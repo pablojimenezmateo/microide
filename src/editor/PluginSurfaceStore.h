@@ -70,6 +70,12 @@ struct SurfaceContent {
   bool operator==(const SurfaceContent&) const = default;
 };
 
+// When `content` is a raster showing `content_hash`, give it (the handle and the
+// surface's intrinsic size) the size width x height; true when that changed it.
+// Shared by the store's apply and by a publish whose raster is already decoded.
+bool ApplyRasterSizeTo(SurfaceContent& content, std::uint64_t content_hash, int width,
+                       int height);
+
 // A resolved anchored surface for one file, sorted by line so the inset resolver
 // can slice per visible row. Pointers stay valid until the next store mutation.
 struct AnchoredSurface {
@@ -128,6 +134,12 @@ class PluginSurfaceStore {
   // Drop the anchor of every surface at/under `path_prefix` (a file/dir delete), so
   // a deleted file's surfaces no longer anchor to a path that no longer exists.
   bool ClearPathPrefix(const std::filesystem::path& path_prefix);
+
+  // Lay every raster surface showing `content_hash` out at its decoded size
+  // (width x height pixels), which is the size the host draws it at. The size a
+  // plugin declares beside encoded bytes may be missing or wrong, so the decode's
+  // answer replaces it (TD-2026-07-16-39). True when a surface changed.
+  bool ApplyRasterSize(std::uint64_t content_hash, int width, int height);
 
   bool has_anchored() const { return !anchored_by_path_.empty(); }
   std::uint64_t revision() const { return revision_; }

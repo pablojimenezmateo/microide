@@ -138,6 +138,13 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
     return finish(true);
   }
 
+  if (runtime_.raster_decode_event_type != 0 &&
+      event.type == runtime_.raster_decode_event_type) {
+    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::RasterDecodeEvent");
+    operations_.apply_decoded_raster_sizes();
+    return finish(true);
+  }
+
   operations_.sync_text_input_surface(nullptr);
 
   switch (event.type) {

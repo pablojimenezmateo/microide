@@ -22,6 +22,7 @@ class WorkspaceEventDispatcher {
     Uint32 control_event_type = 0;
     Uint32 plugin_thread_event_type = 0;
     Uint32 highlight_prefetch_event_type = 0;
+    Uint32 raster_decode_event_type = 0;
   };
 
   struct State {
@@ -45,6 +46,8 @@ class WorkspaceEventDispatcher {
     // Makes finished blame visible; true when what the overlay reads changed.
     std::function<bool()> apply_git_blame_results;
     std::function<void()> consume_highlight_prefetch_results;
+    // Lays decoded plugin rasters out at their real size and repaints them.
+    std::function<void()> apply_decoded_raster_sizes;
     std::function<void()> consume_lsp_callbacks;
     std::function<void()> consume_dap_callbacks;
     std::function<void()> consume_control_callbacks;

@@ -593,6 +593,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/actions/WorkspaceActionRequests.cpp
   src/workspace/WorkspaceCommandParsing.cpp
   src/workspace/WorkspaceFileDrop.cpp
+  src/workspace/PluginRasterSize.cpp
   src/workspace/control/ControlChannelService.cpp
   src/workspace/control/ControlUiQuery.cpp
   src/workspace/control/ControlBufferQuery.cpp

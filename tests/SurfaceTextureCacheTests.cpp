@@ -1,14 +1,17 @@
 #include "TestSupport.h"
 
 #include "support/SoftwareCanvas.h"
+#include "support/TinyPng.h"
 
 #include "project/ProjectBackgroundExecutor.h"
 #include "render/SurfaceTextureCache.h"
+#include "util/Waker.h"
 
 #include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -307,6 +310,57 @@ void TestUploadWithNoRendererDoesNotPermanentlySuppressTheImage() {
   executor.Shutdown();
 }
 
+// TD-2026-07-16-39: an encoded image's size is in its bytes, and the size a plugin
+// declares beside them is optional. The decode is what knows it, so the cache
+// reports it, and wakes the loop to take it, as soon as the decode finishes --
+// before, and independently of, any upload.
+void TestDecodeReportsTheEncodedSizeAndWakes() {
+  ProjectBackgroundExecutor executor;
+  SurfaceTextureCache cache(executor);
+  constexpr microide::util::WakeChannel kChannel = 77;
+  cache.SetWakeChannel(kChannel);
+  std::atomic<int> wakes{0};
+  microide::util::SetWakePusherForTesting([&wakes](microide::util::WakeChannel channel) {
+    if (channel == kChannel) {
+      wakes.fetch_add(1);
+    }
+    return true;
+  });
+
+  constexpr std::uint64_t kHash = 9001;
+  cache.Request(kHash, SurfaceTextureCache::RasterFormat::Png, TinyPng(), /*declared_w=*/0,
+                /*declared_h=*/0);
+  cache.Request(kHash + 1, SurfaceTextureCache::RasterFormat::Png,
+                std::vector<std::byte>(16, std::byte{0x7F}), 0, 0);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  std::vector<SurfaceTextureCache::RasterSize> sizes;
+  while (sizes.empty() && std::chrono::steady_clock::now() < deadline) {
+    sizes = cache.TakeDecodedSizes();
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  executor.Shutdown();  // both decodes have run
+  for (const SurfaceTextureCache::RasterSize& size : cache.TakeDecodedSizes()) {
+    sizes.push_back(size);
+  }
+  microide::util::SetWakePusherForTesting(nullptr);
+
+  Expect(sizes.size() == 1 && sizes[0].hash == kHash && sizes[0].width == kTinyPngWidth &&
+             sizes[0].height == kTinyPngHeight,
+         "the decode reports the image's own size, and a failed decode reports none");
+  Expect(wakes.load() == 1, "one wake per successful decode: " + std::to_string(wakes.load()));
+  const auto known = cache.DecodedSize(kHash);
+  Expect(known.has_value() && known->width == kTinyPngWidth && known->height == kTinyPngHeight,
+         "a taken size answers DecodedSize before anything uploads it");
+  Expect(!cache.DecodedSize(kHash + 1).has_value(), "a failed decode has no size");
+
+  SoftwareCanvas canvas(32, 32);
+  cache.Upload(canvas.renderer());
+  const auto uploaded = cache.DecodedSize(kHash);
+  Expect(cache.cached_count() == 1 && uploaded.has_value() &&
+             uploaded->height == kTinyPngHeight,
+         "after the upload the texture entry answers DecodedSize");
+}
+
 }  // namespace
 
 void RegisterSurfaceTextureCacheTests(std::vector<TestCase>& tests) {
@@ -321,6 +375,8 @@ void RegisterSurfaceTextureCacheTests(std::vector<TestCase>& tests) {
           TestTextureCreateFailureFoldsIntoBoundedFifo);
   AddTest(tests, "SurfaceTextureCache/InFlightEncodedBytesAreBounded",
           TestInFlightEncodedBytesAreBounded);
+  AddTest(tests, "SurfaceTextureCache/DecodeReportsTheEncodedSizeAndWakes",
+          TestDecodeReportsTheEncodedSizeAndWakes);
 }
 
 }  // namespace microide::tests

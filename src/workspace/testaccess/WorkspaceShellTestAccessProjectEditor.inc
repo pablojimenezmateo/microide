@@ -136,6 +136,9 @@
       const WorkspaceShell& shell) {
     return shell.context_.current_project_state.ghost_text_if_present();
   }
+  static render::SurfaceTextureCache& RasterCache(WorkspaceShell& shell) {
+    return shell.surface_texture_cache_;
+  }
   static bool HasPluginPresentation(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.plugin_presentation_if_present() != nullptr;
   }

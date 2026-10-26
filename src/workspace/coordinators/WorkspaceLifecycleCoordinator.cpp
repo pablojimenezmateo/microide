@@ -286,6 +286,10 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   // The worker itself stays unspawned until the first Reload that loads a plugin.
   plugin_runtime_.Host().SetWorker(&plugin_runtime_.Thread());
 
+  // A decoded plugin raster wakes the loop with its size, so the surface is laid
+  // out and painted at it without waiting for unrelated input (TD-2026-07-16-39).
+  surface_texture_cache_.SetWakeChannel(register_wake());
+
   highlight_prefetch_event_type_ = register_wake();
   // The worker fires this from its own thread once a result is queued; the wake
   // only nudges the main loop to drain (the event carries no payload).

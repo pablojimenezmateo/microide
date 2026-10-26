@@ -26,6 +26,7 @@
 #include "workspace/services/PromptSurfaceService.h"
 #include "workspace/coordinators/WorkspacePathMutationCoordinator.h"
 #include "workspace/lsp/LspViewportPositions.h"
+#include "workspace/PluginRasterSize.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 // WorkspaceShell's constructor lives here, so this TU must see the complete type
@@ -757,6 +758,7 @@ WorkspaceShell::WorkspaceShell() {
           [this](std::string_view owner, std::string_view surface_id,
                  editor::SurfaceContent content) {
             const editor::SurfacePreviewSlot slot = content.preview;
+            ApplyKnownRasterSize(content, surface_texture_cache_);
             if (context_.current_project_state.EnsurePluginPresentation()
                     .surfaces.ReplaceForOwnerSurface(owner, surface_id, std::move(content))) {
               if (slot != editor::SurfacePreviewSlot::None) {

@@ -91,27 +91,67 @@ void SurfaceTextureCache::Request(std::uint64_t hash, RasterFormat format,
     Decoded decoded = format == RasterFormat::Png
                           ? DecodeEncoded(hash, bytes)
                           : WrapRgba8(hash, std::move(bytes), declared_w, declared_h);
-    std::lock_guard<std::mutex> lock(sink->mutex);
-    // The encoded bytes have been consumed by the decode; release the reservation.
-    sink->in_flight_encoded_bytes -= encoded_size;
-    // TD-2026-07-17-092: bound the pre-upload decoded-buffer backlog. If this valid
-    // decode would push pending host memory over budget, drop its RGBA and hand
-    // Upload a lightweight "over budget" marker so the in-flight marker is released
-    // and the image can be re-decoded later when the sink has drained.
-    if (decoded.ok) {
-      const std::size_t decoded_bytes = decoded.rgba.size();
-      if (decoded_bytes > sink->budget_bytes - sink->pending_bytes) {
-        Decoded marker;
-        marker.hash = decoded.hash;
-        marker.ok = false;
-        marker.dropped_over_budget = true;
-        sink->ready.push_back(std::move(marker));
-        return;
+    util::WakeChannel wake = 0;
+    {
+      std::lock_guard<std::mutex> lock(sink->mutex);
+      // The encoded bytes have been consumed by the decode; release the reservation.
+      sink->in_flight_encoded_bytes -= encoded_size;
+      if (decoded.ok) {
+        // The size is known now, whatever happens to the pixels below.
+        sink->decoded_sizes.push_back(
+            RasterSize{.hash = decoded.hash, .width = decoded.width, .height = decoded.height});
+        wake = sink->wake_channel;
+        // TD-2026-07-17-092: bound the pre-upload decoded-buffer backlog. If this
+        // valid decode would push pending host memory over budget, drop its RGBA and
+        // hand Upload a lightweight "over budget" marker so the in-flight marker is
+        // released and the image can be re-decoded later when the sink has drained.
+        const std::size_t decoded_bytes = decoded.rgba.size();
+        if (decoded_bytes > sink->budget_bytes - sink->pending_bytes) {
+          Decoded marker;
+          marker.hash = decoded.hash;
+          marker.ok = false;
+          marker.dropped_over_budget = true;
+          decoded = std::move(marker);
+        } else {
+          sink->pending_bytes += decoded_bytes;
+        }
       }
-      sink->pending_bytes += decoded_bytes;
+      sink->ready.push_back(std::move(decoded));
     }
-    sink->ready.push_back(std::move(decoded));
+    // Outside the lock: the wake reaches the shell thread, which takes the size.
+    (void) util::PushWake(wake);
   });
+}
+
+void SurfaceTextureCache::SetWakeChannel(util::WakeChannel channel) {
+  wake_channel_ = channel;
+  std::lock_guard<std::mutex> lock(sink_->mutex);
+  sink_->wake_channel = channel;
+}
+
+std::vector<SurfaceTextureCache::RasterSize> SurfaceTextureCache::TakeDecodedSizes() {
+  std::vector<RasterSize> sizes;
+  {
+    std::lock_guard<std::mutex> lock(sink_->mutex);
+    sizes.swap(sink_->decoded_sizes);
+  }
+  for (const RasterSize& size : sizes) {
+    if (entries_.find(size.hash) == entries_.end()) {
+      awaiting_upload_sizes_[size.hash] = size;
+    }
+  }
+  return sizes;
+}
+
+std::optional<SurfaceTextureCache::RasterSize> SurfaceTextureCache::DecodedSize(
+    std::uint64_t hash) const {
+  if (const auto it = entries_.find(hash); it != entries_.end()) {
+    return RasterSize{.hash = hash, .width = it->second.width, .height = it->second.height};
+  }
+  if (const auto it = awaiting_upload_sizes_.find(hash); it != awaiting_upload_sizes_.end()) {
+    return it->second;
+  }
+  return std::nullopt;
 }
 
 void SurfaceTextureCache::Upload(SDL_Renderer* renderer) {
@@ -125,6 +165,9 @@ void SurfaceTextureCache::Upload(SDL_Renderer* renderer) {
     return;
   }
   for (Decoded& decoded : ready) {
+    // Whatever becomes of it below, this decode is consumed: an uploaded entry
+    // answers DecodedSize from now on, and a dropped one no longer can.
+    awaiting_upload_sizes_.erase(decoded.hash);
     // The hash may have been Clear()'d while decoding; only honor still-pending
     // requests. A failed decode drops the in-flight marker so we never retry, but
     // keeps it in the map so a later identical Request short-circuits.
@@ -274,6 +317,7 @@ void SurfaceTextureCache::Clear() {
   in_flight_or_failed_.clear();
   texture_create_failures_.clear();
   failed_hash_order_.clear();
+  awaiting_upload_sizes_.clear();
   vram_bytes_ = 0;
 }
 

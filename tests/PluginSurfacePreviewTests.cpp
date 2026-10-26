@@ -1,10 +1,18 @@
 #include "TestSupport.h"
 
 #include "editor/PluginSurfaceStore.h"
+#include "render/SurfaceTextureCache.h"
+#include "support/TinyPng.h"
+#include "util/Waker.h"
+#include "workspace/PluginRasterSize.h"
 #include "workspace/PluginSurfacePreview.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
+#include <atomic>
+#include <chrono>
 #include <string>
+#include <thread>
+#include <variant>
 
 #include "WorkspaceShellEventHelpers.h"
 
@@ -225,6 +233,60 @@ void TestScrollbarDragScrollsPreview() {
          "releasing the scrollbar should be handled");
 }
 
+// TD-2026-07-16-39: a PNG published without width/height (they are optional) was
+// laid out at 0x0 forever -- the preview could not scroll and an inline inset was
+// one pixel tall -- and nothing repainted the "Rendering…" placeholder when the
+// decode finished. The decode's wake now lays the surface out at the image's own
+// size and repaints it.
+void TestDecodedRasterIsLaidOutAtItsOwnSize() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 900, 700);
+  render::SurfaceTextureCache& cache = WorkspaceShellTestAccess::RasterCache(shell);
+  const Uint32 channel = SDL_RegisterEvents(1);
+  cache.SetWakeChannel(channel);
+  std::atomic<int> wakes{0};
+  util::SetWakePusherForTesting([&wakes, channel](util::WakeChannel pushed) {
+    if (pushed == channel) {
+      wakes.fetch_add(1);
+    }
+    return true;
+  });
+
+  constexpr std::uint64_t kHash = 4711;
+  SurfaceContent content;
+  content.body = RasterHandle{.content_hash = kHash, .width = 0, .height = 0};
+  ShowPreviewPanel(shell, std::move(content));
+  cache.Request(kHash, render::SurfaceTextureCache::RasterFormat::Png, TinyPng(), 0, 0);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (wakes.load() == 0 && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  util::SetWakePusherForTesting(nullptr);
+  Expect(wakes.load() == 1, "the decode should wake the loop");
+
+  (void)shell.ConsumePendingRenderInvalidation();
+  SDL_Event wake{};
+  wake.type = channel;
+  const auto result = shell.HandleEvent(wake);
+  auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
+  const SurfaceContent* laid_out =
+      state.plugin_presentation_if_present()->surfaces.Find("plug", "chart");
+  Expect(laid_out != nullptr &&
+             laid_out->intrinsic_width == static_cast<float>(kTinyPngWidth) &&
+             laid_out->intrinsic_height == static_cast<float>(kTinyPngHeight),
+         "the wake lays the surface out at the decoded size, got " +
+             std::to_string(laid_out != nullptr ? laid_out->intrinsic_height : -1.0f));
+  Expect(result.handled && result.redraw.HasAnyRedraw(),
+         "the wake repaints the placeholder that was waiting for the image");
+
+  // A republish of the same bytes still declares nothing; the host keeps the size.
+  SurfaceContent republished;
+  republished.body = RasterHandle{.content_hash = kHash, .width = 0, .height = 0};
+  workspace::ApplyKnownRasterSize(republished, cache);
+  Expect(republished.intrinsic_height == static_cast<float>(kTinyPngHeight),
+         "a republish of a decoded image takes its size before reaching the store");
+}
+
 }  // namespace
 
 void RegisterPluginSurfacePreviewTests(std::vector<TestCase>& tests) {
@@ -238,6 +300,8 @@ void RegisterPluginSurfacePreviewTests(std::vector<TestCase>& tests) {
           TestHitRegionClickDispatchesCommand);
   AddTest(tests, "PluginSurfacePreview/ScrollbarDragScrollsPreview",
           TestScrollbarDragScrollsPreview);
+  AddTest(tests, "PluginSurfacePreview/DecodedRasterIsLaidOutAtItsOwnSize",
+          TestDecodedRasterIsLaidOutAtItsOwnSize);
 }
 
 }  // namespace microide::tests
