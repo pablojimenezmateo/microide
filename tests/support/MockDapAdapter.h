@@ -29,7 +29,8 @@ supports_config_done = mode in ("config_done", "stop", "pause", "pause_silent_th
                                 "variables", "evaluate",
                                 "restart", "threads", "exception", "die", "thread_event",
                                 "function", "reverse", "reverse_late", "stale_stack",
-                                "relocate", "partial_continue", "stop_no_thread", "reject_resume")
+                                "relocate", "partial_continue", "stop_no_thread", "reject_resume",
+                                "gdb15_wedged")
 # `reject_resume`: after the stop, reject the resume request (continue/next/...) so
 # the host must undo its optimistic Running flip and restore the stopped view.
 reject_resume = (mode == "reject_resume")
@@ -75,6 +76,30 @@ silent_terminate = (mode == "silent_terminate")
 # depend on that answer.
 silent_threads = (mode == "pause_silent_threads")
 running = False
+# `gdb15_wedged`: gdb 15.1's DAP (Ubuntu 24.04). It starts the program inside
+# `launch`, and under load that `run` may not return until the program stops, so
+# `configurationDone` -- and every request queued behind it, `pause` included --
+# goes unanswered. Here: configurationDone starts a real child (reported in a
+# `process` event, as gdb does), is left unanswered, and a `pause` is answered only
+# once that child has been stopped by SIGINT, which is what gdb's own Ctrl+C sends.
+gdb15_wedged = (mode == "gdb15_wedged")
+wedged_child = None
+wedged_config_done = None
+wedged_pauses = []
+import threading
+write_lock = threading.Lock()
+
+def watch_wedged_child():
+    # gdb notices its program's stop by itself: answer what was queued behind
+    # configurationDone once the child is stopped by SIGINT.
+    import signal
+    if wedged_child.wait() != -signal.SIGINT:
+        return
+    respond(wedged_config_done, {})
+    for pause in wedged_pauses:
+        respond(pause, {})
+    event("stopped", {"reason": "signal", "description": "SIGINT", "threadId": 1,
+                      "allThreadsStopped": True})
 # `die`: reach Running (answer configurationDone) then exit WITHOUT a terminated event, to
 # exercise the host's dead-adapter reconciliation (no zombie session).
 die_after_launch = (mode == "die")
@@ -99,12 +124,13 @@ def read_message():
 
 def write_message(message):
     global seq
-    seq += 1
-    message["seq"] = seq
-    data = json.dumps(message).encode("utf-8")
-    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
-    sys.stdout.buffer.write(data)
-    sys.stdout.buffer.flush()
+    with write_lock:
+        seq += 1
+        message["seq"] = seq
+        data = json.dumps(message).encode("utf-8")
+        sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
+        sys.stdout.buffer.write(data)
+        sys.stdout.buffer.flush()
 
 def respond(req, body=None, success=True, message=None):
     resp = {"type": "response", "request_seq": req["seq"], "success": success,
@@ -205,6 +231,17 @@ while True:
         # that so a regression to "launch last" fails loudly here.
         if "launch" not in received and "attach" not in received:
             respond(msg, success=False, message="configurationDone before launch")
+            continue
+        if gdb15_wedged:
+            import subprocess
+            wedged_child = subprocess.Popen(
+                [sys.executable, "-c",
+                 "import signal, time\nsignal.signal(signal.SIGINT, signal.SIG_DFL)\nwhile True: time.sleep(0.05)"])
+            event("process", {"name": "spin", "systemProcessId": wedged_child.pid,
+                              "isLocalProcess": True, "startMethod": "launch"})
+            event("thread", {"reason": "started", "threadId": 1})
+            wedged_config_done = msg
+            threading.Thread(target=watch_wedged_child, daemon=True).start()
             continue
         respond(msg, {})
         if stop_on_config:
@@ -348,6 +385,8 @@ while True:
             rendered = ",".join(o.get("filterId", "") + "=" + o.get("condition", "") for o in opts)
             event("output", {"category": "stdout", "output": "excopt:" + rendered + "\n"})
         respond(msg, {})
+    elif command == "pause" and gdb15_wedged:
+        wedged_pauses.append(msg)  # queued behind configurationDone, as on gdb 15
     elif command == "pause":
         running = False
         event("output", {"category": "stdout", "output": "cmd:pause\n"})
@@ -356,6 +395,8 @@ while True:
     elif command == "terminate" and silent_terminate:
         pass  # wedged: never answered
     elif command == "terminate":
+        if wedged_child is not None and wedged_child.poll() is None:
+            wedged_child.kill()
         respond(msg, {})
         event("terminated")
     elif command == "disconnect":

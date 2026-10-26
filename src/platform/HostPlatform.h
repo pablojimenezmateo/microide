@@ -26,4 +26,9 @@ std::string UseUtf8CharacterLocale();
 // empty when it is unknown: no such process, or not permitted.
 std::filesystem::path ProcessWorkingDirectory(int pid);
 
+// Sends SIGINT to local process `pid`, as Ctrl+C in its terminal would. True when
+// the signal was delivered. A debugger tracing `pid` (gdb) catches it and stops the
+// program instead of the program seeing it.
+bool InterruptProcess(int pid);
+
 }  // namespace microide::platform

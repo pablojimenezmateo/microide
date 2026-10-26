@@ -26,6 +26,10 @@ std::string UseUtf8CharacterLocale() {
   return now != nullptr ? now : "";
 }
 
+bool InterruptProcess(int pid) {
+  return pid > 0 && kill(pid, SIGINT) == 0;
+}
+
 std::filesystem::path ProcessWorkingDirectory(int pid) {
   if (pid > 0) {
     std::error_code error;

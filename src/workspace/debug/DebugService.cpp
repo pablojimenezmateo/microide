@@ -165,10 +165,12 @@ void DebugService::StopAllDebugging() {
   if (manager.SessionCount() == 0) {
     return;
   }
-  // Tear every session down (blocks until all adapter I/O threads join). The
-  // next-frame prune drops the now-terminal sessions and cleans their consoles.
+  // Ask every session to stop, as Stop does for one: a terminate each, an adapter
+  // that does not answer forced down. Not ShutdownAll -- that joins every adapter's
+  // I/O thread on the UI thread, and a wedged gdb froze the window for seconds
+  // (QA dbg-sessions on gdb 15). The next-frame prune drops each session as it ends
+  // and cleans its console.
   manager.BeginShutdownAll();
-  manager.ShutdownAll();
   // All sessions are gone, so reset the project-shared adapter state (same as
   // StopDebugging's last-session branch).
   ResetAdapterBreakpointState();

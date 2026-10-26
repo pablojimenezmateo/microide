@@ -145,6 +145,9 @@ class DebugSession {
              const std::string& cwd = {}, const platform::SubprocessSandbox& sandbox = {});
 
   State CurrentState() const { return state_; }
+  // The debugged program's process id from the adapter's `process` event, when it
+  // runs on this machine; 0 when unknown or remote.
+  int debuggee_pid() const { return debuggee_pid_; }
   // Active = the session is doing something the UI should reflect.
   bool IsActive() const;
   const std::string& LastError() const { return last_error_; }
@@ -287,6 +290,14 @@ class DebugSession {
   // unbounded formatting. No-op for non-gdb adapters. Best-effort (errors ignored).
   void SendDebuggerValueLimits();
   void SetState(State state);
+  // gdb 15.1 (Ubuntu 24.04's) starts the program inside `launch`, and under load
+  // that `run` may not return until the program stops: configurationDone stays
+  // unanswered, and every request queued behind it on gdb's one DAP thread -- a
+  // `pause`, a `terminate` -- with it (TD-2026-10-21-375). While that holds, this
+  // interrupts the local program the way gdb's own Ctrl+C does (gdb traces it,
+  // catches the SIGINT and stops it, and the queue drains) and returns true. gdb
+  // only: another adapter's program would get the signal itself.
+  bool InterruptGdbStillStartingProgram();
 
   std::unique_ptr<DapClient> client_;
   Callbacks callbacks_{};
@@ -295,9 +306,16 @@ class DebugSession {
   std::string last_error_;
   bool launch_sent_ = false;
   bool configuration_done_sent_ = false;
+  // gdb 15 can leave configurationDone unanswered until its program first stops
+  // (TD-2026-10-21-375); while it is, Pause interrupts the program itself.
+  bool configuration_done_answered_ = false;
+  // The session's adapter runs on this machine (not over a remote launcher), so a
+  // process id it reports names a process here.
+  bool local_adapter_ = false;
+  int debuggee_pid_ = 0;
   // Threads the adapter announced (`thread` events) or listed (`threads`), oldest
-  // first: what Pause pauses while the program runs. gdb answers no request then,
-  // so a `threads` round trip at Pause time never came back (QA dbg-pause).
+  // first: what Pause pauses while the program runs. A `threads` round trip at
+  // Pause time never came back on gdb 15 (QA dbg-pause; TD-2026-10-21-375).
   std::vector<int> known_thread_ids_;
   // A Pause asked for before any thread was announced: sent when the first one is
   // (an F6 right after the program started did nothing, QA dbg-pause).

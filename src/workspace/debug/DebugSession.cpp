@@ -87,6 +87,9 @@ bool DebugSession::Start(const platform::ProcessLauncher& launcher,
   config_ = config;
   launch_sent_ = false;
   configuration_done_sent_ = false;
+  configuration_done_answered_ = false;
+  local_adapter_ = launcher.is_local();
+  debuggee_pid_ = 0;
   last_error_.clear();
   is_gdb_adapter_ = CommandLooksLikeGdb(command, config.type);
   client_->SetTerminateDebuggeeOnDisconnect(!config_.IsAttach());
@@ -158,6 +161,7 @@ void DebugSession::SendConfigurationDone() {
   }
   client_->SendRequestAsync("configurationDone", util::JsonValue(nullptr),
                             [this](const dap_protocol::DapResponse& response) {
+                              configuration_done_answered_ = true;
                               const bool in_handshake = state_ == State::Configuring ||
                                                         state_ == State::Initializing;
                               if (!response.success) {
@@ -313,6 +317,14 @@ void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& 
       }
       callbacks_.on_breakpoint_changed(path, dap_protocol::ParseBreakpoint(bp));
     }
+  } else if (event == "process") {
+    // The program's process, for Pause while gdb 15 still holds configurationDone.
+    // Only one on this machine: a remote adapter's pid names a process over there.
+    const util::JsonValue& pid = body["systemProcessId"];
+    const util::JsonValue& is_local = body["isLocalProcess"];
+    if (local_adapter_ && pid.IsInt() && (!is_local.IsBool() || is_local.AsBool())) {
+      debuggee_pid_ = static_cast<int>(pid.AsInt());
+    }
   } else if (event == "thread") {
     // A thread started or exited. Keep the known ids (Pause needs one while the
     // program runs), then refresh the thread list so the Call Stack thread
@@ -333,10 +345,10 @@ void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& 
       pause_pending_ = false;
       client_->SendRequestAsync("pause", dap_protocol::MakeThreadIdArguments(known_thread_ids_.front()), {});
     }
-    // The list is only shown at a stop (its answer is dropped otherwise), and a
-    // `threads` request to gdb while its program starts left gdb answering nothing
-    // more under load -- configurationDone, the threads, a pause, a terminate, all
-    // timed out (QA dbg-pause). A stop refreshes the list itself.
+    // The list is only shown at a stop (its answer is dropped otherwise), and on
+    // gdb 15 a `threads` request while it is still starting the program queues
+    // behind configurationDone with everything else (TD-2026-10-21-375). A stop
+    // refreshes the list itself.
     if (state_ == State::Stopped) {
       RefreshThreadList();
     }
@@ -370,8 +382,10 @@ void DebugSession::RequestStop() {
   // the adapter then emits `terminated`, which drives the disconnect. Adapters
   // without terminate support are disconnected directly.
   if (client_->Capabilities().supports_terminate_request) {
-    // An adapter that does not answer (gdb under load stopped answering anything
-    // after the launch, QA dbg-pause) must not keep the session -- and its program
+    // A `terminate` behind a configurationDone gdb 15 has not answered would wait
+    // with it: stop the program first so gdb's queue drains.
+    (void)InterruptGdbStillStartingProgram();
+    // An adapter that does not answer must not keep the session -- and its program
     // -- alive: a failed or timed-out terminate forces the adapter down, whose
     // disconnect asks the launched program's end.
     client_->SendRequestAsync("terminate", util::JsonValue(nullptr),

@@ -4,6 +4,8 @@
 // the shared DebugSession and are a cohesive cluster.
 #include "workspace/debug/DebugSession.h"
 
+#include "platform/HostPlatform.h"
+
 #include <utility>
 #include <vector>
 
@@ -66,14 +68,24 @@ void DebugSession::StepBack() {
   SendResumeRequest("stepBack");
 }
 
+bool DebugSession::InterruptGdbStillStartingProgram() {
+  return is_gdb_adapter_ && configuration_done_sent_ && !configuration_done_answered_ &&
+         debuggee_pid_ > 0 && platform::InterruptProcess(debuggee_pid_);
+}
+
 void DebugSession::Pause() {
   if (state_ != State::Running || !client_->IsInitialized()) {
     return;
   }
+  // A `pause` behind a configurationDone gdb 15 has not answered is never answered.
+  if (InterruptGdbStillStartingProgram()) {
+    return;
+  }
   // `pause` requires a threadId. When running there is no stopped thread: pause
   // the first one the adapter announced. Asking for the thread list now is the
-  // fallback only -- gdb answers no request while the program runs, so the
-  // request timed out and `pause` was never sent (QA dbg-pause).
+  // fallback only: on gdb 15 a request sent while it is still starting the program
+  // waits behind configurationDone (above), so the `threads` round trip timed out
+  // and `pause` was never sent (QA dbg-pause).
   if (!known_thread_ids_.empty()) {
     client_->SendRequestAsync("pause", dap_protocol::MakeThreadIdArguments(known_thread_ids_.front()), {});
     return;
@@ -97,6 +109,7 @@ void DebugSession::Restart() {
   // A re-emitted `initialized` (some adapters send one on restart) must re-install
   // breakpoints and re-finalize, so re-arm the configurationDone guard.
   configuration_done_sent_ = false;
+  configuration_done_answered_ = false;
   // A restarted program's threads are announced afresh.
   known_thread_ids_.clear();
   // The DAP `restart` request optionally carries the original launch/attach

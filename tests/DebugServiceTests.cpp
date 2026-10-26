@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <functional>
+#include <signal.h>
 #include <string>
 #include <thread>
 #include <vector>
@@ -491,6 +492,86 @@ void TestDebugSessionPauseFromRunning() {
   Expect(captured.output.find("cmd:pause") != std::string::npos,
          "Pause should send the DAP `pause` command after resolving a thread");
   manager.ShutdownAll();
+}
+
+// TD-2026-10-21-375: on gdb 15.1 (Ubuntu 24.04) F6 did nothing. gdb 15 starts the
+// program inside `launch`; under load that `run` may not return until the program
+// stops, so configurationDone stays unanswered on gdb's one DAP thread and a
+// `pause` queues behind it forever. While configurationDone is unanswered the
+// session interrupts its local program with SIGINT itself -- what gdb's own
+// Ctrl+C does; gdb catches it and the program stops.
+void TestDebugSessionPauseInterruptsAGdbStillStartingTheProgram() {
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(),
+                          GdbFlavoredAdapterCommand(server_path, "gdb15_wedged"));
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+  Expect(PollUntil(manager,
+                   [&]() {
+                     const auto* session = manager.ActiveSession();
+                     return session != nullptr &&
+                            session->CurrentState() == DebugSession::State::Running &&
+                            session->debuggee_pid() > 0;
+                   }),
+         "the session runs and knows its program's process from the `process` event");
+
+  manager.ActiveSession()->Pause();
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }),
+         "Pause stops a program whose gdb is still inside configurationDone");
+  manager.ShutdownAll();
+}
+
+// QA dbg-sessions on gdb 15: Stop All Debug Sessions froze the window for
+// seconds. It joined every adapter's I/O thread on the UI thread, and a gdb 15
+// still holding configurationDone (TD-2026-10-21-375) answered the terminate
+// queued behind it only on a timeout. Stop All now asks each session to stop, as
+// Stop does -- interrupting a program whose gdb is still starting it -- and the
+// per-frame prune drops each as it ends.
+void TestDebugServiceStopAllDoesNotWaitOnAWedgedGdb() {
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+  microide::workspace::WorkspaceContext context;
+  context.current_project_state.root = temp_dir.path();
+  microide::workspace::DebugService service;
+  service.Configure(context, microide::workspace::DebugService::Operations{});
+  DapManager& manager = service.CurrentDapManager();
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(),
+                          GdbFlavoredAdapterCommand(server_path, "gdb15_wedged"));
+  LaunchConfig config;
+  config.name = "session";
+  config.type = "mock";
+  config.request = "launch";
+  Expect(service.StartDebugging(config), "the session should start");
+  const auto pump_until = [&](const std::function<bool()>& done) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (!done() && std::chrono::steady_clock::now() < deadline) {
+      service.ConsumeDapCallbacks();
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return done();
+  };
+  int pid = 0;
+  Expect(pump_until([&]() {
+           const DebugSession* session = manager.ActiveSession();
+           pid = session != nullptr ? session->debuggee_pid() : 0;
+           return pid > 0;
+         }),
+         "the session runs its program, still inside configurationDone");
+
+  service.StopAllDebugging();
+  Expect(manager.SessionCount() == 1,
+         "Stop All returns without joining the adapter (the session is still ending)");
+  Expect(pump_until([&]() { return manager.SessionCount() == 0; }),
+         "the session ends and is pruned");
+  Expect(::kill(pid, 0) != 0, "and its program is gone");
 }
 
 // QA dbg-pause: F6 on a program running under gdb did nothing. Pause asked the
@@ -3287,6 +3368,8 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/SessionRejectedResumeRestoresStoppedView",
           TestDebugSessionRejectedResumeRestoresStoppedView);
   AddTest(tests, "DebugService/SessionPauseFromRunning", TestDebugSessionPauseFromRunning);
+  AddTest(tests, "DebugService/SessionPauseInterruptsAGdbStillStartingTheProgram",
+          TestDebugSessionPauseInterruptsAGdbStillStartingTheProgram);
   AddTest(tests, "DebugService/AStopTheAdapterDoesNotAnswerEndsTheSession",
           TestAStopTheAdapterDoesNotAnswerEndsTheSession);
   AddTest(tests, "DebugService/TeardownEndsALaunchedDebuggeeAndSparesAnAttachedOne",
@@ -3339,6 +3422,7 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/SessionWatchEvaluate", TestDebugSessionWatchEvaluate);
   AddTest(tests, "DebugService/SessionReplEvaluate", TestDebugSessionReplEvaluate);
   AddTest(tests, "DebugService/ManagerStopAllSessions", TestDebugManagerStopAllSessions);
+  AddTest(tests, "DebugService/StopAllDoesNotWaitOnAWedgedGdb", TestDebugServiceStopAllDoesNotWaitOnAWedgedGdb);
   AddTest(tests, "DebugService/TwoPhaseStopReporting", TestDebugServiceTwoPhaseStopReporting);
   AddTest(tests, "DebugService/BackgroundStopDoesNotBroadcast",
           TestDebugServiceBackgroundStopDoesNotBroadcast);
