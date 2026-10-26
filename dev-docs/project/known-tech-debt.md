@@ -449,27 +449,57 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-26-393 — the full perf gate fails on perf-runner-v1. [OPEN]
+### TD-2026-10-26-394 — the editor and the chrome build two identical glyph atlases by default. [OPEN — optimization]
 
-`tools/perf-gate.sh` on this box (`perf-runner-v1`) last recorded FAIL on 2026-10-25
-(commit d49174f0) with 12 scenarios red: `branch_review_presentation_markers`,
-`editor_cjk_scroll_paint`, `editor_save_normalization`, `editor_indent_detect_open`,
-`external_change_refresh_open_diff`/`_merge`, `scroll_large_file`,
-`editor_scroll_fresh_content_large`, `terminal_scroll_long_output`,
-`terminal_stream_chunked_output`, `terminal_alt_screen_toggle`, plus `terminal.open`'s
-allocation phase (rebaselined under TD-2026-10-09-334). It already failed at that
-session's starting commit (7a46c26c), so a red gate here is not by itself evidence of a
-regression. Known: `editor_save_normalization`'s p95/max spikes (~37 ms) are fsync
-stalls on the encrypted ext4 volume, at the same rate at base and HEAD when both save to
-the main checkout and zero on tmpfs. Several timing baselines also say they were
-recorded on an advisory runner (TD-2026-08-11-184) and are not enforced until
-re-recorded here. Nothing had tracked this: it lived only in a session note.
+Since 8df85a3a (2026-10-19) the editor area draws with its own `TextRenderer` at
+`editor.font_size` and the chrome with another at the UI size. That was a correct fix:
+one renderer let a large editor font overflow every fixed-height chrome row. But both
+default to 13 pt in the same family, so a default setup fills two identical ASCII atlases
+and keeps two identical glyph caches. The perf A/B for TD-2026-10-26-393 measured it:
+`large_file_open_first_paint` +0.25 ms (+14%; `EnsureAsciiAtlas` 2.2M -> 10.3M
+instructions), and `editor_scroll_fresh_content_large` about +190 KB resident per
+sweep outside the C++ heap (bisected to 8df85a3a). Next: let the two renderers share one
+backend, atlas and cache while their family and size match, and split them when the
+editor font changes. A render-layer design change, so not done in the gate pass.
 
-Next, on an idle box: base vs HEAD interleaved from the main checkout (same disk) for
-each red scenario. "Rebaseline down, investigate up": a scenario at or under its base
-is re-recorded; one over it is a regression to find.
+### TD-2026-10-26-393 — the full perf gate fails on perf-runner-v1. [LARGELY RESOLVED 2026-10-26 — one gate-policy question left]
 
-### TD-2026-10-25-392 — CI's QA lanes are red on most pushes; `multi-caret-pairs` fails on X11 CI and passes locally. [OPEN -- seventeen causes fixed 2026-10-25/26]
+`tools/perf-gate.sh` on this box (`perf-runner-v1`) had recorded FAIL since at least
+2026-10-25, with 11 scenarios red. Nothing tracked it; it lived only in a session note.
+Every one was taken base-vs-HEAD: the base commit that last recorded its baseline, built
+in a worktree on the same disk (the LTO `environ` link fix d123ee73 applied by hand), three
+interleaved rounds each. Increases were profiled with callgrind (instruction counts, no
+timing noise) or bisected.
+
+- **The machine, not the code** (HEAD equal to base or better): `scroll_large_file`
+  (59.4 vs 60.0 ms; the 34 ms baseline describes another machine state),
+  `terminal_scroll_long_output`, `terminal_alt_screen_toggle`, `editor_cjk_scroll_paint`.
+- **Explained increases:** `editor_indent_detect_open` +0.15 ms (8435356a: VS Code's
+  guessIndentation over 1024 lines instead of 256 fixed 2-space files read as
+  4-space; `DetectIndent` 3.6x the instructions). `external_change_refresh_open_merge`
+  +1.7 ms (+17% instructions in drawing the merge toolbar, window chrome, panel strip
+  and sidebar added since August). `external_change_refresh_open_diff` net heap -67 KB
+  -> -0.6 KB (a cache now survives the refresh: no growth per iteration).
+  `editor_scroll_fresh_content_large` +190 KB resident and `large_file_open_first_paint`
+  +0.25 ms: the second glyph atlas, TD-2026-10-26-394.
+- **The disk:** `editor_save_normalization`'s p95/max were fsync stalls on the
+  encrypted checkout volume (up to 37 ms one run in three, the same at every commit).
+  The scenario now saves a copy in the temp directory (tmpfs here); p95 4.4 ms and max
+  6.4 ms on all three runs after.
+- **Already passing:** `branch_review_presentation_markers`,
+  `terminal_stream_chunked_output` (re-recorded too: its timing half was from an advisory
+  runner and not enforced).
+
+All were re-recorded on the idle box (`--update-baseline`, both halves), and the next full
+gate PASSED. A second full gate failed only `multi_project_switch` on
+`mean_rss_growth_bytes`: 88 KB against the 64 KiB floor's 80 KB allowance. Three more
+runs read 53, 54 and 65 KB. Its real retention is about 55 KB (33 KB when recorded in
+August, a few pages more), and a 25% envelope at that size occasionally catches page
+jitter. Left open because the fix is a gate policy choice: raise the suite-wide floor,
+which loosens about 90 zero-growth gates, or give this scenario its own tolerance, which
+the harness discourages because a rebaseline drops it.
+
+### TD-2026-10-25-392 — CI's QA lanes are red on most pushes; `multi-caret-pairs` fails on X11 CI and passes locally. [OPEN -- eighteen causes fixed 2026-10-25/26]
 
 **2026-10-25, three causes found and fixed:**
 
@@ -639,6 +669,23 @@ three never reached frame 1: the app was blocked in its first present.
   the control channel came up. It now waits for this launch's first presented
   frame (the per-frame log line QA always enables). `_open_source` also checks
   that `open` was taken, so a refused open is told apart from a missing tab.
+
+**2026-10-26, sixth CI run (8d2e68e8: `checks` 40299792501, `qa-deep`
+40299792553).** X11 `qa` and `qa-wayland` came back fully clean, with no flaky
+retries and no notes at all: the gdb `pause` notes are gone with TD-2026-10-21-375.
+`qa-asan` had one flaky scenario:
+
+- **`unicode-editing` lost the `é` of "café".** On X11 the driver typed a Latin-1
+  character with `xdotool key U00E9`, between two 80 ms sleeps. xdotool binds
+  such a keysym to a scratch keycode for the press and restores the map right
+  after, and the slow ASan binary looked the key up under the restored map. No
+  wait on the driver's side can close that race. The driver now binds Latin-1
+  keysyms to the display's free keycodes with `xmodmap` and leaves them bound
+  (`_map_latin1`). There are 18 free keycodes, used as a cache: one is reused only
+  after the app has taken every key sent before. The X server delivers the
+  MappingNotify ahead of any later key event. `xmodmap` (x11-xserver-utils) is
+  now a required QA tool, installed by both workflows. Clean 6/6 on the release
+  and ASan builds, and 4/4 with four ASan copies at once.
 
 Close this entry once a run of CI's QA lanes comes back green with no flaky
 retries and no driver notes.
