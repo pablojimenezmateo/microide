@@ -148,7 +148,7 @@ jobs:
             libpcre2-dev liblua5.4-dev libfreetype-dev libharfbuzz-dev \
             libfontconfig-dev libx11-dev libxext-dev libwayland-dev \
             libxkbcommon-dev libegl-dev \
-            xvfb xdotool x11-apps x11-utils python3-pil fonts-dejavu-core \
+            xvfb xdotool x11-apps x11-utils x11-xserver-utils python3-pil fonts-dejavu-core \
             clangd gdb
 
       - name: Cache SDL3 build

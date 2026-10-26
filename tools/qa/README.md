@@ -9,7 +9,7 @@ and checks it with oracles that need no expected screenshot.
 ## Setup
 
 ```bash
-sudo apt install xvfb xdotool x11-apps x11-utils python3-pil   # Xvfb, xdotool, xwd, xdpyinfo, Pillow
+sudo apt install xvfb xdotool x11-apps x11-utils x11-xserver-utils python3-pil   # Xvfb, xdotool, xwd, xdpyinfo, xmodmap, Pillow
 sudo apt install clangd gdb nodejs                              # the lsp-* and dbg-* flows
 (mkdir -p ~/.cache/microide-qa/ts && cd ~/.cache/microide-qa/ts && npm install typescript@5 typescript-language-server)
 dotnet tool install --global csharp-ls                          # lsp-typescript, lsp-csharp

@@ -39,7 +39,7 @@ import monkey as m  # noqa: E402
 import scenarios as s  # noqa: E402
 import invariants as inv  # noqa: E402
 
-REQUIRED_TOOLS = ("Xvfb", "xdotool", "xwd", "xdpyinfo")
+REQUIRED_TOOLS = ("Xvfb", "xdotool", "xwd", "xdpyinfo", "xmodmap")
 
 
 def require_tools() -> None:

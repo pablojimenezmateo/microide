@@ -417,6 +417,11 @@ class App:
         self._wheels_pending = 0
         self._motion_pending: tuple[int, int] | None = None
         self._pointer_at: tuple[int, int] | None = None  # window coordinates, as last sent
+        # Latin-1 characters bound to the display's free keycodes (_map_latin1), oldest
+        # first. Per launch: a restart keeps the display, whose bound keycodes a fresh
+        # listing then sees as taken.
+        self._latin1_keycodes: dict[str, int] = {}
+        self._free_keycodes: list[int] | None = None
         self._keys_sent: list[str] = []  # what the presses were, for a timeout's note
         self._typed_log_offset = 0
         args = [str(self.binary)]
@@ -1157,9 +1162,11 @@ class App:
             return
         self._focus()
         args = ["type", "--clearmodifiers", "--delay", "25"]
-        # Beyond ASCII, xdotool remaps a scratch keycode per character and SDL races
-        # the keymap change, so a run of them drops characters; Latin-1 goes as its
-        # own keysym press instead. Past Latin-1 there is no way in: Xvfb has no
+        # Beyond ASCII, xdotool remaps a scratch keycode per character and restores
+        # it right after the press, and SDL races that: a slow app looked the key up
+        # under the restored map and typed nothing (unicode-editing lost the `é` on
+        # the ASan lane, behind 80 ms sleeps that were a guess). Latin-1 is mapped
+        # here instead, and stays mapped (_map_latin1). Past Latin-1 there is no way in: Xvfb has no
         # input method, and without one X delivers no text for such a keysym (a real
         # desktop's IME does) -- those characters are inserted through the control
         # channel's `type` (the paste path), and the action log says so.
@@ -1181,15 +1188,40 @@ class App:
                 chunk += char
             elif ord(char) <= 0xFF:
                 flush()
-                time.sleep(0.08)  # let SDL see the ASCII run's keymap settle first
+                self._map_latin1(char)
                 self._expect_typed_input(char, 1)
-                self._xdotool(*key_args, "U%04X" % ord(char))
-                time.sleep(0.08)
+                self._xdotool(*key_args, "0x%x" % ord(char))
             else:
                 flush()
                 self._record({"type-via-control": char})
                 self._control(["control-send", "type", char])
         flush()
+
+    def _map_latin1(self, char: str) -> None:
+        """Binds Latin-1 `char`'s keysym to one of the display's free keycodes with
+        xmodmap and leaves it bound, so xdotool presses it as an ordinary key and
+        never remaps anything around the press. The free keycodes are a small
+        cache: one is reused for a new character only once the app has taken every
+        key sent before (_await_typed_input), so no pending key can be read under
+        the new mapping. The X server delivers the MappingNotify ahead of any later
+        key event, so SDL reads the next key under the mapping set here."""
+        if char in self._latin1_keycodes:
+            self._latin1_keycodes[char] = self._latin1_keycodes.pop(char)  # most recent last
+            return
+        if self._free_keycodes is None:
+            listing = subprocess.run(["xmodmap", "-pke"], env=self.tool_env, capture_output=True, text=True)
+            self._free_keycodes = [int(line.split()[1]) for line in listing.stdout.splitlines()
+                                   if line.startswith("keycode") and len(line.split()) <= 3]
+        if self._free_keycodes:
+            keycode = self._free_keycodes.pop()
+        else:
+            self._await_typed_input()
+            oldest = next(iter(self._latin1_keycodes))
+            keycode = self._latin1_keycodes.pop(oldest)
+        keysym = "0x%x" % ord(char)
+        subprocess.run(["xmodmap", "-e", f"keycode {keycode} = {keysym} {keysym}"], env=self.tool_env,
+                       capture_output=True)
+        self._latin1_keycodes[char] = keycode
 
     def center(self, element: dict[str, Any]) -> tuple[float, float]:
         x, y, w, h = element["rect"]

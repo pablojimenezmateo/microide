@@ -616,9 +616,9 @@ check_qa() {
   local qa_jobs="${MICROIDE_QA_JOBS:-$(( JOBS < 8 ? JOBS : 8 ))}"
   run_logged "$log" bash -c '
     set -e
-    for tool in Xvfb xdotool xwd xdpyinfo; do
+    for tool in Xvfb xdotool xwd xdpyinfo xmodmap; do
       if ! command -v "$tool" >/dev/null 2>&1; then
-        echo "run-checks: qa needs $tool (apt install xvfb xdotool x11-apps x11-utils)" >&2
+        echo "run-checks: qa needs $tool (apt install xvfb xdotool x11-apps x11-utils x11-xserver-utils)" >&2
         exit 1
       fi
     done
