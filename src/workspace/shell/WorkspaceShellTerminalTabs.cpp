@@ -113,7 +113,7 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
             }
           },
       .forget_recent_project =
-          [this](const std::filesystem::path& root) { recents_service_.ForgetProject(root); },
+          [this](const project::ProjectId& id) { recents_service_.ForgetProject(id); },
       .open_terminal =
           [this](std::shared_ptr<const platform::ProcessLauncher> launcher, std::string label_prefix,
                  std::string command) {

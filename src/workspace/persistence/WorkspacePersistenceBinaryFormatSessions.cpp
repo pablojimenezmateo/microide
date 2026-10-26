@@ -402,9 +402,18 @@ bool EncodeWorkspaceSessionRecord(const PersistedWorkspaceSessionState& state,
                     out)) {
     return false;
   }
-  for (const auto& root : state.project_roots) {
-    if (!AppendRecord(WorkspaceSessionTag::ProjectRoot,
-                      [&](PrimitiveWriter& w) { return w.WritePath(root); }, out)) {
+  // Interleaved, one project at a time: an older build reads the path tags in tab
+  // order and skips the identity records as unknown tags.
+  std::vector<std::byte> payload;
+  for (std::size_t i = 0; i < std::max(state.projects.size(), state.project_roots.size()); ++i) {
+    if (i < state.projects.size() &&
+        (!EncodeProjectId(state.projects[i], &payload) ||
+         !AppendTaggedRecord(static_cast<std::uint16_t>(WorkspaceSessionTag::Project), payload, out))) {
+      return false;
+    }
+    if (i < state.project_roots.size() &&
+        !AppendRecord(WorkspaceSessionTag::ProjectRoot,
+                      [&](PrimitiveWriter& w) { return w.WritePath(state.project_roots[i]); }, out)) {
       return false;
     }
   }
@@ -413,6 +422,7 @@ bool EncodeWorkspaceSessionRecord(const PersistedWorkspaceSessionState& state,
 
 bool DecodeWorkspaceSessionRecord(std::span<const std::byte> input,
                                   PersistedWorkspaceSessionState* state) {
+  constexpr std::size_t kMaxWorkspaceProjectRoots = 256;
   if (state == nullptr) {
     return false;
   }
@@ -430,6 +440,20 @@ bool DecodeWorkspaceSessionRecord(std::span<const std::byte> input,
                    seen_schema = true;
                    return true;
                  }
+                 case WorkspaceSessionTag::Project: {
+                   std::optional<project::ProjectId> id;
+                   if (!DecodeProjectId(payload, &id)) {
+                     return false;
+                   }
+                   // The same cap and dedupe as the legacy roots below.
+                   if (id.has_value() &&
+                       std::find(state->projects.begin(), state->projects.end(), *id) ==
+                           state->projects.end() &&
+                       state->projects.size() < kMaxWorkspaceProjectRoots) {
+                     state->projects.push_back(std::move(*id));
+                   }
+                   return true;
+                 }
                  case WorkspaceSessionTag::ProjectRoot: {
                    std::filesystem::path root;
                    if (!reader.ReadPath(&root) || reader.remaining() != 0) {
@@ -438,7 +462,6 @@ bool DecodeWorkspaceSessionRecord(std::span<const std::byte> input,
                    // Cap and dedupe: a corrupt session with thousands of (or
                    // duplicate) roots would otherwise spin up a large startup loop
                    // and duplicate project tabs. 256 is far past any real workspace.
-                   constexpr std::size_t kMaxWorkspaceProjectRoots = 256;
                    const std::filesystem::path normalized = root.lexically_normal();
                    const bool already_present =
                        std::any_of(state->project_roots.begin(), state->project_roots.end(),

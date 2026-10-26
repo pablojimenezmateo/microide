@@ -1042,6 +1042,15 @@ stages; it stages from the row's menu now, and waits for Commit to be enabled).
 Test: `MirrorSyncEngine/IgnoresAWatchRowOlderThanItsPush` (fails without the
 skip).
 
+**Recurred once, 2026-10-26.** One `qa-remote` run during the project-identity
+work (which does not touch the sync engine) ended the same way: "LICENSE changed
+on qa-slow and here", then J 0/8, K and L failing on the stalled sync, and E and
+F timing out. The next two runs of the same lane -- one at the base commit
+14f3a793, one at the change -- were clean on both passes. So the race the
+`pushed_manifest` skip closed is narrowed, not gone. Reopen if it comes back; the
+first thing to check is whether a delta can still be built before the write
+lands but carry a manifest id above the write's answer.
+
 
 `tools/run-checks.sh qa-remote`'s second pass (the loopback host behind a 60 ms
 each-way link, `qa-slow`) fails scenario J: while four host agents rewrite the tree,

@@ -1884,19 +1884,36 @@ std::string PathLeafName(const std::filesystem::path& path) {
 // exists-validated lists (ExistingRecentProjects/ExistingRecentFilesFor), so this no
 // longer stats each path per paint — the validation is cached against the MRU
 // revision in the service (TD-2026-07-17A-014).
-std::vector<editor::WelcomeRecent> BuildRecentRows(
-    std::span<const std::filesystem::path> paths, std::span<const std::string> displays = {}) {
+std::vector<editor::WelcomeRecent> BuildRecentRows(std::span<const std::filesystem::path> paths) {
   std::vector<editor::WelcomeRecent> rows;
   rows.reserve(paths.size());
-  for (std::size_t i = 0; i < paths.size(); ++i) {
-    const std::filesystem::path& path = paths[i];
+  for (const std::filesystem::path& path : paths) {
     if (path.empty()) {
       continue;
     }
     rows.push_back(editor::WelcomeRecent{
         .name = PathLeafName(path),
-        .path_display = i < displays.size() ? displays[i] : path.string(),
+        .path_display = path.string(),
         .path = path,
+    });
+  }
+  return rows;
+}
+
+// A row per recent project, named by its id: a remote one shows `host:/path`,
+// never its mirror's directory, and is reopened by that name.
+std::vector<editor::WelcomeRecent> BuildRecentProjectRows(std::span<const project::ProjectId> ids) {
+  std::vector<editor::WelcomeRecent> rows;
+  rows.reserve(ids.size());
+  for (const project::ProjectId& id : ids) {
+    if (id.empty()) {
+      continue;
+    }
+    rows.push_back(editor::WelcomeRecent{
+        .name = id.Label(),
+        .path_display = id.Location(),
+        .path = id.IoRoot(),
+        .remote_folder = id.IsRemote() ? id.Location() : std::string(),
     });
   }
   return rows;
@@ -1965,15 +1982,15 @@ const editor::WelcomeViewModel& RenderViewModelBuilder::BuildWelcomeView(
     vm.empty_recents_label = "No recent projects yet.";
     vm.open_folder_label = LabelWithChord("Open Folder…", ActionId::ProjectOpen);
     vm.open_remote_folder_label = LabelWithChord("Open Folder on Host…", ActionId::RemoteOpenFolder);
-    vm.recent_projects =
-        BuildRecentRows(recents.ExistingRecentProjects(), recents.ExistingRecentProjectDisplays());
+    vm.recent_projects = BuildRecentProjectRows(recents.ExistingRecentProjects());
     return vm;
   }
 
   // Project home: a project is open but the focused group has no tab. Offer this project's
   // recent files plus the create/open/find affordances — not "open a different folder".
   vm.kind = editor::WelcomeKind::ProjectHome;
-  vm.title = PathLeafName(root);
+  // The project's name, not its root's: a remote project's root is its mirror.
+  vm.title = context_.current_project_state.id.Label();
   vm.subtitle = "Open a file, or jump back into a recent one.";
   vm.actions_heading = "Actions";
   vm.recent_files_heading = "Recent files";

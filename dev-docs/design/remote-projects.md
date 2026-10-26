@@ -40,13 +40,15 @@ Shipped from the groundwork so far, on `main`:
 | **G10** (part) | `project::FileWriteGate` is the one door for writes that replace a file's contents — the editor save, the plugin file API, replace-in-project and the merge rollback writer — with `CheckProjectWritesGoThroughTheWriteGate` keeping the primitive out of workspace, plugin and editor. `TextViewport` holds its gate as a pointer, which is where `MirrorWriteGate` plugs in. | tree operations (create/rename/delete): the LSP resource-ops journal and the sidebar's file ops (TD-2026-09-29-305) |
 | **G5** (part) | `SaveFormatterService` runs the formatter on a worker. An interactive save DEFERS — it returns without writing and its completion applies the formatter's output, guarded on the buffer's content revision — while a save whose caller acts on completion blocks. Flushes at tab close, project switch/close and quit keep an in-flight save from being dropped. The lint's spawn allowlist is now the service alone, plus a second half confining the one remaining shell-thread wait. | the blocking callers still wait (TD-2026-09-28-304); participants are still on the shell thread; compare/merge saves are still blocking |
 | **G4** (part) | `editor::AsyncBufferWork` is the guarded completion — an operation id the tab holds (so a completion finds its tab, and finds none if it was closed) plus the `content_revision` it was posted against — and the format-on-save path was moved onto it, so there is one copy of that rule rather than three. `project::FileReadService` is the dedicated reader: one thread, not the serial `ProjectBackgroundExecutor`, with cancellation checked between 1 MiB chunks so closing a tab stops the I/O. `EditorTabState::needs_restore` became `Content{Ready, Deferred, Loading, Failed}`, so the ~40 existing guards ask `content_pending()` and cover a state added later by construction. Files ≥ 4 MiB open off-thread; the WHOLE load runs on the reader's thread through the request's `on_worker` hook — the classification (hash, encoding, line endings, CRLF rewrite) and the buffer build, with a complete `TextViewport` constructed there and moved into the tab by the completion. One file is one read however many panes wait for it: the completion hands its view to every other tab waiting on that path, sharing the buffer. `TextViewport` gained a read-only mode, refused at both edit choke points and at `Save()`, because a keystroke into a tab whose bytes have not arrived would otherwise become a buffer that shadows the file and can be saved over it. A sticky notification reports a read above 48 MiB. | compare/merge still read their sides on the shell thread (TD-2026-09-29-312); the threshold is a size, so a small file on a stalled mount still blocks (TD-2026-09-29-313); — the disk-content hash (G6) is off the shell thread for the watcher sweep, leaving only the save path's own conflict check, which must decide before it writes (TD-2026-09-29-309) |
+| **G8** | `project::ProjectId` (`Local{path} \| Remote{host, host_root}`) on `ProjectWorkspaceState::id`, fixed when the catalog entry is created; every project label derives from it and `ProjectLabelForRoot` is deleted; the session and MRU persist ids beside their legacy roots; a remote recents entry outlives its mirror (2026-10-26, § 6.8). | nothing; the state directory stays keyed by the I/O root, deliberately (§ 6.8) |
 
 The right-hand column above records what each item left open *when it landed*.
 As of 2026-10-25 all of it has since shipped: TD-301, TD-304, TD-305, TD-309,
 TD-312 and TD-313 are resolved, the remote project answers G9 with the host's
 pushed `git/metadata`, and the manifest digest is blake3. **G7** notification
-actions shipped too (`openspec/specs/notification-actions`). The only item not
-started is **G8** `ProjectId`, scoped as `openspec/changes/project-identity`.
+actions shipped too (`openspec/specs/notification-actions`). **G8** `ProjectId`
+shipped on 2026-10-26 (`openspec/specs/project-identity`, § 6.8): every
+groundwork item is done.
 
 **G11** (part, 2026-10-07): the parity harness exists — `tests/parity/` holds the
 loopback launcher and gate, the runner with its normalizer, vacuity guards,
@@ -1464,11 +1466,27 @@ who its parent was:
   older build reads as `Location::Local(path)`, which is what it meant. Avoiding
   the migration is possible and not worth it: it buys compatibility this project
   does not want at the price of a leak it does.
-- The remote half of a `ProjectId` carries `host, remote_root, user (optional),
-  last_manifest_id, last_connected_at`, written through the same persistence path.
-  The per-project state directory is keyed by the `ProjectId`, not by the mirror
-  path, so `remote.mirror_root` can change without orphaning a project's settings,
-  session or breakpoints.
+- **As shipped (2026-10-26, `openspec/specs/project-identity`).** `project::ProjectId`
+  is `Local{path} | Remote{host, host_root}` (the user is part of `host`, as
+  `RemoteHostTarget::Display` writes it; the manifest id and last-connected time
+  stay in the mirror's own state, where the engine already keeps them). It is
+  resolved once, when a catalog entry is created (`OpenProjectTab`, session restore,
+  recents), by `ResolveProjectId`: `Remote` exactly when the path is the default
+  tree of the mirror whose `meta/remote` record names it. It is stored on
+  `ProjectWorkspaceState::id` beside `locality` and survives every scoped-state
+  reset; activation asks `RemoteHostService::LocalityFor(id)` instead of sniffing
+  the directory. The workspace session and the MRU write `ProjectId` records and,
+  for one release window, the legacy root path beside each, so an older build still
+  restores; a file with no records is resolved path by path on load.
+- **What stayed path-keyed, and why.** Breakpoints and recent files name files and
+  filter by the active project's I/O root, a pure function of the id, so they did
+  not move. The per-project state directory also stays keyed by the I/O root: the
+  mirror path is a pure function of `(host, host_root)` and the data directory, so
+  the key is already stable for everything the editor can do. The
+  `remote.mirror_root` setting that would make it unstable was never built.
+  Re-keying would cost a directory migration with a rename on first open, for a
+  directory name (`tree-<hash>`) no user sees. Revisit if the mirror root ever
+  becomes configurable.
   Presentation (`WorkspaceProjectPresentation`, the welcome recents, the window
   title) renders a `ProjectId` and therefore shows `host:/remote/root` by
   construction rather than by remembering to.

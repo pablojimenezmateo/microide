@@ -1178,11 +1178,10 @@ util::JsonValue ControlChannelService::BuildProjects() const {
     project_object["root"] =
         util::JsonValue(entry != nullptr ? entry->root.generic_string() : std::string());
     project_object["active"] = util::JsonValue(i == catalog.active_index);
-    if (entry != nullptr && operations_.remote_project) {
-      if (const auto remote = operations_.remote_project(entry->root)) {
-        project_object["host"] = util::JsonValue(remote->host);
-        project_object["hostRoot"] = util::JsonValue(remote->host_root);
-      }
+    // From the id, so a restored remote project is marked before it is activated.
+    if (const project::ProjectId::Remote* remote = context_->ProjectCatalogId(i).remote()) {
+      project_object["host"] = util::JsonValue(remote->host);
+      project_object["hostRoot"] = util::JsonValue(remote->host_root);
     }
     projects.push_back(util::JsonValue(std::move(project_object)));
   }

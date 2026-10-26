@@ -74,7 +74,7 @@
       WorkspaceShell& shell, const std::string& command_line) {
     return shell.ExecuteControlCommand(command_line);
   }
-  static const std::vector<std::filesystem::path>& RecentProjects(const WorkspaceShell& shell) {
+  static const std::vector<microide::project::ProjectId>& RecentProjects(const WorkspaceShell& shell) {
     return shell.recents_service_.RecentProjects();
   }
   // One query verb through the control channel, as its socket client gets it; a
@@ -945,4 +945,16 @@
   }
   static std::string ProjectTabTooltipLabel(WorkspaceShell& shell, std::size_t index) {
     return shell.ProjectTabTooltipLabel(index);
+  }
+  static std::string ProjectTabDisplayTitle(WorkspaceShell& shell, std::size_t index) {
+    return shell.ProjectTabDisplayTitle(index);
+  }
+  // The name prompts use for the active project ("Discard all … changes in <it>?").
+  static std::string ProjectLabel(const WorkspaceShell& shell) { return shell.ProjectLabel(); }
+  static const microide::project::ProjectId& ProjectCatalogId(const WorkspaceShell& shell, std::size_t index) {
+    return shell.context_.ProjectCatalogId(index);
+  }
+  static bool ProjectCatalogEntryInitialized(const WorkspaceShell& shell, std::size_t index) {
+    const auto* entry = shell.context_.ProjectCatalogEntry(index);
+    return entry != nullptr && entry->initialized;
   }

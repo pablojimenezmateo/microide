@@ -580,9 +580,14 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
             if (region.recent_index < welcome_model->recent_projects.size()) {
               // Copied, not referenced: opening changes the project root, which
               // is part of the memo key `welcome_model` points into.
-              const std::filesystem::path project =
-                  welcome_model->recent_projects[region.recent_index].path;
-              OpenProjectTab(project, true, true);
+              const editor::WelcomeRecent recent = welcome_model->recent_projects[region.recent_index];
+              if (!recent.remote_folder.empty()) {
+                // By its host and folder, so a mirror deleted since is made again.
+                ActionCoordinator(MakeActionContext())
+                    .Execute(ActionId::RemoteOpenFolder, {recent.remote_folder}, ActionSource::Menu);
+              } else {
+                OpenProjectTab(recent.path, true, true);
+              }
             }
             break;
           case editor::WelcomeHitRegion::Kind::OpenFolder:

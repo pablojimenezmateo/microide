@@ -67,6 +67,8 @@ class RemoteProject {
   static std::filesystem::path DefaultTree(std::string_view host, std::string_view host_root);
   // The record of the mirror whose tree is `tree`, if it is one.
   static std::optional<RemoteProjectRecord> ReadRecord(const std::filesystem::path& tree);
+  // Write it (Open does, each time). False when it cannot be written.
+  [[nodiscard]] static bool WriteRecord(const std::filesystem::path& tree, const RemoteProjectRecord& record);
 
   const std::filesystem::path& tree() const { return store_->tree(); }
   RemoteProjectRecord record() const;

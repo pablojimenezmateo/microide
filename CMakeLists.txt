@@ -379,6 +379,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/FileFinder.cpp
   src/project/FileIndex.cpp
   src/project/PendingPaths.cpp
+  src/project/ProjectId.cpp
   src/project/LocalTreeOps.cpp
   src/project/FileReadService.cpp
   src/project/FileWriteGate.cpp
@@ -1539,6 +1540,7 @@ add_executable(microide_kernel_tests
   tests/MirrorStoreTests.cpp
   tests/MirrorSyncEngineTests.cpp
   tests/RemoteProjectTests.cpp
+  tests/ProjectIdTests.cpp
   src/server/ListeningPorts.cpp
   src/server/WorkspaceTree.cpp
   src/server/WorkspaceWatch.cpp

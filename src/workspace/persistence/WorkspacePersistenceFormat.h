@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "editor/TextViewport.h"
+#include "project/ProjectId.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/git/BranchReviewPersistence.h"
 #include "workspace/git/CommitWorkflowPersistence.h"
@@ -130,7 +131,15 @@ struct PersistedProjectSessionState {
   std::vector<PersistedEditorTabState> closed_editors;
 };
 
+// The open projects, in tab order, as identities (project::ProjectId records).
+// `project_roots` is the legacy form: each project's I/O root under the path tag.
+// The writer emits it beside `projects` for one release window, so an older build
+// of the same major version still restores the session; a reader uses it only for
+// a file with no identity records at all (one written before them), resolving
+// each path as a typed one is (project::ResolveProjectId). `active_project_index`
+// indexes whichever list the reader uses: the writer keeps them parallel.
 struct PersistedWorkspaceSessionState {
+  std::vector<project::ProjectId> projects;
   std::vector<std::filesystem::path> project_roots;
   std::size_t active_project_index = 0;
 };
@@ -144,7 +153,10 @@ struct PersistedRecentFile {
   std::filesystem::path project_root;
 };
 
+// `recent_projects` are identities, newest first; `recent_project_roots` is their
+// legacy path form, with the same dual-write rule as PersistedWorkspaceSessionState.
 struct PersistedMruState {
+  std::vector<project::ProjectId> recent_projects;
   std::vector<std::filesystem::path> recent_project_roots;
   std::vector<PersistedRecentFile> recent_files;
 };

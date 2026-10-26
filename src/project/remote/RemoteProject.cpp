@@ -53,6 +53,16 @@ std::optional<RemoteProjectRecord> RemoteProject::ReadRecord(const std::filesyst
   return record;
 }
 
+bool RemoteProject::WriteRecord(const std::filesystem::path& tree, const RemoteProjectRecord& record) {
+  std::string body;
+  util::PutVarint(body, kRecordVersion);
+  util::PutBytes(body, record.host);
+  util::PutBytes(body, record.host_root);
+  return persistence::PersistedRecordWriter::WriteFile(
+      RecordPath(tree),
+      std::span<const std::byte>(reinterpret_cast<const std::byte*>(body.data()), body.size()), 0);
+}
+
 RemoteProject::RemoteProject(Config config, Listener listener)
     : config_(std::move(config)), listener_(std::move(listener)) {
   const std::string host = config_.session.target.Display();
@@ -85,15 +95,8 @@ bool RemoteProject::Open(std::string* error) {
   if (!store_->Open(error)) {
     return false;
   }
-  std::string body;
-  util::PutVarint(body, kRecordVersion);
   const RemoteProjectRecord mine = record();
-  util::PutBytes(body, mine.host);
-  util::PutBytes(body, mine.host_root);
-  if (!persistence::PersistedRecordWriter::WriteFile(
-          RecordPath(store_->tree()),
-          std::span<const std::byte>(reinterpret_cast<const std::byte*>(body.data()), body.size()),
-          0)) {
+  if (!WriteRecord(store_->tree(), mine)) {
     *error = "cannot write " + RecordPath(store_->tree()).string();
     return false;
   }

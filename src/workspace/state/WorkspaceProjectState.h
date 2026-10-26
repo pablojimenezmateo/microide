@@ -34,6 +34,7 @@
 #include "project/EditorConfig.h"
 #include "project/FileIndex.h"
 #include "project/FileWriteGate.h"
+#include "project/ProjectId.h"
 #include "project/ProjectLocality.h"
 #include "project/GitCompareService.h"
 #include "compare/BranchReviewStateService.h"
@@ -1016,7 +1017,13 @@ struct PluginGhostText {
 };
 
 struct ProjectWorkspaceState {
+  // The directory every file, git, search and process site works in: the path of a
+  // local project, the mirror's tree of a remote one. It never names the project.
   std::filesystem::path root;
+  // What does name it (project::ProjectId): every label, tooltip, title and prompt
+  // derives from this, never from `root`. Identity like `locality` below: set
+  // when the catalog entry is created and kept through every scoped-state reset.
+  project::ProjectId id;
   // The launcher every spawn belonging to THIS project goes through. Local today;
   // a remote project's is transport-prefixed, and that is the whole point — § 6.5
   // of the remote design says a session that chooses locality per call silently

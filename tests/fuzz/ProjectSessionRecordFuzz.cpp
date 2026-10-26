@@ -6,11 +6,12 @@
 #include <span>
 #include <vector>
 
-// Fuzz the per-project session decoder (editor groups, split tree, sidebar and
-// tree state, the terminal layout to revive, the closed editors and each
-// editor's collapsed folds). DecodeProjectSessionRecord must
-// never crash on arbitrary bytes, and what it accepts must stay inside the caps
-// a revive trusts (tabs, panes per tab).
+// Fuzz the session decoders in WorkspacePersistenceBinaryFormatSessions: the
+// per-project session (editor groups, split tree, sidebar and tree state, the
+// terminal layout to revive, the closed editors and each editor's collapsed
+// folds), and the workspace session (the open projects, as project-identity
+// records and legacy root paths). Neither may crash on arbitrary bytes, and what
+// they accept must stay inside the caps a restore trusts.
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size) {
   if (data == nullptr) {
     return 0;
@@ -18,6 +19,21 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   std::vector<std::byte> bytes(size);
   for (std::size_t i = 0; i < size; ++i) {
     bytes[i] = static_cast<std::byte>(data[i]);
+  }
+  microide::workspace::PersistedWorkspaceSessionState workspace;
+  if (microide::workspace::DecodeWorkspaceSessionRecord(
+          std::span<const std::byte>(bytes.data(), bytes.size()), &workspace)) {
+    if (workspace.projects.size() > 256 || workspace.project_roots.size() > 256) {
+      __builtin_trap();
+    }
+    for (const auto& id : workspace.projects) {
+      // A decoded id is always usable: a path, or a host with an absolute root.
+      const auto* remote = id.remote();
+      if (remote != nullptr ? (remote->host.empty() || remote->host_root.empty() || remote->host_root.front() != '/')
+                            : id.empty()) {
+        __builtin_trap();
+      }
+    }
   }
   microide::workspace::PersistedProjectSessionState state;
   if (microide::workspace::DecodeProjectSessionRecord(

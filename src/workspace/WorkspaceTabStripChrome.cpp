@@ -123,7 +123,7 @@ WorkspaceTabStripChrome::RefreshProjectStripSources() const {
     const ProjectWorkspaceState* project = is_active_project ? &context_->current_project_state
                                                              : operations_.project_catalog_entry(i);
     sources.badge_styles.push_back(ProjectTabBadgeStyle{
-        .text = tab_strip_service_->BuildProjectBadgeText(ProjectLabelForRoot(root)),
+        .text = tab_strip_service_->BuildProjectBadgeText(context_->ProjectCatalogId(i).Label()),
         .color = project != nullptr ? ProjectTabBadgeColor(*project, root)
                                     : DefaultProjectBaseColor(root),
         .show_badge = layout_mode_service_->CurrentMode() != LayoutMode::Compact,

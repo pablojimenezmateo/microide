@@ -133,8 +133,7 @@ std::string WorkspaceShell::DirtyPromptMessage() const {
   }
 
   if (context_.prompts.dirty.kind == DirtyPromptState::Kind::CloseProject) {
-    const std::filesystem::path project_root = ProjectCatalogRoot(context_.prompts.dirty.project_index);
-    const std::string label = ProjectLabelForRoot(project_root);
+    const std::string label = context_.ProjectCatalogId(context_.prompts.dirty.project_index).Label();
     return context_.prompts.dirty.dirty_count == 1
                ? "Save the dirty tab before closing " + label + "?"
                : "Save the " + std::to_string(context_.prompts.dirty.dirty_count) +

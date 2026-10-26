@@ -105,6 +105,20 @@ struct WorkspaceContext {
     const auto* state = ProjectCatalogEntry(index);
     return state != nullptr ? state->root : kEmpty;
   }
+
+  // What names the project at `index` (ProjectCatalogRoot's twin): every label of a
+  // project tab reads this, never the root.
+  const project::ProjectId& ProjectCatalogId(std::size_t index) const {
+    static const project::ProjectId kNone;
+    if (index >= project_catalog.entries.size()) {
+      return kNone;
+    }
+    if (!current_project_state.root.empty() && index == project_catalog.active_index) {
+      return current_project_state.id;
+    }
+    const auto* state = ProjectCatalogEntry(index);
+    return state != nullptr ? state->id : kNone;
+  }
 };
 
 }  // namespace microide::workspace

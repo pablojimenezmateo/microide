@@ -57,7 +57,21 @@ void AppendProjectConfigSummary(const workspace::PersistedProjectConfigState& st
 void AppendWorkspaceSessionSummary(const workspace::PersistedWorkspaceSessionState& state,
                                    std::ostringstream& stream) {
   stream << "decoded.workspace_session.active_project_index: " << state.active_project_index << '\n';
-  stream << "decoded.workspace_session.project_count: " << state.project_roots.size() << '\n';
+  // The identities when the file has them, else the legacy roots it was written with.
+  const bool has_ids = !state.projects.empty();
+  stream << "decoded.workspace_session.project_count: "
+         << (has_ids ? state.projects.size() : state.project_roots.size()) << '\n';
+  for (std::size_t i = 0; i < state.projects.size(); ++i) {
+    const project::ProjectId& id = state.projects[i];
+    stream << "decoded.workspace_session.project[" << i << "]: " << (id.IsRemote() ? "remote " : "local ")
+           << id.Location() << '\n';
+  }
+  if (!has_ids) {
+    for (std::size_t i = 0; i < state.project_roots.size(); ++i) {
+      stream << "decoded.workspace_session.project[" << i << "]: path " << state.project_roots[i].string()
+             << '\n';
+    }
+  }
 }
 
 void AppendDecodedSummary(std::uint32_t capability_flags,

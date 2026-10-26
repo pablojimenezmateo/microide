@@ -529,11 +529,16 @@ that file says exactly what, and what each one left):
 - **Bugs found on the way**: the git sidebar could stick "refreshing" forever after
   a refresh during a refresh; a sandboxed plugin could not run git.
 
-Open (as of 2026-10-25): only **G8** `ProjectId`. A project is still named by
-its filesystem root, so a remote project is labelled by its mirror's tree
-directory (`tree`) in the project tab, the window title and prompts. It is
-scoped as `openspec/changes/project-identity`. Everything else listed here
-earlier has shipped: G4's size threshold (TD-2026-09-29-313, by the mirror), G5's
+**G8** `ProjectId` shipped 2026-10-26 (`openspec/specs/project-identity`): a
+project is named by `project::ProjectId` (`Local{path} | Remote{host, host_root}`),
+fixed when its catalog entry is created and kept on `ProjectWorkspaceState::id`;
+`root` stays the I/O path. Every label (project tab, badge, tooltip, window title,
+prompts, the project home, the welcome recents, the control channel's `projects`)
+derives from the id, and `ProjectLabelForRoot` is gone, so a remote project's
+mirror path has nowhere to be shown. The session and MRU persist ids (dual-writing
+the legacy root for one release), a restored remote project is remote before it
+is activated, and a remote recents entry outlives its mirror. Nothing in
+groundwork is open. Everything else listed here earlier has shipped: G4's size threshold (TD-2026-09-29-313, by the mirror), G5's
 blocking callers (TD-2026-09-28-304), G6's blake3 manifest digest
 (`util/ContentHash`), G7's notification actions (`notification-actions` spec),
 and G11's parity harness. Groundwork carries its own perf gates (design § 9) and

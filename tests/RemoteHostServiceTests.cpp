@@ -8,6 +8,9 @@
 #include "workspace/WorkspaceUiText.h"
 #include "workspace/services/AssistService.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
+#include "workspace/persistence/PersistenceService.h"
+#include "project/remote/RemoteProject.h"
+#include "support/SoftwareCanvas.h"
 
 #include <algorithm>
 #include <chrono>
@@ -573,7 +576,8 @@ void TestRemoveMirrorDeletesAClosedMirrorAndKeepsUnsentSaves() {
   Expect(!std::filesystem::exists(mirror.parent_path()),
          "the tree and its metadata are gone: " + mirror.parent_path().string());
   const auto& recents = WorkspaceShellTestAccess::RecentProjects(shell);
-  Expect(std::find(recents.begin(), recents.end(), mirror) == recents.end(),
+  Expect(std::none_of(recents.begin(), recents.end(),
+                      [&](const project::ProjectId& id) { return id.IoRoot() == mirror; }),
          "and the recents list no longer offers it");
   outcome = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "remote-remove-mirror " + mirror.string());
   Expect(!outcome.ok && outcome.error.find("not the mirror") != std::string::npos,
@@ -606,6 +610,25 @@ void TestOpenFolderOnHostEditsTheHostTree() {
          "the project is the mirror, named after the host folder: " + mirror.string());
   Expect(!WorkspaceShellTestAccess::ProjectLauncher(shell).is_local(),
          "the project's processes run on the host");
+  // Named by its host folder wherever it is shown (project-identity), never by the
+  // mirror's directory under the data directory.
+  {
+    const std::string location = target + ":" + host_root.string();
+    Expect(WorkspaceShellTestAccess::ProjectCatalogId(shell, 0) ==
+               project::ProjectId::ForRemote(target, host_root.string()),
+           "the project's id is the host folder: " + WorkspaceShellTestAccess::ProjectCatalogId(shell, 0).Location());
+    Expect(WorkspaceShellTestAccess::ProjectTabDisplayTitle(shell, 0) == "app",
+           "the project tab reads the host folder's name: " + WorkspaceShellTestAccess::ProjectTabDisplayTitle(shell, 0));
+    Expect(WorkspaceShellTestAccess::ProjectTabTooltipLabel(shell, 0) == location,
+           "its tooltip is host:/path, not the mirror path: " + WorkspaceShellTestAccess::ProjectTabTooltipLabel(shell, 0));
+    Expect(WorkspaceShellTestAccess::ProjectLabel(shell) == "app",
+           "prompts name the host folder: " + WorkspaceShellTestAccess::ProjectLabel(shell));
+    SoftwareCanvas canvas(1280, 800);
+    WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 800);
+    shell.Render(canvas.renderer(), 1280, 800);
+    const std::string title = WorkspaceShellTestAccess::ControlUi(shell)["windowTitle"].AsString();
+    Expect(title == "app \u2014 microide", "the window title names the host folder: " + title);
+  }
 
   Expect(WaitUntil(
              [&] {
@@ -975,7 +998,84 @@ void TestOpenFolderOnHostEditsTheHostTree() {
     Expect(!WorkspaceShellTestAccess::ProjectLauncher(shell).is_local(),
            "and is recognized as the remote project it mirrors");
   }
+  {
+    // The mirror deleted outside the editor (a wiped data directory). A recents
+    // row for it reopens by host and folder (Open Folder on Host, what the welcome
+    // row runs), which makes the mirror again and syncs it.
+    std::filesystem::remove_all(mirror.parent_path());
+    WorkspaceShell shell;
+    PointAtFakeHost(shell, host);
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open " + target + ":" + host_root.string()),
+           "the remote project reopens by its name");
+    Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == mirror &&
+               WorkspaceShellTestAccess::ProjectCatalogId(shell, 0).IsRemote(),
+           "as the same remote project, at the same mirror");
+    Expect(WaitUntil(
+               [&] {
+                 Pump(shell);
+                 return std::filesystem::exists(mirror / "main.c");
+               },
+               std::chrono::seconds(30), std::chrono::milliseconds(10)),
+           "and the mirror fills from the host again");
+  }
   RemoveFakeMaster(target);
+}
+
+// A session listing a local project (active) and a remote one (inactive): the
+// remote project's catalog entry is remote, and named by its host folder, from the
+// moment it is restored -- before any connection, without being activated. Both
+// session forms: one with identity records, and one written before them that names
+// the mirror tree by path alone.
+void TestARestoredRemoteProjectIsNamedBeforeItIsActivated() {
+  TemporaryDirectory state_home;
+  ScopedEnvVar scoped_state("XDG_STATE_HOME", state_home.path().string());
+  TemporaryDirectory local_dir;
+  const std::filesystem::path local = local_dir.path() / "local";
+  std::filesystem::create_directories(local);
+  const std::string host = "dev@restored-" + std::to_string(::getpid());
+  const std::string host_root = "/home/dev/repo";
+  const project::ProjectId remote_id = project::ProjectId::ForRemote(host, host_root);
+  // The mirror as an earlier run left it; nothing here connects.
+  const std::filesystem::path tree = remote_id.IoRoot();
+  std::filesystem::create_directories(tree);
+  std::filesystem::create_directories(tree.parent_path() / "meta");
+  Expect(project::remote::RemoteProject::WriteRecord(tree, {.host = host, .host_root = host_root}),
+         "the mirror's record is written");
+
+  for (const bool legacy : {false, true}) {
+    const std::string form = legacy ? " (legacy session)" : "";
+    workspace::PersistedWorkspaceSessionState session;
+    session.project_roots = {local, tree};
+    if (!legacy) {
+      session.projects = {project::ProjectId::ForLocal(local), remote_id};
+    }
+    const workspace::PersistenceService persistence;
+    Expect(persistence.SaveWorkspaceSession(state_home.path() / "microide" / "workspace-session", session),
+           "the session is written" + form);
+
+    WorkspaceShell shell;
+    Expect(WorkspaceShellTestAccess::RestoreWorkspaceSession(shell), "the session restores" + form);
+    Expect(WorkspaceShellTestAccess::ProjectCount(shell) == 2, "both projects are listed" + form);
+    Expect(!WorkspaceShellTestAccess::ProjectCatalogEntryInitialized(shell, 1),
+           "the remote project is not activated" + form);
+    Expect(WorkspaceShellTestAccess::ProjectCatalogId(shell, 1) == remote_id,
+           "its entry is already remote" + form + ": " + WorkspaceShellTestAccess::ProjectCatalogId(shell, 1).Location());
+    Expect(WorkspaceShellTestAccess::ProjectTabDisplayTitle(shell, 1) == "repo" &&
+               WorkspaceShellTestAccess::ProjectTabTooltipLabel(shell, 1) == host + ":" + host_root,
+           "its tab is named by the host folder" + form + ": " +
+               WorkspaceShellTestAccess::ProjectTabTooltipLabel(shell, 1));
+    const util::JsonValue projects = WorkspaceShellTestAccess::ExecuteControlQuery(shell, "projects");
+    Expect(projects.AsArray().size() == 2 && projects.AsArray()[1]["host"].AsString() == host &&
+               projects.AsArray()[1]["hostRoot"].AsString() == host_root && !projects.AsArray()[0].HasKey("host"),
+           "the projects query marks it remote before it connects" + form);
+    Expect(!WorkspaceShellTestAccess::StatusBarSegmentVisible(shell, StatusBarSegmentId::Remote),
+           "and nothing has connected" + form);
+    WorkspaceShellTestAccess::SaveWorkspaceSession(shell);
+    workspace::PersistedWorkspaceSessionState saved;
+    Expect(persistence.LoadWorkspaceSession(state_home.path() / "microide" / "workspace-session", &saved) &&
+               saved.projects.size() == 2 && saved.projects[1] == remote_id && saved.project_roots[1] == tree,
+           "saving writes the identity beside its root" + form);
+  }
 }
 
 // What counts as a host-local link: http(s), a loopback name, an explicit port.
@@ -1076,6 +1176,8 @@ void TestStatusPathsAbbreviateHome() {
 }  // namespace
 
 void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RemoteHostService/ARestoredRemoteProjectIsNamedBeforeItIsActivated",
+          TestARestoredRemoteProjectIsNamedBeforeItIsActivated);
   AddTest(tests, "RemoteHostService/HeldMassDeleteIsAppliedFromItsRow", TestHeldMassDeleteIsAppliedFromItsRow);
   AddTest(tests, "RemoteHostService/StatusPathsAbbreviateHome", TestStatusPathsAbbreviateHome);
   AddTest(tests, "RemoteHostService/LoopbackUrlsAreRecognized", TestLoopbackUrlsAreRecognized);

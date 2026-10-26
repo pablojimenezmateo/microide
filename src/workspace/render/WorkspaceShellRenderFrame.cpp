@@ -670,7 +670,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     if (inputs != frame_state_.window_title_inputs) {
       frame_state_.window_title_inputs = inputs;
       ComposeWindowTitle(frame_state_.window_title, tab != nullptr ? tab->title : "", dirty,
-                         project_state.root.empty() ? "" : ProjectLabelForRoot(project_state.root));
+                         project_state.id.Label());
       if (dialog_window_ != nullptr) {
         SDL_SetWindowTitle(dialog_window_, frame_state_.window_title.c_str());
       }

@@ -707,8 +707,8 @@ void TestBuilderWelcomeViewIsRegistrySourcedWithRecents() {
   const std::filesystem::path alpha = temp.path() / "alpha";
   const std::filesystem::path beta_slash = (temp.path() / "beta").string() + "/";
   RecentsService recents;
-  recents.RecordProjectOpen(beta_slash);
-  recents.RecordProjectOpen(alpha);
+  recents.RecordProjectOpen(project::ProjectId::ForLocal(beta_slash));
+  recents.RecordProjectOpen(project::ProjectId::ForLocal(alpha));
   const editor::WelcomeViewModel vm = builder.BuildWelcomeView(recents);
 
   Expect(vm.kind == editor::WelcomeKind::NoProject, "no open project => NoProject variant");
@@ -764,8 +764,8 @@ void TestBuilderWelcomeViewPrunesMissingRecents() {
   // A stale root (e.g. a removed temp project) must not appear — every surfaced row has to
   // be openable. The existing root should still come through.
   RecentsService recents;
-  recents.RecordProjectOpen(present);
-  recents.RecordProjectOpen(missing);
+  recents.RecordProjectOpen(project::ProjectId::ForLocal(present));
+  recents.RecordProjectOpen(project::ProjectId::ForLocal(missing));
   const editor::WelcomeViewModel vm = builder.BuildWelcomeView(recents);
 
   Expect(vm.recent_projects.size() == 1, "non-existent recent roots should be pruned");
@@ -793,7 +793,7 @@ void TestBuilderWelcomeViewIsMemoized() {
   RenderViewModelBuilder::ResetWelcomeViewCacheForTesting();
 
   RecentsService recents;
-  recents.RecordProjectOpen(first);
+  recents.RecordProjectOpen(project::ProjectId::ForLocal(first));
   const editor::WelcomeViewModel& a = builder.BuildWelcomeView(recents);
   Expect(RenderViewModelBuilder::WelcomeViewCacheMissesForTesting() == 1,
          "the first build should miss");
@@ -804,7 +804,7 @@ void TestBuilderWelcomeViewIsMemoized() {
          "an unchanged repeat ask should hit the memo");
   Expect(&a == &b, "a hit should hand back the same model, not a rebuilt copy");
 
-  recents.RecordProjectOpen(second);
+  recents.RecordProjectOpen(project::ProjectId::ForLocal(second));
   const editor::WelcomeViewModel& c = builder.BuildWelcomeView(recents);
   Expect(RenderViewModelBuilder::WelcomeViewCacheMissesForTesting() == 2,
          "an MRU change should invalidate the memo");
@@ -812,7 +812,7 @@ void TestBuilderWelcomeViewIsMemoized() {
 
   // A fresh service at revision 1 must not be answered from the entry above.
   RecentsService other;
-  other.RecordProjectOpen(second);
+  other.RecordProjectOpen(project::ProjectId::ForLocal(second));
   const editor::WelcomeViewModel& d = builder.BuildWelcomeView(other);
   Expect(RenderViewModelBuilder::WelcomeViewCacheMissesForTesting() == 3,
          "a different RecentsService must miss, whatever its revision reads");
@@ -833,6 +833,7 @@ void TestBuilderWelcomeViewProjectHomeShowsRecentFiles() {
 
   WorkspaceContext context;
   context.current_project_state.root = root;
+  context.current_project_state.id = project::ProjectId::ForLocal(root);
   RenderViewModelBuilder builder(context);
 
   RecentsService recents;
@@ -852,6 +853,36 @@ void TestBuilderWelcomeViewProjectHomeShowsRecentFiles() {
          "only this project's existing recent files should be surfaced (missing + other pruned)");
   Expect(vm.recent_files[0].path == present && vm.recent_files[0].name == "main.cpp",
          "the surviving recent file should be the one that still exists on disk");
+}
+
+// A remote project is named by its host folder everywhere the welcome surface
+// shows it: its recents row (which reopens it by that name, so a deleted mirror is
+// made again) and, once open, its home's title -- never by its mirror directory.
+void TestBuilderWelcomeViewNamesRemoteProjectsByHost() {
+  RenderViewModelBuilder::ResetWelcomeViewCacheForTesting();
+  const project::ProjectId remote = project::ProjectId::ForRemote("dev@box", "/home/dev/repo");
+  {
+    WorkspaceContext context;
+    RenderViewModelBuilder builder(context);
+    RecentsService recents;
+    recents.RecordProjectOpen(remote);  // no mirror on disk
+    const editor::WelcomeViewModel vm = builder.BuildWelcomeView(recents);
+    Expect(vm.recent_projects.size() == 1, "a remote recent whose mirror is gone is still offered");
+    Expect(vm.recent_projects[0].name == "repo" && vm.recent_projects[0].path_display == "dev@box:/home/dev/repo" &&
+               vm.recent_projects[0].remote_folder == "dev@box:/home/dev/repo",
+           "named and reopened by host:/path: '" + vm.recent_projects[0].path_display + "'");
+  }
+  {
+    TemporaryDirectory temp;
+    WorkspaceContext context;
+    context.current_project_state.root = temp.path() / "app";  // the mirror's tree, say
+    context.current_project_state.id = remote;
+    RenderViewModelBuilder builder(context);
+    RecentsService recents;
+    const editor::WelcomeViewModel vm = builder.BuildWelcomeView(recents);
+    Expect(vm.kind == editor::WelcomeKind::ProjectHome && vm.title == "repo",
+           "the home's title is the host folder's name, not the root's: '" + vm.title + "'");
+  }
 }
 
 void TestComputeWelcomeLayoutProducesHitRegions() {
@@ -1589,6 +1620,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestBuilderOccurrencesFollowAReloadedDocument);
   AddTest(tests, "RenderViewModelBuilder/WelcomeViewIsRegistrySourcedWithRecents",
           TestBuilderWelcomeViewIsRegistrySourcedWithRecents);
+  AddTest(tests, "RenderViewModelBuilder/WelcomeViewNamesRemoteProjectsByHost",
+          TestBuilderWelcomeViewNamesRemoteProjectsByHost);
   AddTest(tests, "RenderViewModelBuilder/WelcomeViewPrunesMissingRecents",
           TestBuilderWelcomeViewPrunesMissingRecents);
   AddTest(tests, "RenderViewModelBuilder/WelcomeViewIsMemoized",

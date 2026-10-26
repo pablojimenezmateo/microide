@@ -22,6 +22,9 @@ struct WelcomeRecent {
   std::string name;
   std::string path_display;
   std::filesystem::path path;
+  // A remote project's `host:/path` ("" for anything local): it opens through Open
+  // Folder on Host, which makes its mirror again if that is gone, not by `path`.
+  std::string remote_folder;
 };
 
 // A remote project's connection, on its home (remote-projects.md § 7.3): one entry

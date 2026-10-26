@@ -3,6 +3,8 @@
   }
   static void SetProjectRoot(WorkspaceShell& shell, const std::filesystem::path& root) {
     shell.context_.current_project_state.root = root.lexically_normal();
+    shell.context_.current_project_state.id =
+        microide::project::ProjectId::ForLocal(shell.context_.current_project_state.root);
     shell.context_.current_project_state.directory_tree.SetRoot(shell.context_.current_project_state.root);
     shell.context_.current_project_state.file_index.SetRoot(shell.context_.current_project_state.root);
     shell.context_.current_project_state.file_finder.SetIndex(&shell.context_.current_project_state.file_index);

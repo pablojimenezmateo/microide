@@ -33,9 +33,9 @@ class RecentsService {
   // service stays in-memory only (persistence is silently skipped).
   void Configure(const PersistenceService& persistence);
 
-  void RecordProjectOpen(const std::filesystem::path& root);
-  // Drop `root` and its files from the lists (a removed mirror must not be offered).
-  void ForgetProject(const std::filesystem::path& root);
+  void RecordProjectOpen(const project::ProjectId& id);
+  // Drop `id` and its files from the lists (a removed mirror must not be offered).
+  void ForgetProject(const project::ProjectId& id);
   void RecordFileOpen(const std::filesystem::path& file,
                       const std::filesystem::path& project_root);
 
@@ -51,24 +51,22 @@ class RecentsService {
     return std::chrono::milliseconds(750);
   }
 
-  const std::vector<std::filesystem::path>& RecentProjects() const {
-    return state_.recent_project_roots;
+  const std::vector<project::ProjectId>& RecentProjects() const {
+    return state_.recent_projects;
   }
 
   // Recent files opened under `project_root`, newest-first, capped at `limit`.
   std::vector<std::filesystem::path> RecentFilesFor(const std::filesystem::path& project_root,
                                                     std::size_t limit) const;
 
-  // Recent projects/files filtered to those that still exist on disk, for the welcome
-  // surface. The result is cached against a revision bumped whenever the MRU changes,
-  // so paint and hover hit-testing never re-stat the recents every frame
+  // Recent projects/files that can still be opened, for the welcome surface: a local
+  // folder that still exists, and every remote project (whose mirror is made again
+  // when it is opened). The result is cached against a revision bumped whenever the
+  // MRU changes, so paint and hover hit-testing never re-stat the recents every frame
   // (TD-2026-07-17A-014). A path that disappears while the MRU is unchanged stays
   // listed until the next MRU change re-validates — the perf-first cache contract.
-  const std::vector<std::filesystem::path>& ExistingRecentProjects() const;
-  // Parallel to ExistingRecentProjects: what to show for each — the path, or
-  // `host:/path` for a remote project's mirror (never the mirror's own path, which
-  // is an implementation detail under the data directory). Same cache.
-  const std::vector<std::string>& ExistingRecentProjectDisplays() const;
+  // What to show for each is its id's Label()/Location(), never a mirror path.
+  const std::vector<project::ProjectId>& ExistingRecentProjects() const;
   const std::vector<std::filesystem::path>& ExistingRecentFilesFor(
       const std::filesystem::path& project_root, std::size_t limit) const;
 
@@ -108,8 +106,7 @@ class RecentsService {
   // Bumped on every MRU mutation (record/open, initial load); keys the validated
   // existing-path caches below.
   std::uint64_t revision_ = 0;
-  mutable std::vector<std::filesystem::path> existing_projects_;
-  mutable std::vector<std::string> existing_project_displays_;
+  mutable std::vector<project::ProjectId> existing_projects_;
   mutable std::uint64_t existing_projects_revision_ = 0;
   mutable bool existing_projects_valid_ = false;
   mutable std::vector<std::filesystem::path> existing_files_;

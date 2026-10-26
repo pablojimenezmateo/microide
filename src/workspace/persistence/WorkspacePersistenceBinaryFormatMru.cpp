@@ -45,9 +45,19 @@ bool EncodeMruRecord(const PersistedMruState& state, std::vector<std::byte>* out
                     [&](PrimitiveWriter& w) { return w.WriteU32(kSchemaVersion); }, out)) {
     return false;
   }
-  for (const std::filesystem::path& root : state.recent_project_roots) {
-    if (!AppendRecord(MruStateTag::RecentProjectRoot,
-                      [&](PrimitiveWriter& w) { return w.WritePath(root); }, out)) {
+  // Interleaved like the workspace session's projects: the identity, then its
+  // legacy path form for an older build.
+  std::vector<std::byte> id_payload;
+  for (std::size_t i = 0; i < std::max(state.recent_projects.size(), state.recent_project_roots.size());
+       ++i) {
+    if (i < state.recent_projects.size() &&
+        (!EncodeProjectId(state.recent_projects[i], &id_payload) ||
+         !AppendTaggedRecord(static_cast<std::uint16_t>(MruStateTag::RecentProject), id_payload, out))) {
+      return false;
+    }
+    if (i < state.recent_project_roots.size() &&
+        !AppendRecord(MruStateTag::RecentProjectRoot,
+                      [&](PrimitiveWriter& w) { return w.WritePath(state.recent_project_roots[i]); }, out)) {
       return false;
     }
   }
@@ -93,6 +103,16 @@ bool DecodeMruRecord(std::span<const std::byte> input, PersistedMruState* state)
                      return true;
                    }
                    state->recent_project_roots.push_back(std::move(root));
+                   return true;
+                 }
+                 case MruStateTag::RecentProject: {
+                   std::optional<project::ProjectId> id;
+                   if (!DecodeProjectId(payload, &id)) {
+                     return false;
+                   }
+                   if (id.has_value() && state->recent_projects.size() < RecentsService::MaxProjects()) {
+                     state->recent_projects.push_back(std::move(*id));
+                   }
                    return true;
                  }
                  case MruStateTag::RecentFile: {

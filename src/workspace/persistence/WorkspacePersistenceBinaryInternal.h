@@ -187,8 +187,22 @@ enum class EditorTabTag : std::uint16_t {
 
 enum class WorkspaceSessionTag : std::uint16_t {
   Schema = 1,
-  ProjectRoot = 2,
+  ProjectRoot = 2,  // legacy: repeated, one path per project (dual-written)
   ActiveProjectIndex = 3,
+  Project = 4,      // repeated, one nested ProjectIdTag record per project
+};
+
+// A project::ProjectId. Kind decides which of the rest are present.
+enum class ProjectIdTag : std::uint16_t {
+  Kind = 1,      // u8: ProjectIdKind
+  Path = 2,      // Local
+  Host = 3,      // Remote
+  HostRoot = 4,  // Remote, absolute
+};
+
+enum class ProjectIdKind : std::uint8_t {
+  Local = 1,
+  Remote = 2,
 };
 
 enum class DebugStateTag : std::uint16_t {
@@ -212,8 +226,9 @@ enum class FunctionBreakpointTag : std::uint16_t {
 
 enum class MruStateTag : std::uint16_t {
   Schema = 1,
-  RecentProjectRoot = 2,  // repeated, one path record per project
+  RecentProjectRoot = 2,  // legacy: repeated, one path record per project (dual-written)
   RecentFile = 3,         // repeated, one nested record per file
+  RecentProject = 4,      // repeated, one nested ProjectIdTag record per project
 };
 
 enum class RecentFileEntryTag : std::uint16_t {
@@ -306,6 +321,54 @@ bool ReadStringRecord(EnumTag expected_tag,
   }
   PrimitiveReader reader(payload);
   return reader.ReadString(out) && reader.remaining() == 0;
+}
+
+[[maybe_unused]] bool EncodeProjectId(const project::ProjectId& id, std::vector<std::byte>* out) {
+  out->clear();
+  if (const project::ProjectId::Remote* remote = id.remote()) {
+    return AppendRecord(ProjectIdTag::Kind,
+                        [](PrimitiveWriter& w) { return w.WriteU8(static_cast<std::uint8_t>(ProjectIdKind::Remote)); },
+                        out) &&
+           AppendRecord(ProjectIdTag::Host, [&](PrimitiveWriter& w) { return w.WriteString(remote->host); }, out) &&
+           AppendRecord(ProjectIdTag::HostRoot,
+                        [&](PrimitiveWriter& w) { return w.WriteString(remote->host_root); }, out);
+  }
+  return AppendRecord(ProjectIdTag::Kind,
+                      [](PrimitiveWriter& w) { return w.WriteU8(static_cast<std::uint8_t>(ProjectIdKind::Local)); },
+                      out) &&
+         AppendRecord(ProjectIdTag::Path, [&](PrimitiveWriter& w) { return w.WritePath(id.local()->root); }, out);
+}
+
+// False for a malformed record. A well-formed one that names no usable project --
+// an unknown (newer) kind, a missing field, a relative host root -- decodes to
+// nullopt, and the caller skips that entry rather than the whole file.
+[[maybe_unused]] bool DecodeProjectId(std::span<const std::byte> input, std::optional<project::ProjectId>* id) {
+  std::uint8_t kind = 0;
+  std::filesystem::path path;
+  std::string host;
+  std::string host_root;
+  const bool parsed = ParseRecordStream<ProjectIdTag>(
+      input, [&](ProjectIdTag tag, std::span<const std::byte> payload) {
+        PrimitiveReader reader(payload);
+        switch (tag) {
+          case ProjectIdTag::Kind: return reader.ReadU8(&kind) && reader.remaining() == 0;
+          case ProjectIdTag::Path: return reader.ReadPath(&path) && reader.remaining() == 0;
+          case ProjectIdTag::Host: return reader.ReadString(&host) && reader.remaining() == 0;
+          case ProjectIdTag::HostRoot: return reader.ReadString(&host_root) && reader.remaining() == 0;
+        }
+        return true;
+      });
+  if (!parsed) {
+    return false;
+  }
+  id->reset();
+  if (kind == static_cast<std::uint8_t>(ProjectIdKind::Local) && !path.empty()) {
+    *id = project::ProjectId::ForLocal(std::move(path));
+  } else if (kind == static_cast<std::uint8_t>(ProjectIdKind::Remote) && !host.empty() &&
+             !host_root.empty() && host_root.front() == '/') {
+    *id = project::ProjectId::ForRemote(std::move(host), std::move(host_root));
+  }
+  return true;
 }
 
 [[maybe_unused]] bool EncodeEditorTab(const PersistedEditorTabState& tab, std::vector<std::byte>* out) {

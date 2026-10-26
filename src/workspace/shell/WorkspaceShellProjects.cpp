@@ -24,24 +24,30 @@ ProjectCatalogService& WorkspaceShell::MakeProjectCatalogService() {
       context_,
       ProjectCatalogService::Operations{
           .initialize_current_project =
-              [this](const std::filesystem::path& project_root,
+              [this](const project::ProjectId& id,
+                     const std::filesystem::path& project_root,
                      bool restore_persistence,
                      bool log_feedback,
                      bool activate_restored_tab,
                      const project::ProjectLocality& locality) {
-                // A remote project's mirror opened as a plain root (from the recents
-                // list, a restored session, a typed path) gets its own locality and
-                // reconnects; an explicit locality always wins.
+                // A remote project gets its host's locality and (re)connects -- read
+                // from its id, fixed when its catalog entry was created, not sniffed
+                // from the directory here. An explicit locality always wins (the
+                // parity suite's loopback host).
                 project::ProjectLocality resolved = locality;
-                bool remote_project = false;
-                if (resolved.launcher == &platform::LocalProcessLauncher()) {
-                  if (auto remote = MakeRemoteHostService().LocalityForMirror(project_root)) {
-                    resolved = *remote;
-                    remote_project = true;
+                const bool remote_project =
+                    id.IsRemote() && resolved.launcher == &platform::LocalProcessLauncher();
+                if (remote_project) {
+                  // A remote project is never opened as a local folder: no mirror,
+                  // no project (LocalityFor has said why).
+                  const auto remote = MakeRemoteHostService().LocalityFor(id);
+                  if (!remote.has_value()) {
+                    return false;
                   }
+                  resolved = *remote;
                 }
                 const bool initialized = InitializeCurrentProject(
-                    project_root, restore_persistence, log_feedback, activate_restored_tab, resolved);
+                    id, project_root, restore_persistence, log_feedback, activate_restored_tab, resolved);
                 if (initialized && remote_project) {
                   // Reported before this state had its root: what the sync has not
                   // fetched yet is listed, and the connection shown, from the start.
@@ -151,11 +157,14 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
     }
   }
 
+  // The one place a catalog entry is created from a typed, picked or recent path:
+  // the path is named here, once (a mirror's own tree is its remote project).
+  const project::ProjectId id = project::ResolveProjectId(normalized_root);
   const bool opened =
-      MakeProjectCatalogService().Open(normalized_root, restore_persistence, log_feedback,
+      MakeProjectCatalogService().Open(id, normalized_root, restore_persistence, log_feedback,
                                        locality);
   if (opened) {
-    recents_service_.RecordProjectOpen(normalized_root);
+    recents_service_.RecordProjectOpen(id);
     NoteLayoutInputsChanged();
   }
   return opened;

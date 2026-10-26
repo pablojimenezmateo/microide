@@ -35,17 +35,10 @@ inline std::string_view ScanIncompleteNote(const project::ProjectFileScanStatus&
 // sizes its buffer for the widest std::size_t so there is no failure case.
 using util::AppendUnsigned;
 
-// The display label for a project root: its directory name, the normalized path
-// when the name is empty (a filesystem root), "Welcome" for no root. One
-// definition — the tab-strip chrome and the shell each carried a byte-identical
-// private copy (the AppendHintSegment shape below, again).
-inline std::string ProjectLabelForRoot(const std::filesystem::path& root) {
-  if (root.empty()) {
-    return "Welcome";
-  }
-  const std::string filename = root.filename().string();
-  return filename.empty() ? root.lexically_normal().string() : filename;
-}
+// A project's label is its id's (project::ProjectId::Label), never its root's: a
+// remote project's root is its mirror. There is deliberately no helper here that
+// takes a path -- `ProjectLabelForRoot` was one, and it labelled every remote
+// project by its mirror's directory.
 
 // The window's title: VS Code's `${dirty}${activeEditorShort} — ${rootName} —
 // ${appName}`, each part dropped when there is none. Written into `out` so a

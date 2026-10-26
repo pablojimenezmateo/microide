@@ -11,7 +11,7 @@ namespace microide::workspace {
 class ProjectCatalogService {
  public:
   struct Operations {
-    std::function<bool(const std::filesystem::path&, bool, bool, bool,
+    std::function<bool(const project::ProjectId&, const std::filesystem::path&, bool, bool, bool,
                        const project::ProjectLocality&)>
         initialize_current_project;
     std::function<void()> sync_active_editor_tab;
@@ -40,7 +40,8 @@ class ProjectCatalogService {
 
   ProjectCatalogService(WorkspaceContext& context, Operations operations);
 
-  bool Open(const std::filesystem::path& normalized_root,
+  bool Open(const project::ProjectId& id,
+            const std::filesystem::path& normalized_root,
             bool restore_persistence,
             bool log_feedback,
             const project::ProjectLocality& locality = {});

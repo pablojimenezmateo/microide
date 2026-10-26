@@ -112,15 +112,16 @@ const std::string& WorkspaceShell::BreadcrumbLabel(std::size_t group_index) cons
 }
 
 std::string WorkspaceShell::ProjectLabel() const {
-  return context_.current_project_state.root.empty() ? "microide" : ProjectLabelForRoot(context_.current_project_state.root);
+  const project::ProjectId& id = context_.current_project_state.id;
+  return id.empty() ? "microide" : id.Label();
 }
 
 std::string WorkspaceShell::ProjectTabDisplayTitle(std::size_t index) const {
   if (index >= context_.project_catalog.entries.size()) {
     return {};
   }
-  const std::filesystem::path& root = ProjectCatalogRoot(index);
-  const std::string label = ProjectLabelForRoot(root);
+  const project::ProjectId& id = context_.ProjectCatalogId(index);
+  const std::string label = id.empty() ? "Welcome" : id.Label();
   // The PREDICATE, not the list. This runs once per project tab per painted
   // frame, and DirtyEditorTabIndicesForProject reserves a vector sized to the
   // tab count before it finds out whether anything is dirty -- so the common
@@ -132,17 +133,11 @@ std::string WorkspaceShell::ProjectTabTooltipLabel(std::size_t index) const {
   if (index >= context_.project_catalog.entries.size()) {
     return {};
   }
-  const std::filesystem::path& root = ProjectCatalogRoot(index);
-  if (root.empty()) {
-    return ProjectLabelForRoot(root);
-  }
-  // Catalog roots are normalized on the way in, so `lexically_normal()` here was
-  // ~12 allocations producing a path identical to the one it was given -- once
-  // per project tab per painted frame (TD-2026-08-10-174).
-  if (!util::PathTextNeedsNormalizing(root.native())) {
-    return root.string();
-  }
-  return root.lexically_normal().string();
+  // The full name: the path, or `host:/path` -- a remote project's mirror path is
+  // never shown. Location() skips `lexically_normal()` for an already-normal path
+  // (catalog roots are normalized on the way in; TD-2026-08-10-174).
+  const project::ProjectId& id = context_.ProjectCatalogId(index);
+  return id.empty() ? "Welcome" : id.Location();
 }
 
 SDL_FRect WorkspaceShell::ComputeCaretAnchoredOverlayRect(const SDL_FRect& editor_area,

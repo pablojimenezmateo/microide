@@ -1,7 +1,5 @@
 #include "workspace/persistence/RecentsService.h"
 
-#include "project/remote/RemoteProject.h"
-
 #include <algorithm>
 #include <atomic>
 #include <utility>
@@ -15,13 +13,23 @@ namespace {
 
 // Move `value` to the front of `entries`, dropping any prior occurrence, and cap the
 // list at `max`. Newest-first ordering with deduplication.
-void PromoteToFront(std::vector<std::filesystem::path>& entries,
-                    const std::filesystem::path& value,
+void PromoteToFront(std::vector<project::ProjectId>& entries,
+                    const project::ProjectId& value,
                     std::size_t max) {
   entries.erase(std::remove(entries.begin(), entries.end(), value), entries.end());
   entries.insert(entries.begin(), value);
   if (entries.size() > max) {
     entries.resize(max);
+  }
+}
+
+// The legacy path form written beside the ids (PersistedMruState): each one's I/O
+// root, in the same order.
+void SyncLegacyRoots(PersistedMruState& state) {
+  state.recent_project_roots.clear();
+  state.recent_project_roots.reserve(state.recent_projects.size());
+  for (const project::ProjectId& id : state.recent_projects) {
+    state.recent_project_roots.push_back(id.IoRoot());
   }
 }
 
@@ -44,41 +52,54 @@ void RecentsService::Configure(const PersistenceService& persistence) {
   ++revision_;
   if (!storage_path_.empty()) {
     persistence_->LoadMruState(storage_path_, &state_);
-    // Defensively clamp anything an older/corrupt record might have over-grown.
-    if (state_.recent_project_roots.size() > MaxProjects()) {
-      state_.recent_project_roots.resize(MaxProjects());
+    // A file written before identity records names projects by path alone: name
+    // each one as a typed path is named, once (a mirror's tree is its remote project).
+    if (state_.recent_projects.empty()) {
+      for (const std::filesystem::path& root : state_.recent_project_roots) {
+        if (!root.empty()) {
+          state_.recent_projects.push_back(project::ResolveProjectId(root));
+        }
+      }
     }
+    // Defensively clamp anything an older/corrupt record might have over-grown.
+    if (state_.recent_projects.size() > MaxProjects()) {
+      state_.recent_projects.resize(MaxProjects());
+    }
+    SyncLegacyRoots(state_);
     if (state_.recent_files.size() > MaxFiles()) {
       state_.recent_files.resize(MaxFiles());
     }
   }
 }
 
-void RecentsService::RecordProjectOpen(const std::filesystem::path& root) {
-  if (root.empty()) {
+void RecentsService::RecordProjectOpen(const project::ProjectId& id) {
+  if (id.empty()) {
     return;
   }
   // Re-opening what is already newest changes nothing, so it must not cost a
   // durable write. Reopening the active project is the common case.
-  if (!state_.recent_project_roots.empty() && state_.recent_project_roots.front() == root) {
+  if (!state_.recent_projects.empty() && state_.recent_projects.front() == id) {
     return;
   }
-  PromoteToFront(state_.recent_project_roots, root, MaxProjects());
+  PromoteToFront(state_.recent_projects, id, MaxProjects());
+  SyncLegacyRoots(state_);
   ++revision_;
   Save();
 }
 
-void RecentsService::ForgetProject(const std::filesystem::path& root) {
-  auto& roots = state_.recent_project_roots;
+void RecentsService::ForgetProject(const project::ProjectId& id) {
+  auto& projects = state_.recent_projects;
   auto& files = state_.recent_files;
-  const auto before = roots.size() + files.size();
-  roots.erase(std::remove(roots.begin(), roots.end(), root), roots.end());
+  const auto before = projects.size() + files.size();
+  const std::filesystem::path root = id.IoRoot();
+  projects.erase(std::remove(projects.begin(), projects.end(), id), projects.end());
   files.erase(std::remove_if(files.begin(), files.end(),
                              [&](const auto& entry) { return entry.project_root == root; }),
               files.end());
-  if (roots.size() + files.size() == before) {
+  if (projects.size() + files.size() == before) {
     return;
   }
+  SyncLegacyRoots(state_);
   ++revision_;
   Save();
 }
@@ -121,31 +142,24 @@ std::vector<std::filesystem::path> RecentsService::RecentFilesFor(
   return result;
 }
 
-const std::vector<std::filesystem::path>& RecentsService::ExistingRecentProjects() const {
+const std::vector<project::ProjectId>& RecentsService::ExistingRecentProjects() const {
   if (!existing_projects_valid_ || existing_projects_revision_ != revision_) {
     existing_projects_.clear();
-    existing_project_displays_.clear();
-    for (const std::filesystem::path& root : state_.recent_project_roots) {
-      if (root.empty()) {
+    for (const project::ProjectId& id : state_.recent_projects) {
+      if (id.empty()) {
         continue;
       }
+      // A remote project outlives its mirror: opening it makes the mirror again
+      // from the host. A local folder that is gone cannot be opened.
       std::error_code ec;
-      if (std::filesystem::exists(root, ec)) {
-        existing_projects_.push_back(root);
-        const auto remote = project::remote::RemoteProject::ReadRecord(root);
-        existing_project_displays_.push_back(remote.has_value() ? remote->host + ":" + remote->host_root
-                                                                : root.string());
+      if (id.IsRemote() || std::filesystem::exists(id.local()->root, ec)) {
+        existing_projects_.push_back(id);
       }
     }
     existing_projects_revision_ = revision_;
     existing_projects_valid_ = true;
   }
   return existing_projects_;
-}
-
-const std::vector<std::string>& RecentsService::ExistingRecentProjectDisplays() const {
-  (void)ExistingRecentProjects();  // fills both
-  return existing_project_displays_;
 }
 
 const std::vector<std::filesystem::path>& RecentsService::ExistingRecentFilesFor(

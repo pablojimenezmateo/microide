@@ -15,11 +15,13 @@ ProjectCatalogService::ProjectCatalogService(WorkspaceContext& context, Operatio
 ProjectCatalogCoordinator::Operations ProjectCatalogService::BuildCoordinatorOperations() {
   return ProjectCatalogCoordinator::Operations{
       .initialize_current_project =
-          [this](const std::filesystem::path& project_root,
+          [this](const project::ProjectId& id,
+                 const std::filesystem::path& project_root,
                  bool restore_persistence,
                  bool log_feedback,
                  const project::ProjectLocality& locality) {
-            return operations_.initialize_current_project(project_root,
+            return operations_.initialize_current_project(id,
+                                                          project_root,
                                                           restore_persistence,
                                                           log_feedback,
                                                           true,
@@ -42,11 +44,12 @@ ProjectCatalogCoordinator::Operations ProjectCatalogService::BuildCoordinatorOpe
   };
 }
 
-bool ProjectCatalogService::Open(const std::filesystem::path& normalized_root,
+bool ProjectCatalogService::Open(const project::ProjectId& id,
+                                 const std::filesystem::path& normalized_root,
                                  bool restore_persistence,
                                  bool log_feedback,
                                  const project::ProjectLocality& locality) {
-  return coordinator_.Open(normalized_root, restore_persistence, log_feedback, locality);
+  return coordinator_.Open(id, normalized_root, restore_persistence, log_feedback, locality);
 }
 
 bool ProjectCatalogService::Switch(std::size_t index, bool activate_restored_tab) {
@@ -79,7 +82,7 @@ bool ProjectCatalogService::ActivateProjectState(ProjectWorkspaceState& state,
       util::PerformanceTrace::Scope scope(
           "ProjectCatalogService::ActivateProjectState::InitializeCurrentProject");
       initialized = operations_.initialize_current_project(
-          state.root, state.restore_persistence_on_activate, false, activate_restored_tab,
+          state.id, state.root, state.restore_persistence_on_activate, false, activate_restored_tab,
           state.locality);
     }
     if (!initialized) {
@@ -179,6 +182,7 @@ void ProjectCatalogService::LoadProjectState(ProjectWorkspaceState& state) {
     util::PerformanceTrace::Scope scope("ProjectCatalogService::LoadProjectState::ResetStoredState");
     state = ProjectWorkspaceState{};
     state.root = context_.current_project_state.root;
+    state.id = context_.current_project_state.id;
     state.initialized = true;
     state.restore_persistence_on_activate = false;
   }

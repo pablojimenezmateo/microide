@@ -21,7 +21,8 @@ constexpr std::size_t kMaxOpenProjects = 128;
 ProjectCatalogCoordinator::ProjectCatalogCoordinator(WorkspaceContext& context, Operations operations)
     : context_(context), operations_(std::move(operations)) {}
 
-bool ProjectCatalogCoordinator::Open(const std::filesystem::path& normalized_root,
+bool ProjectCatalogCoordinator::Open(const project::ProjectId& id,
+                                     const std::filesystem::path& normalized_root,
                                      bool restore_persistence,
                                      bool log_feedback,
                                      const project::ProjectLocality& locality) {
@@ -33,13 +34,14 @@ bool ProjectCatalogCoordinator::Open(const std::filesystem::path& normalized_roo
 
   auto project_state = std::make_unique<ProjectWorkspaceState>();
   project_state->root = normalized_root;
+  project_state->id = id;
   project_state->locality = locality;
   project_state->initialized = true;
   context_.project_catalog.entries.push_back(std::move(project_state));
   context_.project_catalog.active_index = context_.project_catalog.entries.size() - 1;
 
-  if (!operations_.initialize_current_project(normalized_root, restore_persistence, log_feedback,
-                                              locality)) {
+  if (!operations_.initialize_current_project(id, normalized_root, restore_persistence,
+                                              log_feedback, locality)) {
     context_.project_catalog.entries.pop_back();
     RestoreActivationCheckpoint(checkpoint);
     return false;

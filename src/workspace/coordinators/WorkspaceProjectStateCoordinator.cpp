@@ -373,7 +373,8 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   }
 }
 
-bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& project_root,
+bool WorkspaceShell::InitializeCurrentProject(const project::ProjectId& id,
+                                              const std::filesystem::path& project_root,
                                               bool restore_persistence,
                                               bool log_feedback,
                                               bool activate_restored_tab,
@@ -387,9 +388,11 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
         "WorkspaceShell::InitializeCurrentProject::ResetProjectScopedState");
     ResetProjectScopedState(false);
   }
-  // Locality is identity, not scoped state: the reset above put the local pair
-  // back, and everything after this line -- plugin load, language-server
-  // registration, the first git refresh -- must already see the project's own.
+  // Id and locality are identity, not scoped state: the reset above put an empty id
+  // and the local pair back, and everything after this line -- plugin load,
+  // language-server registration, the first git refresh -- must already see the
+  // project's own.
+  context_.current_project_state.id = id;
   context_.current_project_state.locality = locality;
   {
     util::StartupTrace::Scope set_root_scope("WorkspaceShell::SetProjectRoot");

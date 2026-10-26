@@ -16,6 +16,7 @@
 
 #include "editor/WelcomeView.h"
 #include "plugin/PluginHost.h"
+#include "project/ProjectId.h"
 #include "project/ProjectLocality.h"
 #include "project/remote/MirrorSyncEngine.h"
 #include "project/remote/RemoteHostSession.h"
@@ -44,9 +45,9 @@ namespace microide::workspace {
 //
 // And the remote PROJECTS (Phase 2b): a host directory opened as a project is a
 // mirror the editor opens as an ordinary root, with its own channel to the host.
-// The open funnel asks LocalityForMirror for every root it opens, so a mirror
-// reopened from the recents list or a restored session reconnects instead of
-// opening as a plain local folder.
+// A project whose id (project::ProjectId) is remote asks LocalityFor when it is
+// initialized, so one reopened from the recents list or a restored session
+// reconnects instead of opening as a plain local folder.
 //
 // Sessions report on their worker threads; every report is drained on the UI
 // thread (DrainCompletions), so all the state below is UI-thread only.
@@ -56,7 +57,7 @@ class RemoteHostService {
     std::function<void(NotificationService::Request)> notify;
     std::function<void(std::string_view key)> dismiss_notification;
     // A removed mirror leaves the recents list (Remote: Remove Mirror).
-    std::function<void(const std::filesystem::path& root)> forget_recent_project;
+    std::function<void(const project::ProjectId& id)> forget_recent_project;
     // Open a terminal tab whose shell runs through `launcher`, titled with
     // `label_prefix`; `command` empty = an interactive shell. False on failure.
     std::function<bool(std::shared_ptr<const platform::ProcessLauncher> launcher,
@@ -112,12 +113,14 @@ class RemoteHostService {
   bool OpenTerminalOnHost(std::string_view host, std::string* error);
   // Remote: Open Folder on Host… — `[user@]host[:port]:/absolute/path`. Prepares the
   // project's mirror and returns the tree the editor opens; the project connects
-  // when that tree is opened (LocalityForMirror). nullopt with *error otherwise.
+  // when that tree is opened (LocalityFor). nullopt with *error otherwise.
   std::optional<std::filesystem::path> PrepareRemoteFolder(std::string_view spec,
                                                            std::string* error);
-  // The locality of `root` if it is a remote project's mirror — opening the project
-  // (and starting its connection) the first time — and nullopt for any other folder.
-  std::optional<project::ProjectLocality> LocalityForMirror(const std::filesystem::path& root);
+  // The locality of the remote project `id` -- opening it (creating its mirror if
+  // there is none) and starting its connection the first time, reconnecting it
+  // after a close. nullopt for a local id, and, with a notification saying why,
+  // for a mirror that cannot be opened.
+  std::optional<project::ProjectLocality> LocalityFor(const project::ProjectId& id);
   // The project at `root` was closed: drop its connection (the ssh channel, the
   // host's workspace and its watch). The RemoteProject itself stays — a project state
   // may still point at its locality while it is torn down — and reopening reconnects.

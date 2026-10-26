@@ -723,10 +723,10 @@
                                    project::ProjectFileScanStatus status,
                                    std::uint64_t index_version_at_dispatch);
   void SetWelcomePlaceholder();
-  bool InitializeCurrentProject(const std::filesystem::path& project_root,
+  bool InitializeCurrentProject(const project::ProjectId& id, const std::filesystem::path& project_root,
                                 bool restore_persistence,
                                 bool log_feedback,
-                                bool activate_restored_tab = true, project::ProjectLocality locality = {});
+                                bool activate_restored_tab, project::ProjectLocality locality);
   bool OpenProjectTab(const std::filesystem::path& project_root,
                       bool restore_persistence,
                       bool log_feedback, const project::ProjectLocality& locality = {});

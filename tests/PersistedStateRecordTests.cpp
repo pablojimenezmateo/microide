@@ -614,6 +614,80 @@ void TestPersistedStateProjectSessionRoundTripOmitsChatRegistry() {
          "duplicate/equivalent roots collapse to unique entries at decode");
 }
 
+// The workspace session's projects as identities (project-identity), written
+// beside their legacy root paths. Three readers: this build (prefers the ids), a
+// file written before the ids (legacy roots only), and an older build, which knows
+// only the root tag and skips every other tag as unknown.
+void TestPersistedStateWorkspaceSessionProjectIds() {
+  using microide::project::ProjectId;
+  const ProjectId local = ProjectId::ForLocal("/tmp/project-a");
+  const ProjectId remote = ProjectId::ForRemote("dev@box:2222", "/home/dev/repo");
+  PersistedWorkspaceSessionState session{
+      .projects = {local, remote},
+      .project_roots = {"/tmp/project-a", remote.IoRoot()},
+      .active_project_index = 1,
+  };
+  std::vector<std::byte> record;
+  Expect(EncodeWorkspaceSessionRecord(session, &record), "encode");
+  PersistedWorkspaceSessionState decoded;
+  Expect(DecodeWorkspaceSessionRecord(record, &decoded), "decode");
+  Expect(decoded.projects.size() == 2 && decoded.projects[0] == local && decoded.projects[1] == remote &&
+             decoded.active_project_index == 1,
+         "the identities round-trip, remote host and root included");
+  Expect(decoded.project_roots.size() == 2 && decoded.project_roots[1] == remote.IoRoot(),
+         "and the legacy roots are written beside them, in the same order");
+
+  // What an older build sees: the root tags, in order, among tags it skips.
+  std::vector<std::filesystem::path> legacy_view;
+  std::size_t offset = 0;
+  while (offset < record.size()) {
+    microide::persistence::TaggedRecordView view;
+    Expect(microide::persistence::ReadTaggedRecord(record, &offset, &view), "the stream frames");
+    if (view.tag == 2) {  // WorkspaceSessionTag::ProjectRoot
+      microide::persistence::PrimitiveReader reader(view.payload);
+      std::filesystem::path root;
+      Expect(reader.ReadPath(&root), "a root path");
+      legacy_view.push_back(root);
+    }
+  }
+  Expect(legacy_view == decoded.project_roots, "an older build restores the same projects by path");
+
+  // A file written before the identities: roots only, and no ids invented for it
+  // (the coordinator names them, ResolveProjectId, since that reads the disk).
+  PersistedWorkspaceSessionState legacy{.project_roots = {"/tmp/old-a", "/tmp/old-b"}};
+  std::vector<std::byte> legacy_record;
+  Expect(EncodeWorkspaceSessionRecord(legacy, &legacy_record), "legacy encode");
+  PersistedWorkspaceSessionState decoded_legacy;
+  Expect(DecodeWorkspaceSessionRecord(legacy_record, &decoded_legacy), "legacy decode");
+  Expect(decoded_legacy.projects.empty() && decoded_legacy.project_roots.size() == 2,
+         "a legacy file decodes to its roots alone");
+
+  // An id that names nothing usable -- a relative host root -- is skipped, not fatal.
+  PersistedWorkspaceSessionState bad{
+      .projects = {ProjectId::ForRemote("box", "relative/root"), local, local}};
+  std::vector<std::byte> bad_record;
+  Expect(EncodeWorkspaceSessionRecord(bad, &bad_record), "bad encode");
+  PersistedWorkspaceSessionState decoded_bad;
+  Expect(DecodeWorkspaceSessionRecord(bad_record, &decoded_bad), "a bad entry does not fail the file");
+  Expect(decoded_bad.projects.size() == 1 && decoded_bad.projects[0] == local,
+         "the unusable id is dropped and the duplicate collapsed");
+}
+
+void TestPersistedStateMruProjectIds() {
+  using microide::project::ProjectId;
+  const ProjectId remote = ProjectId::ForRemote("box", "/srv/app");
+  PersistedMruState mru{
+      .recent_projects = {remote, ProjectId::ForLocal("/home/u/proj")},
+      .recent_project_roots = {remote.IoRoot(), "/home/u/proj"},
+  };
+  std::vector<std::byte> encoded;
+  Expect(EncodeMruRecord(mru, &encoded), "encode");
+  PersistedMruState decoded;
+  Expect(DecodeMruRecord(encoded, &decoded), "decode");
+  Expect(decoded.recent_projects == mru.recent_projects && decoded.recent_project_roots == mru.recent_project_roots,
+         "recent project identities and their legacy roots round-trip");
+}
+
 void TestPersistedStateProjectSessionRoundTripsTreeState() {
   PersistedProjectSessionState session = BuildProjectSessionFixture();
   std::vector<std::byte> record;
@@ -1547,6 +1621,8 @@ void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PersistedStateRecord/ProjectConfigMigratesLegacyEditorPrefTags",
           TestPersistedStateProjectConfigMigratesLegacyEditorPrefTags);
   AddTest(tests, "PersistedStateRecord/MruRoundTrip", TestPersistedStateMruRecordRoundTrip);
+  AddTest(tests, "PersistedStateRecord/MruProjectIds", TestPersistedStateMruProjectIds);
+  AddTest(tests, "PersistedStateRecord/WorkspaceSessionProjectIds", TestPersistedStateWorkspaceSessionProjectIds);
   AddTest(tests, "PersistedStateRecord/MruEnforcesCaps",
           TestPersistedStateMruRecordEnforcesCaps);
   AddTest(tests, "PersistedStateRecord/MruRequiresSchema",

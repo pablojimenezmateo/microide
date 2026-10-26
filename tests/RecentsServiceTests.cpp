@@ -2,8 +2,7 @@
 
 #include "workspace/persistence/RecentsService.h"
 #include "workspace/persistence/PersistenceService.h"
-#include "persistence/PersistedRecordWriter.h"
-#include "util/ByteCodec.h"
+#include "project/remote/RemoteProject.h"
 #include "util/PerformanceCounters.h"
 
 #include <cstddef>
@@ -15,33 +14,36 @@ namespace microide::tests {
 namespace {
 
 using microide::workspace::RecentsService;
+using microide::project::ProjectId;
+
+ProjectId Local(const std::filesystem::path& root) { return ProjectId::ForLocal(root); }
 
 // Without Configure() the service is in-memory only (Save() no-ops), so these tests
 // exercise the MRU dedup/ordering/bounds logic without touching disk.
 
 void TestRecentsProjectsAreNewestFirstAndDeduped() {
   RecentsService recents;
-  recents.RecordProjectOpen("/a");
-  recents.RecordProjectOpen("/b");
-  recents.RecordProjectOpen("/c");
-  recents.RecordProjectOpen("/a");  // re-open promotes to front, no duplicate
+  recents.RecordProjectOpen(Local("/a"));
+  recents.RecordProjectOpen(Local("/b"));
+  recents.RecordProjectOpen(Local("/c"));
+  recents.RecordProjectOpen(Local("/a"));  // re-open promotes to front, no duplicate
 
   const auto& projects = recents.RecentProjects();
   Expect(projects.size() == 3, "re-opening a project should not duplicate it");
-  Expect(projects[0] == std::filesystem::path("/a"), "most recent project should be first");
-  Expect(projects[1] == std::filesystem::path("/c"), "second-most-recent project should follow");
-  Expect(projects[2] == std::filesystem::path("/b"), "least recent project should be last");
+  Expect(projects[0] == Local("/a"), "most recent project should be first");
+  Expect(projects[1] == Local("/c"), "second-most-recent project should follow");
+  Expect(projects[2] == Local("/b"), "least recent project should be last");
 }
 
 void TestRecentsProjectsAreBounded() {
   RecentsService recents;
   for (std::size_t i = 0; i < RecentsService::MaxProjects() + 5; ++i) {
-    recents.RecordProjectOpen("/p" + std::to_string(i));
+    recents.RecordProjectOpen(Local("/p" + std::to_string(i)));
   }
   Expect(recents.RecentProjects().size() == RecentsService::MaxProjects(),
          "recent projects should be capped at MaxProjects()");
   Expect(recents.RecentProjects().front() ==
-             std::filesystem::path("/p" + std::to_string(RecentsService::MaxProjects() + 4)),
+             Local("/p" + std::to_string(RecentsService::MaxProjects() + 4)),
          "the newest project should survive the bound");
 }
 
@@ -92,21 +94,21 @@ void TestRecentsExistingProjectsFilterAndCacheInvalidation() {
   const std::filesystem::path missing = temp.path() / "gone";
 
   RecentsService recents;
-  recents.RecordProjectOpen(one);
-  recents.RecordProjectOpen(missing);  // never created on disk
+  recents.RecordProjectOpen(Local(one));
+  recents.RecordProjectOpen(Local(missing));  // never created on disk
 
   const auto& existing = recents.ExistingRecentProjects();
-  Expect(existing.size() == 1 && existing[0] == one,
+  Expect(existing.size() == 1 && existing[0] == Local(one),
          "only on-disk recent projects are surfaced");
   // Second call returns the same cached vector (same MRU revision).
   Expect(&recents.ExistingRecentProjects() == &existing,
          "an unchanged MRU reuses the cached validated list");
 
   // Recording another project bumps the revision and re-validates.
-  recents.RecordProjectOpen(two);
+  recents.RecordProjectOpen(Local(two));
   const auto& after = recents.ExistingRecentProjects();
   Expect(after.size() == 2, "recording a new project invalidates the validated cache");
-  Expect(after[0] == two, "the newest recorded project is first");
+  Expect(after[0] == Local(two), "the newest recorded project is first");
 }
 
 // The MRU coalesces its durable writes, so what lands on disk is no longer a
@@ -121,7 +123,7 @@ void TestRecentsSurviveFlushAndReload() {
   {
     RecentsService recents;
     recents.Configure(persistence);
-    recents.RecordProjectOpen("/proj");
+    recents.RecordProjectOpen(Local("/proj"));
     recents.RecordFileOpen("/proj/a.cpp", "/proj");
     recents.RecordFileOpen("/proj/b.cpp", "/proj");
     recents.FlushPendingSave();
@@ -134,7 +136,7 @@ void TestRecentsSurviveFlushAndReload() {
   Expect(files[0] == std::filesystem::path("/proj/b.cpp"),
          "the reloaded MRU should keep newest-first ordering");
   Expect(!reloaded.RecentProjects().empty() &&
-             reloaded.RecentProjects().front() == std::filesystem::path("/proj"),
+             reloaded.RecentProjects().front() == Local("/proj"),
          "a flushed MRU should reload the recorded project");
 }
 
@@ -180,8 +182,8 @@ void TestRecentsReopeningNewestEntryDoesNotWrite() {
       microide::util::ReadPerformanceCounter(microide::util::PerfCounterId::PersistenceRecordWrites);
   for (int i = 0; i < 10; ++i) {
     recents.RecordFileOpen("/proj/a.cpp", "/proj");
-    recents.RecordProjectOpen("/proj-x");
-    recents.RecordProjectOpen("/proj-x");
+    recents.RecordProjectOpen(Local("/proj-x"));
+    recents.RecordProjectOpen(Local("/proj-x"));
   }
   recents.FlushPendingSave();
   const std::uint64_t after =
@@ -190,32 +192,84 @@ void TestRecentsReopeningNewestEntryDoesNotWrite() {
          "re-recording the entry that is already newest must not write");
 }
 
-// A remote project's mirror is listed as the host folder it mirrors, never as the
-// mirror's own path under the data directory.
-void TestRecentsShowAMirrorAsItsHostFolder() {
-  TemporaryDirectory temp;
-  const std::filesystem::path plain = temp.path() / "plain";
-  const std::filesystem::path mirror_tree = temp.path() / "mirror" / "app";
+// A file written before identity records names its recent projects by path; each
+// is named on load as a typed path is, so a mirror's own tree comes back as the
+// remote project it mirrors and a plain folder as a local one.
+void TestRecentsLegacyPathsResolveOnLoad() {
+  TemporaryDirectory state_dir;
+  TemporaryDirectory data_dir;
+  ScopedEnvVar scoped_state("XDG_STATE_HOME", state_dir.path().string());
+  ScopedEnvVar scoped_data("XDG_DATA_HOME", data_dir.path().string());
+  const std::filesystem::path plain = state_dir.path() / "plain";
   std::filesystem::create_directories(plain);
+  const std::filesystem::path mirror_tree = project::remote::RemoteProject::DefaultTree("dev@box", "/home/dev/app");
   std::filesystem::create_directories(mirror_tree);
-  std::string body;
-  util::PutVarint(body, 1);
-  util::PutBytes(body, "dev@box");
-  util::PutBytes(body, "/home/dev/app");
-  Expect(persistence::PersistedRecordWriter::WriteFile(
-             temp.path() / "mirror" / "meta" / "remote",
-             std::span<const std::byte>(reinterpret_cast<const std::byte*>(body.data()), body.size()), 0),
+  std::filesystem::create_directories(mirror_tree.parent_path() / "meta");
+  Expect(project::remote::RemoteProject::WriteRecord(mirror_tree, {.host = "dev@box", .host_root = "/home/dev/app"}),
          "the mirror's record is written");
+  const microide::workspace::PersistenceService persistence;
+  microide::workspace::PersistedMruState legacy;
+  legacy.recent_project_roots = {mirror_tree, plain};
+  persistence.SaveMruState(state_dir.path() / "microide" / "recents", legacy);
+
   RecentsService recents;
-  recents.RecordProjectOpen(plain);
-  recents.RecordProjectOpen(mirror_tree);
-  const auto& displays = recents.ExistingRecentProjectDisplays();
-  Expect(displays.size() == 2 && displays[0] == "dev@box:/home/dev/app" && displays[1] == plain.string(),
-         "the mirror shows as host:/path, a plain folder as its path");
+  recents.Configure(persistence);
+  const auto& projects = recents.ExistingRecentProjects();
+  Expect(projects.size() == 2 && projects[0] == ProjectId::ForRemote("dev@box", "/home/dev/app") &&
+             projects[1] == Local(plain),
+         "the mirror reads back as its remote project, the folder as a local one");
+  Expect(projects[0].Location() == "dev@box:/home/dev/app", "and is shown as host:/path");
+}
+
+// A remote project outlives its mirror: the entry is its host and folder, and
+// opening it makes the mirror again. A local folder that is gone stays hidden.
+// Forgetting a remote project (Remote: Remove Mirror) drops it and its files.
+void TestRecentsKeepARemoteProjectWhoseMirrorIsGone() {
+  TemporaryDirectory temp;
+  RecentsService recents;
+  const ProjectId remote = ProjectId::ForRemote("dev@box", "/srv/gone");
+  recents.RecordProjectOpen(remote);
+  recents.RecordProjectOpen(Local(temp.path() / "deleted-local"));
+  recents.RecordFileOpen(remote.IoRoot() / "main.c", remote.IoRoot());
+  Expect(!std::filesystem::exists(remote.IoRoot()), "the mirror does not exist");
+  const auto& existing = recents.ExistingRecentProjects();
+  Expect(existing.size() == 1 && existing[0] == remote,
+         "the remote project is still offered; the missing local folder is not");
+
+  recents.ForgetProject(remote);
+  Expect(recents.ExistingRecentProjects().empty() && recents.RecentFilesFor(remote.IoRoot(), 10).empty(),
+         "forgetting it drops the project and its files");
+}
+
+// The new file still restores in an older build: each identity is written beside
+// its legacy path, in the same order.
+void TestRecentsDualWriteTheLegacyRoots() {
+  TemporaryDirectory state_dir;
+  ScopedEnvVar scoped_state("XDG_STATE_HOME", state_dir.path().string());
+  const microide::workspace::PersistenceService persistence;
+  const ProjectId remote = ProjectId::ForRemote("dev@box", "/srv/app");
+  {
+    RecentsService recents;
+    recents.Configure(persistence);
+    recents.RecordProjectOpen(Local("/proj"));
+    recents.RecordProjectOpen(remote);
+    recents.FlushPendingSave();
+  }
+  microide::workspace::PersistedMruState raw;
+  Expect(persistence.LoadMruState(state_dir.path() / "microide" / "recents", &raw), "the file loads");
+  Expect(raw.recent_projects.size() == 2 && raw.recent_projects[0] == remote &&
+             raw.recent_projects[1] == Local("/proj"),
+         "the identities are written, newest first");
+  Expect(raw.recent_project_roots.size() == 2 && raw.recent_project_roots[0] == remote.IoRoot() &&
+             raw.recent_project_roots[1] == std::filesystem::path("/proj"),
+         "beside each one's I/O root under the legacy tag");
 }
 
 void RegisterRecentsServiceTests(std::vector<TestCase>& tests) {
-  AddTest(tests, "RecentsService/ShowAMirrorAsItsHostFolder", TestRecentsShowAMirrorAsItsHostFolder);
+  AddTest(tests, "RecentsService/LegacyPathsResolveOnLoad", TestRecentsLegacyPathsResolveOnLoad);
+  AddTest(tests, "RecentsService/KeepARemoteProjectWhoseMirrorIsGone",
+          TestRecentsKeepARemoteProjectWhoseMirrorIsGone);
+  AddTest(tests, "RecentsService/DualWriteTheLegacyRoots", TestRecentsDualWriteTheLegacyRoots);
   AddTest(tests, "RecentsService/ExistingProjectsFilterAndCacheInvalidation",
           TestRecentsExistingProjectsFilterAndCacheInvalidation);
   AddTest(tests, "RecentsService/ProjectsNewestFirstAndDeduped",

@@ -194,8 +194,12 @@ std::optional<std::filesystem::path> RemoteHostService::PrepareRemoteFolder(std:
   return project->project->tree();
 }
 
-std::optional<project::ProjectLocality> RemoteHostService::LocalityForMirror(
-    const std::filesystem::path& root) {
+std::optional<project::ProjectLocality> RemoteHostService::LocalityFor(const project::ProjectId& id) {
+  const project::ProjectId::Remote* remote_id = id.remote();
+  if (remote_id == nullptr) {
+    return std::nullopt;
+  }
+  const std::filesystem::path root = id.IoRoot();
   if (const auto existing = projects_.find(root); existing != projects_.end()) {
     // Reopened after a close (which disconnected it): connect again. A no-op when
     // the project is still connected or connecting.
@@ -206,24 +210,15 @@ std::optional<project::ProjectLocality> RemoteHostService::LocalityForMirror(
     ApplyProject(root);
     return existing->second.project->locality();
   }
-  const std::optional<remote::RemoteProjectRecord> record = remote::RemoteProject::ReadRecord(root);
-  if (!record.has_value()) {
-    return std::nullopt;
-  }
   std::string error;
   const std::optional<remote::RemoteHostTarget> target =
-      remote::ParseRemoteHostTarget(record->host, &error);
-  // Only the mirror's own tree: a copy or a renamed directory is a local folder.
-  if (!target.has_value() ||
-      remote::RemoteProject::DefaultTree(target->Display(), record->host_root) != root) {
-    return std::nullopt;
-  }
-  Project* project = OpenProject(*target, record->host_root, &error);
+      remote::ParseRemoteHostTarget(remote_id->host, &error);
+  Project* project = target.has_value() ? OpenProject(*target, remote_id->host_root, &error) : nullptr;
   if (project == nullptr) {
     if (operations_.notify) {
       operations_.notify(NotificationService::Request{
           .tone = NotificationService::Tone::Error,
-          .message = "Cannot open the mirror of " + record->host + ":" + record->host_root + ": " + error,
+          .message = "Cannot open the mirror of " + id.Location() + ": " + error,
       });
     }
     return std::nullopt;
@@ -457,7 +452,7 @@ bool RemoteHostService::RemoveMirror(const std::filesystem::path& root, bool dis
     return false;
   }
   if (operations_.forget_recent_project) {
-    operations_.forget_recent_project(root);
+    operations_.forget_recent_project(project::ProjectId::ForRemote(record->host, record->host_root));
   }
   if (operations_.notify) {
     operations_.notify(NotificationService::Request{
