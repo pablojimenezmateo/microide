@@ -449,7 +449,27 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-25-392 — CI's QA lanes are red on most pushes; `multi-caret-pairs` fails on X11 CI and passes locally. [OPEN -- fifteen causes fixed 2026-10-25/26]
+### TD-2026-10-26-393 — the full perf gate fails on perf-runner-v1. [OPEN]
+
+`tools/perf-gate.sh` on this box (`perf-runner-v1`) last recorded FAIL on 2026-10-25
+(commit d49174f0) with 12 scenarios red: `branch_review_presentation_markers`,
+`editor_cjk_scroll_paint`, `editor_save_normalization`, `editor_indent_detect_open`,
+`external_change_refresh_open_diff`/`_merge`, `scroll_large_file`,
+`editor_scroll_fresh_content_large`, `terminal_scroll_long_output`,
+`terminal_stream_chunked_output`, `terminal_alt_screen_toggle`, plus `terminal.open`'s
+allocation phase (rebaselined under TD-2026-10-09-334). It already failed at that
+session's starting commit (7a46c26c), so a red gate here is not by itself evidence of a
+regression. Known: `editor_save_normalization`'s p95/max spikes (~37 ms) are fsync
+stalls on the encrypted ext4 volume, at the same rate at base and HEAD when both save to
+the main checkout and zero on tmpfs. Several timing baselines also say they were
+recorded on an advisory runner (TD-2026-08-11-184) and are not enforced until
+re-recorded here. Nothing had tracked this: it lived only in a session note.
+
+Next, on an idle box: base vs HEAD interleaved from the main checkout (same disk) for
+each red scenario. "Rebaseline down, investigate up": a scenario at or under its base
+is re-recorded; one over it is a regression to find.
+
+### TD-2026-10-25-392 — CI's QA lanes are red on most pushes; `multi-caret-pairs` fails on X11 CI and passes locally. [OPEN -- seventeen causes fixed 2026-10-25/26]
 
 **2026-10-25, three causes found and fixed:**
 
@@ -602,6 +622,23 @@ things remained, all fixed:
   after the flow changed files or ran `git` outside the app. The watcher may not
   have seen such a change yet, and `git-refresh` also reloads clean buffers, so it
   is not sent otherwise.
+
+**2026-10-26, fifth CI run (5349c330: `checks` 40287550347, `qa-deep`
+40287550264).** Every job is green. X11 `qa` and `qa-asan` came back fully
+clean, with all four ASan monkey seeds passing and no flaky retries. Their only
+notes are TD-375's gdb `pause`. `qa-wayland` had four flaky scenarios, all failing
+on their first step: `overlays`, `menus`, `overlay-backdrop` and `menu-clicks`
+sent `open` and saw no tab within 5 s. Their logs show no frames in that time, and
+three never reached frame 1: the app was blocked in its first present.
+
+- **The lane was oversubscribed.** Each Wayland scenario is two software
+  renderers (weston's compositor and the app's GL) at scale 2, and CI ran four
+  at a time on four vCPUs. `qa-deep` now runs it two at a time, as it does
+  `qa-asan`; it still ends before that lane.
+- **The driver called the app ready on a guess.** `_spawn` slept 0.6 s after
+  the control channel came up. It now waits for this launch's first presented
+  frame (the per-frame log line QA always enables). `_open_source` also checks
+  that `open` was taken, so a refused open is told apart from a missing tab.
 
 Close this entry once a run of CI's QA lanes comes back green with no flaky
 retries and no driver notes.
@@ -993,7 +1030,53 @@ for the MSBuild load. Two others were the harness and are fixed:
 a module that defines a name twice) and `tree-collisions` (it counted toasts; a
 refusal replaces the previous refusal's toast).
 
-### TD-2026-10-21-375 — gdb 15.1 sometimes stops answering after a launch under load. [CLOSED 2026-10-25 — not re-found]
+### TD-2026-10-21-375 — gdb 15.1 sometimes stops answering after a launch under load. [RESOLVED 2026-10-26 — Pause and Stop interrupt a program gdb 15 is still starting]
+
+**Resolved 2026-10-26, reproduced with gdb 15.1 itself** (unpacked from the Ubuntu
+24.04 package into a scratch directory with its Python 3.12, put first on `PATH`).
+`dbg-pause` and `dbg-sessions`, four copies at once, gave the note every time.
+gdb's own DAP log (`set debug dap-log-file`) shows the mechanism: gdb 15's `launch`
+runs `exec_and_expect_stop("run")` on its gdb thread, and under load that `run` does
+not return until the program stops. `configurationDone` waits for the gdb thread on
+gdb's single DAP thread, and every later request queues behind it: `pause`,
+`threads`, `terminate`. In the stuck logs `configurationDone` is never answered; in
+the good ones it is answered right after the `process` event. gdb 16+ moved the
+start into `configurationDone` on the DAP thread.
+
+The fix, on the app side: the session keeps the debuggee's pid from the adapter's
+`process` event (only for a local adapter and a local process). While gdb's
+`configurationDone` is unanswered, Pause and Stop interrupt the program with
+SIGINT, as gdb's own Ctrl+C does (`platform::InterruptProcess`). gdb traces the
+program, catches the signal and stops it, `run` returns, and the queue drains. It
+is gdb-only: another adapter's program would receive the signal itself. Stop All
+also no longer joins every adapter's I/O thread on the UI thread, which froze the
+window for seconds behind the stuck terminate; it asks each session to stop, as
+Stop does, and the per-frame prune drops them. The flows no longer turn an
+unanswered pause into a note. Tests:
+`DebugService/SessionPauseInterruptsAGdbStillStartingTheProgram` and
+`DebugService/StopAllDoesNotWaitOnAWedgedGdb`, against a `gdb15_wedged` mock mode
+(each fails without its half of the fix). On gdb 15.1 every debugger flow passed
+twice, and the two pause flows passed eight times under load; on gdb 17 every
+debugger flow passed.
+
+**Reopened 2026-10-26.** It was not "under load", and it was never gone. Every QA
+lane on CI prints "note: gdb did not answer `pause`" twice on every run, including
+fully green ones (`dbg-pause`'s two pauses; the flow downgrades the adapter's
+silence to a note). CI's Ubuntu 24.04 ships gdb 15.1. This box has gdb 17.1, where
+the same flow answers `pause` in about half a millisecond, so no local run (the
+closure below included) could see it. On a real Ubuntu 24.04 machine, then, Pause
+on a running program does nothing.
+
+What the gdb 15 DAP sources show (read from the 15.1 package, not run): `pause` is
+`response=False`, which gdb 15 answers at once from its DAP thread after posting
+`interrupt -a` to the gdb thread. An unanswered `pause` therefore means the DAP
+thread was still inside an earlier request waiting on the gdb thread. gdb 15
+starts the program in `launch` itself (`exec_and_expect_stop("run")` on the gdb
+thread; `configurationDone` is a no-op), where 17 defers it to
+`configurationDone` and handles both on the DAP thread. Which request was in
+flight, and whether the gdb thread was blocked in `run`, needs the traffic. The
+flow saved the traffic when the note fired; the run with gdb 15 itself (above)
+answered it first.
 
 **Closed 2026-10-25.** The "next" below was run: a plain `gdb --interpreter=dap`
 driven by a script (initialize, launch, setBreakpoints, configurationDone) eight
@@ -2804,7 +2887,17 @@ Tried 2026-10-09: `LspProtocol.cpp` with `SKIP_PRECOMPILE_HEADERS` in the
 box at load 15. Inconclusive under that load; repeat on a quiet machine before
 ruling the PCH in or out.
 
-### TD-2026-10-09-334 — four allocation gates carry the terminal split-pane cost. [OPEN — decided: rebaseline]
+### TD-2026-10-09-334 — four allocation gates carry the terminal split-pane cost. [RESOLVED 2026-10-26 — `terminal.open` rebaselined on perf-runner-v1]
+
+**Resolved 2026-10-26.** This development box *is* `perf-runner-v1`: `tools/perf-gate.sh
+--status` records its weekly runs under that runner. The three terminal scenarios that
+carry the `terminal.open` phase (`terminal_scroll_long_output`,
+`terminal_stream_chunked_output`, `terminal_alt_screen_toggle`) failed only that phase's
+allocation gate, 24 -> 28, the accepted split-pane cost. `--update-baseline=deterministic`
+on just those three moved it to 28 and tightened each scenario's total (-10 to -14:
+"rebaseline down"); timing numbers were carried over unchanged. The other three gates
+needed no change (the 2026-10-09 A/B below). The timing failures the full gate still
+shows are tracked separately.
 
 Measured 2026-10-08 against v2.12.0 on one machine: after the per-open and
 per-terminal regressions were fixed (de1d840b), four gates still read above the
