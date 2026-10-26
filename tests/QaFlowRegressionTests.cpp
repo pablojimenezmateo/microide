@@ -367,6 +367,32 @@ void TestATerminalPaneCursorChangeRepaintsItsCaret() {
   fixture.ExpectFresh(elsewhere, "an inactive pane's cursor showing again elsewhere");
 }
 
+// CI QA (X11, terminal-programs, vim insert): a frame drawn for something else --
+// the caret blink -- repainted only the caret, while vim's rows had changed. The
+// output landed after its wake was handled; frame prep then sampled the new rows
+// into the pane's snapshot, and nothing asked for the rows the snapshot changed.
+// Paint reads the snapshot, so the frame that takes a new one repaints its pane.
+void TestTerminalOutputSampledByFramePrepRepaintsItsPane() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("term.txt", "text\n");
+  TestAccess::EnsureTerminalTab(fixture.shell);
+  auto& session = TestAccess::ActiveTerminalSession(fixture.shell);
+  TerminalSessionTestAccess::Reset(session, 8, 40);
+  TerminalSessionTestAccess::AppendOutput(session, "prompt$ ");
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  fixture.PinCaret();
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+
+  // Output whose wake has not been handled yet, then a frame for something else.
+  TerminalSessionTestAccess::AppendOutput(session, "\r\n-- INSERT --\r\nrow two\r\nrow three");
+  workspace::RenderInvalidation elsewhere;
+  elsewhere.rects.push_back(SDL_FRect{2.0f, 2.0f, 4.0f, 4.0f});
+  fixture.ExpectFresh(elsewhere, "terminal output sampled by frame prep");
+}
+
 // The sidebar's repaint-on-change check keyed the view, selection, scroll and
 // tree revision into one value and then forced it non-zero with `key |= 1`,
 // which erased any change living only in bit 0 of the last term: in the git,
@@ -3838,6 +3864,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/ATerminalTitleRepaintsItsTab", TestATerminalTitleRepaintsItsTab);
   AddTest(tests, "QaFlowRegression/ATerminalPaneCursorChangeRepaintsItsCaret",
           TestATerminalPaneCursorChangeRepaintsItsCaret);
+  AddTest(tests, "QaFlowRegression/TerminalOutputSampledByFramePrepRepaintsItsPane",
+          TestTerminalOutputSampledByFramePrepRepaintsItsPane);
   AddTest(tests, "QaFlowRegression/ASidebarScrollOfOneRowRepaints", TestASidebarScrollOfOneRowRepaints);
   AddTest(tests, "QaFlowRegression/SaveAsRevealsTheNewFileInTheTree", TestSaveAsRevealsTheNewFileInTheTree);
   AddTest(tests, "QaFlowRegression/TheGitViewReportsTheSelectedEntrysRow", TestTheGitViewReportsTheSelectedEntrysRow);

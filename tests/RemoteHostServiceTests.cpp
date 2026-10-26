@@ -1052,6 +1052,11 @@ void TestARestoredRemoteProjectIsNamedBeforeItIsActivated() {
     const workspace::PersistenceService persistence;
     Expect(persistence.SaveWorkspaceSession(state_home.path() / "microide" / "workspace-session", session),
            "the session is written" + form);
+    // A save is accepted, not landed: the shell below reads the file through its
+    // own service, whose load flushes only its own queue. Unflushed, the restore
+    // raced the write on a slow runner, and the second form's write could land
+    // after the shell's save and overwrite it (CI, from 9201d8d6).
+    persistence.FlushPendingWrites();
 
     WorkspaceShell shell;
     Expect(WorkspaceShellTestAccess::RestoreWorkspaceSession(shell), "the session restores" + form);

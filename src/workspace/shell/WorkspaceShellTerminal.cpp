@@ -701,8 +701,16 @@ void WorkspaceShell::PrepareTerminalPanesForFrame(TerminalTabState& tab,
         pane->visible_lines_first_row == first_row && pane->visible_lines_max_rows == visible_rows;
     const std::uint64_t previous_generation =
         same_visible_range ? pane->visible_lines_snapshot.generation : 0;
-    pane->session.SnapshotLineRangeIfChanged(first_row, visible_rows, previous_generation,
-                                             &pane->visible_lines_snapshot);
+    // Paint reads this snapshot, so a frame that takes a new one repaints the pane:
+    // output can land after the wake that announced it was handled, and the frame
+    // that samples it may have been drawn for something else entirely (a caret
+    // blink repainted only the caret over vim's changed rows -- CI QA,
+    // terminal-programs). A wake's own repaint covers the usual case; this covers
+    // the frame that gets there first.
+    if (pane->session.SnapshotLineRangeIfChanged(first_row, visible_rows, previous_generation,
+                                                 &pane->visible_lines_snapshot)) {
+      RequestRedrawRect(rects.panes[pane_index]);
+    }
     pane->visible_lines_first_row = first_row;
     pane->visible_lines_max_rows = visible_rows;
     pane->frame_cursor = pane->session.CursorSnapshot();
