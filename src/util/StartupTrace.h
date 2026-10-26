@@ -17,7 +17,13 @@ namespace microide::util {
 //                               or per plugin rather than once.
 class StartupTrace : public TraceChannelFacade<StartupTrace> {
  public:
-  static TraceChannel& Channel();
+  // Defined here so a Scope on a disabled channel inlines to one flag test
+  // (TD-2026-10-13-338). Function-local so the env read happens on first use.
+  static TraceChannel& Channel() {
+    static TraceChannel channel("startup", "MICROIDE_STARTUP_TRACE", "MICROIDE_STARTUP_SUMMARY",
+                                /*min_duration_env=*/nullptr);
+    return channel;
+  }
 
   // Rebase the elapsed-time origin so "ms total" is measured from the start of
   // Application::Initialize rather than from first use.

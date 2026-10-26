@@ -422,7 +422,12 @@ inline constexpr std::size_t kNoEditorGroup = static_cast<std::size_t>(-1);
 std::size_t AdjacentEditorGroup(const EditorGroupRectsLayout& rects,
                                 std::size_t from,
                                 EditorGroupDirection direction);
-bool Contains(const SDL_FRect& rect, float x, float y);
+// Half-open: a point on the right or bottom edge is outside. Defined here so the
+// per-motion hit tests (PointerOver, CursorKindForPosition) inline it; out of line
+// the LTO build kept it as a call (TD-2026-10-13-338).
+inline bool Contains(const SDL_FRect& rect, float x, float y) {
+  return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
+}
 // Exact four-float equality for SDL_FRect.
 inline bool RectsEqual(const SDL_FRect& lhs, const SDL_FRect& rhs) {
   return lhs.x == rhs.x && lhs.y == rhs.y && lhs.w == rhs.w && lhs.h == rhs.h;

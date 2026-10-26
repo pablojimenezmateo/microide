@@ -331,10 +331,6 @@ std::size_t AdjacentEditorGroup(const EditorGroupRectsLayout& rects,
   return best;
 }
 
-bool Contains(const SDL_FRect& rect, float x, float y) {
-  return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
-}
-
 std::optional<SDL_FRect> UnionOptionalRects(std::optional<SDL_FRect> lhs,
                                             const SDL_FRect& rhs) {
   if (!lhs.has_value()) {

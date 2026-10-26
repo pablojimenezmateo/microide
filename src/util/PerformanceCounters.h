@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -544,8 +545,28 @@ constexpr std::size_t kPerfCounterCount = static_cast<std::size_t>(PerfCounterId
 
 using PerfCounterSnapshot = std::array<std::uint64_t, kPerfCounterCount>;
 
+namespace detail {
+
+// The counters themselves, in the header so AddPerformanceCounter is inlined into
+// its callers. Out of line it was a 29-byte call the LTO build kept as a call
+// 0.9M times across the gated scenarios, from the glyph cache's lookup and
+// MeasureWidth (TD-2026-10-13-338). `constinit`: zeroed at load, so there is no
+// first-use guard on the hot path (the function-local static it replaces had
+// one) and no initialization order for a counter bumped during another TU's
+// static initialization to get wrong.
+inline constinit std::array<std::atomic<std::uint64_t>, kPerfCounterCount> g_perf_counters{};
+
+constexpr std::size_t PerfCounterIndex(PerfCounterId id) {
+  const auto index = static_cast<std::size_t>(id);
+  return index < kPerfCounterCount ? index : kPerfCounterCount - 1;
+}
+
+}  // namespace detail
+
 void ResetPerformanceCounters();
-void AddPerformanceCounter(PerfCounterId id, std::uint64_t delta = 1);
+inline void AddPerformanceCounter(PerfCounterId id, std::uint64_t delta = 1) {
+  detail::g_perf_counters[detail::PerfCounterIndex(id)].fetch_add(delta, std::memory_order_relaxed);
+}
 std::uint64_t ReadPerformanceCounter(PerfCounterId id);
 PerfCounterSnapshot CapturePerformanceCounters();
 std::vector<std::pair<std::string_view, std::uint64_t>> NonZeroCounterDelta(

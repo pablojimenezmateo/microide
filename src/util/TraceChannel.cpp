@@ -321,11 +321,7 @@ void TraceChannel::DumpAggregateOnce() {
   WriteAggregate(stderr);
 }
 
-TraceScope::TraceScope(TraceChannel& channel, std::string_view label) {
-  if (!channel.Enabled()) {
-    return;
-  }
-
+void TraceScope::Begin(TraceChannel& channel, std::string_view label) {
   // Copy the label only on the enabled path. These scopes sit in hot paths (the
   // highlight query path constructs several per call), so an unconditional copy
   // here was a per-scope heap allocation in production with tracing off.
@@ -338,11 +334,7 @@ TraceScope::TraceScope(TraceChannel& channel, std::string_view label) {
   start_ = Clock::now();
 }
 
-TraceScope::~TraceScope() {
-  if (channel_ == nullptr) {
-    return;
-  }
-
+void TraceScope::End() {
   const Clock::time_point end = Clock::now();
   const double duration_ms = DurationMs(end - start_);
   g_active_scope[slot_] = parent_;

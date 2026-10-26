@@ -26,20 +26,29 @@ namespace microide::editor::detail {
 // TextViewportHighlightCache.cpp (the cache itself).
 inline constexpr std::size_t kHighlightCheckpointInterval = 128;
 
-inline bool PositionLess(const TextPosition& lhs, const TextPosition& rhs) {
-  if (lhs.line != rhs.line) {
-    return lhs.line < rhs.line;
+// Function objects rather than functions, because both are handed to std::sort:
+// a function decays to a pointer there and the sort calls through it, which the
+// LTO build left as 0.7M out-of-line calls across the gated scenarios. An
+// object's call operator is part of its type, so the comparator inlines
+// (TD-2026-10-13-338). Called like functions everywhere else.
+inline constexpr struct PositionLessFn {
+  bool operator()(const TextPosition& lhs, const TextPosition& rhs) const {
+    if (lhs.line != rhs.line) {
+      return lhs.line < rhs.line;
+    }
+    return lhs.column < rhs.column;
   }
-  return lhs.column < rhs.column;
-}
+} PositionLess{};
 
 // Order secondary carets by their caret position. Shared by the
 // AddSecondaryCaret / AddSecondaryCaretWithRange / DedupeSecondaryCaretsAgainstPrimary
 // sort sites so they cannot drift apart.
-inline bool SecondaryCaretPositionLess(const TextViewportUndoHistory::SecondaryCaret& lhs,
-                                       const TextViewportUndoHistory::SecondaryCaret& rhs) {
-  return PositionLess(lhs.position, rhs.position);
-}
+inline constexpr struct SecondaryCaretPositionLessFn {
+  bool operator()(const TextViewportUndoHistory::SecondaryCaret& lhs,
+                  const TextViewportUndoHistory::SecondaryCaret& rhs) const {
+    return PositionLess(lhs.position, rhs.position);
+  }
+} SecondaryCaretPositionLess{};
 
 // Put the secondary carets back in caret order, skipping the sort when they are
 // already in it -- which is the overwhelmingly common case, because every motion

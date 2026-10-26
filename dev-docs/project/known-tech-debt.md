@@ -2791,16 +2791,44 @@ LTO on the static build, `-Os` for PCRE2, PCRE2 without JIT on the server (host
 search is not interactive per keystroke), `-ffunction-sections -Wl,--gc-sections`.
 Not done: the size costs one install round trip, not runtime.
 
-### TD-2026-10-13-338 — the LTO build leaves trivial accessors out of line. [DECIDED 2026-10-26 — no build-flag change; only the definition-level inlining remains]
+### TD-2026-10-13-338 — the LTO build leaves trivial accessors out of line. [RESOLVED 2026-10-26 — no build-flag change; the project-owned hot accessors are inlinable by definition]
+
+**Done 2026-10-26, the definition-level step.** Each of the four project-owned callees
+from step 1's table got the change its shape needed, not an attribute:
+- `util::AddPerformanceCounter` is an inline function over a `constinit` counter array
+  in the header (`detail::g_perf_counters`). The function-local static it replaces
+  also put a first-use guard on every increment.
+- `TraceScope`'s constructor and destructor are inline and hold only the disabled
+  test. The enabled work is `Begin`/`End`, out of line. `PerformanceTrace::Channel()`
+  and `StartupTrace::Channel()` are defined in their headers (`StartupTrace.cpp` is
+  gone), so a Scope on a disabled channel is an inlined flag load.
+- `workspace::Contains(SDL_FRect, x, y)` is inline in `WorkspaceLayout.h`.
+- `editor::detail::PositionLess` and `SecondaryCaretPositionLess` were already
+  `inline`. They stayed out of line because `std::sort(..., detail::PositionLess)`
+  passes a function POINTER, which the sort calls through. They are `constexpr`
+  function objects now, so the comparator is part of the sort's type. Every call
+  site is unchanged.
+
+`nm` on the perf binary: no out-of-line `AddPerformanceCounter`, `PositionLess` or
+`TraceScope` constructor remains. Callgrind, measured phase, against 9465677d (the
+parent): `editor_multi_caret_edit_burst` 489.6M -> 484.7M instructions,
+`debug_pane_hittest_geometry` 287.4M -> 283.5M, `scroll_large_file` 421.6M -> 420.1M,
+`editor_column_selection_burst` 177.6M -> 177.2M, `menu_hover_switch` 14.86M -> 14.78M.
+Timed A/B against 9201d8d6 (main), two interleaved rounds at 10 iterations: allocations
+identical, `debug_pane_hittest_geometry` 9.43 -> 8.93 ms, everything else within noise.
+The full gate passes.
+
+Not taken: `string_view ==` and `string_view::substr` (libstdc++'s own inline
+operators, which only the flag decided above could reach), and the `LineSpan` /
+`TextRenderer::CharWidth` indirections (by design, as step 1 says).
 
 **Decided 2026-10-26 (project owner):** neither `-O3` nor a raised
 `inline-unit-growth` is worth it. Both gave at most 1.5-2% suite-wide CPU, within this
 box's noise, for 16% and 59% more code (the A/B below). The perf preset stays `-O2 -flto`
 with GCC's default inlining parameters; do not reopen the flag question without new
-evidence. What remains is the definition-level option: make the project-owned hot
+evidence. What remained was the definition-level option: make the project-owned hot
 accessors (`AddPerformanceCounter`, `Scope::Scope`, `Contains`, `PositionLess`)
-inlinable by definition, and profile the few scenarios that moved for their own hot
-calls.
+inlinable by definition (done, above).
 
 
 **Step 2 done 2026-10-26 on perf-runner-v1** (this box; see TD-2026-10-26-393). Three

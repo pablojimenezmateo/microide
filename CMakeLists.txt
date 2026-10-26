@@ -324,7 +324,6 @@ target_include_directories(microide_runtime_syntax_generated PRIVATE src)
 set(MICROIDE_INSTRUMENTATION_SOURCES
   src/util/PerformanceCounters.cpp
   src/util/PerformanceTrace.cpp
-  src/util/StartupTrace.cpp
   src/util/StringUtil.cpp
   src/util/TraceChannel.cpp
 )
@@ -469,7 +468,6 @@ set(MICROIDE_KERNEL_SOURCES
   src/util/ContentHash.cpp
   src/util/Zstd.cpp
   src/util/Sha256.cpp
-  src/util/StartupTrace.cpp
   src/util/StringUtil.cpp
   src/util/TaskExecutor.cpp
   src/util/TextFileIO.cpp
@@ -2092,7 +2090,6 @@ add_executable(microide_diff_bench
   src/util/TraceChannel.cpp
   src/util/PerformanceTrace.cpp
   src/util/Parse.cpp
-  src/util/StartupTrace.cpp
   src/util/StringUtil.cpp
   src/util/DurableFile.cpp
   src/util/TextFileIO.cpp

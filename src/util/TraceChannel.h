@@ -143,13 +143,27 @@ class TraceChannel {
 // argument is never copied and no allocation happens on the disabled path.
 class TraceScope {
  public:
-  TraceScope(TraceChannel& channel, std::string_view label);
-  ~TraceScope();
+  // The disabled test is inline and the rest is not: these scopes sit on hot
+  // paths (0.4M constructions across the gated scenarios), and out of line the
+  // LTO build kept even the off path as a call (TD-2026-10-13-338).
+  TraceScope(TraceChannel& channel, std::string_view label) {
+    if (channel.Enabled()) {
+      Begin(channel, label);
+    }
+  }
+  ~TraceScope() {
+    if (channel_ != nullptr) {
+      End();
+    }
+  }
 
   TraceScope(const TraceScope&) = delete;
   TraceScope& operator=(const TraceScope&) = delete;
 
  private:
+  void Begin(TraceChannel& channel, std::string_view label);
+  void End();
+
   TraceChannel* channel_ = nullptr;
   TraceScope* parent_ = nullptr;
   // Cached at construction rather than read back through `channel_` on

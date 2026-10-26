@@ -2,20 +2,12 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cstdlib>
 
 #include "util/StringUtil.h"
 
 namespace microide::util {
 namespace {
-
-using CounterArray = std::array<std::atomic<std::uint64_t>, kPerfCounterCount>;
-
-CounterArray& Counters() {
-  static CounterArray counters;
-  return counters;
-}
 
 // Positionally aligned with PerfCounterId by construction: both are expanded
 // from the same MICROIDE_PERF_COUNTERS list, so an id cannot exist without its
@@ -26,10 +18,6 @@ constexpr std::array<std::string_view, kPerfCounterCount> kCounterNames = {
 #undef MICROIDE_PERF_COUNTER_NAME
 };
 
-std::size_t ToIndex(PerfCounterId id) {
-  return std::min(static_cast<std::size_t>(id), kPerfCounterCount - 1);
-}
-
 bool& DumpedFlag() {
   static bool dumped = false;
   return dumped;
@@ -38,23 +26,19 @@ bool& DumpedFlag() {
 }  // namespace
 
 void ResetPerformanceCounters() {
-  for (std::atomic<std::uint64_t>& counter : Counters()) {
+  for (std::atomic<std::uint64_t>& counter : detail::g_perf_counters) {
     counter.store(0, std::memory_order_relaxed);
   }
 }
 
-void AddPerformanceCounter(PerfCounterId id, std::uint64_t delta) {
-  Counters()[ToIndex(id)].fetch_add(delta, std::memory_order_relaxed);
-}
-
 std::uint64_t ReadPerformanceCounter(PerfCounterId id) {
-  return Counters()[ToIndex(id)].load(std::memory_order_relaxed);
+  return detail::g_perf_counters[detail::PerfCounterIndex(id)].load(std::memory_order_relaxed);
 }
 
 PerfCounterSnapshot CapturePerformanceCounters() {
   PerfCounterSnapshot snapshot{};
   for (std::size_t i = 0; i < kPerfCounterCount; ++i) {
-    snapshot[i] = Counters()[i].load(std::memory_order_relaxed);
+    snapshot[i] = detail::g_perf_counters[i].load(std::memory_order_relaxed);
   }
   return snapshot;
 }
@@ -80,7 +64,7 @@ std::vector<std::pair<std::string_view, std::uint64_t>> NonZeroCounterDelta(
 }
 
 std::string_view PerformanceCounterName(PerfCounterId id) {
-  return kCounterNames[ToIndex(id)];
+  return kCounterNames[detail::PerfCounterIndex(id)];
 }
 
 void WritePerformanceCounters(std::FILE* out) {

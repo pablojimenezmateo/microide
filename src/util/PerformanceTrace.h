@@ -26,7 +26,14 @@ namespace microide::util {
 // the parent scope, so it distorts exactly the numbers you are reading.
 class PerformanceTrace : public TraceChannelFacade<PerformanceTrace> {
  public:
-  static TraceChannel& Channel();
+  // Defined here so a Scope on a disabled channel inlines to one flag test
+  // (TD-2026-10-13-338). Function-local so the env read happens on first use
+  // rather than during static initialization of an arbitrary translation unit.
+  static TraceChannel& Channel() {
+    static TraceChannel channel("perf", "MICROIDE_PERF_TRACE", "MICROIDE_PERF_SUMMARY",
+                                "MICROIDE_PERF_TRACE_MIN_MS");
+    return channel;
+  }
 
   // True only in streaming mode. Guard a bespoke stderr line with this rather
   // than Enabled(), or a summary-only run pays for output it never wanted.

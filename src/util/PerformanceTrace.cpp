@@ -6,14 +6,6 @@
 
 namespace microide::util {
 
-TraceChannel& PerformanceTrace::Channel() {
-  // Function-local so the env read happens on first use rather than during
-  // static initialization of an arbitrary translation unit.
-  static TraceChannel channel("perf", "MICROIDE_PERF_TRACE", "MICROIDE_PERF_SUMMARY",
-                              "MICROIDE_PERF_TRACE_MIN_MS");
-  return channel;
-}
-
 PerformanceTrace::ScopeLabel::ScopeLabel(TraceChannel& channel, std::string_view base) {
   if (!channel.Enabled()) {
     return;
