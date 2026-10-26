@@ -159,6 +159,9 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   // the current cell width and font height. Like EnsureAsciiAtlas, a session
   // that never renders a non-ASCII string never allocates it.
   void EnsureClusterAtlas();
+  // A cleared width x height surface in `texture_format_` for one composite, over
+  // `composite_scratch_` when it fits there. The caller destroys it once uploaded.
+  SDL_Surface* AcquireCompositeSurface(int width, int height);
   SDL_Surface* BuildAsciiCompositeSurface(std::string_view text, SDL_Color color);
   // The composite for everything BuildAsciiCompositeSurface does not take: each
   // glyph cluster rendered on its own cell span (util::GridCellWidth cells), so
@@ -240,6 +243,10 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   SDL_Texture* atlas_texture_ = nullptr;
   int atlas_texture_width_ = 0;
   int atlas_texture_height_ = 0;
+  // Pixels of the composite being built (see AcquireCompositeSurface); grows to
+  // the widest composite up to kMaxCompositeScratchBytes and is then reused.
+  static constexpr std::size_t kMaxCompositeScratchBytes = 4u * 1024 * 1024;
+  std::vector<std::uint32_t> composite_scratch_;
   std::vector<SDL_Vertex> geom_vertices_;
   std::vector<int> geom_indices_;
 };

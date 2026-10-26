@@ -473,19 +473,11 @@ SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text
   const int total_width_px =
       std::max(1, static_cast<int>(std::ceil(static_cast<float>(text.size()) * cell_width_px)));
 
-  SDL_Surface* composite = nullptr;
-  {
-    util::PerformanceTrace::Scope alloc_scope("render::TextBackend::CompositeAllocate");
-    composite = SDL_CreateSurface(total_width_px, font_height_px, texture_format_);
-    if (composite == nullptr) {
-      return nullptr;
-    }
-    // Start transparent. Atlas blits supply the visible pixels at exact cell
-    // positions; spaces and outside-cell gaps remain alpha=0.
-    if (!SDL_FillSurfaceRect(composite, nullptr, 0)) {
-      SDL_DestroySurface(composite);
-      return nullptr;
-    }
+  // Starts transparent: atlas blits supply the visible pixels at exact cell
+  // positions; spaces and outside-cell gaps remain alpha=0.
+  SDL_Surface* composite = AcquireCompositeSurface(total_width_px, font_height_px);
+  if (composite == nullptr) {
+    return nullptr;
   }
 
   util::PerformanceTrace::Scope blit_scope("render::TextBackend::CompositeGlyphBlits");
@@ -503,6 +495,40 @@ SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text
       SDL_DestroySurface(composite);
       return nullptr;
     }
+  }
+  return composite;
+}
+
+SDL_Surface* SdlTtfTextBackend::AcquireCompositeSurface(int width, int height) {
+  util::PerformanceTrace::Scope alloc_scope("render::TextBackend::CompositeAllocate");
+  // A composite lives from its build to its upload, a few lines later in
+  // ResolveEntry, so one buffer serves every miss. It used to be a fresh surface
+  // each time -- a pixel allocation plus a clear as large as the string, which on
+  // a scroll through fresh content cost as much as the glyph blits themselves
+  // (TD-2026-08-30-276). The surface handed out is a header over that buffer at
+  // exactly width x height, so every blit clips where it always did and the upload
+  // reads what it always read; destroying it frees the header and not the pixels.
+  const std::size_t pixels = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+  SDL_Surface* composite = nullptr;
+  // Every format ChooseGlyphSurfaceFormat picks today is four bytes a pixel; the
+  // scratch is laid out for exactly that, and anything else gets its own surface.
+  if (SDL_BYTESPERPIXEL(texture_format_) == sizeof(std::uint32_t) &&
+      pixels * sizeof(std::uint32_t) <= kMaxCompositeScratchBytes) {
+    if (composite_scratch_.size() < pixels) {
+      composite_scratch_.resize(std::max(pixels, composite_scratch_.size() * 2));
+    }
+    composite = SDL_CreateSurfaceFrom(width, height, texture_format_, composite_scratch_.data(),
+                                      width * static_cast<int>(sizeof(std::uint32_t)));
+  } else {
+    // A string wider than the scratch is worth keeping: its own surface, once.
+    composite = SDL_CreateSurface(width, height, texture_format_);
+  }
+  if (composite == nullptr) {
+    return nullptr;
+  }
+  if (!SDL_FillSurfaceRect(composite, nullptr, 0)) {
+    SDL_DestroySurface(composite);
+    return nullptr;
   }
   return composite;
 }
@@ -543,17 +569,9 @@ SDL_Surface* SdlTtfTextBackend::BuildGridCompositeSurface(std::string_view text,
       1, static_cast<int>(std::ceil(static_cast<float>(std::max<std::size_t>(total_cells, 1)) *
                                     cell_width_px)));
 
-  SDL_Surface* composite = nullptr;
-  {
-    util::PerformanceTrace::Scope alloc_scope("render::TextBackend::CompositeAllocate");
-    composite = SDL_CreateSurface(total_width_px, font_height_px, texture_format_);
-    if (composite == nullptr) {
-      return nullptr;
-    }
-    if (!SDL_FillSurfaceRect(composite, nullptr, 0)) {
-      SDL_DestroySurface(composite);
-      return nullptr;
-    }
+  SDL_Surface* composite = AcquireCompositeSurface(total_width_px, font_height_px);
+  if (composite == nullptr) {
+    return nullptr;
   }
 
   util::PerformanceTrace::Scope blit_scope("render::TextBackend::CompositeGlyphBlits");

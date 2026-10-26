@@ -6709,7 +6709,19 @@ direct per-color rendering` already compared the tinted blit against
 and 24 characters. It passes unchanged, and probing it — dropping one bit of the
 alpha channel in the new loop — fails it.
 
-**Left open:** `CompositeAllocate` is now comparable to the blits it used to be 15x
+**Resolved 2026-10-26.** The upload did not need a sub-rect: `SDL_CreateSurfaceFrom`
+puts an exact width x height header over a buffer the backend keeps
+(`AcquireCompositeSurface`, `composite_scratch_`, grown geometrically and capped at
+4 MiB, past which a composite gets its own surface). Every blit therefore clips where
+it always did, the upload reads the same pixels, and a miss allocates a header
+instead of a pixel buffer and clears only its own rect. A/B against a29fd4a5, three
+rounds: `editor_cjk_scroll_paint` 521.8 -> 499.3 ms, and resident growth per sweep
+down everywhere it shows (`editor_scroll_fresh_content_large` 666 -> 518 KB,
+`editor_soft_wrap_long_line_scroll` 38 -> 14 KB). The pixel tests (ephemeral vs
+composite, ASCII spacing, grid composites) and the QA suite's redraw verifier are
+unchanged.
+
+**Was left open:** `CompositeAllocate` is now comparable to the blits it used to be 15x
 smaller than (10.3 ms vs 10.7 ms on `editor_scroll_fresh_content_large`). It is a
 surface allocation plus a full clear per cache miss. Reusing one scratch surface
 across misses is the obvious shape and does not fit: the surface is handed to
@@ -11148,7 +11160,18 @@ tab per painted frame (and `ProjectCatalogRoot` returned that path BY VALUE);
 `BuildPersistedEditorTabState` normalized once per open tab of every group on every
 session save. Both guarded.
 
-**Still open**: `rg -n 'lexically_normal' src | wc -l` is still ~400. What this pass
+**Closed 2026-10-26, by measurement.** The ranking this asked for, taken with
+callgrind (instruction counts, `lexically_normal` inclusive of the allocations it
+makes, whole run including setup) over five interactive scenarios:
+`switch_and_idle` 3.2M of 1,406M (0.23%, 823 calls), `multi_tab_cycle` 4.3M of 2,177M
+(0.20%), `file_finder_type_query` 0.46M of 2,970M (0.02%), `editor_typing_paint`
+0.63M of 2,482M (0.03%), `git_sidebar_refresh_many_untracked` 0.16M of 1,286M
+(0.01%). No remaining site is hot, so the ~370 that are left (`rg -c`) stay: each
+runs on an event, not per entry or per frame, and rewriting them would be churn
+with no number behind it. A new per-entry or per-frame caller is the shape to
+watch for, and the 2026-08 passes' `PathTextNeedsNormalizing` guard is the fix.
+
+Original note: `rg -n 'lexically_normal' src | wc -l` was still ~400. What this pass
 did NOT do is the per-item sites in `DirectoryTree` (the sidebar's own normalize
 per entry), `GitBlameService`'s cache keys, and the ~27 in
 `WorkspaceShellPlugins.cpp`. Rank by how often the call runs and confirm with the
