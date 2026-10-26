@@ -785,11 +785,23 @@ void RunEditorSnippetPlaceholderEdit(ScenarioContext& context) {
 }
 
 void RunEditorSaveNormalization(ScenarioContext& context) {
-  const std::filesystem::path file = "tests/perf/fixtures/editor_essentials_1mb/mixed_content.txt";
-  if (!RequireFixture(context, file, "editor_save_normalization")) {
+  const std::filesystem::path fixture = "tests/perf/fixtures/editor_essentials_1mb/mixed_content.txt";
+  if (!RequireFixture(context, fixture, "editor_save_normalization")) {
     return;
   }
-  FixtureRestoreGuard guard(file, ReadFileTextOrThrow(file));
+  // Saved as a copy in the temp directory (tmpfs on perf-runner-v1): the phase is
+  // the normalization and the write, not the checkout volume's fsync, whose stalls
+  // on that encrypted ext4 disk put up to 37 ms in p95/max one run in three -- the
+  // same at every commit, and none on tmpfs (TD-2026-10-26-393).
+  std::error_code ec;
+  const std::filesystem::path dir =
+      std::filesystem::temp_directory_path(ec) / "microide_perf_save_normalization";
+  std::filesystem::create_directories(dir, ec);
+  const std::filesystem::path file = dir / fixture.filename();
+  std::filesystem::copy_file(fixture, file, std::filesystem::copy_options::overwrite_existing, ec);
+  if (ec) {
+    throw std::runtime_error("editor_save_normalization: could not copy the fixture: " + ec.message());
+  }
   (void)context.Open("tests/perf/fixtures/small_project");
   context.SetSetting("editor.save.trim_trailing_whitespace", "true");
   context.SetSetting("editor.save.ensure_final_newline", "true");
