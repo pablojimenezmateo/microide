@@ -2280,44 +2280,32 @@ int main(int argc, char** argv) {
   std::unordered_map<std::string, BaselineComparison> comparisons;
   bool all_passed = true;
   std::size_t selected_count = 0;
-  // Integrity gate for the manifest-backed fixture trees.
-  //
-  // A tree that is ENTIRELY ABSENT is a skip (or a hard failure under
-  // --require-fixtures), and a tree that is PRESENT must match its manifest or
-  // the run dies. These trees are
-  // gitignored and generated on demand by the ctest `microide_perf_fixtures`
-  // setup, so a fresh checkout legitimately has none of them — and this loop used
-  // to hash them unconditionally and report the empty-tree digest as a corruption
-  // mismatch. That is what took CI's perf-canary lane red: it runs microide_perf
-  // directly for one scenario that reads no fixture at all, so nothing had
-  // generated them and nothing needed them.
-  //
-  // Verifying only what is present also means a filtered run pays only for the
-  // trees it has, rather than rehashing ~17 MB across three trees to run one
-  // fixture-free scenario.
-  {
-    static constexpr std::string_view kManifestBackedFixtures[] = {
+  // Integrity gate for the generated fixture trees: every tree with a committed
+  // manifest that is present must match it, or the run dies before measuring a
+  // different tree under the old name. A git fixture's digest includes its
+  // `git status`, so a scenario that left something staged is caught too. A tree
+  // that is ENTIRELY ABSENT is a skip (or a hard failure under --require-fixtures):
+  // they are gitignored and generated on demand by the ctest `microide_perf_fixtures`
+  // setup, so a fresh checkout legitimately has none of them -- and perf-canary runs
+  // microide_perf directly for one scenario that reads no fixture at all.
+  if (options->require_fixtures) {
+    static constexpr std::string_view kGeneratedFixtures[] = {
         "tests/perf/fixtures/kernel_sized_project",
         "tests/perf/fixtures/editor_essentials_50k_cpp",
         "tests/perf/fixtures/editor_essentials_50k_py",
     };
-    for (const std::string_view fixture : kManifestBackedFixtures) {
-      const std::filesystem::path root{fixture};
-      if (!DirectoryExistsNoThrow(root)) {
-        if (options->require_fixtures) {
-          std::cerr << "required fixture tree missing: " << root.string()
-                    << " (generate with tests/perf/generate_*.py, or drop --require-fixtures)\n";
-          return 1;
-        }
-        std::cerr << root.string() << ": fixture tree absent, integrity check skipped\n";
-        continue;
-      }
-      std::string fixture_error;
-      if (!PerfHarness::VerifyFixtureTree(root, &fixture_error)) {
-        std::cerr << fixture_error << '\n';
+    for (const std::string_view fixture : kGeneratedFixtures) {
+      if (!DirectoryExistsNoThrow(std::filesystem::path{fixture})) {
+        std::cerr << "required fixture tree missing: " << fixture
+                  << " (generate with tests/perf/generate_*.py, or drop --require-fixtures)\n";
         return 1;
       }
     }
+  }
+  if (std::string fixture_error;
+      !PerfHarness::VerifyPresentFixtureTrees("tests/perf/fixtures", &fixture_error)) {
+    std::cerr << fixture_error << '\n';
+    return 1;
   }
 
   std::size_t run_index = 0;

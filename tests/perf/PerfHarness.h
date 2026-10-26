@@ -690,8 +690,20 @@ class PerfHarness {
   // passed so a call site cannot pair a tree with the wrong manifest.
   static std::filesystem::path FixtureManifestPath(const std::filesystem::path& root);
   // Integrity check for a fixture tree against its committed manifest. Hashes in
-  // process (util::Sha256); the perf runner needs no interpreter on PATH.
+  // process (util::Sha256); the perf runner needs no interpreter on PATH. A git
+  // fixture (one with a `.git`) is digested the way its generator wrote it: the
+  // worktree outside `.git`, then `git status --porcelain`, so index state a
+  // scenario left behind is a mismatch too.
   static bool VerifyFixtureTree(const std::filesystem::path& root, std::string* error);
+  // Every generated fixture tree under `fixtures_root` that has a committed
+  // manifest (`<tree>.sha256`) and is present, verified once before any scenario
+  // runs; the first mismatch is reported in `error`. Found by its manifest rather
+  // than named in a list: the list named three trees and left the seven git ones to
+  // the ctest setup, which a lane running microide_perf directly never runs
+  // (TD-2026-08-10-172). An absent tree is not an error here: a fresh checkout has
+  // none, and the scenarios that need one skip.
+  static bool VerifyPresentFixtureTrees(const std::filesystem::path& fixtures_root,
+                                        std::string* error);
   static std::string LastError();
   // SDL driver name the most recent InitializeDriver actually resolved (e.g.
   // "software", "opengl"). Empty before the first driver init. Backs report

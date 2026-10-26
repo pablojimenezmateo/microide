@@ -25,6 +25,7 @@
 #endif
 
 #include "app/DirtyRegionPolicy.h"
+#include "platform/Subprocess.h"
 #include "perf/AllocationCounter.h"
 #include "perf/PerfHarnessIsolation.h"
 #include "TerminalSessionTestAccess.h"
@@ -1325,6 +1326,75 @@ void PerfHarness::ShutdownDriver(Driver* driver) {
   driver->isolated_app_root.clear();
 }
 
+namespace {
+
+// `git status --porcelain=v1 -uall -z` as generate_git_workstation_fixtures.py runs
+// it: the same `-c` pins and environment, so a developer's own gitconfig
+// (core.excludesFile, core.autocrlf) cannot make the digest differ by machine, and
+// none of the repository-locating variables a hook or `git bisect run` exports.
+bool FixtureGitStatus(const std::filesystem::path& root, std::string* out, std::string* error) {
+  std::vector<std::string> argv = {"git", "-C", root.string()};
+  for (const char* pin : {"core.excludesFile=/dev/null", "core.attributesFile=/dev/null",
+                          "core.autocrlf=false", "core.safecrlf=false", "core.hooksPath=/dev/null",
+                          "commit.gpgsign=false", "gc.auto=0", "init.defaultBranch=main",
+                          "user.name=Fixture", "user.email=fixture@microide"}) {
+    argv.emplace_back("-c");
+    argv.emplace_back(pin);
+  }
+  for (const char* arg : {"status", "--porcelain=v1", "-uall", "-z"}) {
+    argv.emplace_back(arg);
+  }
+  platform::SubprocessOptions options;
+  options.capture_stderr = true;
+  options.timeout_ms = 60000;
+  for (const char* name : {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+                           "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+                           "GIT_NAMESPACE", "GIT_PREFIX"}) {
+    options.environment_overrides.push_back({.name = name, .value = std::nullopt});
+  }
+  options.environment_overrides.push_back({.name = "GIT_CONFIG_NOSYSTEM", .value = "1"});
+  options.environment_overrides.push_back(
+      {.name = "HOME", .value = "/nonexistent-microide-fixture-home"});
+  options.environment_overrides.push_back(
+      {.name = "XDG_CONFIG_HOME", .value = "/nonexistent-microide-fixture-home"});
+  platform::SubprocessResult result = platform::RunSubprocess(argv, options);
+  if (result.exit_code != 0) {
+    if (error) {
+      *error = "git status failed in fixture " + root.string() + ": " + result.stderr_text;
+    }
+    return false;
+  }
+  *out = std::move(result.stdout_text);
+  return true;
+}
+
+}  // namespace
+
+bool PerfHarness::VerifyPresentFixtureTrees(const std::filesystem::path& fixtures_root,
+                                            std::string* error) {
+  std::vector<std::filesystem::path> trees;
+  std::error_code list_error;
+  for (std::filesystem::directory_iterator it(fixtures_root, list_error), end;
+       !list_error && it != end; it.increment(list_error)) {
+    if (it->path().extension() != ".sha256") {
+      continue;
+    }
+    std::filesystem::path tree = it->path();
+    tree.replace_extension();
+    std::error_code tree_error;
+    if (std::filesystem::is_directory(tree, tree_error) && !tree_error) {
+      trees.push_back(std::move(tree));
+    }
+  }
+  std::sort(trees.begin(), trees.end());
+  for (const std::filesystem::path& tree : trees) {
+    if (!VerifyFixtureTree(tree, error)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 std::filesystem::path PerfHarness::FixtureManifestPath(const std::filesystem::path& root) {
   std::filesystem::path manifest = root;
   manifest += ".sha256";
@@ -1360,6 +1430,8 @@ bool PerfHarness::VerifyFixtureTree(const std::filesystem::path& root, std::stri
   // differs" from "the interpreter never produced a line", and it interpolates a
   // filesystem path into shell+python source. util::Sha256 already exists for
   // exactly this.
+  std::error_code git_error;
+  const bool git_repository = std::filesystem::exists(root / ".git", git_error) && !git_error;
   std::vector<std::string> relative_paths;
   std::error_code walk_error;
   for (std::filesystem::recursive_directory_iterator it(root, walk_error), end; it != end;
@@ -1369,6 +1441,12 @@ bool PerfHarness::VerifyFixtureTree(const std::filesystem::path& root, std::stri
         *error = "failed to walk fixture tree " + root.string() + ": " + walk_error.message();
       }
       return false;
+    }
+    // The generator skips `.git` (object layout and index stat data are not
+    // reproducible) and folds the status in below instead.
+    if (git_repository && it->path().filename() == ".git") {
+      it.disable_recursion_pending();
+      continue;
     }
     std::error_code kind_error;
     if (!it->is_regular_file(kind_error) || kind_error) {
@@ -1419,6 +1497,15 @@ bool PerfHarness::VerifyFixtureTree(const std::filesystem::path& root, std::stri
       return false;
     }
     digest.Update(std::string_view(&kSeparator, 1));
+  }
+
+  if (git_repository) {
+    std::string status;
+    if (!FixtureGitStatus(root, &status, error)) {
+      return false;
+    }
+    digest.Update(std::string_view("git-status\0", 11));
+    digest.Update(status);
   }
 
   const std::string actual = digest.FinishHex();

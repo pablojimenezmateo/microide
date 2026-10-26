@@ -11356,7 +11356,17 @@ generators disagreeing about one fixture path is most of how this entry happened
 running it would now also break the manifest, so it goes rather than gets
 repointed.
 
-**Still open**: git fixtures are not in `PerfMain`'s `kManifestBackedFixtures`
+**Resolved 2026-10-26.** The perf binary does shell out to git for it: its git
+scenarios already run git, and `git status --porcelain=v1 -uall -z` with the
+generator's `-c` pins and environment (no system or user config, no inherited
+`GIT_DIR`) is the same answer the generator folded in. `VerifyFixtureTree` digests a
+tree with a `.git` the way `generate_git_workstation_fixtures.py` does, and
+`PerfHarness::VerifyPresentFixtureTrees` replaces the three-name list: every present
+tree with a committed manifest is checked before any scenario runs, all 15 of them,
+the seven git ones included. Probed: an untracked file dropped into
+`git_status_project` fails the run with a hash mismatch, and removing it passes.
+
+Original note: git fixtures were not in `PerfMain`'s `kManifestBackedFixtures`
 in-process integrity check, because the porcelain half of their digest is not
 something the perf binary can compute without shelling out to git. The ctest
 setup is the only enforcement, so a lane that runs `microide_perf` directly
