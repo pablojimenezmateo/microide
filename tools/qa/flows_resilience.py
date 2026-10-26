@@ -38,9 +38,14 @@ REPO = Path(__file__).resolve().parents[2]
 
 def _timed(app: q.App, predicate, budget: float, label: str) -> float | None:
     """Waits for `predicate` up to 4x `budget`; a finding when it took longer than
-    `budget` (slow) or never happened (broken). Returns the seconds it took."""
+    `budget` (slow) or never happened (broken). Returns the seconds it took.
+    The budget is for a release build: MQA_SLOW_FACTOR stretches it as it does
+    every wait, since on an instrumented one both the app and each polling query
+    (a control client of the same binary) run that much slower -- Ctrl+End on
+    a 64 MiB file measured 3.1 s against 2.0 on the ASan lane (huge-file)."""
+    budget *= q.SLOW_FACTOR
     start = time.monotonic()
-    ok = app.wait_until(predicate, budget * 4, label)
+    ok = app.wait_until(predicate, budget * 4 / q.SLOW_FACTOR, label)
     took = time.monotonic() - start
     if ok:
         app.expect(took <= budget, f"{label} took {took:.2f}s (budget {budget:.1f}s)")
