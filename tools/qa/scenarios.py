@@ -23,7 +23,9 @@ FOCUSES = ("editor", "sidebar", "panel")
 
 
 def _open_source(app: q.App) -> None:
-    app.send("open", "src/scheduler.cpp")
+    reply = app.send("open", "src/scheduler.cpp")
+    if not app.expect(bool(reply.get("ok")), f"open src/scheduler.cpp is taken ({reply})"):
+        return
     app.wait_until(lambda: any(e["name"].endswith("/scheduler.cpp")
                                for e in app.elements("tab")), 5.0, "scheduler.cpp's tab")
     app.check("open src/scheduler.cpp")

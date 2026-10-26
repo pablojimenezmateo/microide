@@ -122,8 +122,13 @@ jobs:
           key: ccache-qa-wayland-${{ runner.os }}-${{ github.sha }}
           restore-keys: ccache-qa-wayland-${{ runner.os }}-
 
+      # Two at a time, as qa-asan: each scenario is two software renderers (weston's
+      # compositor and the app's GL) at scale 2, and four of them on this runner's
+      # four vCPUs starved the presents -- an app blocked in its first one for
+      # seconds while its flow waited (overlays, menus, overlay-backdrop and
+      # menu-clicks on one run). The lane still ends before qa-asan does.
       - name: Run the GUI QA suite on weston at scale 2
-        run: MQA_ALLOW_MISSING_TOOLS=1 MICROIDE_QA_JOBS=4 tools/run-checks.sh qa-wayland
+        run: MQA_ALLOW_MISSING_TOOLS=1 MICROIDE_QA_JOBS=2 tools/run-checks.sh qa-wayland
 
       - name: Upload logs and findings
         if: always()

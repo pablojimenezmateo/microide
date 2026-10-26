@@ -432,7 +432,21 @@ class App:
             raise QaFailure(f"microide exited at startup; log: {self.log_path}")
         self.window = self._find_window()
         self.origin = self._window_origin()
-        self.settle(0.6)
+        # Ready means its first frame is on screen (MICROIDE_TRACE_REDRAW_VERBOSE
+        # logs each one): until the startup present returns, the main loop answers
+        # nothing. A fixed settle here was a guess, and four apps starting at once
+        # under software-rendered weston (scale 2) blocked in that present for
+        # longer than it and the 5 s wait after -- `open`, then no frame and no tab
+        # (qa-wayland: overlays, menus, overlay-backdrop, menu-clicks on one run).
+        _wait(lambda: self._first_frame_presented() or not self.alive(), 20.0,
+              "the window never presented its first frame")
+        if not self.alive():
+            raise QaFailure(f"microide exited at startup; log: {self.log_path}")
+
+    def _first_frame_presented(self) -> bool:
+        with contextlib.suppress(OSError):
+            return b"microide redraw frame: frame=1 " in self.log_path.read_bytes()
+        return False
 
     def _start_xvfb(self, w: int, h: int) -> None:
         """Xvfb picks a free display and tells us (-displayfd); scanning lock
