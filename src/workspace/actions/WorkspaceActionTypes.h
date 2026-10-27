@@ -29,9 +29,9 @@ enum class ActionId {
   // tail (VS Code's "Output: Show Output Channel"): `show-output <channel-id>`.
   // The "Show Output" button on a formatter failure is this.
   ShowOutput,
-  // Remote hosts (dev-docs/design/remote-projects.md § 6.6, § 7). Open a terminal on
-  // `[user@]host[:port]` (no argument: prompt for one), connecting first if needed.
-  RemoteOpenTerminal,
+  // Remote hosts (dev-docs/design/remote-projects.md § 6.6, § 7). In a remote
+  // project, a terminal on THIS machine (Terminal > New runs on the host there).
+  RemoteOpenLocalTerminal,
   // Open a host directory as a remote project: `remote-open [user@]host[:port]:/path`
   // (no argument: prompt for one). The editor opens the project's local mirror.
   RemoteOpenFolder,

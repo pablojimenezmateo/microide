@@ -488,9 +488,9 @@ bool TerminalsAreMixed(const ProjectWorkspaceState& state) {
   return host && local;
 }
 
-// A terminal tab's label prefix: its own (a host terminal opened from Remote: Open
-// Terminal on Host…), else — while host and local terminals are mixed — `local · `
-// or the project's host.
+// A terminal tab's label prefix: its own (the ssh authentication tab, a local
+// terminal in a remote project), else — while host and local terminals are mixed —
+// `local · ` or the project's host.
 std::string TerminalLabelPrefix(const ProjectWorkspaceState& state, const TerminalPaneState& pane,
                                 bool mixed) {
   if (!pane.label_prefix.empty() || !mixed) {

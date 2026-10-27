@@ -655,12 +655,13 @@ struct TerminalPaneState {
   // command rather than opened as a fresh tab that loses its position.
   std::filesystem::path launch_working_directory;
   std::string launch_command;
-  // Where it runs when that is not the project's launcher: a terminal opened on a
-  // host (Remote: Open Terminal on Host…). Shared, so the pane keeps it alive and
-  // a relaunch or a split stays on that host. Null = the project's.
+  // Where it runs when that is not the project's launcher: the ssh authentication
+  // tab, or a local terminal in a remote project (Remote: Open Local Terminal).
+  // Shared, so the pane keeps it alive and a relaunch or a split stays where it
+  // ran. Null = the project's.
   std::shared_ptr<const platform::ProcessLauncher> launcher;
-  // Prepended to the tab title ("build-box · "), so a host terminal is never
-  // mistaken for a local one.
+  // Prepended to the tab title ("ssh · ", "local · "), so a terminal that does not
+  // run where the project's do is never mistaken for one that does.
   std::string label_prefix;
 };
 

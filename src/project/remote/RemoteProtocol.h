@@ -131,7 +131,8 @@ struct HelloRequest {
   std::int64_t protocol = kProtocolVersion;
   std::int64_t min_protocol = kMinProtocolVersion;
   std::string release;  // the client's app version, for messages only
-  std::string root;     // workspace root on the host ("" = none: a terminal-only session)
+  std::string root;     // workspace root on the host ("" = none: a terminal-only session,
+                        // which the server still accepts from older clients)
   HelloSettings settings;
 };
 

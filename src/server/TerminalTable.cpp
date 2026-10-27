@@ -51,8 +51,8 @@ std::optional<TerminalTable::OpenRequest> TerminalTable::ParseOpen(const util::J
     return fail("term/open params must be an object");
   }
   OpenRequest request;
-  // No cwd: the user's home, as a login shell would start (a host terminal opened
-  // outside any project).
+  // No cwd: the user's home, as a login shell would start (a directory outside
+  // the project, or a terminal-only session's terminal).
   const util::JsonValue& cwd = params["cwd"];
   if (cwd.IsNull()) {
     const char* home = std::getenv("HOME");

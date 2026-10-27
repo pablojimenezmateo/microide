@@ -100,8 +100,16 @@ void TestMenuRegistryExpandedMenusExposeExpectedEntries() {
   // only from the palette is one a user has to already know about.
   Expect(MenuContainsLabel(MenuId::File, "Remote: Open Folder on Host…"),
          "File menu should expose opening a folder on a host beside Open Folder");
-  Expect(MenuContainsLabel(MenuId::Terminal, "Remote: Open Terminal on Host…"),
-         "Terminal menu should expose opening a terminal on a host beside New Terminal");
+  {
+    // In a remote project New Terminal runs on the host; its local twin sits under it.
+    const auto* terminal = FindWorkspaceMenuSpec(MenuId::Terminal);
+    Expect(terminal != nullptr && terminal->items.size() > 1 && terminal->items[0].action == ActionId::Term &&
+               terminal->items[1].action == ActionId::RemoteOpenLocalTerminal &&
+               ResolvedMenuItemLabel(terminal->items[1]) == "New Local Terminal",
+           "Terminal menu should expose New Local Terminal directly under New Terminal");
+    Expect(!MenuContainsLabel(MenuId::Terminal, "Remote: Open Terminal on Host…"),
+           "the removed host-terminal command is not in the Terminal menu");
+  }
   Expect(MenuContainsLabel(MenuId::Go, "Go to File…"),
          "Go menu should expose file navigation");
   Expect(MenuContainsLabel(MenuId::Go, "Find in Buffer"),

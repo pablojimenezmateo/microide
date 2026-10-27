@@ -59,9 +59,9 @@ void Pump(WorkspaceShell& shell) {
 // The shell's ssh is the fake host's shim. Automatic port forwarding is off: on a
 // shared machine (a parallel test run) another test's listener would be forwarded
 // and counted; the one test about it turns it back on.
-void PointAtFakeHost(WorkspaceShell& shell, const FakeSshHost& host) {
+void PointAtFakeHost(WorkspaceShell& shell, const FakeSshHost& host, bool needs_auth = false) {
   std::string ssh;
-  for (const std::string& word : host.SshArgv()) {
+  for (const std::string& word : host.SshArgv(needs_auth)) {
     ssh += (ssh.empty() ? "" : " ") + word;
   }
   Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.ssh_command", ssh),
@@ -70,49 +70,120 @@ void PointAtFakeHost(WorkspaceShell& shell, const FakeSshHost& host) {
          "no automatic forwards");
 }
 
-// Remote: Open Terminal on Host… end to end, through the command a palette entry
-// or the host prompt runs: no project open, the host has no server (it is
-// installed), the tab is titled with the host, the shell is the host's, the
-// status bar names the host, and Disconnect ends the terminal's link.
-void TestOpenTerminalOnHostFromTheCommand() {
-  FakeSshHost host;
-  WorkspaceShell shell;
-  PointAtFakeHost(shell, host);
-  // A per-run host name: the control socket's path is derived from it.
-  const std::string target = "dev@fake-" + std::to_string(::getpid());
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-terminal " + target),
-         "the command is accepted");
-  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-terminal -oProxyCommand=x"),
-         "a hostile host is refused by the command itself");
+void RemoveFakeMaster(const std::string& target);
 
+const workspace::NotificationService::Notification* FindRow(WorkspaceShell& shell, std::string_view key) {
+  for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+    if (row.key == key) {
+      return &row;
+    }
+  }
+  return nullptr;
+}
+
+// Every terminal says where it runs (remote-connection-lifecycle, "Host and local
+// terminals are never confused", "A local shell from a remote-only window"): in a
+// remote project the authentication tab is `ssh · ` and runs here, Terminal > New
+// runs on the host, Remote: Open Local Terminal is `local · ` and runs here; a local
+// project's terminal carries no prefix, and the local-terminal command is not
+// offered there. Along the way: the host prompt completes, a hostile host is
+// refused, port forwards and a host terminal's localhost link reach the project's
+// host, and Disconnect ends the host terminal's link.
+void TestRemoteProjectTerminalsSayWhereTheyRun() {
+  FakeSshHost host;
+  const std::filesystem::path host_root = host.home / "src" / "terms";
+  WriteFile(host_root / "a.txt", "a\n");
+  TemporaryDirectory local_project;
+  WorkspaceShell shell;
+  // The key has a passphrase: the batch master fails and ssh must ask in a terminal.
+  PointAtFakeHost(shell, host, /*needs_auth=*/true);
+  // A per-run host name: the control socket's path is derived from it.
+  const std::string target = "dev@fake-terms-" + std::to_string(::getpid());
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open -oProxyCommand=x:/tmp"),
+         "a hostile host is refused by the command itself");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open " + target + ":" + host_root.string()),
+         "the remote project opens");
+  const auto labels = [&] { return WorkspaceShellTestAccess::BottomPanelTerminalLabels(shell); };
+  const auto tab_with_prefix = [&](std::string_view prefix) -> std::optional<std::size_t> {
+    for (std::size_t i = 0; i < WorkspaceShellTestAccess::TerminalTabCount(shell); ++i) {
+      if (WorkspaceShellTestAccess::TerminalTabLabelPrefix(shell, i) == prefix) {
+        return i;
+      }
+    }
+    return std::nullopt;
+  };
   Expect(WaitUntil(
              [&] {
                Pump(shell);
-               return WorkspaceShellTestAccess::TerminalTabCount(shell) == 1 &&
-                      WorkspaceShellTestAccess::TerminalTabSession(shell, 0).running();
+               return tab_with_prefix("ssh \xc2\xb7 ").has_value();
              },
              std::chrono::seconds(30), std::chrono::milliseconds(5)),
-         "a host terminal tab opens once the connection is ready");
-  terminal::TerminalSession& session = WorkspaceShellTestAccess::TerminalTabSession(shell, 0);
-  Expect(session.is_host_terminal(), "it is a host terminal");
-  Expect(WorkspaceShellTestAccess::TerminalTabLabelPrefix(shell, 0) == target + " · ",
-         "its title names the host");
-  Expect(WorkspaceShellTestAccess::StatusBarSegmentVisible(shell, StatusBarSegmentId::Remote) &&
-             WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Remote) == target,
-         "the status bar names the connected host: '" +
-             WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Remote) + "'");
-
-  session.SendBytes("echo ON-HOST-$((20+22)) \"$HOME\"\n");
+         "the authentication tab opens, prefixed ssh");
+  Expect(WorkspaceShellTestAccess::TerminalTabLauncher(shell, *tab_with_prefix("ssh \xc2\xb7 ")).is_local(),
+         "and runs here: ssh prompts on this machine");
+  const auto segment = [&] {
+    return WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Remote);
+  };
   Expect(WaitUntil(
              [&] {
                Pump(shell);
-               return ScreenText(session).find("ON-HOST-42 " + host.home.string()) != std::string::npos;
+               return segment() == target;
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(5)),
+         "authenticated there, the project connects and the status bar names its host: '" + segment() + "'");
+
+  // Terminal > New in a remote project: a host terminal.
+  const std::size_t before_host = WorkspaceShellTestAccess::TerminalTabCount(shell);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "term"), "Terminal > New");
+  Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == before_host + 1, "a tab opens");
+  const std::size_t host_tab = before_host;
+  terminal::TerminalSession& host_session = WorkspaceShellTestAccess::TerminalTabSession(shell, host_tab);
+  Expect(host_session.is_host_terminal() &&
+             WorkspaceShellTestAccess::TerminalTabLabelPrefix(shell, host_tab).empty(),
+         "a host terminal through the project's launcher, with no prefix of its own");
+  host_session.SendBytes("echo ON-HOST-$((20+22)) \"$HOME\"\n");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return ScreenText(host_session).find("ON-HOST-42 " + host.home.string()) != std::string::npos;
              },
              std::chrono::seconds(15), std::chrono::milliseconds(5)),
-         "the shell runs on the host:\n" + ScreenText(session));
+         "its shell runs on the host:\n" + ScreenText(host_session));
 
-  // The host prompt completes from the hosts in use (and ~/.ssh/config).
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-terminal"), "the prompt opens");
+  // Remote: Open Local Terminal: a shell on this machine, and its title says so.
+  Expect(WorkspaceShellTestAccess::ActionEnabled(shell, workspace::ActionId::RemoteOpenLocalTerminal),
+         "the local terminal is offered in a remote project");
+  // `terminal.shell` names a program on THIS machine: the local terminal's shell.
+  const std::filesystem::path wrapper = local_project.path() / "marked-shell";
+  WriteFile(wrapper, "#!/bin/sh\nexport QA_SHELL_MARK=local-shell\nexec /bin/sh \"$@\"\n");
+  std::filesystem::permissions(wrapper, std::filesystem::perms::owner_all);
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "terminal.shell", wrapper.string()),
+         "terminal.shell is set");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-local-terminal"), "Open Local Terminal");
+  Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == before_host + 2, "a tab opens");
+  const std::size_t local_tab = before_host + 1;
+  terminal::TerminalSession& local_session = WorkspaceShellTestAccess::TerminalTabSession(shell, local_tab);
+  Expect(!local_session.is_host_terminal() &&
+             WorkspaceShellTestAccess::TerminalTabLauncher(shell, local_tab).is_local() &&
+             WorkspaceShellTestAccess::TerminalTabLabelPrefix(shell, local_tab) == "local \xc2\xb7 ",
+         "it runs here, prefixed local");
+  local_session.SendBytes("echo LOCAL-$((40+2))-$QA_SHELL_MARK\n");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return ScreenText(local_session).find("LOCAL-42-local-shell") != std::string::npos;
+             },
+             std::chrono::seconds(15), std::chrono::milliseconds(5)),
+         "its shell is terminal.shell, on this machine:\n" + ScreenText(local_session));
+  {
+    const auto all = labels();
+    Expect(all.size() == before_host + 2 && all[host_tab].rfind(target + " \xc2\xb7 ", 0) == 0 &&
+               all[local_tab].rfind("local \xc2\xb7 ", 0) == 0,
+           "mixed, each says where it runs: '" + all[host_tab] + "' / '" + all[local_tab] + "'");
+  }
+
+  // The host prompt completes from the open projects' hosts (and ~/.ssh/config).
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open"), "the prompt opens");
   Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell), "it is up");
   WorkspaceShellTestAccess::SetPromptSurfaceInput(shell, target.substr(0, target.size() - 2));
   {
@@ -121,8 +192,9 @@ void TestOpenTerminalOnHostFromTheCommand() {
     tab.key.key = SDLK_TAB;
     (void)shell.HandleEvent(tab);
   }
-  Expect(WorkspaceShellTestAccess::PromptSurfaceInput(shell).rfind(target, 0) == 0,
-         "Tab completes the connected host: '" + WorkspaceShellTestAccess::PromptSurfaceInput(shell) + "'");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceInput(shell) == target + ":",
+         "Tab completes the connected host, on to the path: '" +
+             WorkspaceShellTestAccess::PromptSurfaceInput(shell) + "'");
   {
     SDL_Event escape{};
     escape.type = SDL_EVENT_KEY_DOWN;
@@ -138,23 +210,15 @@ void TestOpenTerminalOnHostFromTheCommand() {
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-forward-port 39218"),
          "the forward is accepted (the only host)");
   const std::string forward_key = "remote.forward." + target + ".39218";
-  const auto forward_row = [&]() -> const workspace::NotificationService::Notification* {
-    for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
-      if (row.key == forward_key) {
-        return &row;
-      }
-    }
-    return nullptr;
-  };
   Expect(WaitUntil(
              [&] {
                Pump(shell);
-               return forward_row() != nullptr;
+               return FindRow(shell, forward_key) != nullptr;
              },
              std::chrono::seconds(15), std::chrono::milliseconds(5)),
          "a row reports the forward");
   {
-    const auto* row = forward_row();
+    const auto* row = FindRow(shell, forward_key);
     Expect(row != nullptr && row->message.find("is available at localhost:") != std::string::npos &&
                row->actions.size() == 2 && row->actions[0].label == "Open in Browser" &&
                row->actions[0].args.size() == 1 && row->actions[0].args[0].rfind("http://localhost:", 0) == 0 &&
@@ -162,12 +226,9 @@ void TestOpenTerminalOnHostFromTheCommand() {
            "with the local address, Open in Browser and Copy Address: '" +
                (row != nullptr ? row->message : std::string()) + "'");
   }
-  Expect(WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Remote) ==
-             target + " · 1 port",
-         "the status bar counts it: '" +
-             WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Remote) + "'");
+  Expect(segment() == target + " \xc2\xb7 1 port", "the status bar counts it: '" + segment() + "'");
   // A localhost link in a HOST terminal is the host's: clicking it forwards that
-  // port and opens the local end, path and query kept. A local terminal's would
+  // port and opens the local end, path and query kept. The local terminal's would
   // open as it is.
   std::vector<std::string> opened;
   WorkspaceShellTestAccess::SetExternalUrlOpener(shell, [&](std::string_view url) {
@@ -175,11 +236,11 @@ void TestOpenTerminalOnHostFromTheCommand() {
     return true;
   });
   Expect(WorkspaceShellTestAccess::RemoteHosts(shell).OpenHostLocalUrl(
-             WorkspaceShellTestAccess::TerminalTabLauncher(shell, 0), "http://localhost:39220/app?x=1"),
-         "the link is taken");
+             WorkspaceShellTestAccess::TerminalTabLauncher(shell, host_tab), "http://localhost:39220/app?x=1"),
+         "the host terminal's link is taken");
   Expect(!WorkspaceShellTestAccess::RemoteHosts(shell).OpenHostLocalUrl(
-             platform::LocalProcessLauncher(), "http://localhost:39220/"),
-         "a local terminal's link is not the host's");
+             WorkspaceShellTestAccess::TerminalTabLauncher(shell, local_tab), "http://localhost:39220/"),
+         "the local terminal's link is not the host's");
   Expect(WaitUntil(
              [&] {
                Pump(shell);
@@ -197,60 +258,69 @@ void TestOpenTerminalOnHostFromTheCommand() {
   Expect(WaitUntil(
              [&] {
                Pump(shell);
-               return WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Remote) ==
-                      target;
+               return segment() == target;
              },
              std::chrono::seconds(15), std::chrono::milliseconds(5)),
          "and the count goes");
+
+  // A local project beside it: its terminals are local and say nothing about it,
+  // and there is no separate local terminal to offer.
+  const std::size_t remote_index = WorkspaceShellTestAccess::ActiveProjectIndex(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTabWithLocality(shell, local_project.path(), {}), "a local project");
+  Expect(!WorkspaceShellTestAccess::ActionEnabled(shell, workspace::ActionId::RemoteOpenLocalTerminal),
+         "the local terminal is not offered in a local project (the menu item dims)");
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-local-terminal"),
+         "and the command is refused there");
+  if (WorkspaceShellTestAccess::TerminalTabCount(shell) == 0) {
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "term"), "Terminal > New");
+  }
+  for (const std::string& label : labels()) {
+    Expect(label.find(" \xc2\xb7 ") == std::string::npos, "a local project's terminal has no prefix: " + label);
+  }
+  Expect(WorkspaceShellTestAccess::TerminalTabLauncher(shell, 0).is_local(), "and runs here");
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, remote_index), "back to the remote project");
 
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-disconnect"), "disconnect");
   Expect(WaitUntil(
              [&] {
                Pump(shell);
-               return !session.running();
+               return !host_session.running();
              },
              std::chrono::seconds(10), std::chrono::milliseconds(5)),
-         "the terminal shows its link ended");
-  // The shim's stand-in master is a plain file at this target's control path;
-  // remove exactly that one (the directory may hold the user's real masters).
-  if (const char* runtime = std::getenv("XDG_RUNTIME_DIR"); runtime != nullptr) {
-    const std::filesystem::path control = std::filesystem::path(runtime) / "microide-ssh" /
-                                          ("m-" + util::Sha256Hex(target).substr(0, 16));
-    std::error_code ec;
-    std::filesystem::remove(control, ec);
-    std::filesystem::remove(control.string() + ".log", ec);
-  }
+         "the host terminal shows its link ended");
+  Expect(local_session.running(), "the local one is not the host's to end");
+  RemoveFakeMaster(target);
 }
 
-// With a host terminal and a local one side by side, every tab says where its
-// shell runs: `local · ` on the local one, the host on the host one.
-void RemoveFakeMaster(const std::string& target);
-
-void TestMixedTerminalsSayWhereTheyRun() {
+// A host with no server and installing turned off: the project's error row offers
+// the install command beside Reconnect and the ssh command.
+void TestAFailedInstallOffersTheInstallCommand() {
   FakeSshHost host;
-  TemporaryDirectory project;
+  const std::filesystem::path host_root = host.home / "src" / "install";
+  WriteFile(host_root / "a.txt", "a\n");
   WorkspaceShell shell;
   PointAtFakeHost(shell, host);
-  Expect(WorkspaceShellTestAccess::OpenProjectTabWithLocality(shell, project.path(), {}), "a local project");
-  if (WorkspaceShellTestAccess::TerminalTabCount(shell) == 0) {
-    WorkspaceShellTestAccess::ExecuteCommandLine(shell, "terminal");
-  }
-  const std::size_t local_tabs = WorkspaceShellTestAccess::TerminalTabCount(shell);
-  Expect(local_tabs >= 1, "a local terminal is open");
-  const auto titles = [&] { return WorkspaceShellTestAccess::BottomPanelTerminalLabels(shell); };
-  Expect(titles()[0].rfind("local", 0) != 0, "alone, a local terminal carries no prefix: " + titles()[0]);
-  const std::string target = "dev@fake-mixed-" + std::to_string(::getpid());
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-terminal " + target), "host terminal");
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.server_install", "false"),
+         "installing is off");
+  const std::string target = "dev@fake-install-" + std::to_string(::getpid());
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open " + target + ":" + host_root.string()),
+         "the remote project opens");
+  const std::string key = "remote.project." + WorkspaceShellTestAccess::ProjectRoot(shell).string();
   Expect(WaitUntil(
              [&] {
                Pump(shell);
-               return WorkspaceShellTestAccess::TerminalTabCount(shell) == local_tabs + 1;
+               const auto* row = FindRow(shell, key);
+               return row != nullptr && row->tone == workspace::NotificationService::Tone::Error;
              },
              std::chrono::seconds(30), std::chrono::milliseconds(5)),
-         "the host terminal opens");
-  const auto all = titles();
-  Expect(all[0].rfind("local \xc2\xb7 ", 0) == 0 && all.back().rfind(target + " \xc2\xb7 ", 0) == 0,
-         "mixed, each says where it runs: '" + all[0] + "' / '" + all.back() + "'");
+         "the connection fails with a row");
+  const auto* row = FindRow(shell, key);
+  Expect(row != nullptr && row->message.find("install") != std::string::npos && row->actions.size() == 3 &&
+             row->actions[0].label == "Reconnect" && row->actions[1].label == "Copy ssh Command" &&
+             row->actions[2].label == "Copy Install Command" && row->actions[2].args.size() == 2 &&
+             row->actions[2].args[1] == "install",
+         "with Reconnect, Copy ssh Command and Copy Install Command: '" +
+             (row != nullptr ? row->message : std::string()) + "'");
   RemoveFakeMaster(target);
 }
 
@@ -440,8 +510,11 @@ void TestAPortThatStartsListeningIsForwarded() {
   PointAtFakeHost(shell, host);
   Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.auto_forward_ports", "true"),
          "automatic forwards on");
+  const std::filesystem::path host_root = host.home / "src" / "ports";
+  WriteFile(host_root / "a.txt", "a\n");
   const std::string target = "dev@fake-ports-" + std::to_string(::getpid());
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-terminal " + target), "connect");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open " + target + ":" + host_root.string()),
+         "connect");
   Expect(WaitUntil(
              [&] {
                Pump(shell);
@@ -1211,9 +1284,10 @@ void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostService/HeldMassDeleteIsAppliedFromItsRow", TestHeldMassDeleteIsAppliedFromItsRow);
   AddTest(tests, "RemoteHostService/StatusPathsAbbreviateHome", TestStatusPathsAbbreviateHome);
   AddTest(tests, "RemoteHostService/LoopbackUrlsAreRecognized", TestLoopbackUrlsAreRecognized);
-  AddTest(tests, "RemoteHostService/OpenTerminalOnHostFromTheCommand",
-          TestOpenTerminalOnHostFromTheCommand);
-  AddTest(tests, "RemoteHostService/MixedTerminalsSayWhereTheyRun", TestMixedTerminalsSayWhereTheyRun);
+  AddTest(tests, "RemoteHostService/RemoteProjectTerminalsSayWhereTheyRun",
+          TestRemoteProjectTerminalsSayWhereTheyRun);
+  AddTest(tests, "RemoteHostService/AFailedInstallOffersTheInstallCommand",
+          TestAFailedInstallOffersTheInstallCommand);
   AddTest(tests, "RemoteHostService/HostTerminalSettingsReachTheProjectLauncher",
           TestHostTerminalSettingsReachTheProjectLauncher);
   AddTest(tests, "RemoteHostService/UnfetchedFilesAreListedAndOpenWhenFetched",

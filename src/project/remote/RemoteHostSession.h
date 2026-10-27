@@ -119,7 +119,9 @@ class RemoteHostSession {
     std::function<std::filesystem::path(std::string_view arch)> server_binary;
     std::string release;
     // The host directory this connection serves as its workspace (server/hello's
-    // root): a remote project's channel. Empty for a terminal-only session.
+    // root): a remote project's channel. Empty for a terminal-only session (the
+    // editor opens none since Remote: Open Terminal on Host… was removed; the
+    // server still accepts one, and tests use it).
     std::string workspace_root;
     std::chrono::milliseconds min_backoff{1000};
     std::chrono::milliseconds max_backoff{30000};

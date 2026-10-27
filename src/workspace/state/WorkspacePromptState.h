@@ -90,8 +90,7 @@ struct PromptSurfaceState {
     ConfirmRenameSave,
     // Ctrl+S on an untitled buffer: type the path to save as.
     SaveAs,
-    // Remote: Open Terminal on Host…: type `[user@]host[:port]`.
-    RemoteHost,
+    // Remote: Open Folder on Host…: type `[user@]host[:port]:/path`.
     RemoteFolder,
     // Replace every project-search match: confirm with the counts first (VS
     // Code's "Replace N occurrences across M files"), since it rewrites files the

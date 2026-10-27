@@ -201,7 +201,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       }
       return DispatchResult::Handled;
     }
-    case ActionId::RemoteOpenTerminal:
+    case ActionId::RemoteOpenLocalTerminal:
     case ActionId::RemoteOpenFolder:
     case ActionId::RemoteResolveConflict:
     case ActionId::RemoteShowLog:
@@ -225,20 +225,18 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
         return args.empty() ? hosts->SoleHost() : args[0];
       };
       switch (id) {
-        case ActionId::RemoteOpenTerminal: {
-          if (args.empty()) {
-            context_.OpenRemoteHostPrompt();
-            return DispatchResult::Handled;
+        case ActionId::RemoteOpenLocalTerminal:
+          // In a local project Terminal > New is already local.
+          if (!hosts->IsRemoteProject(context_.ProjectRoot())) {
+            return reject("The active project is not a remote project: Terminal > New is local here");
           }
-          std::string error;
-          if (!hosts->OpenTerminalOnHost(args[0], &error)) {
-            return reject("Cannot connect to \"" + args[0] + "\": " + error);
+          if (!hosts->OpenLocalTerminal()) {
+            return reject("Cannot open a local terminal");
           }
           return DispatchResult::Handled;
-        }
         case ActionId::RemoteOpenFolder: {
           if (args.empty()) {
-            context_.OpenRemoteHostPrompt(/*folder=*/true);
+            context_.OpenRemoteHostPrompt();
             return DispatchResult::Handled;
           }
           std::string error;

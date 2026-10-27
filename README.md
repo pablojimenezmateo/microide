@@ -130,9 +130,10 @@ for what is actually measured, and what is not.
 - OSC 52 clipboard copy (opt-in, off by default), focus notifications, basic device/cursor query replies
 - Terminal text selection, copy, and paste shortcuts
 - Tab drag reordering; right-click for "Copy Last Command and Output"
-- **Terminals on a remote host**: `Remote: Open Terminal on Host…` (`remote-terminal
-  [user@]host[:port]`) runs the shell on the host over your own ssh configuration — no inbound
-  port, no root. The host owns the pty, so a closed laptop or a dropped link kills nothing: the
+- **Terminals on a remote host**: in a remote project (`Remote: Open Folder on Host…`, below)
+  Terminal > New runs the shell on the host over your own ssh configuration — no inbound
+  port, no root; `Remote: Open Local Terminal` (Terminal > New Local Terminal) opens one on
+  this machine instead, titled `local · `. The host owns the pty, so a closed laptop or a dropped link kills nothing: the
   editor reconnects by itself and every terminal resumes with its scrollback, nothing repeated.
   The first connect installs `microide-server` under `~/.local/share/microide/server`
   (`remote.server_install`); a passphrase prompt is answered in a terminal tab. On a slow link
@@ -710,7 +711,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `remote-resolve <path> <mine|host|compare|merge>`
 - `remote-remove-mirror [root] [discard]`
 - `remote-show-log [host]`
-- `remote-terminal [[user@]host[:port]]`
+- `remote-local-terminal`
 - `remote-status`
 - `remote-stop-server [host]`
 - `remote-disconnect [host]`

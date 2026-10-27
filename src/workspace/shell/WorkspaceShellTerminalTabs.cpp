@@ -46,16 +46,19 @@ TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
         GetSettingValue("remote.predict").value_or("adaptive")));
     pane.launch_working_directory = cwd;
     pane.launch_command = command;
-    // A pane on a host runs through that host's launcher, and a host's shell is
-    // the host's login shell: `terminal.shell` names a program on THIS machine.
-    const bool on_host = pane.launcher != nullptr;
+    // A pane with its own launcher (the ssh authentication tab, a local terminal in
+    // a remote project) runs through it, else through the project's. A host's shell
+    // is the host's login shell: `terminal.shell` names a program on THIS machine.
     const platform::ProcessLauncher& launcher =
-        on_host ? *pane.launcher : context_.current_project_state.launcher();
-    return terminal::UsePlaceholderTerminalsForTesting() && !on_host
+        pane.launcher != nullptr ? *pane.launcher : context_.current_project_state.launcher();
+    // Test mode stands in for the project's own local shells only: a host terminal
+    // runs on the (fake) host, and an own-launcher pane is started on purpose — the
+    // authentication tab's ssh must really run for the connection to go on.
+    return terminal::UsePlaceholderTerminalsForTesting() && pane.launcher == nullptr && launcher.is_local()
                ? pane.session.StartPlaceholderForTesting(cwd, command)
                : pane.session.Start(launcher, cwd, command,
-                                    on_host ? std::string()
-                                            : GetSettingValue("terminal.shell").value_or(""));
+                                    launcher.is_local() ? GetSettingValue("terminal.shell").value_or("")
+                                                        : std::string());
   };
   glue_->terminal_panel_service = std::make_unique<TerminalPanelService>(
       context_.current_project_state,

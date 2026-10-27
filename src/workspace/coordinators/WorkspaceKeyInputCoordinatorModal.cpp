@@ -197,10 +197,8 @@ bool KeyInputCoordinator::HandlePromptSurfaceKeyDown(const SDL_KeyboardEvent& ev
         return true;
       case SDLK_TAB:
         if (!prompts_.surface.completions.empty()) {
-          if (std::optional<std::string> completed = CompleteRemoteHostText(
-                  prompts_.surface.input.text(),
-                  prompts_.surface.action == PromptSurfaceState::Action::RemoteFolder,
-                  prompts_.surface.completions)) {
+          if (std::optional<std::string> completed =
+                  CompleteRemoteHostText(prompts_.surface.input.text(), prompts_.surface.completions)) {
             prompts_.surface.input.SetText(std::move(*completed));
             operations_.request_prompt_redraw();
           }

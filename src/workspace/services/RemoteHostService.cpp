@@ -40,8 +40,9 @@ std::size_t SettingSize(const std::optional<std::string>& value) {
   return parsed.has_value() && *parsed > 0 ? static_cast<std::size_t>(*parsed) : 0;
 }
 
-// The local machine's launcher, as the shared pointer a pane holds: an ssh
-// authentication terminal runs HERE whatever the project's locality.
+// The local machine's launcher, as the shared pointer a pane holds: the ssh
+// authentication terminal and a local terminal run HERE whatever the project's
+// locality.
 std::shared_ptr<const platform::ProcessLauncher> LocalLauncher() {
   return std::shared_ptr<const platform::ProcessLauncher>(&platform::LocalProcessLauncher(),
                                                           [](const platform::ProcessLauncher*) {});
@@ -55,21 +56,6 @@ RemoteHostService::~RemoteHostService() {
   work_.Shutdown();
   // Sessions next: their threads post into the mailbox until they are joined.
   projects_.clear();
-  hosts_.clear();
-}
-
-std::string RemoteHostService::NotificationKey(std::string_view host) {
-  return "remote.host." + std::string(host);
-}
-
-RemoteHostService::Host* RemoteHostService::Find(std::string_view host) {
-  const auto it = hosts_.find(host);
-  return it == hosts_.end() ? nullptr : &it->second;
-}
-
-const RemoteHostService::Host* RemoteHostService::Find(std::string_view host) const {
-  const auto it = hosts_.find(host);
-  return it == hosts_.end() ? nullptr : &it->second;
 }
 
 remote::RemoteHostSession::Config RemoteHostService::SessionConfig(
@@ -301,11 +287,18 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
       if (status.error.empty()) {
         dismiss();
       } else {
+        std::vector<NotificationAction> actions = {
+            NotificationAction{.label = "Reconnect", .id = ActionId::RemoteReconnect, .args = {record.host}},
+            NotificationAction{.label = "Copy ssh Command", .id = ActionId::RemoteCopyCommand,
+                               .args = {record.host, "ssh"}, .keep_open = true},
+        };
+        // A server that could not be installed: the command that installs it by hand.
+        if (status.error.find("install") != std::string::npos) {
+          actions.push_back(NotificationAction{.label = "Copy Install Command", .id = ActionId::RemoteCopyCommand,
+                                               .args = {record.host, "install"}, .keep_open = true});
+        }
         row(Tone::Error, label + ": " + status.error + " (the mirror stays editable; saves are queued)",
-            {NotificationAction{.label = "Reconnect", .id = ActionId::RemoteReconnect,
-                                .args = {record.host}},
-             NotificationAction{.label = "Copy ssh Command", .id = ActionId::RemoteCopyCommand,
-                                .args = {record.host, "ssh"}, .keep_open = true}});
+            std::move(actions));
       }
       break;
     case State::Ready:
@@ -936,47 +929,8 @@ bool RemoteHostService::ResolveMerged(const std::filesystem::path& path) {
   return true;
 }
 
-RemoteHostService::Host& RemoteHostService::Ensure(const remote::RemoteHostTarget& target) {
-  const std::string key = target.Display();
-  if (Host* existing = Find(key)) {
-    return *existing;
-  }
-  const auto setting = [&](std::string_view name) {
-    return operations_.setting ? operations_.setting(name) : std::optional<std::string>();
-  };
-  remote::RemoteHostSession::Config config = SessionConfig(target);
-
-  Host entry;
-  entry.session = std::make_unique<remote::RemoteHostSession>(
-      std::move(config), [this, key](const remote::RemoteHostSession::Status& status) {
-        // Coalesced per host: only the latest state matters by the time the UI runs.
-        mailbox_.PostLatest("remote:" + key, [this, key, status]() { Apply(key, status); });
-      });
-  entry.launcher = std::make_shared<remote::RemoteProcessLauncher>(
-      entry.session->connection(), remote::RemotePathMap({}, {}),
-      remote::RemoteProcessLauncher::Options{
-          .description = key,
-          .terminal_credit_bytes = SettingSize(setting("remote.term_credit_bytes")),
-          .terminal_prefetch_lines = SettingSize(setting("remote.scrollback_prefetch_lines")),
-      });
-  return hosts_.emplace(key, std::move(entry)).first->second;
-}
-
-bool RemoteHostService::OpenTerminalOnHost(std::string_view host, std::string* error) {
-  const std::optional<remote::RemoteHostTarget> target = remote::ParseRemoteHostTarget(host, error);
-  if (!target.has_value()) {
-    return false;
-  }
-  const std::string key = target->Display();
-  Host& entry = Ensure(*target);
-  ++entry.pending_terminals;
-  if (entry.status.state == State::Ready) {
-    OpenPendingTerminals(key, entry);
-  } else {
-    entry.session->Connect();
-  }
-  PublishStatusSegment();
-  return true;
+bool RemoteHostService::OpenLocalTerminal() {
+  return operations_.open_terminal && operations_.open_terminal(LocalLauncher(), "local \xc2\xb7 ", {});
 }
 
 void RemoteHostService::ProjectClosed(const std::filesystem::path& root) {
@@ -995,11 +949,6 @@ void RemoteHostService::ProjectClosed(const std::filesystem::path& root) {
 
 bool RemoteHostService::Reconnect(std::string_view host) {
   bool found = false;
-  if (Host* entry = Find(host)) {
-    entry->auth_terminal_opened = false;
-    entry->session->Connect();
-    found = true;
-  }
   // A host's remote projects each have their own channel: they reconnect with it.
   for (auto& [tree, project] : projects_) {
     (void)tree;
@@ -1013,12 +962,6 @@ bool RemoteHostService::Reconnect(std::string_view host) {
 }
 
 void RemoteHostService::Disconnect(std::string_view host) {
-  for (auto& [key, entry] : hosts_) {
-    if (host.empty() || key == host) {
-      entry.pending_terminals = 0;
-      entry.session->Disconnect();
-    }
-  }
   // The mirror stays open and editable; saves queue in its journal until the next
   // connection.
   for (auto& [tree, project] : projects_) {
@@ -1031,13 +974,6 @@ void RemoteHostService::Disconnect(std::string_view host) {
 
 std::string RemoteHostService::SoleHost() const {
   std::string sole;
-  for (const auto& [key, entry] : hosts_) {
-    (void)entry;
-    if (!sole.empty() && sole != key) {
-      return {};
-    }
-    sole = key;
-  }
   for (const auto& [tree, project] : projects_) {
     (void)tree;
     const std::string host = project.project->record().host;
@@ -1050,10 +986,9 @@ std::string RemoteHostService::SoleHost() const {
 }
 
 bool RemoteHostService::StopServer(std::string_view host) {
-  // The host's session wherever it lives: a terminal's host entry, or -- the usual
-  // case -- a remote project's own session. Looking only in the host entries
-  // answered "No remote host" for every host the user had only opened a folder on
-  // (QA remote P), while Show Log, Reconnect and the port commands found it.
+  // A remote project's own session: looking only in the (since removed)
+  // terminal-only host entries once answered "No remote host" for every host the
+  // user had opened a folder on (QA remote P).
   remote::RemoteHostSession* session = SessionFor(host);
   if (session == nullptr) {
     return false;
@@ -1092,10 +1027,6 @@ std::vector<std::string> RemoteHostService::KnownHosts() const {
       hosts.push_back(host);
     }
   };
-  for (const auto& [key, entry] : hosts_) {
-    (void)entry;
-    add(key);
-  }
   for (const auto& [tree, entry] : projects_) {
     (void)tree;
     add(entry.project->record().host);
@@ -1160,11 +1091,6 @@ bool RemoteHostService::OpenHostLocalUrl(const platform::ProcessLauncher& launch
     return false;
   }
   std::string host;
-  for (const auto& [key, entry] : hosts_) {
-    if (entry.launcher.get() == &launcher) {
-      host = key;
-    }
-  }
   for (const auto& [tree, entry] : projects_) {
     (void)tree;
     if (entry.project->launcher().get() == &launcher) {
@@ -1324,9 +1250,6 @@ bool RemoteHostService::StopForward(std::string_view host, std::uint16_t port, b
 }
 
 const remote::RemoteHostSession* RemoteHostService::SessionFor(std::string_view host) const {
-  if (const Host* entry = Find(host)) {
-    return entry->session.get();
-  }
   for (const auto& [tree, project] : projects_) {
     (void)tree;
     if (project.project->record().host == host) {
@@ -1403,9 +1326,8 @@ void AppendForwards(std::string& text, const remote::RemoteHostSession& session)
 }  // namespace
 
 std::string RemoteHostService::StatusText() const {
-  if (hosts_.empty() && projects_.empty()) {
-    return "No remote hosts. Remote: Open Folder on Host… or Remote: Open Terminal on Host… "
-           "connects to one.";
+  if (projects_.empty()) {
+    return "No remote hosts. Remote: Open Folder on Host… connects to one.";
   }
   std::string text;
   const char* home = std::getenv("HOME");
@@ -1422,111 +1344,10 @@ std::string RemoteHostService::StatusText() const {
             " conflicts), mirror " + HomeAbbreviatedPath(tree, home != nullptr ? home : "");
     AppendForwards(text, entry.project->session());
   }
-  for (const auto& [key, entry] : hosts_) {
-    if (!text.empty()) {
-      text += "\n";
-    }
-    text += key + ": " + std::string(remote::RemoteHostSession::StateName(entry.status.state));
-    if (!entry.status.error.empty()) {
-      text += " — " + entry.status.error;
-    }
-    AppendForwards(text, *entry.session);
-  }
   return text;
 }
 
 bool RemoteHostService::DrainCompletions() { return mailbox_.Drain() > 0; }
-
-void RemoteHostService::OpenPendingTerminals(const std::string& host, Host& entry) {
-  for (; entry.pending_terminals > 0; --entry.pending_terminals) {
-    if (operations_.open_terminal) {
-      (void)operations_.open_terminal(entry.launcher, host + " · ", {});
-    }
-  }
-}
-
-void RemoteHostService::Apply(const std::string& host, const remote::RemoteHostSession::Status& status) {
-  Host* entry = Find(host);
-  if (entry == nullptr) {
-    return;
-  }
-  entry->status = status;
-  using Tone = NotificationService::Tone;
-  const std::string key = NotificationKey(host);
-  const auto row = [&](Tone tone, std::string message, std::vector<NotificationAction> actions = {}) {
-    if (operations_.notify) {
-      operations_.notify(NotificationService::Request{.tone = tone,
-                                                      .key = key,
-                                                      .message = std::move(message),
-                                                      .sticky = true,
-                                                      .actions = std::move(actions)});
-    }
-  };
-  const NotificationAction reconnect{.label = "Reconnect", .id = ActionId::RemoteReconnect, .args = {host}};
-  switch (status.state) {
-    case State::Connecting:
-    case State::StartingServer:
-    case State::Installing:
-      row(Tone::Info, status.message + "…");
-      break;
-    case State::NeedsAuth:
-      row(Tone::Warning, "Authenticate to " + host + " in the terminal below");
-      if (!entry->auth_terminal_opened && operations_.open_terminal) {
-        // ssh itself prompts there — no password field exists in microide.
-        entry->auth_terminal_opened = true;
-        (void)operations_.open_terminal(LocalLauncher(), "ssh · ",
-                                        entry->session->SshCommandText());
-      }
-      break;
-    case State::Ready:
-      entry->auth_terminal_opened = false;
-      if (operations_.dismiss_notification) {
-        operations_.dismiss_notification(key);
-      }
-      if (operations_.notify) {
-        operations_.notify(NotificationService::Request{.tone = Tone::Info,
-                                                        .message = "Connected to " + host});
-      }
-      AdviseAboutHostServer(host, *entry->session);
-      WatchPorts(host, *entry->session);
-      OpenPendingTerminals(host, *entry);
-      break;
-    case State::Reconnecting:
-      row(Tone::Warning, "Reconnecting to " + host + "…", {reconnect});
-      break;
-    case State::Offline:
-      row(Tone::Warning,
-          host + " is offline" + (status.error.empty() ? std::string() : ": " + status.error),
-          {reconnect});
-      break;
-    case State::Disconnected:
-      entry->pending_terminals = 0;
-      if (status.error.empty()) {
-        if (operations_.dismiss_notification) {
-          operations_.dismiss_notification(key);
-        }
-        break;
-      }
-      {
-        std::vector<NotificationAction> actions = {
-            reconnect,
-            NotificationAction{.label = "Copy ssh Command",
-                               .id = ActionId::RemoteCopyCommand,
-                               .args = {host, "ssh"},
-                               .keep_open = true},
-        };
-        if (status.error.find("install") != std::string::npos) {
-          actions.push_back(NotificationAction{.label = "Copy Install Command",
-                                               .id = ActionId::RemoteCopyCommand,
-                                               .args = {host, "install"},
-                                               .keep_open = true});
-        }
-        row(Tone::Error, status.error, std::move(actions));
-      }
-      break;
-  }
-  PublishStatusSegment();
-}
 
 void RemoteHostService::AdviseAboutHostServer(const std::string& host,
                                               const remote::RemoteHostSession& session) {
@@ -1576,7 +1397,7 @@ void RemoteHostService::PublishStatusSegment() {
   if (!operations_.set_status_segment) {
     return;
   }
-  // Every connection the editor holds: host terminals' and remote projects'.
+  // Every connection the editor holds: one per open remote project.
   std::vector<std::pair<std::string, State>> connections;
   std::size_t ports = 0;
   // § 7.4: a first sync's progress, and saves not yet on the host.
@@ -1585,9 +1406,6 @@ void RemoteHostService::PublishStatusSegment() {
   bool first_sync = false;
   std::size_t unsent = 0;
   std::string tooltip;
-  for (const auto& [key, entry] : hosts_) {
-    connections.emplace_back(key, entry.status.state);
-  }
   for (const auto& [tree, entry] : projects_) {
     (void)tree;
     if (!entry.closed) {

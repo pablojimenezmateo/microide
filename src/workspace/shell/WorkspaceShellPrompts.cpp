@@ -184,8 +184,7 @@ void WorkspaceShell::OpenPromptSurface(PromptSurfaceState::Action action,
                                        const std::filesystem::path& path,
                                        std::string input) {
   MakePromptSurfaceService().OpenPromptSurface(action, kind, path, std::move(input));
-  if (action == PromptSurfaceState::Action::RemoteHost ||
-      action == PromptSurfaceState::Action::RemoteFolder) {
+  if (action == PromptSurfaceState::Action::RemoteFolder) {
     context_.prompts.surface.completions = MakeRemoteHostService().KnownHosts();
   }
 }
@@ -240,8 +239,6 @@ std::string_view WorkspaceShell::PromptSurfaceTitle() const {
       return "Debug Console";
     case PromptSurfaceState::Action::GoToLine:
       return "Go to Line";
-    case PromptSurfaceState::Action::RemoteHost:
-      return "Open Terminal on Host";
     case PromptSurfaceState::Action::RemoteFolder:
       return "Open Folder on Host";
     case PromptSurfaceState::Action::RenameSymbol:
@@ -317,10 +314,6 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
       return "Evaluate in the active session; the result prints to the console.";
     case PromptSurfaceState::Action::GoToLine:
       return "Enter a line[:column] to jump to.";
-    case PromptSurfaceState::Action::RemoteHost:
-      return context_.prompts.surface.completions.empty()
-                 ? "Enter [user@]host[:port] — reached with your ssh configuration."
-                 : "Enter [user@]host[:port] — Tab completes a host from ~/.ssh/config.";
     case PromptSurfaceState::Action::RemoteFolder:
       return context_.prompts.surface.completions.empty()
                  ? "Enter [user@]host[:port]:/path — the folder opens from a local mirror."
@@ -393,8 +386,6 @@ std::array<std::string_view, 2> WorkspaceShell::PromptSurfaceActionLabels() cons
       return {"Evaluate", "Close"};
     case PromptSurfaceState::Action::GoToLine:
       return {"Go", "Cancel"};
-    case PromptSurfaceState::Action::RemoteHost:
-      return {"Connect", "Cancel"};
     case PromptSurfaceState::Action::RemoteFolder:
       return {"Open", "Cancel"};
     case PromptSurfaceState::Action::RenameSymbol:
@@ -579,15 +570,11 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     return;
   }
   if (context_.prompts.surface_visible &&
-      (context_.prompts.surface.action == PromptSurfaceState::Action::RemoteHost ||
-       context_.prompts.surface.action == PromptSurfaceState::Action::RemoteFolder)) {
-    const ActionId action = context_.prompts.surface.action == PromptSurfaceState::Action::RemoteHost
-                                ? ActionId::RemoteOpenTerminal
-                                : ActionId::RemoteOpenFolder;
+      context_.prompts.surface.action == PromptSurfaceState::Action::RemoteFolder) {
     const std::string input = context_.prompts.surface.input.text();
     MakePromptSurfaceService().DismissPromptSurface(true);
     if (!input.empty()) {
-      ActionCoordinator(MakeActionContext()).Execute(action, {input}, ActionSource::Shortcut);
+      ActionCoordinator(MakeActionContext()).Execute(ActionId::RemoteOpenFolder, {input}, ActionSource::Shortcut);
     }
     return;
   }

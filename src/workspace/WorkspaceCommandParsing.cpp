@@ -343,9 +343,9 @@ std::string JoinCommandArguments(const std::vector<std::string>& args, std::size
   return joined;
 }
 
-std::optional<std::string> CompleteRemoteHostText(std::string_view text, bool folder,
+std::optional<std::string> CompleteRemoteHostText(std::string_view text,
                                                   const std::vector<std::string>& hosts) {
-  if (hosts.empty() || (folder && text.find(':') != std::string_view::npos)) {
+  if (hosts.empty() || text.find(':') != std::string_view::npos) {
     return std::nullopt;
   }
   // A typed `user@` rides along onto an ssh-config alias; a host already in use
@@ -360,12 +360,8 @@ std::optional<std::string> CompleteRemoteHostText(std::string_view text, bool fo
       values.push_back(std::move(value));
     }
   }
-  const std::string suffix = folder ? ":" : "";
   if (const auto exact = std::find(values.begin(), values.end(), text); exact != values.end()) {
-    if (folder) {
-      return *exact + suffix;  // named: on to the path
-    }
-    return std::next(exact) == values.end() ? values.front() : *std::next(exact);
+    return *exact + ":";  // named: on to the path
   }
   std::vector<CommandCompletionCandidate> matches;
   for (const std::string& value : values) {
@@ -377,7 +373,7 @@ std::optional<std::string> CompleteRemoteHostText(std::string_view text, bool fo
     return std::nullopt;
   }
   if (matches.size() == 1) {
-    return matches.front().value + suffix;
+    return matches.front().value + ":";
   }
   const std::string common = CommonPrefix(matches);
   return common.size() > text.size() ? common : matches.front().value;

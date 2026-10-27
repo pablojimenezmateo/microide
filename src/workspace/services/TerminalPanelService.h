@@ -61,9 +61,9 @@ class TerminalPanelService {
   // Opens a new tab around one started pane. `focus_terminal` also shows the
   // Terminal content and moves keyboard focus to the panel.
   void OpenTerminal(std::string command = {}, bool focus_terminal = true, bool log_feedback = false);
-  // A tab whose shell runs through `launcher` (a host, or this machine on purpose)
-  // instead of the project's, titled with `label_prefix`. False when the launch
-  // failed. Works with no project open: a host terminal needs none.
+  // A tab whose shell runs through `launcher` instead of the project's (the ssh
+  // authentication tab, a local terminal in a remote project), titled with
+  // `label_prefix`. False when the launch failed.
   bool OpenTerminalOn(std::shared_ptr<const platform::ProcessLauncher> launcher,
                       std::string label_prefix, std::string command = {});
   // The terminals at project init: the restored session's layout revived (fresh

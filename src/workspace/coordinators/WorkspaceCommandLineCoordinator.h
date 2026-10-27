@@ -25,7 +25,7 @@ class CommandLineCoordinator {
     // keystroke (TD-2026-07-17A-012). The reference is consumed synchronously.
     std::function<const std::vector<std::string>&()> plugin_command_names;
     std::function<std::vector<std::string>()> sidebar_view_ids;
-    // Hosts `remote-terminal` / `remote-open` complete from (RemoteHostService::KnownHosts).
+    // Hosts `remote-open` completes from (RemoteHostService::KnownHosts).
     std::function<std::vector<std::string>()> remote_hosts;
     std::function<PluginCommandResult(const std::string&, const std::vector<std::string>&)>
         execute_plugin_command;

@@ -127,18 +127,15 @@ void CommandLineCoordinator::CompleteInput(editor::SingleLineEditor& input) {
                active_index == 2) {
       candidates = CompletePath(completion_root, active_prefix, true);
     }
-  } else if ((command == "remote-terminal" || command == "remote-open") && active_index == 1 &&
-             operations_.remote_hosts) {
-    // A host; for a folder, `host:` so the path follows with no space.
+  } else if (command == "remote-open" && active_index == 1 && operations_.remote_hosts) {
+    // A host as `host:`, so the path follows with no space.
     const std::size_t at = active_prefix.find('@');
     const std::string user = at == std::string::npos ? std::string() : active_prefix.substr(0, at + 1);
-    const bool folder = command == "remote-open";
-    if (!folder || active_prefix.find(':') == std::string::npos) {
+    if (active_prefix.find(':') == std::string::npos) {
       for (const std::string& host : operations_.remote_hosts()) {
-        const std::string value =
-            (host.find('@') != std::string::npos ? host : user + host) + (folder ? ":" : "");
+        const std::string value = (host.find('@') != std::string::npos ? host : user + host) + ":";
         if (StartsWith(value, active_prefix)) {
-          candidates.push_back(CommandCompletionCandidate{value, !folder});
+          candidates.push_back(CommandCompletionCandidate{value, false});
         }
       }
     }

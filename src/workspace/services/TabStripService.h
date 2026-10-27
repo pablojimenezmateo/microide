@@ -302,9 +302,9 @@ class TabStripService {
   std::uint64_t geometry_epoch_ = 0;
 };
 
-// What the panel's tab strip puts before `pane`'s label: its own prefix (a host
-// terminal's "host · "), or "local · " / the project's host while host and local
-// terminals are mixed; empty otherwise.
+// What the panel's tab strip puts before `pane`'s label: its own prefix ("ssh · ",
+// "local · "), or "local · " / the project's host while host and local terminals
+// are mixed; empty otherwise.
 std::string TerminalPaneLabelPrefix(const ProjectWorkspaceState& state, const TerminalPaneState& pane);
 
 }  // namespace microide::workspace

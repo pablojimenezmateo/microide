@@ -449,6 +449,34 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-27-396 — host-terminal settings and `terminal.shell` reached the wrong terminals. [RESOLVED 2026-10-27]
+
+Found while removing `Remote: Open Terminal on Host…`
+(`openspec/changes/remove-host-terminal-command`), both fixed with it.
+
+**`remote.term_credit_bytes` / `remote.scrollback_prefetch_lines` never reached a
+remote project's terminals.** `RemoteHostService::Ensure` read both into the
+launcher of the terminal-only host session; `RemoteProject::Open` built the
+project's `RemoteProcessLauncher` without them. Every terminal a user actually
+opened in a remote project (Terminal > New, since TD-2026-09-22-301) used the
+host's defaults whatever the Settings overlay said, and removing the command would
+have left both settings read by nothing. `RemoteProject::Config` now carries them
+and `RemoteHostService::OpenProject` fills them;
+`RemoteHostService/HostTerminalSettingsReachTheProjectLauncher` pins it.
+
+**A pane with its own launcher was treated as "on a host".** `start_pane`
+(`WorkspaceShellTerminalTabs.cpp`) keyed two decisions on `pane.launcher != nullptr`:
+skip `terminal.shell` (a host's shell is its login shell) and never use the test
+placeholder. Once the only such panes are the ssh authentication tab and a local
+terminal in a remote project, both are local, so the local terminal would have
+ignored `terminal.shell`. And the inverse held in tests: a remote project's own
+terminal (no pane launcher, a remote project launcher) was started as a
+placeholder, so no unit test ever ran a remote project's Terminal > New on the
+fake host. Now `terminal.shell` follows the effective launcher's locality, and the
+placeholder stands in only for the project's own local shells.
+`RemoteHostService/RemoteProjectTerminalsSayWhereTheyRun` runs a host terminal and
+a `terminal.shell`-wrapped local one in the same remote project.
+
 ### TD-2026-10-27-395 — local `qa` fails `unicode-editing`: the desktop's IBus reaches the app under test. [RESOLVED 2026-10-27]
 
 **Fixed:** `tools/qa/microide_qa.py` starts every app under test from

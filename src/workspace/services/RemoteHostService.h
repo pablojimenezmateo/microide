@@ -36,18 +36,15 @@ class RemoteProject;
 
 namespace microide::workspace {
 
-// The editor's hosts (dev-docs/design/remote-projects.md § 6.6, § 7): one
-// RemoteHostSession per `[user@]host[:port]` the user opened a terminal on, its
-// launcher, and everything the user sees of it — the status-bar segment, the
-// keyed notification row with its buttons (Reconnect, Copy ssh Command, Copy
-// Install Command), the authentication terminal, and the host terminals waiting
-// for the connection.
-//
-// And the remote PROJECTS (Phase 2b): a host directory opened as a project is a
-// mirror the editor opens as an ordinary root, with its own channel to the host.
-// A project whose id (project::ProjectId) is remote asks LocalityFor when it is
-// initialized, so one reopened from the recents list or a restored session
-// reconnects instead of opening as a plain local folder.
+// The editor's remote PROJECTS (dev-docs/design/remote-projects.md § 6.6, § 7): a
+// host directory opened as a project is a mirror the editor opens as an ordinary
+// root, with its own channel (RemoteHostSession) to the host, and everything the
+// user sees of that connection — the status-bar segment, the keyed notification
+// row with its buttons (Reconnect, Copy ssh Command, Copy Install Command), the
+// authentication terminal, port forwards. A "host" here is always a remote
+// project's host. A project whose id (project::ProjectId) is remote asks
+// LocalityFor when it is initialized, so one reopened from the recents list or a
+// restored session reconnects instead of opening as a plain local folder.
 //
 // Sessions report on their worker threads; every report is drained on the UI
 // thread (DrainCompletions), so all the state below is UI-thread only.
@@ -58,8 +55,10 @@ class RemoteHostService {
     std::function<void(std::string_view key)> dismiss_notification;
     // A removed mirror leaves the recents list (Remote: Remove Mirror).
     std::function<void(const project::ProjectId& id)> forget_recent_project;
-    // Open a terminal tab whose shell runs through `launcher`, titled with
-    // `label_prefix`; `command` empty = an interactive shell. False on failure.
+    // Open a terminal tab whose shell runs through `launcher` rather than the
+    // project's (the ssh authentication tab, a local terminal in a remote project),
+    // titled with `label_prefix`; `command` empty = an interactive shell. False on
+    // failure.
     std::function<bool(std::shared_ptr<const platform::ProcessLauncher> launcher,
                        std::string label_prefix, std::string command)>
         open_terminal;
@@ -107,10 +106,10 @@ class RemoteHostService {
   // Apply what the sessions reported. True when anything was drained.
   bool DrainCompletions();
 
-  // Remote: Open Terminal on Host… — connects (or reuses the connection) and opens
-  // the terminal once it is ready. False with *error for a host string that is
-  // refused before anything runs.
-  bool OpenTerminalOnHost(std::string_view host, std::string* error);
+  // Remote: Open Local Terminal — a terminal tab on THIS machine, prefixed
+  // `local · `, in the active project (in a remote one, Terminal > New runs on the
+  // host). False when the tab could not be opened.
+  bool OpenLocalTerminal();
   // Remote: Open Folder on Host… — `[user@]host[:port]:/absolute/path`. Prepares the
   // project's mirror and returns the tree the editor opens; the project connects
   // when that tree is opened (LocalityFor). nullopt with *error otherwise.
@@ -212,8 +211,8 @@ class RemoteHostService {
   // outcome a notification row — with Open in Browser and Copy Address on success.
   // False when nothing connects to `host`.
   bool ForwardPort(std::string_view host, std::uint16_t port);
-  // A link clicked in a terminal that runs through `launcher`: when that is a host's
-  // and the URL names the host's own loopback (`http://localhost:3000/x`), forward
+  // A link clicked in a terminal that runs through `launcher`: when that is a remote
+  // project's and the URL names the host's own loopback (`http://localhost:3000/x`), forward
   // the port and open the same URL at the local end — VS Code's terminal links do
   // the same. False for anything else: the caller opens it as it is.
   bool OpenHostLocalUrl(const platform::ProcessLauncher& launcher, std::string_view url);
@@ -226,7 +225,7 @@ class RemoteHostService {
   };
   static std::optional<LoopbackUrl> ParseLoopbackUrl(std::string_view url);
   bool CancelForward(std::string_view host, std::uint16_t port);
-  // Hosts to offer when connecting: the ones in use now, then every concrete alias
+  // Hosts to offer when connecting: the open projects', then every concrete alias
   // in ~/.ssh/config (and what it includes). Reads the config: not for a frame path.
   std::vector<std::string> KnownHosts() const;
   // The host of the remote project at `root`, or empty.
@@ -236,21 +235,10 @@ class RemoteHostService {
   std::optional<std::string> CommandText(std::string_view host, std::string_view which) const;
   // Remote: Show Status.
   std::string StatusText() const;
-  // The only host, or empty when there are none or several.
+  // The only host among the remote projects, or empty when there are none or several.
   std::string SoleHost() const;
-  bool has_hosts() const { return !hosts_.empty(); }
-
-  static std::string NotificationKey(std::string_view host);
 
  private:
-  struct Host {
-    std::unique_ptr<project::remote::RemoteHostSession> session;
-    std::shared_ptr<project::remote::RemoteProcessLauncher> launcher;
-    project::remote::RemoteHostSession::Status status;
-    std::size_t pending_terminals = 0;
-    bool auth_terminal_opened = false;
-  };
-
   struct Project {
     std::unique_ptr<project::remote::RemoteProject> project;
     project::remote::RemoteHostSession::Status status;
@@ -295,18 +283,13 @@ class RemoteHostService {
                        std::string* error);
   void ApplyProject(const std::filesystem::path& tree);
   void PublishConflictRows(const std::filesystem::path& tree, Project& entry);
-  // Any session to `host`: its terminal session, else a project's.
+  // The session of the first remote project on `host`, or null.
   const project::remote::RemoteHostSession* SessionFor(std::string_view host) const;
   project::remote::RemoteHostSession* SessionFor(std::string_view host) {
     return const_cast<project::remote::RemoteHostSession*>(std::as_const(*this).SessionFor(host));
   }
   // The project and relative path a conflicted mirror path belongs to.
   std::pair<Project*, std::string> ConflictOwner(const std::filesystem::path& path);
-  Host* Find(std::string_view host);
-  const Host* Find(std::string_view host) const;
-  Host& Ensure(const project::remote::RemoteHostTarget& target);
-  void Apply(const std::string& host, const project::remote::RemoteHostSession::Status& status);
-  void OpenPendingTerminals(const std::string& host, Host& entry);
   void PublishStatusSegment();
   // Once per host, when it is Ready: warn when its processes end at logout (the
   // hello's session-survival report), which makes "terminals survive a
@@ -316,7 +299,6 @@ class RemoteHostService {
                              const project::remote::RemoteHostSession& session);
 
   Operations operations_;
-  std::map<std::string, Host, std::less<>> hosts_;
   // By host (`RemoteHostTarget::Display`): the ports forwarded to it, shared by
   // its sessions. Kept after they go, so the next connection forwards them again.
   std::map<std::string, std::shared_ptr<project::remote::HostPortForwards>, std::less<>> forwards_;

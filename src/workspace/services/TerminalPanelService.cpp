@@ -187,8 +187,9 @@ TerminalLayoutRecord TerminalPanelService::CaptureLayout() const {
     if (record.panes.empty()) {
       continue;
     }
-    // A tab that lost a host pane keeps its panes, evenly: the shares were the
-    // whole row's.
+    // A tab that lost an own-launcher pane (the auth tab, a local terminal in a
+    // remote project: neither is revived) keeps its panes, evenly: the shares were
+    // the whole row's.
     if (all_panes_kept) {
       record.weights.assign(tab.weights.begin(), tab.weights.end());
     }

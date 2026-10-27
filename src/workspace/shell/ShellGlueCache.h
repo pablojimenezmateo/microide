@@ -69,7 +69,7 @@ struct ShellGlueCache {
   std::unique_ptr<PromptSurfaceService> prompt_surface_service;
   std::unique_ptr<TerminalPanelService> terminal_panel_service;
   // Its sessions' threads post status here until joined; declared like the rest,
-  // built on first use (Remote: Open Terminal on Host…).
+  // built on first use (the first remote project).
   std::unique_ptr<RemoteHostService> remote_host_service;
   std::unique_ptr<ProjectCatalogService> project_catalog_service;
   std::unique_ptr<DebugPaneService> debug_pane_service;

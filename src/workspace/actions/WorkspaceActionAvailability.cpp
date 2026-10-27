@@ -126,7 +126,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::NotificationAction:  // rejects naming the row/action it cannot find
     case ActionId::BannerAction:        // rejects when the active tab shows no such button
     case ActionId::ShowOutput:          // rejects naming a channel that does not exist
-    case ActionId::RemoteOpenTerminal:  // no project needed: a host terminal has none
     case ActionId::RemoteOpenFolder:
     case ActionId::RemoteResolveConflict:
     case ActionId::RemoteShowLog:
@@ -420,6 +419,9 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return !context_.current_project_state.root.empty();
     case ActionId::Reveal:
       return !context_.current_project_state.root.empty();
+    case ActionId::RemoteOpenLocalTerminal:
+      // In a local project Terminal > New is already local: dimmed, not a duplicate.
+      return context_.current_project_state.id.IsRemote();
     case ActionId::TabToGroup:
       return context_.current_project_state.editor_groups.size() > 1 &&
              !context_.current_project_state.focused_group().open_tabs.empty();

@@ -115,7 +115,9 @@ from the text above:
 - `RemoteHostSession`: ControlMaster with BatchMode, NeedsAuth in a terminal tab,
   attach-or-install over the same master, reconnect with backoff;
   `workspace/services/RemoteHostService` for `Remote: Open Terminal on Host…`, the
-  status segment and the notification rows. Tested end to end against
+  status segment and the notification rows. (`Remote: Open Terminal on Host…` and
+  its terminal-only host session were removed on 2026-10-27, once a remote
+  project's Terminal > New ran on its host: see § 7.1.) Tested end to end against
   `tests/fixtures/remote/fake-ssh`.
 - Open: `term/scrollback` backfill, two clients on one pty, the perf-harness
   delay scenarios (§ 9) — TD-2026-10-08-325, -326.
@@ -234,8 +236,8 @@ this document's § 7, what a user still missed:
   `remote-forward-port <port> [host]` rides the ControlMaster (`ssh -O forward`),
   survives a new master, and a localhost link clicked in a host terminal forwards
   its port and opens the local end. The status segment counts forwarded ports.
-- **Host picker**: Tab in the host prompts and `remote-terminal`/`remote-open`
-  complete from the hosts in use and `~/.ssh/config` (with `Include`).
+- **Host picker**: Tab in the host prompt and `remote-open` complete from the
+  hosts in use and `~/.ssh/config` (with `Include`).
 - **Freshness fixes**: a tracked file under a directory the watch prunes (`build/`)
   is polled; opening a stale or absent file pulls it first (§ 7.3), a large one
   streamed beside the backfill instead of behind it.
@@ -1899,16 +1901,23 @@ plugin-owned or render-TU product logic.
 | --- | --- |
 | Welcome (no project) | An **Open Remote Folder…** action beside Open Folder… (`WelcomeHitRegion::Kind::OpenRemote`). Remote entries in the recents list show a host badge (`host:/path`, never the mirror path). |
 | File menu | **Open Remote Folder…** under Open Folder…, `ActionId::ProjectOpenRemote`. |
-| Command palette | `Remote: Open Folder…`, `Remote: Open Terminal on Host…` (Phase 2a: a host's terminals with no project, § 8), `Remote: Reconnect`, `Remote: Disconnect`, `Remote: Resync (full manifest)`, `Remote: Show Status`, `Remote: Open Terminal on Host`, `Remote: Open Local Terminal`, `Remote: Reinstall Server on Host`, `Remote: Stop Host Server`, `Remote: Remove Mirror`. Availability follows connection state (`WorkspaceActionAvailability`). |
+| Command palette | `Remote: Open Folder…`, `Remote: Reconnect`, `Remote: Disconnect`, `Remote: Resync (full manifest)`, `Remote: Show Status`, `Remote: Open Local Terminal`, `Remote: Reinstall Server on Host`, `Remote: Stop Host Server`, `Remote: Remove Mirror`. Availability follows connection state (`WorkspaceActionAvailability`). |
 | Command line / control channel | `project-open ssh://[user@]host/abs/path` and `project-open-remote [user@]host:/abs/path`. The `ssh://` form is canonical; the scp form is accepted when the string is not an existing local path. This is also what the headless tests drive. |
 | CLI | `microide ssh://host/path` opens straight into a remote project. |
 
-The entry points as built (2026-10-16): the command palette's `Remote:` verbs, the
+The entry points as built (2026-10-27): the command palette's `Remote:` verbs, the
 File menu (`Remote: Open Folder on Host…` under Open Folder…), the Terminal menu
-(`Remote: Open Terminal on Host…` under New Terminal), the welcome page's second
-start button, and `remote-open` on the command line and control channel. The
-`ssh://` CLI form and `Remote: Resync`, `Reinstall Server`, `Open Local Terminal`
-are not built; `Remote: Remove Mirror` is (`remote-remove-mirror`). The durable
+(`New Local Terminal`, `Remote: Open Local Terminal` / `remote-local-terminal`,
+under New Terminal: a shell on this machine, prefixed `local · `, offered only in a
+remote project), the welcome page's second start button, and `remote-open` on the
+command line and control channel. `Remote: Open Terminal on Host…` (Phase 2a's
+host terminals with no project) was removed on 2026-10-27
+(`openspec/changes/remove-host-terminal-command`): a remote project's Terminal >
+New already runs on its host, a shell on a host with no project is `ssh` in a
+local terminal, and the command owned a second, terminal-only host session in
+`RemoteHostService` that duplicated the project session's state machine. The
+server still accepts a terminal-only hello. The `ssh://` CLI form and
+`Remote: Resync`, `Reinstall Server` are not built; `Remote: Remove Mirror` is (`remote-remove-mirror`). The durable
 contract is `openspec/specs/remote-project-mirror` (the change is archived as
 `openspec/changes/archive/2026-10-25-remote-project-mirror`).
 
@@ -2473,7 +2482,8 @@ Each phase is independently useful and independently measurable.
   yet**: this phase opens no remote *project*. It ships as a user-visible feature
   on its own — *a host's terminals in microide, that survive a dropped link and
   reattach, with predicted echo* — reached through `Remote: Open Terminal on
-  Host…`, and that is why it is first: it is where every protocol-shape decision
+  Host…` (removed 2026-10-27, § 7.1: a remote project's terminals took its
+  place), and that is why it is first: it is where every protocol-shape decision
   lives, it is the smaller of the two high-risk components (§ 8.1), and it is
   useful to a user who syncs with git and wants nothing else. Its exit gate
   includes the § 10.1 terminal and `proc/spawn` parity rows against the real

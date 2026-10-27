@@ -241,7 +241,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   });
   static const auto kTerminalItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::Term, {}, "Ctrl+Shift+`"),
-      MenuItem(ActionId::RemoteOpenTerminal),
+      MenuItem(ActionId::RemoteOpenLocalTerminal, "New Local Terminal"),
       MenuItem(ActionId::TerminalSplit, {}, "Ctrl+Shift+\\"),
       MenuItem(ActionId::TerminalRelaunch),
       MenuSeparator(),

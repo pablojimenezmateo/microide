@@ -274,11 +274,9 @@ void WorkspaceActionContext::OpenCommandArgumentsPrompt(std::string_view command
   }
 }
 
-void WorkspaceActionContext::OpenRemoteHostPrompt(bool folder) {
+void WorkspaceActionContext::OpenRemoteHostPrompt() {
   if (operations_.open_prompt_surface) {
-    operations_.open_prompt_surface(folder ? PromptSurfaceState::Action::RemoteFolder
-                                           : PromptSurfaceState::Action::RemoteHost,
-                                    PromptSurfaceState::Kind::TextInput,
+    operations_.open_prompt_surface(PromptSurfaceState::Action::RemoteFolder, PromptSurfaceState::Kind::TextInput,
                                     std::filesystem::path{}, std::string{});
   }
 }

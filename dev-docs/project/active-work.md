@@ -301,6 +301,16 @@ new terminal behaviour lands there.
 
 ### 7. Remote-projects groundwork
 
+> **`Remote: Open Terminal on Host…` removed (2026-10-27).** A remote project's
+> Terminal > New runs on its host; the terminal-only host session behind the
+> command (`RemoteHostService::Host`, its own status machine and auth path) is
+> gone, so every host verb resolves a project's session. `Remote: Open Local
+> Terminal` (Terminal > New Local Terminal) gives a shell on this machine from a
+> remote-only window. Fixed on the way: `remote.term_credit_bytes` and
+> `remote.scrollback_prefetch_lines` never reached a remote project's terminals,
+> and a pane with its own local launcher skipped `terminal.shell`. See
+> `openspec/changes/remove-host-terminal-command`.
+>
 > **Verified on a real host (2026-10-16).** `tools/qa/remote.py` drives the shipped
 > binary headlessly against `worky` through the control channel -- open and first
 > sync, save, host edits under clean and dirty tabs, offline save and replay, a

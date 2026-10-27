@@ -22,7 +22,8 @@ What it checks, each as the user would see it, with the measured latencies:
                                 on reconnect
   F  link death                 the ssh master is killed; a save still lands after the
                                 automatic reconnect
-  G  host terminal              `hostname` prints the host's own name
+  G  terminals                  Terminal > New prints the host's `hostname`; Remote:
+                                Open Local Terminal runs a shell on this machine
   H  clangd on the host         go to definition in a self-contained file
   I  host branch switch         no crash; the tree follows
   J  agent churn                saves land while N host agents rewrite the tree; the
@@ -303,14 +304,25 @@ class Suite:
             app.check("F")
 
         if self.runs("G"):
-            # The host's own name, not the ssh alias (they differ for a config alias).
+            # Terminal > New in the remote project runs on its host. The host's own
+            # name, not the ssh alias (they differ for a config alias).
             hostname = host.ssh("hostname").strip()
-            reply = app.send("remote-terminal", host.name); app.settle(2.5)
+            reply = app.send("term"); app.settle(2.5)
             app.send("type", "echo QA-TERM-$(hostname)"); app.send("key", "enter")
             out, dt = wait_for(lambda: (lambda o: o if f"QA-TERM-{hostname}" in o.get("text", "") else None)(
                 app.query("terminal-output")), 20, 0.5)
             self.record("G.host-terminal", out is not None, f"{reply} {dt:.2f}s")
-            app.screenshot("G-terminal"); app.check("G")
+            app.screenshot("G-terminal")
+            # Remote: Open Local Terminal runs HERE. The loopback host is this machine,
+            # so the hostname cannot tell them apart: the app's isolated config
+            # directory can -- only a shell started by the app inherits it.
+            marker = app.env["XDG_CONFIG_HOME"]
+            reply = app.send("remote-local-terminal"); app.settle(1.5)
+            app.send("type", "echo QA-LOCAL-$XDG_CONFIG_HOME"); app.send("key", "enter")
+            out, dt = wait_for(lambda: (lambda o: o if f"QA-LOCAL-{marker}" in o.get("text", "") else None)(
+                app.query("terminal-output")), 20, 0.5)
+            self.record("G.local-terminal", bool(reply.get("ok")) and out is not None, f"{reply} {dt:.2f}s")
+            app.screenshot("G-local-terminal"); app.check("G")
 
         if self.runs("H"):
             # The bundled cpp-lsp plugin registers clangd; the isolated config starts empty.

@@ -479,29 +479,25 @@ void TestWorkspaceSharedCommandCompletionHelpers() {
   Expect(JoinCommandArguments({"cmd", "left", "right value"}, 1) == "left right value",
          "joined command arguments should preserve argument order");
 
-  // Tab in the host prompts.
+  // Tab in the host prompt.
   using microide::workspace::CompleteRemoteHostText;
   const std::vector<std::string> hosts = {"worky", "work-gpu", "build-box"};
-  Expect(CompleteRemoteHostText("b", false, hosts) == std::optional<std::string>("build-box"),
-         "one match completes");
-  Expect(CompleteRemoteHostText("wor", false, hosts) == std::optional<std::string>("work"),
+  Expect(CompleteRemoteHostText("b", hosts) == std::optional<std::string>("build-box:"),
+         "one match completes, with the ':' its path follows");
+  Expect(CompleteRemoteHostText("wor", hosts) == std::optional<std::string>("work"),
          "several extend to their common prefix");
-  Expect(CompleteRemoteHostText("work", false, hosts) == std::optional<std::string>("worky"),
+  Expect(CompleteRemoteHostText("work", hosts) == std::optional<std::string>("worky"),
          "with nothing left to extend, the first match");
-  Expect(CompleteRemoteHostText("worky", false, hosts) == std::optional<std::string>("work-gpu") &&
-             CompleteRemoteHostText("build-box", false, hosts) == std::optional<std::string>("worky"),
-         "a named host moves on to the next, wrapping");
-  Expect(CompleteRemoteHostText("me@bu", false, hosts) == std::optional<std::string>("me@build-box"),
+  Expect(CompleteRemoteHostText("worky", hosts) == std::optional<std::string>("worky:"),
+         "a named host goes on to the path");
+  Expect(CompleteRemoteHostText("me@bu", hosts) == std::optional<std::string>("me@build-box:"),
          "a user@ prefix is kept");
-  Expect(CompleteRemoteHostText("dev@fa", false, {"dev@fake-host", "nas"}) ==
-             std::optional<std::string>("dev@fake-host"),
+  Expect(CompleteRemoteHostText("dev@fa", {"dev@fake-host", "nas"}) ==
+             std::optional<std::string>("dev@fake-host:"),
          "a host in use carries its own user and matches whole");
-  Expect(CompleteRemoteHostText("bu", true, hosts) == std::optional<std::string>("build-box:") &&
-             CompleteRemoteHostText("worky", true, hosts) == std::optional<std::string>("worky:"),
-         "a folder spec gets the ':' its path follows");
-  Expect(!CompleteRemoteHostText("worky:/s", true, hosts).has_value() &&
-             !CompleteRemoteHostText("zz", false, hosts).has_value() &&
-             !CompleteRemoteHostText("w", false, {}).has_value(),
+  Expect(!CompleteRemoteHostText("worky:/s", hosts).has_value() &&
+             !CompleteRemoteHostText("zz", hosts).has_value() &&
+             !CompleteRemoteHostText("w", {}).has_value(),
          "past the ':', no match, or no hosts: nothing");
   // `term bash -c "echo hi; sleep 1"` is parsed again by the shell: the quoted
   // argument must stay one word, or bash ran `echo` with $0 = `hi;` and printed
