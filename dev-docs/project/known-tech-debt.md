@@ -759,6 +759,14 @@ ignores the unknown notification. Pinned by
 `RemoteTerminal/ADetachThatKeepsTheConnectionReleasesTheTerminal` (fails with the
 notification removed).
 
+Follow-up the same day: the notification opened a race the hardened lane found.
+`Attached` published the handle and only then sent the input typed while the open
+was in flight, so a detach the moment the handle was known queued `term/detach`
+ahead of it and the host dropped the input. The held input is now queued inside
+the lock that publishes the handle.
+`RemoteTerminal/InputTypedBeforeTheOpenSurvivesAnImmediateDetach` (40 terminals,
+detached the instant each is answered: 0 of 40 commands ran before the fix).
+
 Original entry:
 
 `RemoteTerminalChannel::Detach` unregisters the handle and sends nothing: the
