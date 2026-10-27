@@ -313,7 +313,7 @@ new terminal behaviour lands there.
 > when the server restarted). `server/status` lists terminals, and each connect
 > reports the ones nobody holds in one row with Attach / Close. Opted out
 > (`terminal.restore_sessions` off), quit closes them. See
-> `openspec/changes/archive/*-remote-terminal-restore`.
+> `openspec/changes/archive/2026-10-27-remote-terminal-restore`.
 >
 > **`Remote: Open Terminal on Host…` removed (2026-10-27).** A remote project's
 > Terminal > New runs on its host; the terminal-only host session behind the

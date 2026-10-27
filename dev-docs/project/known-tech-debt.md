@@ -451,7 +451,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ### TD-2026-10-27-401 — remote-terminal-restore leftovers: one QA scenario, the detached badge, deep paging in QA.
 
-What `openspec/changes/archive/*-remote-terminal-restore` did not finish:
+What `openspec/changes/archive/2026-10-27-remote-terminal-restore` did not finish:
 
 - **qa-remote T11 is not automated.** "A terminal another client uses is not
   offered" needs two app instances on one project; `tools/qa/remote.py` drives one
