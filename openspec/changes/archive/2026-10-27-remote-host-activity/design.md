@@ -145,6 +145,16 @@ confirm. The item surface gains one Delete key case, routed through a per-mode
 key as today. All through `ActionId`s so the palette, the control channel and
 tests reach them.
 
+*As built:* End on a process is a new `proc/end {handle}` notification rather
+than `proc/signal` then `proc/release`: `proc/release` forgets only an exited
+process, and nothing would send it once a kept, detached process had exited, so
+the server terminates it the way a detach terminates an unkept one and forgets
+it on exit when no client holds it. The terminal rows' Enter goes through
+`remote-attach-terminals`, which now focuses a tab already holding the terminal
+for every caller. The view's subscription follows a visibility flag the shell
+sets after every input event and control command, rather than hooks in each of
+the sidebar's show/hide paths.
+
 *Alternative 1:* an Output channel refreshed with text. Rejected: no rows, no
 actions, and the Output panel is the terminal's neighbour, which the view wants to
 focus. *Alternative 2:* an overlay like Settings. Rejected: a modal surface for

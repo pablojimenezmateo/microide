@@ -13,7 +13,7 @@ Define the per-user `microide-server` daemon: its subcommands, socket, lifetime,
 - **THEN** one server process serves both, and `microide-server status` lists two workspaces
 
 ### Requirement: Subcommands start, stop, status and attach
-The binary SHALL provide `start` (daemonize and stay up), `stop`, `status` (print the socket, workspaces, terminals and processes) and `attach` (connect to the running server, or start one, then relay stdio to it). A server started with `start` SHALL never exit for idleness; one started on demand by `attach` SHALL exit when it has no workspaces and its idle timer expires.
+The binary SHALL provide `start` (daemonize and stay up), `stop`, `status` and `attach` (connect to the running server, or start one, then relay stdio to it). `status` SHALL print, as a readable table by default and as JSON with `--json`, the socket, the server's pid, uptime, memory and CPU share, and each workspace with its attached clients, its terminals (directory, pid, clients, memory, CPU share of the shell and what it runs) and its processes (argv, pid, kept state, memory, CPU share); the table form SHALL take the two samples a CPU share needs itself, and the JSON form SHALL be the plain `server/status` reply. A server started with `start` SHALL never exit for idleness; one started on demand by `attach` SHALL exit when it has no workspaces and its idle timer expires.
 
 #### Scenario: A hand-started server survives a night with no clients
 - **WHEN** a user runs `microide-server start`, connects, and disconnects for longer than the idle timeout
@@ -22,6 +22,10 @@ The binary SHALL provide `start` (daemonize and stay up), `stop`, `status` (prin
 #### Scenario: An on-demand server exits when idle
 - **WHEN** `attach` started the server and every workspace has closed and the idle timeout passes
 - **THEN** the server exits and removes its socket
+
+#### Scenario: status answers "what did I leave running"
+- **WHEN** a user runs `microide-server status` on a host with one workspace holding a terminal running `watch date` and a kept `clangd`
+- **THEN** the table shows that workspace with the terminal's directory, pid and CPU share and the process's argv, kept state and memory, and `--json` prints the same as `server/status` returns
 
 ### Requirement: The socket lives under the user's home and is verified on every bind
 The socket directory SHALL default to `~/.local/state/microide/server/`, created mode 0700, and SHALL be verified on every bind: each component opened without following symlinks, owned by the uid, and mode 0700. A directory that fails verification SHALL be refused with the reason and never adopted. `$XDG_RUNTIME_DIR` SHALL NOT be required; `remote.server_socket_dir` SHALL override the location. The socket path SHALL fit the 108-byte AF_UNIX limit.

@@ -370,6 +370,11 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               list = ComputePluginSidebarListLayout(layout.sidebar, count);
               selected = state.sidebar.plugin.selected_index;
               label = [&items](std::size_t index) { return items[index].label; };
+              // The row as painted: the label, then its detail (the Host view's figures).
+              shown = [&items](std::size_t index) {
+                return items[index].detail.empty() ? items[index].label
+                                                   : items[index].label + "  " + items[index].detail;
+              };
             } else {
               const auto& entries = state.directory_tree.entries();
               count = entries.size();

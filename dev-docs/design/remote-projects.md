@@ -1644,8 +1644,13 @@ a process spawned as a child of ssh does not: it dies with the connection.
   workspaces and was started on demand. **A server started by hand never
   idle-exits.** `microide-server start` daemonizes and stays until
   `microide-server stop`, the user's `Remote: Stop Host Server`, or the box
-  reboots; `microide-server status` prints the socket, the workspaces, their
-  terminals and processes. That is the drop-in: copy, run, connect — and if the
+  reboots; `microide-server status` prints the server (pid, uptime, its own CPU
+  share and memory), then per workspace its clients, files and watch mode, its
+  terminals (directory, shell pid, clients) and its processes (argv, pid, kept
+  and for how long), each with the CPU share and memory of the pid **and
+  everything under it** -- as a table, taking the two samples a CPU share needs a
+  second apart; `--json` prints the plain `server/status` reply instead
+  (remote-host-activity). That is the drop-in: copy, run, connect — and if the
   client is allowed to install (§ 6.6), skip the first two.
 - **The socket is under `$HOME`, and `/run/user/<uid>` is not required.** The
   earlier revision put the socket in `$XDG_RUNTIME_DIR` and refused to start
@@ -1790,8 +1795,28 @@ a process spawned as a child of ssh does not: it dies with the connection.
   clients, exited}`); after each connect the client asks once, after its own
   reattaches, and reports the ones nobody is attached to under that root (a crash
   leaves these) in the § 7.4a row. No idle reaper: a running terminal keeps its
-  workspace open, and the listing -- in that row, in `Remote: Show Status` and in
-  `microide-server status` -- is the answer to orphans.
+  workspace open, and the listing -- in that row, in `Remote: Show Status`'s Host
+  view (§ 7.9a) and in `microide-server status` -- is the answer to orphans.
+- **What the server runs is accounted for, and costs nothing unasked**
+  (remote-host-activity). `server/status` lists processes beside terminals
+  (`{handle, root, argv (8 args x 256 bytes, kept at spawn), pid, cwd, kept,
+  detached_ms?, exited, buffered_bytes}`), each terminal's shell `pid` and line
+  count, and per workspace its live counts, manifest files, hashes held and watch
+  mode. With `{activity: true}` -- and in every `activity/changed` push -- the
+  server row and every terminal and process row also carry `rss_bytes` and
+  `cpu_permille` (thousandths of a core) from ONE walk of `/proc`
+  (`ProcessActivity`): a row sums its pid's subtree (a compiler under `make` under
+  a shell), and `utime+stime+cutime+cstime` so a child that came and went between
+  samples is counted in its parent; CPU is the difference against the previous
+  sample of the same pid and start time, `-1` on a pid's first. `activity/subscribe`
+  answers with that status and starts a 2 s sampler beside the port sampler for
+  as long as any connection is subscribed; `activity/unsubscribe` or the
+  connection closing drops it, and the last one stops the sampler -- an
+  unsubscribed, unasked server reads `/proc` not at all. `proc/end {handle}`
+  terminates a process whoever spawned it (SIGTERM to its group, SIGKILL after the
+  grace) and forgets it once it has exited with no client holding it: a kept,
+  detached process would otherwise wait for a release nobody sends. The wire stays
+  version 3; every field is additive and decoded as untrusted.
 - **Two clients may attach at once**, which is what "open it from the other
   machine" means. Both get the same events; terminal handles are shared, their
   output fans out to both, and the pty takes the smaller of the two sizes
@@ -2165,6 +2190,35 @@ It is deliberately a plain list and not a second git UI: with agents committing,
 the git sidebar already answers the question better, and this view exists for the
 window between commits. It has a **Clear** action and shows the count that the
 aggregated notification (§ 7.6) and the status-bar tooltip report.
+
+### 7.9a The Host view
+
+The answer to "did I leave anything running there?" from the client, in
+microide's terms rather than `htop`'s (remote-host-activity). `Remote: Show
+Status` (the Remote menu's second item; `remote-status [host]`, asking which host
+when there are several) opens **Host**, a contextual sidebar view on the same
+item surface as Changed on Host: four collapsible groups -- **Server**,
+**Workspaces**, **Terminals**, **Processes** -- with their totals, and a row per
+item with what it costs (`3.2% · 41 MB · 2 clients`, `kept · 12 min · 0.0% ·
+180 MB`; `…` for a figure not reported yet or by an older server). The rows are
+built once per push in `RemoteHostService` (`BuildHostActivityRows`), never at
+paint time.
+
+While the view is on screen the client is subscribed to the host's activity
+(`activity/subscribe`), and only then: the shell tells the service after every
+input event and control command whether the view is shown, a project switch or
+a hide unsubscribes, and a reconnect resubscribes. Pushes land on the I/O thread
+and reach the UI through the mailbox, latest only. An older server's
+`kErrorUnknownMethod` leaves one plain status and a static view, not an error.
+
+**Enter** on a terminal row focuses the tab holding it, else attaches it in a new
+one (`remote-attach-terminals`, which now focuses a held terminal for every
+caller); on the Server row it stops the server after a confirm. **Delete** ends a
+terminal (`remote-close-terminals`) or a process (`remote-end-process <host>
+<handle>`, `proc/end`), confirmed while it runs; a terminal open in another
+window is refused, saying so, since `term/close` would only detach this one.
+The control channel has no sidebar: `remote-status` answers with
+`StatusText()`, which carries each host's totals from the last status seen.
 
 ### 7.10 Failure messages
 

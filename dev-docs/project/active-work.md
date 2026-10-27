@@ -315,6 +315,16 @@ new terminal behaviour lands there.
 > (`terminal.restore_sessions` off), quit closes them. See
 > `openspec/changes/archive/2026-10-27-remote-terminal-restore`.
 >
+> **What a host runs, from the client (2026-10-27, remote-host-activity).**
+> `Remote: Show Status` opens a Host sidebar view -- Server, Workspaces,
+> Terminals, Processes, each row with its CPU share and memory (the pid and
+> everything under it) -- pushed by the host every 2 s while the view is shown and
+> never otherwise; Enter focuses or attaches a terminal, Delete ends a terminal or
+> a process (`remote-end-process`, `proc/end`) after a confirm. `server/status`
+> lists processes and per-workspace counts (no hard-coded zero left) and takes
+> `{activity: true}`; `microide-server status` prints a table (`--json` the
+> reply). See `openspec/changes/archive/2026-10-27-remote-host-activity`.
+>
 > **A Remote menu (2026-10-27, remote-menu).** Every remote verb that needs no
 > typed argument is in a top-level Remote menu between Git and Terminal, labelled
 > without the palette's `Remote:` prefix and dimmed (never hidden) while there is

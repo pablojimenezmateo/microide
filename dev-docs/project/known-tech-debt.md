@@ -449,6 +449,34 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-27-407 — remote-host-activity leftovers: the hand check on worky, the walk's cost on a busy host, a terminal row's command, `status` and the idle timer.
+
+What `openspec/changes/archive/2026-10-27-remote-host-activity` did not finish:
+
+- **Task 5.2, the hand check on worky** (`microide-server status` there, then the
+  Host view with a build running), was not done in the session that built it: no
+  access to that host. The loopback `qa-remote` group V covers the same path
+  (menu → view, CPU rising under `yes`, Delete + confirm ending it, no subscriber
+  once hidden), over both the plain and the 60 ms link.
+- **One `/proc` walk per tick reads every process on the box**, not only
+  microide's. Measured nowhere yet on a host with thousands of processes; the
+  design's fallback is to walk only the subtrees from `/proc/<pid>/task/*/children`.
+  Worth doing only if a profile of the sampler on such a host says so.
+- **A terminal row names its directory, not what runs in it** (`#3 · src`, not
+  `#3 · watch date`). The foreground process group's `comm` (`/proc/<pid>/stat`
+  field 8, tpgid) would say what the user is looking for; it is one more field of
+  the read the walk already does.
+- **`microide-server status` resets an on-demand server's idle countdown.** The
+  status connection is a connection, and `ReapClosed` restarts `idle_since_`
+  whenever any connection exists, so a script polling `status` keeps an
+  on-demand server alive for good. Pre-existing (any rootless client does it);
+  the fix is to let only connections that opened a workspace (or hold a terminal
+  or process) count as activity, and it changes when tests' raw clients let a
+  server go, so it wants its own change.
+- **The view shows one host.** With several hosts open, `remote-status <host>`
+  (or the menu's host pick) switches it; there is no per-host grouping, and the
+  collapsed groups are not persisted with the session.
+
 ### TD-2026-10-27-406 — `RemoteTerminal/TwoClientsShareAHostTerminalAtTheSmallerSize` once saw a blank screen for 15 s.
 
 Under the ASan lane, while the GUI QA lane and the TSan build ran beside it

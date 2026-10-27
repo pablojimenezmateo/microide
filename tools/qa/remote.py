@@ -55,6 +55,11 @@ What it checks, each as the user would see it, with the measured latencies:
      T4 the host server restarted between quit and relaunch: fresh shells, and
         the row says why; T9 a `+` while connecting is a pending tab at once
      T10 3000 lines survive a quit: the tail is there, nothing duplicated
+  V  the Host view              (remote-host-activity) Remote > Show Status opens it;
+                                the project's terminal is listed (with its pid on
+                                the host); `yes` in it raises its CPU figure; Delete
+                                + confirm ends it (pgrep empty, row gone); hidden,
+                                the host keeps no activity subscriber
 
 Without MQA_REMOTE_HOST the suite prints why it did not run and exits 0: it is
 on-demand against a real host. `tools/qa/local-sshd.sh` stands up a loopback-only
@@ -366,9 +371,11 @@ class Suite:
         self.record("T6.orphans-offered", row is not None and "2 running with no tab" in row["message"],
                     f"{dt:.1f}s {row['message'] if row else [n['message'] for n in self.notifs()]}")
         status = app.send("remote-status")
-        shown = " ".join(n["message"] for n in self.notifs())
+        # Show Status opens the Host view; its text answer is the control reply's.
+        shown = status.get("feedback", "")
         self.record("T12.show-status-lists-them", bool(status.get("ok")) and "with no tab" in shown,
                     f"{shown[-300:]!r}")
+        app.send("sidebar-show", "tree")
         orphans = sorted(r["handle"] for r in self.host_terminals() if r.get("clients") == 0)
         if len(orphans) == 2:
             tabs = len(app.query("terminals"))
@@ -439,6 +446,73 @@ class Suite:
                     f"{started}")
         self.close_all_terminals()
         app.check("T")
+
+    # ---- group V: the Host view (remote-host-activity) -------------------
+    def host_status(self) -> dict:
+        out = self.host.ssh('"$HOME/.local/share/microide/server/microide-server" status --json')
+        try:
+            return json.loads(out)
+        except ValueError:
+            return {}
+
+    def host_rows(self) -> list[dict]:
+        return self.app.elements("row", prefix="host/")
+
+    def run_host_view(self) -> None:
+        app, tok = self.app, self.token
+        marker = f"QA-V-{tok}"
+        # Through the menu, as a user gets there: Remote > Show Status.
+        app.click_named("menu:Remote"); app.settle(0.3)
+        app.key("Down"); app.settle(0.1); app.key("Return"); app.settle(0.5)
+        view = app.ui()["sidebar"]
+        self.record("V.menu-opens-view", view.get("view") == "host" and view.get("visible"), f"sidebar={view}")
+        self.close_all_terminals()
+        self.new_terminal(f"echo {marker}-ready")
+        panes, dt = wait_for(lambda: (lambda ps: ps if ps and ps[0]["hostHandle"] else None)(self.panes()), 30, 0.3)
+        handle = panes[0]["hostHandle"] if panes else None
+        app.send("remote-status")  # the view again: the new terminal took the keyboard
+        name = f"host/#{handle}"
+        row, dt = wait_for(lambda: next((r for r in self.host_rows() if r["name"].startswith(name)), None), 10, 0.3)
+        listed = next((t for t in self.host_status().get("terminals", []) if t.get("handle") == handle), {})
+        self.record("V.terminal-listed", row is not None and int(listed.get("pid", 0)) > 0,
+                    f"{dt:.1f}s row={row} host={listed}")
+        app.send("focus", "panel"); app.settle(0.2)
+        app.send("type", f"yes {marker} > /dev/null"); app.send("key", "enter")
+        app.send("remote-status")
+
+        def busy():
+            r = next((r for r in self.host_rows() if r["name"].startswith(name)), None)
+            label = (r or {}).get("label", "")
+            words = [w for w in label.replace("\u00b7", " ").split() if w.endswith("%")]
+            try:
+                return r if words and float(words[0][:-1]) > 10 else None
+            except ValueError:
+                return None
+        row, dt = wait_for(busy, 15, 0.5)
+        self.record("V.cpu-rises", row is not None, f"{dt:.1f}s row={row}")
+        app.screenshot("V-busy")
+        # Delete on it: walk the selection to the row, Delete, confirm.
+        app.send("focus", "sidebar"); app.settle(0.2)
+        for _ in range(20):
+            if any(r.get("selected") and r["name"].startswith(name) for r in self.host_rows()):
+                break
+            app.key("Down"); app.settle(0.1)
+        app.key("Delete"); app.settle(0.3)
+        prompt = app.ui().get("prompt") or {}
+        app.check("V.confirm")
+        app.key("Return"); app.settle(0.5)
+        gone, dt = wait_for(lambda: not self.host_pgrep(marker), 15, 0.5)
+        row_gone, _ = wait_for(lambda: not any(r["name"].startswith(name) for r in self.host_rows()), 10, 0.3)
+        self.record("V.delete-ends-it", bool(gone) and bool(row_gone),
+                    f"{dt:.1f}s prompt={prompt} pgrep={self.host_pgrep(marker)!r}")
+        # Hidden: no subscriber on the host, for longer than the push interval.
+        app.send("sidebar-show", "tree"); app.settle(0.3)
+        quiet, dt = wait_for(lambda: self.host_status().get("server", {}).get("activity_subscribers") == 0, 10, 0.5)
+        time.sleep(5)
+        still = self.host_status().get("server", {}).get("activity_subscribers")
+        self.record("V.hidden-unsubscribes", bool(quiet) and still == 0, f"{dt:.1f}s then {still}")
+        self.close_all_terminals()
+        app.check("V")
 
     # ---- scenarios -------------------------------------------------------
     def run_remote_menu(self) -> None:
@@ -742,6 +816,8 @@ class Suite:
             app.check("N")
         if self.runs("T"):
             self.run_terminal_restore()
+        if self.runs("V"):
+            self.run_host_view()
         if self.runs("P"):
             # The remote commands no other scenario runs, each with what it answers
             # and, where one is cheap, a receipt: Remove Mirror stays out (L relaunches
