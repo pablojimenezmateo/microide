@@ -456,7 +456,7 @@ class Suite:
             return {}
 
     def host_rows(self) -> list[dict]:
-        return self.app.elements("row", prefix="host/")
+        return self.app.elements("row", prefix="row:host/")
 
     def run_host_view(self) -> None:
         app, tok = self.app, self.token
@@ -471,7 +471,7 @@ class Suite:
         panes, dt = wait_for(lambda: (lambda ps: ps if ps and ps[0]["hostHandle"] else None)(self.panes()), 30, 0.3)
         handle = panes[0]["hostHandle"] if panes else None
         app.send("remote-status")  # the view again: the new terminal took the keyboard
-        name = f"host/#{handle}"
+        name = f"row:host/#{handle}"
         row, dt = wait_for(lambda: next((r for r in self.host_rows() if r["name"].startswith(name)), None), 10, 0.3)
         listed = next((t for t in self.host_status().get("terminals", []) if t.get("handle") == handle), {})
         self.record("V.terminal-listed", row is not None and int(listed.get("pid", 0)) > 0,

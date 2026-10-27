@@ -449,6 +449,19 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-27-408 — the clang lane once read a header full of NUL bytes while six lanes built at once.
+
+`tools/run-checks.sh clang-build`, run beside tests, ASan, UBSan, TSan and
+hardened (2026-10-27), failed every TU that includes
+`src/workspace/shell/WorkspaceShell.h` with `null character ignored
+[-Wnull-character]` from line 18 on. The file on disk had no NUL byte and no
+writer, and the same lane passed unchanged on the rerun right after. A read of a
+source file that comes back zero-filled points below the build (ccache's or the
+PCH's shared state under concurrent lanes, or the filesystem under memory
+pressure), not at the tree. Not reproduced; next time keep the failing object's
+`.d` file and the PCH beside the log, and check `ccache -s` for errors, before
+deciding.
+
 ### TD-2026-10-27-407 — remote-host-activity leftovers: the hand check on worky, the walk's cost on a busy host, a terminal row's command, `status` and the idle timer.
 
 What `openspec/changes/archive/2026-10-27-remote-host-activity` did not finish:
