@@ -405,7 +405,7 @@ void RemoteHostService::PublishHostChanges(const std::filesystem::path& tree, Pr
       .tone = NotificationService::Tone::Info,
       .key = "remote.changes." + tree.string(),
       .message = std::to_string(count) + (count == 1 ? " file" : " files") + " changed on " +
-                 entry.project->record().host,
+                 entry.host,
       .actions = {NotificationAction{.label = "Show", .id = ActionId::RemoteShowHostChanges}},
   });
 }
@@ -637,7 +637,7 @@ bool RemoteHostService::OpenHostChange(const std::filesystem::path& root, const 
     }
     return true;
   }
-  const std::string host = it->second.project->record().host;
+  const std::string host = it->second.host;
   engine.FetchPreviousCopy(relative, [this, current, deleted, host](
                                          std::optional<std::filesystem::path> copy, std::string error) {
     mailbox_.Post([this, current, deleted, host, copy = std::move(copy), error = std::move(error)]() {
@@ -699,7 +699,7 @@ void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, P
     }
   }
   entry.conflict_rows.clear();
-  const std::string host = entry.project->record().host;
+  const std::string host = entry.host;
   for (std::size_t i = 0; i < conflicts.size() && i < kMaxRows; ++i) {
     const std::string absolute = (tree / conflicts[i]).string();
     entry.conflict_rows.push_back(conflicts[i]);
@@ -812,7 +812,7 @@ bool RemoteHostService::OpenWhenFetched(const std::filesystem::path& path,
         operations_.notify(NotificationService::Request{
             .tone = NotificationService::Tone::Info,
             .key = key,
-            .message = "Fetching " + relative + " from " + entry.project->record().host + "…",
+            .message = "Fetching " + relative + " from " + entry.host + "…",
             .sticky = true});
       }
       entry.project->engine().Prioritize(
@@ -833,7 +833,7 @@ bool RemoteHostService::OpenWhenFetched(const std::filesystem::path& path,
     if (!host_path.has_value()) {
       continue;
     }
-    const std::string host = entry.project->record().host;
+    const std::string host = entry.host;
     if (operations_.notify) {
       operations_.notify(NotificationService::Request{
           .tone = NotificationService::Tone::Info,
@@ -865,7 +865,7 @@ bool RemoteHostService::CompareConflict(const std::filesystem::path& path) {
     return false;
   }
   const std::filesystem::path mirror_file = path.lexically_normal();
-  const std::string host = entry->project->record().host;
+  const std::string host = entry->host;
   entry->project->engine().FetchHostCopy(
       relative, [this, mirror_file, host](std::optional<std::filesystem::path> copy, std::string error) {
         mailbox_.Post([this, mirror_file, host, copy = std::move(copy), error = std::move(error)]() {
@@ -974,7 +974,7 @@ bool RemoteHostService::Reconnect(std::string_view host) {
   // it. A closed one stays down: its tab is gone, and reopening it connects.
   for (auto& [tree, project] : projects_) {
     (void)tree;
-    if (!project.closed && project.project->record().host == host) {
+    if (!project.closed && project.host == host) {
       project.auth_terminal_opened = false;
       project.project->session().Connect();
       found = true;
@@ -988,7 +988,7 @@ void RemoteHostService::Disconnect(std::string_view host) {
   // connection.
   for (auto& [tree, project] : projects_) {
     (void)tree;
-    if (!project.closed && (host.empty() || project.project->record().host == host)) {
+    if (!project.closed && (host.empty() || project.host == host)) {
       project.project->session().Disconnect();
     }
   }
@@ -1127,7 +1127,7 @@ std::vector<std::string> RemoteHostService::KnownHosts() const {
   };
   for (const auto& [tree, entry] : projects_) {
     (void)tree;
-    add(entry.project->record().host);
+    add(entry.host);
   }
   if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0') {
     const std::filesystem::path ssh = std::filesystem::path(home) / ".ssh";
@@ -1192,7 +1192,7 @@ bool RemoteHostService::OpenHostLocalUrl(const platform::ProcessLauncher& launch
   for (const auto& [tree, entry] : projects_) {
     (void)tree;
     if (entry.project->launcher().get() == &launcher) {
-      host = entry.project->record().host;
+      host = entry.host;
     }
   }
   if (host.empty()) {
@@ -1428,7 +1428,7 @@ std::string RemoteHostService::PendingTerminalLine(const std::filesystem::path& 
   if (it == projects_.end()) {
     return "[waiting for the host connection\xe2\x80\xa6]";
   }
-  const std::string host = it->second.project->record().host;
+  const std::string host = it->second.host;
   const remote::RemoteHostSession::Status& status = it->second.status;
   // Typed keys are dropped, not queued: a shell that turns out to be another one
   // (a reattach that fell back) must not run them.
@@ -1551,7 +1551,7 @@ void RemoteHostService::OnHostTerminals(const std::filesystem::path& tree,
 bool RemoteHostService::AttachHostTerminals(const std::filesystem::path& active_root, std::string_view host,
                                             const std::vector<std::uint64_t>& handles, std::string* error) {
   const auto it = projects_.find(active_root);
-  if (it == projects_.end() || it->second.closed || it->second.project->record().host != host) {
+  if (it == projects_.end() || it->second.closed || it->second.host != host) {
     *error = "Switch to a project on " + std::string(host) + " to attach its terminals";
     return false;
   }
@@ -1588,7 +1588,7 @@ bool RemoteHostService::CloseHostTerminals(std::string_view host, const std::vec
 
 void RemoteHostService::DropUnclaimed(std::string_view host, const std::vector<std::uint64_t>& handles) {
   for (auto& [tree, entry] : projects_) {
-    if (entry.project->record().host != host) {
+    if (entry.host != host) {
       continue;
     }
     const std::size_t before = entry.unclaimed_terminals.size();
