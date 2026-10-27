@@ -194,6 +194,7 @@ enum class WorkspaceSessionTag : std::uint16_t {
   ProjectRoot = 2,  // legacy: repeated, one path per project (dual-written)
   ActiveProjectIndex = 3,
   Project = 4,      // repeated, one nested ProjectIdTag record per project
+  HostViewCollapsed = 5,  // repeated string: a collapsed Host view group's row id
 };
 
 // A project::ProjectId. Kind decides which of the rest are present.

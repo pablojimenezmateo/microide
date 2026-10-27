@@ -275,11 +275,76 @@ void TestHostRowsFromAnOlderServer() {
          "before any status: the connection's own row");
 }
 
+// Two hosts open (TD-2026-10-27-407): the view lists both, each under its own
+// group, rows prefixed with their host; Delete on one host's row acts on that
+// host; a collapsed host group stays collapsed through a save and a restore of
+// the workspace session.
+void TestHostViewListsEveryOpenHost() {
+  TemporaryDirectory homes;
+  const ScopedEnvVar state("XDG_STATE_HOME", (homes.path() / "state").string());
+  const ScopedEnvVar config("XDG_CONFIG_HOME", (homes.path() / "config").string());
+  FakeSshHost host;
+  WriteFile(host.home / "src" / "one" / "a.txt", "a\n");
+  WriteFile(host.home / "src" / "two" / "b.txt", "b\n");
+  const std::string first = "dev@fake-view-one-" + std::to_string(::getpid());
+  const std::string second = "dev@fake-view-two-" + std::to_string(::getpid());
+  std::vector<std::string> collapsed;
+  {
+    WorkspaceShell shell;
+    PointAtFakeHost(shell, host);
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(
+               shell, "remote-open " + first + ":" + (host.home / "src" / "one").string()),
+           "a project on the first host");
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(
+               shell, "remote-open " + second + ":" + (host.home / "src" / "two").string()),
+           "one on the second");
+    const auto shown = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "remote-status " + first);
+    Expect(shown.ok, "Show Status runs: " + shown.error);
+    const std::string first_group = "@" + first;
+    const std::string second_group = "@" + second;
+    Expect(PumpUntil(shell,
+                     [&] {
+                       const Item* a = RowWithId(shell, first_group + " server");
+                       const Item* b = RowWithId(shell, second_group + " server");
+                       return RowWithId(shell, first_group) != nullptr && RowWithId(shell, second_group) != nullptr &&
+                              a != nullptr && b != nullptr && a->detail.find("pid ") != std::string::npos &&
+                              b->detail.find("pid ") != std::string::npos;
+                     }),
+           "both hosts, each a group with its own server row:" + Rows(shell));
+    Expect(RowWithId(shell, first_group)->depth == 0 && RowWithId(shell, first_group + " group:server")->depth == 1 &&
+               RowWithId(shell, first_group + " server")->depth == 2,
+           "one level down under the host" + Rows(shell));
+    Expect(RowWithId(shell, "server") == nullptr, "no unprefixed rows beside other hosts");
+    auto& hosts = WorkspaceShellTestAccess::RemoteHosts(shell);
+    const auto stop = hosts.HostRowOpenCommand(second_group + " server");
+    Expect(stop.has_value() && stop->command_line.find(second) != std::string::npos &&
+               stop->command_line.find(first) == std::string::npos,
+           "a row's command names its own host: " + (stop.has_value() ? stop->command_line : std::string()));
+
+    Expect(hosts.ToggleHostGroup(second_group), "the second host's group collapses");
+    Expect(RowWithId(shell, second_group + " server") == nullptr && RowWithId(shell, second_group) != nullptr &&
+               RowWithId(shell, second_group)->collapsed,
+           "its rows go, its group stays:" + Rows(shell));
+    collapsed = hosts.CollapsedHostGroups();
+    Expect(collapsed == std::vector<std::string>{second_group}, "and it is what the session keeps");
+    WorkspaceShellTestAccess::SaveWorkspaceSession(shell);
+    WorkspaceShellTestAccess::FlushPendingStateWrites(shell);
+  }
+  {
+    WorkspaceShell shell;
+    PointAtFakeHost(shell, host);
+    (void)WorkspaceShellTestAccess::RestoreWorkspaceSession(shell);
+    Expect(WorkspaceShellTestAccess::RemoteHosts(shell).CollapsedHostGroups() == collapsed,
+           "a restored session collapses the same group");
+  }
+}
+
 }  // namespace
 
 void RegisterRemoteHostViewTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostView/ShowsAndEndsWhatTheHostRuns", TestHostViewShowsAndEndsWhatTheHostRuns);
   AddTest(tests, "RemoteHostView/RowsFromAnOlderServer", TestHostRowsFromAnOlderServer);
+  AddTest(tests, "RemoteHostView/ListsEveryOpenHost", TestHostViewListsEveryOpenHost);
 }
 
 }  // namespace microide::tests

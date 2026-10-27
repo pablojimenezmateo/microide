@@ -475,7 +475,31 @@ pressure), not at the tree. Not reproduced; next time keep the failing object's
 `.d` file and the PCH beside the log, and check `ccache -s` for errors, before
 deciding.
 
-### TD-2026-10-27-407 — remote-host-activity leftovers: the hand check on worky, the walk's cost on a busy host, a terminal row's command, `status` and the idle timer.
+### TD-2026-10-27-407 — remote-host-activity leftovers: the hand check on worky, the walk's cost on a busy host, a terminal row's command, `status` and the idle timer. [PARTLY RESOLVED 2026-10-27 — open: the hand check on worky only]
+
+Done (2026-10-27):
+- **The walk**: `ProcessActivity::Sample` reads only the reported trees, down
+  `/proc/<pid>/task/*/children` (`ReadTrees`), and falls back to the full walk on a
+  kernel without those files. 0.78 ms -> 0.007 ms a sample on a 431-process box.
+  `RemoteHostActivity/SampleSeesARealChildTree` checks the tree read against a
+  full walk's.
+- **A terminal row's command**: `ProcessActivity::ForegroundCommand` (the shell's
+  `tpgid`, that group's `comm`) in `server/status` as `command`; the Host view's
+  row names it (`#3 · sleep`), the text table adds `(sleep)`.
+  `RemoteHostActivity/StatusListsTerminalsAndProcessesAcrossRoots`.
+- **`status` and the idle timer**: a connection restarts the countdown only once
+  it dispatches something other than hello / `server/status` / `server/log`
+  (`RemotePeer::OnDispatch`, `Connection::active`); an open one still holds the
+  exit off, so a status reply is never cut. `RemoteServer/PollingStatusDoesNotKeepAnOnDemandServerAlive`
+  (polls `status --json` every 100 ms against a 400 ms timeout; fails on the old rule).
+- **Several hosts**: the view lists every open host, each under an `@<host>` group
+  with prefixed row ids, each subscribed while shown; collapsed groups persist with
+  the workspace session. `RemoteHostView/ListsEveryOpenHost`.
+
+Open: **the hand check on worky** (task 5.2) needs that host; nothing in this
+environment reaches it. The loopback `qa-remote` group V covers the path.
+
+Original entry:
 
 What `openspec/changes/archive/2026-10-27-remote-host-activity` did not finish:
 

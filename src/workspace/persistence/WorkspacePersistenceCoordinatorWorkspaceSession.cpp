@@ -28,6 +28,9 @@ bool PersistenceCoordinator::RestoreWorkspaceSession() {
   context_.project_catalog.entries.clear();
   context_.project_catalog.active_index = 0;
   context_.project_catalog.tab_scroll_index = 0;
+  if (operations_.restore_host_view_collapsed) {
+    operations_.restore_host_view_collapsed(persisted_session.host_view_collapsed);
+  }
 
   // The identity records when the file has them; a file written before them names
   // its projects by path alone, and each is named here as a typed path would be.
@@ -135,6 +138,9 @@ void PersistenceCoordinator::SaveWorkspaceSession() const {
     persisted_session.project_roots.push_back(project_root.lexically_normal());
   }
   persisted_session.active_project_index = active_filtered_index;
+  if (operations_.host_view_collapsed) {
+    persisted_session.host_view_collapsed = operations_.host_view_collapsed();
+  }
   operations_.persistence_service->SaveWorkspaceSession(session_path, persisted_session);
 }
 

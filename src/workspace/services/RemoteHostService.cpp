@@ -247,7 +247,7 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
   const bool state_changed = status.state != entry.status.state || status.message != entry.status.message ||
                              status.error != entry.status.error;
   entry.status = status;
-  if (state_changed && entry.host == host_view_.host) {
+  if (state_changed && host_view_.visible) {
     // The Host view follows its connection: resubscribe once it is back (a new
     // connection, a new subscription), and its Server row says the state.
     UpdateActivitySubscription();
@@ -972,8 +972,9 @@ void RemoteHostService::ProjectClosed(const std::filesystem::path& root) {
   // (its terminals start and are summed up), even one the close never got to end.
   it->second.status = remote::RemoteHostSession::Status{};
   it->second.unclaimed_terminals.clear();
-  if (it->second.host == host_view_.host) {
-    UpdateActivitySubscription();
+  // A host may have left the view (its last project closed) or lost a row.
+  UpdateActivitySubscription();
+  if (host_view_.visible) {
     BuildHostRows();
   }
   PublishStatusSegment();
@@ -1503,7 +1504,7 @@ void RemoteHostService::OnHostTerminals(const std::filesystem::path& tree,
   if (status.has_value()) {
     // The Host view's rows and StatusText's totals, until the view's own pushes.
     last_status_[record.host] = *status;
-    if (record.host == host_view_.host) {
+    if (host_view_.visible) {
       BuildHostRows();
     }
   }

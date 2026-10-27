@@ -142,6 +142,9 @@ struct PersistedWorkspaceSessionState {
   std::vector<project::ProjectId> projects;
   std::vector<std::filesystem::path> project_roots;
   std::size_t active_project_index = 0;
+  // The Host view's collapsed groups, by row id (RemoteHostService): the view spans
+  // projects, so it is the workspace's.
+  std::vector<std::string> host_view_collapsed;
 };
 
 // Most-recently-used projects and files, surfaced on the welcome surface and in

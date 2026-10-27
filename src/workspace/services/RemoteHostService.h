@@ -272,17 +272,20 @@ class RemoteHostService {
   std::string StatusText() const;
 
   // ---- The Host view (remote-host-activity D4-D6) ----
-  // Point the Host view at `host`, which must have an open project; its rows are
-  // that host's from now on. False otherwise.
+  // The view lists every host with an open project: one host's rows as they are,
+  // or, with several, each under a collapsible group of its own (`@<host>`; its
+  // rows' ids carry the same prefix -- HostRowId). Show `host` there: its group
+  // is expanded. False when no open project is on it.
   bool ShowHost(std::string_view host);
-  // The host the view shows ("" before any).
-  const std::string& HostViewHost() const { return host_view_.host; }
-  // Whether the Host view is on screen. While it is, the host pushes its activity
-  // (activity/subscribe); once it is not, nothing is asked and nothing is pushed.
-  // A view with no host yet (a restored session) takes `active_root`'s project's
-  // host, else the only one. Cheap when nothing changed: the shell calls it after
-  // every event and control command.
+  // Whether the Host view is on screen. While it is, every host shown pushes its
+  // activity (activity/subscribe); once it is not, nothing is asked and nothing
+  // is pushed. Cheap when nothing changed: the shell calls it after every event
+  // and control command. (`active_root` is unused since the view shows them all.)
   void SetHostViewVisible(bool visible, const std::filesystem::path& active_root);
+  // The groups the user collapsed (host groups and per-host groups, by row id):
+  // what the session keeps, and what a restored session puts back.
+  std::vector<std::string> CollapsedHostGroups() const;
+  void RestoreCollapsedHostGroups(const std::vector<std::string>& ids);
   // Its rows as of the last status, built when that arrived; a collapsed group's
   // rows are left out.
   std::vector<plugin::PluginHost::SidebarItem> HostRows() const;
@@ -406,10 +409,14 @@ class RemoteHostService {
   // subscribe through the connection that should carry it, unsubscribe from one
   // that should not. Called on every change of either.
   void UpdateActivitySubscription();
-  // A status for the Host view from subscription `generation` (a stale one, from
-  // a connection or a view since replaced, is dropped).
-  void OnHostActivity(std::uint64_t generation, std::optional<project::remote::ServerStatus> status);
   void BuildHostRows();
+  // A row id's host and its id within that host: the prefix of a several-host
+  // view's ids, or the only host for an unprefixed one. Empty host: none.
+  std::pair<std::string, std::string_view> HostOfRow(std::string_view id) const;
+  // A status for the Host view from `host`'s subscription `generation` (a stale
+  // one, from a connection or a view since replaced, is dropped).
+  void OnHostActivity(const std::string& host, std::uint64_t generation,
+                      std::optional<project::remote::ServerStatus> status);
   // The client of `host`'s first open project, when it is connected.
   std::shared_ptr<project::remote::RemoteServerClient> ConnectedClient(std::string_view host) const;
   // The session of the first OPEN remote project on `host`, or null: a closed one's
@@ -452,12 +459,15 @@ class RemoteHostService {
   // StatusText's totals and the Host view's rows.
   std::map<std::string, project::remote::ServerStatus, std::less<>> last_status_;
   struct HostView {
-    std::string host;
     bool visible = false;
-    // The connection the subscription went through; expired or replaced = none.
-    std::weak_ptr<project::remote::RemoteServerClient> subscribed;
-    // Bumped by every (un)subscribe: what a replaced subscription posts is dropped.
-    std::uint64_t generation = 0;
+    struct Subscription {
+      // The connection it went through; expired or replaced = none.
+      std::weak_ptr<project::remote::RemoteServerClient> client;
+      // Its (un)subscribe's number: what a replaced subscription posts is dropped.
+      std::uint64_t generation = 0;
+    };
+    std::map<std::string, Subscription, std::less<>> subscriptions;  // by host
+    std::uint64_t next_generation = 0;
     std::set<std::string, std::less<>> collapsed;
     std::vector<plugin::PluginHost::SidebarItem> rows;
   };

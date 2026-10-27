@@ -2247,6 +2247,20 @@ window is refused, saying so, since `term/close` would only detach this one.
 The control channel has no sidebar: `remote-status` answers with
 `StatusText()`, which carries each host's totals from the last status seen.
 
+**As built (2026-10-27): every open host.** With one host open the view is as
+above; with several, each host is a collapsible group of its own (`@<host>`, its
+connection state and the server's figures) with its four groups one level down,
+their ids prefixed `@<host> ` so Enter and Delete act on the right host, and
+every shown host is subscribed while the view is on screen. `remote-status
+<host>` opens that host's group. The collapsed groups are kept with the
+workspace session (`HostViewCollapsed`). A terminal row names what runs in its
+foreground (`#3 · watch`, from the shell's `tpgid` and that group's `comm`), the
+directory only while the shell itself is in front. The server walks only the
+trees it reports on, down `/proc/<pid>/task/*/children` (0.78 ms a sample on a
+430-process box before, 0.007 ms after), and a connection that only asks for
+hello, `server/status` or `server/log` no longer restarts an on-demand server's
+idle countdown -- a script polling `microide-server status` let it live forever.
+
 ### 7.10 Failure messages
 
 Every remote failure names the stage, the host, and a command the user can paste

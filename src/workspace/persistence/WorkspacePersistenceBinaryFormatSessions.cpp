@@ -435,6 +435,12 @@ bool EncodeWorkspaceSessionRecord(const PersistedWorkspaceSessionState& state,
       return false;
     }
   }
+  for (const std::string& id : state.host_view_collapsed) {
+    if (!AppendRecord(WorkspaceSessionTag::HostViewCollapsed,
+                      [&](PrimitiveWriter& w) { return w.WriteString(id); }, out)) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -494,6 +500,19 @@ bool DecodeWorkspaceSessionRecord(std::span<const std::byte> input,
                  }
                  case WorkspaceSessionTag::ActiveProjectIndex:
                    return ReadSize(reader, &state->active_project_index) && reader.remaining() == 0;
+                 case WorkspaceSessionTag::HostViewCollapsed: {
+                   // A row id is short; a file with thousands of them is not one this wrote.
+                   constexpr std::size_t kMaxCollapsed = 1024;
+                   constexpr std::size_t kMaxIdBytes = 4096;
+                   std::string id;
+                   if (!reader.ReadString(&id) || reader.remaining() != 0) {
+                     return false;
+                   }
+                   if (id.size() <= kMaxIdBytes && state->host_view_collapsed.size() < kMaxCollapsed) {
+                     state->host_view_collapsed.push_back(std::move(id));
+                   }
+                   return true;
+                 }
                }
                return true;
              }) &&

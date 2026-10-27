@@ -641,6 +641,18 @@ void TestPersistedStateProjectSessionRoundTripOmitsChatRegistry() {
   Expect(DecodeWorkspaceSessionRecord(dup_record, &decoded_dup), "dup decode should succeed");
   Expect(decoded_dup.project_roots.size() == 2,
          "duplicate/equivalent roots collapse to unique entries at decode");
+
+  // The Host view's collapsed groups ride with the workspace session.
+  PersistedWorkspaceSessionState host_view{
+      .project_roots = {"/tmp/p"},
+      .host_view_collapsed = {"group:processes", "@dev@box:2222", "@dev@other group:terminals"},
+  };
+  std::vector<std::byte> host_view_record;
+  Expect(EncodeWorkspaceSessionRecord(host_view, &host_view_record), "host view encode");
+  PersistedWorkspaceSessionState decoded_host_view;
+  Expect(DecodeWorkspaceSessionRecord(host_view_record, &decoded_host_view), "host view decode");
+  Expect(decoded_host_view.host_view_collapsed == host_view.host_view_collapsed,
+         "the collapsed Host view groups round-trip, in order");
 }
 
 // The workspace session's projects as identities (project-identity), written

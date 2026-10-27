@@ -17,6 +17,10 @@ namespace microide::workspace {
 // Terminals, Processes -- each with its totals as `detail`, and a depth-1 row per
 // item with its figures. A row's `id` says what it is: "server", "workspace:<root>",
 // "terminal:<handle>", "process:<handle>", and "group:<name>" for the groups.
+//
+// With several hosts in the view each host's rows sit one level down, under a
+// group row "@<host>", and carry "@<host> " before their id (a host has no space,
+// and no plain id starts with '@').
 struct HostActivityInput {
   std::string host;
   // The connection's state in the client's words ("ready", "reconnecting", ...)
@@ -28,17 +32,24 @@ struct HostActivityInput {
   const project::remote::ServerStatus* status = nullptr;
   // The host roots this window has open as projects: their rows say "this window".
   std::vector<std::string> own_roots;
-  // Group ids ("group:terminals") the user collapsed.
+  // Group ids ("group:terminals", prefixed as the rows are) the user collapsed.
   const std::set<std::string, std::less<>>* collapsed = nullptr;
+  // "" alone in the view; "@<host> " and one level down beside other hosts.
+  std::string id_prefix;
+  int depth = 0;
 };
+// The id prefix of `host`'s rows in a several-host view, and its group row's id.
+std::string HostRowPrefix(std::string_view host);
+std::string HostGroupRowId(std::string_view host);
 std::vector<plugin::PluginHost::SidebarItem> BuildHostActivityRows(const HostActivityInput& input);
 
 // What a Host row's id names.
 struct HostRowId {
-  enum class Kind { Group, Server, Workspace, Terminal, Process };
+  enum class Kind { Group, Server, Workspace, Terminal, Process, Host };
   Kind kind = Kind::Group;
   std::uint64_t handle = 0;  // Terminal, Process
   std::string_view name;     // Group: its name; Workspace: its root
+  std::string_view host;     // the "@<host>" prefix's host; "" for an unprefixed id
 };
 std::optional<HostRowId> ParseHostRowId(std::string_view id);
 

@@ -2,6 +2,8 @@
 
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 
+#include "workspace/services/RemoteHostService.h"
+
 #include <utility>
 
 #include "workspace/services/ProjectCatalogService.h"
@@ -95,6 +97,20 @@ PersistenceCoordinator& WorkspaceShell::MakePersistenceCoordinator() {
           .debugger_enabled =
               [this]() { return SettingFlagEnabled(GetSettingValue("debug.enabled")); },
           .capture_terminal_layout = [this]() { return MakeTerminalPanelService().CaptureLayout(); },
+          // No service, nothing collapsed: one exists whenever a restored session
+          // had any (restore makes it), so a save never drops them.
+          .host_view_collapsed =
+              [this]() {
+                return glue_->remote_host_service != nullptr
+                           ? glue_->remote_host_service->CollapsedHostGroups()
+                           : std::vector<std::string>{};
+              },
+          .restore_host_view_collapsed =
+              [this](const std::vector<std::string>& ids) {
+                if (!ids.empty() || glue_->remote_host_service != nullptr) {
+                  MakeRemoteHostService().RestoreCollapsedHostGroups(ids);
+                }
+              },
           .plugin_theme_names = [this]() { return theme_registry_.Names(); },
           .resolve_plugin_theme =
               [this](std::string_view id) { return theme_registry_.Resolve(id); },

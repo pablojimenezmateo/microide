@@ -39,6 +39,9 @@ struct Totals {
   }
 };
 
+// An id without a host prefix ("terminal:4").
+std::optional<HostRowId> ParseLocalHostRowId(std::string_view id);
+
 }  // namespace
 
 std::vector<Item> BuildHostActivityRows(const HostActivityInput& input) {
@@ -48,17 +51,20 @@ std::vector<Item> BuildHostActivityRows(const HostActivityInput& input) {
     return input.collapsed != nullptr && input.collapsed->count(id) > 0;
   };
   const auto group = [&](std::string id, std::string label, std::string detail) {
+    id.insert(0, input.id_prefix);
     const bool closed = collapsed(id);
     rows.push_back(Item{.label = std::move(label),
                         .detail = std::move(detail),
                         .id = std::move(id),
-                        .depth = 0,
+                        .depth = input.depth,
                         .collapsible = true,
                         .collapsed = closed});
     return !closed;
   };
   const auto row = [&](std::string id, std::string label, std::string detail) {
-    rows.push_back(Item{.label = std::move(label), .detail = std::move(detail), .id = std::move(id), .depth = 1});
+    id.insert(0, input.id_prefix);
+    rows.push_back(Item{.label = std::move(label), .detail = std::move(detail), .id = std::move(id),
+                        .depth = input.depth + 1});
   };
   const auto own = [&](const std::string& root) {
     return std::find(input.own_roots.begin(), input.own_roots.end(), root) != input.own_roots.end();
@@ -160,7 +166,33 @@ std::vector<Item> BuildHostActivityRows(const HostActivityInput& input) {
   return rows;
 }
 
+std::string HostRowPrefix(std::string_view host) { return "@" + std::string(host) + " "; }
+
+std::string HostGroupRowId(std::string_view host) { return "@" + std::string(host); }
+
 std::optional<HostRowId> ParseHostRowId(std::string_view id) {
+  std::string_view host;
+  if (id.starts_with('@')) {
+    const std::size_t space = id.find(' ');
+    host = id.substr(1, space == std::string_view::npos ? std::string_view::npos : space - 1);
+    if (host.empty()) {
+      return std::nullopt;
+    }
+    if (space == std::string_view::npos) {
+      return HostRowId{.kind = HostRowId::Kind::Host, .host = host};
+    }
+    id.remove_prefix(space + 1);
+  }
+  std::optional<HostRowId> parsed = ParseLocalHostRowId(id);
+  if (parsed.has_value()) {
+    parsed->host = host;
+  }
+  return parsed;
+}
+
+namespace {
+
+std::optional<HostRowId> ParseLocalHostRowId(std::string_view id) {
   const std::size_t colon = id.find(':');
   const std::string_view kind = id.substr(0, colon);
   const std::string_view rest = colon == std::string_view::npos ? std::string_view() : id.substr(colon + 1);
@@ -183,5 +215,7 @@ std::optional<HostRowId> ParseHostRowId(std::string_view id) {
   }
   return std::nullopt;
 }
+
+}  // namespace
 
 }  // namespace microide::workspace

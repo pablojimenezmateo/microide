@@ -47,6 +47,10 @@ class PersistenceCoordinator {
     std::function<bool()> debugger_enabled;
     // The terminal panel as a session saves it (TerminalPanelService::CaptureLayout).
     std::function<TerminalLayoutRecord()> capture_terminal_layout;
+    // The Host view's collapsed groups (RemoteHostService), kept with the
+    // workspace session.
+    std::function<std::vector<std::string>()> host_view_collapsed;
+    std::function<void(const std::vector<std::string>&)> restore_host_view_collapsed;
     // Phase D plugin colour themes. `plugin_theme_names` lists contributed theme
     // ids for the colorscheme picker; `resolve_plugin_theme` derives the Theme for
     // a contributed id (nullopt when the id is not a plugin theme, so colorscheme
