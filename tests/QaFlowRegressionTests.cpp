@@ -3756,6 +3756,13 @@ void TestTheRemoteSegmentOpensTheRemoteMenu() {
     if (!name.starts_with("menu-item:Remote/")) {
       continue;
     }
+    // Remove Mirror… is live whenever the recents name a closed remote project, and
+    // the recents are the process's: an earlier test in the shard may have left one.
+    if (name == "menu-item:Remote/Remove Mirror…") {
+      Expect(entry["enabled"].AsBool() == TestAccess::IsActionEnabled(fixture.shell, workspace::ActionId::RemoteRemoveMirror),
+             "Remove Mirror… is drawn as available exactly when it is");
+      continue;
+    }
     const bool always = name == "menu-item:Remote/Open Folder on Host…";
     Expect(entry["enabled"].AsBool() == always,
            name + (always ? " should be available with no host" : " should be dimmed with no host connected"));
