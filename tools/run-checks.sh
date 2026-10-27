@@ -57,6 +57,20 @@ export CCACHE_SLOPPINESS="${CCACHE_SLOPPINESS:-pch_defines,time_macros}"
 LOG_DIR="${MICROIDE_LOG_DIR:-/tmp}"
 mkdir -p "$LOG_DIR"
 
+# Configure-and-build a tree that another lane may be building at the same time:
+# `qa`, `qa-remote`, `qa-wayland` and `tests` all build `build/`, `asan` and
+# `qa-asan` both build `build/microide-asan`. Two ninjas in one tree at once
+# linked the app against half-written objects ("undefined symbol
+# Application::Run") and failed a lane that had nothing wrong with it. The lock
+# serializes only the build step: the second lane's build is then a no-op, and
+# the lanes' tests still run side by side. $1 = the tree, the rest = the command.
+locked_build() {
+  local dir="$1"; shift
+  mkdir -p "$dir"
+  flock "$dir/.run-checks-build.lock" "$@"
+}
+export -f locked_build
+
 # Run a command, tee combined stdout+stderr to $1, and return the command's
 # real exit status (not tee's).
 run_logged() {
@@ -127,12 +141,15 @@ check_tests() {
   # switch the add_test() does.
   run_logged "$log" bash -c '
     set -e
-    cmake -S . -B build
-    targets="microide_tests microide_kernel_tests microide_kernel_link_probe"
-    if grep -q "^MICROIDE_PERF_HARNESS_BUILD:BOOL=ON" build/CMakeCache.txt; then
-      targets="$targets microide_perf"
-    fi
-    cmake --build build --target $targets -j'"$JOBS"'
+    locked_build build bash -c "
+      set -e
+      cmake -S . -B build
+      targets=\"microide_tests microide_kernel_tests microide_kernel_link_probe\"
+      if grep -q \"^MICROIDE_PERF_HARNESS_BUILD:BOOL=ON\" build/CMakeCache.txt; then
+        targets=\"\$targets microide_perf\"
+      fi
+      cmake --build build --target \$targets -j'"$JOBS"'
+    "
     ctest --test-dir build --output-on-failure -j'"$CTEST_JOBS"'
   '
   local rc=$?
@@ -178,8 +195,7 @@ check_sanitizer() {
 
   run_logged "$log" bash -c '
     set -e
-    cmake --preset '"$preset"'
-    cmake --build '"$build_dir"' -j'"$JOBS"'
+    locked_build '"$build_dir"' bash -c "cmake --preset '"$preset"' && cmake --build '"$build_dir"' -j'"$JOBS"'"
     '"$test_prefix"'ctest --test-dir '"$build_dir"' --output-on-failure -j'"$CTEST_SAN_JOBS"'
   '
   local rc=$?
@@ -646,8 +662,7 @@ check_qa() {
       fi
     done
     rm -rf '"$out"'
-    cmake -S . -B build >/dev/null
-    cmake --build build --target microide -j'"$JOBS"'
+    locked_build build bash -c "cmake -S . -B build >/dev/null && cmake --build build --target microide -j'"$JOBS"'"
     status=0
     python3 -m unittest discover -s tools/qa -p "test_*.py"
     python3 tools/qa/run.py --out '"$out"'/suite suite --jobs '"$qa_jobs"' || status=1
@@ -675,8 +690,7 @@ check_qa_asan() {
   run_logged "$log" bash -c '
     set -e
     rm -rf '"$out"'
-    cmake --preset microide-asan >/dev/null
-    cmake --build build/microide-asan --target microide -j'"$JOBS"'
+    locked_build build/microide-asan bash -c "cmake --preset microide-asan >/dev/null && cmake --build build/microide-asan --target microide -j'"$JOBS"'"
     export MQA_SLOW_FACTOR="${MQA_SLOW_FACTOR:-3}"
     status=0
     python3 -m unittest discover -s tools/qa -p "test_*.py"
@@ -700,8 +714,7 @@ check_qa_remote() {
   run_logged "$log" bash -c '
     set -e
     rm -rf '"$out"'
-    cmake -S . -B build >/dev/null
-    cmake --build build --target microide -j'"$JOBS"'
+    locked_build build bash -c "cmake -S . -B build >/dev/null && cmake --build build --target microide -j'"$JOBS"'"
     bash tools/build-server.sh x86_64
     eval "$(tools/qa/local-sshd.sh start)"
     trap "tools/qa/local-sshd.sh stop" EXIT
@@ -730,8 +743,7 @@ check_qa_wayland() {
     set -e
     rm -rf '"$out"'
     command -v weston >/dev/null || tools/qa/weston.sh >/dev/null
-    cmake -S . -B build >/dev/null
-    cmake --build build --target microide -j'"$JOBS"'
+    locked_build build bash -c "cmake -S . -B build >/dev/null && cmake --build build --target microide -j'"$JOBS"'"
     python3 -m unittest discover -s tools/qa -p "test_*.py"
     MQA_BACKEND=wayland MQA_WAYLAND_SCALE=2 \
       python3 tools/qa/run.py --out '"$out"' suite --jobs '"$qa_jobs"'
