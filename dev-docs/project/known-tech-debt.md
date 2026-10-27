@@ -534,7 +534,21 @@ What `openspec/changes/archive/2026-10-27-remote-menu` left:
   Caching which recents have a mirror against the recents revision would make it
   exact.
 
-### TD-2026-10-27-404 — a range-for over a member of a temporary is silent until ASan runs.
+### TD-2026-10-27-404 — a range-for over a member of a temporary is silent until ASan runs. [RESOLVED 2026-10-27 — the lint]
+
+C++23 was the cleaner answer and is not available where it counts: CI builds on
+Ubuntu 24.04 (GCC 13, Clang 18), and P2718R0 needs GCC 15 / Clang 19. So the
+lint: `CheckRangeForDoesNotSubscriptATemporary`
+(`tests/architecture/LanguageHazardArchitectureRules.cpp`, hard-fail, over
+`src/` and `tests/`) flags a range-for whose range subscripts a call's result --
+a `)` followed by `[` whose `(` follows a name or a template's `>` -- code-masked,
+wrapped lines included, with negative and positive fixtures
+(`RunRangeForTemporaryRuleFixtures`: a named local, a data member of the
+temporary, a member call, `(*json)[...]`, a classic for and comment/string text
+all pass) and a loud guard when it finds no range-for at all. The tree had none
+(3,849 range-fors scanned). Revisit for C++23 when CI's compilers have P2718.
+
+Original entry:
 
 `for (const auto& e : TestAccess::ControlUi(shell)["elements"].AsArray())` walks
 freed storage: C++20 extends the lifetime of the range expression's result, not

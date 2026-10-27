@@ -1,5 +1,7 @@
 #include "architecture/KernelArchitectureRules.h"
 
+#include "architecture/LanguageHazardArchitectureRules.h"
+
 #include <algorithm>
 #include <array>
 #include <functional>
@@ -813,6 +815,7 @@ const std::vector<NamedRule>& KernelArchitectureRuleList() {
       {"CheckGitMetadataIsAskedOfTheHost", CheckGitMetadataIsAskedOfTheHost},
       {"CheckEveryUserSaveRunsTheSamePreparation", CheckEveryUserSaveRunsTheSamePreparation},
       {"CheckProjectWritesGoThroughTheWriteGate", CheckProjectWritesGoThroughTheWriteGate},
+      {"CheckRangeForDoesNotSubscriptATemporary", CheckRangeForDoesNotSubscriptATemporary},
   };
   return rules;
 }

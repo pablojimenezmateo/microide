@@ -7,6 +7,7 @@
 #include "architecture/WorkspaceServiceArchitectureRules.h"
 #include "architecture/WorkspaceShellArchitectureRules.h"
 #include "architecture/KernelArchitectureRules.h"
+#include "architecture/LanguageHazardArchitectureRules.h"
 #include "architecture/WorkspaceViewModelArchitectureRules.h"
 
 #include <filesystem>
@@ -1413,6 +1414,7 @@ void RunAllRuleFixtures() {
   RunGitLayerLocalityRuleFixtures();
   RunWriteGateRuleFixtures();
   RunTextViewportDefaultedSpecialMembersRuleFixtures();
+  RunRangeForTemporaryRuleFixtures();
 }
 
 }  // namespace microide::tests::architecture
