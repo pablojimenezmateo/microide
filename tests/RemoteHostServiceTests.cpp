@@ -292,6 +292,64 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
   RemoveFakeMaster(target);
 }
 
+// A closed remote project stays down and never answers for its host: with an open
+// project on the same host, the host verbs (Show Log, Reconnect) reach the open
+// one's session, and Reconnect does not bring the closed tab's connection back.
+void TestAClosedProjectDoesNotAnswerForItsHost() {
+  FakeSshHost host;
+  const std::filesystem::path first_root = host.home / "src" / "first";
+  const std::filesystem::path second_root = host.home / "src" / "second";
+  WriteFile(first_root / "a.txt", "a\n");
+  WriteFile(second_root / "b.txt", "b\n");
+  WorkspaceShell shell;
+  PointAtFakeHost(shell, host);
+  const std::string target = "dev@fake-closed-" + std::to_string(::getpid());
+  using State = project::remote::RemoteHostSession::State;
+  auto& hosts = WorkspaceShellTestAccess::RemoteHosts(shell);
+  const auto state_of = [&](const std::filesystem::path& mirror) {
+    const auto snapshot = hosts.SnapshotOf(mirror);
+    return snapshot.has_value() ? snapshot->state : State::Disconnected;
+  };
+  std::vector<std::filesystem::path> mirrors;
+  for (const std::filesystem::path& root : {first_root, second_root}) {
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open " + target + ":" + root.string()),
+           "a remote project opens: " + root.string());
+    mirrors.push_back(WorkspaceShellTestAccess::ProjectRoot(shell));
+    Expect(WaitUntil(
+               [&] {
+                 Pump(shell);
+                 return state_of(mirrors.back()) == State::Ready;
+               },
+               std::chrono::seconds(30), std::chrono::milliseconds(5)),
+           "and connects");
+  }
+  // Close whichever the service looks at first (its projects are keyed by mirror).
+  const std::size_t closed = mirrors[0] < mirrors[1] ? 0 : 1;
+  const std::filesystem::path open_mirror = mirrors[1 - closed];
+  WorkspaceShellTestAccess::CloseProject(shell, closed);
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return state_of(mirrors[closed]) == State::Disconnected;
+             },
+             std::chrono::seconds(10), std::chrono::milliseconds(5)),
+         "the closed project's connection goes");
+  Expect(hosts.SoleHost() == target, "the open project's host is the only host");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-show-log " + target),
+         "Show Log reaches the open project's live session, not the closed one's");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-reconnect " + target), "reconnect");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return state_of(open_mirror) == State::Ready;
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(5)),
+         "the open project is connected");
+  Expect(state_of(mirrors[closed]) == State::Disconnected,
+         "and the closed one stays down: its tab is gone");
+  RemoveFakeMaster(target);
+}
+
 // A host with no server and installing turned off: the project's error row offers
 // the install command beside Reconnect and the ssh command.
 void TestAFailedInstallOffersTheInstallCommand() {
@@ -1286,6 +1344,8 @@ void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostService/LoopbackUrlsAreRecognized", TestLoopbackUrlsAreRecognized);
   AddTest(tests, "RemoteHostService/RemoteProjectTerminalsSayWhereTheyRun",
           TestRemoteProjectTerminalsSayWhereTheyRun);
+  AddTest(tests, "RemoteHostService/AClosedProjectDoesNotAnswerForItsHost",
+          TestAClosedProjectDoesNotAnswerForItsHost);
   AddTest(tests, "RemoteHostService/AFailedInstallOffersTheInstallCommand",
           TestAFailedInstallOffersTheInstallCommand);
   AddTest(tests, "RemoteHostService/HostTerminalSettingsReachTheProjectLauncher",

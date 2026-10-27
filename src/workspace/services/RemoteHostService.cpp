@@ -949,10 +949,11 @@ void RemoteHostService::ProjectClosed(const std::filesystem::path& root) {
 
 bool RemoteHostService::Reconnect(std::string_view host) {
   bool found = false;
-  // A host's remote projects each have their own channel: they reconnect with it.
+  // A host's open remote projects each have their own channel: they reconnect with
+  // it. A closed one stays down: its tab is gone, and reopening it connects.
   for (auto& [tree, project] : projects_) {
     (void)tree;
-    if (project.project->record().host == host) {
+    if (!project.closed && project.project->record().host == host) {
       project.auth_terminal_opened = false;
       project.project->session().Connect();
       found = true;
@@ -966,7 +967,7 @@ void RemoteHostService::Disconnect(std::string_view host) {
   // connection.
   for (auto& [tree, project] : projects_) {
     (void)tree;
-    if (host.empty() || project.project->record().host == host) {
+    if (!project.closed && (host.empty() || project.project->record().host == host)) {
       project.project->session().Disconnect();
     }
   }
@@ -976,6 +977,9 @@ std::string RemoteHostService::SoleHost() const {
   std::string sole;
   for (const auto& [tree, project] : projects_) {
     (void)tree;
+    if (project.closed) {
+      continue;
+    }
     const std::string host = project.project->record().host;
     if (!sole.empty() && sole != host) {
       return {};
@@ -1252,7 +1256,7 @@ bool RemoteHostService::StopForward(std::string_view host, std::uint16_t port, b
 const remote::RemoteHostSession* RemoteHostService::SessionFor(std::string_view host) const {
   for (const auto& [tree, project] : projects_) {
     (void)tree;
-    if (project.project->record().host == host) {
+    if (!project.closed && project.project->record().host == host) {
       return &project.project->session();
     }
   }

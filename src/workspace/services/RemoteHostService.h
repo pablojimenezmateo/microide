@@ -199,8 +199,9 @@ class RemoteHostService {
   // `[user@]host[:port]:/absolute/path`, validated like a host target.
   static std::optional<std::pair<project::remote::RemoteHostTarget, std::string>> ParseRemoteFolder(
       std::string_view spec, std::string* error);
+  // The host's OPEN remote projects; false when there are none.
   bool Reconnect(std::string_view host);
-  // Empty = every host.
+  // Empty = every host. Open projects only (a closed one is down already).
   void Disconnect(std::string_view host = {});
   // `microide-server stop` on the host, off the UI thread; the result is a row.
   bool StopServer(std::string_view host);
@@ -235,7 +236,8 @@ class RemoteHostService {
   std::optional<std::string> CommandText(std::string_view host, std::string_view which) const;
   // Remote: Show Status.
   std::string StatusText() const;
-  // The only host among the remote projects, or empty when there are none or several.
+  // The only host among the open remote projects, or empty when there are none or
+  // several.
   std::string SoleHost() const;
 
  private:
@@ -283,7 +285,8 @@ class RemoteHostService {
                        std::string* error);
   void ApplyProject(const std::filesystem::path& tree);
   void PublishConflictRows(const std::filesystem::path& tree, Project& entry);
-  // The session of the first remote project on `host`, or null.
+  // The session of the first OPEN remote project on `host`, or null: a closed one's
+  // is disconnected, and answering with it shadowed an open one on the same host.
   const project::remote::RemoteHostSession* SessionFor(std::string_view host) const;
   project::remote::RemoteHostSession* SessionFor(std::string_view host) {
     return const_cast<project::remote::RemoteHostSession*>(std::as_const(*this).SessionFor(host));
