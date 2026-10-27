@@ -103,8 +103,18 @@ still readable. Destroying a session that was not detached still closes it, so a
 tab close, a pane close and every path nobody thought of keep today's safe
 behaviour.
 
-`TerminalPanelService::DetachHostTerminals()` runs it on every host pane (project
-and Open Terminal on Host), and `CloseHostTerminals()` stops them instead.
+`TerminalPanelService::DetachHostTerminals()` runs it on every **running** host
+pane (project and Open Terminal on Host), and `CloseHostTerminals()` stops them
+instead. A host pane whose shell has already exited (`!running()` with a channel:
+the user pressed Ctrl+D, or the command finished, while this client was attached
+and saw it) is **closed** by both, never detached: there is no process to keep,
+only the server's copy of a buffer this client has already shown, and the server
+counts every table entry — exited or not — as live for its idle rule
+(`TerminalTable::LiveCount` is `terminals_.size()`), so a detached dead buffer would
+hold an on-demand server open for good. Its tab revives as a fresh shell in its
+directory, as today. "Kept until seen" in the shipped spec therefore means seen by
+an attached client; a shell that exits with no client attached is the case § 6.12
+keeps for the next attach (D4).
 `WorkspaceShell::CloseProject` calls one or the other **before**
 `ProjectCatalogService::Close` (which persists the entry — reading the retained
 identity — and then destroys it); `Detach` when `terminal.restore_sessions` is on,

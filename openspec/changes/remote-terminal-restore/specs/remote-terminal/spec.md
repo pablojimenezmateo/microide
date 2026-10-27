@@ -16,7 +16,7 @@ A terminal requested in a remote project, or through `Remote: Open Terminal on H
 - **THEN** the tab appears immediately, reading as connecting, and holds the host shell once the link is `Ready`
 
 ### Requirement: Host terminals survive quitting microide and closing the project
-Quitting microide and closing a remote project's tab SHALL leave every host terminal of that window or project running on the host: the client SHALL stop receiving its frames without sending `term/close`. For close-project this SHALL be an explicit detach step ordered before the project's state is persisted and torn down, not a consequence of the order of unrelated calls. Closing a terminal tab or pane, or the shell exiting, SHALL still end the host terminal per "The pty and the terminal model live on the host". When `terminal.restore_sessions` is off, quit and close-project SHALL close host terminals instead, so a user who opted out of revival leaves nothing running.
+Quitting microide and closing a remote project's tab SHALL leave every host terminal of that window or project running on the host: the client SHALL stop receiving its frames without sending `term/close`. For close-project this SHALL be an explicit detach step ordered before the project's state is persisted and torn down, not a consequence of the order of unrelated calls. Closing a terminal tab or pane, or the shell exiting, SHALL still end the host terminal per "The pty and the terminal model live on the host". Only a terminal whose shell is still running SHALL be left on the host: one whose shell has already exited while this client was attached SHALL be closed by quit and by close-project, so that no process-less buffer is left holding the server open, and its tab SHALL revive as a fresh shell. When `terminal.restore_sessions` is off, quit and close-project SHALL close every host terminal instead, so a user who opted out of revival leaves nothing running.
 
 #### Scenario: Quit leaves the host shell running
 - **WHEN** a remote project's terminal is running `watch date` and the user quits microide
@@ -29,6 +29,10 @@ Quitting microide and closing a remote project's tab SHALL leave every host term
 #### Scenario: Closing the tab still ends the shell
 - **WHEN** the user closes that terminal tab instead
 - **THEN** the host shell and `watch` are ended, and the server no longer lists the terminal
+
+#### Scenario: Exited shells leave nothing behind
+- **WHEN** the user ends each of three host shells with Ctrl+D, leaves their tabs open, and quits microide
+- **THEN** the server lists no terminal, and an on-demand server with no other workspace idles out
 
 #### Scenario: Opted out of revival
 - **WHEN** `terminal.restore_sessions` is off and the user quits, or closes the project, with a host terminal open

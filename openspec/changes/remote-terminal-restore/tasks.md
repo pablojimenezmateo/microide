@@ -18,9 +18,9 @@
 
 - [ ] 3.1 `TerminalHostChannel::Detach()` / `RemoteTerminalChannel::Detach()`: unregister and stop frames, no `term/close`
 - [ ] 3.2 `TerminalSession::DetachFromHost()` retaining the identity; destruction of an undetached host session still closes
-- [ ] 3.3 `TerminalPanelService::DetachHostTerminals()` and `CloseHostTerminals()` over every host pane (project and Open Terminal on Host)
+- [ ] 3.3 `TerminalPanelService::DetachHostTerminals()` and `CloseHostTerminals()` over every host pane (project and Open Terminal on Host); detach only a running one — a pane whose shell already exited is closed by both (its buffer would otherwise count as live for the server's idle rule)
 - [ ] 3.4 `WorkspaceShell::CloseProject`: detach (or close with `terminal.restore_sessions` off) before `ProjectCatalogService::Close`; `LifecycleCoordinator::Shutdown`: close host terminals with it off, before `persist_active_project`
-- [ ] 3.5 Make 1.3 pass; add "closing the tab still ends the shell" and "restore_sessions off closes on quit and on close-project" tests
+- [ ] 3.5 Make 1.3 pass; add "closing the tab still ends the shell", "restore_sessions off closes on quit and on close-project", and "three shells ended with Ctrl+D, tabs left open, quit: the server lists no terminal and idles out" tests
 
 ## 4. Persist host identity
 
