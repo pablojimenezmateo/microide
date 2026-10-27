@@ -162,6 +162,9 @@ struct FakeSshHost {
   // Where a session starts when it is not $HOME (empty: $HOME), as sshd starts one
   // in the passwd home whatever $HOME says.
   std::filesystem::path login_dir;
+  // Seconds the ssh master takes to come up ("" = at once): a project that stays
+  // Connecting for a while.
+  std::string master_delay;
   std::filesystem::path shim = std::filesystem::path(MICROIDE_TEST_SOURCE_DIR) / "fixtures" /
                                "remote" / "fake-ssh";
 
@@ -179,6 +182,9 @@ struct FakeSshHost {
   FakeSshHost(const FakeSshHost&) = delete;
   FakeSshHost& operator=(const FakeSshHost&) = delete;
 
+  // The socket directory of the server the host's sessions start.
+  std::filesystem::path server_dir() const { return home / ".local/state/microide/server"; }
+
   // The `remote.ssh_command` that reaches it, as argv.
   std::vector<std::string> SshArgv(bool needs_auth = false) const {
     std::vector<std::string> argv = {"env", "FAKE_SSH_HOME=" + home.string()};
@@ -187,6 +193,9 @@ struct FakeSshHost {
     }
     if (needs_auth) {
       argv.push_back("FAKE_SSH_NEEDS_AUTH=1");
+    }
+    if (!master_delay.empty()) {
+      argv.push_back("FAKE_SSH_MASTER_DELAY=" + master_delay);
     }
     argv.push_back(shim.string());
     return argv;

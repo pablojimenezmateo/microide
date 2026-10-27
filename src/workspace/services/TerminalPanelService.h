@@ -33,10 +33,13 @@ class TerminalPanelService {
     // a real process.
     // `launcher` null = the project's; otherwise the pane records it (and the
     // label prefix) for relaunches and splits.
-    // `cwd` empty = the project root.
+    // `cwd` empty = the project root. `attach` names a recorded host terminal to
+    // reattach to (a revived host pane). A host terminal asked for before the
+    // project's connection is up comes back PENDING -- a real pane that starts
+    // once connected (StartPendingHostPanes) -- never null.
     std::function<std::unique_ptr<TerminalPaneState>(
         std::string command, std::shared_ptr<const platform::ProcessLauncher> launcher,
-        std::string label_prefix, std::filesystem::path cwd)>
+        std::string label_prefix, std::filesystem::path cwd, terminal::HostIdentity attach)>
         make_started_pane;
     // Restart an exited pane's session in place with its recorded cwd/command.
     // False when the launch failed.
@@ -66,15 +69,38 @@ class TerminalPanelService {
   // `label_prefix`. False when the launch failed.
   bool OpenTerminalOn(std::shared_ptr<const platform::ProcessLauncher> launcher,
                       std::string label_prefix, std::string command = {});
+  // A tab attached to an existing host terminal of this project (a terminal no
+  // tab claims, offered after a connect), cold: its screen and history. False
+  // with no project.
+  bool OpenTerminalAttached(terminal::HostIdentity identity);
   // The terminals at project init: the restored session's layout revived (fresh
   // shells in the same tabs, splits and directories, VS Code's revive), else the
   // default terminal. In placeholder-terminal test mode the default is a bare,
   // unstarted pane (no shell spawn); revived panes start as placeholders.
   void OpenTerminalsForProjectInit();
   // What a session saves: every tab's panes that run through the project's
-  // launcher (a terminal opened on another host is that host's to keep), each
-  // with its shell's current directory. Tabs left with no such pane are dropped.
+  // launcher (the ssh authentication tab and a local terminal in a remote project
+  // are not revived), each with its shell's current directory and, for a host
+  // pane, the host terminal it is (reattached on reopen). Tabs left with no such
+  // pane are dropped.
   TerminalLayoutRecord CaptureLayout() const;
+
+  // --- host terminals across quit and close-project (remote-projects.md § 6.12)
+  // These take a state rather than acting on the active one: quit reaches every
+  // open project's, and a connection becomes ready for an inactive project too.
+  //
+  // Let go of `state`'s host terminals before it is persisted and torn down: each
+  // running host shell is DETACHED -- left running on the host, its identity kept
+  // for the session to record -- or, with terminal.restore_sessions off (nothing
+  // would reattach it), closed. A host shell that already exited while this
+  // client watched is closed either way: there is no process to keep, and the
+  // server counts its buffer as live.
+  void ReleaseHostTerminals(ProjectWorkspaceState& state) const;
+  // Start every pending host pane of `state` (its connection is up now): each
+  // opens, or reattaches to the terminal it recorded. Returns how many started.
+  static std::size_t StartPendingHostPanes(ProjectWorkspaceState& state);
+  // Rewrite every pending host pane's status line in `state`.
+  static void SetPendingHostStatus(ProjectWorkspaceState& state, std::string_view line);
   // Where `pane`'s shell is now, in the editor's tree (OSC 7, else the process's
   // own cwd for a local shell; a host's path mapped back to the mirror), or the
   // directory it was launched in when that is unknown. Not for hot paths: the
@@ -153,6 +179,9 @@ class TerminalPanelService {
  private:
   bool PanelVisible() const { return state_.panel.content != PanelContentKind::None; }
   bool PanelShowsTerminal() const;
+  // Push `pane` (null: nothing, false) as a new active tab; `show` shows the
+  // Terminal content, focusing the panel with `focus`.
+  bool PushTerminalTab(std::unique_ptr<TerminalPaneState> pane, bool show, bool focus, bool was_visible);
   void ShowTerminalContent(bool focus);
   void HidePanel();
 

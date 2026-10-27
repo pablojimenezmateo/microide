@@ -1320,6 +1320,7 @@ add_executable(microide_tests
   tests/parity/ParityHarness.cpp
   tests/parity/ParityTests.cpp
   tests/RemoteHostServiceTests.cpp
+  tests/RemoteTerminalRestoreTests.cpp
   tests/PluginHostTests.cpp
   tests/PluginPureHelperTests.cpp
   tests/PluginSurfaceCoverageTests.cpp

@@ -8,6 +8,7 @@
 #   FAKE_SSH_CWD         where a session starts (default: FAKE_SSH_HOME)
 #   FAKE_SSH_NEEDS_AUTH  set: a BatchMode master fails the way a key with a
 #                        passphrase does; an interactive one succeeds
+#   FAKE_SSH_MASTER_DELAY  seconds the master takes to come up (a far host)
 #
 # `-O forward|cancel -L spec` adds or removes the line `spec` in "$ctl.forwards"
 # (a forward needs the master; an identical second forward succeeds and adds
@@ -49,6 +50,7 @@ if [ "$op" = forward ] || [ "$op" = cancel ]; then
   exit 0
 fi
 if [ "$master" = yes ]; then
+  [ -n "$FAKE_SSH_MASTER_DELAY" ] && sleep "$FAKE_SSH_MASTER_DELAY"
   if [ -n "$FAKE_SSH_NEEDS_AUTH" ] && [ "$batch" = yes ]; then
     echo "user@host: Permission denied (publickey)." > "${log:-/dev/stderr}"
     exit 255

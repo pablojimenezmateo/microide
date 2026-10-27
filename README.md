@@ -714,6 +714,8 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `remote-local-terminal`
 - `remote-status`
 - `remote-stop-server [host]`
+- `remote-attach-terminals <host> <handle>...`
+- `remote-close-terminals <host> <handle>...`
 - `remote-disconnect [host]`
 - `remote-reconnect <host>`
 - `remote-copy-command <host> <ssh|install|linger>`

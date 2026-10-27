@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "platform/HostPlatform.h"
+#include "platform/ProcessLauncher.h"
 #include "terminal/TerminalSession.h"
 #include "workspace/TabReorder.h"
 
@@ -77,30 +78,38 @@ void TerminalPanelService::OpenTerminal(std::string command, bool focus_terminal
   const bool was_visible = PanelVisible();
   const bool panel_already_showing_terminal = state_.panel.content == PanelContentKind::Terminal;
   std::unique_ptr<TerminalPaneState> pane =
-      operations_.make_started_pane(std::move(command), {}, {}, {});
-  if (pane == nullptr) {
-    return;
-  }
-  state_.terminal_tabs.push_back(MakeTerminalTab(std::move(pane)));
-  state_.active_terminal_tab_index = state_.terminal_tabs.size() - 1;
-  if (focus_terminal || panel_already_showing_terminal) {
-    ShowTerminalContent(focus_terminal);
-  }
-  operations_.note_layout_inputs_changed();
-  NotePanelVisibilityChanged(was_visible);
+      operations_.make_started_pane(std::move(command), {}, {}, {}, {});
+  (void)PushTerminalTab(std::move(pane), focus_terminal || panel_already_showing_terminal,
+                        focus_terminal, was_visible);
 }
 
 bool TerminalPanelService::OpenTerminalOn(std::shared_ptr<const platform::ProcessLauncher> launcher,
                                           std::string label_prefix, std::string command) {
   const bool was_visible = PanelVisible();
-  std::unique_ptr<TerminalPaneState> pane = operations_.make_started_pane(
-      std::move(command), std::move(launcher), std::move(label_prefix), {});
+  return PushTerminalTab(operations_.make_started_pane(std::move(command), std::move(launcher),
+                                                       std::move(label_prefix), {}, {}),
+                         /*show=*/true, /*focus=*/true, was_visible);
+}
+
+bool TerminalPanelService::OpenTerminalAttached(terminal::HostIdentity identity) {
+  if (state_.root.empty()) {
+    return false;
+  }
+  const bool was_visible = PanelVisible();
+  return PushTerminalTab(operations_.make_started_pane({}, {}, {}, {}, std::move(identity)),
+                         /*show=*/true, /*focus=*/true, was_visible);
+}
+
+bool TerminalPanelService::PushTerminalTab(std::unique_ptr<TerminalPaneState> pane, bool show, bool focus,
+                                           bool was_visible) {
   if (pane == nullptr) {
     return false;
   }
   state_.terminal_tabs.push_back(MakeTerminalTab(std::move(pane)));
   state_.active_terminal_tab_index = state_.terminal_tabs.size() - 1;
-  ShowTerminalContent(true);
+  if (show) {
+    ShowTerminalContent(focus);
+  }
   operations_.note_layout_inputs_changed();
   NotePanelVisibilityChanged(was_visible);
   return true;
@@ -118,8 +127,9 @@ void TerminalPanelService::OpenTerminalsForProjectInit() {
         if (!pane_record.cwd.empty() && !std::filesystem::is_directory(pane_record.cwd, error)) {
           pane_record.cwd.clear();
         }
-        std::unique_ptr<TerminalPaneState> pane = operations_.make_started_pane(
-            std::move(pane_record.command), {}, {}, std::move(pane_record.cwd));
+        std::unique_ptr<TerminalPaneState> pane =
+            operations_.make_started_pane(std::move(pane_record.command), {}, {},
+                                          std::move(pane_record.cwd), std::move(pane_record.host));
         if (pane == nullptr) {
           continue;
         }
@@ -155,7 +165,10 @@ void TerminalPanelService::OpenTerminalsForProjectInit() {
   // The project's terminal is shown, but the keyboard starts in the editor, as in
   // VS Code: the first Ctrl+N or typed letter of a session is not the shell's
   // (TD-2026-10-16-348).
-  if (!terminal::UsePlaceholderTerminalsForTesting()) {
+  // Test mode stands in for shells this machine starts only: a remote project's
+  // terminal is a host terminal (on the test's fake host) in tests as well.
+  if (!terminal::UsePlaceholderTerminalsForTesting() ||
+      terminal::HostTerminalsFor(state_.launcher()) != nullptr) {
     OpenTerminal({}, /*focus_terminal=*/false, false);
     ShowTerminalContent(/*focus=*/false);
     return;
@@ -181,8 +194,9 @@ TerminalLayoutRecord TerminalPanelService::CaptureLayout() const {
       if (p == tab.active_pane) {
         record.active_pane = record.panes.size();
       }
-      record.panes.push_back(
-          TerminalPaneRecord{.cwd = PaneWorkingDirectory(pane), .command = pane.launch_command});
+      record.panes.push_back(TerminalPaneRecord{.cwd = PaneWorkingDirectory(pane),
+                                                .command = pane.launch_command,
+                                                .host = pane.session.host_identity()});
     }
     if (record.panes.empty()) {
       continue;
@@ -199,6 +213,53 @@ TerminalLayoutRecord TerminalPanelService::CaptureLayout() const {
     layout.tabs.push_back(std::move(record));
   }
   return layout;
+}
+
+namespace {
+
+template <typename Visit>
+void ForEachProjectHostPane(ProjectWorkspaceState& state, Visit&& visit) {
+  for (const std::unique_ptr<TerminalTabState>& tab : state.terminal_tabs) {
+    for (const std::unique_ptr<TerminalPaneState>& pane : tab->panes) {
+      // A pane with its own launcher (the ssh tab, a local terminal) is not the
+      // project's host's.
+      if (pane != nullptr && pane->launcher == nullptr) {
+        visit(*pane);
+      }
+    }
+  }
+}
+
+}  // namespace
+
+void TerminalPanelService::ReleaseHostTerminals(ProjectWorkspaceState& state) const {
+  const bool keep = !operations_.revive_terminals || operations_.revive_terminals();
+  ForEachProjectHostPane(state, [keep](TerminalPaneState& pane) {
+    if (!pane.session.is_host_terminal()) {
+      return;  // local, pending (nothing on the host yet), or already let go
+    }
+    if (!keep || pane.session.host_shell_exited()) {
+      pane.session.Stop();
+    } else {
+      pane.session.DetachFromHost();
+    }
+  });
+}
+
+std::size_t TerminalPanelService::StartPendingHostPanes(ProjectWorkspaceState& state) {
+  std::size_t started = 0;
+  const platform::ProcessLauncher& launcher = state.launcher();
+  ForEachProjectHostPane(state, [&](TerminalPaneState& pane) {
+    if (pane.session.host_pending() && pane.session.StartPendingOnHost(launcher)) {
+      ++started;
+      pane.reattach_unreported = true;  // its outcome is news for the connect's summary
+    }
+  });
+  return started;
+}
+
+void TerminalPanelService::SetPendingHostStatus(ProjectWorkspaceState& state, std::string_view line) {
+  ForEachProjectHostPane(state, [line](TerminalPaneState& pane) { pane.session.SetPendingStatus(line); });
 }
 
 std::filesystem::path TerminalPanelService::PaneWorkingDirectory(const TerminalPaneState& pane) const {
@@ -301,7 +362,8 @@ bool TerminalPanelService::SplitActivePane() {
       {}, active != nullptr ? active->launcher : nullptr,
       active != nullptr ? active->label_prefix : std::string(),
       active != nullptr && active->launcher == nullptr ? PaneWorkingDirectory(*active)
-                                                       : std::filesystem::path());
+                                                       : std::filesystem::path(),
+      {});
   if (pane == nullptr) {
     return false;
   }
@@ -376,7 +438,10 @@ bool TerminalPanelService::ActivatePaneAt(const WorkspaceLayout& layout, float x
 
 bool TerminalPanelService::RelaunchActivePane() {
   TerminalPaneState* pane = state_.active_terminal_pane();
-  if (pane == nullptr || pane->session.running() || !operations_.relaunch_pane) {
+  // A pending pane is not an exited one: it starts by itself once connected, and
+  // relaunching it would forget the host terminal it is waiting to reattach to.
+  if (pane == nullptr || pane->session.running() || pane->session.host_pending() ||
+      !operations_.relaunch_pane) {
     return false;
   }
   if (!operations_.relaunch_pane(*pane)) {

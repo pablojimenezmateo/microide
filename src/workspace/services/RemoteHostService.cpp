@@ -239,9 +239,23 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
   const remote::RemoteHostSession::Status status = project.session().status();
   const remote::MirrorSyncEngine::Status sync = project.engine().status();
   const bool came_back = status.state == State::Ready && entry.status.state != State::Ready;
+  const bool state_changed = status.state != entry.status.state || status.message != entry.status.message ||
+                             status.error != entry.status.error;
   entry.status = status;
   if (came_back && operations_.project_reconnected) {
     operations_.project_reconnected(tree);
+  }
+  // Terminals asked for while the connection was down say what they wait for,
+  // rewritten only when that changes; on Ready they start, and the connect is
+  // summed up in one row once the server lists its terminals.
+  if (state_changed && status.state != State::Ready && operations_.host_terminals_waiting) {
+    operations_.host_terminals_waiting(tree, PendingTerminalLine(tree));
+  }
+  if (came_back) {
+    if (operations_.start_host_terminals) {
+      operations_.start_host_terminals(tree);
+    }
+    ListHostTerminals(tree, entry);
   }
   const remote::RemoteProjectRecord record = project.record();
   const std::string label = record.host + ":" + record.host_root;
@@ -941,9 +955,14 @@ void RemoteHostService::ProjectClosed(const std::filesystem::path& root) {
   it->second.closed = true;
   it->second.project->session().Disconnect();
   it->second.announced_sync = false;
+  // Not a state any reopen should compare against: a reopen's Ready is a connect
+  // (its terminals start and are summed up), even one the close never got to end.
+  it->second.status = remote::RemoteHostSession::Status{};
+  it->second.unclaimed_terminals.clear();
   PublishStatusSegment();
   if (operations_.dismiss_notification) {
     operations_.dismiss_notification("remote.project." + root.string());
+    operations_.dismiss_notification("remote.terminals." + root.string());
   }
 }
 
@@ -1329,6 +1348,185 @@ void AppendForwards(std::string& text, const remote::RemoteHostSession& session)
 
 }  // namespace
 
+std::string RemoteHostService::PendingTerminalLine(const std::filesystem::path& root) const {
+  const auto it = projects_.find(root);
+  if (it == projects_.end()) {
+    return "[waiting for the host connection\xe2\x80\xa6]";
+  }
+  const std::string host = it->second.project->record().host;
+  const remote::RemoteHostSession::Status& status = it->second.status;
+  // Typed keys are dropped, not queued: a shell that turns out to be another one
+  // (a reattach that fell back) must not run them.
+  constexpr std::string_view kIgnored = " \xc2\xb7 keys typed until then are ignored]";
+  switch (status.state) {
+    case State::Connecting:
+      return "[connecting to " + host + "\xe2\x80\xa6 the shell starts once connected" + std::string(kIgnored);
+    case State::NeedsAuth:
+      return "[authenticate to " + host + " in the ssh tab; the shell starts once connected" +
+             std::string(kIgnored);
+    case State::StartingServer:
+      return "[starting the host server on " + host + "\xe2\x80\xa6" + std::string(kIgnored);
+    case State::Installing:
+      return "[installing the host server on " + host + "\xe2\x80\xa6" + std::string(kIgnored);
+    case State::Reconnecting:
+      return "[reconnecting to " + host + "\xe2\x80\xa6" + std::string(kIgnored);
+    case State::Ready:
+      return "[starting the shell on " + host + "\xe2\x80\xa6]";
+    case State::Offline:
+    case State::Disconnected:
+      break;
+  }
+  return "[not connected to " + host + (status.error.empty() ? std::string() : ": " + status.error) +
+         " \xc2\xb7 Remote: Reconnect starts the shell]";
+}
+
+void RemoteHostService::ListHostTerminals(const std::filesystem::path& tree, Project& entry) {
+  std::shared_ptr<remote::RemoteServerClient> client = entry.project->session().connection()->client();
+  if (client == nullptr) {
+    return;
+  }
+  // Asked AFTER the reattaches went out on the same connection, so the server has
+  // taken them by the time it lists: a terminal this window is claiming is
+  // attached (or held by a pane) and never offered back.
+  work_.Post([this, client, tree]() {
+    std::string error;
+    std::optional<remote::ServerStatus> status = client->Status(&error);
+    mailbox_.Post([this, tree, status = std::move(status)]() { OnHostTerminals(tree, status); });
+  });
+}
+
+void RemoteHostService::OnHostTerminals(const std::filesystem::path& tree,
+                                        const std::optional<remote::ServerStatus>& status) {
+  const auto it = projects_.find(tree);
+  if (it == projects_.end() || it->second.closed) {
+    return;
+  }
+  Project& entry = it->second;
+  const remote::RemoteProjectRecord record = entry.project->record();
+  const HostTerminalClaims claims =
+      operations_.host_terminals_claimed ? operations_.host_terminals_claimed(tree) : HostTerminalClaims{};
+  entry.unclaimed_terminals.clear();
+  // An older server lists none: nothing is offered, and that is not an error.
+  if (status.has_value() && status->terminals.has_value()) {
+    for (const remote::ServerTerminal& terminal : *status->terminals) {
+      if (terminal.root == record.host_root && terminal.clients == 0 &&
+          std::find(claims.handles.begin(), claims.handles.end(), terminal.handle) == claims.handles.end()) {
+        entry.unclaimed_terminals.push_back(terminal);
+      }
+    }
+  }
+  if (!operations_.notify) {
+    return;
+  }
+  const std::string key = "remote.terminals." + tree.string();
+  const auto count = [](std::size_t n, std::string_view one, std::string_view many) {
+    return std::to_string(n) + " " + std::string(n == 1 ? one : many);
+  };
+  const std::size_t fresh = claims.server_restarted + claims.gone;
+  if (fresh == 0 && entry.unclaimed_terminals.empty()) {
+    if (operations_.dismiss_notification) {
+      operations_.dismiss_notification(key);
+    }
+    if (claims.reattached > 0) {
+      operations_.notify(NotificationService::Request{
+          .tone = NotificationService::Tone::Info,
+          .message = "Reattached to " + record.host + ": " + count(claims.reattached, "terminal", "terminals")});
+    }
+    return;
+  }
+  // § 7.4a's "reattached to build-box" row: the whole connect in one row --
+  // reattached, started fresh and why, running with no tab -- never one per terminal.
+  std::string message = record.host + ":";
+  const auto part = [&](std::string text) {
+    message += (message.back() == ':' ? " " : " \xc2\xb7 ") + text;
+  };
+  if (claims.reattached > 0) {
+    part(count(claims.reattached, "terminal", "terminals") + " reattached");
+  }
+  if (fresh > 0) {
+    std::string why = claims.gone == 0                ? "the host server restarted"
+                      : claims.server_restarted == 0 ? "the host no longer had them"
+                                                     : "the host server restarted or no longer had them";
+    if (status.has_value() && status->session_survival.has_value() &&
+        status->session_survival->kill_user_processes) {
+      why += "; the host ends your processes at logout";
+    }
+    part(std::to_string(fresh) + " started fresh (" + why + ")");
+  }
+  if (!entry.unclaimed_terminals.empty()) {
+    part(count(entry.unclaimed_terminals.size(), "running with no tab", "running with no tab"));
+  }
+  std::vector<NotificationAction> actions;
+  if (!entry.unclaimed_terminals.empty()) {
+    std::vector<std::string> args = {record.host};
+    for (const remote::ServerTerminal& terminal : entry.unclaimed_terminals) {
+      args.push_back(std::to_string(terminal.handle));
+    }
+    actions.push_back(NotificationAction{.label = "Attach", .id = ActionId::RemoteAttachHostTerminals, .args = args});
+    actions.push_back(NotificationAction{.label = "Close", .id = ActionId::RemoteCloseHostTerminals,
+                                         .args = std::move(args)});
+  }
+  operations_.notify(NotificationService::Request{.tone = NotificationService::Tone::Info,
+                                                  .key = key,
+                                                  .message = std::move(message),
+                                                  .sticky = true,
+                                                  .actions = std::move(actions)});
+}
+
+bool RemoteHostService::AttachHostTerminals(const std::filesystem::path& active_root, std::string_view host,
+                                            const std::vector<std::uint64_t>& handles, std::string* error) {
+  const auto it = projects_.find(active_root);
+  if (it == projects_.end() || it->second.closed || it->second.project->record().host != host) {
+    *error = "Switch to a project on " + std::string(host) + " to attach its terminals";
+    return false;
+  }
+  const std::shared_ptr<remote::RemoteServerClient> client =
+      it->second.project->session().connection()->client();
+  if (client == nullptr || !client->connected() || !operations_.attach_host_terminal) {
+    *error = "Not connected to " + std::string(host);
+    return false;
+  }
+  for (const std::uint64_t handle : handles) {
+    (void)operations_.attach_host_terminal(
+        terminal::HostIdentity{.epoch = client->hello().daemon_epoch, .handle = handle});
+  }
+  DropUnclaimed(host, handles);
+  return true;
+}
+
+bool RemoteHostService::CloseHostTerminals(std::string_view host, const std::vector<std::uint64_t>& handles) {
+  const remote::RemoteHostSession* session = SessionFor(host);
+  const std::shared_ptr<remote::RemoteServerClient> client =
+      session != nullptr ? session->connection()->client() : nullptr;
+  if (client == nullptr) {
+    return false;
+  }
+  for (const std::uint64_t handle : handles) {
+    util::JsonObject params;
+    params["handle"] = util::JsonValue(static_cast<std::int64_t>(handle));
+    // Ends it unless another client is attached, whose it then stays.
+    client->peer().Notify(remote::method::kTermClose, util::JsonValue(std::move(params)));
+  }
+  DropUnclaimed(host, handles);
+  return true;
+}
+
+void RemoteHostService::DropUnclaimed(std::string_view host, const std::vector<std::uint64_t>& handles) {
+  for (auto& [tree, entry] : projects_) {
+    if (entry.project->record().host != host) {
+      continue;
+    }
+    const std::size_t before = entry.unclaimed_terminals.size();
+    std::erase_if(entry.unclaimed_terminals, [&](const remote::ServerTerminal& terminal) {
+      return std::find(handles.begin(), handles.end(), terminal.handle) != handles.end();
+    });
+    if (before != entry.unclaimed_terminals.size() && entry.unclaimed_terminals.empty() &&
+        operations_.dismiss_notification) {
+      operations_.dismiss_notification("remote.terminals." + tree.string());
+    }
+  }
+}
+
 std::string RemoteHostService::StatusText() const {
   if (projects_.empty()) {
     return "No remote hosts. Remote: Open Folder on Host… connects to one.";
@@ -1347,6 +1545,15 @@ std::string RemoteHostService::StatusText() const {
             std::to_string(sync.dirty) + " to push, " + std::to_string(sync.conflicts) +
             " conflicts), mirror " + HomeAbbreviatedPath(tree, home != nullptr ? home : "");
     AppendForwards(text, entry.project->session());
+    // Terminals left running on the host with no tab (the connect's row offers them).
+    if (!entry.closed && !entry.unclaimed_terminals.empty()) {
+      text += "; " + std::to_string(entry.unclaimed_terminals.size()) + " host terminal" +
+              (entry.unclaimed_terminals.size() == 1 ? "" : "s") + " with no tab:";
+      for (const remote::ServerTerminal& terminal : entry.unclaimed_terminals) {
+        text += " #" + std::to_string(terminal.handle) + " " +
+                (terminal.cwd.empty() ? record.host_root : terminal.cwd) + (terminal.exited ? " (exited)" : "");
+      }
+    }
   }
   return text;
 }

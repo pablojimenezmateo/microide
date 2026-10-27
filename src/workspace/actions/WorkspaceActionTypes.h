@@ -42,6 +42,11 @@ enum class ActionId {
   RemoteShowLog,
   RemoteShowStatus,
   RemoteStopServer,   // `remote-stop-server [host]`; the sole host when omitted
+  // `remote-attach-terminals <host> <handle>...`: host terminals nobody is attached
+  // to, each in a new tab of the active project (the connect row's Attach);
+  // `remote-close-terminals <host> <handle>...` ends them (its Close).
+  RemoteAttachHostTerminals,
+  RemoteCloseHostTerminals,
   // `remote-remove-mirror [root] [discard]`: delete a closed remote project's mirror
   // (tree, objects, journal, state) and forget it in the recents; `discard` lets
   // saves the host never received go with it.

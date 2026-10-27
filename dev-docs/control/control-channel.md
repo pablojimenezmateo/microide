@@ -339,7 +339,7 @@ The last four are the agent-facing ones (ported 2026-10-07 from the never-merged
   `tabs` stays as the flat list the media scripts use.
 - `commands` lists the runnable command registry as `{command, usage, label}`, then the plugin-contributed commands (`plugin: true`).
 - `terminals` lists the terminal strip: per tab `{tab, active, unseenOutput,
-  unseenBell, panes}`, per pane `{pane, active, label, labelPrefix, running, lineCount}` (`labelPrefix`: what the tab strip shows before the label, e.g. `host · ` for a host terminal).
+  unseenBell, panes}`, per pane `{pane, active, label, labelPrefix, running, pending, hostHandle, lineCount}` (`labelPrefix`: what the tab strip shows before the label, e.g. `ssh · ` for the authentication tab; `pending`: a remote project's terminal waiting for its connection; `hostHandle`: the host terminal a remote project's pane is, 0 for none).
   `unseenBell`: a program rang the bell (BEL) while the tab was not on screen.
 - `terminal-output` snapshots one pane's scrollback: args `{tab, pane, lines}`
   default to the active tab's active pane and the last 1000 lines (capped at

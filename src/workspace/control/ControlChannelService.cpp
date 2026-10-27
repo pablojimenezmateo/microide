@@ -1088,6 +1088,11 @@ util::JsonValue ControlChannelService::BuildTerminals() const {
       // What the tab strip shows before the label ("host · " for a host terminal).
       pane_object["labelPrefix"] = util::JsonValue(TerminalPaneLabelPrefix(state, *pane));
       pane_object["running"] = util::JsonValue(pane->session.running());
+      // A host terminal waiting for its project's connection, and which host
+      // terminal a pane is (0: none) -- what a reopen reattaches to.
+      pane_object["pending"] = util::JsonValue(pane->session.host_pending());
+      pane_object["hostHandle"] =
+          util::JsonValue(static_cast<std::int64_t>(pane->session.host_identity().handle));
       pane_object["lineCount"] =
           util::JsonValue(static_cast<std::int64_t>(pane->session.LineCount()));
       panes.push_back(util::JsonValue(std::move(pane_object)));

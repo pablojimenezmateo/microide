@@ -221,6 +221,13 @@ void WorkspaceShell::CloseProject(std::size_t index) {
   save_formatter_service_.FlushPendingRuns();
   file_read_service_.CancelAllAndFlush();
   const std::filesystem::path closed_root = ProjectCatalogRoot(index);
+  // A remote project's running host shells stay on the host (§ 6.12): let go of
+  // them, explicitly, before the close persists the state (recording which they
+  // are) and destroys it -- a destroyed session would close its shell. With
+  // terminal.restore_sessions off nothing would reattach them: end them instead.
+  if (ProjectWorkspaceState* state = context_.ProjectStateForRoot(closed_root); state != nullptr) {
+    MakeTerminalPanelService().ReleaseHostTerminals(*state);
+  }
   MakeProjectCatalogService().Close(index);
   // A remote project's channel, host-side workspace and watch go with its tab; the
   // mirror and its journal stay, and reopening reconnects.

@@ -20,6 +20,8 @@
 #include "project/ProjectLocality.h"
 #include "project/remote/MirrorSyncEngine.h"
 #include "project/remote/RemoteHostSession.h"
+#include "project/remote/RemoteProtocol.h"
+#include "terminal/TerminalHostChannel.h"
 #include "util/MainThreadMailbox.h"
 #include "util/SerialWorkQueue.h"
 #include "workspace/services/NotificationService.h"
@@ -50,6 +52,16 @@ namespace microide::workspace {
 // thread (DrainCompletions), so all the state below is UI-thread only.
 class RemoteHostService {
  public:
+  // What the project's terminal tabs hold of its host's terminals when a connect's
+  // summary is made (host_terminals_claimed): every handle a pane is or will
+  // reattach to, and how the panes started since the last summary came up.
+  struct HostTerminalClaims {
+    std::vector<std::uint64_t> handles;
+    std::size_t reattached = 0;
+    std::size_t server_restarted = 0;  // started fresh: recorded under another server
+    std::size_t gone = 0;              // started fresh: the server no longer had it
+  };
+
   struct Operations {
     std::function<void(NotificationService::Request)> notify;
     std::function<void(std::string_view key)> dismiss_notification;
@@ -72,6 +84,16 @@ class RemoteHostService {
     // The remote project at `root` (re)gained its connection: whatever the editor
     // asked of the host while it was down (git above all) is worth asking again.
     std::function<void(const std::filesystem::path& root)> project_reconnected;
+    // The remote project at `root`'s connection is up: start its pending host
+    // terminals (open, or reattach to the ones its session recorded).
+    std::function<void(const std::filesystem::path& root)> start_host_terminals;
+    // Its connection's state changed while terminals wait for it: their line.
+    std::function<void(const std::filesystem::path& root, std::string_view line)> host_terminals_waiting;
+    // What the project's tabs claim of its host's terminals (see HostTerminalClaims);
+    // marks the starts it counts as reported.
+    std::function<HostTerminalClaims(const std::filesystem::path& root)> host_terminals_claimed;
+    // Open a terminal tab in the ACTIVE project attached to `identity`'s terminal.
+    std::function<bool(terminal::HostIdentity identity)> attach_host_terminal;
     // The host pushed a new git status for the remote project at `root`.
     std::function<void(const std::filesystem::path& root)> git_status_pushed;
     // Replace output channel `id`'s lines with `text`'s and show it.
@@ -236,6 +258,16 @@ class RemoteHostService {
   std::optional<std::string> CommandText(std::string_view host, std::string_view which) const;
   // Remote: Show Status.
   std::string StatusText() const;
+  // The status line of a host terminal of `root`'s project waiting for its
+  // connection, in that connection's words.
+  std::string PendingTerminalLine(const std::filesystem::path& root) const;
+  // The connect summary's Attach: each of `handles` (host terminals nobody is
+  // attached to) in a new tab of the active project, which must be on `host`.
+  // False with *error otherwise.
+  bool AttachHostTerminals(const std::filesystem::path& active_root, std::string_view host,
+                           const std::vector<std::uint64_t>& handles, std::string* error);
+  // Its Close: term/close for each. False when nothing connects to `host`.
+  bool CloseHostTerminals(std::string_view host, const std::vector<std::uint64_t>& handles);
   // The only host among the open remote projects, or empty when there are none or
   // several.
   std::string SoleHost() const;
@@ -255,6 +287,9 @@ class RemoteHostService {
     std::optional<std::chrono::steady_clock::time_point> host_changes_announced;
     std::uint64_t pending_revision = 0;  // the engine's, last reported
     editor::WelcomeRemoteStatus status_block;  // last reported
+    // The host terminals under this project's root nobody is attached to, as the
+    // last connect's server/status listed them (Show Status names them).
+    std::vector<project::remote::ServerTerminal> unclaimed_terminals;
   };
   // The forward job behind ForwardPort and OpenHostLocalUrl; `then_open` (a
   // LoopbackUrl's scheme and rest) opens the forwarded URL once it is up.
@@ -285,6 +320,12 @@ class RemoteHostService {
                        std::string* error);
   void ApplyProject(const std::filesystem::path& tree);
   void PublishConflictRows(const std::filesystem::path& tree, Project& entry);
+  // After a connect's reattaches went out: ask server/status (off the UI thread)
+  // and sum the connect up in one row (OnHostTerminals).
+  void ListHostTerminals(const std::filesystem::path& tree, Project& entry);
+  void OnHostTerminals(const std::filesystem::path& tree,
+                       const std::optional<project::remote::ServerStatus>& status);
+  void DropUnclaimed(std::string_view host, const std::vector<std::uint64_t>& handles);
   // The session of the first OPEN remote project on `host`, or null: a closed one's
   // is disconnected, and answering with it shadowed an open one on the same host.
   const project::remote::RemoteHostSession* SessionFor(std::string_view host) const;

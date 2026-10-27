@@ -1,6 +1,7 @@
 #include <memory>
 
 #include "workspace/coordinators/WorkspaceLifecycleCoordinator.h"
+#include "workspace/services/TerminalPanelService.h"
 
 #include <optional>
 #include <system_error>
@@ -119,6 +120,7 @@ void LifecycleCoordinator::Shutdown() {
   operations_.shutdown_plugin_runtime();
   operations_.save_user_config();
   operations_.stop_git_blame_service();
+  operations_.release_host_terminals();
   operations_.persist_active_project();
   // Inactive projects are already durably persisted the moment they are switched
   // away from (PersistActiveEntry writes config+session before the state is moved
@@ -138,9 +140,9 @@ void LifecycleCoordinator::Shutdown() {
   // the visible path — the window is already destroyed before Shutdown() runs.
   operations_.stop_control_channel();
   operations_.stop_debug_sessions();
-  // Terminal session teardown and cursor cleanup are intentionally skipped here:
-  // the process exits via quick_exit() immediately after, and a terminal's shell
-  // ends with its pty. A debug adapter does not take its debuggee with it on a
+  // Local terminal teardown and cursor cleanup are intentionally skipped here:
+  // the process exits via quick_exit() immediately after, and a local shell ends
+  // with its pty. Host terminals were let go of above, explicitly. A debug adapter does not take its debuggee with it on a
   // closed pipe -- hence stop_debug_sessions above.
 }
 
@@ -359,6 +361,17 @@ LifecycleCoordinator& WorkspaceShell::MakeLifecycleCoordinator() {
               [this]() {
                 git_blame_service_.Stop();
                 highlight_prefetch_service_.Shutdown();
+              },
+          .release_host_terminals =
+              [this]() {
+                TerminalPanelService& panel = MakeTerminalPanelService();
+                panel.ReleaseHostTerminals(context_.current_project_state);
+                for (std::size_t i = 0; i < context_.project_catalog.entries.size(); ++i) {
+                  if (i != context_.project_catalog.active_index &&
+                      context_.project_catalog.entries[i] != nullptr) {
+                    panel.ReleaseHostTerminals(*context_.project_catalog.entries[i]);
+                  }
+                }
               },
           .persist_active_project =
               [this]() {

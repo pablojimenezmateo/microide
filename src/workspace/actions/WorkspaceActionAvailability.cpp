@@ -132,6 +132,8 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::RemoteShowStatus:
     case ActionId::RemoteRemoveMirror:  // rejects naming what stops it (open, unsent, not a mirror)
     case ActionId::RemoteStopServer:    // these reject naming the host they cannot find
+    case ActionId::RemoteAttachHostTerminals:
+    case ActionId::RemoteCloseHostTerminals:
     case ActionId::RemoteDisconnect:
     case ActionId::RemoteReconnect:
     case ActionId::RemoteCopyCommand:
@@ -437,6 +439,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       // Only a pane the host launched and whose process has since gone can be
       // brought back; a live shell has nothing to relaunch.
       return active_terminal_pane != nullptr && !active_terminal_pane->session.running() &&
+             !active_terminal_pane->session.host_pending() &&
              !active_terminal_pane->launch_working_directory.empty();
     case ActionId::TerminalToggle:
     case ActionId::PanelToggle:

@@ -35,6 +35,11 @@ class LifecycleCoordinator {
     std::function<void()> shutdown_plugin_runtime;
     std::function<void()> save_user_config;
     std::function<void()> stop_git_blame_service;
+    // Every open project's host terminals, active or not, let go of explicitly
+    // (TerminalPanelService::ReleaseHostTerminals) before anything is persisted:
+    // whether a host shell survives a quit must not depend on how the process
+    // ends -- quick_exit runs no destructor, the test binaries run them all.
+    std::function<void()> release_host_terminals;
     std::function<void()> persist_active_project;
     std::function<void()> save_workspace_session;
     // The recents MRU coalesces its durable writes, so a burst of opens can leave

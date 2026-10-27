@@ -663,6 +663,9 @@ struct TerminalPaneState {
   // Prepended to the tab title ("ssh · ", "local · "), so a terminal that does not
   // run where the project's do is never mistaken for one that does.
   std::string label_prefix;
+  // A pending host pane started when its connection came up, and the connect's
+  // summary row has not counted how (reattached, or fresh and why) yet.
+  bool reattach_unreported = false;
 };
 
 // One tab of the bottom panel's terminal strip: one to `kMaxTerminalPanes`

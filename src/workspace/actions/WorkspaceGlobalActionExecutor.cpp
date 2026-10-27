@@ -207,6 +207,8 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
     case ActionId::RemoteShowLog:
     case ActionId::RemoteShowStatus:
     case ActionId::RemoteStopServer:
+    case ActionId::RemoteAttachHostTerminals:
+    case ActionId::RemoteCloseHostTerminals:
     case ActionId::RemoteDisconnect:
     case ActionId::RemoteReconnect:
     case ActionId::RemoteRemoveMirror:
@@ -279,6 +281,28 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
           if (host.empty() || !hosts->StopServer(host)) {
             return reject(host.empty() ? "usage: remote-stop-server <host>"
                                        : "No remote host \"" + host + "\"");
+          }
+          return DispatchResult::Handled;
+        }
+        case ActionId::RemoteAttachHostTerminals:
+        case ActionId::RemoteCloseHostTerminals: {
+          const bool attach = id == ActionId::RemoteAttachHostTerminals;
+          std::vector<std::uint64_t> handles;
+          for (std::size_t i = 1; i < args.size(); ++i) {
+            const std::optional<std::int64_t> handle = util::ParseInt64(args[i]);
+            if (!handle.has_value() || *handle <= 0) {
+              return reject("Not a terminal handle: \"" + args[i] + "\"");
+            }
+            handles.push_back(static_cast<std::uint64_t>(*handle));
+          }
+          if (handles.empty()) {
+            return reject(attach ? "usage: remote-attach-terminals <host> <handle>..."
+                                 : "usage: remote-close-terminals <host> <handle>...");
+          }
+          std::string error;
+          if (attach ? !hosts->AttachHostTerminals(context_.ProjectRoot(), args[0], handles, &error)
+                     : !hosts->CloseHostTerminals(args[0], handles)) {
+            return reject(attach ? error : "No remote host \"" + args[0] + "\"");
           }
           return DispatchResult::Handled;
         }

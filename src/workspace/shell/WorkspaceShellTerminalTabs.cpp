@@ -36,7 +36,7 @@ TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
   // shell runs on the host, TD-2026-09-22-301), the project's `terminal.shell`,
   // the scrollback cap and the shell's wake channel.
   const auto start_pane = [this](TerminalPaneState& pane, const std::filesystem::path& cwd,
-                                 const std::string& command) {
+                                 const std::string& command, terminal::HostIdentity attach) {
     if (terminal_event_type_ != 0) {
       pane.session.SetWakeChannel(terminal_event_type_);
     }
@@ -58,7 +58,8 @@ TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
                ? pane.session.StartPlaceholderForTesting(cwd, command)
                : pane.session.Start(launcher, cwd, command,
                                     launcher.is_local() ? GetSettingValue("terminal.shell").value_or("")
-                                                        : std::string());
+                                                        : std::string(),
+                                    std::move(attach));
   };
   glue_->terminal_panel_service = std::make_unique<TerminalPanelService>(
       context_.current_project_state,
@@ -74,8 +75,8 @@ TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
           .make_started_pane =
               [this, start_pane](std::string command,
                                  std::shared_ptr<const platform::ProcessLauncher> launcher,
-                                 std::string label_prefix,
-                                 std::filesystem::path cwd) -> std::unique_ptr<TerminalPaneState> {
+                                 std::string label_prefix, std::filesystem::path cwd,
+                                 terminal::HostIdentity attach) -> std::unique_ptr<TerminalPaneState> {
                 if (context_.current_project_state.root.empty() && launcher == nullptr) {
                   return nullptr;
                 }
@@ -83,14 +84,20 @@ TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
                 pane->launcher = std::move(launcher);
                 pane->label_prefix = std::move(label_prefix);
                 if (!start_pane(*pane, cwd.empty() ? context_.current_project_state.root : cwd,
-                                command)) {
+                                command, std::move(attach))) {
                   return nullptr;
+                }
+                // Waiting for the project's connection: say for what, in the
+                // connection's own words, until it is up (host_terminals_waiting).
+                if (pane->session.host_pending() && glue_->remote_host_service != nullptr) {
+                  pane->session.SetPendingStatus(glue_->remote_host_service->PendingTerminalLine(
+                      context_.current_project_state.root));
                 }
                 return pane;
               },
           .relaunch_pane =
               [start_pane](TerminalPaneState& pane) {
-                return start_pane(pane, pane.launch_working_directory, pane.launch_command);
+                return start_pane(pane, pane.launch_working_directory, pane.launch_command, {});
               },
           .note_layout_inputs_changed = [this]() { NoteLayoutInputsChanged(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },
@@ -157,6 +164,65 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
             if (context_.current_project_state.root == root) {
               RequestGitSidebarRefresh();
             }
+          },
+      .start_host_terminals =
+          [this](const std::filesystem::path& root) {
+            // The project's own state, active or not: a background project's
+            // terminals start with its connection too.
+            ProjectWorkspaceState* state = context_.ProjectStateForRoot(root);
+            if (state != nullptr && TerminalPanelService::StartPendingHostPanes(*state) > 0 &&
+                state == &context_.current_project_state) {
+              RequestBottomPanelRedraw();
+            }
+          },
+      .host_terminals_waiting =
+          [this](const std::filesystem::path& root, std::string_view line) {
+            if (ProjectWorkspaceState* state = context_.ProjectStateForRoot(root); state != nullptr) {
+              TerminalPanelService::SetPendingHostStatus(*state, line);
+            }
+          },
+      .host_terminals_claimed =
+          [this](const std::filesystem::path& root) {
+            RemoteHostService::HostTerminalClaims claims;
+            ProjectWorkspaceState* state = context_.ProjectStateForRoot(root);
+            if (state == nullptr) {
+              return claims;
+            }
+            for (const auto& tab : state->terminal_tabs) {
+              for (const auto& pane : tab->panes) {
+                if (pane == nullptr || pane->launcher != nullptr) {
+                  continue;
+                }
+                if (const terminal::HostIdentity identity = pane->session.host_identity(); !identity.empty()) {
+                  claims.handles.push_back(identity.handle);
+                }
+                if (!pane->reattach_unreported) {
+                  continue;
+                }
+                switch (pane->session.host_reattach()) {
+                  case terminal::HostReattach::Pending:
+                    continue;  // not answered yet: the next summary counts it
+                  case terminal::HostReattach::Reattached:
+                    ++claims.reattached;
+                    break;
+                  case terminal::HostReattach::ServerRestarted:
+                    ++claims.server_restarted;
+                    break;
+                  case terminal::HostReattach::Gone:
+                    ++claims.gone;
+                    break;
+                  case terminal::HostReattach::None:
+                    break;
+                }
+                pane->reattach_unreported = false;
+              }
+            }
+            return claims;
+          },
+      .attach_host_terminal =
+          [this](terminal::HostIdentity identity) {
+            TerminalPanelService& panel = MakeTerminalPanelService();
+            return panel.OpenTerminalAttached(std::move(identity));
           },
       .git_status_pushed =
           [this](const std::filesystem::path& root) {
