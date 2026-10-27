@@ -10,12 +10,13 @@ server open. A dropped link is already handled on the client too:
 from its own resume point.
 
 What is missing is on the client side of a *quit* and a *close-project*, verified
-2026-10-27 against the code:
+2026-10-27 against the code (and written against the tree after
+`remove-host-terminal-command`, so every host terminal is a remote project's):
 
 | gap | where |
 | --- | --- |
 | Remote project panes fail to start before `Ready`, so they are dropped and `terminal_layout_to_revive` is consumed | `RemoteTerminalChannel::Open` returns null on a disconnected client; `make_started_pane` returns null; `OpenTerminalsForProjectInit` `continue`s |
-| The session has no host identity; Open Terminal on Host panes are skipped | `TerminalPanelService::CaptureLayout`, `TerminalLayoutRecord.h`, `WorkspacePersistenceBinaryFormatSessions.cpp` |
+| The session has no host identity | `TerminalPanelService::CaptureLayout`, `TerminalLayoutRecord.h`, `WorkspacePersistenceBinaryFormatSessions.cpp` |
 | Close-project kills the shells (`term/close` over a live link before `ProjectClosed`); quit orphans them (`Shutdown` → `quick_exit`, no teardown, no `term/close`) | `WorkspaceShell::CloseProject`, `LifecycleCoordinator::Shutdown` |
 | Cold attach is unused; the host's terminals cannot be listed; § 7.4a's "reattached — N terminals still running" row was never built | `RemoteTerminalChannel::Attach` has only test callers; no `term/list`; `RemoteHostService` |
 
@@ -32,8 +33,8 @@ less code than today where two paths did one job.
 - A remote project always has its terminal tab from the moment it opens.
 - Host terminal lifetime is decided by explicit steps, never by call order.
 - A host terminal no tab claims is visible and can be attached or closed.
-- One mechanism where there were two (hosts' `pending_terminals` counter versus
-  nothing for projects; three bracketed status-line builders; two push-a-tab bodies).
+- One mechanism where there were two (three bracketed status-line builders; two
+  push-a-tab bodies).
 
 **Non-Goals:**
 - Local terminal process persistence (VS Code needs a pty-host daemon; local revive
@@ -43,7 +44,6 @@ less code than today where two paths did one job.
   terminal keeps its workspace open indefinitely. Discoverability through
   `term/list` is the answer to orphans, not a timer.
 - § 7.4a's dimmed tab with a `detached` badge while a link is down.
-- Reviving a host pane that was opened with no project open (see D3).
 
 ## Decisions
 
@@ -59,17 +59,12 @@ state changes (the host service already receives exactly those events), never pe
 frame. Input to a pending pane is dropped (it must not be queued into a shell that
 may become a different one on fallback), and the line says so.
 
-On the connection's first `Ready` — `RemoteHostService` already computes it for a
-project (`came_back` in `ApplyProject`, which fires `project_reconnected`) and for a
-host (`Apply`'s `State::Ready`, where `OpenPendingTerminals` runs today) — the
+On the project connection's first `Ready` — `RemoteHostService` already computes
+it (`came_back` in `ApplyProject`, which fires `project_reconnected`) — the
 service asks the shell to `StartPendingPanes(launcher)`: every pending pane bound
-to that launcher starts (D4). `Host::pending_terminals` and `OpenPendingTerminals`
-are deleted; `OpenTerminalOnHost` opens a pending pane at once through the same
-`open_terminal` operation, so both entry points share the one mechanism and the
-host terminal's tab also appears immediately rather than on `Ready`. On
-`Disconnected`/`Offline` the pending panes show the error line and relaunch with
-Enter through the existing `relaunch_pane` (they are `!running()`, which is what
-`RelaunchActivePane` keys on).
+to that launcher starts (D4). On `Disconnected`/`Offline` the pending panes show
+the error line and relaunch with Enter through the existing `relaunch_pane` (they
+are `!running()`, which is what `RelaunchActivePane` keys on).
 
 `TerminalPanelService` acts on `context_.current_project_state` only, so pending
 panes of an **inactive** project are not reachable from a `Ready` for its root.
@@ -104,17 +99,18 @@ tab close, a pane close and every path nobody thought of keep today's safe
 behaviour.
 
 `TerminalPanelService::DetachHostTerminals()` runs it on every **running** host
-pane (project and Open Terminal on Host), and `CloseHostTerminals()` stops them
-instead. A host pane whose shell has already exited (`!running()` with a channel:
-the user pressed Ctrl+D, or the command finished, while this client was attached
-and saw it) is **closed** by both, never detached: there is no process to keep,
-only the server's copy of a buffer this client has already shown, and the server
-counts every table entry — exited or not — as live for its idle rule
-(`TerminalTable::LiveCount` is `terminals_.size()`), so a detached dead buffer would
-hold an on-demand server open for good. Its tab revives as a fresh shell in its
-directory, as today. "Kept until seen" in the shipped spec therefore means seen by
-an attached client; a shell that exits with no client attached is the case § 6.12
-keeps for the next attach (D4).
+pane, and `CloseHostTerminals()` stops them instead. A host pane whose shell has
+already exited (`!running()` with a channel: the user pressed Ctrl+D, or the
+command finished, while this client was attached and saw it) is **closed** by
+both, never detached: there is no process to keep, only the server's copy of a
+buffer this client has already shown, and the server counts every table entry —
+exited or not — as live for its idle rule (`TerminalTable::LiveCount` is
+`terminals_.size()`), so a detached dead buffer would hold an on-demand server
+open for good. Its tab revives as a fresh shell in its directory, as today. "Kept
+until seen" in the shipped spec therefore means seen by an attached client; a
+shell that exits with no client attached is the case § 6.12 keeps for the next
+attach (D4).
+
 `WorkspaceShell::CloseProject` calls one or the other **before**
 `ProjectCatalogService::Close` (which persists the entry — reading the retained
 identity — and then destroys it); `Detach` when `terminal.restore_sessions` is on,
@@ -122,17 +118,18 @@ identity — and then destroys it); `Detach` when `terminal.restore_sessions` is
 
 Quit needs no detach: `Shutdown` persists the active entry while every channel is
 still live and attached (the identity is read from the channel), and `quick_exit`
-drops the link, which is a detach on the server. With `terminal.restore_sessions`
-off, `Shutdown` gains one step, `CloseHostTerminals()` before `persist_active_project`,
-so the opt-out stops leaking (today it orphans a shell per quit). Local terminals are
-still not torn down there, as the comment in `Shutdown` explains.
+drops the link, which is a detach on the server. `Shutdown` gains one step before
+`persist_active_project`: `CloseHostTerminals()` when `terminal.restore_sessions`
+is off (the opt-out stops leaking; today it orphans a shell per quit), else the
+close of exited panes only. Local terminals are still not torn down there, as the
+comment in `Shutdown` explains.
 
 *Alternative:* invert the default (destruction detaches, only an explicit close
 closes). Rejected: a missed close path would leak a host shell silently, and a
 shell killed by mistake is at least loud. `term/list` (D5) is the backstop for the
 other direction (a crash, and the quits that happened before this change).
 
-### D3. Host identity is one struct, read from the channel, kept by the session, written as three pane records
+### D3. Host identity is one struct, read from the channel, kept by the session, written as two pane records
 `struct HostIdentity { std::string epoch; std::uint64_t handle; }`.
 `TerminalHostChannel::identity()` returns it (`RemoteTerminalChannel`: the client's
 `hello().daemon_epoch` and `handle_`; zero handle until `term/open` answers).
@@ -140,25 +137,18 @@ other direction (a crash, and the quits that happened before this change).
 by `DetachFromHost()`; `Stop()` clears it. Nothing is duplicated into the pane
 state and nothing is written from the I/O thread.
 
-`TerminalPaneRecord` gains `host_epoch` (string), `host_handle` (u64) and
-`host_target` (string; empty = the project's own host), written as three new
-`TerminalPaneTag`s through `PersistedRecordWriter` and read by the existing
-`ParseRecordStream`. An old reader skips unknown tags; a new reader treats their
-absence as today's fresh-shell revive. Decode bounds: epoch ≤ `kMaxEpochBytes`
-(64, the hello's own cap), handle 0 = none, and the target is validated by
-`ParseRemoteHostTarget` at revive time (the existing command-line guard), not
-trusted at decode. A forged session can at most ask this user's own server to
-attach a terminal this user owns — the same authority as `microide-server attach`.
+`TerminalPaneRecord` gains `host_epoch` (string) and `host_handle` (u64), written
+as two new `TerminalPaneTag`s through `PersistedRecordWriter` and read by the
+existing `ParseRecordStream`. An old reader skips unknown tags; a new reader treats
+their absence as today's fresh-shell revive. Decode bounds: epoch ≤
+`kMaxEpochBytes` (64, the hello's own cap), handle 0 = none. A forged session can
+at most ask this user's own server to attach a terminal this user owns — the same
+authority as `microide-server attach`.
 
-`CaptureLayout` stops skipping launcher-bound panes. A host pane's cwd stays the
-mirror path for a project pane and the host path for a terminal-only pane, as
-`PaneWorkingDirectory` already distinguishes. The record lives in the **project
-session** (`ProjectSessionTag::TerminalTab`); a host pane opened while a project is
-active is recorded in that project's session and revived with it. A host pane
-opened with **no project open** has no session to live in (the no-project state is
-not persisted) — it is left running and offered by `term/list` on the next connect.
-Recorded as a TD rather than extended here: it needs a per-window terminal record
-in the workspace session, which is a format decision of its own.
+`CaptureLayout` keeps skipping launcher-bound panes: after
+`remove-host-terminal-command` the only such pane is the interactive-auth `ssh ·`
+tab, which a session must not revive. A host pane's cwd stays the mirror path, as
+`PaneWorkingDirectory` already maps it.
 
 ### D4. Attach-or-fallback on Ready, asynchronous, counted into one row
 `StartPendingPanes(launcher)`: for each pending pane bound to it, if the pane has an
@@ -183,17 +173,17 @@ output and exit line and relaunches with Enter: the existing exited-pane path.
 Request `term/list {}` returns `{terminals: [{handle, root, cwd, title, clients,
 exited}]}`, built under the `TerminalTable` mutex and bounded by `max_terminals`
 (64). `root` is the connection's workspace root at `term/open`, recorded on the
-`Terminal` then (today the table does not know it); `cwd` is the session's reported
-working directory; `title` the last OSC title; `exited` is `!running()`. No
-last-output time: nothing in this change reads it, and it would cost a store per
-output chunk on the reader thread.
+`Terminal` then (today the table does not know it; `remote-host-activity` uses the
+same field); `cwd` is the session's reported working directory; `title` the last
+OSC title; `exited` is `!running()`. No last-output time: nothing in this change
+reads it, and it would cost a store per output chunk on the reader thread.
 
 The client sends it once per `Ready`, after the D4 attaches on the same lane, so a
 terminal this window is claiming is never offered, and filters to `clients == 0`,
-the project's root (or the empty root for a terminal-only host), and not among the
-handles it just attached. `kErrorUnknownMethod` (-32601, what `RemotePeer` answers
-for any method it does not know) yields an empty list, so the method is additive
-and `kProtocolVersion` stays 3.
+the project's root, and not among the handles it just attached.
+`kErrorUnknownMethod` (-32601, what `RemotePeer` answers for any method it does
+not know) yields an empty list, so the method is additive and `kProtocolVersion`
+stays 3.
 
 The result goes into **one sticky row per host** (`remote.terminals.<host>`): the
 § 7.4a "reattached to build-box" row, which was designed and not built. It sums the
@@ -203,7 +193,8 @@ terminal in a new tab via the same cold attach) and **Close** (`term/close` for
 each) as `ActionId::RemoteAttachHostTerminals` / `RemoteCloseHostTerminals` with
 `{host, handle…}` args. With nothing to say (all reattached, none unclaimed) the
 row is a plain transient "Reattached to build-box: 2 terminals". `Remote: Show
-Status` appends the unclaimed terminals to its host line.
+Status` appends the unclaimed terminals to its host line (until
+`remote-host-activity` replaces it with the Host view).
 
 ## Risks / Trade-offs
 
