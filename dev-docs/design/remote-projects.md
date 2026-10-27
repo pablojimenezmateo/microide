@@ -2054,6 +2054,17 @@ to `Remote:`, which is the same list behind a text box; built first as one verb,
 `remote-status`.) The tooltip is each project's `host:/path` with its unsent saves,
 then "Remote menu".
 
+A dimmed row says why after its label, as the LSP rows say their server's state:
+`Show Status (connect to a host first)`, `Stop Forwarding a Port… (no port is
+forwarded)`, `Remove Mirror… (no closed remote project)` -- the text lives beside
+the availability rule (`ActionAvailability::DisabledReason`), and the popup is
+measured with it always, so its width does not move as hosts connect. The `ui`
+query names a row by its label alone. Forward a Port… asks for the port, then,
+with several hosts open and none implied by the active project, for the host
+(a pick of the open hosts) instead of refusing. Remove Mirror…'s row is lit only
+for a recent whose mirror is on disk, read once per change of the recents or of
+the open projects.
+
 ### 7.4a Reattach
 
 Reconnecting to a daemon that kept working is the common path, so it is stated

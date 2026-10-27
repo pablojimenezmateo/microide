@@ -517,7 +517,27 @@ concurrent lanes and a dropped frame are both possible. Next time it fails, keep
 the server's log (`ShortServerDir`) and the channel's frame counters before
 deciding which.
 
-### TD-2026-10-27-405 — Remote menu leftovers: no reason on a dimmed row, Forward a Port… with several hosts, Remove Mirror's availability.
+### TD-2026-10-27-405 — Remote menu leftovers: no reason on a dimmed row, Forward a Port… with several hosts, Remove Mirror's availability. [RESOLVED 2026-10-27]
+
+- **Reason suffix**, not tooltips: `ActionAvailability::DisabledReason` (static
+  text beside the availability rule) is appended by `MenuItemLabel` into the same
+  kind of reused buffer the LSP rows use. The `ui` query, the test-access lookups
+  and the locators use `MenuItemLabel(item, /*with_reason=*/false)`, so a row's
+  name does not change as it dims; the popup is measured with each row's
+  possible reason (`PossibleDisabledReason`), so its width is stable and its
+  width cache stays correctly keyed. Pinned in
+  `QaFlowRegression/TheRemoteSegmentOpensTheRemoteMenu`.
+- **Forward a Port… / Stop Forwarding with a port alone and several hosts**: a
+  pick of the open hosts (`WorkspaceActionContext::OpenHostPick`, now shared with
+  the bare host verbs). `RemoteHostService/ForwardAPortAsksForTheHostWhenSeveralAreOpen`.
+- **Remove Mirror… availability** is exact: the mirror is checked on disk
+  (`RemoteHostService::HasMirrorOnDisk`), cached against the recents revision and
+  an open-projects generation, so the disk is read once per change; a mirror
+  deleted outside the editor is noticed when the pick lists what is there. The
+  no-service fallback checks the disk too, cached on the recents revision.
+  `RemoteHostService/RemoveMirrorDimsForAMirrorDeletedOutsideTheEditor`.
+
+Original entry:
 
 What `openspec/changes/archive/2026-10-27-remote-menu` left:
 - A dimmed row says nothing about why. The design wanted "Connect to a host

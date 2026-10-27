@@ -370,6 +370,15 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
             host = hosts->SoleHost();
           }
           const auto port_number = static_cast<std::uint16_t>(*port);
+          // Several hosts and none implied: ask for it after the port, where the
+          // command line used to be refused ("Name the host").
+          if (host.empty() &&
+              context_.OpenHostPick(forward ? "Forward Port " + std::to_string(*port) + " on"
+                                            : "Stop Forwarding Port " + std::to_string(*port) + " on",
+                                    std::string(forward ? "remote-forward-port " : "remote-unforward-port ") +
+                                        std::to_string(*port))) {
+            return DispatchResult::Handled;
+          }
           if (host.empty() || !(forward ? hosts->ForwardPort(host, port_number)
                                         : hosts->CancelForward(host, port_number))) {
             return reject(host.empty() ? "Name the host: remote-" + std::string(forward ? "" : "un") +

@@ -780,6 +780,9 @@ class WorkspaceActionContext {
   // verb with several hosts open). False when the bare command is unambiguous and
   // runs as it is.
   bool OpenOptionalArgumentPicker(ActionId id);
+  // The open remote hosts as a pick titled `title`, each row running
+  // `command_line <host>`. False with fewer than two hosts (nothing to ask).
+  bool OpenHostPick(std::string_view title, std::string_view command_line);
   // Browse Folder…: `folder`'s entries as a pick -- its subfolders browse on,
   // its files open (the active file's folder when empty). Empty on success,
   // else why not.

@@ -3767,6 +3767,22 @@ void TestTheRemoteSegmentOpensTheRemoteMenu() {
     Expect(entry["enabled"].AsBool() == always,
            name + (always ? " should be available with no host" : " should be dimmed with no host connected"));
   }
+  // A dimmed row says why after its label (TD-2026-10-27-405); its name in the
+  // query stays its label, and a live row says nothing more.
+  using workspace::MenuId;
+  Expect(TestAccess::PaintedMenuItemLabel(fixture.shell, MenuId::Remote, "Show Status") ==
+             "Show Status (connect to a host first)",
+         "a dimmed connection verb says what it waits for: '" +
+             TestAccess::PaintedMenuItemLabel(fixture.shell, MenuId::Remote, "Show Status") + "'");
+  Expect(TestAccess::PaintedMenuItemLabel(fixture.shell, MenuId::Remote, "Forward a Port…") ==
+             "Forward a Port… (connect to a host first)",
+         "Forward a Port… too");
+  Expect(TestAccess::PaintedMenuItemLabel(fixture.shell, MenuId::Remote, "Stop Forwarding a Port…") ==
+             "Stop Forwarding a Port… (no port is forwarded)",
+         "Stop Forwarding says there is nothing forwarded");
+  Expect(TestAccess::PaintedMenuItemLabel(fixture.shell, MenuId::Remote, "Open Folder on Host…") ==
+             "Open Folder on Host…",
+         "an available row paints its label alone");
 
   SendKeyDown(fixture.shell, SDLK_ESCAPE, SDL_KMOD_NONE);
   Expect(!TestAccess::MenuBarOpen(fixture.shell), "Escape should close the Remote menu");

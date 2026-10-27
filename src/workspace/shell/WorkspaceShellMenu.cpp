@@ -311,9 +311,14 @@ std::optional<SDL_FRect> WorkspaceShell::ComputePopupMenuRect(
         total_height += kWorkspaceMenuPopupSeparatorHeight;
         continue;
       }
-      raw_width = std::max(raw_width,
-                           text_renderer_.MeasureWidth(MenuItemLabel(item)) +
-                               text_renderer_.MeasureWidth(MenuItemAccelerator(item)) + 68.0f);
+      // A row's dimmed reason is measured whether it shows now or not: the popup
+      // keeps one width as hosts come and go, and this cache stays keyed right.
+      float label_width = text_renderer_.MeasureWidth(MenuItemLabel(item, /*with_reason=*/false));
+      if (const std::string_view reason = ActionAvailability::PossibleDisabledReason(item.action);
+          !reason.empty()) {
+        label_width += text_renderer_.MeasureWidth(" ()") + text_renderer_.MeasureWidth(reason);
+      }
+      raw_width = std::max(raw_width, label_width + text_renderer_.MeasureWidth(MenuItemAccelerator(item)) + 68.0f);
       total_height += kWorkspaceMenuPopupItemHeight;
     }
     popup_width_cache[popup_width_cache_next] = PopupWidthCacheEntry{
@@ -449,7 +454,7 @@ std::vector<WorkspaceShell::VisiblePopupMenuItem> WorkspaceShell::ComputeVisible
                                                       popup_rect);
 }
 
-std::string_view WorkspaceShell::MenuItemLabel(const MenuItemSpec& item) const {
+std::string_view WorkspaceShell::MenuItemLabel(const MenuItemSpec& item, bool with_reason) const {
   // The breakpoint gutter menu's enable/disable item flips its verb based on the
   // breakpoint's current state, captured into the menu when it opened.
   if (item.action == ActionId::DebugBreakpointToggleEnabled) {
@@ -484,8 +489,24 @@ std::string_view WorkspaceShell::MenuItemLabel(const MenuItemSpec& item) const {
         MenuLspReadiness(), composed);
   };
 
+  // A dimmed row that says why (the Remote menu's), in the same buffer: the LSP
+  // rows carry no such reason, so the two never compose.
+  const auto reasoned = [&](std::string_view label) -> std::string_view {
+    const std::string_view reason =
+        with_reason ? MakeActionAvailability().DisabledReason(effective_action) : std::string_view();
+    if (reason.empty()) {
+      return label;
+    }
+    thread_local std::string composed;
+    composed.assign(label);
+    composed += " (";
+    composed += reason;
+    composed += ")";
+    return composed;
+  };
+
   if (!item.label.empty()) {
-    return IsLspDrivenMenuAction(effective_action) ? lsp_label(item.label) : item.label;
+    return IsLspDrivenMenuAction(effective_action) ? lsp_label(item.label) : reasoned(item.label);
   }
   if (!item.command_name.empty()) {
     if (command_action != nullptr && !command_action->label.empty()) {
@@ -499,7 +520,7 @@ std::string_view WorkspaceShell::MenuItemLabel(const MenuItemSpec& item) const {
   }
   if (const ActionSpec* action = FindWorkspaceActionSpec(item.action); action != nullptr) {
     if (!action->label.empty()) {
-      return IsLspDrivenMenuAction(effective_action) ? lsp_label(action->label) : action->label;
+      return IsLspDrivenMenuAction(effective_action) ? lsp_label(action->label) : reasoned(action->label);
     }
     if (!action->command_name.empty()) {
       return action->command_name;

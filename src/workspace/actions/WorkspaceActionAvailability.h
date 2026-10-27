@@ -56,7 +56,8 @@ class ActionAvailability {
     std::function<std::size_t()> debug_session_count;
     // The remote hosts service when one exists (null before any remote project
     // opened: nothing is connected), and whether the recents list names a remote
-    // project -- what Remove Mirror can take while no service exists yet.
+    // project whose mirror is on disk -- what Remove Mirror can take while no
+    // service exists yet (cached against the recents revision).
     std::function<const RemoteHostService*()> remote_hosts;
     std::function<bool()> has_remote_recent;
   };
@@ -64,6 +65,15 @@ class ActionAvailability {
   ActionAvailability(const WorkspaceContext& context, Operations operations);
 
   bool IsEnabled(ActionId id) const;
+  // Why `id` is dimmed, for the menu row to say after its label ("Show Status
+  // (connect to a host first)"), as the LSP rows say their server's state; empty
+  // when it is enabled or has no reason worth a word. Static text, no allocation:
+  // asked per painted row.
+  std::string_view DisabledReason(ActionId id) const;
+  // The reason `id` would give when dimmed, whatever its state now (empty for an
+  // action that never gives one): what a popup's width is measured with, so the
+  // menu does not change width as a host connects.
+  static std::string_view PossibleDisabledReason(ActionId id);
 
  private:
   TreeContextTargetKind ActiveTreeTargetKind() const;

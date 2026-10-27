@@ -388,6 +388,57 @@ void TestAClosedProjectDoesNotAnswerForItsHost() {
   RemoveFakeMaster(target);
 }
 
+// Forward a Port… with two hosts open and a local project active (TD-2026-10-27-405):
+// the port is asked first, then the host -- where the command used to be refused
+// with "Name the host". The same for Stop Forwarding typed with a port alone.
+void TestForwardAPortAsksForTheHostWhenSeveralAreOpen() {
+  FakeSshHost host;
+  TemporaryDirectory local_project;
+  WriteFile(host.home / "src" / "one" / "a.txt", "a\n");
+  WriteFile(host.home / "src" / "two" / "b.txt", "b\n");
+  WorkspaceShell shell;
+  PointAtFakeHost(shell, host);
+  const std::string first = "dev@fake-fwd-one-" + std::to_string(::getpid());
+  const std::string second = "dev@fake-fwd-two-" + std::to_string(::getpid());
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(
+             shell, "remote-open " + first + ":" + (host.home / "src" / "one").string()),
+         "a project on the first host");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(
+             shell, "remote-open " + second + ":" + (host.home / "src" / "two").string()),
+         "one on the second");
+  Expect(WorkspaceShellTestAccess::OpenProjectTabWithLocality(shell, local_project.path(), {}),
+         "and a local project, active: no host is implied");
+  const auto picked = [&](std::string_view command, std::string_view title) {
+    const auto& pick = WorkspaceShellTestAccess::QuickPick(shell);
+    const auto offers = [&](const std::string& target) {
+      return std::any_of(pick.items.begin(), pick.items.end(), [&](const auto& item) {
+        return item.value.starts_with(std::string(command) + " ") && item.value.find(target) != std::string::npos &&
+               item.primary_label == target;
+      });
+    };
+    return WorkspaceShellTestAccess::OverlayVisible(shell) && pick.title == title && pick.items.size() == 2 &&
+           offers(first) && offers(second);
+  };
+  const auto dismiss = [&]() {
+    SDL_Event escape{};
+    escape.type = SDL_EVENT_KEY_DOWN;
+    escape.key.key = SDLK_ESCAPE;
+    (void)shell.HandleEvent(escape);
+  };
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-forward-port 39231"),
+         "the port alone is accepted");
+  Expect(picked("remote-forward-port 39231", "Forward Port 39231 on"),
+         "and the host is asked for, the open hosts offered: '" +
+             WorkspaceShellTestAccess::QuickPick(shell).title + "'");
+  dismiss();
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-unforward-port 39231"),
+         "Stop Forwarding with the port alone too");
+  Expect(picked("remote-unforward-port 39231", "Stop Forwarding Port 39231 on"), "asks the same way");
+  dismiss();
+  RemoveFakeMaster(first);
+  RemoveFakeMaster(second);
+}
+
 // A host with no server and installing turned off: the project's error row offers
 // the install command beside Reconnect and the ssh command.
 void TestAFailedInstallOffersTheInstallCommand() {
@@ -710,6 +761,54 @@ void TestProjectHomeStatusBlockFollowsTheConnection() {
 // Remote: Remove Mirror. A mirror leaves the disk only through this (a copy of
 // the host's tree plus its metadata is a real cost: 47 MB + up to 170 MB for this
 // repository after churn), and only when nothing in it is still owed to the host.
+// Remove Mirror…'s row lights only for a mirror that is there (TD-2026-10-27-405):
+// a recent whose mirror was deleted outside the editor dims it once the pick has
+// looked -- it used to stay lit for good, and the pick then offered nothing.
+void TestRemoveMirrorDimsForAMirrorDeletedOutsideTheEditor() {
+  TemporaryDirectory homes;
+  const ScopedEnvVar state("XDG_STATE_HOME", (homes.path() / "state").string());
+  const ScopedEnvVar config("XDG_CONFIG_HOME", (homes.path() / "config").string());
+  const ScopedEnvVar data("XDG_DATA_HOME", (homes.path() / "data").string());
+  FakeSshHost host;
+  const std::filesystem::path host_root = host.home / "src" / "gone";
+  WriteFile(host_root / "a.txt", "a\n");
+  const std::string target = "dev@fake-gone-" + std::to_string(::getpid());
+  WorkspaceShell shell;
+  PointAtFakeHost(shell, host);
+  Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::RemoteRemoveMirror),
+         "no recents, no mirror: dimmed");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open " + target + ":" + host_root.string()),
+         "the remote project opens");
+  const std::filesystem::path mirror = WorkspaceShellTestAccess::ProjectRoot(shell);
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return std::filesystem::exists(mirror / "a.txt");
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(10)),
+         "the mirror fills");
+  Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::RemoteRemoveMirror),
+         "an open project's mirror is not removable: dimmed");
+  WorkspaceShellTestAccess::CloseProject(shell, 0);
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::RemoteRemoveMirror);
+             },
+             std::chrono::seconds(10), std::chrono::milliseconds(10)),
+         "closed, its mirror is removable");
+  std::filesystem::remove_all(mirror.parent_path());  // outside the editor
+  Expect(WorkspaceShellTestAccess::ExecuteMenuAction(shell, ActionId::RemoteRemoveMirror), "the row runs");
+  Expect(WorkspaceShellTestAccess::QuickPick(shell).items.empty(), "the pick finds nothing to remove");
+  SDL_Event escape{};
+  escape.type = SDL_EVENT_KEY_DOWN;
+  escape.key.key = SDLK_ESCAPE;
+  (void)shell.HandleEvent(escape);
+  Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::RemoteRemoveMirror),
+         "and the row dims, the recents unchanged");
+  RemoveFakeMaster(target);
+}
+
 void TestRemoveMirrorDeletesAClosedMirrorAndKeepsUnsentSaves() {
   FakeSshHost host;
   const std::filesystem::path host_root = host.home / "src" / "app";
@@ -1416,6 +1515,8 @@ void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostService/LoopbackUrlsAreRecognized", TestLoopbackUrlsAreRecognized);
   AddTest(tests, "RemoteHostService/RemoteProjectTerminalsSayWhereTheyRun",
           TestRemoteProjectTerminalsSayWhereTheyRun);
+  AddTest(tests, "RemoteHostService/ForwardAPortAsksForTheHostWhenSeveralAreOpen",
+          TestForwardAPortAsksForTheHostWhenSeveralAreOpen);
   AddTest(tests, "RemoteHostService/AClosedProjectDoesNotAnswerForItsHost",
           TestAClosedProjectDoesNotAnswerForItsHost);
   AddTest(tests, "RemoteHostService/AFailedInstallOffersTheInstallCommand",
@@ -1428,6 +1529,8 @@ void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostService/APortThatStartsListeningIsForwarded", TestAPortThatStartsListeningIsForwarded);
   AddTest(tests, "RemoteHostService/ProjectHomeStatusBlockFollowsTheConnection",
           TestProjectHomeStatusBlockFollowsTheConnection);
+  AddTest(tests, "RemoteHostService/RemoveMirrorDimsForAMirrorDeletedOutsideTheEditor",
+          TestRemoveMirrorDimsForAMirrorDeletedOutsideTheEditor);
   AddTest(tests, "RemoteHostService/RemoveMirrorDeletesAClosedMirrorAndKeepsUnsentSaves",
           TestRemoveMirrorDeletesAClosedMirrorAndKeepsUnsentSaves);
   AddTest(tests, "RemoteHostService/OpenFolderOnHostEditsTheHostTree",

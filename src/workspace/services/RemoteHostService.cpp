@@ -166,6 +166,7 @@ RemoteHostService::Project* RemoteHostService::OpenProject(const remote::RemoteH
   entry.host = target.Display();
   entry.host_root = host_root;
   Project& stored = projects_.emplace(tree, std::move(entry)).first->second;
+  ++open_generation_;
   if (!raw->Open(error)) {
     projects_.erase(tree);
     return nullptr;
@@ -197,6 +198,7 @@ std::optional<project::ProjectLocality> RemoteHostService::LocalityFor(const pro
     // Reopened after a close (which disconnected it): connect again. A no-op when
     // the project is still connected or connecting.
     existing->second.closed = false;
+    ++open_generation_;
     // Reopened before its session acted on the close's Disconnect, it is simply
     // still connected and reports no new state: show it again from here.
     existing->second.project->session().Connect();
@@ -467,6 +469,7 @@ bool RemoteHostService::RemoveMirror(const std::filesystem::path& root, bool dis
       operations_.dismiss_notification("remote.project." + root.string());
     }
     projects_.erase(it);
+    ++open_generation_;
   }
   if (!remote::MirrorStore::Remove(root.parent_path(), error)) {
     return false;
@@ -962,6 +965,7 @@ void RemoteHostService::ProjectClosed(const std::filesystem::path& root) {
     return;
   }
   it->second.closed = true;
+  ++open_generation_;
   it->second.project->session().Disconnect();
   it->second.announced_sync = false;
   // Not a state any reopen should compare against: a reopen's Ready is a connect
@@ -1034,21 +1038,20 @@ bool RemoteHostService::HasForwardedPort() const {
   return false;
 }
 
+bool RemoteHostService::HasMirrorOnDisk(const project::ProjectId& id) {
+  return id.IsRemote() && remote::RemoteProject::ReadRecord(id.IoRoot()).has_value();
+}
+
 bool RemoteHostService::HasRemovableMirror() const {
   if (!operations_.recent_projects) {
     return false;
   }
-  for (const project::ProjectId& id : operations_.recent_projects()) {
-    const project::ProjectId::Remote* named = id.remote();
-    if (named != nullptr &&
-        std::none_of(projects_.begin(), projects_.end(), [&](const auto& entry) {
-          return !entry.second.closed && entry.second.host == named->host &&
-                 entry.second.host_root == named->host_root;
-        })) {
-      return true;
-    }
+  const std::uint64_t revision = operations_.recents_revision ? operations_.recents_revision() : 0;
+  if (!removable_mirror_.has_value() || removable_mirror_->recents_revision != revision ||
+      removable_mirror_->open_generation != open_generation_ || !operations_.recents_revision) {
+    (void)RemovableMirrors();  // records the answer
   }
-  return false;
+  return removable_mirror_->any;
 }
 
 std::vector<std::string> RemoteHostService::OpenHosts() const {
@@ -1080,17 +1083,22 @@ std::vector<RemoteHostService::ForwardedPort> RemoteHostService::ForwardedPorts(
 std::vector<project::ProjectId> RemoteHostService::RemovableMirrors() const {
   std::vector<project::ProjectId> mirrors;
   if (!operations_.recent_projects) {
+    removable_mirror_ = RemovableMirrorAnswer{};
     return mirrors;
   }
   for (const project::ProjectId& id : operations_.recent_projects()) {
     if (!id.IsRemote()) {
       continue;
     }
-    const std::filesystem::path tree = id.IoRoot();
-    if (!IsRemoteProject(tree) && remote::RemoteProject::ReadRecord(tree).has_value()) {
+    if (!IsRemoteProject(id.IoRoot()) && HasMirrorOnDisk(id)) {
       mirrors.push_back(id);
     }
   }
+  // What the menu row reads until the recents or the open projects change.
+  removable_mirror_ = RemovableMirrorAnswer{
+      .recents_revision = operations_.recents_revision ? operations_.recents_revision() : 0,
+      .open_generation = open_generation_,
+      .any = !mirrors.empty()};
   return mirrors;
 }
 

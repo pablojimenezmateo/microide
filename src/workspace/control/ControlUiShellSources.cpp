@@ -114,7 +114,7 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
             const auto items = MenuItems(id);
             locator += '/';
             if (index < items.size()) {
-              locator += MenuItemLabel(items[index]);
+              locator += MenuItemLabel(items[index], /*with_reason=*/false);
             }
             return locator;
           },
@@ -167,7 +167,9 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                 if (row.separator) {
                   continue;
                 }
-                const std::string label(MenuItemLabel(items[row.index]));
+                // The row's name, not what it paints: a dimmed row's reason is not
+                // part of its identity.
+                const std::string label(MenuItemLabel(items[row.index], /*with_reason=*/false));
                 AddControlUiElement(out, kMenuItem, owner + "/" + label, row.rect, label);
                 out.back().enabled = row.enabled;
                 out.back().active = row.hovered;

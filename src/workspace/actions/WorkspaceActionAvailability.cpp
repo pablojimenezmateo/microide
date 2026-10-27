@@ -693,4 +693,30 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
   return true;
 }
 
+std::string_view ActionAvailability::PossibleDisabledReason(ActionId id) {
+  switch (id) {
+    case ActionId::RemoteShowStatus:
+    case ActionId::RemoteEndHostProcess:
+    case ActionId::RemoteShowLog:
+    case ActionId::RemoteStopServer:
+    case ActionId::RemoteDisconnect:
+    case ActionId::RemoteReconnect:
+    case ActionId::RemoteForwardPort:
+      return "connect to a host first";
+    case ActionId::RemoteUnforwardPort:
+      return "no port is forwarded";
+    case ActionId::RemoteShowHostChanges:
+      return "not a remote project";
+    case ActionId::RemoteRemoveMirror:
+      return "no closed remote project";
+    default:
+      return {};
+  }
+}
+
+std::string_view ActionAvailability::DisabledReason(ActionId id) const {
+  const std::string_view reason = PossibleDisabledReason(id);
+  return reason.empty() || IsEnabled(id) ? std::string_view() : reason;
+}
+
 }  // namespace microide::workspace

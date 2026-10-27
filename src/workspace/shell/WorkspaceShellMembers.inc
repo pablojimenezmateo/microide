@@ -523,7 +523,7 @@
   // label (which every caller does: layout measures one row at a time, paint draws one
   // row at a time). Returning std::string here cost two allocations per visible row per
   // frame for as long as a menu stayed open.
-  std::string_view MenuItemLabel(const MenuItemSpec& item) const;
+  std::string_view MenuItemLabel(const MenuItemSpec& item, bool with_reason = true) const;
   std::string_view MenuItemAccelerator(const MenuItemSpec& item) const;
   bool IsMenuItemEnabled(const MenuItemSpec& item) const;
   // Row-loop overload: enablement for a whole popup is resolved against ONE

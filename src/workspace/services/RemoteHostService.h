@@ -69,6 +69,9 @@ class RemoteHostService {
     std::function<void(const project::ProjectId& id)> forget_recent_project;
     // The recents list, newest first: the mirrors Remove Mirror can offer.
     std::function<const std::vector<project::ProjectId>&()> recent_projects;
+    // Bumped whenever that list changes (RecentsService::revision): what
+    // HasRemovableMirror's answer is cached against.
+    std::function<std::uint64_t()> recents_revision;
     // Open a terminal tab whose shell runs through `launcher` rather than the
     // project's (the ssh authentication tab, a local terminal in a remote project),
     // titled with `label_prefix`; `command` empty = an interactive shell. False on
@@ -319,7 +322,10 @@ class RemoteHostService {
   bool HasOpenProject() const;
   //   a port is forwarded to a host with an open project -- one to stop forwarding
   bool HasForwardedPort() const;
-  //   a recent remote project is not open -- a mirror Remove Mirror may take
+  //   a recent remote project is not open and its mirror is on disk -- one Remove
+  //   Mirror can take. The disk is read once per change of the recents or of the
+  //   open projects, not per row; a mirror deleted outside the editor meanwhile
+  //   is noticed when the pick lists what is there (RemovableMirrors).
   bool HasRemovableMirror() const;
 
   // The hosts of the open remote projects, each once, in the order first opened.
@@ -334,6 +340,9 @@ class RemoteHostService {
   // The recent remote projects that are not open and whose mirror is on disk: what
   // Remove Mirror offers. Reads each candidate's record: not for a frame path.
   std::vector<project::ProjectId> RemovableMirrors() const;
+  // Whether `id` is a remote project whose mirror is on disk (its record reads):
+  // the per-recent half of the above. Reads the disk.
+  static bool HasMirrorOnDisk(const project::ProjectId& id);
 
  private:
   struct Project {
@@ -427,6 +436,15 @@ class RemoteHostService {
   // By mirror tree. Kept until the service goes: a project state may still hold
   // their launcher and gate (ProjectLocality's lifetime rule).
   std::map<std::filesystem::path, Project> projects_;
+  // Bumped whenever a project opens, closes or goes: with the recents revision,
+  // the key HasRemovableMirror's cached answer holds for.
+  std::uint64_t open_generation_ = 0;
+  struct RemovableMirrorAnswer {
+    std::uint64_t recents_revision = 0;
+    std::uint64_t open_generation = 0;
+    bool any = false;
+  };
+  mutable std::optional<RemovableMirrorAnswer> removable_mirror_;
   std::vector<std::string> survival_warned_;  // hosts already warned
   std::vector<std::string> update_offered_;   // hosts already offered a restart
   std::filesystem::path fetching_copy_;  // the host-file copy being opened right now

@@ -625,30 +625,37 @@ bool WorkspaceActionContext::OpenOptionalArgumentPicker(ActionId id) {
     case ActionId::RemoteDisconnect: {
       // A host verb run bare acts on the only host; with several it would guess
       // (or, for Disconnect, take them all), so the menu asks which.
-      RemoteHostService* hosts = RemoteHosts();
       const ActionSpec* spec = FindWorkspaceActionSpec(id);
-      if (hosts == nullptr || spec == nullptr || !operations_.open_command_choices) {
+      if (spec == nullptr) {
         return false;
-      }
-      std::vector<std::string> open = hosts->OpenHosts();
-      if (open.size() < 2) {
-        return false;
-      }
-      std::vector<QuickPickItem> items;
-      for (std::string& host : open) {
-        items.push_back(QuickPickItem{.value = std::string(spec->command_name) + " " + QuoteCommandArg(host),
-                                      .primary_label = std::move(host)});
       }
       std::string_view title = spec->label;
       if (title.starts_with("Remote: ")) {
         title.remove_prefix(8);
       }
-      operations_.open_command_choices(QuickPickService::CommandChoices(std::string(title), "hosts", std::move(items)));
-      return true;
+      return OpenHostPick(title, spec->command_name);
     }
     default:
       return false;
   }
+}
+
+bool WorkspaceActionContext::OpenHostPick(std::string_view title, std::string_view command_line) {
+  RemoteHostService* hosts = RemoteHosts();
+  if (hosts == nullptr || !operations_.open_command_choices) {
+    return false;
+  }
+  std::vector<std::string> open = hosts->OpenHosts();
+  if (open.size() < 2) {
+    return false;
+  }
+  std::vector<QuickPickItem> items;
+  for (std::string& host : open) {
+    items.push_back(QuickPickItem{.value = std::string(command_line) + " " + QuoteCommandArg(host),
+                                  .primary_label = std::move(host)});
+  }
+  operations_.open_command_choices(QuickPickService::CommandChoices(std::string(title), "hosts", std::move(items)));
+  return true;
 }
 
 bool WorkspaceActionContext::OverlayVisible() const {

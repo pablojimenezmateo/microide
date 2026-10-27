@@ -288,7 +288,7 @@
       if (item.separator) {
         continue;
       }
-      labels.emplace_back(shell.MenuItemLabel(item));
+      labels.emplace_back(shell.MenuItemLabel(item, /*with_reason=*/false));
     }
     return labels;
   }
@@ -320,7 +320,7 @@
         static_cast<std::size_t>(menu.active_item_index) >= items.size()) {
       return {};
     }
-    return std::string(shell.MenuItemLabel(items[static_cast<std::size_t>(menu.active_item_index)]));
+    return std::string(shell.MenuItemLabel(items[static_cast<std::size_t>(menu.active_item_index)], /*with_reason=*/false));
   }
   static std::vector<std::string> GitEntryContextMenuLabels(const WorkspaceShell& shell) {
     std::vector<std::string> labels;
@@ -328,7 +328,7 @@
       if (item.separator) {
         continue;
       }
-      labels.emplace_back(shell.MenuItemLabel(item));
+      labels.emplace_back(shell.MenuItemLabel(item, /*with_reason=*/false));
     }
     return labels;
   }

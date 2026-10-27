@@ -5,6 +5,7 @@
 
 #include "workspace/coordinators/SelectionAutoscroll.h"
 
+#include <optional>
 #include <utility>
 
 #include "workspace/services/TerminalPanelService.h"
@@ -247,10 +248,17 @@ ActionAvailability WorkspaceShell::Bootstrapper::BuildActionAvailability() const
           .debug_session_count = [shell]() { return shell->CurrentDapManager().SessionCount(); },
           .remote_hosts = [shell]() -> const RemoteHostService* { return shell->glue_->remote_host_service.get(); },
           .has_remote_recent =
-              [shell]() {
-                const auto& recents = shell->recents_service_.RecentProjects();
-                return std::any_of(recents.begin(), recents.end(),
-                                   [](const project::ProjectId& id) { return id.IsRemote(); });
+              [shell, cached = std::make_shared<std::optional<std::pair<std::uint64_t, bool>>>()]() {
+                // Per painted row while the menu is open: the disk once per change.
+                const RecentsService& recents = shell->recents_service_;
+                if (!cached->has_value() || (*cached)->first != recents.revision()) {
+                  const auto& ids = recents.RecentProjects();
+                  *cached = std::pair{recents.revision(),
+                                      std::any_of(ids.begin(), ids.end(), [](const project::ProjectId& id) {
+                                        return RemoteHostService::HasMirrorOnDisk(id);
+                                      })};
+                }
+                return (*cached)->second;
               },
       });
 }

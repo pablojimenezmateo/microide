@@ -378,7 +378,7 @@
       if (visible_item.separator) {
         continue;
       }
-      labels.emplace_back(shell.MenuItemLabel(items[visible_item.index]));
+      labels.emplace_back(shell.MenuItemLabel(items[visible_item.index], /*with_reason=*/false));
     }
     return labels;
   }
@@ -395,7 +395,7 @@
       if (visible_item.separator) {
         continue;
       }
-      if (shell.MenuItemLabel(items[visible_item.index]) == label) {
+      if (shell.MenuItemLabel(items[visible_item.index], /*with_reason=*/false) == label) {
         return visible_item.rect;
       }
     }
@@ -414,7 +414,7 @@
       if (visible_item.separator) {
         continue;
       }
-      if (shell.MenuItemLabel(items[visible_item.index]) == label) {
+      if (shell.MenuItemLabel(items[visible_item.index], /*with_reason=*/false) == label) {
         return visible_item.checked;
       }
     }
@@ -431,11 +431,22 @@
       if (item.separator) {
         continue;
       }
-      if (shell.MenuItemLabel(item) == label) {
+      if (shell.MenuItemLabel(item, /*with_reason=*/false) == label) {
         return shell.IsMenuItemChecked(item);
       }
     }
     return std::nullopt;
+  }
+  // What `id`'s row named `label` paints: its label, and why it is dimmed when it
+  // is and says (ActionAvailability::DisabledReason). Empty for no such row.
+  static std::string PaintedMenuItemLabel(const WorkspaceShell& shell, WorkspaceShell::MenuId id,
+                                          std::string_view label) {
+    for (const auto& item : shell.MenuItems(id)) {
+      if (!item.separator && shell.MenuItemLabel(item, /*with_reason=*/false) == label) {
+        return std::string(shell.MenuItemLabel(item));
+      }
+    }
+    return {};
   }
   // Non-separator labels of a menu's assembled item list, read straight from
   // MenuItems (no popup/layout needed). Reflects LSP hide filtering, so useful for
@@ -447,7 +458,7 @@
       if (item.separator) {
         continue;
       }
-      labels.emplace_back(shell.MenuItemLabel(item));
+      labels.emplace_back(shell.MenuItemLabel(item, /*with_reason=*/false));
     }
     return labels;
   }
