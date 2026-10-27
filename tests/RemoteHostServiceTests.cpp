@@ -1247,8 +1247,13 @@ void TestARestoredRemoteProjectIsNamedBeforeItIsActivated() {
 void TestHeldMassDeleteIsAppliedFromItsRow() {
   FakeSshHost host;
   const std::filesystem::path host_root = host.home / "held";
+  // 140 files in one directory that goes at once (an unmount, an `rm -rf` of a
+  // tree): one watch batch. Deleting them one by one let a loaded machine split
+  // them across batches each under the threshold, and nothing was held (the
+  // hold is per batch: TD-2026-10-27-402).
   for (int i = 0; i < 150; ++i) {
-    WriteFile(host_root / ("f" + std::to_string(i)), "x");
+    WriteFile(i < 140 ? host_root / "gone" / ("f" + std::to_string(i)) : host_root / ("f" + std::to_string(i)),
+              "x");
   }
   const std::string target = "dev@fake-held-" + std::to_string(::getpid());
   WorkspaceShell shell;
@@ -1264,10 +1269,15 @@ void TestHeldMassDeleteIsAppliedFromItsRow() {
              std::chrono::seconds(30), std::chrono::milliseconds(10)),
          "the mirror fills from the host");
 
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return std::filesystem::exists(mirror / "gone" / "f139");
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(10)),
+         "the directory is mirrored too");
   // Not a repository, so nothing explains the deletes: they are held.
-  for (int i = 0; i < 140; ++i) {
-    std::filesystem::remove(host_root / ("f" + std::to_string(i)));
-  }
+  std::filesystem::rename(host_root / "gone", host.home / "gone-elsewhere");
   const auto held_row = [&]() -> const workspace::NotificationService::Notification* {
     for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
       if (row.message.find("would delete 140 files") != std::string::npos) {
@@ -1286,14 +1296,14 @@ void TestHeldMassDeleteIsAppliedFromItsRow() {
   const workspace::NotificationService::Notification* row = held_row();
   Expect(row->actions.size() == 2 && row->actions[0].label == "Apply" && row->actions[1].label == "Disconnect",
          "with Apply and Disconnect");
-  Expect(std::filesystem::exists(mirror / "f0"), "and nothing was deleted yet");
+  Expect(std::filesystem::exists(mirror / "gone" / "f0"), "and nothing was deleted yet");
 
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "notification-action " + row->key + " Apply"),
          "Apply is pressed");
   Expect(WaitUntil(
              [&] {
                Pump(shell);
-               return !std::filesystem::exists(mirror / "f0") && held_row() == nullptr;
+               return !std::filesystem::exists(mirror / "gone" / "f0") && held_row() == nullptr;
              },
              std::chrono::seconds(20), std::chrono::milliseconds(10)),
          "the deletes apply and the row goes");

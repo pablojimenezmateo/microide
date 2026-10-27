@@ -614,11 +614,23 @@ void TestADetachedTerminalHoldsAnOnDemandServer() {
     channel->Detach();  // what quit does: no term/close
     TerminalSessionTestAccess::EnterHostMode(session, nullptr);
   }  // the client and its attach relay go
-  std::this_thread::sleep_for(std::chrono::milliseconds(2500));
-  const std::vector<remote::ServerTerminal> rows = ListedTerminals(dir);
+  // Twenty idle timeouts with no client: an on-demand server that counted only
+  // connections would be gone.
+  std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+  std::vector<remote::ServerTerminal> rows = ListedTerminals(dir);
+  Expect(Listed(rows, handle) != nullptr, "the server outlived its idle timeout and still holds the terminal");
+  // The shell's `sleep 1; exit` finishes on the host's own time (a loaded
+  // machine starts it late): wait for it rather than assume it.
+  Expect(WaitUntil(
+             [&] {
+               rows = ListedTerminals(dir);
+               const remote::ServerTerminal* row = Listed(rows, handle);
+               return row != nullptr && row->exited;
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(100)),
+         "the shell exits while detached, and its terminal is still listed");
   const remote::ServerTerminal* row = Listed(rows, handle);
-  Expect(row != nullptr, "the server outlived its idle timeout and still holds the terminal");
-  Expect(row != nullptr && row->exited && row->clients == 0 && row->root.empty(),
+  Expect(row != nullptr && row->clients == 0 && row->root.empty(),
          "exited while detached, attached to nobody, under no workspace");
 }
 

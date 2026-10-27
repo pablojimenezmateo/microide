@@ -449,6 +449,23 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-27-402 — the mass-delete hold is decided per watch batch, so a delete split across batches escapes it.
+
+`MirrorSyncEngine::HoldMassDeleteLocked` holds a batch's deletes when that
+batch alone deletes more than `max(mass_delete_min_rows (100), 25% of the
+tree)`. A host-side delete that reaches the watcher in several batches -- a
+slow `rm` of a large tree, or 140 single-file deletes on a loaded machine --
+can stay under the threshold in every batch, and each batch is applied: the
+safety net (§ 6.3, "an unmounted or emptied host root must not empty the
+mirror") is bypassed by timing. Found when
+`RemoteHostService/HeldMassDeleteIsAppliedFromItsRow` failed under four
+parallel sanitizer lanes (the test now deletes one directory atomically, which
+is what it means to model). Fix shape: decide against the deletes applied in
+the last `kSameCheckout` window as well as this batch's -- which needs the
+applied ones deferred for that window (or reversible from the object store)
+so a later batch can still hold them; that trades delete latency, so it wants
+a design note, not a quick patch.
+
 ### TD-2026-10-27-401 — remote-terminal-restore leftovers: one QA scenario, the detached badge, deep paging in QA.
 
 What `openspec/changes/archive/2026-10-27-remote-terminal-restore` did not finish:
