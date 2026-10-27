@@ -3,7 +3,7 @@
 - [ ] 1.1 Fake-ssh end-to-end test: open a remote project whose link becomes `Ready` after a delay; assert a terminal tab exists from project open and that the same tab gets a host prompt once `Ready` (fails today: the pane is dropped)
 - [ ] 1.2 Kernel test: a terminal opened over a connection with no workspace root keeps an on-demand server past its idle timeout once the connection goes away without `term/close`, and an exited-while-detached terminal is still listed (the idle rule already counts terminals; this pins it — no server change expected)
 - [ ] 1.3 Fake-ssh test: run a long-lived command in a remote project's terminal, `CloseProject`, and assert the server still lists the terminal with zero clients (fails today: `term/close` is sent before the disconnect)
-- [ ] 1.4 Fake-ssh test: the same through `Shutdown` (quit), asserting the shell is still running on the host (passes today — quit orphans; pins that the identity written by § 4 refers to a live terminal)
+- [ ] 1.4 Fake-ssh test: the same through `Shutdown` (quit) with a second, inactive remote project also holding a terminal, asserting both shells are still running on the host (fails today in the test binary: `quick_exit_on_shutdown` is off there, the destructors run and send `term/close`)
 
 ## 2. Pending host panes (deferred start)
 
@@ -18,16 +18,16 @@
 
 - [ ] 3.1 `TerminalHostChannel::Detach()` / `RemoteTerminalChannel::Detach()`: unregister and stop frames, no `term/close`
 - [ ] 3.2 `TerminalSession::DetachFromHost()` retaining the identity; destruction of an undetached host session still closes
-- [ ] 3.3 `TerminalPanelService::DetachHostTerminals()` and `CloseHostTerminals()` over every host pane; detach only a running one — a pane whose shell already exited is closed by both (its buffer would otherwise count as live for the server's idle rule)
-- [ ] 3.4 `WorkspaceShell::CloseProject`: detach (or close with `terminal.restore_sessions` off) before `ProjectCatalogService::Close`; `LifecycleCoordinator::Shutdown`: close exited host terminals, or every one with the setting off, before `persist_active_project`
-- [ ] 3.5 Make 1.3 pass; add "closing the tab still ends the shell", "restore_sessions off closes on quit and on close-project", and "three shells ended with Ctrl+D, tabs left open, quit: the server lists no terminal and idles out" tests
+- [ ] 3.3 `ReleaseHostTerminals(ProjectWorkspaceState&, Release::Detach|Close)` over a state's host panes; detach only a running one — a pane whose shell already exited is closed by both (its buffer would otherwise count as live for the server's idle rule)
+- [ ] 3.4 `WorkspaceShell::CloseProject`: release the closing state (detach, or close with `terminal.restore_sessions` off) before `ProjectCatalogService::Close`; `LifecycleCoordinator::Shutdown`: release the active state and every catalog entry's stored state the same way before `persist_active_project`
+- [ ] 3.5 Make 1.3 and 1.4 pass; add "closing the tab still ends the shell", "restore_sessions off closes on quit and on close-project", and "three shells ended with Ctrl+D, tabs left open, quit: the server lists no terminal and idles out" tests
 
 ## 4. Persist host identity
 
-- [ ] 4.1 `HostIdentity` on `TerminalHostChannel::identity()` and `TerminalSession::host_identity()` (live channel, else retained; cleared by `Stop`)
+- [ ] 4.1 `HostIdentity` on `TerminalHostChannel::identity()` (read under the channel mutex: `handle_` is set on the I/O thread) and `TerminalSession::host_identity()` (live channel, else retained; cleared by `Stop`)
 - [ ] 4.2 `TerminalPaneRecord`: `host_epoch`, `host_handle`; rewrite the header comment (host panes' processes ARE kept)
 - [ ] 4.3 New `TerminalPaneTag`s in `WorkspacePersistenceBinaryFormatSessions.cpp` with decode bounds (epoch ≤ `kMaxEpochBytes`, handle 0 = none)
-- [ ] 4.4 `CaptureLayout`: record each project host pane's identity; launcher-bound panes (the auth tab) stay skipped
+- [ ] 4.4 `CaptureLayout`: record each project host pane's identity; launcher-bound panes (the auth tab, a local terminal in a remote project) stay skipped
 - [ ] 4.5 Round-trip test; a session without the tags revives as a fresh shell; corpus entries for the session fuzz target, and run it
 
 ## 5. Reattach on reopen
@@ -40,14 +40,14 @@
 
 ## 6. Discover unclaimed host terminals
 
-- [ ] 6.1 Server: the workspace root recorded on the `Terminal` at open; `TerminalTable::List` (bounded by `max_terminals`); `term/list` in `RemoteProtocol.h` and `RemoteServer.cpp`; kernel test covering an attached, a detached and an exited terminal across two roots
-- [ ] 6.2 Client: send after the session's attaches; filter (no clients, this root, not just claimed); `kErrorUnknownMethod` = empty list
+- [ ] 6.1 Server: the workspace root recorded on the `Terminal` at open; `TerminalTable::List` (bounded by `max_terminals`); `StatusJson` gains `terminals: [{handle, root, cwd, clients, exited}]` and derives the per-workspace count from it (the "per-workspace accounting: TD" zero goes); kernel test covering an attached, a detached and an exited terminal across two roots, through `server/status`
+- [ ] 6.2 Client: `ServerStatus` + validating `ServerStatusFromJson` in `RemoteProtocol.{h,cpp}` (unit tests incl. a hostile reply: zero/huge handles, non-string roots, missing key); `RemoteServerClient::Status()`; ask after the session's attaches on the host-job queue; filter (no clients, this root, not just claimed); a reply without `terminals` = nothing to list
 - [ ] 6.3 The per-host summary row (reattached · started fresh with reason · running with no tab) with `RemoteAttachHostTerminals` / `RemoteCloseHostTerminals`; `Remote: Show Status` appends the unclaimed terminals
 - [ ] 6.4 Tests: a crash-orphaned terminal is offered and Attach opens it with its screen; one attached by another client is not offered; Close ends it
 
 ## 7. QA, docs and lanes
 
-- [ ] 7.1 `qa-remote`: the scenarios of § 8, as a new lettered group `T` in `tools/qa/remote.py` (the relaunch ones reuse `L`'s second launch with the same XDG dirs); every `T` scenario also runs under `qa-slow`
+- [ ] 7.1 `qa-remote`: the scenarios of § 8, as a new lettered group `T` in `tools/qa/remote.py` (the relaunch ones reuse the existing relaunch scenario's second launch with the same XDG dirs); every `T` scenario also runs under `qa-slow`
 - [ ] 7.2 Verify by hand on `worky` with `watch date`: T1, T2, T3 and T6
 - [ ] 7.3 Docs: `remote-projects.md` § 6.12/§ 7.4a as built, `active-work.md` § 3 (host terminals survive a quit), `known-tech-debt.md` for anything deferred
 - [ ] 7.4 Lanes, tests run in batches of 16: `tools/run-checks.sh tests`, `perf-tests` (a render-adjacent session change), `qa`, `qa-remote`, `asan`, `ubsan`, `tsan`, `clang-build`; `tools/audit-lua-longjmp.py` is not affected

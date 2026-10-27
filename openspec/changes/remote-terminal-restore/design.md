@@ -17,8 +17,8 @@ What is missing is on the client side of a *quit* and a *close-project*, verifie
 | --- | --- |
 | Remote project panes fail to start before `Ready`, so they are dropped and `terminal_layout_to_revive` is consumed | `RemoteTerminalChannel::Open` returns null on a disconnected client; `make_started_pane` returns null; `OpenTerminalsForProjectInit` `continue`s |
 | The session has no host identity | `TerminalPanelService::CaptureLayout`, `TerminalLayoutRecord.h`, `WorkspacePersistenceBinaryFormatSessions.cpp` |
-| Close-project kills the shells (`term/close` over a live link before `ProjectClosed`); quit orphans them (`Shutdown` → `quick_exit`, no teardown, no `term/close`) | `WorkspaceShell::CloseProject`, `LifecycleCoordinator::Shutdown` |
-| Cold attach is unused; the host's terminals cannot be listed; § 7.4a's "reattached — N terminals still running" row was never built | `RemoteTerminalChannel::Attach` has only test callers; no `term/list`; `RemoteHostService` |
+| Close-project kills the shells (`term/close` over a live link before `ProjectClosed`); quit orphans them in the shipping binary (`Shutdown` → `quick_exit`, no teardown, no `term/close`) and kills them in the test binaries (`quick_exit_on_shutdown` off, destructors run) | `WorkspaceShell::CloseProject`, `LifecycleCoordinator::Shutdown`, `AppStartupOptions.h` |
+| Cold attach is unused; the host's terminals cannot be listed (`server/status` carries counts only); § 7.4a's "reattached — N terminals still running" row was never built | `RemoteTerminalChannel::Attach` has only test callers; `RemoteServer::StatusJson`; `RemoteHostService` |
 
 Priorities applied throughout, in the repo's order: speed (nothing on the shell
 thread waits on the host; every attach is asynchronous, as `Open` is), correctness
@@ -41,8 +41,11 @@ less code than today where two paths did one job.
   stays layout-only).
 - Handing ptys to a restarted server (`SCM_RIGHTS`, § 6.12, Phase 3).
 - An idle reaper for detached terminals. By design (§ 6.12 "Lifetime") a running
-  terminal keeps its workspace open indefinitely. Discoverability through
-  `term/list` is the answer to orphans, not a timer.
+  terminal keeps its workspace open indefinitely. Discoverability through the
+  `server/status` listing is the answer to orphans, not a timer.
+- A new wire method. The listing rides on `server/status`, which exists, is what
+  the CLI prints, and is what `remote-host-activity` extends with figures; a
+  `term/list` beside it would be the same rows twice.
 - § 7.4a's dimmed tab with a `detached` badge while a link is down.
 
 ## Decisions
@@ -89,7 +92,7 @@ unchanged.
 glyph; the pending status line would be a fourth copy. One
 `TerminalSession::AppendStatusLineLocked(text, dim)` replaces all of them.
 
-### D2. Detach is an explicit verb; destruction keeps meaning close; quit stays as it is
+### D2. Detach is an explicit verb; destruction keeps meaning close; quit and close-project run the same step
 `TerminalHostChannel::Detach()` unregisters the handle and stops frames with no
 `term/close` (`RemoteTerminalChannel::Detach` = `Close` minus the notify).
 `TerminalSession::DetachFromHost()` calls it, retains the channel's `HostIdentity`
@@ -98,35 +101,47 @@ still readable. Destroying a session that was not detached still closes it, so a
 tab close, a pane close and every path nobody thought of keep today's safe
 behaviour.
 
-`TerminalPanelService::DetachHostTerminals()` runs it on every **running** host
-pane, and `CloseHostTerminals()` stops them instead. A host pane whose shell has
-already exited (`!running()` with a channel: the user pressed Ctrl+D, or the
-command finished, while this client was attached and saw it) is **closed** by
-both, never detached: there is no process to keep, only the server's copy of a
-buffer this client has already shown, and the server counts every table entry —
-exited or not — as live for its idle rule (`TerminalTable::LiveCount` is
-`terminals_.size()`), so a detached dead buffer would hold an on-demand server
-open for good. Its tab revives as a fresh shell in its directory, as today. "Kept
-until seen" in the shipped spec therefore means seen by an attached client; a
-shell that exits with no client attached is the case § 6.12 keeps for the next
-attach (D4).
+One helper, `ReleaseHostTerminals(ProjectWorkspaceState&, Release)` with
+`Release::Detach | Close`, walks a state's host panes: `Detach` detaches every
+**running** one, `Close` stops them instead. A host pane whose shell has already
+exited (`!running()` with a channel: the user pressed Ctrl+D, or the command
+finished, while this client was attached and saw it) is **closed** by both, never
+detached: there is no process to keep, only the server's copy of a buffer this
+client has already shown, and the server counts every table entry — exited or not
+— as live for its idle rule (`TerminalTable::LiveCount` is `terminals_.size()`),
+so a detached dead buffer would hold an on-demand server open for good. Its tab
+revives as a fresh shell in its directory, as today. "Kept until seen" in the
+shipped spec therefore means seen by an attached client; a shell that exits with
+no client attached is the case § 6.12 keeps for the next attach (D4). The mode
+is `Detach` when `terminal.restore_sessions` is on, `Close` when it is off; the
+caller reads the setting once.
 
-`WorkspaceShell::CloseProject` calls one or the other **before**
-`ProjectCatalogService::Close` (which persists the entry — reading the retained
-identity — and then destroys it); `Detach` when `terminal.restore_sessions` is on,
-`Close` when it is off.
+The helper takes a state rather than acting on `context_.current_project_state`
+because quit must reach the inactive projects too: their sessions stay attached
+while inactive (nothing mutates an inactive state, but its channels live on), and
+only `quick_exit` detaches them today. `WorkspaceShell::CloseProject` runs it on
+the closing project's state **before** `ProjectCatalogService::Close` (which
+persists the entry — reading the retained identity — and then destroys it).
+`LifecycleCoordinator::Shutdown` runs it on the active state and on each catalog
+entry's stored state before `persist_active_project`. Detaching is a handle
+unregister per pane with nothing on the wire, so quit stays instant; closing
+sends one fire-and-forget `term/close` per pane. The inactive entries are not
+re-persisted at quit (their identities were written when they were switched away
+from, while their channels were live, and a detach does not change them). Local
+terminals are still not torn down at quit, as the comment in `Shutdown` explains.
 
-Quit needs no detach: `Shutdown` persists the active entry while every channel is
-still live and attached (the identity is read from the channel), and `quick_exit`
-drops the link, which is a detach on the server. `Shutdown` gains one step before
-`persist_active_project`: `CloseHostTerminals()` when `terminal.restore_sessions`
-is off (the opt-out stops leaking; today it orphans a shell per quit), else the
-close of exited panes only. Local terminals are still not torn down there, as the
-comment in `Shutdown` explains.
+Making quit explicit is what lets the fake-ssh tests assert it: in the test
+binaries `quick_exit_on_shutdown` is off and the destructors run, so without the
+step a quit would kill every host shell there and the "survives a quit" tests
+would be testing the process exit path, not the product.
 
-*Alternative:* invert the default (destruction detaches, only an explicit close
+*Alternative 1 (the earlier draft):* leave quit to `quick_exit`, adding only the
+opt-out close. Rejected: the lifetime of a host shell would still be decided by
+how the process ends — the thing the goal says never to do — and differently in
+the two binaries.
+*Alternative 2:* invert the default (destruction detaches, only an explicit close
 closes). Rejected: a missed close path would leak a host shell silently, and a
-shell killed by mistake is at least loud. `term/list` (D5) is the backstop for the
+shell killed by mistake is at least loud. The listing (D5) is the backstop for the
 other direction (a crash, and the quits that happened before this change).
 
 ### D3. Host identity is one struct, read from the channel, kept by the session, written as two pane records
@@ -135,7 +150,8 @@ other direction (a crash, and the quits that happened before this change).
 `hello().daemon_epoch` and `handle_`; zero handle until `term/open` answers).
 `TerminalSession::host_identity()` returns the live channel's, or the one retained
 by `DetachFromHost()`; `Stop()` clears it. Nothing is duplicated into the pane
-state and nothing is written from the I/O thread.
+state. `handle_` is set on the I/O thread when `term/open` answers, so
+`identity()` reads it under the channel's existing mutex, as `Reattach` does.
 
 `TerminalPaneRecord` gains `host_epoch` (string) and `host_handle` (u64), written
 as two new `TerminalPaneTag`s through `PersistedRecordWriter` and read by the
@@ -146,9 +162,9 @@ at most ask this user's own server to attach a terminal this user owns — the s
 authority as `microide-server attach`.
 
 `CaptureLayout` keeps skipping launcher-bound panes: after
-`remove-host-terminal-command` the only such pane is the interactive-auth `ssh ·`
-tab, which a session must not revive. A host pane's cwd stays the mirror path, as
-`PaneWorkingDirectory` already maps it.
+`remove-host-terminal-command` those are the interactive-auth `ssh ·` tab and a
+`local ·` terminal in a remote project, neither of which a session revives. A
+host pane's cwd stays the mirror path, as `PaneWorkingDirectory` already maps it.
 
 ### D4. Attach-or-fallback on Ready, asynchronous, counted into one row
 `StartPendingPanes(launcher)`: for each pending pane bound to it, if the pane has an
@@ -169,21 +185,36 @@ Nothing waits on the shell thread: the attach reply lands on the I/O thread as
 A reattached exited shell (`kRunning` clear in the cold frame) shows its final
 output and exit line and relaunches with Enter: the existing exited-pane path.
 
-### D5. `term/list` is additive, offered after the session's claims, and reported in the § 7.4a row
-Request `term/list {}` returns `{terminals: [{handle, root, cwd, title, clients,
-exited}]}`, built under the `TerminalTable` mutex and bounded by `max_terminals`
-(64). `root` is the connection's workspace root at `term/open`, recorded on the
-`Terminal` then (today the table does not know it; `remote-host-activity` uses the
-same field); `cwd` is the session's reported working directory; `title` the last
-OSC title; `exited` is `!running()`. No last-output time: nothing in this change
-reads it, and it would cost a store per output chunk on the reader thread.
+### D5. `server/status` lists the terminals, offered after the session's claims, and reported in the § 7.4a row
+`RemoteServer::StatusJson` gains `terminals: [{handle, root, cwd, clients,
+exited}]` beside the counts it reports today, from a `TerminalTable::List()` built
+under the table mutex and bounded by `max_terminals` (64); the per-workspace
+`terminals` count (today a hard-coded zero marked "per-workspace accounting: TD")
+is derived from the same list. `root` is the connection's workspace root at
+`term/open`, recorded on the `Terminal` then (today the table does not know it;
+`remote-host-activity` extends the same rows with pid, scrollback lines and the
+resource figures); `cwd` is the session's `reported_working_directory()`;
+`exited` is `!running()`. No title: the server-side `TerminalSession` keeps no
+window title (its only `title` is the OSC notify's), and the row is identified by
+its directory. No last-output time: nothing in this change reads it, and it
+would cost a store per output chunk on the reader thread.
 
-The client sends it once per `Ready`, after the D4 attaches on the same lane, so a
+The client decodes the reply with a validating `ServerStatusFromJson`
+(`RemoteProtocol.{h,cpp}`, the hello's style: a missing or mistyped field is
+"not reported", never a crash or a wrong number; handles non-zero, roots and
+cwds bounded like paths elsewhere on the wire) through
+`RemoteServerClient::Status()` on the host-job queue, as `ShowLog` calls the
+server. It asks once per `Ready`, after the D4 attaches on the same lane, so a
 terminal this window is claiming is never offered, and filters to `clients == 0`,
-the project's root, and not among the handles it just attached.
-`kErrorUnknownMethod` (-32601, what `RemotePeer` answers for any method it does
-not know) yields an empty list, so the method is additive and `kProtocolVersion`
-stays 3.
+the project's root, and not among the handles it just attached. An older server's
+reply simply has no `terminals` key, which decodes as nothing to list, so the
+reply is additive and `kProtocolVersion` stays 3. `microide-server status` prints
+the listing with no further work, since it prints the reply.
+
+*Alternative:* a `term/list` request. Rejected: `server/status` already exists,
+already carries the terminal count, is already what the CLI prints, and is what
+`remote-host-activity` extends; a second method would carry the same rows twice
+and need a second decoder and a second CLI path.
 
 The result goes into **one sticky row per host** (`remote.terminals.<host>`): the
 § 7.4a "reattached to build-box" row, which was designed and not built. It sums the
@@ -199,11 +230,13 @@ Status` appends the unclaimed terminals to its host line (until
 ## Risks / Trade-offs
 
 - [Host shells accumulate when a user never reopens] → Each is listed by
-  `term/list`, surfaced on the next connect and in `Remote: Show Status`, and ended
-  by Close or `Remote: Stop Host Server`. Users who never want this set
-  `terminal.restore_sessions` off, which now closes on quit too. No reaper.
-- [Close-project ordering regresses later] → A fake-ssh test asserts the server
-  still lists the terminal with zero clients after `CloseProject`, and another that
+  `server/status`, surfaced on the next connect and in `Remote: Show Status` (and
+  `microide-server status` on the host), and ended by Close or `Remote: Stop Host
+  Server`. Users who never want this set `terminal.restore_sessions` off, which now
+  closes on quit too. No reaper.
+- [Close-project or quit ordering regresses later] → Fake-ssh tests assert the
+  server still lists the terminal with zero clients after `CloseProject` and
+  after `Shutdown` (in the test binary, where destructors run), and another that
   a plain tab close ends it.
 - [Two processes reopen the same session] → Both attach. The server already shares
   one pty at the smaller size, so this is the existing two-client case.
