@@ -1778,7 +1778,9 @@ a process spawned as a child of ssh does not: it dies with the connection.
   `TerminalPanelService::ReleaseHostTerminals`, runs over the closing project's
   terminals (close-project) and over every open project's, active or not (quit),
   before anything is persisted. A running host shell is **detached** --
-  `TerminalHostChannel::Detach`, Close without `term/close` -- and its identity
+  `TerminalHostChannel::Detach`, which sends `term/detach` instead of
+  `term/close` (the host stops framing for that connection and lists the
+  terminal unclaimed even while the connection stays up) -- and its identity
   (the server's `daemon_epoch` and the handle) is written into the session's pane
   record; a shell that already exited while the client watched is closed (its
   buffer would otherwise count as live for the idle rule and hold an on-demand

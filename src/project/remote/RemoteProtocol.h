@@ -54,12 +54,15 @@ inline constexpr std::string_view kOpCancel = "op/cancel";  // notification: {"i
 // Host terminals (§ 6.5). Requests: term/open {cwd, command?, shell?: [argv], rows,
 // columns, scrollback_lines} -> {handle, credit_bytes}; term/attach {handle} -> true.
 // Notifications: term/resize {handle, rows, columns}, term/close {handle},
+// term/detach {handle} (this connection stops receiving the terminal's frames; it
+// keeps running, as when the connection closes -- an older server ignores it),
 // term/ack {handle, bytes} (total frame bytes received). Input and frames are the
 // TermInput / TermFrame content frames.
 inline constexpr std::string_view kTermOpen = "term/open";
 inline constexpr std::string_view kTermAttach = "term/attach";
 inline constexpr std::string_view kTermResize = "term/resize";
 inline constexpr std::string_view kTermClose = "term/close";
+inline constexpr std::string_view kTermDetach = "term/detach";
 inline constexpr std::string_view kTermAck = "term/ack";
 // The workspace tree (Phase 2b, § 6.2). tree/manifest {} -> TreeRows content frames
 // (id = the request) on the bulk lane, then, on the same lane so it cannot overtake

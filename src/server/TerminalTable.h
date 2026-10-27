@@ -116,6 +116,8 @@ class TerminalTable {
   void Close(std::uint64_t connection, std::uint64_t handle);
   // A connection went away: its terminals keep running, without it.
   void Detach(std::uint64_t connection);
+  // term/detach: `connection` leaves terminal `handle` alone, which keeps running.
+  void Detach(std::uint64_t connection, std::uint64_t handle);
   // Clients attached to `handle` (for tests and status).
   std::size_t AttachedCount(std::uint64_t handle) const;
 
@@ -179,6 +181,9 @@ class TerminalTable {
 
   // The pty takes the smallest pane any attached client reported. Table lock held.
   void ApplySharedSizeLocked(Terminal& terminal);
+  // Drops `connection`'s client of `terminal` and resizes to the rest; false if
+  // it was not attached.
+  bool RemoveClientLocked(Terminal& terminal, std::uint64_t connection);
   void Run();
   void Notify();
 

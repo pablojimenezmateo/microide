@@ -441,6 +441,10 @@ void RemoteServer::InstallTerminalHandlers(Connection& connection) {
                       [this, &connection, handle_of](std::uint64_t, const util::JsonValue& params) {
                         terminals_->Close(connection.id, handle_of(params));
                       });
+  peer.OnNotification(remote::method::kTermDetach,
+                      [this, &connection, handle_of](std::uint64_t, const util::JsonValue& params) {
+                        terminals_->Detach(connection.id, handle_of(params));
+                      });
   peer.OnNotification(remote::method::kTermAck,
                       [this, &connection, handle_of](std::uint64_t, const util::JsonValue& params) {
                         const std::int64_t bytes = params["bytes"].AsInt(0);

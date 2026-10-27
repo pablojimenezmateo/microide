@@ -634,6 +634,44 @@ void TestADetachedTerminalHoldsAnOnDemandServer() {
          "exited while detached, attached to nobody, under no workspace");
 }
 
+// A detach that keeps the connection (TD-2026-10-27-399) tells the host: the
+// terminal is listed with no client -- what a second machine is offered as
+// unclaimed -- while the connection that detached it is still open, and the
+// shell keeps running.
+void TestADetachThatKeepsTheConnectionReleasesTheTerminal() {
+  ShortServerDir dir;
+  StartServer(dir);
+  auto client = Connect(dir);
+  TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  auto channel = remote::RemoteTerminalChannel::Open(
+      client, terminal::HostTerminalSource::OpenRequest{.shell = {"sh"}}, session,
+      [](const std::filesystem::path& path) { return path; });
+  Expect(channel != nullptr, "the terminal opens");
+  TerminalSessionTestAccess::EnterHostMode(session, channel);
+  Expect(WaitUntil([&] { return channel->handle() != 0; }, std::chrono::seconds(10)), "it is answered");
+  const std::uint64_t handle = channel->handle();
+  {
+    const std::vector<remote::ServerTerminal> rows = ListedTerminals(dir);
+    const remote::ServerTerminal* row = Listed(rows, handle);
+    Expect(row != nullptr && row->clients == 1, "attached: one client");
+  }
+  channel->Detach();
+  TerminalSessionTestAccess::EnterHostMode(session, nullptr);
+  Expect(client->connected(), "the connection stays up");
+  std::vector<remote::ServerTerminal> rows;
+  Expect(WaitUntil(
+             [&] {
+               rows = ListedTerminals(dir);
+               const remote::ServerTerminal* row = Listed(rows, handle);
+               return row != nullptr && row->clients == 0;
+             },
+             std::chrono::seconds(10), std::chrono::milliseconds(20)),
+         "the host lists it with no client while the detaching connection is open");
+  const remote::ServerTerminal* row = Listed(rows, handle);
+  Expect(row != nullptr && !row->exited, "and the shell still runs");
+}
+
 // Quit and close-project detach a host terminal rather than close it; a reopen
 // reattaches it COLD from the recorded identity -- the screen, what the shell
 // printed meanwhile, a dim rule under the restored history. A recorded identity
@@ -764,6 +802,8 @@ void RegisterRemoteTerminalTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteTerminal/ServerStatusDecoderTrustsNothing", TestServerStatusDecoderTrustsNothing);
   AddTest(tests, "RemoteTerminal/ADetachedTerminalHoldsAnOnDemandServer",
           TestADetachedTerminalHoldsAnOnDemandServer);
+  AddTest(tests, "RemoteTerminal/ADetachThatKeepsTheConnectionReleasesTheTerminal",
+          TestADetachThatKeepsTheConnectionReleasesTheTerminal);
   AddTest(tests, "RemoteTerminal/ADetachedHostTerminalIsReattachedByIdentity",
           TestADetachedHostTerminalIsReattachedByIdentity);
   AddTest(tests, "RemoteTerminal/APendingHostTerminalStartsOnceConnected",

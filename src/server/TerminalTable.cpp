@@ -322,8 +322,7 @@ void TerminalTable::Close(std::uint64_t connection, std::uint64_t handle) {
     const bool others = std::any_of(shared.clients.begin(), shared.clients.end(),
                                     [connection](const Client& client) { return client.connection != connection; });
     if (others) {
-      std::erase_if(shared.clients, [connection](const Client& client) { return client.connection == connection; });
-      ApplySharedSizeLocked(shared);
+      (void)RemoveClientLocked(shared, connection);
       detached = true;
     } else {
       terminal = std::move(it->second);
@@ -337,19 +336,37 @@ void TerminalTable::Close(std::uint64_t connection, std::uint64_t handle) {
   terminal->session.Stop();
 }
 
+bool TerminalTable::RemoveClientLocked(Terminal& terminal, std::uint64_t connection) {
+  const auto removed = std::erase_if(terminal.clients, [connection](const Client& client) {
+    return client.connection == connection;
+  });
+  if (removed == 0) {
+    return false;
+  }
+  ApplySharedSizeLocked(terminal);  // the others may have room again
+  return true;
+}
+
+void TerminalTable::Detach(std::uint64_t connection, std::uint64_t handle) {
+  bool resized = false;
+  {
+    std::lock_guard lock(mutex_);
+    if (const auto it = terminals_.find(handle); it != terminals_.end()) {
+      resized = RemoveClientLocked(*it->second, connection);
+    }
+  }
+  if (resized) {
+    Notify();  // as below
+  }
+}
+
 void TerminalTable::Detach(std::uint64_t connection) {
   bool resized = false;
   {
     std::lock_guard lock(mutex_);
     for (auto& [handle, terminal] : terminals_) {
       (void)handle;
-      const auto removed = std::erase_if(terminal->clients, [connection](const Client& client) {
-        return client.connection == connection;
-      });
-      if (removed != 0) {
-        ApplySharedSizeLocked(*terminal);  // the others may have room again
-        resized = true;
-      }
+      resized = RemoveClientLocked(*terminal, connection) || resized;
     }
   }
   // Wake the frame pump as Resize does: a pty that grew back draws nothing by

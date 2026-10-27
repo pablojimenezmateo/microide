@@ -472,10 +472,12 @@ void RemoteTerminalChannel::Detach() {
     client = client_;
     handle = handle_;
   }
-  // Frames stop here; the host keeps sending this connection's until it goes,
-  // which is what follows a detach (quit, close-project).
+  // Frames stop here, and the host is told so: it stops framing for this
+  // connection and lists the terminal as unclaimed if nobody else holds it,
+  // whether or not the connection stays up.
   if (handle != 0 && client != nullptr) {
     client->UnregisterTerminal(handle);
+    client->peer().Notify(method::kTermDetach, HandleParams(handle));
   }
 }
 

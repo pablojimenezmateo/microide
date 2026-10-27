@@ -602,7 +602,18 @@ but the tab and the shell come back apart. Fix shape: re-persist only the
 inactive projects whose host identities changed since their last write (a
 per-state revision bumped by a start), rather than every inactive project.
 
-### TD-2026-10-27-399 — detaching a host terminal tells the server nothing; it keeps sending that connection frames.
+### TD-2026-10-27-399 — detaching a host terminal tells the server nothing; it keeps sending that connection frames. [RESOLVED 2026-10-27]
+
+`RemoteTerminalChannel::Detach` now sends `term/detach {handle}`, and the server
+drops that connection's client of the terminal (`TerminalTable::Detach(connection,
+handle)`, sharing `RemoveClientLocked` with the connection-wide detach and with
+`Close`'s leave-the-others path), so the pty resizes to whoever is left and the
+terminal is listed unclaimed while the connection stays open. An older server
+ignores the unknown notification. Pinned by
+`RemoteTerminal/ADetachThatKeepsTheConnectionReleasesTheTerminal` (fails with the
+notification removed).
+
+Original entry:
 
 `RemoteTerminalChannel::Detach` unregisters the handle and sends nothing: the
 server still counts the connection as attached (`clients` in `server/status`) and
