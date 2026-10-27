@@ -368,7 +368,15 @@ RemoteHostSession::~RemoteHostSession() {
     thread_.join();
   }
   (void)config_.forwards->Release(this);
+  const auto client = connection_->client();
   connection_->Replace(nullptr);
+  // Stopped, not just let go of: a host terminal's channel may still hold the
+  // client, and its I/O thread would go on delivering git pushes and watch
+  // frames to handlers this session's owner installed and is about to destroy
+  // (RemoteHostService's mailbox: a TSan race at shell teardown). Stop joins it.
+  if (client != nullptr) {
+    client->peer().Stop();
+  }
 }
 
 void RemoteHostSession::LinkDied() {

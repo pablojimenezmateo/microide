@@ -223,7 +223,8 @@ void TestHostTerminalsSurviveQuitAndReattach() {
     WorkspaceShellTestAccess::CloseProject(shell, WorkspaceShellTestAccess::ActiveProjectIndex(shell));
     Expect(WaitUntil(
                [&] {
-                 const auto* row = Listed(HostTerminals(host), kept);
+                 const auto rows = HostTerminals(host);  // held: Listed points into it
+                 const auto* row = Listed(rows, kept);
                  return row != nullptr && row->clients == 0;
                },
                std::chrono::seconds(10)),
