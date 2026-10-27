@@ -449,6 +449,19 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-28-410 — `MirrorSyncEngine/APushWhoseAnswerWasLostIsNotAConflict` failed on CI's ASan and TSan jobs: a request counted as sent before it was. [RESOLVED 2026-10-28]
+
+The test waits for the push to be "on the wire" (`RemotePeer::pending_request_count`
+rising) and then fails the link. `SendRequest` registers a request in `pending_`
+before queuing it -- a fast answer must find it -- and erases it if the queue
+refuses, so the count included a request not yet sent. The test's 1 ms poll saw
+it, its `Fail` closed the transport before the send, the push came back
+never-sent (`may_have_applied` false: correct), and the host bytes the test then
+wrote were rightly a conflict. 2 runs in 48 on two cores locally, failing in
+~300 ms as on CI. `pending_request_count` now counts a request once it is queued
+(`PendingRequest::sent`), which is what its contract always said; 0 in 96 on two
+cores and 0 in 192 under 64-way ASan load after. The test is a day old (TD-385's).
+
 ### TD-2026-10-27-409 — two projects reaching one fresh host at once: one install failed and that project stayed disconnected. [RESOLVED 2026-10-27]
 
 Found while writing the test for TD-2026-10-27-400: opening two remote projects

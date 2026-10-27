@@ -94,7 +94,9 @@ std::uint64_t RemotePeer::Request(std::string_view method, const util::JsonValue
 std::size_t RemotePeer::pending_request_count() const {
   std::lock_guard lock(mutex_);
   return static_cast<std::size_t>(std::count_if(pending_.begin(), pending_.end(),
-                                                [](const auto& entry) { return !entry.second.heartbeat; }));
+                                                [](const auto& entry) {
+                                                  return entry.second.sent && !entry.second.heartbeat;
+                                                }));
 }
 
 std::uint64_t RemotePeer::SendRequest(std::string_view method, const util::JsonValue& params,
@@ -120,6 +122,12 @@ std::uint64_t RemotePeer::SendRequest(std::string_view method, const util::JsonV
     std::lock_guard lock(mutex_);
     pending_.erase(id);
     return 0;
+  }
+  {
+    std::lock_guard lock(mutex_);
+    if (const auto it = pending_.find(id); it != pending_.end()) {
+      it->second.sent = true;  // not when its answer already took it
+    }
   }
   return id;
 }

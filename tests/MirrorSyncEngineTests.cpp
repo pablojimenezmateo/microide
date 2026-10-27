@@ -554,7 +554,11 @@ void TestMirrorAPushWhoseAnswerWasLostIsNotAConflict() {
   const std::size_t before = session.client->peer().pending_request_count();
   WriteFile(session.Tree("a.txt"), "two\n");
   session.engine->NotifyLocalWrite("a.txt");
-  // pending_request_count leaves the link's own pings out: one going unanswered
+  // pending_request_count counts a request once it is queued on the transport,
+  // not when it is registered: counted from registration, the wait below once
+  // saw the push before it was sent, the Fail beat the send, and the push was
+  // (rightly) never-sent -- 1 run in ~15 on two cores (TD-2026-10-28-410).
+  // It also leaves the link's own pings out: one going unanswered
   // to the stopped server here once passed for the push, which then found the
   // link failed, was never sent, and the host bytes the test wrote below really
   // were a host change (1 run in ~40 under load, CI's TSan job).
@@ -576,8 +580,15 @@ void TestMirrorAPushWhoseAnswerWasLostIsNotAConflict() {
   session.client = session.StartServer();
   session.connection->Replace(session.client);
   session.Sync();
-  Expect(ReadFile(session.host / "a.txt") == "three\n",
-         "the newer save lands over the lost push's bytes: '" + ReadFile(session.host / "a.txt") + "'");
+  {
+    const auto status = session.engine->status();
+    Expect(ReadFile(session.host / "a.txt") == "three\n",
+           "the newer save lands over the lost push's bytes: '" + ReadFile(session.host / "a.txt") +
+               "' (mirror '" + ReadFile(session.Tree("a.txt")) + "', state " +
+               std::to_string(static_cast<int>(session.engine->StateOf("a.txt"))) + ", dirty " +
+               std::to_string(status.dirty) + ", conflicts " + std::to_string(status.conflicts) + ", error '" +
+               status.error + "')");
+  }
   Expect(session.engine->StateOf("a.txt") == ContentState::Current && session.engine->status().conflicts == 0 &&
              session.engine->status().dirty == 0,
          "with no conflict and nothing left unsent");

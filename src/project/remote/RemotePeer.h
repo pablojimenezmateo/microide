@@ -126,6 +126,10 @@ class RemotePeer {
   struct PendingRequest {
     ResponseHandler handler;
     bool heartbeat = false;  // a link/ping of SendPing's
+    // Queued on the transport. A request is registered before it is sent (a fast
+    // answer must find it) and erased if the send fails; until then it is not
+    // "sent and unanswered", and pending_request_count leaves it out.
+    bool sent = false;
   };
   std::map<std::uint64_t, PendingRequest> pending_;
   std::unordered_set<std::uint64_t> incoming_in_flight_;
