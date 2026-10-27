@@ -145,6 +145,10 @@ RemoteHostService::Project* RemoteHostService::OpenProject(const remote::RemoteH
   config.session = SessionConfig(target);
   config.session.workspace_root = host_root;
   config.mirror_directory = tree.parent_path();
+  config.terminal_credit_bytes =
+      SettingSize(operations_.setting ? operations_.setting("remote.term_credit_bytes") : std::nullopt);
+  config.terminal_prefetch_lines = SettingSize(
+      operations_.setting ? operations_.setting("remote.scrollback_prefetch_lines") : std::nullopt);
   if (const auto budget_mib = util::ParseInt64(
           operations_.setting ? operations_.setting("remote.object_store_budget").value_or("")
                               : std::string());

@@ -73,6 +73,7 @@ class RemoteProcessLauncher final : public platform::ProcessLauncher,
                   const platform::SubprocessSandbox& sandbox) const override;
   bool is_local() const override { return false; }
   std::string_view description() const override { return options_.description; }
+  const Options& options() const { return options_; }
 
   project::GitAvailability Availability(const std::filesystem::path& root) const override;
   // Project search over the host's real tree (search/run), for the project root

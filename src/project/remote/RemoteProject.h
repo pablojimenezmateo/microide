@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -45,6 +46,10 @@ class RemoteProject {
     // "" = MirrorStore::DefaultDirectory(host, root).
     std::filesystem::path mirror_directory;
     MirrorSyncEngine::Options engine;
+    // Per host terminal (RemoteProcessLauncher::Options): remote.term_credit_bytes and
+    // remote.scrollback_prefetch_lines; 0 = the host's defaults.
+    std::size_t terminal_credit_bytes = 0;
+    std::size_t terminal_prefetch_lines = 0;
     // The host pushed a new git status for the tree (git/subscribe): the git
     // sidebar can re-render from it without a host process. Any thread.
     std::function<void()> git_status_changed;

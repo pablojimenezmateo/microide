@@ -264,6 +264,31 @@ void RemoveFakeMaster(const std::string& target) {
   }
 }
 
+// The host-terminal settings shape a remote PROJECT's terminals: they once reached
+// only the launcher of the removed terminal-only host session, so in a project
+// both read as their defaults whatever the user set.
+void TestHostTerminalSettingsReachTheProjectLauncher() {
+  FakeSshHost host;
+  const std::filesystem::path host_root = host.home / "src" / "settings";
+  WriteFile(host_root / "a.txt", "a\n");
+  WorkspaceShell shell;
+  PointAtFakeHost(shell, host);
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.term_credit_bytes", "65536") &&
+             WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.scrollback_prefetch_lines",
+                                                                "1234"),
+         "the settings are set");
+  const std::string target = "dev@fake-settings-" + std::to_string(::getpid());
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open " + target + ":" + host_root.string()),
+         "the remote project opens");
+  const auto* launcher = dynamic_cast<const project::remote::RemoteProcessLauncher*>(
+      &WorkspaceShellTestAccess::ProjectLauncher(shell));
+  Expect(launcher != nullptr, "the project's launcher is the host's");
+  Expect(launcher != nullptr && launcher->options().terminal_credit_bytes == 65536 &&
+             launcher->options().terminal_prefetch_lines == 1234,
+         "and carries both settings");
+  RemoveFakeMaster(target);
+}
+
 // § 7.3: a file the mirror has not fetched (here: over remote.backfill_max_file_mib,
 // so it stays unfetched deterministically) is still listed — dimmed in the tree, in
 // quick-open — and opening it fetches it, then opens it.
@@ -1189,6 +1214,8 @@ void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostService/OpenTerminalOnHostFromTheCommand",
           TestOpenTerminalOnHostFromTheCommand);
   AddTest(tests, "RemoteHostService/MixedTerminalsSayWhereTheyRun", TestMixedTerminalsSayWhereTheyRun);
+  AddTest(tests, "RemoteHostService/HostTerminalSettingsReachTheProjectLauncher",
+          TestHostTerminalSettingsReachTheProjectLauncher);
   AddTest(tests, "RemoteHostService/UnfetchedFilesAreListedAndOpenWhenFetched",
           TestUnfetchedFilesAreListedAndOpenWhenFetched);
   AddTest(tests, "RemoteHostService/ConflictMergesThreeWaysToTheHost", TestConflictMergesThreeWaysToTheHost);
