@@ -473,10 +473,14 @@ freed storage: C++20 extends the lifetime of the range expression's result, not
 of the temporary `ControlUi()` returned that `operator[]` reaches into. It passed
 every plain run and failed only under ASan (the Remote menu's flow test, fixed in
 b810db96a). C++23 (P2718R0, GCC 15 / Clang 19) extends every temporary in the
-range initializer and removes the class; until the project moves, an
-architecture-lint rule over `tests/` and `src/` for `for (... : <call>(...)[`
-(and `.member` after a call returning by value) would catch the next one. The
-single other match today is a pointer deref, not a temporary.
+range initializer and removes the class. A DATA member of the temporary is safe
+(`: ComputeEditorGroupRectsForState(layout).groups` extends the whole object, and
+the tree has several); the hazard is a member FUNCTION or `operator[]` that returns
+a reference into a temporary returned by value, which a regex cannot tell from a
+call on a cached reference (`MakeEditorTabService().DirtyGroupTabs()` is fine).
+GCC's `-Wdangling-reference` did not fire on it. Options: move to C++23, or a lint
+for the one shape seen -- `: <call>(...)[` -- with fixtures; nothing in the tree
+matches that shape today.
 
 ### TD-2026-10-27-403 — files the host deletes while the first backfill is fetching them stay counted "to fetch".
 
