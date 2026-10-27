@@ -97,21 +97,23 @@ void TerminalSession::SetWakeChannel(util::WakeChannel channel) {
 bool TerminalSession::Start(const platform::ProcessLauncher& launcher,
                             const std::filesystem::path& working_directory,
                             std::string_view command,
-                            std::string_view shell) {
+                            std::string_view shell,
+                            HostIdentity attach) {
   // `shell` is a command line, not a program path — that is what the setting has
   // always said it was. Splitting here (rather than in the backend) keeps the
   // backend's request argv-shaped and the quoting rules in one place.
   return StartArgv(launcher, working_directory, command,
-                   launcher.ResolveArgv(util::SplitCommandLine(shell)));
+                   launcher.ResolveArgv(util::SplitCommandLine(shell)), std::move(attach));
 }
 
 bool TerminalSession::StartArgv(const platform::ProcessLauncher& launcher,
                                 const std::filesystem::path& working_directory,
                                 std::string_view command,
-                                std::vector<std::string> shell_argv) {
+                                std::vector<std::string> shell_argv,
+                                HostIdentity attach) {
   Stop();
   if (const HostTerminalSource* host = HostTerminalsFor(launcher)) {
-    return StartOnHost(*host, working_directory, command, std::move(shell_argv));
+    return StartOnHost(*host, working_directory, command, std::move(shell_argv), std::move(attach));
   }
   {
     std::scoped_lock lock(mutex_);
@@ -229,17 +231,9 @@ void TerminalSession::Stop() {
     stop_requested_ = true;
     backend = std::move(backend_);
     child_pid = child_pid_;
-    host_channel = host_channel_;
+    host_channel = host_.channel;
   }
-  // Outside the lock: Close waits out a frame being applied, which takes it.
-  if (host_channel) {
-    host_channel->Close();
-    std::scoped_lock lock(mutex_);
-    prediction_.Withdraw(PredictionViewLocked());
-    prediction_.Clear();
-    host_channel_.reset();
-    host_primary_stash_.reset();
-  }
+  StopHost(host_channel);
   if (backend) {
     backend->Stop();
   } else if (child_pid > 0) {

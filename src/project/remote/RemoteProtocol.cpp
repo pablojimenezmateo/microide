@@ -165,6 +165,52 @@ std::optional<HelloReply> HelloReplyFromJson(const util::JsonValue& json, std::s
   return hello;
 }
 
+ServerStatus ServerStatusFromJson(const util::JsonValue& json) {
+  ServerStatus status;
+  if (!json.IsObject()) {
+    return status;
+  }
+  if (const util::JsonValue& epoch = json["daemon_epoch"];
+      epoch.IsString() && epoch.AsString().size() <= kMaxEpochBytes) {
+    status.daemon_epoch = epoch.AsString();
+  }
+  if (const util::JsonValue& survival = json["session_survival"]; survival.IsObject()) {
+    status.session_survival = SessionSurvival{
+        .kill_user_processes = survival["kill_user_processes"].AsBool(false),
+        .linger = survival["linger"].AsBool(false)};
+  }
+  const util::JsonValue& terminals = json["terminals"];
+  if (!terminals.IsArray()) {
+    return status;  // absent, or the count an older server sends
+  }
+  // A handle is a JSON integer; past 2^53 a peer's double would already have lost
+  // it, so nothing above that is a handle this server could have issued.
+  constexpr std::int64_t kMaxHandle = std::int64_t{1} << 53;
+  constexpr std::int64_t kMaxClients = 1 << 20;
+  std::vector<ServerTerminal>& rows = status.terminals.emplace();
+  for (const util::JsonValue& row : terminals.AsArray()) {
+    if (rows.size() >= kMaxListedTerminals) {
+      break;
+    }
+    const util::JsonValue& handle = row["handle"];
+    const util::JsonValue& root = row["root"];
+    const util::JsonValue& cwd = row["cwd"];
+    const util::JsonValue& clients = row["clients"];
+    if (!row.IsObject() || !handle.IsInt() || handle.AsInt() <= 0 || handle.AsInt() > kMaxHandle ||
+        !root.IsString() || root.AsString().size() > kMaxRootBytes || !clients.IsInt() ||
+        clients.AsInt() < 0 || clients.AsInt() > kMaxClients) {
+      continue;
+    }
+    rows.push_back(ServerTerminal{
+        .handle = static_cast<std::uint64_t>(handle.AsInt()),
+        .root = root.AsString(),
+        .cwd = cwd.IsString() && cwd.AsString().size() <= kMaxRootBytes ? cwd.AsString() : std::string(),
+        .clients = static_cast<std::size_t>(clients.AsInt()),
+        .exited = row["exited"].AsBool(false)});
+  }
+  return status;
+}
+
 std::optional<std::string> CheckProtocolCompatibility(std::int64_t local_protocol,
                                                       std::int64_t local_min_protocol,
                                                       std::string_view local_release,

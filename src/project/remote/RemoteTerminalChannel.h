@@ -33,7 +33,11 @@ class RemoteTerminalChannel final : public terminal::TerminalHostChannel,
   using HostToLocal = std::function<std::filesystem::path(const std::filesystem::path&)>;
 
   // `request.working_directory` is already a HOST path. `host_to_local` maps the
-  // shell's OSC 7 reports back into the editor's tree.
+  // shell's OSC 7 reports back into the editor's tree. With `request.attach` set
+  // this is a cold reattach to that terminal when the client's server is the one
+  // it was recorded under, falling back to a fresh open -- when the server
+  // restarted, or no longer has it -- as reattach() reports. The session is bound
+  // to the channel before anything is sent.
   static std::shared_ptr<RemoteTerminalChannel> Open(
       std::shared_ptr<RemoteServerClient> client,
       const terminal::HostTerminalSource::OpenRequest& request, terminal::TerminalSession& session,
@@ -60,6 +64,9 @@ class RemoteTerminalChannel final : public terminal::TerminalHostChannel,
   void Send(const terminal::TerminalInputEvent& event) override;
   void Resize(std::size_t rows, std::size_t columns) override;
   void Close() override;
+  void Detach() override;
+  terminal::HostIdentity identity() const override;
+  terminal::HostReattach reattach() const override;
   std::optional<std::chrono::milliseconds> RoundTrip() const override;
   bool FetchHistory(std::uint64_t before, std::size_t count, HistoryDone done) override;
 
@@ -72,6 +79,11 @@ class RemoteTerminalChannel final : public terminal::TerminalHostChannel,
   bool SendAttach(const std::shared_ptr<RemoteServerClient>& client, std::uint64_t handle,
                   const std::optional<terminal::TerminalSession::HostResumePoint>& resume,
                   bool reattach);
+  bool SendOpen(const std::shared_ptr<RemoteServerClient>& client,
+                const terminal::HostTerminalSource::OpenRequest& request);
+  // A refused cold attach that has an open to fall back on: sends it. False when
+  // there is none (the caller reports the refusal).
+  bool FallBackToOpen(const std::shared_ptr<RemoteServerClient>& client);
   void OpenFailed(const std::string& error);
   void ApplyFrame(std::string_view bytes);
   static void SendResize(const std::shared_ptr<RemoteServerClient>& client, std::uint64_t handle,
@@ -100,6 +112,12 @@ class RemoteTerminalChannel final : public terminal::TerminalHostChannel,
   std::uint64_t received_bytes_ = 0;
   std::uint64_t acked_bytes_ = 0;
   bool reattaching_ = false;
+  // Detached with a known handle: the terminal is left to the host, and a late
+  // open/attach answer must not close it.
+  bool detached_ = false;
+  terminal::HostReattach reattach_state_ = terminal::HostReattach::None;
+  // The open a requested reattach falls back to; dropped once answered.
+  std::optional<terminal::HostTerminalSource::OpenRequest> fallback_;
 };
 
 }  // namespace microide::project::remote

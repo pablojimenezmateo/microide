@@ -187,7 +187,7 @@ void RemoteServer::InstallHandlers(Connection& connection) {
                                .settings = {.backfill_inflight_bytes = backfill},
                            }));
                  });
-  peer.OnRequest("server/status", [this, &connection](std::uint64_t id, const util::JsonValue&) {
+  peer.OnRequest(remote::method::kServerStatus, [this, &connection](std::uint64_t id, const util::JsonValue&) {
     connection.peer.Reply(id, StatusJson());
   });
   peer.OnRequest(remote::method::kServerLog, [this, &connection](std::uint64_t id, const util::JsonValue&) {
@@ -350,6 +350,7 @@ void RemoteServer::InstallTerminalHandlers(Connection& connection) {
                      connection.peer.ReplyError(id, remote::kErrorInvalidParams, error);
                      return;
                    }
+                   request->root = connection.root;
                    const TerminalTable::OpenResult opened =
                        terminals_->Open(connection.id, std::move(*request));
                    if (opened.handle == 0) {
@@ -440,18 +441,36 @@ util::JsonValue RemoteServer::StatusJson() {
     live += connection->closed ? 0 : 1;
   }
   status["connections"] = util::JsonValue(live);
+  // The terminals, listed: a client offers the ones nobody is attached to (a
+  // crash orphan, a quit before this client recorded it). The per-workspace
+  // count is derived from the same rows.
+  const std::vector<TerminalTable::Listing> terminals = terminals_->List();
+  util::JsonArray terminal_rows;
+  terminal_rows.reserve(terminals.size());
+  for (const TerminalTable::Listing& terminal : terminals) {
+    util::JsonObject row;
+    row["handle"] = util::JsonValue(static_cast<std::int64_t>(terminal.handle));
+    row["root"] = util::JsonValue(terminal.root);
+    row["cwd"] = util::JsonValue(terminal.cwd);
+    row["clients"] = util::JsonValue(static_cast<std::int64_t>(terminal.clients));
+    row["exited"] = util::JsonValue(terminal.exited);
+    terminal_rows.push_back(util::JsonValue(std::move(row)));
+  }
   util::JsonArray workspaces;
   for (const auto& [root, workspace] : workspaces_) {
     util::JsonObject entry;
     entry["root"] = util::JsonValue(root);
     entry["clients"] = util::JsonValue(static_cast<std::int64_t>(workspace.clients));
-    entry["terminals"] = util::JsonValue(std::int64_t{0});
+    entry["terminals"] = util::JsonValue(static_cast<std::int64_t>(
+        std::count_if(terminals.begin(), terminals.end(),
+                      [&](const TerminalTable::Listing& terminal) { return terminal.root == root; })));
     entry["processes"] = util::JsonValue(std::int64_t{0});  // per-workspace accounting: TD
     workspaces.push_back(util::JsonValue(std::move(entry)));
   }
   status["workspaces"] = util::JsonValue(std::move(workspaces));
   status["processes"] = util::JsonValue(static_cast<std::int64_t>(processes_->LiveCount()));
-  status["terminals"] = util::JsonValue(static_cast<std::int64_t>(terminals_->LiveCount()));
+  // Was a count before the listing; the count is its length.
+  status["terminals"] = util::JsonValue(std::move(terminal_rows));
   util::JsonObject survival;
   survival["kill_user_processes"] = util::JsonValue(config_.session_survival.kill_user_processes);
   survival["linger"] = util::JsonValue(config_.session_survival.linger);

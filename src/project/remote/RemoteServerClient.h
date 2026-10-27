@@ -108,6 +108,9 @@ class RemoteServerClient {
   void Release(std::uint64_t handle);
 
   std::optional<GitMetadata> QueryGitMetadata(const std::filesystem::path& host_root);
+  // server/status, blocking the calling thread (not the I/O thread) on the reply.
+  // nullopt with *error when it failed; a reply is decoded as untrusted.
+  std::optional<ServerStatus> Status(std::string* error);
 
   // Pushed git status (git/subscribe, remote-projects.md § 6.5): the host pushes
   // `git status` after every change to the workspace or its repository, so the

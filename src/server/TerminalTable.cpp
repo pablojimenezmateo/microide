@@ -143,6 +143,7 @@ TerminalTable::OpenResult TerminalTable::Open(std::uint64_t connection, OpenRequ
                                   : limits_.credit_bytes;
     terminal->prefetch_lines =
         request.prefetch_lines != 0 ? request.prefetch_lines : limits_.prefetch_lines;
+    terminal->root = std::move(request.root);
     terminal->clients.push_back(
         Client{.connection = connection, .rows = request.rows, .columns = request.columns});
   }
@@ -363,6 +364,21 @@ std::size_t TerminalTable::AttachedCount(std::uint64_t handle) const {
   std::lock_guard lock(mutex_);
   const auto it = terminals_.find(handle);
   return it == terminals_.end() ? 0 : it->second->clients.size();
+}
+
+std::vector<TerminalTable::Listing> TerminalTable::List() const {
+  std::lock_guard lock(mutex_);
+  std::vector<Listing> list;
+  list.reserve(terminals_.size());
+  for (const auto& [handle, terminal] : terminals_) {
+    // Table lock, then the session's: the order the frame pump's captures take.
+    list.push_back(Listing{.handle = handle,
+                           .root = terminal->root,
+                           .cwd = terminal->session.reported_working_directory().string(),
+                           .clients = terminal->clients.size(),
+                           .exited = !terminal->session.running()});
+  }
+  return list;
 }
 
 std::size_t TerminalTable::LiveCount() const {

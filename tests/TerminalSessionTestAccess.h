@@ -140,10 +140,13 @@ struct TerminalSessionTestAccess {
   static void EnterHostMode(microide::terminal::TerminalSession& session,
                             std::shared_ptr<microide::terminal::TerminalHostChannel> channel) {
     std::scoped_lock lock(session.mutex_);
-    session.host_channel_ = std::move(channel);
-    session.host_screen_top_ = 0;
-    session.host_screen_lines_ = session.lines_.size();
-    session.host_alternate_ = false;
+    if (channel != nullptr && session.host_.channel == channel) {
+      return;  // the channel bound itself before its first request (it may hold a frame)
+    }
+    session.host_.channel = std::move(channel);
+    session.host_.screen_top = 0;
+    session.host_.screen_lines = session.lines_.size();
+    session.host_.alternate = false;
     session.running_ = true;
   }
 

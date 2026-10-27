@@ -702,6 +702,15 @@ void RemoteServerClient::EndGitMutation() {
   git_required_generation_ = std::max(git_required_generation_, last_git_generation_.load());
 }
 
+std::optional<ServerStatus> RemoteServerClient::Status(std::string* error) {
+  const std::optional<util::JsonValue> reply =
+      Call(method::kServerStatus, util::JsonValue(util::JsonObject{}), error);
+  if (!reply.has_value()) {
+    return std::nullopt;
+  }
+  return ServerStatusFromJson(*reply);
+}
+
 std::optional<RemoteServerClient::GitMetadata> RemoteServerClient::QueryGitMetadata(
     const std::filesystem::path& host_root) {
   util::JsonObject params;

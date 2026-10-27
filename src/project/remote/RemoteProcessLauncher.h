@@ -88,6 +88,7 @@ class RemoteProcessLauncher final : public platform::ProcessLauncher,
 
   // A terminal in a remote project is a host terminal: the pty and the shell run
   // on the host (term/open), never a local shell in a mapped directory.
+  bool Ready() const override;
   std::shared_ptr<terminal::TerminalHostChannel> OpenTerminal(
       const OpenRequest& request, terminal::TerminalSession& session,
       std::string* error) const override;

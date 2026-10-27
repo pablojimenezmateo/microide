@@ -325,6 +325,11 @@ std::filesystem::path RemoteProcessLauncher::ResolveWorkingDirectory(
   return cwd;
 }
 
+bool RemoteProcessLauncher::Ready() const {
+  const std::shared_ptr<RemoteServerClient> client = connection_->client();
+  return client != nullptr && client->connected();
+}
+
 std::shared_ptr<terminal::TerminalHostChannel> RemoteProcessLauncher::OpenTerminal(
     const OpenRequest& request, terminal::TerminalSession& session, std::string* error) const {
   OpenRequest host_request = request;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -25,6 +26,11 @@ inline constexpr std::int64_t kMinProtocolVersion = 3;
 namespace method {
 inline constexpr std::string_view kServerHello = "server/hello";
 inline constexpr std::string_view kServerShutdown = "server/shutdown";
+// server/status {} -> {release, daemon_epoch, session_survival, workspaces: [...],
+// terminals: [{handle, root, cwd, clients, exited}], ...}: what `microide-server
+// status` prints. Before the terminal listing `terminals` was a count; a client
+// reads that as "not listed" (ServerStatusFromJson).
+inline constexpr std::string_view kServerStatus = "server/status";
 inline constexpr std::string_view kLinkPing = "link/ping";
 inline constexpr std::string_view kOpCancel = "op/cancel";  // notification: {"id": <request>}
 // Host terminals (§ 6.5). Requests: term/open {cwd, command?, shell?: [argv], rows,
@@ -154,6 +160,30 @@ util::JsonValue ToJson(const HelloReply& hello);
 // the first field that is missing, mistyped or out of range.
 std::optional<HelloRequest> HelloRequestFromJson(const util::JsonValue& json, std::string* error);
 std::optional<HelloReply> HelloReplyFromJson(const util::JsonValue& json, std::string* error);
+
+// The part of a server/status reply the client acts on. Every field is untrusted
+// and nothing fails the decode: a missing or mistyped field reads as not reported,
+// never as a wrong value.
+struct ServerTerminal {
+  std::uint64_t handle = 0;  // never 0 once decoded
+  std::string root;          // the opening connection's workspace root ("" = none)
+  std::string cwd;           // "" = not reported
+  std::size_t clients = 0;   // attached connections
+  bool exited = false;
+  bool operator==(const ServerTerminal&) const = default;
+};
+struct ServerStatus {
+  std::string daemon_epoch;  // "" = not reported
+  std::optional<SessionSurvival> session_survival;
+  // nullopt: the server lists no terminals (one older than the listing, whose
+  // `terminals` is a count). A row with an unusable handle, root or client count
+  // is dropped rather than guessed at.
+  std::optional<std::vector<ServerTerminal>> terminals;
+};
+// At most this many rows are kept from one reply (the server caps its own table
+// at 64 terminals).
+inline constexpr std::size_t kMaxListedTerminals = 256;
+ServerStatus ServerStatusFromJson(const util::JsonValue& json);
 
 // Whether two peers can talk: each side's version must be at least the other's
 // floor. nullopt when compatible; otherwise the message the user sees, naming both

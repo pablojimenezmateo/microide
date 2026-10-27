@@ -95,7 +95,7 @@ bool TerminalSession::SendMouseToHost(TerminalInputEvent::Kind kind, MouseButton
                                       util::KeyModifiers modifiers) {
   {
     std::scoped_lock lock(mutex_);
-    if (host_channel_ == nullptr) {
+    if (host_.channel == nullptr) {
       return false;
     }
     const TerminalMouseTrackingMode mode = CurrentTerminalMouseTrackingMode(

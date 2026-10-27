@@ -13,22 +13,44 @@ namespace {
 // The rule drawn where host lines could not be had (trimmed on the host while
 // detached, or withheld while the credit window was full): one line, with the
 // count, never `count` blank lines.
-TerminalLine MakeGapLine(std::uint64_t count) {
+std::string GapText(std::uint64_t count) {
+  return "\xe2\x8b\xaf " + std::to_string(count) + (count == 1 ? " line" : " lines") +
+         " not transferred \xe2\x8b\xaf";
+}
+
+std::size_t Utf8Length(unsigned char lead) {
+  return lead >= 0xf0 ? 4 : lead >= 0xe0 ? 3 : lead >= 0xc0 ? 2 : 1;
+}
+
+// The lines the session draws itself (a pending start, a lost link, a gap rule,
+// the reattach rule), always through this one builder.
+TerminalLine MakeStatusLine(std::string_view text, bool dim) {
   TerminalLine line;
-  const std::string text = "\xe2\x8b\xaf " + std::to_string(count) +
-                           (count == 1 ? " line" : " lines") + " not transferred \xe2\x8b\xaf";
   TerminalStyle style;
-  style.set(cell_attr::kDim, true);
-  // Glyph by glyph: "⋯" is three bytes and one column.
+  style.set(cell_attr::kDim, dim);
+  // Glyph by glyph: "⋯" is three bytes and one column. A truncated sequence at the
+  // end (a host's error text cut short) is one cell of what is left.
   for (std::size_t at = 0; at < text.size();) {
-    const std::size_t length = static_cast<unsigned char>(text[at]) >= 0xe0 ? 3 : 1;
+    const std::size_t length =
+        std::min(Utf8Length(static_cast<unsigned char>(text[at])), text.size() - at);
     TerminalCell cell;
-    cell.SetUtf8(std::string_view(text).substr(at, length));
+    cell.SetUtf8(text.substr(at, length));
     cell.style = style;
     line.cells.push_back(cell);
     at += length;
   }
   return line;
+}
+
+// Insert `line` into a host mirror's `lines` as scrollback just above the screen,
+// so the screen's mirror is untouched and a reattach can still resume against
+// it. It stands for no host line. The cursor, on the screen, moves down one.
+void InsertHostRule(std::deque<TerminalLine>& lines, TerminalHostMode& host,
+                    std::uint64_t trim_total, std::size_t& cursor_row, TerminalLine line) {
+  const std::size_t at = lines.size() - std::min(host.screen_lines, lines.size());
+  host.history.AddGap(trim_total + at, 0);
+  lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(at), std::move(line));
+  ++cursor_row;
 }
 
 }  // namespace
@@ -41,20 +63,23 @@ const HostTerminalSource* HostTerminalsFor(const platform::ProcessLauncher& laun
 
 bool TerminalSession::is_host_terminal() const {
   std::scoped_lock lock(mutex_);
-  return host_channel_ != nullptr;
+  return host_.channel != nullptr;
 }
 
 std::shared_ptr<TerminalHostChannel> TerminalSession::HostChannel() const {
   std::scoped_lock lock(mutex_);
-  return host_channel_;
+  return host_.channel;
 }
 
 bool TerminalSession::StartOnHost(const HostTerminalSource& source,
                                   const std::filesystem::path& working_directory,
-                                  std::string_view command, std::vector<std::string> shell_argv) {
+                                  std::string_view command, std::vector<std::string> shell_argv,
+                                  HostIdentity attach) {
   std::size_t rows = 0;
   std::size_t columns = 0;
   std::size_t scrollback = 0;
+  // Asked outside the session lock: the source takes its connection's.
+  const bool ready = source.Ready();
   {
     std::scoped_lock lock(mutex_);
     ReseedForStartLocked(working_directory,
@@ -62,14 +87,32 @@ bool TerminalSession::StartOnHost(const HostTerminalSource& source,
     rows = rows_;
     columns = columns_;
     scrollback = max_scrollback_lines_;
-    host_screen_top_ = 0;
-    host_screen_lines_ = lines_.size();
-    host_alternate_ = false;
-    host_primary_stash_.reset();
-    host_primary_stash_screen_lines_ = 0;
-    host_mirrored_ = false;
-    next_input_seq_ = 1;
+    host_.screen_top = 0;
+    host_.screen_lines = lines_.size();
+    host_.alternate = false;
+    host_.primary_stash.reset();
+    host_.primary_stash_screen_lines = 0;
+    host_.mirrored = false;
+    host_.link_down = false;
+    host_.next_input_seq = 1;
     stop_requested_ = false;
+    if (!ready) {
+      // Not connected yet: wait, with the request kept, until StartPendingOnHost.
+      // The status line is the caller's to say (SetPendingStatus).
+      lines_ = {MakeStatusLine("[waiting for the host connection\xe2\x80\xa6]", /*dim=*/false)};
+      host_.screen_lines = lines_.size();
+      cursor_visible_ = false;
+      running_ = false;
+      host_.pending = TerminalHostMode::PendingStart{.working_directory = working_directory,
+                                       .command = std::string(command),
+                                       .shell_argv = std::move(shell_argv),
+                                       .attach = std::move(attach)};
+      AdvanceSnapshotGenerationLocked();
+    }
+  }
+  if (!ready) {
+    PushWakeEvent();
+    return true;
   }
   std::string error;
   std::shared_ptr<TerminalHostChannel> channel = source.OpenTerminal(
@@ -78,29 +121,127 @@ bool TerminalSession::StartOnHost(const HostTerminalSource& source,
                                       .shell = std::move(shell_argv),
                                       .rows = rows,
                                       .columns = columns,
-                                      .scrollback_lines = scrollback},
+                                      .scrollback_lines = scrollback,
+                                      .attach = std::move(attach)},
       *this, &error);
   {
     std::scoped_lock lock(mutex_);
-    host_channel_ = channel;
+    host_.channel = channel;
     running_ = channel != nullptr;
     if (channel == nullptr) {
-      lines_ = {TerminalLine{}};
+      lines_ = {MakeStatusLine("[could not open a terminal on the host: " + error + "]", /*dim=*/false)};
       cursor_row_ = 0;
       cursor_column_ = 0;
-      for (const char c : "[could not open a terminal on the host: " + error + "]") {
-        if (c != '\0') {
-          TerminalCell cell;
-          cell.SetAscii(c);
-          lines_.back().cells.push_back(cell);
-        }
-      }
-      host_screen_lines_ = lines_.size();
+      host_.screen_lines = lines_.size();
     }
     AdvanceSnapshotGenerationLocked();
   }
   PushWakeEvent();
   return channel != nullptr;
+}
+
+void TerminalSession::StopHost(const std::shared_ptr<TerminalHostChannel>& channel) {
+  // Outside the lock: Close waits out a frame being applied, which takes it.
+  if (channel != nullptr) {
+    channel->Close();
+  }
+  std::scoped_lock lock(mutex_);
+  if (channel != nullptr) {
+    prediction_.Withdraw(PredictionViewLocked());
+    prediction_.Clear();
+    host_.channel.reset();
+    host_.primary_stash.reset();
+  }
+  host_.pending.reset();
+  host_.detached_identity = {};
+  host_.link_down = false;
+  host_.announce_reattach = false;
+}
+
+bool TerminalSession::host_pending() const {
+  std::scoped_lock lock(mutex_);
+  return host_.pending.has_value();
+}
+
+void TerminalSession::SetPendingStatus(std::string_view text) {
+  {
+    std::scoped_lock lock(mutex_);
+    if (!host_.pending.has_value()) {
+      return;
+    }
+    lines_ = {MakeStatusLine(text, /*dim=*/false)};
+    host_.screen_lines = lines_.size();
+    AdvanceSnapshotGenerationLocked();
+  }
+  PushWakeEvent();
+}
+
+bool TerminalSession::StartPendingOnHost(const platform::ProcessLauncher& launcher) {
+  std::optional<TerminalHostMode::PendingStart> pending;
+  {
+    std::scoped_lock lock(mutex_);
+    pending.swap(host_.pending);
+  }
+  if (!pending.has_value()) {
+    return false;
+  }
+  return StartArgv(launcher, pending->working_directory, pending->command,
+                   std::move(pending->shell_argv), std::move(pending->attach));
+}
+
+HostIdentity TerminalSession::host_identity() const {
+  std::shared_ptr<TerminalHostChannel> channel;
+  {
+    std::scoped_lock lock(mutex_);
+    if (host_.pending.has_value()) {
+      return host_.pending->attach;
+    }
+    if (host_.channel == nullptr) {
+      return host_.detached_identity;
+    }
+    channel = host_.channel;
+  }
+  // Outside the session lock: the channel holds its own while it applies a frame,
+  // which takes this one (lock order).
+  return channel->identity();
+}
+
+HostReattach TerminalSession::host_reattach() const {
+  const std::shared_ptr<TerminalHostChannel> channel = HostChannel();
+  return channel != nullptr ? channel->reattach() : HostReattach::None;
+}
+
+void TerminalSession::DetachFromHost() {
+  const std::shared_ptr<TerminalHostChannel> channel = HostChannel();
+  if (channel == nullptr) {
+    return;
+  }
+  HostIdentity identity = channel->identity();
+  // Outside the lock, as Stop closes: Detach waits out a frame being applied.
+  channel->Detach();
+  {
+    std::scoped_lock lock(mutex_);
+    if (host_.channel != channel) {
+      return;  // stopped or restarted meanwhile
+    }
+    prediction_.Withdraw(PredictionViewLocked());
+    prediction_.Clear();
+    host_.channel.reset();
+    running_ = false;
+    host_.detached_identity = std::move(identity);
+    AdvanceSnapshotGenerationLocked();
+  }
+  PushWakeEvent();
+}
+
+bool TerminalSession::host_shell_exited() const {
+  std::scoped_lock lock(mutex_);
+  return host_.channel != nullptr && host_.mirrored && !running_ && !host_.link_down;
+}
+
+void TerminalSession::NoteHostReattached() {
+  std::scoped_lock lock(mutex_);
+  host_.announce_reattach = true;
 }
 
 TerminalPredictionOverlay::View TerminalSession::PredictionViewLocked() {
@@ -129,11 +270,11 @@ bool TerminalSession::SendToHost(TerminalInputEvent event) {
   std::shared_ptr<TerminalHostChannel> channel;
   {
     std::scoped_lock lock(mutex_);
-    if (host_channel_ == nullptr) {
+    if (host_.channel == nullptr) {
       return false;
     }
-    channel = host_channel_;
-    event.seq = next_input_seq_++;
+    channel = host_.channel;
+    event.seq = host_.next_input_seq++;
   }
   // Sent first: the prediction is drawn in this frame either way, and the host
   // should not wait on the overlay.
@@ -144,7 +285,7 @@ bool TerminalSession::SendToHost(TerminalInputEvent event) {
   bool predicted = false;
   {
     std::scoped_lock lock(mutex_);
-    if (host_channel_ == channel) {
+    if (host_.channel == channel) {
       prediction_.set_round_trip(round_trip);
       predicted = prediction_.Typed(event, PredictionViewLocked());
       if (predicted) {
@@ -192,7 +333,7 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
   bool consistent = true;
   {
     std::scoped_lock lock(mutex_);
-    if (host_channel_ == nullptr) {
+    if (host_.channel == nullptr) {
       return true;  // stopped: a late frame has nothing to apply to
     }
     // Predictions out first: Keep and Promote name CONFIRMED lines.
@@ -203,43 +344,43 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
       prediction_.Clear();
       // A cold attach: nothing held is valid, scrollback included.
       lines_.clear();
-      host_screen_lines_ = 0;
-      host_primary_stash_.reset();
-      host_primary_stash_screen_lines_ = 0;
-      host_alternate_ = false;
-      host_screen_top_ = frame.previous_top;
-      host_history_.gaps.clear();
-      host_history_.first_line = frame.previous_top;
-      host_history_.exhausted = false;
+      host_.screen_lines = 0;
+      host_.primary_stash.reset();
+      host_.primary_stash_screen_lines = 0;
+      host_.alternate = false;
+      host_.screen_top = frame.previous_top;
+      host_.history.gaps.clear();
+      host_.history.first_line = frame.previous_top;
+      host_.history.exhausted = false;
       // Rows above a mirror's first line can arrive later (RequestOlderHostHistory),
       // and each takes the trim total one DOWN: start it where that cannot reach 0.
       scrollback_trim_total_ = std::max(scrollback_trim_total_, TerminalHostHistory::kRowBase);
     }
-    if (alternate && !host_alternate_) {
-      host_primary_stash_ = std::move(lines_);
-      host_primary_stash_screen_lines_ = host_screen_lines_;
+    if (alternate && !host_.alternate) {
+      host_.primary_stash = std::move(lines_);
+      host_.primary_stash_screen_lines = host_.screen_lines;
       lines_.clear();
-      host_screen_lines_ = 0;
-    } else if (!alternate && host_alternate_) {
-      if (host_primary_stash_.has_value()) {
-        lines_ = std::move(*host_primary_stash_);
+      host_.screen_lines = 0;
+    } else if (!alternate && host_.alternate) {
+      if (host_.primary_stash.has_value()) {
+        lines_ = std::move(*host_.primary_stash);
       } else {
         lines_.clear();
       }
-      host_primary_stash_.reset();
-      host_screen_lines_ = host_primary_stash_screen_lines_;
+      host_.primary_stash.reset();
+      host_.screen_lines = host_.primary_stash_screen_lines;
     }
-    host_alternate_ = alternate;
+    host_.alternate = alternate;
 
     // Detach the old screen from the tail; what stays is scrollback.
     std::vector<TerminalLine> old_screen;
-    old_screen.reserve(host_screen_lines_);
-    const std::size_t screen_from = lines_.size() - std::min(host_screen_lines_, lines_.size());
+    old_screen.reserve(host_.screen_lines);
+    const std::size_t screen_from = lines_.size() - std::min(host_.screen_lines, lines_.size());
     for (std::size_t i = screen_from; i < lines_.size(); ++i) {
       old_screen.push_back(std::move(lines_[i]));
     }
     lines_.resize(screen_from);
-    const std::uint64_t old_top = alternate ? 0 : host_screen_top_;
+    const std::uint64_t old_top = alternate ? 0 : host_.screen_top;
     const auto take_old = [&](std::uint64_t absolute, TerminalLine& out) {
       if (absolute < old_top || absolute - old_top >= old_screen.size()) {
         consistent = false;
@@ -250,7 +391,7 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
     };
 
     if (!alternate) {
-      if (frame.previous_top != host_screen_top_) {
+      if (frame.previous_top != host_.screen_top) {
         consistent = false;
       }
       if (frame.screen_top < frame.previous_top) {
@@ -260,16 +401,16 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
         std::uint64_t back = frame.previous_top - frame.screen_top;
         while (back > 0 && !lines_.empty()) {
           const std::uint64_t row = scrollback_trim_total_ + lines_.size() - 1;
-          if (!host_history_.gaps.empty() && host_history_.gaps.back().row == row) {
-            TerminalHostHistory::Gap& gap = host_history_.gaps.back();
+          if (!host_.history.gaps.empty() && host_.history.gaps.back().row == row) {
+            TerminalHostHistory::Gap& gap = host_.history.gaps.back();
             if (gap.count > back) {
               // Only the newest of the withheld lines are back on screen.
               gap.count -= back;
-              lines_.back() = MakeGapLine(gap.count);
+              lines_.back() = MakeStatusLine(GapText(gap.count), /*dim=*/true);
               break;
             }
             back -= gap.count;
-            host_history_.gaps.pop_back();
+            host_.history.gaps.pop_back();
           } else {
             --back;
           }
@@ -291,8 +432,8 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
             }
             break;
           case TerminalHostRun::Kind::Gap:
-            host_history_.AddGap(scrollback_trim_total_ + lines_.size(), run.count);
-            lines_.push_back(MakeGapLine(run.count));
+            host_.history.AddGap(scrollback_trim_total_ + lines_.size(), run.count);
+            lines_.push_back(MakeStatusLine(GapText(run.count), /*dim=*/true));
             break;
         }
         absolute += run.count;
@@ -311,35 +452,46 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
     if (frame.screen_keep.empty()) {
       lines_.emplace_back();  // the buffer always holds a line
     }
-    host_screen_lines_ = std::max<std::size_t>(1, frame.screen_keep.size());
+    host_.screen_lines = std::max<std::size_t>(1, frame.screen_keep.size());
     if (!alternate) {
-      host_screen_top_ = frame.screen_top;
+      host_.screen_top = frame.screen_top;
     }
-    host_mirrored_ = true;
+    host_.mirrored = true;
+    host_.link_down = false;
 
     rows_ = frame.rows;
     columns_ = frame.columns;
     // The client's own scrollback cap; the host's is the host's business.
     if (!alternate) {
-      const std::size_t keep = max_scrollback_lines_ + host_screen_lines_;
+      const std::size_t keep = max_scrollback_lines_ + host_.screen_lines;
       if (lines_.size() > keep + keep / 4) {
         const std::size_t trim = lines_.size() - keep;
         lines_.erase(lines_.begin(), lines_.begin() + static_cast<std::ptrdiff_t>(trim));
         scrollback_trim_total_ += trim;
         // The front moves by host lines, not rows: a trimmed rule was `count` of them.
         std::uint64_t host_lines = trim;
-        std::erase_if(host_history_.gaps, [&](const TerminalHostHistory::Gap& gap) {
+        std::erase_if(host_.history.gaps, [&](const TerminalHostHistory::Gap& gap) {
           if (gap.row >= scrollback_trim_total_) {
             return false;
           }
           host_lines = host_lines + gap.count - 1;
           return true;
         });
-        host_history_.first_line += host_lines;
+        host_.history.first_line += host_lines;
       }
     }
-    cursor_row_ = lines_.size() - host_screen_lines_ + frame.cursor_row;
+    cursor_row_ = lines_.size() - host_.screen_lines + frame.cursor_row;
     cursor_column_ = frame.cursor_column;
+    if (host_.announce_reattach && frame.has(TerminalHostFrame::kReset)) {
+      // The recorded terminal is back: say so under the history it brought (VS
+      // Code's "History restored"). On the alternate screen there is no history
+      // on show to put it under.
+      host_.announce_reattach = false;
+      if (!alternate) {
+        InsertHostRule(lines_, host_, scrollback_trim_total_, cursor_row_,
+                       MakeStatusLine("\xe2\x8b\xaf reattached \xe2\x8b\xaf", /*dim=*/true));
+      }
+    }
     use_alternate_screen_ = alternate;
     cursor_visible_ = frame.has(TerminalHostFrame::kCursorVisible);
     cursor_blinking_ = frame.has(TerminalHostFrame::kCursorBlinking);
@@ -375,25 +527,15 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
 void TerminalSession::HostConnectionLost(std::string_view reason) {
   {
     std::scoped_lock lock(mutex_);
-    if (host_channel_ == nullptr || !running_) {
+    if (host_.channel == nullptr || !running_) {
       return;
     }
     running_ = false;
+    host_.link_down = true;
     prediction_.Withdraw(PredictionViewLocked());
     prediction_.Clear();
-    const std::string text = "[connection to the host lost: " + std::string(reason) + "]";
-    TerminalLine line;
-    for (const char c : text) {
-      TerminalCell cell;
-      cell.SetAscii(c);
-      line.cells.push_back(cell);
-    }
-    // As scrollback below the screen, so the screen's mirror is untouched and a
-    // reattach can still resume against it. It stands for no host line.
-    const std::size_t at = lines_.size() - std::min(host_screen_lines_, lines_.size());
-    host_history_.AddGap(scrollback_trim_total_ + at, 0);
-    lines_.insert(lines_.begin() + static_cast<std::ptrdiff_t>(at), std::move(line));
-    ++cursor_row_;
+    InsertHostRule(lines_, host_, scrollback_trim_total_, cursor_row_,
+                   MakeStatusLine("[connection to the host lost: " + std::string(reason) + "]", /*dim=*/false));
     AdvanceSnapshotGenerationLocked();
   }
   PushWakeEvent();
@@ -401,10 +543,10 @@ void TerminalSession::HostConnectionLost(std::string_view reason) {
 
 std::optional<TerminalSession::HostResumePoint> TerminalSession::host_resume_point() const {
   std::scoped_lock lock(mutex_);
-  if (host_channel_ == nullptr || !host_mirrored_) {
+  if (host_.channel == nullptr || !host_.mirrored) {
     return std::nullopt;
   }
-  return HostResumePoint{.screen_top = host_screen_top_, .alternate = host_alternate_};
+  return HostResumePoint{.screen_top = host_.screen_top, .alternate = host_.alternate};
 }
 
 void TerminalSession::ReattachHost(std::shared_ptr<TerminalHostChannel> channel) {
@@ -412,10 +554,11 @@ void TerminalSession::ReattachHost(std::shared_ptr<TerminalHostChannel> channel)
     std::scoped_lock lock(mutex_);
     prediction_.Withdraw(PredictionViewLocked());
     prediction_.Clear();
-    host_channel_ = std::move(channel);
+    host_.channel = std::move(channel);
     // The new client numbers its input from 1 again; so does the host.
-    next_input_seq_ = 1;
-    running_ = host_channel_ != nullptr;
+    host_.next_input_seq = 1;
+    running_ = host_.channel != nullptr;
+    host_.link_down = false;
     AdvanceSnapshotGenerationLocked();
   }
   PushWakeEvent();
@@ -428,19 +571,19 @@ void TerminalSession::RequestOlderHostHistory() {
   std::size_t count = 0;
   {
     std::scoped_lock lock(mutex_);
-    if (host_channel_ == nullptr || !host_mirrored_ || use_alternate_screen_ ||
-        host_history_.in_flight || host_history_.exhausted || host_history_.first_line == 0) {
+    if (host_.channel == nullptr || !host_.mirrored || use_alternate_screen_ ||
+        host_.history.in_flight || host_.history.exhausted || host_.history.first_line == 0) {
       return;
     }
     // Never past this client's own cap: the next frame would trim it straight off.
-    const std::size_t keep = max_scrollback_lines_ + host_screen_lines_;
+    const std::size_t keep = max_scrollback_lines_ + host_.screen_lines;
     if (lines_.size() >= keep) {
       return;
     }
     count = std::min(kPageLines, keep - lines_.size());
-    before = host_history_.first_line;
-    channel = host_channel_;
-    host_history_.in_flight = true;
+    before = host_.history.first_line;
+    channel = host_.channel;
+    host_.history.in_flight = true;
   }
   const bool sent = channel->FetchHistory(
       before, count, [this](std::uint64_t first, std::vector<TerminalLine> lines) {
@@ -448,20 +591,20 @@ void TerminalSession::RequestOlderHostHistory() {
       });
   if (!sent) {
     std::scoped_lock lock(mutex_);
-    host_history_.in_flight = false;
+    host_.history.in_flight = false;
   }
 }
 
 void TerminalSession::PrependHostHistory(std::uint64_t first, std::vector<TerminalLine> lines) {
   {
     std::scoped_lock lock(mutex_);
-    host_history_.in_flight = false;
+    host_.history.in_flight = false;
     if (lines.empty()) {
-      host_history_.exhausted = true;  // the host holds nothing older
+      host_.history.exhausted = true;  // the host holds nothing older
       return;
     }
     // Only a page that still ends where this mirror begins, on the same screen.
-    if (use_alternate_screen_ || first + lines.size() != host_history_.first_line ||
+    if (use_alternate_screen_ || first + lines.size() != host_.history.first_line ||
         lines.size() > scrollback_trim_total_) {
       return;
     }
@@ -470,7 +613,7 @@ void TerminalSession::PrependHostHistory(std::uint64_t first, std::vector<Termin
                   std::make_move_iterator(lines.end()));
     scrollback_trim_total_ -= count;  // every row already held keeps its absolute index
     cursor_row_ += count;
-    host_history_.first_line = first;
+    host_.history.first_line = first;
     AdvanceSnapshotGenerationLocked();
   }
   PushWakeEvent();
@@ -484,17 +627,17 @@ void TerminalSession::RequestHostGapFill(std::size_t first_row, std::size_t rows
   std::size_t count = 0;
   {
     std::scoped_lock lock(mutex_);
-    if (host_channel_ == nullptr || !host_mirrored_ || use_alternate_screen_) {
+    if (host_.channel == nullptr || !host_.mirrored || use_alternate_screen_) {
       return;
     }
     // Never past this client's own cap: the next frame would trim it straight off.
-    const std::size_t keep = max_scrollback_lines_ + host_screen_lines_;
+    const std::size_t keep = max_scrollback_lines_ + host_.screen_lines;
     if (lines_.size() >= keep) {
       return;
     }
     const std::uint64_t first = scrollback_trim_total_ + first_row;
     const std::uint64_t end = first + rows;
-    for (TerminalHostHistory::Gap& gap : host_history_.gaps) {
+    for (TerminalHostHistory::Gap& gap : host_.history.gaps) {
       if (gap.row >= end) {
         break;
       }
@@ -506,12 +649,12 @@ void TerminalSession::RequestHostGapFill(std::size_t first_row, std::size_t rows
       }
       // The newest of the withheld lines first: they sit right above what follows
       // the rule, so a partial fill reads on from the text below it.
-      before = host_history_.HostIndexOfRow(gap.row, scrollback_trim_total_) + gap.count;
+      before = host_.history.HostIndexOfRow(gap.row, scrollback_trim_total_) + gap.count;
       count = static_cast<std::size_t>(
           std::min<std::uint64_t>({gap.count, kPageLines, keep - lines_.size()}));
       gap.fill_in_flight = true;
       gap_id = gap.id;
-      channel = host_channel_;
+      channel = host_.channel;
       break;
     }
   }
@@ -524,7 +667,7 @@ void TerminalSession::RequestHostGapFill(std::size_t first_row, std::size_t rows
       });
   if (!sent) {
     std::scoped_lock lock(mutex_);
-    for (TerminalHostHistory::Gap& gap : host_history_.gaps) {
+    for (TerminalHostHistory::Gap& gap : host_.history.gaps) {
       if (gap.id == gap_id) {
         gap.fill_in_flight = false;
       }
@@ -537,9 +680,9 @@ void TerminalSession::FillHostGap(std::uint64_t gap_id, std::uint64_t before, st
   {
     std::scoped_lock lock(mutex_);
     const auto gap_it =
-        std::find_if(host_history_.gaps.begin(), host_history_.gaps.end(),
+        std::find_if(host_.history.gaps.begin(), host_.history.gaps.end(),
                      [gap_id](const TerminalHostHistory::Gap& gap) { return gap.id == gap_id; });
-    if (gap_it == host_history_.gaps.end()) {
+    if (gap_it == host_.history.gaps.end()) {
       return;  // trimmed, or taken back on screen, while the request was out
     }
     gap_it->fill_in_flight = false;
@@ -550,7 +693,7 @@ void TerminalSession::FillHostGap(std::uint64_t gap_id, std::uint64_t before, st
     // Only a page that still ends where the gap does, on the same screen; a gap a
     // growing screen shrank since is asked again by the next frame that shows it.
     const std::uint64_t gap_end =
-        host_history_.HostIndexOfRow(gap_it->row, scrollback_trim_total_) + gap_it->count;
+        host_.history.HostIndexOfRow(gap_it->row, scrollback_trim_total_) + gap_it->count;
     if (use_alternate_screen_ || before != gap_end || first + lines.size() != gap_end ||
         lines.size() > gap_it->count) {
       return;
@@ -565,22 +708,22 @@ void TerminalSession::FillHostGap(std::uint64_t gap_id, std::uint64_t before, st
       lines_.insert(lines_.begin() + static_cast<std::ptrdiff_t>(at),
                     std::make_move_iterator(lines.begin()), std::make_move_iterator(lines.end()));
       added = count - 1;
-      host_history_.gaps.erase(gap_it);
+      host_.history.gaps.erase(gap_it);
     } else {
       // The newest part: below the rule, which now stands for what is still older.
       gap_it->count -= count;
-      lines_[at] = MakeGapLine(gap_it->count);
+      lines_[at] = MakeStatusLine(GapText(gap_it->count), /*dim=*/true);
       lines_.insert(lines_.begin() + static_cast<std::ptrdiff_t>(at + 1),
                     std::make_move_iterator(lines.begin()), std::make_move_iterator(lines.end()));
       added = count;
     }
-    for (TerminalHostHistory::Gap& gap : host_history_.gaps) {
+    for (TerminalHostHistory::Gap& gap : host_.history.gaps) {
       if (gap.row > gap_row) {
         gap.row += added;
       }
     }
     cursor_row_ += added;  // the cursor is on the screen, below every gap
-    host_history_.RecordRowShift(gap_row, added);
+    host_.history.RecordRowShift(gap_row, added);
     AdvanceSnapshotGenerationLocked();
   }
   PushWakeEvent();
@@ -588,19 +731,19 @@ void TerminalSession::FillHostGap(std::uint64_t gap_id, std::uint64_t before, st
 
 std::uint64_t TerminalSession::RowShiftSequence() const {
   std::scoped_lock lock(mutex_);
-  return host_history_.row_shift_sequence;
+  return host_.history.row_shift_sequence;
 }
 
 bool TerminalSession::RowShiftsSince(std::uint64_t sequence,
                                      std::vector<TerminalHostHistory::RowShift>& out) const {
   std::scoped_lock lock(mutex_);
   out.clear();
-  const std::uint64_t held_from = host_history_.row_shift_sequence - host_history_.row_shifts.size();
+  const std::uint64_t held_from = host_.history.row_shift_sequence - host_.history.row_shifts.size();
   if (sequence < held_from) {
     return false;  // further behind than the log reaches
   }
-  for (std::uint64_t i = sequence - held_from; i < host_history_.row_shifts.size(); ++i) {
-    out.push_back(host_history_.row_shifts[static_cast<std::size_t>(i)]);
+  for (std::uint64_t i = sequence - held_from; i < host_.history.row_shifts.size(); ++i) {
+    out.push_back(host_.history.row_shifts[static_cast<std::size_t>(i)]);
   }
   return true;
 }

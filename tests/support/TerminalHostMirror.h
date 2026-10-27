@@ -40,6 +40,7 @@ class RecordingChannel final : public terminal::TerminalHostChannel {
     resized_columns = columns;
   }
   void Close() override { closed = true; }
+  void Detach() override { detached = true; }
   // term/scrollback, answered synchronously from the host session, as the server
   // does (CaptureHostHistory); unset, nothing is sent.
   bool FetchHistory(std::uint64_t before, std::size_t count, HistoryDone done) override {
@@ -59,6 +60,7 @@ class RecordingChannel final : public terminal::TerminalHostChannel {
   std::size_t resized_rows = 0;
   std::size_t resized_columns = 0;
   bool closed = false;
+  bool detached = false;
 };
 
 // A host session, a client session in host mode, and the builder between them;

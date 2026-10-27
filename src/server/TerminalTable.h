@@ -71,6 +71,10 @@ class TerminalTable {
     // remote.scrollback_prefetch_lines), clamped; 0 = the table's default.
     std::size_t credit_bytes = 0;
     std::size_t prefetch_lines = 0;
+    // The workspace root of the connection that opened it ("" = a terminal-only
+    // session): what server/status lists the terminal under. Not from the body --
+    // the server fills it from the connection's hello.
+    std::string root;
   };
   struct OpenResult {
     std::uint64_t handle = 0;
@@ -118,6 +122,18 @@ class TerminalTable {
   std::size_t LiveCount() const;
   const Limits& limits() const { return limits_; }
 
+  // One live terminal as server/status lists it: what a client needs to offer a
+  // terminal nobody is attached to (a crash orphan, another machine's).
+  struct Listing {
+    std::uint64_t handle = 0;
+    std::string root;  // the opening connection's workspace root ("" = none)
+    std::string cwd;   // the shell's OSC 7 directory ("" = not reported)
+    std::size_t clients = 0;
+    bool exited = false;
+  };
+  // Every live terminal, by handle; at most limits().max_terminals of them.
+  std::vector<Listing> List() const;
+
  private:
   // One attached client's view of a terminal. Guarded by the table mutex.
   struct Client {
@@ -151,6 +167,7 @@ class TerminalTable {
     terminal::TerminalSession session;
     std::size_t credit_bytes = 0;
     std::size_t prefetch_lines = 0;
+    std::string root;             // OpenRequest::root, fixed at open
     std::vector<Client> clients;  // guarded by the table mutex
     // Bumped by the session's reader thread on every parsed chunk; never 0.
     std::atomic<std::uint64_t> output_generation{1};

@@ -269,7 +269,7 @@ std::optional<microide::util::JsonValue> Ask(const Options& options, std::string
 
 int Status(const Options& options) {
   std::string error;
-  const auto status = Ask(options, "server/status", &error);
+  const auto status = Ask(options, remote::method::kServerStatus, &error);
   if (!status.has_value()) {
     std::cerr << "microide-server: " << error << '\n';
     return 1;

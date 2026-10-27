@@ -4,11 +4,14 @@
 #include "support/DelayRelay.h"
 
 #include "platform/UnixSocket.h"
+#include "project/remote/RemoteConnection.h"
 #include "project/remote/RemoteProcessLauncher.h"
+#include "project/remote/RemoteProtocol.h"
 #include "project/remote/RemoteServerClient.h"
 #include "project/remote/RemoteServerPaths.h"
 #include "project/remote/RemoteTerminalChannel.h"
 #include "terminal/TerminalSession.h"
+#include "util/JsonValue.h"
 
 #include <chrono>
 #include <filesystem>
@@ -29,6 +32,37 @@ std::shared_ptr<remote::RemoteServerClient> Connect(const ShortServerDir& dir) {
   Expect(fd >= 0 && client->ConnectFds(fd, fd, remote::HelloRequest{.release = "test"}, &error),
          "the client connects: " + error);
   return client;
+}
+
+std::shared_ptr<remote::RemoteServerClient> ConnectWithRoot(const ShortServerDir& dir,
+                                                            const std::filesystem::path& root) {
+  auto client = remote::RemoteServerClient::Create();
+  const int fd = platform::ConnectUnixSocket(remote::ServerSocketPath(dir.path()));
+  std::string error;
+  Expect(fd >= 0 && client->ConnectFds(fd, fd,
+                                       remote::HelloRequest{.release = "test", .root = root.string()},
+                                       &error),
+         "the client connects with a workspace: " + error);
+  return client;
+}
+
+// The server's terminal listing, asked over a fresh connection of its own.
+std::vector<remote::ServerTerminal> ListedTerminals(const ShortServerDir& dir) {
+  auto client = Connect(dir);
+  std::string error;
+  const std::optional<remote::ServerStatus> status = client->Status(&error);
+  Expect(status.has_value() && status->terminals.has_value(), "server/status lists terminals: " + error);
+  return status.has_value() && status->terminals.has_value() ? *status->terminals
+                                                             : std::vector<remote::ServerTerminal>{};
+}
+
+const remote::ServerTerminal* Listed(const std::vector<remote::ServerTerminal>& rows, std::uint64_t handle) {
+  for (const remote::ServerTerminal& row : rows) {
+    if (row.handle == handle) {
+      return &row;
+    }
+  }
+  return nullptr;
 }
 
 std::string ScreenText(const TerminalSession& session) {
@@ -417,9 +451,311 @@ void TestScrollingUpFetchesOlderHostHistory() {
   session.Stop();
 }
 
+// server/status lists every live terminal -- attached, detached, exited -- under
+// the workspace root of the connection that opened it, with its directory and
+// its attached clients; the per-workspace count is derived from the same rows.
+void TestServerStatusListsTerminalsAcrossRoots() {
+  ShortServerDir dir;
+  StartServer(dir);
+  const std::filesystem::path root_a = dir.scratch() / "a";
+  const std::filesystem::path root_b = dir.scratch() / "b";
+  std::filesystem::create_directories(root_a);
+  std::filesystem::create_directories(root_b);
+  const auto identity = [](const std::filesystem::path& path) { return path; };
+  const auto open = [&](const std::shared_ptr<remote::RemoteServerClient>& client, TerminalSession& session,
+                        const std::filesystem::path& cwd) {
+    TerminalSessionTestAccess::Reset(session, 24, 80);
+    auto channel = remote::RemoteTerminalChannel::Open(
+        client, terminal::HostTerminalSource::OpenRequest{.working_directory = cwd, .shell = {"sh"}},
+        session, identity);
+    Expect(channel != nullptr, "the terminal opens");
+    TerminalSessionTestAccess::EnterHostMode(session, channel);
+    return channel;
+  };
+
+  auto a = ConnectWithRoot(dir, root_a);
+  TerminalSession attached;
+  auto attached_channel = open(a, attached, root_a);
+  TypeLine(attached, "printf '\\033]7;file://localhost%s\\a' \"$PWD\"; echo cwd-$((1+1))");
+  Expect(WaitForText(attached, "cwd-2"), "the shell answers:\n" + ScreenText(attached));
+  TerminalSession exited;
+  auto exited_channel = open(a, exited, root_a);
+  TypeLine(exited, "exit");
+  Expect(WaitUntil([&] { return !exited.running(); }, std::chrono::seconds(10)), "the second shell exits");
+  Expect(exited.host_shell_exited(), "and the session knows its shell ended (not its link)");
+
+  std::uint64_t detached_handle = 0;
+  {
+    auto b = ConnectWithRoot(dir, root_b);
+    TerminalSession left;
+    auto left_channel = open(b, left, root_b);
+    TypeLine(left, "echo left-$((2+2))");
+    Expect(WaitForText(left, "left-4"), "the third shell answers");
+    detached_handle = left_channel->handle();
+    b->peer().Fail("link dropped");  // nothing is closed on the host
+    Expect(WaitUntil([&] { return !left.running(); }, std::chrono::seconds(5)), "its link is gone");
+    Expect(!left.host_shell_exited(), "a lost link is not an exited shell");
+    TerminalSessionTestAccess::EnterHostMode(left, nullptr);
+  }
+
+  std::vector<remote::ServerTerminal> rows;
+  Expect(WaitUntil(
+             [&] {
+               rows = ListedTerminals(dir);
+               const remote::ServerTerminal* row = Listed(rows, attached_channel->handle());
+               const remote::ServerTerminal* gone = Listed(rows, detached_handle);
+               return row != nullptr && row->cwd == root_a.string() && gone != nullptr && gone->clients == 0;
+             },
+             std::chrono::seconds(10)),
+         "the listing catches up with the OSC 7 directory and the dropped link");
+  Expect(rows.size() == 3, "three terminals listed: " + std::to_string(rows.size()));
+  const remote::ServerTerminal* row = Listed(rows, attached_channel->handle());
+  Expect(row != nullptr && row->root == root_a.string() && row->clients == 1 && !row->exited,
+         "an attached terminal: its root, its directory, one client");
+  row = Listed(rows, exited_channel->handle());
+  Expect(row != nullptr && row->root == root_a.string() && row->exited,
+         "an exited one is still listed (its output is kept until seen), marked exited");
+  row = Listed(rows, detached_handle);
+  Expect(row != nullptr && row->root == root_b.string() && row->clients == 0 && !row->exited,
+         "a detached one under its own root, attached to nobody");
+
+  std::string error;
+  const std::optional<util::JsonValue> raw =
+      a->Call(remote::method::kServerStatus, util::JsonValue(util::JsonObject{}), &error);
+  Expect(raw.has_value(), "the raw reply: " + error);
+  std::int64_t root_a_count = -1;
+  for (const util::JsonValue& workspace : (*raw)["workspaces"].AsArray()) {
+    if (workspace["root"].AsString() == root_a.string()) {
+      root_a_count = workspace["terminals"].AsInt(-1);
+    }
+  }
+  Expect(root_a_count == 2, "the workspace's terminal count comes from the listing: " +
+                                std::to_string(root_a_count));
+  attached.Stop();
+  exited.Stop();
+}
+
+// The listing is untrusted on the client: a malformed row is dropped rather than
+// guessed at, and a reply with no listing (an older server, whose `terminals` is
+// a count) lists nothing -- it is not an error.
+void TestServerStatusDecoderTrustsNothing() {
+  const auto parse = [](std::string_view text) {
+    const std::optional<util::JsonValue> json = util::ParseJson(text);
+    Expect(json.has_value(), "test JSON parses");
+    return remote::ServerStatusFromJson(*json);
+  };
+  Expect(!parse(R"({"daemon_epoch":"e1","terminals":3})").terminals.has_value(),
+         "an older server's count is not a listing");
+  Expect(!parse(R"({"daemon_epoch":"e1"})").terminals.has_value(), "nor is a missing key");
+  Expect(parse(R"([1,2])").daemon_epoch.empty(), "a non-object reply reads as nothing reported");
+  const remote::ServerStatus status = parse(R"({
+    "daemon_epoch": "e1",
+    "session_survival": {"kill_user_processes": true},
+    "terminals": [
+      {"handle": 7, "root": "/srv/p", "cwd": "/srv/p/sub", "clients": 0, "exited": false},
+      {"handle": 0, "root": "/srv/p", "clients": 0},
+      {"handle": -4, "root": "/srv/p", "clients": 0},
+      {"handle": 9007199254740993, "root": "/srv/p", "clients": 0},
+      {"handle": "8", "root": "/srv/p", "clients": 0},
+      {"handle": 9, "root": 12, "clients": 0},
+      {"handle": 10, "root": "/srv/p", "clients": -1},
+      {"handle": 11, "root": "/srv/p"},
+      {"handle": 12, "root": "", "cwd": 5, "clients": 2, "exited": "yes"},
+      "not a row"
+    ]})");
+  Expect(status.daemon_epoch == "e1", "the epoch");
+  Expect(status.session_survival.has_value() && status.session_survival->kill_user_processes,
+         "the survival report");
+  Expect(status.terminals.has_value() && status.terminals->size() == 2,
+         "only the two usable rows survive: " +
+             std::to_string(status.terminals.has_value() ? status.terminals->size() : 0));
+  if (status.terminals.has_value() && status.terminals->size() == 2) {
+    Expect((*status.terminals)[0] == remote::ServerTerminal{.handle = 7, .root = "/srv/p",
+                                                            .cwd = "/srv/p/sub", .clients = 0,
+                                                            .exited = false},
+           "a whole row decodes as sent");
+    Expect((*status.terminals)[1] == remote::ServerTerminal{.handle = 12, .root = "", .cwd = "",
+                                                            .clients = 2, .exited = false},
+           "a mistyped cwd or exited flag reads as not reported");
+  }
+  std::string many = R"({"terminals":[)";
+  for (int i = 1; i <= 1000; ++i) {
+    many += (i > 1 ? "," : "") + std::string(R"({"handle":)") + std::to_string(i) +
+            R"(,"root":"/r","clients":0})";
+  }
+  many += "]}";
+  Expect(parse(many).terminals->size() == remote::kMaxListedTerminals, "a flood is capped");
+}
+
+// A terminal-only session (no workspace root) holds an on-demand server past its
+// idle timeout once its connection goes without term/close -- the idle rule
+// counts terminals -- and a shell that exits while nobody is attached keeps its
+// terminal listed, exited, for the next attach to see.
+void TestADetachedTerminalHoldsAnOnDemandServer() {
+  ShortServerDir dir;
+  std::uint64_t handle = 0;
+  {
+    auto client = remote::RemoteServerClient::Create();
+    std::string error;
+    Expect(client->ConnectCommand({MICROIDE_SERVER_BINARY, "attach", "--socket-dir", dir.path().string(),
+                                   "--idle-timeout-ms", "100"},
+                                  remote::HelloRequest{.release = "test"}, &error),
+           "an on-demand server through attach: " + error);
+    TerminalSession session;
+    TerminalSessionTestAccess::Reset(session, 24, 80);
+    auto channel = remote::RemoteTerminalChannel::Open(
+        client, terminal::HostTerminalSource::OpenRequest{.shell = {"sh"}}, session,
+        [](const std::filesystem::path& path) { return path; });
+    Expect(channel != nullptr, "the terminal opens");
+    TerminalSessionTestAccess::EnterHostMode(session, channel);
+    TypeLine(session, "sleep 1; exit");
+    Expect(WaitUntil([&] { return channel->handle() != 0; }, std::chrono::seconds(10)), "it is answered");
+    handle = channel->handle();
+    channel->Detach();  // what quit does: no term/close
+    TerminalSessionTestAccess::EnterHostMode(session, nullptr);
+  }  // the client and its attach relay go
+  std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+  const std::vector<remote::ServerTerminal> rows = ListedTerminals(dir);
+  const remote::ServerTerminal* row = Listed(rows, handle);
+  Expect(row != nullptr, "the server outlived its idle timeout and still holds the terminal");
+  Expect(row != nullptr && row->exited && row->clients == 0 && row->root.empty(),
+         "exited while detached, attached to nobody, under no workspace");
+}
+
+// Quit and close-project detach a host terminal rather than close it; a reopen
+// reattaches it COLD from the recorded identity -- the screen, what the shell
+// printed meanwhile, a dim rule under the restored history. A recorded identity
+// from another server process, or a handle the server no longer has, opens a
+// fresh shell instead and says which. Closing still ends the terminal.
+void TestADetachedHostTerminalIsReattachedByIdentity() {
+  ShortServerDir dir;
+  StartServer(dir);
+  const std::filesystem::path host = dir.scratch() / "host" / "p";
+  const std::filesystem::path mirror = dir.scratch() / "mirror" / "p";
+  std::filesystem::create_directories(host);
+  std::filesystem::create_directories(mirror);
+  const remote::RemotePathMap map(mirror, host);
+
+  terminal::HostIdentity recorded;
+  {
+    auto first = Connect(dir);
+    const remote::RemoteProcessLauncher launcher(first, map, {.host_paths_readable_locally = true});
+    TerminalSession session;
+    Expect(session.Start(launcher, mirror, {}, "sh"), "the host terminal starts");
+    TypeLine(session, "echo before-quit-$((6*7)); sleep 1; echo after-quit-$((7*7))");
+    Expect(WaitForText(session, "before-quit-42"), "the shell answers:\n" + ScreenText(session));
+    recorded = session.host_identity();
+    Expect(!recorded.empty() && recorded.epoch == first->hello().daemon_epoch,
+           "a running host terminal has an identity: its handle and its server's epoch");
+    Expect(session.host_reattach() == terminal::HostReattach::None, "a plain open asked no reattach");
+    session.DetachFromHost();
+    Expect(!session.running() && session.host_identity() == recorded,
+           "detached: not running, the identity kept for the session to record");
+  }  // the session (destroyed detached) and the connection go
+  {
+    const std::vector<remote::ServerTerminal> rows = ListedTerminals(dir);
+    const remote::ServerTerminal* row = Listed(rows, recorded.handle);
+    Expect(row != nullptr && row->clients == 0 && !row->exited,
+           "the host still runs it, attached to nobody: destroying a detached session closes nothing");
+  }
+
+  auto second = Connect(dir);
+  const remote::RemoteProcessLauncher launcher(second, map, {.host_paths_readable_locally = true});
+  TerminalSession reopened;
+  Expect(reopened.Start(launcher, mirror, {}, "sh", recorded), "the reattach starts");
+  Expect(WaitForText(reopened, "after-quit-49"),
+         "the reattached screen has what the shell printed after the quit:\n" + ScreenText(reopened));
+  Expect(ScreenText(reopened).find("before-quit-42") != std::string::npos, "and what it printed before");
+  Expect(WaitUntil([&] { return reopened.host_reattach() == terminal::HostReattach::Reattached; },
+                   std::chrono::seconds(5)),
+         "it reports the reattach");
+  Expect(reopened.host_identity() == recorded, "the same host terminal");
+  Expect(ScreenText(reopened).find("\xe2\x8b\xaf reattached \xe2\x8b\xaf") != std::string::npos,
+         "a rule says the history was restored:\n" + ScreenText(reopened));
+  TypeLine(reopened, "echo again-$((8*8))");
+  Expect(WaitForText(reopened, "again-64"), "and it takes input");
+
+  // Recorded under another server process: a fresh shell, never that handle here.
+  TerminalSession restarted;
+  Expect(restarted.Start(launcher, mirror, {}, "sh", terminal::HostIdentity{.epoch = "gone", .handle = recorded.handle}),
+         "a stale-epoch start");
+  Expect(restarted.host_reattach() == terminal::HostReattach::ServerRestarted,
+         "reported as a restarted server");
+  TypeLine(restarted, "echo fresh-$((3*3))");
+  Expect(WaitForText(restarted, "fresh-9"), "a fresh shell:\n" + ScreenText(restarted));
+  Expect(restarted.host_identity().handle != recorded.handle, "a different terminal");
+
+  // A handle the server does not have: refused, then a fresh shell.
+  TerminalSession gone;
+  Expect(gone.Start(launcher, mirror, {}, "sh",
+                    terminal::HostIdentity{.epoch = recorded.epoch, .handle = 999'999}),
+         "a gone-handle start");
+  TypeLine(gone, "echo gone-fresh-$((5*5))");
+  Expect(WaitForText(gone, "gone-fresh-25"), "typed input reaches the fresh shell:\n" + ScreenText(gone));
+  Expect(gone.host_reattach() == terminal::HostReattach::Gone, "reported as gone");
+  Expect(gone.host_identity().handle != 999'999 && !gone.host_identity().empty(),
+         "the identity is the new terminal's");
+
+  // Closing ends it on the host.
+  reopened.Stop();
+  Expect(WaitUntil([&] { return Listed(ListedTerminals(dir), recorded.handle) == nullptr; },
+                   std::chrono::seconds(10)),
+         "closing a reattached terminal ends it");
+  restarted.Stop();
+  gone.Stop();
+}
+
+// A host terminal asked for before the connection is up is PENDING: it shows
+// one status line, drops input (it must not reach a shell that may turn out to be
+// another), and starts -- the open it was waiting for -- once the connection is.
+void TestAPendingHostTerminalStartsOnceConnected() {
+  ShortServerDir dir;
+  StartServer(dir);
+  const std::filesystem::path host = dir.scratch() / "host" / "p";
+  const std::filesystem::path mirror = dir.scratch() / "mirror" / "p";
+  std::filesystem::create_directories(host);
+  std::filesystem::create_directories(mirror);
+  auto connection = std::make_shared<remote::RemoteConnection>();
+  const remote::RemoteProcessLauncher launcher(connection, remote::RemotePathMap(mirror, host),
+                                               {.host_paths_readable_locally = true});
+  Expect(!launcher.Ready(), "no client yet");
+  TerminalSession session;
+  const terminal::HostIdentity wanted{.epoch = "e", .handle = 4};
+  Expect(session.Start(launcher, mirror, {}, "sh", wanted), "the start is accepted");
+  Expect(session.host_pending() && !session.running() && !session.is_host_terminal(),
+         "pending: no shell, nothing bound");
+  Expect(session.host_identity() == wanted, "it names the terminal it will reattach to");
+  session.SetPendingStatus("[connecting to fake\xe2\x80\xa6]");
+  Expect(ScreenText(session).find("[connecting to fake") != std::string::npos,
+         "its one line says what it waits for:\n" + ScreenText(session));
+  TypeLine(session, "echo DROPPED");
+  (void)session.StartPendingOnHost(launcher);  // not ready yet: it waits again
+  Expect(session.host_pending(), "still pending while the host is not connected");
+
+  connection->Replace(Connect(dir));
+  Expect(launcher.Ready(), "connected");
+  Expect(session.StartPendingOnHost(launcher), "the pending start runs");
+  Expect(!session.host_pending(), "no longer pending");
+  Expect(session.host_reattach() == terminal::HostReattach::ServerRestarted,
+         "the identity it carried was another server's: a fresh shell");
+  TypeLine(session, "echo started-$((4*4))");
+  Expect(WaitForText(session, "started-16"), "the shell runs on the host:\n" + ScreenText(session));
+  Expect(ScreenText(session).find("DROPPED") == std::string::npos, "input typed while pending was dropped");
+  session.Stop();
+}
+
 }  // namespace
 
 void RegisterRemoteTerminalTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RemoteTerminal/ServerStatusListsTerminalsAcrossRoots",
+          TestServerStatusListsTerminalsAcrossRoots);
+  AddTest(tests, "RemoteTerminal/ServerStatusDecoderTrustsNothing", TestServerStatusDecoderTrustsNothing);
+  AddTest(tests, "RemoteTerminal/ADetachedTerminalHoldsAnOnDemandServer",
+          TestADetachedTerminalHoldsAnOnDemandServer);
+  AddTest(tests, "RemoteTerminal/ADetachedHostTerminalIsReattachedByIdentity",
+          TestADetachedHostTerminalIsReattachedByIdentity);
+  AddTest(tests, "RemoteTerminal/APendingHostTerminalStartsOnceConnected",
+          TestAPendingHostTerminalStartsOnceConnected);
   AddTest(tests, "RemoteTerminal/HostTerminalRunsTheShellOnTheHost",
           TestHostTerminalRunsTheShellOnTheHost);
   AddTest(tests, "RemoteTerminal/HostTerminalSurvivesADroppedConnection",

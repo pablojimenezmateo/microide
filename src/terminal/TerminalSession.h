@@ -7,6 +7,7 @@
 #include "terminal/TerminalLinkTable.h"
 #include "terminal/TerminalHostChannel.h"
 #include "terminal/TerminalHostHistory.h"
+#include "terminal/TerminalHostMode.h"
 #include "terminal/TerminalHostWire.h"
 #include "terminal/TerminalInput.h"
 #include "terminal/TerminalPredictionOverlay.h"
@@ -59,16 +60,19 @@ class TerminalSession {
   // worse than no terminal — it looks right and runs the wrong `make` — so the
   // launcher is a parameter rather than an assumption, and the remote terminal is a
   // different argv rather than a different code path.
-  bool Start(const platform::ProcessLauncher& launcher,
-             const std::filesystem::path& working_directory,
-             std::string_view command = {},
-             std::string_view shell = {});
+  //
+  // On a launcher whose shells run on another machine, `attach` names a host
+  // terminal to reattach to instead of opening one (HostTerminalSource::
+  // OpenRequest::attach), and a host that is not connected yet leaves the session
+  // PENDING (see host_pending) rather than failing.
+  bool Start(const platform::ProcessLauncher& launcher, const std::filesystem::path& working_directory,
+             std::string_view command = {}, std::string_view shell = {}, HostIdentity attach = {});
   // Same, with the shell already argv (an empty argv is the platform default).
   // The host side of a host terminal starts here: its argv crossed the wire as
   // an array and must not be re-split.
   bool StartArgv(const platform::ProcessLauncher& launcher,
                  const std::filesystem::path& working_directory, std::string_view command,
-                 std::vector<std::string> shell_argv);
+                 std::vector<std::string> shell_argv, HostIdentity attach = {});
   void Stop();
   // Test seam: brings the session up without spawning a real PTY/child process.
   // Always compiled; selected at runtime when placeholder-terminal test mode is
@@ -201,6 +205,32 @@ class TerminalSession {
   // same code over the same members, which is why the panel needs no remote path.
   bool is_host_terminal() const;
 
+  // A host terminal asked for before its host's connection is up (Start through a
+  // HostTerminalSource that is not Ready) is PENDING: no shell runs anywhere yet,
+  // the buffer holds one status line, input is dropped (it must not be queued into
+  // a shell that may turn out to be a different one), and running() is false.
+  bool host_pending() const;
+  // Rewrite a pending session's status line; no-op otherwise. Called when the
+  // connection's state changes, never per frame.
+  void SetPendingStatus(std::string_view text);
+  // Start a pending session through `launcher`, whose host is now connected: the
+  // open, or the reattach, it was waiting for. False when it was not pending.
+  bool StartPendingOnHost(const platform::ProcessLauncher& launcher);
+  // The host terminal this session is: its channel's while one is bound, the one
+  // it will reattach to while pending, the one it let go of after DetachFromHost.
+  // Empty for a local session, a fresh open not yet answered, and after Stop().
+  HostIdentity host_identity() const;
+  // What became of the reattach this session asked for (None when it asked none).
+  HostReattach host_reattach() const;
+  // Let go of the host terminal and leave it RUNNING on the host (quit and
+  // close-project, § 6.12): no term/close. host_identity() keeps naming it, and
+  // running() is false. Destroying or Stop()ping a session that was not detached
+  // still closes its host terminal.
+  void DetachFromHost();
+  // True when the host's shell exited while this client was attached and saw it
+  // -- not when only the link to the host is down.
+  bool host_shell_exited() const;
+
   // Client side: apply one frame from the host (on the connection's thread).
   // `working_directory`, when present, is already mapped into the editor's tree.
   // False when the frame is inconsistent with what this session holds (a Keep or
@@ -240,8 +270,13 @@ class TerminalSession {
   std::uint64_t RowShiftSequence() const;
   bool RowShiftsSince(std::uint64_t sequence, std::vector<TerminalHostHistory::RowShift>& out) const;
   // Carry on over a new channel to the same host terminal (a reconnect), keeping
-  // the mirror: the channel was attached with host_resume_point().
+  // the mirror: the channel was attached with host_resume_point(). A channel also
+  // binds itself through this before its first request goes out, so no frame can
+  // land on a session that does not know it yet.
   void ReattachHost(std::shared_ptr<TerminalHostChannel> channel);
+  // The channel's reattach was answered: the next cold frame is the recorded
+  // terminal's, and a dim rule goes under its restored history.
+  void NoteHostReattached();
   // Local echo prediction for host terminals (`remote.predict`).
   void SetPredictionMode(TerminalPredictionOverlay::Mode mode);
   // Pending predictions not yet confirmed by the host; for tests and diagnostics.
@@ -502,25 +537,17 @@ class TerminalSession {
 
   // Host mode (see is_host_terminal). Guarded by mutex_.
   bool StartOnHost(const HostTerminalSource& source, const std::filesystem::path& working_directory,
-                   std::string_view command, std::vector<std::string> shell_argv);
+                   std::string_view command, std::vector<std::string> shell_argv, HostIdentity attach);
+  // Stop's host half: close `channel` (when there is one) and forget every host
+  // state a session carries between starts, pending and detached included.
+  void StopHost(const std::shared_ptr<TerminalHostChannel>& channel);
   // Send through the host channel when there is one; false when this session
   // is local (the caller encodes).
   bool SendToHost(TerminalInputEvent event);
   bool SendMouseToHost(TerminalInputEvent::Kind kind, MouseButton button, bool pressed,
                        std::size_t row, std::size_t column, util::KeyModifiers modifiers);
   std::shared_ptr<TerminalHostChannel> HostChannel() const;
-  std::shared_ptr<TerminalHostChannel> host_channel_;
-  std::uint64_t next_input_seq_ = 1;
-  std::uint64_t host_screen_top_ = 0;   // host-absolute index of the first screen line
-  std::size_t host_screen_lines_ = 0;   // screen lines at the tail of lines_
-  bool host_alternate_ = false;
-  bool host_mirrored_ = false;  // a frame has been applied
-  // The primary buffer while the host shows its alternate screen. Optional: a
-  // libstdc++ deque allocates when default-constructed, and every terminal —
-  // local ones, which never stash — paid two allocations for this slot.
-  std::optional<std::deque<TerminalLine>> host_primary_stash_;
-  std::size_t host_primary_stash_screen_lines_ = 0;
-  TerminalHostHistory host_history_;
+  TerminalHostMode host_;
   void PrependHostHistory(std::uint64_t first, std::vector<TerminalLine> lines);
   void FillHostGap(std::uint64_t gap_id, std::uint64_t before, std::uint64_t first,
                    std::vector<TerminalLine> lines);

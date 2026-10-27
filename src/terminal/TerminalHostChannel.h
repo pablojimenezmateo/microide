@@ -21,6 +21,26 @@ namespace microide::terminal {
 
 class TerminalSession;
 
+// Which host terminal a pane is (dev-docs/design/remote-projects.md § 6.12): the
+// server process it lives in and its handle there. A handle means nothing to
+// another server process, so the epoch travels with it -- a session records both,
+// and a reopen attaches only when the server answering is still that one.
+struct HostIdentity {
+  std::string epoch;
+  std::uint64_t handle = 0;  // 0 = none
+  bool empty() const { return handle == 0; }
+  bool operator==(const HostIdentity&) const = default;
+};
+
+// How a pane that asked to reattach to a recorded host terminal came up.
+enum class HostReattach : std::uint8_t {
+  None,             // a plain open: no reattach was asked
+  Pending,          // term/attach sent, not answered yet
+  Reattached,       // the host terminal is back, screen and history
+  ServerRestarted,  // recorded under another server process: a fresh shell instead
+  Gone,             // the server no longer has it: a fresh shell instead
+};
+
 // The client's end of one host terminal (dev-docs/design/remote-projects.md
 // § 6.5): what a TerminalSession in host mode sends its input, size and close
 // through. Frames come back the other way, into TerminalSession::ApplyHostFrame.
@@ -34,6 +54,14 @@ class TerminalHostChannel {
   // Close the terminal on the host and stop delivering frames. When this returns
   // no frame is being applied and none will be.
   virtual void Close() = 0;
+  // Stop delivering frames and leave the terminal RUNNING on the host (quit and
+  // close-project, § 6.12): Close without the term/close. Same guarantee on return.
+  virtual void Detach() = 0;
+  // The host terminal this channel serves; an empty handle until the host
+  // answered. Any thread.
+  virtual HostIdentity identity() const { return {}; }
+  // What became of a requested reattach (OpenRequest::attach). Any thread.
+  virtual HostReattach reattach() const { return HostReattach::None; }
   // The link's measured round trip, for adaptive echo prediction; nullopt until
   // one has been measured.
   virtual std::optional<std::chrono::milliseconds> RoundTrip() const { return std::nullopt; }
@@ -65,9 +93,18 @@ class HostTerminalSource {
     std::size_t scrollback_lines = 2000;
     std::size_t credit_bytes = 0;    // remote.term_credit_bytes (0 = the host's default)
     std::size_t prefetch_lines = 0;  // remote.scrollback_prefetch_lines (0 = the host's default)
+    // Reattach to this host terminal instead (cold: its screen plus prefetched
+    // history) when the server answering is still the one it was recorded under;
+    // otherwise -- or when that server no longer has it -- open a fresh one with
+    // the fields above. Empty = open.
+    HostIdentity attach;
   };
 
   virtual ~HostTerminalSource() = default;
+  // Whether a terminal can be opened now (the host's connection is up). A
+  // terminal asked for before that waits as a pending session (TerminalSession::
+  // StartPendingOnHost) instead of failing.
+  virtual bool Ready() const = 0;
   // Open a host terminal whose frames are applied to `session` until the
   // returned channel is closed. Null with *error when the host refused or is gone.
   virtual std::shared_ptr<TerminalHostChannel> OpenTerminal(const OpenRequest& request,
