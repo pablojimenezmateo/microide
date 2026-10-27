@@ -244,15 +244,17 @@ check_fuzz() {
   # Per-target wall-clock budget (seconds). Keep small so the gate stays cheap;
   # override with MICROIDE_FUZZ_SECONDS for a deeper local campaign.
   local seconds="${MICROIDE_FUZZ_SECONDS:-30}"
-  # Every libFuzzer executable in the tree. Keep in sync with add_executable(*Fuzz)
-  # in CMakeLists.txt; check_fuzz --list prints exactly what was built.
-  local targets=(
-    PersistedRecordReaderFuzz DebugStateRecordFuzz GitBlameParserFuzz
-    JsonValueParseFuzz PluginDisplayListParseFuzz SearchRegexFuzz
-    SurfaceRasterDecodeFuzz TerminalCsiParserFuzz TerminalSessionOutputFuzz
-    PieceTreeEquivalenceFuzz JsonRpcMessageFramingFuzz
-    GitPorcelainV2ParserFuzz EditorConfigParseFuzz RemoteFrameDecoderFuzz
-  )
+  # Every libFuzzer executable in the tree, read from CMakeLists.txt's
+  # add_executable(*Fuzz). A hand-kept list here drifted: ProjectSessionRecordFuzz
+  # and RemoteManifestDecodeFuzz were built by nothing and run by nothing while
+  # the lane reported green. check_fuzz --list prints exactly what was built.
+  local targets=()
+  mapfile -t targets < <(grep -o 'add_executable([A-Za-z0-9_]*Fuzz\b' CMakeLists.txt |
+                         sed 's/add_executable(//' | sort -u)
+  if (( ${#targets[@]} == 0 )); then
+    echo "run-checks: no add_executable(*Fuzz) found in CMakeLists.txt; the fuzz lane would run nothing" >&2
+    return 1
+  fi
 
   run_logged "$log" bash -c '
     set -e

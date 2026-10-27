@@ -10,7 +10,7 @@
 // per-project session (editor groups, split tree, sidebar and tree state, the
 // terminal layout to revive, the closed editors and each editor's collapsed
 // folds), and the workspace session (the open projects, as project-identity
-// records and legacy root paths). Neither may crash on arbitrary bytes, and what
+// records and legacy root paths, and the Host view's collapsed groups). Neither may crash on arbitrary bytes, and what
 // they accept must stay inside the caps a restore trusts.
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size) {
   if (data == nullptr) {
@@ -25,6 +25,15 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
           std::span<const std::byte>(bytes.data(), bytes.size()), &workspace)) {
     if (workspace.projects.size() > 256 || workspace.project_roots.size() > 256) {
       __builtin_trap();
+    }
+    // The Host view's collapsed groups: bounded in count and in each id's length.
+    if (workspace.host_view_collapsed.size() > 1024) {
+      __builtin_trap();
+    }
+    for (const auto& id : workspace.host_view_collapsed) {
+      if (id.size() > 4096) {
+        __builtin_trap();
+      }
     }
     for (const auto& id : workspace.projects) {
       // A decoded id is always usable: a path, or a host with an absolute root.
