@@ -716,8 +716,16 @@ check_qa_remote() {
     rm -rf '"$out"'
     locked_build build bash -c "cmake -S . -B build >/dev/null && cmake --build build --target microide -j'"$JOBS"'"
     bash tools/build-server.sh x86_64
-    eval "$(tools/qa/local-sshd.sh start)"
+    # Through a variable: `eval "$(…)"` takes eval'"'"'s status, so a failed start
+    # read as success, no host was set, and remote.py "not run" exited 0 -- a
+    # green lane that checked nothing.
+    sshd_env="$(tools/qa/local-sshd.sh start)"
+    eval "$sshd_env"
     trap "tools/qa/local-sshd.sh stop" EXIT
+    if [[ -z "${MQA_REMOTE_HOST:-}" || -z "${MQA_REMOTE_ROOT:-}" ]]; then
+      echo "run-checks: the loopback host did not come up; the remote suite would run nothing" >&2
+      exit 1
+    fi
     status=0
     python3 tools/qa/remote.py --out '"$out"'/loopback || status=1
     # The same host behind a 60 ms each-way link (local-sshd.sh, slow-link.py):

@@ -91,7 +91,10 @@ host_repo() {
     git clone -q "$REPO" "$HOST_REPO"
   fi
   git -C "$HOST_REPO" fetch -q "$REPO" HEAD
-  git -C "$HOST_REPO" checkout -q --detach FETCH_HEAD
+  # Forced: the host repository is disposable, and an aborted run leaves it dirty
+  # (an agent's edits, a branch switch) -- a plain checkout then refused, the
+  # start failed, and the remote lane ran nothing.
+  git -C "$HOST_REPO" checkout -q -f --detach FETCH_HEAD
   git -C "$HOST_REPO" reset -q --hard FETCH_HEAD
   git -C "$HOST_REPO" clean -qfdx
 }
