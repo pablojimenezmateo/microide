@@ -53,6 +53,7 @@ RemoteWorkspace::WriteResult WriteResultFrom(std::optional<util::JsonValue> resu
   if (error.has_value() || !result.has_value()) {
     out.error = error.has_value() ? error->message : "no answer";
     out.unreachable = !error.has_value() || error->code == kErrorCancelled;
+    out.may_have_applied = out.unreachable;  // this request was sent
     return out;
   }
   const util::JsonValue& hash = (*result)["hash"];
@@ -491,7 +492,8 @@ RemoteWorkspace::WriteResult RemoteWorkspace::WriteFileSync(std::string path,
         return WriteFile(std::move(path), content, expect, mode, Lane::Interactive,
                          std::move(finish));
       },
-      connection_, timeout, WriteResult{.error = "timed out waiting for file/write", .unreachable = true});
+      connection_, timeout,
+      WriteResult{.error = "timed out waiting for file/write", .unreachable = true, .may_have_applied = true});
 }
 
 std::uint64_t RemoteWorkspace::ApplyTreeOp(TreeOp op, std::string path, std::string to,
@@ -529,7 +531,8 @@ RemoteWorkspace::WriteResult RemoteWorkspace::ApplyTreeOpSync(TreeOp op, std::st
       [&](WriteDone finish) {
         return ApplyTreeOp(op, std::move(path), std::move(to), expect, std::move(finish));
       },
-      connection_, timeout, WriteResult{.error = "timed out waiting for fs/op", .unreachable = true});
+      connection_, timeout,
+      WriteResult{.error = "timed out waiting for fs/op", .unreachable = true, .may_have_applied = true});
 }
 
 }  // namespace microide::project::remote

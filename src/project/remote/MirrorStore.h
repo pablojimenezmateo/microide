@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "project/remote/RemoteManifest.h"
 #include "util/ContentHash.h"
@@ -55,9 +56,17 @@ class MirrorStore {
     // The host's newest manifest id when it acknowledged this path's last push
     // (RemoteWorkspace::WriteResult::manifest_id). A row from a manifest at or below
     // it was built before the host saw that write -- the echo of an earlier push,
-    // say -- and must not be taken over it. Not persisted: after a reload the next
-    // manifest is newer than any push this window made.
+    // say -- and must not be taken over it. Comparable only within one server tree's
+    // manifest sequence, so every full manifest clears it (a reconnect may reach a
+    // new tree that counts from 1). Not persisted: after a reload the next manifest
+    // is newer than any push this window made.
     std::uint64_t pushed_manifest = 0;
+    // The bytes of pushes whose answer never came (the link dropped mid-write), by
+    // hash, newest last and bounded: the host may hold any of them. A later push
+    // that conflicts with exactly one of these finds its own write, not a host
+    // change, and continues from it. Cleared by any answer. Not persisted: after a
+    // reload such a push reads as the conflict it may be.
+    std::vector<util::ContentHash> unacknowledged;
 
     friend bool operator==(const Entry&, const Entry&) = default;
   };

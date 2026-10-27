@@ -117,6 +117,10 @@ class RemoteWorkspace {
     // The request never got an answer (no connection, or it closed): nothing is
     // known about the host, and the operation is worth retrying on the next one.
     bool unreachable = false;
+    // Unreachable AFTER the request went out (the link closed, or the wait timed
+    // out, before the answer came): the host may have applied it. False when it was
+    // never sent (no connection).
+    bool may_have_applied = false;
     // The host's newest manifest id once the write was done (0 from a server that
     // does not say): a watch row in a manifest at or below it predates the write.
     std::uint64_t manifest_id = 0;

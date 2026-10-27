@@ -1208,7 +1208,34 @@ LC_CTYPE (the user's, or C.UTF-8) at startup; numbers stay locale-free.
 (`QaFlowRegressionUx/TheWindowTitleNamesTheActiveFileAndItsState`,
 `HostPlatform/CharacterLocaleIsUtf8EvenFromAPosixEnvironment`.)
 
-### TD-2026-10-22-385 — over the slow link, saves stop reaching the host under agent churn. [RESOLVED 2026-10-25]
+### TD-2026-10-22-385 — over the slow link, saves stop reaching the host under agent churn. [RESOLVED 2026-10-27]
+
+**Resolved again 2026-10-27: the QA host never ran the 10-25 fix, and the fix had
+two holes of its own.** Every `qa-remote` run of the day failed E, F, J, K or L on
+both links. (1) The lane's host kept a microide-server installed on 2026-10-22:
+the editor installs only over a missing or incompatible server and a dev build
+keeps its release string, so `build-server.sh` rebuilt a binary nobody installed,
+and the write answers carried no `manifest_id` (logged `answer=0`). The skip
+below never fired there, which is why the stall "recurred". `local-sshd.sh start`
+now removes the host's server so each run installs its own build
+(validation-traps.md, "A lane that builds a binary the product then declines to
+install"). (2) With a current server, E failed on every run: manifest ids are one
+server tree's sequence, and a reconnect that reaches a new tree counts from 1, so a
+`pushed_manifest` from before the drop skipped the new tree's full manifest row
+for the file and never re-planned the save journaled offline. A full manifest now
+clears every `pushed_manifest` (it is built after every acknowledged push, so it
+supersedes them in its own sequence and cannot be compared across one).
+(3) Over the slow link, one run in four: a push the host applied but whose answer
+was lost with the link left the save pending against the old base; the user saved
+again, and the next push conflicted with the client's own bytes, parking the file.
+A push that went out and got no answer (`WriteResult::may_have_applied`, distinct
+from never sent) now records its hash; a conflict whose host hash is one of them
+adopts it as the base and pushes the current bytes over it. Tests:
+`MirrorSyncEngine/ReconnectToANewServerFlushesTheJournal` and
+`MirrorSyncEngine/APushWhoseAnswerWasLostIsNotAConflict` (both fail without their
+fix). Left: an unanswered push is remembered in memory only, so after an app
+restart it still reads as the conflict it may be (the user resolves it; nothing is
+lost).
 
 **Resolved 2026-10-25: the mirror took a watch row older than its own push.** The
 run ended in "LICENSE changed on qa-slow and here" -- a conflict on a file the

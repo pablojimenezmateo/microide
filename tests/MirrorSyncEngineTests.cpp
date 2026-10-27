@@ -8,11 +8,13 @@
 #include "project/remote/RemoteServerClient.h"
 #include "project/remote/RemoteWorkspace.h"
 #include "util/ContentHash.h"
+#include "util/Parse.h"
 #include "util/PerformanceCounters.h"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <csignal>
 #include <filesystem>
 #include <functional>
 #include <thread>
@@ -36,6 +38,7 @@ struct MirrorSession {
   std::filesystem::path host = temp.path() / "host";
   std::filesystem::path mirror_dir = temp.path() / "mirror";
   std::shared_ptr<remote::RemoteServerClient> client;
+  std::shared_ptr<remote::RemoteConnection> connection;
   std::unique_ptr<remote::RemoteWorkspace> workspace;
   std::unique_ptr<remote::MirrorStore> store;
   std::unique_ptr<remote::MirrorSyncEngine> engine;
@@ -43,16 +46,29 @@ struct MirrorSession {
 
   MirrorSession() { std::filesystem::create_directories(host); }
 
+  // A new server process for the host tree: its manifest ids start again at 1.
+  // With `pid_file`, the server's pid is written there (to stop it from a test).
+  std::shared_ptr<remote::RemoteServerClient> StartServer(const std::filesystem::path& pid_file = {}) {
+    auto started = remote::RemoteServerClient::Create();
+    std::string error;
+    const std::vector<std::string> argv =
+        pid_file.empty() ? std::vector<std::string>{MICROIDE_SERVER_BINARY, "serve-stdio"}
+                         : std::vector<std::string>{"sh", "-c",
+                                                    "echo $$ > '" + pid_file.string() + "'; exec '" +
+                                                        std::string(MICROIDE_SERVER_BINARY) + "' serve-stdio"};
+    Expect(started->ConnectCommand(argv,
+                                   remote::HelloRequest{.release = "test", .root = host.string()},
+                                   &error),
+           "connects: " + error);
+    return started;
+  }
+
   void Connect(remote::MirrorSyncEngine::Options options = {}) {
     engine.reset();
-    client = remote::RemoteServerClient::Create();
+    client = StartServer();
     std::string error;
-    Expect(client->ConnectCommand({MICROIDE_SERVER_BINARY, "serve-stdio"},
-                                  remote::HelloRequest{.release = "test", .root = host.string()},
-                                  &error),
-           "connects: " + error);
-    workspace = std::make_unique<remote::RemoteWorkspace>(
-        std::make_shared<remote::RemoteConnection>(client));
+    connection = std::make_shared<remote::RemoteConnection>(client);
+    workspace = std::make_unique<remote::RemoteWorkspace>(connection);
     store = std::make_unique<remote::MirrorStore>(mirror_dir);
     Expect(store->Open(&error), "the mirror opens: " + error);
     engine = std::make_unique<remote::MirrorSyncEngine>(
@@ -465,6 +481,102 @@ void TestMirrorIgnoresAWatchRowOlderThanItsPush() {
   session.engine->Flush();
   Expect(ReadFile(session.Tree("a.txt")) == "host four\n",
          "a newer row is a host change and is pulled");
+}
+
+// The skip above compares manifest ids, and those are one server tree's sequence:
+// a reconnect that reaches a new tree (the last connection to the old one went, or
+// the server restarted) starts again at 1. A push acknowledged at id N before the
+// link dropped then made every row for that path from the new tree's first N
+// manifests read as "older than the push" -- including the full manifest the
+// reconnect syncs from, which is skipped before it can re-plan the save journaled
+// while offline. QA remote E ("journal flushed on reconnect") and F failed on every
+// run once the QA host ran a server new enough to send the ids.
+void TestMirrorReconnectToANewServerFlushesTheJournal() {
+  MirrorSession session;
+  WriteFile(session.host / "a.txt", "one\n");
+  session.Connect();
+  for (int i = 0; i < 6; ++i) {
+    session.Sync();  // each full manifest is a new id
+  }
+  WriteFile(session.Tree("a.txt"), "two\n");
+  session.engine->NotifyLocalWrite("a.txt");
+  session.engine->Flush();
+  Expect(ReadFile(session.host / "a.txt") == "two\n", "the save reaches the host");
+  Expect(session.store->entries()["a.txt"].pushed_manifest > 3, "acknowledged well into the sequence");
+
+  // The link drops; a save made meanwhile is journaled.
+  session.connection->Replace(nullptr);
+  WriteFile(session.Tree("a.txt"), "three\n");
+  session.engine->NotifyLocalWrite("a.txt");
+  session.engine->Flush();
+  Expect(ReadFile(session.host / "a.txt") == "two\n" && session.engine->status().dirty == 1,
+         "offline, the save waits in the journal");
+
+  // Back, to a new server whose ids start again.
+  session.client = session.StartServer();
+  session.connection->Replace(session.client);
+  session.Sync();
+  Expect(ReadFile(session.host / "a.txt") == "three\n",
+         "the reconnect's sync pushes the journaled save: '" + ReadFile(session.host / "a.txt") + "'");
+  Expect(session.engine->StateOf("a.txt") == ContentState::Current && session.engine->status().dirty == 0,
+         "and the file is current, nothing left unsent");
+}
+
+// A push the host applied but whose answer was lost with the link -- the client
+// only learns "no answer" -- and a save after it. The next connection's push
+// expects the old base and finds the host holding the lost push's bytes. That is
+// the client's own write, not a host change: it becomes the base and the newer save
+// lands over it. Taken for a conflict, it parked the file, and every later save of
+// it stayed in the mirror (QA remote, slow link: D2's save landed unanswered, then
+// E, F and J failed on LICENSE).
+void TestMirrorAPushWhoseAnswerWasLostIsNotAConflict() {
+  MirrorSession session;
+  WriteFile(session.host / "a.txt", "one\n");
+  session.Connect();
+  session.Sync();
+  // Swap in a server whose pid is known, so its answers can be withheld.
+  const std::filesystem::path pid_file = session.temp.path() / "server.pid";
+  session.client = session.StartServer(pid_file);
+  session.connection->Replace(session.client);
+  session.Sync();
+  std::string pid_text = ReadFile(pid_file);
+  while (!pid_text.empty() && (pid_text.back() == '\n' || pid_text.back() == ' ')) {
+    pid_text.pop_back();
+  }
+  const std::optional<std::int64_t> pid = util::ParseInt64(pid_text);
+  Expect(pid.has_value() && *pid > 0, "the server's pid is known");
+  if (!pid.has_value() || *pid <= 0) {
+    return;
+  }
+  ::kill(static_cast<pid_t>(*pid), SIGSTOP);
+
+  // The push goes out; no answer can come.
+  const std::size_t before = session.client->peer().pending_request_count();
+  WriteFile(session.Tree("a.txt"), "two\n");
+  session.engine->NotifyLocalWrite("a.txt");
+  Expect(WaitUntil([&] { return session.client->peer().pending_request_count() > before; },
+                   std::chrono::seconds(10), std::chrono::milliseconds(1)),
+         "the push is on the wire");
+  // The link drops before the answer; the host had applied the write.
+  session.client->peer().Fail("the link dropped mid-write");
+  session.engine->Flush();
+  ::kill(static_cast<pid_t>(*pid), SIGKILL);
+  WriteFile(session.host / "a.txt", "two\n");
+  Expect(session.engine->status().dirty == 1, "unanswered, the save stays in the journal");
+
+  // Saved again while the link is down: never sent, so never a candidate.
+  WriteFile(session.Tree("a.txt"), "three\n");
+  session.engine->NotifyLocalWrite("a.txt");
+  session.engine->Flush();
+
+  session.client = session.StartServer();
+  session.connection->Replace(session.client);
+  session.Sync();
+  Expect(ReadFile(session.host / "a.txt") == "three\n",
+         "the newer save lands over the lost push's bytes: '" + ReadFile(session.host / "a.txt") + "'");
+  Expect(session.engine->StateOf("a.txt") == ContentState::Current && session.engine->status().conflicts == 0 &&
+             session.engine->status().dirty == 0,
+         "with no conflict and nothing left unsent");
 }
 
 void TestMirrorParksConflictsAndNeverOverwritesLocalEdits() {
@@ -895,6 +1007,10 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
           TestMirrorPushesLocalWritesUnderCompareAndSwap);
   AddTest(tests, "MirrorSyncEngine/IgnoresAWatchRowOlderThanItsPush",
           TestMirrorIgnoresAWatchRowOlderThanItsPush);
+  AddTest(tests, "MirrorSyncEngine/ReconnectToANewServerFlushesTheJournal",
+          TestMirrorReconnectToANewServerFlushesTheJournal);
+  AddTest(tests, "MirrorSyncEngine/APushWhoseAnswerWasLostIsNotAConflict",
+          TestMirrorAPushWhoseAnswerWasLostIsNotAConflict);
   AddTest(tests, "MirrorSyncEngine/ParksConflictsAndNeverOverwritesLocalEdits",
           TestMirrorParksConflictsAndNeverOverwritesLocalEdits);
   AddTest(tests, "MirrorSyncEngine/HoldsAMassDelete", TestMirrorHoldsAMassDelete);

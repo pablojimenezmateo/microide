@@ -17,6 +17,10 @@ using LocalState = MirrorStore::LocalState;
 
 // Backfill fetches on the wire at once (§ 6.3's pull concurrency).
 constexpr std::size_t kMaxPullsInFlight = 4;
+// Per path: the pushes remembered that went out and got no answer
+// (MirrorStore::Entry::unacknowledged). One per link that dropped mid-write; saves
+// made while it was down were never sent and are not counted.
+constexpr std::size_t kMaxUnacknowledgedPushes = 8;
 
 // A pushed file's local bytes are read whole; past this, the push is refused rather
 // than holding the editor's largest buffers twice in memory.
@@ -1069,6 +1073,17 @@ void MirrorSyncEngine::SyncNow() {
     held_deletes_.clear();  // a full manifest re-decides every delete
     status_.unreadable = 0;  // and retries every unreadable file
     status_.first_unreadable.clear();
+    // A full manifest starts the push-echo comparison again. It was built on
+    // request, after every push this engine has had acknowledged (pushes and this
+    // sync share the serial queue), so it is newer than each of them; and it may
+    // come from another sequence altogether -- a reconnect that reached a new
+    // server tree numbers its manifests from 1 -- where an old `pushed_manifest`
+    // compares as nothing. Kept, that number skipped this manifest's row for a
+    // recently pushed path and so never re-planned the save journaled offline.
+    for (auto& [path, entry] : store_.entries()) {
+      (void)path;
+      entry.pushed_manifest = 0;
+    }
     std::vector<std::string> listed;
     listed.reserve(manifest->rows.size());
     for (ManifestRow& row : manifest->rows) {
@@ -1545,6 +1560,14 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
     MirrorStore::Entry* entry = store_.Find(path);
     if (entry != nullptr) {
       using Status = RemoteWorkspace::WriteResult::Status;
+      // Which of the bytes this path sent without an answer the host now holds, if
+      // any (MirrorStore::Entry::unacknowledged).
+      const bool own_unacknowledged =
+          result.hash.has_value() && std::find(entry->unacknowledged.begin(), entry->unacknowledged.end(),
+                                               *result.hash) != entry->unacknowledged.end();
+      if (!result.unreachable) {
+        entry->unacknowledged.clear();
+      }
       if (result.status == Status::Ok && result.hash.has_value()) {
         objects_.Put(*result.hash, content);
         entry->base = *result.hash;
@@ -1574,9 +1597,29 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
         if (entry->has_remote) {
           entry->remote.hash = *result.hash;
         }
+      } else if (result.status == Status::Conflict && own_unacknowledged) {
+        // An earlier push of this path landed but its answer was lost with the link,
+        // and the user saved again since: the host holds our own bytes, not a change
+        // of its own. They are the base now; push the current bytes over them.
+        entry->base = result.hash;
+        entry->conflict = false;
+        entry->pushed_manifest = result.manifest_id;
+        if (entry->has_remote) {
+          entry->remote.hash = *result.hash;
+        }
+        queue_.Post([this, path]() { PushNow(path); });
       } else if (result.status == Status::Conflict) {
         entry->conflict = true;
       } else {
+        if (result.may_have_applied && entry->push_pending) {
+          // Sent and unanswered: the host may hold these bytes now.
+          const util::ContentHash sent = util::HashContent(content);
+          objects_.Put(sent, content);  // the base a later merge would need
+          entry->unacknowledged.push_back(sent);
+          if (entry->unacknowledged.size() > kMaxUnacknowledgedPushes) {
+            entry->unacknowledged.erase(entry->unacknowledged.begin());
+          }
+        }
         status_.error = result.error;
       }
       RecountLocked();
