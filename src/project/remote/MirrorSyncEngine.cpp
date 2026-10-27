@@ -1460,6 +1460,8 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
       }
       continue;
     }
+    // Checked just above; bound once so every use below reads the same bytes' hash.
+    const util::ContentHash fetched_hash = object.hash.value_or(util::ContentHash{});
     std::lock_guard path_lock(store_.PathLock(object.path));
     Precondition expect;
     std::uint32_t mode = 0644;
@@ -1475,11 +1477,12 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
         entry->conflict = true;
         continue;
       }
-      expect = local == LocalState::Missing ? Precondition::NotThere()
-                                            : Precondition::Of(*entry->base);
+      // A local file matches only a base it has (CheckLocal), so no base here is absent.
+      expect = local == LocalState::Missing || !entry->base.has_value() ? Precondition::NotThere()
+                                                                       : Precondition::Of(*entry->base);
       mode = entry->remote.mode != 0 ? entry->remote.mode : 0644;
       // The host's mtime, when these bytes are the row's: never a time in the future.
-      if (entry->remote.hash == *object.hash && entry->remote.mtime_ns > 0 &&
+      if (entry->remote.hash == fetched_hash && entry->remote.mtime_ns > 0 &&
           entry->remote.mtime_ns < WallClockNowNs()) {
         mtime_ns = entry->remote.mtime_ns;
       }
@@ -1499,7 +1502,7 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
                         : util::ZstdApplyDelta(*base, object.content, kMaxDeltaResultBytes);
         }
       }
-      if (!applied.has_value() || util::HashContent(*applied) != *object.hash) {
+      if (!applied.has_value() || util::HashContent(*applied) != fetched_hash) {
         std::lock_guard lock(mutex_);
         if (status_.unreadable++ == 0) {
           status_.first_unreadable = object.path + ": the host's delta did not apply";
@@ -1516,7 +1519,7 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
     if (!object.staged_file.empty()) {
       std::error_code ignored;
       size = std::filesystem::file_size(object.staged_file, ignored);
-      result = CopyFileIntoTree(store_.tree(), object.path, object.staged_file, *object.hash, expect,
+      result = CopyFileIntoTree(store_.tree(), object.path, object.staged_file, fetched_hash, expect,
                                 mode, mtime_ns, Durability::Deferred);
     } else {
       result = WriteTreeFile(store_.tree(), object.path, object.content, expect, mode, mtime_ns,
@@ -1531,13 +1534,13 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
       continue;
     }
     if (result.ok() && object.staged_file.empty()) {
-      objects_.Put(*object.hash, object.content);  // checked above, or read back checked
+      objects_.Put(fetched_hash, object.content);  // checked above, or read back checked
     }
     if (result.ok()) {
       // The bytes fetched may be newer than the manifest row: they are the host's
       // latest, and the row follows them.
-      entry->base = *object.hash;
-      entry->remote.hash = *object.hash;
+      entry->base = fetched_hash;
+      entry->remote.hash = fetched_hash;
       entry->remote.size = size;
       store_.RecordLocal(object.path, *entry);
       written.push_back(object.path);

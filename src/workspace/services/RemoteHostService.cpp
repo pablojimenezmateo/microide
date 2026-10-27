@@ -1052,7 +1052,7 @@ bool RemoteHostService::HasRemovableMirror() const {
       removable_mirror_->open_generation != open_generation_ || !operations_.recents_revision) {
     (void)RemovableMirrors();  // records the answer
   }
-  return removable_mirror_->any;
+  return removable_mirror_.has_value() && removable_mirror_->any;
 }
 
 std::vector<std::string> RemoteHostService::OpenHosts() const {
