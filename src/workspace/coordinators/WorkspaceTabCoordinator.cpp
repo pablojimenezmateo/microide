@@ -111,6 +111,9 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
       }
       return false;
     }
+    // As the editor's Save: the pane is clean now, which is when its inline blame
+    // shows, and the blame read for the content before the save is stale.
+    operations_.invalidate_editor_blame_path(compare_tab.right_viewport.path().lexically_normal());
     refresh_directory_tree();
     operations_.notify_plugin_buffer_save(compare_tab.right_viewport.path());
     return true;
@@ -163,6 +166,9 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
     // result would permanently lock out "Mark Resolved" for the tab.
     merge_tab.disk_result_tick = util::FileModificationTick(merge_tab.result_viewport.path());
     merge_tab.external_result_stale = false;
+    // As the editor's Save: the result pane is clean now, which is when its inline
+    // blame shows, and nothing else repaints it (QA merge-toolbar).
+    operations_.invalidate_editor_blame_path(merge_tab.result_viewport.path().lexically_normal());
     refresh_directory_tree();
     operations_.notify_plugin_buffer_save(merge_tab.result_viewport.path());
     return true;

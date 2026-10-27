@@ -2058,6 +2058,45 @@ void TestWorkspaceShellMergeBlameLoadsForResultPane() {
          "merge blame should keep the blame summary metadata");
 }
 
+// QA merge-toolbar (redraw verifier): Save on a merge repainted only its toolbar.
+// The result pane's inline blame is drawn only while it is clean, so the save that
+// cleaned it put an annotation on the caret row that no damage covered -- the
+// editor's Save repaints its pane through the blame invalidation, the merge's and
+// the diff's never called it.
+void TestWorkspaceShellMergeSaveRepaintsTheResultPane() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  const std::filesystem::path base = temp_dir.path() / "base.cpp";
+  const std::filesystem::path incoming = temp_dir.path() / "incoming.cpp";
+  WriteFile(source, "line 1\ncurrent line\nline 3\nline 4\n");
+  WriteFile(base, "line 1\nbase line\nline 3\nline 4\n");
+  WriteFile(incoming, "line 1\nincoming line\nline 3\nline 4\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add merge blame fixture", "merge blame fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, source, source),
+         "merge editor should open");
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  merge.result_viewport.MoveCursorTo(1, 0);
+  merge.result_viewport.InsertText("edited ");
+  (void)WorkspaceShellTestAccess::TakePendingRenderInvalidation(shell);
+
+  Expect(WorkspaceShellTestAccess::SaveTab(shell, 0), "the merge result saves");
+  Expect(!merge.result_viewport.dirty(), "and is clean");
+  const auto damage = WorkspaceShellTestAccess::TakePendingRenderInvalidation(shell);
+  const SDL_FRect pane = WorkspaceShellTestAccess::ActiveMergeResultRect(shell);
+  bool covered = damage.full;
+  for (const SDL_FRect& rect : damage.rects) {
+    SDL_FRect overlap{};
+    covered = covered || SDL_GetRectIntersectionFloat(&rect, &pane, &overlap);
+  }
+  Expect(covered, "the save that cleaned the result pane must repaint it (its blame shows only when clean)");
+}
+
 // QA monkey (seed 8, state oracle): comparing an untitled buffer with the
 // clipboard named its tab "compare: Clipboard  ↔  Untitled" -- the control
 // channel's title, prefix and all -- where every other comparison's tab is named.
@@ -3567,6 +3606,7 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareRenderReusesVisibleLayoutCache);
   AddTest(tests, "WorkspaceShell/CompareBlameLoadsForWorkingTreePane",
           TestWorkspaceShellCompareBlameLoadsForWorkingTreePane);
+  AddTest(tests, "WorkspaceShell/MergeSaveRepaintsTheResultPane", TestWorkspaceShellMergeSaveRepaintsTheResultPane);
   AddTest(tests, "WorkspaceShell/MergeBlameLoadsForResultPane",
           TestWorkspaceShellMergeBlameLoadsForResultPane);
   AddTest(tests, "WorkspaceShell/PathlessComparisonTabIsNamedLikeVsCode",
