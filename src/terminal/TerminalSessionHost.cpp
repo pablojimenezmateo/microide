@@ -75,18 +75,22 @@ bool TerminalSession::StartOnHost(const HostTerminalSource& source,
                                   const std::filesystem::path& working_directory,
                                   std::string_view command, std::vector<std::string> shell_argv,
                                   HostIdentity attach) {
-  std::size_t rows = 0;
-  std::size_t columns = 0;
-  std::size_t scrollback = 0;
+  // The arguments move once, into the request: the pending path keeps it whole
+  // and the ready path sends it. (Moving them in each branch read to clang-tidy as
+  // a use after move, the two branches being split by the lock scope.)
+  HostTerminalSource::OpenRequest request{.working_directory = working_directory,
+                                          .command = std::string(command),
+                                          .shell = std::move(shell_argv),
+                                          .attach = std::move(attach)};
   // Asked outside the session lock: the source takes its connection's.
   const bool ready = source.Ready();
   {
     std::scoped_lock lock(mutex_);
     ReseedForStartLocked(working_directory,
                          command.empty() ? std::string("shell") : std::string(command));
-    rows = rows_;
-    columns = columns_;
-    scrollback = max_scrollback_lines_;
+    request.rows = rows_;
+    request.columns = columns_;
+    request.scrollback_lines = max_scrollback_lines_;
     host_.screen_top = 0;
     host_.screen_lines = lines_.size();
     host_.alternate = false;
@@ -103,10 +107,10 @@ bool TerminalSession::StartOnHost(const HostTerminalSource& source,
       host_.screen_lines = lines_.size();
       cursor_visible_ = false;
       running_ = false;
-      host_.pending = TerminalHostMode::PendingStart{.working_directory = working_directory,
-                                       .command = std::string(command),
-                                       .shell_argv = std::move(shell_argv),
-                                       .attach = std::move(attach)};
+      host_.pending = TerminalHostMode::PendingStart{.working_directory = std::move(request.working_directory),
+                                                     .command = std::move(request.command),
+                                                     .shell_argv = std::move(request.shell),
+                                                     .attach = std::move(request.attach)};
       AdvanceSnapshotGenerationLocked();
     }
   }
@@ -115,15 +119,7 @@ bool TerminalSession::StartOnHost(const HostTerminalSource& source,
     return true;
   }
   std::string error;
-  std::shared_ptr<TerminalHostChannel> channel = source.OpenTerminal(
-      HostTerminalSource::OpenRequest{.working_directory = working_directory,
-                                      .command = std::string(command),
-                                      .shell = std::move(shell_argv),
-                                      .rows = rows,
-                                      .columns = columns,
-                                      .scrollback_lines = scrollback,
-                                      .attach = std::move(attach)},
-      *this, &error);
+  std::shared_ptr<TerminalHostChannel> channel = source.OpenTerminal(std::move(request), *this, &error);
   {
     std::scoped_lock lock(mutex_);
     host_.channel = channel;
