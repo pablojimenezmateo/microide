@@ -298,9 +298,26 @@ void TestBulkWindowFillsALongLink() {
   const double throughput = kChunks * static_cast<double>(chunk.size()) / seconds;
   const double product = kBytesPerSecond * std::chrono::duration<double>(kRtt).count();
   const double window = static_cast<double>(sender.bulk_window());
-  // What this test is for: the window climbs out of its start at all.
-  Expect(window > static_cast<double>(RemoteFrameTransport::Options{}.bulk_window_initial),
-         "the window grew past its start: window " + std::to_string(window));
+  // On any machine, the window is the rule's answer for what the acks MEASURED:
+  // bandwidth x (base RTT + the allowance), less one chunk.
+  const double base = std::chrono::duration<double>(sender.base_rtt()).count();
+  const double measured_rule =
+      sender.bulk_bandwidth() *
+          (base + std::chrono::duration<double>(RemoteFrameTransport::kQueueAllowance).count()) -
+      static_cast<double>(RemoteFrameTransport::kMaxBulkChunkBytes);
+  Expect(base > 0.0 && std::abs(window - std::clamp(measured_rule, 64.0 * 1024, 1024.0 * 1024)) < window * 0.005,
+         "the window follows the measured bandwidth x (base RTT + allowance): window " +
+             std::to_string(window) + ", rule " + std::to_string(measured_rule));
+  // What this test is for: the window climbs out of its start at all. That needs a
+  // relay that kept its pace: a starved one delivers short of window / RTT, and the
+  // window then rightly follows the measurement DOWN (70 KB under a UBSan build
+  // sharing the machine with three other lanes, 2026-10-27). Not Trustworthy(),
+  // which is false in every sanitizer build and would leave those lanes checking
+  // nothing here: only the starvation it also reads.
+  if (timing.StalledFraction() < 0.10) {
+    Expect(window > static_cast<double>(RemoteFrameTransport::Options{}.bulk_window_initial),
+           "the window grew past its start: window " + std::to_string(window) + "; " + timing.Describe());
+  }
   // And where it settles is the rule's answer for this link: bandwidth x (RTT +
   // the allowance), less the one chunk a frame-to-ack sample already contains --
   // ~419 KB here. This used to demand 90 % of the bare 469 KB product, i.e. 422 KB,
