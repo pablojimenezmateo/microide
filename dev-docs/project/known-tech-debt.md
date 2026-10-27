@@ -449,6 +449,19 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-27-409 — two projects reaching one fresh host at once: one install failed and that project stayed disconnected. [RESOLVED 2026-10-27]
+
+Found while writing the test for TD-2026-10-27-400: opening two remote projects
+on a host with no server installed ran the install script twice at once, and
+both staged the binary at one fixed name, `.microide-server.tmp`. One `mv`
+renamed the other's staging file away, the second failed with `mv: cannot stat
+'.microide-server.tmp'`, and its project went Disconnected -- its pending
+terminal never started. The staging name is the installing shell's own now
+(`.microide-server.tmp.$$`, removed if the install fails), so concurrent installs
+each rename a whole binary into place. Pinned by
+`RemoteHostSession/ConcurrentInstallsOnOneHostAllSucceed` (eight installs at once;
+fails on the old script).
+
 ### TD-2026-10-27-408 — the clang lane once read a header full of NUL bytes while six lanes built at once.
 
 `tools/run-checks.sh clang-build`, run beside tests, ASan, UBSan, TSan and

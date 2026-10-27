@@ -39,9 +39,13 @@ std::filesystem::path DefaultServerSocketDir(const std::filesystem::path& home) 
 }
 
 std::string_view ServerInstallScript() {
-  return "umask 077 && d=\"$HOME/$0\" && mkdir -p \"$d\" && cat > \"$d/.microide-server.tmp\" && "
-         "chmod 700 \"$d/.microide-server.tmp\" && "
-         "mv -f \"$d/.microide-server.tmp\" \"$d/microide-server\"";
+  // The staging name is this shell's own ($$): two windows or projects reaching a
+  // fresh host at once install side by side, and each rename replaces the binary
+  // atomically. A shared name let one `mv` take the other's file away from under
+  // it ("cannot stat .microide-server.tmp"), and that project stayed disconnected.
+  return "umask 077 && d=\"$HOME/$0\" && mkdir -p \"$d\" && t=\"$d/.microide-server.tmp.$$\" && "
+         "{ cat > \"$t\" && chmod 700 \"$t\" && mv -f \"$t\" \"$d/microide-server\" || "
+         "{ rm -f \"$t\"; exit 1; }; }";
 }
 
 std::string_view ServerInstallDirectory() { return ".local/share/microide/server"; }

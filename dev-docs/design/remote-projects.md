@@ -1388,10 +1388,15 @@ manifest hash. So:
   manifest check) through
 
   ```
-  ssh -S <ctl> -- <host> sh -c 'umask 077 && d="$HOME/$0" && mkdir -p "$d" && cat > "$d/.microide-server.tmp" \
-    && chmod 700 "$d/.microide-server.tmp" && mv -f "$d/.microide-server.tmp" "$d/microide-server"' \
+  ssh -S <ctl> -- <host> sh -c 'umask 077 && d="$HOME/$0" && mkdir -p "$d" && t="$d/.microide-server.tmp.$$" \
+    && { cat > "$t" && chmod 700 "$t" && mv -f "$t" "$d/microide-server" || { rm -f "$t"; exit 1; }; }' \
     <install_dir>
   ```
+
+  The staging file is named for the installing shell, so two projects reaching
+  one fresh host at once install side by side (a shared `.microide-server.tmp`
+  let one install rename the other's file away, and that project stayed
+  disconnected).
 
   then returns to StartingServer. That is the **only** shell command this design
   ever sends; its one variable is a directory the client chose, it travels as

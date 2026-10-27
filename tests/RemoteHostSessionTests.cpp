@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <sys/stat.h>
@@ -480,9 +481,53 @@ void TestSocketDirAndBackfillBoundReachTheServer() {
          "naming the setting: " + bad_log.Error());
 }
 
+// Two projects (or windows) reaching one fresh host at once each run the install
+// script. With one shared staging name, one `mv` renamed the other's file away and
+// that install failed -- the project stayed disconnected. Every concurrent install
+// succeeds now, the binary is whole, and no staging file is left behind.
+void TestConcurrentInstallsOnOneHostAllSucceed() {
+  TemporaryDirectory home;
+  const std::string binary(64 * 1024, 'b');
+  std::vector<std::thread> installs;
+  std::atomic<int> failures{0};
+  std::mutex errors_mutex;
+  std::string errors;
+  for (int i = 0; i < 8; ++i) {
+    installs.emplace_back([&] {
+      const platform::SubprocessResult result = platform::RunSubprocess(
+          {"sh", "-c", std::string(remote::ServerInstallScript()), std::string(remote::ServerInstallDirectory())},
+          platform::SubprocessOptions{.stdin_text = binary,
+                                      .environment_overrides = {{"HOME", home.path().string()}},
+                                      .timeout_ms = 20000});
+      if (!result.success()) {
+        ++failures;
+        std::lock_guard lock(errors_mutex);
+        errors += result.stderr_text;
+      }
+    });
+  }
+  for (std::thread& install : installs) {
+    install.join();
+  }
+  Expect(failures == 0, "every concurrent install succeeds: " + errors);
+  const std::filesystem::path dir = home.path() / std::string(remote::ServerInstallDirectory());
+  Expect(ReadFile(dir / "microide-server") == binary, "the installed binary is whole");
+  Expect((std::filesystem::status(dir / "microide-server").permissions() & std::filesystem::perms::owner_exec) !=
+             std::filesystem::perms::none,
+         "and executable");
+  std::size_t entries = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+    (void)entry;
+    ++entries;
+  }
+  Expect(entries == 1, "no staging file is left behind: " + std::to_string(entries) + " entries");
+}
+
 }  // namespace
 
 void RegisterRemoteHostSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RemoteHostSession/ConcurrentInstallsOnOneHostAllSucceed",
+          TestConcurrentInstallsOnOneHostAllSucceed);
   AddTest(tests, "RemoteHostSession/HostTargetsAreValidatedBeforeAnythingRuns",
           TestHostTargetsAreValidatedBeforeAnythingRuns);
   AddTest(tests, "RemoteHostSession/SshConfigHostsFollowsIncludesAndSkipsPatterns",

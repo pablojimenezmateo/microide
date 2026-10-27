@@ -283,7 +283,10 @@ void TestABackgroundStartedHostTerminalIsRecordedAtQuit() {
     Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, open_first),
            "switched away from while connecting: its session is written now, pending pane and all");
     TerminalSession& front = WorkspaceShellTestAccess::TerminalTabSession(shell, 0);
-    Expect(PumpUntil(shell, [&] { return front.running(); }), "the front project's terminal starts");
+    // Its handle, not only `running`: until term/open answers it is 0, and every
+    // host terminal would read as "not the front one".
+    Expect(PumpUntil(shell, [&] { return front.running() && front.host_identity().handle != 0; }),
+           "the front project's terminal starts");
     const std::uint64_t front_handle = front.host_identity().handle;
     Expect(PumpUntil(shell,
                      [&] {
