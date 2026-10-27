@@ -1930,8 +1930,14 @@ plugin-owned or render-TU product logic.
 | Command line / control channel | `project-open ssh://[user@]host/abs/path` and `project-open-remote [user@]host:/abs/path`. The `ssh://` form is canonical; the scp form is accepted when the string is not an existing local path. This is also what the headless tests drive. |
 | CLI | `microide ssh://host/path` opens straight into a remote project. |
 
-The entry points as built (2026-10-27): the command palette's `Remote:` verbs, the
-File menu (`Remote: Open Folder on Host…` under Open Folder…), the Terminal menu
+The entry points as built (2026-10-27): the command palette's `Remote:` verbs; the
+top-level **Remote** menu between Git and Terminal (`openspec/changes/remote-menu`),
+holding every remote verb that needs no typed argument with the prefix dropped --
+Open Folder on Host…; Show Status, Show Changed on Host, Show Host Server Log;
+Forward a Port…, Stop Forwarding a Port…; Reconnect, Disconnect, Stop Host Server;
+Remove Mirror… -- dimmed, never hidden, while there is nothing for them to act on
+(the File menu no longer carries an Open Folder on Host twin); the host's status
+segment, which opens that menu (§ 7.4); the Terminal menu
 (`New Local Terminal`, `Remote: Open Local Terminal` / `remote-local-terminal`,
 under New Terminal: a shell on this machine, prefixed `local · `, offered only in a
 remote project), the welcome page's second start button, and `remote-open` on the
@@ -1999,8 +2005,13 @@ One host-owned segment per remote project, through `StatusBarService`:
 | Offline | `⇅ build-box · offline · 3 unsent` | error |
 | NeedsAuth | `⇅ build-box · sign in` | warning |
 
-Clicking it opens the command palette filtered to `Remote:`; the tooltip is the
-full `host:/path`, the last-connected time and the pending-push count.
+Clicking it opens the **Remote** menu as a popup anchored at the segment (it flips
+above the bar), as VS Code's remote indicator lists its verbs: the segment carries
+`StatusBarSegmentValue::menu = MenuId::Remote` rather than a command, and the `ui`
+query reports `menu: "Remote"` on `status:remote`. (Designed as the palette filtered
+to `Remote:`, which is the same list behind a text box; built first as one verb,
+`remote-status`.) The tooltip is each project's `host:/path` with its unsent saves,
+then "Remote menu".
 
 ### 7.4a Reattach
 

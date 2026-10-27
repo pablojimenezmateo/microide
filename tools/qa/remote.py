@@ -28,7 +28,13 @@ What it checks, each as the user would see it, with the measured latencies:
   I  host branch switch         no crash; the tree follows
   J  agent churn                saves land while N host agents rewrite the tree; the
                                 trees agree once they stop
+  K  git on the host           a saved edit is a change in the git view; staging and
+                                committing run on the host
   L  relaunch on the mirror     the project reconnects from its record and a save pushes
+  M  project search             a file the host just created is found over the mirror
+  N  tree operations            a new file, a rename and a delete reach the host
+  R  the Remote menu            the host's segment opens it above itself; the verbs are
+                                live; the arrows walk them; Enter runs Show Status
   P  remote commands            status, the server log, the ssh command copied, a port
                                 forwarded and unforwarded, host changes listed and
                                 cleared, the server stopped and reconnected
@@ -434,6 +440,43 @@ class Suite:
         app.check("T")
 
     # ---- scenarios -------------------------------------------------------
+    def run_remote_menu(self) -> None:
+        """R: the host's status segment opens the Remote menu above itself, the
+        same menu the bar opens; with the host connected its verbs are live, the
+        arrows walk them and Enter on Show Status runs remote-status."""
+        app = self.app
+        segment = next((e for e in app.elements("status") if e["name"] == "status:remote"), None)
+        self.record("R.segment-opens-menu", bool(segment and segment.get("enabled") and segment.get("menu") == "Remote"),
+                    f"segment={segment}")
+        if segment is None:
+            return
+        app.click_named("status:remote"); app.settle(0.3); app.check("R.click-segment")
+        ui = app.ui()
+        rows = app.elements("menu-item", prefix="menu-item:Remote/")
+        first = rows[0]["rect"] if rows else None
+        self.record("R.popup-above-segment",
+                    ui["menu"]["open"] and ui["menu"]["menu"] == "Remote" and first is not None
+                    and first[1] + first[3] <= segment["rect"][1],
+                    f"menu={ui['menu']} first-row={first} segment={segment['rect']}")
+        live = {r["label"] for r in rows if r.get("enabled")}
+        want = {"Open Folder on Host…", "Show Status", "Show Changed on Host", "Show Host Server Log",
+                "Forward a Port…", "Reconnect", "Disconnect", "Stop Host Server"}
+        self.record("R.verbs-live", want <= live, f"live={sorted(live)}")
+        app.key("Escape"); app.settle(0.2)
+        self.record("R.escape-closes", not app.ui()["menu"]["open"], f"menu={app.ui()['menu']}")
+        # The bar's Remote menu is the same one: walk to Show Status and run it.
+        app.click_named("menu:Remote"); app.settle(0.3)
+        before = app.ui().get("actions", {}).get("dispatched", 0)
+        app.key("Down"); app.settle(0.1)
+        active = next((r["label"] for r in app.elements("menu-item", prefix="menu-item:Remote/") if r.get("active")), None)
+        self.record("R.arrow-walks", active == "Show Status", f"active={active}")
+        app.key("Return"); app.settle(0.4); app.check("R.run-show-status")
+        actions = app.ui().get("actions", {})
+        self.record("R.enter-runs-row", actions.get("last") == "remote-status" and actions.get("dispatched", 0) > before,
+                    f"actions={actions}")
+        app.key("Escape"); app.settle(0.2)
+        app.check("R")
+
     def run_all(self) -> None:
         app, host, tok = self.app, self.host, self.token
         app.send("remote-open", f"{host.name}:{host.root}")
@@ -448,6 +491,9 @@ class Suite:
         _, _, diff = self.trees_equal()
         self.record("A.tree-equal", not diff, f"differing: {sorted(diff)[:10]}")
         app.screenshot("A-ready"); app.check("A")
+
+        if self.runs("R"):
+            self.run_remote_menu()
 
         if self.runs("B"):
             app.send("open", EDIT_FILE); app.settle(0.5)

@@ -315,6 +315,15 @@ new terminal behaviour lands there.
 > (`terminal.restore_sessions` off), quit closes them. See
 > `openspec/changes/archive/2026-10-27-remote-terminal-restore`.
 >
+> **A Remote menu (2026-10-27, remote-menu).** Every remote verb that needs no
+> typed argument is in a top-level Remote menu between Git and Terminal, labelled
+> without the palette's `Remote:` prefix and dimmed (never hidden) while there is
+> nothing to act on; File lost its Open Folder on Host twin. The host's status
+> segment opens that menu above itself instead of running `remote-status`. Run
+> from the menu, Stop Forwarding a Port… and Remove Mirror… pick from what exists
+> (`remote-remove-mirror` now takes its root) and the host verbs ask which host
+> when several are open. See `openspec/changes/archive/2026-10-27-remote-menu`.
+>
 > **`Remote: Open Terminal on Host…` removed (2026-10-27).** A remote project's
 > Terminal > New runs on its host; the terminal-only host session behind the
 > command (`RemoteHostService::Host`, its own status machine and auth path) is

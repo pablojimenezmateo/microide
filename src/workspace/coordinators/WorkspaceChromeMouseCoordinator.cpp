@@ -58,8 +58,8 @@ bool ChromeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
 
   // An open menu takes the press first, wherever it lands: its rows are drawn over
   // the sidebar, and the view buttons used to be tested first, so a row over them
-  // switched the sidebar view instead of running (File > Remote: Open Folder on
-  // Host… over the Search button, with the project strip shown). A press outside
+  // switched the sidebar view instead of running (File's fourth row over the Search
+  // button, with the project strip shown). A press outside
   // the menu closes it and stops there, as everywhere else.
   if (HandleMenuButtonDown(event, layout)) {
     return true;

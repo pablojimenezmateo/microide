@@ -1592,6 +1592,63 @@ def flow_chrome_segments(app: q.App) -> None:
     dismiss(app)
 
 
+# ---- the Remote menu --------------------------------------------------------
+
+REMOTE_MENU_ROWS = ("Open Folder on Host…", "Show Status", "Show Changed on Host", "Show Host Server Log",
+                    "Forward a Port…", "Stop Forwarding a Port…", "Reconnect", "Disconnect",
+                    "Stop Host Server", "Remove Mirror…")
+
+
+def flow_remote_menu(app: q.App) -> None:
+    """remote-menu: the remote verbs in one top-level menu, prefix-free, with
+    nothing connected -- Open Folder on Host… live, the rest dimmed but present;
+    the keyboard walks only the live row and Enter runs it (the host prompt); File
+    no longer carries the twin; the palette still finds the verbs by "remote".
+    (The status segment's click needs a host: tools/qa/remote.py scenario M.)"""
+    labels = [e["label"] for e in app.elements("menu")]
+    if not app.expect("Remote" in labels, f"the bar shows a Remote menu ({labels})"):
+        return
+    app.expect(labels.index("Remote") == labels.index("Git") + 1 and labels[labels.index("Remote") + 1] == "Terminal",
+               f"Remote sits between Git and Terminal ({labels})")
+    app.click_named("menu:Remote")
+    step(app, "open the Remote menu", 0.2)
+    app.expect(app.ui()["menu"]["menu"] == "Remote", "the click opens the Remote menu")
+    rows = app.elements("menu-item", prefix="menu-item:Remote/")
+    app.expect(tuple(r["label"] for r in rows) == REMOTE_MENU_ROWS,
+               f"the Remote menu lists the remote verbs in order ({[r['label'] for r in rows]})")
+    for row in rows:
+        live = row["label"] == "Open Folder on Host…"
+        app.expect(row.get("enabled") is live,
+                   f"{row['label']} is {'available' if live else 'dimmed'} with no host connected")
+    app.expect(app.element("menu-item:Remote/Open Folder on Host…").get("active") is True,
+               "the menu opens on its first live row")
+    app.key("Down")
+    step(app, "Down in the Remote menu")
+    app.expect(app.element("menu-item:Remote/Open Folder on Host…").get("active") is True,
+               "Down skips the dimmed rows (the only live row stays active)")
+    app.key("Return")
+    step(app, "run Open Folder on Host…", 0.25)
+    ui = app.ui()
+    app.expect(not ui["menu"]["open"] and ui.get("modal") == "prompt",
+               f"Enter runs the row: the host prompt opens (menu open={ui['menu']['open']}, modal={ui.get('modal')})")
+    dismiss(app)
+
+    app.click_named("menu:File")
+    step(app, "open File", 0.2)
+    file_rows = [e["label"] for e in app.elements("menu-item", prefix="menu-item:File/")]
+    app.expect(not any("Host" in label for label in file_rows), f"File has no Open Folder on Host twin ({file_rows})")
+    dismiss(app)
+
+    app.key("ctrl+shift+p")
+    step(app, "command palette", 0.2)
+    app.type("remote")
+    step(app, "type remote", 0.25)
+    found = [e["label"] for e in app.elements("overlay-row")]
+    app.expect(any(label.startswith("Remote: Show Status") for label in found),
+               f"the palette keeps the Remote: prefix and finds the verbs by it ({found[:6]})")
+    dismiss(app)
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "nav-history": flow_nav_history,
     "chrome-segments": flow_chrome_segments,
@@ -1617,6 +1674,7 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "plugins-ui": flow_plugins_ui,
     "git-remote": flow_git_remote,
     "compare-keys": flow_compare_keys,
+    "remote-menu": flow_remote_menu,
 }
 
 PLUGINS: dict[str, tuple[str, ...]] = {

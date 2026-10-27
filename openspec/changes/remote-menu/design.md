@@ -106,6 +106,27 @@ width either fits or overflows into the chevron; neither truncates
 (`kMaxMenuBarItems` is 24). A layout test pins the width at which the chevron
 first appears so a later menu knows the budget.
 
+### D5. A bare menu row picks what exists rather than asking for a typed argument (as built)
+Three rows would otherwise have prompted for, or guessed, an argument:
+- **Stop Forwarding a Port…** (`<port>` required) opens a pick of the forwarded
+  ports (`host_port → localhost:local_port`, host as detail) through the existing
+  `OpenArgumentPicker` path, instead of a prompt for a number nobody remembers.
+- **Remove Mirror…** — its bare form acted on the active project, whose mirror is
+  open and therefore always refused ("close the project first"). The usage became
+  `remote-remove-mirror <root> [discard]` and the row picks among the closed
+  remote projects whose mirror is on disk (`RemoteHostService::RemovableMirrors`).
+  The `remote-project-mirror` spec is modified to match (it promised removing the
+  active project's mirror after the dirty prompt, which was never built; closing
+  the project is that prompt).
+- **Reconnect, Disconnect, Show Host Server Log, Stop Host Server** act on the only
+  host when run bare; with several open hosts the row asks which
+  (`WorkspaceActionContext::OpenOptionalArgumentPicker`). `remote-reconnect`'s host
+  became optional (`[host]`), which its executor already treated it as.
+
+Availability (D3) reads only what `RemoteHostService` holds — `HasOpenProject`,
+`HasForwardedPort`, `HasRemovableMirror` — over host strings cached per project,
+so a painted menu row costs no disk and no allocation.
+
 ## Risks / Trade-offs
 
 - [Muscle memory for File > Remote: Open Folder on Host… and the segment's toast]
