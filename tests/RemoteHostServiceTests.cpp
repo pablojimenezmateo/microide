@@ -1269,13 +1269,18 @@ void TestHeldMassDeleteIsAppliedFromItsRow() {
              std::chrono::seconds(30), std::chrono::milliseconds(10)),
          "the mirror fills from the host");
 
+  // The whole first sync, not just a file of it: deleted while the backfill still
+  // fetches them, files never reach the mirror and are no mirror delete to hold
+  // (and leave the engine counting them to fetch: TD-2026-10-27-403).
   Expect(WaitUntil(
              [&] {
                Pump(shell);
-               return std::filesystem::exists(mirror / "gone" / "f139");
+               const auto snapshot = WorkspaceShellTestAccess::RemoteHosts(shell).SnapshotOf(mirror);
+               return snapshot.has_value() && snapshot->sync.synced_once && !snapshot->sync.syncing &&
+                      snapshot->sync.absent == 0 && std::filesystem::exists(mirror / "gone" / "f139");
              },
-             std::chrono::seconds(30), std::chrono::milliseconds(10)),
-         "the directory is mirrored too");
+             std::chrono::seconds(60), std::chrono::milliseconds(10)),
+         "the first sync completes, the directory mirrored too");
   // Not a repository, so nothing explains the deletes: they are held.
   std::filesystem::rename(host_root / "gone", host.home / "gone-elsewhere");
   const auto held_row = [&]() -> const workspace::NotificationService::Notification* {

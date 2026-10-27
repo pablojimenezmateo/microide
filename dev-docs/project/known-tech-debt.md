@@ -449,6 +449,23 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-27-403 — files the host deletes while the first backfill is fetching them stay counted "to fetch".
+
+Found by `RemoteHostService/HeldMassDeleteIsAppliedFromItsRow` under 64 parallel
+copies (5 runs in 128): the test removed a 140-file directory on the host while
+the project's first sync was still fetching it. The sync then finished --
+`syncing` false -- with `absent` at 21 to 86, nothing held and the deletes not
+applied either: the files the backfill had not reached yet were neither fetched
+(the host no longer has them) nor dropped from the pending set, and the ones it
+had fetched were too few for a mass-delete hold yet were not deleted. The status
+row read "Syncing … (86 files to fetch)" until the sync ended and the mirror kept
+files the host had deleted. Expected: a delete delta for a row still pending a
+fetch removes it from the pending set (and from `absent`), and one for a fetched
+row is reconciled as any delete. The test now waits for the first sync to
+complete before deleting, which is what it means to test; this entry is the
+engine's half. Start at `MirrorSyncEngine`'s watch-delta reconcile against
+`LaunchPulls`' in-flight set.
+
 ### TD-2026-10-27-402 — the mass-delete hold is decided per watch batch, so a delete split across batches escapes it.
 
 `MirrorSyncEngine::HoldMassDeleteLocked` holds a batch's deletes when that
@@ -457,10 +474,10 @@ tree)`. A host-side delete that reaches the watcher in several batches -- a
 slow `rm` of a large tree, or 140 single-file deletes on a loaded machine --
 can stay under the threshold in every batch, and each batch is applied: the
 safety net (§ 6.3, "an unmounted or emptied host root must not empty the
-mirror") is bypassed by timing. Found when
-`RemoteHostService/HeldMassDeleteIsAppliedFromItsRow` failed under four
-parallel sanitizer lanes (the test now deletes one directory atomically, which
-is what it means to model). Fix shape: decide against the deletes applied in
+mirror") is bypassed by timing. Noticed while
+chasing `RemoteHostService/HeldMassDeleteIsAppliedFromItsRow` under load (that
+failure turned out to be TD-2026-10-27-403; the test now deletes one directory
+atomically after the first sync completes). Fix shape: decide against the deletes applied in
 the last `kSameCheckout` window as well as this batch's -- which needs the
 applied ones deferred for that window (or reversible from the object store)
 so a later batch can still hold them; that trades delete latency, so it wants
