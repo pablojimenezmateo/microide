@@ -27,6 +27,10 @@ void RemotePeer::OnNotification(std::string_view method, NotificationHandler han
   notification_handlers_[std::string(method)] = std::move(handler);
 }
 
+void RemotePeer::OnDispatch(std::function<void(std::string_view)> handler) {
+  dispatch_handler_ = std::move(handler);
+}
+
 void RemotePeer::OnContent(ContentHandler handler) {
   content_handler_ = std::move(handler);
 }
@@ -218,6 +222,9 @@ void RemotePeer::HandleFrame(Frame frame) {
         }
         incoming_in_flight_.insert(frame.id);
       }
+      if (dispatch_handler_) {
+        dispatch_handler_(name);
+      }
       handler->second(frame.id, (*body)["params"]);
       return;
     }
@@ -246,6 +253,9 @@ void RemotePeer::HandleFrame(Frame frame) {
       }
       const auto handler = notification_handlers_.find(name);
       if (handler != notification_handlers_.end()) {
+        if (dispatch_handler_) {
+          dispatch_handler_(name);
+        }
         handler->second(frame.id, (*body)["params"]);
       }
       return;

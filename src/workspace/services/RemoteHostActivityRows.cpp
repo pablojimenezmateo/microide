@@ -111,7 +111,10 @@ std::vector<Item> BuildHostActivityRows(const HostActivityInput& input) {
     if (group("group:terminals", "Terminals",
               std::to_string(status->terminals->size()) + std::string(kDot) + totals.Text())) {
       for (const remote::ServerTerminal& terminal : *status->terminals) {
-        std::string place = remote::TerminalPlace(terminal.cwd, terminal.root);
+        // What runs in it is what the user looks for (`#3 · watch`); the directory
+        // while the shell itself is in the foreground.
+        std::string place = terminal.command.empty() ? remote::TerminalPlace(terminal.cwd, terminal.root)
+                                                     : terminal.command;
         if (place.empty() || place == ".") {
           place = terminal.root.empty() ? std::string("~")
                                         : std::filesystem::path(terminal.root).filename().string();

@@ -198,6 +198,9 @@ struct ServerTerminal {
   std::uint64_t handle = 0;  // never 0 once decoded
   std::string root;          // the opening connection's workspace root ("" = none)
   std::string cwd;           // "" = not reported
+  // What runs in its foreground (the process group leader's comm: `watch`, `vim`);
+  // "" while the shell itself is, or from a server that does not say.
+  std::string command;
   std::size_t clients = 0;   // attached connections
   bool exited = false;
   std::optional<int> pid;  // the shell's

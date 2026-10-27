@@ -73,6 +73,10 @@ class RemoteServer {
     project::remote::RemotePeer peer;
     std::string root;  // the workspace this connection opened, "" before hello
     std::atomic<bool> closed{false};
+    // Asked for something beyond what an observer asks (hello, server/status,
+    // server/log): only such a connection restarts an on-demand server's idle
+    // countdown. Polling `microide-server status` must not keep it alive for good.
+    std::atomic<bool> active{false};
     // file/write content by request id, until its request claims it. I/O thread only.
     std::map<std::uint64_t, std::string> uploads;
     std::size_t upload_bytes = 0;

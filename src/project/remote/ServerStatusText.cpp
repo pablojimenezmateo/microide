@@ -188,7 +188,10 @@ std::string FormatServerStatusTable(const ServerStatus& status) {
         if (terminal.root != root) {
           continue;
         }
-        const std::string place = TerminalPlace(terminal.cwd, terminal.root);
+        std::string place = TerminalPlace(terminal.cwd, terminal.root);
+        if (!terminal.command.empty()) {
+          place += (place.empty() ? "" : " ") + std::string("(") + terminal.command + ")";
+        }
         row("terminal #" + std::to_string(terminal.handle) + (place.empty() ? "" : " " + place), terminal.pid,
             terminal.exited ? std::string("exited") : Count(terminal.clients, "client", "clients"),
             terminal.figures);

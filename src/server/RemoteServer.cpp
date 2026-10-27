@@ -145,6 +145,12 @@ RemoteServer::Connection& RemoteServer::Accept(int read_fd, int write_fd) {
   InstallSearchHandlers(ref);
   InstallPortHandlers(ref);
   InstallActivityHandlers(ref);
+  ref.peer.OnDispatch([&ref](std::string_view method) {
+    if (method != remote::method::kServerHello && method != remote::method::kServerStatus &&
+        method != remote::method::kServerLog) {
+      ref.active.store(true, std::memory_order_relaxed);
+    }
+  });
   remote::RemotePeer::Options options;  // the server answers pings; it does not send them
   if (!ref.peer.Start(read_fd, write_fd, options)) {
     ref.closed = true;
@@ -547,6 +553,11 @@ util::JsonValue RemoteServer::StatusJson(bool activity) {
     row["exited"] = util::JsonValue(terminal.exited);
     row["pid"] = util::JsonValue(static_cast<std::int64_t>(terminal.pid));
     row["scrollback_lines"] = util::JsonValue(static_cast<std::int64_t>(terminal.scrollback_lines));
+    if (!terminal.exited) {
+      if (std::string command = ProcessActivity::ForegroundCommand(terminal.pid); !command.empty()) {
+        row["command"] = util::JsonValue(std::move(command));
+      }
+    }
     if (const ProcessActivity::Figures* own = figures_at(1 + i)) {
       AddFigures(*own, row);
     }
@@ -731,7 +742,14 @@ void RemoteServer::ReapClosed() {
         ++it;
       }
     }
-    if (!connections_.empty() || !workspaces_.empty()) {
+    // An observer's connection holds the exit off while it is open (Idle wants no
+    // connection at all) but does not restart the countdown; a client's does.
+    const bool in_use = !workspaces_.empty() ||
+                        std::any_of(connections_.begin(), connections_.end(), [](const auto& connection) {
+                          return connection->active.load(std::memory_order_relaxed) ||
+                                 !connection->root.empty();
+                        });
+    if (in_use) {
       idle_since_ = std::chrono::steady_clock::now();
     }
   }

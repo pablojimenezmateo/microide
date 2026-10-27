@@ -15,7 +15,9 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -143,6 +145,38 @@ void TestSampleSeesARealChildTree() {
              std::chrono::seconds(10), std::chrono::milliseconds(50)),
          "the shell's tree holds more than the shell");
   Expect(first[2].cpu_permille == -1 || first[2].cpu_permille >= 0, "a figure or not reported");
+  // The sample reads only these trees (down the children files); a walk of every
+  // process on the box finds the same tree.
+  {
+    std::vector<ProcessActivity::Stat> everything;
+    for (const auto& entry : std::filesystem::directory_iterator("/proc")) {
+      const std::string name = entry.path().filename().string();
+      if (name.empty() || name[0] < '1' || name[0] > '9') {
+        continue;
+      }
+      // A /proc file reports size 0: read it as a stream.
+      std::ifstream file(entry.path() / "stat");
+      std::string line;
+      if (std::getline(file, line)) {
+        if (const auto stat = ProcessActivity::ParseStat(line); stat.has_value()) {
+          everything.push_back(*stat);
+        }
+      }
+    }
+    ProcessActivity walked;
+    const std::vector<ProcessActivity::Figures> whole =
+        walked.Measure(everything, roots, std::chrono::steady_clock::now(), 100, ::sysconf(_SC_PAGESIZE));
+    const std::vector<ProcessActivity::Figures> trees = ProcessActivity().Sample(roots);
+    Expect(whole[0].rss_bytes > whole[1].rss_bytes && trees[0].rss_bytes > trees[1].rss_bytes,
+           "both see the shell's children: " + std::to_string(whole[0].rss_bytes) + "/" +
+               std::to_string(whole[1].rss_bytes) + " " + std::to_string(trees[0].rss_bytes) + "/" +
+               std::to_string(trees[1].rss_bytes));
+    // Resident sizes move a page or two between two reads; the tree's members do not.
+    const auto close = [](std::int64_t a, std::int64_t b) { return std::abs(a - b) <= 64 * 4096; };
+    Expect(close(whole[0].rss_bytes, trees[0].rss_bytes),
+           "the tree read down the children files is the tree a full walk finds: " +
+               std::to_string(whole[0].rss_bytes) + " vs " + std::to_string(trees[0].rss_bytes));
+  }
   ProcessActivity fresh;
   Expect(fresh.Sample(roots)[2].cpu_permille == -1, "no share on a pid's first sample");
   std::this_thread::sleep_for(std::chrono::milliseconds(300));
@@ -250,10 +284,39 @@ void TestStatusListsTerminalsAndProcessesAcrossRoots() {
              status->terminals->front().figures.rss_bytes.value_or(0) > 0,
          "the terminal's shell tree's memory");
 
+  Expect(status->terminals.has_value() && !status->terminals->empty() &&
+             status->terminals->front().command.empty(),
+         "an idle shell has nothing in its foreground but itself: no command");
+
+  // What runs in the terminal names its row (TD-2026-10-27-407): the foreground
+  // process group's command, not the directory.
+  for (const char c : std::string_view("sleep 30")) {
+    TerminalSession::KeyPress press;
+    press.key = TerminalSession::KeyPress::Key::Char;
+    press.codepoint = static_cast<unsigned char>(c);
+    (void)shell.SendKeyPress(press);
+  }
+  TerminalSession::KeyPress enter;
+  enter.key = TerminalSession::KeyPress::Key::Enter;
+  (void)shell.SendKeyPress(enter);
+  Expect(WaitUntil(
+             [&] {
+               status = observer->Status(&error, /*activity=*/true);
+               return status.has_value() && status->terminals.has_value() && !status->terminals->empty() &&
+                      status->terminals->front().command == "sleep";
+             },
+             std::chrono::seconds(10)),
+         "a terminal running `sleep 30` says so: '" +
+             (status.has_value() && status->terminals.has_value() && !status->terminals->empty()
+                  ? status->terminals->front().command
+                  : std::string("?")) +
+             "'");
+
   // The table names both.
   const std::string table = remote::FormatServerStatusTable(*status);
   Expect(table.find(root_b.string()) != std::string::npos && table.find("sleep 120") != std::string::npos &&
-             table.find("kept ") != std::string::npos && table.find("terminal #") != std::string::npos,
+             table.find("kept ") != std::string::npos && table.find("terminal #") != std::string::npos &&
+             table.find("(sleep)") != std::string::npos,
          "the table lists the terminal and the kept process:\n" + table);
 
   // proc/end from a client that did not spawn it: the kept process ends, and --

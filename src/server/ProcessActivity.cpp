@@ -4,6 +4,8 @@
 #include <cerrno>
 #include <charconv>
 #include <cstdio>
+#include <string>
+#include <unordered_map>
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -22,7 +24,7 @@ bool ParseField(std::string_view text, T* out) {
 // 16), so one read takes it whole. 0 when the process went between the readdir
 // and the open, which is ordinary.
 std::size_t ReadStat(const char* name, char* buffer, std::size_t size) {
-  char path[64];
+  char path[300];  // a d_name is at most 255 bytes
   std::snprintf(path, sizeof(path), "/proc/%s/stat", name);
   const int fd = ::open(path, O_RDONLY | O_CLOEXEC);
   if (fd < 0) {
@@ -34,6 +36,103 @@ std::size_t ReadStat(const char* name, char* buffer, std::size_t size) {
   } while (got < 0 && errno == EINTR);
   ::close(fd);
   return got > 0 ? static_cast<std::size_t>(got) : 0;
+}
+
+// Whether this kernel lists a task's children (/proc/<pid>/task/<tid>/children,
+// CONFIG_PROC_CHILDREN): what lets a sample read only the trees it reports on.
+bool KernelListsChildren() {
+  static const bool lists = ::access("/proc/thread-self/children", R_OK) == 0;
+  return lists;
+}
+
+// Every child of `pid`, from each of its threads' children files (a child belongs
+// to the thread that forked it), appended to `out`.
+void AppendChildren(int pid, std::vector<int>& out) {
+  char path[64];
+  std::snprintf(path, sizeof(path), "/proc/%d/task", pid);
+  DIR* tasks = ::opendir(path);
+  if (tasks == nullptr) {
+    return;  // gone since its parent listed it
+  }
+  std::string text;
+  char buffer[4096];
+  while (const dirent* task = ::readdir(tasks)) {
+    if (task->d_name[0] < '1' || task->d_name[0] > '9') {
+      continue;
+    }
+    char children[320];
+    std::snprintf(children, sizeof(children), "/proc/%d/task/%s/children", pid, task->d_name);
+    const int fd = ::open(children, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+      continue;
+    }
+    text.clear();
+    for (;;) {
+      const ssize_t got = ::read(fd, buffer, sizeof(buffer));
+      if (got < 0 && errno == EINTR) {
+        continue;
+      }
+      if (got <= 0) {
+        break;
+      }
+      text.append(buffer, static_cast<std::size_t>(got));
+    }
+    ::close(fd);
+    std::string_view rest = text;
+    while (!rest.empty()) {
+      const std::size_t end = std::min(rest.find(' '), rest.size());
+      int child = 0;
+      if (ParseField(rest.substr(0, end), &child) && child > 0) {
+        out.push_back(child);
+      }
+      rest.remove_prefix(std::min(end + 1, rest.size()));
+    }
+  }
+  ::closedir(tasks);
+}
+
+// The stat lines Measure needs: each root and, for a tree root, everything under
+// it -- found down the children files rather than by reading every process on the
+// box (a busy build host has thousands; microide's trees, tens).
+std::vector<ProcessActivity::Stat> ReadTrees(std::span<const ProcessActivity::Root> roots) {
+  std::vector<ProcessActivity::Stat> table;
+  // pid -> whether its children were listed already.
+  std::unordered_map<int, bool> seen;
+  std::vector<std::pair<int, bool>> pending;  // pid, list its children
+  for (const ProcessActivity::Root& root : roots) {
+    if (root.pid > 0) {
+      pending.emplace_back(root.pid, root.subtree);
+    }
+  }
+  char buffer[1024];
+  char name[16];
+  std::vector<int> children;
+  while (!pending.empty()) {
+    const auto [pid, expand] = pending.back();
+    pending.pop_back();
+    const auto [it, inserted] = seen.try_emplace(pid, false);
+    if (inserted) {
+      std::snprintf(name, sizeof(name), "%d", pid);
+      const std::size_t got = ReadStat(name, buffer, sizeof(buffer));
+      if (const std::optional<ProcessActivity::Stat> stat =
+              ProcessActivity::ParseStat(std::string_view(buffer, got));
+          stat.has_value()) {
+        table.push_back(*stat);
+      } else {
+        continue;  // gone: nothing under it to list either
+      }
+    }
+    if (!expand || it->second) {
+      continue;
+    }
+    it->second = true;
+    children.clear();
+    AppendChildren(pid, children);
+    for (const int child : children) {
+      pending.emplace_back(child, true);
+    }
+  }
+  return table;
 }
 
 }  // namespace
@@ -75,6 +174,9 @@ std::optional<ProcessActivity::Stat> ProcessActivity::ParseStat(std::string_view
       case 4:
         ok = ParseField(value, &stat.ppid);
         break;
+      case 8:
+        ok = ParseField(value, &stat.tpgid);
+        break;
       case 14:
         ok = ParseField(value, &utime);
         break;
@@ -110,9 +212,41 @@ std::optional<ProcessActivity::Stat> ProcessActivity::ParseStat(std::string_view
   return stat;
 }
 
+std::string ProcessActivity::ForegroundCommand(int shell_pid) {
+  if (shell_pid <= 0) {
+    return {};
+  }
+  char name[16];
+  char buffer[1024];
+  std::snprintf(name, sizeof(name), "%d", shell_pid);
+  const std::optional<Stat> shell = ParseStat(std::string_view(buffer, ReadStat(name, buffer, sizeof(buffer))));
+  if (!shell.has_value() || shell->tpgid <= 0 || shell->tpgid == shell_pid) {
+    return {};
+  }
+  char path[64];
+  std::snprintf(path, sizeof(path), "/proc/%d/comm", shell->tpgid);
+  const int fd = ::open(path, O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    return {};
+  }
+  ssize_t got = 0;
+  do {
+    got = ::read(fd, buffer, 64);  // comm is at most 16 bytes
+  } while (got < 0 && errno == EINTR);
+  ::close(fd);
+  std::string command(buffer, got > 0 ? static_cast<std::size_t>(got) : 0);
+  while (!command.empty() && (command.back() == '\n' || command.back() == ' ')) {
+    command.pop_back();
+  }
+  return command;
+}
+
 std::vector<ProcessActivity::Figures> ProcessActivity::Sample(std::span<const Root> roots) {
   std::vector<Stat> table;
-  if (DIR* proc = ::opendir("/proc"); proc != nullptr) {
+  if (KernelListsChildren()) {
+    table = ReadTrees(roots);
+  } else if (DIR* proc = ::opendir("/proc"); proc != nullptr) {
+    // No children files: one walk of every process, the trees built from ppid.
     table.reserve(512);
     char buffer[1024];
     while (const dirent* entry = ::readdir(proc)) {

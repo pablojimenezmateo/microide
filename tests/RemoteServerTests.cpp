@@ -245,6 +245,33 @@ void TestAttachStartsOnDemandAndTheServerIdlesOut() {
          "the on-demand server idles out and removes its socket");
 }
 
+// A script polling `microide-server status` is an observer, not a client
+// (TD-2026-10-27-407): it used to restart an on-demand server's idle countdown at
+// every poll, keeping it alive for good. Polled every 100 ms against a 400 ms
+// timeout, the server idles out all the same.
+void TestPollingStatusDoesNotKeepAnOnDemandServerAlive() {
+  ShortTempDir temp;
+  const std::filesystem::path dir = temp.path() / "s";
+  {
+    platform::AsyncSubprocess attach;
+    Expect(attach.Start({Server(), "attach", "--socket-dir", dir.string(), "--idle-timeout-ms", "400"}),
+           "attach starts an on-demand server");
+    Expect(WaitUntil([&]() { return ::access(remote::ServerSocketPath(dir).c_str(), F_OK) == 0; },
+                     std::chrono::seconds(10)),
+           "its socket appears");
+    attach.CloseStdin();
+    Expect(WaitUntil([&]() { return !attach.IsRunning(); }, std::chrono::seconds(10)), "attach goes");
+  }
+  bool gone = false;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (!gone && std::chrono::steady_clock::now() < deadline) {
+    (void)RunServer({"status", "--json", "--socket-dir", dir.string()});  // one ask, no 1 s wait
+    gone = ::access(remote::ServerSocketPath(dir).c_str(), F_OK) != 0;
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  Expect(gone, "polled with status every 100 ms, the on-demand server still idles out");
+}
+
 // /proc/net/tcp{,6}: this user's LISTEN sockets on a loopback or wildcard address,
 // whatever the table's spacing; another user's, a connected socket and one bound to
 // an outside address are not forwardable ports.
@@ -377,6 +404,8 @@ void RegisterRemoteServerTests(std::vector<TestCase>& tests) {
           TestSessionSurvivalReadsLogindAndLinger);
   AddTest(tests, "RemoteServer/StartedServerServesWorkspacesAndDoesNotHoldStdio",
           TestStartedServerServesWorkspacesAndDoesNotHoldStdio);
+  AddTest(tests, "RemoteServer/PollingStatusDoesNotKeepAnOnDemandServerAlive",
+          TestPollingStatusDoesNotKeepAnOnDemandServerAlive);
   AddTest(tests, "RemoteServer/AttachStartsOnDemandAndTheServerIdlesOut",
           TestAttachStartsOnDemandAndTheServerIdlesOut);
   AddTest(tests, "RemoteServer/ListeningPortsParseProcNetTcp", TestListeningPortsParseProcNetTcp);

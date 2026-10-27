@@ -5,6 +5,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
@@ -12,8 +13,10 @@
 namespace microide::server {
 
 // What a host's microide objects cost (remote-host-activity D2): resident memory
-// and CPU share of a pid, or of a pid and everything under it, from ONE walk of
-// /proc per sample. CPU is a delta: the ticks a pid's tree spent since the
+// and CPU share of a pid, or of a pid and everything under it, from one read of
+// those trees per sample -- down /proc/<pid>/task/*/children, so a host running
+// thousands of processes costs what microide's tens do; a kernel without the
+// children files gets one walk of all of /proc instead. CPU is a delta: the ticks a pid's tree spent since the
 // previous sample that asked for that pid, over the time between the two -- so
 // the first sample of a pid has none, and says so.
 //
@@ -26,6 +29,7 @@ class ProcessActivity {
   struct Stat {
     int pid = 0;
     int ppid = 0;
+    int tpgid = -1;  // its controlling terminal's foreground process group; -1 = none
     // utime + stime + cutime + cstime: its own CPU plus that of the children it
     // reaped, so a compiler that came and went under `make` between two samples
     // is still counted -- in make's cutime -- rather than lost with its pid.
@@ -49,6 +53,11 @@ class ProcessActivity {
     std::int32_t cpu_permille = -1;  // thousandths of one core; -1 = no previous sample yet
     bool operator==(const Figures&) const = default;
   };
+
+  // What runs in the foreground of the terminal `shell_pid` controls -- the comm of
+  // its foreground process group's leader (`watch`, `vim`, `make`) -- or "" while
+  // the shell itself is in the foreground, or when it is gone.
+  static std::string ForegroundCommand(int shell_pid);
 
   // Walk /proc once and report on each of `roots`, in order.
   std::vector<Figures> Sample(std::span<const Root> roots);

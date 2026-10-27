@@ -60,6 +60,10 @@ class RemotePeer {
   void OnContent(ContentHandler handler);
   void OnCancel(std::function<void(std::uint64_t id)> handler);
   void OnClosed(std::function<void(std::string_view reason)> handler);
+  // Called on the I/O thread with the method of every request or notification
+  // about to be dispatched to a registered handler (not pings, not cancels):
+  // what the server's idle rule reads to tell a client from an observer.
+  void OnDispatch(std::function<void(std::string_view method)> handler);
 
   [[nodiscard]] bool Start(int read_fd, int write_fd, Options options);
   void Stop();
@@ -111,6 +115,7 @@ class RemotePeer {
   ContentHandler content_handler_;
   std::function<void(std::uint64_t)> cancel_handler_;
   std::function<void(std::string_view)> closed_handler_;
+  std::function<void(std::string_view)> dispatch_handler_;
 
   RemoteFrameTransport transport_;
   bool send_pings_ = false;

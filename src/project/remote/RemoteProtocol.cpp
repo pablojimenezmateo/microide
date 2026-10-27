@@ -220,6 +220,22 @@ std::string ReadPath(const util::JsonValue& value) {
   return value.IsString() && value.AsString().size() <= kMaxRootBytes ? value.AsString() : std::string();
 }
 
+// A process name the host reports (a comm: 15 bytes there), shown in a row: short,
+// and nothing that is not printable -- it is the host's text, not ours.
+std::string ReadCommandName(const util::JsonValue& value) {
+  constexpr std::size_t kMaxCommandBytes = 64;
+  if (!value.IsString() || value.AsString().size() > kMaxCommandBytes) {
+    return {};
+  }
+  std::string name = value.AsString();
+  for (char& c : name) {
+    if (static_cast<unsigned char>(c) < 0x20 || c == 0x7f) {
+      c = '?';
+    }
+  }
+  return name;
+}
+
 }  // namespace
 
 ServerStatus ServerStatusFromJson(const util::JsonValue& json) {
@@ -291,6 +307,7 @@ ServerStatus ServerStatusFromJson(const util::JsonValue& json) {
       ServerTerminal terminal{.handle = *handle,
                               .root = root.AsString(),
                               .cwd = ReadPath(row["cwd"]),
+                              .command = ReadCommandName(row["command"]),
                               .clients = static_cast<std::size_t>(*clients),
                               .exited = row["exited"].AsBool(false),
                               .pid = ReadPid(row["pid"]),
