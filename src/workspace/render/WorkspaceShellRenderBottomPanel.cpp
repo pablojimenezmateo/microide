@@ -361,19 +361,6 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                        tab.bell_mark ? theme_.diagnostic_warning : theme_.accent);
       }
     }
-    const SDL_FRect new_tab_rect = tab_strip_service_.BottomPanelTerminalNewTabRect(
-        layout_mode_service_.CurrentMode(), panel_header);
-    DrawButtonCentered(
-        text_renderer_, renderer, theme_, new_tab_rect, "", ButtonTone::Neutral,
-        ButtonVisualState{
-            .enabled = true,
-            .hovered = PointerOver(new_tab_rect),
-            .active = false,
-        });
-    DrawPlusGlyph(renderer, new_tab_rect,
-                  PointerOver(new_tab_rect)
-                      ? theme_.text_primary
-                      : theme_.text_secondary);
     const TabStripOverflowControls& panel_overflow = panel_vm.tab_overflow;
     DrawTabStripOverflowButton(
         text_renderer_, renderer, theme_, panel_overflow.left_button, /*point_right=*/false,
@@ -411,6 +398,18 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     }
     DrawVCenteredTextOn(text_renderer_, renderer, panel_header, 12.0f, theme_.chrome_text,
                         theme_.chrome_background, header_label);
+  }
+
+  // New terminal, for every content kind too: a click there opens one whether or
+  // not a tab exists, and the empty panel's own hint points at it. Drawn only
+  // beside a tab, it was missing exactly when there was no terminal to begin with.
+  {
+    const SDL_FRect new_tab_rect = tab_strip_service_.BottomPanelTerminalNewTabRect(
+        layout_mode_service_.CurrentMode(), panel_header);
+    const bool hovered = PointerOver(new_tab_rect);
+    DrawButtonCentered(text_renderer_, renderer, theme_, new_tab_rect, "", ButtonTone::Neutral,
+                       ButtonVisualState{.enabled = true, .hovered = hovered, .active = false});
+    DrawPlusGlyph(renderer, new_tab_rect, hovered ? theme_.text_primary : theme_.text_secondary);
   }
 
   // Maximize / restore, at the header's right edge for every content kind. An

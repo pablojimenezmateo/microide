@@ -2604,6 +2604,44 @@ void TestWorkspaceShellPanelHeaderButtonRepaintsItsHover() {
   }
 }
 
+// A Terminal panel with no terminal shows its New Terminal button. The button was
+// painted only beside a tab, so the empty panel -- whose hint says "use + on the
+// tab strip" -- had a clickable button nobody could see.
+void TestWorkspaceShellEmptyTerminalPanelShowsItsNewTerminalButton() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the panel fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::CurrentProjectState(shell).terminal_tabs.clear();
+  WorkspaceShellTestAccess::CurrentProjectState(shell).active_terminal_tab_index = 0;
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+
+  const SDL_FRect button = WorkspaceShellTestAccess::BottomPanelTerminalNewTabRect(shell);
+  Expect(button.w > 0.0f, "the empty Terminal panel should lay out its New Terminal button");
+  // The plus crosses the button's centre; two pixels down and right is off both arms.
+  const int cx = static_cast<int>(std::floor(button.x + button.w * 0.5f));
+  const int cy = static_cast<int>(std::floor(button.y + button.h * 0.5f));
+  const SDL_Color glyph = canvas.PixelAt(cx, cy);
+  const SDL_Color beside = canvas.PixelAt(cx + 2, cy + 2);
+  Expect(glyph.r != beside.r || glyph.g != beside.g || glyph.b != beside.b,
+         "the empty Terminal panel should paint the + of its New Terminal button");
+}
+
 // Dragging a bottom-panel tab and dropping it repaints the strip: the drag ghost
 // is gone after the drop. Found by the QA monkey (seed 3: the dragged "bash" tab's
 // ghost stayed on the strip after the drop).
@@ -6286,6 +6324,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellDroppingAPanelTabClearsItsGhost);
   AddTest(tests, "WorkspaceShell/PanelHeaderButtonRepaintsItsHover",
           TestWorkspaceShellPanelHeaderButtonRepaintsItsHover);
+  AddTest(tests, "WorkspaceShell/EmptyTerminalPanelShowsItsNewTerminalButton",
+          TestWorkspaceShellEmptyTerminalPanelShowsItsNewTerminalButton);
   AddTest(tests, "WorkspaceShell/MenuArrowsWalkOnlyTheMenuBar",
           TestWorkspaceShellMenuArrowsWalkOnlyTheMenuBar);
   AddTest(tests, "WorkspaceShell/AModalReleasesAHoveredWindowControl",

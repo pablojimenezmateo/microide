@@ -736,6 +736,14 @@
     return shell.tab_strip_service_.BottomPanelMaximizeButtonRect(
         shell.layout_mode_service_.CurrentMode(), panel_header);
   }
+  static SDL_FRect BottomPanelTerminalNewTabRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const SDL_FRect panel_header =
+        MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
+                 kWorkspaceBottomPanelHeaderHeight);
+    return shell.tab_strip_service_.BottomPanelTerminalNewTabRect(
+        shell.layout_mode_service_.CurrentMode(), panel_header);
+  }
   static std::size_t TerminalTabCount(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.terminal_tabs.size();
   }
