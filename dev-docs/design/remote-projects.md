@@ -1931,7 +1931,7 @@ plugin-owned or render-TU product logic.
 | CLI | `microide ssh://host/path` opens straight into a remote project. |
 
 The entry points as built (2026-10-27): the command palette's `Remote:` verbs; the
-top-level **Remote** menu between Git and Terminal (`openspec/changes/remote-menu`),
+top-level **Remote** menu between Git and Terminal (`openspec/changes/archive/2026-10-27-remote-menu`),
 holding every remote verb that needs no typed argument with the prefix dropped --
 Open Folder on Host…; Show Status, Show Changed on Host, Show Host Server Log;
 Forward a Port…, Stop Forwarding a Port…; Reconnect, Disconnect, Stop Host Server;
