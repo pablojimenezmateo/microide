@@ -3748,7 +3748,10 @@ void TestTheRemoteSegmentOpensTheRemoteMenu() {
            "the popup should open above the status bar, there being no room below");
   }
   // Nothing connected: the connection verbs are there and dimmed.
-  for (const util::JsonValue& entry : TestAccess::ControlUi(fixture.shell)["elements"].AsArray()) {
+  // Held: a range-for over a member of the temporary the query returns would
+  // walk freed storage.
+  const util::JsonValue open_ui = TestAccess::ControlUi(fixture.shell);
+  for (const util::JsonValue& entry : open_ui["elements"].AsArray()) {
     const std::string& name = entry["name"].AsString();
     if (!name.starts_with("menu-item:Remote/")) {
       continue;
