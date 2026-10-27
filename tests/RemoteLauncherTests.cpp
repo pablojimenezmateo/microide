@@ -209,19 +209,27 @@ void TestHostProcessExitIsSentWhenItHappens() {
          "connects: " + error);
   const remote::RemoteProcessLauncher launcher(client, remote::RemotePathMap(local, host),
                                                {.host_paths_readable_locally = true});
-  std::vector<double> ms;
-  for (int i = 0; i < 9; ++i) {
-    const auto start = std::chrono::steady_clock::now();
-    const auto result = launcher.Run({"/bin/sh", "-c", "exec >&- 2>&-; sleep 0.02; exit 3"},
-                                     platform::SubprocessOptions{.cwd = local});
-    ms.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
-    Expect(result.exit_code == 3, "the exit status arrives: " + std::to_string(result.exit_code));
-  }
-  std::sort(ms.begin(), ms.end());
-  const double median = ms[ms.size() / 2];
+  // The median of 9 runs of `script`, in ms.
+  const auto median_ms = [&](const char* script) {
+    std::vector<double> ms;
+    for (int i = 0; i < 9; ++i) {
+      const auto start = std::chrono::steady_clock::now();
+      const auto result = launcher.Run({"/bin/sh", "-c", script}, platform::SubprocessOptions{.cwd = local});
+      ms.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
+      Expect(result.exit_code == 3, "the exit status arrives: " + std::to_string(result.exit_code));
+    }
+    std::sort(ms.begin(), ms.end());
+    return ms[ms.size() / 2];
+  };
+  // Measured against a control that exits at once, so the spawn and round trip --
+  // whatever they cost on a loaded machine -- cancel out: woken by the exit, the
+  // 20 ms sleep adds ~20 ms; polled, the exit waited for the 50 ms tick and adds
+  // at least 50. (An absolute "< 40 ms" crossed under six parallel lanes, 40.76.)
+  const double control = median_ms("exec >&- 2>&-; exit 3");
+  const double slept = median_ms("exec >&- 2>&-; sleep 0.02; exit 3");
   if (!IsSanitizerBuild()) {
-    // ~20 ms of sleep plus a few of spawn; polled, the exit waited for the 50 ms tick.
-    Expect(median < 40.0, "the median run is " + std::to_string(median) + " ms");
+    Expect(slept - control < 40.0, "the 20 ms sleep cost " + std::to_string(slept - control) +
+                                       " ms over the control (" + std::to_string(control) + " ms)");
   }
 }
 
