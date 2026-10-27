@@ -141,7 +141,12 @@ _None._
   fuzz), kernel (`term/list`, exited-while-detached retention, a terminal-only
   session holding the server), fake-ssh end to end (project opens with its tab;
   close-project leaves the shell; quit, reopen, same handle and screen; epoch
-  fallback; orphan offered), and the `qa-remote` relaunch scenario (`L`).
+  fallback; orphan offered), and a `qa-remote` group `T` of fifteen host-checked
+  scenarios (tasks § 8: survive a quit, X and Ctrl+D leave nothing, server
+  restarted, finished while closed, crash orphan found, opt-out, close-project,
+  `+` while connecting, host terminals with and without a project, deep
+  scrollback, a second client, Show Status, tab close ends the process, all
+  under the slow link).
 - Docs: `remote-projects.md` § 6.12/§ 7.4a "as built", `active-work.md` § 3,
   `TerminalLayoutRecord.h`'s header comment, `known-tech-debt.md` for the
   no-project host pane.

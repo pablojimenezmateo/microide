@@ -47,7 +47,31 @@
 
 ## 7. QA, docs and lanes
 
-- [ ] 7.1 `qa-remote`: extend scenario `L` (the relaunch with the same XDG dirs) with a one-second ticking command before the quit; after the relaunch assert the tab shows a newer tick and the earlier ones in scrollback (also under `qa-slow`)
-- [ ] 7.2 Verify by hand on `worky` with `watch date`
+- [ ] 7.1 `qa-remote`: the scenarios of § 8, as a new lettered group `T` in `tools/qa/remote.py` (the relaunch ones reuse `L`'s second launch with the same XDG dirs); every `T` scenario also runs under `qa-slow`
+- [ ] 7.2 Verify by hand on `worky` with `watch date`: T1, T2, T3 and T6
 - [ ] 7.3 Docs: `remote-projects.md` § 6.12/§ 7.4a as built, `active-work.md` § 3 (host terminals survive a quit), `known-tech-debt.md`: the no-project host pane (D3) and anything else deferred
 - [ ] 7.4 Lanes, tests run in batches of 16: `tools/run-checks.sh tests`, `perf-tests` (a render-adjacent session change), `qa`, `qa-remote`, `asan`, `ubsan`, `tsan`, `clang-build`; `tools/audit-lua-longjmp.py` is not affected
+
+## 8. QA scenarios (`qa-remote`, group `T`)
+
+Each runs the app against the loopback sshd (`tools/qa/local-sshd.sh`) or `worky`,
+and checks the HOST side through `ssh host microide-server status` (terminal
+count) and `pgrep -f` of the marker command, not only what the app shows. The
+on-demand server is started with a short `--idle-timeout-ms` so the idle-out
+assertions take seconds. Each scenario records a screenshot of the panel.
+
+- [ ] T1 **Three shells survive a quit.** Open the remote project; three tabs: `watch -n1 date` (long), `ls -la` and `ls -lh` (output), the third split in two panes. Quit; relaunch with the same XDG dirs. Assert three tabs in the same order, the split kept, the first showing a `date` newer than the quit, the `ls` outputs in the other two's scrollback, every cwd as before, and `status` reporting 3 terminals before and after
+- [ ] T2 **Closed with X, nothing remains.** From T1's state, close the three tabs with the X; quit. Assert `pgrep watch` empty, `status` 0 terminals, and the on-demand server idles out
+- [ ] T3 **Ended with Ctrl+D, tabs left open, nothing remains.** From T1's state, Ctrl+D in each (the `watch` one after Ctrl+C), leave the `[process exited]` tabs open; quit. Same assertions as T2; on relaunch the three tabs revive as fresh shells in their directories
+- [ ] T4 **The host server restarted in between.** From T1's state, quit; `microide-server stop` then `start` on the host; relaunch. Assert three fresh shells in the recorded directories and one row naming one host, three started fresh, "the host server restarted"
+- [ ] T5 **A command finished while microide was closed.** A tab runs `sleep 3; echo DONE-<token>; exit`; quit at once; wait; relaunch. Assert the tab shows `DONE-<token>` and the exit line, and Enter starts a new shell in that directory
+- [ ] T6 **A crash leaves an orphan that is found.** With `watch` running, SIGKILL the app (no session written for the new tab). Relaunch. Assert the row reports one terminal running with no tab; Attach opens a tab showing a live `date`; Close ends it (`pgrep` empty, `status` 0)
+- [ ] T7 **Opted out.** `terminal.restore_sessions` off; with `watch` running, quit. Assert `pgrep` empty and `status` 0; relaunch shows one fresh default terminal
+- [ ] T8 **Close-project keeps the shell; reopening reattaches.** With `watch` running, close the project tab (not the app). Assert `status` 1 terminal, 0 clients. Reopen the project from Recents: the tab reattaches with a newer `date`
+- [ ] T9 **`+` while connecting.** Relaunch with the host behind the 60 ms link, click `+` before the status reads Ready. Assert a second tab appears at once reading as connecting and holds a host prompt once Ready, with no tab added or removed
+- [ ] T10 **Open Terminal on Host, with and without a project.** (a) With the remote project active, `Remote: Open Terminal on Host…`, run `watch`, quit, relaunch: the host tab is back with its title prefix and a newer `date`. (b) With no project open, the same, quit, relaunch, open the project: the row offers the terminal as running with no tab and Attach opens it
+- [ ] T11 **Deep scrollback after a reattach.** `seq 1 3000` in a tab; quit; relaunch. Assert the last lines present at once and `1` reachable by scrolling up (older pages fetched), with no duplicated line across the prefetch boundary
+- [ ] T12 **A terminal another client uses is not offered.** Two app instances with different XDG dirs on the same project: the first runs `watch`; the second connects. Assert the second's row does not offer it; quit the first; reconnect the second (`Remote: Reconnect`): now it is offered
+- [ ] T13 **Show Status lists the unclaimed.** From T6's orphan, before Attach, `Remote: Show Status` names the host with one unclaimed terminal and its cwd
+- [ ] T14 **Closing a running tab ends its process.** With `watch` running, close the tab with X (app kept open). Assert `pgrep` empty within a second and `status` 0 terminals
+- [ ] T15 **Every `T` scenario under `qa-slow`** (60 ms each way), with the reattach timings recorded against the three-second budget of the proposal's first scenario
