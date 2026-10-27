@@ -1114,6 +1114,11 @@ struct ProjectWorkspaceState {
   // What the restored session's terminal panel looked like, waiting for project
   // init to revive it (TerminalPanelService::OpenTerminalsForProjectInit).
   TerminalLayoutRecord terminal_layout_to_revive;
+  // A host terminal started (StartPendingHostPanes) since this project's session
+  // was last written: a project switched away from while its connection came up
+  // has a terminal its saved session does not name, so quit re-records its
+  // terminal layout (TD-2026-10-27-400). Cleared by a session save.
+  bool host_terminals_unrecorded = false;
 
   // Bounds-checked active terminal tab, or nullptr when there are none / the
   // stored index is stale. Mirrors clamped_focused_group_index()'s clamp-on-read

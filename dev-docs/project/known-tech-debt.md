@@ -587,7 +587,19 @@ What `openspec/changes/archive/2026-10-27-remote-terminal-restore` did not finis
   paging back to line 1 is covered only by the kernel test
   `RemoteTerminal/ScrollingUpFetchesOlderHostHistory`.
 
-### TD-2026-10-27-400 — a host terminal started in a background project after it was switched away from is not recorded at quit.
+### TD-2026-10-27-400 — a host terminal started in a background project after it was switched away from is not recorded at quit. [RESOLVED 2026-10-27]
+
+`TerminalPanelService::StartPendingHostPanes` marks the state
+(`ProjectWorkspaceState::host_terminals_unrecorded`, cleared by a session save),
+and quit's new `record_inactive_host_terminals` step amends only the marked
+inactive projects' saved sessions: `PersistenceCoordinator::SaveTerminalLayout`
+loads the record (the load flushes the write queue) and replaces its terminal
+layout with `TerminalPanelService::CaptureLayout(state)`, which now takes any
+state. Every other inactive project is still left alone. Pinned by
+`RemoteTerminalRestore/ABackgroundStartedHostTerminalIsRecordedAtQuit` (fails
+with the step removed).
+
+Original entry:
 
 Quit detaches every open project's host terminals but re-persists only the
 active one (an inactive project's session was written when it was switched away

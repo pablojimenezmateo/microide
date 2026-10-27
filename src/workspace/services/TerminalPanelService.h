@@ -83,7 +83,10 @@ class TerminalPanelService {
   // are not revived), each with its shell's current directory and, for a host
   // pane, the host terminal it is (reattached on reopen). Tabs left with no such
   // pane are dropped.
-  TerminalLayoutRecord CaptureLayout() const;
+  TerminalLayoutRecord CaptureLayout() const { return CaptureLayout(state_); }
+  // The same for any project's state, active or not (quit re-records an inactive
+  // project's: StartPendingHostPanes).
+  static TerminalLayoutRecord CaptureLayout(const ProjectWorkspaceState& state);
 
   // --- host terminals across quit and close-project (remote-projects.md § 6.12)
   // These take a state rather than acting on the active one: quit reaches every
@@ -105,7 +108,11 @@ class TerminalPanelService {
   // own cwd for a local shell; a host's path mapped back to the mirror), or the
   // directory it was launched in when that is unknown. Not for hot paths: the
   // local fallback is a readlink.
-  std::filesystem::path PaneWorkingDirectory(const TerminalPaneState& pane) const;
+  std::filesystem::path PaneWorkingDirectory(const TerminalPaneState& pane) const {
+    return PaneWorkingDirectory(state_, pane);
+  }
+  static std::filesystem::path PaneWorkingDirectory(const ProjectWorkspaceState& state,
+                                                    const TerminalPaneState& pane);
   // Closes a whole tab, every pane included.
   void CloseTerminalTab(std::size_t index);
   bool MoveActiveTerminalTabTo(std::size_t index);

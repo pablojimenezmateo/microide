@@ -179,10 +179,10 @@ void TerminalPanelService::OpenTerminalsForProjectInit() {
   ShowTerminalContent(/*focus=*/false);
 }
 
-TerminalLayoutRecord TerminalPanelService::CaptureLayout() const {
+TerminalLayoutRecord TerminalPanelService::CaptureLayout(const ProjectWorkspaceState& state) {
   TerminalLayoutRecord layout;
-  for (std::size_t t = 0; t < state_.terminal_tabs.size(); ++t) {
-    const TerminalTabState& tab = *state_.terminal_tabs[t];
+  for (std::size_t t = 0; t < state.terminal_tabs.size(); ++t) {
+    const TerminalTabState& tab = *state.terminal_tabs[t];
     TerminalTabRecord record;
     bool all_panes_kept = true;
     for (std::size_t p = 0; p < tab.pane_count(); ++p) {
@@ -194,7 +194,7 @@ TerminalLayoutRecord TerminalPanelService::CaptureLayout() const {
       if (p == tab.active_pane) {
         record.active_pane = record.panes.size();
       }
-      record.panes.push_back(TerminalPaneRecord{.cwd = PaneWorkingDirectory(pane),
+      record.panes.push_back(TerminalPaneRecord{.cwd = PaneWorkingDirectory(state, pane),
                                                 .command = pane.launch_command,
                                                 .host = pane.session.host_identity()});
     }
@@ -207,7 +207,7 @@ TerminalLayoutRecord TerminalPanelService::CaptureLayout() const {
     if (all_panes_kept) {
       record.weights.assign(tab.weights.begin(), tab.weights.end());
     }
-    if (t == state_.active_terminal_tab_index) {
+    if (t == state.active_terminal_tab_index) {
       layout.active_tab = layout.tabs.size();
     }
     layout.tabs.push_back(std::move(record));
@@ -255,6 +255,9 @@ std::size_t TerminalPanelService::StartPendingHostPanes(ProjectWorkspaceState& s
       pane.reattach_unreported = true;  // its outcome is news for the connect's summary
     }
   });
+  if (started != 0) {
+    state.host_terminals_unrecorded = true;
+  }
   return started;
 }
 
@@ -262,11 +265,12 @@ void TerminalPanelService::SetPendingHostStatus(ProjectWorkspaceState& state, st
   ForEachProjectHostPane(state, [line](TerminalPaneState& pane) { pane.session.SetPendingStatus(line); });
 }
 
-std::filesystem::path TerminalPanelService::PaneWorkingDirectory(const TerminalPaneState& pane) const {
+std::filesystem::path TerminalPanelService::PaneWorkingDirectory(const ProjectWorkspaceState& state,
+                                                                const TerminalPaneState& pane) {
   // OSC 7 when the shell sends it; else, for a shell this machine runs, its
   // process's own cwd (bash sends no OSC 7 unless configured to).
   const platform::ProcessLauncher& launcher =
-      pane.launcher != nullptr ? *pane.launcher : state_.launcher();
+      pane.launcher != nullptr ? *pane.launcher : state.launcher();
   std::filesystem::path cwd = pane.session.reported_working_directory();
   if (cwd.empty() && launcher.is_local()) {
     cwd = platform::ProcessWorkingDirectory(pane.session.child_process_id());

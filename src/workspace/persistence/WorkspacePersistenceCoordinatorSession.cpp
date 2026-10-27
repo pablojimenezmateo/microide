@@ -15,6 +15,7 @@
 #include "util/StartupTrace.h"
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "workspace/persistence/WorkspacePersistenceFormat.h"
+#include "workspace/WorkspaceProjectPresentation.h"
 #include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
@@ -668,7 +669,23 @@ void PersistenceCoordinator::SaveSessionState() {
   }
 
   operations_.persistence_service->SaveProjectSession(session_path, persisted_session);
+  state.host_terminals_unrecorded = false;
   SaveDebugState();
+}
+
+bool PersistenceCoordinator::SaveTerminalLayout(const std::filesystem::path& root,
+                                                TerminalLayoutRecord layout) {
+  if (operations_.persistence_service == nullptr || root.empty()) {
+    return false;
+  }
+  const std::filesystem::path session_path = ProjectStateDirectory(root) / "session";
+  PersistedProjectSessionState persisted_session;
+  // Load flushes the write queue first, so this amends what the last save wrote.
+  if (!operations_.persistence_service->LoadProjectSession(session_path, &persisted_session)) {
+    return false;
+  }
+  persisted_session.terminal_layout = std::move(layout);
+  return operations_.persistence_service->SaveProjectSession(session_path, persisted_session);
 }
 
 std::optional<PersistedEditorTabState>

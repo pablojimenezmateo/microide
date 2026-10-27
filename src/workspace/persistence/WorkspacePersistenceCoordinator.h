@@ -79,6 +79,11 @@ class PersistenceCoordinator {
   void MaterializeCanonicalPreferences();
   bool RestoreSessionState();
   void SaveSessionState();
+  // Rewrite only the terminal layout of the session saved for the project at
+  // `root` -- an inactive one, whose state is not the current one -- leaving the
+  // rest of that record as its last save wrote it. False when there is no such
+  // record to amend.
+  bool SaveTerminalLayout(const std::filesystem::path& root, TerminalLayoutRecord layout);
   bool RestoreWorkspaceSession();
   void SaveWorkspaceSession() const;
 

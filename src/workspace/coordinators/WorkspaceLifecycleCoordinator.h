@@ -40,6 +40,11 @@ class LifecycleCoordinator {
     // whether a host shell survives a quit must not depend on how the process
     // ends -- quick_exit runs no destructor, the test binaries run them all.
     std::function<void()> release_host_terminals;
+    // An inactive project's session was written when it was switched away from;
+    // a host terminal that started in it afterwards (its connection came up in
+    // the background) is re-recorded here, or the next connect finds that shell
+    // with no tab to reattach to. Only those projects: the rest are unchanged.
+    std::function<void()> record_inactive_host_terminals;
     std::function<void()> persist_active_project;
     std::function<void()> save_workspace_session;
     // The recents MRU coalesces its durable writes, so a burst of opens can leave

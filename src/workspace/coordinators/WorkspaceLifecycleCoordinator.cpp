@@ -124,9 +124,11 @@ void LifecycleCoordinator::Shutdown() {
   operations_.persist_active_project();
   // Inactive projects are already durably persisted the moment they are switched
   // away from (PersistActiveEntry writes config+session before the state is moved
-  // into the catalog entry), and nothing mutates an inactive project while it is
-  // inactive. Re-persisting them here would re-hydrate and re-write identical data
-  // for every inactive project, so it is intentionally omitted.
+  // into the catalog entry). Re-persisting them here would re-hydrate and re-write
+  // identical data for every inactive project, so it is omitted -- except for the
+  // one thing that changes in a project while it is inactive: a host terminal
+  // whose connection came up in the background.
+  operations_.record_inactive_host_terminals();
   operations_.save_workspace_session();
   operations_.flush_recents();
   // Land every state write the saves above only QUEUED. This has to come after
@@ -370,6 +372,20 @@ LifecycleCoordinator& WorkspaceShell::MakeLifecycleCoordinator() {
                   if (i != context_.project_catalog.active_index &&
                       context_.project_catalog.entries[i] != nullptr) {
                     panel.ReleaseHostTerminals(*context_.project_catalog.entries[i]);
+                  }
+                }
+              },
+          .record_inactive_host_terminals =
+              [this]() {
+                for (std::size_t i = 0; i < context_.project_catalog.entries.size(); ++i) {
+                  ProjectWorkspaceState* state = context_.project_catalog.entries[i].get();
+                  if (i == context_.project_catalog.active_index || state == nullptr ||
+                      !state->host_terminals_unrecorded) {
+                    continue;
+                  }
+                  if (MakePersistenceCoordinator().SaveTerminalLayout(
+                          state->root, TerminalPanelService::CaptureLayout(*state))) {
+                    state->host_terminals_unrecorded = false;
                   }
                 }
               },

@@ -256,6 +256,60 @@ void TestHostTerminalsSurviveQuitAndReattach() {
   }
 }
 
+// TD-2026-10-27-400: a project switched away from while its connection was
+// still coming up saved a session with a PENDING pane (no identity); its shell
+// started afterwards, in the background. Quit re-records that project's terminal
+// layout, so the reopen reattaches the tab to that shell instead of starting a
+// fresh one beside it.
+void TestABackgroundStartedHostTerminalIsRecordedAtQuit() {
+  ScopedAppHomes homes;
+  FakeSshHost host;
+  host.master_delay = "2";
+  const std::filesystem::path first_root = host.home / "src" / "front";
+  const std::filesystem::path second_root = host.home / "src" / "back";
+  WriteFile(first_root / "a.txt", "a\n");
+  WriteFile(second_root / "b.txt", "b\n");
+  const std::string target = Target("fake-back");
+  const std::string open_first = "remote-open " + target + ":" + first_root.string();
+  const std::string open_second = "remote-open " + target + ":" + second_root.string();
+
+  std::uint64_t background = 0;
+  {
+    WorkspaceShell shell;
+    PointAtFakeHost(shell, host);
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, open_second), "the background project");
+    Expect(WorkspaceShellTestAccess::TerminalTabSession(shell, 0).host_pending(),
+           "its terminal is pending: the link is still connecting");
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, open_first),
+           "switched away from while connecting: its session is written now, pending pane and all");
+    TerminalSession& front = WorkspaceShellTestAccess::TerminalTabSession(shell, 0);
+    Expect(PumpUntil(shell, [&] { return front.running(); }), "the front project's terminal starts");
+    const std::uint64_t front_handle = front.host_identity().handle;
+    Expect(PumpUntil(shell,
+                     [&] {
+                       for (const remote::ServerTerminal& row : HostTerminals(host)) {
+                         if (row.handle != front_handle && row.clients == 1) {
+                           background = row.handle;
+                         }
+                       }
+                       return background != 0;
+                     }),
+           "the background project's terminal started too, with nobody looking at it");
+    shell.Shutdown();  // quit
+  }
+  {
+    WorkspaceShell shell;
+    PointAtFakeHost(shell, host);
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, open_second), "reopen the background project");
+    Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 1, "one tab");
+    TerminalSession& session = WorkspaceShellTestAccess::TerminalTabSession(shell, 0);
+    Expect(session.host_identity().handle == background,
+           "naming the shell that started in the background, not a fresh one");
+    Expect(PumpUntil(shell, [&] { return session.host_reattach() == terminal::HostReattach::Reattached; }),
+           "and reattached to it");
+  }
+}
+
 // The other side of the lifetime rule: a tab closed with its X ends its shell;
 // a shell the user ended (Ctrl+D) is closed at quit, not kept as a dead buffer
 // that holds the server; terminal.restore_sessions off closes at quit. A terminal
@@ -397,6 +451,8 @@ void RegisterRemoteTerminalRestoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteTerminalRestore/ARemoteProjectOpensWithItsTerminal", TestARemoteProjectOpensWithItsTerminal);
   AddTest(tests, "RemoteTerminalRestore/HostTerminalsSurviveQuitAndReattach",
           TestHostTerminalsSurviveQuitAndReattach);
+  AddTest(tests, "RemoteTerminalRestore/ABackgroundStartedHostTerminalIsRecordedAtQuit",
+          TestABackgroundStartedHostTerminalIsRecordedAtQuit);
   AddTest(tests, "RemoteTerminalRestore/HostTerminalLifetimeAndUnclaimedTerminals",
           TestHostTerminalLifetimeAndUnclaimedTerminals);
 }
