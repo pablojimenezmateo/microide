@@ -105,11 +105,22 @@ stop() {
   rm -f "$STATE/sshd.pid"
 }
 
+# The host's installed microide-server is part of what a run tests, so every start
+# drops it (stop() has stopped it) and the first connect installs the one built for
+# this run. The editor only installs over a MISSING or incompatible server, and a
+# dev build keeps its release string, so a kept install never updates: the lane ran
+# a 2026-10-22 server for days, and the write answers' manifest id that
+# TD-2026-10-22-385's fix depends on never reached it (the J stall came back).
+fresh_server() {
+  rm -rf "$HOST_HOME/.local/share/microide/server"
+}
+
 case "${1:-}" in
   start)
     unpack_sshd
     write_config
     stop
+    fresh_server
     "$SSHD" -t -f "$STATE/sshd_config" || die "sshd rejected its config"
     "$SSHD" -f "$STATE/sshd_config" -E "$STATE/sshd.log"
     for _ in $(seq 1 50); do

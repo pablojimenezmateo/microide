@@ -342,6 +342,26 @@ Two lessons, and the second is the general one:
   pattern everywhere else it could live, starting with the docs that tell people
   what to run.
 
+### A lane that builds a binary the product then declines to install
+
+`qa-remote` runs `tools/build-server.sh` every time, but the binary that serves the
+QA host is the one the EDITOR installs on first connect -- and the editor installs
+only over a missing or incompatible server. A dev build keeps its release string,
+so once `~/.cache/microide-qa/sshd/hosthome` held a server, every later run kept
+it: the lane ran a 2026-10-22 server until 2026-10-27. The fix for
+TD-2026-10-22-385 is half on the server (the write answer's `manifest_id`); the
+client got `0` and its skip never fired, so the very race it closed came back in
+scenario J and was filed as "recurred once". The lane's build step was green the
+whole time.
+
+- When a lane builds X but the system under test obtains X through its own
+  update policy, check which copy actually ran. Here: one temporary log line of
+  the write answer showed `answer=0` at once.
+- A persistent fixture directory is state the lane must reset, not just reuse:
+  `local-sshd.sh start` now removes the host's installed server, so each run's
+  first connect installs (and so also tests the install of) this build.
+- A fix split across two binaries is only verified where both are current.
+
 ### `git checkout <file>` on a `git mv`'d file restores pre-rewrite content
 
 During a large move, `git checkout` on a moved file restores the version from the
