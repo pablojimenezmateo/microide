@@ -37,15 +37,8 @@ The client SHALL track Disconnected, Connecting, NeedsAuth, StartingServer, Inst
 - **WHEN** the link is declared dead and connectivity returns
 - **THEN** the client reconnects, every host terminal resumes from its offset, and the Reconnecting row disappears
 
-### Requirement: Host terminals open from a command
-`Remote: Open Terminal on Host…` SHALL prompt for a host and open a terminal tab whose title names the host (`build-box · zsh`). A local project's terminals stay local unless opened through this command (a remote PROJECT's terminals run on its host; see the remote-projects design, Phase 2b).
-
-#### Scenario: Host and local terminals are never confused
-- **WHEN** a local project has one local terminal and one host terminal open
-- **THEN** their tab titles name `local` and the host respectively
-
 ### Requirement: The host entry points sit beside their local twins
-`Remote: Open Folder on Host…` SHALL appear in the File menu directly under Open Folder…, `Remote: Open Terminal on Host…` in the Terminal menu directly under New Terminal, and the cold-start welcome page SHALL offer Open Folder on Host… as a second start button under Open Folder…, in its own layout slot. The command palette entries remain.
+`Remote: Open Folder on Host…` SHALL appear in the File menu directly under Open Folder…, and the cold-start welcome page SHALL offer Open Folder on Host… as a second start button under Open Folder…, in its own layout slot. The command palette entry remains. A local project's terminals stay local; a remote project's terminals run on its host; and in a remote project `Remote: Open Local Terminal` (Terminal > New Local Terminal) SHALL open a terminal on this machine, the action being unavailable in a local project. A terminal tab's title SHALL say where it runs: a host terminal's title names the host, a local terminal in a remote project is prefixed `local · `, and the interactive-auth tab is prefixed `ssh · `.
 
 #### Scenario: A user who has not read the README
 - **WHEN** the editor starts with no project
@@ -54,3 +47,12 @@ The client SHALL track Disconnected, Connecting, NeedsAuth, StartingServer, Inst
 #### Scenario: The welcome buttons never collide
 - **WHEN** the welcome layout is computed for the no-project page at any size
 - **THEN** the host-folder button lies below the open-folder button and above the recent rows, and clicking it opens the host prompt
+
+#### Scenario: Host and local terminals are never confused
+- **WHEN** a local project and a remote project are both open, each with a terminal, and the remote project also has a local terminal
+- **THEN** the remote project's host terminal tab names its host and runs there, its local terminal is prefixed `local · ` and runs here, and the local project's terminal carries neither and runs here
+
+#### Scenario: A local shell from a remote-only window
+- **WHEN** the only open project is remote and the user runs `Remote: Open Local Terminal`
+- **THEN** a terminal tab opens whose shell runs on this machine
+

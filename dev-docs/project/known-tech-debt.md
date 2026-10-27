@@ -499,7 +499,7 @@ host verb on the project lookup alone. All four now skip closed projects;
 ### TD-2026-10-27-396 — host-terminal settings and `terminal.shell` reached the wrong terminals. [RESOLVED 2026-10-27]
 
 Found while removing `Remote: Open Terminal on Host…`
-(`openspec/changes/remove-host-terminal-command`), both fixed with it.
+(`openspec/changes/archive/2026-10-27-remove-host-terminal-command`), both fixed with it.
 
 **`remote.term_credit_bytes` / `remote.scrollback_prefetch_lines` never reached a
 remote project's terminals.** `RemoteHostService::Ensure` read both into the

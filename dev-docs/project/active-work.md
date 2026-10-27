@@ -309,7 +309,7 @@ new terminal behaviour lands there.
 > remote-only window. Fixed on the way: `remote.term_credit_bytes` and
 > `remote.scrollback_prefetch_lines` never reached a remote project's terminals,
 > and a pane with its own local launcher skipped `terminal.shell`. See
-> `openspec/changes/remove-host-terminal-command`.
+> `openspec/changes/archive/2026-10-27-remove-host-terminal-command`.
 >
 > **Verified on a real host (2026-10-16).** `tools/qa/remote.py` drives the shipped
 > binary headlessly against `worky` through the control channel -- open and first

@@ -1912,7 +1912,7 @@ under New Terminal: a shell on this machine, prefixed `local · `, offered only 
 remote project), the welcome page's second start button, and `remote-open` on the
 command line and control channel. `Remote: Open Terminal on Host…` (Phase 2a's
 host terminals with no project) was removed on 2026-10-27
-(`openspec/changes/remove-host-terminal-command`): a remote project's Terminal >
+(`openspec/changes/archive/2026-10-27-remove-host-terminal-command`): a remote project's Terminal >
 New already runs on its host, a shell on a host with no project is `ssh` in a
 local terminal, and the command owned a second, terminal-only host session in
 `RemoteHostService` that duplicated the project session's state machine. The

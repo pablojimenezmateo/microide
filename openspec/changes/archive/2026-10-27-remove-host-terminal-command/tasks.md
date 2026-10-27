@@ -13,7 +13,7 @@
 
 - [x] 3.1 Delete `TestOpenTerminalOnHostFromTheCommand` and `TestMixedTerminalsSayWhereTheyRun`; move the status-bar host segment assertions to `TestOpenFolderOnHostEditsTheHostTree`; add a project-based "the auth tab is prefixed `ssh · `, the local terminal `local · `, and a project terminal neither" test
 - [x] 3.2 `tools/qa/remote.py` scenario `G`: open the terminal with `term` in the remote project instead of `remote-terminal`, keep the `hostname` assertion
-- [ ] 3.3 `tools/run-checks.sh tests` (batches of 16), `clang-build`, `qa`, `qa-remote`
+- [x] 3.3 `tools/run-checks.sh tests` (batches of 16), `clang-build`, `qa`, `qa-remote`
 
 ## 4. Docs
 
