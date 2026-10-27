@@ -449,6 +449,35 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-27-405 — Remote menu leftovers: no reason on a dimmed row, Forward a Port… with several hosts, Remove Mirror's availability.
+
+What `openspec/changes/archive/2026-10-27-remote-menu` left:
+- A dimmed row says nothing about why. The design wanted "Connect to a host
+  first" as the dimmed rows' tooltip; popup menu rows have no tooltip at all
+  (the LSP rows carry their reason in the label instead). Either menu-row
+  tooltips, or a reason suffix as the LSP rows do -- not both.
+- Forward a Port… asks for the port (its `<port>` is required) and then forwards
+  to the active project's host, else the only one. With several hosts open and a
+  local project active it is refused ("Name the host"): the prompt should take
+  `<port> <host>` with the hosts offered, or ask for the host after the port.
+- Remove Mirror…'s availability is "the recents list names a remote project that
+  is not open" (no disk on a painted row). A recent whose mirror was deleted
+  outside the editor lights the row, and the pick then offers nothing for it.
+  Caching which recents have a mirror against the recents revision would make it
+  exact.
+
+### TD-2026-10-27-404 — a range-for over a member of a temporary is silent until ASan runs.
+
+`for (const auto& e : TestAccess::ControlUi(shell)["elements"].AsArray())` walks
+freed storage: C++20 extends the lifetime of the range expression's result, not
+of the temporary `ControlUi()` returned that `operator[]` reaches into. It passed
+every plain run and failed only under ASan (the Remote menu's flow test, fixed in
+b810db96a). C++23 (P2718R0, GCC 15 / Clang 19) extends every temporary in the
+range initializer and removes the class; until the project moves, an
+architecture-lint rule over `tests/` and `src/` for `for (... : <call>(...)[`
+(and `.member` after a call returning by value) would catch the next one. The
+single other match today is a pointer deref, not a temporary.
+
 ### TD-2026-10-27-403 — files the host deletes while the first backfill is fetching them stay counted "to fetch".
 
 Found by `RemoteHostService/HeldMassDeleteIsAppliedFromItsRow` under 64 parallel
