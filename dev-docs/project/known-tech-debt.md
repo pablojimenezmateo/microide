@@ -550,7 +550,20 @@ GCC's `-Wdangling-reference` did not fire on it. Options: move to C++23, or a li
 for the one shape seen -- `: <call>(...)[` -- with fixtures; nothing in the tree
 matches that shape today.
 
-### TD-2026-10-27-403 — files the host deletes while the first backfill is fetching them stay counted "to fetch".
+### TD-2026-10-27-403 — files the host deletes while the first backfill is fetching them stay counted "to fetch". [RESOLVED 2026-10-27]
+
+The cause was one line in `MirrorSyncEngine::ApplyFetched`: a pull the host
+answered `missing` was skipped as "gone since the manifest: the next sync deletes
+it" -- and no next sync was due. When the manifest walk raced the delete, no
+delete delta followed either, so the row stayed absent for good. A `missing`
+answer (not an unreadable file) is now reconciled at once as that path's host
+delete (`ReconcileMissingPulls`: the row is dropped when nothing local depends on
+it, otherwise the usual delete decision under the mass-delete window of
+TD-2026-10-27-402). Pinned by
+`MirrorSyncEngine/APullOfAFileTheHostDeletedDropsTheRow` (fails with the call
+removed).
+
+Original entry:
 
 Found by `RemoteHostService/HeldMassDeleteIsAppliedFromItsRow` under 64 parallel
 copies (5 runs in 128): the test removed a 140-file directory on the host while
@@ -567,7 +580,24 @@ complete before deleting, which is what it means to test; this entry is the
 engine's half. Start at `MirrorSyncEngine`'s watch-delta reconcile against
 `LaunchPulls`' in-flight set.
 
-### TD-2026-10-27-402 — the mass-delete hold is decided per watch batch, so a delete split across batches escapes it.
+### TD-2026-10-27-402 — the mass-delete hold is decided per watch batch, so a delete split across batches escapes it. [RESOLVED 2026-10-27]
+
+Neither trade the entry offered: deletes are not deferred (latency unchanged) and
+not rebuilt from the object store (which need not hold the bytes). A host delete
+is applied at once but made undoable for `kSameCheckout` (10 s): the tree entry is
+renamed under `meta/recently-deleted/` (`SetAsideTreeEntry`) and its store entry
+kept beside it. `HoldMassDeleteLocked` counts the window's deletes with the
+batch's against a threshold taken over the tree before the window; when they
+cross it, the batch is held and the window's deletes are renamed back
+(`RestoreTreeEntry`, RENAME_NOREPLACE; a path the host listed again meanwhile is
+left as it is) and held with it, so Apply / Disconnect see the whole delete.
+Expired set-aside files are unlinked as the window moves, at shutdown, and a
+crash's leftovers at the next start. A user-approved hold is a plain delete.
+Pinned by `MirrorSyncEngine/HoldsAMassDeleteSplitAcrossBatches` (60 + 60 deletes
+on a 150-file tree: 120 held, the first 60 back with their bytes; fails with the
+window ignored).
+
+Original entry:
 
 `MirrorSyncEngine::HoldMassDeleteLocked` holds a batch's deletes when that
 batch alone deletes more than `max(mass_delete_min_rows (100), 25% of the

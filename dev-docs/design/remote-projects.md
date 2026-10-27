@@ -714,6 +714,15 @@ host notices when the link drops.
   100 rows, whichever is larger): it holds the diff, leaves `tree/` untouched, and
   raises a blocking prompt naming the count and the host, with Apply and Disconnect.
   Nothing about a mirror is urgent enough to delete a thousand files without asking.
+  **As built (2026-10-27):** the count is taken over a 10 s window, not one watch
+  batch -- a slow `rm -r` reaches the watch in several batches, each under the
+  line alone. A host delete applied inside the window is renamed under
+  `meta/recently-deleted/` rather than unlinked; a batch that takes the window's
+  total over the line holds itself and puts the window's deletes back into
+  `tree/`, held with it. Past the window (or at shutdown) the set-aside files are
+  unlinked, and a crash's leftovers on the next start. A pull the host answers
+  "no such file" is reconciled as that path's delete at once, through the same
+  window: no later sync is due to do it.
 - **Churn control.** Agent bursts are the normal traffic, so the engine is built
   around them rather than around a human's occasional save. Batches coalesce on a
   250 ms window and collapse repeated writes to the same path to the last row, so

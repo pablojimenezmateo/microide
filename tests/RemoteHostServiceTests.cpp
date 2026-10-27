@@ -1306,9 +1306,8 @@ void TestHeldMassDeleteIsAppliedFromItsRow() {
   FakeSshHost host;
   const std::filesystem::path host_root = host.home / "held";
   // 140 files in one directory that goes at once (an unmount, an `rm -rf` of a
-  // tree): one watch batch. Deleting them one by one let a loaded machine split
-  // them across batches each under the threshold, and nothing was held (the
-  // hold is per batch: TD-2026-10-27-402).
+  // tree). The hold counts over a window, so a delete split across watch batches
+  // is held too (TD-2026-10-27-402, MirrorSyncEngine/HoldsAMassDeleteSplitAcrossBatches).
   for (int i = 0; i < 150; ++i) {
     WriteFile(i < 140 ? host_root / "gone" / ("f" + std::to_string(i)) : host_root / ("f" + std::to_string(i)),
               "x");
@@ -1329,7 +1328,7 @@ void TestHeldMassDeleteIsAppliedFromItsRow() {
 
   // The whole first sync, not just a file of it: deleted while the backfill still
   // fetches them, files never reach the mirror and are no mirror delete to hold
-  // (and leave the engine counting them to fetch: TD-2026-10-27-403).
+  // (the rows are dropped as the host answers: TD-2026-10-27-403).
   Expect(WaitUntil(
              [&] {
                Pump(shell);

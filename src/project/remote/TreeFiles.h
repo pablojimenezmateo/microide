@@ -96,5 +96,15 @@ FileOpResult RenameTreeEntry(const std::filesystem::path& root, std::string_view
 // A file (under `expect`) or an empty directory (`expect` must be Any).
 FileOpResult DeleteTreeEntry(const std::filesystem::path& root, std::string_view path,
                                   const Precondition& expect);
+// DeleteTreeEntry that can be undone: the entry is renamed to `aside` (an absolute
+// path outside the tree, on its filesystem, that must not exist) rather than
+// unlinked. `*moved` says whether there was anything to move.
+FileOpResult SetAsideTreeEntry(const std::filesystem::path& root, std::string_view path,
+                               const Precondition& expect, const std::filesystem::path& aside,
+                               bool* moved);
+// Put what SetAsideTreeEntry moved to `aside` back at `path`, which must not exist
+// (RENAME_NOREPLACE); missing parents are created.
+FileOpResult RestoreTreeEntry(const std::filesystem::path& root, std::string_view path,
+                              const std::filesystem::path& aside);
 
 }  // namespace microide::project::remote

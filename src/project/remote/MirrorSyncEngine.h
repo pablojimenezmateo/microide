@@ -228,8 +228,21 @@ class MirrorSyncEngine {
     std::optional<util::ContentHash> want;
   };
 
+  // A host delete applied in the last kSameCheckout window, its tree entry set
+  // aside under meta/recently-deleted rather than unlinked: a later batch that
+  // takes the window's total over the mass-delete threshold puts it back and holds
+  // it with the rest, so a delete the watch splits across batches is held as one
+  // (TD-2026-10-27-402).
+  struct SetAside {
+    std::string path;
+    std::filesystem::path aside;
+    MirrorStore::Entry entry;
+    std::chrono::steady_clock::time_point at;
+  };
+
   struct Plan {
     std::vector<PullItem> pulls;
+    std::vector<SetAside> restores;  // put back and held (HoldMassDeleteLocked)
     std::vector<std::string> deletes;
     std::vector<std::string> pushes;
     std::vector<std::pair<std::string, std::string>> links;
@@ -270,7 +283,16 @@ class MirrorSyncEngine {
   // A large file a tab is waiting for: streamed to disk now, beside the backfill.
   void StreamPriorityPull(std::string path, std::function<void()> done);
   void PushNow(const std::string& path);
-  void DeleteNow(const std::vector<std::string>& paths);
+  // `undoable`: set each entry aside for the window (host deletes); an approved
+  // hold is the user's decision and is simply applied.
+  void DeleteNow(const std::vector<std::string>& paths, bool undoable);
+  void RestoreNow(std::vector<SetAside> restores);
+  // Unlinks what was set aside before the window (all of it with `all`).
+  void ExpireSetAsideLocked(bool all);
+  std::filesystem::path SetAsideDirectory() const { return store_.meta() / "recently-deleted"; }
+  // The host reported these pulled paths gone (TD-2026-10-27-403): reconciled as
+  // the host's deletes, now -- nothing else would, no later sync being due.
+  void ReconcileMissingPulls(const std::vector<std::string>& paths);
   // False when the host could not be reached: the op stays journaled for later.
   bool TreeOpNow(const LocalTreeOp& op);
   // Replay the journaled tree operations in order, stopping at the first that
@@ -310,6 +332,8 @@ class MirrorSyncEngine {
   std::set<std::string, std::less<>> held_deletes_;
   std::chrono::steady_clock::time_point held_at_{};
   std::optional<std::chrono::steady_clock::time_point> repository_moved_at_;
+  std::deque<SetAside> set_aside_;  // oldest first
+  std::uint64_t set_aside_serial_ = 0;
   // Path -> its latest host change (§ 7.9); `host_change_sequence_` orders them.
   std::unordered_map<std::string, HostChange> host_changes_;
   std::uint64_t host_change_sequence_ = 0;

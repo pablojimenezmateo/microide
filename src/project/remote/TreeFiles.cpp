@@ -508,4 +508,45 @@ FileOpResult DeleteTreeEntry(const std::filesystem::path& root, std::string_view
   return Ok(std::nullopt);
 }
 
+FileOpResult SetAsideTreeEntry(const std::filesystem::path& root, std::string_view path,
+                               const Precondition& expect, const std::filesystem::path& aside,
+                               bool* moved) {
+  *moved = false;
+  std::string error;
+  std::optional<Parent> parent = OpenParent(root, path, /*create=*/false, &error);
+  if (!parent.has_value()) {
+    return Error(error);
+  }
+  FileOpResult refused;
+  bool exists = false;
+  if (!CheckExpect(parent->dir.Get(), parent->name, expect, /*allow_non_file=*/true, &refused,
+                   &exists)) {
+    return refused;
+  }
+  if (!exists) {
+    return Ok(std::nullopt);  // already gone: what the caller wanted
+  }
+  if (RenameNoReplace(parent->dir.Get(), parent->name.c_str(), AT_FDCWD, aside.c_str()) != 0) {
+    return Error(Errno("cannot set " + std::string(path) + " aside"));
+  }
+  *moved = true;
+  return Ok(std::nullopt);
+}
+
+FileOpResult RestoreTreeEntry(const std::filesystem::path& root, std::string_view path,
+                              const std::filesystem::path& aside) {
+  std::string error;
+  std::optional<Parent> parent = OpenParent(root, path, /*create=*/true, &error);
+  if (!parent.has_value()) {
+    return Error(error);
+  }
+  if (RenameNoReplace(AT_FDCWD, aside.c_str(), parent->dir.Get(), parent->name.c_str()) != 0) {
+    if (errno == EEXIST) {
+      return Conflict(std::nullopt);
+    }
+    return Error(Errno("cannot restore " + std::string(path)));
+  }
+  return Ok(std::nullopt);
+}
+
 }  // namespace microide::project::remote

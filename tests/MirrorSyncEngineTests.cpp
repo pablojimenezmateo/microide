@@ -891,6 +891,77 @@ void TestMirrorHoldsAMassDeleteTheRepositoryDidNotExplain() {
          "and the one that came back is kept, with the host's new bytes");
 }
 
+// TD-2026-10-27-402: a mass delete the watch delivers in two batches, each under
+// the threshold alone, is held as one -- the first batch's deletes, already
+// applied, are put back and held with the second's.
+void TestMirrorHoldsAMassDeleteSplitAcrossBatches() {
+  MirrorSession session;
+  for (int i = 0; i < 150; ++i) {
+    WriteFile(session.host / ("f" + std::to_string(i)), "x" + std::to_string(i));
+  }
+  session.Connect();
+  bool native = false;
+  std::string error;
+  Expect(session.workspace->SubscribeWatch(session.engine->WatchSink(), &native, &error),
+         "subscribes: " + error);
+  session.Sync();
+  for (int i = 0; i < 60; ++i) {
+    std::filesystem::remove(session.host / ("f" + std::to_string(i)));
+  }
+  Expect(WaitFor(
+             [&] {
+               session.engine->Flush();
+               return !std::filesystem::exists(session.Tree("f0")) &&
+                      !std::filesystem::exists(session.Tree("f59"));
+             },
+             std::chrono::seconds(10)),
+         "sixty deletes are under the threshold: applied");
+  Expect(session.engine->status().held_deletes == 0, "and nothing is held");
+  for (int i = 60; i < 120; ++i) {
+    std::filesystem::remove(session.host / ("f" + std::to_string(i)));
+  }
+  Expect(WaitFor(
+             [&] {
+               session.engine->Flush();
+               return session.engine->status().held_deletes == 120;
+             },
+             std::chrono::seconds(10)),
+         "sixty more within the window make 120: all of them held: " +
+             std::to_string(session.engine->status().held_deletes));
+  Expect(ReadFile(session.Tree("f0")) == "x0" && ReadFile(session.Tree("f119")) == "x119",
+         "the first batch's files are back, with their bytes, and the second's were never deleted");
+  Expect(session.engine->StateOf("f0") == ContentState::Current, "as the host last listed them");
+  session.engine->ApproveHeldDeletes();
+  session.engine->Flush();
+  Expect(!std::filesystem::exists(session.Tree("f0")) && !std::filesystem::exists(session.Tree("f119")) &&
+             ReadFile(session.Tree("f120")) == "x120",
+         "approved, all 120 apply and the rest stays");
+  Expect(session.engine->status().held_deletes == 0, "and nothing is held after the approval");
+}
+
+// TD-2026-10-27-403: a pull the host answers "no such file" -- deleted while the
+// backfill was on its way, with no delete delta to say so -- is the host's delete:
+// the row stops counting as one to fetch.
+void TestMirrorAPullOfAFileTheHostDeletedDropsTheRow() {
+  MirrorSession session;
+  WriteFile(session.host / "a.txt", "a\n");
+  WriteFile(session.host / "big.txt", "more than ten bytes\n");
+  remote::MirrorSyncEngine::Options options;
+  options.max_file_bytes = 10;  // never backfilled: absent until a tab asks
+  session.Connect(options);
+  session.Sync();
+  Expect(session.engine->status().absent == 1 && session.engine->StateOf("big.txt") == ContentState::Absent,
+         "the large file is listed and not fetched");
+  std::filesystem::remove(session.host / "big.txt");  // and no watch to report it
+  session.engine->Prioritize({"big.txt"});
+  session.engine->Flush();
+  const auto status = session.engine->status();
+  Expect(status.absent == 0, "the host's answer drops it from the files to fetch: " +
+                                 std::to_string(status.absent));
+  Expect(session.engine->StateOf("big.txt") == ContentState::Unknown, "it is not in the mirror at all");
+  Expect(status.unreadable == 0, "and it is not an unreadable file");
+}
+
 // A rename and a delete made with no connection are journaled, survive the engine
 // going away, and replay — in order, before the manifest is compared — on the next
 // connection: the deleted file is not pulled back, the renamed one lands at its
@@ -1018,6 +1089,10 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/ParksConflictsAndNeverOverwritesLocalEdits",
           TestMirrorParksConflictsAndNeverOverwritesLocalEdits);
   AddTest(tests, "MirrorSyncEngine/HoldsAMassDelete", TestMirrorHoldsAMassDelete);
+  AddTest(tests, "MirrorSyncEngine/HoldsAMassDeleteSplitAcrossBatches",
+          TestMirrorHoldsAMassDeleteSplitAcrossBatches);
+  AddTest(tests, "MirrorSyncEngine/APullOfAFileTheHostDeletedDropsTheRow",
+          TestMirrorAPullOfAFileTheHostDeletedDropsTheRow);
   AddTest(tests, "MirrorSyncEngine/FollowsABranchSwitchThatDeletesMostFiles",
           TestMirrorFollowsABranchSwitchThatDeletesMostFiles);
   AddTest(tests, "MirrorSyncEngine/HoldsAMassDeleteTheRepositoryDidNotExplain",

@@ -26,6 +26,11 @@ constexpr std::size_t kMaxUnacknowledgedPushes = 8;
 // than holding the editor's largest buffers twice in memory.
 constexpr std::uint64_t kMaxPushBytes = 256u * 1024 * 1024;
 
+// How far apart a checkout's file changes and its HEAD move can be seen: the watch's
+// max delay (1 s) and the host's repository sampler (1 s), with room for a slow disk.
+// Also the window one mass delete is counted over, however the watch batches it.
+constexpr auto kSameCheckout = std::chrono::seconds(10);
+
 // One streamed object as the batch ApplyFetched takes: the object on success;
 // on failure nothing, and its partly written staging file removed.
 std::optional<std::vector<RemoteWorkspace::FetchedObject>> SingleFetchedBatch(
@@ -64,7 +69,14 @@ MirrorSyncEngine::MirrorSyncEngine(RemoteWorkspace& workspace, MirrorStore& stor
                          idle_cv_.notify_all();
                        }
                      },
-             }) {}
+             }) {
+  // What a previous run set aside and did not get to unlink (a crash): its deletes
+  // are final, the saved state no longer lists those paths.
+  queue_.Post([this]() {
+    std::error_code ignored;
+    std::filesystem::remove_all(SetAsideDirectory(), ignored);
+  });
+}
 
 void MirrorSyncEngine::Flush() {
   std::unique_lock lock(idle_mutex_);
@@ -83,6 +95,7 @@ MirrorSyncEngine::~MirrorSyncEngine() {
   if (state_save_queued_) {
     SaveNowLocked();
   }
+  ExpireSetAsideLocked(/*all=*/true);  // nothing can put them back any more
 }
 
 void MirrorSyncEngine::Changed() {
@@ -661,7 +674,7 @@ void MirrorSyncEngine::ApproveHeldDeletes() {
       held_deletes_.clear();
       status_.held_deletes = 0;
     }
-    DeleteNow(deletes);
+    DeleteNow(deletes, /*undoable=*/false);
     {
       std::lock_guard lock(mutex_);
       RecountLocked();
@@ -1004,25 +1017,37 @@ bool MirrorSyncEngine::ReconcileDeleteLocked(std::map<std::string, MirrorStore::
   return false;
 }
 
-namespace {
-// How far apart a checkout's file changes and its HEAD move can be seen: the watch's
-// max delay (1 s) and the host's repository sampler (1 s), with room for a slow disk.
-constexpr auto kSameCheckout = std::chrono::seconds(10);
-}  // namespace
-
 void MirrorSyncEngine::HoldMassDeleteLocked(Plan& plan, std::size_t previously_remote) {
+  ExpireSetAsideLocked(/*all=*/false);
   if (InBranchEventLocked()) {
     return;  // a branch switch the tree must follow (§ 6.3)
   }
+  // Counted over the window, not the batch: a slow `rm -r` reaches the watch in
+  // several batches, each of which could stay under the threshold alone. The
+  // window's deletes were part of the tree the threshold is a share of.
+  const std::size_t window = set_aside_.size();
   const std::size_t threshold = std::max<std::size_t>(
       options_.mass_delete_min_rows,
-      static_cast<std::size_t>(options_.mass_delete_fraction * static_cast<double>(previously_remote)));
-  if (plan.deletes.size() > threshold) {
+      static_cast<std::size_t>(options_.mass_delete_fraction *
+                               static_cast<double>(previously_remote + window)));
+  if (!plan.deletes.empty() && plan.deletes.size() + window > threshold) {
     held_deletes_.insert(plan.deletes.begin(), plan.deletes.end());
     held_at_ = std::chrono::steady_clock::now();
     plan.deletes.clear();
+    // Put back, and held with the rest (RestoreNow adds them to the hold).
+    std::move(set_aside_.begin(), set_aside_.end(), std::back_inserter(plan.restores));
+    set_aside_.clear();
   }
   status_.held_deletes = held_deletes_.size();
+}
+
+void MirrorSyncEngine::ExpireSetAsideLocked(bool all) {
+  const auto cutoff = std::chrono::steady_clock::now() - kSameCheckout;
+  while (!set_aside_.empty() && (all || set_aside_.front().at < cutoff)) {
+    std::error_code ignored;
+    std::filesystem::remove_all(set_aside_.front().aside, ignored);
+    set_aside_.pop_front();
+  }
 }
 
 void MirrorSyncEngine::OnRepositoryMovedLocked(Plan& plan) {
@@ -1179,7 +1204,8 @@ void MirrorSyncEngine::ApplyWatchDelta(RemoteWorkspace::WatchDelta delta) {
 }
 
 void MirrorSyncEngine::Execute(Plan plan, std::function<void()> on_done) {
-  DeleteNow(plan.deletes);
+  DeleteNow(plan.deletes, /*undoable=*/true);
+  RestoreNow(std::move(plan.restores));
   std::vector<std::string> changed_paths;
   for (const auto& [path, target] : plan.links) {
     if (MakeTreeSymlink(store_.tree(), path, target).ok()) {
@@ -1410,6 +1436,7 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
     return;
   }
   std::vector<std::string> written;
+  std::vector<std::string> gone;
   for (RemoteWorkspace::FetchedObject& object : *objects) {
     // A streamed object's staging copy goes whatever happens to it below.
     struct RemoveStaged {
@@ -1428,8 +1455,10 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
         if (status_.unreadable++ == 0) {
           status_.first_unreadable = object.path + ": " + object.error;
         }
+      } else if (object.missing) {
+        gone.push_back(object.path);  // the host has no such file any more
       }
-      continue;  // gone since the manifest: the next sync deletes it
+      continue;
     }
     std::lock_guard path_lock(store_.PathLock(object.path));
     Precondition expect;
@@ -1517,6 +1546,12 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
     } else {
       status_.error = result.error;
     }
+  }
+  // Gone since the row that asked for it -- deleted while the backfill was on its
+  // way. A delete delta may follow, or may not (the manifest walk raced the
+  // delete): left alone, the row stayed counted "to fetch" with no later sync due.
+  if (!gone.empty()) {
+    ReconcileMissingPulls(gone);
   }
   {
     std::lock_guard lock(mutex_);
@@ -1629,11 +1664,12 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
   Changed();
 }
 
-void MirrorSyncEngine::DeleteNow(const std::vector<std::string>& paths) {
+void MirrorSyncEngine::DeleteNow(const std::vector<std::string>& paths, bool undoable) {
   if (paths.empty()) {
     return;
   }
   std::vector<std::string> removed;
+  bool aside_directory_made = false;
   for (const std::string& path : paths) {
     std::lock_guard path_lock(store_.PathLock(path));
     std::lock_guard lock(mutex_);
@@ -1644,7 +1680,29 @@ void MirrorSyncEngine::DeleteNow(const std::vector<std::string>& paths) {
     // Under expect = base: a file edited since the diff is not deleted.
     const Precondition expect = entry->base.has_value() ? Precondition::Of(*entry->base)
                                                         : Precondition::Anything();
-    const FileOpResult result = DeleteTreeEntry(store_.tree(), path, expect);
+    FileOpResult result;
+    if (undoable) {
+      if (!aside_directory_made) {
+        std::error_code ignored;
+        std::filesystem::create_directories(SetAsideDirectory(), ignored);
+        aside_directory_made = true;
+      }
+      std::filesystem::path aside = SetAsideDirectory() / std::to_string(++set_aside_serial_);
+      bool moved = false;
+      result = SetAsideTreeEntry(store_.tree(), path, expect, aside, &moved);
+      if (result.status == FileOpResult::Status::Error) {
+        // Somewhere it cannot be renamed to (another filesystem): a plain delete,
+        // which the window then cannot undo.
+        result = DeleteTreeEntry(store_.tree(), path, expect);
+      } else if (result.ok() && moved) {
+        set_aside_.push_back(SetAside{.path = path,
+                                      .aside = std::move(aside),
+                                      .entry = *entry,
+                                      .at = std::chrono::steady_clock::now()});
+      }
+    } else {
+      result = DeleteTreeEntry(store_.tree(), path, expect);
+    }
     if (result.ok()) {
       store_.entries().erase(path);
       removed.push_back(path);
@@ -1656,6 +1714,60 @@ void MirrorSyncEngine::DeleteNow(const std::vector<std::string>& paths) {
   if (!removed.empty() && callbacks_.materialized) {
     callbacks_.materialized(removed);
   }
+}
+
+void MirrorSyncEngine::RestoreNow(std::vector<SetAside> restores) {
+  if (restores.empty()) {
+    return;
+  }
+  std::vector<std::string> restored;
+  for (SetAside& item : restores) {
+    std::lock_guard path_lock(store_.PathLock(item.path));
+    std::lock_guard lock(mutex_);
+    // Listed again since (a row in this batch): the host has it, and so do we.
+    const bool relisted = store_.Find(item.path) != nullptr;
+    if (!relisted && RestoreTreeEntry(store_.tree(), item.path, item.aside).ok()) {
+      // As the host last listed it, which is what a held path is (held_deletes_).
+      store_.entries().insert_or_assign(item.path, std::move(item.entry));
+      held_deletes_.insert(item.path);
+      restored.push_back(item.path);
+      continue;
+    }
+    std::error_code ignored;
+    std::filesystem::remove_all(item.aside, ignored);
+  }
+  {
+    std::lock_guard lock(mutex_);
+    status_.held_deletes = held_deletes_.size();
+    RecountLocked();
+    SaveLocked();
+  }
+  if (!restored.empty() && callbacks_.materialized) {
+    callbacks_.materialized(restored);
+  }
+}
+
+void MirrorSyncEngine::ReconcileMissingPulls(const std::vector<std::string>& paths) {
+  Plan plan;
+  {
+    std::lock_guard lock(mutex_);
+    const std::size_t previously_remote = RemoteCountLocked();
+    for (const std::string& path : paths) {
+      const auto it = store_.entries().find(path);
+      // Still the row the pull was for: a newer row (the host made it again) or
+      // a local edit since is not this answer's to decide.
+      if (it != store_.entries().end() && it->second.has_remote &&
+          it->second.remote.kind == ManifestEntryKind::File && !it->second.push_pending &&
+          !it->second.conflict) {
+        ReconcileDeleteLocked(it, plan);
+      }
+    }
+    HoldMassDeleteLocked(plan, previously_remote);
+    RecountLocked();
+    SaveLocked();
+  }
+  DeleteNow(plan.deletes, /*undoable=*/true);
+  RestoreNow(std::move(plan.restores));
 }
 
 }  // namespace microide::project::remote
