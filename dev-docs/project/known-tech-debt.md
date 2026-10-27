@@ -449,6 +449,45 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-27-395 — local `qa` fails `unicode-editing`: the desktop's IBus reaches the app under test.
+
+**Symptom.** On a developer desktop, `tools/run-checks.sh qa` fails
+`unicode-editing` every time, both in the suite and alone
+(`tools/qa/run.py suite unicode-editing`), on `main` (`e54b9009`) as much as after
+it. CI ran the same commit and passed it. Every one of the five findings has the
+same cause: the `é` of "café" lands in the buffer as `Ã©`, which is its UTF-8 bytes
+read as Latin-1:
+
+    non-ASCII text lands as typed: buffer differs at byte 3:
+      got 'cafÃ© 日本 ok', want 'café 日本 ok'
+
+The driver's own note shows the conversion is inside the app, not in the driver.
+The app took all 5 key presses of "café ", and the one `é` press (keysym 0xE9,
+bound by `_map_latin1`) became two characters of text.
+
+**Cause (verified 2026-10-27).** The harness passes the developer's session
+environment to the app it runs on Xvfb. That includes `XMODIFIERS=@im=ibus` (and
+`QT_IM_MODULE=ibus`) from a desktop where `ibus-daemon` is running. SDL3 then
+routes the private display's key events through the desktop's IBus, which commits
+the Latin-1 keysym double-encoded. With only those two variables unset
+(`env -u XMODIFIERS -u QT_IM_MODULE tools/qa/run.py suite unicode-editing`) the
+scenario is clean, and the D-Bus session address can stay. CI runners have no
+IBus, which is why CI is green. Nothing else differs: SDL is 3.2.16 on both, and no
+X11 or input package changed on the failing machine.
+
+**Fix (not done).** The QA harness should clear the input-method selection
+(`XMODIFIERS`, `GTK_IM_MODULE`, `QT_IM_MODULE`, `SDL_IM_MODULE`) from the
+environment of every app it starts on a private display. That is the same reason it
+already gives each run its own `HOME` and XDG tree: a run must not depend on the
+desk it runs at. Check `qa-asan` and `qa-wayland` for the same leak. The
+remote-lane SSH host gets its environment from sshd, so it is unaffected.
+
+**Open question.** Does typing `é` in microide on this desktop, with IBus active,
+insert `é`? A real keyboard reaches IBus through the session's own display, so this
+may be specific to Xvfb (IBus handling events for a display it is not attached
+to). If it double-encodes there as well, it is a product bug in the SDL IME path
+and needs a test of its own.
+
 ### TD-2026-10-26-394 — the editor and the chrome build two identical glyph atlases by default. [RESOLVED 2026-10-26]
 
 **Fixed:** the chrome, editor and terminal `TextRenderer`s draw from one
