@@ -236,15 +236,17 @@ bool ParseMenuEntryRegistration(lua_State* state,
   // The menus on the bar, named as it shows them (any case). Anything else used to
   // register and then appear nowhere -- "Tools", the guide's own example, among
   // them -- so the plugin is told here instead.
-  static constexpr std::array<std::string_view, 8> kMenus = {"file", "edit",     "view",  "go",
-                                                             "git",  "terminal", "debug", "help"};
+  // ContributionRegistry's every-bar-menu test holds this to the bar's own list
+  // (workspace::ParseMenuId reads that, and src/plugin cannot).
+  static constexpr std::array<std::string_view, 9> kMenus = {"file",     "edit",  "view", "go",  "git",
+                                                             "remote", "terminal", "debug", "help"};
   std::string menu_name = *menu_opt;
   std::transform(menu_name.begin(), menu_name.end(), menu_name.begin(),
                  [](unsigned char c) { return static_cast<char>(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c); });
   if (std::find(kMenus.begin(), kMenus.end(), menu_name) == kMenus.end()) {
     if (error_message != nullptr) {
       *error_message = "menu entry names a menu that does not exist: \"" + *menu_opt +
-                       "\" (File, Edit, View, Go, Git, Terminal, Debug or Help)";
+                       "\" (File, Edit, View, Go, Git, Remote, Terminal, Debug or Help)";
     }
     return false;
   }

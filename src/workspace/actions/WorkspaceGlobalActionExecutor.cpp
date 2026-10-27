@@ -312,7 +312,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
         case ActionId::RemoteReconnect: {
           const std::string host = host_arg();
           if (host.empty() || !hosts->Reconnect(host)) {
-            return reject("No remote host \"" + host + "\"");
+            return reject(host.empty() ? "usage: remote-reconnect <host>" : "No remote host \"" + host + "\"");
           }
           return DispatchResult::Handled;
         }
@@ -350,16 +350,15 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
           return DispatchResult::Handled;
         }
         case ActionId::RemoteRemoveMirror: {
-          // Bare: the active project's mirror, which is open -- the service says so,
-          // and the user closes it first. A root argument names a closed one.
-          if (args.empty() && !context_.HasProjectRoot()) {
-            return reject("No active project");
+          // A root, always: an open project's mirror goes with its close, so the
+          // bare form had only ever one answer ("close the project first"). A menu
+          // row or palette entry asks with the mirrors there are (OpenArgumentPicker).
+          if (args.empty()) {
+            return reject("usage: remote-remove-mirror <root> [discard]");
           }
-          const std::filesystem::path root = args.empty() ? context_.ProjectRoot()
-                                                          : std::filesystem::path(args[0]);
           const bool discard = args.size() > 1 && args[1] == "discard";
           std::string error;
-          if (!hosts->RemoveMirror(root, discard, &error)) {
+          if (!hosts->RemoveMirror(std::filesystem::path(args[0]), discard, &error)) {
             return reject(error);
           }
           return DispatchResult::Handled;

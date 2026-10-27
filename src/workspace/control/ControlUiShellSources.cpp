@@ -483,6 +483,9 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                   AddControlUiElement(out, kStatus, StatusBarSegmentName(segment.id), rect,
                                       std::string(segment.text));
                   out.back().enabled = segment.clickable;
+                  if (const MenuSpec* menu = FindMenuSpec(segment.menu); menu != nullptr) {
+                    out.back().menu = std::string(menu->label);
+                  }
                 });
             // Plugin status items (drawn in the breadcrumb row, right-aligned):
             // `status:plugin/<plugin>/<item>`, the item's text as label, enabled when

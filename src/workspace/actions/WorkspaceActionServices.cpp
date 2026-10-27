@@ -18,6 +18,7 @@
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/services/QuickPickService.h"
+#include "workspace/services/RemoteHostService.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
 #include "workspace/WorkspacePathUtils.h"
 
@@ -500,6 +501,42 @@ bool WorkspaceActionContext::OpenIndentationPick() {
 
 bool WorkspaceActionContext::OpenArgumentPicker(ActionId id) {
   switch (id) {
+    case ActionId::RemoteUnforwardPort: {
+      // Stop Forwarding a Port…: the ports forwarded now, where a prompt would ask
+      // for a number the user has to go and look up.
+      RemoteHostService* hosts = RemoteHosts();
+      if (hosts == nullptr || !operations_.open_command_choices) {
+        return false;
+      }
+      std::vector<QuickPickItem> items;
+      for (const RemoteHostService::ForwardedPort& port : hosts->ForwardedPorts()) {
+        items.push_back(QuickPickItem{
+            .value = "remote-unforward-port " + std::to_string(port.host_port) + " " + QuoteCommandArg(port.host),
+            .primary_label = std::to_string(port.host_port) + " \u2192 localhost:" + std::to_string(port.local_port),
+            .secondary_label = port.host});
+      }
+      operations_.open_command_choices(
+          QuickPickService::CommandChoices("Stop Forwarding a Port", "forwarded ports", std::move(items)));
+      return true;
+    }
+    case ActionId::RemoteRemoveMirror: {
+      // Remove Mirror…: the closed remote projects whose mirror is on disk. An
+      // open project's mirror is not offered: closing it is what runs the dirty
+      // prompt, and RemoveMirror refuses one still open.
+      RemoteHostService* hosts = RemoteHosts();
+      if (hosts == nullptr || !operations_.open_command_choices) {
+        return false;
+      }
+      std::vector<QuickPickItem> items;
+      for (const project::ProjectId& mirror : hosts->RemovableMirrors()) {
+        items.push_back(QuickPickItem{.value = "remote-remove-mirror " + QuoteCommandArg(mirror.IoRoot().string()),
+                                      .primary_label = mirror.Label(),
+                                      .secondary_label = mirror.Location()});
+      }
+      operations_.open_command_choices(
+          QuickPickService::CommandChoices("Remove Mirror", "mirrors", std::move(items)));
+      return true;
+    }
     case ActionId::ShowOutput: {
       if (!operations_.output_channels || !operations_.open_command_choices) {
         return false;
@@ -570,6 +607,40 @@ bool WorkspaceActionContext::OpenArgumentPicker(ActionId id) {
         prefill += " ";
       }
       OpenCommandArgumentsPrompt(spec->command_name, std::move(prefill));
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+bool WorkspaceActionContext::OpenOptionalArgumentPicker(ActionId id) {
+  switch (id) {
+    case ActionId::RemoteShowLog:
+    case ActionId::RemoteStopServer:
+    case ActionId::RemoteReconnect:
+    case ActionId::RemoteDisconnect: {
+      // A host verb run bare acts on the only host; with several it would guess
+      // (or, for Disconnect, take them all), so the menu asks which.
+      RemoteHostService* hosts = RemoteHosts();
+      const ActionSpec* spec = FindWorkspaceActionSpec(id);
+      if (hosts == nullptr || spec == nullptr || !operations_.open_command_choices) {
+        return false;
+      }
+      std::vector<std::string> open = hosts->OpenHosts();
+      if (open.size() < 2) {
+        return false;
+      }
+      std::vector<QuickPickItem> items;
+      for (std::string& host : open) {
+        items.push_back(QuickPickItem{.value = std::string(spec->command_name) + " " + QuoteCommandArg(host),
+                                      .primary_label = std::move(host)});
+      }
+      std::string_view title = spec->label;
+      if (title.starts_with("Remote: ")) {
+        title.remove_prefix(8);
+      }
+      operations_.open_command_choices(QuickPickService::CommandChoices(std::string(title), "hosts", std::move(items)));
       return true;
     }
     default:

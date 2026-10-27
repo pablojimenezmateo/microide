@@ -226,6 +226,9 @@ util::JsonValue ControlUiQuery::Build(const WorkspaceContext& context, const Ope
     if (!element.command.empty()) {
       entry["command"] = util::JsonValue(element.command);
     }
+    if (!element.menu.empty()) {
+      entry["menu"] = util::JsonValue(element.menu);
+    }
     if (element.thumb.has_value()) {
       entry["thumb"] = RectJson(*element.thumb);
     }

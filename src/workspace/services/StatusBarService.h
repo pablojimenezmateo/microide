@@ -7,6 +7,7 @@
 #include <string_view>
 
 #include "workspace/StatusTone.h"
+#include "workspace/registries/MenuId.h"
 
 namespace microide::workspace {
 
@@ -56,10 +57,15 @@ struct StatusBarSegmentValue {
   // actual action cannot drift apart again.
   std::string command;
   std::string command_arg;
+  // A menu the click opens, anchored at the segment, in place of a command (the
+  // remote segment opens the Remote menu, as VS Code's remote indicator lists its
+  // verbs). Data the host owns rather than a `menu-open` command string: the
+  // command path has no rect to anchor a popup at.
+  MenuId menu = MenuId::None;
   bool visible = false;
   StatusTone tone = StatusTone::Default;
 
-  bool clickable() const { return !command.empty(); }
+  bool clickable() const { return !command.empty() || menu != MenuId::None; }
 };
 
 class StatusBarService {
@@ -85,6 +91,7 @@ class StatusBarService {
     std::string_view tooltip;
     std::string_view command;
     std::string_view command_arg;
+    MenuId menu = MenuId::None;
     bool visible = false;
     StatusTone tone = StatusTone::Default;
   };
@@ -105,6 +112,7 @@ class StatusBarService {
     slot.tooltip.assign(update.tooltip);
     slot.command.assign(update.command);
     slot.command_arg.assign(update.command_arg);
+    slot.menu = update.menu;
     slot.visible = update.visible;
     slot.tone = update.tone;
   }

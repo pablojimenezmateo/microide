@@ -46,6 +46,9 @@ struct ControlUiElement {
   // A menu row's command (the name the `ui` action receipt reports when it runs);
   // empty for elements that run none, and for submenu rows.
   std::string command;
+  // The menu a click opens, by its label, for an element that opens one in place
+  // of running a command (a status segment's): a driver asserts the popup by it.
+  std::string menu;
   // A scrollbar's thumb (its `rect` is the track).
   std::optional<SDL_FRect> thumb;
 };

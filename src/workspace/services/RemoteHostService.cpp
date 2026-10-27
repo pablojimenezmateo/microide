@@ -162,6 +162,8 @@ RemoteHostService::Project* RemoteHostService::OpenProject(const remote::RemoteH
   Project entry;
   remote::RemoteProject* raw = project.get();
   entry.project = std::move(project);
+  entry.host = target.Display();
+  entry.host_root = host_root;
   Project& stored = projects_.emplace(tree, std::move(entry)).first->second;
   if (!raw->Open(error)) {
     projects_.erase(tree);
@@ -993,19 +995,92 @@ void RemoteHostService::Disconnect(std::string_view host) {
 }
 
 std::string RemoteHostService::SoleHost() const {
-  std::string sole;
+  std::string_view sole;
   for (const auto& [tree, project] : projects_) {
     (void)tree;
     if (project.closed) {
       continue;
     }
-    const std::string host = project.project->record().host;
-    if (!sole.empty() && sole != host) {
+    if (!sole.empty() && sole != project.host) {
       return {};
     }
-    sole = host;
+    sole = project.host;
   }
-  return sole;
+  return std::string(sole);
+}
+
+bool RemoteHostService::HasOpenProject() const {
+  return std::any_of(projects_.begin(), projects_.end(),
+                     [](const auto& entry) { return !entry.second.closed; });
+}
+
+bool RemoteHostService::HasForwardedPort() const {
+  for (const auto& [host, forwards] : forwards_) {
+    if (!forwards->empty() && SessionFor(host) != nullptr) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool RemoteHostService::HasRemovableMirror() const {
+  if (!operations_.recent_projects) {
+    return false;
+  }
+  for (const project::ProjectId& id : operations_.recent_projects()) {
+    const project::ProjectId::Remote* named = id.remote();
+    if (named != nullptr &&
+        std::none_of(projects_.begin(), projects_.end(), [&](const auto& entry) {
+          return !entry.second.closed && entry.second.host == named->host &&
+                 entry.second.host_root == named->host_root;
+        })) {
+      return true;
+    }
+  }
+  return false;
+}
+
+std::vector<std::string> RemoteHostService::OpenHosts() const {
+  std::vector<std::string> hosts;
+  for (const auto& [tree, project] : projects_) {
+    (void)tree;
+    if (!project.closed && std::find(hosts.begin(), hosts.end(), project.host) == hosts.end()) {
+      hosts.push_back(project.host);
+    }
+  }
+  return hosts;
+}
+
+std::vector<RemoteHostService::ForwardedPort> RemoteHostService::ForwardedPorts() const {
+  std::vector<ForwardedPort> ports;
+  for (const auto& [host, forwards] : forwards_) {
+    if (SessionFor(host) == nullptr) {
+      continue;
+    }
+    std::vector<remote::HostPortForwards::PortForward> list = forwards->list();
+    std::sort(list.begin(), list.end(), [](const auto& a, const auto& b) { return a.host_port < b.host_port; });
+    for (const auto& forward : list) {
+      ports.push_back(ForwardedPort{.host = host, .host_port = forward.host_port, .local_port = forward.local_port});
+    }
+  }
+  return ports;
+}
+
+std::vector<project::ProjectId> RemoteHostService::RemovableMirrors() const {
+  std::vector<project::ProjectId> mirrors;
+  if (!operations_.recent_projects) {
+    return mirrors;
+  }
+  for (const project::ProjectId& id : operations_.recent_projects()) {
+    if (!id.IsRemote()) {
+      continue;
+    }
+    const std::filesystem::path tree = id.IoRoot();
+    if (!IsRemoteProject(tree) && remote::RemoteProject::ReadRecord(tree).has_value()) {
+      mirrors.push_back(id);
+    }
+  }
+  return mirrors;
 }
 
 bool RemoteHostService::StopServer(std::string_view host) {
@@ -1065,7 +1140,7 @@ std::vector<std::string> RemoteHostService::KnownHosts() const {
 
 std::string RemoteHostService::HostOfProject(const std::filesystem::path& root) const {
   const auto it = projects_.find(root);
-  return it == projects_.end() ? std::string() : it->second.project->record().host;
+  return it == projects_.end() ? std::string() : it->second.host;
 }
 
 bool RemoteHostService::ForwardPort(std::string_view host, std::uint16_t port) {
@@ -1275,7 +1350,7 @@ bool RemoteHostService::StopForward(std::string_view host, std::uint16_t port, b
 const remote::RemoteHostSession* RemoteHostService::SessionFor(std::string_view host) const {
   for (const auto& [tree, project] : projects_) {
     (void)tree;
-    if (!project.closed && project.project->record().host == host) {
+    if (!project.closed && project.host == host) {
       return &project.project->session();
     }
   }
@@ -1682,8 +1757,9 @@ void RemoteHostService::PublishStatusSegment() {
                     : std::string()) +
                (unsent > 0 && state != State::Ready ? " · " + std::to_string(unsent) + " unsent" : std::string()) +
                (ports == 0 ? std::string() : " · " + std::to_string(ports) + (ports == 1 ? " port" : " ports"));
-  value.tooltip = tooltip + "Remote: Show Status";
-  value.command = "remote-status";
+  // The click lists the remote verbs (the Remote menu) rather than running one.
+  value.tooltip = tooltip + "Remote menu";
+  value.menu = MenuId::Remote;
   value.tone = rank(state) >= 3   ? StatusTone::Error
                : rank(state) == 2 ? StatusTone::Warning
                                   : StatusTone::Default;

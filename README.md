@@ -709,7 +709,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `show-output <channel-id>`
 - `remote-open [[user@]host[:port]:/path]`
 - `remote-resolve <path> <mine|host|compare|merge>`
-- `remote-remove-mirror [root] [discard]`
+- `remote-remove-mirror <root> [discard]`
 - `remote-show-log [host]`
 - `remote-local-terminal`
 - `remote-status`
@@ -717,7 +717,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `remote-attach-terminals <host> <handle>...`
 - `remote-close-terminals <host> <handle>...`
 - `remote-disconnect [host]`
-- `remote-reconnect <host>`
+- `remote-reconnect [host]`
 - `remote-copy-command <host> <ssh|install|linger>`
 - `remote-changes`
 - `remote-clear-changes`

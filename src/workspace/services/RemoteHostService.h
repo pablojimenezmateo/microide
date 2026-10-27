@@ -67,6 +67,8 @@ class RemoteHostService {
     std::function<void(std::string_view key)> dismiss_notification;
     // A removed mirror leaves the recents list (Remote: Remove Mirror).
     std::function<void(const project::ProjectId& id)> forget_recent_project;
+    // The recents list, newest first: the mirrors Remove Mirror can offer.
+    std::function<const std::vector<project::ProjectId>&()> recent_projects;
     // Open a terminal tab whose shell runs through `launcher` rather than the
     // project's (the ssh authentication tab, a local terminal in a remote project),
     // titled with `label_prefix`; `command` empty = an interactive shell. False on
@@ -272,9 +274,36 @@ class RemoteHostService {
   // several.
   std::string SoleHost() const;
 
+  // What the Remote menu's rows are available for. They run per painted row while
+  // the menu is open, so they read only what the service holds: no disk, no
+  // allocation.
+  //   a remote project is open -- a connection to show, reconnect, stop, forward on
+  bool HasOpenProject() const;
+  //   a port is forwarded to a host with an open project -- one to stop forwarding
+  bool HasForwardedPort() const;
+  //   a recent remote project is not open -- a mirror Remove Mirror may take
+  bool HasRemovableMirror() const;
+
+  // The hosts of the open remote projects, each once, in the order first opened.
+  std::vector<std::string> OpenHosts() const;
+  struct ForwardedPort {
+    std::string host;
+    std::uint16_t host_port = 0;
+    std::uint16_t local_port = 0;
+  };
+  // Every port forwarded to a host with an open project, by host then port.
+  std::vector<ForwardedPort> ForwardedPorts() const;
+  // The recent remote projects that are not open and whose mirror is on disk: what
+  // Remove Mirror offers. Reads each candidate's record: not for a frame path.
+  std::vector<project::ProjectId> RemovableMirrors() const;
+
  private:
   struct Project {
     std::unique_ptr<project::remote::RemoteProject> project;
+    // Its record's fields, kept: record() builds both strings per call, and the
+    // menu's availability asks per painted row.
+    std::string host;
+    std::string host_root;
     project::remote::RemoteHostSession::Status status;
     bool auth_terminal_opened = false;
     bool announced_sync = false;

@@ -216,19 +216,26 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
                static_cast<float>(event.button.y))) {
     const StatusBarViewModel status_vm =
         RenderViewModelBuilder(context_).BuildStatusBar(layout, status_bar_service_);
-    std::string_view command;
-    std::string_view command_arg;
+    const StatusBarSegmentViewModel* hit = nullptr;
+    SDL_FRect hit_rect{};
     ForEachStatusBarSegmentRect(
         status_vm, text_renderer_,
         [&](const StatusBarSegmentViewModel& segment, const SDL_FRect& rect) {
-          if (!command.empty() || segment.command.empty() ||
-              !Contains(rect, static_cast<float>(event.button.x),
-                        static_cast<float>(event.button.y))) {
-            return;
+          if (hit == nullptr && segment.clickable &&
+              Contains(rect, static_cast<float>(event.button.x), static_cast<float>(event.button.y))) {
+            hit = &segment;
+            hit_rect = rect;
           }
-          command = segment.command;
-          command_arg = segment.command_arg;
         });
+    // A segment that opens a menu anchors it at itself: the popup flips above the
+    // bar, there being no room below (the remote segment's Remote menu).
+    if (hit != nullptr && hit->menu != MenuId::None) {
+      MakeMenuCoordinator().OpenAnchoredMenu(hit->menu, hit_rect);
+      EnsureRedraw(mark, [this]() { RequestChromeRedraw(); });
+      return true;
+    }
+    const std::string_view command = hit != nullptr ? hit->command : std::string_view();
+    const std::string_view command_arg = hit != nullptr ? hit->command_arg : std::string_view();
     if (!command.empty()) {
       std::vector<std::string> args;
       if (!command_arg.empty()) {

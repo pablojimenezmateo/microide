@@ -231,7 +231,7 @@ void TestEveryBuiltinBindingDispatchesWhereItsRegistrationSays() {
       // action is enabled.
       fixture.Apply();
       const auto enabled = [&](workspace::ActionId action) {
-        return TestAccess::ActionEnabled(fixture.shell, action);
+        return TestAccess::IsActionEnabled(fixture.shell, action);
       };
       const ResolvedKeybinding* first =
           binding.leader_key == SDLK_UNKNOWN

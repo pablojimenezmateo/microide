@@ -619,6 +619,52 @@ return ide.plugin({
   Expect(told, "registering into a menu that does not exist should fail, naming it");
 }
 
+// The plugin parser's list of menu names lives in src/plugin, which cannot read the
+// workspace's spec table, so the two are held together here: one entry per menu on
+// the bar, named by its label, must register and reach that menu. A bar menu the
+// parser does not know (the Remote menu, when it was added) is refused at
+// registration, and a name the bar no longer has would register into nothing.
+void TestPluginMenuNamesAreTheBarsMenus() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  using microide::workspace::IsMenuBarTopLevelMenu;
+  using microide::workspace::WorkspaceMenuSpecs;
+  TemporaryDirectory temp;
+  const std::filesystem::path plugins_dir = temp.path() / "config" / "microide" / "plugins";
+  std::string adds;
+  std::size_t bar_menus = 0;
+  for (const auto& spec : WorkspaceMenuSpecs()) {
+    if (IsMenuBarTopLevelMenu(spec.id)) {
+      ++bar_menus;
+      const std::string label(spec.label);
+      adds += "    ctx.menus.add({ id = \"" + label + "\", menu = \"" + label +
+              "\", action = \"contrib.bar.run\", label = \"In " + label + "\" })\n";
+    }
+  }
+  WriteFile(plugins_dir / "contrib-bar" / "init.lua", "local ide = require(\"microide\")\n"
+                                                       "return ide.plugin({\n"
+                                                       "  id = \"contrib.bar\",\n"
+                                                       "  setup = function(ctx)\n"
+                                                       "    ctx.commands.add(\"contrib.bar.run\", function() end)\n" +
+                                                           adds +
+                                                           "  end,\n"
+                                                           "})\n");
+  PluginHost host;
+  ScopedPluginConfigHomeEnv config_home(temp.path() / "config");
+  host.Reload(temp.path() / "project");
+  Expect(host.ContributedMenuEntries().size() == bar_menus,
+         "every bar menu should accept a plugin entry by its label: " +
+             std::to_string(host.ContributedMenuEntries().size()) + " of " + std::to_string(bar_menus));
+  for (const auto& spec : WorkspaceMenuSpecs()) {
+    if (IsMenuBarTopLevelMenu(spec.id)) {
+      const auto items = ContributedMenuItems(spec.id, host);
+      Expect(items.size() == 1 && items.front().label == "In " + std::string(spec.label),
+             "the entry named \"" + std::string(spec.label) + "\" should reach that menu");
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Plugin-contributed keybindings
 // ---------------------------------------------------------------------------
@@ -1585,6 +1631,7 @@ void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "KeybindingRegistry/ResolveLeftCtrlMatch",
           TestResolveKeybindingsFindLeftCtrlMatch);
   AddTest(tests, "ContributionRegistry/PluginMenuEntriesNameTheMenuBar", TestPluginMenuEntriesNameTheMenuBar);
+  AddTest(tests, "ContributionRegistry/PluginMenuNamesAreTheBarsMenus", TestPluginMenuNamesAreTheBarsMenus);
   AddTest(tests, "ContributionRegistry/FindKeybindingTerminalOwnsGlobalChordsUnlessSkipped",
           TestFindKeybindingTerminalOwnsGlobalChordsUnlessSkipped);
   AddTest(tests, "ContributionRegistry/ResolveKeybindingsSkipShellOverrides",

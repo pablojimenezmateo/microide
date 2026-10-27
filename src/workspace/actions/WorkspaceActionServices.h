@@ -771,6 +771,11 @@ class WorkspaceActionContext {
   // of the output channels, of the other panes, the file finder to compare the
   // active file with. False when it has none to offer (the input prompt asks).
   bool OpenArgumentPicker(ActionId id);
+  // A command whose OPTIONAL argument it would otherwise guess, run bare from a
+  // menu, the palette or a key: the choices, when there is more than one (a host
+  // verb with several hosts open). False when the bare command is unambiguous and
+  // runs as it is.
+  bool OpenOptionalArgumentPicker(ActionId id);
   // Browse Folder…: `folder`'s entries as a pick -- its subfolders browse on,
   // its files open (the active file's folder when empty). Empty on success,
   // else why not.

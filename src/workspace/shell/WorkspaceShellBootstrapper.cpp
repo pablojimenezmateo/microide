@@ -239,6 +239,13 @@ ActionAvailability WorkspaceShell::Bootstrapper::BuildActionAvailability() const
           .debug_session_stopped = [shell]() { return shell->IsDebugSessionStopped(); },
           .debug_supports_reverse = [shell]() { return shell->DebugSupportsReverse(); },
           .debug_session_count = [shell]() { return shell->CurrentDapManager().SessionCount(); },
+          .remote_hosts = [shell]() -> const RemoteHostService* { return shell->glue_->remote_host_service.get(); },
+          .has_remote_recent =
+              [shell]() {
+                const auto& recents = shell->recents_service_.RecentProjects();
+                return std::any_of(recents.begin(), recents.end(),
+                                   [](const project::ProjectId& id) { return id.IsRemote(); });
+              },
       });
 }
 

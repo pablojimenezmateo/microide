@@ -85,7 +85,6 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::Tab, {}, "Ctrl+N"),
       MenuItem(ActionId::Open, {}, "Ctrl+O"),
       MenuItem(ActionId::ProjectOpen, {}, "Ctrl+K Ctrl+O"),
-      MenuItem(ActionId::RemoteOpenFolder),
       MenuSeparator(),
       MenuItem(ActionId::Save),
       MenuItem(ActionId::SaveAs, {}, "Ctrl+Shift+S"),
@@ -239,6 +238,28 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::MergeCopyCurrent, "Copy Current Side"),
       MenuItem(ActionId::MergeResetConflict, "Reset Conflict"),
   });
+  // Every remote verb that needs no typed argument, in one place (the Remote menu
+  // between Git and Terminal: where work lives, like a repository). The menu is
+  // the category, so the labels drop the palette's "Remote: " prefix; the palette
+  // keeps it, because there the prefix is what typing "remote" finds. Resolve
+  // Conflict, Copy Command, Clear Changed on Host and Apply Held Deletes act on a
+  // row or a view and stay there; New Local Terminal is a terminal verb.
+  static const auto kRemoteItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::RemoteOpenFolder, "Open Folder on Host…"),
+      MenuSeparator(),
+      MenuItem(ActionId::RemoteShowStatus, "Show Status"),
+      MenuItem(ActionId::RemoteShowHostChanges, "Show Changed on Host"),
+      MenuItem(ActionId::RemoteShowLog, "Show Host Server Log"),
+      MenuSeparator(),
+      MenuItem(ActionId::RemoteForwardPort, "Forward a Port…"),
+      MenuItem(ActionId::RemoteUnforwardPort, "Stop Forwarding a Port…"),
+      MenuSeparator(),
+      MenuItem(ActionId::RemoteReconnect, "Reconnect"),
+      MenuItem(ActionId::RemoteDisconnect, "Disconnect"),
+      MenuItem(ActionId::RemoteStopServer, "Stop Host Server"),
+      MenuSeparator(),
+      MenuItem(ActionId::RemoteRemoveMirror, "Remove Mirror…"),
+  });
   static const auto kTerminalItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::Term, {}, "Ctrl+Shift+`"),
       MenuItem(ActionId::RemoteOpenLocalTerminal, "New Local Terminal"),
@@ -332,6 +353,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuSpec{MenuId::View, "View", kViewItems},
       MenuSpec{MenuId::Go, "Go", kGoItems},
       MenuSpec{MenuId::Git, "Git", kGitItems},
+      MenuSpec{MenuId::Remote, "Remote", kRemoteItems},
       MenuSpec{MenuId::SidebarMode, "Sidebar Mode", {}},
       MenuSpec{MenuId::GitOutgoingBase, "Outgoing Base", {}},
       MenuSpec{MenuId::Terminal, "Terminal", kTerminalItems},
@@ -496,15 +518,17 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
 }
 
 MenuId ParseMenuId(std::string_view name) {
-  // Every menu on the bar (registration lower-cases the name and refuses others).
-  if (name == "file") return MenuId::File;
-  if (name == "edit") return MenuId::Edit;
-  if (name == "view") return MenuId::View;
-  if (name == "go") return MenuId::Go;
-  if (name == "git") return MenuId::Git;
-  if (name == "terminal") return MenuId::Terminal;
-  if (name == "debug") return MenuId::Debug;
-  if (name == "help") return MenuId::Help;
+  // Every menu on the bar, by its label lower-cased (registration lower-cases the
+  // name and refuses others). Read from the table: a hand-kept list here once
+  // trailed the bar by a menu.
+  for (const MenuSpec& spec : WorkspaceMenuSpecs()) {
+    if (IsMenuBarTopLevelMenu(spec.id) && spec.label.size() == name.size() &&
+        std::equal(spec.label.begin(), spec.label.end(), name.begin(), [](char a, char b) {
+          return (a >= 'A' && a <= 'Z' ? static_cast<char>(a + ('a' - 'A')) : a) == b;
+        })) {
+      return spec.id;
+    }
+  }
   return MenuId::None;
 }
 

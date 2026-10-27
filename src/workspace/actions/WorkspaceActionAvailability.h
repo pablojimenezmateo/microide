@@ -14,6 +14,8 @@
 
 namespace microide::workspace {
 
+class RemoteHostService;
+
 class ActionAvailability {
  public:
   struct Operations {
@@ -52,6 +54,11 @@ class ActionAvailability {
     std::function<bool()> debug_supports_reverse;
     // Number of live debug sessions (Phase 8) — gates the session switcher.
     std::function<std::size_t()> debug_session_count;
+    // The remote hosts service when one exists (null before any remote project
+    // opened: nothing is connected), and whether the recents list names a remote
+    // project -- what Remove Mirror can take while no service exists yet.
+    std::function<const RemoteHostService*()> remote_hosts;
+    std::function<bool()> has_remote_recent;
   };
 
   ActionAvailability(const WorkspaceContext& context, Operations operations);

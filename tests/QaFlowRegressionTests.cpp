@@ -2985,7 +2985,7 @@ void TestCommandRefusalsSayWhatIsWrong() {
 
   Expect(TestAccess::ExecuteCommandLine(fixture.shell, "project-close"), "project-close should run");
   expect_said("compare-clipboard", "No file or buffer selected to compare");
-  expect_said("remote-remove-mirror", "No active project");
+  expect_said("remote-remove-mirror", "usage: remote-remove-mirror <root>");
   expect_said("remote-apply-deletes", "No active project");
   expect_said("tests-discover", "No active project");
 }
@@ -3702,6 +3702,77 @@ void TestMovingOntoAPanelTabsCloseButtonRepaintsIt() {
 
 }  // namespace
 
+// remote-menu: the remote segment names the host and, clicked, opens the Remote
+// menu as a popup above the bar (VS Code's remote indicator) instead of running
+// one hard-wired verb; Escape closes it; a click on a row runs it; with no host
+// connected the connection verbs are dimmed, not missing, and Open Folder on Host…
+// stays available.
+void TestTheRemoteSegmentOpensTheRemoteMenu() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("remote.txt", "text\n");
+  workspace::StatusBarSegmentValue remote;
+  remote.text = "dev@box";
+  remote.tooltip = "Remote menu";
+  remote.menu = workspace::MenuId::Remote;
+  remote.visible = true;
+  TestAccess::SetStatusBarSegment(fixture.shell, workspace::StatusBarSegmentId::Remote, std::move(remote));
+  fixture.PinCaret();
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  bool reported = false;
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    if (entry["name"].AsString() == "status:remote") {
+      reported = entry["enabled"].AsBool() && entry["menu"].AsString() == "Remote";
+    }
+  }
+  Expect(reported, "the ui query should report the remote segment as opening the Remote menu");
+
+  const auto segment = fixture.ElementRect("status:remote");
+  Expect(segment.has_value(), "the status bar should show the remote segment");
+  if (!segment) {
+    return;
+  }
+  fixture.ExpectFresh(fixture.Click(*segment), "opening the Remote menu from the status bar");
+  Expect(TestAccess::MenuBarOpen(fixture.shell) &&
+             TestAccess::ActiveMenuId(fixture.shell) == workspace::MenuId::Remote,
+         "a click on the remote segment should open the Remote menu");
+  const auto open_row = fixture.ElementRect("menu-item:Remote/Open Folder on Host…");
+  const auto status_row = fixture.ElementRect("menu-item:Remote/Show Status");
+  Expect(open_row.has_value() && status_row.has_value(), "the popup should list the remote verbs");
+  if (open_row) {
+    Expect(open_row->y + open_row->h <= segment->y,
+           "the popup should open above the status bar, there being no room below");
+  }
+  // Nothing connected: the connection verbs are there and dimmed.
+  for (const util::JsonValue& entry : TestAccess::ControlUi(fixture.shell)["elements"].AsArray()) {
+    const std::string& name = entry["name"].AsString();
+    if (!name.starts_with("menu-item:Remote/")) {
+      continue;
+    }
+    const bool always = name == "menu-item:Remote/Open Folder on Host…";
+    Expect(entry["enabled"].AsBool() == always,
+           name + (always ? " should be available with no host" : " should be dimmed with no host connected"));
+  }
+
+  SendKeyDown(fixture.shell, SDLK_ESCAPE, SDL_KMOD_NONE);
+  Expect(!TestAccess::MenuBarOpen(fixture.shell), "Escape should close the Remote menu");
+
+  // The row runs its verb: Open Folder on Host… asks for the host.
+  (void)fixture.Click(*segment);
+  const auto row = fixture.ElementRect("menu-item:Remote/Open Folder on Host…");
+  Expect(row.has_value(), "the Remote menu should open again");
+  if (row) {
+    (void)fixture.Click(*row);
+    Expect(!TestAccess::MenuBarOpen(fixture.shell), "running a row should close the menu");
+    Expect(!TestAccess::ControlUi(fixture.shell)["modal"].IsNull(),
+           "Open Folder on Host… should open the host prompt");
+  }
+}
+
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/OutputTabRepaintsWhenItsChannelGetsALabel",
           TestOutputTabRepaintsWhenItsChannelGetsALabel);
@@ -3872,6 +3943,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/ReloadFromDiskRefusesADirtyBufferWithWhy", TestReloadFromDiskRefusesADirtyBufferWithWhy);
   AddTest(tests, "QaFlowRegression/NothingBeneathAnOpenMenuHovers", TestNothingBeneathAnOpenMenuHovers);
   AddTest(tests, "QaFlowRegression/TypingThatReshapesADiffRepaintsIt", TestTypingThatReshapesADiffRepaintsIt);
+  AddTest(tests, "QaFlowRegression/TheRemoteSegmentOpensTheRemoteMenu", TestTheRemoteSegmentOpensTheRemoteMenu);
 }
 
 }  // namespace microide::tests

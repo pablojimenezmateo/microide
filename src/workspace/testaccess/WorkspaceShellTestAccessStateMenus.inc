@@ -322,6 +322,14 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.MenuOverflowChevronRect(layout.menu_bar);
   }
+  // The bar's laid-out menus and the ones its overflow chevron holds, at the
+  // current window size.
+  static VisibleMenuBarItems MenuBarItemsForTest(WorkspaceShell& shell) {
+    return shell.ComputeVisibleMenuBarItems(CurrentLayout(shell).menu_bar);
+  }
+  static MenuBarOverflowIds MenuBarOverflowIdsForTest(WorkspaceShell& shell) {
+    return shell.ComputeOverflowMenuBarItems(CurrentLayout(shell).menu_bar);
+  }
   static std::size_t MenuBarOverflowItemCount(WorkspaceShell& shell) {
     return shell.ComputeOverflowMenuBarItems(CurrentLayout(shell).menu_bar).size();
   }
@@ -558,6 +566,11 @@
           }
         });
     return found;
+  }
+  // A segment as a publisher outside the frame sets it (the remote segment, with no
+  // host to connect to).
+  static void SetStatusBarSegment(WorkspaceShell& shell, StatusBarSegmentId id, StatusBarSegmentValue value) {
+    (void)shell.status_bar_service_.SetSegment(id, std::move(value));
   }
   static void RefreshStatusBar(WorkspaceShell& shell) { shell.RefreshStatusBar(); }
   static void SetStatusBarGitSnapshot(WorkspaceShell& shell,

@@ -84,9 +84,8 @@ void TestMenuBarPopupsPaint() {
 
   // Every menu-bar menu, so the item mix (checkables, disabled rows, separators,
   // accelerators) is covered rather than whichever one happens to be first.
-  const MenuId menus[] = {MenuId::File,  MenuId::Edit,  MenuId::View,
-                          MenuId::Go,    MenuId::Git,   MenuId::Terminal,
-                          MenuId::Debug, MenuId::Help};
+  const MenuId menus[] = {MenuId::File,     MenuId::Edit,  MenuId::View, MenuId::Go,   MenuId::Git,
+                          MenuId::Remote, MenuId::Terminal, MenuId::Debug, MenuId::Help};
   for (const MenuId menu : menus) {
     WorkspaceShellTestAccess::OpenMenuBarMenuForTest(shell, menu);
     PaintPopupBody(shell, canvas, "opening a menu-bar menu should open the menu bar");

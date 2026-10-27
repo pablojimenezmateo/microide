@@ -47,12 +47,12 @@ enum class ActionId {
   // `remote-close-terminals <host> <handle>...` ends them (its Close).
   RemoteAttachHostTerminals,
   RemoteCloseHostTerminals,
-  // `remote-remove-mirror [root] [discard]`: delete a closed remote project's mirror
+  // `remote-remove-mirror <root> [discard]`: delete a closed remote project's mirror
   // (tree, objects, journal, state) and forget it in the recents; `discard` lets
   // saves the host never received go with it.
   RemoteRemoveMirror,
   RemoteDisconnect,   // `remote-disconnect [host]`; every host when omitted
-  RemoteReconnect,    // `remote-reconnect <host>`: the Reconnect button
+  RemoteReconnect,    // `remote-reconnect [host]`: the Reconnect button
   // `remote-copy-command <host> <ssh|install|linger>`: the Copy buttons on a failure row.
   RemoteCopyCommand,
   // Changed on Host (§ 7.9) for the active remote project: `remote-changes` shows the

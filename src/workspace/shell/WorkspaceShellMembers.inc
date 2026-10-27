@@ -2044,8 +2044,7 @@
     std::string accelerator;
     std::string command_name;
   };
-  static constexpr std::size_t kMenuSlotCount =
-      static_cast<std::size_t>(MenuId::ProjectTabContext) + 1;
+  static constexpr std::size_t kMenuSlotCount = kMenuIdCount;
   mutable std::array<std::vector<DynamicMenuEntryStorage>, kMenuSlotCount> dynamic_menu_entries_;
   mutable std::array<std::vector<MenuItemSpec>, kMenuSlotCount> dynamic_menu_items_;
   mutable std::vector<ResolvedKeybinding> resolved_keybindings_cache_;

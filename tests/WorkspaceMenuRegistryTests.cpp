@@ -4,6 +4,7 @@
 #include "workspace/registries/WorkspaceMenuRegistry.h"
 
 #include <algorithm>
+#include <cctype>
 #include <array>
 #include <string>
 #include <string_view>
@@ -30,6 +31,7 @@ std::vector<std::string_view> TopLevelLabels() {
       case MenuId::View:
       case MenuId::Go:
       case MenuId::Git:
+      case MenuId::Remote:
       case MenuId::Terminal:
       case MenuId::Help:
         labels.push_back(spec.label);
@@ -80,8 +82,8 @@ bool TreeMenuContainsAction(TreeContextTargetKind target, ActionId action) {
 
 void TestMenuRegistryTopLevelSnapshot() {
   const std::vector<std::string_view> labels = TopLevelLabels();
-  const std::array<std::string_view, 7> expected = {
-      "File", "Edit", "View", "Go", "Git", "Terminal", "Help",
+  const std::array<std::string_view, 8> expected = {
+      "File", "Edit", "View", "Go", "Git", "Remote", "Terminal", "Help",
   };
   Expect(labels.size() == expected.size(),
          "top-level menu snapshot should contain the expected number of menus");
@@ -96,10 +98,10 @@ void TestMenuRegistryExpandedMenusExposeExpectedEntries() {
          "File menu should expose Open File");
   Expect(MenuContainsLabel(MenuId::File, "Open Folder…"),
          "File menu should expose Open Folder");
-  // VS Code lists its remote entry points beside the local ones; a feature reachable
-  // only from the palette is one a user has to already know about.
-  Expect(MenuContainsLabel(MenuId::File, "Remote: Open Folder on Host…"),
-         "File menu should expose opening a folder on a host beside Open Folder");
+  // The remote verbs live in the Remote menu, once: File no longer carries a
+  // "Remote: Open Folder on Host…" twin (the welcome page keeps its button).
+  Expect(!MenuContainsAction(MenuId::File, ActionId::RemoteOpenFolder),
+         "File menu should not also list Open Folder on Host");
   {
     // In a remote project New Terminal runs on the host; its local twin sits under it.
     const auto* terminal = FindWorkspaceMenuSpec(MenuId::Terminal);
@@ -279,11 +281,11 @@ void TestMenuRegistryTabContextMenusLeadWithCopyAndTrailWithClose() {
 // Iterating the enum rather than the table is the point: a table-driven check
 // can only confirm what is already there.
 void TestMenuRegistryEveryMenuIdHasASpec() {
-  // The enum is contiguous from None; ProjectTabContext is its last enumerator
-  // (kMenuSlotCount is derived from exactly that, so if one is wrong both are).
-  constexpr auto kLast = static_cast<int>(MenuId::ProjectTabContext);
+  // The enum is contiguous from None to kMenuIdCount, which every per-menu table
+  // is sized from, so if the count is wrong this misses a menu or reads past one.
   int checked = 0;
-  for (int raw = static_cast<int>(MenuId::None) + 1; raw <= kLast; ++raw) {
+  for (int raw = static_cast<int>(MenuId::None) + 1; raw < static_cast<int>(microide::workspace::kMenuIdCount);
+       ++raw) {
     const MenuId id = static_cast<MenuId>(raw);
     Expect(FindWorkspaceMenuSpec(id) != nullptr,
            "every MenuId enumerator must have a MenuSpec in the registry table");
@@ -292,6 +294,86 @@ void TestMenuRegistryEveryMenuIdHasASpec() {
   Expect(checked == static_cast<int>(WorkspaceMenuSpecs().size()),
          "the enum and the spec table must have the same number of menus -- a spec "
          "listed twice would otherwise hide a missing one");
+}
+
+// The Remote menu (remote-menu D1): every remote verb that needs no typed argument,
+// in the designed order and groups, labelled without the "Remote: " prefix the
+// palette keeps -- in a menu named Remote the prefix only repeats the menu.
+void TestMenuRegistryRemoteMenuHoldsTheRemoteVerbs() {
+  const auto* spec = FindWorkspaceMenuSpec(MenuId::Remote);
+  Expect(spec != nullptr && spec->label == "Remote", "the Remote menu should exist");
+  if (spec == nullptr) {
+    return;
+  }
+  struct Row {
+    bool separator;
+    ActionId action;
+    std::string_view label;
+  };
+  const Row expected[] = {
+      {false, ActionId::RemoteOpenFolder, "Open Folder on Host…"},
+      {true, {}, {}},
+      {false, ActionId::RemoteShowStatus, "Show Status"},
+      {false, ActionId::RemoteShowHostChanges, "Show Changed on Host"},
+      {false, ActionId::RemoteShowLog, "Show Host Server Log"},
+      {true, {}, {}},
+      {false, ActionId::RemoteForwardPort, "Forward a Port…"},
+      {false, ActionId::RemoteUnforwardPort, "Stop Forwarding a Port…"},
+      {true, {}, {}},
+      {false, ActionId::RemoteReconnect, "Reconnect"},
+      {false, ActionId::RemoteDisconnect, "Disconnect"},
+      {false, ActionId::RemoteStopServer, "Stop Host Server"},
+      {true, {}, {}},
+      {false, ActionId::RemoteRemoveMirror, "Remove Mirror…"},
+  };
+  Expect(spec->items.size() == std::size(expected),
+         "the Remote menu should hold " + std::to_string(std::size(expected)) + " rows, holds " +
+             std::to_string(spec->items.size()));
+  for (std::size_t i = 0; i < std::min(spec->items.size(), std::size(expected)); ++i) {
+    const MenuItemSpec& item = spec->items[i];
+    if (expected[i].separator) {
+      Expect(item.separator, "Remote menu row " + std::to_string(i) + " should be a separator");
+      continue;
+    }
+    Expect(!item.separator && item.action == expected[i].action &&
+               ResolvedMenuItemLabel(item) == expected[i].label,
+           "Remote menu row " + std::to_string(i) + " should be \"" + std::string(expected[i].label) +
+               "\", is \"" + std::string(ResolvedMenuItemLabel(item)) + "\"");
+    const auto* action = FindWorkspaceActionSpec(item.action);
+    Expect(!ResolvedMenuItemLabel(item).starts_with("Remote"),
+           "a Remote menu label should not repeat the menu's name");
+    Expect(action != nullptr && action->label.starts_with("Remote: "),
+           "the palette label keeps the Remote: prefix (typing \"remote\" finds it): " +
+               std::string(action != nullptr ? action->label : std::string_view("?")));
+  }
+  // Between Git and Terminal on the bar.
+  const auto labels = TopLevelLabels();
+  const auto git = std::find(labels.begin(), labels.end(), "Git");
+  Expect(git != labels.end() && git + 1 != labels.end() && *(git + 1) == "Remote" && git + 2 != labels.end() &&
+             *(git + 2) == "Terminal",
+         "the Remote menu should sit between Git and Terminal");
+}
+
+// ParseMenuId reads the bar's own table: every bar menu by its label in any case,
+// nothing else (a context menu is not a contribution target).
+void TestMenuRegistryParseMenuIdNamesEveryBarMenu() {
+  using microide::workspace::IsMenuBarTopLevelMenu;
+  using microide::workspace::ParseMenuId;
+  for (const auto& spec : WorkspaceMenuSpecs()) {
+    std::string lower(spec.label);
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const MenuId parsed = ParseMenuId(lower);
+    if (IsMenuBarTopLevelMenu(spec.id)) {
+      Expect(parsed == spec.id, "\"" + lower + "\" should name the " + std::string(spec.label) + " menu");
+    } else {
+      Expect(parsed == MenuId::None || IsMenuBarTopLevelMenu(parsed),
+             "\"" + lower + "\" should not name a context menu");
+    }
+  }
+  Expect(ParseMenuId("remote") == MenuId::Remote, "\"remote\" should name the Remote menu");
+  Expect(ParseMenuId("tools") == MenuId::None, "an unknown name should name nothing");
+  Expect(ParseMenuId("") == MenuId::None, "an empty name should name nothing");
 }
 
 }  // namespace
@@ -315,6 +397,8 @@ void RegisterWorkspaceMenuRegistryTests(std::vector<TestCase>& tests) {
           TestMenuRegistryProjectTabContextExposesCopyAbsolutePathNotTreeRoot);
   AddTest(tests, "WorkspaceMenuRegistry/TabContextMenusLeadWithCopyAndTrailWithClose",
           TestMenuRegistryTabContextMenusLeadWithCopyAndTrailWithClose);
+  AddTest(tests, "WorkspaceMenuRegistry/RemoteMenuHoldsTheRemoteVerbs", TestMenuRegistryRemoteMenuHoldsTheRemoteVerbs);
+  AddTest(tests, "WorkspaceMenuRegistry/ParseMenuIdNamesEveryBarMenu", TestMenuRegistryParseMenuIdNamesEveryBarMenu);
 }
 
 }  // namespace microide::tests

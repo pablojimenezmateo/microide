@@ -55,6 +55,7 @@ class HostPortForwards {
   };
 
   std::vector<PortForward> list() const;
+  bool empty() const;
   std::optional<PortForward> Find(std::uint16_t host_port) const;
   void Add(PortForward forward);  // replaces one for the same host port
   std::optional<PortForward> Remove(std::uint16_t host_port);

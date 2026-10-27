@@ -299,6 +299,11 @@ std::vector<HostPortForwards::PortForward> HostPortForwards::list() const {
   return forwards_;
 }
 
+bool HostPortForwards::empty() const {
+  std::lock_guard lock(mutex_);
+  return forwards_.empty();
+}
+
 std::optional<HostPortForwards::PortForward> HostPortForwards::Find(std::uint16_t host_port) const {
   std::lock_guard lock(mutex_);
   for (const PortForward& forward : forwards_) {

@@ -52,6 +52,9 @@ bool ActionCoordinator::Execute(ActionId id,
       }
       return true;
     }
+    if (context_.OpenOptionalArgumentPicker(id)) {
+      return true;
+    }
   }
 
   std::string rejection_feedback;

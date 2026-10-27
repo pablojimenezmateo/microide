@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "util/InlineVector.h"
+#include "workspace/registries/MenuId.h"
 #include "workspace/actions/WorkspaceActionTypes.h"
 #include "workspace/lsp/WorkspaceLspClient.h"
 
@@ -18,25 +19,6 @@ class PluginHost;
 }  // namespace microide::plugin
 
 namespace microide::workspace {
-
-enum class MenuId {
-  None,
-  File,
-  Edit,
-  View,
-  Go,
-  Git,
-  SidebarMode,
-  GitOutgoingBase,
-  EditorContext,
-  EditorTabContext,
-  Terminal,
-  Debug,
-  Help,
-  TerminalContext,
-  TerminalTabContext,
-  ProjectTabContext,
-};
 
 enum class TreeContextTargetKind {
   None,
@@ -95,15 +77,6 @@ inline constexpr std::size_t kMaxMenuBarItems = 24;
 // ComputeVisibleWindowControlButtons.
 inline constexpr std::size_t kWindowControlButtonCount = 3;
 
-// Whether a menu lives on the menu bar, as opposed to opening anchored on a button
-// or a click (the sidebar's views menu, the git base menu, the context menus).
-constexpr bool IsMenuBarTopLevelMenu(MenuId id) {
-  return id != MenuId::SidebarMode && id != MenuId::GitOutgoingBase &&
-         id != MenuId::EditorContext && id != MenuId::EditorTabContext &&
-         id != MenuId::TerminalContext && id != MenuId::TerminalTabContext &&
-         id != MenuId::ProjectTabContext && id != MenuId::None;
-}
-
 // One laid-out menu-bar entry. Menu vocabulary rather than shell state: the
 // registry owns MenuId and the cap the container below is sized from, and the
 // shell aliases both.
@@ -134,8 +107,9 @@ std::string_view LspDrivenMenuActionLabel(ActionId id,
                                           const LspClient::ReadinessSnapshot& snapshot,
                                           std::string& scratch);
 
-// Map a plugin menu string ("file", "edit", "view", "go", "terminal") to a MenuId.
-// Returns MenuId::None for unrecognised values.
+// Map a plugin menu string -- a menu-bar menu's label, lower-cased ("file", "remote",
+// …) -- to its MenuId. Derived from the spec table, so a new bar menu is reachable
+// by name with no second list to update. MenuId::None for anything else.
 MenuId ParseMenuId(std::string_view name);
 
 // Dynamic menu items contributed by plugins for a given menu.

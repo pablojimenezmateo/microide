@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "workspace/registries/WorkspaceMenuRegistry.h"
 
 #include "support/RetainedRedraw.h"
 #include "support/SoftwareCanvas.h"
@@ -29,6 +30,7 @@ using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess
 using microide::workspace::ActionId;
 using microide::workspace::TreeContextTargetKind;
 using microide::workspace::WorkspaceTreeContextMenuItems;
+using microide::workspace::IsMenuBarTopLevelMenu;
 
 SDL_Color ReadSurfacePixelOrThrow(SDL_Surface* surface, int x, int y) {
   Uint8 r = 0;
@@ -1918,8 +1920,8 @@ void TestWorkspaceShellRowUnderAnOpenMenuDoesNotHoverThroughIt() {
 
 // A menu row drawn over the sidebar's view buttons runs when clicked. The chrome
 // press handler tested the view buttons before the open menu, so the press went to
-// the button beneath: with the project strip shown, File > Remote: Open Folder on
-// Host… sits over the Search button, and clicking it switched the sidebar to Search
+// the button beneath: with the project strip shown, File's fourth row (then Remote:
+// Open Folder on Host…) sat over the Search button, and clicking it switched the sidebar to Search
 // and left the menu open (reported from use as "nothing happens, and the mouse
 // interacts with the items below the menu"). The `ui` query's receipt names the row
 // the click ran, which is how tools/qa now checks every row of every menu.
@@ -1946,30 +1948,54 @@ void TestWorkspaceShellMenuRowOverTheSidebarViewButtonsRunsTheRow() {
   shell.Render(canvas.renderer(), kWidth, kHeight);
   (void)shell.ConsumePendingRenderInvalidation();
 
+  // A dirty file, so the row that lies over the view buttons with the project strip
+  // shown -- Save -- is enabled and has something to do.
+  WorkspaceShellTestAccess::OpenFile(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("// edited\n");
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
   const std::optional<SDL_FRect> file = WorkspaceShellTestAccess::MenuBarItemRect(shell, "File");
   Expect(file.has_value(), "the File menu should be on the menu bar");
   (void)DispatchEvents(shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, file->x + 4.0f, file->y + 4.0f),
                                MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, file->x + 4.0f, file->y + 4.0f)});
   Expect(WorkspaceShellTestAccess::MenuBarOpen(shell), "clicking File should open it");
 
-  const std::optional<SDL_FRect> row = WorkspaceShellTestAccess::PopupMenuItemRect(
-      shell, WorkspaceShell::MenuId::File, "Remote: Open Folder on Host…");
-  Expect(row.has_value(), "the File menu should list Remote: Open Folder on Host…");
   // Over another view's button where there is one, so a stolen press shows as a
-  // view switch as well as a menu left open.
+  // view switch as well as a menu left open. Whichever File row lies there (it was
+  // Remote: Open Folder on Host… until that moved to the Remote menu).
   const std::string view_before = WorkspaceShellTestAccess::SidebarViewId(shell);
   std::vector<std::string> views{"tree", "search", "git"};
   std::stable_partition(views.begin(), views.end(), [&](const std::string& v) { return v != view_before; });
   std::optional<SDL_FPoint> probe;
-  for (const std::string& view : views) {
-    SDL_FRect overlap{};
-    const SDL_FRect button = WorkspaceShellTestAccess::SidebarModeTabRect(shell, view);
-    if (SDL_GetRectIntersectionFloat(&*row, &button, &overlap) && overlap.w > 2.0f && overlap.h > 2.0f) {
-      probe = SDL_FPoint{overlap.x + overlap.w / 2.0f, overlap.y + overlap.h / 2.0f};
-      break;
+  std::string probed_label;
+  for (const std::string& label : WorkspaceShellTestAccess::VisiblePopupMenuLabels(shell, WorkspaceShell::MenuId::File)) {
+    const std::optional<SDL_FRect> row =
+        WorkspaceShellTestAccess::PopupMenuItemRect(shell, WorkspaceShell::MenuId::File, label);
+    for (const std::string& view : views) {
+      SDL_FRect overlap{};
+      const SDL_FRect button = WorkspaceShellTestAccess::SidebarModeTabRect(shell, view);
+      if (!probe.has_value() && row.has_value() && label != "Quit" && label != "Close Project" &&
+          SDL_GetRectIntersectionFloat(&*row, &button, &overlap) && overlap.w > 2.0f && overlap.h > 2.0f) {
+        probe = SDL_FPoint{overlap.x + overlap.w / 2.0f, overlap.y + overlap.h / 2.0f};
+        probed_label = label;
+      }
     }
   }
-  Expect(probe.has_value(), "the fixture should put the remote row over a sidebar view button");
+  Expect(probe.has_value(), "the fixture should put a File row over a sidebar view button: " + [&] {
+    std::string all;
+    for (const std::string& label : WorkspaceShellTestAccess::VisiblePopupMenuLabels(shell, WorkspaceShell::MenuId::File)) {
+      const auto row = WorkspaceShellTestAccess::PopupMenuItemRect(shell, WorkspaceShell::MenuId::File, label);
+      all += label + "@" + (row ? std::to_string(row->y) : std::string("-")) + " ";
+    }
+    for (const std::string& view : views) {
+      all += view + "@" + std::to_string(WorkspaceShellTestAccess::SidebarModeTabRect(shell, view).y) + " ";
+    }
+    return all;
+  }());
+  if (!probe.has_value()) {
+    return;
+  }
 
   (void)DispatchEvents(shell, {MouseMotionEvent(probe->x, probe->y),
                                MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, probe->x, probe->y),
@@ -1977,10 +2003,8 @@ void TestWorkspaceShellMenuRowOverTheSidebarViewButtonsRunsTheRow() {
   Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == view_before,
          "a click on a menu row must not switch the sidebar view beneath it");
   Expect(!WorkspaceShellTestAccess::MenuBarOpen(shell), "running a row should close the menu");
-  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
-         "the remote row should open the Open Folder on Host prompt");
   const util::JsonValue ui = WorkspaceShellTestAccess::ExecuteControlQuery(shell, "ui");
-  Expect(ui["menu"]["lastRun"].AsString() == "File/Remote: Open Folder on Host…",
+  Expect(ui["menu"]["lastRun"].AsString() == "File/" + probed_label,
          "the ui receipt should name the row the click ran, not " + ui["menu"]["lastRun"].AsString());
   Expect(ui["menu"]["rowsRun"].AsInt() == 1, "one click should run one row");
 }
@@ -2517,6 +2541,68 @@ void TestWorkspaceShellAModalReleasesAHoveredWindowControl() {
                                                  shell.ConsumePendingRenderInvalidation(), pin_caret);
   Expect(modal.identical(), "a modal opening should take the hover off the window control; " +
                                 DescribePixelDiff(modal));
+}
+
+// remote-menu D4: one more top-level menu either fits the bar or goes into the
+// overflow chevron, at every Normal-mode width; nothing is truncated or dropped,
+// and the order is the table's (the bar's prefix, then the chevron's rest). The
+// width from which every menu fits is pinned so the next menu knows the budget.
+void TestWorkspaceShellMenuBarFitsOrOverflowsNeverTruncates() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "the fixture should open its project");
+  std::vector<WorkspaceShell::MenuId> bar_menus;
+  for (const auto& spec : microide::workspace::WorkspaceMenuSpecs()) {
+    if (IsMenuBarTopLevelMenu(spec.id)) {
+      bar_menus.push_back(spec.id);
+    }
+  }
+  int fits_from = -1;
+  float needed = 0.0f;  // the bar menus' extent from the bar's left edge, where all fit
+  // 720 is the default compact breakpoint: below it the bar is the hamburger.
+  for (int width = 720; width <= 1600; width += 4) {
+    WorkspaceShellTestAccess::SetWindowSize(shell, width, 720);
+    WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+    const SDL_FRect bar = WorkspaceShellTestAccess::MenuBarRect(shell);
+    const auto on_bar = WorkspaceShellTestAccess::MenuBarItemsForTest(shell);
+    const auto overflow = WorkspaceShellTestAccess::MenuBarOverflowIdsForTest(shell);
+    const auto chevron = WorkspaceShellTestAccess::MenuOverflowChevronRect(shell);
+    std::vector<WorkspaceShell::MenuId> order;
+    float right = bar.x;
+    for (const auto& item : on_bar) {
+      order.push_back(item.id);
+      Expect(item.rect.x >= right && item.rect.w > 0.0f,
+             "bar menus should be laid out left to right without overlap at width " + std::to_string(width));
+      right = item.rect.x + item.rect.w;
+    }
+    order.insert(order.end(), overflow.begin(), overflow.end());
+    Expect(order == bar_menus, "every bar menu should be on the bar or in the chevron, in order, at width " +
+                                   std::to_string(width));
+    Expect(overflow.empty() == !chevron.has_value(),
+           "the chevron should show exactly when menus overflow, at width " + std::to_string(width));
+    if (chevron.has_value()) {
+      Expect(right <= chevron->x, "no bar menu should run under the chevron at width " + std::to_string(width));
+    }
+    if (fits_from < 0 && overflow.empty()) {
+      fits_from = width;
+      needed = right - bar.x;
+    }
+  }
+  // Every menu fits at the narrowest Normal width, so the chevron never shows
+  // outside Compact mode with the default breakpoint. The extent the menus need is
+  // pinned (Remote menu added, 2026-10-27): a new top-level menu moves it, and
+  // the budget left at 720px says whether it still fits there.
+  constexpr int kMenusExtentPx = 628;
+  Expect(fits_from == 720, "every bar menu should fit at the narrowest Normal width, fits from " +
+                               std::to_string(fits_from));
+  Expect(static_cast<int>(needed + 0.5f) == kMenusExtentPx,
+         "the bar menus need " + std::to_string(needed) + "px, pinned at " + std::to_string(kMenusExtentPx));
 }
 
 // Left/Right walk the menu BAR. They walked every menu spec, so Right from Help
@@ -6392,6 +6478,7 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/ClosingAnAnchoredMenuReleasesItsButton",
           TestWorkspaceShellClosingAnAnchoredMenuReleasesItsButton);
   AddTest(tests, "Breadcrumbs/FolderAtNamesTheSegmentUnderTheClick", TestBreadcrumbFolderAtNamesTheSegmentUnderTheClick);
+  AddTest(tests, "WorkspaceShell/MenuBarFitsOrOverflowsNeverTruncates", TestWorkspaceShellMenuBarFitsOrOverflowsNeverTruncates);
   AddTest(tests, "WorkspaceShell/ChromeSegmentsAreInteractive", TestWorkspaceShellChromeSegmentsAreInteractive);
   AddTest(tests, "WorkspaceShell/SettingsOverAFocusedTerminalHidesItsCaret",
           TestWorkspaceShellSettingsOverAFocusedTerminalHidesItsCaret);

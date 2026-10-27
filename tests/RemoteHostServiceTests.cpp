@@ -34,6 +34,7 @@ struct AssistServiceTestAccess {
 namespace microide::tests {
 namespace {
 
+using workspace::ActionId;
 using workspace::StatusBarSegmentId;
 using workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = workspace::WorkspaceShell::TestAccess;
@@ -151,7 +152,7 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
          "its shell runs on the host:\n" + ScreenText(host_session));
 
   // Remote: Open Local Terminal: a shell on this machine, and its title says so.
-  Expect(WorkspaceShellTestAccess::ActionEnabled(shell, workspace::ActionId::RemoteOpenLocalTerminal),
+  Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, workspace::ActionId::RemoteOpenLocalTerminal),
          "the local terminal is offered in a remote project");
   // `terminal.shell` names a program on THIS machine: the local terminal's shell.
   const std::filesystem::path wrapper = local_project.path() / "marked-shell";
@@ -251,6 +252,43 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
   Expect(opened.size() == 1 && opened[0].rfind("http://localhost:", 0) == 0 &&
              opened[0].ends_with("/app?x=1"),
          "at the local end of the forward: '" + (opened.empty() ? std::string() : opened[0]) + "'");
+  // The Remote menu's verbs are live with a host connected, and its Stop Forwarding
+  // a Port… offers the forwards there are rather than asking for a number.
+  for (const ActionId id : {ActionId::RemoteShowStatus, ActionId::RemoteShowLog, ActionId::RemoteReconnect,
+                            ActionId::RemoteDisconnect, ActionId::RemoteStopServer, ActionId::RemoteForwardPort,
+                            ActionId::RemoteUnforwardPort, ActionId::RemoteShowHostChanges}) {
+    Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, id),
+           "a Remote menu verb is available with a host connected: " + std::to_string(static_cast<int>(id)));
+  }
+  Expect(WorkspaceShellTestAccess::StatusBarSegmentTooltip(shell, StatusBarSegmentId::Remote).ends_with("Remote menu"),
+         "the segment's click opens the Remote menu: '" +
+             WorkspaceShellTestAccess::StatusBarSegmentTooltip(shell, StatusBarSegmentId::Remote) + "'");
+  Expect(WorkspaceShellTestAccess::ExecuteMenuAction(shell, ActionId::RemoteUnforwardPort), "the menu row runs");
+  {
+    const auto& pick = WorkspaceShellTestAccess::QuickPick(shell);
+    const auto lists = [&](std::string_view port) {
+      return std::any_of(pick.items.begin(), pick.items.end(), [&](const auto& item) {
+        // The host is quoted as a command argument (QuoteCommandArg).
+        return item.value.starts_with("remote-unforward-port " + std::string(port) + " ") &&
+               item.value.find(target) != std::string::npos &&
+               item.primary_label.starts_with(std::string(port) + " \u2192 localhost:") &&
+               item.secondary_label == target;
+      });
+    };
+    Expect(WorkspaceShellTestAccess::OverlayVisible(shell) && pick.title == "Stop Forwarding a Port" &&
+               pick.items.size() == 2 && lists("39218") && lists("39220"),
+           "Stop Forwarding a Port… lists the forwarded ports: " + [&] {
+             std::string all;
+             for (const auto& item : pick.items) {
+               all += " | " + item.value + " / " + item.primary_label + " / " + item.secondary_label;
+             }
+             return all;
+           }());
+    SDL_Event escape{};
+    escape.type = SDL_EVENT_KEY_DOWN;
+    escape.key.key = SDLK_ESCAPE;
+    (void)shell.HandleEvent(escape);
+  }
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-unforward-port 39220"),
          "the clicked port's forward stops too");
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-unforward-port 39218"),
@@ -267,7 +305,7 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
   // and there is no separate local terminal to offer.
   const std::size_t remote_index = WorkspaceShellTestAccess::ActiveProjectIndex(shell);
   Expect(WorkspaceShellTestAccess::OpenProjectTabWithLocality(shell, local_project.path(), {}), "a local project");
-  Expect(!WorkspaceShellTestAccess::ActionEnabled(shell, workspace::ActionId::RemoteOpenLocalTerminal),
+  Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, workspace::ActionId::RemoteOpenLocalTerminal),
          "the local terminal is not offered in a local project (the menu item dims)");
   Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-local-terminal"),
          "and the command is refused there");
@@ -690,7 +728,7 @@ void TestRemoveMirrorDeletesAClosedMirrorAndKeepsUnsentSaves() {
              },
              std::chrono::seconds(30), std::chrono::milliseconds(10)),
          "the mirror fills from the host");
-  auto outcome = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "remote-remove-mirror");
+  auto outcome = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "remote-remove-mirror " + mirror.string());
   Expect(!outcome.ok && outcome.error.find("close the project first") != std::string::npos,
          "an open project's mirror is not removed under it: " + outcome.error);
   Expect(std::filesystem::exists(mirror / "main.c"), "and nothing was deleted");
@@ -720,6 +758,26 @@ void TestRemoveMirrorDeletesAClosedMirrorAndKeepsUnsentSaves() {
              std::chrono::seconds(10), std::chrono::milliseconds(10)),
          "the project is closed");
 
+  // The Remote menu's Remove Mirror… offers the closed project's mirror (and only
+  // closed ones: an open project's mirror goes with its close).
+  Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::RemoteRemoveMirror),
+         "Remove Mirror is available for a closed remote project");
+  Expect(WorkspaceShellTestAccess::ExecuteMenuAction(shell, ActionId::RemoteRemoveMirror), "the menu row runs");
+  {
+    // Earlier tests in this process share the data directory, so their closed
+    // mirrors may be offered too: this one must be among them.
+    const auto& pick = WorkspaceShellTestAccess::QuickPick(shell);
+    const bool listed = std::any_of(pick.items.begin(), pick.items.end(), [&](const auto& item) {
+      return item.value.starts_with("remote-remove-mirror ") && item.value.find(mirror.string()) != std::string::npos &&
+             item.secondary_label.starts_with(target + ":") && item.secondary_label.ends_with("/src/app");
+    });
+    Expect(WorkspaceShellTestAccess::OverlayVisible(shell) && pick.title == "Remove Mirror" && listed,
+           "Remove Mirror… lists the closed mirror among " + std::to_string(pick.items.size()));
+    SDL_Event escape{};
+    escape.type = SDL_EVENT_KEY_DOWN;
+    escape.key.key = SDLK_ESCAPE;
+    (void)shell.HandleEvent(escape);
+  }
   outcome = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "remote-remove-mirror " + mirror.string());
   Expect(!outcome.ok && outcome.error.find("1 save") != std::string::npos &&
              outcome.error.find("discard") != std::string::npos,
