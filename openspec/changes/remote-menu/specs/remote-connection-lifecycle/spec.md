@@ -26,3 +26,7 @@ The remote verbs SHALL live in a top-level `Remote` menu between Git and Termina
 #### Scenario: Host and local terminals are never confused
 - **WHEN** a local project and a remote project are both open, each with a terminal, and the remote project also has a local terminal
 - **THEN** the remote project's host terminal tab names its host and runs there, its local terminal is prefixed `local · ` and runs here, and the local project's terminal carries neither and runs here
+
+#### Scenario: A local shell from a remote-only window
+- **WHEN** the only open project is remote and the user runs `Remote: Open Local Terminal`
+- **THEN** a terminal tab opens whose shell runs on this machine
