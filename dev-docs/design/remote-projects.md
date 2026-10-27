@@ -1767,6 +1767,31 @@ a process spawned as a child of ssh does not: it dies with the connection.
   **Overflow is marked, never silent.** A verbose build that outran the ring while
   detached drops the oldest lines and the tab shows a rule saying so, with the
   count. A gap the user can see is recoverable; one they cannot is a bug report.
+- **As built (2026-10-27, remote-terminal-restore): quitting microide and closing
+  a project leave host shells running, and reopening reattaches them.** Neither is
+  left to how the process ends: one explicit step,
+  `TerminalPanelService::ReleaseHostTerminals`, runs over the closing project's
+  terminals (close-project) and over every open project's, active or not (quit),
+  before anything is persisted. A running host shell is **detached** --
+  `TerminalHostChannel::Detach`, Close without `term/close` -- and its identity
+  (the server's `daemon_epoch` and the handle) is written into the session's pane
+  record; a shell that already exited while the client watched is closed (its
+  buffer would otherwise count as live for the idle rule and hold an on-demand
+  server forever); with `terminal.restore_sessions` off every host terminal is
+  closed, so a user who opted out leaves nothing behind. Closing a tab or pane
+  still ends its shell. On reopen each recorded pane attaches cold (screen plus
+  `remote.scrollback_prefetch_lines`, older history on scroll) when the server's
+  epoch matches, with a dim `⋯ reattached ⋯` rule under the restored history; a
+  different epoch or a refused handle starts a fresh shell in the recorded
+  directory. A terminal asked for before the project's connection is `Ready` is
+  a **pending** pane -- a real tab whose one status line follows the connection's
+  state, input dropped -- that starts (or reattaches) on `Ready`, in a background
+  project too. `server/status` lists every terminal (`{handle, root, cwd,
+  clients, exited}`); after each connect the client asks once, after its own
+  reattaches, and reports the ones nobody is attached to under that root (a crash
+  leaves these) in the § 7.4a row. No idle reaper: a running terminal keeps its
+  workspace open, and the listing -- in that row, in `Remote: Show Status` and in
+  `microide-server status` -- is the answer to orphans.
 - **Two clients may attach at once**, which is what "open it from the other
   machine" means. Both get the same events; terminal handles are shared, their
   output fans out to both, and the pty takes the smaller of the two sizes
@@ -1987,6 +2012,16 @@ terminal tabs are drawn dimmed with a `detached` badge while the link is down an
 refill from the buffered output on reattach, with a rule marking where the gap
 was. A terminal whose shell exited while detached shows its exit line and then
 behaves like any finished terminal.
+
+**As built (2026-10-27).** One row per remote project on each connect sums its
+terminals up -- *"build-box: 2 terminals reattached · 1 started fresh (the host
+server restarted) · 1 running with no tab"* -- with **Attach** (each unclaimed
+terminal in a new tab, cold) and **Close** (`term/close`) as
+`remote-attach-terminals` / `remote-close-terminals <host> <handle>...`; with
+nothing but reattaches to report it is a transient "Reattached to build-box: N
+terminals". The reason a terminal started fresh names the host's
+`KillUserProcesses` when the server reports it. The dimmed `detached` badge while
+a link is down is not built; the reattach rule is.
 
 ### 7.5 Labels
 

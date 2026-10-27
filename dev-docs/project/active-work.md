@@ -124,8 +124,11 @@ new terminal behaviour lands there.
   processes, as VS Code's revive), a split inherits its pane's directory, links
   in an inactive pane hover, and every mouse button activates the pane it lands
   on. What VS Code has beyond that is process persistence (a terminal surviving
-  a window reload with its scrollback), which is a host-daemon feature here:
-  `microide-server` already keeps host terminals across a disconnect.
+  a window reload with its scrollback), which is a host-daemon feature here: as
+  of 2026-10-27 a remote project's host terminals survive quitting microide and
+  closing the project, and reopening reattaches the same shells with their
+  screen and history (remote-terminal-restore, below). Local terminals still
+  revive as fresh shells.
 
 ### 4. Editor correctness and scale
 
@@ -301,6 +304,17 @@ new terminal behaviour lands there.
 
 ### 7. Remote-projects groundwork
 
+> **Host terminals survive a quit (2026-10-27, remote-terminal-restore).** A remote
+> project's terminals exist from the moment it opens (pending until the link is
+> Ready, then started); quit and close-project detach running host shells in one
+> explicit step (`TerminalPanelService::ReleaseHostTerminals`) instead of killing
+> or orphaning them depending on how the process ended; the session records each
+> pane's host terminal and a reopen reattaches it cold (or starts fresh, said so,
+> when the server restarted). `server/status` lists terminals, and each connect
+> reports the ones nobody holds in one row with Attach / Close. Opted out
+> (`terminal.restore_sessions` off), quit closes them. See
+> `openspec/changes/archive/*-remote-terminal-restore`.
+>
 > **`Remote: Open Terminal on Host…` removed (2026-10-27).** A remote project's
 > Terminal > New runs on its host; the terminal-only host session behind the
 > command (`RemoteHostService::Host`, its own status machine and auth path) is

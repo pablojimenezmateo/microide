@@ -367,11 +367,14 @@ class App:
                     bucket[name] = bucket.get(name, 0) + int(count)
         return total
 
-    def restart(self, project: Path | None = None, quit_timeout: float = 15.0) -> None:
+    def restart(self, project: Path | None = None, quit_timeout: float = 15.0,
+                between: Callable[[], None] | None = None) -> None:
         """Quits the app the way a person does (the `quit` command, so session state
         is written as on a real exit) and starts it again on the same display, XDG
         tree and project -- the session-restore path. An unsaved buffer makes quit
-        ask first; a scenario that wants that prompt drives it before calling this."""
+        ask first; a scenario that wants that prompt drives it before calling this.
+        `between` runs once the old process is gone and before the new one starts
+        (what happens while the app is closed: a host server restarted, a wait)."""
         self._bank_action_counts()
         if self.alive():
             self.send("quit")
@@ -399,6 +402,8 @@ class App:
                 self._socket.close()
             self._socket = None
         self.log_offset = 0
+        if between is not None:
+            between()
         self._spawn(project if project is not None else self.project, self._extra_args)
 
     def crash_and_relaunch(self, project: Path | None = None) -> None:
@@ -1688,6 +1693,7 @@ _SURFACE_OWNERS = (
     ("panel-tab:", "bottomPanel"), ("button:panel/", "bottomPanel"), ("button:close-panel-tab/", "bottomPanel"),
 )
 _OVERLAP_KINDS = {"button", "sidebar-view", "debug-tab", "panel-tab"}
+_FLOATING_PREFIX = "button:notification/"
 
 
 def _surface_and_overlap_findings(ui: dict[str, Any]) -> list[tuple[str, str]]:
@@ -1719,6 +1725,11 @@ def _surface_and_overlap_findings(ui: dict[str, Any]) -> list[tuple[str, str]]:
             continue
         a = element["rect"]
         for other in seen:
+            # Notification rows float over the workbench (VS Code's toasts do too):
+            # one covering a panel or editor button is the stack's layer, not a
+            # layout collision. Two rows' own buttons overlapping still is.
+            if element["name"].startswith(_FLOATING_PREFIX) != other["name"].startswith(_FLOATING_PREFIX):
+                continue
             b = other["rect"]
             ix = min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0])
             iy = min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1])

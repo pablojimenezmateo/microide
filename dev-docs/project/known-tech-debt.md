@@ -449,6 +449,51 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-27-401 — remote-terminal-restore leftovers: one QA scenario, the detached badge, deep paging in QA.
+
+What `openspec/changes/archive/*-remote-terminal-restore` did not finish:
+
+- **qa-remote T11 is not automated.** "A terminal another client uses is not
+  offered" needs two app instances on one project; `tools/qa/remote.py` drives one
+  `App`. The rule is covered by the fake-ssh test
+  `RemoteTerminalRestore/HostTerminalLifetimeAndUnclaimedTerminals` (a terminal a
+  raw second client holds is not in the row's args), not end to end.
+- **§ 7.4a's dimmed tab with a `detached` badge while the link is down** is not
+  built (out of scope by the proposal); a lost link still shows the
+  `[connection to the host lost: …]` line.
+- **qa-remote T10** checks the tail and that nothing is duplicated after a reattach;
+  paging back to line 1 is covered only by the kernel test
+  `RemoteTerminal/ScrollingUpFetchesOlderHostHistory`.
+
+### TD-2026-10-27-400 — a host terminal started in a background project after it was switched away from is not recorded at quit.
+
+Quit detaches every open project's host terminals but re-persists only the
+active one (an inactive project's session was written when it was switched away
+from, `LifecycleCoordinator::Shutdown`). With pending panes a background
+project's terminal can now START after that write -- the project was switched
+away from while still connecting, and its connection came up in the background
+(`TerminalPanelService::StartPendingHostPanes` reaches inactive states). That
+terminal is detached at quit with no record naming it, so the next connect offers
+it as "running with no tab" instead of reattaching it to its tab (its tab revives
+as a fresh shell). Nothing is lost or leaked -- the row's Attach takes it back --
+but the tab and the shell come back apart. Fix shape: re-persist only the
+inactive projects whose host identities changed since their last write (a
+per-state revision bumped by a start), rather than every inactive project.
+
+### TD-2026-10-27-399 — detaching a host terminal tells the server nothing; it keeps sending that connection frames.
+
+`RemoteTerminalChannel::Detach` unregisters the handle and sends nothing: the
+server still counts the connection as attached (`clients` in `server/status`) and
+keeps framing output for it until the connection closes, and the client parks
+those frames in `RemoteServerClient::terminal_orphans_` (capped at
+`kMaxOrphanBytes`). Today every detach is followed at once by the connection
+closing (quit; close-project's `RemoteHostService::ProjectClosed`), so the window
+is milliseconds. A future detach that keeps the connection (moving a pane to
+another window, detaching one tab) would leave the terminal listed as attached --
+never offered as unclaimed -- and would burn credit on frames nobody reads. Fix
+shape: a `term/detach {handle}` notification (`TerminalTable::Close` minus the
+shutdown); an older server ignores an unknown notification, so no protocol bump.
+
 ### TD-2026-10-27-398 — three validation lanes went red on a loaded machine for reasons outside the product. [RESOLVED 2026-10-27]
 
 All three surfaced in one session that ran the tests, ASan, UBSan, TSan, clang,

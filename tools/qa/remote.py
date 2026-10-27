@@ -32,6 +32,23 @@ What it checks, each as the user would see it, with the measured latencies:
   P  remote commands            status, the server log, the ssh command copied, a port
                                 forwarded and unforwarded, host changes listed and
                                 cleared, the server stopped and reconnected
+  T  host terminals restore     (remote-terminal-restore) checked on the HOST through
+                                `microide-server status` and pgrep, not only in the app:
+     T1 three shells -- a loop, two with output, one split -- survive a quit; the
+        relaunch reattaches the same handles, the loop still printing
+     T13 closing a running tab with X ends its process
+     T2 the rest closed with X, then quit: nothing left on the host
+     T3 shells ended with `exit`, tabs left open, quit: nothing left; they revive
+        as fresh shells
+     T5 a command that finishes while microide is closed shows its last output
+        on reopen, and Enter starts a new shell
+     T6 a crash (SIGKILL) leaves orphans the connect's row offers; Attach opens
+        one with its screen, Close ends the other; T12 Show Status lists them
+     T7 terminal.restore_sessions off: quit ends the shell
+     T8 close-project keeps the shell; reopening the project reattaches it
+     T4 the host server restarted between quit and relaunch: fresh shells, and
+        the row says why; T9 a `+` while connecting is a pending tab at once
+     T10 3000 lines survive a quit: the tail is there, nothing duplicated
 
 Without MQA_REMOTE_HOST the suite prints why it did not run and exits 0: it is
 on-demand against a real host. `tools/qa/local-sshd.sh` stands up a loopback-only
@@ -184,6 +201,237 @@ class Suite:
         host, mirror = self.host.tree_hashes(), mirror_hashes(self.mirror)
         diff = {k for k in set(host) | set(mirror) if host.get(k) != mirror.get(k)}
         return host, mirror, diff
+
+    # ---- group T: host terminals across quit, crash and close-project ----------
+    def host_terminals(self) -> list[dict]:
+        """The host server's terminals under this project's root, from the host's
+        own `microide-server status` (the CLI prints the server/status reply)."""
+        out = self.host.ssh('"$HOME/.local/share/microide/server/microide-server" status')
+        try:
+            rows = json.loads(out).get("terminals")
+        except ValueError:
+            return []
+        return [r for r in rows if r.get("root") == self.host.root] if isinstance(rows, list) else []
+
+    def host_pgrep(self, marker: str) -> str:
+        # `[Q]A-...`: the pattern must not match the ssh command line carrying it
+        # (the `sh -c` running this pgrep holds the marker in its own argv).
+        return self.host.ssh(f"pgrep -f '[{marker[0]}]{marker[1:]}' || true").strip()
+
+    def panes(self) -> list[dict]:
+        return [dict(p, tab=t["tab"]) for t in self.app.query("terminals") for p in t["panes"]]
+
+    def term_text(self, tab: int, pane: int = 0) -> str:
+        return self.app.query("terminal-output", {"tab": tab, "pane": pane, "lines": 20000}).get("text", "")
+
+    def close_all_terminals(self) -> None:
+        for _ in range(24):
+            if not self.app.query("terminals"):
+                return
+            self.app.send("term-close"); self.app.settle(0.2)
+
+    def relaunch(self, crash: bool = False, between=None):
+        self.app.screenshot("T-before-relaunch")
+        if crash:
+            self.app.crash_and_relaunch(self.mirror)
+        else:
+            self.app.restart(self.mirror, between=between)
+        return self.wait_ready(180)
+
+    def all_started(self, timeout: float = 60):
+        """Every terminal pane past pending, i.e. started or reattached."""
+        return wait_for(lambda: (lambda ps: ps if ps and not any(p["pending"] for p in ps) else None)(
+            self.panes()), timeout, 0.3)
+
+    def new_terminal(self, line: str | None = None) -> None:
+        self.app.send("term"); self.app.settle(0.5)
+        if line is not None:
+            self.app.send("type", line); self.app.send("key", "enter")
+
+    def run_terminal_restore(self) -> None:
+        app, tok = self.app, self.token
+        loop = f"QA-T1-{tok}"
+        self.close_all_terminals()
+        # A clean slate on the host: terminals an earlier run left with nobody
+        # attached (its app was killed, the crash path) are not this group's.
+        leftover = [str(r["handle"]) for r in self.host_terminals() if r.get("clients") == 0]
+        if leftover:
+            app.send("remote-close-terminals", self.host.name, *leftover)
+            wait_for(lambda: not [r for r in self.host_terminals() if r.get("clients") == 0], 10, 0.3)
+            self.info("T.leftover-closed", ",".join(leftover))
+        # T1: a loop, two tabs with output, the third split in two.
+        self.new_terminal(f"while :; do echo {loop}-$(date +%s); sleep 1; done")
+        self.new_terminal(f"echo QA-T1-LS-{tok}-$((20+22))")
+        self.new_terminal(f"echo QA-T1-LH-{tok}-$((30+3))")
+        app.send("term-split"); app.settle(0.5)
+        app.send("type", f"echo QA-T1-SPLIT-{tok}"); app.send("key", "enter")
+        before, dt = wait_for(lambda: (lambda ps: ps if len(ps) == 4 and all(p["hostHandle"] for p in ps)
+                                       else None)(self.panes()), 30, 0.3)
+        handles = sorted(p["hostHandle"] for p in before or [])
+        listed = sorted(r["handle"] for r in self.host_terminals())
+        self.record("T1.four-host-terminals", len(handles) == 4 and listed == handles,
+                    f"panes={handles} host={listed} in {dt:.1f}s")
+        wait_for(lambda: f"QA-T1-LS-{tok}-42" in self.term_text(1), 15, 0.3)
+        quit_at = int(time.time())
+        app.screenshot("T1-before-quit")
+        msg, dt, ok = self.relaunch()
+        self.record("T1.relaunch-ready", ok, f"{msg} {dt:.1f}s")
+        after, dt = self.all_started()
+        self.record("T1.same-layout",
+                    after is not None and len({p["tab"] for p in after}) == 3 and len(after) == 4 and
+                    sorted(p["hostHandle"] for p in after) == handles,
+                    f"{dt:.1f}s panes={[(p['tab'], p['pane'], p['hostHandle'], p['pending']) for p in after or []]}")
+
+        def loop_after_quit():
+            stamps = [int(x) for x in __import__("re").findall(loop + r"-(\d+)", self.term_text(0))]
+            return stamps and max(stamps) > quit_at
+        ok, dt = wait_for(loop_after_quit, 20, 0.5)
+        self.record("T1.loop-still-running", bool(ok), f"a stamp newer than the quit after {dt:.1f}s")
+        text = self.term_text(1)
+        self.record("T1.output-kept", f"QA-T1-LS-{tok}-42" in text and "reattached" in text,
+                    f"tail={text[-300:]!r}")
+        self.record("T1.split-kept", f"QA-T1-SPLIT-{tok}" in self.term_text(2, 0) + self.term_text(2, 1),
+                    "the split's output is in one of its panes")
+        row, _ = wait_for(lambda: next((n for n in self.notifs() if "Reattached to" in n["message"]), None), 15, 0.3)
+        self.info("T1.row", row["message"] if row else f"{[n['message'] for n in self.notifs()]}")
+        app.screenshot("T1-reattached"); app.check("T1")
+
+        # T13: closing a running tab with X ends its process on the host.
+        active = next((t for t in app.query("terminals") if t["active"]), None)
+        closing = active["panes"][0]["hostHandle"] if active and len(active["panes"]) == 1 else 0
+        if not closing:  # the split tab: step to a single-pane one
+            app.send("term-next"); app.settle(0.3)
+            active = next((t for t in app.query("terminals") if t["active"]), None)
+            closing = active["panes"][0]["hostHandle"] if active else 0
+        app.send("term-close")
+        gone, dt = wait_for(lambda: closing not in [r["handle"] for r in self.host_terminals()], 10, 0.3)
+        self.record("T13.close-ends-process", bool(gone), f"handle {closing} gone after {dt:.1f}s")
+
+        # T2: everything closed with X, then quit: nothing is left.
+        self.close_all_terminals()
+        gone, dt = wait_for(lambda: not self.host_terminals() and not self.host_pgrep(loop), 10, 0.3)
+        self.record("T2.nothing-left", bool(gone),
+                    f"{dt:.1f}s host={self.host_terminals()} pgrep={self.host_pgrep(loop)!r}")
+        msg, dt, ok = self.relaunch()
+        # The relaunch opens the project's default terminal (attached); nothing of
+        # the closed ones may be left running with nobody attached.
+        self.record("T2.still-nothing-after-quit",
+                    ok and not [r for r in self.host_terminals() if r.get("clients") == 0],
+                    f"{self.host_terminals()}")
+
+        # T3: shells ended with `exit`, tabs left open, quit: closed, not kept.
+        self.close_all_terminals()
+        for _ in range(2):
+            self.new_terminal("exit")
+        ended, _ = wait_for(lambda: (lambda ps: ps if len(ps) == 2 and not any(p["running"] for p in ps)
+                                     else None)(self.panes()), 20, 0.3)
+        self.record("T3.ended", ended is not None, f"{self.panes()}")
+        msg, dt, ok = self.relaunch()
+        started, _ = self.all_started()
+        self.record("T3.nothing-kept-fresh-shells",
+                    ok and not [r for r in self.host_terminals() if r.get("exited")] and started is not None and
+                    len(started) == 2 and all(p["running"] for p in started),
+                    f"host={self.host_terminals()} panes={started}")
+
+        # T5: a command that finishes while microide is closed.
+        self.close_all_terminals()
+        self.new_terminal(f"sleep 3; echo QA-T5-DONE-{tok}; exit")
+        wait_for(lambda: any(p["hostHandle"] for p in self.panes()), 10, 0.2)
+        msg, dt, ok = self.relaunch(between=lambda: time.sleep(5))  # it finishes while closed
+        done, dt = wait_for(lambda: f"QA-T5-DONE-{tok}" in self.term_text(0), 30, 0.3)
+        panes = self.panes()
+        self.record("T5.finished-output-shown", bool(done) and panes and not panes[0]["running"],
+                    f"{dt:.1f}s panes={panes}")
+        app.send("focus", "panel"); app.send("key", "enter")
+        relaunched, dt = wait_for(lambda: (lambda ps: ps if ps and ps[0]["running"] else None)(self.panes()), 20, 0.3)
+        self.record("T5.enter-relaunches", relaunched is not None, f"{dt:.1f}s")
+
+        # T6 / T12: a crash leaves two orphans; the connect offers them.
+        self.close_all_terminals()
+        orphan = f"QA-T6-{tok}"
+        self.new_terminal(f"while :; do echo {orphan}-A-$(date +%s); sleep 1; done")
+        self.new_terminal(f"while :; do echo {orphan}-B-$(date +%s); sleep 1; done")
+        wait_for(lambda: len([p for p in self.panes() if p["hostHandle"]]) == 2, 15, 0.3)
+        # The session last written (T5's relaunch) names neither: a crash records nothing.
+        msg, dt, ok = self.relaunch(crash=True)
+        row, dt = wait_for(lambda: next((n for n in self.notifs() if "running with no tab" in n["message"]), None),
+                           30, 0.3)
+        self.record("T6.orphans-offered", row is not None and "2 running with no tab" in row["message"],
+                    f"{dt:.1f}s {row['message'] if row else [n['message'] for n in self.notifs()]}")
+        status = app.send("remote-status")
+        shown = " ".join(n["message"] for n in self.notifs())
+        self.record("T12.show-status-lists-them", bool(status.get("ok")) and "with no tab" in shown,
+                    f"{shown[-300:]!r}")
+        orphans = sorted(r["handle"] for r in self.host_terminals() if r.get("clients") == 0)
+        if len(orphans) == 2:
+            tabs = len(app.query("terminals"))
+            app.send("remote-attach-terminals", self.host.name, str(orphans[0]))
+            attached, dt = wait_for(lambda: (lambda ts: ts if len(ts) == tabs + 1 else None)(
+                app.query("terminals")), 10, 0.3)
+            shows, _ = wait_for(lambda: f"{orphan}-" in self.term_text(tabs), 15, 0.3)
+            self.record("T6.attach-opens-it", attached is not None and bool(shows), f"{dt:.1f}s")
+            app.send("remote-close-terminals", self.host.name, str(orphans[1]))
+            gone, dt = wait_for(lambda: orphans[1] not in [r["handle"] for r in self.host_terminals()], 10, 0.3)
+            self.record("T6.close-ends-it", bool(gone), f"{dt:.1f}s")
+        else:
+            self.record("T6.attach-opens-it", False, f"host orphans={orphans}")
+        app.screenshot("T6-attached"); app.check("T6")
+
+        # T7: opted out of revival, quit ends the shell.
+        self.close_all_terminals()
+        app.send("set-setting", "terminal.restore_sessions", "false")
+        marker = f"QA-T7-{tok}"
+        self.new_terminal(f"while :; do echo {marker}; sleep 1; done")
+        wait_for(lambda: self.host_pgrep(marker), 10, 0.3)
+        msg, dt, ok = self.relaunch()
+        gone, dt = wait_for(lambda: not self.host_pgrep(marker), 10, 0.3)
+        self.record("T7.opted-out-quit-ends-it", bool(gone), f"pgrep={self.host_pgrep(marker)!r}")
+        app.send("set-setting", "terminal.restore_sessions", "true")
+
+        # T8: close the project (not the app): the shell stays; reopening reattaches.
+        self.close_all_terminals()
+        kept = f"QA-T8-{tok}"
+        self.new_terminal(f"while :; do echo {kept}-$(date +%s); sleep 1; done")
+        wait_for(lambda: any(p["hostHandle"] for p in self.panes()), 10, 0.3)
+        handle = next((p["hostHandle"] for p in self.panes() if p["hostHandle"]), 0)
+        app.send("project-close"); app.settle(1.0)
+        row, dt = wait_for(lambda: next((r for r in self.host_terminals() if r["handle"] == handle
+                                         and r["clients"] == 0), None), 10, 0.3)
+        self.record("T8.close-project-keeps-it", row is not None, f"{dt:.1f}s host={self.host_terminals()}")
+        app.send("remote-open", f"{self.host.name}:{self.host.root}")
+        self.wait_ready(120)
+        back, dt = wait_for(lambda: (lambda ps: ps if any(p["hostHandle"] == handle and p["running"] for p in ps)
+                                     else None)(self.panes()), 30, 0.3)
+        self.record("T8.reopen-reattaches", back is not None, f"{dt:.1f}s panes={self.panes()}")
+
+        # T10: deep output survives a quit, nothing duplicated across the prefetch.
+        self.close_all_terminals()
+        self.new_terminal(f"seq 1 3000 | sed 's/^/QA-T10-{tok}-/'")
+        wait_for(lambda: f"QA-T10-{tok}-3000" in self.term_text(0), 20, 0.3)
+        msg, dt, ok = self.relaunch()
+        self.all_started()
+        tail, dt = wait_for(lambda: f"QA-T10-{tok}-3000" in self.term_text(0), 30, 0.3)
+        import re as _re
+        numbers = [int(n) for n in _re.findall(rf"QA-T10-{tok}-(\d+)", self.term_text(0))]
+        self.record("T10.tail-and-no-duplicates", bool(tail) and len(numbers) == len(set(numbers)),
+                    f"{len(numbers)} rows held, last {numbers[-1] if numbers else None}")
+
+        # T4 / T9: the host server restarted between quit and relaunch.
+        self.app.restart(self.mirror, between=lambda: self.host.ssh(
+            '"$HOME/.local/share/microide/server/microide-server" stop'))
+        app.send("term")
+        pending = [p for p in self.panes() if p["pending"]]
+        self.info("T9.plus-while-connecting", f"pending panes at once: {len(pending)} of {len(self.panes())}")
+        msg, dt, ok = self.wait_ready(180)
+        row, dt = wait_for(lambda: next((n for n in self.notifs() if "started fresh" in n["message"]), None), 30, 0.3)
+        self.record("T4.server-restart-starts-fresh-and-says-so",
+                    row is not None and "host server restarted" in row["message"],
+                    f"{dt:.1f}s {row['message'] if row else [n['message'] for n in self.notifs()]}")
+        started, _ = self.all_started()
+        self.record("T9.pending-tabs-start", started is not None and all(p["running"] for p in started),
+                    f"{started}")
+        self.close_all_terminals()
+        app.check("T")
 
     # ---- scenarios -------------------------------------------------------
     def run_all(self) -> None:
@@ -445,6 +693,8 @@ class Suite:
             self.record("N.delete-reaches-host", bool(gone) or state.get("heldDeletes", 0) > 0,
                         f"{dt:.1f}s held={state.get('heldDeletes')} ls={host.ssh(f'ls {host.root}/qa')!r}")
             app.check("N")
+        if self.runs("T"):
+            self.run_terminal_restore()
         if self.runs("P"):
             # The remote commands no other scenario runs, each with what it answers
             # and, where one is cheap, a receipt: Remove Mirror stays out (L relaunches
