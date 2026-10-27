@@ -5,6 +5,9 @@
 
 #include <SDL3/SDL.h>
 
+#include <atomic>
+#include <thread>
+
 namespace microide::tests {
 namespace {
 
@@ -167,11 +170,45 @@ void TestWakePushFailureLatchesOwedWake() {
          "a rejected completion-wake push must latch the shared wake-owed bit");
 }
 
+// The override is swapped while other threads push wakes (a previous test's worker
+// still finishing). The swap and the calls through it are synchronized, and a clear
+// waits out a call in flight, so a cleared pusher's captured locals are never
+// reached afterwards: the TSan lane caught the unsynchronized version as a race
+// between PluginSurfacePreview's clear and a background executor's idle wake.
+void TestWakePusherOverrideSwapsSafelyUnderConcurrentWakes() {
+  std::atomic<bool> stop{false};
+  std::thread pusher([&stop] {
+    while (!stop.load(std::memory_order_acquire)) {
+      (void)microide::util::DeliverWake(4244);
+    }
+  });
+  bool reached_after_clear = false;
+  for (int round = 0; round < 200; ++round) {
+    std::atomic<int> calls{0};
+    std::atomic<bool> cleared{false};
+    microide::util::SetWakePusherForTesting([&calls, &cleared, &reached_after_clear](microide::util::WakeChannel) {
+      reached_after_clear = reached_after_clear || cleared.load(std::memory_order_acquire);
+      calls.fetch_add(1, std::memory_order_relaxed);
+      return true;
+    });
+    while (calls.load(std::memory_order_relaxed) == 0) {
+      std::this_thread::yield();
+    }
+    microide::util::SetWakePusherForTesting(nullptr);
+    cleared.store(true, std::memory_order_release);
+  }
+  stop.store(true, std::memory_order_release);
+  pusher.join();
+  Expect(!reached_after_clear, "no call reaches an override after it was cleared");
+}
+
 }  // namespace
 
 void RegisterBackgroundTaskCounterTests(std::vector<TestCase>& tests) {
   AddTest(tests, "BackgroundTaskCounter/WakePushFailureLatchesOwedWake",
           TestWakePushFailureLatchesOwedWake);
+  AddTest(tests, "BackgroundTaskCounter/WakePusherOverrideSwapsSafelyUnderConcurrentWakes",
+          TestWakePusherOverrideSwapsSafelyUnderConcurrentWakes);
   AddTest(tests, "BackgroundTaskCounter/UnmatchedDecrementDoesNotGoNegative",
           TestUnmatchedDecrementDoesNotGoNegative);
   AddTest(tests, "BackgroundTaskCounter/WakeUsesRegisteredEventType",

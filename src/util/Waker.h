@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <mutex>
 #include <utility>
 
 // Shared, checked wake-the-UI-loop pusher for one-shot producers (git blame, control
@@ -45,13 +46,29 @@ inline void SetWakePusher(WakePusher pusher) { InstalledWakePusher() = std::move
 // Test seam: override the installed pusher so a test can force a rejected wake
 // without needing a globally full event queue. Passing nullptr restores the installed
 // host pusher (it does NOT clear it). One instance across all TUs.
-inline WakePusher& WakePusherOverride() {
-  static WakePusher pusher;
-  return pusher;
+//
+// Unlike the host binding, which is installed once before any producer thread runs,
+// the override is set and cleared while other tests' worker threads may be pushing
+// wakes. So it is guarded: the swap and every call through it hold `mutex`, and the
+// clear therefore waits out a call in flight -- a test's pusher typically captures
+// its own locals by reference, which must not be reached once it has cleared it.
+// `active` keeps the production path to one relaxed-cost atomic load.
+struct WakePusherOverrideSlot {
+  std::mutex mutex;
+  WakePusher pusher;
+  std::atomic<bool> active{false};
+};
+
+inline WakePusherOverrideSlot& WakePusherOverride() {
+  static WakePusherOverrideSlot slot;
+  return slot;
 }
 
 inline void SetWakePusherForTesting(WakePusher pusher) {
-  WakePusherOverride() = std::move(pusher);
+  WakePusherOverrideSlot& slot = WakePusherOverride();
+  std::scoped_lock lock(slot.mutex);
+  slot.pusher = std::move(pusher);
+  slot.active.store(static_cast<bool>(slot.pusher), std::memory_order_release);
 }
 
 // Process-wide "a wake push failed and its producer's ready state still needs
@@ -96,8 +113,11 @@ inline bool DeliverWake(WakeChannel channel) {
   if (channel == 0) {
     return false;
   }
-  if (const WakePusher& override_pusher = WakePusherOverride()) {
-    return override_pusher(channel);
+  if (WakePusherOverrideSlot& slot = WakePusherOverride(); slot.active.load(std::memory_order_acquire)) {
+    std::scoped_lock lock(slot.mutex);
+    if (slot.pusher) {
+      return slot.pusher(channel);
+    }
   }
   const WakePusher& pusher = InstalledWakePusher();
   return pusher ? pusher(channel) : false;
