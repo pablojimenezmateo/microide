@@ -69,6 +69,10 @@ class ProcessTable {
     // Set (a value) or unset (nullopt) on top of the server's own environment.
     std::vector<std::pair<std::string, std::optional<std::string>>> env;
     bool keep_on_detach = false;
+    // The workspace root of the connection that spawned it ("" = none): what
+    // server/status lists the process under. Not from the body -- the server fills
+    // it from the connection's hello, as TerminalTable::OpenRequest::root.
+    std::string root;
   };
   struct SpawnResult {
     std::uint64_t handle = 0;
@@ -97,12 +101,38 @@ class ProcessTable {
               std::uint64_t stderr_offset, std::string* error);
   // The client is done with an exited handle: forget it.
   void Release(std::uint64_t handle);
+  // proc/end (the Host view's End, remote-host-activity D4): terminate it as a
+  // detach terminates an unkept process -- SIGTERM to its group, SIGKILL after a
+  // grace -- and forget it once it has exited and no client holds it. A client
+  // that does hold it gets its proc/exit as usual. False for an unknown handle.
+  bool End(std::uint64_t handle);
   // A connection went away: terminate what it spawned without keep_on_detach, and
   // detach the rest.
   void Detach(std::uint64_t connection);
 
   std::size_t LiveCount() const;
   std::size_t CountFor(std::uint64_t connection) const;
+
+  // One process as server/status lists it (remote-host-activity D3): what a user
+  // needs to recognise it ("clangd", kept since a detach) and what it holds.
+  struct Listing {
+    std::uint64_t handle = 0;
+    std::string root;               // the spawning connection's workspace root
+    std::vector<std::string> argv;  // as spawned, bounded (kListedArgs x kListedArgBytes)
+    int pid = -1;
+    std::string cwd;
+    bool kept = false;  // keep_on_detach
+    // How long ago its client went; nullopt while one is attached.
+    std::optional<std::chrono::milliseconds> detached_for;
+    bool exited = false;
+    std::size_t buffered_bytes = 0;  // stdout + stderr not yet acknowledged
+  };
+  // The argv a listing keeps: the row's name, not a transcript.
+  static constexpr std::size_t kListedArgs = 8;
+  static constexpr std::size_t kListedArgBytes = 256;
+  // Every process the table holds (live, or exited and not yet released), by
+  // handle; at most Limits::max_processes of them.
+  std::vector<Listing> List() const;
 
  private:
   struct Stream {
@@ -126,6 +156,8 @@ class ProcessTable {
     std::uint64_t connection = 0;
     bool git_mutation = false;  // a git that may change a repository: its exit pushes status
     std::string cwd;
+    std::string root;               // SpawnRequest::root
+    std::vector<std::string> argv;  // the listed prefix (List)
     bool exited = false;
     int exit_code = -1;
     int exit_signal = 0;

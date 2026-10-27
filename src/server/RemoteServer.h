@@ -18,6 +18,7 @@
 #include "project/GitRepositoryMetadataTracker.h"
 #include "server/GitStatusSampler.h"
 #include "server/PeriodicSampler.h"
+#include "server/ProcessActivity.h"
 #include "server/RecentObjects.h"
 #include "server/ProcessTable.h"
 #include "server/TerminalTable.h"
@@ -81,6 +82,7 @@ class RemoteServer {
   // A root's tree and the workers that serve it: manifests on `queue`, disk reads
   // and writes on `io_queue` — never a connection's I/O thread, which must keep
   // answering pings while a cold tree hashes.
+  enum class WatchMode { None, Native, Polling };
   struct ServedTree {
     // What one watching connection was last sent: the baseline its next delta is
     // computed against. Shared: after a batch every primed subscriber points at
@@ -110,6 +112,9 @@ class RemoteServer {
     std::mutex publish_mutex;
     std::map<std::uint64_t, Subscriber> subscribers;  // by connection id
     std::unique_ptr<WorkspaceWatch> watch;            // created on the first subscribe
+    // How `watch` watches, for server/status: set once it exists, read from any
+    // thread (the watch itself is the queue thread's).
+    std::atomic<WatchMode> watch_mode{WatchMode::None};
     std::mutex watch_mutex;                           // guards watch_changes
     WorkspaceTree::Changes watch_changes;             // since the last published batch
     // HEAD, the branch ref and packed-refs as of the last published batch (queue
@@ -160,7 +165,15 @@ class RemoteServer {
   bool RequestLive(std::uint64_t connection_id, std::uint64_t request_id);
   void WithPeer(std::uint64_t connection_id, const std::function<void(remote::RemotePeer&)>& use);
   void InstallHandlers(Connection& connection);
-  util::JsonValue StatusJson();
+  void InstallActivityHandlers(Connection& connection);
+  // server/status's reply (remote-host-activity D1): the tables' rows and the
+  // workspaces' counts; with `activity`, also what each row costs, from one
+  // /proc sample. Takes mutex_ only to copy what it lists, never across the walk.
+  util::JsonValue StatusJson(bool activity);
+  // The activity sampler's tick: the status with activity, pushed to every
+  // activity/subscribe connection as activity/changed.
+  void SampleActivity();
+  void DropActivitySubscriber(std::uint64_t connection_id);
   // Drop connections whose transport closed. Not from their own I/O thread.
   void ReapClosed();
   bool Idle();
@@ -192,6 +205,13 @@ class RemoteServer {
   std::set<std::uint64_t> port_subscribers_;     // guarded by ports_mutex_
   std::vector<std::uint16_t> ports_last_;        // guarded by ports_mutex_
   std::unique_ptr<PeriodicSampler> port_sampler_;  // guarded by ports_mutex_
+  // activity/subscribe: the same shape. The sampler reads /proc only while a
+  // connection is subscribed; a status that asks for activity samples once.
+  const std::chrono::steady_clock::time_point started_ = std::chrono::steady_clock::now();
+  ProcessActivity activity_;
+  std::mutex activity_mutex_;
+  std::set<std::uint64_t> activity_subscribers_;       // guarded by activity_mutex_
+  std::unique_ptr<PeriodicSampler> activity_sampler_;  // guarded by activity_mutex_
 };
 
 }  // namespace microide::server

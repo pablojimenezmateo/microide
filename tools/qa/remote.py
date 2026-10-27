@@ -211,8 +211,9 @@ class Suite:
     # ---- group T: host terminals across quit, crash and close-project ----------
     def host_terminals(self) -> list[dict]:
         """The host server's terminals under this project's root, from the host's
-        own `microide-server status` (the CLI prints the server/status reply)."""
-        out = self.host.ssh('"$HOME/.local/share/microide/server/microide-server" status')
+        own `microide-server status --json` (the server/status reply; the bare
+        command prints a table)."""
+        out = self.host.ssh('"$HOME/.local/share/microide/server/microide-server" status --json')
         try:
             rows = json.loads(out).get("terminals")
         except ValueError:

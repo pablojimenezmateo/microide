@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -26,11 +27,28 @@ inline constexpr std::int64_t kMinProtocolVersion = 3;
 namespace method {
 inline constexpr std::string_view kServerHello = "server/hello";
 inline constexpr std::string_view kServerShutdown = "server/shutdown";
-// server/status {} -> {release, daemon_epoch, session_survival, workspaces: [...],
-// terminals: [{handle, root, cwd, clients, exited}], ...}: what `microide-server
-// status` prints. Before the terminal listing `terminals` was a count; a client
-// reads that as "not listed" (ServerStatusFromJson).
+// server/status {activity?: bool} -> {release, pid, daemon_epoch, session_survival,
+// server: {uptime_ms, activity_subscribers}, workspaces: [{root, clients, terminals, processes,
+// files?, hashed?, watch?}], terminals: [{handle, root, cwd, clients, exited, pid,
+// scrollback_lines}], processes: [{handle, root, argv, pid, cwd, kept, detached_ms?,
+// exited, buffered_bytes}], live_processes}: what `microide-server status` prints.
+// With `activity` the server row and every terminal and process row also carry
+// {rss_bytes, cpu_permille} (cpu_permille -1 on a pid's first sample), from one
+// /proc walk (remote-host-activity D1). Before the listings `terminals` and
+// `processes` were counts; a client reads that as "not listed" (ServerStatusFromJson).
 inline constexpr std::string_view kServerStatus = "server/status";
+// activity/subscribe {} -> the server/status reply with activity; then, every
+// kActivityInterval while subscribed, an activity/changed notification carrying
+// the same. activity/unsubscribe {} (a notification), or the connection closing,
+// stops it; the server samples nothing while nobody is subscribed (D2).
+inline constexpr std::string_view kActivitySubscribe = "activity/subscribe";
+inline constexpr std::string_view kActivityUnsubscribe = "activity/unsubscribe";
+inline constexpr std::string_view kActivityChanged = "activity/changed";
+// proc/end {handle} (a notification): the Host view's End. The server terminates
+// the process (SIGTERM to its group, SIGKILL after a grace) whoever spawned it,
+// and forgets it once it exited with no client holding it -- a kept process
+// nobody is attached to would otherwise wait for a release that never comes.
+inline constexpr std::string_view kProcEnd = "proc/end";
 inline constexpr std::string_view kLinkPing = "link/ping";
 inline constexpr std::string_view kOpCancel = "op/cancel";  // notification: {"id": <request>}
 // Host terminals (§ 6.5). Requests: term/open {cwd, command?, shell?: [argv], rows,
@@ -164,25 +182,73 @@ std::optional<HelloReply> HelloReplyFromJson(const util::JsonValue& json, std::s
 // The part of a server/status reply the client acts on. Every field is untrusted
 // and nothing fails the decode: a missing or mistyped field reads as not reported,
 // never as a wrong value.
+// What a row costs on the host, when the reply carries activity. Either half may
+// be missing: a server older than the figures, a reply that did not ask, a pid
+// that was gone by the sample, and -- for the CPU share -- a pid's first sample,
+// which has nothing to take a difference against.
+struct ActivityFigures {
+  std::optional<std::int64_t> rss_bytes;
+  std::optional<std::int32_t> cpu_permille;  // thousandths of one core
+  bool operator==(const ActivityFigures&) const = default;
+};
 struct ServerTerminal {
   std::uint64_t handle = 0;  // never 0 once decoded
   std::string root;          // the opening connection's workspace root ("" = none)
   std::string cwd;           // "" = not reported
   std::size_t clients = 0;   // attached connections
   bool exited = false;
+  std::optional<int> pid;  // the shell's
+  std::optional<std::size_t> scrollback_lines;
+  ActivityFigures figures;  // of the shell and everything under it
   bool operator==(const ServerTerminal&) const = default;
+};
+struct ServerProcess {
+  std::uint64_t handle = 0;  // never 0 once decoded
+  std::string root;          // the spawning connection's workspace root ("" = none)
+  std::vector<std::string> argv;
+  std::optional<int> pid;
+  std::string cwd;
+  bool kept = false;
+  std::optional<std::chrono::milliseconds> detached_for;  // set while no client holds it
+  bool exited = false;
+  std::size_t buffered_bytes = 0;
+  ActivityFigures figures;
+  bool operator==(const ServerProcess&) const = default;
+};
+struct ServerWorkspace {
+  std::string root;
+  std::size_t clients = 0;
+  std::size_t terminals = 0;
+  std::size_t processes = 0;
+  std::optional<std::size_t> files;
+  std::optional<std::size_t> hashed;
+  std::string watch;  // "native", "polling", "none"; "" = not reported
+  bool operator==(const ServerWorkspace&) const = default;
 };
 struct ServerStatus {
   std::string daemon_epoch;  // "" = not reported
+  std::string release;       // "" = not reported
+  std::optional<int> pid;
   std::optional<SessionSurvival> session_survival;
+  std::optional<std::chrono::milliseconds> uptime;
+  std::size_t activity_subscribers = 0;  // connections the sampler runs for
+  ActivityFigures server;                         // the server process alone
+  std::vector<ServerWorkspace> workspaces;
   // nullopt: the server lists no terminals (one older than the listing, whose
   // `terminals` is a count). A row with an unusable handle, root or client count
   // is dropped rather than guessed at.
   std::optional<std::vector<ServerTerminal>> terminals;
+  // nullopt: the server lists no processes (older than remote-host-activity). Rows
+  // as for terminals.
+  std::optional<std::vector<ServerProcess>> processes;
 };
-// At most this many rows are kept from one reply (the server caps its own table
-// at 64 terminals).
+// At most this many rows are kept from one reply (the server caps its own tables
+// at 64 terminals and 256 processes).
 inline constexpr std::size_t kMaxListedTerminals = 256;
+inline constexpr std::size_t kMaxListedProcesses = 1024;
+inline constexpr std::size_t kMaxListedWorkspaces = 256;
+// How often a subscribed server pushes activity/changed.
+inline constexpr std::chrono::milliseconds kActivityInterval{2000};
 ServerStatus ServerStatusFromJson(const util::JsonValue& json);
 
 // Whether two peers can talk: each side's version must be at least the other's

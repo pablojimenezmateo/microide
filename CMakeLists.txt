@@ -414,6 +414,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/remote/RemoteFrame.cpp
   src/project/remote/RemoteFrameTransport.cpp
   src/project/remote/RemoteProtocol.cpp
+  src/project/remote/ServerStatusText.cpp
   src/project/remote/RemoteSearchWire.cpp
   src/project/remote/LinkHeartbeat.cpp
   src/project/remote/MirrorStore.cpp
@@ -970,6 +971,7 @@ add_test(NAME microide_kernel_link_probe COMMAND microide_kernel_link_probe)
 # covers it.
 add_executable(microide-server
   src/server/ListeningPorts.cpp
+  src/server/ProcessActivity.cpp
   src/server/ProcessTable.cpp
   src/server/RemoteServer.cpp
   src/server/RemoteServerWorkspace.cpp
@@ -1546,12 +1548,14 @@ add_executable(microide_kernel_tests
   tests/RemoteProjectTests.cpp
   tests/ProjectIdTests.cpp
   src/server/ListeningPorts.cpp
+  src/server/ProcessActivity.cpp
   src/server/WorkspaceTree.cpp
   src/server/WorkspaceWatch.cpp
   tests/RemoteFrameTransportTests.cpp
   tests/RemotePeerTests.cpp
   tests/RemoteServerTests.cpp
   tests/RemoteProcessTests.cpp
+  tests/RemoteHostActivityTests.cpp
   tests/RemoteHostSessionTests.cpp
   tests/RemoteTerminalTests.cpp
   tests/RemoteLauncherTests.cpp

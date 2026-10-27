@@ -199,6 +199,7 @@ void RemoteServer::InstallWatchHandlers(Connection& connection) {
             });
         tree->watch->SetPolledPaths(tree->tree.UnwatchedMembers());
         tree->published_head.SetProjectRoot(tree->tree.root());  // the baseline
+        tree->watch_mode.store(tree->watch->native() ? WatchMode::Native : WatchMode::Polling);
       }
       util::JsonObject result;
       result["native"] = util::JsonValue(tree->watch && tree->watch->native());

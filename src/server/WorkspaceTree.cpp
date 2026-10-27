@@ -478,6 +478,7 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::BuildManifestLocked(
   manifest.id = next_manifest_id_++;
   last_rows_ = manifest.rows;
   last_git_ = manifest.git;
+  PublishCountsLocked();
   built_ = true;
   // Which members the watch's own filter keeps it from seeing: one filter decision
   // per directory (memoized; an ancestor's pruning covers its subtree).
@@ -634,7 +635,13 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::UpdateManifest(
   }
   manifest.id = next_manifest_id_++;
   last_rows_ = manifest.rows;
+  PublishCountsLocked();
   return manifest;
+}
+
+void WorkspaceTree::PublishCountsLocked() {
+  manifest_files_.store(last_rows_.size(), std::memory_order_relaxed);
+  hashed_files_.store(cache_.size(), std::memory_order_relaxed);
 }
 
 std::optional<std::vector<std::string>> WorkspaceTree::AdmitCandidates(

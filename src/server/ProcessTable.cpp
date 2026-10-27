@@ -280,6 +280,12 @@ ProcessTable::SpawnResult ProcessTable::Spawn(std::uint64_t connection, SpawnReq
   process->connection = connection;
   process->git_mutation = project::remote::IsGitMutation(request.argv);
   process->cwd = request.cwd;
+  process->root = std::move(request.root);
+  const std::size_t listed = std::min(request.argv.size(), kListedArgs);
+  process->argv.reserve(listed);
+  for (std::size_t i = 0; i < listed; ++i) {
+    process->argv.push_back(request.argv[i].substr(0, kListedArgBytes));
+  }
   process->pid_fd = OpenPidFd(pid);
   std::uint64_t handle = 0;
   {
@@ -340,6 +346,26 @@ bool ProcessTable::Signal(std::uint64_t handle, int signal) {
     return false;
   }
   return ::kill(-it->second->pid, signal) == 0;
+}
+
+bool ProcessTable::End(std::uint64_t handle) {
+  {
+    std::lock_guard lock(mutex_);
+    const auto it = processes_.find(handle);
+    if (it == processes_.end()) {
+      return false;
+    }
+    Process& process = *it->second;
+    // Not kept any more: the loop forgets an exited, unkept process nobody holds.
+    process.keep_on_detach = false;
+    process.detached_at.reset();
+    if (!process.exited && !process.kill_at.has_value()) {
+      ::kill(-process.pid, SIGTERM);
+      process.kill_at = std::chrono::steady_clock::now() + kKillGrace;
+    }
+  }
+  wake_.Wake();
+  return true;
 }
 
 void ProcessTable::Ack(std::uint64_t handle, std::uint64_t stdout_offset,
@@ -444,6 +470,29 @@ std::size_t ProcessTable::CountFor(std::uint64_t connection) const {
   return static_cast<std::size_t>(std::count_if(
       processes_.begin(), processes_.end(),
       [connection](const auto& p) { return p.second->connection == connection; }));
+}
+
+std::vector<ProcessTable::Listing> ProcessTable::List() const {
+  const auto now = std::chrono::steady_clock::now();
+  std::lock_guard lock(mutex_);
+  std::vector<Listing> list;
+  list.reserve(processes_.size());
+  for (const auto& [handle, process] : processes_) {
+    std::optional<std::chrono::milliseconds> detached_for;
+    if (process->connection == 0 && process->detached_at.has_value()) {
+      detached_for = std::chrono::duration_cast<std::chrono::milliseconds>(now - *process->detached_at);
+    }
+    list.push_back(Listing{.handle = handle,
+                           .root = process->root,
+                           .argv = process->argv,
+                           .pid = process->pid,
+                           .cwd = process->cwd,
+                           .kept = process->keep_on_detach,
+                           .detached_for = detached_for,
+                           .exited = process->exited,
+                           .buffered_bytes = process->out.pending.size() + process->err.pending.size()});
+  }
+  return list;
 }
 
 bool ProcessTable::Readable(const Stream& stream) const {

@@ -210,6 +210,16 @@ void RemoteServerClient::InstallRouting() {
       (*handler)(PortsFromJson(params));
     }
   });
+  peer_.OnNotification(method::kActivityChanged, [this](std::uint64_t, const util::JsonValue& params) {
+    std::shared_ptr<ActivityHandler> handler;
+    {
+      std::lock_guard lock(mutex_);
+      handler = activity_handler_;
+    }
+    if (handler && *handler) {
+      (*handler)(ServerStatusFromJson(params));
+    }
+  });
   peer_.OnNotification(method::kWatchMoved, [this](std::uint64_t, const util::JsonValue& params) {
     const util::JsonValue& manifest = params["manifest"];
     if (!manifest.IsInt() || manifest.AsInt() < 0) {
@@ -702,13 +712,43 @@ void RemoteServerClient::EndGitMutation() {
   git_required_generation_ = std::max(git_required_generation_, last_git_generation_.load());
 }
 
-std::optional<ServerStatus> RemoteServerClient::Status(std::string* error) {
-  const std::optional<util::JsonValue> reply =
-      Call(method::kServerStatus, util::JsonValue(util::JsonObject{}), error);
+std::optional<ServerStatus> RemoteServerClient::Status(std::string* error, bool activity) {
+  util::JsonObject params;
+  if (activity) {
+    params["activity"] = util::JsonValue(true);
+  }
+  const std::optional<util::JsonValue> reply = Call(method::kServerStatus, util::JsonValue(std::move(params)), error);
   if (!reply.has_value()) {
     return std::nullopt;
   }
   return ServerStatusFromJson(*reply);
+}
+
+std::optional<ServerStatus> RemoteServerClient::SubscribeActivity(ActivityHandler changed, std::string* error) {
+  {
+    std::lock_guard lock(mutex_);
+    activity_handler_ = std::make_shared<ActivityHandler>(std::move(changed));
+  }
+  std::string why;
+  const std::optional<util::JsonValue> reply =
+      Call(method::kActivitySubscribe, util::JsonValue(util::JsonObject{}), &why);
+  if (!reply.has_value()) {
+    std::lock_guard lock(mutex_);
+    activity_handler_.reset();
+    if (error != nullptr) {
+      *error = why;
+    }
+    return std::nullopt;
+  }
+  return ServerStatusFromJson(*reply);
+}
+
+void RemoteServerClient::UnsubscribeActivity() {
+  {
+    std::lock_guard lock(mutex_);
+    activity_handler_.reset();
+  }
+  peer_.Notify(method::kActivityUnsubscribe, util::JsonValue(util::JsonObject{}));
 }
 
 std::optional<RemoteServerClient::GitMetadata> RemoteServerClient::QueryGitMetadata(

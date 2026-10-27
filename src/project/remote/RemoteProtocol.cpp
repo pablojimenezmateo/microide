@@ -165,6 +165,63 @@ std::optional<HelloReply> HelloReplyFromJson(const util::JsonValue& json, std::s
   return hello;
 }
 
+namespace {
+
+// A handle is a JSON integer; past 2^53 a peer's double would already have lost
+// it, so nothing above that is a handle this server could have issued.
+constexpr std::int64_t kMaxHandle = std::int64_t{1} << 53;
+constexpr std::int64_t kMaxClients = 1 << 20;
+constexpr std::int64_t kMaxCount = std::int64_t{1} << 40;
+constexpr std::int64_t kMaxPid = 1 << 30;  // Linux's PID_MAX_LIMIT is 2^22
+constexpr std::size_t kMaxListedArgs = 64;
+constexpr std::size_t kMaxListedArgBytes = 4096;
+
+// A count in [0, max], else not reported.
+std::optional<std::int64_t> ReadCount(const util::JsonValue& value, std::int64_t max = kMaxCount) {
+  if (!value.IsInt() || value.AsInt() < 0 || value.AsInt() > max) {
+    return std::nullopt;
+  }
+  return value.AsInt();
+}
+
+std::optional<int> ReadPid(const util::JsonValue& value) {
+  if (!value.IsInt() || value.AsInt() <= 0 || value.AsInt() > kMaxPid) {
+    return std::nullopt;
+  }
+  return static_cast<int>(value.AsInt());
+}
+
+std::optional<std::chrono::milliseconds> ReadMilliseconds(const util::JsonValue& value) {
+  const std::optional<std::int64_t> ms = ReadCount(value);
+  return ms.has_value() ? std::optional(std::chrono::milliseconds(*ms)) : std::nullopt;
+}
+
+ActivityFigures ReadFigures(const util::JsonValue& row) {
+  ActivityFigures figures;
+  if (const std::optional<std::int64_t> rss = ReadCount(row["rss_bytes"], std::int64_t{1} << 52)) {
+    figures.rss_bytes = *rss;
+  }
+  // -1 is the server's "no previous sample yet": not reported, like a missing key.
+  // A million permille is a thousand cores.
+  if (const std::optional<std::int64_t> cpu = ReadCount(row["cpu_permille"], 1'000'000)) {
+    figures.cpu_permille = static_cast<std::int32_t>(*cpu);
+  }
+  return figures;
+}
+
+std::optional<std::uint64_t> ReadHandle(const util::JsonValue& value) {
+  if (!value.IsInt() || value.AsInt() <= 0 || value.AsInt() > kMaxHandle) {
+    return std::nullopt;
+  }
+  return static_cast<std::uint64_t>(value.AsInt());
+}
+
+std::string ReadPath(const util::JsonValue& value) {
+  return value.IsString() && value.AsString().size() <= kMaxRootBytes ? value.AsString() : std::string();
+}
+
+}  // namespace
+
 ServerStatus ServerStatusFromJson(const util::JsonValue& json) {
   ServerStatus status;
   if (!json.IsObject()) {
@@ -174,39 +231,112 @@ ServerStatus ServerStatusFromJson(const util::JsonValue& json) {
       epoch.IsString() && epoch.AsString().size() <= kMaxEpochBytes) {
     status.daemon_epoch = epoch.AsString();
   }
+  if (const util::JsonValue& release = json["release"];
+      release.IsString() && release.AsString().size() <= kMaxReleaseBytes) {
+    status.release = release.AsString();
+  }
+  status.pid = ReadPid(json["pid"]);
   if (const util::JsonValue& survival = json["session_survival"]; survival.IsObject()) {
     status.session_survival = SessionSurvival{
         .kill_user_processes = survival["kill_user_processes"].AsBool(false),
         .linger = survival["linger"].AsBool(false)};
   }
-  const util::JsonValue& terminals = json["terminals"];
-  if (!terminals.IsArray()) {
-    return status;  // absent, or the count an older server sends
+  if (const util::JsonValue& server = json["server"]; server.IsObject()) {
+    status.uptime = ReadMilliseconds(server["uptime_ms"]);
+    status.server = ReadFigures(server);
+    status.activity_subscribers =
+        static_cast<std::size_t>(ReadCount(server["activity_subscribers"], kMaxClients).value_or(0));
   }
-  // A handle is a JSON integer; past 2^53 a peer's double would already have lost
-  // it, so nothing above that is a handle this server could have issued.
-  constexpr std::int64_t kMaxHandle = std::int64_t{1} << 53;
-  constexpr std::int64_t kMaxClients = 1 << 20;
-  std::vector<ServerTerminal>& rows = status.terminals.emplace();
-  for (const util::JsonValue& row : terminals.AsArray()) {
-    if (rows.size() >= kMaxListedTerminals) {
-      break;
+  if (const util::JsonValue& workspaces = json["workspaces"]; workspaces.IsArray()) {
+    for (const util::JsonValue& row : workspaces.AsArray()) {
+      if (status.workspaces.size() >= kMaxListedWorkspaces) {
+        break;
+      }
+      const util::JsonValue& root = row["root"];
+      if (!row.IsObject() || !root.IsString() || root.AsString().size() > kMaxRootBytes) {
+        continue;
+      }
+      ServerWorkspace workspace{.root = root.AsString(),
+                                .clients = static_cast<std::size_t>(ReadCount(row["clients"], kMaxClients).value_or(0)),
+                                .terminals = static_cast<std::size_t>(ReadCount(row["terminals"]).value_or(0)),
+                                .processes = static_cast<std::size_t>(ReadCount(row["processes"]).value_or(0))};
+      if (const std::optional<std::int64_t> files = ReadCount(row["files"])) {
+        workspace.files = static_cast<std::size_t>(*files);
+      }
+      if (const std::optional<std::int64_t> hashed = ReadCount(row["hashed"])) {
+        workspace.hashed = static_cast<std::size_t>(*hashed);
+      }
+      if (const util::JsonValue& watch = row["watch"];
+          watch.IsString() && (watch.AsString() == "native" || watch.AsString() == "polling" ||
+                               watch.AsString() == "none")) {
+        workspace.watch = watch.AsString();
+      }
+      status.workspaces.push_back(std::move(workspace));
     }
-    const util::JsonValue& handle = row["handle"];
-    const util::JsonValue& root = row["root"];
-    const util::JsonValue& cwd = row["cwd"];
-    const util::JsonValue& clients = row["clients"];
-    if (!row.IsObject() || !handle.IsInt() || handle.AsInt() <= 0 || handle.AsInt() > kMaxHandle ||
-        !root.IsString() || root.AsString().size() > kMaxRootBytes || !clients.IsInt() ||
-        clients.AsInt() < 0 || clients.AsInt() > kMaxClients) {
-      continue;
+  }
+  if (const util::JsonValue& terminals = json["terminals"]; terminals.IsArray()) {
+    // An array, or absent / the count an older server sends: not listed.
+    std::vector<ServerTerminal>& rows = status.terminals.emplace();
+    for (const util::JsonValue& row : terminals.AsArray()) {
+      if (rows.size() >= kMaxListedTerminals) {
+        break;
+      }
+      const std::optional<std::uint64_t> handle = ReadHandle(row["handle"]);
+      const util::JsonValue& root = row["root"];
+      const std::optional<std::int64_t> clients = ReadCount(row["clients"], kMaxClients);
+      if (!row.IsObject() || !handle.has_value() || !root.IsString() ||
+          root.AsString().size() > kMaxRootBytes || !clients.has_value()) {
+        continue;
+      }
+      ServerTerminal terminal{.handle = *handle,
+                              .root = root.AsString(),
+                              .cwd = ReadPath(row["cwd"]),
+                              .clients = static_cast<std::size_t>(*clients),
+                              .exited = row["exited"].AsBool(false),
+                              .pid = ReadPid(row["pid"]),
+                              .figures = ReadFigures(row)};
+      if (const std::optional<std::int64_t> lines = ReadCount(row["scrollback_lines"])) {
+        terminal.scrollback_lines = static_cast<std::size_t>(*lines);
+      }
+      rows.push_back(std::move(terminal));
     }
-    rows.push_back(ServerTerminal{
-        .handle = static_cast<std::uint64_t>(handle.AsInt()),
-        .root = root.AsString(),
-        .cwd = cwd.IsString() && cwd.AsString().size() <= kMaxRootBytes ? cwd.AsString() : std::string(),
-        .clients = static_cast<std::size_t>(clients.AsInt()),
-        .exited = row["exited"].AsBool(false)});
+  }
+  if (const util::JsonValue& processes = json["processes"]; processes.IsArray()) {
+    std::vector<ServerProcess>& rows = status.processes.emplace();
+    for (const util::JsonValue& row : processes.AsArray()) {
+      if (rows.size() >= kMaxListedProcesses) {
+        break;
+      }
+      const std::optional<std::uint64_t> handle = ReadHandle(row["handle"]);
+      const util::JsonValue& root = row["root"];
+      const util::JsonValue& argv = row["argv"];
+      if (!row.IsObject() || !handle.has_value() || !root.IsString() ||
+          root.AsString().size() > kMaxRootBytes || !argv.IsArray()) {
+        continue;
+      }
+      ServerProcess process{.handle = *handle, .root = root.AsString()};
+      bool argv_ok = true;
+      for (const util::JsonValue& arg : argv.AsArray()) {
+        if (!arg.IsString() || arg.AsString().size() > kMaxListedArgBytes) {
+          argv_ok = false;
+          break;
+        }
+        if (process.argv.size() < kMaxListedArgs) {
+          process.argv.push_back(arg.AsString());
+        }
+      }
+      if (!argv_ok) {
+        continue;  // a row naming its process in something other than strings
+      }
+      process.pid = ReadPid(row["pid"]);
+      process.cwd = ReadPath(row["cwd"]);
+      process.kept = row["kept"].AsBool(false);
+      process.detached_for = ReadMilliseconds(row["detached_ms"]);
+      process.exited = row["exited"].AsBool(false);
+      process.buffered_bytes = static_cast<std::size_t>(ReadCount(row["buffered_bytes"]).value_or(0));
+      process.figures = ReadFigures(row);
+      rows.push_back(std::move(process));
+    }
   }
   return status;
 }

@@ -97,6 +97,11 @@ class WorkspaceTree {
   }
 
   const std::filesystem::path& root() const { return root_; }
+  // The latest manifest's file count and the hashes held for it (server/status).
+  // Lock-free: a cold tree's first build holds the lock for as long as it hashes,
+  // and a status must not wait for that.
+  std::size_t manifest_files() const { return manifest_files_.load(std::memory_order_relaxed); }
+  std::size_t hashed_files() const { return hashed_files_.load(std::memory_order_relaxed); }
   // Files hashed (cache misses) by the most recent BuildManifest.
   std::size_t last_hashed_files() const { return last_hashed_files_; }
   // The id of the newest manifest built so far (0: none). Taken under the lock a
@@ -139,6 +144,7 @@ class WorkspaceTree {
                          std::vector<std::string>& out, std::string* error,
                          const std::string& prefix = {});
   std::string OverLimitMessage() const;
+  void PublishCountsLocked();
   void LoadCache();
   void SaveCacheLocked();
 
@@ -158,6 +164,8 @@ class WorkspaceTree {
   bool built_ = false;
   bool last_update_was_full_ = false;
   bool cache_dirty_ = false;
+  std::atomic<std::size_t> manifest_files_{0};
+  std::atomic<std::size_t> hashed_files_{0};
 };
 
 }  // namespace microide::server

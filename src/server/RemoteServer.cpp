@@ -9,6 +9,7 @@
 #include "project/GitMetadataSource.h"
 #include "project/remote/RemoteServerPaths.h"
 #include "server/ListeningPorts.h"
+#include "server/ProcessActivity.h"
 #include "util/ContentHash.h"
 #include "util/Log.h"
 #include "util/TextFileIO.h"
@@ -103,6 +104,20 @@ RemoteServer::~RemoteServer() {
     (void)connection->peer.Flush(std::chrono::milliseconds(500));
     connection->peer.Stop();  // joins its I/O thread, and with it any closed handler
   }
+  // The samplers before the tables: the activity one lists them, and the members
+  // that would otherwise stop the samplers outlive this body. After the
+  // connections, so no subscribe can start one again. Joined outside their locks.
+  std::unique_ptr<PeriodicSampler> samplers[2];
+  {
+    std::lock_guard lock(activity_mutex_);
+    samplers[0] = std::move(activity_sampler_);
+  }
+  {
+    std::lock_guard lock(ports_mutex_);
+    samplers[1] = std::move(port_sampler_);
+  }
+  samplers[0].reset();
+  samplers[1].reset();
   terminals_.reset();
   processes_.reset();
 }
@@ -129,6 +144,7 @@ RemoteServer::Connection& RemoteServer::Accept(int read_fd, int write_fd) {
   InstallGitHandlers(ref);
   InstallSearchHandlers(ref);
   InstallPortHandlers(ref);
+  InstallActivityHandlers(ref);
   remote::RemotePeer::Options options;  // the server answers pings; it does not send them
   if (!ref.peer.Start(read_fd, write_fd, options)) {
     ref.closed = true;
@@ -187,8 +203,8 @@ void RemoteServer::InstallHandlers(Connection& connection) {
                                .settings = {.backfill_inflight_bytes = backfill},
                            }));
                  });
-  peer.OnRequest(remote::method::kServerStatus, [this, &connection](std::uint64_t id, const util::JsonValue&) {
-    connection.peer.Reply(id, StatusJson());
+  peer.OnRequest(remote::method::kServerStatus, [this, &connection](std::uint64_t id, const util::JsonValue& params) {
+    connection.peer.Reply(id, StatusJson(params["activity"].AsBool(false)));
   });
   peer.OnRequest(remote::method::kServerLog, [this, &connection](std::uint64_t id, const util::JsonValue&) {
     // Size-capped by the server's own logger, so this is a small local read.
@@ -235,6 +251,7 @@ void RemoteServer::InstallHandlers(Connection& connection) {
     }
     released.reset();
     DropPortSubscriber(connection.id);
+    DropActivitySubscriber(connection.id);
     processes_->Detach(connection.id);
     terminals_->Detach(connection.id);
     connection.closed = true;
@@ -251,6 +268,7 @@ void RemoteServer::InstallProcessHandlers(Connection& connection) {
       connection.peer.ReplyError(id, remote::kErrorInvalidParams, error);
       return;
     }
+    request->root = connection.root;
     const ProcessTable::SpawnResult spawned = processes_->Spawn(connection.id, std::move(*request));
     if (spawned.handle == 0) {
       connection.peer.ReplyError(id, remote::kErrorInvalidParams, spawned.error);
@@ -315,6 +333,9 @@ void RemoteServer::InstallProcessHandlers(Connection& connection) {
   });
   peer.OnNotification("proc/release", [this, handle_of](std::uint64_t, const util::JsonValue& params) {
     processes_->Release(handle_of(params));
+  });
+  peer.OnNotification(remote::method::kProcEnd, [this, handle_of](std::uint64_t, const util::JsonValue& params) {
+    processes_->End(handle_of(params));
   });
   peer.OnContent([this, &connection](remote::FrameType type, std::uint64_t handle, std::string bytes) {
     if (type == remote::FrameType::ProcStdin) {
@@ -428,54 +449,211 @@ void RemoteServer::InstallTerminalHandlers(Connection& connection) {
                       });
 }
 
-util::JsonValue RemoteServer::StatusJson() {
-  std::lock_guard lock(mutex_);
+namespace {
+
+void AddFigures(const ProcessActivity::Figures& figures, util::JsonObject& into) {
+  // A pid the walk did not find (exited, or gone between the listing and the
+  // sample) reports nothing rather than zero.
+  if (figures.rss_bytes < 0) {
+    return;
+  }
+  into["rss_bytes"] = util::JsonValue(figures.rss_bytes);
+  into["cpu_permille"] = util::JsonValue(static_cast<std::int64_t>(figures.cpu_permille));
+}
+
+std::int64_t Milliseconds(std::chrono::steady_clock::duration duration) {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+}
+
+}  // namespace
+
+util::JsonValue RemoteServer::StatusJson(bool activity) {
   util::JsonObject status;
   status["socket"] = util::JsonValue(config_.socket_path.string());
   status["pid"] = util::JsonValue(static_cast<std::int64_t>(::getpid()));
   status["release"] = util::JsonValue(config_.release);
   status["daemon_epoch"] = util::JsonValue(epoch_);
   status["on_demand"] = util::JsonValue(config_.on_demand);
+  // Copied under mutex_; listed and sampled outside it, so the I/O threads that
+  // send through connections_ never wait on a /proc walk.
+  struct WorkspaceRow {
+    std::string root;
+    std::size_t clients = 0;
+    std::shared_ptr<ServedTree> tree;
+  };
+  std::vector<WorkspaceRow> workspace_rows;
   std::int64_t live = 0;
-  for (const auto& connection : connections_) {
-    live += connection->closed ? 0 : 1;
+  {
+    std::lock_guard lock(mutex_);
+    for (const auto& connection : connections_) {
+      live += connection->closed ? 0 : 1;
+    }
+    workspace_rows.reserve(workspaces_.size());
+    for (const auto& [root, workspace] : workspaces_) {
+      workspace_rows.push_back(WorkspaceRow{.root = root, .clients = workspace.clients, .tree = workspace.tree});
+    }
   }
   status["connections"] = util::JsonValue(live);
-  // The terminals, listed: a client offers the ones nobody is attached to (a
-  // crash orphan, a quit before this client recorded it). The per-workspace
-  // count is derived from the same rows.
   const std::vector<TerminalTable::Listing> terminals = terminals_->List();
+  const std::vector<ProcessTable::Listing> processes = processes_->List();
+
+  // One walk for every row: the server alone, each shell and each process with
+  // everything under it.
+  std::vector<ProcessActivity::Figures> figures;
+  if (activity) {
+    std::vector<ProcessActivity::Root> roots;
+    roots.reserve(1 + terminals.size() + processes.size());
+    roots.push_back(ProcessActivity::Root{.pid = static_cast<int>(::getpid()), .subtree = false});
+    for (const TerminalTable::Listing& terminal : terminals) {
+      roots.push_back(ProcessActivity::Root{.pid = terminal.exited ? -1 : terminal.pid});
+    }
+    for (const ProcessTable::Listing& process : processes) {
+      roots.push_back(ProcessActivity::Root{.pid = process.exited ? -1 : process.pid});
+    }
+    figures = activity_.Sample(roots);
+  }
+  const auto figures_at = [&](std::size_t index) -> const ProcessActivity::Figures* {
+    return index < figures.size() ? &figures[index] : nullptr;
+  };
+
+  const auto now = std::chrono::steady_clock::now();
+  util::JsonObject server;
+  server["uptime_ms"] = util::JsonValue(Milliseconds(now - started_));
+  if (const ProcessActivity::Figures* own = figures_at(0)) {
+    AddFigures(*own, server);
+  }
+  {
+    std::lock_guard lock(activity_mutex_);
+    server["activity_subscribers"] = util::JsonValue(static_cast<std::int64_t>(activity_subscribers_.size()));
+  }
+  status["server"] = util::JsonValue(std::move(server));
+
+  // The terminals, listed: a client offers the ones nobody is attached to (a
+  // crash orphan, a quit before this client recorded it), and the Host view
+  // shows each with what it costs.
   util::JsonArray terminal_rows;
   terminal_rows.reserve(terminals.size());
-  for (const TerminalTable::Listing& terminal : terminals) {
+  for (std::size_t i = 0; i < terminals.size(); ++i) {
+    const TerminalTable::Listing& terminal = terminals[i];
     util::JsonObject row;
     row["handle"] = util::JsonValue(static_cast<std::int64_t>(terminal.handle));
     row["root"] = util::JsonValue(terminal.root);
     row["cwd"] = util::JsonValue(terminal.cwd);
     row["clients"] = util::JsonValue(static_cast<std::int64_t>(terminal.clients));
     row["exited"] = util::JsonValue(terminal.exited);
+    row["pid"] = util::JsonValue(static_cast<std::int64_t>(terminal.pid));
+    row["scrollback_lines"] = util::JsonValue(static_cast<std::int64_t>(terminal.scrollback_lines));
+    if (const ProcessActivity::Figures* own = figures_at(1 + i)) {
+      AddFigures(*own, row);
+    }
     terminal_rows.push_back(util::JsonValue(std::move(row)));
   }
+  util::JsonArray process_rows;
+  process_rows.reserve(processes.size());
+  std::int64_t live_processes = 0;
+  for (std::size_t i = 0; i < processes.size(); ++i) {
+    const ProcessTable::Listing& process = processes[i];
+    live_processes += process.exited ? 0 : 1;
+    util::JsonObject row;
+    row["handle"] = util::JsonValue(static_cast<std::int64_t>(process.handle));
+    row["root"] = util::JsonValue(process.root);
+    util::JsonArray argv;
+    argv.reserve(process.argv.size());
+    for (const std::string& arg : process.argv) {
+      argv.push_back(util::JsonValue(arg));
+    }
+    row["argv"] = util::JsonValue(std::move(argv));
+    row["pid"] = util::JsonValue(static_cast<std::int64_t>(process.pid));
+    row["cwd"] = util::JsonValue(process.cwd);
+    row["kept"] = util::JsonValue(process.kept);
+    if (process.detached_for.has_value()) {
+      row["detached_ms"] = util::JsonValue(static_cast<std::int64_t>(process.detached_for->count()));
+    }
+    row["exited"] = util::JsonValue(process.exited);
+    row["buffered_bytes"] = util::JsonValue(static_cast<std::int64_t>(process.buffered_bytes));
+    if (const ProcessActivity::Figures* own = figures_at(1 + terminals.size() + i)) {
+      AddFigures(*own, row);
+    }
+    process_rows.push_back(util::JsonValue(std::move(row)));
+  }
+
   util::JsonArray workspaces;
-  for (const auto& [root, workspace] : workspaces_) {
+  workspaces.reserve(workspace_rows.size());
+  for (const WorkspaceRow& workspace : workspace_rows) {
+    const auto under = [&](const std::string& root) { return root == workspace.root; };
     util::JsonObject entry;
-    entry["root"] = util::JsonValue(root);
+    entry["root"] = util::JsonValue(workspace.root);
     entry["clients"] = util::JsonValue(static_cast<std::int64_t>(workspace.clients));
-    entry["terminals"] = util::JsonValue(static_cast<std::int64_t>(
-        std::count_if(terminals.begin(), terminals.end(),
-                      [&](const TerminalTable::Listing& terminal) { return terminal.root == root; })));
-    entry["processes"] = util::JsonValue(std::int64_t{0});  // per-workspace accounting: TD
+    entry["terminals"] = util::JsonValue(static_cast<std::int64_t>(std::count_if(
+        terminals.begin(), terminals.end(), [&](const TerminalTable::Listing& t) { return under(t.root); })));
+    entry["processes"] = util::JsonValue(static_cast<std::int64_t>(std::count_if(
+        processes.begin(), processes.end(),
+        [&](const ProcessTable::Listing& p) { return !p.exited && under(p.root); })));
+    if (workspace.tree) {
+      entry["files"] = util::JsonValue(static_cast<std::int64_t>(workspace.tree->tree.manifest_files()));
+      entry["hashed"] = util::JsonValue(static_cast<std::int64_t>(workspace.tree->tree.hashed_files()));
+      const WatchMode mode = workspace.tree->watch_mode.load();
+      entry["watch"] = util::JsonValue(std::string(mode == WatchMode::Native    ? "native"
+                                                   : mode == WatchMode::Polling ? "polling"
+                                                                                : "none"));
+    }
     workspaces.push_back(util::JsonValue(std::move(entry)));
   }
   status["workspaces"] = util::JsonValue(std::move(workspaces));
-  status["processes"] = util::JsonValue(static_cast<std::int64_t>(processes_->LiveCount()));
-  // Was a count before the listing; the count is its length.
+  // `processes` was the live count before the listing, as `terminals` was; a
+  // client that reads a number reads it from `live_processes`.
+  status["live_processes"] = util::JsonValue(live_processes);
+  status["processes"] = util::JsonValue(std::move(process_rows));
   status["terminals"] = util::JsonValue(std::move(terminal_rows));
   util::JsonObject survival;
   survival["kill_user_processes"] = util::JsonValue(config_.session_survival.kill_user_processes);
   survival["linger"] = util::JsonValue(config_.session_survival.linger);
   status["session_survival"] = util::JsonValue(std::move(survival));
   return util::JsonValue(std::move(status));
+}
+
+void RemoteServer::InstallActivityHandlers(Connection& connection) {
+  connection.peer.OnRequest(remote::method::kActivitySubscribe,
+                            [this, &connection](std::uint64_t id, const util::JsonValue&) {
+                              {
+                                std::lock_guard lock(activity_mutex_);
+                                activity_subscribers_.insert(connection.id);
+                                if (activity_sampler_ == nullptr) {
+                                  activity_sampler_ = std::make_unique<PeriodicSampler>(
+                                      remote::kActivityInterval, [this]() { SampleActivity(); });
+                                }
+                              }
+                              connection.peer.Reply(id, StatusJson(true));
+                            });
+  connection.peer.OnNotification(remote::method::kActivityUnsubscribe,
+                                 [this, &connection](std::uint64_t, const util::JsonValue&) {
+                                   DropActivitySubscriber(connection.id);
+                                 });
+}
+
+void RemoteServer::SampleActivity() {
+  std::vector<std::uint64_t> subscribers;
+  {
+    std::lock_guard lock(activity_mutex_);
+    subscribers.assign(activity_subscribers_.begin(), activity_subscribers_.end());
+  }
+  if (subscribers.empty()) {
+    return;
+  }
+  const util::JsonValue message = StatusJson(true);
+  for (const std::uint64_t subscriber : subscribers) {
+    WithPeer(subscriber, [&](remote::RemotePeer& peer) { peer.Notify(remote::method::kActivityChanged, message); });
+  }
+}
+
+void RemoteServer::DropActivitySubscriber(std::uint64_t connection_id) {
+  std::unique_ptr<PeriodicSampler> stopped;  // joined outside the lock its thread takes
+  {
+    std::lock_guard lock(activity_mutex_);
+    if (activity_subscribers_.erase(connection_id) > 0 && activity_subscribers_.empty()) {
+      stopped = std::move(activity_sampler_);
+    }
+  }
 }
 
 namespace {

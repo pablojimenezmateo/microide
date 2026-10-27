@@ -130,6 +130,8 @@ class TerminalTable {
     std::string cwd;   // the shell's OSC 7 directory ("" = not reported)
     std::size_t clients = 0;
     bool exited = false;
+    int pid = -1;                       // the shell's ("-1" once it is gone)
+    std::size_t scrollback_lines = 0;  // lines held: history plus the screen
   };
   // Every live terminal, by handle; at most limits().max_terminals of them.
   std::vector<Listing> List() const;

@@ -110,7 +110,19 @@ class RemoteServerClient {
   std::optional<GitMetadata> QueryGitMetadata(const std::filesystem::path& host_root);
   // server/status, blocking the calling thread (not the I/O thread) on the reply.
   // nullopt with *error when it failed; a reply is decoded as untrusted.
-  std::optional<ServerStatus> Status(std::string* error);
+  // With `activity`, the reply carries what each row costs (one host-side
+  // sample; a CPU share needs a previous one, so a lone ask may lack it).
+  std::optional<ServerStatus> Status(std::string* error, bool activity = false);
+  // activity/subscribe (remote-host-activity D2): the status with activity now,
+  // then `changed` on the I/O thread with every activity/changed push until
+  // UnsubscribeActivity. nullopt with *error when the host refused -- a server
+  // older than it answers kErrorUnknownMethod, which is no subscription and no
+  // error the user needs to see.
+  using ActivityHandler = std::function<void(const ServerStatus& status)>;
+  std::optional<ServerStatus> SubscribeActivity(ActivityHandler changed, std::string* error);
+  // Stops the pushes (a notification: nothing waits) and drops the handler, so a
+  // push already in flight is not delivered.
+  void UnsubscribeActivity();
 
   // Pushed git status (git/subscribe, remote-projects.md § 6.5): the host pushes
   // `git status` after every change to the workspace or its repository, so the
@@ -233,6 +245,7 @@ class RemoteServerClient {
   std::map<std::uint64_t, std::shared_ptr<std::function<void(const util::JsonValue&)>>> search_routes_;
   std::shared_ptr<std::function<void(const std::string&)>> git_status_handler_;
   std::shared_ptr<PortsHandler> ports_handler_;
+  std::shared_ptr<ActivityHandler> activity_handler_;
   int git_mutations_in_flight_ = 0;
   std::uint64_t git_required_generation_ = 0;
   // The highest proc/exit `git_generation` seen; recorded before the exit is

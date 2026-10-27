@@ -3,7 +3,8 @@
 //
 //   start   [--on-demand] [--socket-dir D] [--idle-timeout-ms N] [--keep-grace-ms N]   daemonize and serve
 //   stop    [--socket-dir D]                                       ask it to exit
-//   status  [--socket-dir D]                                       print what it serves
+//   status  [--socket-dir D] [--json]                              print what it serves:
+//                                                                  a table, or the raw reply
 //   attach  [--socket-dir D] [--idle-timeout-ms N]                 relay stdio to it,
 //                                                                  starting one on demand
 //   serve-stdio                                                    serve ONE connection on
@@ -29,6 +30,7 @@
 #include "project/remote/RemotePeer.h"
 #include "project/remote/RemoteProtocol.h"
 #include "project/remote/RemoteServerPaths.h"
+#include "project/remote/ServerStatusText.h"
 #include "server/RemoteServer.h"
 #include "util/JsonFormat.h"
 #include "util/JsonValue.h"
@@ -58,11 +60,12 @@ struct Options {
   bool on_demand = false;
   std::chrono::milliseconds idle_timeout{10 * 60 * 1000};
   std::chrono::milliseconds keep_grace{30 * 60 * 1000};
+  bool json = false;
 };
 
 int Usage() {
   std::cerr << "usage: microide-server <start|stop|status|attach|serve-stdio> "
-               "[--socket-dir DIR] [--on-demand] [--idle-timeout-ms N] [--keep-grace-ms N]\n";
+               "[--socket-dir DIR] [--on-demand] [--idle-timeout-ms N] [--keep-grace-ms N] [--json]\n";
   return 2;
 }
 
@@ -94,6 +97,8 @@ std::optional<Options> ParseOptions(int argc, char** argv) {
       options.socket_dir = argv[++i];
     } else if (arg == "--on-demand") {
       options.on_demand = true;
+    } else if (arg == "--json") {
+      options.json = true;
     } else if (arg == "--idle-timeout-ms" && i + 1 < argc) {
       const auto ms = microide::util::ParseInt64(argv[++i]);
       if (!ms.has_value() || *ms < 0) {
@@ -231,7 +236,8 @@ int Start(const Options& options) {
 
 // One request to the running server, synchronously; for status and stop.
 std::optional<microide::util::JsonValue> Ask(const Options& options, std::string_view method,
-                                             std::string* error) {
+                                             std::string* error,
+                                             microide::util::JsonValue params = microide::util::JsonValue(nullptr)) {
   const std::filesystem::path socket = remote::ServerSocketPath(options.socket_dir);
   const int fd = microide::platform::ConnectUnixSocket(socket);
   if (fd < 0) {
@@ -247,7 +253,7 @@ std::optional<microide::util::JsonValue> Ask(const Options& options, std::string
   std::condition_variable done;
   std::optional<microide::util::JsonValue> answer;
   bool finished = false;
-  peer.Request(method, microide::util::JsonValue(nullptr), remote::Lane::Interactive,
+  peer.Request(method, params, remote::Lane::Interactive,
                [&](std::optional<microide::util::JsonValue> result,
                    std::optional<remote::RemotePeer::RpcError> rpc_error) {
                  std::lock_guard lock(mutex);
@@ -269,13 +275,34 @@ std::optional<microide::util::JsonValue> Ask(const Options& options, std::string
 
 int Status(const Options& options) {
   std::string error;
-  const auto status = Ask(options, remote::method::kServerStatus, &error);
+  if (options.json) {
+    // The plain reply, exactly what a client's server/status returns: no figures,
+    // so nothing reads /proc.
+    const auto status = Ask(options, remote::method::kServerStatus, &error);
+    if (!status.has_value()) {
+      std::cerr << "microide-server: " << error << '\n';
+      return 1;
+    }
+    const auto formatted = microide::util::FormatJson(microide::util::SerializeJson(*status), "  ");
+    std::cout << (formatted.ok ? formatted.text : microide::util::SerializeJson(*status)) << '\n';
+    return 0;
+  }
+  // A CPU share is a difference between two samples: take the first, wait, and
+  // print the second, so the column is never "not reported" for want of one.
+  microide::util::JsonObject params;
+  params["activity"] = microide::util::JsonValue(true);
+  const microide::util::JsonValue ask(std::move(params));
+  if (!Ask(options, remote::method::kServerStatus, &error, ask).has_value()) {
+    std::cerr << "microide-server: " << error << '\n';
+    return 1;
+  }
+  std::this_thread::sleep_for(std::chrono::seconds(1));
+  const auto status = Ask(options, remote::method::kServerStatus, &error, ask);
   if (!status.has_value()) {
     std::cerr << "microide-server: " << error << '\n';
     return 1;
   }
-  const auto formatted = microide::util::FormatJson(microide::util::SerializeJson(*status), "  ");
-  std::cout << (formatted.ok ? formatted.text : microide::util::SerializeJson(*status)) << '\n';
+  std::cout << remote::FormatServerStatusTable(remote::ServerStatusFromJson(*status));
   return 0;
 }
 

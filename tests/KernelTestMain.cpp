@@ -89,6 +89,7 @@ void RegisterRemoteFrameTransportTests(std::vector<TestCase>& tests);
 void RegisterRemotePeerTests(std::vector<TestCase>& tests);
 void RegisterRemoteServerTests(std::vector<TestCase>& tests);
 void RegisterRemoteProcessTests(std::vector<TestCase>& tests);
+void RegisterRemoteHostActivityTests(std::vector<TestCase>& tests);
 void RegisterRemoteLauncherTests(std::vector<TestCase>& tests);
 
 namespace {
@@ -110,6 +111,7 @@ void RegisterKernelTests(std::vector<TestCase>& tests) {
   RegisterRemotePeerTests(tests);
   RegisterRemoteServerTests(tests);
   RegisterRemoteProcessTests(tests);
+  RegisterRemoteHostActivityTests(tests);
   RegisterRemoteLauncherTests(tests);
   RegisterTestRunnerCliTests(tests);
   RegisterAppDirectoriesTests(tests);

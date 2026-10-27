@@ -376,7 +376,9 @@ std::vector<TerminalTable::Listing> TerminalTable::List() const {
                            .root = terminal->root,
                            .cwd = terminal->session.reported_working_directory().string(),
                            .clients = terminal->clients.size(),
-                           .exited = !terminal->session.running()});
+                           .exited = !terminal->session.running(),
+                           .pid = terminal->session.child_process_id(),
+                           .scrollback_lines = terminal->session.LineCount()});
   }
   return list;
 }
