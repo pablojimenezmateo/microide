@@ -449,6 +449,20 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-27-406 — `RemoteTerminal/TwoClientsShareAHostTerminalAtTheSmallerSize` once saw a blank screen for 15 s.
+
+Under the ASan lane, while the GUI QA lane and the TSan build ran beside it
+(2026-10-27), the first client's screen stayed entirely empty -- no prompt, not
+even the echo of the typed `echo ready-$((1+1))` -- for the whole 15 s
+`WaitForText`. Not reproduced since: the test alone 5x, 24 copies in parallel, and
+12 parallel runs of its whole kernel shard, all under ASan, pass. A blank screen
+(rather than a late one) is what a lost first frame would look like, and the
+session-binds-before-first-request path (`TerminalSessionTestAccess::EnterHostMode`'s
+early return) exists for exactly that race, so a starved server under four
+concurrent lanes and a dropped frame are both possible. Next time it fails, keep
+the server's log (`ShortServerDir`) and the channel's frame counters before
+deciding which.
+
 ### TD-2026-10-27-405 — Remote menu leftovers: no reason on a dimmed row, Forward a Port… with several hosts, Remove Mirror's availability.
 
 What `openspec/changes/archive/2026-10-27-remote-menu` left:
