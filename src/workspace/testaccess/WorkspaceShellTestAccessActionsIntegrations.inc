@@ -951,6 +951,17 @@
     }
     return {};
   }
+  static std::optional<WorkspaceShell::VisibleStripTab> VisibleProjectTab(WorkspaceShell& shell,
+                                                                         std::size_t index) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    for (const WorkspaceShell::VisibleStripTab& tab :
+         shell.tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip)) {
+      if (tab.index == index) {
+        return tab;
+      }
+    }
+    return std::nullopt;
+  }
   static std::string ProjectTabTooltipLabel(WorkspaceShell& shell, std::size_t index) {
     return shell.ProjectTabTooltipLabel(index);
   }

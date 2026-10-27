@@ -89,6 +89,16 @@ std::uint64_t WorkspaceTabStripChrome::ComputeProjectStripFingerprint() const {
                   (static_cast<std::uint64_t>(color.a) << 32);
     }
     fingerprint = util::Fnv1aValue(fingerprint, color_key);
+    // A remote project's corner follows its connection: the worst stage, not the
+    // status revision, so a sync count ticking under a steady state re-lays nothing.
+    // (The host is in the id, which the root already pins.)
+    std::uint64_t remote_key = 0;
+    if (context_->ProjectCatalogId(i).IsRemote()) {
+      remote_key = 1u + (project != nullptr
+                             ? static_cast<std::uint64_t>(editor::WorstRemoteStage(project->remote_status))
+                             : static_cast<std::uint64_t>(editor::WelcomeStageState::Active));
+    }
+    fingerprint = util::Fnv1aValue(fingerprint, remote_key);
   }
   return fingerprint;
 }
@@ -112,21 +122,33 @@ WorkspaceTabStripChrome::RefreshProjectStripSources() const {
   sources.tooltip_labels.reserve(entry_count);
   sources.badge_styles.reserve(entry_count);
   for (std::size_t i = 0; i < entry_count; ++i) {
-    sources.display_titles.push_back(operations_.project_tab_display_title(i));
-    sources.tooltip_labels.push_back(operations_.project_tab_tooltip_label(i));
-    sources.widths.push_back(tab_strip_service_->MeasureProjectTabWidth(
-        sources.display_titles.back(), operations_.measure_width));
+    const project::ProjectId& id = context_->ProjectCatalogId(i);
     const std::filesystem::path& root = operations_.project_catalog_root(i);
     const bool is_active_project =
         !context_->current_project_state.root.empty() &&
         i == context_->project_catalog.active_index;
     const ProjectWorkspaceState* project = is_active_project ? &context_->current_project_state
                                                              : operations_.project_catalog_entry(i);
+    // A remote project says where it is on its tab: the host after the name, and
+    // the connection's state in the corner (visible however narrow the tab gets).
+    std::string secondary_title;
+    std::optional<editor::WelcomeStageState> remote_state;
+    if (const project::ProjectId::Remote* remote = id.remote(); remote != nullptr) {
+      secondary_title = std::string(kHintSeparator) + remote->host;
+      remote_state = project != nullptr ? editor::WorstRemoteStage(project->remote_status)
+                                        : editor::WelcomeStageState::Active;
+    }
+    sources.display_titles.push_back(operations_.project_tab_display_title(i));
+    sources.tooltip_labels.push_back(operations_.project_tab_tooltip_label(i));
+    sources.widths.push_back(tab_strip_service_->MeasureProjectTabWidth(
+        sources.display_titles.back(), secondary_title, operations_.measure_width));
     sources.badge_styles.push_back(ProjectTabBadgeStyle{
-        .text = tab_strip_service_->BuildProjectBadgeText(context_->ProjectCatalogId(i).Label()),
+        .text = tab_strip_service_->BuildProjectBadgeText(id.Label()),
         .color = project != nullptr ? ProjectTabBadgeColor(*project, root)
                                     : DefaultProjectBaseColor(root),
         .show_badge = layout_mode_service_->CurrentMode() != LayoutMode::Compact,
+        .secondary_title = std::move(secondary_title),
+        .remote_state = remote_state,
     });
   }
   ++sources.version;

@@ -168,10 +168,7 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
       const float stage_w = block.w / static_cast<float>(std::max<std::size_t>(1, model.remote.stages.size()));
       float stage_x = block.x;
       for (const WelcomeRemoteStage& stage : model.remote.stages) {
-        const SDL_Color marker = stage.state == WelcomeStageState::Done      ? theme.diff_added
-                                 : stage.state == WelcomeStageState::Failed  ? theme.diagnostic_error
-                                 : stage.state == WelcomeStageState::Attention ? theme.diagnostic_warning
-                                                                              : theme.diagnostic_info;
+        const SDL_Color marker = WelcomeStageColor(theme, stage.state);
         const float square = std::floor(line_height * 0.45f);
         render::FillRect(renderer,
                          SDL_FRect{stage_x, block.y + row + std::floor((line_height - square) * 0.5f), square, square},
@@ -1354,6 +1351,16 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     text_renderer.DrawEphemeralRuns(renderer, gutter_number_run_scratch_.data(),
                                     gutter_number_run_scratch_.size());
   }
+}
+
+SDL_Color WelcomeStageColor(const render::Theme& theme, WelcomeStageState state) {
+  switch (state) {
+    case WelcomeStageState::Done: return theme.diff_added;
+    case WelcomeStageState::Failed: return theme.diagnostic_error;
+    case WelcomeStageState::Attention: return theme.diagnostic_warning;
+    case WelcomeStageState::Active: return theme.diagnostic_info;
+  }
+  return theme.diagnostic_info;
 }
 
 }  // namespace microide::editor

@@ -2604,6 +2604,63 @@ void TestWorkspaceShellPanelHeaderButtonRepaintsItsHover() {
   }
 }
 
+// A remote project's tab says so: its host after the name, and its connection's
+// state as the tab's top-left corner, in the welcome page's stage colours. A local
+// project's tab has neither. The corner follows the state through the strip's
+// source cache, which must not hand back the old colour.
+void TestWorkspaceShellRemoteProjectTabShowsHostAndConnectionCorner() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path local_root = temp_dir.path() / "local";
+  const std::filesystem::path remote_root = temp_dir.path() / "app";
+  WriteFile(local_root / "a.txt", "a\n");
+  WriteFile(remote_root / "b.txt", "b\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, local_root, false, false),
+         "the fixture should open the local project");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, remote_root, false, false),
+         "the fixture should open the second project");
+  auto& remote = WorkspaceShellTestAccess::CurrentProjectState(shell);
+  remote.id = microide::project::ProjectId::ForRemote("worky", "/srv/app");
+  using Stage = microide::editor::WelcomeStageState;
+  remote.remote_status.stages = {{.text = "not connected", .state = Stage::Failed}};
+  ++remote.remote_status_revision;
+
+  const auto local_tab = WorkspaceShellTestAccess::VisibleProjectTab(shell, 0);
+  const auto remote_tab = WorkspaceShellTestAccess::VisibleProjectTab(shell, 1);
+  Expect(local_tab.has_value() && remote_tab.has_value(), "both project tabs should be on the strip");
+  Expect(local_tab->secondary_title.empty() && !local_tab->remote_state.has_value(),
+         "a local project's tab has no host and no corner");
+  Expect(remote_tab->secondary_title == " \xc2\xb7 worky",
+         "a remote project's tab names its host: '" + remote_tab->secondary_title + "'");
+  Expect(remote_tab->remote_state == Stage::Failed, "the corner carries the connection's worst stage");
+
+  const auto theme = microide::render::MakeDefaultTheme();
+  const auto same = [](SDL_Color a, SDL_Color b) { return a.r == b.r && a.g == b.g && a.b == b.b; };
+  SoftwareCanvas canvas(kWidth, kHeight);
+  const auto corner_of = [&](std::size_t index) {
+    shell.Render(canvas.renderer(), kWidth, kHeight);
+    const SDL_FRect rect = WorkspaceShellTestAccess::ProjectTabRect(shell, index);
+    return canvas.PixelAt(static_cast<int>(rect.x) + 1, static_cast<int>(rect.y) + 1);
+  };
+  Expect(same(corner_of(1), theme.diagnostic_error), "an offline project's corner is the error colour");
+  Expect(!same(corner_of(0), theme.diagnostic_error) && !same(corner_of(0), theme.diff_added),
+         "a local project's corner is the tab's own");
+
+  remote.remote_status.stages = {{.text = "connected", .state = Stage::Done},
+                                 {.text = "synced 2 files", .state = Stage::Done}};
+  ++remote.remote_status_revision;
+  Expect(same(corner_of(1), theme.diff_added),
+         "once connected and synced, the same tab's corner turns to the done colour");
+}
+
 // A Terminal panel with no terminal shows its New Terminal button. The button was
 // painted only beside a tab, so the empty panel -- whose hint says "use + on the
 // tab strip" -- had a clickable button nobody could see.
@@ -6324,6 +6381,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellDroppingAPanelTabClearsItsGhost);
   AddTest(tests, "WorkspaceShell/PanelHeaderButtonRepaintsItsHover",
           TestWorkspaceShellPanelHeaderButtonRepaintsItsHover);
+  AddTest(tests, "WorkspaceShell/RemoteProjectTabShowsHostAndConnectionCorner",
+          TestWorkspaceShellRemoteProjectTabShowsHostAndConnectionCorner);
   AddTest(tests, "WorkspaceShell/EmptyTerminalPanelShowsItsNewTerminalButton",
           TestWorkspaceShellEmptyTerminalPanelShowsItsNewTerminalButton);
   AddTest(tests, "WorkspaceShell/MenuArrowsWalkOnlyTheMenuBar",

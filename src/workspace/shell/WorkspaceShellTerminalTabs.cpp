@@ -199,10 +199,17 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
       .project_status_changed =
           [this](const std::filesystem::path& root, const editor::WelcomeRemoteStatus& status) {
             if (ProjectWorkspaceState* state = context_.ProjectStateForRoot(root); state != nullptr) {
+              const editor::WelcomeStageState shown = editor::WorstRemoteStage(state->remote_status);
               state->remote_status = status;
               ++state->remote_status_revision;
               if (state == &context_.current_project_state) {
                 RequestEditorSurfaceRedraw();
+              }
+              // Every project's tab wears its connection's state, a background one
+              // too. It is pushed here, so nothing polls; and only a change of that
+              // state repaints the strip, not every sync count.
+              if (editor::WorstRemoteStage(status) != shown) {
+                RequestChromeRedraw();
               }
             }
           },

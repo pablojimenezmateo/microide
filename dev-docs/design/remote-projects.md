@@ -1986,6 +1986,17 @@ show `host:/remote/path` or `host:name`; a remote terminal tab is labelled
 `build-box · zsh`. The mirror path appears only in **Remote: Show Status**, so a
 user can find it when they need it and never mistakes it for their project.
 
+**As built (2026-10-27), the project tab:** the name, then ` · host` in the dimmer
+secondary colour (cut before the name is, never instead of it), and an 8 px
+triangle in the tab's top-left corner coloured by the connection's worst stage —
+the welcome page's stage colours via `editor::WelcomeStageColor` (done green,
+in-progress info, attention amber, failed red). The corner is what still says
+"remote, and how it stands" when the strip squeezes a tab to its badge, and it
+shows for a background project too: `project_status_changed` repaints the strip
+only when that stage changes (pushed, never polled), and the strip's source
+fingerprint keys on the stage, not the status revision, so a sync count ticking
+under a steady state re-lays nothing. A local project's tab is unchanged.
+
 ### 7.6 Notifications
 
 Through `NotificationService`, each with the one action that matters:

@@ -11,6 +11,7 @@
 #include <array>
 #include <charconv>
 #include <cmath>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -940,6 +941,18 @@ inline void DrawPrimarySecondaryRowText(const render::TextRenderer& text_rendere
              text_renderer.TruncateToWidthEphemeralView(secondary, secondary_width));
 }
 
+// A remote project tab's extras (VisibleStripTab::secondary_title / remote_state):
+// the host after the name, dimmer, and the connection's state as a corner triangle,
+// which stays visible when the strip squeezes the name to nothing.
+struct StripTabRemoteMark {
+  std::string_view secondary_label;
+  std::optional<editor::WelcomeStageState> state;
+};
+
+inline StripTabRemoteMark RemoteMarkOf(const VisibleStripTab& tab) {
+  return StripTabRemoteMark{.secondary_label = tab.secondary_title, .state = tab.remote_state};
+}
+
 inline void DrawStripTab(const render::TextRenderer& text_renderer,
                          SDL_Renderer* renderer,
                          const render::Theme& theme,
@@ -951,7 +964,8 @@ inline void DrawStripTab(const render::TextRenderer& text_renderer,
                          bool active,
                          const StripTabStyle& style,
                          const StripTabPalette& palette,
-                         bool hovered = false) {
+                         bool hovered = false,
+                         const StripTabRemoteMark& remote = {}) {
   const SDL_Color inactive_background =
       (hovered && palette.hover_fill.a != 0) ? palette.hover_fill : palette.inactive_fill;
   const SDL_Color background = active ? palette.active_fill : inactive_background;
@@ -987,11 +1001,33 @@ inline void DrawStripTab(const render::TextRenderer& text_renderer,
   // Every visible tab in the project, editor and panel strips passes through here on
   // every frame, and most tab labels fit — so an owned truncation was a per-tab
   // per-frame std::string copy for nothing. The view is consumed by this one call.
-  DrawVCenteredTextOn(
-      text_renderer, renderer, rect, text_left_padding,
-      active ? palette.active_text : palette.inactive_text, background,
-      text_renderer.TruncateToWidthEphemeralView(
-          label, std::max(8.0f, rect.w - style.close_right_reserve - (text_left_padding - style.text_left_padding))));
+  const float label_width =
+      std::max(8.0f, rect.w - style.close_right_reserve - (text_left_padding - style.text_left_padding));
+  const std::string_view title = text_renderer.TruncateToWidthEphemeralView(label, label_width);
+  DrawVCenteredTextOn(text_renderer, renderer, rect, text_left_padding,
+                      active ? palette.active_text : palette.inactive_text, background, title);
+  // The name keeps the room; the host gets what is left (the corner already says
+  // "remote" when there is none). The title is drawn before the second truncation
+  // reuses the shared scratch.
+  if (!remote.secondary_label.empty()) {
+    const float title_width = text_renderer.MeasureWidth(title);
+    if (const float room = label_width - title_width; room > 24.0f) {
+      DrawVCenteredTextOn(text_renderer, renderer, rect, text_left_padding + title_width,
+                          theme.chrome_text_secondary, background,
+                          text_renderer.TruncateToWidthEphemeralView(remote.secondary_label, room));
+    }
+  }
+  if (remote.state.has_value()) {
+    // Over the active tab's accent edge, so it reads on every tab alike.
+    constexpr int kCorner = 8;
+    render::SetDrawColor(renderer, editor::WelcomeStageColor(theme, *remote.state));
+    const float x = std::floor(rect.x);
+    const float y = std::floor(rect.y);
+    for (int row = 0; row < kCorner; ++row) {
+      SDL_RenderLine(renderer, x, y + static_cast<float>(row),
+                     x + static_cast<float>(kCorner - 1 - row), y + static_cast<float>(row));
+    }
+  }
 }
 
 // Paints a chevron-glyph button with an optional hidden-tab count badge,
@@ -1078,7 +1114,8 @@ inline void DrawTabDragFeedback(const render::TextRenderer& text_renderer,
   FillRect(renderer, MakeRect(ghost_rect.x + 1.0f, ghost_rect.y + 2.0f, ghost_rect.w, ghost_rect.h),
            render::BlendColors(theme.surface_background, SDL_Color{0, 0, 0, 255}, 0.5f));
   DrawStripTab(text_renderer, renderer, theme, ghost_rect, ghost->display_title, ghost->badge_text,
-               ghost->badge_color, ghost->show_badge, /*active=*/true, style, palette);
+               ghost->badge_color, ghost->show_badge, /*active=*/true, style, palette,
+               /*hovered=*/false, RemoteMarkOf(*ghost));
   OutlineRect(renderer, ghost_rect, theme.accent);
 }
 

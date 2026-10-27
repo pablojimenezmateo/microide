@@ -160,7 +160,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                        .close_right_reserve = 46.0f,
                        .accent_edge = StripAccentEdge::Top,
                    },
-                   chrome_tab_palette, tab_hovered(rect));
+                   chrome_tab_palette, tab_hovered(rect), RemoteMarkOf(tab));
       draw_tab_close_button(close_rect,
                             tab.active ? chrome_tab_palette.active_glyph
                                        : chrome_tab_palette.inactive_glyph,

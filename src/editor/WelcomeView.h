@@ -7,6 +7,10 @@
 #include <string>
 #include <vector>
 
+namespace microide::render {
+struct Theme;
+}
+
 namespace microide::editor {
 
 // A single curated keyboard-shortcut row on the welcome surface. Sourced from the
@@ -45,6 +49,31 @@ struct WelcomeRemoteStatus {
   bool empty() const { return stages.empty(); }
   friend bool operator==(const WelcomeRemoteStatus&, const WelcomeRemoteStatus&) = default;
 };
+
+// How the connection stands as a whole: its worst stage. A status not reported yet
+// is a connection still being made.
+inline WelcomeStageState WorstRemoteStage(const WelcomeRemoteStatus& status) {
+  const auto rank = [](WelcomeStageState state) {
+    switch (state) {
+      case WelcomeStageState::Done: return 0;
+      case WelcomeStageState::Active: return 1;
+      case WelcomeStageState::Attention: return 2;
+      case WelcomeStageState::Failed: return 3;
+    }
+    return 3;
+  };
+  WelcomeStageState worst = status.stages.empty() ? WelcomeStageState::Active : WelcomeStageState::Done;
+  for (const WelcomeRemoteStage& stage : status.stages) {
+    if (rank(stage.state) > rank(worst)) {
+      worst = stage.state;
+    }
+  }
+  return worst;
+}
+
+// A stage's colour, wherever a connection's state is drawn: the welcome page's
+// stage squares and a remote project tab's corner.
+SDL_Color WelcomeStageColor(const render::Theme& theme, WelcomeStageState state);
 
 // The welcome surface renders one of two layouts depending on whether a project is
 // open. NoProject is the cold-start home (open a folder / recent projects); ProjectHome

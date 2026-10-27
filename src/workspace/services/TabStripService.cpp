@@ -54,8 +54,11 @@ std::string TabStripService::BuildProjectBadgeText(std::string_view label) const
 }
 
 float TabStripService::MeasureProjectTabWidth(std::string_view display_title,
+                                              std::string_view secondary_title,
                                               const MeasureWidthFn& measure_width) const {
-  return std::clamp(measure_width(display_title) + 58.0f + kProjectTabBadgeWidth, 156.0f, 260.0f);
+  const float secondary = secondary_title.empty() ? 0.0f : measure_width(secondary_title);
+  return std::clamp(measure_width(display_title) + secondary + 58.0f + kProjectTabBadgeWidth, 156.0f,
+                    260.0f);
 }
 
 float TabStripService::MeasureEditorTabWidth(std::string_view display_title,
@@ -173,6 +176,8 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleProjectTabs(
       tab.badge_text = badge_styles[tab.index].text;
       tab.badge_color = badge_styles[tab.index].color;
       tab.show_badge = badge_styles[tab.index].show_badge;
+      tab.secondary_title = badge_styles[tab.index].secondary_title;
+      tab.remote_state = badge_styles[tab.index].remote_state;
     }
   }
   return tabs;

@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -31,6 +32,10 @@ struct VisibleStripTab {
   // and (stronger) the program rang the bell.
   bool activity_dot = false;
   bool bell_mark = false;
+  // Project strip only, for a remote project: its host after the name (` · worky`,
+  // drawn dimmer), and its connection's state as the tab's top-left corner.
+  std::string secondary_title;
+  std::optional<editor::WelcomeStageState> remote_state;
 };
 
 struct TabStripOverflowControls {
@@ -64,6 +69,8 @@ struct ProjectTabBadgeStyle {
   std::string text;
   SDL_Color color{};
   bool show_badge = false;
+  std::string secondary_title;
+  std::optional<editor::WelcomeStageState> remote_state;
 };
 
 class TabStripService {
@@ -72,7 +79,8 @@ class TabStripService {
   using TitleProvider = std::function<std::string(std::size_t)>;
 
   std::string BuildProjectBadgeText(std::string_view label) const;
-  float MeasureProjectTabWidth(std::string_view display_title,
+  // `secondary_title` is a remote project's ` · host` (empty for a local one).
+  float MeasureProjectTabWidth(std::string_view display_title, std::string_view secondary_title,
                                const MeasureWidthFn& measure_width) const;
   float MeasureEditorTabWidth(std::string_view display_title,
                               const MeasureWidthFn& measure_width) const;
