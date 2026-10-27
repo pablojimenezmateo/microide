@@ -287,6 +287,14 @@ void RemoteTerminalChannel::Attached(const std::shared_ptr<RemoteServerClient>& 
     }
     credit_bytes_ = std::max<std::size_t>(credit_bytes, 4096);
     input.swap(pending_input_);
+    // Queued before the handle is visible to any other caller: a Detach or Close
+    // that reads it next queues term/detach / term/close BEHIND what was typed
+    // while the open was in flight (one lane, in order). Sent after the lock, the
+    // detach could overtake it, and the host drops input from a connection that
+    // is no longer attached -- the typed command never ran. Send only queues.
+    if (!input.empty()) {
+      client->peer().SendContent(FrameType::TermInput, handle, input, Lane::Interactive);
+    }
     rows = pending_rows_;
     columns = pending_columns_;
     sent_rows_ = rows;  // a new attach: the host knows nothing of this client's size
@@ -319,9 +327,6 @@ void RemoteTerminalChannel::Attached(const std::shared_ptr<RemoteServerClient>& 
   client->RegisterTerminal(handle, std::move(events));
   if (rows > 0) {
     SendResize(client, handle, rows, columns);
-  }
-  if (!input.empty()) {
-    client->peer().SendContent(FrameType::TermInput, handle, input, Lane::Interactive);
   }
 }
 

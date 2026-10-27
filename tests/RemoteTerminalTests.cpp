@@ -677,6 +677,57 @@ void TestADetachThatKeepsTheConnectionReleasesTheTerminal() {
   Expect(row != nullptr && !row->exited, "and the shell still runs");
 }
 
+// What was typed while term/open was in flight reaches the shell even when the
+// terminal is detached the moment its handle is known: the held input is queued
+// before the handle is visible, so term/detach cannot overtake it (the host drops
+// input from a connection no longer attached). Spun on the handle, many times:
+// the window was microseconds wide.
+void TestInputTypedBeforeTheOpenSurvivesAnImmediateDetach() {
+  ShortServerDir dir;
+  StartServer(dir);
+  const std::filesystem::path out = dir.scratch() / "typed";
+  std::filesystem::create_directories(out);
+  auto client = Connect(dir);
+  constexpr int kTerminals = 40;
+  std::vector<std::uint64_t> handles;
+  for (int i = 0; i < kTerminals; ++i) {
+    TerminalSession session;
+    TerminalSessionTestAccess::Reset(session, 24, 80);
+    auto channel = remote::RemoteTerminalChannel::Open(
+        client, terminal::HostTerminalSource::OpenRequest{.shell = {"sh"}}, session,
+        [](const std::filesystem::path& path) { return path; });
+    Expect(channel != nullptr, "the terminal opens");
+    TerminalSessionTestAccess::EnterHostMode(session, channel);
+    TypeLine(session, "touch " + (out / std::to_string(i)).string());
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (channel->handle() == 0 && std::chrono::steady_clock::now() < deadline) {
+    }
+    Expect(channel->handle() != 0, "it is answered");
+    handles.push_back(channel->handle());
+    channel->Detach();
+    TerminalSessionTestAccess::EnterHostMode(session, nullptr);
+  }
+  int ran = 0;
+  Expect(WaitUntil(
+             [&] {
+               ran = 0;
+               for (int i = 0; i < kTerminals; ++i) {
+                 ran += std::filesystem::exists(out / std::to_string(i)) ? 1 : 0;
+               }
+               return ran == kTerminals;
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(50)),
+         "every command typed before its open was answered ran: " + std::to_string(ran) + " of " +
+             std::to_string(kTerminals));
+  auto closer = Connect(dir);
+  for (const std::uint64_t handle : handles) {
+    util::JsonObject params;
+    params["handle"] = util::JsonValue(static_cast<std::int64_t>(handle));
+    closer->peer().Notify(remote::method::kTermClose, util::JsonValue(std::move(params)));
+  }
+  (void)closer->peer().Flush(std::chrono::seconds(5));
+}
+
 // Quit and close-project detach a host terminal rather than close it; a reopen
 // reattaches it COLD from the recorded identity -- the screen, what the shell
 // printed meanwhile, a dim rule under the restored history. A recorded identity
@@ -809,6 +860,8 @@ void RegisterRemoteTerminalTests(std::vector<TestCase>& tests) {
           TestADetachedTerminalHoldsAnOnDemandServer);
   AddTest(tests, "RemoteTerminal/ADetachThatKeepsTheConnectionReleasesTheTerminal",
           TestADetachThatKeepsTheConnectionReleasesTheTerminal);
+  AddTest(tests, "RemoteTerminal/InputTypedBeforeTheOpenSurvivesAnImmediateDetach",
+          TestInputTypedBeforeTheOpenSurvivesAnImmediateDetach);
   AddTest(tests, "RemoteTerminal/ADetachedHostTerminalIsReattachedByIdentity",
           TestADetachedHostTerminalIsReattachedByIdentity);
   AddTest(tests, "RemoteTerminal/APendingHostTerminalStartsOnceConnected",
