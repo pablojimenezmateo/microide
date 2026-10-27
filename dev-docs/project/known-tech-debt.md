@@ -449,6 +449,53 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-27-398 — three validation lanes went red on a loaded machine for reasons outside the product. [RESOLVED 2026-10-27]
+
+All three surfaced in one session that ran the tests, ASan, UBSan, TSan, clang,
+qa and qa-remote lanes side by side on 16 cores.
+
+**TSan: the wake-pusher test override raced its callers.**
+`util::SetWakePusherForTesting` assigned a plain `std::function` that worker
+threads call through `DeliverWake`; PluginSurfacePreview's
+`DecodedRasterIsLaidOutAtItsOwnSize` cleared it while a ProjectBackgroundExecutor
+worker from an earlier test was pushing an idle wake. Beyond the torn read, a call
+that read the pusher just before the clear could still run it afterwards, against
+the test's stack-captured counter. The override is now a mutex-guarded slot with an
+`active` flag (one atomic load on the production path), and a clear waits out a
+call in flight. `BackgroundTaskCounter/WakePusherOverrideSwapsSafelyUnderConcurrentWakes`;
+a standalone TSan build of its loop reports 5 races on the old header, none now.
+
+**UBSan: `RemoteFrameTransport/BulkWindowFillsALongLink` asserted a measurement.**
+"The window grew past its start" was unconditional, but the window follows the
+bandwidth the acks measure, and a CPU-starved relay delivers short of window / RTT
+(252788, 204232, 70660 bytes; 2 of 5 runs alone while the box was loaded). The test
+now asserts the machine-independent rule (window = measured bandwidth x (base RTT
++ allowance) - one chunk) on every build, and the climb only over an unstarved
+window -- `StalledFraction`, not `Trustworthy()`, which is false in every sanitizer
+build and would have left those lanes checking nothing.
+
+**qa: `resize-overlays` resized nothing.** 15 findings, all "timed out waiting for
+the window to be 1024/640 wide", passing on retry: the app's log shows no resize.
+`resize_window` is a no-op when `App.window` is unset, and `_find_window` returned
+`None` silently after 5 s, looking before the first frame was presented. It now
+looks after the first frame, on a 20 s deadline, and an X11 launch without a window
+is a `QaFailure`. (One X window per app was checked, so a wrong pick is ruled out;
+the silent miss is the only path that matches the log.)
+
+### TD-2026-10-27-397 — a closed remote project answered for its host. [RESOLVED 2026-10-27]
+
+`RemoteHostService::SessionFor`, `SoleHost`, `Reconnect` and `Disconnect` walked
+every remote project, closed ones included (a closed project's entry stays: a
+project state may still hold its locality). With a closed and an open project on
+one host, Show Log, Stop Server, the port commands and Copy Command could resolve
+to the closed project's disconnected session and fail; `SoleHost` counted the
+closed project's host; and Reconnect brought a closed tab's connection back. A
+terminal opened with `Remote: Open Terminal on Host…` masked it while one was open
+(its terminal-only host session was preferred); removing that command left every
+host verb on the project lookup alone. All four now skip closed projects;
+`RemoteHostService/AClosedProjectDoesNotAnswerForItsHost` fails on the old code
+("Show Log reaches the open project's live session").
+
 ### TD-2026-10-27-396 — host-terminal settings and `terminal.shell` reached the wrong terminals. [RESOLVED 2026-10-27]
 
 Found while removing `Remote: Open Terminal on Host…`
