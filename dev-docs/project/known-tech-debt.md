@@ -449,7 +449,15 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-27-395 — local `qa` fails `unicode-editing`: the desktop's IBus reaches the app under test.
+### TD-2026-10-27-395 — local `qa` fails `unicode-editing`: the desktop's IBus reaches the app under test. [RESOLVED 2026-10-27]
+
+**Fixed:** `tools/qa/microide_qa.py` starts every app under test from
+`app_base_env`, which drops `DESKTOP_INPUT_METHOD_ENV` (`XMODIFIERS`,
+`GTK_IM_MODULE`, `QT_IM_MODULE`, `SDL_IM_MODULE`). That is the one place the
+harness builds an app's environment, so X11, Wayland, ASan and the remote lane's
+local app all take it. `unicode-editing` is clean with `XMODIFIERS=@im=ibus` still
+set in the shell that runs it, and `test_driver.AppEnvironmentTests` pins the
+filter. The open question below (real typing under IBus) is unchanged.
 
 **Symptom.** On a developer desktop, `tools/run-checks.sh qa` fails
 `unicode-editing` every time, both in the suite and alone
@@ -475,7 +483,7 @@ scenario is clean, and the D-Bus session address can stay. CI runners have no
 IBus, which is why CI is green. Nothing else differs: SDL is 3.2.16 on both, and no
 X11 or input package changed on the failing machine.
 
-**Fix (not done).** The QA harness should clear the input-method selection
+**Fix (as proposed).** The QA harness should clear the input-method selection
 (`XMODIFIERS`, `GTK_IM_MODULE`, `QT_IM_MODULE`, `SDL_IM_MODULE`) from the
 environment of every app it starts on a private display. That is the same reason it
 already gives each run its own `HOME` and XDG tree: a run must not depend on the

@@ -101,6 +101,21 @@ SANITIZER_ENV = {
 }
 
 
+# The desktop's input-method selection, which the app under test must not inherit
+# (TD-2026-10-27-395). With `XMODIFIERS=@im=ibus` from a developer's session, SDL
+# routed the private display's keys through that desktop's IBus, which committed a
+# Latin-1 keysym double-encoded (`é` -> `Ã©`): unicode-editing failed at every desk
+# with IBus running and passed on CI, which has none. A run must not depend on the
+# desk it runs at, as its own HOME and XDG tree already say.
+DESKTOP_INPUT_METHOD_ENV = ("XMODIFIERS", "GTK_IM_MODULE", "QT_IM_MODULE", "SDL_IM_MODULE")
+
+
+def app_base_env(environ: dict[str, str]) -> dict[str, str]:
+    """The environment an app under test starts from: the caller's, less what
+    ties the run to the desktop it was started on."""
+    return {key: value for key, value in environ.items() if key not in DESKTOP_INPUT_METHOD_ENV}
+
+
 # SDL's defaults (SDL_HINT_MOUSE_DOUBLE_CLICK_TIME / _RADIUS), with margin.
 DOUBLE_CLICK_SECONDS = 0.55
 
@@ -250,7 +265,7 @@ class App:
         # Short path: the control socket lives under XDG_RUNTIME_DIR and AF_UNIX
         # paths stop at 108 bytes.
         work = Path(tempfile.mkdtemp(prefix="mqa-", dir="/tmp"))
-        env = dict(os.environ)
+        env = app_base_env(dict(os.environ))
         env.update({
             "SDL_VIDEODRIVER": "wayland" if BACKEND == "wayland" else "x11",
             # One SDL_Log line per frame and per clip under an open menu: the frame

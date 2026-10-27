@@ -118,6 +118,16 @@ class StartupFailureTests(unittest.TestCase):
             self.assertEqual(set(ledger.call_args.args[2]), {"menus", "chrome"})
 
 
+class AppEnvironmentTests(unittest.TestCase):
+    def test_the_desktop_input_method_is_not_inherited(self):
+        # TD-2026-10-27-395: a desktop's XMODIFIERS=@im=ibus reached the app on
+        # Xvfb and its IBus double-encoded typed Latin-1 text.
+        env = q.app_base_env({"XMODIFIERS": "@im=ibus", "GTK_IM_MODULE": "ibus",
+                              "QT_IM_MODULE": "ibus", "SDL_IM_MODULE": "fcitx",
+                              "LANG": "en_US.UTF-8", "PATH": "/usr/bin"})
+        self.assertEqual(env, {"LANG": "en_US.UTF-8", "PATH": "/usr/bin"})
+
+
 class RegistrySourceTests(unittest.TestCase):
     def test_duplicate_flow_keys_are_detected_before_import_loses_them(self):
         import scenarios
