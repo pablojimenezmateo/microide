@@ -11,6 +11,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <sys/socket.h>
@@ -286,6 +287,11 @@ void TestHeartbeatMeasuresRttAndDetectsADeadPeer() {
     closes.fetch_add(1);
   });
   Expect(lonely.Start(silent.a, silent.a, options), "start the lonely client");
+  // Its pings are out and unanswered; they are the link's own, not requests a
+  // caller is waiting on (a test that waited for "its" request once took a ping).
+  std::this_thread::sleep_for(std::chrono::milliseconds(30));
+  Expect(lonely.pending_request_count() == 0, "unanswered pings are not pending requests: " +
+                                                  std::to_string(lonely.pending_request_count()));
   Expect(WaitUntil([&]() { return closes.load() == 1; }, std::chrono::seconds(5)),
          "a peer that never answers is declared dead");
   std::lock_guard lock(reason_mutex);

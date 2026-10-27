@@ -1,5 +1,7 @@
 #include "project/remote/RemotePeer.h"
 
+#include <algorithm>
+
 #include <utility>
 #include <vector>
 
@@ -82,6 +84,19 @@ std::uint64_t RemotePeer::Request(std::string_view method, const util::JsonValue
 std::uint64_t RemotePeer::Request(std::string_view method, const util::JsonValue& params,
                                   Lane lane, ResponseHandler handler,
                                   const std::function<void(std::uint64_t id)>& before_send) {
+  return SendRequest(method, params, lane, std::move(handler), before_send, /*heartbeat=*/false);
+}
+
+std::size_t RemotePeer::pending_request_count() const {
+  std::lock_guard lock(mutex_);
+  return static_cast<std::size_t>(std::count_if(pending_.begin(), pending_.end(),
+                                                [](const auto& entry) { return !entry.second.heartbeat; }));
+}
+
+std::uint64_t RemotePeer::SendRequest(std::string_view method, const util::JsonValue& params,
+                                      Lane lane, ResponseHandler handler,
+                                      const std::function<void(std::uint64_t id)>& before_send,
+                                      bool heartbeat) {
   std::uint64_t id = 0;
   {
     std::lock_guard lock(mutex_);
@@ -89,7 +104,7 @@ std::uint64_t RemotePeer::Request(std::string_view method, const util::JsonValue
       return 0;
     }
     id = next_request_id_++;
-    pending_[id] = std::move(handler);
+    pending_[id] = PendingRequest{.handler = std::move(handler), .heartbeat = heartbeat};
   }
   if (before_send) {
     before_send(id);
@@ -243,7 +258,7 @@ void RemotePeer::HandleFrame(Frame frame) {
         if (pending == pending_.end()) {
           return;  // an answer to nothing we asked (or already answered)
         }
-        handler = std::move(pending->second);
+        handler = std::move(pending->second.handler);
         pending_.erase(pending);
       }
       if (!well_formed) {
@@ -265,7 +280,7 @@ void RemotePeer::HandleFrame(Frame frame) {
 }
 
 void RemotePeer::HandleClosed(std::string_view reason, bool report) {
-  std::map<std::uint64_t, ResponseHandler> orphaned;
+  std::map<std::uint64_t, PendingRequest> orphaned;
   bool first = false;
   {
     std::lock_guard lock(mutex_);
@@ -273,9 +288,9 @@ void RemotePeer::HandleClosed(std::string_view reason, bool report) {
     closed_ = true;
     orphaned.swap(pending_);
   }
-  for (auto& [id, handler] : orphaned) {
+  for (auto& [id, pending] : orphaned) {
     (void)id;
-    handler(std::nullopt, RpcError{kErrorCancelled, "connection closed: " + std::string(reason)});
+    pending.handler(std::nullopt, RpcError{kErrorCancelled, "connection closed: " + std::string(reason)});
   }
   if (first && report && closed_handler_) {
     closed_handler_(reason);
@@ -306,17 +321,19 @@ void RemotePeer::HandleTick() {
   util::JsonObject params;
   params["clock"] = util::JsonValue(*stamp);
   const std::int64_t sent = *stamp;
-  Request(method::kLinkPing, util::JsonValue(std::move(params)), Lane::Interactive,
-          [this, sent](std::optional<util::JsonValue> result, std::optional<RpcError> error) {
-            if (!result.has_value() || error.has_value()) {
-              return;
-            }
-            const std::int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                         std::chrono::steady_clock::now() - epoch_)
-                                         .count();
-            std::lock_guard lock(mutex_);
-            heartbeat_.OnPong(sent, now);
-          });
+  SendRequest(
+      method::kLinkPing, util::JsonValue(std::move(params)), Lane::Interactive,
+      [this, sent](std::optional<util::JsonValue> result, std::optional<RpcError> error) {
+        if (!result.has_value() || error.has_value()) {
+          return;
+        }
+        const std::int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     std::chrono::steady_clock::now() - epoch_)
+                                     .count();
+        std::lock_guard lock(mutex_);
+        heartbeat_.OnPong(sent, now);
+      },
+      {}, /*heartbeat=*/true);
 }
 
 }  // namespace microide::project::remote

@@ -554,6 +554,10 @@ void TestMirrorAPushWhoseAnswerWasLostIsNotAConflict() {
   const std::size_t before = session.client->peer().pending_request_count();
   WriteFile(session.Tree("a.txt"), "two\n");
   session.engine->NotifyLocalWrite("a.txt");
+  // pending_request_count leaves the link's own pings out: one going unanswered
+  // to the stopped server here once passed for the push, which then found the
+  // link failed, was never sent, and the host bytes the test wrote below really
+  // were a host change (1 run in ~40 under load, CI's TSan job).
   Expect(WaitUntil([&] { return session.client->peer().pending_request_count() > before; },
                    std::chrono::seconds(10), std::chrono::milliseconds(1)),
          "the push is on the wire");

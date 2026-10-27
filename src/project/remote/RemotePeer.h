@@ -93,11 +93,9 @@ class RemotePeer {
 
   // Incoming request `id` was cancelled by the peer (op/cancel) and not yet replied.
   bool IsCancelled(std::uint64_t id) const;
-  // Requests sent and not yet answered.
-  std::size_t pending_request_count() const {
-    std::lock_guard lock(mutex_);
-    return pending_.size();
-  }
+  // Requests sent and not yet answered -- the caller's, not the link's own
+  // heartbeat pings, which come and go on their own clock.
+  std::size_t pending_request_count() const;
   std::optional<std::int64_t> rtt_ms() const;
   std::size_t bulk_window() const { return transport_.bulk_window(); }
   void SetFixedBulkWindow(std::size_t bytes) { transport_.SetFixedBulkWindow(bytes); }
@@ -120,11 +118,19 @@ class RemotePeer {
 
   mutable std::mutex mutex_;  // guards everything below
   std::uint64_t next_request_id_ = 1;
-  std::map<std::uint64_t, ResponseHandler> pending_;
+  struct PendingRequest {
+    ResponseHandler handler;
+    bool heartbeat = false;  // a link/ping of SendPing's
+  };
+  std::map<std::uint64_t, PendingRequest> pending_;
   std::unordered_set<std::uint64_t> incoming_in_flight_;
   std::unordered_set<std::uint64_t> incoming_cancelled_;
   LinkHeartbeat heartbeat_;
   bool closed_ = false;
+
+  std::uint64_t SendRequest(std::string_view method, const util::JsonValue& params, Lane lane,
+                            ResponseHandler handler,
+                            const std::function<void(std::uint64_t id)>& before_send, bool heartbeat);
 };
 
 }  // namespace microide::project::remote
