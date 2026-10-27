@@ -450,8 +450,6 @@ class App:
               "the control channel never came up")
         if not self.alive():
             raise QaFailure(f"microide exited at startup; log: {self.log_path}")
-        self.window = self._find_window()
-        self.origin = self._window_origin()
         # Ready means its first frame is on screen (MICROIDE_TRACE_REDRAW_VERBOSE
         # logs each one): until the startup present returns, the main loop answers
         # nothing. A fixed settle here was a guess, and four apps starting at once
@@ -462,6 +460,14 @@ class App:
               "the window never presented its first frame")
         if not self.alive():
             raise QaFailure(f"microide exited at startup; log: {self.log_path}")
+        # Looked up once the first frame is presented, when the window surely exists.
+        # Looked up before it, on a fixed 5 s budget, a loaded machine (four apps
+        # starting beside three sanitizer builds) once found none: every resize the
+        # resize-overlays flow sent then went nowhere, and only its waits noticed.
+        self.window = self._find_window()
+        if not self.wayland and self.window is None:
+            raise QaFailure(f"no X window found for microide (pid {self.proc.pid}); log: {self.log_path}")
+        self.origin = self._window_origin()
 
     def _first_frame_presented(self) -> bool:
         with contextlib.suppress(OSError):
@@ -814,15 +820,17 @@ class App:
         searches = [["--class", "microide"]]
         if self.proc is not None:
             searches.insert(0, ["--pid", str(self.proc.pid)])
-        for _ in range(25):
+        deadline = time.monotonic() + 20.0
+        while True:
             for search in searches:
                 result = subprocess.run(["xdotool", "search", *search], env=self.tool_env,
                                         capture_output=True, text=True)
                 ids = result.stdout.split()
                 if ids:
                     return ids[-1]
+            if time.monotonic() >= deadline:
+                return None
             time.sleep(0.2)
-        return None
 
     def _window_origin(self) -> tuple[int, int]:
         if self.wayland or not self.window:
