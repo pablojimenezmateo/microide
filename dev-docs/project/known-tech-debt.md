@@ -462,7 +462,17 @@ each rename a whole binary into place. Pinned by
 `RemoteHostSession/ConcurrentInstallsOnOneHostAllSucceed` (eight installs at once;
 fails on the old script).
 
-### TD-2026-10-27-408 — the clang lane once read a header full of NUL bytes while six lanes built at once.
+### TD-2026-10-27-408 — the clang lane once read a header full of NUL bytes while six lanes built at once. [OPEN — not reproduced; the evidence is now kept]
+
+2026-10-27: `tools/run-checks.sh clang-build` now keeps what this entry asked for
+when a build fails with `null character ignored`: the failing pass's log, each
+named header's hash and NUL count as it is on disk afterwards, the PCH files,
+`ccache -s -v`, and `free` / `uptime` / the tail of `dmesg`, under
+`$LOG_DIR/microide-clang-build-evidence/` -- and it still fails the lane (a retry
+would hide it). Deferred until it happens again: nothing to fix without a
+reproduction.
+
+Original entry:
 
 `tools/run-checks.sh clang-build`, run beside tests, ASan, UBSan, TSan and
 hardened (2026-10-27), failed every TU that includes
@@ -527,7 +537,16 @@ What `openspec/changes/archive/2026-10-27-remote-host-activity` did not finish:
   (or the menu's host pick) switches it; there is no per-host grouping, and the
   collapsed groups are not persisted with the session.
 
-### TD-2026-10-27-406 — `RemoteTerminal/TwoClientsShareAHostTerminalAtTheSmallerSize` once saw a blank screen for 15 s.
+### TD-2026-10-27-406 — `RemoteTerminal/TwoClientsShareAHostTerminalAtTheSmallerSize` once saw a blank screen for 15 s. [OPEN — not reproduced; the evidence is now kept]
+
+2026-10-27: every test using `ShortServerDir` prints the last 32 KiB of its
+server's log when it fails (the destructor sees the throwing `Expect` through
+`std::uncaught_exceptions`), and this test's first wait names the terminal's
+handle and the frame bytes the channel applied
+(`RemoteTerminalChannel::received_bytes`) -- "no frame came" and "a frame came
+and showed nothing" now read differently. Deferred until it fails again.
+
+Original entry:
 
 Under the ASan lane, while the GUI QA lane and the TSan build ran beside it
 (2026-10-27), the first client's screen stayed entirely empty -- no prompt, not

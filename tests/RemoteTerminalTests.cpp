@@ -323,7 +323,12 @@ void TestTwoClientsShareAHostTerminalAtTheSmallerSize() {
   TerminalSessionTestAccess::EnterHostMode(a, channel_a);
   a.Resize(20, 80);
   TypeLine(a, "echo ready-$((1+1))");
-  Expect(WaitForText(a, "ready-2"), "the first client sees its shell:\n" + ScreenText(a));
+  // On a blank screen, whether any frame arrived at all (TD-2026-10-27-406): the
+  // server's log is printed with the failure (ShortServerDir).
+  Expect(WaitForText(a, "ready-2"), "the first client sees its shell (handle " +
+                                        std::to_string(channel_a->handle()) + ", " +
+                                        std::to_string(channel_a->received_bytes()) + " frame bytes):\n" +
+                                        ScreenText(a));
   const std::uint64_t handle = channel_a->handle();
 
   auto second = Connect(dir);

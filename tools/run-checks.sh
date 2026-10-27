@@ -385,6 +385,27 @@ check_clang_build() {
       exit 0
     fi
     if ! grep -qF "$stale_pch_marker" "$first_pass_log"; then
+      # TD-2026-10-27-408: a header that read back as NUL bytes, once, while six
+      # lanes built at once, and was fine on disk and on the rerun. Keep what can
+      # tell a corrupt read (filesystem, memory pressure) from a corrupt cache
+      # entry or PCH before it is gone -- and still fail: a retry would hide it.
+      if grep -q "null character ignored" "$first_pass_log"; then
+        evidence='"${LOG_DIR}"'/microide-clang-build-evidence
+        rm -rf "$evidence"; mkdir -p "$evidence"
+        cp "$first_pass_log" "$evidence/build.log"
+        grep -o "^[^ :]*\.\(h\|hpp\|inc\|cpp\):[0-9]*:[0-9]*: \(warning\|error\): null character" \
+          "$first_pass_log" | cut -d: -f1 | sort -u > "$evidence/headers.txt"
+        while read -r header; do
+          [ -f "$header" ] || continue
+          { echo "== $header"; sha256sum "$header"; echo "NUL bytes now: $(tr -cd "\000" < "$header" | wc -c)"; } \
+            >> "$evidence/headers-now.txt"
+        done < "$evidence/headers.txt"
+        find '"$build_dir"' -name "cmake_pch*.pch" -printf "%p %s %TY-%Tm-%Td %TT\n" \
+          > "$evidence/pch.txt" 2>/dev/null || true
+        command -v ccache >/dev/null 2>&1 && ccache -s -v > "$evidence/ccache-stats.txt" 2>&1
+        { free -m; echo; uptime; echo; dmesg 2>/dev/null | tail -50; } > "$evidence/machine.txt" 2>&1
+        echo "run-checks: a source read back as NUL bytes (TD-2026-10-27-408); evidence in $evidence"
+      fi
       rm -f "$first_pass_log"
       exit 1
     fi

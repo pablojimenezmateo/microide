@@ -228,6 +228,11 @@ std::uint64_t RemoteTerminalChannel::handle() const {
   return handle_;
 }
 
+std::uint64_t RemoteTerminalChannel::received_bytes() const {
+  std::lock_guard lock(mutex_);
+  return received_bytes_;
+}
+
 terminal::HostIdentity RemoteTerminalChannel::identity() const {
   std::lock_guard lock(mutex_);
   // The epoch of the server this handle belongs to: the client's hello is fixed

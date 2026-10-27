@@ -72,6 +72,9 @@ class RemoteTerminalChannel final : public terminal::TerminalHostChannel,
 
   // The host's handle; 0 until term/open answers.
   std::uint64_t handle() const;
+  // Frame bytes applied since the last attach: what tells "no frame came" from "a
+  // frame came and showed nothing" when a screen stays blank.
+  std::uint64_t received_bytes() const;
 
  private:
   void Attached(const std::shared_ptr<RemoteServerClient>& client, std::uint64_t handle,

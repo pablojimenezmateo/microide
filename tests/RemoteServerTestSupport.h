@@ -1,5 +1,8 @@
 #pragma once
 
+#include <algorithm>
+#include <cstdio>
+#include <exception>
 #include <cerrno>
 #include <chrono>
 #include <csignal>
@@ -124,6 +127,12 @@ class ShortServerDir {
     std::ofstream(path_.parent_path() / server_fixture_detail::kOwnerFile) << ::getpid();
   }
   ~ShortServerDir() {
+    // A test failing (Expect throws) takes the server's log with it unless it is
+    // printed here: the evidence a once-in-a-while failure needs, which a rerun
+    // that passes cannot give back (TD-2026-10-27-406).
+    if (std::uncaught_exceptions() > uncaught_at_start_) {
+      DumpServerLogTail();
+    }
     platform::RunSubprocess({MICROIDE_SERVER_BINARY, "stop", "--socket-dir", path_.string()},
                             platform::SubprocessOptions{.timeout_ms = 10000});
     // `stop` asks; a server wedged on a live child may not answer in time.
@@ -140,7 +149,23 @@ class ShortServerDir {
   std::filesystem::path scratch() const { return path_.parent_path(); }
 
  private:
+  void DumpServerLogTail() const {
+    constexpr std::streamoff kTail = 32 * 1024;
+    std::ifstream log(path_ / "server.log", std::ios::binary | std::ios::ate);
+    if (!log) {
+      std::fprintf(stderr, "[server log %s: none]\n", (path_ / "server.log").c_str());
+      return;
+    }
+    const std::streamoff size = log.tellg();
+    log.seekg(std::max<std::streamoff>(0, size - kTail));
+    const std::string tail{std::istreambuf_iterator<char>(log), std::istreambuf_iterator<char>()};
+    std::fprintf(stderr, "[server log %s, last %lld of %lld bytes]\n%s\n[end of server log]\n",
+                 (path_ / "server.log").c_str(), static_cast<long long>(tail.size()),
+                 static_cast<long long>(size), tail.c_str());
+  }
+
   std::filesystem::path path_;
+  int uncaught_at_start_ = std::uncaught_exceptions();
 };
 
 inline void StartServer(const ShortServerDir& dir, std::vector<std::string> extra_args = {}) {
