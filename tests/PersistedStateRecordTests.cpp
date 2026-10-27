@@ -428,9 +428,10 @@ void TestPersistedStateProjectSessionSkipsOverCapGroupsBeforeDecoding() {
          "only as many editor groups as the editor area can hold are kept");
 }
 
-// The terminal layout round-trips: tabs, panes (cwd + command), shares, the
-// active tab and pane, the maximized panel. A forged session cannot revive more
-// tabs or panes than the caps.
+// The terminal layout round-trips: tabs, panes (cwd + command, and a host pane's
+// terminal), shares, the active tab and pane, the maximized panel. A forged
+// session cannot revive more tabs or panes than the caps, nor half a host
+// identity; a session written without one revives fresh shells.
 void TestPersistedStateProjectSessionTerminalLayoutRoundTrips() {
   using microide::workspace::TerminalPaneRecord;
   using microide::workspace::TerminalTabRecord;
@@ -439,7 +440,9 @@ void TestPersistedStateProjectSessionTerminalLayoutRoundTrips() {
   session.terminal_layout.active_tab = 1;
   session.terminal_layout.tabs.push_back(TerminalTabRecord{
       .panes = {TerminalPaneRecord{.cwd = "/work/a", .command = ""},
-                TerminalPaneRecord{.cwd = "/work/b", .command = "htop"}},
+                TerminalPaneRecord{.cwd = "/work/b",
+                                   .command = "htop",
+                                   .host = {.epoch = "1730000000-4242-ab", .handle = 17}}},
       .weights = {0.3f, 0.7f},
       .active_pane = 1});
   session.terminal_layout.tabs.push_back(
@@ -456,6 +459,32 @@ void TestPersistedStateProjectSessionTerminalLayoutRoundTrips() {
          "panes keep their directory, command and the active pane");
   Expect(layout.tabs[0].weights.size() == 2 && std::fabs(layout.tabs[0].weights[0] - 0.3f) < 1e-6f,
          "the shares round-trip");
+  Expect(layout.tabs[0].panes[1].host ==
+                 microide::terminal::HostIdentity{.epoch = "1730000000-4242-ab", .handle = 17} &&
+             layout.tabs[0].panes[0].host.empty() && layout.tabs[1].panes[0].host.empty(),
+         "a host pane keeps its terminal; the others name none");
+
+  // Half an identity names nothing, and an epoch past the hello's cap is no
+  // server's: the pane revives fresh (the record still decodes).
+  PersistedProjectSessionState halves;
+  halves.terminal_layout.tabs.push_back(TerminalTabRecord{
+      .panes = {TerminalPaneRecord{.cwd = "/h", .host = {.epoch = "", .handle = 9}},
+                TerminalPaneRecord{.cwd = "/e", .host = {.epoch = "e", .handle = 0}}}});
+  Expect(EncodeProjectSessionRecord(halves, &record), "encode the halves");
+  Expect(DecodeProjectSessionRecord(record, &decoded) && decoded.terminal_layout.tabs.size() == 1 &&
+             decoded.terminal_layout.tabs[0].panes.size() == 2 &&
+             decoded.terminal_layout.tabs[0].panes[0].host.empty() &&
+             decoded.terminal_layout.tabs[0].panes[1].host.empty() &&
+             decoded.terminal_layout.tabs[0].panes[1].host.epoch.empty(),
+         "half identities revive as fresh shells");
+  PersistedProjectSessionState long_epoch;
+  long_epoch.terminal_layout.tabs.push_back(TerminalTabRecord{
+      .panes = {TerminalPaneRecord{.cwd = "/l", .host = {.epoch = std::string(65, 'x'), .handle = 3}}}});
+  Expect(EncodeProjectSessionRecord(long_epoch, &record), "encode the long epoch");
+  Expect(DecodeProjectSessionRecord(record, &decoded) && decoded.terminal_layout.tabs.size() == 1 &&
+             decoded.terminal_layout.tabs[0].panes[0].host.empty() &&
+             decoded.terminal_layout.tabs[0].panes[0].host.epoch.empty(),
+         "an over-long epoch names no server: a fresh shell, the session kept");
 
   PersistedProjectSessionState forged;
   TerminalTabRecord wide;

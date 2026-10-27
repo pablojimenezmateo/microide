@@ -138,6 +138,10 @@ enum class TerminalTabTag : std::uint16_t {
 enum class TerminalPaneTag : std::uint16_t {
   Cwd = 1,
   Command = 2,
+  // A host pane's terminal (TerminalPaneRecord::host), written only when there is
+  // one. An older reader skips both; a session without them revives fresh shells.
+  HostEpoch = 3,
+  HostHandle = 4,
 };
 
 enum class EditorGroupTag : std::uint16_t {

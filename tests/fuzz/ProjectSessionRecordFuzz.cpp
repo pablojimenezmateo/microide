@@ -61,6 +61,17 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
           tab.weights.size() > microide::workspace::kMaxTerminalPanes) {
         __builtin_trap();
       }
+      // A recorded host terminal is whole or absent: a reopen must never attach
+      // a handle with no server to tell it by.
+      for (const auto& pane : tab.panes) {
+        if (!pane.host.empty() && (pane.host.epoch.empty() ||
+                                   pane.host.epoch.size() > microide::workspace::kMaxRecordedHostEpochBytes)) {
+          __builtin_trap();
+        }
+        if (pane.host.empty() && !pane.host.epoch.empty()) {
+          __builtin_trap();
+        }
+      }
     }
   }
   return 0;

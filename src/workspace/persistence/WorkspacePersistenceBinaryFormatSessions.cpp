@@ -94,6 +94,11 @@ bool EncodeTerminalTab(const TerminalTabRecord& tab, std::vector<std::byte>* out
                       &payload) ||
         !AppendRecord(TerminalPaneTag::Command,
                       [&](PrimitiveWriter& w) { return w.WriteString(pane.command); }, &payload) ||
+        (!pane.host.empty() &&
+         (!AppendRecord(TerminalPaneTag::HostEpoch,
+                        [&](PrimitiveWriter& w) { return w.WriteString(pane.host.epoch); }, &payload) ||
+          !AppendRecord(TerminalPaneTag::HostHandle,
+                        [&](PrimitiveWriter& w) { return w.WriteU64(pane.host.handle); }, &payload))) ||
         !AppendTaggedRecord(static_cast<std::uint16_t>(TerminalTabTag::Pane), payload, out)) {
       return false;
     }
@@ -130,10 +135,23 @@ bool DecodeTerminalTab(std::span<const std::byte> input, TerminalTabRecord* tab)
                         case TerminalPaneTag::Command:
                           return field_reader.ReadString(&pane.command) &&
                                  field_reader.remaining() == 0;
+                        case TerminalPaneTag::HostEpoch:
+                          return field_reader.ReadString(&pane.host.epoch) &&
+                                 field_reader.remaining() == 0;
+                        case TerminalPaneTag::HostHandle:
+                          return field_reader.ReadU64(&pane.host.handle) &&
+                                 field_reader.remaining() == 0;
                       }
                       return true;
                     })) {
               return false;
+            }
+            // Half an identity names nothing -- an epoch with no handle, a handle
+            // with no epoch to tell its server by -- and an epoch past the hello's
+            // cap is no server's: the pane revives as a fresh shell.
+            if (pane.host.handle == 0 || pane.host.epoch.empty() ||
+                pane.host.epoch.size() > kMaxRecordedHostEpochBytes) {
+              pane.host = {};
             }
             tab->panes.push_back(std::move(pane));
             return true;
