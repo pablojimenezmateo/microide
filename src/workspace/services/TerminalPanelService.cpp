@@ -333,6 +333,26 @@ bool TerminalPanelService::ActivateTerminalTab(std::size_t index) {
   return true;
 }
 
+bool TerminalPanelService::FindHostTerminal(const terminal::HostIdentity& identity, bool focus) {
+  for (std::size_t t = 0; t < state_.terminal_tabs.size(); ++t) {
+    TerminalTabState& tab = *state_.terminal_tabs[t];
+    for (std::size_t p = 0; p < tab.panes.size(); ++p) {
+      const TerminalPaneState* pane = tab.panes[p].get();
+      // A pane with its own launcher (a local terminal in a remote project) is
+      // not a host terminal, whatever it once held.
+      if (pane == nullptr || pane->launcher != nullptr || pane->session.host_identity() != identity) {
+        continue;
+      }
+      if (focus) {
+        tab.active_pane = p;
+        (void)ActivateTerminalTab(t);
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
 bool TerminalPanelService::CycleTerminalTab(int delta) {
   const std::size_t count = state_.terminal_tabs.size();
   if (count < 2) {

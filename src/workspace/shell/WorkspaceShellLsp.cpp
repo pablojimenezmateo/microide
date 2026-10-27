@@ -1,5 +1,8 @@
 #include "workspace/shell/WorkspaceShell.h"
 
+#include "workspace/services/RemoteHostService.h"
+#include "workspace/shell/ShellGlueCache.h"
+
 #include <algorithm>
 
 #include <cctype>
@@ -328,6 +331,12 @@ ControlChannelService::CommandOutcome WorkspaceShell::ExecuteControlCommand(
   std::string& feedback = context_.current_project_state.panel.feedback.text;
   feedback.clear();
   outcome.ok = MakeCommandLineCoordinator().ExecuteCommandLine(command_line);
+  // As after an input event (HandleEvent): a command may have shown or hidden the
+  // Host view, and its subscription follows.
+  if (glue_->remote_host_service != nullptr) {
+    glue_->remote_host_service->SetHostViewVisible(HostViewShown(context_.current_project_state.sidebar),
+                                                   context_.current_project_state.root);
+  }
   if (outcome.ok) {
     outcome.feedback = feedback;
   } else {

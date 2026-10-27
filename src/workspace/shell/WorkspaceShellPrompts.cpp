@@ -197,6 +197,28 @@ void WorkspaceShell::DismissPromptSurface(bool restore_focus) {
   MakePromptSurfaceService().DismissPromptSurface(restore_focus);
 }
 
+namespace {
+
+// A command prompt's title: its command's label without the menu's "Remote: "
+// group prefix or its trailing "…". `command_line` is a command name, or a whole
+// line whose first word is one.
+std::string_view PromptCommandTitle(std::string_view command_line) {
+  const ActionSpec* spec = FindWorkspaceActionByCommand(command_line.substr(0, command_line.find(' ')));
+  if (spec == nullptr || spec->label.empty()) {
+    return "Run Command";
+  }
+  std::string_view label = spec->label;
+  if (label.ends_with("…")) {
+    label.remove_suffix(std::string_view("…").size());
+  }
+  if (label.starts_with("Remote: ")) {
+    label.remove_prefix(std::string_view("Remote: ").size());
+  }
+  return label;
+}
+
+}  // namespace
+
 std::string_view WorkspaceShell::PromptSurfaceTitle() const {
   switch (context_.prompts.surface.action) {
     case PromptSurfaceState::Action::SaveAs:
@@ -248,15 +270,8 @@ std::string_view WorkspaceShell::PromptSurfaceTitle() const {
     case PromptSurfaceState::Action::ConfirmProjectReplaceAll:
       return "Replace All";
     case PromptSurfaceState::Action::CommandArguments:
-      if (const ActionSpec* spec = FindWorkspaceActionByCommand(context_.prompts.surface.command_name);
-          spec != nullptr && !spec->label.empty()) {
-        std::string_view label = spec->label;
-        if (label.ends_with("…")) {
-          label.remove_suffix(std::string_view("…").size());
-        }
-        return label;
-      }
-      return "Run Command";
+    case PromptSurfaceState::Action::ConfirmCommand:
+      return PromptCommandTitle(context_.prompts.surface.command_name);
   }
   return "Prompt";
 }
@@ -322,6 +337,7 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
       return "Enter a new name for the symbol under the cursor.";
     case PromptSurfaceState::Action::ConfirmRenameSave:
     case PromptSurfaceState::Action::ConfirmProjectReplaceAll:
+    case PromptSurfaceState::Action::ConfirmCommand:
       return context_.prompts.surface.detail;
     case PromptSurfaceState::Action::CommandArguments: {
       // The usage after the command's name: what to type.
@@ -396,6 +412,11 @@ std::array<std::string_view, 2> WorkspaceShell::PromptSurfaceActionLabels() cons
       return {"Replace All", "Cancel"};
     case PromptSurfaceState::Action::CommandArguments:
       return {"Run", "Cancel"};
+    case PromptSurfaceState::Action::ConfirmCommand: {
+      // The command's verb: "End Host Process" -> "End".
+      const std::string_view title = PromptCommandTitle(context_.prompts.surface.command_name);
+      return {title.substr(0, title.find(' ')), "Cancel"};
+    }
   }
   return {"OK", "Cancel"};
 }
@@ -460,6 +481,7 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
       case Action::SaveAs:
       case Action::ConfirmProjectReplaceAll:
       case Action::CommandArguments:
+      case Action::ConfirmCommand:
         MakePromptSurfaceService().DismissPromptSurface(true);
         return;
       case Action::ConfirmRenameSave:
@@ -579,12 +601,19 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     return;
   }
   if (context_.prompts.surface_visible &&
-      context_.prompts.surface.action == PromptSurfaceState::Action::CommandArguments) {
-    // The typed arguments after the command's name, parsed as the command line
-    // parses them (quotes group words), so the prompt and the palette's command
-    // line run and refuse alike.
+      (context_.prompts.surface.action == PromptSurfaceState::Action::CommandArguments ||
+       context_.prompts.surface.action == PromptSurfaceState::Action::ConfirmCommand)) {
+    // The typed arguments after the command's name (or the confirmed line as it
+    // was built), parsed as the command line parses them (quotes group words), so
+    // the prompt and the palette's command line run and refuse alike.
+    const bool confirmed = context_.prompts.surface.action == PromptSurfaceState::Action::ConfirmCommand;
+    if (confirmed && resolution == DirtyPathResolution::Discard) {
+      MakePromptSurfaceService().DismissPromptSurface(true);
+      return;
+    }
     const std::string command_line =
-        context_.prompts.surface.command_name + " " + context_.prompts.surface.input.text();
+        confirmed ? context_.prompts.surface.command_name
+                  : context_.prompts.surface.command_name + " " + context_.prompts.surface.input.text();
     MakePromptSurfaceService().DismissPromptSurface(true);
     const bool ok = MakeCommandLineCoordinator().ExecuteCommandLine(command_line);
     if (const std::string& feedback = context_.current_project_state.panel.feedback.text;

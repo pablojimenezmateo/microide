@@ -114,6 +114,10 @@ class TerminalPanelService {
   bool CycleTerminalTab(int delta);
   // Make tab `index` the active one and show the Terminal content.
   bool ActivateTerminalTab(std::size_t index);
+  // Whether a pane of this project holds host terminal `identity`; with `focus`,
+  // its tab and pane become the active ones (the Host view's Enter on a terminal
+  // a tab already shows).
+  bool FindHostTerminal(const terminal::HostIdentity& identity, bool focus);
 
   // --- panes ----------------------------------------------------------------
   // Split the active tab: a started pane to the right of its active pane, which

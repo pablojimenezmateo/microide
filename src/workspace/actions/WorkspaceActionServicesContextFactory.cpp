@@ -532,7 +532,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .show_git_sidebar = [this]() { ShowGitSidebar(); },
           .show_tests_sidebar = [this]() { ShowTestsSidebar(); },
           .show_outline_sidebar = [this]() { ShowOutlineSidebar(); },
-          .show_host_changes_sidebar = [this]() { MakeSidebarService().ShowHostChanges(); },
+          .show_host_view_sidebar = [this](SidebarMode mode) { MakeSidebarService().ShowHostView(mode); },
           .show_plugin_sidebar =
               [this](std::string_view id, bool temporary) {
                 return ShowPluginSidebar(id, temporary);

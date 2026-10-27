@@ -100,6 +100,10 @@ struct PromptSurfaceState {
     // without arguments (`git-create-branch <name>`): type them; the line runs as
     // `<command_name> <input>`.
     CommandArguments,
+    // Confirm, then run the command line in `command_name` (the Host view's End
+    // and Stop on a running item). `detail` is the question; the title and the
+    // button come from the command's label ("Remote: End Host Process" -> End).
+    ConfirmCommand,
   };
 
   Kind kind = Kind::None;
@@ -109,7 +113,7 @@ struct PromptSurfaceState {
   std::size_t target_line = 0;
   editor::SingleLineEditor input;
   std::string detail;
-  // The command a CommandArguments prompt runs.
+  // The command a CommandArguments prompt runs; a ConfirmCommand's whole line.
   std::string command_name;
   std::string provider_id;
   std::string request_id;

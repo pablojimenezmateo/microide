@@ -399,10 +399,10 @@ bool SidebarCoordinator::OpenPluginItem() {
   }
   const plugin::PluginHost::SidebarItem& item = *selected;
 
-  if (ActiveSidebarMode() == SidebarMode::HostChanges) {
-    // Keep sidebar focus, as the outline does: arrow keys walk the changes and each
-    // Enter shows the next one.
-    return operations_.open_host_change && operations_.open_host_change(item);
+  if (const SidebarMode mode = ActiveSidebarMode(); IsHostOwnedItemView(mode)) {
+    // Keep sidebar focus, as the outline does: arrow keys walk the rows and each
+    // Enter acts on the next one.
+    return operations_.open_host_view_row && operations_.open_host_view_row(mode, item);
   }
 
   // Outline rows reuse this storage but the host owns navigation: jump the active
@@ -447,6 +447,14 @@ bool SidebarCoordinator::TogglePluginItem() {
   // Snapshot the item by value: re-snapshotting below rebuilds the items vector,
   // invalidating any reference into it.
   const plugin::PluginHost::SidebarItem item = *selected;
+  if (const SidebarMode mode = ActiveSidebarMode(); IsHostOwnedItemView(mode)) {
+    // The host owns these groups' expanded state, as a plugin owns its own.
+    if (!operations_.toggle_host_view_row || !operations_.toggle_host_view_row(mode, item)) {
+      return false;
+    }
+    RefreshHostView();
+    return true;
+  }
   std::string error_message;
   const bool toggled =
       plugin_runtime_.Host().ToggleSidebarItem(state_.sidebar.view_id, item, &error_message);
@@ -461,6 +469,18 @@ bool SidebarCoordinator::TogglePluginItem() {
   // (visible) row set. RefreshPlugin re-clamps the selection and requests redraw.
   RefreshPlugin();
   return true;
+}
+
+bool SidebarCoordinator::EndPluginItem() {
+  const plugin::PluginHost::SidebarItem* selected =
+      SelectedListEntry(state_.sidebar.plugin.items, state_.sidebar.plugin.selected_index);
+  const SidebarMode mode = ActiveSidebarMode();
+  if (selected == nullptr || !IsHostOwnedItemView(mode) || !operations_.end_host_view_row) {
+    return false;
+  }
+  // By value: ending a row may refresh the rows under it.
+  const plugin::PluginHost::SidebarItem item = *selected;
+  return operations_.end_host_view_row(mode, item);
 }
 
 bool SidebarCoordinator::CanStageAllGitEntries() const {

@@ -274,6 +274,12 @@ bool SidebarCoordinator::RefreshPlugin() {
   if (state_.sidebar.view_id == "outline") {
     return RefreshOutline();
   }
+  // R in Changed on Host cleared its rows here, as if it were a plugin view with
+  // no provider, until the next host change refilled them.
+  if (IsHostOwnedItemView(ActiveSidebarMode())) {
+    RefreshHostView();
+    return true;
+  }
   state_.sidebar.plugin.items.clear();
   state_.sidebar.plugin.error.clear();
   state_.sidebar.plugin.placeholder.clear();
@@ -368,17 +374,21 @@ bool SidebarCoordinator::RefreshOutline() {
   return true;
 }
 
-void SidebarCoordinator::RefreshHostChanges() {
+void SidebarCoordinator::RefreshHostView() {
+  const SidebarMode mode = ActiveSidebarMode();
+  if (!IsHostOwnedItemView(mode)) {
+    return;
+  }
   PluginSidebarState& plugin = state_.sidebar.plugin;
   std::string selected_path;
   if (plugin.selected_index < plugin.items.size()) {
     selected_path = plugin.items[plugin.selected_index].id;
   }
-  plugin.items = operations_.host_change_rows ? operations_.host_change_rows()
-                                              : std::vector<plugin::PluginHost::SidebarItem>{};
+  plugin.items = operations_.host_view_rows ? operations_.host_view_rows(mode)
+                                            : std::vector<plugin::PluginHost::SidebarItem>{};
   plugin.error.clear();
-  // Newest first: a change arriving above the selection must not move it to a
-  // different file under the user's keyboard.
+  // Rows arrive above the selection (Changed on Host is newest first; a Host
+  // push adds a terminal): it must not move to a different row under the keyboard.
   plugin.selected_index = 0;
   for (std::size_t i = 0; i < plugin.items.size() && !selected_path.empty(); ++i) {
     if (plugin.items[i].id == selected_path) {
@@ -387,7 +397,7 @@ void SidebarCoordinator::RefreshHostChanges() {
     }
   }
   RecomputePluginSidebarPlaceholder();
-  if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::HostChanges) {
+  if (state_.sidebar.visible) {
     operations_.request_sidebar_redraw();
   }
 }
@@ -433,9 +443,9 @@ void SidebarCoordinator::RecomputePluginSidebarPlaceholder() {
   if (plugin.items.empty()) {
     // Outline shares this storage but reports symbols, not generic items.
     const SidebarMode mode = ActiveSidebarMode();
-    plugin.placeholder = mode == SidebarMode::HostChanges
-                             ? std::string("Nothing changed on the host since you connected")
-                             : FormatEmptyState(mode == SidebarMode::Outline ? "symbols" : "items");
+    plugin.placeholder = mode == SidebarMode::HostChanges ? std::string("Nothing changed on the host since you connected")
+                         : mode == SidebarMode::Host  ? std::string("Not connected to a host")
+                                                      : FormatEmptyState(mode == SidebarMode::Outline ? "symbols" : "items");
   } else {
     plugin.placeholder.clear();
   }

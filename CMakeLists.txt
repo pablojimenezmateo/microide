@@ -710,6 +710,8 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceLayoutMergeAndChrome.cpp
   src/workspace/WorkspaceOutputChannels.cpp
   src/workspace/services/RemoteHostService.cpp
+  src/workspace/services/RemoteHostServiceActivity.cpp
+  src/workspace/services/RemoteHostActivityRows.cpp
   src/workspace/services/TerminalPanelService.cpp
   src/workspace/services/QuickPickService.cpp
   src/workspace/services/TerminalFindService.cpp
@@ -1323,6 +1325,7 @@ add_executable(microide_tests
   tests/parity/ParityTests.cpp
   tests/RemoteHostServiceTests.cpp
   tests/RemoteTerminalRestoreTests.cpp
+  tests/RemoteHostViewTests.cpp
   tests/PluginHostTests.cpp
   tests/PluginPureHelperTests.cpp
   tests/PluginSurfaceCoverageTests.cpp

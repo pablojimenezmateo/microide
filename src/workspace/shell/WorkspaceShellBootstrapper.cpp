@@ -141,6 +141,12 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
   // Always-on crash-safety: re-arm the session-snapshot flush so a settled dirty buffer's
   // unsaved content is durably staged for restore even if the process later crashes.
   MaybeArmSessionFlushTimer();
+  // The Host view's subscription follows what is on screen, whichever handler
+  // showed or hid it (a key, a click, a project switch). A compare when nothing changed.
+  if (glue_->remote_host_service != nullptr) {
+    glue_->remote_host_service->SetHostViewVisible(HostViewShown(context_.current_project_state.sidebar),
+                                                   context_.current_project_state.root);
+  }
   return result;
 }
 

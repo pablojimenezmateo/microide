@@ -11,6 +11,7 @@
 #include "workspace/services/RemoteHostService.h"
 #include "workspace/services/SidebarService.h"
 #include "workspace/shell/ShellGlueCache.h"
+#include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
 #include "workspace/coordinators/WorkspaceMenuCoordinator.h"
 #include "workspace/coordinators/WorkspacePathMutationCoordinator.h"
 #include "workspace/WorkspacePathUtils.h"
@@ -139,10 +140,10 @@ void SidebarCoordinator::ShowOutline() {
   RefreshOutline();
 }
 
-void SidebarCoordinator::ShowHostChanges() {
-  ShowMode(SidebarMode::HostChanges, false);
+void SidebarCoordinator::ShowHostView(SidebarMode mode) {
+  ShowMode(mode, false);
   state_.sidebar.plugin.selected_index = 0;
-  RefreshHostChanges();
+  RefreshHostView();
 }
 
 bool SidebarCoordinator::ShowPlugin(std::string_view id, bool temporary) {
@@ -233,8 +234,8 @@ void SidebarCoordinator::RestorePrevious() {
     RefreshProblems();
   } else if (ActiveSidebarMode() == SidebarMode::Tests) {
     RefreshTests();
-  } else if (ActiveSidebarMode() == SidebarMode::HostChanges) {
-    RefreshHostChanges();
+  } else if (IsHostOwnedItemView(ActiveSidebarMode())) {
+    RefreshHostView();
   }
   operations_.request_sidebar_redraw();
 }
@@ -265,6 +266,23 @@ void SidebarCoordinator::RefreshProjectFiles() {
 }
 
 SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
+  // A Host row's Enter or Delete: refused out loud, asked first, or run -- through
+  // the command line, so the row, the palette and the control channel run and
+  // refuse alike.
+  const auto run_row_command = [this](std::optional<RemoteHostService::RowCommand> command) {
+    if (!command.has_value()) {
+      return false;
+    }
+    if (!command->refusal.empty()) {
+      Notify(NotificationService::Tone::Warning, std::move(command->refusal));
+    } else if (!command->confirm.empty()) {
+      MakePromptSurfaceService().OpenConfirmCommandPrompt(std::move(command->command_line),
+                                                          std::move(command->confirm));
+    } else if (!MakeCommandLineCoordinator().ExecuteCommandLine(command->command_line)) {
+      Notify(NotificationService::Tone::Error, context_.current_project_state.panel.feedback.text);
+    }
+    return true;
+  };
   return SidebarCoordinator(
       context_.current_project_state, context_.prompts, context_.menu_state,
       context_.current_project_state.root, plugin_runtime_,
@@ -395,18 +413,36 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
                 return ActionCoordinator(MakeActionContext()).Execute(id, args, source);
               },
           .open_commit_workflow = [this]() { return OpenCommitWorkflow(); },
-          .host_change_rows =
-              [this]() {
-                return glue_->remote_host_service != nullptr
-                           ? glue_->remote_host_service->HostChangeRows(
-                                 context_.current_project_state.root)
-                           : std::vector<plugin::PluginHost::SidebarItem>{};
+          .host_view_rows =
+              [this](SidebarMode mode) {
+                RemoteHostService* hosts = glue_->remote_host_service.get();
+                if (hosts == nullptr) {
+                  return std::vector<plugin::PluginHost::SidebarItem>{};
+                }
+                return mode == SidebarMode::Host ? hosts->HostRows()
+                                                 : hosts->HostChangeRows(context_.current_project_state.root);
               },
-          .open_host_change =
-              [this](const plugin::PluginHost::SidebarItem& item) {
-                return glue_->remote_host_service != nullptr &&
-                       glue_->remote_host_service->OpenHostChange(context_.current_project_state.root,
-                                                                  item.id);
+          .open_host_view_row =
+              [this, run_row_command](SidebarMode mode, const plugin::PluginHost::SidebarItem& item) {
+                RemoteHostService* hosts = glue_->remote_host_service.get();
+                if (hosts == nullptr) {
+                  return false;
+                }
+                if (mode == SidebarMode::HostChanges) {
+                  return hosts->OpenHostChange(context_.current_project_state.root, item.id);
+                }
+                return run_row_command(hosts->HostRowOpenCommand(item.id));
+              },
+          .end_host_view_row =
+              [this, run_row_command](SidebarMode mode, const plugin::PluginHost::SidebarItem& item) {
+                RemoteHostService* hosts = glue_->remote_host_service.get();
+                return mode == SidebarMode::Host && hosts != nullptr &&
+                       run_row_command(hosts->HostRowEndCommand(item.id));
+              },
+          .toggle_host_view_row =
+              [this](SidebarMode mode, const plugin::PluginHost::SidebarItem& item) {
+                RemoteHostService* hosts = glue_->remote_host_service.get();
+                return mode == SidebarMode::Host && hosts != nullptr && hosts->ToggleHostGroup(item.id);
               },
       });
 }

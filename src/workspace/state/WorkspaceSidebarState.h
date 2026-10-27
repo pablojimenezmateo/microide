@@ -47,13 +47,23 @@ enum class SidebarMode {
   // the files the host changed since connect or the last Clear, on the same item
   // surface as Outline; confirming a row opens the file or its before/after compare.
   HostChanges,
+  // Remote projects' "Host" (remote-host-activity D4): what one connected host is
+  // running for microide -- its server, workspaces, terminals and processes, with
+  // their CPU and memory -- on the same item surface; Enter and Delete act on a row.
+  Host,
 };
 
 // The views drawn and driven by the shared plugin item-list surface
 // (`SidebarState::plugin`): one predicate instead of a disjunction per call site.
 constexpr bool UsesPluginItemSurface(SidebarMode mode) {
   return mode == SidebarMode::Plugin || mode == SidebarMode::Outline ||
-         mode == SidebarMode::HostChanges;
+         mode == SidebarMode::HostChanges || mode == SidebarMode::Host;
+}
+
+// The item-surface views whose rows the host builds (RemoteHostService), not a
+// plugin or the outline query: one refresh path, and the keys route back to it.
+constexpr bool IsHostOwnedItemView(SidebarMode mode) {
+  return mode == SidebarMode::HostChanges || mode == SidebarMode::Host;
 }
 
 // One clickable mode tab in the sidebar header row. `id` points at a builtin view's static
@@ -237,6 +247,10 @@ struct PluginSidebarState {
   bool placeholder_is_error = false;
 };
 
+struct SidebarState;
+// Whether `sidebar` shows the Host view: what RemoteHostService's subscription follows.
+bool HostViewShown(const SidebarState& sidebar);
+
 struct SidebarState {
   bool visible = true;
   std::string view_id = "tree";
@@ -257,5 +271,9 @@ struct SidebarState {
   };
   std::optional<TreeClipboard> tree_clipboard;
 };
+
+inline bool HostViewShown(const SidebarState& sidebar) {
+  return sidebar.visible && sidebar.view_id == "host";
+}
 
 }  // namespace microide::workspace

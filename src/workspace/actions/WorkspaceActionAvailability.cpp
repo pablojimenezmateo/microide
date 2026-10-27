@@ -421,6 +421,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     // The Remote menu's verbs (remote-menu D3): dimmed, never hidden, while there
     // is nothing for them to act on, so the menu keeps its shape.
     case ActionId::RemoteShowStatus:
+    case ActionId::RemoteEndHostProcess:  // a process lives on a connected host
     case ActionId::RemoteShowLog:
     case ActionId::RemoteStopServer:
     case ActionId::RemoteDisconnect:

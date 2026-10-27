@@ -712,10 +712,11 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `remote-remove-mirror <root> [discard]`
 - `remote-show-log [host]`
 - `remote-local-terminal`
-- `remote-status`
+- `remote-status [host]`
 - `remote-stop-server [host]`
 - `remote-attach-terminals <host> <handle>...`
 - `remote-close-terminals <host> <handle>...`
+- `remote-end-process <host> <handle>`
 - `remote-disconnect [host]`
 - `remote-reconnect [host]`
 - `remote-copy-command <host> <ssh|install|linger>`

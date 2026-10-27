@@ -209,6 +209,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
     case ActionId::RemoteStopServer:
     case ActionId::RemoteAttachHostTerminals:
     case ActionId::RemoteCloseHostTerminals:
+    case ActionId::RemoteEndHostProcess:
     case ActionId::RemoteDisconnect:
     case ActionId::RemoteReconnect:
     case ActionId::RemoteRemoveMirror:
@@ -273,9 +274,37 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
           }
           return DispatchResult::Handled;
         }
-        case ActionId::RemoteShowStatus:
-          context_.Notify(NotificationService::Tone::Info, hosts->StatusText());
+        case ActionId::RemoteShowStatus: {
+          // The Host view (remote-host-activity D6): the named host, else the
+          // active remote project's, else the only one; with several and none of
+          // those, the menu and palette ask which (OpenOptionalArgumentPicker).
+          std::string host = args.empty() ? hosts->HostOfProject(context_.ProjectRoot()) : args[0];
+          if (host.empty()) {
+            host = hosts->SoleHost();
+          }
+          if (host.empty() || !hosts->ShowHost(host)) {
+            return reject(host.empty() ? "usage: remote-status <host>" : "No remote host \"" + host + "\"");
+          }
+          const SidebarViewSpec* view = FindBuiltinSidebarView(SidebarMode::Host);
+          if (view == nullptr ||
+              !context_.ShowSidebarView(
+                  SidebarViewInfo{.id = view->id, .label = view->label, .mode = view->mode}, {}, {})) {
+            return reject("Cannot show the Host view");
+          }
+          // The control channel's answer, which has no sidebar to look at.
+          context_.SetCommandFeedback(hosts->StatusText());
           return DispatchResult::Handled;
+        }
+        case ActionId::RemoteEndHostProcess: {
+          const std::optional<std::int64_t> handle = args.size() == 2 ? util::ParseInt64(args[1]) : std::nullopt;
+          if (!handle.has_value() || *handle <= 0) {
+            return reject("usage: remote-end-process <host> <handle>");
+          }
+          if (!hosts->EndHostProcess(args[0], static_cast<std::uint64_t>(*handle))) {
+            return reject("No remote host \"" + args[0] + "\"");
+          }
+          return DispatchResult::Handled;
+        }
         case ActionId::RemoteStopServer: {
           const std::string host = host_arg();
           if (host.empty() || !hosts->StopServer(host)) {

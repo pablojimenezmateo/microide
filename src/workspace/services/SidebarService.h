@@ -21,8 +21,8 @@ class SidebarService {
   void ShowGit();
   void ShowTests();
   void ShowOutline();
-  void ShowHostChanges();
-  void RefreshHostChanges();
+  void ShowHostView(SidebarMode mode);
+  void RefreshHostView();
   bool ShowPlugin(std::string_view id, bool temporary = false);
   void Close();
   void Toggle();
@@ -48,6 +48,7 @@ class SidebarService {
   bool RunTestItem();
   bool OpenPluginItem();
   bool TogglePluginItem();
+  bool EndPluginItem();
   bool CanStageAllGitEntries() const;
   bool CanDiscardAllGitEntries() const;
   bool StageAllGitEntries();

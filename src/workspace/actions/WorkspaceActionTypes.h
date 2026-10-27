@@ -47,6 +47,9 @@ enum class ActionId {
   // `remote-close-terminals <host> <handle>...` ends them (its Close).
   RemoteAttachHostTerminals,
   RemoteCloseHostTerminals,
+  // `remote-end-process <host> <handle>`: the Host view's End on a process row --
+  // proc/end, whoever spawned it (remote-host-activity).
+  RemoteEndHostProcess,
   // `remote-remove-mirror <root> [discard]`: delete a closed remote project's mirror
   // (tree, objects, journal, state) and forget it in the recents; `discard` lets
   // saves the host never received go with it.

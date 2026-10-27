@@ -20,6 +20,7 @@
 #include "workspace/render/SingleLineViewMetrics.h"
 #include "workspace/services/StatusBarService.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
+#include "workspace/registries/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceUiText.h"
 
 #include <algorithm>
@@ -472,31 +473,15 @@ void RefillOccurrenceScanCache(const editor::TextViewport& viewport,
 }
 
 SidebarMode SidebarModeFromViewId(std::string_view view_id) {
-  if (view_id == "search") {
-    return SidebarMode::Search;
+  // The built-ins from their registry (this was a second, hand-kept table of
+  // them, one view behind each time a view was added). Any other id is a
+  // plugin's view ("plugin" included): every plugin view used to come out None,
+  // and the sidebar painted the file tree under the plugin's rows; a view whose
+  // provider went away is reset to the tree by the sidebar coordinator
+  // (RefreshPlugin).
+  if (const SidebarViewSpec* builtin = FindBuiltinSidebarView(view_id); builtin != nullptr) {
+    return builtin->mode;
   }
-  if (view_id == "problems") {
-    return SidebarMode::Problems;
-  }
-  if (view_id == "git") {
-    return SidebarMode::Git;
-  }
-  if (view_id == "tests") {
-    return SidebarMode::Tests;
-  }
-  if (view_id == "outline") {
-    return SidebarMode::Outline;
-  }
-  if (view_id == "host-changes") {
-    return SidebarMode::HostChanges;
-  }
-  if (view_id == "tree") {
-    return SidebarMode::Tree;
-  }
-  // Any other id is a plugin's view ("plugin" included). This table knew only the
-  // built-ins, so every plugin view came out None and the sidebar painted the file
-  // tree under the plugin's rows; a view whose provider went away is reset to the
-  // tree by the sidebar coordinator (RefreshPlugin).
   return view_id.empty() ? SidebarMode::None : SidebarMode::Plugin;
 }
 

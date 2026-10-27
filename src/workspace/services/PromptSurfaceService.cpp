@@ -209,6 +209,12 @@ void PromptSurfaceService::OpenPromptSurface(PromptSurfaceState::Action action,
   operations_.request_prompt_redraw();
 }
 
+void PromptSurfaceService::OpenConfirmCommandPrompt(std::string command_line, std::string question) {
+  OpenPromptSurface(PromptSurfaceState::Action::ConfirmCommand, PromptSurfaceState::Kind::Confirm, {}, {});
+  prompts_.surface.command_name = std::move(command_line);
+  prompts_.surface.detail = std::move(question);
+}
+
 void PromptSurfaceService::OpenExternalUrlPrompt(std::string url) {
   if (url.empty()) {
     return;

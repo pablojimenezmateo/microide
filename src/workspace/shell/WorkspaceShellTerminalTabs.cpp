@@ -227,6 +227,16 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
             TerminalPanelService& panel = MakeTerminalPanelService();
             return panel.OpenTerminalAttached(std::move(identity));
           },
+      .host_terminal_tab =
+          [this](const terminal::HostIdentity& identity, bool focus) {
+            return MakeTerminalPanelService().FindHostTerminal(identity, focus);
+          },
+      .host_activity_updated =
+          [this]() {
+            if (HostViewShown(context_.current_project_state.sidebar)) {
+              MakeSidebarService().RefreshHostView();
+            }
+          },
       .git_status_pushed =
           [this](const std::filesystem::path& root) {
             // Rendered from the push: the refresh reads it instead of running git.
@@ -250,7 +260,7 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
           [this](const std::filesystem::path& root) {
             if (context_.current_project_state.root == root &&
                 context_.current_project_state.sidebar.view_id == "host-changes") {
-              MakeSidebarService().RefreshHostChanges();
+              MakeSidebarService().RefreshHostView();
             }
           },
       .open_url = [this](std::string_view url) { return OpenExternalUrl(url); },

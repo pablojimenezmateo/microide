@@ -96,6 +96,11 @@ class RemoteHostService {
     std::function<HostTerminalClaims(const std::filesystem::path& root)> host_terminals_claimed;
     // Open a terminal tab in the ACTIVE project attached to `identity`'s terminal.
     std::function<bool(terminal::HostIdentity identity)> attach_host_terminal;
+    // Whether a terminal tab of this window holds `identity`'s terminal; with
+    // `focus`, that tab is brought forward too.
+    std::function<bool(const terminal::HostIdentity& identity, bool focus)> host_terminal_tab;
+    // The Host view's rows changed (a push, a group toggled, a reconnect).
+    std::function<void()> host_activity_updated;
     // The host pushed a new git status for the remote project at `root`.
     std::function<void(const std::filesystem::path& root)> git_status_pushed;
     // Replace output channel `id`'s lines with `text`'s and show it.
@@ -258,8 +263,41 @@ class RemoteHostService {
   // "ssh", "install", "linger", or "port:<host port>" (a forward's local address):
   // what the matching Copy button puts on the clipboard.
   std::optional<std::string> CommandText(std::string_view host, std::string_view which) const;
-  // Remote: Show Status.
+  // Remote: Show Status's text answer (the control channel's: it has no sidebar):
+  // each project's connection and sync, and each host's totals from the last
+  // status it sent.
   std::string StatusText() const;
+
+  // ---- The Host view (remote-host-activity D4-D6) ----
+  // Point the Host view at `host`, which must have an open project; its rows are
+  // that host's from now on. False otherwise.
+  bool ShowHost(std::string_view host);
+  // The host the view shows ("" before any).
+  const std::string& HostViewHost() const { return host_view_.host; }
+  // Whether the Host view is on screen. While it is, the host pushes its activity
+  // (activity/subscribe); once it is not, nothing is asked and nothing is pushed.
+  // A view with no host yet (a restored session) takes `active_root`'s project's
+  // host, else the only one. Cheap when nothing changed: the shell calls it after
+  // every event and control command.
+  void SetHostViewVisible(bool visible, const std::filesystem::path& active_root);
+  // Its rows as of the last status, built when that arrived; a collapsed group's
+  // rows are left out.
+  std::vector<plugin::PluginHost::SidebarItem> HostRows() const;
+  // Expand or collapse the group row `id`. False for any other row.
+  bool ToggleHostGroup(std::string_view id);
+  // What Enter or Delete on Host row `id` runs: a command line, the question to
+  // confirm it with first ("" = none), or -- for a row whose action would not do
+  // what it says -- a refusal to show instead. nullopt for a row with no action.
+  struct RowCommand {
+    std::string command_line;
+    std::string confirm;
+    std::string refusal;
+  };
+  std::optional<RowCommand> HostRowOpenCommand(std::string_view id) const;
+  std::optional<RowCommand> HostRowEndCommand(std::string_view id) const;
+  // Remote: End Host Process -- proc/end for `handle` on `host`. False when
+  // nothing connects to it.
+  bool EndHostProcess(std::string_view host, std::uint64_t handle);
   // The status line of a host terminal of `root`'s project waiting for its
   // connection, in that connection's words.
   std::string PendingTerminalLine(const std::filesystem::path& root) const;
@@ -355,6 +393,16 @@ class RemoteHostService {
   void OnHostTerminals(const std::filesystem::path& tree,
                        const std::optional<project::remote::ServerStatus>& status);
   void DropUnclaimed(std::string_view host, const std::vector<std::uint64_t>& handles);
+  // The Host view's subscription follows its visibility and its host's connection:
+  // subscribe through the connection that should carry it, unsubscribe from one
+  // that should not. Called on every change of either.
+  void UpdateActivitySubscription();
+  // A status for the Host view from subscription `generation` (a stale one, from
+  // a connection or a view since replaced, is dropped).
+  void OnHostActivity(std::uint64_t generation, std::optional<project::remote::ServerStatus> status);
+  void BuildHostRows();
+  // The client of `host`'s first open project, when it is connected.
+  std::shared_ptr<project::remote::RemoteServerClient> ConnectedClient(std::string_view host) const;
   // The session of the first OPEN remote project on `host`, or null: a closed one's
   // is disconnected, and answering with it shadowed an open one on the same host.
   const project::remote::RemoteHostSession* SessionFor(std::string_view host) const;
@@ -382,6 +430,20 @@ class RemoteHostService {
   std::vector<std::string> survival_warned_;  // hosts already warned
   std::vector<std::string> update_offered_;   // hosts already offered a restart
   std::filesystem::path fetching_copy_;  // the host-file copy being opened right now
+  // The last status each host sent (a connect's listing, the Host view's pushes):
+  // StatusText's totals and the Host view's rows.
+  std::map<std::string, project::remote::ServerStatus, std::less<>> last_status_;
+  struct HostView {
+    std::string host;
+    bool visible = false;
+    // The connection the subscription went through; expired or replaced = none.
+    std::weak_ptr<project::remote::RemoteServerClient> subscribed;
+    // Bumped by every (un)subscribe: what a replaced subscription posts is dropped.
+    std::uint64_t generation = 0;
+    std::set<std::string, std::less<>> collapsed;
+    std::vector<plugin::PluginHost::SidebarItem> rows;
+  };
+  HostView host_view_;
   // Mirror file -> the host version its open merge is against (MergeConflict).
   std::map<std::filesystem::path, util::ContentHash> merges_;
   // Blocking host work off the UI thread — Stop Host Server, Show Log, port

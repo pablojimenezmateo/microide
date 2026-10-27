@@ -804,6 +804,7 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
           .move_plugin_sidebar_selection = [this](int delta) { MovePluginSidebarSelection(delta); },
           .open_selected_plugin_sidebar_item = [this]() { return OpenSelectedPluginSidebarItem(); },
           .toggle_plugin_sidebar_item = [this]() { return ToggleSelectedPluginSidebarItem(); },
+          .end_selected_plugin_sidebar_item = [this]() { return MakeSidebarService().EndPluginItem(); },
           .refresh_plugin_sidebar = [this]() { return RefreshPluginSidebar(); },
           .reveal_selected_tree_sidebar_line = [this]() { RevealSelectedTreeSidebarLine(); },
           .move_compare_selection = [this](int delta) { MoveCompareSelection(delta); },

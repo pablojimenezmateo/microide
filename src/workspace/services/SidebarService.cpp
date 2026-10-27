@@ -35,12 +35,12 @@ void SidebarService::ShowOutline() {
   coordinator_.ShowOutline();
 }
 
-void SidebarService::ShowHostChanges() {
-  coordinator_.ShowHostChanges();
+void SidebarService::ShowHostView(SidebarMode mode) {
+  coordinator_.ShowHostView(mode);
 }
 
-void SidebarService::RefreshHostChanges() {
-  coordinator_.RefreshHostChanges();
+void SidebarService::RefreshHostView() {
+  coordinator_.RefreshHostView();
 }
 
 bool SidebarService::ShowPlugin(std::string_view id, bool temporary) {
@@ -141,6 +141,10 @@ bool SidebarService::OpenPluginItem() {
 
 bool SidebarService::TogglePluginItem() {
   return coordinator_.TogglePluginItem();
+}
+
+bool SidebarService::EndPluginItem() {
+  return coordinator_.EndPluginItem();
 }
 
 bool SidebarService::CanStageAllGitEntries() const {

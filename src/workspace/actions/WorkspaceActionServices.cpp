@@ -157,10 +157,11 @@ bool WorkspaceActionContext::ShowSidebarView(const SidebarViewInfo& view,
       operations_.show_outline_sidebar();
       return true;
     case SidebarMode::HostChanges:
-      if (!operations_.show_host_changes_sidebar) {
+    case SidebarMode::Host:
+      if (!operations_.show_host_view_sidebar) {
         return false;
       }
-      operations_.show_host_changes_sidebar();
+      operations_.show_host_view_sidebar(view.mode);
       return true;
     case SidebarMode::Plugin:
       return operations_.show_plugin_sidebar(view.id, false);
@@ -181,6 +182,7 @@ bool WorkspaceActionContext::ToggleSidebarView(const SidebarViewInfo& view,
     case SidebarMode::Tests:
     case SidebarMode::Outline:
     case SidebarMode::HostChanges:
+    case SidebarMode::Host:
     case SidebarMode::Plugin:
       if (same_view) {
         operations_.close_sidebar();
@@ -617,6 +619,7 @@ bool WorkspaceActionContext::OpenArgumentPicker(ActionId id) {
 bool WorkspaceActionContext::OpenOptionalArgumentPicker(ActionId id) {
   switch (id) {
     case ActionId::RemoteShowLog:
+    case ActionId::RemoteShowStatus:
     case ActionId::RemoteStopServer:
     case ActionId::RemoteReconnect:
     case ActionId::RemoteDisconnect: {

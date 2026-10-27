@@ -332,6 +332,8 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
         return false;
       case SDLK_R:
         return operations_.refresh_plugin_sidebar();
+      case SDLK_DELETE:
+        return operations_.end_selected_plugin_sidebar_item && operations_.end_selected_plugin_sidebar_item();
       default:
         return false;
     }

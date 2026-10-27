@@ -19,6 +19,7 @@ std::span<const SidebarViewSpec> BuiltinSidebarViewSpecs() {
       SidebarViewSpec{"outline", "Outline", SidebarMode::Outline},
       SidebarViewSpec{"host-changes", "Changed on Host", SidebarMode::HostChanges,
                       /*contextual=*/true},
+      SidebarViewSpec{"host", "Host", SidebarMode::Host, /*contextual=*/true},
   });
   return kSpecs;
 }
@@ -123,6 +124,7 @@ SidebarViewRequest ParseSidebarViewRequest(const std::vector<std::string>& args,
     case SidebarMode::Tests:
     case SidebarMode::Outline:
     case SidebarMode::HostChanges:
+    case SidebarMode::Host:
       break;
   }
 

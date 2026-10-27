@@ -10,6 +10,7 @@
 #include "platform/RuntimePaths.h"
 #include "project/remote/RemoteProcessLauncher.h"
 #include "project/remote/RemoteProject.h"
+#include "project/remote/ServerStatusText.h"
 #include "util/CommandLine.h"
 #include "util/Parse.h"
 #include "workspace/SettingFlags.h"
@@ -244,6 +245,12 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
   const bool state_changed = status.state != entry.status.state || status.message != entry.status.message ||
                              status.error != entry.status.error;
   entry.status = status;
+  if (state_changed && entry.host == host_view_.host) {
+    // The Host view follows its connection: resubscribe once it is back (a new
+    // connection, a new subscription), and its Server row says the state.
+    UpdateActivitySubscription();
+    BuildHostRows();
+  }
   if (came_back && operations_.project_reconnected) {
     operations_.project_reconnected(tree);
   }
@@ -961,6 +968,10 @@ void RemoteHostService::ProjectClosed(const std::filesystem::path& root) {
   // (its terminals start and are summed up), even one the close never got to end.
   it->second.status = remote::RemoteHostSession::Status{};
   it->second.unclaimed_terminals.clear();
+  if (it->second.host == host_view_.host) {
+    UpdateActivitySubscription();
+    BuildHostRows();
+  }
   PublishStatusSegment();
   if (operations_.dismiss_notification) {
     operations_.dismiss_notification("remote.project." + root.string());
@@ -1481,6 +1492,13 @@ void RemoteHostService::OnHostTerminals(const std::filesystem::path& tree,
   const HostTerminalClaims claims =
       operations_.host_terminals_claimed ? operations_.host_terminals_claimed(tree) : HostTerminalClaims{};
   entry.unclaimed_terminals.clear();
+  if (status.has_value()) {
+    // The Host view's rows and StatusText's totals, until the view's own pushes.
+    last_status_[record.host] = *status;
+    if (record.host == host_view_.host) {
+      BuildHostRows();
+    }
+  }
   // An older server lists none: nothing is offered, and that is not an error.
   if (status.has_value() && status->terminals.has_value()) {
     for (const remote::ServerTerminal& terminal : *status->terminals) {
@@ -1562,8 +1580,12 @@ bool RemoteHostService::AttachHostTerminals(const std::filesystem::path& active_
     return false;
   }
   for (const std::uint64_t handle : handles) {
-    (void)operations_.attach_host_terminal(
-        terminal::HostIdentity{.epoch = client->hello().daemon_epoch, .handle = handle});
+    const terminal::HostIdentity identity{.epoch = client->hello().daemon_epoch, .handle = handle};
+    // One a tab already holds is brought forward, not attached a second time.
+    if (operations_.host_terminal_tab && operations_.host_terminal_tab(identity, /*focus=*/true)) {
+      continue;
+    }
+    (void)operations_.attach_host_terminal(identity);
   }
   DropUnclaimed(host, handles);
   return true;
@@ -1629,6 +1651,42 @@ std::string RemoteHostService::StatusText() const {
                 (terminal.cwd.empty() ? record.host_root : terminal.cwd) + (terminal.exited ? " (exited)" : "");
       }
     }
+  }
+  // Each host's totals, from the last status it sent: what Show Status's view
+  // shows, for the control channel, which has no sidebar.
+  for (const auto& [host, status] : last_status_) {
+    if (SessionFor(host) == nullptr) {
+      continue;
+    }
+    const std::size_t terminals = status.terminals.has_value() ? status.terminals->size() : 0;
+    std::size_t processes = 0;
+    std::size_t kept = 0;
+    remote::ActivityFigures total = status.server;
+    const auto add = [&](const remote::ActivityFigures& figures) {
+      if (figures.rss_bytes.has_value()) {
+        total.rss_bytes = total.rss_bytes.value_or(0) + *figures.rss_bytes;
+      }
+      if (figures.cpu_permille.has_value()) {
+        total.cpu_permille = total.cpu_permille.value_or(0) + *figures.cpu_permille;
+      }
+    };
+    if (status.terminals.has_value()) {
+      for (const remote::ServerTerminal& terminal : *status.terminals) {
+        add(terminal.figures);
+      }
+    }
+    if (status.processes.has_value()) {
+      for (const remote::ServerProcess& process : *status.processes) {
+        processes += process.exited ? 0 : 1;
+        kept += process.kept && process.detached_for.has_value() && !process.exited ? 1 : 0;
+        add(process.figures);
+      }
+    }
+    text += "\n" + host + " server" + (status.release.empty() ? std::string() : " " + status.release) + ": " +
+            std::to_string(terminals) + " terminal" + (terminals == 1 ? "" : "s") + ", " +
+            std::to_string(processes) + " process" + (processes == 1 ? "" : "es") +
+            (kept > 0 ? " (" + std::to_string(kept) + " kept)" : std::string()) + ", " +
+            remote::FormatFigures(total);
   }
   return text;
 }

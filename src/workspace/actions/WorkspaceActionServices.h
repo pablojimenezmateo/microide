@@ -89,7 +89,8 @@ class WorkspaceActionContext {
     std::function<void()> show_git_sidebar;
     std::function<void()> show_tests_sidebar;
     std::function<void()> show_outline_sidebar;
-    std::function<void()> show_host_changes_sidebar;
+    // A host-owned item view (Changed on Host, Host): IsHostOwnedItemView.
+    std::function<void(SidebarMode mode)> show_host_view_sidebar;
     std::function<bool(std::string_view, bool)> show_plugin_sidebar;
     std::function<std::optional<SDL_FRect>()> current_window_rect;
     std::function<void()> refresh_project_files;
@@ -399,6 +400,9 @@ class WorkspaceActionContext {
 
   void PrepareForAction(ActionSource source);
   bool RejectAction(ActionSource source, std::string feedback);
+  // The command surfaces' answer for an action that ran (the control channel's
+  // `feedback`), with no toast: the UI shows the outcome itself.
+  void SetCommandFeedback(std::string feedback) { state_.panel.feedback.text = std::move(feedback); }
 
   // The receipt for the last action dispatched through ActionCoordinator: what a
   // key, menu row, palette entry or command actually ran. The `ui` control query

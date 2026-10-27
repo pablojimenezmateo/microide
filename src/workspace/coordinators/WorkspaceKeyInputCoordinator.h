@@ -176,6 +176,9 @@ class KeyInputCoordinator {
     std::function<void(int)> move_plugin_sidebar_selection;
     std::function<bool()> open_selected_plugin_sidebar_item;
     std::function<bool()> toggle_plugin_sidebar_item;
+    // Delete on an item-surface row: the view's row-end action (the Host view's
+    // End); false, leaving the key unhandled, where the view declares none.
+    std::function<bool()> end_selected_plugin_sidebar_item;
     std::function<bool()> refresh_plugin_sidebar;
     std::function<void()> reveal_selected_tree_sidebar_line;
     std::function<void(int)> move_compare_selection;

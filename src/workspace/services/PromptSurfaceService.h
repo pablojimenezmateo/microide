@@ -44,6 +44,8 @@ class PromptSurfaceService {
                          const std::filesystem::path& path,
                          std::string input);
   void OpenExternalUrlPrompt(std::string url);
+  // Ask `question`, and run `command_line` on yes (PromptSurfaceState::ConfirmCommand).
+  void OpenConfirmCommandPrompt(std::string command_line, std::string question);
 
  private:
   // Assign (if needed) and return the stable id of the focused group's tab at
