@@ -2083,8 +2083,11 @@ terminal in a new tab, cold) and **Close** (`term/close`) as
 `remote-attach-terminals` / `remote-close-terminals <host> <handle>...`; with
 nothing but reattaches to report it is a transient "Reattached to build-box: N
 terminals". The reason a terminal started fresh names the host's
-`KillUserProcesses` when the server reports it. The dimmed `detached` badge while
-a link is down is not built; the reattach rule is.
+`KillUserProcesses` when the server reports it. While a link is down a host
+terminal's tab reads `<label> · detached`, its title in the secondary colour
+(`TerminalSession::host_link_down`, `BottomPanelTabModel::detached`); the
+`[connection to the host lost: …]` line stays in its scrollback, and the badge
+goes on reattach.
 
 ### 7.5 Labels
 

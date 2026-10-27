@@ -54,7 +54,10 @@ What it checks, each as the user would see it, with the measured latencies:
      T8 close-project keeps the shell; reopening the project reattaches it
      T4 the host server restarted between quit and relaunch: fresh shells, and
         the row says why; T9 a `+` while connecting is a pending tab at once
-     T10 3000 lines survive a quit: the tail is there, nothing duplicated
+     T10 3000 lines survive a quit: the tail is there, nothing duplicated; scrolling
+         up pages the rest in from the host down to line 1
+     T11 a terminal a second app instance is attached to is not offered as one
+         with no tab; this instance's own orphan is
   V  the Host view              (remote-host-activity) Remote > Show Status opens it;
                                 the project's terminal is listed (with its pid on
                                 the host); `yes` in it raises its CPU figure; Delete
@@ -150,6 +153,8 @@ class Suite:
         self.results: list[tuple[str, str, str]] = []
         self.token = time.strftime("%H%M%S")
         self.mirror: Path | None = None
+        # How to launch a second instance on the same host (T11); None: not run.
+        self.second_app: dict | None = None
 
     # ---- helpers ---------------------------------------------------------
     def record(self, name: str, ok: bool, detail: str = "") -> None:
@@ -420,6 +425,8 @@ class Suite:
 
         # T10: deep output survives a quit, nothing duplicated across the prefetch.
         self.close_all_terminals()
+        # Room for all of it on the host: 2000 lines by default would trim line 1.
+        app.send("set-setting", "terminal.scrollback_lines", "5000")
         self.new_terminal(f"seq 1 3000 | sed 's/^/QA-T10-{tok}-/'")
         wait_for(lambda: f"QA-T10-{tok}-3000" in self.term_text(0), 20, 0.3)
         msg, dt, ok = self.relaunch()
@@ -429,6 +436,55 @@ class Suite:
         numbers = [int(n) for n in _re.findall(rf"QA-T10-{tok}-(\d+)", self.term_text(0))]
         self.record("T10.tail-and-no-duplicates", bool(tail) and len(numbers) == len(set(numbers)),
                     f"{len(numbers)} rows held, last {numbers[-1] if numbers else None}")
+        # T10b: the reattach brought the tail; scrolling up pages the rest in from
+        # the host (term/scrollback) until line 1, still nothing duplicated.
+        term = app.query("ui").get("terminal")
+        first_line = None
+        if term:
+            x, y, w, h = term["rect"]
+            def paged_to_one():
+                app.wheel(x + w / 2, y + h / 2, -40)
+                rows = [int(n) for n in _re.findall(rf"QA-T10-{tok}-(\d+)", self.term_text(0))]
+                return rows if rows and min(rows) == 1 else None
+            rows, dt = wait_for(paged_to_one, 60, 0.2)
+            first_line = min(rows) if rows else None
+            self.record("T10.pages-back-to-line-1", rows is not None and len(rows) == len(set(rows)) == 3000,
+                        f"{dt:.1f}s, {len(rows or [])} rows, first {first_line}")
+        else:
+            self.record("T10.pages-back-to-line-1", False, "no terminal geometry in the ui query")
+        app.send("set-setting", "terminal.scrollback_lines", "2000")
+
+        # T11: a terminal another client is attached to is never offered as one
+        # with no tab -- a second app instance holds one; this one crashes with an
+        # orphan of its own and, on relaunch, is offered exactly that one.
+        if self.second_app is not None:
+            self.close_all_terminals()
+            with q.App.launch(**self.second_app) as other_app:
+                other = Suite(other_app, self.host, set())
+                other_app.send("remote-open", f"{self.host.name}:{self.host.root}")
+                msg, dt, ok = other.wait_ready(180)
+                other.close_all_terminals()
+                other.new_terminal(f"echo QA-T11-THEIRS-{tok}")
+                theirs, _ = wait_for(lambda: next((p["hostHandle"] for p in other.panes() if p["hostHandle"]), 0),
+                                     30, 0.3)
+                self.new_terminal(f"while :; do echo QA-T11-MINE-{tok}; sleep 1; done")
+                mine, _ = wait_for(lambda: next((p["hostHandle"] for p in self.panes() if p["hostHandle"]), 0),
+                                   30, 0.3)
+                msg, dt, ok = self.relaunch(crash=True)
+                row, dt = wait_for(lambda: next((n for n in self.notifs() if "running with no tab" in n["message"]),
+                                                None), 30, 0.3)
+                listed = {r["handle"]: r.get("clients") for r in self.host_terminals()}
+                self.record("T11.another-clients-terminal-not-offered",
+                            bool(theirs) and bool(mine) and row is not None and
+                            "1 running with no tab" in row["message"] and listed.get(theirs) == 1,
+                            f"theirs={theirs} mine={mine} host={listed} "
+                            f"row={row['message'] if row else [n['message'] for n in self.notifs()]}")
+                if mine:
+                    app.send("remote-close-terminals", self.host.name, str(mine))
+                other.close_all_terminals()
+                wait_for(lambda: theirs not in [r["handle"] for r in self.host_terminals()], 10, 0.3)
+                other_app.check("T11")
+            app.check("T11")
 
         # T4 / T9: the host server restarted between quit and relaunch.
         self.app.restart(self.mirror, between=lambda: self.host.ssh(
@@ -892,6 +948,10 @@ def main() -> int:
         with q.App.launch(project=fixture, shots=out / "shots", keep_home=True, extra_env=env,
                           extra_args=ssh_args) as app:
             suite = Suite(app, host, only)
+            # Its own homes (App.launch makes a work dir per instance): its own
+            # mirror and connection to the same host server.
+            suite.second_app = dict(project=fixture, shots=out / "shots-second", keep_home=True,
+                                    extra_env=env, extra_args=ssh_args)
             suite.run_all()
             results, mirror, work = suite.results, suite.mirror, app.work
             findings += app.findings

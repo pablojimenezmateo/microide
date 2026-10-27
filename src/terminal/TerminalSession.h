@@ -230,6 +230,9 @@ class TerminalSession {
   // True when the host's shell exited while this client was attached and saw it
   // -- not when only the link to the host is down.
   bool host_shell_exited() const;
+  // True while the connection carrying this host terminal is down (HostConnectionLost
+  // until ReattachHost): its shell runs on, detached; the tab says so.
+  bool host_link_down() const;
 
   // Client side: apply one frame from the host (on the connection's thread).
   // `working_directory`, when present, is already mapped into the editor's tree.

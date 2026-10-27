@@ -235,6 +235,11 @@ bool TerminalSession::host_shell_exited() const {
   return host_.channel != nullptr && host_.mirrored && !running_ && !host_.link_down;
 }
 
+bool TerminalSession::host_link_down() const {
+  std::scoped_lock lock(mutex_);
+  return host_.channel != nullptr && host_.link_down;
+}
+
 void TerminalSession::NoteHostReattached() {
   std::scoped_lock lock(mutex_);
   host_.announce_reattach = true;

@@ -32,6 +32,9 @@ struct VisibleStripTab {
   // and (stronger) the program rang the bell.
   bool activity_dot = false;
   bool bell_mark = false;
+  // Terminal strip only: a host terminal whose link is down -- its title is drawn
+  // dimmed, and says `detached` (§ 7.4a).
+  bool dimmed = false;
   // Project strip only, for a remote project: its host after the name (` · worky`,
   // drawn dimmer), and its connection's state as the tab's top-left corner.
   std::string secondary_title;
@@ -63,6 +66,8 @@ struct BottomPanelTabModel {
   // Terminal tabs: unseen output and an unseen bell, see TerminalTabState.
   bool activity = false;
   bool bell = false;
+  // A host terminal whose connection is down: running on the host, detached.
+  bool detached = false;
 };
 
 struct ProjectTabBadgeStyle {

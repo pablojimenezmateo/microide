@@ -327,6 +327,15 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
              std::chrono::seconds(10), std::chrono::milliseconds(5)),
          "the host terminal shows its link ended");
   Expect(local_session.running(), "the local one is not the host's to end");
+  // § 7.4a: its tab says it is detached, dimmed; the local terminal's does not.
+  Expect(host_session.host_link_down(), "the host terminal's link is down, its shell detached");
+  {
+    const std::vector<std::string> strip = WorkspaceShellTestAccess::BottomPanelTerminalLabels(shell);
+    Expect(host_tab < strip.size() && strip[host_tab].ends_with(" \xc2\xb7 detached") &&
+               local_tab < strip.size() && !strip[local_tab].ends_with("detached"),
+           "the host tab's label says detached: '" + (host_tab < strip.size() ? strip[host_tab] : std::string()) +
+               "'");
+  }
   RemoveFakeMaster(target);
 }
 

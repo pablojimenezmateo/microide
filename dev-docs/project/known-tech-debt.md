@@ -672,7 +672,21 @@ applied ones deferred for that window (or reversible from the object store)
 so a later batch can still hold them; that trades delete latency, so it wants
 a design note, not a quick patch.
 
-### TD-2026-10-27-401 — remote-terminal-restore leftovers: one QA scenario, the detached badge, deep paging in QA.
+### TD-2026-10-27-401 — remote-terminal-restore leftovers: one QA scenario, the detached badge, deep paging in QA. [RESOLVED 2026-10-27]
+
+- **qa-remote T11** is automated: `tools/qa/remote.py` launches a second `App`
+  (its own homes, mirror and connection) that holds a host terminal; this
+  instance crashes with an orphan of its own, and on relaunch is offered exactly
+  that one ("1 running with no tab") while the host lists the other's with one
+  client.
+- **The `detached` badge** (§ 7.4a): a host terminal whose link is down reads
+  `<label> · detached` with its title dimmed; pinned in
+  `RemoteHostService/RemoteProjectTerminalsSayWhereTheyRun`.
+- **qa-remote T10b** pages back to line 1 with the wheel after the reattach
+  (scrollback raised to 5000 for that terminal), checking all 3000 rows and no
+  duplicates.
+
+Original entry:
 
 What `openspec/changes/archive/2026-10-27-remote-terminal-restore` did not finish:
 

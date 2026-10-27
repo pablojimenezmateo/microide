@@ -947,10 +947,12 @@ inline void DrawPrimarySecondaryRowText(const render::TextRenderer& text_rendere
 struct StripTabRemoteMark {
   std::string_view secondary_label;
   std::optional<editor::WelcomeStageState> state;
+  // A detached host terminal's tab: its title in the secondary colour.
+  bool dimmed = false;
 };
 
 inline StripTabRemoteMark RemoteMarkOf(const VisibleStripTab& tab) {
-  return StripTabRemoteMark{.secondary_label = tab.secondary_title, .state = tab.remote_state};
+  return StripTabRemoteMark{.secondary_label = tab.secondary_title, .state = tab.remote_state, .dimmed = tab.dimmed};
 }
 
 inline void DrawStripTab(const render::TextRenderer& text_renderer,
@@ -1005,7 +1007,10 @@ inline void DrawStripTab(const render::TextRenderer& text_renderer,
       std::max(8.0f, rect.w - style.close_right_reserve - (text_left_padding - style.text_left_padding));
   const std::string_view title = text_renderer.TruncateToWidthEphemeralView(label, label_width);
   DrawVCenteredTextOn(text_renderer, renderer, rect, text_left_padding,
-                      active ? palette.active_text : palette.inactive_text, background, title);
+                      remote.dimmed ? theme.chrome_text_secondary
+                      : active      ? palette.active_text
+                                    : palette.inactive_text,
+                      background, title);
   // The name keeps the room; the host gets what is left (the corner already says
   // "remote" when there is none). The title is drawn before the second truncation
   // reuses the shared scratch.

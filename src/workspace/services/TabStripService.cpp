@@ -491,6 +491,9 @@ bool TerminalsAreMixed(const ProjectWorkspaceState& state) {
 // A terminal tab's label prefix: its own (the ssh authentication tab, a local
 // terminal in a remote project), else — while host and local terminals are mixed —
 // `local · ` or the project's host.
+// After a host terminal's label while its link is down (§ 7.4a).
+constexpr std::string_view kDetachedSuffix = " \xc2\xb7 detached";
+
 std::string TerminalLabelPrefix(const ProjectWorkspaceState& state, const TerminalPaneState& pane,
                                 bool mixed) {
   if (!pane.label_prefix.empty() || !mixed) {
@@ -536,6 +539,7 @@ std::uint64_t TabStripService::ComputeBottomPanelTabsFingerprint(
     // The activity dot is part of the model: it is painted from the strip tab.
     hash = HashMix(hash, terminal_tab->has_unseen_output ? std::uint64_t{1} : std::uint64_t{0});
     hash = HashMix(hash, terminal_tab->has_unseen_bell ? std::uint64_t{1} : std::uint64_t{0});
+    hash = HashMix(hash, pane != nullptr && pane->session.host_link_down() ? std::uint64_t{1} : std::uint64_t{0});
   }
   // Output: the augmentation inputs plus the resolved open ids and the full channel
   // id/label table. The per-tab label is a deterministic function of (open ids,
@@ -589,6 +593,10 @@ const std::vector<BottomPanelTabModel>& TabStripService::BuildBottomPanelTabs(
       label = "Terminal";
     }
     label.insert(0, TerminalLabelPrefix(state, *pane, mixed));
+    const bool detached = pane->session.host_link_down();
+    if (detached) {
+      label += kDetachedSuffix;
+    }
     tabs.push_back(BottomPanelTabModel{
         .kind = BottomPanelTabKind::Terminal,
         .terminal_index = i,
@@ -597,6 +605,7 @@ const std::vector<BottomPanelTabModel>& TabStripService::BuildBottomPanelTabs(
         .tooltip_label = label,
         .activity = terminal_tab->has_unseen_output,
         .bell = terminal_tab->has_unseen_bell,
+        .detached = detached,
     });
   }
 
@@ -740,6 +749,7 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleBottomPanelTa
   for (VisibleStripTab& tab : visible) {
     tab.activity_dot = tab.index < tabs.size() && tabs[tab.index].activity;
     tab.bell_mark = tab.index < tabs.size() && tabs[tab.index].bell;
+    tab.dimmed = tab.index < tabs.size() && tabs[tab.index].detached;
   }
   cache.model_fingerprint = bottom_panel_tabs_cache_.fingerprint;
   cache.geometry_epoch = geometry_epoch_;
@@ -781,6 +791,9 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleTerminalTabs(
       label = "Terminal";
     }
     label.insert(0, TerminalLabelPrefix(state, *pane, mixed));
+    if (pane->session.host_link_down()) {
+      label += kDetachedSuffix;
+    }
     terminal_indices.push_back(i);
     display_titles.push_back(label);
     tooltip_labels.push_back(label);
