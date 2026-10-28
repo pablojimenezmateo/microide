@@ -480,6 +480,16 @@ coordinators already use), then gives that executor a context holding the
 service, deletes the forwarders and their `Operations` fields. One area per
 commit, lane-checked. The original ordering below still holds.
 
+Re-examined 2026-10-28, starting Project: `OpenProjectTab`, `SwitchProject` and
+`CloseProject` each orchestrate about ten shell parts (the formatter and file-read
+flush, the tree menu, the tab-strip chrome, recents, the layout-dirty mark, the
+dirty prompt, the remote-host service). A `ProjectSessionService` holding them
+would need an `Operations` of the same ten callbacks back into the shell: the bag
+would move, not shrink. A slice is worth doing only where the behaviour's parts
+are themselves services the new owner can hold by reference; pick slices by that
+test, not by executor size. The shared prologue those three did have in common is
+`SettleTabIoBeforeTeardown` now.
+
 Original plan, one area per commit so each slice is reviewable and lane-checked: give each
 executor its own context type holding references to the services it calls
 (`AssistService&`, `EditorTabService&`, `TerminalPanelService&`, …, the
