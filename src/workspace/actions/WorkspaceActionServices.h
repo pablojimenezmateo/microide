@@ -26,6 +26,9 @@ namespace microide::workspace {
 class AssistService;
 class DebugService;
 class TerminalPanelService;
+class EditorTabService;
+class TextInputCoordinator;
+class QuickPickService;
 class RemoteHostService;
 
 // Defined in GitSidebarCommandCenter.h; only the type is needed here (function
@@ -136,14 +139,12 @@ class WorkspaceActionContext {
     std::function<void()> open_help_about_overlay;
     std::function<void()> toggle_status_bar;
     std::function<void()> toggle_layout_mode;
-    std::function<editor::TextViewport*()> active_editor_viewport;
     std::function<void()> open_buffer_search;
     std::function<void()> refresh_buffer_search;
     std::function<void()> open_buffer_replace;
     std::function<bool(std::string*)> find_lsp_references;
     // `incoming` selects callers-of vs called-by; both render into the same channel.
     std::function<bool(bool, std::string*)> show_call_hierarchy;
-    std::function<void(std::string query)> open_workspace_symbol_picker;
     // Change Language Mode: the pick (empty) or a language to set ("auto" detects
     // again); false, with why, for a language no definition has.
     std::function<bool(const std::string& language, std::string* error)> change_language_mode;
@@ -168,7 +169,6 @@ class WorkspaceActionContext {
     std::function<ReviewOpenOutcome()> open_conflict_review;
     std::function<ReviewOpenOutcome(const std::string&)> open_branch_review;
     std::function<ReviewOpenOutcome(const std::string&)> open_commit_review;
-    std::function<TabEntry::EditorTabState*()> active_editor_tab;
     std::function<editor::FoldingModel*()> ensure_active_folding_model_fresh;
     std::function<bool(const editor::TextViewport&)> replace_active_editor_view;
     // A view of the path for a new pane: shares the live buffer when the file is
@@ -183,7 +183,6 @@ class WorkspaceActionContext {
     std::function<void(std::size_t)> activate_tab;
     std::function<bool(std::size_t)> move_active_tab_to;
     std::function<bool()> reopen_active_tab;
-    std::function<bool(DeferredTabHandle)> reopen_editor;
     std::function<bool(std::size_t)> save_tab;
     // The interactive save. Same tab, same contract, except the formatter runs off
     // the shell thread and the write lands when it returns.
@@ -193,16 +192,11 @@ class WorkspaceActionContext {
     // Save All: every dirty editor in every group, deferred as one Ctrl+S is.
     std::function<SaveAllOutcome()> save_all_dirty_tabs;
     std::function<bool(std::size_t, const std::filesystem::path&, std::string*)> save_tab_as;
-    std::function<bool(const std::filesystem::path&)> open_new_buffer_in_new_tab;
     std::function<void()> reset_caret_blink;
     std::function<bool(EditorSplitOrientation)> split_editor_group;
     std::function<bool()> focus_other_group;
     // VS Code's focusLeft/Right/Above/BelowGroup and moveActiveEditorGroup*.
-    std::function<bool(EditorGroupDirection)> focus_editor_group_in_direction;
-    std::function<bool(std::size_t)> focus_editor_group_at;
     // Go Back (-1) / Go Forward (+1): the place to reveal, if there is one.
-    std::function<std::optional<EditorNavigationHistory::Location>(int)> step_navigation;
-    std::function<bool(EditorGroupDirection)> move_editor_group_in_direction;
     std::function<bool()> close_editor_group;
     std::function<void(std::size_t)> request_close_tab;
     std::function<void(std::vector<std::size_t>)> request_close_tabs;
@@ -213,11 +207,6 @@ class WorkspaceActionContext {
     std::function<bool(std::size_t, std::size_t, std::size_t, std::size_t)> move_tab_to_group;
     std::function<void()> request_focused_editor_redraw;
     std::function<editor::TextViewport*()> active_editable_viewport;
-    std::function<bool(std::string_view, bool)> insert_text_into_active_text_surface;
-    std::function<bool()> has_active_single_line_text_surface;
-    std::function<std::string()> selected_text_at_active_single_line_text_surface;
-    std::function<bool()> select_all_at_active_single_line_text_surface;
-    std::function<bool()> cut_selection_at_active_single_line_text_surface;
     std::function<CompareTabState*()> active_compare_tab;
     std::function<void()> mark_branch_file_reviewed;
     std::function<void()> unmark_branch_file_reviewed;
@@ -243,7 +232,6 @@ class WorkspaceActionContext {
     std::function<std::optional<std::string>()> last_terminal_command_text;
     std::function<std::optional<std::string>()> selection_text_with_context;
     std::function<std::optional<std::string>()> read_clipboard_text;
-    std::function<void(std::string)> paste_text_into_terminal;
     // A key press (down then up) delivered through the window's event path, as
     // the keyboard would: shortcuts, the focused surface, the terminal's encoder.
     std::function<void(SDL_Keycode, SDL_Keymod)> press_key;
@@ -267,12 +255,8 @@ class WorkspaceActionContext {
     std::function<void()> note_layout_inputs_changed;
     std::function<void()> request_window_redraw;
     // Focus the notification stack; false when it is empty.
-    std::function<bool()> focus_notifications;
     // Resolve and take a notification row's action (see NotificationService::
     // TakeAction); nullopt with *error naming what did not resolve.
-    std::function<std::optional<NotificationAction>(std::string_view, std::string_view,
-                                                    std::string*)>
-        take_notification_action;
     // Press the button labelled so on the active editor tab's banner; false with
     // *error when the tab shows no banner or the banner has no such button.
     std::function<bool(std::string_view, std::string*)> activate_editor_banner;
@@ -312,10 +296,8 @@ class WorkspaceActionContext {
     std::function<void()> open_debug_repl_prompt;
     // Launch-config picker (Phase 9): open the fuzzy picker over the project's
     // launch configs.
-    std::function<void()> open_launch_config_picker;
     std::function<void()> open_color_theme_picker;
     // Show a pick whose rows run command lines (QuickPickKind::RunCommand).
-    std::function<void(QuickPickState)> open_command_choices;
     std::function<const std::vector<WorkspaceOutputChannels::ChannelInfo>&()> output_channels;
     std::function<void(std::string query)> open_document_symbol_picker;
     // Open the command palette over all built-in + plugin commands, optionally pre-filling
@@ -359,6 +341,10 @@ class WorkspaceActionContext {
     AssistService& assist;
     DebugService& debug;
     TerminalPanelService& terminal_panel;
+    EditorTabService& editor_tabs;
+    TextInputCoordinator& text_input;
+    QuickPickService& quick_pick;
+    NotificationService& notifications;
   };
 
   WorkspaceActionContext(ProjectCatalogState& project_catalog,
@@ -370,6 +356,7 @@ class WorkspaceActionContext {
   AssistService& assist() { return services_.assist; }
   DebugService& debug() { return services_.debug; }
   TerminalPanelService& terminal_panel() { return services_.terminal_panel; }
+  EditorTabService& editor_tabs() { return services_.editor_tabs; }
 
   void PrepareForAction(ActionSource source);
   bool RejectAction(ActionSource source, std::string feedback);
@@ -596,17 +583,12 @@ class WorkspaceActionContext {
   // The newest recently closed editor whose file still exists, removed from the
   // list (entries for files gone since are dropped on the way); nullopt for none.
   std::optional<DeferredTabHandle> TakeRecentlyClosedEditor();
-  // Open `view`'s file in the focused group as it was (caret, scroll, folds), or
-  // activate the tab already showing it. False when it cannot be opened.
-  bool ReopenEditor(DeferredTabHandle view);
   bool SaveTab(std::size_t index);
   bool SaveTabDeferred(std::size_t index);
   SaveAllOutcome SaveAllDirtyTabs();
   bool RevertActiveFile();
   // Save As / naming an untitled buffer. `error` says why on failure.
   bool SaveTabAs(std::size_t index, const std::filesystem::path& path, std::string* error);
-  // A path that does not exist yet opens as an empty buffer bound to it.
-  bool OpenNewBufferInNewTab(const std::filesystem::path& path);
   // The Save As prompt (Ctrl+S on an untitled buffer).
   // `initial` prefills the path (a named file's own, for Save As on it).
   void OpenSaveAsPrompt(std::string initial = {});
@@ -617,12 +599,7 @@ class WorkspaceActionContext {
                         const std::filesystem::path& path,
                         std::string* error_message);
   bool FocusOtherGroup();
-  bool FocusEditorGroupInDirection(EditorGroupDirection direction);
-  // Focus the 0-based group `index`; false when there is none.
-  bool FocusEditorGroupAt(std::size_t index);
   std::size_t EditorGroupCount() const { return state_.editor_groups.size(); }
-  std::optional<EditorNavigationHistory::Location> StepNavigation(int direction);
-  bool MoveEditorGroupInDirection(EditorGroupDirection direction);
   bool CloseEditorGroup();
   void RequestCloseTab(std::size_t index);
   void RequestCloseTabs(std::vector<std::size_t> indices);

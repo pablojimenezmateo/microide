@@ -1,4 +1,5 @@
 #include "workspace/actions/WorkspaceActionCoordinator.h"
+#include "workspace/services/EditorTabService.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -77,7 +78,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       // A typed path that does not exist yet opens as an empty buffer bound to
       // it (`code new.txt`); the file is created on save.
       if (!PathExistsForOpen(request->path)) {
-        if (!context_.OpenNewBufferInNewTab(request->path)) {
+        if (!context_.editor_tabs().OpenNewBufferInNewTab(request->path)) {
           return reject("Cannot open " + request->path.string());
         }
         return DispatchResult::Handled;
@@ -176,7 +177,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
 
         for (const std::filesystem::path& path : request.paths) {
           const bool opened = PathExistsForOpen(path) ? context_.OpenPathInNewTab(path)
-                                                      : context_.OpenNewBufferInNewTab(path);
+                                                      : context_.editor_tabs().OpenNewBufferInNewTab(path);
           if (!opened) {
             return reject("Failed to open file in a new tab: " + path.string());
           }
@@ -228,7 +229,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       // The editor comes back as it was closed -- caret, selection, scroll and
       // folds -- through the deferred-tab hydration a restored session uses, also
       // when the read lands later (a large file loads off the shell thread).
-      return context_.ReopenEditor(std::move(*closed)) ? DispatchResult::Handled
+      return context_.editor_tabs().ReopenEditor(std::move(*closed)) ? DispatchResult::Handled
                                                        : DispatchResult::Rejected;
     }
     case ActionId::NavigateBack:
@@ -238,7 +239,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       }
       const bool back = id == ActionId::NavigateBack;
       const std::optional<EditorNavigationHistory::Location> target =
-          context_.StepNavigation(back ? -1 : 1);
+          context_.editor_tabs().StepNavigation(back ? -1 : 1);
       if (!target.has_value()) {
         return reject(back ? "Nothing to go back to" : "Nothing to go forward to");
       }
@@ -430,7 +431,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       }
       const std::size_t index = *n - 1;
       if (index < context_.EditorGroupCount()) {
-        context_.FocusEditorGroupAt(index);
+        context_.editor_tabs().FocusEditorGroupAt(index);
         return DispatchResult::Handled;
       }
       if (index == context_.EditorGroupCount() && context_.HasProjectRoot()) {
@@ -440,28 +441,28 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       return reject("No editor group " + std::to_string(*n));
     }
     case ActionId::FocusEditorGroupLeft:
-      context_.FocusEditorGroupInDirection(EditorGroupDirection::Left);
+      context_.editor_tabs().FocusEditorGroupInDirection(EditorGroupDirection::Left);
       return DispatchResult::Handled;
     case ActionId::FocusEditorGroupRight:
-      context_.FocusEditorGroupInDirection(EditorGroupDirection::Right);
+      context_.editor_tabs().FocusEditorGroupInDirection(EditorGroupDirection::Right);
       return DispatchResult::Handled;
     case ActionId::FocusEditorGroupUp:
-      context_.FocusEditorGroupInDirection(EditorGroupDirection::Up);
+      context_.editor_tabs().FocusEditorGroupInDirection(EditorGroupDirection::Up);
       return DispatchResult::Handled;
     case ActionId::FocusEditorGroupDown:
-      context_.FocusEditorGroupInDirection(EditorGroupDirection::Down);
+      context_.editor_tabs().FocusEditorGroupInDirection(EditorGroupDirection::Down);
       return DispatchResult::Handled;
     case ActionId::MoveEditorGroupLeft:
-      context_.MoveEditorGroupInDirection(EditorGroupDirection::Left);
+      context_.editor_tabs().MoveEditorGroupInDirection(EditorGroupDirection::Left);
       return DispatchResult::Handled;
     case ActionId::MoveEditorGroupRight:
-      context_.MoveEditorGroupInDirection(EditorGroupDirection::Right);
+      context_.editor_tabs().MoveEditorGroupInDirection(EditorGroupDirection::Right);
       return DispatchResult::Handled;
     case ActionId::MoveEditorGroupUp:
-      context_.MoveEditorGroupInDirection(EditorGroupDirection::Up);
+      context_.editor_tabs().MoveEditorGroupInDirection(EditorGroupDirection::Up);
       return DispatchResult::Handled;
     case ActionId::MoveEditorGroupDown:
-      context_.MoveEditorGroupInDirection(EditorGroupDirection::Down);
+      context_.editor_tabs().MoveEditorGroupInDirection(EditorGroupDirection::Down);
       return DispatchResult::Handled;
     case ActionId::CloseGroup:
       context_.CloseEditorGroup();

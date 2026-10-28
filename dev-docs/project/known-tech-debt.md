@@ -558,6 +558,15 @@ active terminal pane is read from state. `ActionAvailability` holds
 are gone (asked per painted menu row: five fewer type-erased calls each).
 Operations 192 -> 174.
 
+**tabs/groups, single-line text input, pickers, notifications** (2026-10-28) --
+`Services` gains `EditorTabService&`, `TextInputCoordinator&`, `QuickPickService&`
+and `NotificationService&`. Reopen editor, new buffer, focus/move group, Go
+Back/Forward are `context_.editor_tabs()` calls from the tab executor; the
+single-line copy/cut/select-all/insert/paste paths, every command-choices pick,
+the workspace-symbol and launch-config pickers, and Focus Notifications / the
+notification action call their service inside the context. 19 fields, their
+lambdas and six forwarding methods gone. Operations 174 -> 155.
+
 Original plan, one area per commit so each slice is reviewable and lane-checked: give each
 executor its own context type holding references to the services it calls
 (`AssistService&`, `EditorTabService&`, `TerminalPanelService&`, …, the

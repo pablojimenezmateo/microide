@@ -8,6 +8,9 @@
 #include "workspace/services/AssistService.h"
 #include "workspace/debug/DebugService.h"
 #include "workspace/services/TerminalPanelService.h"
+#include "workspace/services/EditorTabService.h"
+#include "workspace/services/QuickPickService.h"
+#include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/git/PatchApplyService.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
@@ -116,9 +119,23 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
          microide::workspace::AssistService assist;
          microide::workspace::DebugService debug;
          microide::workspace::TerminalPanelService terminal_panel(project_state, {});
+         microide::workspace::EditorTabService editor_tabs(
+             microide::workspace::TabCoordinator(catalog, project_state, {}));
+         microide::workspace::PromptState prompts;
+         microide::workspace::MenuSurfaceState menus;
+         microide::workspace::TextInputState text_input_state;
+         microide::workspace::TextInputCoordinator text_input(project_state, prompts, menus,
+                                                              text_input_state, {});
+         microide::workspace::QuickPickService quick_pick;
+         microide::workspace::NotificationService notifications;
          WorkspaceActionContext context(catalog, project_state, ui_scale,
-                                        {.assist = assist, .debug = debug,
-                                         .terminal_panel = terminal_panel},
+                                        {.assist = assist,
+                                         .debug = debug,
+                                         .terminal_panel = terminal_panel,
+                                         .editor_tabs = editor_tabs,
+                                         .text_input = text_input,
+                                         .quick_pick = quick_pick,
+                                         .notifications = notifications},
                                         std::move(operations));
          ActionCoordinator coordinator(context);
 

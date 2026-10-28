@@ -19,6 +19,7 @@
 #include "workspace/shell/WorkspaceShell.h"
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 #include "workspace/git/CompareTabReview.h"
+#include "workspace/services/EditorTabService.h"
 #include "workspace/services/QuickPickService.h"
 #include "workspace/services/RemoteHostService.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
@@ -354,13 +355,13 @@ void WorkspaceActionContext::ShowFileFinder() {
 }
 
 std::string WorkspaceActionContext::OpenFolderPick(const std::filesystem::path& folder_arg) {
-  if (!HasProjectRoot() || !operations_.open_command_choices) {
+  if (!HasProjectRoot()) {
     return "No active project";
   }
   std::filesystem::path folder = folder_arg;
   if (folder.empty()) {
     const editor::TextViewport* viewport =
-        operations_.active_editor_viewport ? operations_.active_editor_viewport() : nullptr;
+        services_.editor_tabs.ActiveEditorViewport();
     folder = viewport != nullptr && !viewport->path().empty() ? viewport->path().parent_path() : state_.root;
   }
   folder = (folder.is_absolute() ? folder : state_.root / folder).lexically_normal();
@@ -402,7 +403,7 @@ std::string WorkspaceActionContext::OpenFolderPick(const std::filesystem::path& 
                                   .primary_label = file.filename().string()});
   }
   const std::string relative = RelativePathLabel(state_.root, folder);
-  operations_.open_command_choices(QuickPickService::CommandChoices(
+  services_.quick_pick.Open(QuickPickService::CommandChoices(
       relative.empty() ? state_.root.filename().string() : relative, "entries", std::move(items)));
   return {};
 }
@@ -410,7 +411,7 @@ std::string WorkspaceActionContext::OpenFolderPick(const std::filesystem::path& 
 bool WorkspaceActionContext::OpenLineEndingPick() {
   const editor::TextViewport* viewport =
       operations_.active_editable_viewport ? operations_.active_editable_viewport() : nullptr;
-  if (viewport == nullptr || !operations_.open_command_choices) {
+  if (viewport == nullptr) {
     return false;
   }
   const auto current = [&](util::LineEnding ending) {
@@ -423,7 +424,7 @@ bool WorkspaceActionContext::OpenLineEndingPick() {
                     .primary_label = "CRLF",
                     .secondary_label = current(util::LineEnding::CRLF)},
   };
-  operations_.open_command_choices(
+  services_.quick_pick.Open(
       QuickPickService::CommandChoices("Change End of Line Sequence", "line endings", std::move(items)));
   return true;
 }
@@ -443,7 +444,7 @@ bool WorkspaceActionContext::SetActiveLineEnding(util::LineEnding ending) {
 bool WorkspaceActionContext::OpenIndentationPick() {
   const editor::TextViewport* viewport =
       operations_.active_editable_viewport ? operations_.active_editable_viewport() : nullptr;
-  if (viewport == nullptr || !operations_.open_command_choices) {
+  if (viewport == nullptr) {
     return false;
   }
   std::vector<QuickPickItem> items = {
@@ -459,7 +460,7 @@ bool WorkspaceActionContext::OpenIndentationPick() {
                                   .primary_label = "Tab Size: " + std::to_string(size),
                                   .secondary_label = viewport->tab_size() == size ? "current" : ""});
   }
-  operations_.open_command_choices(QuickPickService::CommandChoices("Indentation", "options", std::move(items)));
+  services_.quick_pick.Open(QuickPickService::CommandChoices("Indentation", "options", std::move(items)));
   return true;
 }
 
@@ -469,7 +470,7 @@ bool WorkspaceActionContext::OpenArgumentPicker(ActionId id) {
       // Stop Forwarding a Port…: the ports forwarded now, where a prompt would ask
       // for a number the user has to go and look up.
       RemoteHostService* hosts = RemoteHosts();
-      if (hosts == nullptr || !operations_.open_command_choices) {
+      if (hosts == nullptr) {
         return false;
       }
       std::vector<QuickPickItem> items;
@@ -479,7 +480,7 @@ bool WorkspaceActionContext::OpenArgumentPicker(ActionId id) {
             .primary_label = std::to_string(port.host_port) + " \u2192 localhost:" + std::to_string(port.local_port),
             .secondary_label = port.host});
       }
-      operations_.open_command_choices(
+      services_.quick_pick.Open(
           QuickPickService::CommandChoices("Stop Forwarding a Port", "forwarded ports", std::move(items)));
       return true;
     }
@@ -488,7 +489,7 @@ bool WorkspaceActionContext::OpenArgumentPicker(ActionId id) {
       // open project's mirror is not offered: closing it is what runs the dirty
       // prompt, and RemoveMirror refuses one still open.
       RemoteHostService* hosts = RemoteHosts();
-      if (hosts == nullptr || !operations_.open_command_choices) {
+      if (hosts == nullptr) {
         return false;
       }
       std::vector<QuickPickItem> items;
@@ -497,12 +498,12 @@ bool WorkspaceActionContext::OpenArgumentPicker(ActionId id) {
                                       .primary_label = mirror.Label(),
                                       .secondary_label = mirror.Location()});
       }
-      operations_.open_command_choices(
+      services_.quick_pick.Open(
           QuickPickService::CommandChoices("Remove Mirror", "mirrors", std::move(items)));
       return true;
     }
     case ActionId::ShowOutput: {
-      if (!operations_.output_channels || !operations_.open_command_choices) {
+      if (!operations_.output_channels) {
         return false;
       }
       std::vector<QuickPickItem> items;
@@ -513,11 +514,11 @@ bool WorkspaceActionContext::OpenArgumentPicker(ActionId id) {
       }
       // Open even with none yet: the pick says so, where a prompt would ask for a
       // channel name nobody could know.
-      operations_.open_command_choices(QuickPickService::CommandChoices("Show Output Channel", "channels", std::move(items)));
+      services_.quick_pick.Open(QuickPickService::CommandChoices("Show Output Channel", "channels", std::move(items)));
       return true;
     }
     case ActionId::TabToGroup: {
-      if (!operations_.open_command_choices || state_.editor_groups.size() < 2) {
+      if (state_.editor_groups.size() < 2) {
         return false;
       }
       std::vector<QuickPickItem> items;
@@ -532,14 +533,14 @@ bool WorkspaceActionContext::OpenArgumentPicker(ActionId id) {
             .secondary_label = group.has_active_tab() ? group.active_tab().title : std::string("empty"),
         });
       }
-      operations_.open_command_choices(QuickPickService::CommandChoices("Move Tab to Group", "groups", std::move(items)));
+      services_.quick_pick.Open(QuickPickService::CommandChoices("Move Tab to Group", "groups", std::move(items)));
       return true;
     }
     case ActionId::CompareFiles: {
       // VS Code's Compare Active File With…: the file finder, and the file picked
       // is compared with the active one.
       const editor::TextViewport* viewport =
-          operations_.active_editor_viewport ? operations_.active_editor_viewport() : nullptr;
+          services_.editor_tabs.ActiveEditorViewport();
       if (viewport == nullptr || viewport->path().empty() || !HasProjectRoot()) {
         return false;
       }
@@ -560,7 +561,7 @@ bool WorkspaceActionContext::OpenArgumentPicker(ActionId id) {
       // so Enter acts there (VS Code's breakpoint commands act on the caret) and a
       // condition or message is typed after them.
       const editor::TextViewport* viewport =
-          operations_.active_editor_viewport ? operations_.active_editor_viewport() : nullptr;
+          services_.editor_tabs.ActiveEditorViewport();
       const ActionSpec* spec = FindWorkspaceActionSpec(id);
       if (viewport == nullptr || viewport->path().empty() || spec == nullptr) {
         return false;
@@ -604,7 +605,7 @@ bool WorkspaceActionContext::OpenOptionalArgumentPicker(ActionId id) {
 
 bool WorkspaceActionContext::OpenHostPick(std::string_view title, std::string_view command_line) {
   RemoteHostService* hosts = RemoteHosts();
-  if (hosts == nullptr || !operations_.open_command_choices) {
+  if (hosts == nullptr) {
     return false;
   }
   std::vector<std::string> open = hosts->OpenHosts();
@@ -616,7 +617,7 @@ bool WorkspaceActionContext::OpenHostPick(std::string_view title, std::string_vi
     items.push_back(QuickPickItem{.value = std::string(command_line) + " " + QuoteCommandArg(host),
                                   .primary_label = std::move(host)});
   }
-  operations_.open_command_choices(QuickPickService::CommandChoices(std::string(title), "hosts", std::move(items)));
+  services_.quick_pick.Open(QuickPickService::CommandChoices(std::string(title), "hosts", std::move(items)));
   return true;
 }
 
@@ -698,9 +699,7 @@ bool WorkspaceActionContext::ChangeLanguageMode(const std::string& language, std
 }
 
 void WorkspaceActionContext::OpenWorkspaceSymbolPicker(std::string query) {
-  if (operations_.open_workspace_symbol_picker) {
-    operations_.open_workspace_symbol_picker(std::move(query));
-  }
+  services_.quick_pick.Open(QuickPickService::WorkspaceSymbols(std::move(query)));
 }
 
 bool WorkspaceActionContext::ShowCallHierarchy(bool incoming, std::string* error_message) {
@@ -854,7 +853,7 @@ void WorkspaceActionContext::StepBufferSearch(int delta) {
     // Revealing a match selects it (VS Code's find), so "on it" is where the
     // selection starts -- or the caret, with nothing selected -- taken BEFORE the
     // refresh, which itself reveals (and so selects) its pick.
-    const editor::TextViewport* viewport = operations_.active_editor_viewport();
+    const editor::TextViewport* viewport = services_.editor_tabs.ActiveEditorViewport();
     std::optional<editor::TextPosition> caret_before;
     if (viewport != nullptr) {
       caret_before = viewport->selection_range().has_value()
@@ -900,7 +899,7 @@ std::filesystem::path WorkspaceActionContext::ResolveComparePath(
   if (source == ActionSource::ContextMenu) {
     return operations_.resolve_tree_action_path(source);
   }
-  if (const editor::TextViewport* viewport = operations_.active_editor_viewport();
+  if (const editor::TextViewport* viewport = services_.editor_tabs.ActiveEditorViewport();
       viewport != nullptr && !viewport->path().empty()) {
     return viewport->path().lexically_normal();
   }
@@ -963,8 +962,8 @@ std::optional<CompareInput> WorkspaceActionContext::ResolveCurrentCompareInput(
   // Otherwise prefer the active editor buffer — its live, possibly-unsaved text.
   // Not the welcome page a group with no tab shows: that is not a buffer (it
   // was diffed as "Untitled").
-  if (operations_.active_editor_viewport != nullptr) {
-    if (editor::TextViewport* viewport = operations_.active_editor_viewport();
+  {
+    if (editor::TextViewport* viewport = services_.editor_tabs.ActiveEditorViewport();
         viewport != nullptr && !viewport->is_placeholder()) {
       const std::filesystem::path path = viewport->path().lexically_normal();
       CompareInput input;
@@ -1247,10 +1246,6 @@ std::optional<DeferredTabHandle> WorkspaceActionContext::TakeRecentlyClosedEdito
   return std::nullopt;
 }
 
-bool WorkspaceActionContext::ReopenEditor(DeferredTabHandle view) {
-  return operations_.reopen_editor && operations_.reopen_editor(std::move(view));
-}
-
 bool WorkspaceActionContext::ReopenActiveTab() {
   return operations_.reopen_active_tab();
 }
@@ -1281,10 +1276,6 @@ bool WorkspaceActionContext::SaveTabAs(std::size_t index, const std::filesystem:
     return false;
   }
   return operations_.save_tab_as(index, path, error);
-}
-
-bool WorkspaceActionContext::OpenNewBufferInNewTab(const std::filesystem::path& path) {
-  return operations_.open_new_buffer_in_new_tab && operations_.open_new_buffer_in_new_tab(path);
 }
 
 void WorkspaceActionContext::OpenSaveAsPrompt(std::string initial) {
@@ -1344,23 +1335,6 @@ bool WorkspaceActionContext::SplitEditorGroup(EditorSplitOrientation orientation
 
 bool WorkspaceActionContext::FocusOtherGroup() {
   return operations_.focus_other_group();
-}
-
-bool WorkspaceActionContext::FocusEditorGroupAt(std::size_t index) {
-  return operations_.focus_editor_group_at && operations_.focus_editor_group_at(index);
-}
-
-std::optional<EditorNavigationHistory::Location> WorkspaceActionContext::StepNavigation(
-    int direction) {
-  return operations_.step_navigation ? operations_.step_navigation(direction) : std::nullopt;
-}
-
-bool WorkspaceActionContext::FocusEditorGroupInDirection(EditorGroupDirection direction) {
-  return operations_.focus_editor_group_in_direction(direction);
-}
-
-bool WorkspaceActionContext::MoveEditorGroupInDirection(EditorGroupDirection direction) {
-  return operations_.move_editor_group_in_direction(direction);
 }
 
 bool WorkspaceActionContext::CloseEditorGroup() {
@@ -1427,7 +1401,7 @@ bool WorkspaceActionContext::RevealPathAtLine(const std::filesystem::path& path,
   // a read-only placeholder. The load applies the tab's restored view state, so
   // record the target there and let the completion place it.
   if (TabEntry::EditorTabState* editor_tab =
-          operations_.active_editor_tab ? operations_.active_editor_tab() : nullptr;
+          services_.editor_tabs.ActiveEditorTab();
       editor_tab != nullptr && editor_tab->content_pending()) {
     editor_tab->restore.cursor_line = line;
     editor_tab->restore.cursor_column = request.column > 0 ? request.column - 1 : 0;
@@ -1467,11 +1441,11 @@ bool WorkspaceActionContext::MoveActiveTabToGroup(std::size_t to_group,
 }
 
 void WorkspaceActionContext::SelectAll() {
-  if (operations_.select_all_at_active_single_line_text_surface()) {
+  if (services_.text_input.SelectAllAtActiveSingleLineSurface()) {
     operations_.reset_caret_blink();
     return;
   }
-  if (operations_.has_active_single_line_text_surface()) {
+  if (services_.text_input.HasActiveSingleLineTextSurface()) {
     // Active single-line field (possibly empty): consume the shortcut. Falling
     // through would Select-All the background editor and steal focus to it.
     return;
@@ -1556,11 +1530,11 @@ std::string WorkspaceActionContext::CopySelectionText(bool* whole_line) const {
   // A focused single-line field owns the keystroke even when the panel holds
   // focus: the terminal find bar floats over a terminal that may itself have a
   // selection, and Ctrl+C there must copy the query, not the transcript.
-  if (operations_.has_active_single_line_text_surface()) {
+  if (services_.text_input.HasActiveSingleLineTextSurface()) {
     // A single-line field owns the keystroke. Return its selection (empty when
     // nothing is selected -> the caller skips the clipboard write) instead of
     // falling through to the background editor and copying its current line.
-    return operations_.selected_text_at_active_single_line_text_surface();
+    return services_.text_input.SelectedTextAtActiveSingleLineSurface();
   }
   if (state_.surface.focus == FocusTarget::Panel && operations_.terminal_has_selection()) {
     return operations_.selected_terminal_text();
@@ -1610,11 +1584,11 @@ std::optional<std::string> WorkspaceActionContext::SelectionTextWithContext() {
 }
 
 void WorkspaceActionContext::CutSelection() {
-  if (operations_.cut_selection_at_active_single_line_text_surface()) {
+  if (services_.text_input.CutSelectionAtActiveSingleLineSurface()) {
     operations_.reset_caret_blink();
     return;
   }
-  if (operations_.has_active_single_line_text_surface()) {
+  if (services_.text_input.HasActiveSingleLineTextSurface()) {
     // Active single-line field with nothing selected: consume the shortcut.
     // Falling through would DeleteCurrentLine() on the background editor -- an
     // out-of-nowhere data-loss edit behind the focused input surface.
@@ -1691,7 +1665,7 @@ void WorkspaceActionContext::PasteClipboard() {
       clipboard_text->back() == '\n' &&
       !(state_.surface.focus == FocusTarget::Panel &&
         state_.active_terminal_pane() != nullptr) &&
-      !operations_.has_active_single_line_text_surface();
+      !services_.text_input.HasActiveSingleLineTextSurface();
   editor::TextViewport* line_target = nullptr;
   std::size_t line_target_column = 0;
   if (line_paste) {
@@ -1741,10 +1715,10 @@ void WorkspaceActionContext::InsertTextIntoActiveSurface(std::string text,
     text.resize(util::PreviousUtf8Boundary(text, kMaxInsertBytes));
   }
   if (state_.surface.focus == FocusTarget::Panel && state_.active_terminal_pane() != nullptr) {
-    operations_.paste_text_into_terminal(std::move(text));
+    services_.text_input.PasteTextIntoTerminal(std::move(text));
     return;
   }
-  if (operations_.insert_text_into_active_text_surface(text, distribute_across_carets)) {
+  if (services_.text_input.InsertTextAtActiveSurface(text, distribute_across_carets)) {
     return;
   }
   if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
@@ -1785,7 +1759,11 @@ void WorkspaceActionContext::RequestLiveConfigRedraw() {
 }
 
 bool WorkspaceActionContext::FocusNotifications() {
-  return operations_.focus_notifications && operations_.focus_notifications();
+  if (!services_.notifications.Focus()) {
+    return false;
+  }
+  operations_.request_window_redraw();
+  return true;
 }
 
 bool WorkspaceActionContext::CancelSaveWait(std::uint64_t id) {
@@ -1802,11 +1780,20 @@ bool WorkspaceActionContext::ShowOutputChannel(std::string_view channel_id) {
 
 std::optional<NotificationAction> WorkspaceActionContext::TakeNotificationAction(
     std::string_view row, std::string_view action, std::string* error) {
-  if (!operations_.take_notification_action) {
-    *error = "notifications are not available";
+  const std::optional<std::size_t> row_index = services_.notifications.FindRow(row);
+  if (!row_index.has_value()) {
+    *error = "no notification \"" + std::string(row) + "\"";
     return std::nullopt;
   }
-  return operations_.take_notification_action(row, action, error);
+  const std::optional<std::size_t> action_index =
+      services_.notifications.FindAction(*row_index, action);
+  if (!action_index.has_value()) {
+    *error = "notification \"" + std::string(row) + "\" has no action \"" +
+             std::string(action) + "\"";
+    return std::nullopt;
+  }
+  operations_.request_window_redraw();
+  return services_.notifications.TakeAction(*row_index, *action_index);
 }
 
 bool WorkspaceActionContext::ActivateEditorBanner(std::string_view label, std::string* error) {
@@ -1940,7 +1927,7 @@ editor::TextViewport* WorkspaceActionContext::ActiveNavigableViewport() {
 }
 
 TabEntry::EditorTabState* WorkspaceActionContext::ActiveEditorTab() {
-  return operations_.active_editor_tab ? operations_.active_editor_tab() : nullptr;
+  return services_.editor_tabs.ActiveEditorTab();
 }
 
 editor::FoldingModel* WorkspaceActionContext::EnsureActiveFoldingModelFresh() {

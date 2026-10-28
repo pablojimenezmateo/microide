@@ -161,9 +161,7 @@ void WorkspaceActionContext::OpenDebugReplPrompt() {
 }
 
 void WorkspaceActionContext::OpenLaunchConfigPicker() {
-  if (operations_.open_launch_config_picker) {
-    operations_.open_launch_config_picker();
-  }
+  services_.quick_pick.Open(QuickPickService::LaunchConfigs(state_.launch_configs));
 }
 
 void WorkspaceActionContext::CycleSurfaceFocus(bool backward) {
@@ -381,6 +379,10 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .assist = assist_service_,
           .debug = debug_service_,
           .terminal_panel = MakeTerminalPanelService(),
+          .editor_tabs = MakeEditorTabService(),
+          .text_input = MakeTextInputCoordinator(),
+          .quick_pick = quick_pick_service_,
+          .notifications = notification_service_,
       },
       WorkspaceActionContext::Operations{
           .close_tree_context_menu = [this]() { MakeMenuCoordinator().CloseTreeContextMenu(); },
@@ -531,7 +533,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 const bool compact = layout_mode_service_.CurrentMode() != LayoutMode::Compact;
                 SetSettingValue("ui.layout_mode", compact ? "compact" : "regular");
               },
-          .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
           .open_buffer_search = [this]() { OpenBufferSearch(); },
           .refresh_buffer_search = [this]() { RefreshBufferSearch(); },
           .open_buffer_replace = [this]() { OpenBufferReplace(); },
@@ -550,10 +551,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                   show_results_channel("lsp.callHierarchy", incoming ? "Incoming Calls" : "Outgoing Calls");
                 }
                 return ok;
-              },
-          .open_workspace_symbol_picker =
-              [this](std::string query) {
-                quick_pick_service_.Open(QuickPickService::WorkspaceSymbols(std::move(query)));
               },
           .change_language_mode =
               [this](const std::string& language, std::string* error) {
@@ -641,7 +638,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [make_review](const std::string& ref) { return make_review().OpenBranchReview(ref); },
           .open_commit_review =
               [make_review](const std::string& ref) { return make_review().OpenCommitReview(ref); },
-          .active_editor_tab = [this]() { return ActiveEditorTab(); },
           .ensure_active_folding_model_fresh =
               [this]() { return EnsureActiveFoldingModelFresh(); },
           .replace_active_editor_view =
@@ -663,10 +659,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .activate_tab = [this](std::size_t index) { ActivateTab(index); },
           .move_active_tab_to = [this](std::size_t index) { return MoveActiveTabTo(index); },
           .reopen_active_tab = [this]() { return ReopenActiveTab(); },
-          .reopen_editor =
-              [this](DeferredTabHandle view) {
-                return MakeEditorTabService().ReopenEditor(std::move(view));
-              },
           .save_tab = [this](std::size_t index) { return SaveTab(index, SaveMode::Blocking); },
           .save_tab_deferred =
               [this](std::size_t index) { return SaveTab(index, SaveMode::Deferred); },
@@ -735,28 +727,12 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                     context_.current_project_state.clamped_focused_group_index(), index, path,
                     error);
               },
-          .open_new_buffer_in_new_tab =
-              [this](const std::filesystem::path& path) {
-                return MakeEditorTabService().OpenNewBufferInNewTab(path);
-              },
           .reset_caret_blink = [this]() { ResetCaretBlink(); },
           .split_editor_group =
               [this](EditorSplitOrientation orientation) {
                 return SplitEditorGroup(orientation);
               },
           .focus_other_group = [this]() { return FocusOtherEditorGroup(); },
-          .focus_editor_group_in_direction =
-              [this](EditorGroupDirection direction) {
-                return MakeEditorTabService().FocusEditorGroupInDirection(direction);
-              },
-          .focus_editor_group_at =
-              [this](std::size_t index) { return MakeEditorTabService().FocusEditorGroupAt(index); },
-          .step_navigation =
-              [this](int direction) { return MakeEditorTabService().StepNavigation(direction); },
-          .move_editor_group_in_direction =
-              [this](EditorGroupDirection direction) {
-                return MakeEditorTabService().MoveEditorGroupInDirection(direction);
-              },
           .close_editor_group = [this]() { return CloseEditorGroup(); },
           .request_close_tab = [this](std::size_t index) { RequestCloseTab(index); },
           .request_close_tabs =
@@ -773,27 +749,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               },
           .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
           .active_editable_viewport = [this]() { return ActiveEditableViewport(); },
-          .insert_text_into_active_text_surface =
-              [this](std::string_view text, bool distribute_across_carets) {
-                return MakeTextInputCoordinator().InsertTextAtActiveSurface(
-                    text, distribute_across_carets);
-              },
-          .has_active_single_line_text_surface =
-              [this]() {
-                return MakeTextInputCoordinator().HasActiveSingleLineTextSurface();
-              },
-          .selected_text_at_active_single_line_text_surface =
-              [this]() {
-                return MakeTextInputCoordinator().SelectedTextAtActiveSingleLineSurface();
-              },
-          .select_all_at_active_single_line_text_surface =
-              [this]() {
-                return MakeTextInputCoordinator().SelectAllAtActiveSingleLineSurface();
-              },
-          .cut_selection_at_active_single_line_text_surface =
-              [this]() {
-                return MakeTextInputCoordinator().CutSelectionAtActiveSingleLineSurface();
-              },
           .active_compare_tab = [this]() { return ActiveCompareTab(); },
           .mark_branch_file_reviewed = [this]() { SetActiveBranchFileReviewed(true); },
           .unmark_branch_file_reviewed = [this]() { SetActiveBranchFileReviewed(false); },
@@ -917,10 +872,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .last_terminal_command_text = [this]() { return LastTerminalCommandText(); },
           .selection_text_with_context = [this]() { return SelectionTextWithContext(); },
           .read_clipboard_text = [this]() { return ReadClipboardText(); },
-          .paste_text_into_terminal =
-              [this](std::string text) {
-                MakeTextInputCoordinator().PasteTextIntoTerminal(std::move(text));
-              },
           .press_key =
               [dispatch_injected](SDL_Keycode key, SDL_Keymod modifiers) {
                 // A chord is pressed as a keyboard presses it: its modifiers go
@@ -1050,32 +1001,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this](float scale) { MakePersistenceCoordinator().ApplyUiScale(scale, true, true); },
           .note_layout_inputs_changed = [this]() { NoteLayoutInputsChanged(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },
-          .focus_notifications =
-              [this]() {
-                if (!notification_service_.Focus()) {
-                  return false;
-                }
-                RequestWindowRedraw();
-                return true;
-              },
-          .take_notification_action =
-              [this](std::string_view row, std::string_view action,
-                     std::string* error) -> std::optional<NotificationAction> {
-                const std::optional<std::size_t> row_index = notification_service_.FindRow(row);
-                if (!row_index.has_value()) {
-                  *error = "no notification \"" + std::string(row) + "\"";
-                  return std::nullopt;
-                }
-                const std::optional<std::size_t> action_index =
-                    notification_service_.FindAction(*row_index, action);
-                if (!action_index.has_value()) {
-                  *error = "notification \"" + std::string(row) + "\" has no action \"" +
-                           std::string(action) + "\"";
-                  return std::nullopt;
-                }
-                RequestWindowRedraw();
-                return notification_service_.TakeAction(*row_index, *action_index);
-              },
           .activate_editor_banner =
               [this](std::string_view label, std::string* error) {
                 const EditorBannerState* banner =
@@ -1145,18 +1070,12 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .stop_debugging = [this]() { StopDebugging(); },
           .stop_all_debug_sessions = [this]() { StopAllDebugSessions(); },
           .open_debug_repl_prompt = [this]() { OpenDebugReplPrompt(); },
-          .open_launch_config_picker =
-              [this]() {
-                quick_pick_service_.Open(
-                    QuickPickService::LaunchConfigs(context_.current_project_state.launch_configs));
-              },
           .open_color_theme_picker =
               [this]() {
                 MakePersistenceCoordinator().RefreshAvailableColorschemeNames();
                 quick_pick_service_.Open(QuickPickService::ColorThemes(
                     available_colorscheme_names_, context_.current_project_state.active_colorscheme_name));
               },
-          .open_command_choices = [this](QuickPickState pick) { quick_pick_service_.Open(std::move(pick)); },
           .output_channels = [this]() -> const std::vector<WorkspaceOutputChannels::ChannelInfo>& {
             return output_channels_.Channels();
           },
