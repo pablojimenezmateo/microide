@@ -18,6 +18,7 @@
 #include "workspace/coordinators/WorkspaceSidebarCoordinator.h"
 #include "workspace/coordinators/WorkspaceTabCoordinator.h"
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
+#include "workspace/debug/DebugPaneService.h"
 #include "workspace/debug/DebugService.h"
 #include "workspace/persistence/SettingsStore.h"
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
@@ -40,7 +41,8 @@ struct ActionContextTestServices {
         persistence(workspace_context, theme, colorschemes, theme_names, ui_scale, settings, {}),
         sidebar(workspace::SidebarCoordinator(state, prompts, menus, project_root, plugin_runtime, {})),
         compare_merge(workspace::DiffTabCoordinator(state, {}),
-                      workspace::CompareInteractionCoordinator(state, {})) {}
+                      workspace::CompareInteractionCoordinator(state, {})),
+        debug_pane(state, {}) {}
 
   workspace::WorkspaceActionContext::Services Services() {
     return {.assist = assist,
@@ -53,7 +55,8 @@ struct ActionContextTestServices {
             .persistence = persistence,
             .output_channels = output_channels,
             .sidebar = sidebar,
-            .compare_merge = compare_merge};
+            .compare_merge = compare_merge,
+            .debug_pane = debug_pane};
   }
 
   workspace::PromptState prompts;
@@ -78,6 +81,7 @@ struct ActionContextTestServices {
   workspace::PersistenceCoordinator persistence;
   workspace::SidebarService sidebar;
   workspace::CompareMergeService compare_merge;
+  workspace::DebugPaneService debug_pane;
 };
 
 }  // namespace microide::tests

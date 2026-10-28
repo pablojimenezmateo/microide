@@ -277,8 +277,6 @@ void WorkspaceShell::ShowDebugPaneMode(DebugPaneMode mode) {
   MakeDebugPaneService().ShowMode(mode);
 }
 
-void WorkspaceShell::ToggleDebugPane() { MakeDebugPaneService().Toggle(); }
-
 void WorkspaceShell::CloseDebugPane() { MakeDebugPaneService().Close(); }
 
 void WorkspaceShell::OpenDebugPaneOnStop() { MakeDebugPaneService().OpenOnStop(); }

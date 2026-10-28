@@ -23,6 +23,7 @@
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 #include "workspace/git/ReviewSessionCoordinator.h"
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
+#include "workspace/debug/DebugPaneService.h"
 #include "workspace/services/EditorTabService.h"
 #include "workspace/services/SidebarService.h"
 
@@ -89,16 +90,10 @@ void WorkspaceActionContext::StopDebuggingWithFeedback() {
   }
 }
 
-void WorkspaceActionContext::ToggleDebugPane() {
-  if (operations_.toggle_debug_pane) {
-    operations_.toggle_debug_pane();
-  }
-}
+void WorkspaceActionContext::ToggleDebugPane() { services_.debug_pane.Toggle(); }
 
 void WorkspaceActionContext::ShowDebugPaneSurface(DebugPaneMode mode) {
-  if (operations_.show_debug_pane_mode) {
-    operations_.show_debug_pane_mode(mode);
-  }
+  services_.debug_pane.ShowMode(mode);
 }
 
 void WorkspaceActionContext::ShowDebugOutput() {
@@ -149,9 +144,9 @@ void WorkspaceActionContext::AddDebugWatchExpression(std::string expression) {
 }
 
 void WorkspaceActionContext::StopAllDebugSessions() {
-  if (operations_.stop_all_debug_sessions) {
-    operations_.stop_all_debug_sessions();
-  }
+  services_.debug.StopAllDebugging();
+  services_.debug_pane.Close();
+  operations_.request_window_redraw();
 }
 
 void WorkspaceActionContext::OpenDebugReplPrompt() {
@@ -385,6 +380,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .output_channels = output_channels_,
           .sidebar = MakeSidebarService(),
           .compare_merge = MakeCompareMergeService(),
+          .debug_pane = MakeDebugPaneService(),
       },
       WorkspaceActionContext::Operations{
           .close_tree_context_menu = [this]() { MakeMenuCoordinator().CloseTreeContextMenu(); },
@@ -1015,7 +1011,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .request_quit = [this]() { RequestQuit(); },
           .start_debugging = [this]() { return StartDebuggingWithDefaultConfig(); },
           .stop_debugging = [this]() { StopDebugging(); },
-          .stop_all_debug_sessions = [this]() { StopAllDebugSessions(); },
           .open_debug_repl_prompt = [this]() { OpenDebugReplPrompt(); },
           .open_document_symbol_picker =
               [this](std::string query) {
@@ -1051,8 +1046,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this](GitSidebarActionId action, std::size_t index) {
                 return DispatchGitSidebarAction(action, index);
               },
-          .toggle_debug_pane = [this]() { ToggleDebugPane(); },
-          .show_debug_pane_mode = [this](DebugPaneMode mode) { ShowDebugPaneMode(mode); },
           .show_debug_output = [this]() { ShowDebugOutput(); },
           .start_named_debug_config =
               [this](const std::string& name) { return StartNamedDebugConfig(name); },

@@ -1061,7 +1061,6 @@
   void ShowTestsSidebar();
   // Right-side debug pane convenience wrappers (forward to MakeDebugPaneService()).
   void ShowDebugPaneMode(DebugPaneMode mode);
-  void ToggleDebugPane();
   void CloseDebugPane();
   void OpenDebugPaneOnStop();
   SidebarModeRowLayout SidebarModeRow(const SDL_FRect& sidebar_rect) const;
@@ -1464,8 +1463,6 @@
   void ShowDebugOutput();
   // Remove a pruned session's console channel + close its tab (Phase 10).
   void RemoveDebugConsole(int session_id);
-  // Stop every live debug session and close the debug pane (Phase 10).
-  void StopAllDebugSessions();
   LspClient::ReadinessSnapshot ActiveLspReadinessSnapshot(bool ensure_started = true);
   // Frame-memoized, never-starting readiness for the menu paint/hit-test paths.
   const LspClient::ReadinessSnapshot& MenuLspReadiness() const;

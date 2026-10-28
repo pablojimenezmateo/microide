@@ -32,6 +32,7 @@ class QuickPickService;
 class PersistenceCoordinator;
 class SidebarService;
 class CompareMergeService;
+class DebugPaneService;
 class RemoteHostService;
 
 // Defined in GitSidebarCommandCenter.h; only the type is needed here (function
@@ -262,8 +263,6 @@ class WorkspaceActionContext {
     // Multi-session switcher (Phase 8). debug_session_count reports how many live
     // sessions exist (gates the switch command); debug_switch_session cycles to the
     // next session (index < 0) or selects a 1-based index.
-    // Stop every live debug session (Phase 10).
-    std::function<void()> stop_all_debug_sessions;
     // Debug-console REPL (Phase 9): open the single-line prompt that evaluates an
     // expression in the active session and appends the result to the console.
     std::function<void()> open_debug_repl_prompt;
@@ -282,9 +281,6 @@ class WorkspaceActionContext {
     // Git sidebar entry context-menu dispatch: forwards to the shell's
     // DispatchGitSidebarAction for the given entry index.
     std::function<bool(GitSidebarActionId, std::size_t)> dispatch_git_sidebar_action;
-    // Right-side debug pane: toggle visibility, or show a specific surface.
-    std::function<void()> toggle_debug_pane;
-    std::function<void(DebugPaneMode)> show_debug_pane_mode;
     // Surface the active debug session's console output in the bottom panel.
     std::function<void()> show_debug_output;
     // Add a watch expression directly (no prompt) — the "Add to Watch" row menu
@@ -317,6 +313,7 @@ class WorkspaceActionContext {
     const WorkspaceOutputChannels& output_channels;
     SidebarService& sidebar;
     CompareMergeService& compare_merge;
+    DebugPaneService& debug_pane;
   };
 
   WorkspaceActionContext(ProjectCatalogState& project_catalog,

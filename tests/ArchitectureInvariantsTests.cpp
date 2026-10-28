@@ -262,8 +262,10 @@ void TestArchitectureFileSizes() {
              // repaint its callers relied on frame prep for).
              // 1621: ShowOutlineSidebar / ShowPluginSidebar, whose last caller was
              // the action context (it holds SidebarService now).
+             // 1619: ToggleDebugPane / StopAllDebugSessions; the action context holds
+             // DebugPaneService.
              return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShellMembers.inc",
-                                                     1621);
+                                                     1619);
            });
 
   AssertRuleResultsPass(results);

@@ -564,12 +564,6 @@ void WorkspaceShell::StopDebugging() {
   RequestWindowRedraw();
 }
 
-void WorkspaceShell::StopAllDebugSessions() {
-  debug_service_.StopAllDebugging();
-  CloseDebugPane();
-  RequestWindowRedraw();
-}
-
 bool WorkspaceShell::IsDebugSessionActive() const { return debug_service_.IsSessionActive(); }
 
 bool WorkspaceShell::IsDebugSessionStopped() const {

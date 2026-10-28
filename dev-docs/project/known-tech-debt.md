@@ -616,6 +616,11 @@ forwarders lost their last caller and went (members cap 1623 -> 1621). The unit
 test that builds a context without a shell gets every service from
 `tests/support/ActionContextTestServices.h`. Operations 148 -> 128.
 
+**debug pane** (2026-10-28) -- `Services` gains `DebugPaneService&`: toggle /
+show-mode / stop-all call it (and `DebugService`); the shell's `ToggleDebugPane` and
+`StopAllDebugSessions` lost their last caller (members cap 1621 -> 1619).
+Operations 128 -> 125.
+
 Original plan, one area per commit so each slice is reviewable and lane-checked: give each
 executor its own context type holding references to the services it calls
 (`AssistService&`, `EditorTabService&`, `TerminalPanelService&`, …, the
