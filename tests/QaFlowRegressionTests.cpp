@@ -57,6 +57,12 @@ struct FlowFixture {
     file = root / std::string(file_name);
     WriteFile(file, std::string(content));
     Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the flow fixture should open its project");
+    // The initial index scan runs in the background, and a project search reads its
+    // candidates from the index: a flow that searches before it lands searched no
+    // files (QaFlowRegression/SearchResultsCaughtUpAtFramePrepRepaintTheirCount, on
+    // a loaded machine). Start every flow from an indexed project.
+    Expect(WaitForFileIndexSize(shell, 1, std::chrono::seconds(10)),
+           "the flow fixture's project should be indexed");
     TestAccess::SetWindowSize(shell, kWidth, kHeight);
     TestAccess::OpenSingleEditorTab(shell, file);
     TestAccess::ShowTreeSidebar(shell);
