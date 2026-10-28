@@ -225,7 +225,7 @@ Language servers themselves are contributed by Lua plugins (`plugins/*-lsp/`) vi
   file into a throwaway `TextViewport` (reusing line-ending / BOM / encoding
   detection + the atomic, permission-preserving save), applies the encoding-mapped
   edits, and saves — no tab is opened. Open buffers still edit in place via
-  `WorkspaceShell::ApplyLspWorkspaceEdit`. A confirmation prompt gates the write.
+  `WorkspaceEditService::ApplyLspEdit`. A confirmation prompt gates the write.
 
 ## Transport model
 

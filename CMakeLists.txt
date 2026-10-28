@@ -684,6 +684,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceProjectSearchPresentation.cpp
   src/workspace/WorkspaceProjectPresentation.cpp
   src/workspace/coordinators/WorkspaceProjectCatalogCoordinator.cpp
+  src/workspace/services/WorkspaceEditService.cpp
   src/workspace/assist/AssistHost.cpp
   src/workspace/assist/CodeActionAssist.cpp
   src/workspace/assist/CompletionAssist.cpp

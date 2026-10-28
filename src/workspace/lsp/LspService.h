@@ -62,7 +62,7 @@ class LspService {
     std::function<void()> request_chrome_redraw;
     std::function<void()> request_bottom_panel_redraw;
     // Apply 0-based LSP edits to already-open buffers in place (the shell's
-    // ApplyLspWorkspaceEdit). Used by the server-initiated workspace/applyEdit
+    // WorkspaceEditService::ApplyLspEdit). Used by the server-initiated workspace/applyEdit
     // path; closed files are written on disk by LspService itself. The result
     // distinguishes "something applied" from "some open-buffer target was rejected"
     // (beyond-EOF line, overlapping group) so the server response can report partial
@@ -303,7 +303,7 @@ class LspService {
   // (highest-position-first), then it is saved — no tab is opened, no active editor
   // state is touched. `is_open(normalized_path)` returns true for a path the caller
   // edits in place (skipped here); an empty edit path (the active buffer) is always
-  // skipped. Reuses the per-file position-encoding mapping of ApplyLspWorkspaceEdit.
+  // skipped. Reuses the per-file position-encoding mapping of WorkspaceEditService::ApplyLspEdit.
   DiskEditResult ApplyLspEditsToClosedFilesOnDisk(
       const std::vector<CodeActionEdit>& edits,
       const std::function<bool(const std::filesystem::path&)>& is_open);

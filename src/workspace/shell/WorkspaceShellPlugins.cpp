@@ -303,7 +303,7 @@ WorkspaceShell::WorkspaceShell() {
           .apply_workspace_edit_to_open_buffers =
               [this](const std::vector<CodeActionEdit>& edits) {
                 bool any_rejected = false;
-                const bool applied = ApplyLspWorkspaceEdit(edits, &any_rejected);
+                const bool applied = workspace_edit_service_.ApplyLspEdit(edits, &any_rejected);
                 return OpenBufferEditResult{.applied_any = applied,
                                             .any_rejected = any_rejected};
               },
@@ -513,6 +513,42 @@ WorkspaceShell::WorkspaceShell() {
               [this]() { return AllSettingInfos(plugin_runtime_.Host(), available_colorscheme_names_); },
           .setting_value = [this](std::string_view id) { return GetSettingValue(id); },
       });
+  workspace_edit_service_.Configure(
+      context_, lsp_service_,
+      WorkspaceEditService::Operations{
+          .active_editable_viewport = [this]() { return ActiveEditableViewport(); },
+          .reset_caret_blink = [this]() { ResetCaretBlink(); },
+          .request_active_editable_last_change_redraw =
+              [this]() { RequestActiveEditableLastChangeRedraw(); },
+          .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
+          .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
+          .request_active_editable_line_range_redraw =
+              [this](std::size_t start_line, std::size_t end_line) {
+                if (ActiveTabIsCompare()) {
+                  RequestCompareRightLineRangeRedraw(start_line, end_line);
+                } else if (ActiveTabIsMerge()) {
+                  RequestMergeResultLineRangeRedraw(start_line, end_line);
+                } else {
+                  RequestEditorLineRangeRedraw(start_line, end_line);
+                }
+              },
+          .request_active_tab_redraw =
+              [this](bool include_tree_sidebar) { RequestActiveTabRedraw(include_tree_sidebar); },
+          .confirm_rename_save =
+              [this](std::string detail) {
+                OpenPromptSurface(PromptSurfaceState::Action::ConfirmRenameSave,
+                                  PromptSurfaceState::Kind::Confirm, std::filesystem::path{},
+                                  std::string{});
+                context_.prompts.surface.detail = std::move(detail);
+                RequestChromeRedraw();
+              },
+          .notify_error =
+              [this](std::string message) {
+                Notify(NotificationService::Tone::Error, std::move(message));
+              },
+          .notify_buffer_saved =
+              [this](const std::filesystem::path& path) { NotifyPluginBufferSave(path); },
+      });
   assist_service_.Configure(
       context_, plugin_runtime_, output_channels_, language_contract_,
       AssistService::Operations{
@@ -568,7 +604,7 @@ WorkspaceShell::WorkspaceShell() {
               },
           .apply_lsp_workspace_edit =
               [this](const std::vector<CodeActionEdit>& edits) {
-                return ApplyLspWorkspaceEdit(edits);
+                return workspace_edit_service_.ApplyLspEdit(edits);
               },
           .apply_full_lsp_workspace_edit =
               [this](const std::vector<CodeActionEdit>& edits,
@@ -578,7 +614,7 @@ WorkspaceShell::WorkspaceShell() {
           .apply_rename_workspace_edit =
               [this](const std::string& new_name, const std::vector<CodeActionEdit>& edits,
                      const std::vector<WorkspaceResourceOp>& resource_ops) {
-                ApplyRenameWorkspaceEdit(new_name, edits, resource_ops);
+                workspace_edit_service_.ApplyRename(new_name, edits, resource_ops);
               },
           .open_file_in_new_tab =
               [this](const std::filesystem::path& path) { return OpenFileInNewTab(path); },
@@ -799,7 +835,7 @@ WorkspaceShell::WorkspaceShell() {
       .apply_workspace_edit =
           [this](std::string_view /*owner*/,
                  const plugin::PluginHost::WorkspaceEditRequest& request) {
-            return ApplyPluginWorkspaceEdit(request);
+            return workspace_edit_service_.ApplyPluginEdit(request);
           },
       .publish_ghost_text =
           [this](std::string_view owner,
@@ -1466,495 +1502,6 @@ void WorkspaceShell::ActivatePluginSurfacePreview(std::string_view owner,
   panel.surface_scroll_y = 0;
   context_.current_project_state.surface.focus = FocusTarget::Panel;
   RequestFullRedraw();
-}
-
-bool WorkspaceShell::ApplyPluginWorkspaceEdit(
-    const plugin::PluginHost::WorkspaceEditRequest& request) {
-  // Resolve the target viewport: an empty path edits the active editable buffer;
-  // a named path must be an already-open editor buffer (v1 never edits files on
-  // disk, so undo stays coherent).
-  editor::TextViewport* viewport = nullptr;
-  if (request.path.empty()) {
-    viewport = ActiveEditableViewport();
-  } else {
-    const std::filesystem::path normalized = util::NormalizedPath(request.path);
-    if (editor::TextViewport* active = ActiveEditableViewport();
-        active != nullptr && util::SameAsNormalizedPath(active->path(), normalized)) {
-      viewport = active;
-    } else {
-      viewport = OpenEditorViewOfPath(context_.current_project_state.editor_groups, normalized);
-    }
-  }
-  if (viewport == nullptr) {
-    return false;
-  }
-
-  // Staleness guard for edits deferred from the plugin worker: the coordinates
-  // were computed against `guard_path` at `captured_content_revision`. If the
-  // resolved buffer is a different file (the user switched tabs) or has advanced
-  // (the user typed) during the async hop, the edit is stale — drop it rather than
-  // apply now-invalid coordinates over newer input.
-  if (request.has_staleness_guard &&
-      (!util::SameAsNormalizedPath(viewport->path(), request.guard_path) ||
-       viewport->content_revision() != request.captured_content_revision)) {
-    return false;
-  }
-
-  // 1-based plugin coordinates → clamped 0-based document positions, evaluated
-  // live so caret clamping sees post-edit line lengths.
-  const auto clamp_position = [&](std::size_t one_based_line,
-                                  std::size_t one_based_column) -> editor::TextPosition {
-    const std::size_t line_count = viewport->line_count();
-    std::size_t line = one_based_line >= 1 ? one_based_line - 1 : 0;
-    if (line_count == 0) {
-      return editor::TextPosition{0, 0};
-    }
-    if (line >= line_count) {
-      line = line_count - 1;
-    }
-    const std::size_t line_length = viewport->lines().LineLength(line);
-    std::size_t column = one_based_column >= 1 ? one_based_column - 1 : 0;
-    if (column > line_length) {
-      column = line_length;
-    }
-    return editor::TextPosition{line, column};
-  };
-
-  // Build clamped ranges up front, then apply highest-position-first so earlier
-  // edits' coordinates stay valid as the document shifts beneath them.
-  std::vector<std::pair<editor::SelectionRange, std::string>> applied_edits;
-  applied_edits.reserve(request.edits.size());
-  for (const auto& edit : request.edits) {
-    const editor::TextPosition start = clamp_position(edit.start_line, edit.start_column);
-    const editor::TextPosition end =
-        edit.end_line >= 1 ? clamp_position(edit.end_line, edit.end_column) : start;
-    applied_edits.emplace_back(editor::SelectionRange{start, end}, edit.text);
-  }
-  // Highest position first, later array entry first on a tie (see
-  // editor/EditBatchOrder.h): two inserts at one position come out in the order
-  // the plugin listed them. Overlapping ranges have no single meaning, so they
-  // are refused rather than applied in whichever order the sort chose.
-  std::vector<editor::SelectionRange> edit_ranges;
-  edit_ranges.reserve(applied_edits.size());
-  for (const auto& [range, text] : applied_edits) {
-    edit_ranges.push_back(range);
-  }
-  std::vector<std::size_t> apply_order;
-  editor::OrderEditsForApplication(edit_ranges, apply_order);
-  if (editor::EditsOverlap(edit_ranges, apply_order)) {
-    return false;
-  }
-
-  if (!applied_edits.empty()) {
-    viewport->BeginUndoGroup();
-    for (const std::size_t idx : apply_order) {
-      viewport->ReplaceRange(applied_edits[idx].first, applied_edits[idx].second,
-                             /*record_undo=*/true);
-    }
-    viewport->EndUndoGroup();
-  }
-
-  if (request.has_selection) {
-    const editor::TextPosition start =
-        clamp_position(request.selection_start_line, request.selection_start_column);
-    const editor::TextPosition end =
-        clamp_position(request.selection_end_line, request.selection_end_column);
-    viewport->JumpCursorTo(start.line, start.column, /*extend_selection=*/false);
-    viewport->MoveCursorTo(end.line, end.column, /*extend_selection=*/true);
-  } else if (request.has_cursor) {
-    const editor::TextPosition cursor =
-        clamp_position(request.cursor_line, request.cursor_column);
-    viewport->JumpCursorTo(cursor.line, cursor.column, /*extend_selection=*/false);
-  }
-
-  ResetCaretBlink();
-  RequestActiveEditableLastChangeRedraw();
-  RequestChromeRedraw();
-  return true;
-}
-
-bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& edits,
-                                           bool* out_any_rejected) {
-  const auto mark_rejected = [&]() {
-    if (out_any_rejected != nullptr) {
-      *out_any_rejected = true;
-    }
-  };
-  if (edits.empty()) {
-    return false;
-  }
-
-  // Resolve a target path to an already-open editable buffer. An empty path (or
-  // one matching the active buffer) resolves to the active editable buffer; other
-  // paths must already be open (v1 never edits files on disk, so undo stays
-  // coherent). Mirrors ApplyPluginWorkspaceEdit's resolution.
-  const auto resolve_uncached = [&](const std::filesystem::path& path) -> editor::TextViewport* {
-    if (path.empty()) {
-      return ActiveEditableViewport();
-    }
-    const std::filesystem::path normalized = util::NormalizedPath(path);
-    if (editor::TextViewport* active = ActiveEditableViewport();
-        active != nullptr && util::SameAsNormalizedPath(active->path(), normalized)) {
-      return active;
-    }
-    return OpenEditorViewOfPath(context_.current_project_state.editor_groups, normalized);
-  };
-
-  // A large rename / code action repeatedly targets the same handful of files, so
-  // memoize the (normalized) path -> viewport resolution instead of re-scanning
-  // every open tab per edit — that inner scan is the second half of the O(edits *
-  // touched_files) worst case the parser caps still permit.
-  std::unordered_map<std::string, editor::TextViewport*> resolve_cache;
-  const auto resolve = [&](const std::filesystem::path& path) -> editor::TextViewport* {
-    std::string key = util::NormalizedPath(path).generic_string();
-    const auto it = resolve_cache.find(key);
-    if (it != resolve_cache.end()) {
-      return it->second;
-    }
-    editor::TextViewport* viewport = resolve_uncached(path);
-    resolve_cache.emplace(std::move(key), viewport);
-    return viewport;
-  };
-
-  // Group edits by the buffer they resolve to; each buffer applies its edits as a
-  // single grouped-undo step, highest-position-first so earlier ranges stay valid.
-  // `bucket_index` maps a viewport to its slot in `by_viewport` so grouping is O(1)
-  // per edit rather than a linear scan (O(edits * touched_files) otherwise).
-  std::vector<std::pair<editor::TextViewport*, std::vector<std::pair<editor::SelectionRange, std::string>>>>
-      by_viewport;
-  std::unordered_map<editor::TextViewport*, std::size_t> bucket_index;
-  const auto bucket_for = [&](editor::TextViewport* viewport)
-      -> std::vector<std::pair<editor::SelectionRange, std::string>>& {
-    const auto it = bucket_index.find(viewport);
-    if (it != bucket_index.end()) {
-      return by_viewport[it->second].second;
-    }
-    bucket_index.emplace(viewport, by_viewport.size());
-    by_viewport.emplace_back(viewport, std::vector<std::pair<editor::SelectionRange, std::string>>{});
-    return by_viewport.back().second;
-  };
-
-  for (const CodeActionEdit& edit : edits) {
-    editor::TextViewport* viewport = resolve(edit.path);
-    if (viewport == nullptr) {
-      continue;
-    }
-    bucket_for(viewport).emplace_back(edit.range, edit.new_text);
-  }
-
-  // Each edited buffer is re-synced with a FULL document change afterward (the
-  // incremental last-change path only carries the last of N edits, which would
-  // desync the server). A WorkspaceEdit can touch several open buffers (header+
-  // source rename, multi-file fixit); each one's server mirror and stored
-  // diagnostics must be reconciled, not just the active tab's. Rather than snapshot
-  // every whole buffer twice (before + after), capture only the compact delta the
-  // re-sync needs — pre-edit line count plus the affected line span — and stream
-  // the after-content live from the viewport at sync time (TD-2026-07-17A-016).
-  editor::TextViewport* active_viewport = ActiveEditableViewport();
-  struct BucketSync {
-    std::size_t before_line_count = 0;
-    std::size_t first_changed_line = 0;  // min affected line (before-coords)
-    std::size_t last_changed_line = 0;   // max affected line, inclusive (before-coords)
-  };
-  std::vector<BucketSync> bucket_sync(by_viewport.size());
-  for (std::size_t i = 0; i < by_viewport.size(); ++i) {
-    if (by_viewport[i].first != nullptr && !by_viewport[i].second.empty()) {
-      bucket_sync[i].before_line_count = by_viewport[i].first->line_count();
-    }
-  }
-
-  bool applied_any = false;
-  for (std::size_t bucket_i = 0; bucket_i < by_viewport.size(); ++bucket_i) {
-    editor::TextViewport* viewport = by_viewport[bucket_i].first;
-    auto& buffer_edits = by_viewport[bucket_i].second;
-    if (viewport == nullptr || buffer_edits.empty()) {
-      continue;
-    }
-    // Resolve the server's position encoding for this buffer so the edit's LSP
-    // `character` offsets (utf-16 code units by spec default) map to the right
-    // UTF-8 byte column — mis-mapping on a non-ASCII line splits a multibyte
-    // sequence and corrupts the buffer.
-    std::string vp_language_id;
-    LspClient* vp_client = lsp_service_.LspClientForViewport(*viewport, &vp_language_id);
-    const lsp_encoding::PositionEncoding vp_encoding =
-        vp_client != nullptr ? LspEncodingForClient(*vp_client)
-                             : lsp_encoding::PositionEncoding::Utf8;
-    // Convert 0-based LSP coordinates to editor byte columns. A line beyond EOF is a
-    // stale/confused/hostile server target: unlike the old forgiving clamp (which
-    // silently rewrote it onto the LAST real line and mutated it — visible data loss
-    // in dirty state, undo, diagnostics, folds), we now REJECT the whole buffer's edit
-    // group, matching the closed-file applier's range policy. The sole allowed
-    // beyond-EOF position is the end-of-document sentinel {line == line_count,
-    // character == 0} (an append at EOF). LspCharacterToByteColumn still soft-clamps
-    // the column within a valid line.
-    const std::size_t line_count = viewport->line_count();
-    const auto map_position =
-        [&](editor::TextPosition pos, bool* ok) -> editor::TextPosition {
-      if (line_count == 0) {
-        if (pos.line != 0) {
-          *ok = false;
-        }
-        return editor::TextPosition{0, 0};
-      }
-      if (pos.line == line_count && pos.column == 0) {
-        // End-of-document append sentinel: keep it addressed to one-past-last-line.
-        return pos;
-      }
-      if (pos.line >= line_count) {
-        *ok = false;
-        return pos;
-      }
-      pos.column = lsp_encoding::LspCharacterToByteColumn(
-          viewport->lines().LineView(pos.line), pos.column, vp_encoding);
-      return pos;
-    };
-    bool group_ok = true;
-    for (auto& [range, text] : buffer_edits) {
-      range.start = map_position(range.start, &group_ok);
-      range.end = map_position(range.end, &group_ok);
-    }
-    if (!group_ok) {
-      // A beyond-EOF target invalidates this buffer's whole group; drop it and record
-      // the rejection so a server-initiated applyEdit reports partial failure.
-      mark_rejected();
-      continue;
-    }
-    // Highest position first, with the tie rules in editor/EditBatchOrder.h:
-    // same start -> the replace before the inserts, same range -> later array
-    // entry first, so N inserts at one position keep their array order.
-    // Overlapping edits are rejected whole (see the closed-file applier): two
-    // intersecting ranges double-edit shared bytes order-dependently.
-    std::vector<editor::SelectionRange> buffer_ranges;
-    buffer_ranges.reserve(buffer_edits.size());
-    for (const auto& [range, text] : buffer_edits) {
-      buffer_ranges.push_back(range);
-    }
-    std::vector<std::size_t> apply_order;
-    editor::OrderEditsForApplication(buffer_ranges, apply_order);
-    if (editor::EditsOverlap(buffer_ranges, apply_order)) {
-      mark_rejected();
-      continue;
-    }
-
-    // Record the affected line span (before-coords) for the LSP re-sync + redraw
-    // instead of diffing full before/after snapshots. Every edit changes its target
-    // line, so the lowest start line is the first differing line, and the highest
-    // end line bounds the redraw range for a same-line-count edit.
-    std::size_t first_changed = std::numeric_limits<std::size_t>::max();
-    std::size_t last_changed = 0;
-    for (const auto& [range, text] : buffer_edits) {
-      const editor::SelectionRange normalized = editor::TextViewport::NormalizeRange(range);
-      first_changed = std::min(first_changed, normalized.start.line);
-      last_changed = std::max(last_changed, normalized.end.line);
-    }
-    bucket_sync[bucket_i].first_changed_line =
-        first_changed == std::numeric_limits<std::size_t>::max() ? 0 : first_changed;
-    bucket_sync[bucket_i].last_changed_line = last_changed;
-
-    viewport->BeginUndoGroup();
-    for (const std::size_t idx : apply_order) {
-      viewport->ReplaceRange(buffer_edits[idx].first, buffer_edits[idx].second,
-                             /*record_undo=*/true);
-    }
-    viewport->EndUndoGroup();
-    applied_any = true;
-  }
-
-  if (applied_any) {
-    ResetCaretBlink();
-    // Full-document re-sync of EVERY edited buffer. The active buffer additionally
-    // drives the visible redraw via RequestActiveEditableChangeRedraw (which itself
-    // full-syncs the active viewport); non-active edited buffers are synced
-    // directly through the LSP service so their server mirror + diagnostics stay
-    // correct even though they are not the visible tab.
-    // Every edited buffer's fold model must be recomputed. The fold model's
-    // content_revision fingerprint alone does not force a rescan once a file is fully
-    // resolved (see the Undo/Redo guard in WorkspaceActionContext), so a same-line-count
-    // edit — a Format-Document re-indent, a bracket-renesting code action / rename —
-    // would otherwise leave phantom fold markers that hide arbitrary line ranges. Mark
-    // each edited tab's fold model dirty, including non-active tabs a multi-file edit
-    // touched.
-    const auto mark_folds_dirty = [&](editor::TextViewport* edited) {
-      if (edited == nullptr) {
-        return;
-      }
-      for (auto& group : context_.current_project_state.editor_groups) {
-        for (auto& tab : group.open_tabs) {
-          if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
-              &tab.editor_state->viewport == edited && tab.editor_state->folding_model) {
-            tab.editor_state->folding_model->MarkDirty();
-            return;
-          }
-        }
-      }
-    };
-    bool active_synced = false;
-    for (std::size_t i = 0; i < by_viewport.size(); ++i) {
-      editor::TextViewport* viewport = by_viewport[i].first;
-      if (viewport == nullptr || by_viewport[i].second.empty()) {
-        continue;
-      }
-      mark_folds_dirty(viewport);
-      const LspService::BufferChangeDelta delta{bucket_sync[i].before_line_count,
-                                                bucket_sync[i].first_changed_line};
-      lsp_service_.SyncLspForBufferChange(*viewport, delta);
-      if (viewport == active_viewport) {
-        // Repaint only the touched line span for the visible buffer (the after-
-        // content lives in the viewport now, so no before/after diff is needed). A
-        // net line-count change reflows everything below, so fall back to a full
-        // editor redraw; otherwise damage [first_changed, last_changed].
-        const std::size_t after_count = viewport->line_count();
-        if (bucket_sync[i].before_line_count != after_count) {
-          RequestFocusedEditorRedraw();
-        } else {
-          const std::size_t start_line = bucket_sync[i].first_changed_line;
-          const std::size_t end_line =
-              std::max(bucket_sync[i].last_changed_line + 1, start_line + 1);
-          if (ActiveTabIsCompare()) {
-            RequestCompareRightLineRangeRedraw(start_line, end_line);
-          } else if (ActiveTabIsMerge()) {
-            RequestMergeResultLineRangeRedraw(start_line, end_line);
-          } else {
-            RequestEditorLineRangeRedraw(start_line, end_line);
-          }
-        }
-        active_synced = true;
-      }
-    }
-    if (!active_synced) {
-      // The edit did not touch the active buffer; still refresh its last-change
-      // derived state so the caret/redraw bookkeeping stays consistent.
-      RequestActiveEditableLastChangeRedraw();
-    }
-    // Repaint the tab strip so the dirty indicator appears immediately; the edit
-    // just flipped the buffer to dirty and RequestChromeRedraw only damages the
-    // menu-bar region, leaving the tab dot stale until the next full repaint.
-    RequestActiveTabRedraw(/*include_tree_sidebar=*/false);
-  }
-  return applied_any;
-}
-
-void WorkspaceShell::ApplyRenameWorkspaceEdit(const std::string& new_name,
-                                              const std::vector<CodeActionEdit>& edits,
-                                              const std::vector<WorkspaceResourceOp>& resource_ops) {
-  if (edits.empty() && resource_ops.empty()) {
-    return;
-  }
-  // Distinct affected files (an empty path targets the active buffer, always open).
-  // Dedupe through a hash set (O(edits)) rather than a linear std::find per edit —
-  // a large legal rename otherwise pays O(edits * touched_files) here.
-  std::vector<std::filesystem::path> affected;
-  std::unordered_set<std::string> affected_seen;
-  std::size_t closed_count = 0;
-  for (const CodeActionEdit& edit : edits) {
-    if (edit.path.empty()) {
-      continue;
-    }
-    const std::filesystem::path normalized = util::NormalizedPath(edit.path);
-    if (!affected_seen.insert(normalized.generic_string()).second) {
-      continue;
-    }
-    affected.push_back(normalized);
-    if (OpenEditorViewOfPath(context_.current_project_state.editor_groups, normalized) == nullptr) {
-      ++closed_count;
-    }
-  }
-
-  if (closed_count == 0 && resource_ops.empty()) {
-    // Everything is already open: apply in place, leaving the buffers dirty like any
-    // other edit (the user saves as usual).
-    ApplyLspWorkspaceEdit(edits);
-    return;
-  }
-
-  // Some files are not open, or the rename carries file operations (e.g. a
-  // rust-analyzer module rename renames the file itself). Confirm before applying —
-  // writing files the user hasn't opened and mutating paths are outward,
-  // hard-to-undo actions. The closed files are applied SILENTLY on disk
-  // (VSCode-style); no tabs are opened for them.
-  std::string detail = "Renaming to '" + new_name + "' changes " +
-                       std::to_string(affected.size()) + (affected.size() == 1 ? " file" : " files") +
-                       " (" + std::to_string(closed_count) + " not open)";
-  if (!resource_ops.empty()) {
-    detail += " and performs " + std::to_string(resource_ops.size()) +
-              (resource_ops.size() == 1 ? " file operation" : " file operations");
-  }
-  detail += ". Apply and save?";
-  pending_rename_save_ =
-      PendingRenameSave{new_name, edits, std::move(affected), resource_ops};
-  OpenPromptSurface(PromptSurfaceState::Action::ConfirmRenameSave,
-                    PromptSurfaceState::Kind::Confirm, std::filesystem::path{}, std::string{});
-  context_.prompts.surface.detail = std::move(detail);
-  RequestChromeRedraw();
-}
-
-void WorkspaceShell::DiscardPendingRenameSave() { pending_rename_save_.reset(); }
-
-void WorkspaceShell::CommitPendingRenameSave() {
-  if (!pending_rename_save_.has_value()) {
-    return;
-  }
-  const PendingRenameSave pending = std::move(*pending_rename_save_);
-  pending_rename_save_.reset();
-
-  // Resource ops run FIRST (the text edits are keyed by the post-rename paths;
-  // open tabs are retargeted by the reconcile hooks as each op lands). A failed
-  // op batch rolls itself back and aborts the rename — applying the text edits
-  // against paths the ops never produced would corrupt the workspace.
-  if (!pending.resource_ops.empty() &&
-      !lsp_service_.ApplyWorkspaceResourceOps(pending.resource_ops).ok) {
-    Notify(NotificationService::Tone::Error,
-           "Rename aborted: file operations failed (rolled back)");
-    return;
-  }
-
-  // Open files keep their edits applied in place (ApplyLspWorkspaceEdit resolves
-  // only already-open buffers; closed files are skipped there), then are saved.
-  ApplyLspWorkspaceEdit(pending.edits);
-
-  std::size_t saved = 0;
-  bool any_conflict = false;
-  for (auto& group : context_.current_project_state.editor_groups) {
-    for (auto& tab : group.open_tabs) {
-      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
-          tab.editor_state->content_pending()) {
-        continue;
-      }
-      editor::TextViewport& viewport = tab.editor_state->viewport;
-      const std::filesystem::path normalized = util::NormalizedPath(viewport.path());
-      if (std::find(pending.affected_paths.begin(), pending.affected_paths.end(), normalized) ==
-          pending.affected_paths.end()) {
-        continue;
-      }
-      if (!viewport.dirty()) {
-        continue;
-      }
-      if (viewport.SaveWouldOverwriteUnseenDisk()) {
-        any_conflict = true;
-        continue;
-      }
-      if (viewport.Save(context_.current_project_state.write_gate())) {
-        NotifyPluginBufferSave(viewport.path());
-        ++saved;
-      }
-    }
-  }
-
-  // Apply the remaining edits to the CLOSED files directly on disk — no tab spam.
-  const auto is_open = [this](const std::filesystem::path& normalized) {
-    return OpenEditorViewOfPath(context_.current_project_state.editor_groups, normalized) != nullptr;
-  };
-  const LspService::DiskEditResult disk =
-      lsp_service_.ApplyLspEditsToClosedFilesOnDisk(pending.edits, is_open);
-  saved += disk.files_written;
-
-  std::string feedback = "Renamed to '" + pending.new_name + "' in " + std::to_string(saved) +
-                         (saved == 1 ? " file" : " files");
-  if (any_conflict || disk.any_failed) {
-    feedback += " (some skipped)";
-  }
-  context_.current_project_state.panel.feedback.text = std::move(feedback);
-  RequestActiveTabRedraw(/*include_tree_sidebar=*/true);
 }
 
 std::vector<LspClient::Diagnostic> WorkspaceShell::CollectLspContextDiagnostics(

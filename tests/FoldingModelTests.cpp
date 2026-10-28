@@ -80,7 +80,7 @@ void ExpectMatchesReference(const FoldingModel& model, const std::vector<std::st
 // WITHOUT changing the line count (a formatter re-indent, a completion / code
 // action / plugin edit that re-nests brackets) leaves STALE fold ranges unless
 // the mutating path marks the model dirty. This documents why
-// ApplyLspWorkspaceEdit, the completion-accept path, and Undo/Redo must all call
+// WorkspaceEditService::ApplyLspEdit, the completion-accept path, and Undo/Redo must all call
 // MarkDirty().
 void TestFoldStaleWithoutMarkDirtyAfterSameLineCountEdit() {
   std::vector<std::string> lines = {

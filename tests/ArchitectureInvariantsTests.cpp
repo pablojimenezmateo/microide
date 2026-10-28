@@ -253,8 +253,10 @@ void TestArchitectureFileSizes() {
              // 1652: the shell's private ProjectOpenDialogLaunchResult, a
              // value-for-value copy of ProjectOpenPickerResult, is gone.
              // 1647: ChangedLineSpan, a copy of editor::AppliedEditLineSpan.
+             // 1633: the three workspace-edit appliers, the pending rename and its
+             // struct moved to WorkspaceEditService.
              return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShellMembers.inc",
-                                                     1647);
+                                                     1633);
            });
 
   AssertRuleResultsPass(results);

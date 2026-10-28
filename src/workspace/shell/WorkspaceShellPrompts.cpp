@@ -485,7 +485,7 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
         MakePromptSurfaceService().DismissPromptSurface(true);
         return;
       case Action::ConfirmRenameSave:
-        DiscardPendingRenameSave();
+        workspace_edit_service_.DiscardPendingRename();
         MakePromptSurfaceService().DismissPromptSurface(true);
         return;
       case Action::ConfirmCommitAmend:
@@ -525,9 +525,9 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     const bool confirmed = resolution != DirtyPathResolution::Discard;
     MakePromptSurfaceService().DismissPromptSurface(true);
     if (confirmed) {
-      CommitPendingRenameSave();
+      workspace_edit_service_.CommitPendingRename();
     } else {
-      DiscardPendingRenameSave();
+      workspace_edit_service_.DiscardPendingRename();
     }
     return;
   }

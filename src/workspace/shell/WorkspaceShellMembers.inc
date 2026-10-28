@@ -1015,37 +1015,6 @@
   void UpdateMergeTrackingAfterViewportEdit(MergeTabState& merge_tab);
   editor::TextViewport* ActiveEditableViewport();
   const editor::TextViewport* ActiveEditableViewport() const;
-  // Applies a plugin `ctx.editor.apply_edits` request: resolves the target
-  // viewport (active editable buffer, or a named open editor buffer), validates
-  // and clamps every edit, applies them as one grouped-undo step, then optionally
-  // moves the caret / sets the selection. Returns true when a buffer was edited.
-  bool ApplyPluginWorkspaceEdit(const plugin::PluginHost::WorkspaceEditRequest& request);
-  // Apply a code action's inline WorkspaceEdit (0-based, LSP-native coordinates)
-  // to the open buffers. Sibling of ApplyPluginWorkspaceEdit (which takes 1-based
-  // plugin coordinates); shares its resolve-open-buffer-only + grouped-undo +
-  // highest-position-first apply discipline.
-  // `out_any_rejected` (optional) is set true when a resolved buffer's edit group was
-  // dropped without applying (a line beyond EOF, or an overlapping group), so the
-  // server-initiated workspace/applyEdit response can report partial failure.
-  bool ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& edits, bool* out_any_rejected = nullptr);
-  // Apply an LSP rename result. If every affected file is already open (and no
-  // resource ops), applies in place (dirty). If some are closed — or the rename
-  // carries file create/rename/delete ops — stashes the edit and confirms before
-  // applying ops, edits, and saves — a project-wide rename that stays undo-coherent.
-  void ApplyRenameWorkspaceEdit(const std::string& new_name,
-                                const std::vector<CodeActionEdit>& edits,
-                                const std::vector<WorkspaceResourceOp>& resource_ops);
-  // Open, apply, and save the pending rename after the user confirms (or discard it
-  // on cancel). No-op when nothing is pending.
-  void CommitPendingRenameSave();
-  void DiscardPendingRenameSave();
-  struct PendingRenameSave {
-    std::string new_name;
-    std::vector<CodeActionEdit> edits;
-    std::vector<std::filesystem::path> affected_paths;
-    std::vector<WorkspaceResourceOp> resource_ops;
-  };
-  std::optional<PendingRenameSave> pending_rename_save_;
   // Collect the diagnostics for `viewport`'s file that overlap `range`, in LSP
   // wire form, to populate a textDocument/codeAction request context.
   std::vector<LspClient::Diagnostic> CollectLspContextDiagnostics(const editor::TextViewport& viewport, const editor::SelectionRange& range, lsp_encoding::PositionEncoding encoding) const;
@@ -2212,6 +2181,7 @@
   bool HandleTerminalFindKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleTerminalFindMouseDown(float x, float y);
   AssistService assist_service_;
+  WorkspaceEditService workspace_edit_service_;
   LspService lsp_service_;
   DebugService debug_service_;
   ControlChannelService control_channel_service_;

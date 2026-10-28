@@ -407,7 +407,7 @@ RuleResult CheckEveryUserSaveRunsTheSamePreparation(const std::filesystem::path&
       // Applying an LSP workspace edit to buffers that happen to be open. The edit is
       // the server's, not the user's; running a formatter over it would rewrite a
       // rename's result behind the user's back.
-      "src/workspace/shell/WorkspaceShellPlugins.cpp",
+      "src/workspace/services/WorkspaceEditService.cpp",
       // The same, for files that are NOT open: a scratch viewport used purely as a
       // read-modify-write of a closed file.
       "src/workspace/lsp/LspService.cpp",

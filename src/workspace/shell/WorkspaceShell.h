@@ -65,6 +65,7 @@
 #include "workspace/WorkspaceVirtualDocument.h"
 #include "workspace/WorkspaceEventResult.h"
 #include "workspace/services/AssistService.h"
+#include "workspace/services/WorkspaceEditService.h"
 #include "workspace/control/ControlChannelService.h"
 #include "workspace/control/ControlSpec.h"
 #include "workspace/debug/DebugService.h"

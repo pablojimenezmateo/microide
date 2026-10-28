@@ -5894,7 +5894,7 @@ void TestTextViewportColumnCaretsAreCapped() {
          "a column select should still place some carets");
 }
 
-// Mirrors WorkspaceShell::ApplyLspWorkspaceEdit for a multi-line "remove unused
+// Mirrors WorkspaceEditService::ApplyLspEdit for a multi-line "remove unused
 // includes" fix: several non-contiguous single-line deletions, clamped, sorted
 // highest-position-first, applied inside one undo group. A single Undo must fully
 // restore the original document (else save-after-undo persists truncated content).
