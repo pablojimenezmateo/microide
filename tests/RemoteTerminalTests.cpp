@@ -355,7 +355,7 @@ void TestTwoClientsShareAHostTerminalAtTheSmallerSize() {
   // used to decide whether the first client's shell survived.)
   TerminalSessionTestAccess::EnterHostMode(b, nullptr);
   channel_b.reset();
-  Expect(second->peer().Flush(std::chrono::seconds(5)), "the second client's close is sent");
+  Expect(second->peer().Flush(std::chrono::seconds(5), std::chrono::seconds(5)), "the second client's close is sent");
   second.reset();
   // The host's own answer, not a sleep: the remaining client's view is back at
   // its size with no output needed (the detach used to wait for the program to
@@ -670,9 +670,10 @@ void TestAClosedTerminalIsClosedOnTheHostWhenTheClientGoesAtOnce() {
     handle = channel->handle();
     // Harmless frames ahead of the close: more than the socket buffers hold, so
     // the close is still queued when the client goes (2000 already fails 5 of 5
-    // without the flush), yet few enough to drain within the flush's 500 ms on a
-    // sanitizer build under load (20000 did not: 11 of 12 failed on TSan).
-    constexpr int kBacklogFrames = 4000;
+    // without the flush). On a loaded sanitizer build the host reads them for
+    // longer than any fixed deadline allowed, which is why the flush gives up on a
+    // stall rather than at one.
+    constexpr int kBacklogFrames = 20000;
     util::JsonObject ack;
     ack["handle"] = util::JsonValue(static_cast<std::int64_t>(handle));
     ack["bytes"] = util::JsonValue(static_cast<std::int64_t>(0));
@@ -769,7 +770,7 @@ void TestInputTypedBeforeTheOpenSurvivesAnImmediateDetach() {
     params["handle"] = util::JsonValue(static_cast<std::int64_t>(handle));
     closer->peer().Notify(remote::method::kTermClose, util::JsonValue(std::move(params)));
   }
-  (void)closer->peer().Flush(std::chrono::seconds(5));
+  (void)closer->peer().Flush(std::chrono::seconds(5), std::chrono::seconds(5));
 }
 
 // Quit and close-project detach a host terminal rather than close it; a reopen

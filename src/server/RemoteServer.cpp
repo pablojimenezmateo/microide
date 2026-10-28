@@ -101,7 +101,7 @@ RemoteServer::~RemoteServer() {
   }
   for (auto& connection : connections) {
     // A reply queued just before the teardown (server/shutdown's own) still goes out.
-    (void)connection->peer.Flush(std::chrono::milliseconds(500));
+    (void)connection->peer.FlushForTeardown();
     connection->peer.Stop();  // joins its I/O thread, and with it any closed handler
   }
   // The samplers before the tables: the activity one lists them, and the members
@@ -813,7 +813,7 @@ int RemoteServer::ServeOne(int read_fd, int write_fd) {
     ::poll(&fd, 1, -1);
     wake_.Drain();
   }
-  (void)connection.peer.Flush(std::chrono::milliseconds(500));
+  (void)connection.peer.FlushForTeardown();
   connection.peer.Stop();
   return 0;
 }

@@ -52,7 +52,7 @@ RemoteServerClient::~RemoteServerClient() {
   // this a close still behind other frames was discarded -- the host kept the dead
   // shell, unclaimed, holding its server. Bounded as the server's own goodbye is
   // (RemoteServer), and immediate on a link that is already closed.
-  (void)peer_.Flush(std::chrono::milliseconds(500));
+  (void)peer_.FlushForTeardown();
   peer_.Stop();
   if (command_.IsRunning()) {
     command_.Shutdown(2000);

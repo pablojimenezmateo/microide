@@ -71,8 +71,13 @@ class RemotePeer {
   void Fail(std::string_view reason) { transport_.Fail(reason); }
   bool closed() const { return transport_.closed(); }
   bool OnIoThread() const { return transport_.OnIoThread(); }
-  // Wait up to `timeout` for what was sent so far to be written (RemoteFrameTransport::Flush).
-  bool Flush(std::chrono::milliseconds timeout) { return transport_.Flush(timeout); }
+  // Wait for what was sent so far to be written (RemoteFrameTransport::Flush).
+  bool Flush(std::chrono::milliseconds stall, std::chrono::milliseconds limit) {
+    return transport_.Flush(stall, limit);
+  }
+  // The flush before a deliberate teardown (a server's goodbye, a client going):
+  // half a second of a peer that has stopped reading, five in all.
+  bool FlushForTeardown() { return Flush(std::chrono::milliseconds(500), std::chrono::seconds(5)); }
 
   // Send a request; `handler` runs once with its result or error — including when
   // the connection closes first (a kErrorCancelled-coded "connection closed").

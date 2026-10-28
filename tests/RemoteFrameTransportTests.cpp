@@ -9,6 +9,7 @@
 #include <cmath>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -406,8 +407,8 @@ void TestLyingAckCloses() {
 }
 
 // Flush waits until what was queued has been written — the reply a deliberate
-// teardown sends last (server/shutdown's) — and gives up at its deadline when the
-// peer does not read.
+// teardown sends last (server/shutdown's) — and gives up on a peer that does not
+// read.
 void TestFlushWaitsForQueuedFrames() {
   SocketPair pair;
   Inbox inbox;
@@ -415,16 +416,67 @@ void TestFlushWaitsForQueuedFrames() {
   Expect(transport.Start(pair.a, pair.a, inbox.Callbacks()), "start");
   const std::string big(4 * 1024 * 1024, 'f');  // more than the socket buffers hold
   Expect(transport.Send(FrameType::ProcStdout, Lane::Interactive, 1, big), "queued");
-  Expect(!transport.Flush(std::chrono::milliseconds(50)),
-         "with nobody reading, the flush gives up at its deadline");
+  Expect(!transport.Flush(std::chrono::milliseconds(50), std::chrono::seconds(10)),
+         "with nobody reading, the flush gives up once it has stalled");
   FrameDecoder decoder;
   std::vector<Frame> frames;
   std::thread reader([&]() { frames = ReadRawFrames(pair.b, decoder, 1); });
-  Expect(transport.Flush(std::chrono::seconds(10)), "once the peer reads, it completes");
+  Expect(transport.Flush(std::chrono::seconds(10), std::chrono::seconds(10)),
+         "once the peer reads, it completes");
   reader.join();
   Expect(frames.size() == 1 && frames[0].payload.size() == big.size(), "and the frame arrived whole");
   transport.Stop();
   ::close(pair.b);
+}
+
+// A peer that reads slowly but steadily is not a dead one: the flush waits as long
+// as bytes keep going out, far past its stall time, and stops at its limit.
+void TestFlushWaitsForASlowReaderUpToItsLimit() {
+  const std::string big(4 * 1024 * 1024, 'f');
+  const auto trickle = [](int fd, std::atomic<bool>& stop) {
+    std::vector<char> chunk(64 * 1024);
+    while (!stop.load()) {
+      if (::read(fd, chunk.data(), chunk.size()) <= 0) {
+        return;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+  };
+  {
+    SocketPair pair;
+    Inbox inbox;
+    RemoteFrameTransport transport;
+    Expect(transport.Start(pair.a, pair.a, inbox.Callbacks()), "start");
+    Expect(transport.Send(FrameType::ProcStdout, Lane::Interactive, 1, big), "queued");
+    std::atomic<bool> stop{false};
+    std::thread reader(trickle, pair.b, std::ref(stop));
+    const auto start = std::chrono::steady_clock::now();
+    const bool flushed = transport.Flush(std::chrono::milliseconds(300), std::chrono::seconds(30));
+    const auto took = std::chrono::steady_clock::now() - start;
+    Expect(flushed, "a reader that keeps reading gets all of it");
+    Expect(took > std::chrono::milliseconds(300), "which took longer than the stall time");
+    stop = true;
+    transport.Stop();
+    ::shutdown(pair.b, SHUT_RDWR);
+    reader.join();
+    ::close(pair.b);
+  }
+  {
+    SocketPair pair;
+    Inbox inbox;
+    RemoteFrameTransport transport;
+    Expect(transport.Start(pair.a, pair.a, inbox.Callbacks()), "start");
+    Expect(transport.Send(FrameType::ProcStdout, Lane::Interactive, 1, big), "queued");
+    std::atomic<bool> stop{false};
+    std::thread reader(trickle, pair.b, std::ref(stop));
+    Expect(!transport.Flush(std::chrono::seconds(10), std::chrono::milliseconds(100)),
+           "and the limit still ends it");
+    stop = true;
+    transport.Stop();
+    ::shutdown(pair.b, SHUT_RDWR);
+    reader.join();
+    ::close(pair.b);
+  }
 }
 
 }  // namespace
@@ -442,6 +494,8 @@ void RegisterRemoteFrameTransportTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteFrameTransport/PeerHangupCloses", TestPeerHangupCloses);
   AddTest(tests, "RemoteFrameTransport/WedgedPeerIsTornDown", TestWedgedPeerIsTornDown);
   AddTest(tests, "RemoteFrameTransport/FlushWaitsForQueuedFrames", TestFlushWaitsForQueuedFrames);
+  AddTest(tests, "RemoteFrameTransport/FlushWaitsForASlowReaderUpToItsLimit",
+          TestFlushWaitsForASlowReaderUpToItsLimit);
   AddTest(tests, "RemoteFrameTransport/LyingAckCloses", TestLyingAckCloses);
 }
 

@@ -120,11 +120,19 @@ void RemoteFrameTransport::Stop() {
   closed_.store(true, std::memory_order_release);
 }
 
-bool RemoteFrameTransport::Flush(std::chrono::milliseconds timeout) {
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
+bool RemoteFrameTransport::Flush(std::chrono::milliseconds stall, std::chrono::milliseconds limit) {
+  const auto start = std::chrono::steady_clock::now();
+  auto stalled_at = start + stall;
+  std::size_t lowest = unwritten_.load(std::memory_order_acquire);
   wake_.Wake();
-  while (unwritten_.load(std::memory_order_acquire) > 0) {
-    if (closed() || std::chrono::steady_clock::now() >= deadline) {
+  for (std::size_t unwritten = lowest; unwritten > 0;
+       unwritten = unwritten_.load(std::memory_order_acquire)) {
+    const auto now = std::chrono::steady_clock::now();
+    if (unwritten < lowest) {
+      lowest = unwritten;
+      stalled_at = now + stall;
+    }
+    if (closed() || now >= stalled_at || now >= start + limit) {
       return false;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
