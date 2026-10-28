@@ -151,7 +151,7 @@ void RemoteServer::InstallTreeHandlers(Connection& connection) {
                      // Encode outside the server lock (WithPeer holds it).
                      std::vector<std::string> chunks;
                      if (manifest.has_value()) {
-                       const auto& rows = manifest->rows;
+                       const std::vector<remote::ManifestRow>& rows = *manifest->rows;
                        ForEachChunk(
                            rows.size(),
                            [&](std::size_t i) { return rows[i].path.size() + rows[i].link_target.size(); },
@@ -163,8 +163,7 @@ void RemoteServer::InstallTreeHandlers(Connection& connection) {
                        std::lock_guard publish(tree->publish_mutex);
                        if (const auto subscriber = tree->subscribers.find(connection_id);
                            subscriber != tree->subscribers.end()) {
-                         subscriber->second.last_sent =
-                             std::make_shared<const std::vector<remote::ManifestRow>>(rows);
+                         subscriber->second.last_sent = manifest->rows;  // shared, not copied
                        }
                      }
                      WithPeer(connection_id, [&](remote::RemotePeer& peer) {
@@ -183,7 +182,7 @@ void RemoteServer::InstallTreeHandlers(Connection& connection) {
                        result["manifest_id"] =
                            util::JsonValue(static_cast<std::int64_t>(manifest->id));
                        result["rows"] =
-                           util::JsonValue(static_cast<std::int64_t>(manifest->rows.size()));
+                           util::JsonValue(static_cast<std::int64_t>(manifest->rows->size()));
                        result["git"] = util::JsonValue(manifest->git);
                        peer.Reply(id, util::JsonValue(std::move(result)), remote::Lane::Bulk);
                      });
@@ -442,7 +441,7 @@ void RemoteServer::PublishWatchBatch(ServedTree& tree) {
   if (tree.tree.last_update_was_full() && tree.watch) {
     tree.watch->SetPolledPaths(tree.tree.UnwatchedMembers());
   }
-  auto current = std::make_shared<const std::vector<remote::ManifestRow>>(std::move(manifest->rows));
+  std::shared_ptr<const std::vector<remote::ManifestRow>> current = std::move(manifest->rows);
   // Subscribers primed by the same manifest share a baseline: one diff for each
   // distinct baseline, not one per connection.
   std::map<const std::vector<remote::ManifestRow>*, std::vector<std::string>> frames_for;

@@ -21,14 +21,14 @@ using server::WorkspaceTree;
 
 std::vector<std::string> Paths(const WorkspaceTree::Manifest& manifest) {
   std::vector<std::string> paths;
-  for (const ManifestRow& row : manifest.rows) {
+  for (const ManifestRow& row : *manifest.rows) {
     paths.push_back(row.path);
   }
   return paths;
 }
 
 const ManifestRow* Find(const WorkspaceTree::Manifest& manifest, std::string_view path) {
-  for (const ManifestRow& row : manifest.rows) {
+  for (const ManifestRow& row : *manifest.rows) {
     if (row.path == path) {
       return &row;
     }
@@ -89,7 +89,7 @@ void TestWorkspaceTreeHashCache() {
   Expect(first.has_value() && tree.last_hashed_files() == 100, "a cold tree hashes every file");
   const auto second = tree.BuildManifest(&error);
   Expect(second.has_value() && tree.last_hashed_files() == 0, "an unchanged tree hashes nothing");
-  Expect(second->rows == first->rows, "and reports the same rows");
+  Expect(*second->rows == *first->rows, "and reports the same rows");
   Expect(second->id > first->id, "each manifest has a new id");
   WriteFile(root / "f7.txt", "changed");
   const auto third = tree.BuildManifest(&error);
@@ -114,7 +114,7 @@ void TestWorkspaceTreeDoesNotTrustARacyCacheEntry() {
          "and again: a just-written file is not served from the cache");
   WriteFile(root / "hot.txt", "two\n");  // same size
   const auto manifest = tree.BuildManifest(&error);
-  Expect(manifest.has_value() && manifest->rows[0].hash == util::HashContent("two\n"),
+  Expect(manifest.has_value() && (*manifest->rows)[0].hash == util::HashContent("two\n"),
          "a same-size rewrite is seen at once");
 }
 
@@ -148,14 +148,14 @@ void TestWorkspaceTreeIncrementalUpdateMatchesAFullBuild() {
   Expect(tree.last_hashed_files() == 2, "only the changed and the new file are hashed");
   WorkspaceTree fresh(root);
   const auto full = fresh.BuildManifest(&error);
-  Expect(full.has_value() && updated->rows == full->rows,
+  Expect(full.has_value() && *updated->rows == *full->rows,
          "the same rows as a full build: the ignored file out, the deleted ones gone");
 
   WriteFile(root / ".gitignore", "*.log\nsrc/new.c\n");
   const auto after_rules = tree.UpdateManifest(WorkspaceTree::Changes{.touched = {".gitignore"}}, &error);
   Expect(after_rules.has_value() && tree.last_update_was_full(),
          "a .gitignore edit rebuilds: membership rules changed");
-  Expect(std::none_of(after_rules->rows.begin(), after_rules->rows.end(),
+  Expect(std::none_of(after_rules->rows->begin(), after_rules->rows->end(),
                       [](const ManifestRow& row) { return row.path == "src/new.c"; }),
          "and a newly ignored untracked file leaves the set");
 }

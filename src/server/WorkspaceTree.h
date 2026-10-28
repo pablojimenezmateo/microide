@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -51,7 +52,10 @@ class WorkspaceTree {
 
   struct Manifest {
     std::uint64_t id = 0;  // increases with every manifest this tree builds
-    std::vector<project::remote::ManifestRow> rows;  // sorted by path, unique
+    // Sorted by path, unique. Shared and immutable: the tree keeps the newest as its
+    // baseline and every watching connection's last-sent snapshot is the same vector,
+    // so a tree holds one copy of its rows, not one per holder (TD-2026-10-28-418).
+    std::shared_ptr<const std::vector<project::remote::ManifestRow>> rows;
     bool git = false;  // the content set came from git
   };
 
@@ -155,7 +159,8 @@ class WorkspaceTree {
   std::unordered_map<std::string, CacheEntry> cache_;
   std::size_t last_hashed_files_ = 0;
   // The last manifest's rows, the base of the next incremental update.
-  std::vector<project::remote::ManifestRow> last_rows_;
+  std::shared_ptr<const std::vector<project::remote::ManifestRow>> last_rows_ =
+      std::make_shared<const std::vector<project::remote::ManifestRow>>();
   bool last_git_ = false;
   // Checked-out gitlinks the last full listing found (sorted): which repository an
   // incremental update asks about a new path.

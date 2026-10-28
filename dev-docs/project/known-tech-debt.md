@@ -449,7 +449,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-28-418 — the remote link's idle wakeups and memory, measured end to end: what was fixed, and what is left. [PARTLY RESOLVED 2026-10-28 — open: per-file state on both sides, allocator slack after a first sync]
+### TD-2026-10-28-418 — the remote link's idle wakeups and memory, measured end to end: what was fixed, and what is left. [PARTLY RESOLVED 2026-10-28 — open: the client's per-file state, allocator slack after a first sync, the git sampler's polling]
 
 Measured with `tools/qa/remote.py` W (idle) and X (live), loopback host, this
 repository (4,767 files, 36 MB) unless stated. Per thread now: every remote and
@@ -518,20 +518,27 @@ Left open:
    and `Entry::remote.path` both hold the path, plus a whole `ManifestRow` (~130 B
    with `link_target`) and bookkeeping per entry: one path copy and a compact row
    would roughly halve it.
-3. **Per-file state, server:** ~0.6 KB per file in use (8.8 MB at 15,000 files).
+3. ~~**Per-file state, server:** ~0.6 KB per file in use (8.8 MB at 15,000 files).
    `WorkspaceTree::last_rows_` and the watch subscribers' snapshot are two full
    copies of the row vector, and `UpdateManifest` moves every row out of
    `last_rows_` and then copies the whole vector back -- an O(files) string copy
-   per watch batch, i.e. per agent edit. One `shared_ptr<const vector>` for both
-   halves the memory and the per-batch copy.
+   per watch batch, i.e. per agent edit.~~ RESOLVED 2026-10-28:
+   `WorkspaceTree::Manifest::rows` is a `shared_ptr<const vector>` the tree and
+   every subscriber's baseline share, and a watch batch copies the unchanged rows
+   once into the next vector. 15,000 files: 8.8 -> 6.2 MB in use. Left: the hash
+   cache (`cache_`) is keyed by a third copy of every path; keying it by the row
+   would save another ~1 MB there.
 4. **The git sampler stat-polls once a second** per watched tree (HEAD, the branch
    ref, packed-refs, the index): ~0.01% CPU, but it is the server's largest idle
    wakeup source. An inotify watch on `.git` and `refs/heads` would make it
    event-driven.
-5. **Live, X (agent churn: four host agents for 15 s):** the client spent 1.5 s of
-   CPU over 20 s against the server's 0.6 s; where the client's goes (the watch
-   delta apply, the reload of open buffers, the file index, git refreshes) is not
-   yet broken down.
+5. ~~**Live, X (agent churn: four host agents for 15 s):** the client spent 1.5 s of
+   CPU over 20 s against the server's 0.6 s.~~ Broken down 2026-10-28, per thread:
+   `mirror-sync` 0.13 s; the main thread 0.77 s and the sixteen llvmpipe threads
+   ~1.0 s -- 57 partial frames in 20.7 s (`MICROIDE_TRACE_REDRAW_VERBOSE`), the file
+   tree and git state following the agents at ~2.7 fps. That is the UI legitimately
+   updating, coalesced already, and expensive per frame only because Xvfb renders
+   in software. Not a remote cost.
 
 ### TD-2026-10-28-417 — the remote server kept every byte of the first sync in memory, per workspace. [RESOLVED 2026-10-28]
 

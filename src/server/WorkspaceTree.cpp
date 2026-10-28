@@ -474,7 +474,7 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::BuildManifestLocked(
   // After a full build, not per watch batch: a full build is when the whole tree was
   // just paid for, and a batch's handful of entries is not worth a rewrite.
   SaveCacheLocked();
-  manifest.rows = std::move(*rows);
+  manifest.rows = std::make_shared<const std::vector<ManifestRow>>(std::move(*rows));
   manifest.id = next_manifest_id_++;
   last_rows_ = manifest.rows;
   last_git_ = manifest.git;
@@ -499,7 +499,7 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::BuildManifestLocked(
       pruned.emplace(directory, result);
       return result;
     };
-    for (const ManifestRow& row : manifest.rows) {
+    for (const ManifestRow& row : *manifest.rows) {
       const std::size_t slash = row.path.rfind('/');
       if (slash != std::string::npos && row.kind != ManifestEntryKind::Submodule &&
           is_pruned(row.path.substr(0, slash))) {
@@ -519,8 +519,8 @@ std::optional<std::vector<std::string>> WorkspaceTree::SearchPaths(std::string* 
   std::lock_guard lock(mutex_);
   if (built_) {
     std::vector<std::string> paths;
-    paths.reserve(last_rows_.size());
-    for (const project::remote::ManifestRow& row : last_rows_) {
+    paths.reserve(last_rows_->size());
+    for (const project::remote::ManifestRow& row : *last_rows_) {
       paths.push_back(row.path);
     }
     return paths;
@@ -557,11 +557,11 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::UpdateManifest(
   std::sort(touched.begin(), touched.end());
   touched.erase(std::unique(touched.begin(), touched.end()), touched.end());
   const auto listed = [&](const std::string& path) {
-    const auto it = std::lower_bound(last_rows_.begin(), last_rows_.end(), path,
+    const auto it = std::lower_bound(last_rows_->begin(), last_rows_->end(), path,
                                      [](const ManifestRow& row, const std::string& key) {
                                        return row.path < key;
                                      });
-    return it != last_rows_.end() && it->path == path;
+    return it != last_rows_->end() && it->path == path;
   };
   // Paths whose row is recomputed: the members touched, and the new paths the
   // content-set rules admit. A touched path that is gone simply loses its row.
@@ -606,16 +606,18 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::UpdateManifest(
     }
     return false;
   };
-  Manifest manifest;
-  manifest.git = last_git_;
-  manifest.rows.reserve(last_rows_.size() + fresh->size());
+  // The previous rows are shared with the connections that were sent them, so the
+  // unchanged ones are copied into the new vector -- once. (They used to be moved
+  // out of the tree's own copy and the whole result copied back: twice.)
+  std::vector<ManifestRow> rows;
+  rows.reserve(last_rows_->size() + fresh->size());
   std::size_t f = 0;
-  for (ManifestRow& row : last_rows_) {
+  for (const ManifestRow& row : *last_rows_) {
     while (f < fresh->size() && (*fresh)[f].path < row.path) {
-      manifest.rows.push_back(std::move((*fresh)[f++]));
+      rows.push_back(std::move((*fresh)[f++]));
     }
     if (f < fresh->size() && (*fresh)[f].path == row.path) {
-      manifest.rows.push_back(std::move((*fresh)[f++]));
+      rows.push_back(std::move((*fresh)[f++]));
       continue;
     }
     if (std::binary_search(touched.begin(), touched.end(), row.path) ||
@@ -623,16 +625,19 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::UpdateManifest(
       cache_.erase(row.path);
       continue;
     }
-    manifest.rows.push_back(std::move(row));
+    rows.push_back(row);
   }
   while (f < fresh->size()) {
-    manifest.rows.push_back(std::move((*fresh)[f++]));
+    rows.push_back(std::move((*fresh)[f++]));
   }
-  if (manifest.rows.size() > options_.max_files) {
+  if (rows.size() > options_.max_files) {
     *error = OverLimitMessage();
     built_ = false;  // the next batch decides from scratch
     return std::nullopt;
   }
+  Manifest manifest;
+  manifest.git = last_git_;
+  manifest.rows = std::make_shared<const std::vector<ManifestRow>>(std::move(rows));
   manifest.id = next_manifest_id_++;
   last_rows_ = manifest.rows;
   PublishCountsLocked();
@@ -640,7 +645,7 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::UpdateManifest(
 }
 
 void WorkspaceTree::PublishCountsLocked() {
-  manifest_files_.store(last_rows_.size(), std::memory_order_relaxed);
+  manifest_files_.store(last_rows_->size(), std::memory_order_relaxed);
   hashed_files_.store(cache_.size(), std::memory_order_relaxed);
 }
 
