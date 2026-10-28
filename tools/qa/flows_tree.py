@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Callable
 
 import microide_qa as q
-from flows_common import active_title, dismiss, git, messages, open_file, read, step, write
+from flows_common import active_title, dismiss, git, messages, open_file, read, step, wait_toasts_clear, write
 
 
 def _rows(app: q.App) -> list[str]:
@@ -57,22 +57,22 @@ def flow_tree_collisions(app: q.App) -> None:
     app.send("tree-refresh")
     if not _select(app, "a.txt"):
         return
-    before = len(messages(app))
+    wait_toasts_clear(app)
     app.key("F2")
     if _prompt_and_type(app, "b.txt", "rename a.txt onto b.txt"):
-        app.wait_until(lambda: len(messages(app)) > before, 3.0, "a toast for the refused rename")
-        app.expect(any("already exists" in m for m in messages(app)[before:]),
-                   f"a rename onto an existing name is refused and says why ({messages(app)[before:]})")
+        app.wait_until(lambda: bool(messages(app)), 3.0, "a toast for the refused rename")
+        app.expect(any("already exists" in m for m in messages(app)),
+                   f"a rename onto an existing name is refused and says why ({messages(app)})")
         app.expect((app.project / "col" / "a.txt").exists() and (app.project / "col" / "b.txt").read_text() == "b\n",
                    "and neither file changed")
     dismiss(app)
 
-    before = len(messages(app))
+    wait_toasts_clear(app)
     _context(app, "col", "New File…")
     if _prompt_and_type(app, "b.txt", "new file over an existing one"):
-        app.wait_until(lambda: len(messages(app)) > before, 3.0, "a toast for the refused file")
-        app.expect(any("already exists" in m for m in messages(app)[before:]),
-                   f"a new file over an existing one is refused ({messages(app)[before:]})")
+        app.wait_until(lambda: bool(messages(app)), 3.0, "a toast for the refused file")
+        app.expect(any("already exists" in m for m in messages(app)),
+                   f"a new file over an existing one is refused ({messages(app)})")
         app.expect((app.project / "col" / "b.txt").read_text() == "b\n", "and the existing file is untouched")
     dismiss(app)
 

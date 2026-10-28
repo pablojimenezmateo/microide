@@ -141,6 +141,15 @@ def messages(app: q.App) -> list[str]:
     return [n.get("message", "") for n in app.query("notifications")]
 
 
+def wait_toasts_clear(app: q.App) -> None:
+    """Waits until no transient toast is on screen, so a toast the next step expects
+    is told apart by appearing at all. Counting the stack is not enough: a message
+    identical to one still showing refreshes that row instead of stacking a second
+    (NotificationService::Post), so the count does not rise -- a flake whose outcome
+    was whether the earlier toast had expired yet. Toasts live 4 s (DurationMs)."""
+    app.wait_until(lambda: not messages(app), 6.0, "the earlier toasts to expire")
+
+
 # ---- window size ---------------------------------------------------------------
 
 def resize_window(app: q.App, width: int, height: int) -> None:
