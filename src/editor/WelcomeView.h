@@ -20,8 +20,9 @@ struct WelcomeShortcut {
   std::string label;
 };
 
-// A recent-project entry. `name` is the folder name (primary text), `path_display`
-// the muted full path, and `path` the value opened when the row is clicked.
+// A recent entry. `name` is the primary text (a project's name, a file's name),
+// `path_display` the muted context (a project's location; a file's folder
+// relative to its project), and `path` the value opened when the row is clicked.
 struct WelcomeRecent {
   std::string name;
   std::string path_display;

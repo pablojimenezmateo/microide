@@ -855,6 +855,47 @@ void TestBuilderWelcomeViewProjectHomeShowsRecentFiles() {
          "the surviving recent file should be the one that still exists on disk");
 }
 
+// A recent file reads as its name plus its folder relative to the project, never
+// the full path: a remote project's root is the local mirror, so a full path named
+// a directory on this machine rather than the host's (where the same relative
+// path holds). A file at the root shows no folder.
+void TestBuilderWelcomeRecentFilesShowProjectRelativeFolders() {
+  TemporaryDirectory temp;
+  const std::filesystem::path mirror = temp.path() / "mirrors" / "box" / "repo";
+  std::filesystem::create_directories(mirror / "src" / "editor");
+  const std::filesystem::path nested = mirror / "src" / "editor" / "main.cpp";
+  const std::filesystem::path top = mirror / "README.md";
+  { std::ofstream(nested) << "int main() {}\n"; }
+  { std::ofstream(top) << "# repo\n"; }
+
+  for (const project::ProjectId& id : {project::ProjectId::ForLocal(mirror),
+                                        project::ProjectId::ForRemote("dev@box", "/home/dev/repo")}) {
+    WorkspaceContext context;
+    context.current_project_state.root = mirror;
+    context.current_project_state.id = id;
+    RenderViewModelBuilder builder(context);
+    RecentsService recents;
+    recents.RecordFileOpen(top, mirror);
+    recents.RecordFileOpen(nested, mirror);  // newest first
+    const editor::WelcomeViewModel vm = builder.BuildWelcomeView(recents);
+    const std::string kind = id.IsRemote() ? "remote" : "local";
+    Expect(vm.recent_files.size() == 2, kind + ": both recent files are listed");
+    if (vm.recent_files.size() != 2) {
+      continue;
+    }
+    Expect(vm.recent_files[0].name == "main.cpp" && vm.recent_files[0].path_display == "src/editor",
+           kind + ": a nested file shows its project-relative folder, got '" +
+               vm.recent_files[0].path_display + "'");
+    Expect(vm.recent_files[1].name == "README.md" && vm.recent_files[1].path_display.empty(),
+           kind + ": a root file shows no folder, got '" + vm.recent_files[1].path_display + "'");
+    Expect(vm.recent_files[0].path == nested, kind + ": the row still opens the file itself");
+    for (const editor::WelcomeRecent& row : vm.recent_files) {
+      Expect(row.path_display.find(temp.path().string()) == std::string::npos,
+             kind + ": no row shows the mirror's local directory");
+    }
+  }
+}
+
 // A remote project is named by its host folder everywhere the welcome surface
 // shows it: its recents row (which reopens it by that name, so a deleted mirror is
 // made again) and, once open, its home's title -- never by its mirror directory.
@@ -1628,6 +1669,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestBuilderWelcomeViewIsMemoized);
   AddTest(tests, "RenderViewModelBuilder/WelcomeViewProjectHomeShowsRecentFiles",
           TestBuilderWelcomeViewProjectHomeShowsRecentFiles);
+  AddTest(tests, "RenderViewModelBuilder/WelcomeRecentFilesShowProjectRelativeFolders",
+          TestBuilderWelcomeRecentFilesShowProjectRelativeFolders);
   AddTest(tests, "RenderViewModelBuilder/ComputeWelcomeLayoutProducesHitRegions",
           TestComputeWelcomeLayoutProducesHitRegions);
   AddTest(tests, "RenderViewModelBuilder/ConstructsAllSurfaceViewModels",

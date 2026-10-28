@@ -1,5 +1,6 @@
 #include "workspace/render/RenderViewModelBuilder.h"
 
+#include "workspace/WorkspacePathUtils.h"
 #include "workspace/debug/DebugPaneRegistry.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/git/WorkspaceGitSidebarPresentation.h"
@@ -1865,20 +1866,25 @@ std::string PathLeafName(const std::filesystem::path& path) {
   return name.empty() ? path.string() : name;
 }
 
-// Build a WelcomeRecent row for each path. Callers pass RecentsService's already
-// exists-validated lists (ExistingRecentProjects/ExistingRecentFilesFor), so this no
-// longer stats each path per paint — the validation is cached against the MRU
-// revision in the service (TD-2026-07-17A-014).
-std::vector<editor::WelcomeRecent> BuildRecentRows(std::span<const std::filesystem::path> paths) {
+// Build a WelcomeRecent row for each of the project's recent files: the file's
+// name, then the folder it is in relative to `project_root` ("" at the root) --
+// as VS Code's recent list reads. Never the full path: for a remote project the
+// files live in the local mirror, and its path names a directory on this machine
+// that the user never chose, where the host's own path is the same relative one.
+// Callers pass RecentsService's exists-validated list (ExistingRecentFilesFor),
+// whose validation is cached against the MRU revision (TD-2026-07-17A-014).
+std::vector<editor::WelcomeRecent> BuildRecentFileRows(const std::filesystem::path& project_root,
+                                                       std::span<const std::filesystem::path> paths) {
   std::vector<editor::WelcomeRecent> rows;
   rows.reserve(paths.size());
   for (const std::filesystem::path& path : paths) {
     if (path.empty()) {
       continue;
     }
+    const std::filesystem::path folder = std::filesystem::path(RelativePathLabel(project_root, path)).parent_path();
     rows.push_back(editor::WelcomeRecent{
         .name = PathLeafName(path),
-        .path_display = path.string(),
+        .path_display = folder.generic_string(),
         .path = path,
     });
   }
@@ -1984,7 +1990,7 @@ const editor::WelcomeViewModel& RenderViewModelBuilder::BuildWelcomeView(
   vm.open_file_label = LabelWithChord("Open File…", ActionId::Open);
   vm.find_in_project_label = LabelWithChord("Find in Project…", ActionId::ProjectSearch);
   vm.recent_files =
-      BuildRecentRows(recents.ExistingRecentFilesFor(root, editor::kWelcomeRecentFileLimit));
+      BuildRecentFileRows(root, recents.ExistingRecentFilesFor(root, editor::kWelcomeRecentFileLimit));
   vm.remote = context_.current_project_state.remote_status;
   vm.retry_label = "Retry";
   return vm;

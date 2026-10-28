@@ -169,7 +169,7 @@ const std::vector<std::filesystem::path>& RecentsService::ExistingRecentFilesFor
     existing_files_.clear();
     // Mirror RecentFilesFor's cap-then-filter: take up to `limit` newest entries for
     // this root, then drop any that no longer exist (so the count matches the prior
-    // BuildRecentRows exists-filter over a capped RecentFilesFor list).
+    // BuildRecentFileRows exists-filter over a capped RecentFilesFor list).
     std::size_t matched = 0;
     for (const PersistedRecentFile& entry : state_.recent_files) {
       if (entry.project_root != project_root) {
