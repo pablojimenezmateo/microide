@@ -638,7 +638,7 @@ Start with Project (11 members) to set the shape, then Sidebar (26), Search (39)
 Edit (50), Tab (54), Global (86). Done when `Operations` holds only what has no
 service to name.
 
-### TD-2026-10-28-411 — the 2026-10-28 duplication pass: what it split, and what it left. [PARTLY RESOLVED 2026-10-28 — open: two remainders below]
+### TD-2026-10-28-411 — the 2026-10-28 duplication pass: what it split, and what it left. [PARTLY RESOLVED 2026-10-28 — open: one remainder below]
 
 Done, one commit each: `AssistService` (2,300 lines, 58 members, seven request
 counters) is six feature units in `src/workspace/assist/` over one `AssistHost`;
@@ -672,9 +672,13 @@ Left open:
   almost all `Configure(... Operations{ lambdas })` wiring. Splitting it into
   per-service wiring functions needs members-.inc room (it is a ratcheted cap); a
   wiring table that does not need new shell members is the shape to look for.
-- **`RenderViewModelBuilder::BuildOverlaySurfaceInto` is ~440 lines** in one
-  function on the render hot path. Splitting it needs the `perf-tests` lane and
-  the allocation gates before and after; not attempted blind.
+- ~~**`RenderViewModelBuilder::BuildOverlaySurfaceInto` is ~440 lines**~~ RESOLVED
+  2026-10-28: it is a ~45-line dispatcher now -- reset, the find widget
+  (`BuildFindWidgetInto`, a free function), and the list overlays
+  (`ListOverlayBuilder`: the fifteen shared locals became members, the four
+  lambdas methods, each mode's rows one method, the deferred-label resolve its own
+  step). The warm thread-local scratch and row-ref buffers are kept; the
+  `perf-tests` lane (allocation counting armed) passes.
 - ~~**`BumpRevision` is three byte-identical 4-line bodies**~~ RESOLVED 2026-10-28:
   `util::Revision` replaces them and the terminal snapshot generation's copy.
 

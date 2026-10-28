@@ -757,6 +757,458 @@ struct OverlayRowRef {
   float secondary_width = 0.0f;
 };
 
+// Focused fields show the caret-relative scrolled tail; unfocused fields (and an
+// empty focused field) fall back to "<prefix><full text>" from the start.
+OverlayLabelRef QueryFieldText(const render::TextRenderer& tr, std::string& blob, bool focused,
+                               const editor::SingleLineEditor& editor, float available_width) {
+  if (focused) {
+    if (std::string shown =
+            ComputeSingleLineViewMetrics(tr, editor, "> ", available_width).displayed_text;
+        !shown.empty()) {
+      return OverlayLabelRef::Owned(blob, shown);
+    }
+  }
+  const std::size_t offset = blob.size();
+  blob.append("> ");
+  blob.append(editor.text());
+  OverlayLabelRef ref;
+  ref.offset = offset;
+  ref.length = blob.size() - offset;
+  return ref;
+}
+
+// The find widget (a compact non-modal card): its own submodel, no list chrome.
+void BuildFindWidgetInto(OverlayFindWidgetViewModel& fw_vm, std::string& blob,
+                         const BufferSearchState& buffer_search, bool replace_mode,
+                         TextInputSurface current_surface, const WorkspaceLayout& layout,
+                         const render::TextRenderer& tr) {
+  fw_vm.replace_mode = replace_mode;
+  fw_vm.fw = ComputeBufferFindWidgetLayout(layout.editor_surface, fw_vm.replace_mode);
+  fw_vm.search_focused = current_surface == TextInputSurface::BufferSearch ||
+                         current_surface == TextInputSurface::BufferReplaceSearch;
+  fw_vm.replace_focused = current_surface == TextInputSurface::BufferReplaceReplace;
+  // Aa / ab / .* / Find in Selection, the same order and the same first two
+  // glyphs as the terminal find bar three pixels below it.
+  fw_vm.toggles[static_cast<std::size_t>(BufferFindToggle::MatchCase)] =
+      FindWidgetToggleViewModel{.label = "Aa", .active = buffer_search.match_case};
+  fw_vm.toggles[static_cast<std::size_t>(BufferFindToggle::WholeWord)] =
+      FindWidgetToggleViewModel{.label = "ab", .active = buffer_search.whole_word};
+  fw_vm.toggles[static_cast<std::size_t>(BufferFindToggle::Regex)] =
+      FindWidgetToggleViewModel{.label = ".*", .active = buffer_search.regex};
+  fw_vm.toggles[static_cast<std::size_t>(BufferFindToggle::InSelection)] =
+      FindWidgetToggleViewModel{.label = "≡", .active = buffer_search.scope.has_value()};
+  fw_vm.has_matches = !buffer_search.matches.empty();
+  fw_vm.has_query = !buffer_search.query.text().empty();
+
+  const auto field_ref = [&](const editor::SingleLineEditor& field, bool focused,
+                             float field_width) {
+    if (focused) {
+      if (std::string shown =
+              ComputeSingleLineViewMetrics(tr, field, "", std::max(1.0f, field_width - 12.0f))
+                  .displayed_text;
+          !shown.empty()) {
+        return OverlayLabelRef::Owned(blob, shown);
+      }
+    }
+    return OverlayLabelRef::Direct(field.text());
+  };
+  const OverlayLabelRef search_ref =
+      field_ref(buffer_search.query, fw_vm.search_focused, fw_vm.fw.search_field.w);
+  const OverlayLabelRef replace_ref =
+      field_ref(buffer_search.replace_text, fw_vm.replace_focused, fw_vm.fw.replace_field.w);
+  OverlayLabelRef count_ref;
+  if (fw_vm.has_query) {
+    const std::size_t offset = blob.size();
+    if (fw_vm.has_matches) {
+      AppendUnsigned(blob, buffer_search.selected_index + 1);
+      blob += "/";
+      AppendUnsigned(blob, buffer_search.matches.size());
+    } else {
+      blob += "0/0";
+    }
+    count_ref.offset = offset;
+    count_ref.length = blob.size() - offset;
+  }
+  fw_vm.search_display_text = search_ref.Resolve(blob);
+  fw_vm.replace_display_text = replace_ref.Resolve(blob);
+  fw_vm.count_text = count_ref.Resolve(blob);
+}
+
+// The modal list overlays (quick-open pickers, project search, completion, code
+// actions): shared geometry and chrome, one method per mode for its rows, then
+// every deferred label resolved against the finished blob. Labels are added as
+// offsets while the blob grows and resolved last, because a growing blob moves.
+class ListOverlayBuilder {
+ public:
+  ListOverlayBuilder(OverlaySurfaceViewModel& out, const ProjectWorkspaceState& project,
+                     TextInputSurface current_surface, const SDL_FRect& overlay_rect,
+                     const render::TextRenderer& tr)
+      : out_(out),
+        project_(project),
+        overlay_(project.overlay),
+        current_surface_(current_surface),
+        overlay_rect_(overlay_rect),
+        tr_(tr),
+        blob_(out.label_storage) {
+    row_refs_.clear();
+  }
+
+  void Build() {
+    total_rows_ = TotalRows();
+    out_.list_layout = ComputeScrollableListLayout(
+        overlay_rect_, overlay_rect_.y + OverlayListStartOffset(overlay_.mode), total_rows_,
+        overlay_.scroll_row, 18.0f, 22.0f, 18.0f, 16.0f, 8.0f);
+    out_.scroll_row = out_.list_layout.scroll_row;
+    out_.total_rows = total_rows_;
+    out_.selected_row = static_cast<int>(SelectedIndex());
+    row_width_ = out_.list_layout.row_width;
+    switch (overlay_.mode) {
+      case OverlayMode::ProjectSearch:
+        ProjectSearch();
+        break;
+      case OverlayMode::CommitPicker:
+        CommitPicker();
+        break;
+      case OverlayMode::QuickPick:
+        QuickPick();
+        break;
+      case OverlayMode::CommandPalette:
+        CommandPalette();
+        break;
+      case OverlayMode::Completion:
+        Completion();
+        break;
+      case OverlayMode::CodeActions:
+        CodeActions();
+        break;
+      case OverlayMode::FileFinder:
+      default:
+        FileFinder();
+        break;
+    }
+    Resolve();
+  }
+
+ private:
+  static constexpr float kOverlayInset = 18.0f;
+  static constexpr std::string_view kPickerHint = "↑↓ select · Enter choose · Esc cancel";
+
+  std::size_t TotalRows() const {
+    switch (overlay_.mode) {
+      case OverlayMode::CommitPicker:
+        return overlay_.workflow.compare_picker.matches.size();
+      case OverlayMode::QuickPick:
+        return overlay_.workflow.quick_pick.matches.size();
+      case OverlayMode::CommandPalette:
+        return overlay_.workflow.command_palette.matches.size();
+      case OverlayMode::ProjectSearch:
+        return overlay_.workflow.project_search.results.size();
+      case OverlayMode::Completion:
+        return overlay_.workflow.completion.VisibleCount();
+      case OverlayMode::CodeActions:
+        return overlay_.workflow.code_actions.items.size();
+      case OverlayMode::FileFinder:
+      default:
+        return project_.file_finder.results().size();
+    }
+  }
+
+  std::size_t SelectedIndex() const {
+    switch (overlay_.mode) {
+      case OverlayMode::CommitPicker:
+        return overlay_.workflow.compare_picker.selected_index;
+      case OverlayMode::QuickPick:
+        return overlay_.workflow.quick_pick.selected_index;
+      case OverlayMode::CommandPalette:
+        return overlay_.workflow.command_palette.selected_index;
+      case OverlayMode::ProjectSearch:
+        return overlay_.workflow.project_search.selected_index;
+      case OverlayMode::Completion:
+        return overlay_.workflow.completion.selected_index;
+      case OverlayMode::CodeActions:
+        return overlay_.workflow.code_actions.selected_index;
+      case OverlayMode::FileFinder:
+      default:
+        return project_.file_finder.selected_index();
+    }
+  }
+
+  float RightAlignedX(std::string_view text) const {
+    return overlay_rect_.x + overlay_rect_.w - kOverlayInset - tr_.MeasureWidth(text);
+  }
+
+  template <typename EmitRow>
+  void ForVisible(EmitRow&& emit_row) {
+    const int visible_rows = out_.list_layout.visible_rows;
+    for (int row = 0; row < visible_rows; ++row) {
+      const std::size_t item_index =
+          static_cast<std::size_t>(out_.scroll_row) + static_cast<std::size_t>(row);
+      if (item_index >= total_rows_) {
+        break;
+      }
+      emit_row(item_index);
+    }
+  }
+
+  // One single-column row, truncated to the row column (which already excludes
+  // the scrollbar gutter when the list overflows).
+  void EmitRow(std::string_view label, bool stable) {
+    OverlayRowRef row_ref;
+    row_ref.primary = AddTruncatedLabel(tr_, blob_, label, row_width_ - 16.0f, stable);
+    row_refs_.push_back(row_ref);
+  }
+
+  // Two-column picker rows: the muted right column keeps its measured width and
+  // the primary is pre-truncated to the space that remains (TD-2026-07-16-33
+  // still holds: only the VISIBLE window is materialized). The right column is
+  // bounded too: the primary keeps its full width up to half the row, and a
+  // longer secondary (a workspace symbol's "container · path") is truncated to
+  // the rest -- unbounded, it started left of the row and painted over the label
+  // and out past the overlay.
+  template <typename RowAt>
+  void EmitTwoColumnRows(RowAt&& row_at) {
+    ForVisible([&](std::size_t item_index) {
+      const auto [primary, secondary] = row_at(item_index);
+      OverlayRowRef row_ref;
+      if (!secondary.empty()) {
+        const float primary_room = std::min(tr_.MeasureWidth(primary) + 22.0f, row_width_ * 0.5f);
+        const float secondary_room = std::max(0.0f, row_width_ - primary_room - 12.0f);
+        row_ref.secondary =
+            AddTruncatedLabel(tr_, blob_, secondary, secondary_room, /*stable=*/true);
+        const std::string_view shown = row_ref.secondary.Resolve(blob_);
+        row_ref.secondary_width = shown.empty() ? 0.0f : tr_.MeasureWidth(shown) + 12.0f;
+      }
+      const float primary_width = std::max(20.0f, row_width_ - 12.0f - row_ref.secondary_width);
+      row_ref.primary = AddTruncatedLabel(tr_, blob_, primary, primary_width, /*stable=*/true);
+      row_refs_.push_back(row_ref);
+    });
+  }
+
+  // Shared chrome for every quick-open modal (file finder, project search, command
+  // palette, commit/launch pickers): title, optional context subtitle, query field,
+  // result summary, and the key hint. `*_stable` says a label lives in state that
+  // outlives the frame; anything composed per frame is copied into the blob.
+  void FillPickerChrome(std::string_view title, std::string_view context_label,
+                        const editor::SingleLineEditor& query, TextInputSurface surface,
+                        std::string_view summary_line, bool summary_stable,
+                        std::string_view empty_label, bool empty_label_stable) {
+    title_ref_ = OverlayLabelRef::Direct(title);
+    if (!context_label.empty()) {
+      context_ref_ = AddTruncatedLabel(tr_, blob_, context_label,
+                                       overlay_rect_.w - kOverlayInset * 2.0f, /*stable=*/true);
+    }
+    out_.has_query_field = true;
+    out_.query_surface = surface;
+    out_.query_row_y = overlay_rect_.y + OverlayQueryRowOffset(overlay_.mode);
+    query_ref_ = QueryFieldText(tr_, blob_, current_surface_ == surface, query,
+                                std::max(1.0f, overlay_rect_.w - kOverlayInset * 2.0f));
+    // An empty summary stays empty. This used to substitute a literal "0 of 0",
+    // which a picker showing no rows then printed directly above its own "No
+    // matching …" line -- the same sentence twice, in the old count wording.
+    if (!summary_line.empty()) {
+      summary_ref_ = summary_stable ? OverlayLabelRef::Direct(summary_line)
+                                    : OverlayLabelRef::Owned(blob_, summary_line);
+    }
+    out_.summary_y = overlay_rect_.y + OverlaySummaryRowOffset(overlay_.mode);
+    out_.hint = kPickerHint;
+    out_.hint_x = RightAlignedX(kPickerHint);
+    if (total_rows_ == 0) {
+      empty_ref_ = empty_label_stable ? OverlayLabelRef::Direct(empty_label)
+                                      : OverlayLabelRef::Owned(blob_, empty_label);
+    }
+  }
+
+  void ProjectSearch() {
+    const ProjectSearchState& search = overlay_.workflow.project_search;
+    // The candidate set came from the file index; if that index is only a prefix
+    // of the tree, some files were never searched — flag it (TD-2026-07-17-008/033).
+    if (search.index_incomplete) {
+      constexpr std::string_view kNote = "index incomplete — results may be partial";
+      note_ref_ = OverlayLabelRef::Direct(kNote);
+      out_.note_x = RightAlignedX(kNote);
+    }
+    std::string& scratch = ComposeScratch();
+    scratch = search.results.empty()
+                  ? FormatEmptyState("results")
+              : search.truncated
+                  ? BuildSelectionSummary(search.selected_index, search.results.size(),
+                                          " shown (capped)")
+                  : BuildSelectionSummary(search.selected_index, search.results.size(),
+                                          " results");
+    if (search.running) {
+      scratch += BuildSearchProgressSuffix(search.searched_files, search.total_files);
+    }
+    FillPickerChrome("Project Search", std::string_view{}, search.query,
+                     TextInputSurface::ProjectSearchOverlay, scratch,
+                     /*summary_stable=*/false, "No results",
+                     /*empty_label_stable=*/true);
+    ForVisible([&](std::size_t item_index) {
+      const auto& result = search.results[item_index];
+      scratch.clear();
+      scratch += result.relative_path_string;
+      scratch += ":";
+      AppendUnsigned(scratch, result.line + 1);
+      scratch += ":";
+      AppendUnsigned(scratch, result.column + 1);
+      scratch += "  ";
+      scratch += tr_.TruncateToWidthEphemeralView(result.preview, overlay_rect_.w - 220.0f);
+      EmitRow(scratch, /*stable=*/false);
+    });
+  }
+
+  void CommitPicker() {
+    const ComparePickerState& picker = overlay_.workflow.compare_picker;
+    std::string& scratch = ComposeScratch();
+    scratch = picker.loading ? std::string("Loading history…")
+                             : FormatEmptyState("matching revisions");
+    FillPickerChrome(picker.title.empty() ? std::string_view("Compare against") : picker.title,
+                     picker.context_label, picker.query, TextInputSurface::CommitPicker,
+                     picker.summary_line, /*summary_stable=*/true, scratch,
+                     /*empty_label_stable=*/false);
+    EmitTwoColumnRows([&](std::size_t i) -> std::pair<std::string_view, std::string_view> {
+      return {picker.matches[i].primary_label, picker.matches[i].secondary_label};
+    });
+  }
+
+  void QuickPick() {
+    const QuickPickState& picker = overlay_.workflow.quick_pick;
+    std::string& scratch = ComposeScratch();
+    scratch = FormatEmptyState("matching launch configurations");
+    FillPickerChrome(
+        picker.title.empty() ? std::string_view("Select Launch Configuration") : picker.title,
+        std::string_view{}, picker.query, TextInputSurface::QuickPick, picker.summary_line,
+        /*summary_stable=*/true, scratch, /*empty_label_stable=*/false);
+    EmitTwoColumnRows([&](std::size_t i) -> std::pair<std::string_view, std::string_view> {
+      return {picker.matches[i].primary_label, picker.matches[i].secondary_label};
+    });
+  }
+
+  void CommandPalette() {
+    const CommandPaletteState& palette = overlay_.workflow.command_palette;
+    std::string& scratch = ComposeScratch();
+    scratch = FormatEmptyState("matching commands");
+    FillPickerChrome(palette.title.empty() ? std::string_view("Commands") : palette.title,
+                     std::string_view{}, palette.query, TextInputSurface::CommandPalette,
+                     palette.summary_line, /*summary_stable=*/true, scratch,
+                     /*empty_label_stable=*/false);
+    EmitTwoColumnRows([&](std::size_t i) -> std::pair<std::string_view, std::string_view> {
+      const CommandPaletteItem& item = palette.items[palette.matches[i]];
+      return {item.primary_label, item.secondary_label};
+    });
+  }
+
+  void Completion() {
+    const CompletionSessionState& completion = overlay_.workflow.completion;
+    if (!completion.error.empty()) {
+      error_ref_ = AddTruncatedLabel(tr_, blob_, completion.error, overlay_rect_.w - 36.0f,
+                                     /*stable=*/true);
+      out_.error_at_title_row = true;
+    }
+    std::string& scratch = ComposeScratch();
+    ForVisible([&](std::size_t item_index) {
+      const CompletionSessionItem& item = completion.VisibleItem(item_index);
+      if (item.detail.empty()) {
+        EmitRow(item.label, /*stable=*/true);
+        return;
+      }
+      scratch.clear();
+      scratch += item.label;
+      scratch += "  ";
+      scratch += item.detail;
+      EmitRow(scratch, /*stable=*/false);
+    });
+  }
+
+  void CodeActions() {
+    const CodeActionSessionState& actions = overlay_.workflow.code_actions;
+    title_ref_ = OverlayLabelRef::Direct("Code Actions");
+    // "Loading..." / "No code actions available" render in the list area, below
+    // the title, so they read as the menu's status rather than colliding with it.
+    if (!actions.error.empty()) {
+      error_ref_ =
+          AddTruncatedLabel(tr_, blob_, actions.error, overlay_rect_.w - 36.0f, /*stable=*/true);
+    }
+    ForVisible([&](std::size_t item_index) {
+      EmitRow(actions.items[item_index].title, /*stable=*/true);
+    });
+  }
+
+  void FileFinder() {
+    const auto& finder = project_.file_finder;
+    // When the file index is only a prefix of a very large/deep/unreadable tree,
+    // say so on the title row (right-aligned) with the specific cause so the
+    // ranked list is never read as authoritative (TD-2026-07-17-008/033).
+    if (const std::string_view note = ScanIncompleteNote(finder.index_scan_status());
+        !note.empty()) {
+      note_ref_ = OverlayLabelRef::Direct(note);
+      out_.note_x = RightAlignedX(note);
+    }
+    const auto& results = finder.results();
+    // Shared with the command palette, the git pickers and the overlay footers,
+    // so the count means one thing across quick-open. Appended into the reused
+    // scratch buffer rather than built, to keep the frame allocation-free.
+    std::string& scratch = ComposeScratch();
+    scratch.clear();
+    AppendFilteredCountSummary(scratch, results.size(), finder.indexed_file_count(), "files");
+    const std::string& compare_title = overlay_.workflow.file_finder_compare_title;
+    FillPickerChrome(compare_title.empty() ? std::string_view("Find File")
+                                           : std::string_view(compare_title),
+                     std::string_view{}, finder.query_state(), TextInputSurface::FileFinder,
+                     scratch, /*summary_stable=*/false, "No matching files",
+                     /*empty_label_stable=*/true);
+    ForVisible([&](std::size_t item_index) {
+      EmitRow(results[item_index].path_string, /*stable=*/true);
+    });
+  }
+
+  // The blob is complete: resolve every deferred reference into stable views.
+  void Resolve() {
+    out_.title = title_ref_.Resolve(blob_);
+    out_.note = note_ref_.Resolve(blob_);
+    out_.context_label = context_ref_.Resolve(blob_);
+    out_.query_display_text = query_ref_.Resolve(blob_);
+    out_.summary_line = summary_ref_.Resolve(blob_);
+    out_.error_line = error_ref_.Resolve(blob_);
+    out_.empty_label = empty_ref_.Resolve(blob_);
+    out_.rows.reserve(row_refs_.size());
+    for (const OverlayRowRef& row_ref : row_refs_) {
+      out_.rows.push_back(OverlayListRowViewModel{
+          .primary = row_ref.primary.Resolve(blob_),
+          .secondary = row_ref.secondary.Resolve(blob_),
+          .secondary_width = row_ref.secondary_width,
+      });
+    }
+  }
+
+  // Per-frame composition buffer, kept warm across frames so composing a row or a
+  // summary does not allocate.
+  static std::string& ComposeScratch() {
+    thread_local std::string scratch;
+    return scratch;
+  }
+
+  OverlaySurfaceViewModel& out_;
+  const ProjectWorkspaceState& project_;
+  const OverlayState& overlay_;
+  TextInputSurface current_surface_;
+  const SDL_FRect& overlay_rect_;
+  const render::TextRenderer& tr_;
+  std::string& blob_;
+  std::size_t total_rows_ = 0;
+  float row_width_ = 0.0f;
+  OverlayLabelRef title_ref_;
+  OverlayLabelRef note_ref_;
+  OverlayLabelRef context_ref_;
+  OverlayLabelRef query_ref_;
+  OverlayLabelRef summary_ref_;
+  OverlayLabelRef error_ref_;
+  OverlayLabelRef empty_ref_;
+  // Warm across frames like the scratch: the row refs of the visible window.
+  static thread_local std::vector<OverlayRowRef> row_refs_;
+};
+
+thread_local std::vector<OverlayRowRef> ListOverlayBuilder::row_refs_;
+
 }  // namespace
 
 void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& out,
@@ -800,405 +1252,14 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
     out.list_layout = ScrollableListLayout{};
     return;
   }
-
-  std::string& blob = out.label_storage;
-  const auto metrics_display = [&](const editor::SingleLineEditor& editor,
-                                   std::string_view prefix,
-                                   float available_width) -> std::string {
-    return ComputeSingleLineViewMetrics(tr, editor, prefix, available_width).displayed_text;
-  };
-  // Focused fields show the caret-relative scrolled tail; unfocused fields (and an
-  // empty focused field) fall back to "<prefix><full text>" from the start.
-  const auto query_field_text = [&](TextInputSurface surface,
-                                    const editor::SingleLineEditor& editor,
-                                    float available_width) -> OverlayLabelRef {
-    if (current_surface == surface) {
-      if (std::string focused = metrics_display(editor, "> ", available_width);
-          !focused.empty()) {
-        return OverlayLabelRef::Owned(blob, focused);
-      }
-    }
-    const std::size_t offset = blob.size();
-    blob.append("> ");
-    blob.append(editor.text());
-    OverlayLabelRef ref;
-    ref.offset = offset;
-    ref.length = blob.size() - offset;
-    return ref;
-  };
-
-  // Find widget (compact non-modal card): its own submodel, no list chrome.
   if (overlay.mode == OverlayMode::BufferSearch || overlay.mode == OverlayMode::BufferReplace) {
-    const BufferSearchState& buffer_search = overlay.workflow.buffer_search;
-    OverlayFindWidgetViewModel& fw_vm = out.find_widget;
-    fw_vm.replace_mode = overlay.mode == OverlayMode::BufferReplace;
-    fw_vm.fw = ComputeBufferFindWidgetLayout(layout.editor_surface, fw_vm.replace_mode);
-    fw_vm.search_focused = current_surface == TextInputSurface::BufferSearch ||
-                           current_surface == TextInputSurface::BufferReplaceSearch;
-    fw_vm.replace_focused = current_surface == TextInputSurface::BufferReplaceReplace;
-    // Aa / ab / .* / Find in Selection, the same order and the same first two
-    // glyphs as the terminal find bar three pixels below it.
-    fw_vm.toggles[static_cast<std::size_t>(BufferFindToggle::MatchCase)] =
-        FindWidgetToggleViewModel{.label = "Aa", .active = buffer_search.match_case};
-    fw_vm.toggles[static_cast<std::size_t>(BufferFindToggle::WholeWord)] =
-        FindWidgetToggleViewModel{.label = "ab", .active = buffer_search.whole_word};
-    fw_vm.toggles[static_cast<std::size_t>(BufferFindToggle::Regex)] =
-        FindWidgetToggleViewModel{.label = ".*", .active = buffer_search.regex};
-    fw_vm.toggles[static_cast<std::size_t>(BufferFindToggle::InSelection)] =
-        FindWidgetToggleViewModel{.label = "\u2261", .active = buffer_search.scope.has_value()};
-    fw_vm.has_matches = !buffer_search.matches.empty();
-    fw_vm.has_query = !buffer_search.query.text().empty();
-
-    OverlayLabelRef search_ref = OverlayLabelRef::Direct(buffer_search.query.text());
-    if (fw_vm.search_focused) {
-      if (std::string focused = metrics_display(buffer_search.query, "",
-                                                std::max(1.0f, fw_vm.fw.search_field.w - 12.0f));
-          !focused.empty()) {
-        search_ref = OverlayLabelRef::Owned(blob, focused);
-      }
-    }
-    OverlayLabelRef replace_ref = OverlayLabelRef::Direct(buffer_search.replace_text.text());
-    if (fw_vm.replace_focused) {
-      if (std::string focused = metrics_display(buffer_search.replace_text, "",
-                                                std::max(1.0f, fw_vm.fw.replace_field.w - 12.0f));
-          !focused.empty()) {
-        replace_ref = OverlayLabelRef::Owned(blob, focused);
-      }
-    }
-    OverlayLabelRef count_ref;
-    if (fw_vm.has_query) {
-      const std::size_t offset = blob.size();
-      if (fw_vm.has_matches) {
-        AppendUnsigned(blob, buffer_search.selected_index + 1);
-        blob += "/";
-        AppendUnsigned(blob, buffer_search.matches.size());
-      } else {
-        blob += "0/0";
-      }
-      count_ref.offset = offset;
-      count_ref.length = blob.size() - offset;
-    }
-    fw_vm.search_display_text = search_ref.Resolve(blob);
-    fw_vm.replace_display_text = replace_ref.Resolve(blob);
-    fw_vm.count_text = count_ref.Resolve(blob);
+    BuildFindWidgetInto(out.find_widget, out.label_storage, overlay.workflow.buffer_search,
+                        overlay.mode == OverlayMode::BufferReplace, current_surface, layout, tr);
     out.list_layout = ScrollableListLayout{};
     return;
   }
-
-  // Modal list overlays: shared geometry, then per-mode chrome + visible rows.
-  const std::size_t total_rows = [&]() -> std::size_t {
-    switch (overlay.mode) {
-      case OverlayMode::CommitPicker:
-        return overlay.workflow.compare_picker.matches.size();
-      case OverlayMode::QuickPick:
-        return overlay.workflow.quick_pick.matches.size();
-      case OverlayMode::CommandPalette:
-        return overlay.workflow.command_palette.matches.size();
-      case OverlayMode::ProjectSearch:
-        return overlay.workflow.project_search.results.size();
-      case OverlayMode::Completion:
-        return overlay.workflow.completion.VisibleCount();
-      case OverlayMode::CodeActions:
-        return overlay.workflow.code_actions.items.size();
-      case OverlayMode::FileFinder:
-      default:
-        return context_.current_project_state.file_finder.results().size();
-    }
-  }();
-  const std::size_t selected_index = [&]() -> std::size_t {
-    switch (overlay.mode) {
-      case OverlayMode::CommitPicker:
-        return overlay.workflow.compare_picker.selected_index;
-      case OverlayMode::QuickPick:
-        return overlay.workflow.quick_pick.selected_index;
-      case OverlayMode::CommandPalette:
-        return overlay.workflow.command_palette.selected_index;
-      case OverlayMode::ProjectSearch:
-        return overlay.workflow.project_search.selected_index;
-      case OverlayMode::Completion:
-        return overlay.workflow.completion.selected_index;
-      case OverlayMode::CodeActions:
-        return overlay.workflow.code_actions.selected_index;
-      case OverlayMode::FileFinder:
-      default:
-        return context_.current_project_state.file_finder.selected_index();
-    }
-  }();
-
-  out.list_layout = ComputeScrollableListLayout(
-      overlay_rect, overlay_rect.y + OverlayListStartOffset(overlay.mode), total_rows,
-      overlay.scroll_row, 18.0f, 22.0f, 18.0f, 16.0f, 8.0f);
-  out.scroll_row = out.list_layout.scroll_row;
-  out.total_rows = total_rows;
-  out.selected_row = static_cast<int>(selected_index);
-
-  constexpr float kOverlayInset = 18.0f;
-  const float title_width = overlay_rect.w - kOverlayInset * 2.0f;
-  const float query_available = std::max(1.0f, overlay_rect.w - kOverlayInset * 2.0f);
-  const float row_width = out.list_layout.row_width;
-  const auto right_aligned_x = [&](std::string_view text) {
-    return overlay_rect.x + overlay_rect.w - kOverlayInset - tr.MeasureWidth(text);
-  };
-
-  OverlayLabelRef title_ref;
-  OverlayLabelRef note_ref;
-  OverlayLabelRef context_ref;
-  OverlayLabelRef query_ref;
-  OverlayLabelRef summary_ref;
-  OverlayLabelRef error_ref;
-  OverlayLabelRef empty_ref;
-  thread_local std::vector<OverlayRowRef> row_refs;
-  row_refs.clear();
-  thread_local std::string compose_scratch;
-
-  const int visible_rows = out.list_layout.visible_rows;
-  const auto for_visible = [&](auto&& emit_row) {
-    for (int row = 0; row < visible_rows; ++row) {
-      const std::size_t item_index =
-          static_cast<std::size_t>(out.scroll_row) + static_cast<std::size_t>(row);
-      if (item_index >= total_rows) {
-        break;
-      }
-      emit_row(item_index);
-    }
-  };
-  // Two-column picker rows: the muted right column keeps its measured width and
-  // the primary is pre-truncated to the space that remains (TD-2026-07-16-33
-  // still holds: only the VISIBLE window is materialized). The right column is
-  // bounded too: the primary keeps its full width up to half the row, and a
-  // longer secondary (a workspace symbol's "container · path") is truncated to
-  // the rest -- unbounded, it started left of the row and painted over the label
-  // and out past the overlay.
-  const auto emit_two_column_rows = [&](auto&& row_at) {
-    for_visible([&](std::size_t item_index) {
-      const auto [primary, secondary] = row_at(item_index);
-      OverlayRowRef row_ref;
-      if (!secondary.empty()) {
-        const float primary_room =
-            std::min(tr.MeasureWidth(primary) + 22.0f, row_width * 0.5f);
-        const float secondary_room = std::max(0.0f, row_width - primary_room - 12.0f);
-        row_ref.secondary =
-            AddTruncatedLabel(tr, blob, secondary, secondary_room, /*stable=*/true);
-        const std::string_view shown = row_ref.secondary.Resolve(blob);
-        row_ref.secondary_width = shown.empty() ? 0.0f : tr.MeasureWidth(shown) + 12.0f;
-      }
-      const float primary_width = std::max(20.0f, row_width - 12.0f - row_ref.secondary_width);
-      row_ref.primary = AddTruncatedLabel(tr, blob, primary, primary_width, /*stable=*/true);
-      row_refs.push_back(row_ref);
-    });
-  };
-
-  constexpr std::string_view kPickerHint = "↑↓ select · Enter choose · Esc cancel";
-  // Shared chrome for every quick-open modal (file finder, project search, command
-  // palette, commit/launch pickers): title, optional context subtitle, query field,
-  // result summary, and the key hint. `*_stable` says a label lives in state that
-  // outlives the frame; anything composed per frame is copied into the blob.
-  const auto fill_picker_chrome = [&](std::string_view title, std::string_view context_label,
-                                      const editor::SingleLineEditor& query,
-                                      TextInputSurface surface, std::string_view summary_line,
-                                      bool summary_stable, std::string_view empty_label,
-                                      bool empty_label_stable) {
-    title_ref = OverlayLabelRef::Direct(title);
-    if (!context_label.empty()) {
-      context_ref = AddTruncatedLabel(tr, blob, context_label, title_width, /*stable=*/true);
-    }
-    out.has_query_field = true;
-    out.query_surface = surface;
-    out.query_row_y = overlay_rect.y + OverlayQueryRowOffset(overlay.mode);
-    query_ref = query_field_text(surface, query, query_available);
-    // An empty summary stays empty. This used to substitute a literal "0 of 0",
-    // which a picker showing no rows then printed directly above its own "No
-    // matching …" line -- the same sentence twice, in the old count wording.
-    if (!summary_line.empty()) {
-      summary_ref = summary_stable ? OverlayLabelRef::Direct(summary_line)
-                                   : OverlayLabelRef::Owned(blob, summary_line);
-    }
-    out.summary_y = overlay_rect.y + OverlaySummaryRowOffset(overlay.mode);
-    out.hint = kPickerHint;
-    out.hint_x = right_aligned_x(kPickerHint);
-    if (total_rows == 0) {
-      empty_ref = empty_label_stable ? OverlayLabelRef::Direct(empty_label)
-                                     : OverlayLabelRef::Owned(blob, empty_label);
-    }
-  };
-
-  switch (overlay.mode) {
-    case OverlayMode::ProjectSearch: {
-      const ProjectSearchState& search = overlay.workflow.project_search;
-      // The candidate set came from the file index; if that index is only a prefix
-      // of the tree, some files were never searched — flag it (TD-2026-07-17-008/033).
-      if (search.index_incomplete) {
-        constexpr std::string_view kNote = "index incomplete — results may be partial";
-        note_ref = OverlayLabelRef::Direct(kNote);
-        out.note_x = right_aligned_x(kNote);
-      }
-      compose_scratch = search.results.empty()
-                            ? FormatEmptyState("results")
-                        : search.truncated
-                            ? BuildSelectionSummary(search.selected_index, search.results.size(),
-                                                    " shown (capped)")
-                            : BuildSelectionSummary(search.selected_index, search.results.size(),
-                                                    " results");
-      if (search.running) {
-        compose_scratch += BuildSearchProgressSuffix(search.searched_files, search.total_files);
-      }
-      fill_picker_chrome("Project Search", std::string_view{}, search.query,
-                         TextInputSurface::ProjectSearchOverlay, compose_scratch,
-                         /*summary_stable=*/false, "No results",
-                         /*empty_label_stable=*/true);
-      for_visible([&](std::size_t item_index) {
-        const auto& result = search.results[item_index];
-        compose_scratch.clear();
-        compose_scratch += result.relative_path_string;
-        compose_scratch += ":";
-        AppendUnsigned(compose_scratch, result.line + 1);
-        compose_scratch += ":";
-        AppendUnsigned(compose_scratch, result.column + 1);
-        compose_scratch += "  ";
-        compose_scratch += tr.TruncateToWidthEphemeralView(result.preview,
-                                                           overlay_rect.w - 220.0f);
-        OverlayRowRef row_ref;
-        row_ref.primary =
-            AddTruncatedLabel(tr, blob, compose_scratch, row_width - 16.0f, /*stable=*/false);
-        row_refs.push_back(row_ref);
-      });
-      break;
-    }
-    case OverlayMode::CommitPicker: {
-      const ComparePickerState& picker = overlay.workflow.compare_picker;
-      compose_scratch = picker.loading ? std::string("Loading history…")
-                                       : FormatEmptyState("matching revisions");
-      fill_picker_chrome(
-          picker.title.empty() ? std::string_view("Compare against") : picker.title,
-          picker.context_label, picker.query, TextInputSurface::CommitPicker,
-          picker.summary_line, /*summary_stable=*/true, compose_scratch,
-          /*empty_label_stable=*/false);
-      emit_two_column_rows([&](std::size_t i) -> std::pair<std::string_view, std::string_view> {
-        return {picker.matches[i].primary_label, picker.matches[i].secondary_label};
-      });
-      break;
-    }
-    case OverlayMode::QuickPick: {
-      const QuickPickState& picker = overlay.workflow.quick_pick;
-      compose_scratch = FormatEmptyState("matching launch configurations");
-      fill_picker_chrome(
-          picker.title.empty() ? std::string_view("Select Launch Configuration") : picker.title,
-          std::string_view{}, picker.query, TextInputSurface::QuickPick,
-          picker.summary_line, /*summary_stable=*/true, compose_scratch,
-          /*empty_label_stable=*/false);
-      emit_two_column_rows([&](std::size_t i) -> std::pair<std::string_view, std::string_view> {
-        return {picker.matches[i].primary_label, picker.matches[i].secondary_label};
-      });
-      break;
-    }
-    case OverlayMode::CommandPalette: {
-      const CommandPaletteState& palette = overlay.workflow.command_palette;
-      compose_scratch = FormatEmptyState("matching commands");
-      fill_picker_chrome(palette.title.empty() ? std::string_view("Commands") : palette.title,
-                         std::string_view{}, palette.query, TextInputSurface::CommandPalette,
-                         palette.summary_line, /*summary_stable=*/true, compose_scratch,
-                         /*empty_label_stable=*/false);
-      emit_two_column_rows([&](std::size_t i) -> std::pair<std::string_view, std::string_view> {
-        const CommandPaletteItem& item = palette.items[palette.matches[i]];
-        return {item.primary_label, item.secondary_label};
-      });
-      break;
-    }
-    case OverlayMode::Completion: {
-      const CompletionSessionState& completion = overlay.workflow.completion;
-      if (!completion.error.empty()) {
-        error_ref = AddTruncatedLabel(tr, blob, completion.error, overlay_rect.w - 36.0f,
-                                      /*stable=*/true);
-        out.error_at_title_row = true;
-      }
-      // Rows truncate to the row column (which already excludes the scrollbar
-      // gutter when the list overflows), matching every other single-column mode
-      // — the card-relative width would let a long label run under the scrollbar.
-      for_visible([&](std::size_t item_index) {
-        const CompletionSessionItem& item = completion.VisibleItem(item_index);
-        OverlayRowRef row_ref;
-        if (item.detail.empty()) {
-          row_ref.primary =
-              AddTruncatedLabel(tr, blob, item.label, row_width - 16.0f, /*stable=*/true);
-        } else {
-          compose_scratch.clear();
-          compose_scratch += item.label;
-          compose_scratch += "  ";
-          compose_scratch += item.detail;
-          row_ref.primary =
-              AddTruncatedLabel(tr, blob, compose_scratch, row_width - 16.0f, /*stable=*/false);
-        }
-        row_refs.push_back(row_ref);
-      });
-      break;
-    }
-    case OverlayMode::CodeActions: {
-      const CodeActionSessionState& actions = overlay.workflow.code_actions;
-      title_ref = OverlayLabelRef::Direct("Code Actions");
-      // "Loading..." / "No code actions available" render in the list area, below
-      // the title, so they read as the menu's status rather than colliding with it.
-      if (!actions.error.empty()) {
-        error_ref =
-            AddTruncatedLabel(tr, blob, actions.error, overlay_rect.w - 36.0f, /*stable=*/true);
-      }
-      for_visible([&](std::size_t item_index) {
-        OverlayRowRef row_ref;
-        row_ref.primary = AddTruncatedLabel(tr, blob, actions.items[item_index].title,
-                                            row_width - 16.0f, /*stable=*/true);
-        row_refs.push_back(row_ref);
-      });
-      break;
-    }
-    case OverlayMode::FileFinder:
-    default: {
-      const auto& finder = context_.current_project_state.file_finder;
-      // When the file index is only a prefix of a very large/deep/unreadable tree,
-      // say so on the title row (right-aligned) with the specific cause so the
-      // ranked list is never read as authoritative (TD-2026-07-17-008/033).
-      if (const std::string_view note = ScanIncompleteNote(finder.index_scan_status());
-          !note.empty()) {
-        note_ref = OverlayLabelRef::Direct(note);
-        out.note_x = right_aligned_x(note);
-      }
-      const auto& results = finder.results();
-      // Shared with the command palette, the git pickers and the overlay footers,
-      // so the count means one thing across quick-open. Appended into the reused
-      // scratch buffer rather than built, to keep the frame allocation-free.
-      compose_scratch.clear();
-      AppendFilteredCountSummary(compose_scratch, results.size(), finder.indexed_file_count(),
-                                 "files");
-      fill_picker_chrome(overlay.workflow.file_finder_compare_title.empty()
-                             ? std::string_view("Find File")
-                             : std::string_view(overlay.workflow.file_finder_compare_title), std::string_view{}, finder.query_state(),
-                         TextInputSurface::FileFinder, compose_scratch,
-                         /*summary_stable=*/false, "No matching files",
-                         /*empty_label_stable=*/true);
-      for_visible([&](std::size_t item_index) {
-        OverlayRowRef row_ref;
-        row_ref.primary = AddTruncatedLabel(tr, blob, results[item_index].path_string,
-                                            row_width - 16.0f, /*stable=*/true);
-        row_refs.push_back(row_ref);
-      });
-      break;
-    }
-  }
-
-  // The blob is complete: resolve every deferred reference into stable views.
-  out.title = title_ref.Resolve(blob);
-  out.note = note_ref.Resolve(blob);
-  out.context_label = context_ref.Resolve(blob);
-  out.query_display_text = query_ref.Resolve(blob);
-  out.summary_line = summary_ref.Resolve(blob);
-  out.error_line = error_ref.Resolve(blob);
-  out.empty_label = empty_ref.Resolve(blob);
-  out.rows.reserve(row_refs.size());
-  for (const OverlayRowRef& row_ref : row_refs) {
-    out.rows.push_back(OverlayListRowViewModel{
-        .primary = row_ref.primary.Resolve(blob),
-        .secondary = row_ref.secondary.Resolve(blob),
-        .secondary_width = row_ref.secondary_width,
-    });
-  }
+  ListOverlayBuilder(out, context_.current_project_state, current_surface, overlay_rect, tr)
+      .Build();
 }
 
 TextInputSurfaceViewModel RenderViewModelBuilder::BuildTextInputSurface() const {
