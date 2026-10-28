@@ -2731,12 +2731,19 @@ void TestWorkspaceShellRemoteProjectTabShowsHostAndConnectionCorner() {
   const auto theme = microide::render::MakeDefaultTheme();
   const auto same = [](SDL_Color a, SDL_Color b) { return a.r == b.r && a.g == b.g && a.b == b.b; };
   SoftwareCanvas canvas(kWidth, kHeight);
-  const auto corner_of = [&](std::size_t index) {
+  // `row` counts down from the tab's top edge, one pixel in from its left.
+  const auto pixel_of = [&](std::size_t index, int row) {
     shell.Render(canvas.renderer(), kWidth, kHeight);
     const SDL_FRect rect = WorkspaceShellTestAccess::ProjectTabRect(shell, index);
-    return canvas.PixelAt(static_cast<int>(rect.x) + 1, static_cast<int>(rect.y) + 1);
+    return canvas.PixelAt(static_cast<int>(rect.x) + 1, static_cast<int>(rect.y) + row);
   };
+  // The active tab's top accent is 2 px: the flag hangs from it, never over it.
+  const auto corner_of = [&](std::size_t index) { return pixel_of(index, 3); };
   Expect(same(corner_of(1), theme.diagnostic_error), "an offline project's corner is the error colour");
+  Expect(!same(pixel_of(1, 0), theme.diagnostic_error) && !same(pixel_of(1, 1), theme.diagnostic_error),
+         "the active tab's accent is not painted over by the corner");
+  Expect(same(pixel_of(1, 2), theme.diagnostic_error),
+         "the corner starts right under the active tab's accent, with no gap");
   Expect(!same(corner_of(0), theme.diagnostic_error) && !same(corner_of(0), theme.diff_added),
          "a local project's corner is the tab's own");
 
@@ -2745,6 +2752,11 @@ void TestWorkspaceShellRemoteProjectTabShowsHostAndConnectionCorner() {
   ++remote.remote_status_revision;
   Expect(same(corner_of(1), theme.diff_added),
          "once connected and synced, the same tab's corner turns to the done colour");
+
+  // Not the active tab: no accent, so the corner starts at the tab's own top edge.
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0), "switching to the local project");
+  Expect(same(pixel_of(1, 0), theme.diff_added) && same(pixel_of(1, 1), theme.diff_added),
+         "an inactive tab's corner starts at its top edge, with no gap above it");
 }
 
 // A Terminal panel with no terminal shows its New Terminal button. The button was

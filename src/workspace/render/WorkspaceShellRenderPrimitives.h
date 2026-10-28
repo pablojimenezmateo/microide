@@ -972,11 +972,12 @@ inline void DrawStripTab(const render::TextRenderer& text_renderer,
       (hovered && palette.hover_fill.a != 0) ? palette.hover_fill : palette.inactive_fill;
   const SDL_Color background = active ? palette.active_fill : inactive_background;
   FillRect(renderer, rect, background);
+  constexpr float kAccentThickness = 2.0f;
+  const bool accent_on_top = active && style.accent_edge == StripAccentEdge::Top;
   if (active) {
     const SDL_FRect accent =
-        style.accent_edge == StripAccentEdge::Top
-            ? SDL_FRect{rect.x, rect.y, rect.w, 2.0f}
-            : SDL_FRect{rect.x, rect.y + rect.h - 2.0f, rect.w, 2.0f};
+        accent_on_top ? SDL_FRect{rect.x, rect.y, rect.w, kAccentThickness}
+                      : SDL_FRect{rect.x, rect.y + rect.h - kAccentThickness, rect.w, kAccentThickness};
     FillRect(renderer, accent,
              palette.active_accent.a != 0 ? palette.active_accent : theme.accent);
   }
@@ -1023,11 +1024,13 @@ inline void DrawStripTab(const render::TextRenderer& text_renderer,
     }
   }
   if (remote.state.has_value()) {
-    // Over the active tab's accent edge, so it reads on every tab alike.
+    // Hung from the tab's top edge: the active tab's top accent when it has one --
+    // the flag starts just under it, so the two meet instead of overlapping -- and
+    // the tab's own top otherwise, so an inactive tab shows no gap above the flag.
     constexpr int kCorner = 8;
     render::SetDrawColor(renderer, editor::WelcomeStageColor(theme, *remote.state));
     const float x = std::floor(rect.x);
-    const float y = std::floor(rect.y);
+    const float y = std::floor(rect.y + (accent_on_top ? kAccentThickness : 0.0f));
     for (int row = 0; row < kCorner; ++row) {
       SDL_RenderLine(renderer, x, y + static_cast<float>(row),
                      x + static_cast<float>(kCorner - 1 - row), y + static_cast<float>(row));
