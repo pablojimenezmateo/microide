@@ -199,12 +199,12 @@ WorkspaceShell::WorkspaceShell() {
                 }
                 const std::filesystem::path root = context_.current_project_state.root;
                 std::string error;
-                const bool asked = assist_service_.QueryWorkspaceSymbols(
+                const bool asked = assist_service_.navigation().QueryWorkspaceSymbols(
                     query,
-                    [this, root](std::vector<AssistService::WorkspaceSymbolHit> hits) {
+                    [this, root](std::vector<NavigationAssist::WorkspaceSymbolHit> hits) {
                       std::vector<QuickPickItem> items;
                       items.reserve(hits.size());
-                      for (AssistService::WorkspaceSymbolHit& hit : hits) {
+                      for (NavigationAssist::WorkspaceSymbolHit& hit : hits) {
                         const std::filesystem::path relative = hit.path.lexically_relative(root);
                         std::string where = relative.empty() || relative.native().starts_with("..")
                                                 ? hit.path.generic_string()
@@ -229,7 +229,7 @@ WorkspaceShell::WorkspaceShell() {
               },
           .open_workspace_symbol =
               [this](const std::filesystem::path& path, std::size_t line, std::size_t character) {
-                assist_service_.OpenWorkspaceSymbol(path, line, static_cast<int>(character));
+                assist_service_.navigation().OpenWorkspaceSymbol(path, line, static_cast<int>(character));
               },
           .set_language = [this](const std::string& language) { ApplyLanguageModeToActiveEditor(language); },
           .activate_tab =

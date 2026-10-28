@@ -100,8 +100,11 @@ standing rules, not a task list:
   the command prompt into a second editor interaction model
 - add async/background plugin task surfaces only when a real plugin workload
   needs one
-- `AssistService::Operations` is a transitional seam. It should shrink into
-  smaller explicit assist ports over time, not grow into a shell callback bag
+- `AssistService` is an owner of six feature units in `src/workspace/assist/`
+  (`CompletionAssist`, `SnippetAssist`, `CodeActionAssist`, `NavigationAssist`,
+  `RefactorAssist`, `SignatureHelpAssist`) over one `AssistHost`. Its
+  `AssistHost::Operations` seam is shared by all six; it should shrink into
+  per-feature ports over time, not grow into a shell callback bag
 
 ### 3. Terminal hardening
 

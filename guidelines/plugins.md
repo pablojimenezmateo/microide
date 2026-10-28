@@ -363,7 +363,7 @@ The host forms the stable snippet id as `<plugin_id>.<id>` for merges and
 resolved `LanguageContract` and fully expandable: they surface in the completion
 list (`is_snippet`) and in the Insert-Snippet overlay, and pressing **Tab** after
 typing a snippet's `prefix` (with no active snippet session) expands it in place
-via `AssistService::TrySnippetPrefixExpansion` — an ambiguous or non-matching
+via `SnippetAssist::TryPrefixExpansion` — an ambiguous or non-matching
 prefix falls through to a literal tab. Tabstop / placeholder / choice navigation
 (`$1`, `${1:default}`, `${1|a,b|}`) is handled by `editor::SnippetEngine`.
 

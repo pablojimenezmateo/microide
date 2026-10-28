@@ -427,7 +427,7 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
               },
           .try_editor_snippet_insert_text =
               [this](editor::TextViewport* viewport, std::string_view text) {
-                return assist_service_.TrySnippetInsertTextInEditor(viewport, text);
+                return assist_service_.snippets().TryInsertText(viewport, text);
               },
           .assist_after_typing =
               [this](std::string_view typed) { assist_service_.AfterTyping(typed); },

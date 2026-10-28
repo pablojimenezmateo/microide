@@ -26,7 +26,7 @@
 namespace microide::workspace {
 struct AssistServiceTestAccess {
   static void NavigateToLspLocation(AssistService& assist, const LspClient::Location& location) {
-    assist.NavigateToLspLocation(location, lsp_encoding::PositionEncoding::Utf16);
+    assist.navigation().NavigateToLspLocation(location, lsp_encoding::PositionEncoding::Utf16);
   }
 };
 }  // namespace microide::workspace

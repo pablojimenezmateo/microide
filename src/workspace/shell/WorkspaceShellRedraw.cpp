@@ -445,7 +445,7 @@ void WorkspaceShell::RequestActiveEditableLastChangeRedraw() {
   // sort, paste, format, an LSP workspace edit -- moves the text under them, and
   // Tab would then jump to whatever inherited their coordinates. Ends the session
   // in that case; the engine's own edits stamp the revision and are ignored here.
-  assist_service_.NotifySnippetSessionBufferChanged();
+  assist_service_.snippets().NotifyBufferChanged();
 
   const auto& applied_edit = viewport->last_applied_edit();
   // Slide stored line breakpoints through this edit so a line inserted/removed

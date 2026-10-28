@@ -553,7 +553,7 @@
     return shell.OpenSelectedPluginSidebarItem();
   }
   static bool ShowSignatureHelp(WorkspaceShell& shell) {
-    return shell.assist_service_.ShowSignatureHelp(nullptr);
+    return shell.assist_service_.signature_help().Show(nullptr);
   }
   static std::optional<WorkspaceShell::SignatureHelpPopup> SignatureHelpPopup(
       const WorkspaceShell& shell) {
@@ -561,10 +561,10 @@
   }
   static void ExpireSignatureHelp(WorkspaceShell& shell) { shell.MaybeExpireSignatureHelp(); }
   static bool ApplySelectedCompletion(WorkspaceShell& shell) {
-    return shell.assist_service_.ApplySelectedCompletion();
+    return shell.assist_service_.completion().ApplySelectedCompletion();
   }
   static bool ExecuteSelectedCodeAction(WorkspaceShell& shell) {
-    return shell.assist_service_.ExecuteSelectedCodeAction();
+    return shell.assist_service_.code_actions().ExecuteSelected();
   }
   static void ConsumeProjectSearchUpdates(WorkspaceShell& shell) {
     shell.ConsumeProjectSearchUpdates();

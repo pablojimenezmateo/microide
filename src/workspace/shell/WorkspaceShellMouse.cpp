@@ -111,7 +111,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       // list reflects this diagnostic (there may be several actions).
       const editor::SelectionRange range = visible_hover_popup->diagnostic->range;
       active_editor_hover_target_.reset();
-      assist_service_.ShowCodeActionsOverlay(nullptr, &range);
+      assist_service_.code_actions().ShowOverlay(nullptr, &range);
       EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
       return true;
     }

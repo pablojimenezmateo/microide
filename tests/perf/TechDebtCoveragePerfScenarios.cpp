@@ -48,7 +48,7 @@
 #include "project/ProjectTraversalFilter.h"
 #include "util/PerformanceCounters.h"
 #include "util/TextFileIO.h"
-#include "workspace/AssistProviderMerge.h"
+#include "workspace/assist/AssistProviderMerge.h"
 #include "workspace/services/SettingsOverlayService.h"
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/persistence/WorkspacePersistenceFormat.h"

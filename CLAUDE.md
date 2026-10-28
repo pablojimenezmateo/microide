@@ -29,7 +29,7 @@ file *is*, first match wins — subsystem beats role, role beats catch-all:
 | `registries/` | `*Registry` contribution/lookup tables |
 | `actions/` | `ActionId` types, requests, executors, dispatch |
 | `state/` | `Workspace*State` models |
-| `lsp/`, `debug/`, `git/`, `persistence/`, `control/` | subsystem-owned clients, protocols, models, and presentation |
+| `assist/`, `lsp/`, `debug/`, `git/`, `persistence/`, `control/` | subsystem-owned clients, protocols, models, and presentation |
 | top level | shared workspace vocabulary every bucket includes (`WorkspaceContext`, `WorkspaceLayout`, `WorkspaceUiText`, `FileUri`, …) |
 
 Put a new file in the directory that matches what it is. The architecture lint

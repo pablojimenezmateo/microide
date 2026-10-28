@@ -646,35 +646,35 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .open_buffer_replace = [this]() { OpenBufferReplace(); },
           .show_completion_overlay =
               [this](std::string* error_message) {
-                return assist_service_.ShowCompletionOverlay(error_message);
+                return assist_service_.completion().ShowCompletionOverlay(error_message);
               },
           .show_insert_snippet_overlay =
               [this](std::string* error_message) {
-                return assist_service_.ShowInsertSnippetOverlay(error_message);
+                return assist_service_.completion().ShowInsertSnippetOverlay(error_message);
               },
           .show_code_actions_overlay =
               [this](std::string* error_message) {
-                return assist_service_.ShowCodeActionsOverlay(error_message);
+                return assist_service_.code_actions().ShowOverlay(error_message);
               },
           .go_to_lsp_definition =
               [this](std::string* error_message) {
-                return assist_service_.GoToLspDefinition(error_message);
+                return assist_service_.navigation().GoToDefinition(error_message);
               },
           .go_to_lsp_type_definition =
               [this](std::string* error_message) {
-                return assist_service_.GoToLspTypeDefinition(error_message);
+                return assist_service_.navigation().GoToTypeDefinition(error_message);
               },
           .go_to_lsp_implementation =
               [this](std::string* error_message) {
-                return assist_service_.GoToLspImplementation(error_message);
+                return assist_service_.navigation().GoToImplementation(error_message);
               },
           .go_to_lsp_declaration =
               [this](std::string* error_message) {
-                return assist_service_.GoToLspDeclaration(error_message);
+                return assist_service_.navigation().GoToDeclaration(error_message);
               },
           .find_lsp_references =
               [this, show_results_channel](std::string* error_message) {
-                const bool ok = assist_service_.FindLspReferences(error_message);
+                const bool ok = assist_service_.navigation().FindReferences(error_message);
                 if (ok) {
                   show_results_channel("lsp.references", "LSP References");
                 }
@@ -682,7 +682,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               },
           .show_call_hierarchy =
               [this, show_results_channel](bool incoming, std::string* error_message) {
-                const bool ok = assist_service_.ShowCallHierarchy(incoming, error_message);
+                const bool ok = assist_service_.navigation().ShowCallHierarchy(incoming, error_message);
                 if (ok) {
                   show_results_channel("lsp.callHierarchy", incoming ? "Incoming Calls" : "Outgoing Calls");
                 }
@@ -716,12 +716,12 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               },
           .format_active_document =
               [this](std::string* error_message) {
-                return assist_service_.FormatActiveDocument(error_message);
+                return assist_service_.refactor().FormatActiveDocument(error_message);
               },
-          .symbol_at_cursor = [this]() { return assist_service_.SymbolAtCursor(); },
+          .symbol_at_cursor = [this]() { return assist_service_.refactor().SymbolAtCursor(); },
           .rename_symbol =
               [this](const std::string& new_name, std::string* error_message) {
-                return assist_service_.RenameSymbol(new_name, error_message);
+                return assist_service_.refactor().RenameSymbol(new_name, error_message);
               },
           // Refine a just-opened Rename Symbol prompt from the server's prepareRename:
           // prefill the exact placeholder (only while the user has not typed over the
@@ -729,7 +729,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           // Best-effort and async; a no-op when no server serves the buffer.
           .refine_rename_prompt =
               [this](std::string original_seed) {
-                assist_service_.PrepareRenameForCursor(
+                assist_service_.refactor().PrepareRenameForCursor(
                     [this, original_seed = std::move(original_seed)](
                         bool can_rename, std::string placeholder) {
                       if (!context_.prompts.surface_visible ||
@@ -754,7 +754,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               },
           .show_signature_help =
               [this](std::string* error_message) {
-                return assist_service_.ShowSignatureHelp(error_message);
+                return assist_service_.signature_help().Show(error_message);
               },
           .discover_tests_for_active_buffer =
               [this](std::string* error_message) {
@@ -890,9 +890,9 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               },
           .reset_caret_blink = [this]() { ResetCaretBlink(); },
           .notify_snippet_session_caret_moved =
-              [this]() { assist_service_.NotifySnippetSessionCaretMoved(); },
+              [this]() { assist_service_.snippets().NotifyCaretMoved(); },
           .clear_active_snippet_session_after_undo =
-              [this]() { assist_service_.ClearActiveSnippetSessionAfterUndo(); },
+              [this]() { assist_service_.snippets().ClearAfterUndo(); },
           .split_editor_group =
               [this](EditorSplitOrientation orientation) {
                 return SplitEditorGroup(orientation);

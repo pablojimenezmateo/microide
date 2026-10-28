@@ -46,7 +46,7 @@ Language servers themselves are contributed by Lua plugins (`plugins/*-lsp/`) vi
 | `LspService.{h,cpp}` | Per-project doc sync, diagnostics convert+publish, semantic-token request/publish with generation guards, diagnostic shifting on dirty edits, readiness/status strings, the closed-file on-disk edit applier, and the server-initiated `applyEdit` handler. |
 | `LspFileWatchRegistry.{h,cpp}` | `workspace/didChangeWatchedFiles`: the set of glob patterns servers have registered interest in, plus the per-file match. Patterns are split into relative-to-base and absolute buckets **at registration time**, so the per-changed-file loop does one comparison per pattern instead of re-deciding the pattern's kind every time. |
 | `LspProtocol.{h,cpp}` | JSON ↔ LSP wire mapping (parse/encode helpers), incl. the shared `ParseWorkspaceEdit` (rename / code-action / applyEdit all route through it). |
-| `AssistProviderMerge.h` | **Under `src/workspace/`.** Pure, unit-tested ranking / de-dup / navigation-choice helpers for the LSP-primary concurrent provider merge. |
+| `AssistProviderMerge.h` | **Under `src/workspace/assist/`.** Pure, unit-tested ranking / de-dup / navigation-choice helpers for the LSP-primary concurrent provider merge. |
 | `LspPositionEncoding.{h,cpp}` | Pure byte ↔ code-unit codec (utf-8/16/32). |
 | `LspViewportPositions.h` | Viewport-aware wrappers over the codec (the single home for "resolve line in a viewport, then convert its column"). |
 | `WorkspaceShellLsp.cpp` | **Under `src/workspace/shell/`.** Thin `WorkspaceShell` forwarders → `LspService`; document-symbol → outline adapter. |
@@ -83,7 +83,7 @@ Language servers themselves are contributed by Lua plugins (`plugins/*-lsp/`) vi
   caller emitting a "No X found" message MUST gate it on `answered()`
   (`kOk || kEmpty`) and surface "Language server did not respond" otherwise —
   this applies across definition / references / type-def / impl / declaration /
-  workspace-symbol / rename / formatting in `AssistService`. Test seam:
+  workspace-symbol / rename / formatting in the assist units (`src/workspace/assist/`). Test seam:
   `LspClient::SetRequestTimeoutForTesting(ms)`.
 - **The transport is SHARED with DAP — fix bugs once.** Both clients speak the
   same stdio JSON-RPC wire protocol and used to carry independent copies that

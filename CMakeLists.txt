@@ -684,7 +684,13 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceProjectSearchPresentation.cpp
   src/workspace/WorkspaceProjectPresentation.cpp
   src/workspace/coordinators/WorkspaceProjectCatalogCoordinator.cpp
-  src/workspace/services/AssistService.cpp
+  src/workspace/assist/AssistHost.cpp
+  src/workspace/assist/CodeActionAssist.cpp
+  src/workspace/assist/CompletionAssist.cpp
+  src/workspace/assist/NavigationAssist.cpp
+  src/workspace/assist/RefactorAssist.cpp
+  src/workspace/assist/SignatureHelpAssist.cpp
+  src/workspace/assist/SnippetAssist.cpp
   src/workspace/git/CompareTabLoad.cpp
   src/workspace/git/CompareTabReview.cpp
   src/workspace/git/BranchReviewStateBridge.cpp

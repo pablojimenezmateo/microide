@@ -362,9 +362,9 @@ bool WorkspaceShell::ActivateOverlaySelection() {
       }
       return true;
     case OverlayMode::Completion:
-      return assist_service_.ApplySelectedCompletion();
+      return assist_service_.completion().ApplySelectedCompletion();
     case OverlayMode::CodeActions:
-      return assist_service_.ExecuteSelectedCodeAction();
+      return assist_service_.code_actions().ExecuteSelected();
     case OverlayMode::FileFinder:
     default:
       if (const auto selected = context_.current_project_state.file_finder.SelectedPath(); selected.has_value()) {
