@@ -97,7 +97,10 @@ bool EnsureServerSocketDir(const std::filesystem::path& dir, std::string* error)
     }
     struct stat st{};
     if (::fstatat(parent, name.c_str(), &st, AT_SYMLINK_NOFOLLOW) != 0) {
-      if (errno != ENOENT || ::mkdirat(parent, name.c_str(), 0700) != 0 ||
+      // EEXIST: another starter created it between the stat and the mkdir (two
+      // projects reaching a fresh host at once). Whoever made it, it is checked
+      // below exactly like one that was already there.
+      if (errno != ENOENT || (::mkdirat(parent, name.c_str(), 0700) != 0 && errno != EEXIST) ||
           ::fstatat(parent, name.c_str(), &st, AT_SYMLINK_NOFOLLOW) != 0) {
         *error = "cannot create " + walked.string() + ": " + std::strerror(errno);
         ok = false;

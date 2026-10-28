@@ -973,6 +973,45 @@
   static const microide::project::ProjectId& ProjectCatalogId(const WorkspaceShell& shell, std::size_t index) {
     return shell.context_.ProjectCatalogId(index);
   }
+  // Every project's terminal panes, the active one's and the background ones', as
+  // one line each: root, pending/running, host handle and the first screen line --
+  // what a remote terminal test prints when a pane did not do what it expected
+  // (TD-2026-10-28-414: a background project's pending terminal that never started).
+  static std::string TerminalPanesSummary(WorkspaceShell& shell) {
+    std::string out;
+    const auto describe = [&out](const ProjectWorkspaceState& state, bool active) {
+      for (const auto& tab : state.terminal_tabs) {
+        for (const auto& pane : tab->panes) {
+          if (pane == nullptr) {
+            continue;
+          }
+          std::string first;
+          for (const auto& line : pane->session.SnapshotLines()) {
+            for (const auto& cell : line.cells) {
+              first += cell.DisplayText().empty() ? std::string(" ") : std::string(cell.DisplayText());
+            }
+            if (first.find_first_not_of(' ') != std::string::npos) {
+              break;
+            }
+            first.clear();
+          }
+          out += "\n  " + std::string(active ? "[active] " : "[background] ") + state.root.generic_string() +
+                 ": pending=" + (pane->session.host_pending() ? "yes" : "no") +
+                 " running=" + (pane->session.running() ? "yes" : "no") +
+                 " handle=" + std::to_string(pane->session.host_identity().handle) + " screen=\"" +
+                 first.substr(0, first.find_last_not_of(' ') + 1) + "\"";
+        }
+      }
+    };
+    describe(shell.context_.current_project_state, true);
+    for (std::size_t i = 0; i < shell.context_.project_catalog.entries.size(); ++i) {
+      const ProjectWorkspaceState* state = shell.context_.project_catalog.entries[i].get();
+      if (state != nullptr && i != shell.context_.project_catalog.active_index) {
+        describe(*state, false);
+      }
+    }
+    return out.empty() ? std::string(" (no terminal panes)") : out;
+  }
   static bool ProjectCatalogEntryInitialized(const WorkspaceShell& shell, std::size_t index) {
     const auto* entry = shell.context_.ProjectCatalogEntry(index);
     return entry != nullptr && entry->initialized;

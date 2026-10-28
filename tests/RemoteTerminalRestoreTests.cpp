@@ -72,19 +72,28 @@ void PointAtFakeHost(WorkspaceShell& shell, const FakeSshHost& host) {
 
 // What the host's server lists, asked over a connection of the test's own (it
 // is attached to nothing, so it never counts as a terminal's client).
-std::vector<remote::ServerTerminal> HostTerminals(const FakeSshHost& host) {
+// The host server's terminals, or nullopt when it did not answer (no socket yet, a
+// status that failed): "it listed nothing" and "it was not asked" are different
+// answers to a test waiting for a row.
+std::optional<std::vector<remote::ServerTerminal>> HostTerminalsIfAnswered(const FakeSshHost& host) {
   const int fd = platform::ConnectUnixSocket(remote::ServerSocketPath(host.server_dir()));
   if (fd < 0) {
-    return {};
+    return std::nullopt;
   }
   auto client = remote::RemoteServerClient::Create();
   std::string error;
   if (!client->ConnectFds(fd, fd, remote::HelloRequest{.release = "test"}, &error)) {
-    return {};
+    return std::nullopt;
   }
   const std::optional<remote::ServerStatus> status = client->Status(&error);
-  return status.has_value() && status->terminals.has_value() ? *status->terminals
-                                                             : std::vector<remote::ServerTerminal>{};
+  if (!status.has_value()) {
+    return std::nullopt;
+  }
+  return status->terminals.value_or(std::vector<remote::ServerTerminal>{});
+}
+
+std::vector<remote::ServerTerminal> HostTerminals(const FakeSshHost& host) {
+  return HostTerminalsIfAnswered(host).value_or(std::vector<remote::ServerTerminal>{});
 }
 
 const remote::ServerTerminal* Listed(const std::vector<remote::ServerTerminal>& rows, std::uint64_t handle) {
@@ -289,12 +298,19 @@ void TestABackgroundStartedHostTerminalIsRecordedAtQuit() {
     Expect(PumpUntil(shell, [&] { return front.running() && front.host_identity().handle != 0; }),
            "the front project's terminal starts");
     const std::uint64_t front_handle = front.host_identity().handle;
-    // What the host listed on the last poll, for a failure (TD-2026-10-28-414).
-    std::string last_rows = "never polled";
+    // What the host listed on the last poll that answered, how many did not, and
+    // what each pane shows, for a failure (TD-2026-10-28-414).
+    std::string last_rows = " never answered";
+    int unanswered = 0;
     Expect(PumpUntil(shell,
                      [&] {
+                       const std::optional<std::vector<remote::ServerTerminal>> rows = HostTerminalsIfAnswered(host);
+                       if (!rows.has_value()) {
+                         ++unanswered;
+                         return false;
+                       }
                        last_rows.clear();
-                       for (const remote::ServerTerminal& row : HostTerminals(host)) {
+                       for (const remote::ServerTerminal& row : *rows) {
                          last_rows += " #" + std::to_string(row.handle) + "(clients=" +
                                       std::to_string(row.clients) + ")";
                          if (row.handle != front_handle && row.clients == 1) {
@@ -306,7 +322,9 @@ void TestABackgroundStartedHostTerminalIsRecordedAtQuit() {
            [&] {
              return "the background project's terminal started too, with nobody looking at it; "
                     "front #" + std::to_string(front_handle) + ", the host listed:" +
-                    (last_rows.empty() ? std::string(" nothing") : last_rows);
+                    (last_rows.empty() ? std::string(" nothing") : last_rows) + " (" +
+                    std::to_string(unanswered) + " polls unanswered); panes:" +
+                    WorkspaceShellTestAccess::TerminalPanesSummary(shell);
            });
     shell.Shutdown();  // quit
   }

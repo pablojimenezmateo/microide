@@ -670,7 +670,37 @@ on this machine is also auto-forwarded through that one serial queue, which
 can only delay the cancel. The assertion now says which half stayed (the row,
 the registered forward, or both).
 
-### TD-2026-10-28-414 — `RemoteTerminalRestore/ABackgroundStartedHostTerminalIsRecordedAtQuit` once never saw the background project's terminal. [RESOLVED 2026-10-28 — one real path found and fixed; the evidence stays]
+### TD-2026-10-28-414 — `RemoteTerminalRestore/ABackgroundStartedHostTerminalIsRecordedAtQuit` once never saw the background project's terminal. [RESOLVED 2026-10-28 — root cause: two server daemons for one host; fixed]
+
+2026-10-28, root cause. It still failed after the fix below: 9 of 64 TSan runs
+sixteen at a time (and 4 of 48 at the session's base commit, so not a
+regression). The test now prints every project's panes when it fails
+(`WorkspaceShellTestAccess::TerminalPanesSummary`) and tells an unanswered host
+listing from an empty one (`HostTerminalsIfAnswered`), and that settled it: the
+front pane and the background pane were BOTH running with handle 1, or the host
+"listed nothing" while answering, beside a front pane holding handle 2. Handles are
+per daemon: the two projects were attached to two different `microide-server`
+daemons. Both `attach`es found no daemon answering on a fresh host, both started
+one, and `ListenUnixSocket` replaces any socket of ours at the path -- live or
+not -- so the second daemon took the path from the first. Every later connection
+(`status`, the next launch's reattach, Show Status) reached only the second; the
+projects' terminals were split between them. A real host gets there whenever two
+remote projects connect to it at once, e.g. a session restore.
+
+Fixes: the daemon takes an exclusive `flock` on `<socket dir>/server.lock` before
+it touches the socket and holds it for life (a loser exits once the socket
+answers; a holder on its idle way out frees it within moments; a pre-lock daemon
+still serving is left alone). And `EnsureServerSocketDir` treated losing the
+`mkdir` race (`EEXIST`) as a failure: one of two starters on a fresh host failed
+with "cannot create ...: File exists" -- the directory another starter made is now
+checked like any existing one. Tests:
+`RemoteServer/ConcurrentStartsLeaveOneDaemon` (six concurrent `start`s; the old
+server left 2-4 daemons in 5 of 6 runs),
+`RemoteServer/ConcurrentCallersCreateTheSocketDirTogether` (fails round 0 on the
+old mkdir). The original test under the same load: 9/64 -> 0/64.
+
+Earlier the same day:
+
 
 2026-10-28, again (tests lane, 16 shards at once): `front #1, the host listed:
 #1(clients=1)` -- the kept evidence says the background project's terminal was

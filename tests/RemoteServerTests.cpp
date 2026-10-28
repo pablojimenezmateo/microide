@@ -18,6 +18,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <condition_variable>
 #include <mutex>
 #include <optional>
@@ -162,6 +163,95 @@ util::JsonValue Hello(std::string_view root, std::int64_t protocol = remote::kPr
                       std::int64_t min_protocol = remote::kMinProtocolVersion) {
   return remote::ToJson(remote::HelloRequest{
       .protocol = protocol, .min_protocol = min_protocol, .release = "test", .root = std::string(root)});
+}
+
+// Several starters creating the same fresh socket directory at once all succeed:
+// one wins the mkdir, the rest see EEXIST and check what it made like any existing
+// directory. Losing that race failed the start ("cannot create ...: File exists").
+void TestConcurrentCallersCreateTheSocketDirTogether() {
+  for (int round = 0; round < 20; ++round) {
+    ShortTempDir temp;
+    const std::filesystem::path dir = temp.path() / "a" / "b" / "s";
+    std::atomic<int> ok{0};
+    std::vector<std::thread> callers;
+    for (int i = 0; i < 8; ++i) {
+      callers.emplace_back([&] {
+        std::string error;
+        if (remote::EnsureServerSocketDir(dir, &error)) {
+          ++ok;
+        }
+      });
+    }
+    for (std::thread& caller : callers) {
+      caller.join();
+    }
+    Expect(ok.load() == 8, "round " + std::to_string(round) + ": every caller succeeds: " +
+                               std::to_string(ok.load()) + "/8");
+    Expect(Mode(dir) == 0700u, "and the directory is 0700");
+  }
+}
+
+// Processes whose argv is a `microide-server start` for `dir` and that are still
+// running: the daemons serving it (each starter exits once the socket answers).
+int DaemonsFor(const std::filesystem::path& dir) {
+  int count = 0;
+  for (const auto& entry : std::filesystem::directory_iterator("/proc")) {
+    const std::string pid = entry.path().filename().string();
+    if (pid.empty() || pid.find_first_not_of("0123456789") != std::string::npos) {
+      continue;  // not a process
+    }
+    std::ifstream in(entry.path() / "cmdline", std::ios::binary);
+    std::string argv((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::ifstream stat_in(entry.path() / "stat");
+    std::string stat((std::istreambuf_iterator<char>(stat_in)), std::istreambuf_iterator<char>());
+    const std::size_t close_paren = stat.rfind(')');
+    const bool zombie = close_paren != std::string::npos && close_paren + 2 < stat.size() &&
+                        stat[close_paren + 2] == 'Z';
+    if (!zombie && argv.find(std::string("start") + '\0') != std::string::npos &&
+        argv.find(dir.string() + '\0') != std::string::npos) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+// Two projects reaching one fresh host at once each run `attach`, which starts a
+// daemon when none answers. Both found none, both started one, and the second's
+// bind unlinked the first's LIVE socket: two daemons, the projects split between
+// them, and every later connection -- `status`, the next launch's reattach -- only
+// ever reaching the second (TD-2026-10-28-414, found by its test's flake). One
+// daemon per socket directory, by a lock it holds for life.
+void TestConcurrentStartsLeaveOneDaemon() {
+  ShortTempDir temp;
+  const std::filesystem::path dir = temp.path() / "s";
+  std::vector<std::thread> starters;
+  std::atomic<int> succeeded{0};
+  std::mutex failures_mutex;
+  std::string failures;
+  for (int i = 0; i < 6; ++i) {
+    starters.emplace_back([&] {
+      const platform::SubprocessResult result =
+          RunServer({"start", "--on-demand", "--socket-dir", dir.string(), "--idle-timeout-ms", "60000"});
+      if (result.success()) {
+        ++succeeded;
+      } else {
+        std::lock_guard lock(failures_mutex);
+        failures += " [" + result.stdout_text + result.stderr_text + "]";
+      }
+    });
+  }
+  for (std::thread& starter : starters) {
+    starter.join();
+  }
+  Expect(succeeded.load() == 6, "every start answers: " + std::to_string(succeeded.load()) + failures);
+  // A loser that found the socket answering has exited by now; give a slow one a moment.
+  int daemons = DaemonsFor(dir);
+  for (int i = 0; i < 100 && daemons > 1; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    daemons = DaemonsFor(dir);
+  }
+  Expect(daemons == 1, "one daemon serves the directory: " + std::to_string(daemons));
+  Expect(RunServer({"stop", "--socket-dir", dir.string()}).success(), "and it stops");
 }
 
 // `start` daemonizes and returns — and the pipe it was started with reaches EOF,
@@ -591,6 +681,9 @@ void RegisterRemoteServerTests(std::vector<TestCase>& tests) {
           TestAttachStartsOnDemandAndTheServerIdlesOut);
   AddTest(tests, "RemoteServer/ListeningPortsParseProcNetTcp", TestListeningPortsParseProcNetTcp);
   AddTest(tests, "RemoteServer/ListeningPortsParseSockDiag", TestListeningPortsParseSockDiag);
+  AddTest(tests, "RemoteServer/ConcurrentStartsLeaveOneDaemon", TestConcurrentStartsLeaveOneDaemon);
+  AddTest(tests, "RemoteServer/ConcurrentCallersCreateTheSocketDirTogether",
+          TestConcurrentCallersCreateTheSocketDirTogether);
   AddTest(tests, "RemoteServer/AProcessTableWithNothingRunningSleeps", TestAProcessTableWithNothingRunningSleeps);
   AddTest(tests, "RemoteServer/ListeningPortsSourcesAgreeOnTheLiveHost",
           TestListeningPortsSourcesAgreeOnTheLiveHost);

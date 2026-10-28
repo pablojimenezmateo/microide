@@ -36,11 +36,13 @@
 #include "util/JsonValue.h"
 #include "util/Log.h"
 #include "util/Parse.h"
+#include "util/PosixFd.h"
 
 #include <fcntl.h>
 #include <poll.h>
 #include <pwd.h>
 #include <signal.h>
+#include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -196,6 +198,36 @@ int Start(const Options& options) {
     }
     ::signal(SIGPIPE, SIG_IGN);
     InstallLogFile(remote::ServerLogPath(options.socket_dir));
+    // One daemon per socket directory. Two `attach`es that find no daemon answering
+    // -- two projects reaching one fresh host at once -- both start one, and
+    // ListenUnixSocket replaces whatever socket of ours is at the path, live or
+    // not: the second daemon took the path from the first, the projects were split
+    // between them, and every later connection reached only the second
+    // (TD-2026-10-28-414). The lock is held for the daemon's life (the kernel drops
+    // it at exit, so it is never stale) and taken before the socket is touched. A
+    // loser leaves when the socket answers; else the holder is on its idle way out
+    // and the lock frees within moments.
+    const microide::util::UniqueFd lock(
+        ::open((options.socket_dir / "server.lock").c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600));
+    bool locked = false;
+    for (int attempt = 0; lock.IsValid() && attempt < 500 && !locked; ++attempt) {
+      locked = ::flock(lock.Get(), LOCK_EX | LOCK_NB) == 0;
+      if (!locked) {
+        if (Connectable(socket)) {
+          ::_exit(0);  // another daemon serves it
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      }
+    }
+    if (!locked) {
+      microide::util::Log(lock.IsValid() ? "another daemon holds the server lock and does not answer"
+                                         : "cannot open the server lock: " + std::string(std::strerror(errno)));
+      ::_exit(1);
+    }
+    // A daemon of a release before the lock serves without it.
+    if (Connectable(socket)) {
+      ::_exit(0);
+    }
     std::string listen_error;
     const int listen_fd = microide::platform::ListenUnixSocket(socket, &listen_error);
     if (listen_fd < 0) {
