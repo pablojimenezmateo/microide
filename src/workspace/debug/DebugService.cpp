@@ -332,6 +332,13 @@ void DebugService::ResendBreakpointsForFile(const std::filesystem::path& path) {
   if (session != nullptr && session->IsActive()) {
     session->ResendBreakpointsForFile(path);
   }
+  SyncBreakpointsPanel();
+  if (operations_.request_debug_pane_redraw) {
+    operations_.request_debug_pane_redraw();
+  }
+  if (operations_.request_editor_redraw) {
+    operations_.request_editor_redraw();
+  }
 }
 
 void DebugService::Continue() {

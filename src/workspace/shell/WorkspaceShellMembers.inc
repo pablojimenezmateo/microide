@@ -1426,7 +1426,6 @@
   std::string StartAdHocDebug(const std::string& program, const std::vector<std::string>& args,
                               const std::string& type);
   void StopDebugging();
-  void ResendBreakpointsForFile(const std::filesystem::path& path);
   bool IsDebugSessionActive() const;
   bool IsDebugSessionStopped() const;
   // Canonical read of the master `debug.enabled` toggle (default off). The one

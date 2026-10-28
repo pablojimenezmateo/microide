@@ -278,9 +278,7 @@ editor::BreakpointStore& WorkspaceActionContext::MutableBreakpointStore() {
 }
 
 void WorkspaceActionContext::ResendBreakpoints(const std::filesystem::path& path) {
-  if (operations_.resend_breakpoints_for_file) {
-    operations_.resend_breakpoints_for_file(path);
-  }
+  services_.debug.ResendBreakpointsForFile(path);
 }
 
 std::string WorkspaceActionContext::StartNamedDebugConfig(const std::string& name) {
@@ -1116,8 +1114,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .toggle_debug_pane = [this]() { ToggleDebugPane(); },
           .show_debug_pane_mode = [this](DebugPaneMode mode) { ShowDebugPaneMode(mode); },
           .show_debug_output = [this]() { ShowDebugOutput(); },
-          .resend_breakpoints_for_file =
-              [this](const std::filesystem::path& path) { ResendBreakpointsForFile(path); },
           .start_named_debug_config =
               [this](const std::string& name) { return StartNamedDebugConfig(name); },
           .start_ad_hoc_debug =

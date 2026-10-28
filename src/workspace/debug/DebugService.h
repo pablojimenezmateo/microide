@@ -104,8 +104,11 @@ class DebugService {
   // join; resets the project-shared adapter state. No-op when none are active.
   void StopAllDebugging();
 
-  // Re-send `setBreakpoints` for one file to the active session (no-op when no
-  // session is active). Used when the user toggles a breakpoint mid-session.
+  // The common tail of every line-breakpoint change to `path` (gutter, F9, the
+  // Breakpoints pane, the breakpoint-* commands): re-send `setBreakpoints` for the
+  // file to the active session (if any), rebuild the Breakpoints panel, and request
+  // the pane and the editor gutter repainted. The request is what puts the change
+  // on screen: a command that damages nothing else gets no frame otherwise.
   void ResendBreakpointsForFile(const std::filesystem::path& path);
 
   // Shift stored line breakpoints in `path` to follow an editor edit (so a line

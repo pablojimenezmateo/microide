@@ -820,7 +820,9 @@ EditorMouseCoordinator& WorkspaceShell::MakeEditorMouseCoordinator() {
                 ActivateEditorBannerAction(action, path);
               },
           .on_breakpoint_toggled =
-              [this](const std::filesystem::path& path) { ResendBreakpointsForFile(path); },
+              [this](const std::filesystem::path& path) {
+                debug_service_.ResendBreakpointsForFile(path);
+              },
           .open_breakpoint_context_menu =
               [this](const std::filesystem::path& path, std::size_t line,
                      const SDL_FRect& anchor) { OpenBreakpointContextMenu(path, line, anchor); },

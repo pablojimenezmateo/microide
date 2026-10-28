@@ -318,9 +318,6 @@ class WorkspaceActionContext {
     std::function<void()> show_debug_output;
     // Add a watch expression directly (no prompt) — the "Add to Watch" row menu
     // item, which takes the expression from the row it was invoked on.
-    // Headless breakpoint control (control channel + cold-start spec): re-send a
-    // file's breakpoints to the active session after the store is mutated.
-    std::function<void(const std::filesystem::path&)> resend_breakpoints_for_file;
     // Start a debug session for a named launch config (empty name → the
     // selected/default config). Returns an error string (empty on success).
     std::function<std::string(const std::string&)> start_named_debug_config;

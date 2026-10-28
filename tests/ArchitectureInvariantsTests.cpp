@@ -258,8 +258,10 @@ void TestArchitectureFileSizes() {
              // 1625: the eight one-line Debug* forwarders; the action context and the
              // debug toolbar call DebugService directly (TD-2026-10-28-412).
              // 1624: DebugSwitchSession is DebugService::SwitchSession.
+             // 1623: ResendBreakpointsForFile is DebugService's (it now requests the
+             // repaint its callers relied on frame prep for).
              return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShellMembers.inc",
-                                                     1624);
+                                                     1623);
            });
 
   AssertRuleResultsPass(results);

@@ -570,13 +570,6 @@ void WorkspaceShell::StopAllDebugSessions() {
   RequestWindowRedraw();
 }
 
-void WorkspaceShell::ResendBreakpointsForFile(const std::filesystem::path& path) {
-  debug_service_.ResendBreakpointsForFile(path);
-  // The Breakpoints panel mirrors the line-breakpoint set; rebuild it whenever a
-  // breakpoint is toggled or a modifier edited (both route through here).
-  debug_service_.SyncBreakpointsPanel();
-}
-
 bool WorkspaceShell::IsDebugSessionActive() const { return debug_service_.IsSessionActive(); }
 
 bool WorkspaceShell::IsDebugSessionStopped() const {

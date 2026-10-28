@@ -330,7 +330,7 @@ DebugPaneMouseCoordinator& WorkspaceShell::MakeDebugPaneMouseCoordinator() {
                 if (context_.current_project_state.breakpoint_store.ToggleEnabled(path, line)) {
                   // Re-send the file's breakpoints (a disabled one drops off the
                   // adapter) and rebuild the panel + gutter.
-                  ResendBreakpointsForFile(path);
+                  debug_service_.ResendBreakpointsForFile(path);
                   RequestFocusedEditorRedraw();
                 }
               },

@@ -908,6 +908,30 @@ void TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation() {
          "single-line editor typing should redraw less than the full active pane;" + rects);
 }
 
+// Every action not run from a context menu first closes the tree context menu.
+// With no such menu open that must damage nothing: it used to request the whole
+// chrome strip (menu bar and any open popup) twice per keystroke-bound action.
+void TestWorkspaceShellActionWithNoTreeMenuOpenLeavesTheChromeAlone() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "left.cpp";
+  WriteFile(source, "alpha beta\ngamma\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::ExpandSelection,
+                                                 {}, WorkspaceShell::ActionSource::Shortcut),
+         "expand-selection should run");
+  const auto invalidation = shell.ConsumePendingRenderInvalidation();
+  const SDL_FRect menu_bar = WorkspaceShellTestAccess::CurrentLayout(shell).menu_bar;
+  Expect(!invalidation.full && !AnyRectIntersects(invalidation.rects, menu_bar),
+         "an action with no tree context menu open should not repaint the menu bar");
+}
+
 void TestWorkspaceShellWrappedEditorLineRangeRectCoversContinuationRows() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -6403,6 +6427,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorCaretDirtyRectFollowsActiveCaret);
   AddTest(tests, "WorkspaceShell/EditorTypingReturnsPartialEditorInvalidation",
           TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation);
+  AddTest(tests, "WorkspaceShell/ActionWithNoTreeMenuOpenLeavesTheChromeAlone",
+          TestWorkspaceShellActionWithNoTreeMenuOpenLeavesTheChromeAlone);
   AddTest(tests, "WorkspaceShell/WrappedEditorLineRangeRectCoversContinuationRows",
           TestWorkspaceShellWrappedEditorLineRangeRectCoversContinuationRows);
   AddTest(tests, "WorkspaceShell/CommandTextInputReturnsPartialCommandInvalidation",

@@ -239,6 +239,11 @@ void MenuCoordinator::OpenTreeContextMenu(TreeContextTargetKind target,
 }
 
 void MenuCoordinator::CloseTreeContextMenu() {
+  // Every action not run from a context menu closes it first, so the common case
+  // is "none is open": that repaints nothing.
+  if (!menu_state_.tree_context_menu.open) {
+    return;
+  }
   operations_.request_chrome_redraw();
   menu_state_.tree_context_menu = TreeContextMenuState{};
   operations_.request_chrome_redraw();

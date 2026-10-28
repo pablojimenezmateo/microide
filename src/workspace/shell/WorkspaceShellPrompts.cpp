@@ -736,7 +736,7 @@ void WorkspaceShell::CommitBreakpointModifierPrompt() {
       break;
   }
   MakePromptSurfaceService().DismissPromptSurface(true);
-  ResendBreakpointsForFile(path);
+  debug_service_.ResendBreakpointsForFile(path);
   RequestFocusedEditorRedraw();
 }
 
@@ -747,7 +747,7 @@ void WorkspaceShell::RemoveBreakpointFromMenu() {
     return;
   }
   context_.current_project_state.breakpoint_store.Remove(path, line);
-  ResendBreakpointsForFile(path);
+  debug_service_.ResendBreakpointsForFile(path);
   RequestFocusedEditorRedraw();
 }
 
@@ -769,7 +769,7 @@ void WorkspaceShell::BreakpointQuickActionFromMenu(ActionId id) {
     default:
       return;
   }
-  ResendBreakpointsForFile(path);
+  debug_service_.ResendBreakpointsForFile(path);
   RequestFocusedEditorRedraw();
 }
 
