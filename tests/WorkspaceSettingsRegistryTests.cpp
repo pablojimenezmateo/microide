@@ -176,6 +176,26 @@ void TestSettingsCatalogEdgeValuesRoundTrip() {
   }
 }
 
+// A bool setting is stored by the same token sets it is read with
+// (SettingFlagEnabled): the store used to take only lower-case tokens, so a
+// typed `TRUE` was refused although every reader would have read it as on.
+void TestSettingsBoolValuesParseInAnyCase() {
+  const SettingSpec* spec = FindBuiltinSettingSpec("editor.snippets.enabled");
+  Expect(spec != nullptr && spec->type == microide::workspace::SettingType::Bool,
+         "a bool setting to parse into");
+  for (std::string_view on : {"true", "TRUE", "On", "yes", "1"}) {
+    const auto parsed = ParseSettingValue(*spec, on);
+    Expect(parsed.has_value() && SerializeSettingValue(*parsed) == "true",
+           std::string(on) + " stores as true");
+  }
+  for (std::string_view off : {"false", "No", "OFF", "0"}) {
+    const auto parsed = ParseSettingValue(*spec, off);
+    Expect(parsed.has_value() && SerializeSettingValue(*parsed) == "false",
+           std::string(off) + " stores as false");
+  }
+  Expect(!ParseSettingValue(*spec, "maybe").has_value(), "a non-boolean is refused");
+}
+
 void TestSettingsIntValuesClampAtStoreTime() {
   const SettingSpec* spec = FindBuiltinSettingSpec("editor.font_size");
   Expect(spec != nullptr, "font_size spec should exist");
@@ -657,6 +677,8 @@ void RegisterWorkspaceSettingsRegistryTests(std::vector<TestCase>& tests) {
           TestSettingsCatalogDefaultsRoundTrip);
   AddTest(tests, "WorkspaceSettingsRegistry/EdgeValuesRoundTrip",
           TestSettingsCatalogEdgeValuesRoundTrip);
+  AddTest(tests, "WorkspaceSettingsRegistry/BoolValuesParseInAnyCase",
+          TestSettingsBoolValuesParseInAnyCase);
   AddTest(tests, "WorkspaceSettingsRegistry/IntValuesClampAtStoreTime",
           TestSettingsIntValuesClampAtStoreTime);
   AddTest(tests, "WorkspaceSettingsRegistry/RejectsInvalidEnums",

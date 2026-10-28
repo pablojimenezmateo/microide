@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <string_view>
 
+#include "util/StringUtil.h"
 #include "util/Parse.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceTextSearch.h"
@@ -279,31 +280,21 @@ std::optional<UiScaleRequest> BuildUiScaleRequest(const std::vector<std::string>
 }
 
 std::optional<SoftTabsRequest> BuildSoftTabsRequest(const std::vector<std::string>& args) {
-  if (args.empty()) {
+  const std::optional<bool> enabled =
+      args.empty() ? std::nullopt : util::ParseBoolToken(args[0]);
+  if (!enabled.has_value()) {
     return std::nullopt;
   }
-  const std::string value = ToLower(args[0]);
-  if (value != "on" && value != "off" && value != "true" && value != "false" &&
-      value != "1" && value != "0") {
-    return std::nullopt;
-  }
-  return SoftTabsRequest{
-      .enabled = value == "on" || value == "true" || value == "1",
-  };
+  return SoftTabsRequest{.enabled = *enabled};
 }
 
 std::optional<WrapRequest> BuildWrapRequest(const std::vector<std::string>& args) {
-  if (args.empty()) {
+  const std::optional<bool> enabled =
+      args.empty() ? std::nullopt : util::ParseBoolToken(args[0]);
+  if (!enabled.has_value()) {
     return std::nullopt;
   }
-  const std::string value = ToLower(args[0]);
-  if (value != "on" && value != "off" && value != "true" && value != "false" &&
-      value != "1" && value != "0") {
-    return std::nullopt;
-  }
-  return WrapRequest{
-      .enabled = value == "on" || value == "true" || value == "1",
-  };
+  return WrapRequest{.enabled = *enabled};
 }
 
 FocusRequest BuildFocusRequest(const std::vector<std::string>& args) {

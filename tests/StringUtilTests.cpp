@@ -726,7 +726,14 @@ void TestStringUtilConfigTokenSets() {
   for (const std::string_view other : {"", "word", "/tmp/dap.log", "offset", "nope", "falsey"}) {
     Expect(!IsFalseyToken(other) && !IsTruthyToken(other),
            std::string("`") + std::string(other) + "` is neither falsey nor truthy");
+    Expect(!microide::util::ParseBoolToken(other).has_value(),
+           std::string("`") + std::string(other) + "` does not parse as a boolean");
   }
+  // ParseBoolToken is the two sets as one parse: what a command argument (`:wrap
+  // On`) and a typed bool setting are read with, so neither keeps its own list.
+  Expect(microide::util::ParseBoolToken("On") == std::optional<bool>(true) &&
+             microide::util::ParseBoolToken("NO") == std::optional<bool>(false),
+         "ParseBoolToken answers the truthy and falsey sets in any casing");
   // SettingFlagEnabled is "enabled unless falsey", so a non-boolean payload
   // ("word" for editor.wrap) stays enabled.
   Expect(!IsFalseyToken("word"), "a non-boolean setting payload must not read as disabled");

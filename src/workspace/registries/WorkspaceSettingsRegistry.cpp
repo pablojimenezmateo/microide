@@ -6,6 +6,7 @@
 #include <system_error>
 #include <unordered_map>
 
+#include "util/StringUtil.h"
 #include "plugin/PluginHost.h"
 #include "util/Parse.h"
 #include "workspace/WorkspaceCommandParsing.h"
@@ -1303,11 +1304,10 @@ SettingValue DefaultSettingValue(const SettingSpec& spec) {
 std::optional<SettingValue> ParseSettingValue(const SettingSpec& spec, std::string_view text) {
   switch (spec.type) {
     case SettingType::Bool:
-      if (text == "true" || text == "1" || text == "on" || text == "yes") {
-        return true;
-      }
-      if (text == "false" || text == "0" || text == "off" || text == "no") {
-        return false;
+      // The token sets every bool setting is READ with (SettingFlagEnabled), so a
+      // value the store accepts is one the readers agree on, in any case.
+      if (const std::optional<bool> value = util::ParseBoolToken(text)) {
+        return *value;
       }
       return std::nullopt;
 

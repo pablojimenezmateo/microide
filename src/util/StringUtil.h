@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <cstddef>
 #include <limits>
 #include <span>
@@ -183,6 +184,18 @@ inline void AppendUnsigned(std::string& out, std::size_t value) {
          EqualsAsciiCaseInsensitive(text, "true") ||
          EqualsAsciiCaseInsensitive(text, "yes") ||
          EqualsAsciiCaseInsensitive(text, "on");
+}
+// A token that must be one or the other: true / false for the two sets above,
+// nullopt for anything else (a command argument or a typed setting value that is
+// not a boolean).
+[[nodiscard]] inline std::optional<bool> ParseBoolToken(std::string_view text) {
+  if (IsTruthyToken(text)) {
+    return true;
+  }
+  if (IsFalseyToken(text)) {
+    return false;
+  }
+  return std::nullopt;
 }
 // Terminal display column width of a codepoint: 0 for zero-width / combining
 // marks, 2 for East Asian wide / fullwidth / emoji-presentation codepoints, and
