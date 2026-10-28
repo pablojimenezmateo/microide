@@ -592,6 +592,14 @@ gains `PersistenceCoordinator&` (which now exposes `AvailableColorschemeNames()`
 by reference: the list used to be copied out per call) and the output channels.
 Seven fields gone. Operations 155 -> 148.
 
+**sidebar, compare/merge openers, tab one-liners** (2026-10-28) -- `Services`
+gains `SidebarService&` and `CompareMergeService&`: the eleven sidebar verbs, the
+four comparison/merge openers and five tab one-liners (untitled, find by
+specifier, reopen active, split, focus other group) call them. Two shell
+forwarders lost their last caller and went (members cap 1623 -> 1621). The unit
+test that builds a context without a shell gets every service from
+`tests/support/ActionContextTestServices.h`. Operations 148 -> 128.
+
 Original plan, one area per commit so each slice is reviewable and lane-checked: give each
 executor its own context type holding references to the services it calls
 (`AssistService&`, `EditorTabService&`, `TerminalPanelService&`, …, the

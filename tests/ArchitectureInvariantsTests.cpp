@@ -260,8 +260,10 @@ void TestArchitectureFileSizes() {
              // 1624: DebugSwitchSession is DebugService::SwitchSession.
              // 1623: ResendBreakpointsForFile is DebugService's (it now requests the
              // repaint its callers relied on frame prep for).
+             // 1621: ShowOutlineSidebar / ShowPluginSidebar, whose last caller was
+             // the action context (it holds SidebarService now).
              return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShellMembers.inc",
-                                                     1623);
+                                                     1621);
            });
 
   AssertRuleResultsPass(results);

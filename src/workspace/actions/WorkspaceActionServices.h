@@ -30,6 +30,8 @@ class EditorTabService;
 class TextInputCoordinator;
 class QuickPickService;
 class PersistenceCoordinator;
+class SidebarService;
+class CompareMergeService;
 class RemoteHostService;
 
 // Defined in GitSidebarCommandCenter.h; only the type is needed here (function
@@ -79,10 +81,6 @@ class WorkspaceActionContext {
     std::function<ProjectOpenPickerResult()> open_native_project_picker;
     std::function<ProjectOpenPickerResult()> open_native_file_picker;
     std::function<SidebarMode()> active_sidebar_mode;
-    std::function<void()> toggle_sidebar;
-    std::function<void()> close_sidebar;
-    std::function<void(const std::filesystem::path&)> show_tree_sidebar;
-    std::function<void(std::string, bool)> show_search_sidebar;
     std::function<void(ProjectSearchEditField)> begin_project_search_edit;
     // Move (`cut`) or copy `source` into `directory` (PathMutationCoordinator::
     // PastePath); empty on success, else why not.
@@ -92,15 +90,8 @@ class WorkspaceActionContext {
     // The git view's Commit button: whether it is live, and pressing it.
     std::function<bool()> can_open_git_commit;
     std::function<bool()> open_git_commit_workflow;
-    std::function<void()> show_problems_sidebar;
-    std::function<void()> show_git_sidebar;
-    std::function<void()> show_tests_sidebar;
-    std::function<void()> show_outline_sidebar;
     // A host-owned item view (Changed on Host, Host): IsHostOwnedItemView.
-    std::function<void(SidebarMode mode)> show_host_view_sidebar;
-    std::function<bool(std::string_view, bool)> show_plugin_sidebar;
     std::function<std::optional<SDL_FRect>()> current_window_rect;
-    std::function<void()> refresh_project_files;
     std::function<void()> reload_clean_open_buffers_from_disk;
     // Ask git again now, whatever view is showing (Git: Refresh).
     std::function<void()> request_git_refresh;
@@ -156,15 +147,7 @@ class WorkspaceActionContext {
     std::function<bool(std::string*)> discover_tests_for_active_buffer;
     std::function<bool(const std::vector<std::string>&, std::string*)> run_tests;
     std::function<bool(std::string*)> run_all_discovered_tests;
-    std::function<void(const std::filesystem::path&, const std::string&)> open_compare_picker_for_path;
-    std::function<void(const project::GitCommitEntry&)> open_comparison;
     // Non-git ("plain") comparison of two arbitrary sides (file/buffer/clipboard).
-    std::function<bool(CompareInput, CompareInput)> open_plain_comparison;
-    std::function<bool(const std::filesystem::path&,
-                       const std::filesystem::path&,
-                       const std::filesystem::path&,
-                       const std::filesystem::path&)>
-        open_merge_editor;
     // Batch review sessions: switch to Source Control and open diff/merge tabs,
     // deduping + cleaning stale review tabs. Return a summary outcome.
     std::function<ReviewOpenOutcome()> open_conflict_review;
@@ -178,12 +161,8 @@ class WorkspaceActionContext {
         open_editor_view_for_path;
     std::function<void(const std::filesystem::path&)> open_file;
     std::function<bool(const std::filesystem::path&)> open_file_in_new_tab;
-    std::function<bool()> open_untitled_tab;
-    std::function<std::optional<std::size_t>(std::string_view, std::string*)>
-        find_tab_index_by_specifier;
     std::function<void(std::size_t)> activate_tab;
     std::function<bool(std::size_t)> move_active_tab_to;
-    std::function<bool()> reopen_active_tab;
     std::function<bool(std::size_t)> save_tab;
     // The interactive save. Same tab, same contract, except the formatter runs off
     // the shell thread and the write lands when it returns.
@@ -194,8 +173,6 @@ class WorkspaceActionContext {
     std::function<SaveAllOutcome()> save_all_dirty_tabs;
     std::function<bool(std::size_t, const std::filesystem::path&, std::string*)> save_tab_as;
     std::function<void()> reset_caret_blink;
-    std::function<bool(EditorSplitOrientation)> split_editor_group;
-    std::function<bool()> focus_other_group;
     // VS Code's focusLeft/Right/Above/BelowGroup and moveActiveEditorGroup*.
     // Go Back (-1) / Go Forward (+1): the place to reveal, if there is one.
     std::function<bool()> close_editor_group;
@@ -338,6 +315,8 @@ class WorkspaceActionContext {
     NotificationService& notifications;
     PersistenceCoordinator& persistence;
     const WorkspaceOutputChannels& output_channels;
+    SidebarService& sidebar;
+    CompareMergeService& compare_merge;
   };
 
   WorkspaceActionContext(ProjectCatalogState& project_catalog,

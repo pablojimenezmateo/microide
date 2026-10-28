@@ -475,14 +475,6 @@ void WorkspaceShell::ShowTestsSidebar() {
   MakeSidebarService().ShowTests();
 }
 
-void WorkspaceShell::ShowOutlineSidebar() {
-  MakeSidebarService().ShowOutline();
-}
-
-bool WorkspaceShell::ShowPluginSidebar(std::string_view id, bool temporary) {
-  return MakeSidebarService().ShowPlugin(id, temporary);
-}
-
 void WorkspaceShell::CloseSidebar() {
   MakeSidebarService().Close();
 }

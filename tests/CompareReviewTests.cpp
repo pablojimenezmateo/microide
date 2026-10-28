@@ -1,17 +1,11 @@
 #include "TestSupport.h"
+#include "support/ActionContextTestServices.h"
 
 #include "compare/BranchReviewStateService.h"
 #include "compare/BranchReviewStateTypes.h"
 #include "compare/ComparePresentationModel.h"
 #include "compare/CompareReviewTypes.h"
 #include "compare/CompareSemanticMetadata.h"
-#include "workspace/services/AssistService.h"
-#include "workspace/debug/DebugService.h"
-#include "workspace/services/TerminalPanelService.h"
-#include "workspace/services/EditorTabService.h"
-#include "workspace/services/QuickPickService.h"
-#include "workspace/persistence/WorkspacePersistenceCoordinator.h"
-#include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/git/PatchApplyService.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
@@ -117,36 +111,8 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
            return false;
          };
 
-         microide::workspace::AssistService assist;
-         microide::workspace::DebugService debug;
-         microide::workspace::TerminalPanelService terminal_panel(project_state, {});
-         microide::workspace::EditorTabService editor_tabs(
-             microide::workspace::TabCoordinator(catalog, project_state, {}));
-         microide::workspace::PromptState prompts;
-         microide::workspace::MenuSurfaceState menus;
-         microide::workspace::TextInputState text_input_state;
-         microide::workspace::TextInputCoordinator text_input(project_state, prompts, menus,
-                                                              text_input_state, {});
-         microide::workspace::QuickPickService quick_pick;
-         microide::workspace::NotificationService notifications;
-         microide::workspace::WorkspaceContext workspace_context;
-         microide::render::Theme theme;
-         std::vector<std::string> colorschemes;
-         microide::render::ThemeNameCatalog theme_names;
-         microide::workspace::SettingsStore settings;
-         microide::workspace::PersistenceCoordinator persistence(
-             workspace_context, theme, colorschemes, theme_names, ui_scale, settings, {});
-         microide::workspace::WorkspaceOutputChannels output_channels;
-         WorkspaceActionContext context(catalog, project_state, ui_scale,
-                                        {.assist = assist,
-                                         .debug = debug,
-                                         .terminal_panel = terminal_panel,
-                                         .editor_tabs = editor_tabs,
-                                         .text_input = text_input,
-                                         .quick_pick = quick_pick,
-                                         .notifications = notifications,
-                                         .persistence = persistence,
-                                         .output_channels = output_channels},
+         microide::tests::ActionContextTestServices services(catalog, project_state, ui_scale);
+         WorkspaceActionContext context(catalog, project_state, ui_scale, services.Services(),
                                         std::move(operations));
          ActionCoordinator coordinator(context);
 

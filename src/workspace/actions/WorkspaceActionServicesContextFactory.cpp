@@ -383,6 +383,8 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .notifications = notification_service_,
           .persistence = MakePersistenceCoordinator(),
           .output_channels = output_channels_,
+          .sidebar = MakeSidebarService(),
+          .compare_merge = MakeCompareMergeService(),
       },
       WorkspaceActionContext::Operations{
           .close_tree_context_menu = [this]() { MakeMenuCoordinator().CloseTreeContextMenu(); },
@@ -421,13 +423,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .open_native_file_picker =
               [this]() { return OpenNativeFilePicker(nullptr); },
           .active_sidebar_mode = [this]() { return ActiveSidebarMode(); },
-          .toggle_sidebar = [this]() { ToggleSidebar(); },
-          .close_sidebar = [this]() { CloseSidebar(); },
-          .show_tree_sidebar = [this](const std::filesystem::path& root) { ShowTreeSidebar(root); },
-          .show_search_sidebar =
-              [this](std::string query, bool temporary) {
-                ShowSearchSidebar(std::move(query), temporary);
-              },
           .begin_project_search_edit = [this](ProjectSearchEditField field) { BeginProjectSearchEdit(field); },
           .paste_tree_path =
               [this](const std::filesystem::path& source, bool cut, const std::filesystem::path& directory) {
@@ -438,17 +433,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .refresh_project_search = [this]() { RefreshProjectSearch(); },
           .can_open_git_commit = [this]() { return CanOpenGitCommitButton(); },
           .open_git_commit_workflow = [this]() { return OpenCommitWorkflow(); },
-          .show_problems_sidebar = [this]() { ShowProblemsSidebar(); },
-          .show_git_sidebar = [this]() { ShowGitSidebar(); },
-          .show_tests_sidebar = [this]() { ShowTestsSidebar(); },
-          .show_outline_sidebar = [this]() { ShowOutlineSidebar(); },
-          .show_host_view_sidebar = [this](SidebarMode mode) { MakeSidebarService().ShowHostView(mode); },
-          .show_plugin_sidebar =
-              [this](std::string_view id, bool temporary) {
-                return ShowPluginSidebar(id, temporary);
-              },
           .current_window_rect = [this]() { return CurrentWindowRect(); },
-          .refresh_project_files = [this]() { RefreshProjectFiles(); },
           .reload_clean_open_buffers_from_disk = [this]() { ReloadCleanOpenBuffersFromDisk(); },
           .request_git_refresh = [this]() { RequestGitSidebarRefresh(); },
           .dispatch_git_operation =
@@ -616,23 +601,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this](std::string* error_message) {
                 return RunAllDiscoveredTests(error_message);
               },
-          .open_compare_picker_for_path =
-              [this](const std::filesystem::path& path, const std::string& commit_spec) {
-                OpenComparePickerForPath(path, commit_spec);
-              },
-          .open_comparison = [this](const project::GitCommitEntry& commit) { OpenComparison(commit); },
-          .open_plain_comparison =
-              [this](CompareInput left, CompareInput right) {
-                return MakeCompareMergeService().OpenPlainComparison(std::move(left),
-                                                                     std::move(right));
-              },
-          .open_merge_editor =
-              [this](const std::filesystem::path& base_path,
-                     const std::filesystem::path& incoming_path,
-                     const std::filesystem::path& current_path,
-                     const std::filesystem::path& output_path) {
-                return OpenMergeEditor(base_path, incoming_path, current_path, output_path);
-              },
           .open_conflict_review = [make_review]() { return make_review().OpenConflictReview(); },
           .open_branch_review =
               [make_review](const std::string& ref) { return make_review().OpenBranchReview(ref); },
@@ -651,14 +619,8 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
           .open_file_in_new_tab =
               [this](const std::filesystem::path& path) { return OpenFileInNewTab(path); },
-          .open_untitled_tab = [this]() { return OpenUntitledTab(); },
-          .find_tab_index_by_specifier =
-              [this](std::string_view specifier, std::string* error_message) {
-                return FindTabIndexBySpecifier(specifier, error_message);
-              },
           .activate_tab = [this](std::size_t index) { ActivateTab(index); },
           .move_active_tab_to = [this](std::size_t index) { return MoveActiveTabTo(index); },
-          .reopen_active_tab = [this]() { return ReopenActiveTab(); },
           .save_tab = [this](std::size_t index) { return SaveTab(index, SaveMode::Blocking); },
           .save_tab_deferred =
               [this](std::size_t index) { return SaveTab(index, SaveMode::Deferred); },
@@ -728,11 +690,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                     error);
               },
           .reset_caret_blink = [this]() { ResetCaretBlink(); },
-          .split_editor_group =
-              [this](EditorSplitOrientation orientation) {
-                return SplitEditorGroup(orientation);
-              },
-          .focus_other_group = [this]() { return FocusOtherEditorGroup(); },
           .close_editor_group = [this]() { return CloseEditorGroup(); },
           .request_close_tab = [this](std::size_t index) { RequestCloseTab(index); },
           .request_close_tabs =

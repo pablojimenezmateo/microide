@@ -1059,8 +1059,6 @@
   void ShowProblemsSidebar();
   void ShowGitSidebar();
   void ShowTestsSidebar();
-  void ShowOutlineSidebar();
-  bool ShowPluginSidebar(std::string_view id, bool temporary = false);
   // Right-side debug pane convenience wrappers (forward to MakeDebugPaneService()).
   void ShowDebugPaneMode(DebugPaneMode mode);
   void ToggleDebugPane();

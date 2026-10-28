@@ -19,7 +19,9 @@
 #include "workspace/shell/WorkspaceShell.h"
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 #include "workspace/git/CompareTabReview.h"
+#include "workspace/services/CompareMergeService.h"
 #include "workspace/services/EditorTabService.h"
+#include "workspace/services/SidebarService.h"
 #include "workspace/services/QuickPickService.h"
 #include "workspace/services/RemoteHostService.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
@@ -125,18 +127,18 @@ void WorkspaceActionContext::ShowSidebarSurface() {
   // coordinator's toggle (layout change, window repaint), not a flag flip, which
   // left the editor painted where it used to be.
   if (!state_.sidebar.visible) {
-    operations_.toggle_sidebar();
+    services_.sidebar.Toggle();
     return;
   }
   state_.surface.focus = FocusTarget::Sidebar;
 }
 
 void WorkspaceActionContext::ToggleSidebar() {
-  operations_.toggle_sidebar();
+  services_.sidebar.Toggle();
 }
 
 void WorkspaceActionContext::CloseSidebar() {
-  operations_.close_sidebar();
+  services_.sidebar.Close();
 }
 
 bool WorkspaceActionContext::ShowSidebarView(const SidebarViewInfo& view,
@@ -144,32 +146,29 @@ bool WorkspaceActionContext::ShowSidebarView(const SidebarViewInfo& view,
                                              const std::string& query) {
   switch (view.mode) {
     case SidebarMode::Tree:
-      operations_.show_tree_sidebar(root);
+      services_.sidebar.ShowTree(root);
       return true;
     case SidebarMode::Search:
-      operations_.show_search_sidebar(query, false);
+      services_.sidebar.ShowSearch(query, false);
       return true;
     case SidebarMode::Problems:
-      operations_.show_problems_sidebar();
+      services_.sidebar.ShowProblems();
       return true;
     case SidebarMode::Git:
-      operations_.show_git_sidebar();
+      services_.sidebar.ShowGit();
       return true;
     case SidebarMode::Tests:
-      operations_.show_tests_sidebar();
+      services_.sidebar.ShowTests();
       return true;
     case SidebarMode::Outline:
-      operations_.show_outline_sidebar();
+      services_.sidebar.ShowOutline();
       return true;
     case SidebarMode::HostChanges:
     case SidebarMode::Host:
-      if (!operations_.show_host_view_sidebar) {
-        return false;
-      }
-      operations_.show_host_view_sidebar(view.mode);
+      services_.sidebar.ShowHostView(view.mode);
       return true;
     case SidebarMode::Plugin:
-      return operations_.show_plugin_sidebar(view.id, false);
+      return services_.sidebar.ShowPlugin(view.id, false);
     case SidebarMode::None:
       return false;
   }
@@ -190,13 +189,13 @@ bool WorkspaceActionContext::ToggleSidebarView(const SidebarViewInfo& view,
     case SidebarMode::Host:
     case SidebarMode::Plugin:
       if (same_view) {
-        operations_.close_sidebar();
+        services_.sidebar.Close();
         return true;
       }
       return ShowSidebarView(view, root, query);
     case SidebarMode::Search:
       if (same_view && !state_.sidebar.temporary) {
-        operations_.close_sidebar();
+        services_.sidebar.Close();
         return true;
       }
       return ShowSidebarView(view, root, query);
@@ -218,7 +217,7 @@ void WorkspaceActionContext::SetSidebarWidth(float width) {
 }
 
 void WorkspaceActionContext::RefreshProjectFiles() {
-  operations_.refresh_project_files();
+  services_.sidebar.RefreshProjectFiles();
 }
 
 void WorkspaceActionContext::ReloadCleanOpenBuffersFromDisk() {
@@ -643,11 +642,11 @@ void WorkspaceActionContext::ToggleLayoutMode() {
 }
 
 void WorkspaceActionContext::ShowProjectSearchSidebar(std::string query) {
-  operations_.show_search_sidebar(std::move(query), true);
+  services_.sidebar.ShowSearch(std::move(query), true);
 }
 
 void WorkspaceActionContext::ShowProjectReplace(std::string query) {
-  operations_.show_search_sidebar(std::move(query), true);
+  services_.sidebar.ShowSearch(std::move(query), true);
   BeginProjectSearchEdit(ProjectSearchEditField::Replace);
 }
 
@@ -659,7 +658,7 @@ void WorkspaceActionContext::BeginProjectSearchEdit(ProjectSearchEditField field
 
 void WorkspaceActionContext::ApplyProjectSearchViewCommand(ActionId id) {
   if (operations_.active_sidebar_mode() != SidebarMode::Search) {
-    operations_.show_search_sidebar({}, false);
+    services_.sidebar.ShowSearch({}, false);
   }
   auto& search = state_.overlay.workflow.project_search;
   switch (id) {
@@ -912,12 +911,12 @@ std::filesystem::path WorkspaceActionContext::ResolveComparePath(
 
 void WorkspaceActionContext::OpenComparePickerForPath(const std::filesystem::path& path,
                                                       const std::string& commit_spec) {
-  operations_.open_compare_picker_for_path(path, commit_spec);
+  services_.compare_merge.OpenPickerForPath(path, commit_spec);
 }
 
 void WorkspaceActionContext::OpenHeadComparison(const std::filesystem::path& path) {
   state_.overlay.workflow.compare_picker.path = path.lexically_normal();
-  operations_.open_comparison(project::GitCommitEntry{
+  services_.compare_merge.OpenComparison(project::GitCommitEntry{
       .hash = "HEAD",
       .short_hash = "HEAD",
       .subject = "HEAD",
@@ -993,8 +992,7 @@ std::string WorkspaceActionContext::CompareFiles(const std::filesystem::path& le
   if (!right.has_value()) {
     return "Cannot read right file: " + right_path.string();
   }
-  if (!operations_.open_plain_comparison ||
-      !operations_.open_plain_comparison(std::move(*left), std::move(*right))) {
+  if (!services_.compare_merge.OpenPlainComparison(std::move(*left), std::move(*right))) {
     return "Failed to open comparison";
   }
   return {};
@@ -1035,8 +1033,7 @@ std::string WorkspaceActionContext::CompareWithSelected(ActionSource source) {
   if (!current.has_value()) {
     return error;
   }
-  if (!operations_.open_plain_comparison ||
-      !operations_.open_plain_comparison(std::move(stashed), std::move(*current))) {
+  if (!services_.compare_merge.OpenPlainComparison(std::move(stashed), std::move(*current))) {
     return "Failed to open comparison";
   }
   return {};
@@ -1060,8 +1057,7 @@ std::string WorkspaceActionContext::CompareWithClipboard(ActionSource source) {
       .path = {},
       .editable = false,
   };
-  if (!operations_.open_plain_comparison ||
-      !operations_.open_plain_comparison(std::move(clipboard_input), std::move(*current))) {
+  if (!services_.compare_merge.OpenPlainComparison(std::move(clipboard_input), std::move(*current))) {
     return "Failed to open comparison";
   }
   return {};
@@ -1120,7 +1116,7 @@ void WorkspaceActionContext::OpenMergeEditor(const std::filesystem::path& base_p
                                              const std::filesystem::path& incoming_path,
                                              const std::filesystem::path& current_path,
                                              const std::filesystem::path& output_path) {
-  operations_.open_merge_editor(base_path, incoming_path, current_path, output_path);
+  services_.compare_merge.OpenMergeEditor(base_path, incoming_path, current_path, output_path);
 }
 
 namespace {
@@ -1201,13 +1197,13 @@ bool WorkspaceActionContext::OpenPathInNewTab(const std::filesystem::path& path)
 }
 
 bool WorkspaceActionContext::OpenUntitledTab() {
-  return operations_.open_untitled_tab();
+  return services_.editor_tabs.OpenUntitled();
 }
 
 std::optional<std::size_t> WorkspaceActionContext::FindTabIndexBySpecifier(
     std::string_view specifier,
     std::string* error_message) const {
-  return operations_.find_tab_index_by_specifier(specifier, error_message);
+  return services_.editor_tabs.FindIndexBySpecifier(specifier, error_message);
 }
 
 void WorkspaceActionContext::ActivateTab(std::size_t index) {
@@ -1244,7 +1240,7 @@ std::optional<DeferredTabHandle> WorkspaceActionContext::TakeRecentlyClosedEdito
 }
 
 bool WorkspaceActionContext::ReopenActiveTab() {
-  return operations_.reopen_active_tab();
+  return services_.editor_tabs.ReopenActive();
 }
 
 bool WorkspaceActionContext::SaveTab(std::size_t index) {
@@ -1315,7 +1311,7 @@ bool WorkspaceActionContext::SplitEditorGroup(EditorSplitOrientation orientation
     }
     return false;
   }
-  if (!operations_.split_editor_group(orientation)) {
+  if (!services_.editor_tabs.SplitEditorGroup(orientation)) {
     if (error_message != nullptr) {
       *error_message = "Failed to split the active editor";
     }
@@ -1331,7 +1327,7 @@ bool WorkspaceActionContext::SplitEditorGroup(EditorSplitOrientation orientation
 }
 
 bool WorkspaceActionContext::FocusOtherGroup() {
-  return operations_.focus_other_group();
+  return services_.editor_tabs.FocusOtherGroup();
 }
 
 bool WorkspaceActionContext::CloseEditorGroup() {
