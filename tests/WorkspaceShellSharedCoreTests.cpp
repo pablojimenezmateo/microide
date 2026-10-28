@@ -68,7 +68,6 @@ using microide::workspace::SidebarViewIds;
 using microide::workspace::SidebarViewRequest;
 using microide::workspace::SidebarViewSpec;
 using microide::workspace::SidebarViews;
-using microide::workspace::SplitSyntaxLines;
 using microide::workspace::TreeContextTargetKind;
 using microide::workspace::ToLower;
 using microide::workspace::WorkspaceCommandNames;
@@ -228,10 +227,11 @@ void TestWorkspaceSharedQuoteAndLineEndings() {
 }
 
 void TestWorkspaceSharedSplitSyntaxLines() {
-  const auto lines = SplitSyntaxLines("alpha\nbeta\ngamma");
-  Expect(lines.size() == 3, "split syntax lines should produce three rows");
-  Expect(lines[0] == "alpha", "first syntax line mismatch");
-  Expect(lines[2] == "gamma", "last syntax line mismatch");
+  const auto lines = microide::util::SplitOnByte("alpha\nbeta\r\n\ngamma\n", '\n');
+  Expect(lines.size() == 4, "one record per newline, none after the terminating one");
+  Expect(lines[0] == "alpha" && lines[1] == "beta\r" && lines[2].empty() && lines[3] == "gamma",
+         "a CR is kept and an empty line is a record");
+  Expect(microide::util::SplitOnByte("a\nb\nc", '\n', 2).size() == 2, "the cap bounds the records");
 }
 
 void TestWorkspaceSharedSerializeLines() {
@@ -1065,7 +1065,7 @@ void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/CompletePathVanishedDirectoryReturnsEmpty",
           TestWorkspaceSharedCompletePathVanishedDirectoryReturnsEmpty);
   AddTest(tests, "WorkspaceShared/QuoteAndLineEndings", TestWorkspaceSharedQuoteAndLineEndings);
-  AddTest(tests, "WorkspaceShared/SplitSyntaxLines", TestWorkspaceSharedSplitSyntaxLines);
+  AddTest(tests, "WorkspaceShared/SplitOnByteKeepsEmptyRecordsAndCarriageReturns", TestWorkspaceSharedSplitSyntaxLines);
   AddTest(tests, "WorkspaceShared/SerializeLines", TestWorkspaceSharedSerializeLines);
   AddTest(tests, "WorkspaceShared/ReadFileText", TestWorkspaceSharedReadFileText);
   AddTest(tests, "WorkspaceShared/AtomicTextWrite", TestWorkspaceSharedAtomicTextWrite);

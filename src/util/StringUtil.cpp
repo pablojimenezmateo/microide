@@ -703,38 +703,34 @@ std::vector<std::string_view> SplitAsciiWhitespace(std::string_view text) {
   return parts;
 }
 
-std::vector<std::string_view> SplitNulDelimited(std::string_view text) {
-  std::vector<std::string_view> records;
-  std::size_t offset = 0;
-  while (offset < text.size()) {
-    const std::size_t nul = text.find('\0', offset);
-    if (nul == std::string_view::npos) {
-      records.push_back(text.substr(offset));
-      break;
-    }
-    records.push_back(text.substr(offset, nul - offset));
-    offset = nul + 1;
-  }
-  return records;
-}
-
-std::vector<std::string_view> SplitNulDelimited(std::string_view text, std::size_t max_records) {
+std::vector<std::string_view> SplitOnByte(std::string_view text, char delimiter,
+                                          std::size_t max_records) {
   std::vector<std::string_view> records;
   if (max_records == 0) {
     return records;
   }
-  records.reserve(std::min<std::size_t>(max_records, 1024));
+  if (max_records != static_cast<std::size_t>(-1)) {
+    records.reserve(std::min<std::size_t>(max_records, 1024));
+  }
   std::size_t offset = 0;
   while (offset < text.size() && records.size() < max_records) {
-    const std::size_t nul = text.find('\0', offset);
-    if (nul == std::string_view::npos) {
+    const std::size_t end = text.find(delimiter, offset);
+    if (end == std::string_view::npos) {
       records.push_back(text.substr(offset));
       break;
     }
-    records.push_back(text.substr(offset, nul - offset));
-    offset = nul + 1;
+    records.push_back(text.substr(offset, end - offset));
+    offset = end + 1;
   }
   return records;
+}
+
+std::vector<std::string_view> SplitNulDelimited(std::string_view text) {
+  return SplitOnByte(text, '\0');
+}
+
+std::vector<std::string_view> SplitNulDelimited(std::string_view text, std::size_t max_records) {
+  return SplitOnByte(text, '\0', max_records);
 }
 
 std::string CollapseAsciiWhitespace(std::string_view text) {

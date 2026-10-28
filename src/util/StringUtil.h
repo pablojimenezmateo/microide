@@ -309,6 +309,11 @@ bool IsAllAsciiDigits(std::string_view text);
 // Leading/trailing whitespace produces no empty tokens. The returned views are
 // valid only for the lifetime of `text`.
 std::vector<std::string_view> SplitAsciiWhitespace(std::string_view text);
+// Split `text` on `delimiter` into records, returning views into `text` and
+// stopping after `max_records`. Empty records (adjacent delimiters) are kept; a
+// single terminating delimiter yields no trailing empty record.
+std::vector<std::string_view> SplitOnByte(std::string_view text, char delimiter,
+                                          std::size_t max_records = static_cast<std::size_t>(-1));
 // Split `text` on NUL bytes into records, returning views into `text`. Empty
 // records (adjacent NULs) ARE preserved so positional `-z` git output stays
 // aligned; a single terminating NUL yields no trailing empty record. Views are

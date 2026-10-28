@@ -198,12 +198,12 @@ std::optional<ParsedGitConflictOutput> ParseGitConflictOutput(const compare::Mer
                                                               std::string_view text) {
   bool saw_conflict_block = false;
 
-  const std::vector<std::string> lines = SplitSyntaxLines(text);
+  const std::vector<std::string_view> lines = util::SplitOnByte(text, '\n');
   ParsedGitConflictOutput parsed;
   std::vector<ParsedGitConflictSegment> segments;
   std::size_t line_index = 0;
   // Git's conflict separator is a run of '=' whose length is merge.conflictMarkerSize
-  // (default 7, but configurable). SplitSyntaxLines keeps a trailing '\r', so a CRLF
+  // (default 7, but configurable). SplitOnByte keeps a trailing '\r', so a CRLF
   // working-tree file yields "=======\r"; strip it, then match "all '=' and length
   // >= 7" so a non-default marker size still parses. A content line like
   // "======= heading" (trailing text) is excluded, matching how the sigil markers
@@ -217,10 +217,10 @@ std::optional<ParsedGitConflictOutput> ParseGitConflictOutput(const compare::Mer
   while (line_index < lines.size()) {
     if (!lines[line_index].starts_with("<<<<<<<")) {
       ParsedGitConflictSegment segment;
-      segment.plain_lines.push_back(lines[line_index]);
+      segment.plain_lines.emplace_back(lines[line_index]);
       ++line_index;
       while (line_index < lines.size() && !lines[line_index].starts_with("<<<<<<<")) {
-        segment.plain_lines.push_back(lines[line_index]);
+        segment.plain_lines.emplace_back(lines[line_index]);
         ++line_index;
       }
       segments.push_back(std::move(segment));
@@ -235,14 +235,14 @@ std::optional<ParsedGitConflictOutput> ParseGitConflictOutput(const compare::Mer
     ++line_index;
     while (line_index < lines.size() && !lines[line_index].starts_with("|||||||") &&
            !is_conflict_separator(lines[line_index])) {
-      block.current_lines.push_back(lines[line_index]);
+      block.current_lines.emplace_back(lines[line_index]);
       ++line_index;
     }
     if (line_index < lines.size() && lines[line_index].starts_with("|||||||")) {
       block.has_base = true;
       ++line_index;
       while (line_index < lines.size() && !is_conflict_separator(lines[line_index])) {
-        block.base_lines.push_back(lines[line_index]);
+        block.base_lines.emplace_back(lines[line_index]);
         ++line_index;
       }
     }
@@ -251,7 +251,7 @@ std::optional<ParsedGitConflictOutput> ParseGitConflictOutput(const compare::Mer
     }
     ++line_index;
     while (line_index < lines.size() && !lines[line_index].starts_with(">>>>>>>")) {
-      block.incoming_lines.push_back(lines[line_index]);
+      block.incoming_lines.emplace_back(lines[line_index]);
       ++line_index;
     }
     if (line_index >= lines.size() || !lines[line_index].starts_with(">>>>>>>")) {

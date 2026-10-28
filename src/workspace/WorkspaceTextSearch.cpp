@@ -21,21 +21,6 @@ std::string ToLower(std::string_view text) {
   return util::Utf8CaseFold(text);
 }
 
-std::vector<std::string> SplitSyntaxLines(std::string_view text) {
-  std::vector<std::string> lines;
-  std::size_t start = 0;
-  while (start < text.size()) {
-    const std::size_t newline = text.find('\n', start);
-    if (newline == std::string_view::npos) {
-      lines.emplace_back(text.substr(start));
-      break;
-    }
-    lines.emplace_back(text.substr(start, newline - start));
-    start = newline + 1;
-  }
-  return lines;
-}
-
 std::string CollapseWhitespace(std::string_view text) {
   return util::CollapseAsciiWhitespace(text);
 }
