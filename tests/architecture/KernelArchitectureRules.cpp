@@ -400,17 +400,15 @@ RuleResult CheckEveryUserSaveRunsTheSamePreparation(const std::filesystem::path&
   //
   // Enforced per FILE: a file that calls `<something viewport>.Save()` must also name a
   // preparation. That is coarse in the safe direction and does not depend on a receiver
-  // spelling, which is the pattern-rot this repo keeps finding. Two files are exempt,
-  // and both are PROGRAMMATIC saves rather than user-initiated ones — the same
+  // spelling, which is the pattern-rot this repo keeps finding. One file is exempt,
+  // and its saves are PROGRAMMATIC rather than user-initiated — the same
   // distinction autosave already makes when it suppresses formatters.
-  static constexpr std::array<const char*, 2> kProgrammaticSaveFiles = {
-      // Applying an LSP workspace edit to buffers that happen to be open. The edit is
-      // the server's, not the user's; running a formatter over it would rewrite a
-      // rename's result behind the user's back.
+  static constexpr std::array<const char*, 1> kProgrammaticSaveFiles = {
+      // Applying an LSP workspace edit: to buffers that happen to be open, and to
+      // closed files through a scratch viewport used purely as a read-modify-write.
+      // The edit is the server's, not the user's; running a formatter over it would
+      // rewrite a rename's result behind the user's back.
       "src/workspace/services/WorkspaceEditService.cpp",
-      // The same, for files that are NOT open: a scratch viewport used purely as a
-      // read-modify-write of a closed file.
-      "src/workspace/lsp/LspService.cpp",
   };
   // Any argument list: `Save` takes the project's write gate since TD-2026-09-29-308,
   // and a pattern pinned to `Save()` would have stopped matching every call at once.

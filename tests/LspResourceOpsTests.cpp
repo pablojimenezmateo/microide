@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "workspace/lsp/LspService.h"
+#include "workspace/services/WorkspaceEditService.h"
 #include "workspace/registries/WorkspaceCodeActionRegistry.h"
 #include "workspace/registries/WorkspaceCompletionRegistry.h"
 #include "workspace/WorkspaceContext.h"
@@ -13,7 +14,7 @@
 #include <vector>
 
 // LSP WorkspaceEdit file resource ops (TD-2026-07-17-011): validate-first apply
-// with rollback-safe staging. These exercise LspService::ApplyWorkspaceResourceOps
+// with rollback-safe staging. These exercise WorkspaceEditService::ApplyResourceOps
 // directly — the filesystem-mutating half that the protocol-parser tests do not
 // reach.
 namespace microide::tests {
@@ -22,6 +23,7 @@ namespace {
 using microide::workspace::CodeActionRegistry;
 using microide::workspace::CompletionRegistry;
 using microide::workspace::LspService;
+using microide::workspace::WorkspaceEditService;
 using microide::workspace::WorkspaceContext;
 using microide::workspace::WorkspaceResourceOp;
 using Kind = WorkspaceResourceOp::Kind;
@@ -33,12 +35,14 @@ struct Fixture {
   WorkspaceContext context;
   CompletionRegistry completions;
   CodeActionRegistry code_actions;
-  LspService service;
+  LspService lsp;
+  WorkspaceEditService service;
   std::vector<std::string> log;
 
   Fixture() {
     context.current_project_state.root = dir.path();
-    LspService::Operations ops;
+    lsp.Configure(context, completions, code_actions, LspService::Operations{});
+    WorkspaceEditService::Operations ops;
     ops.reconcile_tabs_after_resource_rename = [this](const std::filesystem::path& from,
                                                       const std::filesystem::path& to) {
       log.push_back("rename:" + from.filename().string() + "->" + to.filename().string());
@@ -49,7 +53,7 @@ struct Fixture {
     ops.refresh_views_after_resource_ops = [this](const std::filesystem::path&) {
       log.push_back("refresh");
     };
-    service.Configure(context, completions, code_actions, std::move(ops));
+    service.Configure(context, lsp, std::move(ops));
   }
 
   std::filesystem::path At(std::string_view relative) const { return dir.path() / relative; }
@@ -83,7 +87,7 @@ void TestCreateRenameDeleteApplyInOrder() {
   Fixture fx;
   WriteText(fx.At("old.rs"), "mod a;\n");
 
-  const auto result = fx.service.ApplyWorkspaceResourceOps({
+  const auto result = fx.service.ApplyResourceOps({
       Create(fx.At("nested/new.rs")),
       Rename(fx.At("old.rs"), fx.At("renamed.rs")),
   });
@@ -107,7 +111,7 @@ void TestReconcileFollowsApplyOrderNotOpKind() {
   WriteText(fx.At("a.rs"), "a\n");
   WriteText(fx.At("b.rs"), "b\n");
 
-  const auto result = fx.service.ApplyWorkspaceResourceOps({
+  const auto result = fx.service.ApplyResourceOps({
       Delete(fx.At("b.rs")),
       Rename(fx.At("a.rs"), fx.At("b.rs")),
   });
@@ -125,7 +129,7 @@ void TestPreconditionFailureLeavesNothingApplied() {
 
   // The second op is invalid (create over an existing file without overwrite), so
   // validation must reject the batch before the first op touches the disk.
-  const auto result = fx.service.ApplyWorkspaceResourceOps({
+  const auto result = fx.service.ApplyResourceOps({
       Create(fx.At("fresh.rs")),
       Create(fx.At("clash.rs")),
   });
@@ -144,7 +148,7 @@ void TestValidationUsesTheSimulatedOverlay() {
 
   // create-then-rename: the rename source does not exist on disk yet, only in the
   // overlay the earlier create populates.
-  const auto created_then_renamed = fx.service.ApplyWorkspaceResourceOps({
+  const auto created_then_renamed = fx.service.ApplyResourceOps({
       Create(fx.At("staged.rs")),
       Rename(fx.At("staged.rs"), fx.At("final.rs")),
   });
@@ -153,7 +157,7 @@ void TestValidationUsesTheSimulatedOverlay() {
          "the created file should end up at the rename destination");
 
   // delete-then-create of the same path is likewise legal.
-  const auto deleted_then_created = fx.service.ApplyWorkspaceResourceOps({
+  const auto deleted_then_created = fx.service.ApplyResourceOps({
       Delete(fx.At("src.rs")),
       Create(fx.At("src.rs")),
   });
@@ -170,7 +174,7 @@ void TestIgnoreOptionsResolveToNoOps() {
   WorkspaceResourceOp delete_missing = Delete(fx.At("absent.rs"));
   delete_missing.ignore_if_not_exists = true;
 
-  const auto result = fx.service.ApplyWorkspaceResourceOps({create_existing, delete_missing});
+  const auto result = fx.service.ApplyResourceOps({create_existing, delete_missing});
   Expect(result.ok, "ignore-option ops that resolve to no-ops are not failures");
   Expect(!result.any_applied, "an all-no-op batch reports nothing applied");
   Expect(ReadText(fx.At("present.rs")) == "present\n",
@@ -186,7 +190,7 @@ void TestOverwriteWinsOverIgnoreIfExists() {
   op.overwrite = true;
   op.ignore_if_exists = true;  // LSP: overwrite wins
 
-  const auto result = fx.service.ApplyWorkspaceResourceOps({op});
+  const auto result = fx.service.ApplyResourceOps({op});
   Expect(result.ok && result.any_applied, "overwrite should apply");
   Expect(ReadText(fx.At("target.rs")).empty(), "overwrite creates an empty file");
 }
@@ -196,19 +200,19 @@ void TestTargetsOutsideTheProjectRootAreRejected() {
   const std::filesystem::path outside = fx.dir.path().parent_path() / "escaped.rs";
   std::filesystem::remove(outside);
 
-  Expect(!fx.service.ApplyWorkspaceResourceOps({Create(outside)}).ok,
+  Expect(!fx.service.ApplyResourceOps({Create(outside)}).ok,
          "a create outside the project root must fail the batch");
   Expect(!std::filesystem::exists(outside), "the escaping op must not touch the filesystem");
 
   WriteText(fx.At("inside.rs"), "inside\n");
-  Expect(!fx.service.ApplyWorkspaceResourceOps({Rename(fx.At("inside.rs"), outside)}).ok,
+  Expect(!fx.service.ApplyResourceOps({Rename(fx.At("inside.rs"), outside)}).ok,
          "a rename destination outside the project root must fail the batch");
   Expect(std::filesystem::exists(fx.At("inside.rs")) && !std::filesystem::exists(outside),
          "the rejected rename must leave the source in place");
 
   // Escaping through a traversal component is caught by the same containment
   // check (paths are lexically normalized before comparison).
-  Expect(!fx.service.ApplyWorkspaceResourceOps({Create(fx.At("../traversed.rs"))}).ok,
+  Expect(!fx.service.ApplyResourceOps({Create(fx.At("../traversed.rs"))}).ok,
          "a ..-traversal target must fail the batch");
 }
 
@@ -230,14 +234,14 @@ void TestTargetsEscapingThroughASymlinkAreRejected() {
   // Creating through the symlinked parent: the leaf does not exist yet, which is
   // exactly the case a lexical check cannot see through.
   const std::filesystem::path through_link = fx.At("link") / "escaped.rs";
-  Expect(!fx.service.ApplyWorkspaceResourceOps({Create(through_link)}).ok,
+  Expect(!fx.service.ApplyResourceOps({Create(through_link)}).ok,
          "a create through a symlink out of the project must fail the batch");
   Expect(!std::filesystem::exists(outside_dir / "escaped.rs"),
          "nothing may be written outside the project root");
 
   // And the rename destination, which is the other half of the same check.
   WriteText(fx.At("inside.rs"), "inside\n");
-  Expect(!fx.service.ApplyWorkspaceResourceOps({Rename(fx.At("inside.rs"), through_link)}).ok,
+  Expect(!fx.service.ApplyResourceOps({Rename(fx.At("inside.rs"), through_link)}).ok,
          "a rename destination through a symlink out of the project must fail");
   Expect(std::filesystem::exists(fx.At("inside.rs")),
          "the rejected rename must leave the source in place");
@@ -247,7 +251,7 @@ void TestTargetsEscapingThroughASymlinkAreRejected() {
   std::filesystem::create_directories(fx.At("real"), ec);
   std::filesystem::create_symlink(fx.At("real"), fx.At("inner_link"), ec);
   Expect(!ec, "inside-the-root symlink fixture created");
-  Expect(fx.service.ApplyWorkspaceResourceOps({Create(fx.At("inner_link") / "ok.rs")}).ok,
+  Expect(fx.service.ApplyResourceOps({Create(fx.At("inner_link") / "ok.rs")}).ok,
          "a create through a symlink that stays inside the project must succeed");
   Expect(std::filesystem::exists(fx.At("real") / "ok.rs"),
          "the file lands at the link's real location inside the project");
@@ -259,13 +263,13 @@ void TestNonRecursiveDirectoryDeleteIsRefused() {
   Fixture fx;
   WriteText(fx.At("pkg/mod.rs"), "mod\n");
 
-  Expect(!fx.service.ApplyWorkspaceResourceOps({Delete(fx.At("pkg"))}).ok,
+  Expect(!fx.service.ApplyResourceOps({Delete(fx.At("pkg"))}).ok,
          "deleting a non-empty directory without `recursive` must fail");
   Expect(std::filesystem::exists(fx.At("pkg/mod.rs")), "the directory must survive the refusal");
 
   WorkspaceResourceOp recursive = Delete(fx.At("pkg"));
   recursive.recursive = true;
-  Expect(fx.service.ApplyWorkspaceResourceOps({recursive}).ok,
+  Expect(fx.service.ApplyResourceOps({recursive}).ok,
          "`recursive` permits the directory delete");
   Expect(!std::filesystem::exists(fx.At("pkg")), "the recursive delete should remove the tree");
 }
@@ -282,7 +286,7 @@ void TestMidBatchFailureRollsBackCompletedOps() {
   // (the overlay only tracks existence), which is exactly the rollback path.
   WriteText(fx.At("blocker"), "not a directory\n");
 
-  const auto result = fx.service.ApplyWorkspaceResourceOps({
+  const auto result = fx.service.ApplyResourceOps({
       Delete(fx.At("doomed.rs")),
       Rename(fx.At("source.rs"), fx.At("blocker/child.rs")),
   });
@@ -302,7 +306,7 @@ void TestStagedBackupsAreDisposedAfterSuccess() {
   Fixture fx;
   WriteText(fx.At("gone.rs"), "gone\n");
 
-  Expect(fx.service.ApplyWorkspaceResourceOps({Delete(fx.At("gone.rs"))}).ok,
+  Expect(fx.service.ApplyResourceOps({Delete(fx.At("gone.rs"))}).ok,
          "the delete should apply");
   Expect(!std::filesystem::exists(fx.At("gone.rs")), "the deleted file is gone");
   for (const auto& entry : std::filesystem::directory_iterator(fx.dir.path())) {
@@ -313,7 +317,7 @@ void TestStagedBackupsAreDisposedAfterSuccess() {
 
 void TestEmptyBatchIsASuccessfulNoOp() {
   Fixture fx;
-  const auto result = fx.service.ApplyWorkspaceResourceOps({});
+  const auto result = fx.service.ApplyResourceOps({});
   Expect(result.ok && !result.any_applied, "an empty op list is a successful no-op");
   Expect(fx.log.empty(), "an empty batch reconciles nothing");
 }

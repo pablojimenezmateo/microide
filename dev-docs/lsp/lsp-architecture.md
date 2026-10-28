@@ -119,7 +119,7 @@ Language servers themselves are contributed by Lua plugins (`plugins/*-lsp/`) vi
   `workspace.applyEdit=true`; `HandleServerRequest` parses the edit, posts it to the
   main thread (buffer/disk mutation must not run on the I/O thread), applies it via
   the bound `apply_edit_handler`, then replies with the real `applied` flag. The
-  handler (`LspService::ApplyServerWorkspaceEdit`) edits open buffers in place and
+  handler (`WorkspaceEditService::ApplyServerEdit`) edits open buffers in place and
   writes closed files silently on disk — the same split as client-initiated rename.
 - **WorkspaceEdit resource ops + versioned edits are supported (TD-2026-07-17-011).**
   The client advertises `workspace.workspaceEdit = {documentChanges,
@@ -130,11 +130,11 @@ Language servers themselves are contributed by Lua plugins (`plugins/*-lsp/`) vi
   (a stale tracked-document version fails the whole edit —
   `LspService::WorkspaceEditVersionsCurrent` over
   `LspClient::TrackedDocumentVersion`) → resource ops
-  (`LspService::ApplyWorkspaceResourceOps`: validate-first against a simulated
+  (`WorkspaceEditService::ApplyResourceOps`: validate-first against a simulated
   overlay, project-root containment, staged deletes/overwrites with rollback on
   mid-flight failure, tab/diagnostic reconcile via
   `PathMutationCoordinator::ReconcileAfterExternal{Rename,Delete}`) → text edits.
-  Ops-carrying code actions route through `LspService::ApplyFullWorkspaceEdit`
+  Ops-carrying code actions route through `WorkspaceEditService::ApplyFull`
   (ops, then open buffers, then closed files on disk); ops-carrying renames go
   through the confirm prompt with the ops stashed in `PendingRenameSave`.
 - **Provider precedence is LSP-primary concurrent merge** (`AssistProviderMerge.h`).
@@ -221,7 +221,7 @@ Language servers themselves are contributed by Lua plugins (`plugins/*-lsp/`) vi
   prompt for a non-renameable position. Range formatting (`textDocument/
   rangeFormatting`) formats the selection when there is one, else the whole document.
 - **Rename across unopened files applies silently on disk** (VSCode-style). The
-  closed-file applier (`LspService::ApplyLspEditsToClosedFilesOnDisk`) loads each
+  closed-file applier (`WorkspaceEditService::ApplyToClosedFiles`) loads each
   file into a throwaway `TextViewport` (reusing line-ending / BOM / encoding
   detection + the atomic, permission-preserving save), applies the encoding-mapped
   edits, and saves — no tab is opened. Open buffers still edit in place via
@@ -327,7 +327,7 @@ why `WorkspaceShellTestAccess::RequestCodeLensesForActiveBuffer` exists.
   no staging residue), validate-first atomicity + root containment, and the
   versioned-edit gate (`ServerApplyEdit*` tests); the op/version parsing itself is
   covered by `LspProtocol/ParsesWorkspaceEditResourceOps`.
-- `LspResourceOpsTests` — `LspService::ApplyWorkspaceResourceOps` in isolation
+- `LspResourceOpsTests` — `WorkspaceEditService::ApplyResourceOps` in isolation
   (no shell, no server): apply order, the simulated-existence overlay
   (create-then-rename, delete-then-create), ignore-option no-ops, `overwrite`
   beating `ignoreIfExists`, project-root containment (incl. `..` traversal),

@@ -7,7 +7,12 @@
 #include <utility>
 
 #include "editor/EditBatchOrder.h"
+#include "editor/RuntimeSyntaxRegistry.h"
+#include "project/FileWriteGate.h"
 #include "util/PathMatch.h"
+#include "workspace/FileUri.h"
+#include "workspace/assist/AssistHost.h"
+#include "workspace/lsp/LspWorkspaceEditOps.h"
 #include "workspace/lsp/LspPositionEncoding.h"
 #include "workspace/lsp/LspService.h"
 #include "workspace/lsp/LspViewportPositions.h"
@@ -34,7 +39,8 @@ editor::TextViewport* WorkspaceEditService::ResolveOpenViewport(
   return OpenEditorViewOfPath(context_->current_project_state.editor_groups, normalized);
 }
 
-bool WorkspaceEditService::ApplyBatch(editor::TextViewport& viewport, const EditBatch& batch) {
+bool WorkspaceEditService::ApplyBatch(editor::TextViewport& viewport, const EditBatch& batch,
+                                      bool record_undo) {
   std::vector<editor::SelectionRange> ranges;
   ranges.reserve(batch.size());
   for (const auto& [range, text] : batch) {
@@ -48,11 +54,15 @@ bool WorkspaceEditService::ApplyBatch(editor::TextViewport& viewport, const Edit
   if (batch.empty()) {
     return true;
   }
-  viewport.BeginUndoGroup();
-  for (const std::size_t index : apply_order) {
-    viewport.ReplaceRange(batch[index].first, batch[index].second, /*record_undo=*/true);
+  if (record_undo) {
+    viewport.BeginUndoGroup();
   }
-  viewport.EndUndoGroup();
+  for (const std::size_t index : apply_order) {
+    viewport.ReplaceRange(batch[index].first, batch[index].second, record_undo);
+  }
+  if (record_undo) {
+    viewport.EndUndoGroup();
+  }
   return true;
 }
 
@@ -347,7 +357,7 @@ void WorkspaceEditService::CommitPendingRename() {
   // open tabs are retargeted by the reconcile hooks as each op lands). A failed
   // op batch rolls itself back and aborts the rename — applying the text edits
   // against paths the ops never produced would corrupt the workspace.
-  if (!pending.resource_ops.empty() && !lsp_->ApplyWorkspaceResourceOps(pending.resource_ops).ok) {
+  if (!pending.resource_ops.empty() && !ApplyResourceOps(pending.resource_ops).ok) {
     operations_.notify_error("Rename aborted: file operations failed (rolled back)");
     return;
   }
@@ -386,10 +396,7 @@ void WorkspaceEditService::CommitPendingRename() {
   }
 
   // Apply the remaining edits to the CLOSED files directly on disk — no tab spam.
-  const auto is_open = [&state](const std::filesystem::path& normalized) {
-    return OpenEditorViewOfPath(state.editor_groups, normalized) != nullptr;
-  };
-  const LspService::DiskEditResult disk = lsp_->ApplyLspEditsToClosedFilesOnDisk(pending.edits, is_open);
+  const DiskEditResult disk = ApplyToClosedFiles(pending.edits);
   saved += disk.files_written;
 
   std::string feedback = "Renamed to '" + pending.new_name + "' in " + std::to_string(saved) +
@@ -399,6 +406,379 @@ void WorkspaceEditService::CommitPendingRename() {
   }
   state.panel.feedback.text = std::move(feedback);
   operations_.request_active_tab_redraw(/*include_tree_sidebar=*/true);
+}
+
+bool WorkspaceEditService::IsOpen(const std::filesystem::path& normalized) const {
+  return OpenEditorViewOfPath(context_->current_project_state.editor_groups, normalized) != nullptr;
+}
+
+std::vector<ClosedFileEditBucket> WorkspaceEditService::PrepareClosedFileBuckets(
+    const std::vector<CodeActionEdit>& edits) const {
+  std::vector<ClosedFileEditBucket> buckets;
+  // Map normalized path -> slot so grouping is O(1) per edit (O(edits * files)
+  // otherwise for a large multi-file rename).
+  std::unordered_map<std::string, std::size_t> bucket_index;
+  for (const CodeActionEdit& edit : edits) {
+    if (edit.path.empty()) {
+      continue;  // empty path targets the (always-open) active buffer
+    }
+    std::filesystem::path normalized = edit.path.lexically_normal();
+    if (IsOpen(normalized)) {
+      continue;  // edited in place by the open-buffer applier; keep undo coherent
+    }
+    const auto [slot, inserted] = bucket_index.emplace(normalized.generic_string(), buckets.size());
+    if (inserted) {
+      buckets.push_back(ClosedFileEditBucket{.path = std::move(normalized)});
+    }
+    buckets[slot->second].edits.emplace_back(edit.range, edit.new_text);
+  }
+  // Resolve each file's server position encoding HERE, on the main thread: the
+  // background applier must not touch the shared runtime syntax registry
+  // (lock-free-main-reader invariant) or the LSP manager. Path-only filetype
+  // detection: an extensionless file defaults to UTF-8 unless a server matches
+  // the path. FindStartedServer never spawns a server.
+  for (ClosedFileEditBucket& bucket : buckets) {
+    const std::string language_id = editor::runtime_syntax::DetectFiletype(bucket.path);
+    const LspClient* client = lsp_->CurrentLspManager().FindStartedServer(language_id);
+    bucket.encoding =
+        client != nullptr ? LspEncodingForClient(*client) : lsp_encoding::PositionEncoding::Utf8;
+  }
+  return buckets;
+}
+
+WorkspaceEditService::DiskEditResult WorkspaceEditService::RunClosedFileEdits(
+    const std::vector<ClosedFileEditBucket>& buckets, project::FileWriteGate& gate) {
+  DiskEditResult result;
+  for (const ClosedFileEditBucket& bucket : buckets) {
+    if (bucket.edits.empty()) {
+      continue;
+    }
+    // A scratch viewport private to this call (safe on a background thread), never
+    // registered as a tab.
+    editor::TextViewport scratch;
+    if (!scratch.OpenFile(bucket.path)) {
+      result.any_failed = true;
+      continue;
+    }
+    // Map 0-based LSP coordinates to editor byte columns. A line beyond EOF is a
+    // hard reject (a buggy/hostile server must not silently mutate the last line
+    // instead of the line it named), except the LSP end-of-document sentinel
+    // `{line == line_count, character == 0}`, which maps to the end of the last
+    // line. A `character` past the line end stays a soft clamp.
+    const std::size_t line_count = scratch.line_count();
+    bool in_range = line_count > 0;
+    const auto map_position = [&](editor::TextPosition pos) -> editor::TextPosition {
+      if (pos.line == line_count && pos.column == 0) {
+        const std::size_t last = line_count - 1;
+        return editor::TextPosition{last, scratch.lines().LineLength(last)};
+      }
+      if (pos.line >= line_count) {
+        in_range = false;
+        return pos;
+      }
+      pos.column = lsp_encoding::LspCharacterToByteColumn(scratch.lines().LineView(pos.line),
+                                                          pos.column, bucket.encoding);
+      return pos;
+    };
+    EditBatch file_edits = bucket.edits;
+    for (auto& [range, text] : file_edits) {
+      if (!in_range) {
+        break;
+      }
+      range.start = map_position(range.start);
+      range.end = map_position(range.end);
+    }
+    // Reject the whole file's group rather than apply a partial, position-corrupted
+    // set; the file on disk stays untouched. No undo: scratch is discarded.
+    if (!in_range || !ApplyBatch(scratch, file_edits, /*record_undo=*/false) ||
+        !scratch.Save(gate)) {
+      result.any_failed = true;
+      continue;
+    }
+    ++result.files_written;
+    result.edits_applied += file_edits.size();
+  }
+  return result;
+}
+
+WorkspaceEditService::DiskEditResult WorkspaceEditService::ApplyToClosedFiles(
+    const std::vector<CodeActionEdit>& edits) {
+  return RunClosedFileEdits(PrepareClosedFileBuckets(edits),
+                            context_->current_project_state.write_gate());
+}
+
+bool WorkspaceEditService::ApplyFull(const std::vector<CodeActionEdit>& edits,
+                                     const std::vector<WorkspaceResourceOp>& resource_ops) {
+  bool any_applied = false;
+  if (!resource_ops.empty()) {
+    const ResourceOpsResult ops_result = ApplyResourceOps(resource_ops);
+    if (!ops_result.ok) {
+      return false;
+    }
+    any_applied = ops_result.any_applied;
+  }
+  if (edits.empty()) {
+    return any_applied;
+  }
+  // Synchronous closed-file apply (code-action scale: a handful of files, often
+  // just the one the ops created); the server-initiated bulk path stays async.
+  const bool open_applied = ApplyLspEdit(edits);
+  const DiskEditResult disk = ApplyToClosedFiles(edits);
+  return any_applied || open_applied || disk.files_written > 0;
+}
+
+WorkspaceEditService::ResourceOpsResult WorkspaceEditService::ApplyResourceOps(
+    const std::vector<WorkspaceResourceOp>& ops) {
+  ResourceOpsResult result;
+  if (ops.empty()) {
+    return result;
+  }
+  namespace fs = std::filesystem;
+  using Kind = WorkspaceResourceOp::Kind;
+  ProjectWorkspaceState& state = context_->current_project_state;
+  const fs::path project_root = state.root;
+
+  // --- Validate every op against a simulated existence overlay BEFORE mutating
+  // anything: the overlay tracks per-path existence as the earlier ops would
+  // leave it, so a create-then-rename batch validates the rename against the
+  // yet-to-be-created file. Catching every logical failure here is what makes
+  // the batch effectively atomic — the apply phase below can only fail on raw
+  // I/O errors, which the write gate's journal covers.
+  std::unordered_map<std::string, bool> overlay;
+  const auto target_exists = [&](const fs::path& p) {
+    const auto it = overlay.find(p.generic_string());
+    if (it != overlay.end()) {
+      return it->second;
+    }
+    std::error_code ec;
+    return fs::exists(p, ec);
+  };
+  const auto set_exists = [&](const fs::path& p, bool exists) {
+    overlay[p.generic_string()] = exists;
+  };
+  const auto fail = [&](std::string message) {
+    result.ok = false;
+    result.any_applied = false;
+    result.error = std::move(message);
+    return result;
+  };
+  std::vector<char> skip(ops.size(), 0);  // ignore-option ops that resolve to no-ops
+  for (std::size_t i = 0; i < ops.size(); ++i) {
+    const WorkspaceResourceOp& op = ops[i];
+    const fs::path target = op.path.lexically_normal();
+    // A server may only touch files inside the active project root (mirrors the
+    // text-edit containment check; a compromised server must not create/rename/
+    // delete arbitrary user files). One bad op fails the whole batch — skipping
+    // it would desync every subsequent edit keyed to the op's outcome.
+    // Resolving containment, not lexical: a symlink INSIDE the root pointing out
+    // of it is spelled entirely within the root, and creating through a symlinked
+    // parent (`link/new.txt`) lands wherever the link points. The repository being
+    // edited is where such a link comes from, so this is not a check the server has
+    // to defeat — it only has to name a path the checkout already provides.
+    if (target.empty() || !util::PathEqualsOrWithinResolvingSymlinks(target, project_root)) {
+      return fail("resource op target escapes the project root");
+    }
+    switch (op.kind) {
+      case Kind::Create:
+        if (target_exists(target) && !op.overwrite) {  // LSP: overwrite wins over ignoreIfExists
+          if (op.ignore_if_exists) {
+            skip[i] = 1;
+            break;
+          }
+          return fail("create target already exists: " + target.generic_string());
+        }
+        set_exists(target, true);
+        break;
+      case Kind::Rename: {
+        const fs::path dest = op.new_path.lexically_normal();
+        if (dest.empty() || !util::PathEqualsOrWithinResolvingSymlinks(dest, project_root)) {
+          return fail("rename destination escapes the project root");
+        }
+        if (!target_exists(target)) {
+          return fail("rename source does not exist: " + target.generic_string());
+        }
+        if (target_exists(dest) && !op.overwrite) {
+          if (op.ignore_if_exists) {
+            skip[i] = 1;
+            break;
+          }
+          return fail("rename destination already exists: " + dest.generic_string());
+        }
+        set_exists(target, false);
+        set_exists(dest, true);
+        break;
+      }
+      case Kind::Delete: {
+        if (!target_exists(target)) {
+          if (op.ignore_if_not_exists) {
+            skip[i] = 1;
+            break;
+          }
+          return fail("delete target does not exist: " + target.generic_string());
+        }
+        std::error_code ec;
+        if (!op.recursive && fs::is_directory(target, ec) && !fs::is_empty(target, ec)) {
+          return fail("delete target is a non-empty directory (recursive not set): " +
+                      target.generic_string());
+        }
+        set_exists(target, false);
+        break;
+      }
+    }
+  }
+
+  // --- Apply: one all-or-nothing batch through the project's write gate, which
+  // journals each op's inverse and unwinds the lot on the first failure (deleted
+  // and overwritten paths are staged aside until the batch lands; TD-2026-09-29-305).
+  using TreeOp = project::FileWriteGate::TreeOp;
+  std::vector<TreeOp> tree_ops;
+  tree_ops.reserve(ops.size());
+  // Reconcile actions are recorded in APPLY ORDER, not grouped by kind: a batch
+  // like [delete B, rename A->B] must close B's tabs before A's tabs are
+  // retargeted onto B, or the retargeted tab (and its unsaved contents) is closed
+  // by the reconcile of an op that ran earlier.
+  struct AppliedReconcile {
+    bool is_rename = false;
+    fs::path from;  // rename source / delete target
+    fs::path to;    // rename destination; empty for delete
+  };
+  std::vector<AppliedReconcile> applied_reconciles;
+  fs::path last_mutated;
+  for (std::size_t i = 0; i < ops.size(); ++i) {
+    if (skip[i] != 0) {
+      continue;
+    }
+    const WorkspaceResourceOp& op = ops[i];
+    const fs::path target = op.path.lexically_normal();
+    switch (op.kind) {
+      case Kind::Create:
+        tree_ops.push_back({.kind = TreeOp::Kind::CreateFile, .path = target, .overwrite = op.overwrite});
+        last_mutated = target;
+        break;
+      case Kind::Rename: {
+        const fs::path dest = op.new_path.lexically_normal();
+        tree_ops.push_back(
+            {.kind = TreeOp::Kind::Rename, .path = target, .new_path = dest, .overwrite = op.overwrite});
+        applied_reconciles.push_back({/*is_rename=*/true, target, dest});
+        last_mutated = dest;
+        break;
+      }
+      case Kind::Delete:
+        tree_ops.push_back({.kind = TreeOp::Kind::Delete, .path = target, .recursive = op.recursive});
+        applied_reconciles.push_back({/*is_rename=*/false, target, {}});
+        last_mutated = target.parent_path();
+        break;
+    }
+  }
+  if (tree_ops.empty()) {
+    return result;  // every op was an ignore-option no-op
+  }
+  project::FileWriteGate::TreeResult applied = state.write_gate().ApplyTreeOps(tree_ops);
+  if (!applied.ok) {
+    return fail(std::move(applied.error_message));
+  }
+  result.any_applied = true;
+
+  // --- The batch landed: reconcile shell state per op, hand the staged
+  // directories off the shell thread (the gate already unlinked staged files), and
+  // refresh the project views once.
+  for (const AppliedReconcile& action : applied_reconciles) {
+    if (action.is_rename) {
+      if (operations_.reconcile_tabs_after_resource_rename) {
+        operations_.reconcile_tabs_after_resource_rename(action.from, action.to);
+      }
+    } else if (operations_.reconcile_tabs_after_resource_delete) {
+      operations_.reconcile_tabs_after_resource_delete(action.from);
+    }
+  }
+  if (!applied.staged_directories.empty()) {
+    if (operations_.dispose_staged_paths_async) {
+      operations_.dispose_staged_paths_async(std::move(applied.staged_directories));
+    } else {
+      state.write_gate().DisposeStaged(applied.staged_directories);
+    }
+  }
+  if (operations_.refresh_views_after_resource_ops) {
+    operations_.refresh_views_after_resource_ops(last_mutated);
+  }
+  return result;
+}
+
+bool WorkspaceEditService::ApplyServerEdit(const LspClient& client, LspClient::WorkspaceEdit edit) {
+  // Version gate FIRST (before anything mutates): a versioned TextDocumentEdit
+  // whose expected version differs from the tracked open document is stale — the
+  // server computed it against text the user has since changed. LSP requires the
+  // client to fail the whole request on a mismatch.
+  if (!lsp_workspace_edit::VersionsCurrent(client, edit)) {
+    return false;
+  }
+  // Resource ops (create/rename/delete) run before any text edit; the parser
+  // re-keyed pre-rename text edits to their post-rename URI to match. One
+  // undecodable target URI fails the whole edit — partially applying an edit
+  // whose op list cannot be fully honored would leave the workspace inconsistent.
+  bool any_resource_applied = false;
+  if (!edit.resource_ops.empty()) {
+    const std::optional<std::vector<WorkspaceResourceOp>> ops =
+        lsp_workspace_edit::FlattenResourceOps(edit.resource_ops);
+    if (!ops.has_value()) {
+      return false;
+    }
+    const ResourceOpsResult ops_result = ApplyResourceOps(*ops);
+    if (!ops_result.ok) {
+      return false;
+    }
+    any_resource_applied = ops_result.any_applied;
+  }
+  std::vector<CodeActionEdit> flat;
+  const std::filesystem::path project_root = context_->current_project_state.root;
+  for (const auto& [uri, text_edits] : edit.changes) {
+    const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
+    if (!path.has_value()) {
+      continue;
+    }
+    // A server-initiated edit may only target files inside the active project
+    // root (or a buffer already open in this project): a buggy or compromised
+    // server must not write any file the user account can reach. Resolving
+    // containment, because the disk applier reuses the editor's atomic save, which
+    // follows a symlink and overwrites its TARGET — a lexical check would let a
+    // link in the checkout leave the project.
+    const std::filesystem::path normalized = path->lexically_normal();
+    if (!util::PathEqualsOrWithinResolvingSymlinks(normalized, project_root) && !IsOpen(normalized)) {
+      continue;
+    }
+    for (const auto& [range, new_text] : text_edits) {
+      flat.push_back(assist::ToCodeActionEdit(*path, range, new_text));
+    }
+  }
+  if (flat.empty()) {
+    // A resource-op-only edit (e.g. a bare file rename) is a legitimate success.
+    return any_resource_applied;
+  }
+  // Open buffers edit in place; closed files are written on disk. Passing the full
+  // set to both is safe: each applier skips the other's paths.
+  bool open_rejected = false;
+  const bool open_applied = ApplyLspEdit(flat, &open_rejected);
+  // A server rename can push edits to thousands of CLOSED files: the buckets and
+  // their encodings are prepared here, the load/edit/save runs off the shell thread
+  // (TD-2026-07-17-011 / TD-2026-07-16-18). A write failure self-heals (atomic
+  // writes leave the file intact and a later request re-syncs), so unlike the
+  // open-buffer path the response does not wait on the disk result.
+  std::vector<ClosedFileEditBucket> buckets = PrepareClosedFileBuckets(flat);
+  const bool had_closed_edits = !buckets.empty();
+  if (had_closed_edits) {
+    if (operations_.run_closed_file_edits_async) {
+      operations_.run_closed_file_edits_async(std::move(buckets));
+    } else {
+      RunClosedFileEdits(buckets, context_->current_project_state.write_gate());  // headless
+    }
+  }
+  // `applied: false` only when an OPEN-buffer group the user can see was rejected
+  // (beyond-EOF / overlap); the closed-file writes were accepted for background
+  // application, as VS Code does.
+  if (open_rejected) {
+    return false;
+  }
+  return open_applied || had_closed_edits || any_resource_applied;
 }
 
 }  // namespace microide::workspace

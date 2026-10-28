@@ -300,58 +300,11 @@ WorkspaceShell::WorkspaceShell() {
           .request_editor_surface_redraw = [this]() { RequestEditorSurfaceRedraw(); },
           .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
           .request_bottom_panel_redraw = [this]() { RequestBottomPanelRedraw(); },
-          .apply_workspace_edit_to_open_buffers =
-              [this](const std::vector<CodeActionEdit>& edits) {
-                bool any_rejected = false;
-                const bool applied = workspace_edit_service_.ApplyLspEdit(edits, &any_rejected);
-                return OpenBufferEditResult{.applied_any = applied,
-                                            .any_rejected = any_rejected};
-              },
-          .run_closed_file_edits_async =
-              [this](std::vector<LspClosedFileEditBucket> buckets) {
-                // Load/apply/save the server rename's closed-file targets off the
-                // shell thread; the file-index watcher reflects the on-disk changes
-                // (TD-2026-07-17-011). The task captures only the buckets by value.
-                project::FileWriteGate* gate = &context_.current_project_state.write_gate();
-                project_background_executor_.Post(
-                    [gate, buckets = std::move(buckets)]() mutable {
-                      LspService::RunClosedFileEdits(buckets, *gate);
-                    });
+          .apply_server_workspace_edit =
+              [this](const LspClient& client, LspClient::WorkspaceEdit edit) {
+                return workspace_edit_service_.ApplyServerEdit(client, std::move(edit));
               },
           .get_setting_value = [this](std::string_view id) { return GetSettingValue(id); },
-          .reconcile_tabs_after_resource_rename =
-              [this](const std::filesystem::path& old_path, const std::filesystem::path& new_path) {
-                EditorTabService& editor_tabs = MakeEditorTabService();
-                PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
-                MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
-                    .ReconcileAfterExternalRename(old_path, new_path);
-              },
-          .reconcile_tabs_after_resource_delete =
-              [this](const std::filesystem::path& path) {
-                EditorTabService& editor_tabs = MakeEditorTabService();
-                PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
-                MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
-                    .ReconcileAfterExternalDelete(path);
-              },
-          .refresh_views_after_resource_ops =
-              [this](const std::filesystem::path& preferred_tree_path) {
-                EditorTabService& editor_tabs = MakeEditorTabService();
-                PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
-                MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
-                    .RefreshViewsAfterExternalMutation(preferred_tree_path);
-              },
-          .dispose_staged_paths_async =
-              [this](std::vector<std::filesystem::path> staged) {
-                // Removing a staged (already-renamed-aside) backup can be slow for
-                // directories; do it off the shell thread. Failure is harmless — a
-                // leftover hidden staging entry, never user data.
-                // Through the project's gate (captured now: the worker must not read
-                // shell state), which is where a remote project's host removes them.
-                project::FileWriteGate* gate = &context_.current_project_state.write_gate();
-                project_background_executor_.Post([gate, staged = std::move(staged)]() {
-                  gate->DisposeStaged(staged);
-                });
-              },
           .plugin_has_definition_provider =
               [this](std::string_view language_id) {
                 return plugin_runtime_.Host().HasLanguageProvider(
@@ -548,6 +501,50 @@ WorkspaceShell::WorkspaceShell() {
               },
           .notify_buffer_saved =
               [this](const std::filesystem::path& path) { NotifyPluginBufferSave(path); },
+          .run_closed_file_edits_async =
+              [this](std::vector<ClosedFileEditBucket> buckets) {
+                // Load/apply/save the server rename's closed-file targets off the
+                // shell thread; the file-index watcher reflects the on-disk changes
+                // (TD-2026-07-17-011). The task captures only the buckets by value.
+                project::FileWriteGate* gate = &context_.current_project_state.write_gate();
+                project_background_executor_.Post(
+                    [gate, buckets = std::move(buckets)]() mutable {
+                      WorkspaceEditService::RunClosedFileEdits(buckets, *gate);
+                    });
+              },
+          .reconcile_tabs_after_resource_rename =
+              [this](const std::filesystem::path& old_path, const std::filesystem::path& new_path) {
+                EditorTabService& editor_tabs = MakeEditorTabService();
+                PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
+                MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
+                    .ReconcileAfterExternalRename(old_path, new_path);
+              },
+          .reconcile_tabs_after_resource_delete =
+              [this](const std::filesystem::path& path) {
+                EditorTabService& editor_tabs = MakeEditorTabService();
+                PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
+                MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
+                    .ReconcileAfterExternalDelete(path);
+              },
+          .refresh_views_after_resource_ops =
+              [this](const std::filesystem::path& preferred_tree_path) {
+                EditorTabService& editor_tabs = MakeEditorTabService();
+                PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
+                MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
+                    .RefreshViewsAfterExternalMutation(preferred_tree_path);
+              },
+          .dispose_staged_paths_async =
+              [this](std::vector<std::filesystem::path> staged) {
+                // Removing a staged (already-renamed-aside) backup can be slow for
+                // directories; do it off the shell thread. Failure is harmless — a
+                // leftover hidden staging entry, never user data.
+                // Through the project's gate (captured now: the worker must not read
+                // shell state), which is where a remote project's host removes them.
+                project::FileWriteGate* gate = &context_.current_project_state.write_gate();
+                project_background_executor_.Post([gate, staged = std::move(staged)]() {
+                  gate->DisposeStaged(staged);
+                });
+              },
       });
   assist_service_.Configure(
       context_, plugin_runtime_, output_channels_, language_contract_,
@@ -609,7 +606,7 @@ WorkspaceShell::WorkspaceShell() {
           .apply_full_lsp_workspace_edit =
               [this](const std::vector<CodeActionEdit>& edits,
                      const std::vector<WorkspaceResourceOp>& resource_ops) {
-                return lsp_service_.ApplyFullWorkspaceEdit(edits, resource_ops);
+                return workspace_edit_service_.ApplyFull(edits, resource_ops);
               },
           .apply_rename_workspace_edit =
               [this](const std::string& new_name, const std::vector<CodeActionEdit>& edits,
