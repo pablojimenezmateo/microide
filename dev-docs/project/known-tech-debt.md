@@ -466,7 +466,21 @@ factory. Measured 2026-10-28:
   coordinator use 242 distinct `context_` members between them, and only 16 are
   used by more than one file.
 
-Plan, one area per commit so each slice is reviewable and lane-checked: give each
+- **What the forwarders reach is mostly the shell itself.** Of the factory's 214
+  lambdas, 137 call a `WorkspaceShell` member function (`OpenProjectTab`,
+  `SwitchProject`, `RequestCloseProject`, …), 71 a service or coordinator, 6
+  neither. So the context is largely a type-erased mirror of the shell's own
+  surface, and a context holding service references cannot replace a forwarder
+  whose target has no service yet. (Found starting the Project slice: all four of
+  its ops land on shell members.)
+
+Plan, revised: each slice first moves an area's behaviour off the shell onto a
+service (for Project: open / switch / close project into the catalog service the
+coordinators already use), then gives that executor a context holding the
+service, deletes the forwarders and their `Operations` fields. One area per
+commit, lane-checked. The original ordering below still holds.
+
+Original plan, one area per commit so each slice is reviewable and lane-checked: give each
 executor its own context type holding references to the services it calls
 (`AssistService&`, `EditorTabService&`, `TerminalPanelService&`, …, the
 coordinator-constructor rule already requires service references), move that
