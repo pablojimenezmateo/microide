@@ -494,17 +494,13 @@ Slices done: **assist** (2026-10-28, `1b1577118`) -- 12 fields, their lambdas an
 10 forwarding methods gone; the context holds `AssistService&` and the executor
 calls the feature. Operations 214 -> 202.
 
-Next slice, **debug**, measured: the context's `Debug*` methods (defined in
-`WorkspaceActionServicesContextFactory.cpp`, lines ~90-135) call ops
-(`debug_continue`, `debug_step_*`, `debug_pause`, `debug_reverse_continue`,
-`debug_step_back`, `debug_restart`, `debug_session_active`,
-`debug_supports_reverse`, `stop_debugging`) whose lambdas call one-line SHELL
-members (`WorkspaceShell::DebugContinue() { debug_service_.Continue(); }`) --
-five hops to `DebugService`. `WorkspaceActionAvailability.cpp` reads
-`debug_session_active` / `debug_supports_reverse` through the same ops, so the
-availability side moves with it. The shell one-liners also serve
-`DebugToolbarSurface` and the render frame through their own seams; those can go
-once those seams hold `DebugService&` too.
+**debug** (2026-10-28, `1216ed0d9`, `1dade027a`) -- ten fields, lambdas and
+forwarding methods; the context holds `DebugService&`, and the debug toolbar
+calls it too, so the eight one-line `WorkspaceShell::Debug*` forwarders are gone
+(members cap 1633 -> 1625). Operations 202 -> 192. Left: `IsDebugSessionActive` /
+`DebugSupportsReverse` stay as shell members for the bootstrapper's and test
+access's seams, and `WorkspaceActionAvailability`'s own Operations still reads
+them through two lambdas.
 
 Original plan, one area per commit so each slice is reviewable and lane-checked: give each
 executor its own context type holding references to the services it calls
