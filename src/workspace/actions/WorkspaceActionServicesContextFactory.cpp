@@ -30,7 +30,7 @@
 namespace microide::workspace {
 
 bool WorkspaceActionContext::PluginRuntimeEnabled() const {
-  return operations_.plugin_runtime_enabled();
+  return services_.plugins.enabled();
 }
 
 void WorkspaceActionContext::ReloadPluginsWithFeedback() {
@@ -244,10 +244,10 @@ void WorkspaceActionContext::RemoveBreakpointFromMenu() {
 
 bool WorkspaceActionContext::DispatchSelectedGitSidebarAction(GitSidebarActionId action) {
   const auto& git = state_.sidebar.git;
-  if (git.selected_index >= git.entries.size() || !operations_.dispatch_git_sidebar_action) {
+  if (git.selected_index >= git.entries.size()) {
     return false;
   }
-  return operations_.dispatch_git_sidebar_action(action, git.selected_index);
+  return services_.sidebar.DispatchGitSidebarAction(action, git.selected_index);
 }
 
 std::string WorkspaceActionContext::SelectedConflictedGitEntryPath() const {
@@ -381,9 +381,11 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .sidebar = MakeSidebarService(),
           .compare_merge = MakeCompareMergeService(),
           .debug_pane = MakeDebugPaneService(),
+          .menus = MakeMenuCoordinator(),
+          .clipboard = clipboard_,
+          .plugins = plugin_runtime_,
       },
       WorkspaceActionContext::Operations{
-          .close_tree_context_menu = [this]() { MakeMenuCoordinator().CloseTreeContextMenu(); },
           .reject_action =
               [this](ActionSource source, std::string feedback) {
                 const std::string feedback_copy = feedback;
@@ -401,10 +403,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 }
                 return accepted;
               },
-          .parse_sidebar_view_request =
-              [this](const std::vector<std::string>& args) {
-                return workspace::ParseSidebarViewRequest(args, plugin_runtime_.Host());
-              },
           .open_project =
               [this](const std::filesystem::path& root, bool restore, bool log_feedback) {
                 return OpenProjectTab(root, restore, log_feedback);
@@ -418,7 +416,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this]() { return OpenNativeProjectPicker(nullptr); },
           .open_native_file_picker =
               [this]() { return OpenNativeFilePicker(nullptr); },
-          .active_sidebar_mode = [this]() { return ActiveSidebarMode(); },
           .begin_project_search_edit = [this](ProjectSearchEditField field) { BeginProjectSearchEdit(field); },
           .paste_tree_path =
               [this](const std::filesystem::path& source, bool cut, const std::filesystem::path& directory) {
@@ -440,11 +437,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this](ActionSource source) { return TreeMutationBasePath(source); },
           .resolve_tree_action_path =
               [this](ActionSource source) { return ResolveTreeActionPath(source); },
-          .row_context_menu_path =
-              [this]() {
-                const auto& menu = context_.menu_state.tree_context_menu;
-                return menu.open ? menu.path.lexically_normal() : std::filesystem::path{};
-              },
           .active_tab_path = [this]() { return ActiveTabPath(); },
           .open_prompt_surface =
               [this](PromptSurfaceState::Action action, PromptSurfaceState::Kind kind,
@@ -458,7 +450,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                                   std::move(prefill));
                 context_.prompts.surface.command_name.assign(command_name);
               },
-          .write_clipboard_text = [this](std::string_view text) { return WriteClipboardText(text); },
           .open_external_url = [this](std::string_view url) { return OpenExternalUrl(url); },
           .write_primary_selection_text =
               [this](std::string_view text) { return WritePrimarySelectionText(text); },
@@ -824,7 +815,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .selected_terminal_text = [this]() { return SelectedTerminalText(); },
           .last_terminal_command_text = [this]() { return LastTerminalCommandText(); },
           .selection_text_with_context = [this]() { return SelectionTextWithContext(); },
-          .read_clipboard_text = [this]() { return ReadClipboardText(); },
           .press_key =
               [dispatch_injected](SDL_Keycode key, SDL_Keymod modifiers) {
                 // A chord is pressed as a keyboard presses it: its modifiers go
@@ -1003,7 +993,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               },
           .request_toggle_fullscreen =
               [this]() { pending_window_action_ = WindowAction::ToggleFullscreen; },
-          .plugin_runtime_enabled = [this]() { return plugin_runtime_.enabled(); },
           .reload_plugins_for_current_project =
               [this](bool announce) {
                 ReloadPluginsForCurrentProject(PluginReloadRequest{.announce = announce});
@@ -1042,10 +1031,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .breakpoint_quick_action_from_menu =
               [this](ActionId id) { BreakpointQuickActionFromMenu(id); },
           .remove_breakpoint_from_menu = [this]() { RemoveBreakpointFromMenu(); },
-          .dispatch_git_sidebar_action =
-              [this](GitSidebarActionId action, std::size_t index) {
-                return DispatchGitSidebarAction(action, index);
-              },
           .show_debug_output = [this]() { ShowDebugOutput(); },
           .start_named_debug_config =
               [this](const std::string& name) { return StartNamedDebugConfig(name); },

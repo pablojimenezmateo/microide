@@ -628,6 +628,16 @@ show-mode / stop-all call it (and `DebugService`); the shell's `ToggleDebugPane`
 `StopAllDebugSessions` lost their last caller (members cap 1621 -> 1619).
 Operations 128 -> 125.
 
+**menu, clipboard, plugin runtime** (2026-10-28) -- `Services` gains
+`MenuCoordinator&`, `SystemClipboard&` and `WorkspacePluginRuntime&`: closing the
+tree menu before every action, the row-menu path, clipboard read/write, the
+sidebar-mode and sidebar-view parsing, `plugin_runtime_enabled` and the git
+sidebar row dispatch no longer cross a `std::function`. `ActionAvailability` reads
+the tree menu from the `WorkspaceContext` it holds. The coordinator-Operations
+lint then caught `TextInputCoordinator::Operations::active_sidebar_mode` as dead
+(it had only looked called because the context's field of the same name was), and
+it went. Operations 125 -> 117.
+
 Original plan, one area per commit so each slice is reviewable and lane-checked: give each
 executor its own context type holding references to the services it calls
 (`AssistService&`, `EditorTabService&`, `TerminalPanelService&`, …, the

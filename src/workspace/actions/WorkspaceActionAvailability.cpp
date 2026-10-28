@@ -555,7 +555,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       // Acts on the row a context menu named, else the active editor tab; either
       // way it needs a project root to reveal within.
       return !context_.current_project_state.root.empty() &&
-             (!operations_.row_context_menu_path().empty() ||
+             ((context_.menu_state.tree_context_menu.open && !context_.menu_state.tree_context_menu.path.empty()) ||
               !operations_.active_tab_path().empty());
     case ActionId::CopyRelativePath: {
       const std::filesystem::path path =

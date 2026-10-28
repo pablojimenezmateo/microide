@@ -33,6 +33,9 @@ class PersistenceCoordinator;
 class SidebarService;
 class CompareMergeService;
 class DebugPaneService;
+class MenuCoordinator;
+class SystemClipboard;
+class WorkspacePluginRuntime;
 class RemoteHostService;
 
 // Defined in GitSidebarCommandCenter.h; only the type is needed here (function
@@ -73,15 +76,12 @@ struct ClipboardExportResult {
 class WorkspaceActionContext {
  public:
   struct Operations {
-    std::function<void()> close_tree_context_menu;
     std::function<bool(ActionSource, std::string)> reject_action;
-    std::function<SidebarViewRequest(const std::vector<std::string>&)> parse_sidebar_view_request;
     std::function<bool(const std::filesystem::path&, bool, bool)> open_project;
     std::function<void(std::size_t)> request_close_project;
     std::function<bool(std::size_t, bool)> switch_project;
     std::function<ProjectOpenPickerResult()> open_native_project_picker;
     std::function<ProjectOpenPickerResult()> open_native_file_picker;
-    std::function<SidebarMode()> active_sidebar_mode;
     std::function<void(ProjectSearchEditField)> begin_project_search_edit;
     // Move (`cut`) or copy `source` into `directory` (PathMutationCoordinator::
     // PastePath); empty on success, else why not.
@@ -102,11 +102,6 @@ class WorkspaceActionContext {
     std::function<std::string(ActionId, const std::vector<std::string>&)> dispatch_git_operation;
     std::function<std::filesystem::path(ActionSource)> tree_mutation_base_path;
     std::function<std::filesystem::path(ActionSource)> resolve_tree_action_path;
-    // The path the *open* row context menu targets, or empty when no such menu is
-    // open. Unlike resolve_tree_action_path this never falls back to the tree
-    // selection, so an action shared between the row menus and the editor-tab menu
-    // can tell "this menu named a row" from "ask the tree what is selected".
-    std::function<std::filesystem::path()> row_context_menu_path;
     std::function<std::filesystem::path()> active_tab_path;
     std::function<void(PromptSurfaceState::Action,
                        PromptSurfaceState::Kind,
@@ -116,7 +111,6 @@ class WorkspaceActionContext {
     // Ask for the arguments of `command_name` (a CommandArguments prompt).
     // The input prompt for `command`'s arguments, its field holding `prefill`.
     std::function<void(std::string_view command, std::string prefill)> open_command_arguments_prompt;
-    std::function<bool(std::string_view)> write_clipboard_text;
     // The desktop's opener for an http(s) URL (a forwarded port's Open in Browser).
     std::function<bool(std::string_view)> open_external_url;
     std::function<bool(std::string_view)> write_primary_selection_text;
@@ -210,7 +204,6 @@ class WorkspaceActionContext {
     std::function<std::string()> selected_terminal_text;
     std::function<std::optional<std::string>()> last_terminal_command_text;
     std::function<std::optional<std::string>()> selection_text_with_context;
-    std::function<std::optional<std::string>()> read_clipboard_text;
     // A key press (down then up) delivered through the window's event path, as
     // the keyboard would: shortcuts, the focused surface, the terminal's encoder.
     std::function<void(SDL_Keycode, SDL_Keymod)> press_key;
@@ -245,7 +238,6 @@ class WorkspaceActionContext {
     // Application, which polls WorkspaceShell::ConsumeWindowAction each frame;
     // the shell only records the request.
     std::function<void()> request_toggle_fullscreen;
-    std::function<bool()> plugin_runtime_enabled;
     // `announce`: report the completed reload's summary (see PluginReloadRequest).
     std::function<void(bool announce)> reload_plugins_for_current_project;
     std::function<void()> request_quit;
@@ -278,9 +270,6 @@ class WorkspaceActionContext {
     std::function<void(ActionId)> edit_breakpoint_modifier_from_menu;
     std::function<void(ActionId)> breakpoint_quick_action_from_menu;
     std::function<void()> remove_breakpoint_from_menu;
-    // Git sidebar entry context-menu dispatch: forwards to the shell's
-    // DispatchGitSidebarAction for the given entry index.
-    std::function<bool(GitSidebarActionId, std::size_t)> dispatch_git_sidebar_action;
     // Surface the active debug session's console output in the bottom panel.
     std::function<void()> show_debug_output;
     // Add a watch expression directly (no prompt) — the "Add to Watch" row menu
@@ -314,6 +303,9 @@ class WorkspaceActionContext {
     SidebarService& sidebar;
     CompareMergeService& compare_merge;
     DebugPaneService& debug_pane;
+    MenuCoordinator& menus;
+    SystemClipboard& clipboard;
+    WorkspacePluginRuntime& plugins;
   };
 
   WorkspaceActionContext(ProjectCatalogState& project_catalog,

@@ -322,7 +322,6 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
           .current_text_input_surface = [this]() { return CurrentTextInputSurface(); },
           .request_prompt_redraw = [this]() { RequestPromptRedraw(); },
           .request_sidebar_redraw = [this]() { RequestSidebarRedraw(); },
-          .active_sidebar_mode = [this]() { return ActiveSidebarMode(); },
           .request_overlay_redraw = [this]() { RequestOverlayRedraw(); },
           .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },

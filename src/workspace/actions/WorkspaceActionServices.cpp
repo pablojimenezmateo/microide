@@ -21,6 +21,8 @@
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/services/CompareMergeService.h"
 #include "workspace/services/EditorTabService.h"
+#include "workspace/WorkspacePluginRuntime.h"
+#include "workspace/SystemClipboard.h"
 #include "workspace/services/SidebarService.h"
 #include "workspace/services/QuickPickService.h"
 #include "workspace/services/RemoteHostService.h"
@@ -55,7 +57,7 @@ WorkspaceActionContext::WorkspaceActionContext(ProjectCatalogState& project_cata
 
 void WorkspaceActionContext::PrepareForAction(ActionSource source) {
   if (source != ActionSource::ContextMenu) {
-    operations_.close_tree_context_menu();
+    services_.menus.CloseTreeContextMenu();
   }
 }
 
@@ -65,7 +67,7 @@ bool WorkspaceActionContext::RejectAction(ActionSource source, std::string feedb
 
 SidebarViewRequest WorkspaceActionContext::ParseSidebarViewRequest(
     const std::vector<std::string>& args) const {
-  return operations_.parse_sidebar_view_request(args);
+  return workspace::ParseSidebarViewRequest(args, services_.plugins.Host());
 }
 
 bool WorkspaceActionContext::HasProjectRoot() const {
@@ -119,7 +121,7 @@ std::string_view WorkspaceActionContext::SidebarViewId() const {
 }
 
 SidebarMode WorkspaceActionContext::ActiveSidebarMode() const {
-  return operations_.active_sidebar_mode();
+  return SidebarModeForViewId(state_.sidebar.view_id, services_.plugins.Host());
 }
 
 void WorkspaceActionContext::ShowSidebarSurface() {
@@ -247,8 +249,8 @@ std::filesystem::path WorkspaceActionContext::ResolveTreeActionPath(ActionSource
 }
 
 std::filesystem::path WorkspaceActionContext::RowContextMenuPath() const {
-  return operations_.row_context_menu_path ? operations_.row_context_menu_path()
-                                           : std::filesystem::path{};
+  const TreeContextMenuState& menu = services_.menus.tree_context_menu();
+  return menu.open ? menu.path.lexically_normal() : std::filesystem::path{};
 }
 
 std::filesystem::path WorkspaceActionContext::ActiveTabPath() const {
@@ -302,14 +304,14 @@ bool WorkspaceActionContext::WriteClipboardText(std::string_view text) const {
   // Zero-copy for the common in-budget case; only an over-budget export materializes a
   // clamped copy (TD-2026-07-17A-119).
   if (text.size() <= kMaxClipboardExportBytes) {
-    return operations_.write_clipboard_text(text);
+    return !text.empty() && services_.clipboard.Write(text);
   }
   const ClipboardExportResult clamped = ClampClipboardExport(text);
   if (operations_.notify) {
     operations_.notify(NotificationService::Tone::Warning,
                        "Copied text truncated (too large for clipboard)");
   }
-  return operations_.write_clipboard_text(clamped.text);
+  return !clamped.text.empty() && services_.clipboard.Write(clamped.text);
 }
 
 bool WorkspaceActionContext::WritePrimarySelectionText(std::string_view text) const {
@@ -657,7 +659,7 @@ void WorkspaceActionContext::BeginProjectSearchEdit(ProjectSearchEditField field
 }
 
 void WorkspaceActionContext::ApplyProjectSearchViewCommand(ActionId id) {
-  if (operations_.active_sidebar_mode() != SidebarMode::Search) {
+  if (ActiveSidebarMode() != SidebarMode::Search) {
     services_.sidebar.ShowSearch({}, false);
   }
   auto& search = state_.overlay.workflow.project_search;
@@ -899,7 +901,7 @@ std::filesystem::path WorkspaceActionContext::ResolveComparePath(
       viewport != nullptr && !viewport->path().empty()) {
     return viewport->path().lexically_normal();
   }
-  if (state_.sidebar.visible && operations_.active_sidebar_mode() == SidebarMode::Tree) {
+  if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Tree) {
     const auto& entries = state_.directory_tree.entries();
     if (state_.directory_tree.selected_index() < entries.size() &&
         !entries[state_.directory_tree.selected_index()].is_directory) {
@@ -1047,7 +1049,7 @@ std::string WorkspaceActionContext::CompareWithClipboard(ActionSource source) {
     return error;
   }
   std::optional<std::string> clip =
-      operations_.read_clipboard_text ? operations_.read_clipboard_text() : std::nullopt;
+      services_.clipboard.Read();
   if (!clip.has_value() || clip->empty()) {
     return "Clipboard is empty";
   }
@@ -1620,7 +1622,7 @@ void WorkspaceActionContext::CutSelection() {
       }
       return;
     }
-    if (!text.empty() && operations_.write_clipboard_text(text)) {
+    if (!text.empty() && services_.clipboard.Write(text)) {
       operations_.write_primary_selection_text(text);
       // A cut with nothing selected takes the whole line, and pasting it back
       // elsewhere puts it on its own line (see PasteClipboard).
@@ -1639,7 +1641,7 @@ void WorkspaceActionContext::CutSelection() {
 }
 
 void WorkspaceActionContext::PasteClipboard() {
-  std::optional<std::string> clipboard_text = operations_.read_clipboard_text();
+  std::optional<std::string> clipboard_text = services_.clipboard.Read();
   if (!clipboard_text.has_value()) {
     return;
   }

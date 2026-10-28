@@ -34,6 +34,8 @@ class MenuCoordinator {
 
   MenuCoordinator(MenuSurfaceState& menu_state, Operations operations);
 
+  const TreeContextMenuState& tree_context_menu() const { return menu_state_.tree_context_menu; }
+
   int FirstEnabledMenuItemIndex(MenuId id) const;
   int NextEnabledMenuItemIndex(MenuId id, int current_index, int delta) const;
   void OpenMenuBarMenu(MenuId id);

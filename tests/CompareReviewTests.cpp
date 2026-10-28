@@ -94,8 +94,6 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
          int unmarked_hunk = 0;
 
          WorkspaceActionContext::Operations operations;
-         // PrepareForAction invokes this unconditionally on every dispatch.
-         operations.close_tree_context_menu = []() {};
          operations.mark_branch_file_reviewed = [&]() { ++marked_file; };
          operations.unmark_branch_file_reviewed = [&]() { ++unmarked_file; };
          operations.mark_branch_hunk_reviewed = [&]() { ++marked_hunk; };

@@ -21,7 +21,6 @@ class TextInputCoordinator {
     std::function<TextInputSurface()> current_text_input_surface;
     std::function<void()> request_prompt_redraw;
     std::function<void()> request_sidebar_redraw;
-    std::function<SidebarMode()> active_sidebar_mode;
     std::function<void()> request_overlay_redraw;
     std::function<void()> request_focused_editor_redraw;
     std::function<void()> request_window_redraw;

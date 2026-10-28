@@ -13,7 +13,9 @@
 #include "workspace/WorkspaceOutputChannels.h"
 #include "workspace/WorkspacePluginRuntime.h"
 #include "workspace/actions/WorkspaceActionServices.h"
+#include "workspace/SystemClipboard.h"
 #include "workspace/coordinators/WorkspaceCompareInteractionCoordinator.h"
+#include "workspace/coordinators/WorkspaceMenuCoordinator.h"
 #include "workspace/coordinators/WorkspaceDiffTabCoordinator.h"
 #include "workspace/coordinators/WorkspaceSidebarCoordinator.h"
 #include "workspace/coordinators/WorkspaceTabCoordinator.h"
@@ -42,7 +44,9 @@ struct ActionContextTestServices {
         sidebar(workspace::SidebarCoordinator(state, prompts, menus, project_root, plugin_runtime, {})),
         compare_merge(workspace::DiffTabCoordinator(state, {}),
                       workspace::CompareInteractionCoordinator(state, {})),
-        debug_pane(state, {}) {}
+        debug_pane(state, {}),
+        menu_coordinator(menus, {}),
+        clipboard(workspace::SystemClipboard::Backend{}) {}
 
   workspace::WorkspaceActionContext::Services Services() {
     return {.assist = assist,
@@ -56,7 +60,10 @@ struct ActionContextTestServices {
             .output_channels = output_channels,
             .sidebar = sidebar,
             .compare_merge = compare_merge,
-            .debug_pane = debug_pane};
+            .debug_pane = debug_pane,
+            .menus = menu_coordinator,
+            .clipboard = clipboard,
+            .plugins = plugin_runtime};
   }
 
   workspace::PromptState prompts;
@@ -82,6 +89,8 @@ struct ActionContextTestServices {
   workspace::SidebarService sidebar;
   workspace::CompareMergeService compare_merge;
   workspace::DebugPaneService debug_pane;
+  workspace::MenuCoordinator menu_coordinator;
+  workspace::SystemClipboard clipboard;
 };
 
 }  // namespace microide::tests
