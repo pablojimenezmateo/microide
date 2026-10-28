@@ -236,7 +236,6 @@ bool CodeActionAssist::ExecuteSelected() {
   if (session.items.empty()) {
     return false;
   }
-  const AssistHost::Operations& ops = host_.ops();
   const CodeActionSessionItem& action =
       session.items[std::min(session.selected_index, session.items.size() - 1)];
 
