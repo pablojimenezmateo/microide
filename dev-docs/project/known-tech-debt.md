@@ -512,6 +512,13 @@ TD-2026-10-27-400 shape).
 
 ### TD-2026-10-28-413 — `RemoteTerminal/ADetachedTerminalHoldsAnOnDemandServer` once saw a detached shell that never exited. [OPEN — not reproduced; the evidence is now kept]
 
+2026-10-28, later: a candidate tested and ruled out. `2b8a56ef2` (the client's
+destructor now flushes what is queued) landed three hours after this entry, and
+this test does exactly what it fixed -- types, detaches, drops the client at once.
+With that flush commented out, 64 runs (16 then 48 concurrent) all passed, so the
+dropped-queue path does not reproduce this either. Still open; the `command=`
+evidence is what will separate the causes.
+
 2026-10-28, second failure (tests lane): it reported "never listed" -- not
 evidence but the bug the diagnostic was meant to avoid: the message was built
 before the wait (unspecified argument order, see TD-406's correction). The wait
