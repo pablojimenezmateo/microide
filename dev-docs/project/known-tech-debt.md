@@ -488,6 +488,36 @@ Fixed:
   server's fetch queue once a burst of >= 4 MiB has drained (a keyed job that
   moves behind every later fetch).
 
+- **A first sync stalled the shell thread for up to 138 ms**, and the cause was
+  not remote code. Found by naming the editor's own threads too (`index-watch`,
+  `index-setup`, `file-watch`, `project-bg`, `task-pool`, `persist`, `plugin`,
+  `remote-svc`, `control-io`, `lsp-io`, `dap-io`, `term-reader`, `fd-retire`,
+  `syntax-warm`) and tracing `ReloadProjectIfFilesChanged` with new scopes: its
+  `ConsumeReady` waited on the `ProjectChangeCoalescer` lock, which the watcher thread
+  held through `Ingest`, where `MergeFileChange` scanned every pending change (up to
+  1,024) with a path comparison per candidate, per incoming change. Every bulk write
+  into a project pays it -- a remote first sync, a `git checkout`, a build. The
+  pending changes are indexed by normalized path now (`CoalescerIndexMatchesTheLinearMerge`
+  holds it to the old scan's output over random bursts). `ConsumeReady`: 289 ms on the
+  shell thread, max 138 -> 1 ms, max 0.1.
+- **`FileIndex::ApplyBatch` held its exclusive lock for 137 ms on one batch**: each
+  insertion was a sorted-vector insert shifting the tail, O(k x N) under the lock
+  the finder and search snapshots take. The batch's `ProjectFile`s are built before
+  the lock; under it, each run of non-recursive changes keeps the last change per
+  path, modifies in place and merges every insertion and removal in one pass
+  (`IncrementalBatchesMatchApplyingEachChangeInOrder`, a randomized differential
+  test against applying each change in order). 153 ms total, max 137 -> 11 ms, max 2.
+- **The index watcher judged every inotify event**, two stats and an ignore match
+  each, including the three a save through a temporary raises for the temporary.
+  File events are coalesced per path within one read of the queue and judged once,
+  on the final state, flushed before any directory event
+  (`FileIndexWatcher/BatchesReplayToTheTree`; without the flush before
+  IN_DELETE_SELF/IN_MOVE_SELF it fails 9 runs in 10).
+
+  A first remote sync of this repository, client: whole-process CPU 1.76-1.87 ->
+  1.14-1.44 s, the `index-watch` thread 0.40-0.50 -> 0.19 s, the worst frame
+  165 -> 8-16 ms.
+
 Result, idle and connected: server 6.8 -> 2.6 wakeups/s, 0.34% -> 0.03% CPU, 48 ->
 9.5 MB RSS (with TD-416/417); client 4.8 -> 3.3 wakeups/s against 2.3 for the same
 editor with no remote project, CPU indistinguishable from local idle.

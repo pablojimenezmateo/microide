@@ -39,6 +39,80 @@ void TestProjectChangeNormalizerMapsIndexUpdates() {
          "deleted index updates should map to deleted file changes");
 }
 
+// The coalescer finds a pending change by its normalized path in an index
+// (TD-2026-10-28-418); it used to scan every pending change. Over random bursts --
+// repeated paths, the same file spelled `a/./x`, every kind in every order,
+// consumes in between -- it must produce exactly what the scan produced: the
+// changes in first-seen order, each merged by the same rules. The reference below
+// IS the scan.
+void TestProjectChangeCoalescerIndexMatchesTheLinearMerge() {
+  using project::ProjectFileChange;
+  using project::ProjectFileChangeKind;
+  const auto reference_merge = [](std::vector<ProjectFileChange>& pending, ProjectFileChange change) {
+    const auto normal = [](const std::filesystem::path& path) { return path.lexically_normal(); };
+    auto existing = std::find_if(pending.begin(), pending.end(), [&](const ProjectFileChange& candidate) {
+      return normal(candidate.relative_path) == normal(change.relative_path);
+    });
+    if (existing == pending.end()) {
+      pending.push_back(std::move(change));
+      return;
+    }
+    if (change.kind == ProjectFileChangeKind::Deleted) {
+      existing->kind = ProjectFileChangeKind::Deleted;
+      return;
+    }
+    if (existing->kind == ProjectFileChangeKind::Deleted && change.kind == ProjectFileChangeKind::Modified) {
+      existing->kind = ProjectFileChangeKind::Created;
+      existing->absolute_path = change.absolute_path;
+      return;
+    }
+    existing->kind = change.kind;
+    existing->absolute_path = change.absolute_path;
+  };
+  std::uint64_t seed = 0xD1B54A32D192ED03ull;
+  const auto next = [&seed](std::uint64_t bound) {
+    seed ^= seed << 13;
+    seed ^= seed >> 7;
+    seed ^= seed << 17;
+    return seed % bound;
+  };
+  project::ProjectChangeCoalescer coalescer;
+  std::vector<ProjectFileChange> reference;
+  for (int round = 0; round < 300; ++round) {
+    project::ProjectChangeBatch batch;
+    const std::size_t count = 1 + next(40);
+    for (std::size_t c = 0; c < count; ++c) {
+      const std::string name = "f" + std::to_string(next(25)) + ".txt";
+      const std::string dir = next(2) == 0 ? "src" : "lib";
+      const std::filesystem::path relative =
+          next(4) == 0 ? std::filesystem::path(dir + "/./" + name) : std::filesystem::path(dir + "/" + name);
+      const ProjectFileChangeKind kind = static_cast<ProjectFileChangeKind>(next(3));
+      ProjectFileChange change{.kind = kind,
+                               .relative_path = relative,
+                               .absolute_path = "/r/" + dir + "/" + name + "#" + std::to_string(round)};
+      reference_merge(reference, change);
+      batch.file_changes.push_back(std::move(change));
+    }
+    coalescer.Ingest(std::move(batch));
+    if (next(3) == 0 || round == 299) {
+      const std::optional<project::ProjectChangeBatch> ready = coalescer.ConsumeReady();
+      Expect(ready.has_value(), "a ready batch");
+      bool same = ready->file_changes.size() == reference.size();
+      for (std::size_t i = 0; same && i < reference.size(); ++i) {
+        same = ready->file_changes[i].kind == reference[i].kind &&
+               ready->file_changes[i].relative_path == reference[i].relative_path &&
+               ready->file_changes[i].absolute_path == reference[i].absolute_path;
+      }
+      Expect(same, "round " + std::to_string(round) + ": the index merges as the scan did (" +
+                       std::to_string(ready->file_changes.size()) + " vs " + std::to_string(reference.size()) + ")");
+      if (!same) {
+        return;
+      }
+      reference.clear();
+    }
+  }
+}
+
 void TestProjectChangeCoalescerMergesBursts() {
   project::ProjectChangeCoalescer coalescer;
   project::ProjectChangeBatch first;
@@ -419,6 +493,8 @@ void RegisterProjectChangeTests(std::vector<TestCase>& tests) {
           TestGitRepositoryMetadataTrackerDetectsPackedRefsChange);
   AddTest(tests, "ProjectChange/NormalizerMapsIndexUpdates", TestProjectChangeNormalizerMapsIndexUpdates);
   AddTest(tests, "ProjectChange/CoalescerMergesBursts", TestProjectChangeCoalescerMergesBursts);
+  AddTest(tests, "ProjectChange/CoalescerIndexMatchesTheLinearMerge",
+          TestProjectChangeCoalescerIndexMatchesTheLinearMerge);
   AddTest(tests, "ProjectChange/CoalescerCollapsesFloodToRescan",
           TestProjectChangeCoalescerCollapsesFloodToRescan);
   AddTest(tests, "ProjectChange/CoalescerGeneration", TestProjectChangeCoalescerSuppressesStaleGeneration);

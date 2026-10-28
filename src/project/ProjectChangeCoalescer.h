@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <mutex>
 #include <optional>
+#include <string>
+#include <unordered_map>
 
 #include "project/ProjectChangeTypes.h"
 
@@ -20,6 +22,9 @@ class ProjectChangeCoalescer {
 
   mutable std::mutex mutex_;
   ProjectChangeBatch pending_;
+  // pending_.file_changes by normalized path text: the merge is a lookup, not a
+  // scan of every pending change (TD-2026-10-28-418).
+  std::unordered_map<std::string, std::size_t> pending_index_;
   std::uint64_t generation_ = 0;
 };
 

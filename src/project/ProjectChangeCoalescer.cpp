@@ -11,11 +11,10 @@ namespace {
 // Cap on distinct pending file changes before the coalescer collapses to a single
 // full-tree rescan. A file-change flood (a build writing thousands of files, a
 // `git checkout` of a huge tree, or a deliberate flood) would otherwise grow the
-// pending list without bound and make MergeFileChange O(N^2) — a linear scan with
-// two path normalizations per comparison — on the watcher thread. A rescan
-// supersedes the individual changes and re-reads the tree, so past this cap it is
-// both cheaper and bounded. The first kMaxPendingFileChanges changes keep their
-// per-file handling (open-buffer reloads, diagnostics clearing).
+// pending list without bound. A rescan supersedes the individual changes and
+// re-reads the tree, so past this cap it is both cheaper and bounded. The first
+// kMaxPendingFileChanges changes keep their per-file handling (open-buffer
+// reloads, diagnostics clearing).
 constexpr std::size_t kMaxPendingFileChanges = 1024;
 
 }  // namespace
@@ -23,6 +22,7 @@ constexpr std::size_t kMaxPendingFileChanges = 1024;
 void ProjectChangeCoalescer::Reset() {
   std::scoped_lock lock(mutex_);
   pending_ = ProjectChangeBatch{};
+  pending_index_.clear();
   generation_ = 0;
 }
 
@@ -57,6 +57,7 @@ std::optional<ProjectChangeBatch> ProjectChangeCoalescer::ConsumeReady(
   ProjectChangeBatch ready = std::move(pending_);
   ready.generation = generation_;
   pending_ = ProjectChangeBatch{};
+  pending_index_.clear();
   if (out_generation != nullptr) {
     *out_generation = generation_;
   }
@@ -78,24 +79,21 @@ void ProjectChangeCoalescer::MergeFileChange(ProjectFileChange change) {
     pending_.file_changes_truncated = true;
     return;
   }
-  // Normalized ONCE, outside the scan. This comparison used to normalize both
-  // sides per candidate -- ~24 allocations to answer "different file", up to 1024
-  // times per change, on the watcher thread while a build writes files. Watcher
-  // paths are already normal in practice, so `SameAsNormalizedPath` answers a
-  // mismatch with a string compare and normalizes nothing at all.
-  const std::filesystem::path normalized_relative =
-      util::PathTextNeedsNormalizing(change.relative_path.native())
-          ? change.relative_path.lexically_normal()
-          : change.relative_path;
-  auto existing = std::find_if(pending_.file_changes.begin(), pending_.file_changes.end(),
-                               [&](const ProjectFileChange& candidate) {
-                                 return util::SameAsNormalizedPath(candidate.relative_path,
-                                                                   normalized_relative);
-                               });
-  if (existing == pending_.file_changes.end()) {
+  // Looked up by its normalized text. This was a scan of every pending change
+  // with a path comparison each -- up to 1024 per incoming change, under the lock
+  // the shell thread's ConsumeReady waits on: a first remote sync's batches kept
+  // the watcher thread busy 0.4 s and stalled a frame for 138 ms
+  // (TD-2026-10-28-418). Watcher paths are already normal in practice, so the key
+  // is usually the path's own text.
+  std::string key = util::PathTextNeedsNormalizing(change.relative_path.native())
+                        ? change.relative_path.lexically_normal().native()
+                        : change.relative_path.native();
+  const auto [slot, inserted] = pending_index_.try_emplace(std::move(key), pending_.file_changes.size());
+  if (inserted) {
     pending_.file_changes.push_back(std::move(change));
     return;
   }
+  const auto existing = pending_.file_changes.begin() + static_cast<std::ptrdiff_t>(slot->second);
 
   if (change.kind == ProjectFileChangeKind::Deleted) {
     existing->kind = ProjectFileChangeKind::Deleted;

@@ -1204,8 +1204,11 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
       file_index_has_pending_changes_.exchange(false, std::memory_order_acq_rel);
 
   project::ProjectChangeBatch supplemental;
-  for (const project::RepositoryChange& change : git_metadata_tracker_.SampleChanges()) {
-    supplemental.repository_changes.push_back(change);
+  {
+    util::PerformanceTrace::Scope sample_scope("WorkspaceShell::ReloadProjectIfFilesChanged::SampleGitMetadata");
+    for (const project::RepositoryChange& change : git_metadata_tracker_.SampleChanges()) {
+      supplemental.repository_changes.push_back(change);
+    }
   }
 
   // Unforced, this call only DRAINS: the FileIndexWatcher has already put whatever
@@ -1240,8 +1243,10 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
     project_change_coalescer_.Ingest(std::move(supplemental));
   }
 
-  const std::optional<project::ProjectChangeBatch> ready =
-      project_change_coalescer_.ConsumeReady();
+  const std::optional<project::ProjectChangeBatch> ready = [&] {
+    util::PerformanceTrace::Scope consume_scope("WorkspaceShell::ReloadProjectIfFilesChanged::ConsumeReady");
+    return project_change_coalescer_.ConsumeReady();
+  }();
   if (!ready.has_value()) {
     if (!index_metadata_pending) {
       return false;

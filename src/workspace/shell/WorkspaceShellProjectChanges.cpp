@@ -179,6 +179,7 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
 }
 
 void WorkspaceShell::RefreshProjectFileViews() {
+  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::RefreshProjectFileViews");
   ProjectWorkspaceState& project = context_.current_project_state;
   project.directory_tree.Refresh();
   project.file_finder.InvalidateIndexCache();
