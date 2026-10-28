@@ -92,6 +92,96 @@ void TestFileIndexWatcherInitialBatchContainsExistingFiles() {
   watcher.Unwatch();
 }
 
+// The watcher coalesces file events by path within one read of the inotify queue
+// and judges each path once, on its final state (TD-2026-10-28-418). Whatever it
+// coalesces, an index built by applying its batches in order must end up equal to
+// the tree: saves through a temporary beside the target, a file deleted and
+// recreated, a directory deleted and recreated holding the same file -- the
+// orderings a reordering bug would get wrong.
+void TestFileIndexWatcherBatchesReplayToTheTree() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "watch_replay";
+  std::filesystem::create_directories(root / "keep");
+  std::filesystem::create_directories(root / "dir");
+  WriteFile(root / "dir/inner.txt", "v0\n");
+  WriteFile(root / "keep/gone.txt", "v0\n");
+
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::set<std::string> index;
+  bool initial = false;
+  std::chrono::steady_clock::time_point last_batch = std::chrono::steady_clock::now();
+  FileIndexWatcher watcher;
+  watcher.SetCallback([&](IndexUpdateBatch batch) {
+    std::lock_guard lock(mutex);
+    if (batch.is_initial) {
+      index.clear();
+      initial = true;
+    }
+    for (const auto& change : batch.changes) {
+      const std::string path = change.entry.relative_path.generic_string();
+      if (change.kind == IndexUpdateBatch::Kind::CreatedOrModified) {
+        index.insert(path);
+      } else if (change.recursive) {
+        std::erase_if(index, [&](const std::string& p) { return p == path || p.rfind(path + "/", 0) == 0; });
+      } else {
+        index.erase(path);
+      }
+    }
+    last_batch = std::chrono::steady_clock::now();
+    cv.notify_all();
+  });
+  Expect(watcher.Watch(root), "watches");
+  Expect(WaitFor(mutex, cv, [&] { return initial; }, std::chrono::milliseconds(2000)), "the initial batch");
+
+  for (int round = 0; round < 3; ++round) {
+    // Enough saves that the watcher is still reading them when the directory
+    // sequence below happens, so that sequence lands in ONE read of the queue --
+    // the case the coalescing must not reorder.
+    for (int i = 0; i < 400; ++i) {  // saves through a temporary, as every editor and the mirror do
+      const std::filesystem::path target = root / "keep" / ("file_" + std::to_string(i) + ".txt");
+      const std::filesystem::path temp = root / "keep" / (".file_" + std::to_string(i) + ".txt.tmp");
+      WriteFile(temp, "round " + std::to_string(round) + "\n");
+      std::filesystem::rename(temp, target);
+    }
+    std::filesystem::remove(root / "keep/gone.txt");
+    WriteFile(root / "keep/gone.txt", "back\n");
+    std::filesystem::remove(root / "dir/inner.txt");
+    std::filesystem::remove_all(root / "dir");
+    std::filesystem::create_directories(root / "dir");
+    WriteFile(root / "dir/inner.txt", "again\n");
+  }
+  std::filesystem::remove(root / "keep/file_7.txt");  // and one removal that stays
+
+  std::set<std::string> tree;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+    if (entry.is_regular_file()) {
+      tree.insert(entry.path().lexically_relative(root).generic_string());
+    }
+  }
+  // Quiescent: the tree's paths indexed, and no batch for a while after.
+  // Polled: the quiet half of the condition comes true with time, not a batch.
+  bool settled = false;
+  for (const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+       !settled && std::chrono::steady_clock::now() < deadline;) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    std::lock_guard lock(mutex);
+    settled = index == tree && std::chrono::steady_clock::now() - last_batch > std::chrono::milliseconds(300);
+  }
+  std::string have;
+  {
+    std::lock_guard lock(mutex);
+    for (const std::string& p : index) {
+      if (!tree.contains(p)) have += " +" + p;
+    }
+    for (const std::string& p : tree) {
+      if (!index.contains(p)) have += " -" + p;
+    }
+  }
+  Expect(settled, "the replayed batches equal the tree; differences:" + have);
+  watcher.Unwatch();
+}
+
 void TestFileIndexWatcherDetectsCreatedFile() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "watch_create";
@@ -765,6 +855,7 @@ void RegisterFileIndexWatcherTests(std::vector<TestCase>& tests) {
           TestFileIndexWatcherBuffersIncrementalsUntilInitialBatch);
   AddTest(tests, "FileIndexWatcher/BoundsPreInitialBatchFlood",
           TestFileIndexWatcherBoundsPreInitialBatchFlood);
+  AddTest(tests, "FileIndexWatcher/BatchesReplayToTheTree", TestFileIndexWatcherBatchesReplayToTheTree);
   AddTest(tests, "FileIndexWatcher/InitialBatchContainsExistingFiles",
           TestFileIndexWatcherInitialBatchContainsExistingFiles);
   AddTest(tests, "FileIndexWatcher/DetectsCreatedFile",

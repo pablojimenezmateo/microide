@@ -28,6 +28,7 @@
 #include <string_view>
 #include <system_error>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include <fcntl.h>
@@ -36,6 +37,7 @@
 #include <unistd.h>
 
 #include "util/PosixFd.h"
+#include "util/ThreadName.h"
 
 namespace microide::platform {
 
@@ -738,6 +740,7 @@ struct FileIndexWatcher::Impl {
     // kernel's inotify queue and are drained when the worker starts; we don't read them
     // from a second thread, so there's no data race on wd_to_path.
     setup_thread = std::thread([this]() {
+      util::NameCurrentThread("index-setup");
       project::ProjectTraversalFilter filter(root, exclude_globs);
       // ONE walk of the tree, producing both halves of what a project open needs:
       // an inotify watch per kept directory, and the initial file batch. This used
@@ -761,7 +764,10 @@ struct FileIndexWatcher::Impl {
       // Start the read loop BEFORE dispatching, so events that arrive while the
       // consumer applies the batch are queued rather than dropped. Kernel-queued
       // events from the root watch are drained by this worker either way.
-      worker = std::thread([this]() { WorkerMain(); });
+      worker = std::thread([this]() {
+        util::NameCurrentThread("index-watch");
+        WorkerMain();
+      });
       if (callback) {
         callback(std::move(initial));
       }
@@ -804,6 +810,60 @@ struct FileIndexWatcher::Impl {
       // .gitignore edited between cycles is picked up. Constructing it here (not
       // per event) amortizes the root-.gitignore read across the whole batch.
       project::ProjectTraversalFilter batch_filter(root, exclude_globs);
+      // File events since the last directory event, coalesced by path and judged
+      // once, on the path's final state: a write through a temporary beside the
+      // target (every save, every mirror pull, most tools) is a create, an attrib
+      // and a close-write of the temporary, its move away and the target's move in,
+      // and each of the first three used to pay two stats and an ignore match for a
+      // file already gone by the time the batch was read (TD-2026-10-28-418).
+      // Flushed before any directory event so a file change never moves across a
+      // directory's create or recursive delete; the stat at the flush reads the
+      // filesystem as it is then, which is what the batch must describe.
+      std::vector<std::filesystem::path> pending_files;
+      std::unordered_map<std::string, bool> pending_removed;  // by path: its last event removed it
+      const auto flush_file_events = [&]() {
+        for (const std::filesystem::path& abs_path : pending_files) {
+          std::filesystem::path rel;
+          if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
+            continue;
+          }
+          IndexUpdateBatch::Change change;
+          if (pending_removed[abs_path.native()]) {
+            change.kind = IndexUpdateBatch::Kind::Deleted;
+            change.entry.relative_path = rel;
+          } else {
+            // Apply the same regular-file + ignore-filter gate the initial
+            // scan (CollectTrackedCreations) and poll fallback enforce.
+            // Without it, a .gitignore/exclude-glob'd file (or a non-regular
+            // entry like a FIFO/socket/symlink) created in a watched dir
+            // leaks into the index via this incremental event and only
+            // vanishes on a full rescan -- an inconsistent, confusing state.
+            std::error_code type_error;
+            if (!std::filesystem::is_regular_file(abs_path, type_error)) {
+              // Not a regular file, but it IS a new entry in a watched
+              // directory: a symlink to a directory, a fifo, a socket. The
+              // index cannot hold it, the sidebar tree shows it, so report
+              // it as a shape change instead of dropping the event. Gated on
+              // the ignore filter so a build writing ignored artifacts does
+              // not turn into a refresh storm. Gone already (a temporary
+              // renamed away): nothing to report.
+              if (!type_error && batch_filter.Includes(abs_path, platform::PathType::Other)) {
+                structure_changed = true;
+              }
+              continue;
+            }
+            if (!batch_filter.Includes(abs_path, platform::PathType::RegularFile)) {
+              continue;
+            }
+            change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
+            change.entry.relative_path = rel;
+            StampEntryMetadata(abs_path, change.entry);
+          }
+          changes.push_back(std::move(change));
+        }
+        pending_files.clear();
+        pending_removed.clear();
+      };
       {
         alignas(alignof(struct inotify_event)) std::array<char, 4096> buf{};
         while (true) {
@@ -855,6 +915,9 @@ struct FileIndexWatcher::Impl {
               const std::string name(ev->name, ::strnlen(ev->name, ev->len));
               const std::filesystem::path abs_path = util::NormalizedPath(dir / name);
 
+              if (is_dir) {
+                flush_file_events();  // keep file changes on their side of this one
+              }
               if (is_dir && (ev->mask & (IN_CREATE | IN_MOVED_TO)) != 0) {
                 // New directory: add watches for it recursively. Build a fresh
                 // filter per event (rare) so this single-threaded worker never
@@ -889,44 +952,17 @@ struct FileIndexWatcher::Impl {
                   changes.push_back(std::move(change));
                 }
               } else if (!is_dir) {
-                std::filesystem::path rel;
-                if (TryBuildTrackedRelativePath(abs_path, root, rel)) {
-                  IndexUpdateBatch::Change change;
-                  if ((ev->mask & (IN_DELETE | IN_MOVED_FROM | IN_DELETE_SELF | IN_MOVE_SELF)) != 0) {
-                    change.kind = IndexUpdateBatch::Kind::Deleted;
-                    change.entry.relative_path = rel;
-                  } else {
-                    // Apply the same regular-file + ignore-filter gate the initial
-                    // scan (CollectTrackedCreations) and poll fallback enforce.
-                    // Without it, a .gitignore/exclude-glob'd file (or a non-regular
-                    // entry like a FIFO/socket/symlink) created in a watched dir
-                    // leaks into the index via this incremental event and only
-                    // vanishes on a full rescan -- an inconsistent, confusing state.
-                    std::error_code type_error;
-                    if (!std::filesystem::is_regular_file(abs_path, type_error)) {
-                      // Not a regular file, but it IS a new entry in a watched
-                      // directory: a symlink to a directory, a fifo, a socket. The
-                      // index cannot hold it, the sidebar tree shows it, so report
-                      // it as a shape change instead of dropping the event. Gated on
-                      // the ignore filter so a build writing ignored artifacts does
-                      // not turn into a refresh storm.
-                      if (!type_error &&
-                          batch_filter.Includes(abs_path, platform::PathType::Other)) {
-                        structure_changed = true;
-                      }
-                      continue;
-                    }
-                    if (!batch_filter.Includes(abs_path, platform::PathType::RegularFile)) {
-                      continue;
-                    }
-                    change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
-                    change.entry.relative_path = rel;
-                    StampEntryMetadata(abs_path, change.entry);
-                  }
-                  changes.push_back(std::move(change));
+                const bool removed =
+                    (ev->mask & (IN_DELETE | IN_MOVED_FROM | IN_DELETE_SELF | IN_MOVE_SELF)) != 0;
+                const auto [slot, inserted] = pending_removed.try_emplace(abs_path.native(), removed);
+                if (inserted) {
+                  pending_files.push_back(abs_path);
+                } else {
+                  slot->second = removed;
                 }
               }
             } else if ((ev->mask & (IN_DELETE_SELF | IN_MOVE_SELF)) != 0) {
+              flush_file_events();
               // A directory renamed within the tree arrives as IN_MOVED_FROM and
               // IN_MOVED_TO on the parent and THEN IN_MOVE_SELF on the directory:
               // the moved-to walk above already re-bound this descriptor to the
@@ -961,6 +997,7 @@ struct FileIndexWatcher::Impl {
             break;
           }
         }
+        flush_file_events();
       }
 
       if (overflow_detected) {
@@ -1002,6 +1039,7 @@ struct FileIndexWatcher::Impl {
     stop_poll.Reset();
     // Take initial snapshot
     poll_worker = std::thread([this]() {
+      util::NameCurrentThread("index-poll");
       RunPollFallbackWorker(root, exclude_globs, entry_budget, poll_interval, stop_poll, callback);
     });
   }
