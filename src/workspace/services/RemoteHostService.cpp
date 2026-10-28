@@ -262,10 +262,14 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
   if (state_changed && status.state != State::Ready && operations_.host_terminals_waiting) {
     operations_.host_terminals_waiting(tree, PendingTerminalLine(tree));
   }
+  // Waiting terminals start on every apply that finds the link up, not only on
+  // the not-Ready -> Ready edge: a terminal opened after the link died but before
+  // "Reconnecting" was applied waits too, and a wake that coalesced Reconnecting
+  // into Ready shows no edge at all (TD-2026-10-28-414). A no-op when none waits.
+  if (status.state == State::Ready && operations_.start_host_terminals) {
+    operations_.start_host_terminals(tree);
+  }
   if (came_back) {
-    if (operations_.start_host_terminals) {
-      operations_.start_host_terminals(tree);
-    }
     ListHostTerminals(tree, entry);
   }
   const remote::RemoteProjectRecord record = project.record();

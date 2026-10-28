@@ -463,7 +463,27 @@ on this machine is also auto-forwarded through that one serial queue, which
 can only delay the cancel. The assertion now says which half stayed (the row,
 the registered forward, or both).
 
-### TD-2026-10-28-414 — `RemoteTerminalRestore/ABackgroundStartedHostTerminalIsRecordedAtQuit` once never saw the background project's terminal. [OPEN — not reproduced; the evidence is now kept]
+### TD-2026-10-28-414 — `RemoteTerminalRestore/ABackgroundStartedHostTerminalIsRecordedAtQuit` once never saw the background project's terminal. [RESOLVED 2026-10-28 — one real path found and fixed; the evidence stays]
+
+2026-10-28, again (tests lane, 16 shards at once): `front #1, the host listed:
+#1(clients=1)` -- the kept evidence says the background project's terminal was
+never opened on the host, i.e. its pane stayed pending. Reading the start path
+found a real way for that to happen. A pane goes pending when the launcher's
+LIVE link is down (`RemoteProcessLauncher::Ready`, the client's `connected()`),
+but pending panes were started only on the APPLIED status's not-Ready -> Ready
+edge in `RemoteHostService::ApplyProject`. The two disagree whenever the link dies
+before "Reconnecting" is applied, and the status wake is `PostLatest`: a
+Reconnecting that is overwritten by Ready before the shell drains it shows no
+edge at all, so a pane opened in that window waited forever. Waiting panes now
+start on every apply that finds the project Ready (a no-op when none waits).
+`RemoteTerminalRestore/ATerminalOpenedWhileTheLinkIsDownStartsAfterACoalescedReconnect`
+drives exactly that window (server stopped, terminal opened, reconnect completed,
+all before the shell drains) and fails every time on the old rule. Whether the
+TD-414 failure took this path is not proven -- the second project's server start
+on the same fresh host is the candidate for the link drop -- so the test's
+diagnostic stays.
+
+Original entry:
 
 Hardened lane, eight lanes at once (2026-10-28): two remote projects are opened
 on one fake host, the second switched away from while its link connects; the

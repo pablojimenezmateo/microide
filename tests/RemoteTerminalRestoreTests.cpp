@@ -6,6 +6,7 @@
 #include "project/remote/RemoteServerClient.h"
 #include "project/remote/RemoteServerPaths.h"
 #include "project/remote/RemoteTerminalChannel.h"
+#include "terminal/TerminalHostChannel.h"
 #include "terminal/TerminalSession.h"
 #include "workspace/services/RemoteHostService.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
@@ -322,6 +323,45 @@ void TestABackgroundStartedHostTerminalIsRecordedAtQuit() {
   }
 }
 
+// TD-2026-10-28-414's one found path: a terminal opened while the link is down
+// waits for it, and the UI learns of the reconnect through a coalesced wake --
+// "Reconnecting" overwritten by "Ready" before the shell drained it. Waiting
+// terminals used to start only on the shell's "was not Ready, is Ready" edge,
+// which that wake never shows, so the terminal waited forever.
+void TestATerminalOpenedWhileTheLinkIsDownStartsAfterACoalescedReconnect() {
+  ScopedAppHomes homes;
+  FakeSshHost host;
+  const std::filesystem::path root = host.home / "src" / "relink";
+  WriteFile(root / "a.txt", "a\n");
+  const std::string target = Target("fake-relink");
+
+  WorkspaceShell shell;
+  PointAtFakeHost(shell, host);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open " + target + ":" + root.string()),
+         "the remote project opens");
+  TerminalSession& first = WorkspaceShellTestAccess::TerminalTabSession(shell, 0);
+  Expect(PumpUntil(shell, [&] { return first.running(); }), "its terminal starts");
+  const auto* source = dynamic_cast<const terminal::HostTerminalSource*>(
+      &WorkspaceShellTestAccess::ProjectLauncher(shell));
+  Expect(source != nullptr && source->Ready(), "a connected host terminal source");
+
+  // From here until the reconnect is complete the shell drains nothing.
+  Expect(platform::RunSubprocess({MICROIDE_SERVER_BINARY, "stop", "--socket-dir", host.server_dir().string()},
+                                 platform::SubprocessOptions{.timeout_ms = 10000})
+             .success(),
+         "the host server stops");
+  Expect(WaitUntil([&] { return !source->Ready(); }, std::chrono::seconds(10)), "the link goes down");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "term"), "a terminal is asked for");
+  const std::size_t index = WorkspaceShellTestAccess::TerminalTabCount(shell) - 1;
+  TerminalSession& waiting = WorkspaceShellTestAccess::TerminalTabSession(shell, index);
+  Expect(waiting.host_pending(), "it waits for the link");
+  Expect(WaitUntil([&] { return source->Ready(); }, std::chrono::seconds(20)),
+         "the session reconnects by itself");
+
+  Expect(PumpUntil(shell, [&] { return waiting.running(); }, std::chrono::seconds(15)),
+         [&] { return "the waiting terminal starts once the shell sees the link back:\n" + ScreenText(waiting); });
+}
+
 // The other side of the lifetime rule: a tab closed with its X ends its shell;
 // a shell the user ended (Ctrl+D) is closed at quit, not kept as a dead buffer
 // that holds the server; terminal.restore_sessions off closes at quit. A terminal
@@ -465,6 +505,8 @@ void RegisterRemoteTerminalRestoreTests(std::vector<TestCase>& tests) {
           TestHostTerminalsSurviveQuitAndReattach);
   AddTest(tests, "RemoteTerminalRestore/ABackgroundStartedHostTerminalIsRecordedAtQuit",
           TestABackgroundStartedHostTerminalIsRecordedAtQuit);
+  AddTest(tests, "RemoteTerminalRestore/ATerminalOpenedWhileTheLinkIsDownStartsAfterACoalescedReconnect",
+          TestATerminalOpenedWhileTheLinkIsDownStartsAfterACoalescedReconnect);
   AddTest(tests, "RemoteTerminalRestore/HostTerminalLifetimeAndUnclaimedTerminals",
           TestHostTerminalLifetimeAndUnclaimedTerminals);
 }
