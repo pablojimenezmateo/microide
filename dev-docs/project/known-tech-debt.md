@@ -449,7 +449,23 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-28-415 — `RemoteHostService/APortThatStartsListeningIsForwarded` once kept an automatic forward after its port stopped listening. [OPEN — not reproduced; the evidence is now kept]
+### TD-2026-10-28-415 — `RemoteHostService/APortThatStartsListeningIsForwarded` once kept an automatic forward after its port stopped listening. [RESOLVED 2026-10-28 — an ordering hole found and closed; not reproduced, the evidence stays]
+
+2026-10-28: the port list reached the UI two ways: the subscription's answer by
+`mailbox_.Post`, its pushes by `mailbox_.PostLatest`. `MainThreadMailbox::PostLatest`
+replaces a queued action IN PLACE, so a push that was queued before the answer and
+then replaced by a newer push ran the newest list ahead of the older answer. After
+a reconnect that meant: the newer list stops a closed port's automatic forward,
+then the stale answer lists the port again, `OnHostPorts` sees it as new and
+forwards it anew -- and no later push stops it, the port being already gone. The
+answer and the pushes now go through one `PostHostPorts` under the same key (the
+first list sets the baseline in `OnHostPorts`), so only the newest list ever runs;
+`MainThreadMailbox::PostLatest`'s contract now warns against splitting one stream
+of states across the two calls. Whether TD-415's failure took this path is not
+proven (the push must land between the answer's arrival and its post); the
+test's which-half diagnostic stays.
+
+Original entry:
 
 TSan lane, ten lanes at once (2026-10-28, at `5f13e41ee`): the listener was
 forwarded and announced, then closed, and for 30 s either the forward's row or

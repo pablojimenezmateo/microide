@@ -50,6 +50,11 @@ class MainThreadMailbox {
   // per URI, which fully replaces a file's diagnostics), so a chatty server/plugin
   // cannot enqueue many stale capped closures between UI drains. Wakes the loop.
   // TD-2026-07-17A-018.
+  //
+  // In place means the NEWEST payload runs at the OLDEST position: ahead of any
+  // plain Post queued after the first keyed one. Never split one stream of states
+  // between Post and PostLatest -- an older state sent by Post then runs after a
+  // newer one (TD-2026-10-28-415). Post every state of a stream under its key.
   void PostLatest(std::string key, Action action);
 
   // Wake the UI loop without enqueuing. For nudging the loop to re-poll state

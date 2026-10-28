@@ -1279,23 +1279,27 @@ void RemoteHostService::WatchPorts(const std::string& host, remote::RemoteHostSe
   work_.Post([this, host, client]() {
     std::string error;
     std::optional<std::vector<std::uint16_t>> now = client->SubscribePorts(
-        [this, host](const std::vector<std::uint16_t>& ports) {
-          mailbox_.PostLatest("remote-ports:" + host, [this, host, ports]() { OnHostPorts(host, ports); });
-        },
+        [this, host](const std::vector<std::uint16_t>& ports) { PostHostPorts(host, ports); },
         &error);
     if (!now.has_value()) {
       return;  // a server that predates it: forwards stay a command and a click
     }
-    mailbox_.Post([this, host, now = std::move(*now)]() {
-      PortWatch& watch = port_watches_[host];
-      if (!watch.baseline.has_value()) {
-        // What already listened when the editor first connected is not news.
-        watch.baseline = std::set<std::uint16_t>(now.begin(), now.end());
-        return;
-      }
-      OnHostPorts(host, now);  // a reconnect: what started while it was down
-    });
+    // The first answer sets the baseline; after a reconnect it says what started
+    // or stopped while the link was down. Either way it is the host's list as of
+    // now, like a push, and goes through the same coalescing key.
+    PostHostPorts(host, *now);
   });
+}
+
+void RemoteHostService::PostHostPorts(const std::string& host, std::vector<std::uint16_t> ports) {
+  // ONE key for the subscription's answer and its pushes. The mailbox replaces a
+  // keyed action IN PLACE, so a push posted before the answer and replaced by a
+  // newer push ran ahead of the (older) answer when the answer used a plain Post:
+  // the newer list stopped a closed port's forward, then the stale answer listed it
+  // again and forwarded it anew, with no later push to stop it
+  // (TD-2026-10-28-415). Coalesced, only the newest list ever runs.
+  mailbox_.PostLatest("remote-ports:" + host,
+                      [this, host, ports = std::move(ports)]() { OnHostPorts(host, ports); });
 }
 
 bool RemoteHostService::PortsWatched(std::string_view host) const {
@@ -1306,7 +1310,9 @@ bool RemoteHostService::PortsWatched(std::string_view host) const {
 void RemoteHostService::OnHostPorts(const std::string& host, const std::vector<std::uint16_t>& ports) {
   PortWatch& watch = port_watches_[host];
   if (!watch.baseline.has_value()) {
-    return;  // the subscription's own answer has not arrived yet
+    // What already listened when the editor first connected is not news.
+    watch.baseline = std::set<std::uint16_t>(ports.begin(), ports.end());
+    return;
   }
   // A port that stopped listening: its program ended. Seen again it is news again,
   // and a forward made for it automatically goes with it, quietly (VS Code's).

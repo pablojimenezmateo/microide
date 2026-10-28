@@ -388,6 +388,9 @@ class RemoteHostService {
     // listening.
     std::set<std::uint16_t> auto_forwarded;
   };
+  // Queue `ports` (the host's whole listening list, answer or push) for
+  // OnHostPorts; only the newest queued list runs.
+  void PostHostPorts(const std::string& host, std::vector<std::uint16_t> ports);
   // CancelForward, announced or not (an automatic forward's port went away).
   bool StopForward(std::string_view host, std::uint16_t port, bool announce);
   void PublishHostChanges(const std::filesystem::path& tree, Project& entry,
