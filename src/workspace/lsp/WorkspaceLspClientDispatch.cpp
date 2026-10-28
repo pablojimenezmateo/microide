@@ -218,11 +218,9 @@ void LspClient::Impl::DispatchMessage(util::JsonValue msg) {
     std::chrono::steady_clock::time_point sent_at;
     {
       std::lock_guard lock(mutex);
-      auto it = pending_requests.find(id);
-      if (it != pending_requests.end()) {
-        cb = std::move(it->second.callback);
-        sent_at = it->second.sent_at;
-        pending_requests.erase(it);
+      if (auto entry = pending_requests.Take(id)) {
+        cb = std::move(entry->callback);
+        sent_at = entry->sent_at;
       }
     }
     if (cb && util::PerformanceTrace::SummaryEnabled()) {
@@ -321,20 +319,12 @@ void LspClient::Impl::FailPendingRequests(bool only_expired) {
   const LspRequestOutcome outcome =
       only_expired ? LspRequestOutcome::kTimeout : LspRequestOutcome::kUnavailable;
   std::lock_guard lock(mutex);
-  bool any = false;
-  for (auto it = pending_requests.begin(); it != pending_requests.end();) {
-    if (only_expired && now < it->second.deadline) {
-      ++it;
-      continue;
-    }
-    auto cb = std::move(it->second.callback);
-    it = pending_requests.erase(it);
-    main_mailbox.PostWithoutWake([cb = std::move(cb), outcome]() mutable {
+  const std::size_t failed = pending_requests.Sweep(only_expired, now, [&](int, auto entry) {
+    main_mailbox.PostWithoutWake([cb = std::move(entry.callback), outcome]() mutable {
       cb(outcome, util::JsonValue(util::JsonObject{}));
     });
-    any = true;
-  }
-  if (any) {
+  });
+  if (failed > 0) {
     main_mailbox.PushWake();
   }
 }

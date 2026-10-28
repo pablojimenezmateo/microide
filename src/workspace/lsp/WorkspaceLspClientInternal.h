@@ -2,6 +2,7 @@
 
 #include <array>
 
+#include "workspace/PendingRequestTable.h"
 #include "workspace/lsp/WorkspaceLspClient.h"
 #include "workspace/lsp/LspFileWatchRegistry.h"
 #include "workspace/lsp/LspProtocol.h"
@@ -125,14 +126,9 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
   // The outcome is kOk when a real frame arrived (DispatchResultRequest then refines
   // it to kOk/kEmpty/kProtocolError by inspecting the payload); kTimeout / kUnavailable
   // when the sweep synthesizes a failure (the envelope is then an empty `{}`).
-  struct PendingRequest {
-    std::function<void(LspRequestOutcome, util::JsonValue)> callback;
-    std::chrono::steady_clock::time_point deadline;
-    // For round-trip attribution. `deadline` cannot stand in for this: tests
-    // shorten request_timeout_, so deadline-minus-timeout would drift.
-    std::chrono::steady_clock::time_point sent_at;
-  };
-  std::unordered_map<int, PendingRequest> pending_requests;
+  // Entries carry `sent_at` for round-trip attribution: `deadline` cannot stand in
+  // for it, since tests shorten request_timeout_.
+  PendingRequestTable<std::function<void(LspRequestOutcome, util::JsonValue)>> pending_requests;
 
   // Per-request timeout; kLspRequestTimeout in production, lowered by tests so the
   // deadline sweep can be exercised without a 30s wait.
@@ -343,22 +339,15 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
   int RegisterPendingRequest(std::function<void(LspRequestOutcome, util::JsonValue)> cb) {
     std::lock_guard lock(mutex);
     const int id = next_id++;
-    const auto now = std::chrono::steady_clock::now();
-    pending_requests[id] = PendingRequest{
-        .callback = std::move(cb),
-        .deadline = now + request_timeout_,
-        .sent_at = now,
-    };
+    pending_requests.Add(id, std::move(cb), request_timeout_);
     return id;
   }
 
-  // Returns true iff this call actually removed a still-pending entry. The
-  // send-failure path uses that to avoid double-delivering a callback the I/O
-  // thread's EOF sweep (FailPendingRequests) may have already failed and erased in
-  // the window between RegisterPendingRequest and a failed SendMessageAfterInitialize.
+  // A failed send's cleanup; false when the EOF sweep claimed the entry first
+  // (PendingRequestTable::Remove).
   bool RemovePendingRequest(int id) {
     std::lock_guard lock(mutex);
-    return pending_requests.erase(id) != 0;
+    return pending_requests.Remove(id);
   }
 
   // Synthesize empty responses for pending requests so a non-responding server never

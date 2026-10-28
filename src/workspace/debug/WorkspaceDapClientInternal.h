@@ -1,5 +1,6 @@
 #pragma once
 
+#include "workspace/PendingRequestTable.h"
 #include "workspace/debug/DapProtocol.h"
 #include "workspace/JsonRpcMessageFraming.h"
 #include "workspace/debug/WorkspaceDapClient.h"
@@ -167,12 +168,8 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
 
   // A registered request awaiting its response: the raw response handler plus the
   // deadline after which the request is failed synthetically.
-  struct PendingRequest {
-    std::function<void(util::JsonValue)> callback;
-    std::chrono::steady_clock::time_point deadline;
-  };
   // Pending request callbacks keyed by request seq, guarded by mutex.
-  std::unordered_map<int, PendingRequest> pending_requests;
+  PendingRequestTable<std::function<void(util::JsonValue)>> pending_requests;
   // Callbacks marshalled to the main thread and drained once per frame. Carries
   // its own mutex + SDL wake event, so it is the innermost lock: producers may
   // post while holding `mutex`, and DrainCallbacks() never takes `mutex`.
@@ -244,10 +241,8 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
     std::function<void(util::JsonValue)> cb;
     {
       std::lock_guard lock(mutex);
-      auto it = pending_requests.find(request_seq);
-      if (it != pending_requests.end()) {
-        cb = std::move(it->second.callback);
-        pending_requests.erase(it);
+      if (auto entry = pending_requests.Take(request_seq)) {
+        cb = std::move(entry->callback);
       }
     }
     if (!cb) {
@@ -293,20 +288,15 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
                              std::chrono::milliseconds timeout) {
     std::lock_guard lock(mutex);
     const int seq = next_seq++;
-    pending_requests[seq] = PendingRequest{
-        .callback = std::move(cb),
-        .deadline = std::chrono::steady_clock::now() + timeout,
-    };
+    pending_requests.Add(seq, std::move(cb), timeout);
     return seq;
   }
 
-  // Returns true iff this call actually removed a still-pending entry. The
-  // send-failure path uses that to avoid double-delivering a callback the I/O
-  // thread's EOF sweep (FailPendingRequests) may have already failed and erased in
-  // the window between RegisterPendingRequest and a failed SendMessageAfterInitialize.
+  // A failed send's cleanup; false when the EOF sweep claimed the entry first
+  // (PendingRequestTable::Remove).
   bool RemovePendingRequest(int seq) {
     std::lock_guard lock(mutex);
-    return pending_requests.erase(seq) != 0;
+    return pending_requests.Remove(seq);
   }
 
   // Synthesize failure responses for pending requests so a non-responding adapter
@@ -317,25 +307,17 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
   void FailPendingRequests(bool only_expired) {
     const auto now = std::chrono::steady_clock::now();
     std::lock_guard lock(mutex);
-    bool any = false;
-    for (auto it = pending_requests.begin(); it != pending_requests.end();) {
-      if (only_expired && now < it->second.deadline) {
-        ++it;
-        continue;
-      }
+    const std::size_t failed = pending_requests.Sweep(only_expired, now, [&](int seq, auto entry) {
       // The runaway/<unavailable> smoking gun: correlate this seq with the
       // matching outbound "send" line to see which request the adapter dropped.
       util::DebugTrace::Note("dap", only_expired ? "request-timeout seq" : "adapter-gone seq",
-                             static_cast<long long>(it->first));
-      auto cb = std::move(it->second.callback);
-      it = pending_requests.erase(it);
+                             static_cast<long long>(seq));
       util::JsonValue envelope = dap_protocol::MakeResponse(
           0, 0, std::string{}, false, "debug adapter did not respond", util::JsonValue(nullptr));
-      main_mailbox.PostWithoutWake(
-          [cb = std::move(cb), envelope = std::move(envelope)]() mutable { cb(std::move(envelope)); });
-      any = true;
-    }
-    if (any) {
+      main_mailbox.PostWithoutWake([cb = std::move(entry.callback),
+                                    envelope = std::move(envelope)]() mutable { cb(std::move(envelope)); });
+    });
+    if (failed > 0) {
       main_mailbox.PushWake();
     }
   }

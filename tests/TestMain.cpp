@@ -23,6 +23,7 @@ void RegisterAppStartupOptionsTests(std::vector<TestCase>& tests);
 void RegisterCompareReviewTests(std::vector<TestCase>& tests);
 void RegisterBranchReviewStateTests(std::vector<TestCase>& tests);
 void RegisterAssistServiceTests(std::vector<TestCase>& tests);
+void RegisterPendingRequestTableTests(std::vector<TestCase>& tests);
 void RegisterParityTests(std::vector<TestCase>& tests);
 void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests);
 void RegisterRemoteTerminalRestoreTests(std::vector<TestCase>& tests);
@@ -194,6 +195,7 @@ void RegisterShellTests(std::vector<TestCase>& tests) {
   RegisterCompareReviewTests(tests);
   RegisterBranchReviewStateTests(tests);
   RegisterAssistServiceTests(tests);
+  RegisterPendingRequestTableTests(tests);
   RegisterParityTests(tests);
   RegisterRemoteHostServiceTests(tests);
   RegisterRemoteTerminalRestoreTests(tests);

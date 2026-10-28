@@ -1327,6 +1327,7 @@ add_executable(microide_tests
   tests/TestSupportSdl.cpp
   tests/TestSupport.cpp
   tests/AssistServiceTests.cpp
+  tests/PendingRequestTableTests.cpp
   tests/parity/LoopbackLocality.cpp
   tests/parity/ParityHarness.cpp
   tests/parity/ParityTests.cpp
