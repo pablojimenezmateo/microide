@@ -449,6 +449,28 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-28-419 — a long first sync drives the UI at ~11 frames a second for its whole length. [OPEN — measured; design below]
+
+Found by `tools/qa/remote.py` X over the 60 ms slow link (`qa-slow`): the same
+first sync that costs the client ~1.3 s of CPU on loopback cost 3.2-4.3 s there.
+Not the link code: the sync takes 16 s instead of 2, and every applied change batch
+repaints (the sidebar tree, the status bar) -- 176 frames, 111 partial and 65 full,
+~11 fps -- and rendering was ~3.8 of the 4.3 s (the 16 llvmpipe threads ~2.2 s,
+the main thread's render and present ~1.6 s; `MICROIDE_PERF_SUMMARY`). Xvfb renders
+in software, which inflates each frame; on a GPU a frame is about a millisecond, so
+the frame COUNT is the defect and the CPU figure its Xvfb-sized symptom. Agent churn
+already coalesces to ~2.7 fps (TD-418 item 5); a bulk write does not.
+
+Design: rate-limit the apply of file-change batches while they keep arriving, in
+`ProjectChangeCoalescer` (which owns "when is a batch ready"): leading edge
+immediate (a single save shows at once), then at most one apply per ~200 ms with the
+trailing batch coalesced; `NextReadyDelayMs` joins `NextAnimationDelayMs` so the
+scheduled wake (which already calls `ReloadProjectIfFilesChanged`) applies it;
+`force_check` bypasses it. Not done in the 2026-10-28 pass because applying
+immediately is what keeps the many tests that write a file and pump once
+deterministic: those need an explicit flush (or the throttle off under test) before
+the change lands, and that is its own reviewed change.
+
 ### TD-2026-10-28-418 — the remote link's idle wakeups and memory, measured end to end: what was fixed, and what is left. [PARTLY RESOLVED 2026-10-28 — open: the client's per-file state, allocator slack after a first sync, the git sampler's polling]
 
 Measured with `tools/qa/remote.py` W (idle) and X (live), loopback host, this
