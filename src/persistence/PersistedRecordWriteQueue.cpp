@@ -18,7 +18,7 @@ std::string MemoKey(const std::filesystem::path& path) {
 }  // namespace
 
 PersistedRecordWriteQueue::PersistedRecordWriteQueue()
-    : queue_(util::SerialWorkQueue::StartMode::kLazy) {}
+    : queue_(util::SerialWorkQueue::StartMode::kLazy, {}, {}, "persist") {}
 
 PersistedRecordWriteQueue::~PersistedRecordWriteQueue() {
   // Flush before the worker is torn down: whatever is still queued is state the

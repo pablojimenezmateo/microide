@@ -1,4 +1,5 @@
 #include "platform/DescriptorRetire.h"
+#include "util/ThreadName.h"
 
 #include <condition_variable>
 #include <mutex>
@@ -49,7 +50,12 @@ class DescriptorRetirer {
   }
 
  private:
-  DescriptorRetirer() { std::thread([this]() { Run(); }).detach(); }
+  DescriptorRetirer() {
+    std::thread([this]() {
+      util::NameCurrentThread("fd-retire");
+      Run();
+    }).detach();
+  }
 
   void Run() {
     std::vector<int> batch;

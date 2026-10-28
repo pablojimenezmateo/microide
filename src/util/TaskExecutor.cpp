@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "util/PerformanceCounters.h"
+#include "util/ThreadName.h"
 
 namespace microide::util {
 
@@ -100,6 +101,7 @@ void TaskExecutor::WaitForIdle() {
 }
 
 void TaskExecutor::WorkerMain(std::size_t slot) {
+  NameCurrentThread("task-pool");
   while (true) {
     TaskEntry entry;
     {

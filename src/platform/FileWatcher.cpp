@@ -17,6 +17,7 @@
 
 #include "util/PosixFd.h"
 #include "util/PosixPipe.h"
+#include "util/ThreadName.h"
 
 namespace microide::platform {
 
@@ -150,7 +151,10 @@ struct FileTreeWatcher::NativeBackend {
       }
     }
 
-    worker_ = std::thread([this]() { WorkerMain(); });
+    worker_ = std::thread([this]() {
+      util::NameCurrentThread("file-watch");
+      WorkerMain();
+    });
     return true;
   }
 

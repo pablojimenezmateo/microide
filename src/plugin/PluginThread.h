@@ -99,7 +99,7 @@ class PluginThread {
   util::MainThreadMailbox mailbox_;
   // Inbound queue (UI -> worker); lazy so an unused host spawns no thread. Declared
   // last so it (and its worker thread) is destroyed/joined before `mailbox_`.
-  util::SerialWorkQueue inbound_{util::SerialWorkQueue::StartMode::kLazy};
+  util::SerialWorkQueue inbound_{util::SerialWorkQueue::StartMode::kLazy, {}, {}, "plugin"};
 };
 
 }  // namespace microide::plugin

@@ -9,6 +9,7 @@ ProjectBackgroundExecutor::ProjectBackgroundExecutor()
              util::SerialWorkQueue::Hooks{
                  .on_enqueue = []() { util::IncrementBackgroundTaskCount(); },
                  .on_complete = []() { util::DecrementBackgroundTaskCountAndWake(); },
-             }) {}
+             },
+             util::SerialWorkQueue::Limits{}, "project-bg") {}
 
 }  // namespace microide::project

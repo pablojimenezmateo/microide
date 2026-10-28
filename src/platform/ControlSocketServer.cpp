@@ -30,6 +30,7 @@
 #include "util/Log.h"
 #include "util/PosixFd.h"
 #include "util/PosixPipe.h"
+#include "util/ThreadName.h"
 
 namespace microide::platform {
 
@@ -559,7 +560,10 @@ bool ControlSocketServer::Start(const std::filesystem::path& socket_path) {
   impl_->socket_path = socket_path;
   impl_->stop.store(false, std::memory_order_release);
   impl_->running.store(true, std::memory_order_release);
-  impl_->io_thread = std::thread([impl = impl_.get()]() { impl->IoMain(); });
+  impl_->io_thread = std::thread([impl = impl_.get()]() {
+    util::NameCurrentThread("control-io");
+    impl->IoMain();
+  });
   return true;
 }
 

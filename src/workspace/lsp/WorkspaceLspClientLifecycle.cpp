@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "util/StartupTrace.h"
+#include "util/ThreadName.h"
 
 namespace microide::workspace {
 
@@ -504,7 +505,10 @@ void LspClient::Impl::DoInitializeBlocking() {
 
   OpenWakePipe();
   stop_io.store(false, std::memory_order_release);
-  io_thread = std::thread([this]() { IoMain(); });
+  io_thread = std::thread([this]() {
+    util::NameCurrentThread("lsp-io");
+    IoMain();
+  });
   Wake();  // flush the queued config/didOpen without waiting for the first poll
 
   bool is_indexing = false;

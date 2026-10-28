@@ -22,6 +22,7 @@
 #include "util/PerformanceTrace.h"
 #include "util/RegexUtil.h"
 #include "util/StringUtil.h"
+#include "util/ThreadName.h"
 
 namespace microide::editor::runtime_syntax {
 
@@ -1449,6 +1450,7 @@ void WarmInBackground() {
     return;  // already warming (or warmed and not yet joined)
   }
   thread = std::thread([]() {
+    util::NameCurrentThread("syntax-warm");
     util::PerformanceTrace::Scope perf_scope("RuntimeSyntaxRegistry::WarmInBackground");
     (void)BuiltInRegistry();
   });

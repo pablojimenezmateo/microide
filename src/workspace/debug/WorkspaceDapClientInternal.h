@@ -12,6 +12,7 @@
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/WakePipe.h"
+#include "util/ThreadName.h"
 
 #include <atomic>
 #include <charconv>
@@ -510,7 +511,10 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
 
     OpenWakePipe();
     stop_io.store(false, std::memory_order_release);
-    io_thread = std::thread([this]() { IoMain(); });
+    io_thread = std::thread([this]() {
+      util::NameCurrentThread("dap-io");
+      IoMain();
+    });
     Wake();
     initializing.store(false, std::memory_order_release);
   }

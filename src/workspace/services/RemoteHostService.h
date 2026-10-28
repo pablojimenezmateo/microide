@@ -480,7 +480,7 @@ class RemoteHostService {
   // Blocking host work off the UI thread — Stop Host Server, Show Log, port
   // forwards — one at a time. Shut down (in-flight job finished, the rest dropped)
   // before the sessions its jobs use go.
-  util::SerialWorkQueue work_;
+  util::SerialWorkQueue work_{util::SerialWorkQueue::StartMode::kLazy, {}, {}, "remote-svc"};
   // Last: its queued closures name `this`, and it must drop them before the
   // sessions that post them are gone — sessions are destroyed explicitly first.
   util::MainThreadMailbox mailbox_;

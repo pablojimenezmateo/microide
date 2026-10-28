@@ -30,6 +30,7 @@
 
 #include "util/PosixFd.h"
 #include "util/PosixPipe.h"
+#include "util/ThreadName.h"
 
 extern "C" char** environ;
 
@@ -323,6 +324,7 @@ class PosixTerminalBackend final : public TerminalBackend {
 
  private:
   void ReaderMain(int master_fd, int wake_fd, int child_pid) {
+    util::NameCurrentThread("term-reader");
     std::array<char, 4096> buffer{};
     while (!stop_requested_.load(std::memory_order_acquire)) {
       bool has_pending_write = false;
