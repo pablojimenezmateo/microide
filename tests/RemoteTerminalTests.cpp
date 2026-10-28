@@ -647,6 +647,43 @@ void TestADetachedTerminalHoldsAnOnDemandServer() {
 // terminal is listed with no client -- what a second machine is offered as
 // unclaimed -- while the connection that detached it is still open, and the
 // shell keeps running.
+// Closing a terminal and then the connection (what quit does: Stop() every exited
+// shell, then drop the client) must still close it on the host. The client's
+// destructor stopped its transport without flushing, so a term/close still queued
+// behind other frames was dropped and the host kept the shell, unclaimed, holding
+// the server -- seen as RemoteTerminalRestore/HostTerminalLifetimeAndUnclaimedTerminals
+// failing under load. The backlog here makes the close wait behind other frames.
+void TestAClosedTerminalIsClosedOnTheHostWhenTheClientGoesAtOnce() {
+  ShortServerDir dir;
+  StartServer(dir);
+  std::uint64_t handle = 0;
+  {
+    auto client = Connect(dir);
+    TerminalSession session;
+    TerminalSessionTestAccess::Reset(session, 24, 80);
+    auto channel = remote::RemoteTerminalChannel::Open(
+        client, terminal::HostTerminalSource::OpenRequest{.shell = {"sh"}}, session,
+        [](const std::filesystem::path& path) { return path; });
+    Expect(channel != nullptr, "the terminal opens");
+    TerminalSessionTestAccess::EnterHostMode(session, channel);
+    Expect(WaitUntil([&] { return channel->handle() != 0; }, std::chrono::seconds(10)), "it is answered");
+    handle = channel->handle();
+    // Harmless frames ahead of the close: more than the socket buffer holds.
+    util::JsonObject ack;
+    ack["handle"] = util::JsonValue(static_cast<std::int64_t>(handle));
+    ack["bytes"] = util::JsonValue(static_cast<std::int64_t>(0));
+    const util::JsonValue params(std::move(ack));
+    for (int i = 0; i < 20000; ++i) {
+      client->peer().Notify(remote::method::kTermAck, params);
+    }
+    channel->Close();
+    TerminalSessionTestAccess::EnterHostMode(session, nullptr);
+  }  // the channel, the session and the client go at once
+  const bool closed = WaitUntil([&] { return Listed(ListedTerminals(dir), handle) == nullptr; },
+                                std::chrono::seconds(10), std::chrono::milliseconds(100));
+  Expect(closed, "the close queued before the client went reached the host");
+}
+
 void TestADetachThatKeepsTheConnectionReleasesTheTerminal() {
   ShortServerDir dir;
   StartServer(dir);
@@ -881,6 +918,8 @@ void RegisterRemoteTerminalTests(std::vector<TestCase>& tests) {
           TestADetachThatKeepsTheConnectionReleasesTheTerminal);
   AddTest(tests, "RemoteTerminal/InputTypedBeforeTheOpenSurvivesAnImmediateDetach",
           TestInputTypedBeforeTheOpenSurvivesAnImmediateDetach);
+  AddTest(tests, "RemoteTerminal/AClosedTerminalIsClosedOnTheHostWhenTheClientGoesAtOnce",
+          TestAClosedTerminalIsClosedOnTheHostWhenTheClientGoesAtOnce);
   AddTest(tests, "RemoteTerminal/ADetachedHostTerminalIsReattachedByIdentity",
           TestADetachedHostTerminalIsReattachedByIdentity);
   AddTest(tests, "RemoteTerminal/APendingHostTerminalStartsOnceConnected",

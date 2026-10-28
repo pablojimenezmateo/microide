@@ -47,6 +47,12 @@ std::shared_ptr<RemoteServerClient> RemoteServerClient::Create() {
 }
 
 RemoteServerClient::~RemoteServerClient() {
+  // Send what is already queued before the connection goes: quit Stop()s each
+  // exited host terminal (a term/close) and then drops the client, and without
+  // this a close still behind other frames was discarded -- the host kept the dead
+  // shell, unclaimed, holding its server. Bounded as the server's own goodbye is
+  // (RemoteServer), and immediate on a link that is already closed.
+  (void)peer_.Flush(std::chrono::milliseconds(500));
   peer_.Stop();
   if (command_.IsRunning()) {
     command_.Shutdown(2000);
