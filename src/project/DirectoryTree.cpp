@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "platform/Filesystem.h"
+#include "platform/FsOps.h"
 #include "project/GitStatusService.h"
 #include "project/IgnoreMatcher.h"
 #include "project/SymlinkLoopGuard.h"
@@ -565,14 +566,11 @@ namespace {
 std::vector<std::string> RelativeKeysExcludingRoot(
     const DirectoryTree::PathKeySet& keys,
     const std::filesystem::path& root) {
-  // Non-throwing overload with a lexical fallback, matching NormalizePathKey and
-  // every other absolute() probe in this file: this runs on the persistence-save
-  // path, where the throwing overload could abort the process if current_path()
-  // fails (unmounted CWD, ENOMEM) instead of degrading to a best-effort key.
-  std::error_code root_error;
-  const auto absolute_root = std::filesystem::absolute(root, root_error);
-  const std::string root_key =
-      (root_error ? root.lexically_normal() : absolute_root.lexically_normal()).generic_string();
+  // Non-throwing with a lexical fallback (NormalizePathKey): this runs on the
+  // persistence-save path, where the throwing absolute() could abort the process
+  // if current_path() fails (unmounted CWD, ENOMEM) instead of degrading to a
+  // best-effort key.
+  const std::string root_key = platform::NormalizeAbsolutePath(root).generic_string();
   std::vector<std::string> relative;
   relative.reserve(keys.size());
   for (const auto& key : keys) {
@@ -709,11 +707,7 @@ bool DirectoryTree::CanCollapseAll() const {
 }
 
 std::string DirectoryTree::NormalizePathKey(const std::filesystem::path& path) {
-  std::error_code error;
-  const auto absolute = std::filesystem::absolute(path, error);
-  std::string key =
-      error ? path.lexically_normal().generic_string() : absolute.lexically_normal().generic_string();
-  return key;
+  return platform::NormalizeAbsolutePath(path).generic_string();
 }
 
 }  // namespace microide::project

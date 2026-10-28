@@ -183,12 +183,11 @@ std::optional<project::PatchApplyRequest> PatchApplyService::BuildRequest(
   // reads request.model. Copying a whole CompareModel here — every row and hunk
   // of a potentially huge diff — just to stage one small hunk was pure UI-thread
   // overhead. The .model field is left value-initialized (empty).
-  const platform::ProcessLauncher* launcher =
-      callbacks_.project_launcher ? callbacks_.project_launcher() : nullptr;
   return project::PatchApplyRequest{
       .operation = operation,
       .target = std::move(target),
-      .launcher = launcher != nullptr ? launcher : &platform::LocalProcessLauncher(),
+      .launcher = &platform::LauncherOrLocal(
+          callbacks_.project_launcher ? callbacks_.project_launcher() : nullptr),
   };
 }
 

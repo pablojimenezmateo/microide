@@ -141,9 +141,8 @@ void GitOperationService::Publish(const std::uint64_t generation,
 }
 
 const platform::ProcessLauncher& GitOperationService::ProjectLauncher() const {
-  const platform::ProcessLauncher* launcher =
-      callbacks_.project_launcher ? callbacks_.project_launcher() : nullptr;
-  return launcher != nullptr ? *launcher : platform::LocalProcessLauncher();
+  return platform::LauncherOrLocal(callbacks_.project_launcher ? callbacks_.project_launcher()
+                                                                 : nullptr);
 }
 
 bool GitOperationService::SwitchBranch(const std::filesystem::path& repository_root,

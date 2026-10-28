@@ -92,6 +92,11 @@ class ProcessLauncher {
 // otherwise.
 const ProcessLauncher& LocalProcessLauncher();
 
+// `launcher`, or the local one when a caller has no project launcher to give.
+inline const ProcessLauncher& LauncherOrLocal(const ProcessLauncher* launcher) {
+  return launcher != nullptr ? *launcher : LocalProcessLauncher();
+}
+
 // Replace every `${workspaceFolder}` in `argv` with `project_root` as the machine
 // that runs the process sees it (`launcher.ResolveWorkingDirectory`), as VS Code's
 // launch and task configurations do. A path the editor computes and splices into a

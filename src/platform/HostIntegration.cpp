@@ -5,6 +5,7 @@
 #include <system_error>
 #include <utility>
 
+#include "platform/FsOps.h"
 #include "platform/ProcessLauncher.h"
 #include "platform/Subprocess.h"
 #include "util/StringUtil.h"
@@ -25,12 +26,6 @@ HostIntegrationResult Failure(std::string message) {
       .ok = false,
       .error_message = std::move(message),
   };
-}
-
-std::filesystem::path NormalizeExistingPath(const std::filesystem::path& path) {
-  std::error_code error;
-  const std::filesystem::path absolute = std::filesystem::absolute(path, error);
-  return (error ? path : absolute).lexically_normal();
 }
 
 // TD-2026-07-17-027: opening an external URL is a trust boundary — plugin- or
@@ -110,7 +105,7 @@ HostIntegrationResult OpenUrl(std::string_view url) {
 }
 
 HostIntegrationResult OpenPathInFileManager(const std::filesystem::path& directory) {
-  const std::filesystem::path normalized_directory = NormalizeExistingPath(directory);
+  const std::filesystem::path normalized_directory = NormalizeAbsolutePath(directory);
   if (normalized_directory.empty()) {
     return Failure("No path was provided");
   }

@@ -89,9 +89,8 @@ void CommitWorkflowService::RestorePersistedDraft(
 }
 
 const platform::ProcessLauncher& CommitWorkflowService::ProjectLauncher() const {
-  const platform::ProcessLauncher* launcher =
-      callbacks_.project_launcher ? callbacks_.project_launcher() : nullptr;
-  return launcher != nullptr ? *launcher : platform::LocalProcessLauncher();
+  return platform::LauncherOrLocal(callbacks_.project_launcher ? callbacks_.project_launcher()
+                                                                 : nullptr);
 }
 
 void CommitWorkflowService::RefreshDerivedState(CommitWorkflowState& state,
