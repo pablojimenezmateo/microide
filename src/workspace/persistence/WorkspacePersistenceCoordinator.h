@@ -68,6 +68,7 @@ class PersistenceCoordinator {
                          Operations operations);
 
   void RefreshAvailableColorschemeNames();
+  const std::vector<std::string>& AvailableColorschemeNames() const { return available_colorscheme_names_; }
   bool ApplyColorscheme(std::string_view name, bool persist, bool log_feedback);
   bool ApplyUiScale(float scale, bool persist, bool log_feedback);
   bool RestoreUserConfig();

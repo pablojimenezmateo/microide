@@ -503,11 +503,8 @@ bool WorkspaceActionContext::OpenArgumentPicker(ActionId id) {
       return true;
     }
     case ActionId::ShowOutput: {
-      if (!operations_.output_channels) {
-        return false;
-      }
       std::vector<QuickPickItem> items;
-      for (const WorkspaceOutputChannels::ChannelInfo& channel : operations_.output_channels()) {
+      for (const WorkspaceOutputChannels::ChannelInfo& channel : services_.output_channels.Channels()) {
         items.push_back(QuickPickItem{.value = "show-output " + QuoteCommandArg(channel.id),
                                       .primary_label = channel.label,
                                       .secondary_label = channel.id});
@@ -1734,14 +1731,12 @@ void WorkspaceActionContext::InsertTextIntoActiveSurface(std::string text,
 }
 
 void WorkspaceActionContext::RefreshAvailableColorschemeNames() {
-  operations_.refresh_available_colorscheme_names();
+  services_.persistence.RefreshAvailableColorschemeNames();
 }
 
 void WorkspaceActionContext::ReportColorschemeNames() {
   std::string message = "Colour schemes:";
-  const std::vector<std::string> names =
-      operations_.available_colorscheme_names ? operations_.available_colorscheme_names()
-                                              : std::vector<std::string>{};
+  const std::vector<std::string>& names = services_.persistence.AvailableColorschemeNames();
   for (std::size_t i = 0; i < names.size(); ++i) {
     message += (i == 0 ? " " : ", ") + names[i];
   }
@@ -1811,7 +1806,7 @@ void WorkspaceActionContext::ToggleWindowFullscreen() {
 }
 
 bool WorkspaceActionContext::ApplyColorscheme(std::string_view name) {
-  if (!operations_.apply_colorscheme(name)) {
+  if (!services_.persistence.ApplyColorscheme(name, true, true)) {
     return false;
   }
   // A theme change repaints with new colors but does not change geometry; the
@@ -1859,7 +1854,7 @@ void WorkspaceActionContext::SetTabSize(std::size_t value) {
   settings_layer::Upsert(state_.settings, "editor.tab_size", std::to_string(value));
   state_.editor_preferences.tab_size = value;
   operations_.apply_editor_preferences_to_all_tabs();
-  operations_.save_config_state();
+  services_.persistence.SaveConfigState();
 }
 
 void WorkspaceActionContext::SetIndentWidth(std::size_t value) {
@@ -1871,7 +1866,7 @@ void WorkspaceActionContext::SetIndentWidth(std::size_t value) {
   settings_layer::Upsert(state_.settings, "editor.indent_width", std::to_string(value));
   state_.editor_preferences.indent_width = value;
   operations_.apply_editor_preferences_to_all_tabs();
-  operations_.save_config_state();
+  services_.persistence.SaveConfigState();
 }
 
 float WorkspaceActionContext::UiScale() const {
@@ -1879,7 +1874,7 @@ float WorkspaceActionContext::UiScale() const {
 }
 
 void WorkspaceActionContext::ApplyUiScale(float scale) {
-  operations_.apply_ui_scale(scale);
+  services_.persistence.ApplyUiScale(scale, true, true);
   RequestLiveConfigRedraw();
 }
 
@@ -1896,7 +1891,7 @@ void WorkspaceActionContext::SetSoftTabs(bool enabled) {
   settings_layer::Upsert(state_.settings, "editor.soft_tabs", enabled ? "true" : "false");
   state_.editor_preferences.soft_tabs = enabled;
   operations_.apply_editor_preferences_to_all_tabs();
-  operations_.save_config_state();
+  services_.persistence.SaveConfigState();
 }
 
 bool WorkspaceActionContext::SoftWrapEnabled() const {
@@ -1910,7 +1905,7 @@ void WorkspaceActionContext::SetSoftWrap(bool enabled) {
     settings_layer::Upsert(state_.settings, "editor.wrap", enabled ? "word" : "off");
     state_.editor_preferences.soft_wrap = enabled;
     operations_.apply_editor_preferences_to_all_tabs();
-    operations_.save_config_state();
+    services_.persistence.SaveConfigState();
   }
   // Wrap toggling reflows every visual row in the active editor; the partial
   // redraw scope from a menu/shortcut close otherwise leaves stale pixels for

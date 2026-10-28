@@ -176,9 +176,9 @@ void WorkspaceActionContext::CycleSurfaceFocus(bool backward) {
 }
 
 void WorkspaceActionContext::OpenColorThemePicker() {
-  if (operations_.open_color_theme_picker) {
-    operations_.open_color_theme_picker();
-  }
+  services_.persistence.RefreshAvailableColorschemeNames();
+  services_.quick_pick.Open(QuickPickService::ColorThemes(
+      services_.persistence.AvailableColorschemeNames(), state_.active_colorscheme_name));
 }
 
 void WorkspaceActionContext::OpenDocumentSymbolPicker(std::string query) {
@@ -381,6 +381,8 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .text_input = MakeTextInputCoordinator(),
           .quick_pick = quick_pick_service_,
           .notifications = notification_service_,
+          .persistence = MakePersistenceCoordinator(),
+          .output_channels = output_channels_,
       },
       WorkspaceActionContext::Operations{
           .close_tree_context_menu = [this]() { MakeMenuCoordinator().CloseTreeContextMenu(); },
@@ -976,15 +978,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 // answer arrives later and re-resolves into the card).
                 return context_.interaction_state.caret_hover.active;
               },
-          .refresh_available_colorscheme_names =
-              [this]() { MakePersistenceCoordinator().RefreshAvailableColorschemeNames(); },
-          .available_colorscheme_names = [this]() { return available_colorscheme_names_; },
-          .apply_colorscheme =
-              [this](std::string_view name) {
-                return MakePersistenceCoordinator().ApplyColorscheme(name, true, true);
-              },
           .apply_editor_preferences_to_all_tabs = [this]() { ApplyEditorPreferencesToAllTabs(); },
-          .save_config_state = [this]() { MakePersistenceCoordinator().SaveConfigState(); },
           .get_setting_value =
               [this](std::string_view id) { return GetSettingValue(id); },
           .set_setting_value =
@@ -995,8 +989,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this](NotificationService::Tone tone, std::string message) {
                 Notify(tone, std::move(message));
               },
-          .apply_ui_scale =
-              [this](float scale) { MakePersistenceCoordinator().ApplyUiScale(scale, true, true); },
           .note_layout_inputs_changed = [this]() { NoteLayoutInputsChanged(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },
           .activate_editor_banner =
@@ -1068,15 +1060,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .stop_debugging = [this]() { StopDebugging(); },
           .stop_all_debug_sessions = [this]() { StopAllDebugSessions(); },
           .open_debug_repl_prompt = [this]() { OpenDebugReplPrompt(); },
-          .open_color_theme_picker =
-              [this]() {
-                MakePersistenceCoordinator().RefreshAvailableColorschemeNames();
-                quick_pick_service_.Open(QuickPickService::ColorThemes(
-                    available_colorscheme_names_, context_.current_project_state.active_colorscheme_name));
-              },
-          .output_channels = [this]() -> const std::vector<WorkspaceOutputChannels::ChannelInfo>& {
-            return output_channels_.Channels();
-          },
           .open_document_symbol_picker =
               [this](std::string query) {
                 const editor::TextViewport* viewport = ActiveEditorViewport();

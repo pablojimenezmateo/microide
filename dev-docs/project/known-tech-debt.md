@@ -587,6 +587,11 @@ the workspace-symbol and launch-config pickers, and Focus Notifications / the
 notification action call their service inside the context. 19 fields, their
 lambdas and six forwarding methods gone. Operations 174 -> 155.
 
+**colour schemes, UI scale, config, output channels** (2026-10-28) -- `Services`
+gains `PersistenceCoordinator&` (which now exposes `AvailableColorschemeNames()`
+by reference: the list used to be copied out per call) and the output channels.
+Seven fields gone. Operations 155 -> 148.
+
 Original plan, one area per commit so each slice is reviewable and lane-checked: give each
 executor its own context type holding references to the services it calls
 (`AssistService&`, `EditorTabService&`, `TerminalPanelService&`, …, the

@@ -10,6 +10,7 @@
 #include "workspace/services/TerminalPanelService.h"
 #include "workspace/services/EditorTabService.h"
 #include "workspace/services/QuickPickService.h"
+#include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/git/PatchApplyService.h"
@@ -128,6 +129,14 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                                                               text_input_state, {});
          microide::workspace::QuickPickService quick_pick;
          microide::workspace::NotificationService notifications;
+         microide::workspace::WorkspaceContext workspace_context;
+         microide::render::Theme theme;
+         std::vector<std::string> colorschemes;
+         microide::render::ThemeNameCatalog theme_names;
+         microide::workspace::SettingsStore settings;
+         microide::workspace::PersistenceCoordinator persistence(
+             workspace_context, theme, colorschemes, theme_names, ui_scale, settings, {});
+         microide::workspace::WorkspaceOutputChannels output_channels;
          WorkspaceActionContext context(catalog, project_state, ui_scale,
                                         {.assist = assist,
                                          .debug = debug,
@@ -135,7 +144,9 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                                          .editor_tabs = editor_tabs,
                                          .text_input = text_input,
                                          .quick_pick = quick_pick,
-                                         .notifications = notifications},
+                                         .notifications = notifications,
+                                         .persistence = persistence,
+                                         .output_channels = output_channels},
                                         std::move(operations));
          ActionCoordinator coordinator(context);
 

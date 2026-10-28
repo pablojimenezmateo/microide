@@ -29,6 +29,7 @@ class TerminalPanelService;
 class EditorTabService;
 class TextInputCoordinator;
 class QuickPickService;
+class PersistenceCoordinator;
 class RemoteHostService;
 
 // Defined in GitSidebarCommandCenter.h; only the type is needed here (function
@@ -241,17 +242,12 @@ class WorkspaceActionContext {
     // Show Hover: pin the editor hover to the caret. False when there is no
     // editor or the caret is off screen.
     std::function<bool()> show_hover_at_caret;
-    std::function<void()> refresh_available_colorscheme_names;
-    std::function<std::vector<std::string>()> available_colorscheme_names;
     // False when no theme of that name exists (built-in, on disk, or plugin).
-    std::function<bool(std::string_view)> apply_colorscheme;
     std::function<void()> apply_editor_preferences_to_all_tabs;
-    std::function<void()> save_config_state;
     std::function<std::optional<std::string>(std::string_view)> get_setting_value;
     std::function<bool(std::string_view, std::string)> set_setting_value;
     // Post a transient host notification toast (and schedule a redraw).
     std::function<void(NotificationService::Tone, std::string)> notify;
-    std::function<void(float)> apply_ui_scale;
     std::function<void()> note_layout_inputs_changed;
     std::function<void()> request_window_redraw;
     // Focus the notification stack; false when it is empty.
@@ -296,9 +292,7 @@ class WorkspaceActionContext {
     std::function<void()> open_debug_repl_prompt;
     // Launch-config picker (Phase 9): open the fuzzy picker over the project's
     // launch configs.
-    std::function<void()> open_color_theme_picker;
     // Show a pick whose rows run command lines (QuickPickKind::RunCommand).
-    std::function<const std::vector<WorkspaceOutputChannels::ChannelInfo>&()> output_channels;
     std::function<void(std::string query)> open_document_symbol_picker;
     // Open the command palette over all built-in + plugin commands, optionally pre-filling
     // the query (e.g. "project-open ") so the user only types the argument.
@@ -342,6 +336,8 @@ class WorkspaceActionContext {
     TextInputCoordinator& text_input;
     QuickPickService& quick_pick;
     NotificationService& notifications;
+    PersistenceCoordinator& persistence;
+    const WorkspaceOutputChannels& output_channels;
   };
 
   WorkspaceActionContext(ProjectCatalogState& project_catalog,
