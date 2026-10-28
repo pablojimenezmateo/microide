@@ -221,11 +221,14 @@ void TestHostProcessExitIsSentWhenItHappens() {
     std::sort(ms.begin(), ms.end());
     return ms[ms.size() / 2];
   };
-  // Measured against a control that exits at once, so the spawn and round trip --
+  // Measured against a control of the same shape, so the spawns and round trip --
   // whatever they cost on a loaded machine -- cancel out: woken by the exit, the
   // 20 ms sleep adds ~20 ms; polled, the exit waited for the 50 ms tick and adds
   // at least 50. (An absolute "< 40 ms" crossed under six parallel lanes, 40.76.)
-  const double control = median_ms("exec >&- 2>&-; exit 3");
+  // The control runs `sleep 0`, not nothing: the measured script forks and execs
+  // /bin/sleep, and with eight lanes running that second process start alone took
+  // the difference to 40.99 ms when the control skipped it.
+  const double control = median_ms("exec >&- 2>&-; sleep 0; exit 3");
   const double slept = median_ms("exec >&- 2>&-; sleep 0.02; exit 3");
   if (!IsSanitizerBuild()) {
     Expect(slept - control < 40.0, "the 20 ms sleep cost " + std::to_string(slept - control) +
