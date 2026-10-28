@@ -806,8 +806,11 @@ void TextViewport::ApplyHistoryEntry(const HistoryEntry& entry, bool forward) {
   // Undo/redo replays a content delta starting at start_line. This is the only
   // edit path that knows the exact extent, so it is the only one that lets the
   // folding model's per-line caches resync instead of rebuilding.
-  InvalidateDerivedCaches(InvalidationReason::ContentEdit, start_line,
-                          ContentSplice{.removed = removed_count, .inserted = inserted_count});
+  InvalidateDerivedCaches(
+      InvalidationReason::ContentEdit, start_line,
+      ContentSplice{.removed = removed_count,
+                    .inserted = inserted_count,
+                    .edit_column = entry.is_inline ? entry.start_column : TextLayoutCache::kNoEditColumn});
   // A column-scoped entry names the byte splice it applied, which is all the
   // width table needs to update the edited line without re-reading it.
   UpdateVisualColumnCacheAfterEdit(

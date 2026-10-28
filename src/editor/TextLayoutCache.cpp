@@ -119,6 +119,37 @@ std::size_t TextLayoutCache::PlainAsciiPrefixEndInto(LineSpan lines,
   return hit;
 }
 
+void TextLayoutCache::CarryPlainPrefixMemosAcrossEdit(LineSpan lines,
+                                                      std::size_t start_line,
+                                                      std::size_t edit_column,
+                                                      std::uint64_t old_revision,
+                                                      std::uint64_t new_revision) const {
+  for (PlainPrefixMemo& memo : plain_prefix_memo_) {
+    if (!memo.valid || memo.content_revision != old_revision || memo.line_index > start_line) {
+      continue;
+    }
+    if (memo.line_index < start_line) {
+      memo.content_revision = new_revision;  // an untouched line
+      continue;
+    }
+    if (edit_column == kNoEditColumn || memo.line_index >= lines.size()) {
+      memo.valid = false;
+      continue;
+    }
+    if (memo.first_non_plain < memo.scanned_through && memo.first_non_plain < edit_column) {
+      // The line's first offending byte lies before the edit: still the answer for
+      // every probe past it. scanned_through just has to stay beyond it.
+      memo.scanned_through = memo.first_non_plain + 1;
+    } else {
+      // Clean as far as it was read, up to where the edit began.
+      memo.scanned_through = std::min(memo.scanned_through, edit_column);
+      memo.first_non_plain = memo.scanned_through;
+    }
+    memo.line_length = lines.LineLength(memo.line_index);
+    memo.content_revision = new_revision;
+  }
+}
+
 const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
                                                               std::size_t line_index,
                                                               std::size_t horizontal_scroll,
@@ -1185,10 +1216,11 @@ void TextLayoutCache::ParkLineWidthsForTabSizeChange() {
 }
 
 void TextLayoutCache::ClearVisibleLineAndMaxColumns() {
-  // The plain-ASCII prefix memo is keyed by (line, content revision), which
-  // covers every edit -- but a viewport that is handed a DIFFERENT document can
-  // see a revision number repeat, and this is the wipe that runs on that path.
-  plain_prefix_memo_ = {};
+  // Not the plain-ASCII prefix memo: it answers for bytes, so a tab-size change
+  // leaves it exact, and an edit carries it (CarryPlainPrefixMemosAcrossEdit).
+  // This also runs on EVERY edit under soft wrap, where no width table exists to
+  // splice -- wiping the memo here made each keystroke re-read the edited line
+  // from byte 0. InvalidateAll, the wipe for a different document, drops it.
   // Every clear but a tab-size change drops the parked table too: this is also
   // the wipe for a viewport handed a different document, whose revisions can
   // repeat the parked one's.
@@ -1347,6 +1379,10 @@ void TextLayoutCache::InvalidateAll() {
   // actually means every cache.
   ClearVisibleLineAndMaxColumns();
   DropWrappedRowLayouts();
+  // Keyed by (line, length, content revision), which covers every edit -- but a
+  // viewport handed a DIFFERENT document can see a revision repeat, and this is
+  // the wipe that runs on that path.
+  plain_prefix_memo_ = {};
   // The one caller that means "release it all". Everything else drops the cache
   // but keeps the buffers for the repaint that follows.
   visible_line_node_pool_.Release();

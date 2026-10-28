@@ -7590,7 +7590,23 @@ reporting 4,194,440 bytes walked.
 `plain_prefix_memo_` hits / extends / cold, because a byte total cannot distinguish
 "read a lot once" from "read a little, repeatedly".
 
-**Left open:** `editor.visible_line_layout_prefix_bytes_scanned` is 335 MB per 10
+**RESOLVED 2026-10-28 (the left-open item below).** Two causes, not one. The memo
+was keyed on the content revision, so an edit dropped it -- `TextLayoutCache::
+CarryPlainPrefixMemosAcrossEdit` now restamps the memos of lines above the edit
+and keeps the edited line's clean prefix up to the edit's column (a column-scoped
+history entry names it: `ContentSplice::edit_column`). And under soft wrap no width
+table exists to splice, so every edit took `UpdateVisualColumnCacheAfterEdit`'s
+reset, whose `ClearVisibleLineAndMaxColumns` ALSO wiped the memo -- a wipe that
+belongs only to `InvalidateAll` (a viewport handed another document), where it
+lives now. `editor_soft_wrap_long_line_typing`: 370,297,180 -> 1,181,708 prefix
+bytes, 353 -> 1 cold memo misses, wall time unchanged within noise (the scan is
+word-at-a-time; this is CPU, not latency). Tests:
+`TextLayout/CachePlainPrefixMemoSurvivesAnEdit`,
+`TextLayout/SoftWrapTypingKeepsThePlainPrefixMemo` (fails on the old wipe). The
+harness now honours `MICROIDE_PERF_COUNTERS` with `--no-isolate`, which is how
+these were read.
+
+**Left open (original):** `editor.visible_line_layout_prefix_bytes_scanned` is 335 MB per 10
 iterations of the typing scenario, and the A/B confirms that is PRE-EXISTING and
 untouched by this change. The memo is keyed on `content_revision`, so every
 keystroke drops it and the prefix is rescanned from 0 — while an edit at column C

@@ -37,6 +37,14 @@ messages, PR descriptions, or release notes, use phrasing like "no regression on
 `<scenario>`" or "improves `<scenario>` p50 from X to Y on `perf-runner-v1`," not "fastest" or
 "X% faster than $other_editor."
 
+## Reading the counters of a run
+
+`MICROIDE_PERF_COUNTERS=1 microide_perf --scenarios=<one> --no-isolate` prints
+every non-zero `util::PerfCounterId` total at the end of the run, as the app does at
+quit. Counters measure what the timing gates cannot (bytes a scan read, cache
+misses), and they are deterministic, so one run of base and one of HEAD is an A/B.
+Without `--no-isolate` each scenario runs in a child whose counters are its own.
+
 ## The allocation gate is one-sided, so check its slack
 
 Every allocation gate fails on an increase and says nothing when the measurement

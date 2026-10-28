@@ -100,6 +100,9 @@ class TextViewport {
   struct ContentSplice {
     std::size_t removed = 0;
     std::size_t inserted = 0;
+    // For an edit confined to line `start_line` (a column-scoped history entry):
+    // the first byte it changed. Every byte of that line before it is as it was.
+    std::size_t edit_column = TextLayoutCache::kNoEditColumn;
   };
 
   // One visual row of the wrapped layout: the layout cache's own row type (this

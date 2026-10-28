@@ -2936,6 +2936,11 @@ int main(int argc, char** argv) {
   // matched" warning for a process that never ran a phase.
   if (!isolate_scenarios) {
     Allocations::DumpTracedAllocationSites();
+    // MICROIDE_PERF_COUNTERS: the same readout the app prints at quit, here the
+    // run's counter totals (with --no-isolate: the child processes' counters are
+    // their own). A counter such as the bytes a scan read is a measurement the
+    // timing gates cannot make, and it used to be reachable only from a test.
+    microide::util::DumpPerformanceCountersOnce();
   }
 
   return all_passed ? 0 : 1;

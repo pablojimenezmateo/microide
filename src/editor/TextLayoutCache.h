@@ -606,6 +606,16 @@ class TextLayoutCache {
                                std::size_t line_index,
                                std::size_t column,
                                std::uint64_t content_revision) const;
+  // A content edit from `start_line` on took the document from `old_revision` to
+  // `new_revision`. Prefix memos of lines above it are still exact and are
+  // restamped; the memo of `start_line` keeps what it knew about the bytes before
+  // `edit_column` (kNoEditColumn: nothing); the rest are left to miss. `lines` is
+  // the edited document, for the edited line's new length.
+  void CarryPlainPrefixMemosAcrossEdit(LineSpan lines,
+                                       std::size_t start_line,
+                                       std::size_t edit_column,
+                                       std::uint64_t old_revision,
+                                       std::uint64_t new_revision) const;
 
  private:
   // One slot per line the memo is tracking. Rows of a line arrive consecutively,

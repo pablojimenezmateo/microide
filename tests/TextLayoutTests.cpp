@@ -6,6 +6,7 @@
 #include "editor/TextBuffer.h"
 #include "editor/TextLayout.h"
 #include "editor/TextLayoutCache.h"
+#include "editor/TextViewport.h"
 #include "util/PerformanceCounters.h"
 #include "util/StringUtil.h"
 
@@ -612,6 +613,92 @@ void TestBuildVisibleLineWindowMatchesWholeLineBuild() {
 // Pin both halves: a realistically-large visible working set evicts nothing, and
 // a set that genuinely exceeds the limit does evict (so this is not passing just
 // because the counter is never incremented).
+// The plain-ASCII prefix memo survives an edit (TD-2026-08-30-274's "left open":
+// typing at column C rescanned [0, C) of its line every keystroke). Each case edits a line the memo has read, carries the memo, and
+// checks the answer against a cold cache and the bytes the warm one re-read.
+
+
+void TestTextLayoutCachePlainPrefixMemoSurvivesAnEdit() {
+  using microide::editor::TextLayoutCache;
+  const std::string e_acute = "\xc3\xa9";
+  struct Case {
+    const char* what;
+    std::string before;
+    std::string after;
+    std::size_t edit_line;
+    std::size_t column;  // kNoEditColumn: the edit did not say
+    std::size_t max_rescanned;
+  };
+  const std::string clean(1000, 'a');
+  std::string dirty_early = clean;
+  dirty_early.replace(100, 1, e_acute);
+  std::string dirty_late = clean;
+  dirty_late.replace(600, 1, e_acute);
+  const auto insert = [](std::string text, std::size_t at, std::string_view what) {
+    return text.insert(at, what);
+  };
+  const std::vector<Case> cases = {
+      {"a clean line re-reads only from the edit", clean, insert(clean, 500, "b"), 0, 500, 501},
+      {"an offending byte before the edit is still the answer", dirty_early,
+       insert(dirty_early, 500, "b"), 0, 500, 0},
+      {"an offending byte after the edit is found again", dirty_late, insert(dirty_late, 500, "b"), 0,
+       500, 502},
+      {"an inserted offending byte is found", clean, insert(clean, 200, e_acute), 0, 200, 1},
+      {"a line above the edit is untouched", clean, clean, 1, 0, 0},
+      {"an edit with no column re-reads the line", clean, insert(clean, 500, "b"), 0,
+       TextLayoutCache::kNoEditColumn, 1001},
+  };
+  for (const Case& c : cases) {
+    std::vector<std::string> lines = {c.before, "second line"};
+    TextLayoutCache warm;
+    (void)warm.PlainAsciiPrefixEnd(lines, 0, c.before.size(), /*content_revision=*/1);
+    if (c.edit_line == 0) {
+      lines[0] = c.after;
+    } else {
+      lines[1] = "second line, edited";
+    }
+    warm.CarryPlainPrefixMemosAcrossEdit(lines, c.edit_line, c.column, 1, 2);
+    util::ResetPerformanceCounters();
+    const std::size_t got = warm.PlainAsciiPrefixEnd(lines, 0, lines[0].size(), 2);
+    const std::uint64_t rescanned =
+        util::ReadPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutPrefixBytesScanned);
+    TextLayoutCache cold;
+    const std::size_t want = cold.PlainAsciiPrefixEnd(lines, 0, lines[0].size(), 2);
+    Expect(got == want, std::string(c.what) + ": " + std::to_string(got) + " != " + std::to_string(want));
+    Expect(rescanned <= c.max_rescanned,
+           std::string(c.what) + ": re-read " + std::to_string(rescanned) + " bytes");
+  }
+}
+
+// The same through a soft-wrapped viewport, where no width table exists to
+// splice: every edit took the width table's "cannot splice" reset, and that reset
+// also dropped the prefix memo, so each keystroke re-read its line from byte 0
+// (editor_soft_wrap_long_line_typing: 370 MB over its 352 keystrokes).
+void TestSoftWrapTypingKeepsThePlainPrefixMemo() {
+  microide::editor::TextViewport viewport;
+  // A tab at the end keeps the line from being plain, so the memo is consulted.
+  std::string line(200000, 'a');
+  line += "\t";
+  viewport.LoadContent(line + "\n");
+  viewport.SetViewportSize(40, 80);
+  viewport.SetSoftWrap(true);
+  // A tab-size change drops the width table, and under soft wrap nothing builds
+  // it again: the state a wrapped editor types in.
+  viewport.SetTabSize(3);
+  viewport.MoveCursorTo(0, 100000);
+  (void)viewport.PlainAsciiPrefixEnd(0, 150000);  // what a paint of the rows does
+  for (int i = 0; i < 3; ++i) {
+    // Counted across the keystroke: the edit's own caret work asks too.
+    util::ResetPerformanceCounters();
+    viewport.InsertText("x");
+    (void)viewport.PlainAsciiPrefixEnd(0, 150000);
+    const std::uint64_t read =
+        util::ReadPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutPrefixBytesScanned);
+    Expect(read <= 50001, "a keystroke at column 100000 should re-read only from there, read " +
+                              std::to_string(read) + " bytes");
+  }
+}
+
 void TestTextLayoutCacheVisibleWorkingSetDoesNotEvict() {
   std::vector<std::string> lines;
   lines.reserve(512);
@@ -958,6 +1045,10 @@ void TestMeasureLineFactsRecordsTabIndentation() {
 }
 
 void RegisterTextLayoutTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TextLayout/SoftWrapTypingKeepsThePlainPrefixMemo",
+          TestSoftWrapTypingKeepsThePlainPrefixMemo);
+  AddTest(tests, "TextLayout/CachePlainPrefixMemoSurvivesAnEdit",
+          TestTextLayoutCachePlainPrefixMemoSurvivesAnEdit);
   AddTest(tests, "TextLayout/MeasureLineFactsRecordsTabIndentation",
           TestMeasureLineFactsRecordsTabIndentation);
   AddTest(tests, "TextLayout/VisualColumnsAreIdentityMatchesTheWalk",

@@ -1390,6 +1390,13 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
   } else {
     fold_edit_span_.NoteSuffixReplaced(safe_start);
   }
+  // The plain-ASCII prefix memo answers for bytes, not rows: the lines above the
+  // edit are untouched, and so is the edited line before the edit's column. Kept
+  // across the keystroke, typing at column C no longer rescans [0, C) of its line.
+  layout_cache_.CarryPlainPrefixMemosAcrossEdit(
+      LineSpan(document_->lines), safe_start,
+      splice.has_value() ? splice->edit_column : TextLayoutCache::kNoEditColumn,
+      document_->content_revision - 1, document_->content_revision);
 
   if (safe_start == 0) {
     // Drop the visible-line layouts from line 0 -- i.e. all of them -- but NOT the
