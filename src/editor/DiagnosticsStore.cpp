@@ -199,12 +199,6 @@ void DiagnosticsStore::RemoveSummary(const SeveritySummary& summary) {
   hint_count_ -= std::min(hint_count_, summary.hints);
 }
 
-void DiagnosticsStore::BumpRevision() {
-  if (++revision_ == 0) {
-    revision_ = 1;
-  }
-}
-
 void DiagnosticsStore::RebuildPath(std::string_view path_key) {
   if (path_key.empty()) {
     return;
@@ -236,7 +230,7 @@ void DiagnosticsStore::RebuildPath(std::string_view path_key) {
         --truncated_file_count_;
       }
       merged_by_path_.erase(existing);
-      BumpRevision();
+      revision_.Bump();
     }
     return;
   }
@@ -265,7 +259,7 @@ void DiagnosticsStore::RebuildPath(std::string_view path_key) {
     // skipping the default-construct + move-assign of the heavy FileDiagnostics
     // value that operator[] would do (mirrors PluginDecorationStore::RebuildPath).
     merged_by_path_.emplace(std::string(path_key), std::move(merged));
-    BumpRevision();
+    revision_.Bump();
     return;
   }
   if (existing->second == merged) {
@@ -279,7 +273,7 @@ void DiagnosticsStore::RebuildPath(std::string_view path_key) {
     ++truncated_file_count_;
   }
   existing->second = std::move(merged);
-  BumpRevision();
+  revision_.Bump();
 }
 
 bool DiagnosticsStore::ReplaceForOwnerFile(std::string_view owner,
@@ -418,7 +412,7 @@ void DiagnosticsStore::Clear() {
   info_count_ = 0;
   hint_count_ = 0;
   truncated_file_count_ = 0;
-  BumpRevision();
+  revision_.Bump();
 }
 
 const std::vector<PublishedDiagnostic>* DiagnosticsStore::FindByPathKey(

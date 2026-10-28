@@ -682,7 +682,7 @@ void TerminalSession::ReseedForStartLocked(const std::filesystem::path& working_
   columns_ = 80;
   ResetEmulationStateLocked();
   wake_event_pending_ = false;
-  snapshot_generation_ = 1;
+  snapshot_generation_.Reset(1);
 }
 
 void TerminalSession::ResetTabStopsLocked() {

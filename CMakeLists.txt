@@ -1605,6 +1605,7 @@ add_executable(microide_kernel_tests
   tests/LineEditSpanTests.cpp
   tests/MergeModelPropertyTests.cpp
   tests/ParseTests.cpp
+  tests/RevisionTests.cpp
   tests/PatternCacheTests.cpp
   tests/PersistedRecordIoTests.cpp
   tests/Phase3Tests.cpp

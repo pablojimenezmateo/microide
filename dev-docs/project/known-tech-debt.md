@@ -449,7 +449,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-28-411 — the 2026-10-28 duplication pass: what it split, and what it left. [PARTLY RESOLVED 2026-10-28 — open: the four remainders below]
+### TD-2026-10-28-411 — the 2026-10-28 duplication pass: what it split, and what it left. [PARTLY RESOLVED 2026-10-28 — open: three remainders below]
 
 Done, one commit each: `AssistService` (2,300 lines, 58 members, seven request
 counters) is six feature units in `src/workspace/assist/` over one `AssistHost`;
@@ -482,9 +482,8 @@ Left open:
 - **`RenderViewModelBuilder::BuildOverlaySurfaceInto` is ~440 lines** in one
   function on the render hot path. Splitting it needs the `perf-tests` lane and
   the allocation gates before and after; not attempted blind.
-- **`BumpRevision` is three byte-identical 4-line bodies** (`BreakpointStore`,
-  `FunctionBreakpointStore`, `DiagnosticsStore`) — below the clone scan's
-  threshold; a shared non-zero revision counter type would replace all three.
+- ~~**`BumpRevision` is three byte-identical 4-line bodies**~~ RESOLVED 2026-10-28:
+  `util::Revision` replaces them and the terminal snapshot generation's copy.
 
 ### TD-2026-10-28-410 — `MirrorSyncEngine/APushWhoseAnswerWasLostIsNotAConflict` failed on CI's ASan and TSan jobs: a request counted as sent before it was. [RESOLVED 2026-10-28]
 

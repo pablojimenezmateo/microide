@@ -50,12 +50,6 @@ std::string_view BreakpointStore::PathKeyView(const std::filesystem::path& path,
   return scratch;
 }
 
-void BreakpointStore::BumpRevision() {
-  if (++revision_ == 0) {
-    revision_ = 1;
-  }
-}
-
 std::vector<Breakpoint>* BreakpointStore::MutableForKey(const std::string& key) {
   const auto it = by_path_.find(key);
   return it == by_path_.end() ? nullptr : &it->second.breakpoints;
@@ -90,11 +84,11 @@ bool BreakpointStore::Toggle(const std::filesystem::path& path, std::size_t line
     if (breakpoints->empty()) {
       by_path_.erase(key);
     }
-    BumpRevision();
+    revision_.Bump();
     return false;
   }
   breakpoints->insert(it, Breakpoint{.line = line});
-  BumpRevision();
+  revision_.Bump();
   return true;
 }
 
@@ -107,12 +101,12 @@ void BreakpointStore::Set(const std::filesystem::path& path, std::size_t line, b
   if (it != breakpoints->end() && it->line == line) {
     if (it->enabled != enabled) {
       it->enabled = enabled;
-      BumpRevision();
+      revision_.Bump();
     }
     return;
   }
   breakpoints->insert(it, Breakpoint{.line = line, .enabled = enabled});
-  BumpRevision();
+  revision_.Bump();
 }
 
 bool BreakpointStore::ToggleEnabled(const std::filesystem::path& path, std::size_t line) {
@@ -125,7 +119,7 @@ bool BreakpointStore::ToggleEnabled(const std::filesystem::path& path, std::size
     return false;
   }
   it->enabled = !it->enabled;
-  BumpRevision();
+  revision_.Bump();
   return true;
 }
 
@@ -156,7 +150,7 @@ void BreakpointStore::SetOptionalField(const std::filesystem::path& path, std::s
     return;
   }
   bp->*field = std::move(value);
-  BumpRevision();
+  revision_.Bump();
 }
 
 void BreakpointStore::SetCondition(const std::filesystem::path& path, std::size_t line,
@@ -188,12 +182,12 @@ void BreakpointStore::Remove(const std::filesystem::path& path, std::size_t line
   if (breakpoints->empty()) {
     by_path_.erase(key);
   }
-  BumpRevision();
+  revision_.Bump();
 }
 
 void BreakpointStore::ClearFile(const std::filesystem::path& path) {
   if (by_path_.erase(PathKey(path)) > 0) {
-    BumpRevision();
+    revision_.Bump();
   }
 }
 
@@ -202,7 +196,7 @@ void BreakpointStore::Clear() {
     return;
   }
   by_path_.clear();
-  BumpRevision();
+  revision_.Bump();
 }
 
 bool BreakpointStore::HasBreakpoint(const std::filesystem::path& path, std::size_t line) const {
@@ -278,7 +272,7 @@ void BreakpointStore::ApplyVerification(const std::filesystem::path& path,
     it->adapter_id = result.id;
     it->verify_message = result.message;
   }
-  BumpRevision();
+  revision_.Bump();
 }
 
 void BreakpointStore::ApplyBreakpointEvent(const std::filesystem::path& path,
@@ -336,7 +330,7 @@ void BreakpointStore::ApplyBreakpointEvent(const std::filesystem::path& path,
     }
   }
   if (changed) {
-    BumpRevision();
+    revision_.Bump();
   }
 }
 
@@ -353,7 +347,7 @@ void BreakpointStore::ResetVerification() {
     }
   }
   if (changed) {
-    BumpRevision();
+    revision_.Bump();
   }
 }
 
@@ -411,7 +405,7 @@ bool BreakpointStore::ShiftForAppliedEdit(const std::filesystem::path& path,
       std::unique(breakpoints.begin(), breakpoints.end(),
                   [](const Breakpoint& a, const Breakpoint& b) { return a.line == b.line; }),
       breakpoints.end());
-  BumpRevision();
+  revision_.Bump();
   return true;
 }
 
@@ -433,7 +427,7 @@ void BreakpointStore::ReplaceAll(std::vector<FileBreakpoints> files) {
     }
     by_path_[key] = FileBreakpoints{.path = normalized, .breakpoints = std::move(file.breakpoints)};
   }
-  BumpRevision();
+  revision_.Bump();
 }
 
 }  // namespace microide::editor

@@ -8,12 +8,6 @@
 
 namespace microide::editor {
 
-void FunctionBreakpointStore::BumpRevision() {
-  if (++revision_ == 0) {
-    revision_ = 1;
-  }
-}
-
 bool FunctionBreakpointStore::HasName(const std::string& name) const {
   return std::any_of(breakpoints_.begin(), breakpoints_.end(),
                      [&name](const FunctionBreakpoint& bp) { return bp.name == name; });
@@ -24,7 +18,7 @@ bool FunctionBreakpointStore::Add(std::string name) {
     return false;
   }
   breakpoints_.push_back(FunctionBreakpoint{.name = std::move(name)});
-  BumpRevision();
+  revision_.Bump();
   return true;
 }
 
@@ -33,7 +27,7 @@ void FunctionBreakpointStore::Remove(std::size_t index) {
     return;
   }
   breakpoints_.erase(breakpoints_.begin() + static_cast<std::ptrdiff_t>(index));
-  BumpRevision();
+  revision_.Bump();
 }
 
 bool FunctionBreakpointStore::ToggleEnabled(std::size_t index) {
@@ -41,7 +35,7 @@ bool FunctionBreakpointStore::ToggleEnabled(std::size_t index) {
     return false;
   }
   breakpoints_[index].enabled = !breakpoints_[index].enabled;
-  BumpRevision();
+  revision_.Bump();
   return true;
 }
 
@@ -50,7 +44,7 @@ void FunctionBreakpointStore::SetCondition(std::size_t index, std::optional<std:
     return;
   }
   breakpoints_[index].condition = std::move(condition);
-  BumpRevision();
+  revision_.Bump();
 }
 
 void FunctionBreakpointStore::SetHitCondition(std::size_t index,
@@ -59,7 +53,7 @@ void FunctionBreakpointStore::SetHitCondition(std::size_t index,
     return;
   }
   breakpoints_[index].hit_condition = std::move(hit_condition);
-  BumpRevision();
+  revision_.Bump();
 }
 
 void FunctionBreakpointStore::Clear() {
@@ -67,7 +61,7 @@ void FunctionBreakpointStore::Clear() {
     return;
   }
   breakpoints_.clear();
-  BumpRevision();
+  revision_.Bump();
 }
 
 void FunctionBreakpointStore::ApplyVerification(
@@ -95,7 +89,7 @@ void FunctionBreakpointStore::ApplyVerification(
     bp.adapter_id = results[i].id;
     bp.verify_message = results[i].message;
   }
-  BumpRevision();
+  revision_.Bump();
 }
 
 bool FunctionBreakpointStore::ApplyBreakpointEvent(const VerifiedFunctionBreakpoint& result) {
@@ -111,7 +105,7 @@ bool FunctionBreakpointStore::ApplyBreakpointEvent(const VerifiedFunctionBreakpo
   }
   it->verified = result.verified;
   it->verify_message = result.message;
-  BumpRevision();
+  revision_.Bump();
   return true;
 }
 
@@ -126,7 +120,7 @@ void FunctionBreakpointStore::ResetVerification() {
     }
   }
   if (changed) {
-    BumpRevision();
+    revision_.Bump();
   }
 }
 
@@ -151,7 +145,7 @@ void FunctionBreakpointStore::ReplaceAll(std::vector<FunctionBreakpoint> breakpo
     breakpoints_.push_back(std::move(bp));
     seen.insert(std::string_view(breakpoints_.back().name));
   }
-  BumpRevision();
+  revision_.Bump();
 }
 
 }  // namespace microide::editor

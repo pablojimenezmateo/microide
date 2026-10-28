@@ -15,6 +15,7 @@
 #include "terminal/TerminalScreenState.h"
 #include "terminal/TerminalSearch.h"
 #include "util/KeyModifiers.h"
+#include "util/Revision.h"
 #include "util/Waker.h"
 
 #include <cstdint>
@@ -523,7 +524,7 @@ class TerminalSession {
   bool saved_origin_mode_ = false;
   std::size_t scroll_region_top_ = 0;
   std::size_t scroll_region_bottom_ = 23;
-  std::uint64_t snapshot_generation_ = 1;
+  util::Revision snapshot_generation_{1};
   std::uint64_t output_count_ = 0;  // OutputCount()
 
   // Test seam: captures bytes written while no backend is attached (placeholder

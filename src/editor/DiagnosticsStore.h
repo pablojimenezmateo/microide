@@ -11,6 +11,7 @@
 
 #include "editor/TextViewport.h"
 #include "util/TransparentStringHash.h"
+#include "util/Revision.h"
 
 namespace microide::editor {
 
@@ -118,7 +119,7 @@ class DiagnosticsStore {
   std::size_t WarningCount() const { return warning_count_; }
   std::size_t InfoCount() const { return info_count_; }
   std::size_t HintCount() const { return hint_count_; }
-  std::uint64_t revision() const { return revision_; }
+  std::uint64_t revision() const { return revision_.value(); }
 
  private:
   struct SeveritySummary {
@@ -149,7 +150,6 @@ class DiagnosticsStore {
       const std::vector<PublishedDiagnostic>& diagnostics);
   void AddSummary(const SeveritySummary& summary);
   void RemoveSummary(const SeveritySummary& summary);
-  void BumpRevision();
   void RebuildPath(std::string_view path_key);
 
   // Transparent hashing lets find() accept a string_view without allocating a
@@ -169,7 +169,7 @@ class DiagnosticsStore {
   // Number of entries in merged_by_path_ whose list is currently truncated;
   // keeps HasTruncatedFile() O(1) as merged paths are rebuilt.
   std::size_t truncated_file_count_ = 0;
-  std::uint64_t revision_ = 0;
+  util::Revision revision_;
 };
 
 }  // namespace microide::editor

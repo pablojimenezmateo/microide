@@ -46,7 +46,7 @@ struct TerminalSessionTestAccess {
     session.wake_event_pending_ = false;
     session.backend_.reset();
     session.scrollback_trim_total_ = 0;
-    session.snapshot_generation_ = 1;
+    session.snapshot_generation_.Reset(1);
 #ifdef MICROIDE_TESTING
     session.test_sent_bytes_.clear();
 #endif

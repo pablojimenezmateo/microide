@@ -851,7 +851,7 @@ void TerminalSession::CaptureForHost(std::uint64_t from, std::size_t max_lines_b
     dest.cells.assign(lines_[i].cells.begin(), lines_[i].cells.end());
     dest.wrapped_from_previous = lines_[i].wrapped_from_previous;
   }
-  out.generation = snapshot_generation_;
+  out.generation = snapshot_generation_.value();
   out.output_count = output_count_;
 
   // The URIs of the links those lines carry; the frame builder sends the ones

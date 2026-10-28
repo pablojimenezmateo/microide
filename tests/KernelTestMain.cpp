@@ -60,6 +60,7 @@ void RegisterInlineVectorTests(std::vector<TestCase>& tests);
 void RegisterSmallVectorTests(std::vector<TestCase>& tests);
 void RegisterFlatDedupSetTests(std::vector<TestCase>& tests);
 void RegisterParseTests(std::vector<TestCase>& tests);
+void RegisterRevisionTests(std::vector<TestCase>& tests);
 void RegisterJsonValueTests(std::vector<TestCase>& tests);
 void RegisterJsonFormatTests(std::vector<TestCase>& tests);
 void RegisterProjectFileScannerTests(std::vector<TestCase>& tests);
@@ -135,6 +136,7 @@ void RegisterKernelTests(std::vector<TestCase>& tests) {
   RegisterSmallVectorTests(tests);
   RegisterFlatDedupSetTests(tests);
   RegisterParseTests(tests);
+  RegisterRevisionTests(tests);
   RegisterJsonValueTests(tests);
   RegisterJsonFormatTests(tests);
   RegisterProjectFileScannerTests(tests);

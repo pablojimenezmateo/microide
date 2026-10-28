@@ -494,11 +494,12 @@ bool TerminalSession::SnapshotLineRangeIfChanged(std::size_t start_row,
   }
 
   std::scoped_lock lock(mutex_);
-  if (snapshot_generation_ == previous_generation && snapshot->generation == snapshot_generation_) {
+  if (snapshot_generation_.value() == previous_generation &&
+      snapshot->generation == snapshot_generation_.value()) {
     return false;
   }
 
-  snapshot->generation = snapshot_generation_;
+  snapshot->generation = snapshot_generation_.value();
   const std::size_t copied = CopyLineRangeIntoLocked(start_row, max_lines, snapshot->lines);
   util::AddPerformanceCounter(util::PerfCounterId::TerminalSnapshotLineRangeIfChangedCopiedLines,
                               copied);
@@ -674,9 +675,7 @@ void TerminalSession::SendFocusEvent(bool focused) {
 }
 
 void TerminalSession::AdvanceSnapshotGenerationLocked() {
-  if (++snapshot_generation_ == 0) {
-    snapshot_generation_ = 1;
-  }
+  snapshot_generation_.Bump();
 }
 
 bool TerminalSession::ConsumeWakeDecisionLocked() {

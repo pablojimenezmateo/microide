@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include "util/Revision.h"
 
 namespace microide::editor {
 
@@ -81,13 +82,12 @@ class FunctionBreakpointStore {
   // empty-named and duplicate entries defensively.
   void ReplaceAll(std::vector<FunctionBreakpoint> breakpoints);
 
-  std::uint64_t revision() const { return revision_; }
+  std::uint64_t revision() const { return revision_.value(); }
 
  private:
-  void BumpRevision();
 
   std::vector<FunctionBreakpoint> breakpoints_;
-  std::uint64_t revision_ = 0;
+  util::Revision revision_;
 };
 
 }  // namespace microide::editor

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "util/TransparentStringHash.h"
+#include "util/Revision.h"
 
 namespace microide::editor {
 
@@ -146,7 +147,7 @@ class BreakpointStore {
   // Replace the entire store (used by persistence restore). Resets verification.
   void ReplaceAll(std::vector<FileBreakpoints> files);
 
-  std::uint64_t revision() const { return revision_; }
+  std::uint64_t revision() const { return revision_.value(); }
 
  private:
   // Shared body for SetCondition / SetHitCondition / SetLogMessage: the three
@@ -177,13 +178,12 @@ class BreakpointStore {
   // Find the breakpoint on `path:line`, creating it (sorted) when absent.
   // Returns nullptr only for an empty path.
   Breakpoint* MutableBreakpoint(const std::filesystem::path& path, std::size_t line);
-  void BumpRevision();
 
   // Transparent hashing lets FindByPathKey() accept a string_view without
   // allocating a throwaway std::string key on every lookup.
   std::unordered_map<std::string, FileBreakpoints, util::TransparentStringHash, std::equal_to<>>
       by_path_;
-  std::uint64_t revision_ = 0;
+  util::Revision revision_;
 };
 
 }  // namespace microide::editor
