@@ -1,5 +1,15 @@
 # MicroIDE Known Tech Debt
 
+Reviewed 2026-10-28 (§ TD-2026-10-28-414, 416 through 419 for the remote
+idle/live-cost pass: measured with the new `tools/qa/remote.py` W and X scenarios
+and named threads; fixed a port sampler walking the kernel's whole connection table
+every 2 s, the first sync pinned in the server's memory, a process-table poll that
+never stopped, a heartbeat ticking four times per ping, a 138 ms frame stall from a
+quadratic change coalescer, a quadratic index apply under its lock, and two daemons
+started for one host -- the root cause of TD-414's flake. Open: the client's
+per-file mirror state, allocator slack after a first sync, the git sampler's
+polling, and a bulk sync's repaint rate).
+
 Reviewed 2026-10-18 (§ TD-2026-10-18-364: what the QA suite does not execute,
 measured with a coverage build -- 56% of the app's lines; remote, terminal
 emulation, partial staging, branch review, the merge editor by mouse, save
