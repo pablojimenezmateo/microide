@@ -449,6 +449,43 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-28-411 — the 2026-10-28 duplication pass: what it split, and what it left. [PARTLY RESOLVED 2026-10-28 — open: the four remainders below]
+
+Done, one commit each: `AssistService` (2,300 lines, 58 members, seven request
+counters) is six feature units in `src/workspace/assist/` over one `AssistHost`;
+every WorkspaceEdit applier (plugin `apply_edits`, LSP edits to open buffers and
+closed files, resource ops, the server's applyEdit, the project-wide rename and
+its confirm) is `WorkspaceEditService`, out of the shell (~490 lines) and out of
+`LspService` (~470 lines, and the shell round trip between the two); the clone
+scan's NormalizeAbsolutePath / launcher-fallback copies and the duplicate-constant
+scan's two unaccepted groups are gone. Found on the way and fixed: a hardened-lane
+flake in `RemoteTerminal/ADetachedHostTerminalIsReattachedByIdentity` (asserted a
+client count before the server had processed the old connection's close), and a
+build tree whose `.ninja_deps` record for `Application.cpp.o` was empty after two
+concurrent ninjas, which kept the production binary on a stale `WorkspaceShell`
+layout while every test shard was green — `run-checks.sh`'s `locked_build` now
+repairs such records (validation-traps § "Two builds in the same directory").
+That race may also be TD-2026-10-27-408's NUL-filled header: the same six-lanes
+setup, and a hand build outside the lock is the one writer the lanes do not
+serialize.
+
+Left open:
+
+- **`AssistHost::Operations` is still one bag for six features** (34 fields). Each
+  feature reads a subset; giving each its own port would make the seam say what
+  every feature needs. Not done in the split because the shell fills it in one
+  place and the payoff is clarity, not behaviour.
+- **The `WorkspaceShell()` constructor is ~730 lines** (`WorkspaceShellPlugins.cpp`),
+  almost all `Configure(... Operations{ lambdas })` wiring. Splitting it into
+  per-service wiring functions needs members-.inc room (it is a ratcheted cap); a
+  wiring table that does not need new shell members is the shape to look for.
+- **`RenderViewModelBuilder::BuildOverlaySurfaceInto` is ~440 lines** in one
+  function on the render hot path. Splitting it needs the `perf-tests` lane and
+  the allocation gates before and after; not attempted blind.
+- **`BumpRevision` is three byte-identical 4-line bodies** (`BreakpointStore`,
+  `FunctionBreakpointStore`, `DiagnosticsStore`) — below the clone scan's
+  threshold; a shared non-zero revision counter type would replace all three.
+
 ### TD-2026-10-28-410 — `MirrorSyncEngine/APushWhoseAnswerWasLostIsNotAConflict` failed on CI's ASan and TSan jobs: a request counted as sent before it was. [RESOLVED 2026-10-28]
 
 The test waits for the push to be "on the wire" (`RemotePeer::pending_request_count`
