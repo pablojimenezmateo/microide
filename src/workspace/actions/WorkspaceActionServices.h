@@ -24,6 +24,7 @@
 namespace microide::workspace {
 
 class AssistService;
+class DebugService;
 class RemoteHostService;
 
 // Defined in GitSidebarCommandCenter.h; only the type is needed here (function
@@ -305,22 +306,12 @@ class WorkspaceActionContext {
     // on success). has_debug_adapters reports whether any adapter is registered.
     std::function<std::string()> start_debugging;
     std::function<void()> stop_debugging;
-    std::function<bool()> debug_session_active;
     // True when the active session is paused (`stopped`); gates continue/step
     // (require stopped) vs. pause (requires running). Execution-control verbs
     // forward to the active session (no-op when none / wrong state).
-    std::function<void()> debug_continue;
-    std::function<void()> debug_step_over;
-    std::function<void()> debug_step_in;
-    std::function<void()> debug_step_out;
-    std::function<void()> debug_pause;
-    std::function<void()> debug_restart;
     // Reverse execution. Forward to the active session (no-op when none / wrong
     // state / adapter lacks `supportsStepBack`). debug_supports_reverse reports the
     // capability so availability can hide the verbs for non-recording adapters.
-    std::function<void()> debug_reverse_continue;
-    std::function<void()> debug_step_back;
-    std::function<bool()> debug_supports_reverse;
     // Multi-session switcher (Phase 8). debug_session_count reports how many live
     // sessions exist (gates the switch command); debug_switch_session cycles to the
     // next session (index < 0) or selects a 1-based index.
@@ -386,11 +377,13 @@ class WorkspaceActionContext {
                          ProjectWorkspaceState& current_project_state,
                          float& ui_scale,
                          AssistService& assist,
+                         DebugService& debug,
                          Operations operations);
 
   // The language assists, called directly: an action that only runs one needs no
   // Operations hop through the shell.
   AssistService& assist() { return assist_; }
+  DebugService& debug() { return debug_; }
 
   void PrepareForAction(ActionSource source);
   bool RejectAction(ActionSource source, std::string feedback);
@@ -721,20 +714,10 @@ class WorkspaceActionContext {
   bool DebuggerEnabled() const;
   // Flip the `debug.enabled` master toggle and announce the new state via toast.
   void ToggleDebuggerEnabled();
-  bool DebugSessionActive() const;
   void StartDebuggingWithFeedback();
   void StopDebuggingWithFeedback();
   // Execution control (Phase 3). No-op when no session / wrong state.
-  void DebugContinue();
-  void DebugStepOver();
-  void DebugStepIn();
-  void DebugStepOut();
-  void DebugPause();
-  void DebugReverseContinue();
-  void DebugStepBack();
   // The active session's adapter advertises `supportsStepBack` (a recording one).
-  bool DebugSupportsReverse() const;
-  void DebugRestart();
   // Multi-session switcher (Phase 8). Count of live sessions; switch to the next
   // (index < 0) or a 1-based session index.
   std::size_t DebugSessionCount() const;
@@ -895,6 +878,7 @@ class WorkspaceActionContext {
   ProjectWorkspaceState& state_;
   float& ui_scale_;
   AssistService& assist_;
+  DebugService& debug_;
   Operations operations_;
   ActionReceipt receipt_;
 };

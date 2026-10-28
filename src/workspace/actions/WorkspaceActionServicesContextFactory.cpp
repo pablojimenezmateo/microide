@@ -89,62 +89,6 @@ void WorkspaceActionContext::StopDebuggingWithFeedback() {
   }
 }
 
-bool WorkspaceActionContext::DebugSessionActive() const {
-  return operations_.debug_session_active && operations_.debug_session_active();
-}
-
-void WorkspaceActionContext::DebugContinue() {
-  if (operations_.debug_continue) {
-    operations_.debug_continue();
-  }
-}
-
-void WorkspaceActionContext::DebugStepOver() {
-  if (operations_.debug_step_over) {
-    operations_.debug_step_over();
-  }
-}
-
-void WorkspaceActionContext::DebugStepIn() {
-  if (operations_.debug_step_in) {
-    operations_.debug_step_in();
-  }
-}
-
-void WorkspaceActionContext::DebugStepOut() {
-  if (operations_.debug_step_out) {
-    operations_.debug_step_out();
-  }
-}
-
-void WorkspaceActionContext::DebugPause() {
-  if (operations_.debug_pause) {
-    operations_.debug_pause();
-  }
-}
-
-void WorkspaceActionContext::DebugReverseContinue() {
-  if (operations_.debug_reverse_continue) {
-    operations_.debug_reverse_continue();
-  }
-}
-
-bool WorkspaceActionContext::DebugSupportsReverse() const {
-  return operations_.debug_supports_reverse && operations_.debug_supports_reverse();
-}
-
-void WorkspaceActionContext::DebugStepBack() {
-  if (operations_.debug_step_back) {
-    operations_.debug_step_back();
-  }
-}
-
-void WorkspaceActionContext::DebugRestart() {
-  if (operations_.debug_restart) {
-    operations_.debug_restart();
-  }
-}
-
 std::size_t WorkspaceActionContext::DebugSessionCount() const {
   return operations_.debug_session_count ? operations_.debug_session_count() : 0;
 }
@@ -475,6 +419,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
       context_.current_project_state,
       ui_scale_,
       assist_service_,
+      debug_service_,
       WorkspaceActionContext::Operations{
           .close_tree_context_menu = [this]() { MakeMenuCoordinator().CloseTreeContextMenu(); },
           .reject_action =
@@ -1254,16 +1199,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .request_quit = [this]() { RequestQuit(); },
           .start_debugging = [this]() { return StartDebuggingWithDefaultConfig(); },
           .stop_debugging = [this]() { StopDebugging(); },
-          .debug_session_active = [this]() { return IsDebugSessionActive(); },
-          .debug_continue = [this]() { DebugContinue(); },
-          .debug_step_over = [this]() { DebugStepOver(); },
-          .debug_step_in = [this]() { DebugStepIn(); },
-          .debug_step_out = [this]() { DebugStepOut(); },
-          .debug_pause = [this]() { DebugPause(); },
-          .debug_restart = [this]() { DebugRestart(); },
-          .debug_reverse_continue = [this]() { DebugReverseContinue(); },
-          .debug_step_back = [this]() { DebugStepBack(); },
-          .debug_supports_reverse = [this]() { return DebugSupportsReverse(); },
           .debug_session_count = [this]() { return CurrentDapManager().SessionCount(); },
           .debug_switch_session = [this](int index) { DebugSwitchSession(index); },
           .stop_all_debug_sessions = [this]() { StopAllDebugSessions(); },

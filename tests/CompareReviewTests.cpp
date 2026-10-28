@@ -6,6 +6,7 @@
 #include "compare/CompareReviewTypes.h"
 #include "compare/CompareSemanticMetadata.h"
 #include "workspace/services/AssistService.h"
+#include "workspace/debug/DebugService.h"
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/git/PatchApplyService.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
@@ -112,7 +113,9 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
          };
 
          microide::workspace::AssistService assist;
-         WorkspaceActionContext context(catalog, project_state, ui_scale, assist, std::move(operations));
+         microide::workspace::DebugService debug;
+         WorkspaceActionContext context(catalog, project_state, ui_scale, assist, debug,
+                                        std::move(operations));
          ActionCoordinator coordinator(context);
 
          const std::vector<std::string> no_args;

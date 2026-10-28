@@ -43,11 +43,13 @@ WorkspaceActionContext::WorkspaceActionContext(ProjectCatalogState& project_cata
                                                ProjectWorkspaceState& current_project_state,
                                                float& ui_scale,
                                                AssistService& assist,
+                                               DebugService& debug,
                                                Operations operations)
     : project_catalog_(project_catalog),
       state_(current_project_state),
       ui_scale_(ui_scale),
       assist_(assist),
+      debug_(debug),
       operations_(std::move(operations)) {}
 
 void WorkspaceActionContext::PrepareForAction(ActionSource source) {

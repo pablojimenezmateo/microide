@@ -1,4 +1,5 @@
 #include "workspace/actions/WorkspaceActionCoordinator.h"
+#include "workspace/debug/DebugService.h"
 
 #include <filesystem>
 #include <optional>
@@ -541,7 +542,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       }
       // Nothing to stop: Shift+F5 between sessions closed the debug pane the user
       // had opened and said "Debugging stopped" (QA dbg-exception-breakpoints).
-      if (!context_.DebugSessionActive()) {
+      if (!context_.debug().IsSessionActive()) {
         return reject("No debug session is running");
       }
       context_.StopDebuggingWithFeedback();
@@ -550,14 +551,14 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");
       }
-      context_.DebugContinue();
+      context_.debug().Continue();
       return DispatchResult::Handled;
     case ActionId::DebugStartOrContinue:
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");
       }
-      if (context_.DebugSessionActive()) {
-        context_.DebugContinue();
+      if (context_.debug().IsSessionActive()) {
+        context_.debug().Continue();
       } else {
         context_.StartDebuggingWithFeedback();
       }
@@ -566,25 +567,25 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");
       }
-      context_.DebugStepOver();
+      context_.debug().StepOver();
       return DispatchResult::Handled;
     case ActionId::DebugStepIn:
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");
       }
-      context_.DebugStepIn();
+      context_.debug().StepIn();
       return DispatchResult::Handled;
     case ActionId::DebugStepOut:
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");
       }
-      context_.DebugStepOut();
+      context_.debug().StepOut();
       return DispatchResult::Handled;
     case ActionId::DebugPause:
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");
       }
-      context_.DebugPause();
+      context_.debug().Pause();
       return DispatchResult::Handled;
     case ActionId::DebugReverseContinue:
       if (!context_.DebuggerEnabled()) {
@@ -593,11 +594,11 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       // The session drops the request for an adapter that cannot run backwards;
       // say so instead of answering "ok" for a step that never happened (the
       // toolbar and menus already hide it for such an adapter).
-      if (!context_.DebugSupportsReverse()) {
+      if (!context_.debug().SupportsStepBack()) {
         return reject("Reverse Continue needs a debug session whose adapter can run backwards "
                       "(supportsStepBack); this one cannot");
       }
-      context_.DebugReverseContinue();
+      context_.debug().ReverseContinue();
       return DispatchResult::Handled;
     case ActionId::DebugStepBack:
       if (!context_.DebuggerEnabled()) {
@@ -606,17 +607,17 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       // The session drops the request for an adapter that cannot run backwards;
       // say so instead of answering "ok" for a step that never happened (the
       // toolbar and menus already hide it for such an adapter).
-      if (!context_.DebugSupportsReverse()) {
+      if (!context_.debug().SupportsStepBack()) {
         return reject("Step Back needs a debug session whose adapter can run backwards "
                       "(supportsStepBack); this one cannot");
       }
-      context_.DebugStepBack();
+      context_.debug().StepBack();
       return DispatchResult::Handled;
     case ActionId::DebugRestart:
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");
       }
-      context_.DebugRestart();
+      context_.debug().Restart();
       return DispatchResult::Handled;
     case ActionId::DebugSwitchSession: {
       if (!context_.DebuggerEnabled()) {
@@ -641,7 +642,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");
       }
-      if (!context_.DebugSessionActive()) {
+      if (!context_.debug().IsSessionActive()) {
         return reject("No debug session is running");
       }
       context_.StopAllDebugSessions();
@@ -650,7 +651,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");
       }
-      if (!context_.DebugSessionActive()) {
+      if (!context_.debug().IsSessionActive()) {
         return reject("Start a debug session to evaluate expressions");
       }
       context_.OpenDebugReplPrompt();
