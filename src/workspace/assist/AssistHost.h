@@ -19,6 +19,8 @@
 
 namespace microide::workspace {
 
+class WorkspaceEditService;
+
 // What every assist feature (completion, snippets, code actions, navigation,
 // refactoring, signature help) shares: the shell's callback seam, the workspace
 // state it reads, and the handful of helpers each feature used to re-spell — the
@@ -64,24 +66,6 @@ class AssistHost {
                                                      const editor::SelectionRange&,
                                                      lsp_encoding::PositionEncoding)>
         collect_lsp_context_diagnostics;
-    // Apply a code action's inline WorkspaceEdit (0-based edits) directly to the
-    // open buffers. Returns false if no target buffer resolved / edit was stale.
-    std::function<bool(const std::vector<CodeActionEdit>&)> apply_lsp_workspace_edit;
-    // Apply a WorkspaceEdit that carries file resource ops (create/rename/delete):
-    // ops first (validate-first + rollback-safe staging), then the text edits —
-    // open buffers in place AND closed files silently on disk (an ops-carrying
-    // action's edits typically fill the file it just created, which no buffer has
-    // open). Returns false when the op batch failed (nothing left applied).
-    std::function<bool(const std::vector<CodeActionEdit>&,
-                       const std::vector<WorkspaceResourceOp>&)>
-        apply_full_lsp_workspace_edit;
-    // Apply an LSP rename result: applies in place when every affected file is open,
-    // or confirms + opens + saves when some are closed (resource ops — e.g. a
-    // rust-analyzer module rename renaming the file — always confirm, and run
-    // before the text edits). `new_name` drives the prompt.
-    std::function<void(const std::string&, const std::vector<CodeActionEdit>&,
-                       const std::vector<WorkspaceResourceOp>&)>
-        apply_rename_workspace_edit;
     std::function<bool(const std::filesystem::path&)> open_file_in_new_tab;
     // Open `path` and then run `then` on the opened tab — now, or later when the
     // file must first come from the host (a remote project's out-of-project file).
@@ -111,9 +95,12 @@ class AssistHost {
                  WorkspacePluginRuntime& plugin_runtime,
                  WorkspaceOutputChannels& output_channels,
                  WorkspaceLanguageContract& language_contract,
+                 WorkspaceEditService& edits,
                  Operations operations);
 
   const Operations& ops() const { return operations_; }
+  // Where a code action's, a rename's and a formatting result's edits are applied.
+  WorkspaceEditService& edits() const { return *edits_; }
   WorkspaceContext& context() const { return *context_; }
   WorkspacePluginRuntime& plugins() const { return *plugin_runtime_; }
   WorkspaceOutputChannels& output() const { return *output_channels_; }
@@ -153,6 +140,7 @@ class AssistHost {
   WorkspacePluginRuntime* plugin_runtime_ = nullptr;
   WorkspaceOutputChannels* output_channels_ = nullptr;
   WorkspaceLanguageContract* language_contract_ = nullptr;
+  WorkspaceEditService* edits_ = nullptr;
   Operations operations_{};
 };
 

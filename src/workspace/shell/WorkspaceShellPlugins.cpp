@@ -547,7 +547,7 @@ WorkspaceShell::WorkspaceShell() {
               },
       });
   assist_service_.Configure(
-      context_, plugin_runtime_, output_channels_, language_contract_,
+      context_, plugin_runtime_, output_channels_, language_contract_, workspace_edit_service_,
       AssistService::Operations{
           .get_setting_value =
               [this](std::string_view id) { return GetSettingValue(id); },
@@ -598,20 +598,6 @@ WorkspaceShell::WorkspaceShell() {
                      const editor::SelectionRange& range,
                      lsp_encoding::PositionEncoding encoding) {
                 return CollectLspContextDiagnostics(viewport, range, encoding);
-              },
-          .apply_lsp_workspace_edit =
-              [this](const std::vector<CodeActionEdit>& edits) {
-                return workspace_edit_service_.ApplyLspEdit(edits);
-              },
-          .apply_full_lsp_workspace_edit =
-              [this](const std::vector<CodeActionEdit>& edits,
-                     const std::vector<WorkspaceResourceOp>& resource_ops) {
-                return workspace_edit_service_.ApplyFull(edits, resource_ops);
-              },
-          .apply_rename_workspace_edit =
-              [this](const std::string& new_name, const std::vector<CodeActionEdit>& edits,
-                     const std::vector<WorkspaceResourceOp>& resource_ops) {
-                workspace_edit_service_.ApplyRename(new_name, edits, resource_ops);
               },
           .open_file_in_new_tab =
               [this](const std::filesystem::path& path) { return OpenFileInNewTab(path); },

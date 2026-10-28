@@ -8,6 +8,7 @@
 #include "workspace/FileUri.h"
 #include "workspace/lsp/LspViewportPositions.h"
 #include "workspace/lsp/LspWorkspaceEditOps.h"
+#include "workspace/services/WorkspaceEditService.h"
 
 namespace microide::workspace {
 
@@ -112,15 +113,8 @@ void RefactorAssist::ApplyRenameResult(const std::filesystem::path& request_path
       workspace_edits.push_back(assist::ToCodeActionEdit(*path, range, new_text));
     }
   }
-  if (ops.apply_rename_workspace_edit) {
-    ops.apply_rename_workspace_edit(new_name, workspace_edits, resource_ops);
-  } else if (!resource_ops.empty() && ops.apply_full_lsp_workspace_edit) {
-    // Headless fallback: resource ops first (the edits are keyed by the
-    // post-rename paths), then the text edits.
-    ops.apply_full_lsp_workspace_edit(workspace_edits, resource_ops);
-  } else if (ops.apply_lsp_workspace_edit) {
-    ops.apply_lsp_workspace_edit(workspace_edits);
-  }
+  // Applies in place when every file is open, or asks before writing closed ones.
+  host_.edits().ApplyRename(new_name, workspace_edits, resource_ops);
 }
 
 void RefactorAssist::PrepareRenameForCursor(std::function<void(bool, std::string)> callback) {
@@ -221,7 +215,7 @@ void RefactorAssist::ApplyFormattingResult(const std::filesystem::path& request_
   for (const auto& [range, new_text] : *edits) {
     workspace_edits.push_back(assist::ToCodeActionEdit(request_path, range, new_text));
   }
-  if (ops.apply_lsp_workspace_edit && !ops.apply_lsp_workspace_edit(workspace_edits)) {
+  if (!host_.edits().ApplyLspEdit(workspace_edits)) {
     LogLsp(host_, "Could not apply formatting");
   }
 }

@@ -8,6 +8,7 @@
 #include "workspace/FileUri.h"
 #include "workspace/lsp/LspViewportPositions.h"
 #include "workspace/lsp/LspWorkspaceEditOps.h"
+#include "workspace/services/WorkspaceEditService.h"
 
 namespace microide::workspace {
 
@@ -248,13 +249,10 @@ bool CodeActionAssist::ExecuteSelected() {
     // Ops-carrying fix: the full applier runs the ops (rollback-safe), then the
     // edits against open buffers AND closed files on disk (the edits typically
     // fill the file the ops just created).
-    return Finish(ops.apply_full_lsp_workspace_edit &&
-                      ops.apply_full_lsp_workspace_edit(action.edits, action.resource_ops),
-                  "Could not apply fix");
+    return Finish(host_.edits().ApplyFull(action.edits, action.resource_ops), "Could not apply fix");
   }
   if (!action.edits.empty()) {
-    return Finish(ops.apply_lsp_workspace_edit && ops.apply_lsp_workspace_edit(action.edits),
-                  "Could not apply fix");
+    return Finish(host_.edits().ApplyLspEdit(action.edits), "Could not apply fix");
   }
   if (action.command.empty()) {
     return false;

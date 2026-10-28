@@ -28,8 +28,9 @@ class AssistService {
                  WorkspacePluginRuntime& plugin_runtime,
                  WorkspaceOutputChannels& output_channels,
                  WorkspaceLanguageContract& language_contract,
+                 WorkspaceEditService& edits,
                  Operations operations) {
-    host_.Configure(context, plugin_runtime, output_channels, language_contract,
+    host_.Configure(context, plugin_runtime, output_channels, language_contract, edits,
                     std::move(operations));
   }
 

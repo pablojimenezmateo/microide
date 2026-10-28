@@ -28,8 +28,10 @@ void AssistHost::Configure(WorkspaceContext& context,
                            WorkspacePluginRuntime& plugin_runtime,
                            WorkspaceOutputChannels& output_channels,
                            WorkspaceLanguageContract& language_contract,
+                           WorkspaceEditService& edits,
                            Operations operations) {
   context_ = &context;
+  edits_ = &edits;
   plugin_runtime_ = &plugin_runtime;
   output_channels_ = &output_channels;
   language_contract_ = &language_contract;

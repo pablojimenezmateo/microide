@@ -522,7 +522,7 @@ serialize.
 
 Left open:
 
-- **`AssistHost::Operations` is still one bag for six features** (34 fields). Each
+- **`AssistHost::Operations` is still one bag for six features** (31 fields; the three workspace-edit forwarders became a `WorkspaceEditService&` on 2026-10-28). Each
   feature reads a subset; giving each its own port would make the seam say what
   every feature needs. Not done in the split because the shell fills it in one
   place and the payoff is clarity, not behaviour.
