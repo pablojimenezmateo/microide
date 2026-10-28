@@ -9,12 +9,14 @@
 #include <utility>
 
 #include "platform/ProcessLauncher.h"
+#include "project/GitMetadataSource.h"
 #include "project/GitRepository.h"
 #include "project/remote/RemoteManifest.h"
 #include "project/remote/RemoteSearchWire.h"
 #include "project/remote/RemoteWorkspace.h"
 #include "project/remote/TreeFiles.h"
 #include "util/ByteCodec.h"
+#include "util/ContentHash.h"
 #include "util/Zstd.h"
 #include "util/Log.h"
 
@@ -23,8 +25,6 @@ namespace {
 
 // The largest object a fetch serves unless the request asks for less.
 constexpr std::uint64_t kMaxObjectBytes = 64u * 1024 * 1024;
-// Objects up to this size are kept for, and sent as, deltas; larger ones stream
-// (and go to disk on the client) whole.
 // The invalid-params reply for a request that needs a workspace: a missing
 // workspace is reported first, else `problem` (what was wrong with the params).
 void ReplyInvalidParams(remote::RemotePeer& peer, std::uint64_t id, bool has_workspace,
@@ -34,7 +34,34 @@ void ReplyInvalidParams(remote::RemotePeer& peer, std::uint64_t id, bool has_wor
                                 : std::string("no workspace: send server/hello with a root"));
 }
 
+// Objects up to this size are kept for, and sent as, deltas; larger ones stream
+// (and go to disk on the client) whole.
 constexpr std::uint64_t kMaxDeltaBaseBytes = 8u * 1024 * 1024;
+// A changed file at least this large whose base is not in RecentObjects asks git's
+// index for it: one `git show` against a whole-file transfer. Below it the file is
+// cheaper to send than the process is to run.
+constexpr std::size_t kIndexBaseMinBytes = 16 * 1024;
+
+// The base a client holds for `path` when it is not in RecentObjects: a file the
+// client got in its first sync and that the host has changed since. When the file
+// was clean then, what the client holds is git's index blob, already on the host's
+// disk -- so the first change of a committed file is still a delta, with nothing
+// kept in memory for it. Used only when its hash IS the client's base: a filter
+// (CRLF, LFS) or a file that was dirty at the backfill is a miss, never a wrong base.
+std::optional<std::string> IndexBlobWithHash(const std::filesystem::path& root, std::string_view path,
+                                             std::string_view hash_hex) {
+  if (project::LocalGitMetadataSource().Availability(root) != project::GitAvailability::Repository) {
+    return std::nullopt;
+  }
+  const project::GitRepository repo(root, platform::LocalProcessLauncher());
+  std::optional<project::GitRepository::BlobAtRevision> blob =
+      repo.ReadBlobAtRevision(std::filesystem::path(std::string(path)), /*revision=*/"");  // ":path"
+  if (!blob.has_value() || blob->truncated || blob->content.size() > kMaxDeltaBaseBytes ||
+      util::HashContent(blob->content).Hex() != hash_hex) {
+    return std::nullopt;
+  }
+  return std::move(blob->content);
+}
 
 // `manifest`: the tree's newest manifest id once the operation is done, so a
 // client can tell a watch row the host built before the write (its id is not
@@ -571,46 +598,57 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
         // The client holds `base` (the version this server last sent it): send
         // what changed since, when that is smaller (remote-projects.md § 6.2).
         if (!bases[index].empty()) {
-          if (const std::optional<std::string> base = tree->recent_objects.Get(bases[index])) {
-            std::string content;
-            const remote::FileOpResult read = remote::ReadTreeFile(
-                tree->tree.root(), paths[index], kMaxDeltaBaseBytes,
-                [&](std::string_view chunk) { content.append(chunk); });
-            if (read.ok()) {
-              const std::string hash = read.current->Hex();
-              std::optional<std::string> delta;
-              if (hash != bases[index]) {
+          std::string content;
+          const remote::FileOpResult read = remote::ReadTreeFile(
+              tree->tree.root(), paths[index], kMaxDeltaBaseBytes,
+              [&](std::string_view chunk) { content.append(chunk); });
+          if (read.ok()) {
+            const std::string hash = read.current->Hex();
+            const bool unchanged = hash == bases[index];
+            std::optional<std::string> delta;
+            if (!unchanged) {
+              std::optional<std::string> base = tree->recent_objects.Get(bases[index]);
+              if (!base.has_value() && content.size() >= kIndexBaseMinBytes) {
+                base = IndexBlobWithHash(tree->tree.root(), paths[index], bases[index]);
+              }
+              if (base.has_value()) {
                 delta = util::ZstdDelta(*base, content);
               }
-              const bool unchanged = hash == bases[index];
-              if (unchanged || (delta.has_value() && delta->size() < content.size() - content.size() / 8)) {
-                util::JsonObject entry;
-                entry["hash"] = util::JsonValue(hash);
-                entry["delta"] = util::JsonValue(true);
-                (void)StreamObject(index, send, [&](const std::function<void(std::string_view)>& sink) {
-                  if (!unchanged) {
-                    sink(*delta);
-                  }
-                  return remote::FileOpResult{};
-                });
-                tree->recent_objects.Put(hash, std::move(content));
-                results.push_back(util::JsonValue(std::move(entry)));
-                continue;
-              }
             }
+            util::JsonValue entry;
+            if (unchanged || (delta.has_value() && delta->size() < content.size() - content.size() / 8)) {
+              util::JsonObject object;
+              object["hash"] = util::JsonValue(hash);
+              object["delta"] = util::JsonValue(true);
+              (void)StreamObject(index, send, [&](const std::function<void(std::string_view)>& sink) {
+                if (!unchanged) {
+                  sink(*delta);
+                }
+                return remote::FileOpResult{};
+              });
+              entry = util::JsonValue(std::move(object));
+            } else {
+              // Whole, from the bytes already read.
+              entry = StreamObject(index, send, [&](const std::function<void(std::string_view)>& sink) {
+                sink(content);
+                return read;
+              });
+            }
+            // A path the client asks about with a base is one that changes: its next
+            // change wants this version as the base.
+            tree->recent_objects.Put(hash, std::move(content));
+            results.push_back(std::move(entry));
+            continue;
           }
+          // Over the delta-base limit, or not readable: whole (or its error) below.
         }
-        std::string kept;
-        util::JsonValue entry = StreamObject(
-            index, send,
-            [&](const std::function<void(std::string_view)>& sink) {
-              return remote::ReadTreeFile(tree->tree.root(), paths[index], max_bytes, sink);
-            },
-            &kept, kMaxDeltaBaseBytes);
-        if (!kept.empty() && entry["hash"].IsString()) {
-          tree->recent_objects.Put(entry["hash"].AsString(), std::move(kept));
-        }
-        results.push_back(std::move(entry));
+        // A first fetch (the backfill, a file new to the client) is not kept: most
+        // of a content set is never fetched again, and keeping it pinned the whole
+        // set in this process (TD-2026-10-28-417). Its first change finds its base
+        // in the git index instead.
+        results.push_back(StreamObject(index, send, [&](const std::function<void(std::string_view)>& sink) {
+          return remote::ReadTreeFile(tree->tree.root(), paths[index], max_bytes, sink);
+        }));
       }
       util::JsonObject reply;
       reply["objects"] = util::JsonValue(std::move(results));

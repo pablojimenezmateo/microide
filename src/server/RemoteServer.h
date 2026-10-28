@@ -132,8 +132,11 @@ class RemoteServer {
     std::set<std::uint64_t> git_subscribers;
     std::optional<project::GitStatusOutput> git_last_pushed;
     std::unique_ptr<GitStatusSampler> git_sampler;  // created on the queue thread
-    // What object/fetch recently sent, for the next fetch's delta base.
-    RecentObjects recent_objects{64u * 1024 * 1024};
+    // What object/fetch recently sent for a path that changed, for that path's
+    // next delta base: the churn working set, not the first sync (TD-2026-10-28-417).
+    // 32 MiB: RecentObjects keeps no object over a quarter of it, which is then the
+    // fetch's 8 MiB delta-base limit.
+    RecentObjects recent_objects{32u * 1024 * 1024};
   };
   struct Workspace {
     std::size_t clients = 0;

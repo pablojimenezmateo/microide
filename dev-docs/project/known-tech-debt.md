@@ -449,6 +449,45 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-28-417 — the remote server kept every byte of the first sync in memory, per workspace. [RESOLVED 2026-10-28]
+
+Found by the same measurement (`W`). An idle server serving this repository (4,767
+files, 36 MB) sat at **48 MB RSS**, 37 MB of it one malloc arena: `RecentObjects`,
+the per-workspace LRU of bytes `object/fetch` served so the NEXT fetch of a changed
+path can be a zstd delta against what the client holds. Every fetch was kept --
+including the whole first sync, which serves the entire content set. So each
+workspace pinned min(content set, 64 MiB) for the life of the server, nearly all of
+it for files that are never fetched again.
+
+The cache now keeps only what a fetch WITH a base served: a path the client is
+tracking because it changed, i.e. the churn working set that the next delta needs.
+The first change of a file after the first sync finds its base elsewhere: when the
+client's base hash is the BLAKE3 of the file's git index blob (a file that was
+clean at the sync), `git show :path` supplies it, so the design's headline case --
+an agent rewriting one function of a committed 200 KiB file -- is still a delta
+(remote-projects.md § 6.2), with nothing held for it. Only for files of at least
+16 KiB (below that the file is cheaper to send than `git` is to run), and only on a
+hash match (a CRLF/LFS filter or a file dirty at the sync is a miss: whole file,
+as on any miss). Cap 64 -> 32 MiB, so `capacity / 4` equals the 8 MiB delta-base
+limit. And an unchanged file asked about with its base is answered "unchanged" with
+no bytes even on a cache miss (it used to need a hit).
+
+Measured with `W`, loopback host: server RSS 48.0 -> 11.2 MB (high-water mark
+11.5 MB: the first sync no longer spikes it either).
+
+The trade-off, stated: in a tree that is NOT a git repository (or for a file that
+was dirty at the first sync), a file's first change after connect is sent whole;
+its later changes are deltas as before.
+
+Tests: `RemoteWorkspace/AChangedFileIsADeltaWithoutKeepingTheFirstSync` (fails on
+the old cache: the small file came back as a delta against first-sync bytes);
+`MirrorSyncEngine/PullsAnEditAsADelta` now models the real workload, a committed
+file.
+
+What the server still holds per file (~1.5 KB on this repo: `WorkspaceTree`'s
+`last_rows_` and hash cache, each subscriber's `last_sent`, the watch's index) is
+TD-2026-10-28-418.
+
 ### TD-2026-10-28-416 — an idle remote server spent 0.34% of a core reading `/proc/net/tcp` for its port list. [RESOLVED 2026-10-28]
 
 Found measuring what an idle remote project costs on both sides (new QA scenario

@@ -256,16 +256,20 @@ void TestMirrorPullsLargeFilesLast() {
 
 // The workload's most common change — an agent rewriting one function in a big
 // source file — arrives as a zstd delta against the tree's copy (§ 6.2), not as
-// the file: the host diffs against the version it last sent this mirror. A file
-// edited here as well is never patched; that is a conflict, as before.
+// the file: the host diffs against the version this mirror holds, which for a
+// committed file is its git index blob (the first sync's bytes are not kept on the
+// host, TD-2026-10-28-417). A file edited here as well is never patched; that is a
+// conflict, as before.
 void TestMirrorPullsAnEditAsADelta() {
   MirrorSession session;
   std::string source;
   for (int i = 0; i < 4000; ++i) {
     source += "int function_" + std::to_string(i) + "(int x) { return x * " + std::to_string(i) + "; }\n";
   }
+  InitializeGitRepo(session.host);
   WriteFile(session.host / "big.cpp", source);
   WriteFile(session.host / "small.txt", "v1\n");
+  CommitAll(session.host, "init", "mirror delta");
   session.Connect();
   session.Sync();
   Expect(session.engine->status().pulled_as_delta == 0, "a first pull has nothing to diff against");

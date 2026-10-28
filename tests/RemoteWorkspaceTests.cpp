@@ -3,9 +3,13 @@
 #include "project/remote/RemoteConnection.h"
 #include "project/remote/RemoteServerClient.h"
 #include "project/remote/RemoteWorkspace.h"
+#include "util/ContentHash.h"
+#include "util/Zstd.h"
 
 #include <algorithm>
 #include <filesystem>
+#include <future>
+#include <optional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -107,6 +111,100 @@ void TestObjectFetchServesVerifiedBytes() {
   Expect(bulk.has_value() && (*bulk)[0].content == big, "the bulk lane delivers the same bytes");
 }
 
+// object/fetch with the version the client holds, waited on.
+std::vector<remote::RemoteWorkspace::FetchedObject> FetchWithBases(
+    remote::RemoteWorkspace& workspace, std::vector<std::string> paths,
+    std::vector<std::optional<util::ContentHash>> bases) {
+  std::promise<std::vector<remote::RemoteWorkspace::FetchedObject>> answered;
+  workspace.FetchObjects(
+      std::move(paths), remote::Lane::Bulk,
+      [&](std::optional<std::vector<remote::RemoteWorkspace::FetchedObject>> objects, std::string error) {
+        Expect(objects.has_value(), "the fetch answers: " + error);
+        answered.set_value(objects.value_or(std::vector<remote::RemoteWorkspace::FetchedObject>{}));
+      },
+      0, std::move(bases));
+  auto future = answered.get_future();
+  Expect(future.wait_for(std::chrono::seconds(60)) == std::future_status::ready, "the fetch answers in time");
+  return future.get();
+}
+
+// What the client ends up holding for an answer: the bytes, or the delta applied
+// to the base it sent.
+std::string Reconstruct(const remote::RemoteWorkspace::FetchedObject& object, const std::string& base) {
+  if (!object.delta_base.has_value()) {
+    return object.content;
+  }
+  if (object.content.empty()) {
+    return base;  // unchanged
+  }
+  return util::ZstdApplyDelta(base, object.content, 64u << 20).value_or("<delta did not apply>");
+}
+
+std::string Lines(const std::string& tag, int count) {
+  std::string text;
+  for (int i = 0; i < count; ++i) {
+    text += tag + " line " + std::to_string(i) + " with some text to make it a real source file\n";
+  }
+  return text;
+}
+
+// The host keeps delta bases for files that CHANGE, not for the first sync
+// (TD-2026-10-28-417): the backfill used to pin every byte it served. A changed
+// file's first delta comes from git's index when what the client holds is the
+// committed blob, and later ones from the bytes this server last sent.
+void TestAChangedFileIsADeltaWithoutKeepingTheFirstSync() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "host";
+  InitializeGitRepo(root);
+  const std::string big = Lines("big", 1200);      // ~80 KiB: over the index-base minimum
+  const std::string small = Lines("small", 10);    // under it
+  const std::string dirty = Lines("dirty", 1200);  // differs from its index blob
+  WriteFile(root / "big.txt", big);
+  WriteFile(root / "small.txt", small);
+  WriteFile(root / "dirty.txt", Lines("committed", 1200));
+  CommitAll(root, "init", "delta bases");
+  WriteFile(root / "dirty.txt", dirty);
+
+  WorkspaceSession session(root);
+  std::string error;
+  const auto first = session.workspace->FetchObjectsSync({"big.txt", "small.txt", "dirty.txt"},
+                                                         remote::Lane::Bulk, &error);
+  Expect(first.has_value() && first->size() == 3 && (*first)[0].hash.has_value() &&
+             (*first)[1].hash.has_value() && (*first)[2].hash.has_value(),
+         "the first sync: " + error);
+
+  const std::string big2 = "an agent's edit\n" + big;
+  const std::string small2 = "an agent's edit\n" + small;
+  const std::string dirty2 = "an agent's edit\n" + dirty;
+  WriteFile(root / "big.txt", big2);
+  WriteFile(root / "small.txt", small2);
+  WriteFile(root / "dirty.txt", dirty2);
+  auto changed = FetchWithBases(*session.workspace, {"big.txt", "small.txt", "dirty.txt"},
+                                {(*first)[0].hash, (*first)[1].hash, (*first)[2].hash});
+  Expect(changed.size() == 3, "every changed object answers");
+  Expect(changed[0].delta_base == (*first)[0].hash && changed[0].content.size() < big2.size() / 8 &&
+             Reconstruct(changed[0], big) == big2,
+         "a committed file's first change is a delta against its index blob");
+  Expect(!changed[1].delta_base.has_value() && changed[1].content == small2,
+         "a small file is sent whole: the first sync's bytes were not kept");
+  Expect(!changed[2].delta_base.has_value() && changed[2].content == dirty2,
+         "a file that was dirty at the first sync has no base on the host: whole");
+
+  const std::string big3 = big2 + "a second edit\n";
+  const std::string dirty3 = dirty2 + "a second edit\n";
+  WriteFile(root / "big.txt", big3);
+  WriteFile(root / "dirty.txt", dirty3);
+  const std::string small_hash = changed[1].hash->Hex();
+  auto again = FetchWithBases(*session.workspace, {"big.txt", "dirty.txt", "small.txt"},
+                              {changed[0].hash, changed[2].hash, changed[1].hash});
+  Expect(again.size() == 3 && again[0].delta_base.has_value() && Reconstruct(again[0], big2) == big3,
+         "the next change is a delta against what was last sent");
+  Expect(again[1].delta_base.has_value() && Reconstruct(again[1], dirty2) == dirty3,
+         "including for the file git could not answer for");
+  Expect(again[2].delta_base.has_value() && again[2].content.empty() && again[2].hash->Hex() == small_hash,
+         "an unchanged file is answered as unchanged, without its bytes");
+}
+
 void TestWriteAndTreeOpsAreCompareAndSwap() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "host";
@@ -165,6 +263,8 @@ void RegisterRemoteWorkspaceTests(std::vector<TestCase>& tests) {
           TestManifestFailureIsAnErrorNotAnEmptyTree);
   AddTest(tests, "RemoteWorkspace/ManifestNeedsAWorkspace", TestManifestNeedsAWorkspace);
   AddTest(tests, "RemoteWorkspace/ObjectFetchServesVerifiedBytes", TestObjectFetchServesVerifiedBytes);
+  AddTest(tests, "RemoteWorkspace/AChangedFileIsADeltaWithoutKeepingTheFirstSync",
+          TestAChangedFileIsADeltaWithoutKeepingTheFirstSync);
   AddTest(tests, "RemoteWorkspace/WriteAndTreeOpsAreCompareAndSwap",
           TestWriteAndTreeOpsAreCompareAndSwap);
 }

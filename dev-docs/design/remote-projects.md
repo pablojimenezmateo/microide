@@ -615,7 +615,11 @@ host notices when the link drops.
   and re-pulling the whole file for it is the design's largest avoidable cost.
   Because the mirror has the previous object, the server sends a `zstd --patch-from`
   delta against it and the client reconstructs. Whole-file transfer stays as the
-  fallback when the base object is missing or the delta is not smaller.
+  fallback when the base object is missing or the delta is not smaller. The server
+  keeps the bytes it sent only for paths that change (fetched with a base); the first
+  change of a file after the first sync takes its base from the git index blob when
+  that blob's hash is the client's base (TD-2026-10-28-417), so the first sync is
+  never held in the server's memory.
 
   **This is a new third-party dependency on both sides and it is linked, not
   shelled.** `third_party/` holds one vendored library today (`stb`), so zstd and
