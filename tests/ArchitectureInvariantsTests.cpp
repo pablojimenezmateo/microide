@@ -255,8 +255,10 @@ void TestArchitectureFileSizes() {
              // 1647: ChangedLineSpan, a copy of editor::AppliedEditLineSpan.
              // 1633: the three workspace-edit appliers, the pending rename and its
              // struct moved to WorkspaceEditService.
+             // 1625: the eight one-line Debug* forwarders; the action context and the
+             // debug toolbar call DebugService directly (TD-2026-10-28-412).
              return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShellMembers.inc",
-                                                     1633);
+                                                     1625);
            });
 
   AssertRuleResultsPass(results);

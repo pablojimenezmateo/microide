@@ -599,15 +599,7 @@ bool WorkspaceShell::DebugEnabled() const {
   return SettingFlagEnabled(GetSettingValue("debug.enabled"));
 }
 
-void WorkspaceShell::DebugContinue() { debug_service_.Continue(); }
-void WorkspaceShell::DebugStepOver() { debug_service_.StepOver(); }
-void WorkspaceShell::DebugStepIn() { debug_service_.StepIn(); }
-void WorkspaceShell::DebugStepOut() { debug_service_.StepOut(); }
-void WorkspaceShell::DebugPause() { debug_service_.Pause(); }
-void WorkspaceShell::DebugReverseContinue() { debug_service_.ReverseContinue(); }
-void WorkspaceShell::DebugStepBack() { debug_service_.StepBack(); }
 bool WorkspaceShell::DebugSupportsReverse() const { return debug_service_.SupportsStepBack(); }
-void WorkspaceShell::DebugRestart() { debug_service_.Restart(); }
 
 void WorkspaceShell::AppendDebugConsoleOutput(int session_id, const std::string& label,
                                               const dap_protocol::DapOutputEvent& output) {

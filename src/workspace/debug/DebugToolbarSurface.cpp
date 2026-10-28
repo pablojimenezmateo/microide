@@ -206,38 +206,38 @@ bool WorkspaceShell::HandleDebugToolbarButtonDown(const SDL_Event& event,
     switch (tb.kinds[i]) {
       case DebugToolbarButton::ContinuePause:
         if (stopped) {
-          DebugContinue();
+          debug_service_.Continue();
         } else {
-          DebugPause();
+          debug_service_.Pause();
         }
         break;
       case DebugToolbarButton::StepOver:
         if (stopped) {
-          DebugStepOver();
+          debug_service_.StepOver();
         }
         break;
       case DebugToolbarButton::StepInto:
         if (stopped) {
-          DebugStepIn();
+          debug_service_.StepIn();
         }
         break;
       case DebugToolbarButton::StepOut:
         if (stopped) {
-          DebugStepOut();
+          debug_service_.StepOut();
         }
         break;
       case DebugToolbarButton::ReverseContinue:
         if (stopped) {
-          DebugReverseContinue();
+          debug_service_.ReverseContinue();
         }
         break;
       case DebugToolbarButton::StepBack:
         if (stopped) {
-          DebugStepBack();
+          debug_service_.StepBack();
         }
         break;
       case DebugToolbarButton::Restart:
-        DebugRestart();
+        debug_service_.Restart();
         break;
       case DebugToolbarButton::Stop:
         StopDebugging();
