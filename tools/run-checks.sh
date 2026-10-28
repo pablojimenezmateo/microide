@@ -67,9 +67,28 @@ mkdir -p "$LOG_DIR"
 locked_build() {
   local dir="$1"; shift
   mkdir -p "$dir"
-  flock "$dir/.run-checks-build.lock" "$@"
+  flock "$dir/.run-checks-build.lock" bash -c 'repair_empty_deps "$0" && "$@"' "$dir" "$@"
 }
-export -f locked_build
+
+# A builder that bypassed the lock can still have raced one that held it, and two
+# ninjas writing .ninja_deps at once can leave an object's dependency record EMPTY.
+# ninja reads that as "depends on nothing" and never rebuilds the object again,
+# whatever header changes: Application.cpp.o kept a stale WorkspaceShell layout and
+# the app segfaulted at startup while every test shard was green (validation-traps
+# § "Two builds in the same directory"). Every TU includes a header, so an empty
+# record is always corruption: delete those objects so this build recompiles them.
+# Runs under the tree's lock, before the build.
+repair_empty_deps() {
+  local dir="$1"
+  [[ -f "$dir/.ninja_deps" ]] || return 0
+  local object
+  while IFS= read -r object; do
+    [[ -n "$object" ]] || continue
+    echo "run-checks: $dir/$object has an empty dependency record; rebuilding it"
+    rm -f -- "$dir/$object"
+  done < <(cd "$dir" && ninja -t deps 2>/dev/null | sed -n 's/^\(.*\): #deps 0,.*/\1/p')
+}
+export -f locked_build repair_empty_deps
 
 # Run a command, tee combined stdout+stderr to $1, and return the command's
 # real exit status (not tee's).
