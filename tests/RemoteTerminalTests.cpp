@@ -668,12 +668,16 @@ void TestAClosedTerminalIsClosedOnTheHostWhenTheClientGoesAtOnce() {
     TerminalSessionTestAccess::EnterHostMode(session, channel);
     Expect(WaitUntil([&] { return channel->handle() != 0; }, std::chrono::seconds(10)), "it is answered");
     handle = channel->handle();
-    // Harmless frames ahead of the close: more than the socket buffer holds.
+    // Harmless frames ahead of the close: more than the socket buffers hold, so
+    // the close is still queued when the client goes (2000 already fails 5 of 5
+    // without the flush), yet few enough to drain within the flush's 500 ms on a
+    // sanitizer build under load (20000 did not: 11 of 12 failed on TSan).
+    constexpr int kBacklogFrames = 4000;
     util::JsonObject ack;
     ack["handle"] = util::JsonValue(static_cast<std::int64_t>(handle));
     ack["bytes"] = util::JsonValue(static_cast<std::int64_t>(0));
     const util::JsonValue params(std::move(ack));
-    for (int i = 0; i < 20000; ++i) {
+    for (int i = 0; i < kBacklogFrames; ++i) {
       client->peer().Notify(remote::method::kTermAck, params);
     }
     channel->Close();

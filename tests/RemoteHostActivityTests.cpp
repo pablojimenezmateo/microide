@@ -13,6 +13,7 @@
 #include "terminal/TerminalSession.h"
 #include "util/JsonValue.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -115,6 +116,21 @@ void TestMeasureSumsSubtreesAndTakesDeltas() {
          "each process counted once");
 }
 
+// The comms of `pid`'s children, sorted.
+std::vector<std::string> ChildCommands(pid_t pid) {
+  const std::string task = "/proc/" + std::to_string(pid) + "/task/" + std::to_string(pid);
+  std::ifstream children(task + "/children");
+  std::vector<std::string> comms;
+  for (pid_t child = 0; children >> child;) {
+    std::ifstream comm("/proc/" + std::to_string(child) + "/comm");
+    std::string name;
+    std::getline(comm, name);
+    comms.push_back(name);
+  }
+  std::sort(comms.begin(), comms.end());
+  return comms;
+}
+
 // Against the real /proc: a child tree's memory includes its children, and a busy
 // loop's share is reported from the second sample on.
 void TestSampleSeesARealChildTree() {
@@ -135,14 +151,15 @@ void TestSampleSeesARealChildTree() {
   }
   ProcessActivity activity;
   const std::vector<ProcessActivity::Root> roots = {{.pid = tree}, {.pid = tree, .subtree = false}, {.pid = busy}};
-  // The two sleeps must exist before the tree is measured.
-  std::vector<ProcessActivity::Figures> first;
-  Expect(WaitUntil(
-             [&] {
-               first = activity.Sample(roots);
-               return first[0].rss_bytes > first[1].rss_bytes && first[1].rss_bytes > 0;
-             },
-             std::chrono::seconds(10), std::chrono::milliseconds(50)),
+  // The tree is measured once it is whole: both children forked AND exec'd. A
+  // child between fork and exec is a copy of the shell, so "the tree holds more
+  // than the shell" was true with one sleep, and the two reads below then saw
+  // different trees (9.7 MB vs 17.5 MB on ubsan).
+  Expect(WaitUntil([&] { return ChildCommands(tree) == std::vector<std::string>{"sleep", "sleep"}; },
+                   std::chrono::seconds(10), std::chrono::milliseconds(20)),
+         "the shell has started both sleeps");
+  const std::vector<ProcessActivity::Figures> first = activity.Sample(roots);
+  Expect(first[0].rss_bytes > first[1].rss_bytes && first[1].rss_bytes > 0,
          "the shell's tree holds more than the shell");
   Expect(first[2].cpu_permille == -1 || first[2].cpu_permille >= 0, "a figure or not reported");
   // The sample reads only these trees (down the children files); a walk of every
