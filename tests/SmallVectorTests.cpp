@@ -10,6 +10,25 @@ namespace {
 
 using microide::util::SmallVector;
 
+// An argument that is an element of the vector itself survives the growth it
+// triggers -- std::vector guarantees `v.push_back(v[0])`, and the old growth freed
+// the heap buffer before reading it (ASan: heap-use-after-free). Both the spill
+// from inline storage and a heap-to-heap regrowth.
+void TestSmallVectorPushBackOfItsOwnElementSurvivesGrowth() {
+  microide::util::SmallVector<int, 2> v{7, 8};
+  v.push_back(v[0]);  // inline -> heap
+  Expect(v.size() == 3 && v[2] == 7, "an inline element pushed through a spill");
+  v.push_back(v[1]);  // heap, at capacity 4 after this: no growth
+  while (v.size() < v.capacity()) {
+    v.push_back(v.back());
+  }
+  const int first = v[0];
+  v.push_back(v[0]);  // heap -> bigger heap
+  Expect(v.back() == first, "a heap element pushed through a regrowth");
+  v.emplace_back(v[1]);
+  Expect(v.back() == v[1], "and emplaced");
+}
+
 void TestSmallVectorStaysInlineBelowCapacity() {
   SmallVector<int, 4> values;
   Expect(values.empty() && values.capacity() == 4 && !values.spilled(),
@@ -156,6 +175,8 @@ void TestSmallVectorEqualityIgnoresCapacityAndStorageMode() {
 
 void RegisterSmallVectorTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SmallVector/StaysInlineBelowCapacity", TestSmallVectorStaysInlineBelowCapacity);
+  AddTest(tests, "SmallVector/PushBackOfItsOwnElementSurvivesGrowth",
+          TestSmallVectorPushBackOfItsOwnElementSurvivesGrowth);
   AddTest(tests, "SmallVector/SpillsAndKeepsEveryElement",
           TestSmallVectorSpillsAndKeepsEveryElement);
   AddTest(tests, "SmallVector/ClearKeepsCapacitySoRefillsDoNotReallocate",

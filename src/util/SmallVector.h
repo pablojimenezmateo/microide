@@ -102,19 +102,27 @@ class SmallVector {
   // point of reusing one rather than constructing a fresh one per event.
   void clear() { size_ = 0; }
 
+  // `value` may be an element of this vector (`v.push_back(v[0])`, which
+  // std::vector allows): it is copied before a growth frees the buffer it lives in.
   void push_back(const T& value) {
     if (size_ == capacity_) {
+      const T copy = value;
       Grow(capacity_ * 2);
+      data()[size_++] = copy;
+      return;
     }
     data()[size_++] = value;
   }
 
+  // Built before any growth, for the same reason: an argument may refer into this
+  // vector.
   template <typename... Args>
   reference emplace_back(Args&&... args) {
+    T value{std::forward<Args>(args)...};
     if (size_ == capacity_) {
       Grow(capacity_ * 2);
     }
-    data()[size_] = T{std::forward<Args>(args)...};
+    data()[size_] = value;
     return data()[size_++];
   }
 
