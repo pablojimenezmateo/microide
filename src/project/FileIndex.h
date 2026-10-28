@@ -168,6 +168,11 @@ class FileIndex {
   // save's write and its rename, so surfacing it in the finder or the search
   // candidate set only ever shows the user a file that is already gone.
   static bool IsTemporaryStagingRelativePath(const std::filesystem::path& path);
+  // One run of non-recursive changes from ApplyBatch (its `Op`s, in batch order):
+  // last change per path wins, modifications in place, insertions and removals
+  // in one merge. Whether the index changed.
+  template <typename Op>
+  bool ApplySegmentLocked(std::vector<Op*>& segment);
   static bool LessProjectPath(const ProjectFile& lhs, const std::filesystem::path& rhs);
   static bool LessProjectFile(const ProjectFile& lhs, const ProjectFile& rhs);
   // `normalized_relative_path` must already be lexically normal. Both callers

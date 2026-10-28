@@ -373,52 +373,65 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
     return true;
   }
 
-  std::unique_lock lock(files_mutex_);
-  bool changed = false;
-  std::filesystem::path normalize_scratch;
-  std::vector<std::filesystem::path> subtree_run;
-  const auto accepted_path = [](const std::filesystem::path& relative_path) {
-    return !relative_path.empty() && !IsGitMetadataRelativePath(relative_path) &&
-           !BatchPathEscapesRoot(relative_path);
+  // Everything that allocates -- normalizing, building each ProjectFile -- happens
+  // before the lock: readers (the shell thread's finder and search snapshots) wait
+  // on it. Then the batch is applied in its order, a segment at a time between
+  // runs of recursive deletions. Within a segment the last change to a path wins,
+  // a modified entry is replaced in place, and every insertion and removal lands
+  // in ONE merge pass. Applied one at a time, each insertion shifted the tail of
+  // the sorted vector: a first sync's batch of a thousand new files into a few
+  // thousand held the lock for 137 ms, and the shell thread waited it out
+  // (TD-2026-10-28-418).
+  struct Op {
+    std::filesystem::path path;      // normalized, accepted
+    std::optional<ProjectFile> file;  // set: create or modify; unset: delete
+    bool recursive = false;
   };
-  for (std::size_t i = 0; i < batch.changes.size(); ++i) {
-    const platform::IndexUpdateBatch::Change& change = batch.changes[i];
-    const std::filesystem::path& relative_path =
-        util::NormalizedPathView(change.entry.relative_path, normalize_scratch);
-    if (!accepted_path(relative_path)) {
-      continue;
-    }
-    if (change.kind == platform::IndexUpdateBatch::Kind::Deleted) {
-      if (!change.recursive) {
-        changed = RemoveProjectFileLocked(relative_path) || changed;
+  std::vector<Op> ops;
+  ops.reserve(batch.changes.size());
+  {
+    std::filesystem::path normalize_scratch;
+    for (const platform::IndexUpdateBatch::Change& change : batch.changes) {
+      const std::filesystem::path& relative_path =
+          util::NormalizedPathView(change.entry.relative_path, normalize_scratch);
+      if (relative_path.empty() || IsGitMetadataRelativePath(relative_path) ||
+          BatchPathEscapesRoot(relative_path)) {
         continue;
       }
+      Op op{.path = relative_path, .recursive = false};
+      if (change.kind == platform::IndexUpdateBatch::Kind::Deleted) {
+        op.recursive = change.recursive;
+      } else {
+        op.file = ToProjectFile(change.entry, relative_path);
+      }
+      ops.push_back(std::move(op));
+    }
+  }
+
+  std::unique_lock lock(files_mutex_);
+  bool changed = false;
+  std::vector<std::filesystem::path> subtree_run;
+  std::vector<Op*> segment;
+  for (std::size_t i = 0; i < ops.size();) {
+    if (ops[i].recursive) {
       // Consume the whole consecutive run of recursive deletions and drop it in
       // one compaction. A `rm -rf`, a branch switch, or a build cleaning its
       // output arrives as exactly such a run -- one change per removed directory,
       // doubled because the parent watch and the directory's own watch each
-      // report it -- and applying them one at a time shifts the tail of the index
-      // vector once per change. They are idempotent and commute, so the run is
-      // just the union of their ranges.
+      // report it. They are idempotent and commute, so the run is just the union
+      // of their ranges.
       subtree_run.clear();
-      subtree_run.push_back(relative_path);
-      while (i + 1 < batch.changes.size()) {
-        const platform::IndexUpdateBatch::Change& next = batch.changes[i + 1];
-        if (next.kind != platform::IndexUpdateBatch::Kind::Deleted || !next.recursive) {
-          break;
-        }
-        ++i;
-        // The scratch may be rewritten here, which is why the run holds copies.
-        const std::filesystem::path& next_path =
-            util::NormalizedPathView(next.entry.relative_path, normalize_scratch);
-        if (accepted_path(next_path)) {
-          subtree_run.push_back(next_path);
-        }
+      for (; i < ops.size() && ops[i].recursive; ++i) {
+        subtree_run.push_back(std::move(ops[i].path));
       }
       changed = RemoveProjectSubtreesLocked(subtree_run) || changed;
       continue;
     }
-    changed = UpsertProjectFileLocked(ToProjectFile(change.entry, relative_path)) || changed;
+    segment.clear();
+    for (; i < ops.size() && !ops[i].recursive; ++i) {
+      segment.push_back(&ops[i]);
+    }
+    changed = ApplySegmentLocked(segment) || changed;
   }
   if (!changed) {
     return false;
@@ -426,6 +439,78 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
   ++version_;
   exclude_hidden_cache_.needs_refresh = true;
   include_hidden_cache_.needs_refresh = true;
+  return true;
+}
+
+template <typename Op>
+bool FileIndex::ApplySegmentLocked(std::vector<Op*>& segment) {
+  // The last change to each path wins: stable-sort by path and keep the last of
+  // every equal run.
+  std::stable_sort(segment.begin(), segment.end(),
+                   [](const Op* lhs, const Op* rhs) { return lhs->path.native() < rhs->path.native(); });
+  std::size_t kept = 0;
+  for (std::size_t j = 0; j < segment.size(); ++j) {
+    if (j + 1 < segment.size() && segment[j + 1]->path.native() == segment[j]->path.native()) {
+      continue;
+    }
+    segment[kept++] = segment[j];
+  }
+  segment.resize(kept);
+
+  bool changed = false;
+  std::size_t structural = 0;  // insertions and removals, still to merge
+  for (Op*& op : segment) {
+    const auto it = std::lower_bound(files_.begin(), files_.end(), op->path, LessProjectPath);
+    const bool present = it != files_.end() && it->relative_path == op->path;
+    if (op->file.has_value() && present) {
+      if (it->mtime != op->file->mtime || it->size != op->file->size) {
+        *it = std::move(*op->file);
+        changed = true;
+      }
+      op = nullptr;  // done in place
+    } else if (!op->file.has_value() && !present) {
+      op = nullptr;  // removing what is not there
+    } else {
+      ++structural;
+    }
+  }
+  if (structural == 0) {
+    return changed;
+  }
+  if (structural == 1) {  // one shift is cheaper than a rebuild
+    for (Op* op : segment) {
+      if (op == nullptr) {
+        continue;
+      }
+      if (op->file.has_value()) {
+        files_.insert(std::lower_bound(files_.begin(), files_.end(), op->path, LessProjectPath),
+                      std::move(*op->file));
+      } else {
+        (void)RemoveProjectFileLocked(op->path);
+      }
+    }
+    return true;
+  }
+  std::vector<ProjectFile> merged;
+  merged.reserve(files_.size() + structural);
+  std::size_t f = 0;
+  for (Op* op : segment) {
+    if (op == nullptr) {
+      continue;
+    }
+    while (f < files_.size() && files_[f].relative_path.native() < op->path.native()) {
+      merged.push_back(std::move(files_[f++]));
+    }
+    if (op->file.has_value()) {
+      merged.push_back(std::move(*op->file));  // not present: an insertion
+    } else {
+      ++f;  // present: the removal skips it
+    }
+  }
+  while (f < files_.size()) {
+    merged.push_back(std::move(files_[f++]));
+  }
+  files_ = std::move(merged);
   return true;
 }
 

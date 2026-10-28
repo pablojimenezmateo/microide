@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -30,6 +31,73 @@ IndexUpdateBatch::Change MakeDeleteChange(std::filesystem::path relative_path) {
   change.kind = IndexUpdateBatch::Kind::Deleted;
   change.entry.relative_path = std::move(relative_path);
   return change;
+}
+
+// ApplyBatch against the plainest model of its contract, over random batches:
+// changes apply in batch order, a create or modify sets a path's size, a delete
+// removes it, a recursive delete removes the directory's whole subtree. The
+// incremental path batches its insertions and removals into one merge per run of
+// non-recursive changes (TD-2026-10-28-418); this is what holds it to applying them
+// one by one -- repeated paths, a delete then a recreate, a recreate then a
+// recursive delete of its parent, in any mix.
+void TestFileIndexIncrementalBatchesMatchApplyingEachChangeInOrder() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  std::filesystem::create_directories(root);
+  FileIndex index;
+  Expect(index.SetRoot(root, FileIndex::RootPopulationMode::Deferred), "deferred root");
+  IndexUpdateBatch initial;
+  initial.is_initial = true;
+  Expect(index.ApplyBatch(initial) || index.Snapshot().empty(), "an empty initial batch");
+
+  std::uint64_t seed = 0x9E3779B97F4A7C15ull;
+  const auto next = [&seed](std::uint64_t bound) {
+    seed ^= seed << 13;
+    seed ^= seed >> 7;
+    seed ^= seed << 17;
+    return seed % bound;
+  };
+  const char* dirs[] = {"a", "a/b", "c", "c/d/e", "f"};
+  const auto random_file = [&] {
+    return std::string(dirs[next(5)]) + "/file_" + std::to_string(next(12)) + ".txt";
+  };
+  std::map<std::string, std::uintmax_t> model;
+  for (int round = 0; round < 400; ++round) {
+    IndexUpdateBatch batch;
+    batch.is_initial = false;
+    const std::size_t count = 1 + next(round % 3 == 0 ? 60 : 6);
+    for (std::size_t c = 0; c < count; ++c) {
+      const std::uint64_t kind = next(10);
+      if (kind < 6) {
+        const std::string path = random_file();
+        const std::uintmax_t size = 1 + next(4);
+        batch.changes.push_back(MakeCreateChange(path, size));
+        model[path] = size;
+      } else if (kind < 9) {
+        const std::string path = random_file();
+        batch.changes.push_back(MakeDeleteChange(path));
+        model.erase(path);
+      } else {
+        const std::string dir = dirs[next(5)];
+        IndexUpdateBatch::Change change = MakeDeleteChange(dir);
+        change.recursive = true;
+        batch.changes.push_back(change);
+        std::erase_if(model, [&](const auto& entry) { return entry.first.rfind(dir + "/", 0) == 0; });
+      }
+    }
+    (void)index.ApplyBatch(batch);
+    const std::vector<project::ProjectFile> files = index.Snapshot();
+    std::vector<std::pair<std::string, std::uintmax_t>> have;
+    for (const project::ProjectFile& file : files) {
+      have.emplace_back(file.relative_path.generic_string(), file.size);
+    }
+    const std::vector<std::pair<std::string, std::uintmax_t>> want(model.begin(), model.end());
+    if (have != want) {
+      Expect(false, "round " + std::to_string(round) + ": the index has " + std::to_string(have.size()) +
+                        " entries, the model " + std::to_string(want.size()));
+      return;
+    }
+  }
 }
 
 void TestFileIndexInitialBatchPopulatesSortedUniqueFilesAndVersion() {
@@ -568,6 +636,8 @@ void TestFileIndexVisitsPendingPaths() {
 
 void RegisterFileIndexTests(std::vector<TestCase>& tests) {
   AddTest(tests, "FileIndex/VisitsPendingPaths", TestFileIndexVisitsPendingPaths);
+  AddTest(tests, "FileIndex/IncrementalBatchesMatchApplyingEachChangeInOrder",
+          TestFileIndexIncrementalBatchesMatchApplyingEachChangeInOrder);
   AddTest(tests, "FileIndex/HidesAtomicWriteStagingFiles",
           TestFileIndexHidesAtomicWriteStagingFiles);
   AddTest(tests, "FileIndex/ReplaceScannedFilesCarriesTruncation",
