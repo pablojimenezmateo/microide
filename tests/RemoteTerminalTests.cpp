@@ -626,14 +626,22 @@ void TestADetachedTerminalHoldsAnOnDemandServer() {
   Expect(Listed(rows, handle) != nullptr, "the server outlived its idle timeout and still holds the terminal");
   // The shell's `sleep 1; exit` finishes on the host's own time (a loaded
   // machine starts it late): wait for it rather than assume it.
+  // What the last poll saw, so a failure says which of "the server let go of the
+  // terminal", "the shell never ran the typed line" and "it ran but was not
+  // reaped" happened (TD-2026-10-28-413).
+  std::string last_seen = "never listed";
   Expect(WaitUntil(
              [&] {
                rows = ListedTerminals(dir);
                const remote::ServerTerminal* row = Listed(rows, handle);
+               last_seen = row == nullptr ? "not listed (" + std::to_string(rows.size()) + " rows)"
+                                          : "listed, clients=" + std::to_string(row->clients) +
+                                                " exited=" + (row->exited ? "yes" : "no") +
+                                                " command='" + row->command + "'";
                return row != nullptr && row->exited;
              },
              std::chrono::seconds(20), std::chrono::milliseconds(100)),
-         "the shell exits while detached, and its terminal is still listed");
+         "the shell exits while detached, and its terminal is still listed: " + last_seen);
   const remote::ServerTerminal* row = Listed(rows, handle);
   Expect(row != nullptr && row->clients == 0 && row->root.empty(),
          "exited while detached, attached to nobody, under no workspace");

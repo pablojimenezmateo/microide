@@ -449,6 +449,21 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-28-413 — `RemoteTerminal/ADetachedTerminalHoldsAnOnDemandServer` once saw a detached shell that never exited. [OPEN — not reproduced; the evidence is now kept]
+
+UBSan lane, eight lanes building and testing at once (2026-10-28): the test types
+`sleep 1; exit` into a host terminal while its open is in flight, detaches the
+moment the handle is known, and waits 20 s for the terminal to be listed as
+exited. It stayed listed (the on-demand server was up the whole time, accepting
+the polls' connections) and never exited. Read so far: the typed line and the
+`term/detach` travel on the Interactive lane in that order since `7aa035031`,
+and the server handles both on the connection's I/O thread in arrival order, so
+no reordering path was found; `Idle()` counts exited terminals too, so the server
+does not drop it. Not reproduced in 24 concurrent UBSan runs.
+The assertion now reports the row it last saw (clients, exited, foreground
+command): `command='sleep'` or `'sh'` next time separates "the line never ran"
+from "it ran but the exit was not reaped".
+
 ### TD-2026-10-28-412 — `WorkspaceActionContext` is a God object, and half of it only forwards. [OPEN — measured, slicing plan below]
 
 `src/workspace/actions/WorkspaceActionServices.{h,cpp}` + the shell's
