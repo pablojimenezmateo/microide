@@ -547,6 +547,17 @@ calls it too, so the eight one-line `WorkspaceShell::Debug*` forwarders are gone
 access's seams, and `WorkspaceActionAvailability`'s own Operations still reads
 them through two lambdas.
 
+**terminal + the rest of debug** (2026-10-28) -- the context takes a `Services`
+struct of references (assist, debug, terminal panel) instead of a growing
+positional list. The nine terminal/panel actions call `TerminalPanelService`;
+session count, session switch (`DebugService::SwitchSession`, the shell's
+`DebugSwitchSession` gone, members cap 1625 -> 1624), the four function-breakpoint
+verbs, the exception-filter condition and Add to Watch call `DebugService`; the
+active terminal pane is read from state. `ActionAvailability` holds
+`const DebugService&` too, so its four debug lambdas and its terminal-pane lambda
+are gone (asked per painted menu row: five fewer type-erased calls each).
+Operations 192 -> 174.
+
 Original plan, one area per commit so each slice is reviewable and lane-checked: give each
 executor its own context type holding references to the services it calls
 (`AssistService&`, `EditorTabService&`, `TerminalPanelService&`, …, the

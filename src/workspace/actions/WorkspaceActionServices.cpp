@@ -42,14 +42,12 @@ ClipboardExportResult ClampClipboardExport(std::string_view text, std::size_t bu
 WorkspaceActionContext::WorkspaceActionContext(ProjectCatalogState& project_catalog,
                                                ProjectWorkspaceState& current_project_state,
                                                float& ui_scale,
-                                               AssistService& assist,
-                                               DebugService& debug,
+                                               Services services,
                                                Operations operations)
     : project_catalog_(project_catalog),
       state_(current_project_state),
       ui_scale_(ui_scale),
-      assist_(assist),
-      debug_(debug),
+      services_(services),
       operations_(std::move(operations)) {}
 
 void WorkspaceActionContext::PrepareForAction(ActionSource source) {
@@ -331,50 +329,8 @@ bool WorkspaceActionContext::RevealPathInTree(const std::filesystem::path& path)
   return operations_.reveal_path_in_tree(path);
 }
 
-void WorkspaceActionContext::OpenTerminal(std::string command) {
-  operations_.open_terminal(std::move(command));
-}
-
-bool WorkspaceActionContext::CloseActiveTerminal() {
-  return operations_.close_active_terminal && operations_.close_active_terminal();
-}
-
-bool WorkspaceActionContext::SplitTerminal() {
-  return operations_.split_terminal && operations_.split_terminal();
-}
-
-bool WorkspaceActionContext::FocusTerminalPane(int delta) {
-  return operations_.focus_terminal_pane && operations_.focus_terminal_pane(delta);
-}
-
-bool WorkspaceActionContext::CycleTerminal(int delta) {
-  return operations_.cycle_terminal && operations_.cycle_terminal(delta);
-}
-
-bool WorkspaceActionContext::RelaunchTerminal() {
-  return operations_.relaunch_terminal && operations_.relaunch_terminal();
-}
-
 bool WorkspaceActionContext::HasActiveTerminalPane() const {
-  return operations_.active_terminal_pane && operations_.active_terminal_pane() != nullptr;
-}
-
-void WorkspaceActionContext::ToggleTerminal() {
-  if (operations_.toggle_terminal) {
-    operations_.toggle_terminal();
-  }
-}
-
-void WorkspaceActionContext::TogglePanel() {
-  if (operations_.toggle_panel) {
-    operations_.toggle_panel();
-  }
-}
-
-void WorkspaceActionContext::TogglePanelMaximized() {
-  if (operations_.toggle_panel_maximized) {
-    operations_.toggle_panel_maximized();
-  }
+  return state_.active_terminal_pane() != nullptr;
 }
 
 bool WorkspaceActionContext::OpenTerminalFind(std::string query) {
@@ -1559,7 +1515,7 @@ void WorkspaceActionContext::ApplyUndoRedo(bool redo) {
   // (the undo that made redo possible already dropped it), and clearing an
   // inactive one is a no-op, so this runs unconditionally rather than only on undo.
   if (changed) {
-    assist_.snippets().ClearAfterUndo();
+    assist().snippets().ClearAfterUndo();
   }
   if (!changed) {
     return;
@@ -1734,7 +1690,7 @@ void WorkspaceActionContext::PasteClipboard() {
       *clipboard_text == project_catalog_.line_clipboard_text &&
       clipboard_text->back() == '\n' &&
       !(state_.surface.focus == FocusTarget::Panel &&
-        operations_.active_terminal_pane() != nullptr) &&
+        state_.active_terminal_pane() != nullptr) &&
       !operations_.has_active_single_line_text_surface();
   editor::TextViewport* line_target = nullptr;
   std::size_t line_target_column = 0;
@@ -1784,7 +1740,7 @@ void WorkspaceActionContext::InsertTextIntoActiveSurface(std::string text,
   if (text.size() > kMaxInsertBytes) {
     text.resize(util::PreviousUtf8Boundary(text, kMaxInsertBytes));
   }
-  if (state_.surface.focus == FocusTarget::Panel && operations_.active_terminal_pane() != nullptr) {
+  if (state_.surface.focus == FocusTarget::Panel && state_.active_terminal_pane() != nullptr) {
     operations_.paste_text_into_terminal(std::move(text));
     return;
   }
@@ -2063,7 +2019,7 @@ void WorkspaceActionContext::NotifyEditorViewportChanged(bool last_change) {
 }
 
 void WorkspaceActionContext::NotifyEditorCaretMoved() {
-  assist_.snippets().NotifyCaretMoved();
+  assist().snippets().NotifyCaretMoved();
   operations_.reset_caret_blink();
   operations_.request_active_tab_redraw(false);
   operations_.request_focused_editor_redraw();
@@ -2119,7 +2075,7 @@ bool WorkspaceActionContext::Focus(FocusRequestTarget target) {
       state_.surface.focus = FocusTarget::Editor;
       return true;
     case FocusRequestTarget::Panel:
-      if (operations_.active_terminal_pane() != nullptr) {
+      if (state_.active_terminal_pane() != nullptr) {
         state_.surface.focus = FocusTarget::Panel;
         return true;
       }

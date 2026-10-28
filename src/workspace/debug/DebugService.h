@@ -149,6 +149,10 @@ class DebugService {
   void FocusNextSession();
   // Live sessions for the switcher UI (id + prebuilt label + state + attention).
   std::vector<DapSessionInfo> Sessions() const;
+  std::size_t SessionCount() const;
+  // The session switcher: the next session (index < 0) or a 1-based index into
+  // Sessions(); an index past the end does nothing.
+  void SwitchSession(int index);
 
   // Breakpoints panel (Phase 7). Toggle one exception-breakpoint filter and live
   // re-send `setExceptionBreakpoints` to the active session (if any). Rebuild the

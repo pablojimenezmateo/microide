@@ -556,7 +556,7 @@ void WorkspaceShell::StopDebugging() {
   // Stops the active session. Only close the debug pane when this was the last
   // live session; with others remaining, the pane stays (re-projected by the
   // next-frame prune as the active session advances).
-  const bool last_session = CurrentDapManager().SessionCount() <= 1;
+  const bool last_session = debug_service_.SessionCount() <= 1;
   debug_service_.StopDebugging();
   if (last_session) {
     CloseDebugPane();
@@ -568,18 +568,6 @@ void WorkspaceShell::StopAllDebugSessions() {
   debug_service_.StopAllDebugging();
   CloseDebugPane();
   RequestWindowRedraw();
-}
-
-void WorkspaceShell::DebugSwitchSession(int index) {
-  // index < 0 cycles to the next session; index >= 1 selects a 1-based session.
-  if (index < 0) {
-    debug_service_.FocusNextSession();
-    return;
-  }
-  const std::vector<DapSessionInfo> sessions = debug_service_.Sessions();
-  if (index >= 1 && static_cast<std::size_t>(index) <= sessions.size()) {
-    debug_service_.FocusSession(sessions[static_cast<std::size_t>(index - 1)].id);
-  }
 }
 
 void WorkspaceShell::ResendBreakpointsForFile(const std::filesystem::path& path) {

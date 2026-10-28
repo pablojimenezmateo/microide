@@ -89,16 +89,6 @@ void WorkspaceActionContext::StopDebuggingWithFeedback() {
   }
 }
 
-std::size_t WorkspaceActionContext::DebugSessionCount() const {
-  return operations_.debug_session_count ? operations_.debug_session_count() : 0;
-}
-
-void WorkspaceActionContext::DebugSwitchSession(int index) {
-  if (operations_.debug_switch_session) {
-    operations_.debug_switch_session(index);
-  }
-}
-
 void WorkspaceActionContext::ToggleDebugPane() {
   if (operations_.toggle_debug_pane) {
     operations_.toggle_debug_pane();
@@ -152,9 +142,10 @@ WorkspaceActionContext::DebugValueRowSelection WorkspaceActionContext::SelectedD
 }
 
 void WorkspaceActionContext::AddDebugWatchExpression(std::string expression) {
-  if (operations_.add_debug_watch_expression) {
-    operations_.add_debug_watch_expression(std::move(expression));
-  }
+  services_.debug.AddWatch(std::move(expression));
+  // Show the surface the expression just landed on, so the item has visible
+  // feedback when invoked from the Variables list.
+  ShowDebugPaneSurface(DebugPaneMode::Watch);
 }
 
 void WorkspaceActionContext::StopAllDebugSessions() {
@@ -310,38 +301,6 @@ std::string WorkspaceActionContext::StartAdHocDebug(const std::string& program,
   return "debug launch unavailable";
 }
 
-void WorkspaceActionContext::AddFunctionBreakpoint(const std::string& name) {
-  if (operations_.add_function_breakpoint) {
-    operations_.add_function_breakpoint(name);
-  }
-}
-
-void WorkspaceActionContext::RemoveFunctionBreakpoint(const std::string& name) {
-  if (operations_.remove_function_breakpoint) {
-    operations_.remove_function_breakpoint(name);
-  }
-}
-
-void WorkspaceActionContext::ToggleFunctionBreakpoint(const std::string& name) {
-  if (operations_.toggle_function_breakpoint) {
-    operations_.toggle_function_breakpoint(name);
-  }
-}
-
-void WorkspaceActionContext::SetFunctionBreakpointCondition(const std::string& name,
-                                                            std::optional<std::string> condition) {
-  if (operations_.set_function_breakpoint_condition) {
-    operations_.set_function_breakpoint_condition(name, std::move(condition));
-  }
-}
-
-std::string WorkspaceActionContext::SetExceptionFilterCondition(const std::string& filter_id,
-                                                                std::optional<std::string> condition) {
-  return operations_.set_exception_filter_condition
-             ? operations_.set_exception_filter_condition(filter_id, std::move(condition))
-             : std::string("debugging is unavailable");
-}
-
 WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
   if (glue_->action_context != nullptr) {
     return *glue_->action_context;
@@ -418,8 +377,11 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
       context_.project_catalog,
       context_.current_project_state,
       ui_scale_,
-      assist_service_,
-      debug_service_,
+      WorkspaceActionContext::Services{
+          .assist = assist_service_,
+          .debug = debug_service_,
+          .terminal_panel = MakeTerminalPanelService(),
+      },
       WorkspaceActionContext::Operations{
           .close_tree_context_menu = [this]() { MakeMenuCoordinator().CloseTreeContextMenu(); },
           .reject_action =
@@ -530,23 +492,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 }
                 return found;
               },
-          .open_terminal =
-              [this](std::string command) {
-                MakeTerminalPanelService().OpenTerminal(std::move(command));
-              },
-          // "Close Terminal" closes the active PANE (VS Code's kill terminal kills
-          // the active instance); the tab goes with its last pane.
-          .close_active_terminal = [this]() { return MakeTerminalPanelService().CloseActivePane(); },
-          .split_terminal = [this]() { return MakeTerminalPanelService().SplitActivePane(); },
-          .focus_terminal_pane =
-              [this](int delta) { return MakeTerminalPanelService().FocusPaneInDirection(delta); },
-          .cycle_terminal =
-              [this](int delta) { return MakeTerminalPanelService().CycleTerminalTab(delta); },
-          .relaunch_terminal = [this]() { return MakeTerminalPanelService().RelaunchActivePane(); },
-          .toggle_terminal = [this]() { MakeTerminalPanelService().ToggleTerminal(); },
-          .toggle_panel = [this]() { MakeTerminalPanelService().TogglePanel(); },
-          .toggle_panel_maximized =
-              [this]() { MakeTerminalPanelService().TogglePanelMaximized(); },
           .open_terminal_find =
               [this](std::string query) {
                 // A terminal behind a hidden panel or another panel tab is still
@@ -1190,7 +1135,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               },
           .request_toggle_fullscreen =
               [this]() { pending_window_action_ = WindowAction::ToggleFullscreen; },
-          .active_terminal_pane = [this]() { return ActiveTerminalPane(); },
           .plugin_runtime_enabled = [this]() { return plugin_runtime_.enabled(); },
           .reload_plugins_for_current_project =
               [this](bool announce) {
@@ -1199,8 +1143,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .request_quit = [this]() { RequestQuit(); },
           .start_debugging = [this]() { return StartDebuggingWithDefaultConfig(); },
           .stop_debugging = [this]() { StopDebugging(); },
-          .debug_session_count = [this]() { return CurrentDapManager().SessionCount(); },
-          .debug_switch_session = [this](int index) { DebugSwitchSession(index); },
           .stop_all_debug_sessions = [this]() { StopAllDebugSessions(); },
           .open_debug_repl_prompt = [this]() { OpenDebugReplPrompt(); },
           .open_launch_config_picker =
@@ -1255,13 +1197,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .toggle_debug_pane = [this]() { ToggleDebugPane(); },
           .show_debug_pane_mode = [this](DebugPaneMode mode) { ShowDebugPaneMode(mode); },
           .show_debug_output = [this]() { ShowDebugOutput(); },
-          .add_debug_watch_expression =
-              [this](std::string expression) {
-                debug_service_.AddWatch(std::move(expression));
-                // Show the surface the expression just landed on, so the item has
-                // visible feedback when invoked from the Variables list.
-                ShowDebugPaneMode(DebugPaneMode::Watch);
-              },
           .resend_breakpoints_for_file =
               [this](const std::filesystem::path& path) { ResendBreakpointsForFile(path); },
           .start_named_debug_config =
@@ -1269,24 +1204,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .start_ad_hoc_debug =
               [this](const std::string& program, const std::vector<std::string>& args,
                      const std::string& type) { return StartAdHocDebug(program, args, type); },
-          .add_function_breakpoint =
-              [this](const std::string& name) { debug_service_.AddFunctionBreakpoint(name); },
-          .remove_function_breakpoint =
-              [this](const std::string& name) {
-                debug_service_.RemoveFunctionBreakpointByName(name);
-              },
-          .toggle_function_breakpoint =
-              [this](const std::string& name) {
-                debug_service_.ToggleFunctionBreakpointByName(name);
-              },
-          .set_function_breakpoint_condition =
-              [this](const std::string& name, std::optional<std::string> condition) {
-                debug_service_.SetFunctionBreakpointConditionByName(name, std::move(condition));
-              },
-          .set_exception_filter_condition =
-              [this](const std::string& filter_id, std::optional<std::string> condition) {
-                return debug_service_.SetExceptionFilterCondition(filter_id, std::move(condition));
-              },
           .move_buffer_search_selection = [this](int delta) { MoveBufferSearchSelection(delta); },
           .reveal_buffer_search_match =
               [this](const editor::SelectionRange& match) {

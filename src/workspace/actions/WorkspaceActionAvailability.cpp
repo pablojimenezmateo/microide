@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "workspace/coordinators/WorkspaceTabCoordinator.h"
+#include "workspace/debug/DebugService.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/lsp/LspFeatureFlags.h"
 #include "workspace/SettingFlags.h"
@@ -37,8 +38,9 @@ bool LspFeatureAvailable(const ActionAvailability::Operations& operations,
 
 }  // namespace
 
-ActionAvailability::ActionAvailability(const WorkspaceContext& context, Operations operations)
-    : context_(context), operations_(std::move(operations)) {}
+ActionAvailability::ActionAvailability(const WorkspaceContext& context,
+                                       const DebugService& debug, Operations operations)
+    : context_(context), debug_(debug), operations_(std::move(operations)) {}
 
 TreeContextTargetKind ActionAvailability::ActiveTreeTargetKind() const {
   return context_.menu_state.tree_context_menu.open ? context_.menu_state.tree_context_menu.target
@@ -48,7 +50,8 @@ TreeContextTargetKind ActionAvailability::ActiveTreeTargetKind() const {
 bool ActionAvailability::IsEnabled(ActionId id) const {
   const editor::TextViewport* active_viewport = operations_.active_navigable_viewport();
   const editor::TextViewport* active_editable_viewport = operations_.active_editable_viewport();
-  const TerminalPaneState* active_terminal_pane = operations_.active_terminal_pane();
+  const TerminalPaneState* active_terminal_pane =
+      context_.current_project_state.active_terminal_pane();
   const TextInputSurface text_input_surface = operations_.current_text_input_surface();
   const bool active_single_line_selection = operations_.active_single_line_text_has_selection();
   switch (id) {
@@ -162,45 +165,45 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::DebugStartOrContinue:
       // Starts when idle, continues when stopped; nothing to do while running.
       return SettingEnabled(operations_, "debug.enabled", false) &&
-             !(operations_.debug_session_active && operations_.debug_session_active() &&
-               !(operations_.debug_session_stopped && operations_.debug_session_stopped()));
+             !(debug_.IsSessionActive() &&
+               !(debug_.SessionState() == DebugSession::State::Stopped));
     case ActionId::DebugContinue:
     case ActionId::DebugStepOver:
     case ActionId::DebugStepIn:
     case ActionId::DebugStepOut:
       // Resume/step are valid only while the session is paused.
       return SettingEnabled(operations_, "debug.enabled", false) &&
-             operations_.debug_session_active && operations_.debug_session_active() &&
-             operations_.debug_session_stopped && operations_.debug_session_stopped();
+             debug_.IsSessionActive() &&
+             debug_.SessionState() == DebugSession::State::Stopped;
     case ActionId::DebugReverseContinue:
     case ActionId::DebugStepBack:
       // Reverse execution: paused session AND a recording adapter that advertises
       // `supportsStepBack` (so these stay hidden/greyed for ordinary adapters).
       return SettingEnabled(operations_, "debug.enabled", false) &&
-             operations_.debug_session_active && operations_.debug_session_active() &&
-             operations_.debug_session_stopped && operations_.debug_session_stopped() &&
-             operations_.debug_supports_reverse && operations_.debug_supports_reverse();
+             debug_.IsSessionActive() &&
+             debug_.SessionState() == DebugSession::State::Stopped &&
+             debug_.SupportsStepBack();
     case ActionId::DebugPause:
       // Pause is valid only while the session is running (active, not stopped).
       return SettingEnabled(operations_, "debug.enabled", false) &&
-             operations_.debug_session_active && operations_.debug_session_active() &&
-             !(operations_.debug_session_stopped && operations_.debug_session_stopped());
+             debug_.IsSessionActive() &&
+             !(debug_.SessionState() == DebugSession::State::Stopped);
     case ActionId::DebugRestart:
       // Restart is valid whenever a session is active (running or stopped).
       return SettingEnabled(operations_, "debug.enabled", false) &&
-             operations_.debug_session_active && operations_.debug_session_active();
+             debug_.IsSessionActive();
     case ActionId::DebugSwitchSession:
       // Switching only makes sense with more than one live session.
       return SettingEnabled(operations_, "debug.enabled", false) &&
-             operations_.debug_session_count && operations_.debug_session_count() > 1;
+             debug_.SessionCount() > 1;
     case ActionId::DebugStopAllSessions:
       // Stopping everything only makes sense with at least one live session.
       return SettingEnabled(operations_, "debug.enabled", false) &&
-             operations_.debug_session_active && operations_.debug_session_active();
+             debug_.IsSessionActive();
     case ActionId::DebugConsoleRepl:
       // REPL evaluation needs a live session (frame 0 when running).
       return SettingEnabled(operations_, "debug.enabled", false) &&
-             operations_.debug_session_active && operations_.debug_session_active();
+             debug_.IsSessionActive();
     case ActionId::PickLaunchConfig:
       // The picker is useful whenever the debugger is enabled (it can launch).
       return SettingEnabled(operations_, "debug.enabled", false);

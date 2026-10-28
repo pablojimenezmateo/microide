@@ -8,6 +8,7 @@
 
 #include "workspace/actions/WorkspaceActionRequests.h"
 #include "workspace/WorkspaceCommandParsing.h"
+#include "workspace/services/TerminalPanelService.h"
 
 namespace microide::workspace {
 
@@ -23,15 +24,15 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
       }
-      context_.OpenTerminal(JoinShellCommandArguments(args, 0));
+      context_.terminal_panel().OpenTerminal(JoinShellCommandArguments(args, 0));
       return DispatchResult::Handled;
     case ActionId::TermClose:
-      if (!context_.CloseActiveTerminal()) {
+      if (!context_.terminal_panel().CloseActivePane()) {
         return reject("No terminal to close");
       }
       return DispatchResult::Handled;
     case ActionId::TerminalSplit:
-      if (!context_.SplitTerminal()) {
+      if (!context_.terminal_panel().SplitActivePane()) {
         return reject("No terminal to split");
       }
       return DispatchResult::Handled;
@@ -41,7 +42,8 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
       // there is no pane that way: the key then falls through to the shell, so a
       // single-pane terminal keeps the chord for its own programs. Asked for by
       // name, the answer says why ("command failed" said nothing).
-      if (!context_.FocusTerminalPane(id == ActionId::TerminalFocusPaneLeft ? -1 : 1)) {
+      if (!context_.terminal_panel().FocusPaneInDirection(
+              id == ActionId::TerminalFocusPaneLeft ? -1 : 1)) {
         if (source == ActionSource::Shortcut) {
           return reject("");
         }
@@ -51,12 +53,12 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
       return DispatchResult::Handled;
     case ActionId::TerminalNext:
     case ActionId::TerminalPrev:
-      if (!context_.CycleTerminal(id == ActionId::TerminalNext ? 1 : -1)) {
+      if (!context_.terminal_panel().CycleTerminalTab(id == ActionId::TerminalNext ? 1 : -1)) {
         return reject("No other terminal");
       }
       return DispatchResult::Handled;
     case ActionId::TerminalRelaunch:
-      if (!context_.RelaunchTerminal()) {
+      if (!context_.terminal_panel().RelaunchActivePane()) {
         return reject(context_.HasActiveTerminalPane() ? "The terminal is still running"
                                                        : "No terminal to relaunch");
       }
@@ -65,19 +67,19 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
       }
-      context_.ToggleTerminal();
+      context_.terminal_panel().ToggleTerminal();
       return DispatchResult::Handled;
     case ActionId::PanelToggle:
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
       }
-      context_.TogglePanel();
+      context_.terminal_panel().TogglePanel();
       return DispatchResult::Handled;
     case ActionId::PanelToggleMaximized:
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
       }
-      context_.TogglePanelMaximized();
+      context_.terminal_panel().TogglePanelMaximized();
       return DispatchResult::Handled;
     case ActionId::TerminalFind:
       if (!context_.OpenTerminalFind(JoinCommandArguments(args, 0))) {

@@ -1437,16 +1437,9 @@
   // a separate `set-setting debug.enabled true` prelude before breakpoint-/debug-
   // commands. Returns true when it flipped the setting on.
   bool EnsureDebuggerEnabledTransiently();
-  // Execution control (Phase 3); forward to debug_service_ / the active session.
-  // Reverse execution; forward to debug_service_ (no-op unless the adapter
-  // advertises `supportsStepBack`). DebugSupportsReverse reports the capability,
-  // gating the reverse commands + their toolbar buttons.
+  // Whether the active session's adapter advertises `supportsStepBack`: gates the
+  // debug toolbar's reverse buttons.
   bool DebugSupportsReverse() const;
-  // Restart the active session (Phase 7); DAP `restart` or terminate+relaunch.
-  // Focus a thread in the Call Stack thread selector (Phase 7 multi-thread).
-  // Make a session active (by id, for the Call Stack session-row click) or switch
-  // by 1-based index / cycle (index < 0) for the command (Phase 8 multi-session).
-  void DebugSwitchSession(int index);
   // Breakpoint-modifier context menu (Phase 6). Read the breakpoint gutter
   // menu's target path+line; open a seeded prompt for a condition/hit/log field
   // (mapped from the ActionId) or remove the breakpoint and live-resend.

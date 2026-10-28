@@ -241,6 +241,19 @@ std::vector<DapSessionInfo> DebugService::Sessions() const {
   return CurrentDapManager().Sessions();
 }
 
+std::size_t DebugService::SessionCount() const { return CurrentDapManager().SessionCount(); }
+
+void DebugService::SwitchSession(int index) {
+  if (index < 0) {
+    FocusNextSession();
+    return;
+  }
+  const std::vector<DapSessionInfo> sessions = Sessions();
+  if (index >= 1 && static_cast<std::size_t>(index) <= sessions.size()) {
+    FocusSession(sessions[static_cast<std::size_t>(index - 1)].id);
+  }
+}
+
 void DebugService::ResetAdapterBreakpointState() {
   // Verification state is tied to the adapter; drop it so a fresh session
   // re-verifies from scratch and the gutter shows unverified until then.

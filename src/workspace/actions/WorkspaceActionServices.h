@@ -25,6 +25,7 @@ namespace microide::workspace {
 
 class AssistService;
 class DebugService;
+class TerminalPanelService;
 class RemoteHostService;
 
 // Defined in GitSidebarCommandCenter.h; only the type is needed here (function
@@ -127,16 +128,6 @@ class WorkspaceActionContext {
     // Reveal a path in the in-app sidebar tree: force-expand ancestors, select it,
     // and scroll it into view. Returns whether a matching row was found.
     std::function<bool(const std::filesystem::path&)> reveal_path_in_tree;
-    std::function<void(std::string)> open_terminal;
-    std::function<bool()> close_active_terminal;
-    // Terminal panes and the panel (TerminalPanelService).
-    std::function<bool()> split_terminal;
-    std::function<bool(int)> focus_terminal_pane;
-    std::function<bool(int)> cycle_terminal;
-    std::function<bool()> relaunch_terminal;
-    std::function<void()> toggle_terminal;
-    std::function<void()> toggle_panel;
-    std::function<void()> toggle_panel_maximized;
     // Opens/refocuses the terminal find bar; false when no terminal is showing.
     std::function<bool(std::string)> open_terminal_find;
     std::function<void(OverlayMode)> show_overlay;
@@ -296,7 +287,6 @@ class WorkspaceActionContext {
     // Application, which polls WorkspaceShell::ConsumeWindowAction each frame;
     // the shell only records the request.
     std::function<void()> request_toggle_fullscreen;
-    std::function<TerminalPaneState*()> active_terminal_pane;
     std::function<bool()> plugin_runtime_enabled;
     // `announce`: report the completed reload's summary (see PluginReloadRequest).
     std::function<void(bool announce)> reload_plugins_for_current_project;
@@ -315,8 +305,6 @@ class WorkspaceActionContext {
     // Multi-session switcher (Phase 8). debug_session_count reports how many live
     // sessions exist (gates the switch command); debug_switch_session cycles to the
     // next session (index < 0) or selects a 1-based index.
-    std::function<std::size_t()> debug_session_count;
-    std::function<void(int index)> debug_switch_session;
     // Stop every live debug session (Phase 10).
     std::function<void()> stop_all_debug_sessions;
     // Debug-console REPL (Phase 9): open the single-line prompt that evaluates an
@@ -348,7 +336,6 @@ class WorkspaceActionContext {
     std::function<void()> show_debug_output;
     // Add a watch expression directly (no prompt) — the "Add to Watch" row menu
     // item, which takes the expression from the row it was invoked on.
-    std::function<void(std::string)> add_debug_watch_expression;
     // Headless breakpoint control (control channel + cold-start spec): re-send a
     // file's breakpoints to the active session after the store is mutated.
     std::function<void(const std::filesystem::path&)> resend_breakpoints_for_file;
@@ -360,30 +347,29 @@ class WorkspaceActionContext {
         start_ad_hoc_debug;
     // Function (symbol) breakpoints + exception-filter conditions (control channel
     // + command line). Each mutates the per-project store + live re-sends.
-    std::function<void(const std::string&)> add_function_breakpoint;
-    std::function<void(const std::string&)> remove_function_breakpoint;
-    std::function<void(const std::string&)> toggle_function_breakpoint;
-    std::function<void(const std::string&, std::optional<std::string>)>
-        set_function_breakpoint_condition;
-    std::function<std::string(const std::string&, std::optional<std::string>)>
-        set_exception_filter_condition;
     // Buffer-search stepping for F3 / Shift+F3 (StepBufferSearch): move the
     // selected match by a delta (wrapping) and reveal one match in the editor.
     std::function<void(int)> move_buffer_search_selection;
     std::function<void(const editor::SelectionRange&)> reveal_buffer_search_match;
   };
 
+  // The services an action calls directly: an action whose whole job is one
+  // call on one of these needs no Operations hop through the shell (TD-412).
+  struct Services {
+    AssistService& assist;
+    DebugService& debug;
+    TerminalPanelService& terminal_panel;
+  };
+
   WorkspaceActionContext(ProjectCatalogState& project_catalog,
                          ProjectWorkspaceState& current_project_state,
                          float& ui_scale,
-                         AssistService& assist,
-                         DebugService& debug,
+                         Services services,
                          Operations operations);
 
-  // The language assists, called directly: an action that only runs one needs no
-  // Operations hop through the shell.
-  AssistService& assist() { return assist_; }
-  DebugService& debug() { return debug_; }
+  AssistService& assist() { return services_.assist; }
+  DebugService& debug() { return services_.debug; }
+  TerminalPanelService& terminal_panel() { return services_.terminal_panel; }
 
   void PrepareForAction(ActionSource source);
   bool RejectAction(ActionSource source, std::string feedback);
@@ -505,22 +491,7 @@ class WorkspaceActionContext {
   bool RevealPathInFileExplorer(const std::filesystem::path& directory) const;
   bool RevealPathInTree(const std::filesystem::path& path) const;
 
-  void OpenTerminal(std::string command);
-  // Closes the active terminal tab. False when there is none — the terminal
-  // strip was the one tab strip whose tabs could only be closed by mouse.
-  bool CloseActiveTerminal();
-  // Split the active terminal tab (a new pane right of the active one).
-  bool SplitTerminal();
-  // Move the active pane left (-1) / right (+1); false when there is none that way.
-  bool FocusTerminalPane(int delta);
-  // Activate the terminal tab `delta` steps away; false with fewer than two.
-  bool CycleTerminal(int delta);
-  // Restart the active pane's exited session in place.
-  bool RelaunchTerminal();
   bool HasActiveTerminalPane() const;
-  void ToggleTerminal();
-  void TogglePanel();
-  void TogglePanelMaximized();
   bool OpenTerminalFind(std::string query);
   void ShowFileFinderWithQuery(std::string query);
   void ShowFileFinder();
@@ -718,10 +689,6 @@ class WorkspaceActionContext {
   void StopDebuggingWithFeedback();
   // Execution control (Phase 3). No-op when no session / wrong state.
   // The active session's adapter advertises `supportsStepBack` (a recording one).
-  // Multi-session switcher (Phase 8). Count of live sessions; switch to the next
-  // (index < 0) or a 1-based session index.
-  std::size_t DebugSessionCount() const;
-  void DebugSwitchSession(int index);
   // Stop every live debug session (Phase 10).
   void StopAllDebugSessions();
   // Debug-console REPL + launch-config picker (Phase 9).
@@ -789,16 +756,6 @@ class WorkspaceActionContext {
   // success).
   std::string StartAdHocDebug(const std::string& program, const std::vector<std::string>& args,
                               const std::string& type);
-  // Function (symbol) breakpoints + exception-filter conditions (breakpoint-function-*
-  // / breakpoint-exception-condition commands). Name/id-keyed; no-op when not found.
-  void AddFunctionBreakpoint(const std::string& name);
-  void RemoveFunctionBreakpoint(const std::string& name);
-  void ToggleFunctionBreakpoint(const std::string& name);
-  void SetFunctionBreakpointCondition(const std::string& name,
-                                      std::optional<std::string> condition);
-  // "" once set, else why not (an unknown filter, one that takes no condition).
-  std::string SetExceptionFilterCondition(const std::string& filter_id,
-                                          std::optional<std::string> condition);
 
   // Editor essentials: accessors and shaping-action driver. These keep the
   // executor free of direct operations_ access while still allowing free
@@ -877,8 +834,7 @@ class WorkspaceActionContext {
   ProjectCatalogState& project_catalog_;
   ProjectWorkspaceState& state_;
   float& ui_scale_;
-  AssistService& assist_;
-  DebugService& debug_;
+  Services services_;
   Operations operations_;
   ActionReceipt receipt_;
 };

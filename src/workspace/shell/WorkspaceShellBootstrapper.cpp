@@ -200,6 +200,7 @@ ActionAvailability WorkspaceShell::Bootstrapper::BuildActionAvailability() const
   auto* shell = &shell_;
   return ActionAvailability(
       shell->context_,
+      shell->debug_service_,
       ActionAvailability::Operations{
           .selected_tree_target_kind = [shell]() { return shell->SelectedTreeTargetKind(); },
           .resolve_tree_action_path =
@@ -219,7 +220,6 @@ ActionAvailability WorkspaceShell::Bootstrapper::BuildActionAvailability() const
               [shell]() {
                 return shell->MakeTextInputCoordinator().HasSelectionAtActiveSingleLineSurface();
               },
-          .active_terminal_pane = [shell]() { return shell->ActiveTerminalPane(); },
           .has_last_terminal_command = [shell]() { return shell->HasLastTerminalCommand(); },
           .terminal_has_selection = [shell]() { return shell->TerminalHasSelection(); },
           .active_tab_is_editor = [shell]() { return shell->ActiveTabIsEditor(); },
@@ -242,10 +242,6 @@ ActionAvailability WorkspaceShell::Bootstrapper::BuildActionAvailability() const
           },
           .get_setting_value =
               [shell](std::string_view id) { return shell->GetSettingValue(id); },
-          .debug_session_active = [shell]() { return shell->IsDebugSessionActive(); },
-          .debug_session_stopped = [shell]() { return shell->IsDebugSessionStopped(); },
-          .debug_supports_reverse = [shell]() { return shell->DebugSupportsReverse(); },
-          .debug_session_count = [shell]() { return shell->CurrentDapManager().SessionCount(); },
           .remote_hosts = [shell]() -> const RemoteHostService* { return shell->glue_->remote_host_service.get(); },
           .has_remote_recent =
               [shell, cached = std::make_shared<std::optional<std::pair<std::uint64_t, bool>>>()]() {

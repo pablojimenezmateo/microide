@@ -14,6 +14,7 @@
 
 namespace microide::workspace {
 
+class DebugService;
 class RemoteHostService;
 
 class ActionAvailability {
@@ -29,7 +30,6 @@ class ActionAvailability {
     std::function<const editor::TextViewport*()> active_editable_viewport;
     std::function<TextInputSurface()> current_text_input_surface;
     std::function<bool()> active_single_line_text_has_selection;
-    std::function<const TerminalPaneState*()> active_terminal_pane;
     // Cheap "is Copy Last Command available?" predicate. Enablement must NOT build the
     // whole scrollback transcript (that is LastTerminalCommandText's job on invoke).
     std::function<bool()> has_last_terminal_command;
@@ -45,15 +45,6 @@ class ActionAvailability {
     std::function<bool()> active_definition_available;
     std::function<bool()> active_references_available;
     std::function<std::optional<std::string>(std::string_view)> get_setting_value;
-    // Debugger (DAP) execution-control gating: active = a session is running or
-    // paused; stopped = that session is paused at a breakpoint/step.
-    std::function<bool()> debug_session_active;
-    std::function<bool()> debug_session_stopped;
-    // Whether the active session's adapter advertises `supportsStepBack` — gates
-    // the reverse-execution commands so they only light up for recording adapters.
-    std::function<bool()> debug_supports_reverse;
-    // Number of live debug sessions (Phase 8) — gates the session switcher.
-    std::function<std::size_t()> debug_session_count;
     // The remote hosts service when one exists (null before any remote project
     // opened: nothing is connected), and whether the recents list names a remote
     // project whose mirror is on disk -- what Remove Mirror can take while no
@@ -62,7 +53,10 @@ class ActionAvailability {
     std::function<bool()> has_remote_recent;
   };
 
-  ActionAvailability(const WorkspaceContext& context, Operations operations);
+  // `debug` answers the execution-control gating directly (a session running or
+  // paused, a recording adapter, more than one session).
+  ActionAvailability(const WorkspaceContext& context, const DebugService& debug,
+                     Operations operations);
 
   bool IsEnabled(ActionId id) const;
   // Why `id` is dimmed, for the menu row to say after its label ("Show Status
@@ -79,6 +73,7 @@ class ActionAvailability {
   TreeContextTargetKind ActiveTreeTargetKind() const;
 
   const WorkspaceContext& context_;
+  const DebugService& debug_;
   Operations operations_;
 };
 

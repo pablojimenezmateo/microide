@@ -623,7 +623,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");
       }
-      if (context_.DebugSessionCount() < 2) {
+      if (context_.debug().SessionCount() < 2) {
         return reject("Need at least two debug sessions to switch");
       }
       // No arg → cycle to the next session; an arg is a 1-based session index.
@@ -635,7 +635,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
           return reject("debug-switch-session expects a session number");
         }
       }
-      context_.DebugSwitchSession(index);
+      context_.debug().SwitchSession(index);
       return DispatchResult::Handled;
     }
     case ActionId::DebugStopAllSessions:
@@ -875,7 +875,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       if (name.empty()) {
         return reject("breakpoint-function-add: a function name is required");
       }
-      context_.AddFunctionBreakpoint(name);
+      context_.debug().AddFunctionBreakpoint(name);
       return DispatchResult::Handled;
     }
     case ActionId::BreakpointFunctionRemove:
@@ -888,9 +888,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
         return reject("breakpoint-function: a function name is required");
       }
       if (id == ActionId::BreakpointFunctionRemove) {
-        context_.RemoveFunctionBreakpoint(name);
+        context_.debug().RemoveFunctionBreakpointByName(name);
       } else {
-        context_.ToggleFunctionBreakpoint(name);
+        context_.debug().ToggleFunctionBreakpointByName(name);
       }
       return DispatchResult::Handled;
     }
@@ -902,7 +902,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
         return reject("breakpoint-function-condition: a function name is required");
       }
       const std::string expr = JoinCommandArguments(args, 1);
-      context_.SetFunctionBreakpointCondition(
+      context_.debug().SetFunctionBreakpointConditionByName(
           args[0], expr.empty() ? std::nullopt : std::optional<std::string>(expr));
       return DispatchResult::Handled;
     }
@@ -916,7 +916,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       const std::string expr = JoinCommandArguments(args, 1);
       // An unknown filter, or a condition on one that takes none, answered "ok"
       // for a condition that was never set.
-      if (const std::string error = context_.SetExceptionFilterCondition(
+      if (const std::string error = context_.debug().SetExceptionFilterCondition(
               args[0], expr.empty() ? std::nullopt : std::optional<std::string>(expr));
           !error.empty()) {
         return reject(error);

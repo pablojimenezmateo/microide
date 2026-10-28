@@ -257,8 +257,9 @@ void TestArchitectureFileSizes() {
              // struct moved to WorkspaceEditService.
              // 1625: the eight one-line Debug* forwarders; the action context and the
              // debug toolbar call DebugService directly (TD-2026-10-28-412).
+             // 1624: DebugSwitchSession is DebugService::SwitchSession.
              return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShellMembers.inc",
-                                                     1625);
+                                                     1624);
            });
 
   AssertRuleResultsPass(results);
