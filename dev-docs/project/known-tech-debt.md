@@ -449,6 +449,33 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-28-412 — `WorkspaceActionContext` is a God object, and half of it only forwards. [OPEN — measured, slicing plan below]
+
+`src/workspace/actions/WorkspaceActionServices.{h,cpp}` + the shell's
+`WorkspaceActionServicesContextFactory.cpp`: one class with 200 member functions
+over an `Operations` struct of 214 `std::function` fields, filled by a 1,400-line
+factory. Measured 2026-10-28:
+
+- **101 of the 200 methods are pure forwarders** (≤ 3 lines, a guard and an
+  `operations_.x(...)` call). An action therefore runs executor → context method →
+  `std::function` → shell lambda → the service that does the work: four hops,
+  two of them type-erased, for what is one call. Each of those lambdas is also a
+  field the coordinator-Operations lint must keep wired.
+- **The surface already partitions.** The six executors
+  (`Workspace{Edit,Global,Project,Search,Sidebar,Tab}ActionExecutor.cpp`) and the
+  coordinator use 242 distinct `context_` members between them, and only 16 are
+  used by more than one file.
+
+Plan, one area per commit so each slice is reviewable and lane-checked: give each
+executor its own context type holding references to the services it calls
+(`AssistService&`, `EditorTabService&`, `TerminalPanelService&`, …, the
+coordinator-constructor rule already requires service references), move that
+area's non-forwarding methods onto it, delete its forwarders and their
+`Operations` fields, and keep the 16 shared members on a small common context.
+Start with Project (11 members) to set the shape, then Sidebar (26), Search (39),
+Edit (50), Tab (54), Global (86). Done when `Operations` holds only what has no
+service to name.
+
 ### TD-2026-10-28-411 — the 2026-10-28 duplication pass: what it split, and what it left. [PARTLY RESOLVED 2026-10-28 — open: three remainders below]
 
 Done, one commit each: `AssistService` (2,300 lines, 58 members, seven request
