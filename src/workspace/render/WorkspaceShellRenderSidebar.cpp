@@ -630,9 +630,6 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       }
     }
 
-    // Reused across rows so the per-row primary label keeps its capacity instead
-    // of allocating (twice, when a review marker prefixes it) each iteration.
-    std::string primary_label;
     for (int row = 0; row < list_layout.visible_rows; ++row) {
       const int line_index = scroll_row + row;
       if (line_index >= static_cast<int>(lines.size())) {

@@ -1544,6 +1544,27 @@ Found a test claiming to verify `ComputeIdleHint(...)` — a function that exist
 nowhere — while actually asserting only that a counter increments. Fake coverage
 reads as real coverage in a test list.
 
+**A broad clang-tidy pass, beyond the two gated checks** (2026-10-28). `bugprone-*`
+(minus the style-only ones), `performance-*`, `misc-redundant-expression` and the
+`clang-analyzer` core/C++/dead-store families over every `src/` TU of
+`build/microide-tidy`: 68 findings in ~930 TUs, and on triage no live bug -- the
+widening casts and `+ 0.5` roundings all act on non-negative ranges, the
+self-assignment and null-terminator reports are deliberate (a copy that starts
+empty, a `memchr` over a sized buffer). The one actionable hit was dead code: a
+render loop's `std::string primary_label` "reused across rows" that a `string_view`
+of the same name inside the loop had shadowed since it was introduced. Run it again
+after a large refactor (`--checks` on `tools/tidy.py`'s runner accepts the list);
+it is not worth gating at this signal.
+
+**Measuring what the process costs when nothing happens.** No unit test sees a loop
+that wakes for nothing: it is correct, and only slow in aggregate. `tools/qa/remote.py`
+scenario W samples every thread's `schedstat` and context switches on both sides of a
+connected, idle remote project; on its first run it found a 500 ms poll that a side
+map made permanent (`ProcessTable`), a listener waking every second while clients were
+connected, a heartbeat ticking four times per ping and a port sampler costing 8 ms of
+kernel time per `/proc/net/tcp` read (TD-2026-10-28-416, 418). Name every thread you
+start (`util::NameCurrentThread`), or its cost reads as the process's.
+
 ## Stale Paint: A Green Pixel Test Is Not A Correct Frame
 
 The app paints a retained scene: a frame repaints only its dirty clips over the
