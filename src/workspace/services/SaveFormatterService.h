@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "platform/ProcessLauncher.h"
+#include "project/FileReadService.h"
 #include "plugin/PluginHost.h"
 #include "util/MainThreadMailbox.h"
 #include "util/TaskExecutor.h"
@@ -125,5 +126,15 @@ class SaveFormatterService {
   // the destroyed mailbox (ASan: heap-use-after-free in MainThreadMailbox::Post).
   util::TaskExecutor executor_{1};
 };
+
+// Before anything moves, closes or replaces tabs wholesale (a project switch or
+// close, quit): a deferred save writes when its formatter returns, and nothing may
+// run before that write lands, or the save the user asked for is silently dropped
+// (the flush only waits when a formatter is mid-run). Then a tab still reading its
+// file is about to stop existing, so finishing the read is pure latency.
+inline void SettleTabIoBeforeTeardown(SaveFormatterService& saves, project::FileReadService& reads) {
+  saves.FlushPendingRuns();
+  reads.CancelAllAndFlush();
+}
 
 }  // namespace microide::workspace

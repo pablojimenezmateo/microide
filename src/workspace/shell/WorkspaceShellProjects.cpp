@@ -172,13 +172,7 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
 
 bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
   (void) log_feedback;
-  // A deferred save writes when its formatter returns. Nothing that moves, closes or
-  // replaces the tab may run before that write lands, or the save the user asked for
-  // is silently dropped. The flush only ever waits when a formatter is mid-run.
-  save_formatter_service_.FlushPendingRuns();
-  // A tab still reading its file is about to stop existing, so finishing the read
-  // is pure latency on the way out.
-  file_read_service_.CancelAllAndFlush();
+  SettleTabIoBeforeTeardown(save_formatter_service_, file_read_service_);
   if (index >= context_.project_catalog.entries.size()) {
     return false;
   }
@@ -215,11 +209,7 @@ void WorkspaceShell::RequestCloseProject(std::size_t index) {
 }
 
 void WorkspaceShell::CloseProject(std::size_t index) {
-  // A deferred save writes when its formatter returns. Nothing that moves, closes or
-  // replaces the tab may run before that write lands, or the save the user asked for
-  // is silently dropped. The flush only ever waits when a formatter is mid-run.
-  save_formatter_service_.FlushPendingRuns();
-  file_read_service_.CancelAllAndFlush();
+  SettleTabIoBeforeTeardown(save_formatter_service_, file_read_service_);
   const std::filesystem::path closed_root = ProjectCatalogRoot(index);
   // A remote project's running host shells stay on the host (§ 6.12): let go of
   // them, explicitly, before the close persists the state (recording which they

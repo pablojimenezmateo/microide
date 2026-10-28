@@ -427,11 +427,7 @@ void WorkspaceShell::Shutdown() {
 }
 
 void WorkspaceShell::RequestQuit() {
-  // A deferred save writes when its formatter returns. Nothing that moves, closes or
-  // replaces the tab may run before that write lands, or the save the user asked for
-  // is silently dropped. The flush only ever waits when a formatter is mid-run.
-  save_formatter_service_.FlushPendingRuns();
-  file_read_service_.CancelAllAndFlush();
+  SettleTabIoBeforeTeardown(save_formatter_service_, file_read_service_);
   MakeLifecycleCoordinator().RequestQuit();
 }
 
