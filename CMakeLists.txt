@@ -1562,6 +1562,7 @@ add_executable(microide_kernel_tests
   tests/ProjectIdTests.cpp
   src/server/ListeningPorts.cpp
   src/server/ProcessActivity.cpp
+  src/server/ProcessTable.cpp
   src/server/WorkspaceTree.cpp
   src/server/WorkspaceWatch.cpp
   tests/RemoteFrameTransportTests.cpp

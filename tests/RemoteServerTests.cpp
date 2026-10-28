@@ -9,6 +9,7 @@
 #include "project/remote/RemoteServerClient.h"
 #include "project/remote/RemoteServerPaths.h"
 #include "server/ListeningPorts.h"
+#include "server/ProcessTable.h"
 #include "util/JsonValue.h"
 
 #include <algorithm>
@@ -16,6 +17,8 @@
 #include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <condition_variable>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -419,6 +422,65 @@ void TestListeningPortsSourcesAgreeOnTheLiveHost() {
   ::close(listener);
 }
 
+// The context switches of this process's thread named `name` (the table's loop
+// names itself), or -1 when there is no such thread.
+long ThreadSwitches(const std::string& name) {
+  for (const auto& task : std::filesystem::directory_iterator("/proc/self/task")) {
+    std::ifstream comm(task.path() / "comm");
+    std::string line;
+    if (!std::getline(comm, line) || line != name) {
+      continue;
+    }
+    std::ifstream status(task.path() / "status");
+    long switches = 0;
+    while (std::getline(status, line)) {
+      if (line.find("ctxt_switches:") != std::string::npos) {
+        switches += std::stol(line.substr(line.find(':') + 1));
+      }
+    }
+    return switches;
+  }
+  return -1;
+}
+
+// Once every process it ran has exited and been released, the table's loop sleeps
+// until something happens. The exit marks lived in a map local to the loop that
+// Release could not reach, so after the first remote process ever exited (a git
+// the sidebar ran) the loop polled twice a second for the server's whole life, and
+// the map grew by one entry per process (TD-2026-10-28-418).
+void TestAProcessTableWithNothingRunningSleeps() {
+  std::mutex mutex;
+  std::condition_variable exited;
+  int exits = 0;
+  server::ProcessTable table(server::ProcessTable::Sink{
+      .content = [](std::uint64_t, remote::FrameType, std::uint64_t, std::string_view) {},
+      .notify =
+          [&](std::uint64_t, std::string_view method, std::uint64_t, const util::JsonValue&) {
+            if (method == "proc/exit") {
+              std::lock_guard lock(mutex);
+              ++exits;
+              exited.notify_all();
+            }
+          },
+      .git_exited = [](const std::string&) { return std::uint64_t{0}; },
+  });
+  for (int i = 0; i < 3; ++i) {
+    const server::ProcessTable::SpawnResult spawned =
+        table.Spawn(1, server::ProcessTable::SpawnRequest{.argv = {"true"}, .cwd = "/"});
+    Expect(spawned.handle != 0, "spawned: " + spawned.error);
+    std::unique_lock lock(mutex);
+    Expect(exited.wait_for(lock, std::chrono::seconds(10), [&] { return exits == i + 1; }), "it exits");
+    lock.unlock();
+    table.Release(spawned.handle);
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));  // the release's own wake
+  const long before = ThreadSwitches("srv-processes");
+  Expect(before >= 0, "the table's loop names its thread");
+  std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+  const long woke = ThreadSwitches("srv-processes") - before;
+  Expect(woke <= 1, "an idle table does not poll: woke " + std::to_string(woke) + " times in 1.5 s");
+}
+
 // A connection that dies before the hello carries the host's own reason. The
 // attach command's stderr went wherever the editor's did, so a server refusing to
 // start ("... has mode 0775 ...; a parent of the socket directory must ...")
@@ -529,6 +591,7 @@ void RegisterRemoteServerTests(std::vector<TestCase>& tests) {
           TestAttachStartsOnDemandAndTheServerIdlesOut);
   AddTest(tests, "RemoteServer/ListeningPortsParseProcNetTcp", TestListeningPortsParseProcNetTcp);
   AddTest(tests, "RemoteServer/ListeningPortsParseSockDiag", TestListeningPortsParseSockDiag);
+  AddTest(tests, "RemoteServer/AProcessTableWithNothingRunningSleeps", TestAProcessTableWithNothingRunningSleeps);
   AddTest(tests, "RemoteServer/ListeningPortsSourcesAgreeOnTheLiveHost",
           TestListeningPortsSourcesAgreeOnTheLiveHost);
   AddTest(tests, "RemoteServer/PortsSubscribePushesANewListener", TestPortsSubscribePushesANewListener);

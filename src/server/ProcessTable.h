@@ -164,6 +164,11 @@ class ProcessTable {
     bool exit_sent = false;
     // Set when a detach terminated it: SIGKILL its group if it is still alive then.
     std::optional<std::chrono::steady_clock::time_point> kill_at;
+    // When the table first saw it exited: its pipes get kExitDrainGrace to reach EOF
+    // (a grandchild may hold them). On the process, not in a side table, so it goes
+    // with the process however it leaves (Release erased it from under a side map,
+    // which then kept the loop polling forever: TD-2026-10-28-418).
+    std::optional<std::chrono::steady_clock::time_point> exited_at;
     // A kept process whose client went: when, so the keep grace can run out.
     std::optional<std::chrono::steady_clock::time_point> detached_at;
   };

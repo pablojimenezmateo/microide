@@ -12,6 +12,7 @@
 #include "util/PosixFd.h"
 #include "util/PosixPipe.h"
 #include "util/WakePipe.h"
+#include "util/ThreadName.h"
 
 #include <fcntl.h>
 #include <poll.h>
@@ -106,7 +107,10 @@ std::string ResolveExecutable(
 
 ProcessTable::ProcessTable(Sink sink, Limits limits) : sink_(std::move(sink)), limits_(limits) {
   wake_.Open();
-  thread_ = std::thread([this]() { Run(); });
+  thread_ = std::thread([this]() {
+    util::NameCurrentThread("srv-processes");
+    Run();
+  });
 }
 
 ProcessTable::~ProcessTable() {
@@ -593,7 +597,6 @@ void ProcessTable::Reap() {
 }
 
 void ProcessTable::Run() {
-  std::map<std::uint64_t, std::chrono::steady_clock::time_point> exited_at;
   std::vector<Outgoing> outgoing;
   std::vector<pollfd> fds;
   std::vector<std::pair<std::uint64_t, bool>> owners;  // handle, is_stderr
@@ -606,6 +609,8 @@ void ProcessTable::Run() {
     std::size_t exit_fds = 0;
     bool any_unwatched = false;  // running with no pid fd: its exit must be polled for
     std::optional<std::chrono::steady_clock::time_point> next_kill;
+    // The earliest drain deadline of an exited process whose pipes are still open.
+    std::optional<std::chrono::steady_clock::time_point> next_drain;
     {
       std::lock_guard lock(mutex_);
       Reap();
@@ -642,9 +647,13 @@ void ProcessTable::Run() {
           }
         }
         if (process.exited) {
-          auto [mark, inserted] = exited_at.try_emplace(process.handle, now);
+          if (!process.exited_at.has_value()) {
+            process.exited_at = now;
+          }
           // A grandchild holding the pipes open must not hold the exit back forever.
-          if (!inserted && now - mark->second > kExitDrainGrace) {
+          const auto drained_by = *process.exited_at + kExitDrainGrace;
+          const bool open = process.out.fd >= 0 || process.err.fd >= 0;
+          if (open && now >= drained_by) {
             for (Stream* stream : {&process.out, &process.err}) {
               if (stream->fd >= 0) {
                 ::close(stream->fd);
@@ -652,6 +661,8 @@ void ProcessTable::Run() {
                 stream->eof = true;
               }
             }
+          } else if (open && (!next_drain.has_value() || drained_by < *next_drain)) {
+            next_drain = drained_by;
           }
         }
         Pump(process, outgoing);
@@ -662,7 +673,6 @@ void ProcessTable::Run() {
               ::close(fd);
             }
           }
-          exited_at.erase(process.handle);
           it = processes_.erase(it);
           continue;
         }
@@ -680,13 +690,18 @@ void ProcessTable::Run() {
     // one, an exit wakes the loop itself: polling for it cost every remote process
     // (a git the sidebar runs, a formatter) up to 50 ms after its output -- a round
     // trip on a 50 ms link (measured on worky, 2026-10-15).
-    int timeout_ms = any_unwatched ? 50 : (exited_at.empty() ? -1 : 500);
-    if (next_kill.has_value()) {
+    // An exited process's pipes are drained by their own readiness; only the grace
+    // deadline of one still open needs a timer. Nothing exited and open: block.
+    int timeout_ms = any_unwatched ? 50 : -1;
+    for (const auto& deadline : {next_kill, next_drain}) {
+      if (!deadline.has_value()) {
+        continue;
+      }
       const auto until = std::chrono::duration_cast<std::chrono::milliseconds>(
-                             *next_kill - std::chrono::steady_clock::now())
+                             *deadline - std::chrono::steady_clock::now())
                              .count();
-      const int kill_ms = static_cast<int>(std::clamp<std::int64_t>(until + 1, 0, 60'000));
-      timeout_ms = timeout_ms < 0 ? kill_ms : std::min(timeout_ms, kill_ms);
+      const int deadline_ms = static_cast<int>(std::clamp<std::int64_t>(until + 1, 0, 60'000));
+      timeout_ms = timeout_ms < 0 ? deadline_ms : std::min(timeout_ms, deadline_ms);
     }
     if (::poll(fds.data(), fds.size(), timeout_ms) < 0 && errno != EINTR) {
       util::Log("process table: poll failed");
