@@ -26,6 +26,11 @@ class PersistedRecordWriter {
                         std::uint32_t capability_flags,
                         PersistedRecordWriterError* error = nullptr);
   static std::filesystem::path BackupPathFor(const std::filesystem::path& path);
+  // How many WriteFile calls the CALLING thread has made. The process-wide
+  // `persistence.record_writes` counter also counts every other thread's saves (a
+  // background project-state write still in flight), so a "this did not write"
+  // assertion read from it fails whenever anything else is persisting.
+  static std::uint64_t WritesOnThisThread();
 };
 
 }  // namespace microide::persistence

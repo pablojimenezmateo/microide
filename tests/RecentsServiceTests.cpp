@@ -1,9 +1,9 @@
 #include "TestSupport.h"
 
+#include "persistence/PersistedRecordWriter.h"
 #include "workspace/persistence/RecentsService.h"
 #include "workspace/persistence/PersistenceService.h"
 #include "project/remote/RemoteProject.h"
-#include "util/PerformanceCounters.h"
 
 #include <cstddef>
 #include <filesystem>
@@ -151,12 +151,12 @@ void TestRecentsBurstCoalescesIntoOneWrite() {
   RecentsService recents;
   recents.Configure(persistence);
   const std::uint64_t before =
-      microide::util::ReadPerformanceCounter(microide::util::PerfCounterId::PersistenceRecordWrites);
+      microide::persistence::PersistedRecordWriter::WritesOnThisThread();
   for (std::size_t i = 0; i < 40; ++i) {
     recents.RecordFileOpen("/proj/f" + std::to_string(i) + ".cpp", "/proj");
   }
   const std::uint64_t after =
-      microide::util::ReadPerformanceCounter(microide::util::PerfCounterId::PersistenceRecordWrites);
+      microide::persistence::PersistedRecordWriter::WritesOnThisThread();
   Expect(after - before <= 1, "a burst of opens must not cost one durable write per file");
 
   // Nothing is lost: the pending state still lands on flush.
@@ -179,7 +179,7 @@ void TestRecentsReopeningNewestEntryDoesNotWrite() {
   recents.FlushPendingSave();
 
   const std::uint64_t before =
-      microide::util::ReadPerformanceCounter(microide::util::PerfCounterId::PersistenceRecordWrites);
+      microide::persistence::PersistedRecordWriter::WritesOnThisThread();
   for (int i = 0; i < 10; ++i) {
     recents.RecordFileOpen("/proj/a.cpp", "/proj");
     recents.RecordProjectOpen(Local("/proj-x"));
@@ -187,7 +187,7 @@ void TestRecentsReopeningNewestEntryDoesNotWrite() {
   }
   recents.FlushPendingSave();
   const std::uint64_t after =
-      microide::util::ReadPerformanceCounter(microide::util::PerfCounterId::PersistenceRecordWrites);
+      microide::persistence::PersistedRecordWriter::WritesOnThisThread();
   Expect(after - before <= 1,
          "re-recording the entry that is already newest must not write");
 }

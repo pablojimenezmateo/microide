@@ -30,7 +30,11 @@ bool FileExists(const std::filesystem::path& path) {
   return exists && !error;
 }
 
+thread_local std::uint64_t t_writes_on_this_thread = 0;
+
 }  // namespace
+
+std::uint64_t PersistedRecordWriter::WritesOnThisThread() { return t_writes_on_this_thread; }
 
 std::filesystem::path PersistedRecordWriter::BackupPathFor(const std::filesystem::path& path) {
   return path.string() + ".bak";
@@ -51,6 +55,7 @@ bool PersistedRecordWriter::WriteFile(const std::filesystem::path& path,
   perf_label.Field("file", path.stem().native());
   util::PerformanceTrace::Scope perf_scope(perf_label.View());
   util::AddPerformanceCounter(util::PerfCounterId::PersistenceRecordWrites);
+  ++t_writes_on_this_thread;
   util::AddPerformanceCounter(util::PerfCounterId::PersistenceRecordBytesWritten, body.size());
 
   SetError(error, PersistedRecordWriterError::None);
