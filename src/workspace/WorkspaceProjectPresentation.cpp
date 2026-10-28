@@ -165,40 +165,42 @@ std::string BuildEditorBreadcrumbLabel(const std::filesystem::path& project_root
   return RelativePathLabel(project_root, path);
 }
 
+namespace {
+
+// "<path>  |  <from> -> <to>": the path when it is known, the sides when they are,
+// and `fallback` when neither is.
+std::string BuildTwoSideBreadcrumbLabel(const std::filesystem::path& project_root,
+                                        const std::filesystem::path& path, std::string_view from,
+                                        std::string_view to, std::string_view fallback) {
+  std::string label = RelativePathLabel(project_root, path);
+  const bool has_sides = !from.empty() || !to.empty();
+  if (!has_sides) {
+    return label.empty() ? std::string(fallback) : label;
+  }
+  if (!label.empty()) {
+    label += "  |  ";
+  }
+  label += from;
+  label += " -> ";
+  label += to;
+  return label;
+}
+
+}  // namespace
+
 std::string BuildCompareBreadcrumbLabel(const std::filesystem::path& project_root,
                                         const std::filesystem::path& path,
                                         std::string_view left_label,
                                         std::string_view right_label) {
-  std::string relative_path = RelativePathLabel(project_root, path);
-  if (!relative_path.empty()) {
-    if (!left_label.empty() || !right_label.empty()) {
-      return relative_path + "  |  " + std::string(left_label) + " -> " +
-             std::string(right_label);
-    }
-    return relative_path;
-  }
-  if (!left_label.empty() || !right_label.empty()) {
-    return std::string(left_label) + " -> " + std::string(right_label);
-  }
-  return "compare";
+  return BuildTwoSideBreadcrumbLabel(project_root, path, left_label, right_label, "compare");
 }
 
 std::string BuildMergeBreadcrumbLabel(const std::filesystem::path& project_root,
                                       const std::filesystem::path& output_path,
                                       std::string_view incoming_label,
                                       std::string_view current_label) {
-  std::string relative_path = RelativePathLabel(project_root, output_path);
-  if (!relative_path.empty()) {
-    if (!incoming_label.empty() || !current_label.empty()) {
-      return relative_path + "  |  " + std::string(incoming_label) + " -> " +
-             std::string(current_label);
-    }
-    return relative_path;
-  }
-  if (!incoming_label.empty() || !current_label.empty()) {
-    return std::string(incoming_label) + " -> " + std::string(current_label);
-  }
-  return "merge";
+  return BuildTwoSideBreadcrumbLabel(project_root, output_path, incoming_label, current_label,
+                                     "merge");
 }
 
 SDL_Color DefaultProjectBaseColor(const std::filesystem::path& project_root) {
