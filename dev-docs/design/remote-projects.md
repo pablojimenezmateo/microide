@@ -1716,7 +1716,12 @@ a process spawned as a child of ssh does not: it dies with the connection.
   connects to the socket and relays stdio to it; if no server is running it starts
   one, daemonizes it and relays to that. The local side does not care which
   happened, beyond what `server/hello` reports. `attach` is the only non-daemon
-  mode of the binary and it is small: a relay loop and the start logic.
+  mode of the binary and it is small: a relay loop and the start logic. Two
+  `attach`es can both find nothing answering (two projects reaching a fresh host
+  at once), so the daemon holds an exclusive `flock` on `<socket dir>/server.lock`
+  for its life, taken before it touches the socket: the loser exits once the
+  winner's socket answers. Without it the second daemon replaced the first's live
+  socket and the host ran two (TD-2026-10-28-414).
 - **Daemonizing detaches stdio explicitly, or the connection that started it never
   returns.** `ssh -- command` does not exit while any process holds the inherited
   stdout or stderr open, so a daemon that forks and keeps them — the default if
