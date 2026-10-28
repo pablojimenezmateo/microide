@@ -1,13 +1,23 @@
 #include "server/ListeningPorts.h"
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
+#include <cstring>
 #include <optional>
 #include <string>
 #include <utility>
 
 #include <fcntl.h>
+#include <linux/inet_diag.h>
+#include <linux/netlink.h>
+#include <linux/sock_diag.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <sys/socket.h>
 #include <unistd.h>
+
+#include "util/PosixFd.h"
 
 namespace microide::server {
 namespace {
@@ -33,24 +43,47 @@ std::optional<std::uint64_t> ParseHex(std::string_view text) {
   return value;
 }
 
-// The kernel prints an address as its 32-bit words in host (little-endian)
-// order: 127.0.0.1 is 0100007F, ::1 is 00000000000000000000000001000000.
-bool ForwardableAddress(std::string_view address) {
-  if (address.find_first_not_of('0') == std::string_view::npos) {
+// Whether a listener bound to this local address is reached by a forward to the
+// host's `localhost:<port>`: every address (0.0.0.0, ::), 127.0.0.0/8, ::1 or
+// ::ffff:127.x.y.z. `address` is in network byte order, 4 or 16 bytes: the one
+// rule for both sources, so they cannot disagree about which ports count.
+bool ForwardableAddress(std::span<const std::uint8_t> address) {
+  if (std::all_of(address.begin(), address.end(), [](std::uint8_t b) { return b == 0; })) {
     return true;  // 0.0.0.0 or ::
   }
-  if (address.size() == 8) {
-    return address.substr(6, 2) == "7F";  // 127.0.0.0/8
+  if (address.size() == 4) {
+    return address[0] == 127;
   }
-  if (address.size() == 32) {
-    if (address == "00000000000000000000000001000000") {
-      return true;  // ::1
+  if (address.size() != 16) {
+    return false;
+  }
+  constexpr std::array<std::uint8_t, 16> kLoopback6{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+  if (std::equal(address.begin(), address.end(), kLoopback6.begin())) {
+    return true;
+  }
+  // ::ffff:127.x.y.z
+  return std::all_of(address.begin(), address.begin() + 10, [](std::uint8_t b) { return b == 0; }) &&
+         address[10] == 0xFF && address[11] == 0xFF && address[12] == 127;
+}
+
+// The kernel prints an address as its 32-bit words in host order (`%08X` of each
+// raw __be32): 127.0.0.1 is 0100007F on a little-endian host. Decoding each word
+// and copying it back out recovers the network-order bytes on the host that
+// printed them.
+std::optional<std::vector<std::uint8_t>> ProcAddressBytes(std::string_view text) {
+  if (text.size() != 8 && text.size() != 32) {
+    return std::nullopt;
+  }
+  std::vector<std::uint8_t> bytes(text.size() / 2);
+  for (std::size_t word = 0; word * 8 < text.size(); ++word) {
+    const std::optional<std::uint64_t> value = ParseHex(text.substr(word * 8, 8));
+    if (!value.has_value()) {
+      return std::nullopt;
     }
-    // ::ffff:127.x.y.z
-    return address.substr(0, 16) == "0000000000000000" && address.substr(16, 8) == "FFFF0000" &&
-           address.substr(30, 2) == "7F";
+    const auto raw = static_cast<std::uint32_t>(*value);
+    std::memcpy(bytes.data() + word * 4, &raw, sizeof(raw));
   }
-  return false;
+  return bytes;
 }
 
 // A procfs table: it states size 0, so it is read to EOF (bounded: thousands of
@@ -114,7 +147,11 @@ std::vector<std::uint16_t> ParseListeningPorts(std::string_view proc_net_tcp, st
     }
     const std::string_view local = fields[1];
     const std::size_t colon = local.find(':');
-    if (line_uid != uid || colon == std::string_view::npos || !ForwardableAddress(local.substr(0, colon))) {
+    if (line_uid != uid || colon == std::string_view::npos) {
+      continue;
+    }
+    const std::optional<std::vector<std::uint8_t>> address = ProcAddressBytes(local.substr(0, colon));
+    if (!address.has_value() || !ForwardableAddress(*address)) {
       continue;
     }
     const std::optional<std::uint64_t> port = ParseHex(local.substr(colon + 1));
@@ -127,18 +164,109 @@ std::vector<std::uint16_t> ParseListeningPorts(std::string_view proc_net_tcp, st
   return ports;
 }
 
-std::vector<std::uint16_t> ListeningPorts() {
+bool ParseSockDiagListeners(std::span<const std::uint8_t> reply, std::uint32_t uid,
+                            std::vector<std::uint16_t>& ports) {
+  std::size_t offset = 0;
+  while (reply.size() - offset >= sizeof(nlmsghdr)) {
+    nlmsghdr header{};
+    std::memcpy(&header, reply.data() + offset, sizeof(header));
+    if (header.nlmsg_len < sizeof(nlmsghdr) || header.nlmsg_len > reply.size() - offset) {
+      return true;  // truncated or malformed: nothing after it can be framed
+    }
+    if (header.nlmsg_type == NLMSG_DONE || header.nlmsg_type == NLMSG_ERROR) {
+      return true;
+    }
+    if (header.nlmsg_type == SOCK_DIAG_BY_FAMILY &&
+        header.nlmsg_len >= NLMSG_LENGTH(sizeof(inet_diag_msg))) {
+      inet_diag_msg message{};
+      std::memcpy(&message, reply.data() + offset + NLMSG_HDRLEN, sizeof(message));
+      const std::size_t address_size = message.idiag_family == AF_INET6 ? 16 : 4;
+      std::array<std::uint8_t, 16> address{};
+      std::memcpy(address.data(), message.id.idiag_src, address_size);
+      // Asked for LISTEN only; the state is checked anyway, as the text path does.
+      if (message.idiag_state == TCP_LISTEN && message.idiag_uid == uid &&
+          ForwardableAddress(std::span<const std::uint8_t>(address.data(), address_size))) {
+        const std::uint16_t port = ntohs(message.id.idiag_sport);
+        if (port != 0) {
+          ports.push_back(port);
+        }
+      }
+    }
+    offset += NLMSG_ALIGN(header.nlmsg_len);
+  }
+  return false;
+}
+
+std::optional<std::vector<std::uint16_t>> ListeningPortsFromSockDiag() {
   const std::uint32_t uid = static_cast<std::uint32_t>(::getuid());
+  util::UniqueFd socket(::socket(AF_NETLINK, SOCK_DGRAM | SOCK_CLOEXEC, NETLINK_SOCK_DIAG));
+  if (!socket.IsValid()) {
+    return std::nullopt;
+  }
   std::vector<std::uint16_t> ports;
-  for (const char* table : {"/proc/net/tcp", "/proc/net/tcp6"}) {
-    if (const std::optional<std::string> text = ReadProcTable(table)) {
-      const std::vector<std::uint16_t> found = ParseListeningPorts(*text, uid);
-      ports.insert(ports.end(), found.begin(), found.end());
+  // Sized for a dump message's worth: the kernel fills up to a page-sized skb per
+  // read, and a smaller buffer truncates a datagram.
+  std::vector<std::uint8_t> buffer(32 * 1024);
+  std::uint32_t sequence = 0;
+  for (const std::uint8_t family : {std::uint8_t{AF_INET}, std::uint8_t{AF_INET6}}) {
+    struct {
+      nlmsghdr header;
+      inet_diag_req_v2 request;
+    } message{};
+    message.header.nlmsg_len = sizeof(message);
+    message.header.nlmsg_type = SOCK_DIAG_BY_FAMILY;
+    message.header.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+    message.header.nlmsg_seq = ++sequence;
+    message.request.sdiag_family = family;
+    message.request.sdiag_protocol = IPPROTO_TCP;
+    message.request.idiag_states = 1U << TCP_LISTEN;  // the kernel skips the established table
+    sockaddr_nl kernel{};
+    kernel.nl_family = AF_NETLINK;
+    if (::sendto(socket.Get(), &message, sizeof(message), 0, reinterpret_cast<const sockaddr*>(&kernel),
+                 sizeof(kernel)) != static_cast<ssize_t>(sizeof(message))) {
+      return std::nullopt;
+    }
+    for (bool done = false; !done;) {
+      const ssize_t got = ::recv(socket.Get(), buffer.data(), buffer.size(), 0);
+      if (got < 0 && errno == EINTR) {
+        continue;
+      }
+      if (got <= 0) {
+        return std::nullopt;  // a refused or broken dump: the caller reads /proc instead
+      }
+      done = ParseSockDiagListeners(std::span<const std::uint8_t>(buffer.data(), static_cast<std::size_t>(got)),
+                                    uid, ports);
     }
   }
   std::sort(ports.begin(), ports.end());
   ports.erase(std::unique(ports.begin(), ports.end()), ports.end());
   return ports;
+}
+
+std::optional<std::vector<std::uint16_t>> ListeningPortsFromProc() {
+  const std::uint32_t uid = static_cast<std::uint32_t>(::getuid());
+  std::vector<std::uint16_t> ports;
+  bool any = false;
+  for (const char* table : {"/proc/net/tcp", "/proc/net/tcp6"}) {
+    if (const std::optional<std::string> text = ReadProcTable(table)) {
+      any = true;
+      const std::vector<std::uint16_t> found = ParseListeningPorts(*text, uid);
+      ports.insert(ports.end(), found.begin(), found.end());
+    }
+  }
+  if (!any) {
+    return std::nullopt;
+  }
+  std::sort(ports.begin(), ports.end());
+  ports.erase(std::unique(ports.begin(), ports.end()), ports.end());
+  return ports;
+}
+
+std::vector<std::uint16_t> ListeningPorts() {
+  if (std::optional<std::vector<std::uint16_t>> ports = ListeningPortsFromSockDiag()) {
+    return std::move(*ports);
+  }
+  return ListeningPortsFromProc().value_or(std::vector<std::uint16_t>{});
 }
 
 }  // namespace microide::server

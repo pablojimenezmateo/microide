@@ -449,6 +449,37 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-28-416 — an idle remote server spent 0.34% of a core reading `/proc/net/tcp` for its port list. [RESOLVED 2026-10-28]
+
+Found measuring what an idle remote project costs on both sides (new QA scenario
+`W` in `tools/qa/remote.py`, below). On the loopback host, connected and settled:
+the editor +2.4 wakeups/s and ~0 CPU over its own local idle; the server ~6
+wakeups/s but **0.34% CPU**, more than a heartbeat and the git sampler's few stats
+per second can cost. The port sampler (`ports/subscribe`, every 2 s) read
+`/proc/net/tcp` and `tcp6`: **7.9 ms of CPU per sample with 23 sockets on the
+machine**. The procfs iterator walks the whole established-connection hash table,
+whose size follows RAM, not the socket count, and prints every socket of every
+user -- for a list of a handful of this user's LISTEN sockets.
+
+`ListeningPorts()` asks `NETLINK_SOCK_DIAG` for `1 << TCP_LISTEN` only (what
+`ss -l` does): the kernel then walks the listening hash alone and skips the
+established table. 0.056 ms per sample. The procfs text stays as the fallback where
+netlink is refused (a seccomp profile, a sandbox). Both paths go through one
+byte-level forwardable-address rule, so they cannot disagree. Server idle CPU
+measured by `W`: 0.341% -> 0.034%.
+
+Tests: `RemoteServer/ListeningPortsParseSockDiag` (the reply parser over built
+netlink messages: user, state, address, a dump split across reads, a truncated
+message), `RemoteServer/ListeningPortsSourcesAgreeOnTheLiveHost` (both sources see
+the test's own listener and name the same ports).
+
+`W` -- idle cost: the editor's idle on the local fixture first (the baseline: ~2.3
+wakeups/s, the caret blink, once the ~10 s startup tail has passed), then
+connected and settled; per thread, CPU from `schedstat` (ns; `/proc/<pid>/stat`'s
+10 ms ticks were too coarse to see 0.03%) and context switches; the server's read
+on the host in one ssh call. Budgets: client +0.5% CPU / +20 wakeups/s over its
+local idle, server 0.5% / 20 per second.
+
 ### TD-2026-10-28-415 — `RemoteHostService/APortThatStartsListeningIsForwarded` once kept an automatic forward after its port stopped listening. [RESOLVED 2026-10-28 — an ordering hole found and closed; not reproduced, the evidence stays]
 
 2026-10-28: the port list reached the UI two ways: the subscription's answer by

@@ -14,14 +14,20 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include <arpa/inet.h>
+#include <linux/inet_diag.h>
+#include <linux/netlink.h>
+#include <linux/sock_diag.h>
+#include <netinet/tcp.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -300,6 +306,119 @@ void TestListeningPortsParseProcNetTcp() {
          "::1, :: and ::ffff:127.0.0.1, not a global address");
 }
 
+// One SOCK_DIAG_BY_FAMILY reply, built the way the kernel frames it.
+class SockDiagReply {
+ public:
+  SockDiagReply& Listener(int family, const std::vector<std::uint8_t>& address, std::uint16_t port,
+                          std::uint32_t uid, std::uint8_t state = TCP_LISTEN) {
+    inet_diag_msg message{};
+    message.idiag_family = static_cast<std::uint8_t>(family);
+    message.idiag_state = state;
+    message.idiag_uid = uid;
+    message.id.idiag_sport = htons(port);
+    std::memcpy(message.id.idiag_src, address.data(), address.size());
+    Append(SOCK_DIAG_BY_FAMILY, &message, sizeof(message));
+    return *this;
+  }
+  SockDiagReply& Done() {
+    const int status = 0;
+    Append(NLMSG_DONE, &status, sizeof(status));
+    return *this;
+  }
+  std::span<const std::uint8_t> bytes() const { return bytes_; }
+
+ private:
+  void Append(std::uint16_t type, const void* payload, std::size_t size) {
+    nlmsghdr header{};
+    header.nlmsg_len = static_cast<std::uint32_t>(NLMSG_LENGTH(size));
+    header.nlmsg_type = type;
+    header.nlmsg_flags = NLM_F_MULTI;
+    const std::size_t at = bytes_.size();
+    bytes_.resize(at + NLMSG_SPACE(size));
+    std::memcpy(bytes_.data() + at, &header, sizeof(header));
+    std::memcpy(bytes_.data() + at + NLMSG_HDRLEN, payload, size);
+  }
+  std::vector<std::uint8_t> bytes_;
+};
+
+// The netlink source keeps exactly what the /proc one keeps (the shared address
+// rule): this user's LISTEN sockets on a loopback or wildcard address.
+void TestListeningPortsParseSockDiag() {
+  const std::vector<std::uint8_t> v4_loopback{127, 0, 0, 1}, v4_any{0, 0, 0, 0}, v4_lan{10, 0, 0, 10};
+  std::vector<std::uint8_t> v6_loopback(16, 0), v6_any(16, 0), v6_mapped(16, 0), v6_global(16, 0);
+  v6_loopback[15] = 1;
+  v6_mapped[10] = v6_mapped[11] = 0xFF;
+  v6_mapped[12] = 127;
+  v6_mapped[15] = 1;
+  v6_global[0] = 0x20;
+  v6_global[1] = 0x01;
+  v6_global[15] = 1;
+  SockDiagReply reply;
+  reply.Listener(AF_INET, v4_loopback, 3000, 1000)
+      .Listener(AF_INET, v4_any, 8080, 1000)
+      .Listener(AF_INET, v4_loopback, 8081, 1001)                   // another user's
+      .Listener(AF_INET, v4_loopback, 8082, 1000, TCP_ESTABLISHED)  // not listening
+      .Listener(AF_INET, v4_lan, 8083, 1000)                        // an outside address
+      .Listener(AF_INET6, v6_loopback, 5432, 1000)
+      .Listener(AF_INET6, v6_any, 9000, 1000)
+      .Listener(AF_INET6, v6_mapped, 9001, 1000)
+      .Listener(AF_INET6, v6_global, 9002, 1000)
+      .Done();
+  std::vector<std::uint16_t> ports;
+  Expect(server::ParseSockDiagListeners(reply.bytes(), 1000, ports), "a reply with NLMSG_DONE ends the dump");
+  std::sort(ports.begin(), ports.end());
+  Expect((ports == std::vector<std::uint16_t>{3000, 5432, 8080, 9000, 9001}),
+         "loopback, wildcard and v4-mapped loopback listeners of this user only");
+
+  SockDiagReply partial;
+  partial.Listener(AF_INET, v4_loopback, 3000, 1000);
+  ports.clear();
+  Expect(!server::ParseSockDiagListeners(partial.bytes(), 1000, ports) &&
+             ports == std::vector<std::uint16_t>{3000},
+         "a reply without NLMSG_DONE asks for the next read, keeping what it held");
+
+  // A length past the buffer cannot be framed: the dump ends, what came before stays.
+  SockDiagReply truncated;
+  truncated.Listener(AF_INET, v4_loopback, 3000, 1000).Listener(AF_INET, v4_any, 8080, 1000);
+  ports.clear();
+  const std::span<const std::uint8_t> whole = truncated.bytes();
+  Expect(server::ParseSockDiagListeners(whole.first(whole.size() - 4), 1000, ports) &&
+             ports == std::vector<std::uint16_t>{3000},
+         "a truncated message ends the dump without reading past the buffer");
+}
+
+// Against the running kernel: both sources see a listener this test opens, and
+// they agree on the whole list (retried: another process on the machine may open
+// or close a listener between the two reads).
+void TestListeningPortsSourcesAgreeOnTheLiveHost() {
+  const int listener = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  Expect(listener >= 0, "a TCP socket");
+  sockaddr_in address{};
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  socklen_t length = sizeof(address);
+  Expect(::bind(listener, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == 0 &&
+             ::listen(listener, 1) == 0 &&
+             ::getsockname(listener, reinterpret_cast<sockaddr*>(&address), &length) == 0,
+         "listening on 127.0.0.1:0");
+  const std::uint16_t port = ntohs(address.sin_port);
+  const auto has = [&](const std::vector<std::uint16_t>& ports) {
+    return std::find(ports.begin(), ports.end(), port) != ports.end();
+  };
+  const std::optional<std::vector<std::uint16_t>> from_proc = server::ListeningPortsFromProc();
+  Expect(from_proc.has_value() && has(*from_proc), "/proc/net/tcp lists the test's listener");
+  if (const std::optional<std::vector<std::uint16_t>> from_diag = server::ListeningPortsFromSockDiag()) {
+    Expect(has(*from_diag), "sock_diag lists the test's listener");
+    bool agreed = false;
+    for (int attempt = 0; attempt < 5 && !agreed; ++attempt) {
+      agreed = server::ListeningPortsFromSockDiag() == server::ListeningPortsFromProc();
+    }
+    Expect(agreed, "sock_diag and /proc/net/tcp name the same ports");
+  }
+  Expect(has(server::ListeningPorts()), "ListeningPorts lists the test's listener");
+  ::close(listener);
+}
+
 // A connection that dies before the hello carries the host's own reason. The
 // attach command's stderr went wherever the editor's did, so a server refusing to
 // start ("... has mode 0775 ...; a parent of the socket directory must ...")
@@ -409,6 +528,9 @@ void RegisterRemoteServerTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteServer/AttachStartsOnDemandAndTheServerIdlesOut",
           TestAttachStartsOnDemandAndTheServerIdlesOut);
   AddTest(tests, "RemoteServer/ListeningPortsParseProcNetTcp", TestListeningPortsParseProcNetTcp);
+  AddTest(tests, "RemoteServer/ListeningPortsParseSockDiag", TestListeningPortsParseSockDiag);
+  AddTest(tests, "RemoteServer/ListeningPortsSourcesAgreeOnTheLiveHost",
+          TestListeningPortsSourcesAgreeOnTheLiveHost);
   AddTest(tests, "RemoteServer/PortsSubscribePushesANewListener", TestPortsSubscribePushesANewListener);
   AddTest(tests, "RemoteServer/AClientReleasedOnItsOwnThreadIsDestroyedElsewhere",
           TestAClientReleasedOnItsOwnThreadIsDestroyedElsewhere);

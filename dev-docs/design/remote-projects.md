@@ -253,7 +253,8 @@ this document's § 7, what a user still missed:
   host version. **Per-host port forwards**: one `HostPortForwards` shared by a
   host's sessions.
 - **Automatic port forwarding**: `ports/subscribe` pushes the host user's
-  listening ports (sampled from `/proc/net/tcp{,6}` every 2 s); a port that starts
+  listening ports (sampled every 2 s through sock_diag netlink, LISTEN sockets only;
+  `/proc/net/tcp{,6}` where netlink is refused -- TD-2026-10-28-416); a port that starts
   listening after connect is forwarded (`remote.auto_forward_ports`).
 - **Project home status block** (§ 7.3): the link, the server and the sync as
   stages, a failure's reason with the reproducing ssh command, and Retry.
