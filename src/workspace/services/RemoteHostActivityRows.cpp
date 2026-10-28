@@ -12,12 +12,6 @@ namespace {
 namespace remote = project::remote;
 using Item = plugin::PluginHost::SidebarItem;
 
-constexpr std::string_view kDot = " \xc2\xb7 ";
-
-std::string Count(std::size_t n, std::string_view one, std::string_view many) {
-  return std::to_string(n) + " " + std::string(n == 1 ? one : many);
-}
-
 // The rows' totals: the sum of what was reported, or "…" when nothing was.
 struct Totals {
   std::optional<std::int64_t> rss;
@@ -78,10 +72,10 @@ std::vector<Item> BuildHostActivityRows(const HostActivityInput& input) {
       detail = "pid " + std::to_string(*status->pid);
     }
     if (status != nullptr && status->uptime.has_value()) {
-      detail += (detail.empty() ? "" : std::string(kDot)) + "up " + remote::FormatAge(*status->uptime);
+      detail += (detail.empty() ? "" : std::string(remote::kFieldSeparator)) + "up " + remote::FormatAge(*status->uptime);
     }
     if (status != nullptr) {
-      detail += (detail.empty() ? "" : std::string(kDot)) + remote::FormatFigures(status->server);
+      detail += (detail.empty() ? "" : std::string(remote::kFieldSeparator)) + remote::FormatFigures(status->server);
     } else {
       detail = input.connection_state;
     }
@@ -93,15 +87,15 @@ std::vector<Item> BuildHostActivityRows(const HostActivityInput& input) {
 
   if (group("group:workspaces", "Workspaces", std::to_string(status->workspaces.size()))) {
     for (const remote::ServerWorkspace& workspace : status->workspaces) {
-      std::string detail = Count(workspace.clients, "client", "clients");
+      std::string detail = remote::FormatCount(workspace.clients, "client", "clients");
       if (workspace.files.has_value()) {
-        detail += std::string(kDot) + Count(*workspace.files, "file", "files");
+        detail += std::string(remote::kFieldSeparator) + remote::FormatCount(*workspace.files, "file", "files");
       }
       if (!workspace.watch.empty() && workspace.watch != "none") {
-        detail += std::string(kDot) + "watch " + workspace.watch;
+        detail += std::string(remote::kFieldSeparator) + "watch " + workspace.watch;
       }
       if (own(workspace.root)) {
-        detail += std::string(kDot) + "this window";
+        detail += std::string(remote::kFieldSeparator) + "this window";
       }
       row("workspace:" + workspace.root, workspace.root, std::move(detail));
     }
@@ -115,7 +109,7 @@ std::vector<Item> BuildHostActivityRows(const HostActivityInput& input) {
       totals.Add(terminal.figures);
     }
     if (group("group:terminals", "Terminals",
-              std::to_string(status->terminals->size()) + std::string(kDot) + totals.Text())) {
+              std::to_string(status->terminals->size()) + std::string(remote::kFieldSeparator) + totals.Text())) {
       for (const remote::ServerTerminal& terminal : *status->terminals) {
         // What runs in it is what the user looks for (`#3 · watch`); the directory
         // while the shell itself is in the foreground.
@@ -129,10 +123,10 @@ std::vector<Item> BuildHostActivityRows(const HostActivityInput& input) {
         if (terminal.exited) {
           detail = "exited";
         } else {
-          detail = remote::FormatFigures(terminal.figures) + std::string(kDot) +
-                   (terminal.clients == 0 ? std::string("no tab") : Count(terminal.clients, "client", "clients"));
+          detail = remote::FormatFigures(terminal.figures) + std::string(remote::kFieldSeparator) +
+                   (terminal.clients == 0 ? std::string("no tab") : remote::FormatCount(terminal.clients, "client", "clients"));
         }
-        row("terminal:" + std::to_string(terminal.handle), "#" + std::to_string(terminal.handle) + std::string(kDot) + place,
+        row("terminal:" + std::to_string(terminal.handle), "#" + std::to_string(terminal.handle) + std::string(remote::kFieldSeparator) + place,
             std::move(detail));
       }
     }
@@ -146,19 +140,19 @@ std::vector<Item> BuildHostActivityRows(const HostActivityInput& input) {
       totals.Add(process.figures);
     }
     if (group("group:processes", "Processes",
-              std::to_string(status->processes->size()) + std::string(kDot) + totals.Text())) {
+              std::to_string(status->processes->size()) + std::string(remote::kFieldSeparator) + totals.Text())) {
       for (const remote::ServerProcess& process : *status->processes) {
         std::string state;
         if (process.exited) {
           state = "exited";
         } else if (process.detached_for.has_value()) {
-          state = std::string(process.kept ? "kept" : "detached") + std::string(kDot) +
+          state = std::string(process.kept ? "kept" : "detached") + std::string(remote::kFieldSeparator) +
                   remote::FormatAge(*process.detached_for);
         } else {
           state = "running";
         }
         std::string detail = process.exited ? std::move(state)
-                                            : state + std::string(kDot) + remote::FormatFigures(process.figures);
+                                            : state + std::string(remote::kFieldSeparator) + remote::FormatFigures(process.figures);
         row("process:" + std::to_string(process.handle), remote::ProcessDisplayName(process.argv), std::move(detail));
       }
     }

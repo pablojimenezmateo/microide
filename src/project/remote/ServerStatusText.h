@@ -16,6 +16,11 @@ namespace microide::project::remote {
 // never describe the same figure differently. A figure that was not reported
 // reads as "…", never as zero.
 inline constexpr std::string_view kNotReported = "\xe2\x80\xa6";
+// Between the figures of one line: "pid 812 · up 3 h 5 min · 3.2% · 41 MB".
+inline constexpr std::string_view kFieldSeparator = " \xc2\xb7 ";
+
+// "1 file", "3 files".
+std::string FormatCount(std::size_t n, std::string_view one, std::string_view many);
 
 // "3.2%" (of one core), "…" when not reported.
 std::string FormatCpuShare(std::optional<std::int32_t> permille);

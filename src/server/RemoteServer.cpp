@@ -221,8 +221,9 @@ void RemoteServer::InstallHandlers(Connection& connection) {
       const std::filesystem::path log = remote::ServerLogPath(config_.socket_path.parent_path());
       path = log.string();
       if (std::optional<std::string> bytes = util::ReadTextFile(log)) {
-        constexpr std::size_t kMaxBytes = 256 * 1024;
-        text = bytes->size() > kMaxBytes ? bytes->substr(bytes->size() - kMaxBytes) : std::move(*bytes);
+        constexpr std::size_t kMaxLogReplyBytes = 256 * 1024;  // the tail is what is read
+        text = bytes->size() > kMaxLogReplyBytes ? bytes->substr(bytes->size() - kMaxLogReplyBytes)
+                                                 : std::move(*bytes);
       }
     }
     result["path"] = util::JsonValue(std::move(path));

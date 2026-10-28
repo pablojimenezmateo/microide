@@ -6,12 +6,6 @@
 namespace microide::project::remote {
 namespace {
 
-constexpr std::string_view kDot = " \xc2\xb7 ";
-
-std::string Count(std::size_t n, std::string_view one, std::string_view many) {
-  return std::to_string(n) + " " + std::string(n == 1 ? one : many);
-}
-
 void Pad(std::string& line, std::size_t column) {
   // Padding counts bytes; the table's text is ASCII but for "…" and "·", which
   // only ever follow the last padded column.
@@ -23,6 +17,10 @@ void Pad(std::string& line, std::size_t column) {
 }
 
 }  // namespace
+
+std::string FormatCount(std::size_t n, std::string_view one, std::string_view many) {
+  return std::to_string(n) + " " + std::string(n == 1 ? one : many);
+}
 
 std::string FormatCpuShare(std::optional<std::int32_t> permille) {
   if (!permille.has_value()) {
@@ -108,7 +106,7 @@ std::string TerminalPlace(std::string_view cwd, std::string_view root) {
 }
 
 std::string FormatFigures(const ActivityFigures& figures) {
-  return FormatCpuShare(figures.cpu_permille) + std::string(kDot) + FormatBytes(figures.rss_bytes);
+  return FormatCpuShare(figures.cpu_permille) + std::string(kFieldSeparator) + FormatBytes(figures.rss_bytes);
 }
 
 std::vector<std::string> StatusRoots(const ServerStatus& status) {
@@ -140,12 +138,12 @@ std::string FormatServerStatusTable(const ServerStatus& status) {
     out += " " + status.release;
   }
   if (status.pid.has_value()) {
-    out += std::string(kDot) + "pid " + std::to_string(*status.pid);
+    out += std::string(kFieldSeparator) + "pid " + std::to_string(*status.pid);
   }
   if (status.uptime.has_value()) {
-    out += std::string(kDot) + "up " + FormatAge(*status.uptime);
+    out += std::string(kFieldSeparator) + "up " + FormatAge(*status.uptime);
   }
-  out += std::string(kDot) + FormatFigures(status.server);
+  out += std::string(kFieldSeparator) + FormatFigures(status.server);
   out += "\n";
   const std::vector<std::string> roots = StatusRoots(status);
   if (roots.empty()) {
@@ -161,15 +159,15 @@ std::string FormatServerStatusTable(const ServerStatus& status) {
     const auto workspace = std::find_if(status.workspaces.begin(), status.workspaces.end(),
                                         [&](const ServerWorkspace& w) { return w.root == root; });
     if (workspace != status.workspaces.end()) {
-      out += std::string(kDot) + Count(workspace->clients, "client", "clients");
+      out += std::string(kFieldSeparator) + FormatCount(workspace->clients, "client", "clients");
       if (workspace->files.has_value()) {
-        out += std::string(kDot) + Count(*workspace->files, "file", "files");
+        out += std::string(kFieldSeparator) + FormatCount(*workspace->files, "file", "files");
       }
       if (!workspace->watch.empty() && workspace->watch != "none") {
-        out += std::string(kDot) + "watch " + workspace->watch;
+        out += std::string(kFieldSeparator) + "watch " + workspace->watch;
       }
     } else {
-      out += std::string(kDot) + "not open";
+      out += std::string(kFieldSeparator) + "not open";
     }
     out += "\n";
     const auto row = [&](std::string name, std::optional<int> pid, std::string state, const ActivityFigures& figures) {
@@ -193,7 +191,7 @@ std::string FormatServerStatusTable(const ServerStatus& status) {
           place += (place.empty() ? "" : " ") + std::string("(") + terminal.command + ")";
         }
         row("terminal #" + std::to_string(terminal.handle) + (place.empty() ? "" : " " + place), terminal.pid,
-            terminal.exited ? std::string("exited") : Count(terminal.clients, "client", "clients"),
+            terminal.exited ? std::string("exited") : FormatCount(terminal.clients, "client", "clients"),
             terminal.figures);
       }
     }
