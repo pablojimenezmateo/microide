@@ -58,6 +58,14 @@ What it checks, each as the user would see it, with the measured latencies:
          up pages the rest in from the host down to line 1
      T11 a terminal a second app instance is attached to is not offered as one
          with no tab; this instance's own orphan is
+  W  idle cost                  the editor's idle on the local fixture, then connected and
+                                settled: CPU and wakeups per second of the editor (over its
+                                local baseline) and of the host's server, per thread, against
+                                budgets (TD-2026-10-28-416)
+  X  live cost                  CPU seconds on both sides, wall time and peak RSS of the
+                                first sync, of four host agents churning for 15 s, and of a
+                                host terminal printing a million lines (INFO: the numbers a
+                                change to the sync, watch or terminal path moves)
   V  the Host view              (remote-host-activity) Remote > Show Status opens it;
                                 the project's terminal is listed (with its pid on
                                 the host); `yes` in it raises its CPU figure; Delete
@@ -145,6 +153,81 @@ def wait_for(pred, timeout: float, every: float = 0.25):
             return v, time.monotonic() - t0
         time.sleep(every)
     return None, time.monotonic() - t0
+
+
+# What an idle process costs, per thread: CPU time in ns (schedstat's first field:
+# precise, where /proc/<pid>/stat counts 10 ms ticks) and context switches
+# (voluntary + involuntary: each is a wakeup or a preemption, so their rate is
+# what an idle process costs the machine besides CPU), plus the process's RSS.
+# One script for both sides of the link -- run here for the editor and through one
+# ssh call for the host's server -- printing "<tid> <ns> <switches> <comm>" per
+# thread and a final "rss <kB>".
+SAMPLE_SCRIPT = (
+    'for t in /proc/$P/task/*; do '
+    'n=$(cut -d" " -f1 "$t/schedstat" 2>/dev/null) || continue; '
+    'c=$(awk \'/ctxt_switches/ {n += $2} END {print n}\' "$t/status" 2>/dev/null) || continue; '
+    'echo "${t##*/} $n $c $(cat "$t/comm" 2>/dev/null)"; done; '
+    'echo "rss $(awk \'/VmRSS/ {print $2}\' /proc/$P/status)"')
+
+
+def parse_sample(text: str) -> tuple[dict[str, tuple[int, int, str]], int]:
+    threads: dict[str, tuple[int, int, str]] = {}
+    rss = 0
+    for line in text.splitlines():
+        parts = line.split(maxsplit=3)
+        if len(parts) == 2 and parts[0] == "rss" and parts[1].isdigit():
+            rss = int(parts[1])
+        elif len(parts) >= 3 and parts[1].isdigit() and parts[2].isdigit():
+            threads[parts[0]] = (int(parts[1]), int(parts[2]), parts[3] if len(parts) > 3 else "?")
+    return threads, rss
+
+
+def local_sample(pid: int) -> str:
+    return subprocess.run(["sh", "-c", f"P={pid}; {SAMPLE_SCRIPT}"], capture_output=True, text=True).stdout
+
+
+class IdleCost:
+    """CPU %, wakeups per second and the busiest threads between two samples."""
+
+    def __init__(self, before: str, after: str, seconds: float):
+        (first, _), (last, self.rss) = parse_sample(before), parse_sample(after)
+        self.seconds = max(seconds, 1e-3)
+        by_name: dict[str, list[float]] = {}
+        for tid, (ns, switches, name) in last.items():
+            ns0, switches0, _ = first.get(tid, (0, 0, name))  # a thread born inside the window
+            entry = by_name.setdefault(name, [0.0, 0.0])
+            entry[0] += (ns - ns0) / 1e7 / self.seconds  # ns -> % of one core
+            entry[1] += (switches - switches0) / self.seconds
+        self.cpu = sum(v[0] for v in by_name.values())
+        self.wakeups = sum(v[1] for v in by_name.values())
+        self.top = sorted(by_name.items(), key=lambda kv: -kv[1][1])[:3]
+
+    def __str__(self) -> str:
+        top = ", ".join(f"{name} {w:.1f}/s {c:.3f}%" for name, (c, w) in self.top)
+        return f"cpu={self.cpu:.3f}% wakeups={self.wakeups:.1f}/s rss={self.rss} kB [{top}]"
+
+
+def idle_cost_over(pid: int, seconds: float) -> IdleCost:
+    before, t0 = local_sample(pid), time.monotonic()
+    time.sleep(seconds)
+    return IdleCost(before, local_sample(pid), time.monotonic() - t0)
+
+
+# A process's whole CPU cost so far, in seconds: its own (utime + stime, every
+# thread, the exited ones included) and its reaped children's (cutime + cstime: the
+# server's git runs, the editor's ssh). For workloads measured in seconds; the
+# 10 ms tick is fine there. "<cpu seconds> <peak RSS kB>" from one script, run here
+# or through ssh.
+COST_SCRIPT = ("set -- $(sed 's/.*) //' /proc/$P/stat); "
+               "echo $(( ${12} + ${13} + ${14} + ${15} )) $(getconf CLK_TCK) "
+               "$(awk '/VmHWM/ {print $2}' /proc/$P/status)")
+
+
+def parse_cost(text: str) -> tuple[float, int] | None:
+    parts = text.split()
+    if len(parts) != 3 or not all(p.isdigit() for p in parts):
+        return None
+    return int(parts[0]) / int(parts[1]), int(parts[2])
 
 
 class Suite:
@@ -608,10 +691,159 @@ class Suite:
         app.key("Escape"); app.settle(0.2)
         app.check("R")
 
+    # ---- group W: what an idle remote project costs -------------------------
+    IDLE_WINDOW_S = 15.0
+    # Budgets for a connected, idle remote project. The client's is ABOVE the
+    # editor's own idle on the local fixture (the caret blink, ~2.3 wakeups/s),
+    # measured first. What should be there: the heartbeat -- one tick per 2 s on the
+    # client's remote-io thread, its pong on the server's -- and the server's git
+    # sampler (a few stats a second); the watch is event-driven and the activity
+    # sampler runs only while the Host view shows. Measured 2026-10-28 on the
+    # loopback host (TD-2026-10-28-416..418): client +1 wakeup/s and ~0 CPU, server
+    # 2.6 wakeups/s, 0.03% CPU and 9.5 MB RSS. Before those, the server read
+    # /proc/net/tcp every 2 s (0.34% CPU), kept the first sync in memory (48 MB) and
+    # polled its process table and listener; the client ticked four times per ping.
+    # Headroom for a loaded CI box, but each budget fails what was there before.
+    IDLE_CLIENT_CPU_PCT = 0.25
+    IDLE_CLIENT_WAKEUPS = 6.0
+    IDLE_CLIENT_RSS_MB = 60  # over the local idle: the mirror's per-file state, bounded allocator slack
+    IDLE_SERVER_CPU_PCT = 0.2
+    IDLE_SERVER_WAKEUPS = 10.0
+    IDLE_SERVER_RSS_MB = 32
+    # "Settled": a 2 s window under this many wakeups/s. The editor's startup tail
+    # (the first frames, the index, plugin loads) runs ~10 s at hundreds, and a
+    # repaint is one wakeup per llvmpipe thread -- 16 on the reference machine -- so
+    # this is under one frame per window.
+    QUIET_WAKEUPS = 10.0
+
+    def settle_quiet(self, timeout: float = 60.0) -> None:
+        wait_for(lambda: idle_cost_over(self.app.proc.pid, 2.0).wakeups < self.QUIET_WAKEUPS, timeout, 0)
+
+    def measure_local_idle(self) -> IdleCost:
+        """The editor's own idle cost on the local fixture, before any remote
+        project: the baseline the client's remote figures are measured against."""
+        self.settle_quiet()
+        return idle_cost_over(self.app.proc.pid, self.IDLE_WINDOW_S)
+
+    def run_idle_cost(self, local: IdleCost) -> None:
+        app = self.app
+        # Settled: the first sync done and its follow-ups (git status, the index)
+        # finished, so the window sees the steady state and not the tail of a sync.
+        wait_for(lambda: self.remote().get("filesPending", 1) == 0, 120, 0.5)
+        self.settle_quiet()
+        try:
+            status = json.loads(self.host.ssh(
+                '"$HOME/.local/share/microide/server/microide-server" status --json'))
+            server_pid = int(status["pid"])
+        except (ValueError, KeyError, TypeError) as error:
+            self.record("W.server-pid", False, f"no pid from the host's status: {error}")
+            return
+        window = int(self.IDLE_WINDOW_S)
+        client_before, t0 = local_sample(app.proc.pid), time.monotonic()
+        # One ssh call for both host samples, so its own handshake is outside the
+        # window it measures.
+        out = self.host.ssh(f"P={server_pid}; {SAMPLE_SCRIPT}; echo ====; sleep {window}; {SAMPLE_SCRIPT}",
+                            timeout=window + 60)
+        client = IdleCost(client_before, local_sample(app.proc.pid), time.monotonic() - t0)
+        self.info("W.client-local-idle", str(local))
+        self.info("W.client-remote-idle", str(client))
+        self.record("W.client-idle-cpu", client.cpu - local.cpu <= self.IDLE_CLIENT_CPU_PCT,
+                    f"+{client.cpu - local.cpu:.3f}% over the local idle (budget {self.IDLE_CLIENT_CPU_PCT}%)")
+        self.record("W.client-idle-wakeups", client.wakeups - local.wakeups <= self.IDLE_CLIENT_WAKEUPS,
+                    f"+{client.wakeups - local.wakeups:.1f}/s over the local idle "
+                    f"(budget {self.IDLE_CLIENT_WAKEUPS}/s)")
+        self.record("W.client-idle-rss", (client.rss - local.rss) / 1024 <= self.IDLE_CLIENT_RSS_MB,
+                    f"+{(client.rss - local.rss) / 1024:.0f} MB over the local idle "
+                    f"(budget {self.IDLE_CLIENT_RSS_MB} MB)")
+        if "====" not in out:
+            self.record("W.server-sample", False, f"host sample unreadable: {out[-300:]!r}")
+            return
+        before, after = out.split("====", 1)
+        server = IdleCost(before, after, self.IDLE_WINDOW_S)
+        self.info("W.server-idle", f"pid={server_pid} {server}")
+        self.record("W.server-idle-cpu", server.cpu <= self.IDLE_SERVER_CPU_PCT,
+                    f"{server.cpu:.3f}% (budget {self.IDLE_SERVER_CPU_PCT}%)")
+        self.record("W.server-idle-wakeups", server.wakeups <= self.IDLE_SERVER_WAKEUPS,
+                    f"{server.wakeups:.1f}/s (budget {self.IDLE_SERVER_WAKEUPS}/s)")
+        self.record("W.server-idle-rss", server.rss / 1024 <= self.IDLE_SERVER_RSS_MB,
+                    f"{server.rss / 1024:.1f} MB (budget {self.IDLE_SERVER_RSS_MB} MB)")
+
+    # ---- group X: what live remote work costs ------------------------------
+    def client_cost(self) -> tuple[float, int] | None:
+        return parse_cost(subprocess.run(["sh", "-c", f"P={self.app.proc.pid}; {COST_SCRIPT}"],
+                                         capture_output=True, text=True).stdout)
+
+    def server_pid(self) -> int | None:
+        try:
+            return int(json.loads(self.host.ssh(
+                '"$HOME/.local/share/microide/server/microide-server" status --json'))["pid"])
+        except (ValueError, KeyError, TypeError):
+            return None
+
+    def server_cost(self, pid: int | None) -> tuple[float, int] | None:
+        return parse_cost(self.host.ssh(f"P={pid}; {COST_SCRIPT}")) if pid else None
+
+    def measure_live(self, name: str, work) -> None:
+        """CPU seconds both sides spend on `work()`, its wall time, and both sides'
+        peak RSS after it, as INFO lines: the numbers a change to the sync, the
+        watch or the terminal path moves."""
+        pid = self.server_pid()
+        client0, server0 = self.client_cost(), self.server_cost(pid)
+        t0 = time.monotonic()
+        detail = work() or ""
+        wall = time.monotonic() - t0
+        client1, server1 = self.client_cost(), self.server_cost(self.server_pid())
+        if not (client0 and client1 and server1):
+            self.record(f"X.{name}-measured", False, f"a cost sample failed: {client0} {client1} {server1}")
+            return
+        # A server that started inside the window (the first sync) cost all it has.
+        server_cpu = server1[0] - (server0[0] if server0 and self.server_pid() == pid else 0.0)
+        self.info(f"X.{name}", f"{wall:.1f}s wall; cpu client={client1[0] - client0[0]:.2f}s "
+                               f"server={server_cpu:.2f}s; peak rss client={client1[1] // 1024} MB "
+                               f"server={server1[1] // 1024} MB {detail}")
+
+    def run_live_cost_after_open(self) -> None:
+        app, host = self.app, self.host
+        if not host.agents:
+            host.install_agents()
+
+        def churn():
+            out = subprocess.run(ssh_cmd(CHECK_HOST or host.name, f"python3 {host.agents} churn {host.root} 4 15"),
+                                 capture_output=True, text=True, timeout=120).stdout
+            # The client's share includes catching up after the agents stop.
+            wait_for(lambda: not self.trees_equal()[2], 60, 1.0)
+            return out.strip().splitlines()[-1] if out.strip() else ""
+        self.measure_live("agent-churn", churn)
+        host.reset()
+        wait_for(lambda: not self.trees_equal()[2], 60, 1.0)
+
+        marker = f"QA-FLOOD-{self.token}"
+
+        def flood():
+            app.send("term"); app.settle(1.0)
+            app.send("type", f"seq 1 1000000; echo {marker}-$((40+2))"); app.send("key", "enter")
+            got, dt = wait_for(lambda: f"{marker}-42" in self.app.query(
+                "terminal-output", {"tab": len(self.app.query("terminals")) - 1, "pane": 0, "lines": 50}).get("text", ""),
+                120, 0.5)
+            return f"(6.9 MB of output; done={bool(got)})"
+        self.measure_live("terminal-flood", flood)
+        self.close_all_terminals()
+
     def run_all(self) -> None:
         app, host, tok = self.app, self.host, self.token
-        app.send("remote-open", f"{host.name}:{host.root}")
-        msg, dt, ok = self.wait_ready()
+        local_idle = self.measure_local_idle() if self.runs("W") else None
+        if self.runs("X"):
+            def first_sync():
+                app.send("remote-open", f"{host.name}:{host.root}")
+                result = self.wait_ready()
+                wait_for(lambda: self.remote().get("filesPending", 1) == 0, 120, 0.5)
+                return result
+            first: list = []
+            self.measure_live("first-sync", lambda: (first.append(first_sync()), "")[1])
+            msg, dt, ok = first[0]
+        else:
+            app.send("remote-open", f"{host.name}:{host.root}")
+            msg, dt, ok = self.wait_ready()
         for project in app.query("projects"):
             if project.get("host") == host.name:
                 self.mirror = Path(project["root"])
@@ -622,6 +854,12 @@ class Suite:
         _, _, diff = self.trees_equal()
         self.record("A.tree-equal", not diff, f"differing: {sorted(diff)[:10]}")
         app.screenshot("A-ready"); app.check("A")
+
+        if local_idle is not None:
+            self.run_idle_cost(local_idle)
+
+        if self.runs("X"):
+            self.run_live_cost_after_open()
 
         if self.runs("R"):
             self.run_remote_menu()
