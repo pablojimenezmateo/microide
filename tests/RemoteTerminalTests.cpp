@@ -759,10 +759,27 @@ void TestADetachedHostTerminalIsReattachedByIdentity() {
            "detached: not running, the identity kept for the session to record");
   }  // the session (destroyed detached) and the connection go
   {
-    const std::vector<remote::ServerTerminal> rows = ListedTerminals(dir);
-    const remote::ServerTerminal* row = Listed(rows, recorded.handle);
-    Expect(row != nullptr && row->clients == 0 && !row->exited,
-           "the host still runs it, attached to nobody: destroying a detached session closes nothing");
+    // The listing comes over a NEW connection, which the server serves
+    // independently of the first one's detach and close: under load it can
+    // answer before it has processed them and still count the old client. What
+    // is asserted is where it settles -- attached to nobody -- and that the
+    // terminal is never closed on the way there.
+    std::string last = "never listed";
+    const bool settled = WaitUntil(
+        [&] {
+          const std::vector<remote::ServerTerminal> rows = ListedTerminals(dir);
+          const remote::ServerTerminal* row = Listed(rows, recorded.handle);
+          if (row == nullptr || row->exited) {
+            last = row == nullptr ? "not listed" : "exited";
+            return true;  // settled, wrongly: reported below
+          }
+          last = "clients=" + std::to_string(row->clients);
+          return row->clients == 0;
+        },
+        std::chrono::seconds(10));
+    Expect(settled && last == "clients=0",
+           "the host still runs it, attached to nobody: destroying a detached session closes "
+           "nothing (" + last + ")");
   }
 
   auto second = Connect(dir);

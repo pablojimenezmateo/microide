@@ -117,8 +117,22 @@ Worse than the noise: the two builds interleave object files from *different sou
 states* if a source was edited between them, which is the same ODR-mismatch shape as
 editing source mid-run (§ "Editing source while a build or sanitizer run is in flight").
 
+Worst of all, and found on 2026-10-28: two ninjas writing `.ninja_deps` at once can
+leave an object's dependency record EMPTY (`ninja -t deps` prints `#deps 0`). That
+does not fail anything. ninja reads an empty record as "depends on nothing", so the
+object is never rebuilt again however many headers change — the corruption outlives
+the race that caused it. `src/app/Application.cpp.o` in `build/` kept yesterday's
+`WorkspaceShell` layout through a members change; `microide_tests` (which does not
+link it) stayed green on every shard, and the production binary segfaulted in
+`SetRenderBackendInfo` at startup, so all 219 QA scenarios failed as "exited at
+startup". The race was an unlocked `cmake --build build` run by hand while a
+`run-checks.sh` lane held the tree's build lock.
+
 - One build at a time, per build directory. Wait for it before starting another,
-  and before starting `ctest`.
+  and before starting `ctest`. A build started by hand while lanes run goes through
+  the lanes' lock: `flock build/.run-checks-build.lock cmake --build build ...`.
+- Every C++ TU includes at least one header, so `#deps 0` is always corruption:
+  `(cd build && ninja -t deps | grep '#deps 0')`, delete the listed objects, rebuild.
 - If a build ends with a missing or zero-byte binary, check for a second builder
   (`pgrep -c cc1plus`) before believing the error.
 - Separate build directories (`build/`, `build/microide-asan`, a worktree) are
