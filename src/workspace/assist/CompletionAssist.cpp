@@ -141,7 +141,7 @@ void CompletionAssist::AfterTyping(std::string_view typed) {
   // keystroke, and the questions below (feature settings, the server, the word at
   // the caret) cost a keystroke in a split ~25% over v2.12.0 for files nothing
   // completes (editor_split_grid_workout's typing phase).
-  if (ops.has_completion_provider && !ops.has_completion_provider(viewport->language_id())) {
+  if (port_.has_completion_provider && !port_.has_completion_provider(viewport->language_id())) {
     if (list_up) {
       FollowCompletionCaret();
     }
@@ -156,8 +156,8 @@ void CompletionAssist::AfterTyping(std::string_view typed) {
     LspClient* client = ops.lsp_client_for_viewport(*viewport, nullptr);
     server_trigger = client != nullptr && client->IsCompletionTriggerCharacter(c);
   }
-  if (server_trigger || (ops.plugin_completion_trigger_characters &&
-                         ops.plugin_completion_trigger_characters(viewport->language_id())
+  if (server_trigger || (port_.plugin_completion_trigger_characters &&
+                         port_.plugin_completion_trigger_characters(viewport->language_id())
                                  .find(c) != std::string::npos)) {
     if (list_up) {
       ops.dismiss_overlay(true);

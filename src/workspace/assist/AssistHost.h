@@ -29,9 +29,10 @@ class WorkspaceEditService;
 // reference to it.
 class AssistHost {
  public:
-  // The shell's callback seam. Keep it narrow: do not grow it into a generic
-  // shell callback bag. A feature that needs a new shell capability adds the one
-  // field it reads.
+  // The shell's callback seam every feature shares: settings, the active views,
+  // the LSP request plumbing, overlays and the redraws an assist edit owes. A
+  // callback only one feature reads belongs in that feature's own Port
+  // (CompletionAssist::Port, ...), so each seam says what its feature needs.
   struct Operations {
     std::function<std::optional<std::string>(std::string_view)> get_setting_value;
     std::function<editor::TextViewport*()> active_editable_viewport;
@@ -48,29 +49,6 @@ class AssistHost {
     std::function<void(OverlayMode)> show_overlay;
     std::function<void(bool)> dismiss_overlay;
     std::function<void()> request_overlay_redraw;
-    // Hand a prebuilt (signature, documentation) pair to the host's caret-anchored
-    // signature-help popup. Empty signature clears it.
-    std::function<void(std::string, std::string)> show_signature_help;
-    // Is the signature-help popup up? Typing inside the call re-asks for it.
-    std::function<bool()> signature_help_showing;
-    // Re-anchor the popup at the caret, so the hint stays on screen across the
-    // keystroke instead of expiring until the re-asked answer arrives.
-    std::function<void()> anchor_signature_help_at_caret;
-    std::function<bool(std::string_view, const std::vector<std::string>&, std::string*)>
-        execute_command_name;
-    // Collect the diagnostics for the viewport's file that overlap `range`,
-    // converted to LSP wire form (columns in the server's position encoding), to
-    // populate a codeAction request `context`. The encoding must match the request
-    // Range's, or clangd (UTF-16) fails to match diagnostics on non-ASCII lines.
-    std::function<std::vector<LspClient::Diagnostic>(const editor::TextViewport&,
-                                                     const editor::SelectionRange&,
-                                                     lsp_encoding::PositionEncoding)>
-        collect_lsp_context_diagnostics;
-    std::function<bool(const std::filesystem::path&)> open_file_in_new_tab;
-    // Open `path` and then run `then` on the opened tab — now, or later when the
-    // file must first come from the host (a remote project's out-of-project file).
-    // False when it will not open at all.
-    std::function<bool(const std::filesystem::path&, std::function<void()> then)> open_file_then;
     std::function<void()> reset_caret_blink;
     std::function<void()> request_focused_editor_redraw;
     std::function<void()> request_active_editable_last_change_redraw;
@@ -78,13 +56,6 @@ class AssistHost {
     std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;
     std::function<void(CompareTabState&, bool)> sync_compare_selection_from_viewport;
     std::function<void(MergeTabState&)> update_merge_tracking_after_viewport_edit;
-    // Does anything (a language server, a plugin provider) offer completion for
-    // this language? Gates quick suggestions, so typing prose in a file nothing
-    // completes asks no one.
-    std::function<bool(std::string_view)> has_completion_provider;
-    // The trigger characters a plugin completion provider registered for this
-    // language (`ctx.completion.add{ trigger_characters = "." }`); empty if none.
-    std::function<std::string(std::string_view)> plugin_completion_trigger_characters;
     // A short message where the user is looking (an info toast): a navigation that
     // found nothing says so, as VS Code's "No definition found" does, instead of
     // writing only to an output channel no one has open.

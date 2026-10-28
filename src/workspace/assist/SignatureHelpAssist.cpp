@@ -116,7 +116,7 @@ void SignatureHelpAssist::AfterTyping(std::string_view typed) {
                           /*default_value=*/true)) {
     return;
   }
-  const bool showing = ops.signature_help_showing && ops.signature_help_showing();
+  const bool showing = port_.signature_help_showing && port_.signature_help_showing();
   if (!showing && !IsTrigger(*viewport, typed.front())) {
     return;
   }
@@ -124,11 +124,11 @@ void SignatureHelpAssist::AfterTyping(std::string_view typed) {
   // enclosing call or nothing; a plugin provider is asked by position alone and
   // commonly answers the same signature anywhere, so `)` closes its hints.
   if (showing && typed.front() == ')' && ops.lsp_client_for_viewport(*viewport, nullptr) == nullptr) {
-    ops.show_signature_help({}, {});
+    port_.show_signature_help({}, {});
     return;
   }
-  if (showing && ops.anchor_signature_help_at_caret) {
-    ops.anchor_signature_help_at_caret();
+  if (showing && port_.anchor_signature_help_at_caret) {
+    port_.anchor_signature_help_at_caret();
   }
   Request(*viewport, /*close_when_empty=*/showing);
 }
@@ -205,7 +205,7 @@ void SignatureHelpAssist::Resolve(const std::shared_ptr<Merge>& merge,
     return;
   }
   merge->acted = true;
-  const auto& show = host_.ops().show_signature_help;
+  const auto& show = port_.show_signature_help;
   if (!show) {
     return;
   }

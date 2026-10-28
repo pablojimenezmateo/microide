@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -18,7 +20,20 @@ namespace microide::workspace {
 // quick suggestions), and the insert-snippet list, which shares its session.
 class CompletionAssist {
  public:
+  // The shell callbacks only this feature reads (AssistHost::Operations has the
+  // shared ones).
+  struct Port {
+    // Does anything (a language server, a plugin provider) offer completion for
+    // this language? Gates quick suggestions, so typing prose in a file nothing
+    // completes asks no one.
+    std::function<bool(std::string_view)> has_completion_provider;
+    // The trigger characters a plugin completion provider registered for this
+    // language (`ctx.completion.add{ trigger_characters = "." }`); empty if none.
+    std::function<std::string(std::string_view)> plugin_completion_trigger_characters;
+  };
+
   explicit CompletionAssist(AssistHost& host) : host_(host) {}
+  void Configure(Port port) { port_ = std::move(port); }
 
   bool ShowCompletionOverlay(std::string* error_message = nullptr);
   // The editor took a keystroke while the completion list is up (the list never
@@ -83,6 +98,7 @@ class CompletionAssist {
   void PublishMerge(const std::shared_ptr<Merge>& merge, const std::filesystem::path& request_path);
 
   AssistHost& host_;
+  Port port_;
   // Monotonic request generation: a new request bumps it; an async callback
   // carries the generation it was dispatched under and drops its result when a
   // newer request has since superseded it. (TD-2026-07-16-65.)

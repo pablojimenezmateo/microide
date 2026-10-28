@@ -151,11 +151,11 @@ void NavigationAssist::NavigateToLspLocation(const LspClient::Location& location
 }
 
 void NavigationAssist::OpenThen(const std::filesystem::path& path, std::function<void()> then) {
-  if (host_.ops().open_file_then) {
-    (void)host_.ops().open_file_then(path, std::move(then));
+  if (port_.open_file_then) {
+    (void)port_.open_file_then(path, std::move(then));
     return;
   }
-  if (host_.ops().open_file_in_new_tab(path)) {
+  if (port_.open_file_in_new_tab(path)) {
     then();
   }
 }

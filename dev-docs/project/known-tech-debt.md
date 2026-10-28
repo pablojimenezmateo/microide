@@ -631,7 +631,7 @@ Start with Project (11 members) to set the shape, then Sidebar (26), Search (39)
 Edit (50), Tab (54), Global (86). Done when `Operations` holds only what has no
 service to name.
 
-### TD-2026-10-28-411 — the 2026-10-28 duplication pass: what it split, and what it left. [PARTLY RESOLVED 2026-10-28 — open: three remainders below]
+### TD-2026-10-28-411 — the 2026-10-28 duplication pass: what it split, and what it left. [PARTLY RESOLVED 2026-10-28 — open: two remainders below]
 
 Done, one commit each: `AssistService` (2,300 lines, 58 members, seven request
 counters) is six feature units in `src/workspace/assist/` over one `AssistHost`;
@@ -653,10 +653,14 @@ serialize.
 
 Left open:
 
-- **`AssistHost::Operations` is still one bag for six features** (31 fields; the three workspace-edit forwarders became a `WorkspaceEditService&` on 2026-10-28). Each
-  feature reads a subset; giving each its own port would make the seam say what
-  every feature needs. Not done in the split because the shell fills it in one
-  place and the payoff is clarity, not behaviour.
+- ~~**`AssistHost::Operations` is still one bag for six features**~~ RESOLVED
+  2026-10-28: measured per feature, nine callbacks were read by exactly one
+  feature. They live in `CompletionAssist::Port` (2), `CodeActionAssist::Port` (2),
+  `NavigationAssist::Port` (2) and `SignatureHelpAssist::Port` (3), handed to that
+  feature alone through `AssistService::Ports`; `AssistHost::Operations` keeps the
+  21 every feature shares (settings, active views, LSP request plumbing, overlays,
+  the redraws an assist edit owes), and its comment now says where a one-feature
+  callback goes.
 - **The `WorkspaceShell()` constructor is ~730 lines** (`WorkspaceShellPlugins.cpp`),
   almost all `Configure(... Operations{ lambdas })` wiring. Splitting it into
   per-service wiring functions needs members-.inc room (it is a ratcheted cap); a

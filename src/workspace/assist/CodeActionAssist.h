@@ -1,5 +1,8 @@
 #pragma once
 
+#include <functional>
+#include <utility>
+
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -15,7 +18,23 @@ namespace microide::workspace {
 // the selected action applied as an inline WorkspaceEdit or run as a command.
 class CodeActionAssist {
  public:
+  // The shell callbacks only this feature reads (AssistHost::Operations has the
+  // shared ones).
+  struct Port {
+    std::function<bool(std::string_view, const std::vector<std::string>&, std::string*)>
+        execute_command_name;
+    // Collect the diagnostics for the viewport's file that overlap `range`,
+    // converted to LSP wire form (columns in the server's position encoding), to
+    // populate a codeAction request `context`. The encoding must match the request
+    // Range's, or clangd (UTF-16) fails to match diagnostics on non-ASCII lines.
+    std::function<std::vector<LspClient::Diagnostic>(const editor::TextViewport&,
+                                                     const editor::SelectionRange&,
+                                                     lsp_encoding::PositionEncoding)>
+        collect_lsp_context_diagnostics;
+  };
+
   explicit CodeActionAssist(AssistHost& host) : host_(host) {}
+  void Configure(Port port) { port_ = std::move(port); }
 
   // Convert LSP code actions into overlay session items, materializing each
   // action's inline WorkspaceEdit under a SHARED aggregate edit/byte budget so a
@@ -49,6 +68,7 @@ class CodeActionAssist {
   bool Finish(bool applied, std::string error);
 
   AssistHost& host_;
+  Port port_;
   std::uint64_t request_generation_ = 0;
 };
 

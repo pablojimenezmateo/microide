@@ -572,52 +572,6 @@ WorkspaceShell::WorkspaceShell() {
           .show_overlay = [this](OverlayMode mode) { ShowOverlay(mode); },
           .dismiss_overlay = [this](bool focus_editor) { DismissOverlay(focus_editor); },
           .request_overlay_redraw = [this]() { RequestOverlayRedraw(); },
-          .show_signature_help =
-              [this](std::string signature, std::string documentation) {
-                ShowSignatureHelpPopup(std::move(signature), std::move(documentation));
-              },
-          .signature_help_showing = [this]() { return active_signature_help_.has_value(); },
-          .anchor_signature_help_at_caret =
-              [this]() {
-                const editor::TextViewport* viewport = ActiveEditableViewport();
-                if (active_signature_help_.has_value() && viewport != nullptr) {
-                  active_signature_help_->cursor_line = viewport->cursor_line();
-                  active_signature_help_->cursor_column = viewport->cursor_column();
-                  RequestEditorSurfaceRedraw();
-                }
-              },
-          .execute_command_name =
-              [this](std::string_view command_name,
-                     const std::vector<std::string>& args,
-                     std::string* error_message) {
-                return ExecuteCommandName(command_name, args, ActionSource::Menu,
-                                          error_message);
-              },
-          .collect_lsp_context_diagnostics =
-              [this](const editor::TextViewport& viewport,
-                     const editor::SelectionRange& range,
-                     lsp_encoding::PositionEncoding encoding) {
-                return CollectLspContextDiagnostics(viewport, range, encoding);
-              },
-          .open_file_in_new_tab =
-              [this](const std::filesystem::path& path) { return OpenFileInNewTab(path); },
-          .open_file_then =
-              [this](const std::filesystem::path& path, std::function<void()> then) {
-                if (glue_->remote_host_service != nullptr &&
-                    glue_->remote_host_service->OpenWhenFetched(
-                        path, [this, then](const std::filesystem::path& fetched) {
-                          if (OpenFileInNewTab(fetched)) {
-                            then();
-                          }
-                        })) {
-                  return true;
-                }
-                if (!OpenFileInNewTab(path)) {
-                  return false;
-                }
-                then();
-                return true;
-              },
           .reset_caret_blink = [this]() { ResetCaretBlink(); },
           .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
           .request_active_editable_last_change_redraw =
@@ -636,20 +590,80 @@ WorkspaceShell::WorkspaceShell() {
               [this](MergeTabState& tab) {
                 UpdateMergeTrackingAfterViewportEdit(tab);
               },
-          .has_completion_provider =
-              [this](std::string_view language_id) {
-                return !language_id.empty() &&
-                       (FindProvider(completion_registry_, std::string(language_id)) != nullptr ||
-                        CurrentLspManager().HasServer(std::string(language_id)));
-              },
-          .plugin_completion_trigger_characters =
-              [this](std::string_view language_id) {
-                const CompletionProviderSpec* provider =
-                    language_id.empty() ? nullptr
-                                        : FindProvider(completion_registry_, language_id);
-                return provider != nullptr ? provider->trigger_characters : std::string{};
-              },
           .notify_info = [this](std::string message) { Notify(NotificationService::Tone::Info, message); },
+      },
+      AssistService::Ports{
+          .completion =
+              {
+                  .has_completion_provider =
+                      [this](std::string_view language_id) {
+                        return !language_id.empty() &&
+                               (FindProvider(completion_registry_, std::string(language_id)) != nullptr ||
+                                CurrentLspManager().HasServer(std::string(language_id)));
+                      },
+                  .plugin_completion_trigger_characters =
+                      [this](std::string_view language_id) {
+                        const CompletionProviderSpec* provider =
+                            language_id.empty() ? nullptr
+                                                : FindProvider(completion_registry_, language_id);
+                        return provider != nullptr ? provider->trigger_characters : std::string{};
+                      },
+              },
+          .code_actions =
+              {
+                  .execute_command_name =
+                      [this](std::string_view command_name,
+                             const std::vector<std::string>& args,
+                             std::string* error_message) {
+                        return ExecuteCommandName(command_name, args, ActionSource::Menu,
+                                                  error_message);
+                      },
+                  .collect_lsp_context_diagnostics =
+                      [this](const editor::TextViewport& viewport,
+                             const editor::SelectionRange& range,
+                             lsp_encoding::PositionEncoding encoding) {
+                        return CollectLspContextDiagnostics(viewport, range, encoding);
+                      },
+              },
+          .navigation =
+              {
+                  .open_file_in_new_tab =
+                      [this](const std::filesystem::path& path) { return OpenFileInNewTab(path); },
+                  .open_file_then =
+                      [this](const std::filesystem::path& path, std::function<void()> then) {
+                        if (glue_->remote_host_service != nullptr &&
+                            glue_->remote_host_service->OpenWhenFetched(
+                                path, [this, then](const std::filesystem::path& fetched) {
+                                  if (OpenFileInNewTab(fetched)) {
+                                    then();
+                                  }
+                                })) {
+                          return true;
+                        }
+                        if (!OpenFileInNewTab(path)) {
+                          return false;
+                        }
+                        then();
+                        return true;
+                      },
+              },
+          .signature_help =
+              {
+                  .show_signature_help =
+                      [this](std::string signature, std::string documentation) {
+                        ShowSignatureHelpPopup(std::move(signature), std::move(documentation));
+                      },
+                  .signature_help_showing = [this]() { return active_signature_help_.has_value(); },
+                  .anchor_signature_help_at_caret =
+                      [this]() {
+                        const editor::TextViewport* viewport = ActiveEditableViewport();
+                        if (active_signature_help_.has_value() && viewport != nullptr) {
+                          active_signature_help_->cursor_line = viewport->cursor_line();
+                          active_signature_help_->cursor_column = viewport->cursor_column();
+                          RequestEditorSurfaceRedraw();
+                        }
+                      },
+              },
       });
   plugin_runtime_.SetCallbacks(plugin::PluginHost::Callbacks{
       .is_command_name_available =

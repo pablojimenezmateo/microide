@@ -1,5 +1,8 @@
 #pragma once
 
+#include <functional>
+#include <utility>
+
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -15,7 +18,21 @@ namespace microide::workspace {
 // opened and followed while typing a call.
 class SignatureHelpAssist {
  public:
+  // The shell callbacks only this feature reads (AssistHost::Operations has the
+  // shared ones).
+  struct Port {
+    // Hand a prebuilt (signature, documentation) pair to the host's caret-anchored
+    // signature-help popup. Empty signature clears it.
+    std::function<void(std::string, std::string)> show_signature_help;
+    // Is the signature-help popup up? Typing inside the call re-asks for it.
+    std::function<bool()> signature_help_showing;
+    // Re-anchor the popup at the caret, so the hint stays on screen across the
+    // keystroke instead of expiring until the re-asked answer arrives.
+    std::function<void()> anchor_signature_help_at_caret;
+  };
+
   explicit SignatureHelpAssist(AssistHost& host) : host_(host) {}
+  void Configure(Port port) { port_ = std::move(port); }
 
   bool Show(std::string* error_message = nullptr);
   // Text was typed into the editor. Parameter hints open on a trigger character
@@ -54,6 +71,7 @@ class SignatureHelpAssist {
   void Resolve(const std::shared_ptr<Merge>& merge, const std::filesystem::path& request_path);
 
   AssistHost& host_;
+  Port port_;
   std::uint64_t request_generation_ = 0;
 };
 

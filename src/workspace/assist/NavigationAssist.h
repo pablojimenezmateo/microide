@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <utility>
 #include <map>
 #include <memory>
 #include <string>
@@ -21,7 +22,18 @@ struct AssistServiceTestAccess;
 // hierarchy, and workspace symbols.
 class NavigationAssist {
  public:
+  // The shell callbacks only this feature reads (AssistHost::Operations has the
+  // shared ones).
+  struct Port {
+    std::function<bool(const std::filesystem::path&)> open_file_in_new_tab;
+    // Open `path` and then run `then` on the opened tab — now, or later when the
+    // file must first come from the host (a remote project's out-of-project file).
+    // False when it will not open at all.
+    std::function<bool(const std::filesystem::path&, std::function<void()> then)> open_file_then;
+  };
+
   explicit NavigationAssist(AssistHost& host) : host_(host) {}
+  void Configure(Port port) { port_ = std::move(port); }
 
   bool GoToDefinition(std::string* error_message = nullptr);
   // LSP-only navigation to the type/interface, implementation(s), or declaration of
@@ -130,6 +142,7 @@ class NavigationAssist {
                               file_line_cache) const;
 
   AssistHost& host_;
+  Port port_;
   // Cursor-jump navigation (definition / type-def / impl / declaration): one
   // counter, since the user only ever jumps once — any new navigation supersedes a
   // pending one. References are an independent surface.

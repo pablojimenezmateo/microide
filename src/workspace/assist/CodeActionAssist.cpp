@@ -61,8 +61,8 @@ bool CodeActionAssist::ShowOverlay(std::string* error_message,
     ops.ensure_lsp_document_open(*viewport, *client, language_id);
     const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
     std::vector<LspClient::Diagnostic> context_diagnostics;
-    if (ops.collect_lsp_context_diagnostics) {
-      context_diagnostics = ops.collect_lsp_context_diagnostics(*viewport, range, encoding);
+    if (port_.collect_lsp_context_diagnostics) {
+      context_diagnostics = port_.collect_lsp_context_diagnostics(*viewport, range, encoding);
     }
     ops.begin_tracked_lsp_request();
     client->RequestCodeActionAsync(
@@ -258,7 +258,7 @@ bool CodeActionAssist::ExecuteSelected() {
     return false;
   }
   std::string error_message;
-  const bool executed = ops.execute_command_name(action.command, action.arguments, &error_message);
+  const bool executed = port_.execute_command_name(action.command, action.arguments, &error_message);
   return Finish(executed, std::move(error_message));
 }
 

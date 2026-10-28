@@ -19,6 +19,13 @@ namespace microide::workspace {
 class AssistService {
  public:
   using Operations = AssistHost::Operations;
+  // Each feature's own callbacks, beside the shared Operations.
+  struct Ports {
+    CompletionAssist::Port completion;
+    CodeActionAssist::Port code_actions;
+    NavigationAssist::Port navigation;
+    SignatureHelpAssist::Port signature_help;
+  };
 
   AssistService() = default;
   AssistService(const AssistService&) = delete;
@@ -29,9 +36,14 @@ class AssistService {
                  WorkspaceOutputChannels& output_channels,
                  WorkspaceLanguageContract& language_contract,
                  WorkspaceEditService& edits,
-                 Operations operations) {
+                 Operations operations,
+                 Ports ports) {
     host_.Configure(context, plugin_runtime, output_channels, language_contract, edits,
                     std::move(operations));
+    completion_.Configure(std::move(ports.completion));
+    code_actions_.Configure(std::move(ports.code_actions));
+    navigation_.Configure(std::move(ports.navigation));
+    signature_help_.Configure(std::move(ports.signature_help));
   }
 
   CompletionAssist& completion() { return completion_; }
