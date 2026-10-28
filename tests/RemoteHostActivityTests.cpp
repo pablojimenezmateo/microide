@@ -252,6 +252,8 @@ void TestStatusListsTerminalsAndProcessesAcrossRoots() {
       [](const std::filesystem::path& path) { return path; });
   Expect(channel != nullptr, "the terminal opens");
   TerminalSessionTestAccess::EnterHostMode(shell, channel);
+  // Its row is asserted below: the open must have been answered first.
+  Expect(WaitUntil([&] { return channel->handle() != 0; }, std::chrono::seconds(10)), "it is answered");
 
   int kept_pid = -1;
   std::uint64_t kept_handle = 0;
@@ -274,7 +276,8 @@ void TestStatusListsTerminalsAndProcessesAcrossRoots() {
   Expect(WaitUntil(
              [&] {
                status = observer->Status(&error);
-               if (!status.has_value() || !status->processes.has_value()) {
+               if (!status.has_value() || !status->processes.has_value() || !status->terminals.has_value() ||
+                   status->terminals->empty() || !status->terminals->front().pid.has_value()) {
                  return false;
                }
                for (const remote::ServerProcess& process : *status->processes) {
@@ -285,7 +288,7 @@ void TestStatusListsTerminalsAndProcessesAcrossRoots() {
                return false;
              },
              std::chrono::seconds(10)),
-         "the kept process is listed as detached: " + error);
+         [&] { return "the kept process is listed as detached, the terminal with its shell: " + error; });
   const remote::ServerProcess* kept = nullptr;
   for (const remote::ServerProcess& process : *status->processes) {
     if (process.handle == kept_handle) {

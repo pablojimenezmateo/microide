@@ -449,6 +449,20 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-28-415 — `RemoteHostService/APortThatStartsListeningIsForwarded` once kept an automatic forward after its port stopped listening. [OPEN — not reproduced; the evidence is now kept]
+
+TSan lane, ten lanes at once (2026-10-28, at `5f13e41ee`): the listener was
+forwarded and announced, then closed, and for 30 s either the forward's row or
+its `port:` entry stayed. Not reproduced in 10 concurrent TSan runs with every
+core also spinning. The removal path was read end to end
+(`OnHostPorts` -> `StopForward` -> the serial work queue's `CancelForward` ->
+the mailbox's dismiss): a port that flickers out and back is re-forwarded and
+re-cancelled in order, and the fake ssh opens no listener, so a forward cannot
+make a port of its own on this "host". Every port the other lanes' tests open
+on this machine is also auto-forwarded through that one serial queue, which
+can only delay the cancel. The assertion now says which half stayed (the row,
+the registered forward, or both).
+
 ### TD-2026-10-28-414 — `RemoteTerminalRestore/ABackgroundStartedHostTerminalIsRecordedAtQuit` once never saw the background project's terminal. [OPEN — not reproduced; the evidence is now kept]
 
 Hardened lane, eight lanes at once (2026-10-28): two remote projects are opened

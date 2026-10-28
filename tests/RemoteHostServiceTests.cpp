@@ -723,7 +723,17 @@ void TestAPortThatStartsListeningIsForwarded() {
                                              .has_value();
              },
              std::chrono::seconds(30), std::chrono::milliseconds(10)),
-         "when it stops listening the automatic forward goes, quietly");
+         [&] {
+           // TD-2026-10-28-415: which half stayed.
+           return std::string("when it stops listening the automatic forward goes, quietly (row ") +
+                  (row_present() ? "still shown" : "gone") + ", forward " +
+                  (WorkspaceShellTestAccess::RemoteHosts(shell)
+                           .CommandText(target, "port:" + std::to_string(port))
+                           .has_value()
+                       ? "still registered"
+                       : "gone") +
+                  ")";
+         });
   RemoveFakeMaster(target);
 }
 
