@@ -61,6 +61,13 @@ class HighlightPrefetchService {
   void Shutdown();
 
  private:
+  // Post `compute(request)` to the worker under `key_prefix` + the request's
+  // viewport (a newer request for the same buffer supersedes an unstarted one),
+  // append its result under `mutex`, and wake the shell.
+  template <typename RequestT, typename ResultT, typename Compute>
+  void PostLatestAndCollect(const char* key_prefix, RequestT request, Compute compute,
+                            std::mutex& mutex, std::vector<ResultT>& results);
+
   project::ProjectBackgroundExecutor executor_;
   std::function<void()> wake_;  // set once before any Request; read on the worker
   std::mutex results_mutex_;
