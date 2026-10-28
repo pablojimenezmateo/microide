@@ -1,5 +1,6 @@
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
+#include "workspace/services/AssistService.h"
 #include "workspace/actions/WorkspaceActionServices.h"
 #include "workspace/registries/WorkspaceKeybindingRegistry.h"
 #include "util/Parse.h"
@@ -59,28 +60,28 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
   switch (id) {
     case ActionId::Completion: {
       std::string error_message;
-      if (!context_.ShowCompletionOverlay(&error_message)) {
+      if (!context_.assist().completion().ShowCompletionOverlay(&error_message)) {
         return reject(error_message.empty() ? "No completions available" : error_message);
       }
       return DispatchResult::Handled;
     }
     case ActionId::InsertSnippet: {
       std::string error_message;
-      if (!context_.ShowInsertSnippetOverlay(&error_message)) {
+      if (!context_.assist().completion().ShowInsertSnippetOverlay(&error_message)) {
         return reject(error_message.empty() ? "No snippets available" : error_message);
       }
       return DispatchResult::Handled;
     }
     case ActionId::CodeActions: {
       std::string error_message;
-      if (!context_.ShowCodeActionsOverlay(&error_message)) {
+      if (!context_.assist().code_actions().ShowOverlay(&error_message)) {
         return reject(error_message.empty() ? "No code actions available" : error_message);
       }
       return DispatchResult::Handled;
     }
     case ActionId::FormatDocument: {
       std::string error_message;
-      if (!context_.FormatActiveDocument(&error_message)) {
+      if (!context_.assist().refactor().FormatActiveDocument(&error_message)) {
         return reject(error_message.empty() ? "Formatting unavailable" : error_message);
       }
       return DispatchResult::Handled;
@@ -174,7 +175,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       // answer a prompt); bare, it opens the prompt prefilled with the symbol.
       if (!args.empty()) {
         std::string error_message;
-        if (!context_.RenameSymbol(JoinCommandArguments(args, 0), &error_message)) {
+        if (!context_.assist().refactor().RenameSymbol(JoinCommandArguments(args, 0), &error_message)) {
           return reject(error_message.empty() ? "Rename unavailable" : error_message);
         }
         return DispatchResult::Handled;
@@ -226,28 +227,28 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       return DispatchResult::Handled;
     case ActionId::GoToDefinition: {
       std::string error_message;
-      if (!context_.GoToLspDefinition(&error_message)) {
+      if (!context_.assist().navigation().GoToDefinition(&error_message)) {
         return reject(error_message.empty() ? "Definition unavailable" : error_message);
       }
       return DispatchResult::Handled;
     }
     case ActionId::GoToTypeDefinition: {
       std::string error_message;
-      if (!context_.GoToLspTypeDefinition(&error_message)) {
+      if (!context_.assist().navigation().GoToTypeDefinition(&error_message)) {
         return reject(error_message.empty() ? "Type definition unavailable" : error_message);
       }
       return DispatchResult::Handled;
     }
     case ActionId::GoToImplementation: {
       std::string error_message;
-      if (!context_.GoToLspImplementation(&error_message)) {
+      if (!context_.assist().navigation().GoToImplementation(&error_message)) {
         return reject(error_message.empty() ? "Implementation unavailable" : error_message);
       }
       return DispatchResult::Handled;
     }
     case ActionId::GoToDeclaration: {
       std::string error_message;
-      if (!context_.GoToLspDeclaration(&error_message)) {
+      if (!context_.assist().navigation().GoToDeclaration(&error_message)) {
         return reject(error_message.empty() ? "Declaration unavailable" : error_message);
       }
       return DispatchResult::Handled;
@@ -282,7 +283,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       return DispatchResult::Handled;
     case ActionId::SignatureHelp: {
       std::string error_message;
-      if (!context_.ShowSignatureHelp(&error_message)) {
+      if (!context_.assist().signature_help().Show(&error_message)) {
         return reject(error_message.empty() ? "No signature help available" : error_message);
       }
       return DispatchResult::Handled;

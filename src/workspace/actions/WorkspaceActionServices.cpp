@@ -1,5 +1,7 @@
 #include "workspace/actions/WorkspaceActionServices.h"
 
+#include "workspace/services/AssistService.h"
+
 #include <algorithm>
 #include <string>
 #include <utility>
@@ -40,10 +42,12 @@ ClipboardExportResult ClampClipboardExport(std::string_view text, std::size_t bu
 WorkspaceActionContext::WorkspaceActionContext(ProjectCatalogState& project_catalog,
                                                ProjectWorkspaceState& current_project_state,
                                                float& ui_scale,
+                                               AssistService& assist,
                                                Operations operations)
     : project_catalog_(project_catalog),
       state_(current_project_state),
       ui_scale_(ui_scale),
+      assist_(assist),
       operations_(std::move(operations)) {}
 
 void WorkspaceActionContext::PrepareForAction(ActionSource source) {
@@ -727,42 +731,6 @@ std::string WorkspaceActionContext::OpenGitCommitWorkflow() {
              : "Commit is unavailable";
 }
 
-bool WorkspaceActionContext::ShowCompletionOverlay(std::string* error_message) {
-  return operations_.show_completion_overlay(error_message);
-}
-
-bool WorkspaceActionContext::ShowInsertSnippetOverlay(std::string* error_message) {
-  return operations_.show_insert_snippet_overlay(error_message);
-}
-
-bool WorkspaceActionContext::ShowCodeActionsOverlay(std::string* error_message) {
-  return operations_.show_code_actions_overlay(error_message);
-}
-
-bool WorkspaceActionContext::GoToLspDefinition(std::string* error_message) {
-  return operations_.go_to_lsp_definition(error_message);
-}
-
-bool WorkspaceActionContext::GoToLspTypeDefinition(std::string* error_message) {
-  return operations_.go_to_lsp_type_definition(error_message);
-}
-
-bool WorkspaceActionContext::GoToLspImplementation(std::string* error_message) {
-  return operations_.go_to_lsp_implementation(error_message);
-}
-
-bool WorkspaceActionContext::GoToLspDeclaration(std::string* error_message) {
-  return operations_.go_to_lsp_declaration(error_message);
-}
-
-bool WorkspaceActionContext::FormatActiveDocument(std::string* error_message) {
-  return operations_.format_active_document(error_message);
-}
-
-bool WorkspaceActionContext::RenameSymbol(const std::string& new_name, std::string* error_message) {
-  return operations_.rename_symbol(new_name, error_message);
-}
-
 bool WorkspaceActionContext::FindLspReferences(std::string* error_message) {
   return operations_.find_lsp_references(error_message);
 }
@@ -779,10 +747,6 @@ void WorkspaceActionContext::OpenWorkspaceSymbolPicker(std::string query) {
 
 bool WorkspaceActionContext::ShowCallHierarchy(bool incoming, std::string* error_message) {
   return operations_.show_call_hierarchy(incoming, error_message);
-}
-
-bool WorkspaceActionContext::ShowSignatureHelp(std::string* error_message) {
-  return operations_.show_signature_help(error_message);
 }
 
 bool WorkspaceActionContext::DiscoverTestsForActiveBuffer(std::string* error_message) {
@@ -1592,8 +1556,8 @@ void WorkspaceActionContext::ApplyUndoRedo(bool redo) {
   // positions pointing at text that is gone. Redo cannot reach an active session
   // (the undo that made redo possible already dropped it), and clearing an
   // inactive one is a no-op, so this runs unconditionally rather than only on undo.
-  if (changed && operations_.clear_active_snippet_session_after_undo) {
-    operations_.clear_active_snippet_session_after_undo();
+  if (changed) {
+    assist_.snippets().ClearAfterUndo();
   }
   if (!changed) {
     return;
@@ -2097,9 +2061,7 @@ void WorkspaceActionContext::NotifyEditorViewportChanged(bool last_change) {
 }
 
 void WorkspaceActionContext::NotifyEditorCaretMoved() {
-  if (operations_.notify_snippet_session_caret_moved) {
-    operations_.notify_snippet_session_caret_moved();
-  }
+  assist_.snippets().NotifyCaretMoved();
   operations_.reset_caret_blink();
   operations_.request_active_tab_redraw(false);
   operations_.request_focused_editor_redraw();

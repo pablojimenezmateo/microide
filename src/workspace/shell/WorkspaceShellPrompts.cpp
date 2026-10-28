@@ -640,7 +640,7 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     const std::string new_name = context_.prompts.surface.input.text();
     MakePromptSurfaceService().DismissPromptSurface(true);
     if (!new_name.empty()) {
-      MakeActionContext().RenameSymbol(new_name, nullptr);
+      (void)assist_service_.refactor().RenameSymbol(new_name, nullptr);  // failures are logged
     }
     return;
   }

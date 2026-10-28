@@ -23,6 +23,7 @@
 
 namespace microide::workspace {
 
+class AssistService;
 class RemoteHostService;
 
 // Defined in GitSidebarCommandCenter.h; only the type is needed here (function
@@ -147,13 +148,6 @@ class WorkspaceActionContext {
     std::function<void()> open_buffer_search;
     std::function<void()> refresh_buffer_search;
     std::function<void()> open_buffer_replace;
-    std::function<bool(std::string*)> show_completion_overlay;
-    std::function<bool(std::string*)> show_insert_snippet_overlay;
-    std::function<bool(std::string*)> show_code_actions_overlay;
-    std::function<bool(std::string*)> go_to_lsp_definition;
-    std::function<bool(std::string*)> go_to_lsp_type_definition;
-    std::function<bool(std::string*)> go_to_lsp_implementation;
-    std::function<bool(std::string*)> go_to_lsp_declaration;
     std::function<bool(std::string*)> find_lsp_references;
     // `incoming` selects callers-of vs called-by; both render into the same channel.
     std::function<bool(bool, std::string*)> show_call_hierarchy;
@@ -161,13 +155,10 @@ class WorkspaceActionContext {
     // Change Language Mode: the pick (empty) or a language to set ("auto" detects
     // again); false, with why, for a language no definition has.
     std::function<bool(const std::string& language, std::string* error)> change_language_mode;
-    std::function<bool(std::string*)> format_active_document;
     std::function<std::string()> symbol_at_cursor;
-    std::function<bool(const std::string&, std::string*)> rename_symbol;
     // Refine a just-opened Rename Symbol prompt from the server's prepareRename
     // (prefill the placeholder / reject non-renameable positions). Best-effort.
     std::function<void(std::string)> refine_rename_prompt;
-    std::function<bool(std::string*)> show_signature_help;
     std::function<bool(std::string*)> discover_tests_for_active_buffer;
     std::function<bool(const std::vector<std::string>&, std::string*)> run_tests;
     std::function<bool(std::string*)> run_all_discovered_tests;
@@ -212,8 +203,6 @@ class WorkspaceActionContext {
     std::function<bool(std::size_t, const std::filesystem::path&, std::string*)> save_tab_as;
     std::function<bool(const std::filesystem::path&)> open_new_buffer_in_new_tab;
     std::function<void()> reset_caret_blink;
-    std::function<void()> notify_snippet_session_caret_moved;
-    std::function<void()> clear_active_snippet_session_after_undo;
     std::function<bool(EditorSplitOrientation)> split_editor_group;
     std::function<bool()> focus_other_group;
     // VS Code's focusLeft/Right/Above/BelowGroup and moveActiveEditorGroup*.
@@ -396,7 +385,12 @@ class WorkspaceActionContext {
   WorkspaceActionContext(ProjectCatalogState& project_catalog,
                          ProjectWorkspaceState& current_project_state,
                          float& ui_scale,
+                         AssistService& assist,
                          Operations operations);
+
+  // The language assists, called directly: an action that only runs one needs no
+  // Operations hop through the shell.
+  AssistService& assist() { return assist_; }
 
   void PrepareForAction(ActionSource source);
   bool RejectAction(ActionSource source, std::string feedback);
@@ -554,22 +548,12 @@ class WorkspaceActionContext {
   void ApplyProjectSearchViewCommand(ActionId id);
   // Git: Commit…: the commit message editor, or why it cannot open.
   std::string OpenGitCommitWorkflow();
-  bool ShowCompletionOverlay(std::string* error_message);
-  bool ShowInsertSnippetOverlay(std::string* error_message);
-  bool ShowCodeActionsOverlay(std::string* error_message);
-  bool GoToLspDefinition(std::string* error_message);
-  bool GoToLspTypeDefinition(std::string* error_message);
-  bool GoToLspImplementation(std::string* error_message);
-  bool GoToLspDeclaration(std::string* error_message);
-  bool ShowSignatureHelp(std::string* error_message);
   bool FindLspReferences(std::string* error_message);
   // Search Workspace Symbols: a quick pick the language server filters as the
   // query is typed, seeded with `query`.
   void OpenWorkspaceSymbolPicker(std::string query);
   bool ChangeLanguageMode(const std::string& language, std::string* error);
   bool ShowCallHierarchy(bool incoming, std::string* error_message);
-  bool FormatActiveDocument(std::string* error_message);
-  bool RenameSymbol(const std::string& new_name, std::string* error_message);
   bool DiscoverTestsForActiveBuffer(std::string* error_message);
   bool RunTests(const std::vector<std::string>& test_ids, std::string* error_message);
   bool RunAllDiscoveredTests(std::string* error_message);
@@ -910,6 +894,7 @@ class WorkspaceActionContext {
   ProjectCatalogState& project_catalog_;
   ProjectWorkspaceState& state_;
   float& ui_scale_;
+  AssistService& assist_;
   Operations operations_;
   ActionReceipt receipt_;
 };
