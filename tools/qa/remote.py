@@ -200,11 +200,20 @@ class IdleCost:
             entry[1] += (switches - switches0) / self.seconds
         self.cpu = sum(v[0] for v in by_name.values())
         self.wakeups = sum(v[1] for v in by_name.values())
-        self.top = sorted(by_name.items(), key=lambda kv: -kv[1][1])[:3]
+        # Mesa's software rasterizer threads: they wake only to draw a frame.
+        self.render_wakeups = sum(v[1] for name, v in by_name.items() if name.startswith("llvmpipe"))
+        # The busiest threads, the render threads folded into one entry.
+        folded: dict[str, list[float]] = {}
+        for name, (cpu, wakeups) in by_name.items():
+            entry = folded.setdefault("llvmpipe-*" if name.startswith("llvmpipe") else name, [0.0, 0.0])
+            entry[0] += cpu
+            entry[1] += wakeups
+        self.top = sorted(folded.items(), key=lambda kv: -kv[1][1])[:5]
 
     def __str__(self) -> str:
-        top = ", ".join(f"{name} {w:.1f}/s {c:.3f}%" for name, (c, w) in self.top)
-        return f"cpu={self.cpu:.3f}% wakeups={self.wakeups:.1f}/s rss={self.rss} kB [{top}]"
+        top = ", ".join(f"{name} {w:.1f}/s {c:.3f}%" for name, (c, w) in self.top if w >= 0.05)
+        return (f"cpu={self.cpu:.3f}% wakeups={self.wakeups:.1f}/s (frames: {self.render_wakeups:.1f} render "
+                f"wakeups/s) rss={self.rss} kB [{top}]")
 
 
 def idle_cost_over(pid: int, seconds: float) -> IdleCost:
@@ -710,14 +719,24 @@ class Suite:
     IDLE_SERVER_CPU_PCT = 0.2
     IDLE_SERVER_WAKEUPS = 10.0
     IDLE_SERVER_RSS_MB = 32
-    # "Settled": a 2 s window under this many wakeups/s. The editor's startup tail
-    # (the first frames, the index, plugin loads) runs ~10 s at hundreds, and a
-    # repaint is one wakeup per llvmpipe thread -- 16 on the reference machine -- so
-    # this is under one frame per window.
+    # "Settled": a 2 s window under this many wakeups/s AND with no frame drawn in it.
+    # The editor's startup tail (the first frames, the index, plugin loads) runs ~10 s
+    # at hundreds, and after a first sync the tree and git state repaint for a few
+    # seconds more: a frame wakes every render thread (16 llvmpipe threads on the
+    # reference machine), so one frame per window passed a wakeup threshold alone and
+    # its tail landed in the measurement. A UI that never stops drawing never
+    # settles, and its frames are then measured -- and fail the budget.
     QUIET_WAKEUPS = 10.0
 
     def settle_quiet(self, timeout: float = 60.0) -> None:
-        wait_for(lambda: idle_cost_over(self.app.proc.pid, 2.0).wakeups < self.QUIET_WAKEUPS, timeout, 0)
+        # A transient toast ("connected to ...") repaints when it expires, seconds
+        # after everything else went quiet: a one-off frame, not idle cost.
+        wait_for(lambda: not any(not n.get("sticky", True) for n in self.notifs()), timeout, 0.5)
+
+        def quiet() -> bool:
+            cost = idle_cost_over(self.app.proc.pid, 2.0)
+            return cost.wakeups < self.QUIET_WAKEUPS and cost.render_wakeups == 0
+        wait_for(quiet, timeout, 0)
 
     def measure_local_idle(self) -> IdleCost:
         """The editor's own idle cost on the local fixture, before any remote
