@@ -238,6 +238,24 @@ struct while the UBSAN shards were running).
 - On suspicion, `rm -rf build/microide-{asan,ubsan,tsan}` and re-run rather than
   rebuilding incrementally. ccache makes the from-scratch rebuild cheap.
 
+### A failure message built before the wait describes the state before the wait
+
+`Expect(WaitForText(session, "ready"), "the shell answers:\n" + ScreenText(session))`
+reads as "wait, then on failure show the screen". It is not: the two arguments of
+a call are evaluated in an unspecified order, and GCC builds the message first.
+So a failure shows the screen as it was BEFORE the 15 s wait -- blank, every
+time -- and that was written up as "the first client's screen stayed entirely
+empty for 15 s" (TD-2026-10-27-406). A diagnostic added to a flaky test later
+reported its own initial value, "never listed", for the same reason
+(TD-2026-10-28-413).
+
+- When a message reads state the condition waits on, pass it as a callable:
+  `Expect(Wait...(...), [&] { return "..." + ScreenText(session); })`. The
+  overload in tests/TestSupport.h builds it only on failure, after the wait.
+- Or run the wait into a `const bool` first and `Expect` on that.
+- A message made of literals, or of values fixed before the wait, is fine either
+  way.
+
 ### A test that only fails under TSAN is a product race until proven otherwise
 
 `WorkspaceShell/ReplaceAllFallsBackWhenResultsTruncated` went red on the tsan

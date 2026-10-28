@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <concepts>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -23,6 +24,21 @@ struct TestCase {
 
 void AddTest(std::vector<TestCase>& tests, std::string_view name, std::function<void()> run);
 void Expect(bool condition, std::string_view message);
+// The same with a message built only on failure, AFTER `condition` was evaluated.
+// Use it whenever the message reads state the condition waits on: in
+// `Expect(WaitForText(s, "x"), "..." + ScreenText(s))` C++ leaves the argument
+// order unspecified and GCC builds the message first, so a failure shows the
+// screen from BEFORE the wait -- which is how a slow first frame was once
+// recorded as "a blank screen for 15 s" (TD-2026-10-27-406).
+template <typename Describe>
+  requires std::invocable<Describe&> &&
+           std::convertible_to<std::invoke_result_t<Describe&>, std::string>
+void Expect(bool condition, Describe&& describe) {
+  if (!condition) {
+    const std::string message = describe();
+    Expect(false, message);
+  }
+}
 
 // True in an ASAN or TSAN build, where the code under test runs several times
 // slower: for the few assertions about absolute timing that measure the machine

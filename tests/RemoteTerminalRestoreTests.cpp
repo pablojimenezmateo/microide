@@ -288,16 +288,25 @@ void TestABackgroundStartedHostTerminalIsRecordedAtQuit() {
     Expect(PumpUntil(shell, [&] { return front.running() && front.host_identity().handle != 0; }),
            "the front project's terminal starts");
     const std::uint64_t front_handle = front.host_identity().handle;
+    // What the host listed on the last poll, for a failure (TD-2026-10-28-414).
+    std::string last_rows = "never polled";
     Expect(PumpUntil(shell,
                      [&] {
+                       last_rows.clear();
                        for (const remote::ServerTerminal& row : HostTerminals(host)) {
+                         last_rows += " #" + std::to_string(row.handle) + "(clients=" +
+                                      std::to_string(row.clients) + ")";
                          if (row.handle != front_handle && row.clients == 1) {
                            background = row.handle;
                          }
                        }
                        return background != 0;
                      }),
-           "the background project's terminal started too, with nobody looking at it");
+           [&] {
+             return "the background project's terminal started too, with nobody looking at it; "
+                    "front #" + std::to_string(front_handle) + ", the host listed:" +
+                    (last_rows.empty() ? std::string(" nothing") : last_rows);
+           });
     shell.Shutdown();  // quit
   }
   {

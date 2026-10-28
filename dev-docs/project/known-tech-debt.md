@@ -449,7 +449,23 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-28-414 — `RemoteTerminalRestore/ABackgroundStartedHostTerminalIsRecordedAtQuit` once never saw the background project's terminal. [OPEN — not reproduced; the evidence is now kept]
+
+Hardened lane, eight lanes at once (2026-10-28): two remote projects are opened
+on one fake host, the second switched away from while its link connects; the
+test then waits 30 s for the host to list a terminal other than the front one
+with one client. It never did, and the server log was empty ("none"). Not
+reproduced in 12 concurrent hardened runs. The assertion now names the front
+handle and every row the host listed on its last poll, which separates "the
+background terminal never opened" from "it opened with no client" (the
+TD-2026-10-27-400 shape).
+
 ### TD-2026-10-28-413 — `RemoteTerminal/ADetachedTerminalHoldsAnOnDemandServer` once saw a detached shell that never exited. [OPEN — not reproduced; the evidence is now kept]
+
+2026-10-28, second failure (tests lane): it reported "never listed" -- not
+evidence but the bug the diagnostic was meant to avoid: the message was built
+before the wait (unspecified argument order, see TD-406's correction). The wait
+now runs first.
 
 UBSan lane, eight lanes building and testing at once (2026-10-28): the test types
 `sleep 1; exit` into a host terminal while its open is in flight, detaches the
@@ -665,6 +681,15 @@ What `openspec/changes/archive/2026-10-27-remote-host-activity` did not finish:
   collapsed groups are not persisted with the session.
 
 ### TD-2026-10-27-406 — `RemoteTerminal/TwoClientsShareAHostTerminalAtTheSmallerSize` once saw a blank screen for 15 s. [OPEN — not reproduced; the evidence is now kept]
+
+2026-10-28 correction: the "blank screen" was never observed. The failure
+message was `Expect(WaitForText(a, ...), "..." + ScreenText(a))`, and C++ leaves
+argument order unspecified: GCC built the message -- the screen, the handle and
+the frame bytes -- BEFORE the 15 s wait ran, so it showed the screen at time
+zero, blank by nature. What failed is only "the prompt did not arrive in 15 s".
+The 2026-10-27 evidence below had the same flaw. Every such wait in
+RemoteTerminalTests now builds its message after the wait (the lazy `Expect`
+overload in tests/TestSupport.h), so the next failure shows the screen as it was.
 
 2026-10-27: every test using `ShortServerDir` prints the last 32 KiB of its
 server's log when it fails (the destructor sees the throwing `Expect` through

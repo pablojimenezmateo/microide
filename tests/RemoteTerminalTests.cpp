@@ -113,20 +113,17 @@ void TestHostTerminalRunsTheShellOnTheHost() {
   Expect(session.is_host_terminal(), "a remote launcher's terminal is a host terminal");
 
   TypeLine(session, "echo HOST-$((40+2)) \"$PWD\"");
-  Expect(WaitForText(session, "HOST-42 " + host.string()),
-         "the shell runs on the host, in the host's tree:\n" + ScreenText(session));
+  Expect(WaitForText(session, "HOST-42 " + host.string()), [&] { return std::string("the shell runs on the host, in the host's tree:\n" + ScreenText(session)); });
 
   TypeLine(session, "printf '\\033]7;file://localhost%s\\a\\033]0;from-host\\a' \"$PWD\"");
-  Expect(WaitUntil([&] { return session.LaunchLabel() == "from-host"; }, std::chrono::seconds(10)),
-         "OSC 0 from the host becomes the label; got '" + session.LaunchLabel() + "'");
+  Expect(WaitUntil([&] { return session.LaunchLabel() == "from-host"; }, std::chrono::seconds(10)), [&] { return std::string("OSC 0 from the host becomes the label; got '" + session.LaunchLabel() + "'"); });
   Expect(WaitUntil([&] { return session.reported_working_directory() == mirror; },
-                   std::chrono::seconds(10)),
-         "OSC 7 names the host's directory and arrives as the mirror's: " +
-             session.reported_working_directory().string());
+                   std::chrono::seconds(10)), [&] { return std::string("OSC 7 names the host's directory and arrives as the mirror's: " +
+             session.reported_working_directory().string()); });
 
   session.Resize(11, 53);
   TypeLine(session, "stty size");
-  Expect(WaitForText(session, "11 53"), "the host's pty took the new size:\n" + ScreenText(session));
+  Expect(WaitForText(session, "11 53"), [&] { return std::string("the host's pty took the new size:\n" + ScreenText(session)); });
   Expect(session.rows() == 11 && session.columns() == 53, "the mirror follows the host's size");
 
   TypeLine(session, "exit");
@@ -157,7 +154,7 @@ void TestHostTerminalSurvivesADroppedConnection() {
     Expect(channel != nullptr, "the terminal opens");
     TerminalSessionTestAccess::EnterHostMode(session, channel);
     TypeLine(session, "echo before-$((1+1)); sleep 1; echo while-detached-$((2+3))");
-    Expect(WaitForText(session, "before-2"), "output before the drop:\n" + ScreenText(session));
+    Expect(WaitForText(session, "before-2"), [&] { return std::string("output before the drop:\n" + ScreenText(session)); });
     handle = channel->handle();
     Expect(handle != 0, "the open was answered");
     first->peer().Fail("link dropped");  // nothing is closed on the host
@@ -175,8 +172,7 @@ void TestHostTerminalSurvivesADroppedConnection() {
   Expect(channel != nullptr, "the reattach is sent");
   TerminalSessionTestAccess::EnterHostMode(session, channel);
   Expect(WaitForText(session, "before-2"), "the reattached screen has the earlier output");
-  Expect(WaitForText(session, "while-detached-5"),
-         "and what the shell printed while detached:\n" + ScreenText(session));
+  Expect(WaitForText(session, "while-detached-5"), [&] { return std::string("and what the shell printed while detached:\n" + ScreenText(session)); });
   TypeLine(session, "echo after-$((3+4))");
   Expect(WaitForText(session, "after-7"), "and it takes input again");
   const std::string text = ScreenText(session);
@@ -219,7 +215,7 @@ void TestPredictionLeadsTheEchoByARoundTrip() {
   TerminalSessionTestAccess::EnterHostMode(session, channel);
   // Split so the echoed command line cannot match the prompt it sets.
   TypeLine(session, "PS1='rea''dy> '");
-  Expect(WaitForText(session, "ready> "), "the prompt arrives:\n" + ScreenText(session));
+  Expect(WaitForText(session, "ready> "), [&] { return std::string("the prompt arrives:\n" + ScreenText(session)); });
 
   const auto type = [&](char32_t c) {
     TerminalSession::KeyPress press;
@@ -275,7 +271,7 @@ void TestWarmReattachKeepsTheMirrorAndDuplicatesNothing() {
   Expect(channel != nullptr, "the terminal opens");
   TerminalSessionTestAccess::EnterHostMode(session, channel);
   TypeLine(session, "for i in $(seq 1 20); do echo early-$i; done; sleep 1; echo late-$((6*7))");
-  Expect(WaitForText(session, "early-20"), "the early output arrives:\n" + ScreenText(session));
+  Expect(WaitForText(session, "early-20"), [&] { return std::string("the early output arrives:\n" + ScreenText(session)); });
   const std::uint64_t handle = channel->handle();
   first->peer().Fail("link dropped");
   Expect(WaitUntil([&] { return !session.running(); }, std::chrono::seconds(5)), "the link drops");
@@ -286,8 +282,8 @@ void TestWarmReattachKeepsTheMirrorAndDuplicatesNothing() {
   auto reattached = remote::RemoteTerminalChannel::Attach(second, handle, session, identity, resume);
   Expect(reattached != nullptr, "the warm reattach is sent");
   session.ReattachHost(reattached);
-  Expect(WaitForText(session, "late-42"), "what the shell printed while detached arrives:\n" +
-                                              ScreenText(session));
+  Expect(WaitForText(session, "late-42"), [&] { return std::string("what the shell printed while detached arrives:\n" +
+                                              ScreenText(session)); });
   const std::string text = ScreenText(session);
   for (const char* line : {"early-1\n", "early-20", "late-42"}) {
     Expect(text.find(line) != std::string::npos && text.find(line) == text.rfind(line),
@@ -325,10 +321,10 @@ void TestTwoClientsShareAHostTerminalAtTheSmallerSize() {
   TypeLine(a, "echo ready-$((1+1))");
   // On a blank screen, whether any frame arrived at all (TD-2026-10-27-406): the
   // server's log is printed with the failure (ShortServerDir).
-  Expect(WaitForText(a, "ready-2"), "the first client sees its shell (handle " +
+  Expect(WaitForText(a, "ready-2"), [&] { return std::string("the first client sees its shell (handle " +
                                         std::to_string(channel_a->handle()) + ", " +
                                         std::to_string(channel_a->received_bytes()) + " frame bytes):\n" +
-                                        ScreenText(a));
+                                        ScreenText(a)); });
   const std::uint64_t handle = channel_a->handle();
 
   auto second = Connect(dir);
@@ -338,15 +334,14 @@ void TestTwoClientsShareAHostTerminalAtTheSmallerSize() {
   Expect(channel_b != nullptr, "the second client attaches");
   TerminalSessionTestAccess::EnterHostMode(b, channel_b);
   b.Resize(10, 40);
-  Expect(WaitForText(b, "ready-2"), "the second client sees the same screen:\n" + ScreenText(b));
+  Expect(WaitForText(b, "ready-2"), [&] { return std::string("the second client sees the same screen:\n" + ScreenText(b)); });
 
   TypeLine(b, "stty size");
-  Expect(WaitForText(b, "10 40") && WaitForText(a, "10 40"),
-         "the pty takes the smaller pane, and both see it:\n" + ScreenText(a));
+  Expect(WaitForText(b, "10 40") && WaitForText(a, "10 40"), [&] { return std::string("the pty takes the smaller pane, and both see it:\n" + ScreenText(a)); });
   Expect(WaitUntil([&] { return a.rows() == 10 && a.columns() == 40; }, std::chrono::seconds(5)),
          "the larger client mirrors the shared size");
   TypeLine(a, "echo from-a-$((2+3))");
-  Expect(WaitForText(b, "from-a-5"), "what one client types, the other sees:\n" + ScreenText(b));
+  Expect(WaitForText(b, "from-a-5"), [&] { return std::string("what one client types, the other sees:\n" + ScreenText(b)); });
   (void)a.ConsumeBell();
   (void)b.ConsumeBell();
   TypeLine(b, "printf '\\a'");
@@ -369,7 +364,7 @@ void TestTwoClientsShareAHostTerminalAtTheSmallerSize() {
   Expect(WaitUntil([&] { return a.rows() == 20 && a.columns() == 80; }, std::chrono::seconds(20)),
          "the host detaches the second client and the remaining one's view is its own size again");
   TypeLine(a, "stty size");
-  Expect(WaitForText(a, "20 80"), "the remaining client gets its room back:\n" + ScreenText(a));
+  Expect(WaitForText(a, "20 80"), [&] { return std::string("the remaining client gets its room back:\n" + ScreenText(a)); });
   a.Stop();
 }
 
@@ -398,7 +393,7 @@ void TestScrollingUpFetchesOlderHostHistory() {
     Expect(channel != nullptr, "the terminal opens");
     TerminalSessionTestAccess::EnterHostMode(writer, channel);
     TypeLine(writer, "i=1; while [ $i -le 1500 ]; do echo row-$i; i=$((i+1)); done; echo done-$((2*2))");
-    Expect(WaitForText(writer, "done-4"), "the output is written:\n" + ScreenText(writer));
+    Expect(WaitForText(writer, "done-4"), [&] { return std::string("the output is written:\n" + ScreenText(writer)); });
     handle = channel->handle();
     first->peer().Fail("detach");
     TerminalSessionTestAccess::EnterHostMode(writer, nullptr);
@@ -430,8 +425,7 @@ void TestScrollingUpFetchesOlderHostHistory() {
   };
   // The screen and the prefetched history can land in separate frames: wait for
   // the rows, and never read front() of an empty result (that was a TSAN SEGV).
-  Expect(WaitUntil([&] { return !rows().empty(); }, std::chrono::seconds(10)),
-         "the attach mirrors the prefetched rows:\n" + ScreenText(session));
+  Expect(WaitUntil([&] { return !rows().empty(); }, std::chrono::seconds(10)), [&] { return std::string("the attach mirrors the prefetched rows:\n" + ScreenText(session)); });
   const std::vector<int> prefetched = rows();
   Expect(!prefetched.empty() && prefetched.size() < 200 && prefetched.front() > 1000,
          "only the newest history was prefetched (" + std::to_string(prefetched.size()) + " rows)");
@@ -482,7 +476,7 @@ void TestServerStatusListsTerminalsAcrossRoots() {
   TerminalSession attached;
   auto attached_channel = open(a, attached, root_a);
   TypeLine(attached, "printf '\\033]7;file://localhost%s\\a' \"$PWD\"; echo cwd-$((1+1))");
-  Expect(WaitForText(attached, "cwd-2"), "the shell answers:\n" + ScreenText(attached));
+  Expect(WaitForText(attached, "cwd-2"), [&] { return std::string("the shell answers:\n" + ScreenText(attached)); });
   TerminalSession exited;
   auto exited_channel = open(a, exited, root_a);
   TypeLine(exited, "exit");
@@ -630,7 +624,9 @@ void TestADetachedTerminalHoldsAnOnDemandServer() {
   // terminal", "the shell never ran the typed line" and "it ran but was not
   // reaped" happened (TD-2026-10-28-413).
   std::string last_seen = "never listed";
-  Expect(WaitUntil(
+  // The wait runs before the message is built: as one Expect(WaitUntil(...), [&] { return std::string(// "..." + last_seen); }) the argument order is unspecified, and GCC built the
+  // message first -- every failure then read "never listed".
+  const bool exited = WaitUntil(
              [&] {
                rows = ListedTerminals(dir);
                const remote::ServerTerminal* row = Listed(rows, handle);
@@ -640,8 +636,8 @@ void TestADetachedTerminalHoldsAnOnDemandServer() {
                                                 " command='" + row->command + "'";
                return row != nullptr && row->exited;
              },
-             std::chrono::seconds(20), std::chrono::milliseconds(100)),
-         "the shell exits while detached, and its terminal is still listed: " + last_seen);
+             std::chrono::seconds(20), std::chrono::milliseconds(100));
+  Expect(exited, "the shell exits while detached, and its terminal is still listed: " + last_seen);
   const remote::ServerTerminal* row = Listed(rows, handle);
   Expect(row != nullptr && row->clients == 0 && row->root.empty(),
          "exited while detached, attached to nobody, under no workspace");
@@ -724,9 +720,8 @@ void TestInputTypedBeforeTheOpenSurvivesAnImmediateDetach() {
                }
                return ran == kTerminals;
              },
-             std::chrono::seconds(20), std::chrono::milliseconds(50)),
-         "every command typed before its open was answered ran: " + std::to_string(ran) + " of " +
-             std::to_string(kTerminals));
+             std::chrono::seconds(20), std::chrono::milliseconds(50)), [&] { return std::string("every command typed before its open was answered ran: " + std::to_string(ran) + " of " +
+             std::to_string(kTerminals)); });
   auto closer = Connect(dir);
   for (const std::uint64_t handle : handles) {
     util::JsonObject params;
@@ -757,7 +752,7 @@ void TestADetachedHostTerminalIsReattachedByIdentity() {
     TerminalSession session;
     Expect(session.Start(launcher, mirror, {}, "sh"), "the host terminal starts");
     TypeLine(session, "echo before-quit-$((6*7)); sleep 1; echo after-quit-$((7*7))");
-    Expect(WaitForText(session, "before-quit-42"), "the shell answers:\n" + ScreenText(session));
+    Expect(WaitForText(session, "before-quit-42"), [&] { return std::string("the shell answers:\n" + ScreenText(session)); });
     recorded = session.host_identity();
     Expect(!recorded.empty() && recorded.epoch == first->hello().daemon_epoch,
            "a running host terminal has an identity: its handle and its server's epoch");
@@ -794,8 +789,7 @@ void TestADetachedHostTerminalIsReattachedByIdentity() {
   const remote::RemoteProcessLauncher launcher(second, map, {.host_paths_readable_locally = true});
   TerminalSession reopened;
   Expect(reopened.Start(launcher, mirror, {}, "sh", recorded), "the reattach starts");
-  Expect(WaitForText(reopened, "after-quit-49"),
-         "the reattached screen has what the shell printed after the quit:\n" + ScreenText(reopened));
+  Expect(WaitForText(reopened, "after-quit-49"), [&] { return std::string("the reattached screen has what the shell printed after the quit:\n" + ScreenText(reopened)); });
   Expect(ScreenText(reopened).find("before-quit-42") != std::string::npos, "and what it printed before");
   Expect(WaitUntil([&] { return reopened.host_reattach() == terminal::HostReattach::Reattached; },
                    std::chrono::seconds(5)),
@@ -813,7 +807,7 @@ void TestADetachedHostTerminalIsReattachedByIdentity() {
   Expect(restarted.host_reattach() == terminal::HostReattach::ServerRestarted,
          "reported as a restarted server");
   TypeLine(restarted, "echo fresh-$((3*3))");
-  Expect(WaitForText(restarted, "fresh-9"), "a fresh shell:\n" + ScreenText(restarted));
+  Expect(WaitForText(restarted, "fresh-9"), [&] { return std::string("a fresh shell:\n" + ScreenText(restarted)); });
   Expect(restarted.host_identity().handle != recorded.handle, "a different terminal");
 
   // A handle the server does not have: refused, then a fresh shell.
@@ -822,7 +816,7 @@ void TestADetachedHostTerminalIsReattachedByIdentity() {
                     terminal::HostIdentity{.epoch = recorded.epoch, .handle = 999'999}),
          "a gone-handle start");
   TypeLine(gone, "echo gone-fresh-$((5*5))");
-  Expect(WaitForText(gone, "gone-fresh-25"), "typed input reaches the fresh shell:\n" + ScreenText(gone));
+  Expect(WaitForText(gone, "gone-fresh-25"), [&] { return std::string("typed input reaches the fresh shell:\n" + ScreenText(gone)); });
   Expect(gone.host_reattach() == terminal::HostReattach::Gone, "reported as gone");
   Expect(gone.host_identity().handle != 999'999 && !gone.host_identity().empty(),
          "the identity is the new terminal's");
@@ -870,7 +864,7 @@ void TestAPendingHostTerminalStartsOnceConnected() {
   Expect(session.host_reattach() == terminal::HostReattach::ServerRestarted,
          "the identity it carried was another server's: a fresh shell");
   TypeLine(session, "echo started-$((4*4))");
-  Expect(WaitForText(session, "started-16"), "the shell runs on the host:\n" + ScreenText(session));
+  Expect(WaitForText(session, "started-16"), [&] { return std::string("the shell runs on the host:\n" + ScreenText(session)); });
   Expect(ScreenText(session).find("DROPPED") == std::string::npos, "input typed while pending was dropped");
   session.Stop();
 }
