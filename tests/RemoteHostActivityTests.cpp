@@ -177,12 +177,40 @@ void TestSampleSeesARealChildTree() {
            "the tree read down the children files is the tree a full walk finds: " +
                std::to_string(whole[0].rss_bytes) + " vs " + std::to_string(trees[0].rss_bytes));
   }
+  // The share is checked against what the kernel says the busy child actually got
+  // over the same window, not against a fixed floor: with every core taken (the
+  // validation lanes run side by side) a spinning child gets ~10% of one, and
+  // "> 100 permille" read that as a unit error. The window is a second so that a
+  // tick (10 ms) is small against the CPU time it measures even under that load.
+  const auto busy_ticks = [busy] {
+    std::ifstream file("/proc/" + std::to_string(busy) + "/stat");
+    std::string line;
+    std::getline(file, line);
+    const auto stat = ProcessActivity::ParseStat(line);
+    return stat.has_value() ? stat->own_ticks : 0;
+  };
   ProcessActivity fresh;
+  const std::uint64_t ticks_before = busy_ticks();
+  const auto wall_before = std::chrono::steady_clock::now();
   Expect(fresh.Sample(roots)[2].cpu_permille == -1, "no share on a pid's first sample");
-  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  std::this_thread::sleep_for(std::chrono::seconds(1));
   const std::vector<ProcessActivity::Figures> second = fresh.Sample(roots);
-  Expect(second[2].cpu_permille > 100, "a busy loop uses a good part of a core: " +
-                                           std::to_string(second[2].cpu_permille));
+  const std::uint64_t ticks_after = busy_ticks();
+  const double wall_ms = std::chrono::duration<double, std::milli>(
+                             std::chrono::steady_clock::now() - wall_before)
+                             .count();
+  const double kernel_permille = static_cast<double>(ticks_after - ticks_before) * 1000.0 /
+                                 static_cast<double>(::sysconf(_SC_CLK_TCK)) * 1000.0 / wall_ms;
+  // The kernel's window brackets the sampler's, so the sampler can only see less;
+  // two ticks either side is the granularity of both reads.
+  const double slack = 2.0 * 1000.0 / static_cast<double>(::sysconf(_SC_CLK_TCK)) * 1000.0 / wall_ms;
+  Expect(second[2].cpu_permille > 0 &&
+             second[2].cpu_permille <= kernel_permille * 1.1 + slack &&
+             second[2].cpu_permille >= kernel_permille * 0.8 - slack,
+         "the busy loop's share is the CPU the kernel gave it: sampled " +
+             std::to_string(second[2].cpu_permille) + " permille, kernel " +
+             std::to_string(static_cast<int>(kernel_permille)) + " over " +
+             std::to_string(static_cast<int>(wall_ms)) + " ms");
   ::kill(-tree, SIGKILL);
   ::kill(busy, SIGKILL);
   ::waitpid(tree, nullptr, 0);
