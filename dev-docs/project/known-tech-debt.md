@@ -638,7 +638,7 @@ Start with Project (11 members) to set the shape, then Sidebar (26), Search (39)
 Edit (50), Tab (54), Global (86). Done when `Operations` holds only what has no
 service to name.
 
-### TD-2026-10-28-411 — the 2026-10-28 duplication pass: what it split, and what it left. [PARTLY RESOLVED 2026-10-28 — open: one remainder below]
+### TD-2026-10-28-411 — the 2026-10-28 duplication pass: what it split, and what it left. [RESOLVED 2026-10-28 — every remainder below is done]
 
 Done, one commit each: `AssistService` (2,300 lines, 58 members, seven request
 counters) is six feature units in `src/workspace/assist/` over one `AssistHost`;
@@ -658,7 +658,7 @@ That race may also be TD-2026-10-27-408's NUL-filled header: the same six-lanes
 setup, and a hand build outside the lock is the one writer the lanes do not
 serialize.
 
-Left open:
+Left open (all resolved 2026-10-28):
 
 - ~~**`AssistHost::Operations` is still one bag for six features**~~ RESOLVED
   2026-10-28: measured per feature, nine callbacks were read by exactly one
@@ -668,10 +668,15 @@ Left open:
   21 every feature shares (settings, active views, LSP request plumbing, overlays,
   the redraws an assist edit owes), and its comment now says where a one-feature
   callback goes.
-- **The `WorkspaceShell()` constructor is ~730 lines** (`WorkspaceShellPlugins.cpp`),
-  almost all `Configure(... Operations{ lambdas })` wiring. Splitting it into
-  per-service wiring functions needs members-.inc room (it is a ratcheted cap); a
-  wiring table that does not need new shell members is the shape to look for.
+- ~~**The `WorkspaceShell()` constructor is ~730 lines**~~ RESOLVED 2026-10-28: it
+  is ~25 lines. Its eight `Configure(...)` blocks are
+  `WorkspaceShell::Bootstrapper::Wire{QuickPick,TabStrip,Lsp,Debug,ControlChannel,
+  WorkspaceEdits,Assist,PluginRuntime}` in `WorkspaceShellBootstrapper.cpp` -- the
+  nested class that already built the availability and the event dispatcher, so
+  no members-.inc line and no new companion TU. The move was mechanical (`[this]`
+  -> `[shell]`, shell members qualified from the members file) and checked by the
+  compiler: inside the constructor every unqualified member name already meant
+  the shell's.
 - ~~**`RenderViewModelBuilder::BuildOverlaySurfaceInto` is ~440 lines**~~ RESOLVED
   2026-10-28: it is a ~45-line dispatcher now -- reset, the find widget
   (`BuildFindWidgetInto`, a free function), and the list overlays

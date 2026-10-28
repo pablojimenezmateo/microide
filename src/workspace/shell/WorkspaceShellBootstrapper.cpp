@@ -20,8 +20,54 @@
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 #include "workspace/control/ControlUiQuery.h"
 #include "util/PerformanceTrace.h"
+#include "workspace/WorkspaceCommandParsing.h"
+#include "workspace/shell/ShellGlueCache.h"
+#include <algorithm>
+#include <filesystem>
+#include <iostream>
+#include <limits>
+#include <set>
+#include <string>
+#include <system_error>
+#include <string_view>
+#include <unordered_map>
+#include <unordered_set>
+#include "editor/EditBatchOrder.h"
+#include "project/CompileCommandsLocator.h"
+#include "util/JsonValue.h"
+#include "util/PathMatch.h"
+#include "util/StartupTrace.h"
+#include "workspace/services/EditorTabService.h"
+#include "workspace/FileUri.h"
+#include "workspace/lsp/LspPositionEncoding.h"
+#include "workspace/services/PromptSurfaceService.h"
+#include "workspace/coordinators/WorkspacePathMutationCoordinator.h"
+#include "workspace/lsp/LspViewportPositions.h"
+#include "workspace/SettingFlags.h"
+#include "workspace/coordinators/WorkspaceChromeMouseCoordinator.h"
+#include "workspace/coordinators/WorkspaceEditorMouseCoordinator.h"
+#include "workspace/coordinators/WorkspaceMenuCoordinator.h"
+#include "workspace/coordinators/WorkspacePanelMouseCoordinator.h"
+#include "workspace/services/SidebarService.h"
+#include "workspace/services/CompareMergeService.h"
+#include "workspace/services/ProjectCatalogService.h"
+#include "workspace/debug/DebugPaneService.h"
+#include "workspace/coordinators/WorkspaceMergeMouseCoordinator.h"
+#include "workspace/coordinators/WorkspaceCompareMouseCoordinator.h"
+#include "workspace/debug/DebugPaneMouseCoordinator.h"
+#include "workspace/coordinators/WorkspaceLifecycleCoordinator.h"
+#include "workspace/registries/WorkspaceCommandRegistry.h"
+#include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 
 namespace microide::workspace {
+
+namespace {
+
+bool IsVirtualDocumentUri(std::string_view text) {
+  return text.starts_with("virtual://");
+}
+
+}  // namespace
 
 namespace {
 
@@ -432,6 +478,764 @@ WorkspaceWakeController WorkspaceShell::Bootstrapper::BuildWakeController() cons
           .caret_blink_animating = [shell]() { return shell->CaretBlinkAnimating(); },
           .current_caret_dirty_rect = [shell]() { return shell->CurrentCaretDirtyRect(); },
       });
+}
+
+void WorkspaceShell::Bootstrapper::WireQuickPick() const {
+  WorkspaceShell* const shell = &shell_;
+  shell->quick_pick_service_.Configure(
+      shell->context_.current_project_state.overlay.workflow.quick_pick,
+      QuickPickService::Operations{
+          .show_overlay = [shell]() { shell->ShowOverlay(OverlayMode::QuickPick); },
+          .showing =
+              [shell]() {
+                return shell->context_.current_project_state.overlay.visible &&
+                       shell->context_.current_project_state.overlay.mode == OverlayMode::QuickPick;
+              },
+          .list_changed =
+              [shell]() {
+                shell->ResetOverlayScroll();
+                shell->RequestOverlayRedraw();
+              },
+          .start_launch_config =
+              [shell](std::size_t index) {
+                ProjectWorkspaceState& state = shell->context_.current_project_state;
+                if (index >= state.launch_configs.size()) {
+                  return;
+                }
+                // Remembered, so Start Debugging and a restart reuse it.
+                state.selected_launch_config_index = index;
+                shell->StartDebugging(state.launch_configs[index], state.root.generic_string());
+              },
+          .apply_colorscheme =
+              [shell](std::string_view name, bool persist) {
+                (void)shell->MakePersistenceCoordinator().ApplyColorscheme(name, persist, false);
+                shell->RequestWindowRedraw();
+              },
+          .reveal =
+              [shell](const std::filesystem::path& path, std::size_t line, std::size_t column) {
+                editor::TextViewport* viewport = shell->ActiveEditorViewport();
+                if (viewport == nullptr || viewport->path() != path || line >= viewport->lines().size()) {
+                  return;
+                }
+                viewport->JumpCursorTo(line, std::min(column, viewport->lines().LineLength(line)));
+                viewport->CenterLine(line);
+                shell->RequestFocusedEditorRedraw();
+              },
+          .restore_view =
+              [shell](const QuickPickState::View& view) {
+                editor::TextViewport* viewport = shell->ActiveEditorViewport();
+                if (viewport == nullptr || viewport->path() != view.path) {
+                  return;
+                }
+                viewport->ApplyRestoredViewState(view.line, view.column, view.scroll, viewport->horizontal_scroll());
+                shell->RequestFocusedEditorRedraw();
+              },
+          .requery =
+              [shell](QuickPickKind kind, const std::string& query) {
+                if (kind != QuickPickKind::WorkspaceSymbol) {
+                  return;
+                }
+                const std::filesystem::path root = shell->context_.current_project_state.root;
+                std::string error;
+                const bool asked = shell->assist_service_.navigation().QueryWorkspaceSymbols(
+                    query,
+                    [shell, root](std::vector<NavigationAssist::WorkspaceSymbolHit> hits) {
+                      std::vector<QuickPickItem> items;
+                      items.reserve(hits.size());
+                      for (NavigationAssist::WorkspaceSymbolHit& hit : hits) {
+                        const std::filesystem::path relative = hit.path.lexically_relative(root);
+                        std::string where = relative.empty() || relative.native().starts_with("..")
+                                                ? hit.path.generic_string()
+                                                : relative.generic_string();
+                        items.push_back(QuickPickItem{
+                            .index = items.size(),
+                            .value = hit.path.string(),
+                            .line = hit.line,
+                            .column = static_cast<std::size_t>(std::max(hit.character, 0)),
+                            .primary_label = std::move(hit.name),
+                            .secondary_label = hit.container.empty() ? where : hit.container + " · " + where,
+                            .search_text = {},
+                        });
+                      }
+                      (void)shell->quick_pick_service_.DeliverItems(QuickPickKind::WorkspaceSymbol, std::move(items));
+                    },
+                    &error);
+                if (!asked) {
+                  shell->quick_pick_service_.Fail(QuickPickKind::WorkspaceSymbol,
+                                           error.empty() ? "No language server to ask" : error);
+                }
+              },
+          .open_workspace_symbol =
+              [shell](const std::filesystem::path& path, std::size_t line, std::size_t character) {
+                shell->assist_service_.navigation().OpenWorkspaceSymbol(path, line, static_cast<int>(character));
+              },
+          .set_language = [shell](const std::string& language) { shell->ApplyLanguageModeToActiveEditor(language); },
+          .activate_tab =
+              [shell](std::uint64_t stable_id) {
+                const EditorGroup& group = shell->context_.current_project_state.focused_group();
+                for (std::size_t i = 0; i < group.open_tabs.size(); ++i) {
+                  if (group.open_tabs[i].stable_id == stable_id) {
+                    shell->MakeEditorTabService().Activate(i);
+                    shell->RequestWindowRedraw();
+                    return;
+                  }
+                }
+              },
+          .run_command_line =
+              [shell](const std::string& command_line) {
+                const ParsedCommandLine parsed = ParseCommandLine(command_line);
+                if (parsed.tokens.empty()) {
+                  return;
+                }
+                std::vector<std::string> args;
+                for (std::size_t i = 1; i < parsed.tokens.size(); ++i) {
+                  args.push_back(parsed.tokens[i].text);
+                }
+                (void)shell->ExecuteCommandName(parsed.tokens.front().text, args, ActionSource::Command);
+              },
+      });
+}
+
+void WorkspaceShell::Bootstrapper::WireTabStrip() const {
+  WorkspaceShell* const shell = &shell_;
+  shell->tab_strip_chrome_.Configure(
+      shell->context_, shell->tab_strip_service_, shell->layout_mode_service_, shell->output_channels_,
+      WorkspaceTabStripChrome::Operations{
+          .project_tab_display_title =
+              [shell](std::size_t index) { return shell->ProjectTabDisplayTitle(index); },
+          .project_tab_tooltip_label =
+              [shell](std::size_t index) { return shell->ProjectTabTooltipLabel(index); },
+          .project_catalog_entry =
+              [shell](std::size_t index) -> const ProjectWorkspaceState* {
+                return shell->ProjectCatalogEntry(index);
+              },
+          .project_catalog_root =
+              [shell](std::size_t index) -> const std::filesystem::path& {
+                return shell->ProjectCatalogRoot(index);
+              },
+          .editor_tab_display_title =
+              [shell](std::size_t group_index, std::size_t index) {
+                return shell->TabDisplayTitle(group_index, index);
+              },
+          .editor_tab_tooltip_label =
+              [shell](std::size_t group_index, std::size_t index) {
+                return shell->TabTooltipLabel(group_index, index);
+              },
+          .current_window_rect = [shell]() { return shell->CurrentWindowRect(); },
+          .editor_group_tab_strip_width =
+              [shell](std::size_t group_index) { return shell->EditorGroupTabStripWidth(group_index); },
+          .measure_width =
+              [shell](std::string_view text) { return shell->text_renderer_.MeasureWidth(text); },
+          .ensure_output_channel_tab_open =
+              [shell](std::string_view id) { shell->EnsureOutputChannelTabOpen(id); },
+          .close_output_channel_tab =
+              [shell](std::string_view id) { shell->CloseOutputChannelTab(id); },
+          .close_terminal_tab =
+              [shell](std::size_t index) { shell->MakeTerminalPanelService().CloseTerminalTab(index); },
+          .request_bottom_panel_redraw = [shell]() { shell->RequestBottomPanelRedraw(); },
+      });
+}
+
+void WorkspaceShell::Bootstrapper::WireLsp() const {
+  WorkspaceShell* const shell = &shell_;
+  shell->lsp_service_.Configure(
+      shell->context_, shell->completion_registry_, shell->code_action_registry_,
+      LspService::Operations{
+          .active_editable_viewport = [shell]() { return shell->ActiveEditableViewport(); },
+          .refresh_problems_sidebar = [shell]() { shell->RefreshProblemsSidebar(); },
+          .request_editor_surface_redraw = [shell]() { shell->RequestEditorSurfaceRedraw(); },
+          .request_chrome_redraw = [shell]() { shell->RequestChromeRedraw(); },
+          .request_bottom_panel_redraw = [shell]() { shell->RequestBottomPanelRedraw(); },
+          .apply_server_workspace_edit =
+              [shell](const LspClient& client, LspClient::WorkspaceEdit edit) {
+                return shell->workspace_edit_service_.ApplyServerEdit(client, std::move(edit));
+              },
+          .get_setting_value = [shell](std::string_view id) { return shell->GetSettingValue(id); },
+          .plugin_has_definition_provider =
+              [shell](std::string_view language_id) {
+                return shell->plugin_runtime_.Host().HasLanguageProvider(
+                    plugin::PluginHost::ContributedLanguageProvider::Kind::Definition,
+                    language_id);
+              },
+          .plugin_has_references_provider =
+              [shell](std::string_view language_id) {
+                return shell->plugin_runtime_.Host().HasLanguageProvider(
+                    plugin::PluginHost::ContributedLanguageProvider::Kind::References,
+                    language_id);
+              },
+      });
+  // Live theme pointer for baking semantic-token recolor decorations (theme_'s
+  // address is stable; a theme switch mutates it in place).
+  shell->lsp_service_.SetTheme(&shell->theme_);
+}
+
+void WorkspaceShell::Bootstrapper::WireDebug() const {
+  WorkspaceShell* const shell = &shell_;
+  shell->debug_service_.Configure(
+      shell->context_,
+      DebugService::Operations{
+          .append_console_output =
+              [shell](int session_id, const std::string& label,
+                     const dap_protocol::DapOutputEvent& output) {
+                shell->AppendDebugConsoleOutput(session_id, label, output);
+                shell->control_channel_service_.OnDebugOutput(output.category, output.output);
+              },
+          .show_debug_console =
+              [shell](int session_id, const std::string& label) {
+                shell->ShowDebugConsole(session_id, label);
+              },
+          .remove_debug_console = [shell](int session_id) { shell->RemoveDebugConsole(session_id); },
+          .notify_session_state_changed =
+              [shell](DebugSession::State /*state*/) { shell->RequestChromeRedraw(); },
+          // A terminal end (clean exit OR a crash/kill/launch-rejection) mirrors to
+          // the control channel here, so an observer is never stranded waiting on a
+          // `terminated` that a non-clean death never sent.
+          .notify_session_terminated =
+              [shell](int session_id, bool failed, const std::string& reason) {
+                shell->control_channel_service_.OnDebugTerminated(session_id, reason);
+                // A non-clean end (crash / kill / launch rejection) is easy to miss:
+                // the session row + transient views disappear. Surface an error toast
+                // so the user knows the debugger died and why, not just that it
+                // silently vanished. A clean exit needs no toast (it was expected).
+                if (failed) {
+                  shell->Notify(NotificationService::Tone::Error,
+                         reason.empty() ? std::string("Debug adapter exited unexpectedly")
+                                        : reason);
+                }
+              },
+          .notify_stop_began =
+              [shell](const std::string& reason, int thread_id) {
+                shell->control_channel_service_.OnDebugStopBegan(reason, thread_id);
+              },
+          .notify_stop_resolved =
+              [shell]() { shell->control_channel_service_.OnDebugStopped(); },
+          .request_chrome_redraw = [shell]() { shell->RequestChromeRedraw(); },
+          .request_debug_pane_redraw = [shell]() { shell->RequestDebugPaneRedraw(); },
+          .request_editor_redraw = [shell]() { shell->RequestEditorSurfaceRedraw(); },
+          .queue_editor_hover_refresh = [shell]() { shell->QueueEditorHoverRefresh(); },
+          .focus_source_location =
+              [shell](const std::filesystem::path& path, std::size_t line) {
+                shell->OpenFile(path);
+                if (editor::TextViewport* viewport = shell->ActiveEditorViewport();
+                    viewport != nullptr) {
+                  viewport->JumpCursorTo(line, 0);
+                }
+                shell->context_.current_project_state.surface.focus = FocusTarget::Editor;
+                shell->RequestEditorSurfaceRedraw();
+              },
+          .show_call_stack_panel =
+              [shell]() {
+                // Auto-open the right-side debug pane on the first stop (Call Stack),
+                // but don't yank the user off another surface on every subsequent step.
+                shell->OpenDebugPaneOnStop();
+              },
+      });
+}
+
+void WorkspaceShell::Bootstrapper::WireControlChannel() const {
+  WorkspaceShell* const shell = &shell_;
+  shell->control_channel_service_.Configure(
+      shell->context_,
+      ControlChannelService::Operations{
+          .execute_command_line =
+              [shell](const std::string& line) { return shell->ExecuteControlCommand(line); },
+          .emit_jsonl = [](const std::string& line) { std::cout << line << '\n' << std::flush; },
+          .adapters =
+              [shell]() {
+                std::vector<ControlAdapterInfo> adapters;
+                for (const auto& detail : shell->CurrentDapManager().AdapterDetails()) {
+                  adapters.push_back(ControlAdapterInfo{detail.type, detail.command});
+                }
+                return adapters;
+              },
+          .ensure_debugger_enabled = [shell]() { shell->EnsureDebuggerEnabledTransiently(); },
+          .notifications = &shell->notification_service_,
+          .remote_project =
+              [shell](const std::filesystem::path& root) -> std::optional<ControlRemoteProjectInfo> {
+                const auto snapshot = shell->MakeRemoteHostService().SnapshotOf(root);
+                if (!snapshot.has_value()) {
+                  return std::nullopt;
+                }
+                using State = project::remote::RemoteHostSession::State;
+                const auto& sync = snapshot->sync;
+                std::string state;
+                switch (snapshot->state) {
+                  case State::Disconnected: state = "disconnected"; break;
+                  case State::Connecting: state = "connecting"; break;
+                  case State::NeedsAuth: state = "needs-auth"; break;
+                  case State::StartingServer: state = "starting"; break;
+                  case State::Installing: state = "installing"; break;
+                  case State::Reconnecting: state = "reconnecting"; break;
+                  case State::Offline: state = "offline"; break;
+                  case State::Ready:
+                    state = (sync.syncing || !sync.synced_once) ? "syncing" : "ready";
+                    break;
+                }
+                const auto count = [](std::size_t n) { return static_cast<std::int64_t>(n); };
+                return ControlRemoteProjectInfo{
+                    .host = snapshot->host,
+                    .host_root = snapshot->host_root,
+                    .state = std::move(state),
+                    .files = count(sync.files),
+                    .files_pending = count(std::min(sync.absent + sync.stale, sync.files)),
+                    .unsent_pushes = count(sync.dirty),
+                    .conflicts = count(sync.conflicts),
+                    .held_deletes = count(sync.held_deletes),
+                };
+              },
+          .keybindings = [shell]() -> const std::vector<ResolvedKeybinding>& {
+            return shell->ResolvedKeybindings();
+          },
+          .action_enabled = [shell](ActionId id) { return shell->MakeActionAvailability().IsEnabled(id); },
+          .ui = shell->MakeControlUiOperations(),
+          .window_hit_region = [shell](float x, float y) -> std::string_view {
+            const auto window = shell->CurrentWindowRect();
+            if (!window.has_value() || x < 0.0f || y < 0.0f || x >= window->w || y >= window->h) {
+              return "outside";
+            }
+            switch (shell->WindowHitTest(x, y)) {
+              case SDL_HITTEST_NORMAL:
+                return "normal";
+              case SDL_HITTEST_DRAGGABLE:
+                return "draggable";
+              default:
+                return "resize";
+            }
+          },
+          .active_buffer = [shell]() -> ControlActiveBuffer {
+            const editor::TextViewport* viewport = shell->ActiveNavigableViewport();
+            if (viewport == nullptr || viewport->is_placeholder()) {
+              return {};
+            }
+            return ControlActiveBuffer{
+                .viewport = viewport,
+                .kind = shell->ActiveMergeTab() != nullptr     ? "merge"
+                        : shell->ActiveCompareTab() != nullptr ? "compare"
+                                                        : "editor",
+            };
+          },
+          .output_channels = &shell->output_channels_,
+          .plugin_command_names = [shell]() { return shell->plugin_runtime_.Host().CommandNames(); },
+          .settings =
+              [shell]() { return AllSettingInfos(shell->plugin_runtime_.Host(), shell->available_colorscheme_names_); },
+          .setting_value = [shell](std::string_view id) { return shell->GetSettingValue(id); },
+      });
+}
+
+void WorkspaceShell::Bootstrapper::WireWorkspaceEdits() const {
+  WorkspaceShell* const shell = &shell_;
+  shell->workspace_edit_service_.Configure(
+      shell->context_, shell->lsp_service_,
+      WorkspaceEditService::Operations{
+          .active_editable_viewport = [shell]() { return shell->ActiveEditableViewport(); },
+          .reset_caret_blink = [shell]() { shell->ResetCaretBlink(); },
+          .request_active_editable_last_change_redraw =
+              [shell]() { shell->RequestActiveEditableLastChangeRedraw(); },
+          .request_chrome_redraw = [shell]() { shell->RequestChromeRedraw(); },
+          .request_focused_editor_redraw = [shell]() { shell->RequestFocusedEditorRedraw(); },
+          .request_active_editable_line_range_redraw =
+              [shell](std::size_t start_line, std::size_t end_line) {
+                if (shell->ActiveTabIsCompare()) {
+                  shell->RequestCompareRightLineRangeRedraw(start_line, end_line);
+                } else if (shell->ActiveTabIsMerge()) {
+                  shell->RequestMergeResultLineRangeRedraw(start_line, end_line);
+                } else {
+                  shell->RequestEditorLineRangeRedraw(start_line, end_line);
+                }
+              },
+          .request_active_tab_redraw =
+              [shell](bool include_tree_sidebar) { shell->RequestActiveTabRedraw(include_tree_sidebar); },
+          .confirm_rename_save =
+              [shell](std::string detail) {
+                shell->OpenPromptSurface(PromptSurfaceState::Action::ConfirmRenameSave,
+                                  PromptSurfaceState::Kind::Confirm, std::filesystem::path{},
+                                  std::string{});
+                shell->context_.prompts.surface.detail = std::move(detail);
+                shell->RequestChromeRedraw();
+              },
+          .notify_error =
+              [shell](std::string message) {
+                shell->Notify(NotificationService::Tone::Error, std::move(message));
+              },
+          .notify_buffer_saved =
+              [shell](const std::filesystem::path& path) { shell->NotifyPluginBufferSave(path); },
+          .run_closed_file_edits_async =
+              [shell](std::vector<ClosedFileEditBucket> buckets) {
+                // Load/apply/save the server rename's closed-file targets off the
+                // shell thread; the file-index watcher reflects the on-disk changes
+                // (TD-2026-07-17-011). The task captures only the buckets by value.
+                project::FileWriteGate* gate = &shell->context_.current_project_state.write_gate();
+                shell->project_background_executor_.Post(
+                    [gate, buckets = std::move(buckets)]() mutable {
+                      WorkspaceEditService::RunClosedFileEdits(buckets, *gate);
+                    });
+              },
+          .reconcile_tabs_after_resource_rename =
+              [shell](const std::filesystem::path& old_path, const std::filesystem::path& new_path) {
+                EditorTabService& editor_tabs = shell->MakeEditorTabService();
+                PromptSurfaceService& prompt_surfaces = shell->MakePromptSurfaceService();
+                shell->MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
+                    .ReconcileAfterExternalRename(old_path, new_path);
+              },
+          .reconcile_tabs_after_resource_delete =
+              [shell](const std::filesystem::path& path) {
+                EditorTabService& editor_tabs = shell->MakeEditorTabService();
+                PromptSurfaceService& prompt_surfaces = shell->MakePromptSurfaceService();
+                shell->MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
+                    .ReconcileAfterExternalDelete(path);
+              },
+          .refresh_views_after_resource_ops =
+              [shell](const std::filesystem::path& preferred_tree_path) {
+                EditorTabService& editor_tabs = shell->MakeEditorTabService();
+                PromptSurfaceService& prompt_surfaces = shell->MakePromptSurfaceService();
+                shell->MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
+                    .RefreshViewsAfterExternalMutation(preferred_tree_path);
+              },
+          .dispose_staged_paths_async =
+              [shell](std::vector<std::filesystem::path> staged) {
+                // Removing a staged (already-renamed-aside) backup can be slow for
+                // directories; do it off the shell thread. Failure is harmless — a
+                // leftover hidden staging entry, never user data.
+                // Through the project's gate (captured now: the worker must not read
+                // shell state), which is where a remote project's host removes them.
+                project::FileWriteGate* gate = &shell->context_.current_project_state.write_gate();
+                shell->project_background_executor_.Post([gate, staged = std::move(staged)]() {
+                  gate->DisposeStaged(staged);
+                });
+              },
+      });
+}
+
+void WorkspaceShell::Bootstrapper::WireAssist() const {
+  WorkspaceShell* const shell = &shell_;
+  shell->assist_service_.Configure(
+      shell->context_, shell->plugin_runtime_, shell->output_channels_, shell->language_contract_, shell->workspace_edit_service_,
+      AssistService::Operations{
+          .get_setting_value =
+              [shell](std::string_view id) { return shell->GetSettingValue(id); },
+          .active_editable_viewport = [shell]() { return shell->ActiveEditableViewport(); },
+          .active_editor_viewport = [shell]() { return shell->ActiveEditorViewport(); },
+          .active_editor_tab = [shell]() { return shell->ActiveEditorTab(); },
+          .active_compare_tab = [shell]() { return shell->ActiveCompareTab(); },
+          .active_merge_tab = [shell]() { return shell->ActiveMergeTab(); },
+          .lsp_client_for_viewport =
+              [shell](const editor::TextViewport& viewport, std::string* language_id) {
+                return shell->LspClientForViewport(viewport, language_id);
+              },
+          .current_lsp_manager = [shell]() -> LspManager& { return shell->CurrentLspManager(); },
+          .ensure_lsp_document_open =
+              [shell](const editor::TextViewport& viewport,
+                     LspClient& client,
+                     std::string_view language_id) {
+                shell->EnsureLspDocumentOpen(viewport, client, language_id);
+              },
+          .begin_tracked_lsp_request = [shell]() { shell->BeginTrackedLspRequest(); },
+          .finish_tracked_lsp_request = [shell]() { shell->FinishTrackedLspRequest(); },
+          .show_overlay = [shell](OverlayMode mode) { shell->ShowOverlay(mode); },
+          .dismiss_overlay = [shell](bool focus_editor) { shell->DismissOverlay(focus_editor); },
+          .request_overlay_redraw = [shell]() { shell->RequestOverlayRedraw(); },
+          .reset_caret_blink = [shell]() { shell->ResetCaretBlink(); },
+          .request_focused_editor_redraw = [shell]() { shell->RequestFocusedEditorRedraw(); },
+          .request_active_editable_last_change_redraw =
+              [shell]() { shell->RequestActiveEditableLastChangeRedraw(); },
+          .request_active_editable_blame_neighborhood_redraw =
+              [shell](std::size_t before_line, std::size_t after_line) {
+                shell->RequestActiveEditableBlameNeighborhoodRedraw(before_line, after_line);
+              },
+          .refresh_compare_tab_derived_state =
+              [shell](CompareTabState& tab) { shell->RefreshCompareTabDerivedState(tab); },
+          .sync_compare_selection_from_viewport =
+              [shell](CompareTabState& tab, bool keep_top_line) {
+                shell->SyncCompareSelectionFromViewport(tab, keep_top_line);
+              },
+          .update_merge_tracking_after_viewport_edit =
+              [shell](MergeTabState& tab) {
+                shell->UpdateMergeTrackingAfterViewportEdit(tab);
+              },
+          .notify_info = [shell](std::string message) { shell->Notify(NotificationService::Tone::Info, message); },
+      },
+      AssistService::Ports{
+          .completion =
+              {
+                  .has_completion_provider =
+                      [shell](std::string_view language_id) {
+                        return !language_id.empty() &&
+                               (FindProvider(shell->completion_registry_, std::string(language_id)) != nullptr ||
+                                shell->CurrentLspManager().HasServer(std::string(language_id)));
+                      },
+                  .plugin_completion_trigger_characters =
+                      [shell](std::string_view language_id) {
+                        const CompletionProviderSpec* provider =
+                            language_id.empty() ? nullptr
+                                                : FindProvider(shell->completion_registry_, language_id);
+                        return provider != nullptr ? provider->trigger_characters : std::string{};
+                      },
+              },
+          .code_actions =
+              {
+                  .execute_command_name =
+                      [shell](std::string_view command_name,
+                             const std::vector<std::string>& args,
+                             std::string* error_message) {
+                        return shell->ExecuteCommandName(command_name, args, ActionSource::Menu,
+                                                  error_message);
+                      },
+                  .collect_lsp_context_diagnostics =
+                      [shell](const editor::TextViewport& viewport,
+                             const editor::SelectionRange& range,
+                             lsp_encoding::PositionEncoding encoding) {
+                        return shell->CollectLspContextDiagnostics(viewport, range, encoding);
+                      },
+              },
+          .navigation =
+              {
+                  .open_file_in_new_tab =
+                      [shell](const std::filesystem::path& path) { return shell->OpenFileInNewTab(path); },
+                  .open_file_then =
+                      [shell](const std::filesystem::path& path, std::function<void()> then) {
+                        if (shell->glue_->remote_host_service != nullptr &&
+                            shell->glue_->remote_host_service->OpenWhenFetched(
+                                path, [shell, then](const std::filesystem::path& fetched) {
+                                  if (shell->OpenFileInNewTab(fetched)) {
+                                    then();
+                                  }
+                                })) {
+                          return true;
+                        }
+                        if (!shell->OpenFileInNewTab(path)) {
+                          return false;
+                        }
+                        then();
+                        return true;
+                      },
+              },
+          .signature_help =
+              {
+                  .show_signature_help =
+                      [shell](std::string signature, std::string documentation) {
+                        shell->ShowSignatureHelpPopup(std::move(signature), std::move(documentation));
+                      },
+                  .signature_help_showing = [shell]() { return shell->active_signature_help_.has_value(); },
+                  .anchor_signature_help_at_caret =
+                      [shell]() {
+                        const editor::TextViewport* viewport = shell->ActiveEditableViewport();
+                        if (shell->active_signature_help_.has_value() && viewport != nullptr) {
+                          shell->active_signature_help_->cursor_line = viewport->cursor_line();
+                          shell->active_signature_help_->cursor_column = viewport->cursor_column();
+                          shell->RequestEditorSurfaceRedraw();
+                        }
+                      },
+              },
+      });
+}
+
+void WorkspaceShell::Bootstrapper::WirePluginRuntime() const {
+  WorkspaceShell* const shell = &shell_;
+  shell->plugin_runtime_.SetCallbacks(plugin::PluginHost::Callbacks{
+      .is_command_name_available =
+          [](std::string_view name) { return FindWorkspaceActionByCommand(name) == nullptr; },
+      .open_file =
+          [shell](const plugin::PluginHost::OpenFileRequest& request) {
+            const std::filesystem::path normalized_path = util::NormalizedPath(request.path);
+            const std::string requested = request.path.generic_string();
+            const bool is_virtual = IsVirtualDocumentUri(requested);
+            const bool opened = is_virtual ? shell->OpenVirtualDocumentInNewTab(requested)
+                                           : shell->OpenFileInNewTab(normalized_path);
+            if (!opened) {
+              // Say why on the Plugin Errors channel rather than failing mutely.
+              // The bool is not a usable signal: PluginHostCallbacks routes
+              // open_file through ApplyHostMutation on the non-direct path and
+              // returns true unconditionally there, so a plugin never observes
+              // this false at all (TD-2026-07-27-001).
+              //
+              // The virtual-document case is worth naming specifically: the
+              // consumer side is complete, but no plugin API exists to REGISTER
+              // a virtual document yet, so every virtual:// open fails and the
+              // reason is not discoverable from the plugin side.
+              std::string reason =
+                  is_virtual
+                      ? "open_file: no virtual document is registered for '" + requested +
+                            "' (no plugin API contributes virtual documents yet)"
+                      : "open_file: could not open '" + normalized_path.generic_string() + "'";
+              shell->output_channels_.AppendLine("plugins.error", "Plugin Errors", reason);
+              shell->plugin_runtime_.AppendError(std::move(reason));
+              return false;
+            }
+            if (request.line > 0) {
+              const std::size_t target_line = request.line - 1;
+              const std::size_t target_column = request.column > 0 ? request.column - 1 : 0;
+              if (editor::TextViewport* viewport = shell->ActiveEditorViewport(); viewport != nullptr) {
+                viewport->JumpCursorTo(target_line, target_column);
+              }
+            }
+            return true;
+          },
+      .active_buffer =
+          [shell]() -> std::optional<plugin::PluginHost::ActiveBuffer> {
+            const editor::TextViewport* viewport = shell->ActiveEditableViewport();
+            if (viewport == nullptr || viewport->path().empty()) {
+              return std::nullopt;
+            }
+            return plugin::PluginHost::ActiveBuffer{
+                .path = util::NormalizedPath(viewport->path()),
+                .line = viewport->cursor_line() + 1,
+                .column = viewport->cursor_column() + 1,
+                .content_revision = viewport->content_revision(),
+            };
+          },
+      .live_buffer_text =
+          [shell](const std::filesystem::path& path) -> std::shared_ptr<const std::string> {
+            // The buffer under the query is nearly always the one in front (a
+            // compare's or a merge's editable side included); otherwise any open
+            // editor tab on the path.
+            const editor::TextViewport* viewport = shell->ActiveEditableViewport();
+            if (viewport == nullptr || !util::SameAsNormalizedPath(viewport->path(), path)) {
+              viewport = OpenEditorViewOfPath(shell->context_.current_project_state.editor_groups,
+                                              path.lexically_normal());
+            }
+            // A tab still reading its file has no text to give yet.
+            return viewport != nullptr && !viewport->is_placeholder()
+                       ? shell->plugin_runtime_.LiveBufferText(*viewport)
+                       : nullptr;
+          },
+      .show_sidebar =
+          [shell](std::string_view id) {
+            return ActionCoordinator(shell->MakeActionContext()).Execute(ActionId::SidebarShow, {std::string(id)},
+                                                    ActionSource::Shortcut);
+          },
+      .publish_diagnostics =
+          [shell](std::string_view owner,
+                 const std::filesystem::path& path,
+                 std::vector<editor::Diagnostic> diagnostics) {
+            if (shell->context_.current_project_state.diagnostics_store.ReplaceForOwnerFile(owner, path, std::move(diagnostics))) {
+              shell->RefreshProblemsSidebar();
+              shell->RequestEditorSurfaceRedraw();
+            }
+          },
+      .clear_file_diagnostics =
+          [shell](std::string_view owner, const std::filesystem::path& path) {
+            if (shell->context_.current_project_state.diagnostics_store.ClearOwnerFile(owner, path)) {
+              shell->RefreshProblemsSidebar();
+              shell->RequestEditorSurfaceRedraw();
+            }
+          },
+      .clear_owner_diagnostics =
+          [shell](std::string_view owner) {
+            if (shell->context_.current_project_state.diagnostics_store.ClearOwner(owner)) {
+              shell->RefreshProblemsSidebar();
+              shell->RequestEditorSurfaceRedraw();
+            }
+          },
+      .publish_decorations =
+          [shell](std::string_view owner,
+                 const std::filesystem::path& path,
+                 editor::PluginDecorationData data) {
+            if (shell->context_.current_project_state.EnsurePluginPresentation()
+                    .decorations.ReplaceForOwnerFile(owner, path, std::move(data))) {
+              shell->RequestEditorSurfaceRedraw();
+            }
+          },
+      .clear_file_decorations =
+          [shell](std::string_view owner, const std::filesystem::path& path) {
+            auto& state = shell->context_.current_project_state;
+            auto* pres = state.plugin_presentation.get();
+            if (pres != nullptr && pres->decorations.ClearOwnerFile(owner, path)) {
+              shell->RequestEditorSurfaceRedraw();
+              state.MaybeReleasePluginPresentation();
+            }
+          },
+      .clear_owner_decorations =
+          [shell](std::string_view owner) {
+            auto& state = shell->context_.current_project_state;
+            auto* pres = state.plugin_presentation.get();
+            if (pres != nullptr && pres->decorations.ClearOwner(owner)) {
+              shell->RequestEditorSurfaceRedraw();
+              state.MaybeReleasePluginPresentation();
+            }
+          },
+      .publish_surface =
+          [shell](std::string_view owner, std::string_view surface_id,
+                 editor::SurfaceContent content) {
+            const editor::SurfacePreviewSlot slot = content.preview;
+            ApplyKnownRasterSize(content, shell->surface_texture_cache_);
+            if (shell->context_.current_project_state.EnsurePluginPresentation()
+                    .surfaces.ReplaceForOwnerSurface(owner, surface_id, std::move(content))) {
+              if (slot != editor::SurfacePreviewSlot::None) {
+                shell->ActivatePluginSurfacePreview(owner, surface_id, slot);
+              }
+              shell->RequestEditorSurfaceRedraw();
+            }
+          },
+      .clear_surface =
+          [shell](std::string_view owner, std::string_view surface_id) {
+            auto& state = shell->context_.current_project_state;
+            auto* pres = state.plugin_presentation.get();
+            if (pres != nullptr && pres->surfaces.ClearOwnerSurface(owner, surface_id)) {
+              shell->SyncPluginSurfacePreviewClosed();
+              shell->RequestEditorSurfaceRedraw();
+              state.MaybeReleasePluginPresentation();
+            }
+          },
+      .clear_owner_surfaces =
+          [shell](std::string_view owner) {
+            auto& state = shell->context_.current_project_state;
+            auto* pres = state.plugin_presentation.get();
+            if (pres != nullptr && pres->surfaces.ClearOwner(owner)) {
+              shell->SyncPluginSurfacePreviewClosed();
+              shell->RequestEditorSurfaceRedraw();
+              state.MaybeReleasePluginPresentation();
+            }
+          },
+      .decode_raster =
+          [shell](std::uint64_t hash, int format, std::vector<std::byte> bytes, int width,
+                 int height) {
+            shell->surface_texture_cache_.Request(
+                hash,
+                format == 0 ? render::SurfaceTextureCache::RasterFormat::Png
+                            : render::SurfaceTextureCache::RasterFormat::Rgba8,
+                std::move(bytes), width, height);
+          },
+      .apply_workspace_edit =
+          [shell](std::string_view /*owner*/,
+                 const plugin::PluginHost::WorkspaceEditRequest& request) {
+            return shell->workspace_edit_service_.ApplyPluginEdit(request);
+          },
+      .publish_ghost_text =
+          [shell](std::string_view owner,
+                 const plugin::PluginHost::GhostTextRequest& request) {
+            shell->PublishPluginGhostText(owner, request);
+          },
+      .clear_ghost_text =
+          [shell](std::string_view owner) { shell->ClearPluginGhostText(owner); },
+      .error_sink =
+          [shell](const std::string& text) {
+            shell->output_channels_.AppendLine("plugins.error", "Plugin Errors", text);
+            shell->plugin_runtime_.AppendError(text);
+          },
+      .log_sink =
+          [shell](const std::string& text) {
+            shell->output_channels_.AppendLine("plugins.log", "Plugin Log", text);
+            shell->plugin_runtime_.AppendLog(text);
+          },
+      .get_setting =
+          [shell](std::string_view id) {
+            return shell->GetSettingValue(id);
+          },
+      .settings_revision =
+          [shell]() {
+            return shell->settings_store_.Revision();
+          },
+      // Plugin status items are drawn in the breadcrumb row, not the menu bar the
+      // chrome redraw covers (QA plugins-ui: an updated item kept its old text).
+      .request_status_redraw =
+          [shell]() {
+            shell->RequestBreadcrumbRedraw();
+          },
+      .show_notification =
+          [shell](const std::string& level, const std::string& message) {
+            shell->Notify(NotificationService::ToneFromLevel(level), message);
+          },
+  });
 }
 
 }  // namespace microide::workspace
