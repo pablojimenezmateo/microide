@@ -35,6 +35,32 @@ void TestHeartbeatDeclaresDeathAfterThreeMisses() {
          "three misses: dead at 6 s, no fourth ping");
 }
 
+// The I/O thread sleeps exactly as long as NextTickDelayMs says: following it
+// lands every tick on a deadline, so the schedule above -- a ping each interval,
+// death at 6 s -- takes one wakeup per interval and none in between (it used to
+// tick at a quarter interval, three idle wakeups of every four).
+void TestHeartbeatSleepsUntilItsNextDeadline() {
+  LinkHeartbeat heartbeat;
+  Expect(heartbeat.NextTickDelayMs(0) == 0, "before the first ping: due now");
+  std::int64_t now = 0;
+  std::vector<std::int64_t> pings;
+  int ticks = 0;
+  while (!heartbeat.dead() && ticks < 10) {
+    ++ticks;
+    if (const auto stamp = heartbeat.Tick(now)) {
+      pings.push_back(*stamp);
+    }
+    now += heartbeat.NextTickDelayMs(now);
+  }
+  Expect((pings == std::vector<std::int64_t>{0, 2000, 4000}) && heartbeat.dead() && ticks == 4,
+         "three pings and the verdict in four ticks: " + std::to_string(ticks));
+  LinkHeartbeat answered;
+  (void)answered.Tick(0);
+  Expect(answered.NextTickDelayMs(500) == 1500, "mid-interval: sleep the rest of it");
+  answered.OnPong(0, 700);
+  Expect(answered.NextTickDelayMs(700) == 1300, "an answer does not move the next ping");
+}
+
 void TestHeartbeatAnswerResetsMissesAndMeasuresRtt() {
   LinkHeartbeat heartbeat;
   (void)heartbeat.Tick(0);
@@ -304,6 +330,7 @@ void TestHeartbeatMeasuresRttAndDetectsADeadPeer() {
 void RegisterRemotePeerTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemotePeer/HeartbeatDeclaresDeathAfterThreeMisses",
           TestHeartbeatDeclaresDeathAfterThreeMisses);
+  AddTest(tests, "RemotePeer/HeartbeatSleepsUntilItsNextDeadline", TestHeartbeatSleepsUntilItsNextDeadline);
   AddTest(tests, "RemotePeer/HeartbeatAnswerResetsMissesAndMeasuresRtt",
           TestHeartbeatAnswerResetsMissesAndMeasuresRtt);
   AddTest(tests, "RemotePeer/HelloRoundTripsAndValidates", TestHelloRoundTripsAndValidates);

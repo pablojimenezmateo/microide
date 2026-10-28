@@ -1,4 +1,5 @@
 #include "server/WorkspaceWatch.h"
+#include "util/ThreadName.h"
 
 #include <utility>
 
@@ -9,7 +10,10 @@ namespace microide::server {
 WorkspaceWatch::WorkspaceWatch(std::filesystem::path root, Options options,
                                std::function<void(WorkspaceTree::Changes)> changed)
     : options_(options), changed_(std::move(changed)), root_(root) {
-  thread_ = std::thread([this]() { Run(); });
+  thread_ = std::thread([this]() {
+    util::NameCurrentThread("srv-watch");
+    Run();
+  });
   watcher_.SetCallback([this](platform::IndexUpdateBatch batch) { OnBatch(std::move(batch)); });
   (void)watcher_.Watch(root);  // false: it polls, which native() reports
 }

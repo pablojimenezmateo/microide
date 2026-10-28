@@ -6,6 +6,7 @@
 
 #include "util/PerformanceCounters.h"
 #include "util/PosixFd.h"
+#include "util/ThreadName.h"
 
 #include <fcntl.h>
 #include <poll.h>
@@ -55,7 +56,10 @@ bool RemoteFrameTransport::Start(int read_fd, int write_fd, Callbacks callbacks,
   bulk_window_.store(std::clamp(options_.bulk_window_initial, options_.bulk_window_floor,
                                 options_.bulk_window_cap),
                      std::memory_order_relaxed);
-  io_thread_ = std::thread([this]() { Run(); });
+  io_thread_ = std::thread([this]() {
+    util::NameCurrentThread("remote-io");
+    Run();
+  });
   return true;
 }
 
@@ -189,10 +193,8 @@ void RemoteFrameTransport::Run() {
     if (ticking) {
       const auto now = std::chrono::steady_clock::now();
       if (now >= next_tick_) {
-        next_tick_ = now + options_.tick_interval;
-        if (callbacks_.on_tick) {
-          callbacks_.on_tick();
-        }
+        const std::chrono::milliseconds next = callbacks_.on_tick ? callbacks_.on_tick() : options_.tick_interval;
+        next_tick_ = std::chrono::steady_clock::now() + std::max(next, std::chrono::milliseconds(1));
         continue;  // the tick may have queued a frame (a ping): recompute the poll set
       }
       timeout_ms = static_cast<int>(

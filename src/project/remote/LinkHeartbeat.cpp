@@ -23,6 +23,17 @@ std::optional<std::int64_t> LinkHeartbeat::Tick(std::int64_t now_ms) {
   return now_ms;
 }
 
+std::int64_t LinkHeartbeat::NextTickDelayMs(std::int64_t now_ms) const {
+  if (dead_) {
+    return config_.interval_ms;  // nothing left to decide; the owner tears down
+  }
+  if (!last_sent_ms_.has_value()) {
+    return 0;
+  }
+  const std::int64_t due = *last_sent_ms_ + config_.interval_ms;
+  return due > now_ms ? due - now_ms : 0;
+}
+
 void LinkHeartbeat::OnPong(std::int64_t sent_ms, std::int64_t now_ms) {
   if (dead_ || !last_sent_ms_.has_value() || sent_ms < first_sent_ms_ ||
       sent_ms > *last_sent_ms_ || now_ms < sent_ms) {

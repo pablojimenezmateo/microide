@@ -449,6 +449,90 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-28-418 — the remote link's idle wakeups and memory, measured end to end: what was fixed, and what is left. [PARTLY RESOLVED 2026-10-28 — open: per-file state on both sides, allocator slack after a first sync]
+
+Measured with `tools/qa/remote.py` W (idle) and X (live), loopback host, this
+repository (4,767 files, 36 MB) unless stated. Per thread now: every remote and
+server thread is named (`util::NameCurrentThread`: `remote-io`, `remote-host`,
+`remote-proc`, `mirror-sync`, `srv-tree`, `srv-tree-io`, `srv-processes`,
+`srv-terminals`, `srv-watch`, `srv-git`, `srv-ports`, `srv-activity`;
+`SerialWorkQueue` takes a thread name). Unnamed, they all read as the process and
+no cost could be attributed.
+
+Fixed:
+
+- **The server's process table polled twice a second forever, and leaked an entry
+  per process.** The exit marks behind the 5 s pipe-drain grace lived in a map
+  local to `ProcessTable::Run`; `Release` (the client collecting an exit) erased
+  the process but could not reach the map, so after the first remote process ever
+  exited (a git the sidebar runs) the map was never empty, the loop's timeout was
+  500 ms for the server's life, and the map grew by one node per process. The mark
+  is on the `Process` now, and the loop sleeps until the earliest drain deadline of
+  an exited process whose pipes are still open, else blocks.
+  `RemoteServer/AProcessTableWithNothingRunningSleeps` (fails on the old loop: 3
+  wakeups in 1.5 s).
+- **The client's I/O thread ticked four times per heartbeat.** The tick ran at a
+  quarter of the 2 s ping interval, though `LinkHeartbeat::Tick` only acts a full
+  interval after the last ping (the ping and the dead-link verdict both). `on_tick`
+  now returns the delay to the heartbeat's next deadline
+  (`LinkHeartbeat::NextTickDelayMs`): one wakeup per ping, and the verdict lands on
+  its deadline instead of up to 500 ms after. `RemotePeer/HeartbeatSleepsUntilItsNextDeadline`.
+- **The server's listener woke every second while a client was connected**, to
+  re-check an idle rule that needs zero connections. A closing connection wakes it
+  already; it blocks while one is open.
+- **Heap diagnostics.** The control channel's `status` has `heap: {inUse, free}`
+  and `microide-server status --json` `server.heap_in_use` / `heap_free`
+  (`util::CurrentHeapUsage`, mallinfo2): RSS cannot tell live data from freed
+  memory the allocator kept, and every question below needed that split. A burst's
+  end trims (`util::ReleaseFreedHeap`): the sync engine after a full sync, the
+  server's fetch queue once a burst of >= 4 MiB has drained (a keyed job that
+  moves behind every later fetch).
+
+Result, idle and connected: server 6.8 -> 2.6 wakeups/s, 0.34% -> 0.03% CPU, 48 ->
+9.5 MB RSS (with TD-416/417); client 4.8 -> 3.3 wakeups/s against 2.3 for the same
+editor with no remote project, CPU indistinguishable from local idle.
+
+Tried and rejected: a fixed `M_MMAP_THRESHOLD` (128 KiB). It does remove the
+client's allocator slack below (a remote open then costs what a local one does,
+76.9 vs 99 MB anon), because glibc's dynamic threshold is what moves first-sync
+buffers into the arenas. But it is process-wide, and the editor's large scratch
+buffers then each cost an mmap/munmap and fresh page faults: on the perf gate
+(same binary, `GLIBC_TUNABLES` on and off) `window_resize_stress` +174%,
+`editor_long_line_select_all_edit` +50%, `editor_multi_caret_edit_burst` +49%,
+`editor_toggle_comment_large_selection` +46%. Speed first: not for the editor.
+
+Left open:
+
+1. **Allocator slack after a first sync, client** (~25-34 MB held free). Not a
+   leak and bounded: 4.4x the data (a synthetic 15,000-file, 159 MB repository)
+   held 34 MB against 25-30. A trim at any later time returns only ~5 MB of it:
+   it is fragmentation -- long-lived small allocations (the mirror store's entries)
+   made in the same arenas, during the burst, as the transient object buffers. The
+   fix is at the source: stream pulled objects to staging files as their frames
+   arrive (hashing incrementally, as `FetchObjectToFile` already does for large
+   files) instead of holding a batch's contents in memory, so the burst allocates
+   no large buffers at all.
+2. **Per-file state, client:** ~1 KB per mirrored file beyond what a local project
+   of the same tree costs (+9 MB in use vs +4 MB local here; +20 MB at 15,000
+   files). `MirrorStore::entries_` is a `std::map<std::string, Entry>` whose key
+   and `Entry::remote.path` both hold the path, plus a whole `ManifestRow` (~130 B
+   with `link_target`) and bookkeeping per entry: one path copy and a compact row
+   would roughly halve it.
+3. **Per-file state, server:** ~0.6 KB per file in use (8.8 MB at 15,000 files).
+   `WorkspaceTree::last_rows_` and the watch subscribers' snapshot are two full
+   copies of the row vector, and `UpdateManifest` moves every row out of
+   `last_rows_` and then copies the whole vector back -- an O(files) string copy
+   per watch batch, i.e. per agent edit. One `shared_ptr<const vector>` for both
+   halves the memory and the per-batch copy.
+4. **The git sampler stat-polls once a second** per watched tree (HEAD, the branch
+   ref, packed-refs, the index): ~0.01% CPU, but it is the server's largest idle
+   wakeup source. An inotify watch on `.git` and `refs/heads` would make it
+   event-driven.
+5. **Live, X (agent churn: four host agents for 15 s):** the client spent 1.5 s of
+   CPU over 20 s against the server's 0.6 s; where the client's goes (the watch
+   delta apply, the reload of open buffers, the file index, git refreshes) is not
+   yet broken down.
+
 ### TD-2026-10-28-417 — the remote server kept every byte of the first sync in memory, per workspace. [RESOLVED 2026-10-28]
 
 Found by the same measurement (`W`). An idle server serving this repository (4,767

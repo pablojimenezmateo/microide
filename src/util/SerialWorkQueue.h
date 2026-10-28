@@ -68,8 +68,9 @@ class SerialWorkQueue {
     std::function<void()> on_complete;
   };
 
+  // `thread_name`: what the worker thread is called (util::NameCurrentThread).
   explicit SerialWorkQueue(StartMode start_mode = StartMode::kLazy, Hooks hooks = {},
-                           Limits limits = Limits{0});
+                           Limits limits = Limits{0}, std::string thread_name = {});
   ~SerialWorkQueue();
 
   SerialWorkQueue(const SerialWorkQueue&) = delete;
@@ -144,6 +145,7 @@ class SerialWorkQueue {
 
   Hooks hooks_;
   Limits limits_;
+  std::string thread_name_;
   std::mutex mutex_;
   std::condition_variable cv_;
   std::list<Job> queue_;

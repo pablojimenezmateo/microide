@@ -6,6 +6,7 @@
 
 #include "platform/ProcessLauncher.h"
 #include "util/Log.h"
+#include "util/ThreadName.h"
 
 namespace microide::server {
 namespace {
@@ -16,7 +17,10 @@ constexpr std::size_t kMaxShellBytes = 64 * 1024;
 }  // namespace
 
 TerminalTable::TerminalTable(Sink sink, Limits limits) : sink_(std::move(sink)), limits_(limits) {
-  thread_ = std::thread([this]() { Run(); });
+  thread_ = std::thread([this]() {
+    util::NameCurrentThread("srv-terminals");
+    Run();
+  });
 }
 
 TerminalTable::~TerminalTable() {

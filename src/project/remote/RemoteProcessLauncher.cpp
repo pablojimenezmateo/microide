@@ -16,6 +16,7 @@
 #include "util/PosixFd.h"
 #include "util/PosixPipe.h"
 #include "util/WakePipe.h"
+#include "util/ThreadName.h"
 
 #include <cerrno>
 #include <fcntl.h>
@@ -159,7 +160,10 @@ class RemoteAsyncProcess final : public platform::AsyncProcessController, public
   void Begin(std::uint64_t handle, int pid) {
     handle_ = handle;
     pid_ = pid;
-    thread_ = std::thread([this]() { Pump(); });
+    thread_ = std::thread([this]() {
+      util::NameCurrentThread("remote-proc");
+      Pump();
+    });
   }
 
   bool IsRunning() const override { return !exited(); }

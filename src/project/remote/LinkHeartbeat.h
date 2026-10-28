@@ -32,6 +32,12 @@ class LinkHeartbeat {
   // ignored (a peer cannot make the RTT up); a late answer still proves liveness.
   void OnPong(std::int64_t sent_ms, std::int64_t now_ms);
 
+  // How long from `now_ms` until Tick next has anything to do: send the next ping
+  // or declare the link dead, which both happen a full interval after the last
+  // ping. The I/O thread sleeps exactly that long, so an idle link wakes once per
+  // interval instead of polling (TD-2026-10-28-418).
+  std::int64_t NextTickDelayMs(std::int64_t now_ms) const;
+
   bool dead() const { return dead_; }
   std::size_t outstanding() const { return outstanding_; }
   // Smoothed round trip (TCP's 1/8 gain), once there has been an answer.

@@ -124,8 +124,10 @@ class RemoteServer {
     // HEAD, the branch ref and packed-refs as of the last published batch (queue
     // thread only): a batch HEAD moved with is announced as watch/moved.
     project::GitRepositoryMetadataTracker published_head;
-    util::SerialWorkQueue queue;     // manifests and watch batches
-    util::SerialWorkQueue io_queue;  // reads, writes and tree ops, in arrival order
+    // manifests and watch batches
+    util::SerialWorkQueue queue{util::SerialWorkQueue::StartMode::kLazy, {}, {}, "srv-tree"};
+    // reads, writes and tree ops, in arrival order
+    util::SerialWorkQueue io_queue{util::SerialWorkQueue::StartMode::kLazy, {}, {}, "srv-tree-io"};
     // Pushed git status (remote-projects.md § 6.5): the connections that asked
     // (guarded by publish_mutex), what was last pushed (queue thread only; reset
     // to force a full push), and the sampler that notices a host-side commit.
@@ -137,6 +139,9 @@ class RemoteServer {
     // 32 MiB: RecentObjects keeps no object over a quarter of it, which is then the
     // fetch's 8 MiB delta-base limit.
     RecentObjects recent_objects{32u * 1024 * 1024};
+    // Object bytes sent since the heap was last trimmed (TD-2026-10-28-418): a fetch
+    // burst trims once it drains, a lone interactive fetch does not.
+    std::atomic<std::uint64_t> served_since_trim{0};
   };
   struct Workspace {
     std::size_t clients = 0;
@@ -182,7 +187,8 @@ class RemoteServer {
   void SampleActivity();
   void DropActivitySubscriber(std::uint64_t connection_id);
   // Drop connections whose transport closed. Not from their own I/O thread.
-  void ReapClosed();
+  // Joins the closed connections; whether any is still open.
+  bool ReapClosed();
   bool Idle();
 
   Config config_;

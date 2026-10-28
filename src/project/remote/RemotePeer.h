@@ -112,7 +112,8 @@ class RemotePeer {
  private:
   void HandleFrame(Frame frame);
   void HandleClosed(std::string_view reason, bool report);
-  void HandleTick();
+  // Sends the heartbeat's ping when one is due; returns the delay to the next tick.
+  std::chrono::milliseconds HandleTick();
   bool SendControl(FrameType type, Lane lane, std::uint64_t id, const util::JsonValue& body);
 
   std::map<std::string, RequestHandler, std::less<>> request_handlers_;

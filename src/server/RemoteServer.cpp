@@ -10,6 +10,7 @@
 #include "project/remote/RemoteServerPaths.h"
 #include "server/ListeningPorts.h"
 #include "server/ProcessActivity.h"
+#include "util/HeapUsage.h"
 #include "util/ContentHash.h"
 #include "util/Log.h"
 #include "util/TextFileIO.h"
@@ -530,6 +531,11 @@ util::JsonValue RemoteServer::StatusJson(bool activity) {
   const auto now = std::chrono::steady_clock::now();
   util::JsonObject server;
   server["uptime_ms"] = util::JsonValue(Milliseconds(now - started_));
+  // Live versus freed-but-kept heap: RSS cannot tell them apart (TD-2026-10-28-418).
+  if (const std::optional<util::HeapUsage> heap = util::CurrentHeapUsage()) {
+    server["heap_in_use"] = util::JsonValue(static_cast<std::int64_t>(heap->in_use_bytes));
+    server["heap_free"] = util::JsonValue(static_cast<std::int64_t>(heap->free_bytes));
+  }
   if (const ProcessActivity::Figures* own = figures_at(0)) {
     AddFigures(*own, server);
   }
@@ -636,7 +642,7 @@ void RemoteServer::InstallActivityHandlers(Connection& connection) {
                                 activity_subscribers_.insert(connection.id);
                                 if (activity_sampler_ == nullptr) {
                                   activity_sampler_ = std::make_unique<PeriodicSampler>(
-                                      remote::kActivityInterval, [this]() { SampleActivity(); });
+                                      "srv-activity", remote::kActivityInterval, [this]() { SampleActivity(); });
                                 }
                               }
                               connection.peer.Reply(id, StatusJson(true));
@@ -697,7 +703,7 @@ void RemoteServer::InstallPortHandlers(Connection& connection) {
                                 ports_last_ = ports;
                                 if (port_sampler_ == nullptr) {
                                   port_sampler_ = std::make_unique<PeriodicSampler>(
-                                      std::chrono::milliseconds(2000), [this]() { SamplePorts(); });
+                                      "srv-ports", std::chrono::milliseconds(2000), [this]() { SamplePorts(); });
                                 }
                               }
                               connection.peer.Reply(id, PortsJson(ports));
@@ -731,8 +737,9 @@ void RemoteServer::DropPortSubscriber(std::uint64_t connection_id) {
   }
 }
 
-void RemoteServer::ReapClosed() {
+bool RemoteServer::ReapClosed() {
   std::vector<std::unique_ptr<Connection>> dead;
+  bool open = false;
   {
     std::lock_guard lock(mutex_);
     for (auto it = connections_.begin(); it != connections_.end();) {
@@ -753,10 +760,12 @@ void RemoteServer::ReapClosed() {
     if (in_use) {
       idle_since_ = std::chrono::steady_clock::now();
     }
+    open = !connections_.empty();
   }
   for (auto& connection : dead) {
     connection->peer.Stop();  // joins its I/O thread; we are not on it
   }
+  return open;
 }
 
 bool RemoteServer::Idle() {
@@ -770,14 +779,17 @@ int RemoteServer::RunListener(int listen_fd) {
   util::Log("listening on " + config_.socket_path.string() + " (epoch " + epoch_ +
             (config_.on_demand ? ", on demand)" : ", started by hand)"));
   while (!shutdown_.load(std::memory_order_acquire)) {
-    ReapClosed();
+    const bool connected = ReapClosed();
     if (Idle()) {
       util::Log("idle with no clients and no workspaces: exiting");
       break;
     }
     pollfd fds[2] = {{listen_fd, POLLIN, 0}, {wake_.read_fd(), POLLIN, 0}};
-    // Wake at least once a second to re-check the idle rule; nothing else polls.
-    const int timeout_ms = config_.on_demand
+    // Idle needs no connection at all, and a connection that closes wakes this
+    // loop (wake_), so while one is open there is nothing to re-check: block. With
+    // none, wake at least once a second for the idle rule (a kept process exiting
+    // does not wake it). An open connection used to cost a wakeup a second here.
+    const int timeout_ms = config_.on_demand && !connected
                                ? static_cast<int>(std::min<std::int64_t>(
                                      config_.idle_timeout.count() + 1, 1000))
                                : -1;

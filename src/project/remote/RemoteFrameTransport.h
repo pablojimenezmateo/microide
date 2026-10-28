@@ -52,8 +52,11 @@ class RemoteFrameTransport {
   struct Callbacks {
     std::function<void(Frame)> on_frame;
     std::function<void(std::string_view reason)> on_closed;
-    // Every Options::tick_interval on the I/O thread (the heartbeat's clock).
-    std::function<void()> on_tick;
+    // On the I/O thread, first Options::tick_interval after Start (the heartbeat's
+    // clock). Returns how long until it wants the next tick: the caller knows its
+    // own next deadline, so an idle connection wakes once per heartbeat rather
+    // than on a fixed polling tick. Unset: every tick_interval.
+    std::function<std::chrono::milliseconds()> on_tick;
   };
 
   struct Options {
@@ -68,8 +71,8 @@ class RemoteFrameTransport {
     std::size_t ack_every_bytes = 32 * 1024;
     // Close the descriptors on Stop (false when someone else owns them).
     bool owns_fds = true;
-    // 0 = no ticks. The poll() wait is bounded by the next tick, so an idle
-    // connection wakes only for its heartbeat.
+    // 0 = no ticks; else the delay to the first. The poll() wait is bounded by the
+    // next tick, so an idle connection wakes only for its heartbeat.
     std::chrono::milliseconds tick_interval{0};
   };
 

@@ -1,4 +1,5 @@
 #include "util/SerialWorkQueue.h"
+#include "util/ThreadName.h"
 
 #include <cstddef>
 #include <cstdio>
@@ -8,8 +9,8 @@
 
 namespace microide::util {
 
-SerialWorkQueue::SerialWorkQueue(StartMode start_mode, Hooks hooks, Limits limits)
-    : hooks_(std::move(hooks)), limits_(limits) {
+SerialWorkQueue::SerialWorkQueue(StartMode start_mode, Hooks hooks, Limits limits, std::string thread_name)
+    : hooks_(std::move(hooks)), limits_(limits), thread_name_(std::move(thread_name)) {
   if (start_mode == StartMode::kEager) {
     EnsureStarted();
   }
@@ -26,7 +27,12 @@ void SerialWorkQueue::EnsureStartedLocked() {
   if (started_.load(std::memory_order_acquire) || stop_) {
     return;
   }
-  worker_ = std::thread([this]() { WorkerMain(); });
+  worker_ = std::thread([this]() {
+    if (!thread_name_.empty()) {
+      NameCurrentThread(thread_name_);
+    }
+    WorkerMain();
+  });
   started_.store(true, std::memory_order_release);
 }
 

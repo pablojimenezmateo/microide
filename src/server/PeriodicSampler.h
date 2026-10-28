@@ -4,7 +4,11 @@
 #include <condition_variable>
 #include <functional>
 #include <mutex>
+#include <string>
+#include <string_view>
 #include <thread>
+
+#include "util/ThreadName.h"
 
 namespace microide::server {
 
@@ -14,9 +18,13 @@ namespace microide::server {
 // host program started listening on.
 class PeriodicSampler {
  public:
-  PeriodicSampler(std::chrono::milliseconds interval, std::function<void()> sample)
+  // `name`: the thread's (util::NameCurrentThread).
+  PeriodicSampler(std::string_view name, std::chrono::milliseconds interval, std::function<void()> sample)
       : sample_(std::move(sample)) {
-    thread_ = std::thread([this, interval]() { Run(interval); });
+    thread_ = std::thread([this, interval, name = std::string(name)]() {
+      util::NameCurrentThread(name);
+      Run(interval);
+    });
   }
   ~PeriodicSampler() {
     {

@@ -17,6 +17,7 @@
 #include "project/remote/TreeFiles.h"
 #include "util/ByteCodec.h"
 #include "util/ContentHash.h"
+#include "util/HeapUsage.h"
 #include "util/Zstd.h"
 #include "util/Log.h"
 
@@ -41,6 +42,9 @@ constexpr std::uint64_t kMaxDeltaBaseBytes = 8u * 1024 * 1024;
 // index for it: one `git show` against a whole-file transfer. Below it the file is
 // cheaper to send than the process is to run.
 constexpr std::size_t kIndexBaseMinBytes = 16 * 1024;
+// Object bytes a fetch burst must have sent before its end trims the heap: below
+// it there is too little freed to be worth the arena walk.
+constexpr std::uint64_t kTrimAfterServedBytes = 4u * 1024 * 1024;
 
 // The base a client holds for `path` when it is not in RecentObjects: a file the
 // client got in its first sync and that the host has changed since. When the file
@@ -583,6 +587,7 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
     tree->io_queue.Post([this, tree, connection_id, id, paths = std::move(paths),
                          bases = std::move(bases), max_bytes, lane]() {
       util::JsonArray results;
+      std::uint64_t sent_bytes = 0;
       for (std::size_t index = 0; index < paths.size(); ++index) {
         if (tree->closing.load() || !RequestLive(connection_id, id)) {
           WithPeer(connection_id, [&](remote::RemotePeer& peer) {
@@ -591,6 +596,7 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
           return;
         }
         const auto send = [&](std::string_view frame) {
+          sent_bytes += frame.size();
           WithPeer(connection_id, [&](remote::RemotePeer& peer) {
             peer.SendContent(remote::FrameType::ObjectData, id, frame, lane);
           });
@@ -654,6 +660,15 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
       reply["objects"] = util::JsonValue(std::move(results));
       WithPeer(connection_id, [&](remote::RemotePeer& peer) {
         peer.Reply(id, util::JsonValue(std::move(reply)), lane);
+      });
+      // Keyed, so it moves behind every fetch queued after this one and runs once
+      // the burst has drained.
+      tree->served_since_trim.fetch_add(sent_bytes);
+      tree->io_queue.PostLatest("heap-trim", [tree]() {
+        if (tree->served_since_trim.load() >= kTrimAfterServedBytes) {
+          tree->served_since_trim.store(0);
+          util::ReleaseFreedHeap();
+        }
       });
     });
   });

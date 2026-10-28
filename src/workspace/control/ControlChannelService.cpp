@@ -19,6 +19,7 @@
 
 #include "platform/AppDirectories.h"
 #include "platform/RuntimePaths.h"
+#include "util/HeapUsage.h"
 #include "util/Parse.h"
 #include "util/StringUtil.h"
 #include "workspace/control/ControlProtocol.h"
@@ -1249,6 +1250,13 @@ util::JsonValue ControlChannelService::BuildStatus() const {
   object["debugStopped"] = util::JsonValue(state.debug_execution.stopped);
   object["connections"] = util::JsonValue(static_cast<std::int64_t>(server_.ConnectionCount()));
   object["renderer"] = util::JsonValue(context_->render_driver_name);
+  // The allocator's view: what is live versus freed-but-kept (TD-2026-10-28-418).
+  if (const std::optional<util::HeapUsage> heap = util::CurrentHeapUsage()) {
+    util::JsonObject heap_object;
+    heap_object["inUse"] = util::JsonValue(static_cast<std::int64_t>(heap->in_use_bytes));
+    heap_object["free"] = util::JsonValue(static_cast<std::int64_t>(heap->free_bytes));
+    object["heap"] = util::JsonValue(std::move(heap_object));
+  }
   object["rendererIsGpu"] = util::JsonValue(context_->render_is_gpu);
   if (operations_.remote_project) {
     if (const auto remote = operations_.remote_project(state.root)) {

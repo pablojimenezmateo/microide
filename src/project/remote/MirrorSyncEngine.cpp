@@ -1,6 +1,7 @@
 #include "project/remote/MirrorSyncEngine.h"
 
 #include <unordered_set>
+#include "util/HeapUsage.h"
 #include "util/ContentHash.h"
 #include "util/TextFileIO.h"
 #include "util/Zstd.h"
@@ -69,7 +70,8 @@ MirrorSyncEngine::MirrorSyncEngine(RemoteWorkspace& workspace, MirrorStore& stor
                          idle_cv_.notify_all();
                        }
                      },
-             }) {
+             },
+             util::SerialWorkQueue::Limits{}, "mirror-sync") {
   // What a previous run set aside and did not get to unlink (a crash): its deletes
   // are final, the saved state no longer lists those paths.
   queue_.Post([this]() {
@@ -1140,6 +1142,9 @@ void MirrorSyncEngine::SyncNow() {
     }
     Changed();
     SweepObjects();
+    // A full sync is this engine's one big burst (the first sync streams the whole
+    // content set through it): give its freed buffers back.
+    util::ReleaseFreedHeap();
   });
 }
 

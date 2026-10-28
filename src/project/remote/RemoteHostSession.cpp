@@ -13,6 +13,7 @@
 #include "project/remote/RemoteServerPaths.h"
 #include "util/Sha256.h"
 #include "util/TextFileIO.h"
+#include "util/ThreadName.h"
 
 #include <fnmatch.h>
 #include <netinet/in.h>
@@ -356,7 +357,10 @@ RemoteHostSession::RemoteHostSession(Config config, Listener listener)
     config_.forwards = std::make_shared<HostPortForwards>();
   }
   link_signal_->session = this;
-  thread_ = std::thread([this]() { Run(); });
+  thread_ = std::thread([this]() {
+    util::NameCurrentThread("remote-host");
+    Run();
+  });
 }
 
 RemoteHostSession::~RemoteHostSession() {

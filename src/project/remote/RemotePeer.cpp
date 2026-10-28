@@ -51,8 +51,8 @@ bool RemotePeer::Start(int read_fd, int write_fd, Options options) {
   }
   RemoteFrameTransport::Options transport_options = options.transport;
   if (send_pings_) {
-    // Tick at a quarter of the ping interval: the heartbeat decides when one is
-    // due, and a dead link is noticed within a quarter interval of its deadline.
+    // The first ping a quarter interval in (an early round-trip estimate); after
+    // that each tick lands on the heartbeat's own next deadline (HandleTick).
     transport_options.tick_interval =
         std::chrono::milliseconds(std::max<std::int64_t>(options.heartbeat.interval_ms / 4, 1));
   }
@@ -62,7 +62,7 @@ bool RemotePeer::Start(int read_fd, int write_fd, Options options) {
                               .on_closed = [this](std::string_view reason) {
                                 HandleClosed(reason, /*report=*/true);
                               },
-                              .on_tick = [this]() { HandleTick(); },
+                              .on_tick = [this]() { return HandleTick(); },
                           },
                           transport_options);
 }
@@ -315,26 +315,25 @@ void RemotePeer::HandleClosed(std::string_view reason, bool report) {
   }
 }
 
-void RemotePeer::HandleTick() {
-  if (!send_pings_) {
-    return;
-  }
+std::chrono::milliseconds RemotePeer::HandleTick() {
   const std::int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                   std::chrono::steady_clock::now() - epoch_)
                                   .count();
   std::optional<std::int64_t> stamp;
   bool dead = false;
+  std::chrono::milliseconds next{0};
   {
     std::lock_guard lock(mutex_);
     stamp = heartbeat_.Tick(now_ms);
     dead = heartbeat_.dead();
+    next = std::chrono::milliseconds(heartbeat_.NextTickDelayMs(now_ms));
   }
   if (dead) {
     transport_.Fail("link dead: no answer to three pings");
-    return;
+    return next;
   }
   if (!stamp.has_value()) {
-    return;
+    return next;
   }
   util::JsonObject params;
   params["clock"] = util::JsonValue(*stamp);
@@ -352,6 +351,7 @@ void RemotePeer::HandleTick() {
         heartbeat_.OnPong(sent, now);
       },
       {}, /*heartbeat=*/true);
+  return next;
 }
 
 }  // namespace microide::project::remote

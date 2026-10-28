@@ -22,7 +22,7 @@ class GitStatusSampler {
       : changed_(std::move(changed)) {
     tracker_.SetProjectRoot(root);
     (void)tracker_.SampleChanges();  // the baseline
-    sampler_.emplace(interval, [this]() {
+    sampler_.emplace("srv-git", interval, [this]() {
       if (!tracker_.SampleChanges().empty() && changed_) {
         changed_();
       }
