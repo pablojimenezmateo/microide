@@ -128,9 +128,13 @@ void RemoteHostService::UpdateActivitySubscription() {
         // stays as that says, with its figures not reported. Not an error.
         status = client->Status(&error);
       }
-      mailbox_.Post([this, host, generation, status = std::move(status)]() mutable {
-        OnHostActivity(host, generation, std::move(status));
-      });
+      // Under the pushes' key: a push queued before this answer runs in the
+      // answer's place otherwise, and the older answer would then overwrite it
+      // (see MainThreadMailbox::PostLatest). Only the newest state runs.
+      mailbox_.PostLatest("remote-activity:" + host,
+                          [this, host, generation, status = std::move(status)]() mutable {
+                            OnHostActivity(host, generation, std::move(status));
+                          });
     });
   }
 }
