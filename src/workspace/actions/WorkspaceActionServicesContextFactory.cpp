@@ -216,7 +216,7 @@ void WorkspaceActionContext::OpenRenameSymbolPrompt() {
   // Prefill with the identifier under the cursor so a rename usually starts from the
   // current name — this opens instantly. The language server's prepareRename then
   // refines the seed / rejects invalid positions asynchronously (best-effort).
-  std::string seed = operations_.symbol_at_cursor ? operations_.symbol_at_cursor() : std::string{};
+  std::string seed = services_.assist.refactor().SymbolAtCursor();
   operations_.open_prompt_surface(PromptSurfaceState::Action::RenameSymbol,
                                   PromptSurfaceState::Kind::TextInput, std::filesystem::path{}, seed);
   if (operations_.refine_rename_prompt) {
@@ -546,7 +546,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 ApplyLanguageModeToActiveEditor(value);
                 return true;
               },
-          .symbol_at_cursor = [this]() { return assist_service_.refactor().SymbolAtCursor(); },
           // Refine a just-opened Rename Symbol prompt from the server's prepareRename:
           // prefill the exact placeholder (only while the user has not typed over the
           // heuristic seed) or dismiss with a hint for a non-renameable position.

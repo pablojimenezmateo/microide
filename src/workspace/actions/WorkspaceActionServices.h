@@ -135,7 +135,6 @@ class WorkspaceActionContext {
     // Change Language Mode: the pick (empty) or a language to set ("auto" detects
     // again); false, with why, for a language no definition has.
     std::function<bool(const std::string& language, std::string* error)> change_language_mode;
-    std::function<std::string()> symbol_at_cursor;
     // Refine a just-opened Rename Symbol prompt from the server's prepareRename
     // (prefill the placeholder / reject non-renameable positions). Best-effort.
     std::function<void(std::string)> refine_rename_prompt;
