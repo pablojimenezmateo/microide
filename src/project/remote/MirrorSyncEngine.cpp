@@ -902,8 +902,26 @@ void MirrorSyncEngine::SaveLocked() {
     queue_.Post([this]() {
       std::lock_guard lock(mutex_);
       state_save_queued_ = false;
+      // More work is coming that saves again when it is done: let it.
+      constexpr auto kMaxStateSaveDeferral = std::chrono::seconds(2);
+      const auto now = std::chrono::steady_clock::now();
+      if ((pull_pipelines_ > 0 || watch_deltas_queued_ > 0) &&
+          (!state_save_deferred_ || now - state_save_deferred_since_ < kMaxStateSaveDeferral)) {
+        if (!state_save_deferred_) {
+          state_save_deferred_ = true;
+          state_save_deferred_since_ = now;
+        }
+        return;
+      }
+      state_save_deferred_ = false;
       SaveNowLocked();
     });
+  }
+}
+
+void MirrorSyncEngine::SaveDeferredIfIdleLocked() {
+  if (state_save_deferred_ && pull_pipelines_ == 0 && watch_deltas_queued_ == 0) {
+    SaveLocked();  // the queued job saves: nothing is left to hold it
   }
 }
 
@@ -1211,7 +1229,21 @@ std::function<void(RemoteWorkspace::WatchDelta)> MirrorSyncEngine::WatchSink() {
 }
 
 void MirrorSyncEngine::ApplyWatchDelta(RemoteWorkspace::WatchDelta delta) {
+  {
+    std::lock_guard lock(mutex_);
+    ++watch_deltas_queued_;
+  }
   queue_.Post([this, delta = std::move(delta)]() mutable {
+    // Counted out when the job ends, whichever way it returns: its own saves are
+    // held while later deltas wait, and the last delta lets a held one through.
+    struct CountedOut {
+      MirrorSyncEngine* engine;
+      ~CountedOut() {
+        std::lock_guard lock(engine->mutex_);
+        --engine->watch_deltas_queued_;
+        engine->SaveDeferredIfIdleLocked();
+      }
+    } counted_out{this};
     Plan plan;
     if (delta.repository_moved) {
       {
@@ -1300,6 +1332,10 @@ void MirrorSyncEngine::Execute(Plan plan, std::function<void()> on_done) {
   // Prioritize() posted meanwhile runs between two of them.
   auto pipeline = std::make_shared<PullPipeline>();
   pipeline->on_drained = std::move(on_done);
+  {
+    std::lock_guard lock(mutex_);
+    ++pull_pipelines_;
+  }
   std::vector<PullItem> batch;
   std::uint64_t batch_bytes = 0;
   std::vector<PullItem> large;
@@ -1330,6 +1366,12 @@ void MirrorSyncEngine::Execute(Plan plan, std::function<void()> on_done) {
 
 void MirrorSyncEngine::LaunchPulls(const std::shared_ptr<PullPipeline>& pipeline) {
   if (pipeline->batches.empty() && pipeline->in_flight == 0) {
+    if (!pipeline->drained) {
+      pipeline->drained = true;
+      std::lock_guard lock(mutex_);
+      --pull_pipelines_;
+      SaveDeferredIfIdleLocked();
+    }
     if (pipeline->on_drained) {
       // Behind every job the batches posted.
       queue_.Post(std::exchange(pipeline->on_drained, {}));

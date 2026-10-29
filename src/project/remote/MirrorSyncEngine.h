@@ -294,6 +294,7 @@ class MirrorSyncEngine {
     std::deque<std::vector<PullItem>> batches;  // small files, batched, then large ones alone
     std::size_t in_flight = 0;
     bool large_in_flight = false;
+    bool drained = false;  // counted out of pull_pipelines_
     std::function<void()> on_drained;
   };
   void LaunchPulls(const std::shared_ptr<PullPipeline>& pipeline);
@@ -361,6 +362,19 @@ class MirrorSyncEngine {
   std::unordered_map<std::string, HostChange> host_changes_;
   std::uint64_t host_change_sequence_ = 0;
   bool state_save_queued_ = false;
+  // Work that will save the state again when it is done -- pull pipelines not yet
+  // drained, host watch deltas queued -- and a state save it held back (mutex_).
+  // The full state is O(paths) per write: a first sync wrote it about forty times,
+  // twice per watch delta (before the delta's pulls and when they drained), each a
+  // fresh multi-megabyte buffer (TD-2026-10-28-418). Held saves coalesce into the
+  // one the last such work makes, or into the first after kMaxStateSaveDeferral.
+  // Crash safety does not wait for it: the journal is written at once, and
+  // meta/pulled records each batch's pulls.
+  std::size_t pull_pipelines_ = 0;
+  std::size_t watch_deltas_queued_ = 0;
+  bool state_save_deferred_ = false;
+  std::chrono::steady_clock::time_point state_save_deferred_since_{};
+  void SaveDeferredIfIdleLocked();
   bool tree_unsynced_ = false;  // pulls written since the last flush (mutex_)
   // PendingPaths(): RecountLocked stages a changed list, Changed() builds the
   // snapshot outside the lock (its directory map is O(paths)) and publishes it.
