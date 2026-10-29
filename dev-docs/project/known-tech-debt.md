@@ -913,6 +913,15 @@ Left open:
    handful of entries) could move behind one rarely-allocated pointer, and the rest
    of the ~1 KB per file has not been attributed -- measure (the control channel's
    `heap`) before cutting further.
+   *Measured 2026-10-29* (loopback host, 4,780 files, redraw verifier off): opening the
+   same tree as a local folder adds 3.8 MB in use; the remote first sync adds 9.4 MB,
+   so ~5.6 MB (~1.2 KB a file) is the remote's own. `MirrorStore`'s entries are 1.7 MB
+   of it (355 B a path, measured by populating a store with the tree's real paths:
+   `sizeof(Entry)` 216 B plus the map node and a 51-byte average path). The other
+   ~3.9 MB is not attributed yet; the client's copy of the last manifest's rows and
+   the engine's per-path side tables are the next to measure. Moving `renamed_from`,
+   `unacknowledged` and `link_target` behind one pointer would save ~80 B a path
+   (~0.4 MB here): not taken for that alone.
 3. ~~**Per-file state, server:** ~0.6 KB per file in use (8.8 MB at 15,000 files).
    `WorkspaceTree::last_rows_` and the watch subscribers' snapshot are two full
    copies of the row vector, and `UpdateManifest` moves every row out of
