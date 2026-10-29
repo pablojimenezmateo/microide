@@ -194,10 +194,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
       surface.show_vertical ? kWorkspaceDiffScrollbarReserve : 0.0f;
   const float content_width = std::max(0.0f, rect.w - right_reserved);
   const float content_height = std::max(0.0f, rect.h - bottom_reserved);
-  const std::size_t visible_start_row = static_cast<std::size_t>(std::max(0, merge_tab->scroll_row));
-  const std::size_t visible_end_row =
-      visible_start_row + static_cast<std::size_t>(std::max(1, surface.visible_rows)) + 64;
-  PopulateMergeSyntaxTokensForWindow(*merge_tab, visible_start_row, visible_end_row);
+  // Syntax tokens were produced in frame prep (PopulateMergeSyntaxTokensForWindow).
   const MergeInteractionLayout interaction = BuildMergeInteractionLayout(rect, surface, *merge_tab);
   const std::size_t selected_hunk =
       merge_tab->conflicts.empty() ? 0 : std::min(merge_tab->selected_hunk, merge_tab->conflicts.size() - 1);

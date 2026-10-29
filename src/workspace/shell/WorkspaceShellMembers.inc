@@ -1005,9 +1005,7 @@
       std::span<const std::uint8_t> resolved_hints = {}) const;
   void UpdateMergeMaxVisualColumns(MergeTabState& merge_tab,
                                    std::span<const std::string> result_lines) const;
-  void PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab,
-                                          std::size_t visible_start_row,
-                                          std::size_t visible_end_row);
+  void PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab, const SDL_FRect& rect);
   // Re-track the conflict spans after the result pane's buffer changed. Reads the
   // viewport's own last-applied-edit span; the caller captures nothing.
   void UpdateMergeTrackingAfterViewportEdit(MergeTabState& merge_tab);

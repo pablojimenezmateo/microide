@@ -652,10 +652,12 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     RefreshBufferSearchIfStale();
     ClampOverlayScrollRow(ComputeOverlayRect(layout.overlay_anchor));
   }
-  // 2b) The focused compare tab's visible syntax tokens, so paint only reads them
-  //     (see PopulateCompareSyntaxTokensForWindow).
+  // 2b) The focused compare or merge tab's visible syntax tokens, so paint only
+  //     reads them (see PopulateCompareSyntaxTokensForWindow).
   if (CompareTabState* compare = ActiveCompareTab(); compare != nullptr) {
     PopulateCompareSyntaxTokensForWindow(*compare, layout.editor_surface);
+  } else if (MergeTabState* merge = ActiveMergeTab(); merge != nullptr) {
+    PopulateMergeSyntaxTokensForWindow(*merge, layout.editor_surface);
   }
   // 3) Commit-draft body viewport sizing + caret-keep-visible scroll clamp (the
   //    083 residual): moved out of RenderCommitBodyField so paint stays pure.

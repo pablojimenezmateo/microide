@@ -25,6 +25,7 @@
 // been given the same treatment.
 
 #include "TestSupport.h"
+#include "support/RetainedRedraw.h"
 
 #include "support/SoftwareCanvas.h"
 
@@ -260,9 +261,55 @@ void TestEditorSurfacePaintsWithARealRenderer() {
   WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
 }
 
+// Two paints of one prepared frame must agree (the redraw verifier's check). The
+// merge surface tokenized in paint, capped per call, so with the visible rows past
+// one call's reach the second paint highlighted rows the first left plain.
+void TestMergePaintsOfOneFrameAgree() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const auto lines = [](const std::string& marker) {
+    std::string text;
+    for (int i = 0; i < 400; ++i) {
+      text += "// comment " + std::to_string(i) + "\nint v" + std::to_string(i) + " = " +
+              (i == 350 ? marker : std::string("0")) + ";\n";
+    }
+    return text;
+  };
+  WriteFile(root / "base.cpp", lines("0"));
+  WriteFile(root / "incoming.cpp", lines("1"));
+  WriteFile(root / "current.cpp", lines("2"));
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWindowWidth, kWindowHeight);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, root / "base.cpp", root / "incoming.cpp",
+                                                   root / "current.cpp", root / "current.cpp"),
+         "merge editor should open");
+  WorkspaceShellTestAccess::ActiveMerge(shell).scroll_row = 300;
+
+  SoftwareCanvas canvas(kWindowWidth, kWindowHeight);  // one canvas: glyph textures are per renderer
+  const WorkspaceShell::FrameToken token =
+      shell.PrepareFrameOnce(canvas.renderer(), kWindowWidth, kWindowHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const SDL_FRect everything{0.0f, 0.0f, static_cast<float>(kWindowWidth),
+                             static_cast<float>(kWindowHeight)};
+  shell.RenderClip(token, canvas.renderer(), kWindowWidth, kWindowHeight, everything);
+  SDL_FlushRenderer(canvas.renderer());
+  SDL_Surface* first = SDL_DuplicateSurface(canvas.surface());
+  shell.RenderClip(token, canvas.renderer(), kWindowWidth, kWindowHeight);
+  SDL_FlushRenderer(canvas.renderer());
+  const std::size_t differing = CountPixelDifferences(first, canvas.surface());
+  SDL_DestroySurface(first);
+  Expect(differing == 0, "a hinted paint and a full paint of the same frame paint the same pixels: " +
+                             std::to_string(differing) + " differ");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellRenderSurfaceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShellRenderSurface/MergePaintsOfOneFrameAgree", TestMergePaintsOfOneFrameAgree);
   AddTest(tests, "WorkspaceShellRenderSurface/MergePaintsWithRealRenderer",
           TestMergeSurfacePaintsWithARealRenderer);
   AddTest(tests, "WorkspaceShellRenderSurface/MergePaintsScrolledAndAfterChoices",

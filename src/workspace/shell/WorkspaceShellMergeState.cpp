@@ -526,13 +526,24 @@ void WorkspaceShell::RefreshMergeTabDerivedState(MergeTabState& merge_tab) const
   ResyncMergeTabViewState(merge_tab);
 }
 
+// The visible window's syntax tokens, for a merge surface painted into `rect`. In
+// frame prep, not paint, for the reason PopulateCompareSyntaxTokensForWindow gives:
+// capped per call, tokenizing while painting made two paints of one frame disagree.
 void WorkspaceShell::PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab,
-                                                        std::size_t visible_start_row,
-                                                        std::size_t visible_end_row) {
+                                                        const SDL_FRect& rect) {
+  if (rect.w <= 0.0f || rect.h <= 0.0f) {
+    return;
+  }
+  const MergeSurfaceLayout surface = ComputeMergeSurfaceLayout(rect, merge_tab);
+  // The clamp paint applies, applied first so both read the same scroll row.
+  ClampMergeScrollRow(merge_tab, surface.visible_rows);
+  const std::size_t visible_start_row = static_cast<std::size_t>(std::max(0, merge_tab.scroll_row));
+  const std::size_t visible_end_row =
+      visible_start_row + static_cast<std::size_t>(std::max(1, surface.visible_rows)) + 64;
   // The two panes tokenize cumulatively from the top, so reaching a row means
   // walking every row above it. SurfaceTokenWindow does that walk with
   // `AdvanceState` (which allocates nothing) and keeps token buffers only for a
-  // bounded window around the viewport, recycled as it slides — where this used
+  // bounded window around the viewport, recycled as it slides -- where this used
   // to keep one heap buffer per line of the file forever (TD-2026-08-15-242).
   constexpr std::size_t kMergeSyntaxRowsPerFrame = 256;
   merge_tab.incoming_token_window.EnsureWindow(
@@ -541,6 +552,18 @@ void WorkspaceShell::PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab
   merge_tab.current_token_window.EnsureWindow(
       visible_start_row, visible_end_row, merge_tab.output_path, kMergeSyntaxRowsPerFrame,
       [&](std::size_t row) -> std::string_view { return merge_tab.model.current_lines[row]; });
+  // Capped per frame, so a window deep in a long file takes several: ask for the
+  // next one until the visible rows are reached. The merge surface had no such
+  // request, so rows past the cap stayed plain until something else repainted.
+  // Against the window's own row count, not the model's: a window never sized
+  // walks nothing, and comparing it with the model's count would ask for frames
+  // forever.
+  const auto behind = [&](const SurfaceTokenWindow& window) {
+    return window.frontier() < std::min(visible_end_row, window.line_count());
+  };
+  if (behind(merge_tab.incoming_token_window) || behind(merge_tab.current_token_window)) {
+    RequestRedrawRect(rect);
+  }
 }
 
 void WorkspaceShell::UpdateMergeTrackingAfterViewportEdit(MergeTabState& merge_tab) {

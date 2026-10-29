@@ -483,8 +483,12 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
   // Capped per frame: if it has not yet reached the deepest visible model row (after
   // scrolling past a giant collapsed run), ask for another frame so it catches up
   // instead of leaving those rows unhighlighted. Self-terminates once caught up.
-  if (compare_tab.left_token_window.frontier() < window_end ||
-      compare_tab.right_token_window.frontier() < window_end) {
+  // Against each window's own row count: one never sized walks nothing, and
+  // would otherwise ask for frames forever.
+  const auto behind = [&](const SurfaceTokenWindow& window) {
+    return window.frontier() < std::min(window_end, window.line_count());
+  };
+  if (behind(compare_tab.left_token_window) || behind(compare_tab.right_token_window)) {
     RequestRedrawRect(rect);
   }
 }
