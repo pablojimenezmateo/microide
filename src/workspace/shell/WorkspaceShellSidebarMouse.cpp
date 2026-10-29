@@ -167,7 +167,12 @@ SidebarMouseCoordinator& WorkspaceShell::MakeSidebarMouseCoordinator() {
               [this](const std::filesystem::path& source, bool cut, const std::filesystem::path& folder) {
                 EditorTabService& editor_tabs = MakeEditorTabService();
                 PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
-                return MakePathMutationCoordinator(editor_tabs, prompt_surfaces).PastePath(source, cut, folder);
+                std::string refusal =
+                    MakePathMutationCoordinator(editor_tabs, prompt_surfaces).PastePath(source, cut, folder);
+                if (!refusal.empty()) {
+                  Notify(NotificationService::Tone::Warning, refusal);  // a drop has no other voice
+                }
+                return refusal;
               },
           .type_into_terminal =
               [this](std::string text) {

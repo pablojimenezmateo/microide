@@ -87,6 +87,35 @@ void TestWorkspaceShellTreeClipboardCopiesAndMoves() {
          "a cut pastes once");
 }
 
+// A refused paste says so once. The coordinator toasted its refusal as an error
+// and the tree action's rejection toasted the same sentence as a warning, so a
+// Ctrl+V of a folder into itself stacked two identical rows.
+void TestWorkspaceShellARefusedTreePasteToastsOnce() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::filesystem::create_directories(root / "dir" / "inner");
+  WriteFile(root / "dir" / "inner" / "a.txt", "a\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowTreeSidebar(shell);
+  WorkspaceShellTestAccess::SetFocusSidebar(shell);
+  const auto press = [&](SDL_Keycode key) { return SendKeyDown(shell, key, SDL_KMOD_CTRL); };
+  Expect(WorkspaceShellTestAccess::SelectTreePath(shell, root / "dir"), "dir should be selectable");
+  Expect(press(SDLK_X), "Ctrl+X in the tree should be handled");
+  WorkspaceShellTestAccess::RefreshProjectFiles(shell);
+  Expect(WorkspaceShellTestAccess::SelectTreePath(shell, root / "dir" / "inner"), "dir/inner should be selectable");
+  (void)press(SDLK_V);
+  Expect(std::filesystem::is_directory(root / "dir" / "inner") && !std::filesystem::exists(root / "dir" / "inner" / "dir"),
+         "a folder is not moved into itself");
+  std::size_t toasts = 0;
+  for (const auto& notification : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+    toasts += notification.message.find("into itself") != std::string::npos ? 1 : 0;
+  }
+  Expect(toasts == 1, "the refusal is shown once, not " + std::to_string(toasts) + " times");
+}
+
 void TestWorkspaceShellRenamePromptSavesDirtyTabs() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1566,6 +1595,7 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/RenamePromptSavesDirtyTabs",
           TestWorkspaceShellRenamePromptSavesDirtyTabs);
   AddTest(tests, "WorkspaceShell/TreeClipboardCopiesAndMoves", TestWorkspaceShellTreeClipboardCopiesAndMoves);
+  AddTest(tests, "WorkspaceShell/ARefusedTreePasteToastsOnce", TestWorkspaceShellARefusedTreePasteToastsOnce);
   AddTest(tests, "WorkspaceShell/GoToLinePromptNavigatesActiveEditor",
           TestWorkspaceShellGoToLinePromptNavigatesActiveEditor);
   AddTest(tests, "WorkspaceShell/PromptCancelButtonDoesNotExecuteAction",

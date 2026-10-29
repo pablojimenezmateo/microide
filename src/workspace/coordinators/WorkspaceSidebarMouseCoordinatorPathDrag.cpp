@@ -153,7 +153,7 @@ bool SidebarMouseCoordinator::FinishPathDrag(bool copy) {
       break;
     case PathDragState::Target::TreeFolder:
       if (operations_.paste_tree_path) {
-        (void)operations_.paste_tree_path(drag.path, /*cut=*/!copy, drag.folder);  // a refusal is notified
+        (void)operations_.paste_tree_path(drag.path, /*cut=*/!copy, drag.folder);  // the shell notifies a refusal
       }
       break;
     case PathDragState::Target::Terminal:

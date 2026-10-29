@@ -219,12 +219,11 @@ std::string PathMutationCoordinator::PastePath(const std::filesystem::path& sour
                                                const std::filesystem::path& directory) {
   const std::filesystem::path from = source.lexically_normal();
   const std::filesystem::path into = directory.lexically_normal();
-  const auto refuse = [this](std::string why) {
-    if (operations_.notify) {
-      operations_.notify(NotificationService::Tone::Error, why);
-    }
-    return why;
-  };
+  // Returned, not notified: each caller reports a refusal once, its own way (the
+  // tree action through its rejection, which also answers the control channel; a
+  // drop with a toast). Notified here as well, a refused Ctrl+V showed the same
+  // sentence twice, as an error and as a warning.
+  const auto refuse = [](std::string why) { return why; };
   std::error_code error;
   if (std::filesystem::symlink_status(from, error).type() == std::filesystem::file_type::not_found) {
     return refuse(from.filename().string() + " is no longer there");
