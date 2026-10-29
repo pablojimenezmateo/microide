@@ -724,6 +724,12 @@ void TestMirrorASaveIntoADirectoryTheHostMovedAwayIsAConflict() {
          "the save is a conflict: " + session.engine->status().error);
   Expect(!std::filesystem::exists(session.host / "changes/x"),
          "and the refused write left no directory on the host");
+  // The refusal itself says nothing is on the host: the conflict is one-sided
+  // before any manifest reconciles the delete. Read off the push alone it was
+  // "changed on both sides", and the row offered Merge with no remote side.
+  const auto before_sync = session.engine->ConflictDetails();
+  Expect(before_sync.size() == 1 && !before_sync[0].on_host,
+         "the push's own answer makes it deleted on the remote");
   session.Sync();
   Expect(session.engine->Conflicts() == std::vector<std::string>{"changes/x/design.md"},
          "the next sync keeps it a conflict");

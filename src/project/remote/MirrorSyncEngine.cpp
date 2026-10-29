@@ -1726,6 +1726,13 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
         queue_.Post([this, path]() { PushNow(path); });
       } else if (result.status == Status::Conflict) {
         entry->conflict = true;
+        if (!result.hash.has_value()) {
+          // The host's answer is that nothing is there: it deleted the file. A push
+          // replayed at reconnect gets that answer before the manifest saying so is
+          // reconciled, and the conflict read as "changed on both sides" -- a Merge
+          // row for a file with no remote side -- until it was.
+          entry->has_remote = false;
+        }
       } else {
         if (result.may_have_applied && entry->push_pending) {
           // Sent and unanswered: the host may hold these bytes now.
