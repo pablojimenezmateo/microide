@@ -802,6 +802,27 @@ def flow_terminal_links(app: q.App) -> None:
         step(app, "click file://", 0.3)
         app.expect(active_title(app) == "README.md", f"a click on a file:// URL opens the file ({active_title(app)})")
 
+    # A link the terminal wraps is one link: the URL starts ten columns before the
+    # right margin, and the click lands on its continuation row. The detector read
+    # one row, so the part past the wrap was no link (TD-2026-10-29-422 item 4;
+    # found here only when the fixture sat under a long path).
+    open_file(app, "notes/links.txt", "")
+    app.send("focus", "panel")
+    app.type('clear; printf "%$(( $(tput cols) - 10 ))s" ""; echo file://$PWD/README.md\n')
+    lines_now = lambda: output().split("\n")
+    wrapped = lambda: next((i for i, line in enumerate(lines_now()) if "file://" in line and
+                            not line.lstrip().startswith("clear")), None)
+    app.wait_until(lambda: wrapped() is not None and wrapped() + 1 < len(lines_now()), 5.0,
+                   "the wrapped URL printed")
+    step(app, "print a wrapped link", 0.3)
+    row = wrapped()
+    if app.expect(row is not None, "the wrapped file:// line is on screen"):
+        app.click(*app.terminal_point(row + 1, 2))
+        app.wait_until(lambda: active_title(app) == "README.md", 3.0, "the click past the wrap to open README.md")
+        step(app, "click past the wrap", 0.3)
+        app.expect(active_title(app) == "README.md",
+                   f"a click on a wrapped URL's continuation opens the file ({active_title(app)})")
+
     # The middle button pastes the primary selection (X11 only).
     app.send("focus", "panel")
     if not app.wayland:
