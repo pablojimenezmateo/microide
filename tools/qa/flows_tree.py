@@ -422,10 +422,69 @@ def flow_tree_drag(app: q.App) -> None:
     dismiss(app)
 
 
+def flow_tree_dotdot_folder(app: q.App) -> None:
+    """A folder whose name starts with two dots (`..cache`) is inside its parent
+    (TD-2026-10-29-423). The tree's copy guard read it as outside, so a folder
+    copied into its own `..cache` child copied itself until the path was too long
+    and then reported "Failed to copy"; the drop preview offered the same drop. A
+    copy into it is refused with the into-itself reason, a Ctrl drop onto it is
+    not offered, and a FILE still copies into it. (The tree lists a dot-named
+    entry only when it is ignored, so the fixture ignores it, as a cache is.)"""
+    write(app, "dd/x.txt", "ex\n")
+    write(app, "dd/..cache/keep.txt", "keep\n")
+    # The tree shows a dot-named entry only when it is ignored (greyed), which is
+    # how a cache folder usually is.
+    write(app, "dd/.gitignore", "..cache/\n")
+    app.send("tree-refresh")
+    app.send("sidebar-show", "tree")
+    app.wait_git_settled()
+    # A click on a folder toggles it, and the children land asynchronously: wait
+    # for them before a second click, which would fold the folder again.
+    for _ in range(2):
+        _select(app, "dd")
+        if app.wait_until(lambda: "row:tree/..cache" in _rows(app), 3.0, "..cache in the tree"):
+            break
+    else:
+        return
+
+    # Copy the folder (the click that expanded it selected it; another would fold
+    # it), paste it on its own ..cache child: refused, with the reason. Pasted on
+    # `dd` itself it would be refused before the fix too, so the target matters.
+    app.key("ctrl+c")
+    if not _select(app, "..cache"):
+        return
+    app.key("ctrl+v")
+    app.wait_until(lambda: any("into itself" in m for m in messages(app)), 3.0, "the refusal toast")
+    app.expect(any("into itself" in m for m in messages(app)),
+               f"a folder pasted into its ..cache child is refused as into itself ({messages(app)})")
+    assert app.project is not None
+    app.expect(not (app.project / "dd/..cache/dd").exists(), "and nothing was copied there")
+    dismiss(app)
+
+    # Ctrl-drag the folder onto ..cache: the drop is not offered, nothing copies.
+    app.send("sidebar-show", "tree")
+    app.settle(0.2)
+    x0, y0 = app.center(app.element("row:tree/dd"))
+    dx, dy = app.center(app.element("row:tree/..cache"))
+    app.drag(x0, y0, dx, dy, steps=10, modifiers=("ctrl",))
+    app.settle(0.5)
+    app.expect(not (app.project / "dd/..cache/dd").exists(), "a Ctrl drop of a folder onto its ..cache child copies nothing")
+
+    # A file still copies into ..cache.
+    _select(app, "x.txt")
+    app.key("ctrl+c")
+    _select(app, "..cache")
+    app.key("ctrl+v")
+    app.wait_until(lambda: _maybe_read(app, "dd/..cache/x.txt") == "ex\n", 3.0, "a file pasted into ..cache")
+    app.expect(_maybe_read(app, "dd/..cache/x.txt") == "ex\n", "a file pasted into a ..cache folder lands there")
+    dismiss(app)
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "tree-collisions": flow_tree_collisions,
     "tree-cancel-transactions": flow_tree_cancel_transactions,
     "rename-open-tabs": flow_rename_open_tabs,
     "tree-clipboard": flow_tree_clipboard,
     "tree-drag": flow_tree_drag,
+    "tree-dotdot-folder": flow_tree_dotdot_folder,
 }
