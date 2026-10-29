@@ -343,6 +343,47 @@ RuleResult CheckEditorViewModelStickyAndOccurrenceAreSpans(const std::filesystem
   return result;
 }
 
+// Every string literal in `text` -- its body (escapes kept as written) and the
+// offset of its opening quote -- skipping comments and character literals. Walked
+// by hand: BuildCodeMask marks literal bodies as NOT code, so a mask-and-skip check
+// over them can never fire, and std::regex over a whole file recurses per character
+// and overflowed the stack on this repo's longer sources.
+template <typename Visit>
+void ForEachStringLiteral(const std::string& text, Visit&& visit) {
+  enum class Lex { Code, LineComment, BlockComment, String, Char };
+  Lex state = Lex::Code;
+  std::size_t literal_start = 0;
+  std::string literal;
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    const char c = text[i];
+    const char n = (i + 1 < text.size()) ? text[i + 1] : '\0';
+    switch (state) {
+      case Lex::Code:
+        if (c == '/' && n == '/') { state = Lex::LineComment; ++i; }
+        else if (c == '/' && n == '*') { state = Lex::BlockComment; ++i; }
+        else if (c == '"') { state = Lex::String; literal_start = i; literal.clear(); }
+        else if (c == '\'') { state = Lex::Char; }
+        break;
+      case Lex::LineComment:
+        if (c == '\n') { state = Lex::Code; }
+        break;
+      case Lex::BlockComment:
+        if (c == '*' && n == '/') { state = Lex::Code; ++i; }
+        break;
+      case Lex::String:
+        if (c == '\\' && i + 1 < text.size()) { literal.push_back(c); literal.push_back(n); ++i; }
+        else if (c == '"') { state = Lex::Code; visit(std::string_view(literal), literal_start); }
+        else if (c == '\n') { state = Lex::Code; }  // unterminated; resynchronise rather than run on
+        else { literal.push_back(c); }
+        break;
+      case Lex::Char:
+        if (c == '\\' && i + 1 < text.size()) { ++i; }
+        else if (c == '\'' || c == '\n') { state = Lex::Code; }
+        break;
+    }
+  }
+}
+
 // Key-hint lists join on " · " (WorkspaceUiText.h's kHintSeparator / JoinHintSegments
 // / AppendHintSegment). The rule exists because the shell drifted off it twice, in
 // the same way both times: GitSidebarCommandCenter.cpp and CompareTabReview.cpp each
@@ -394,52 +435,17 @@ RuleResult CheckHintSegmentsUseTheSharedSeparator(const std::filesystem::path& r
   constexpr std::string_view kPipeSeparator = "  |  ";
   const auto scan_composed_pipe_literals = [&](const std::filesystem::path& path,
                                                const std::string& text) {
-    enum class Lex { Code, LineComment, BlockComment, String, Char };
-    Lex state = Lex::Code;
-    std::size_t literal_start = 0;
-    std::string literal;
-    for (std::size_t i = 0; i < text.size(); ++i) {
-      const char c = text[i];
-      const char n = (i + 1 < text.size()) ? text[i + 1] : '\0';
-      switch (state) {
-        case Lex::Code:
-          if (c == '/' && n == '/') { state = Lex::LineComment; ++i; }
-          else if (c == '/' && n == '*') { state = Lex::BlockComment; ++i; }
-          else if (c == '"') { state = Lex::String; literal_start = i; literal.clear(); }
-          else if (c == '\'') { state = Lex::Char; }
-          break;
-        case Lex::LineComment:
-          if (c == '\n') { state = Lex::Code; }
-          break;
-        case Lex::BlockComment:
-          if (c == '*' && n == '/') { state = Lex::Code; ++i; }
-          break;
-        case Lex::String:
-          if (c == '\\' && i + 1 < text.size()) { literal.push_back(c); literal.push_back(n); ++i; }
-          else if (c == '"') {
-            state = Lex::Code;
-            if (literal != kPipeSeparator &&
-                literal.find(kPipeSeparator) != std::string::npos) {
-              result.violations.push_back(Violation{
-                  .path = path,
-                  .line = LineNumberAt(text, literal_start),
-                  .message = "this literal joins fields on \"  |  \" inline — a composed "
-                             "key-hint line uses kHintSeparator (\" · \"); write the separator "
-                             "as a bare literal if these really are unrelated fields",
-              });
-            }
-          } else if (c == '\n') {
-            state = Lex::Code;  // unterminated; resynchronise rather than run on
-          } else {
-            literal.push_back(c);
-          }
-          break;
-        case Lex::Char:
-          if (c == '\\' && i + 1 < text.size()) { ++i; }
-          else if (c == '\'' || c == '\n') { state = Lex::Code; }
-          break;
+    ForEachStringLiteral(text, [&](std::string_view literal, std::size_t literal_start) {
+      if (literal != kPipeSeparator && literal.find(kPipeSeparator) != std::string_view::npos) {
+        result.violations.push_back(Violation{
+            .path = path,
+            .line = LineNumberAt(text, literal_start),
+            .message = "this literal joins fields on \"  |  \" inline — a composed "
+                       "key-hint line uses kHintSeparator (\" · \"); write the separator "
+                       "as a bare literal if these really are unrelated fields",
+        });
       }
-    }
+    });
   };
 
   const std::regex redefinition(R"(\bvoid\s+AppendHintSegment\s*\()");
@@ -469,6 +475,80 @@ RuleResult CheckHintSegmentsUseTheSharedSeparator(const std::filesystem::path& r
       });
     }
     scan_composed_pipe_literals(entry.path(), text);
+  }
+  return result;
+}
+
+// The two sides of a conflict, a merge or a compare are called Local and Remote in
+// every user-visible string -- buttons, menus, palette titles, toasts, row details,
+// pane captions -- never mine / yours / ours / theirs / the host's, nor current /
+// incoming (git's own mergetool names them $LOCAL and $REMOTE). The same two sides
+// had five names across the app: a remote conflict offered "Keep Mine" / "Take
+// Host's", the merge editor "Accept Ours" / "Accept Theirs", the palette "Accept
+// Current (Keep Ours)", a compare titled its side "(yours)" -- and a user reading a
+// row of 59 "changed on worky and here" toasts could not tell which button kept
+// what. Prose that merely addresses the user ("your ~/.ssh/config") is not a side
+// name and stays legal: the rule flags a side word only where it NAMES a side --
+// after Keep/Take/Accept/Copy/Use, as a parenthesised suffix, or as a whole caption.
+RuleResult CheckSideNamesAreLocalAndRemote(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "conflict, merge and compare sides are named Local and Remote";
+  result.hard_fail = true;
+
+  // Anchored on the remote conflict row, the surface the rule was written for: if
+  // its buttons move, the rule says so instead of passing over a tree it no longer
+  // understands.
+  const std::filesystem::path anchor = repo_root / "src/workspace/services/RemoteHostService.cpp";
+  const std::string anchor_text = ReadRuleTarget(result, anchor);
+  if (anchor_text.find("\"Keep Local\"") == std::string::npos ||
+      anchor_text.find("\"Take Remote\"") == std::string::npos) {
+    result.violations.push_back(Violation{
+        .path = anchor,
+        .line = 1,
+        .message = "rule target moved — RemoteHostService.cpp no longer labels its conflict "
+                   "buttons \"Keep Local\" / \"Take Remote\"; re-anchor "
+                   "CheckSideNamesAreLocalAndRemote",
+    });
+    return result;
+  }
+
+  // Per literal, and only short ones: generated syntax tables hold literals of tens
+  // of kilobytes, which no label is and std::regex would recurse through.
+  constexpr std::size_t kMaxLabelLiteral = 400;
+  const std::regex verb_side(
+      R"(\b(Keep|Take|Accept|Copy|Use)( All)? (Mine|Yours|Ours|Theirs|Current|Incoming|Host's)\b)");
+  const std::regex paren_side(R"(\((mine|yours|ours|theirs|your changes|your version)\))", std::regex::icase);
+  const std::regex caption_side(R"(^(Mine|Yours|Ours|Theirs|Current|Incoming)$)");
+  std::size_t scanned = 0;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src")) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const std::filesystem::path extension = entry.path().extension();
+    if (extension != ".cpp" && extension != ".h" && extension != ".inc") {
+      continue;
+    }
+    const std::string text = ReadText(entry.path());
+    ++scanned;
+    ForEachStringLiteral(text, [&](std::string_view literal, std::size_t literal_start) {
+      if (literal.size() > kMaxLabelLiteral) {
+        return;
+      }
+      const std::string body(literal);
+      if (std::regex_search(body, verb_side) || std::regex_search(body, paren_side) ||
+          std::regex_search(body, caption_side)) {
+        result.violations.push_back(Violation{
+            .path = entry.path(),
+            .line = LineNumberAt(text, literal_start),
+            .message = "\"" + body + "\" names a side mine/yours/ours/theirs/current/"
+                       "incoming/host's — the two sides are Local and Remote everywhere",
+        });
+      }
+    });
+  }
+  if (scanned == 0) {
+    result.missing_targets.push_back(
+        Violation{.path = repo_root / "src", .line = 1, .message = "no source under src/ was scanned"});
   }
   return result;
 }

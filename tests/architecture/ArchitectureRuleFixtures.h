@@ -106,6 +106,11 @@ void RunGitLayerLocalityRuleFixtures();
 // the layer scoping: the same call is a violation in workspace and fine in project.
 void RunWriteGateRuleFixtures();
 
+// Negative + positive controls for CheckHintSegmentsUseTheSharedSeparator (both
+// halves) and CheckSideNamesAreLocalAndRemote (UiTextRuleFixtures.cpp).
+void RunHintSeparatorRuleFixtures();
+void RunSideNameRuleFixtures();
+
 void RunAllRuleFixtures();
 
 }  // namespace microide::tests::architecture

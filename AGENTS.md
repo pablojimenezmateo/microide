@@ -127,6 +127,14 @@ Hard-fail invariants (lint will reject the change):
   their own view-model passes land. The converted render TUs (`WorkspaceShellRenderOverlay`,
   `WorkspaceShellRenderBottomPanel`, `WorkspaceShellRenderTextInput`, `WorkspaceShellHoverPopup`,
   `WorkspaceShellHoverTargets`, `DebugPaneRender`) must not name either broad state type.
+- The two sides of a conflict, a merge or a compare are **Local** and **Remote** in every
+  user-visible string: buttons, menus, palette titles and command ids, toasts, row details, pane
+  captions, compare titles. Never mine / yours / ours / theirs / the host's, nor current /
+  incoming (git's own mergetool calls them `$LOCAL` and `$REMOTE`). "Host" stays the name of the
+  remote *machine* ("Open Folder on Host…", "Changed on Host"); prose that merely addresses the
+  user ("your ~/.ssh/config") is not a side name. Enforced by `CheckSideNamesAreLocalAndRemote`
+  (string literals naming a side after Keep/Take/Accept/Copy/Use, as a parenthesised suffix, or
+  as a whole caption).
 
 Policy invariants (no automated lint, but reviewers will reject):
 

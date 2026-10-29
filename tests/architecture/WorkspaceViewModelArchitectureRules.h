@@ -14,5 +14,6 @@ RuleResult CheckMenuItemTextResolutionIsAllocationFree(const std::filesystem::pa
 RuleResult CheckRenderViewModelsOwnProjectState(const std::filesystem::path& repo_root);
 RuleResult CheckEditorViewModelStickyAndOccurrenceAreSpans(const std::filesystem::path& repo_root);
 RuleResult CheckHintSegmentsUseTheSharedSeparator(const std::filesystem::path& repo_root);
+RuleResult CheckSideNamesAreLocalAndRemote(const std::filesystem::path& repo_root);
 
 }  // namespace microide::tests::architecture
