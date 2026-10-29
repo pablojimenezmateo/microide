@@ -2660,6 +2660,15 @@ void TestTerminalSessionRepeatAndInsertModeFromTheAdvertisedTerminfo() {
   TerminalSessionTestAccess::AppendOutput(session, "x\x1b[2147483647b");
   Expect(session.SnapshotLines().size() <= 4, "a huge count is bounded by the screen");
 
+  // Written a row at a time, a repeat wraps exactly where glyph-by-glyph would.
+  TerminalSessionTestAccess::Reset(session, 4, 4);
+  TerminalSessionTestAccess::AppendOutput(session, "ab\x1b[8bZ");
+  auto wrapped = session.SnapshotLines();
+  ExpectLineText(wrapped, 0, "abbb", "the repeat fills the first row");
+  ExpectLineText(wrapped, 1, "bbbb", "wraps onto the next");
+  ExpectLineText(wrapped, 2, "bbZ", "and the glyph after it follows the last repeat");
+  Expect(wrapped.size() > 1 && wrapped[1].wrapped_from_previous, "the wrap is a soft wrap");
+
   TerminalSessionTestAccess::Reset(session, 3, 10);
   TerminalSessionTestAccess::AppendOutput(session, "abcdef\r\x1b[4hXY\x1b[4lZ");
   ExpectLineText(session.SnapshotLines(), 0, "XYZbcdef", "IRM inserts; after rmir the next glyph overwrites");

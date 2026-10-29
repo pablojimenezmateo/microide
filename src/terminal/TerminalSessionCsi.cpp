@@ -485,6 +485,24 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       // Copied: PutGlyphLocked rewrites `last_glyph_` with the same bytes.
       const std::array<char, 4> glyph = last_glyph_;
       const std::string_view text(glyph.data(), last_glyph_length_);
+      const unsigned char first = static_cast<unsigned char>(glyph[0]);
+      if (last_glyph_length_ == 1 && first >= 0x20 && first < 0x7F && columns_ > 0) {
+        // Plain ASCII, the common case (a row of spaces or dashes): a row at a time
+        // through the run writer, which declines only where a wrap or insert mode
+        // needs the per-glyph path for one byte (TD-2026-10-29-425 item 3).
+        thread_local std::string row;
+        row.assign(std::min(count, columns_), static_cast<char>(first));
+        for (std::size_t left = count; left > 0;) {
+          const std::string_view chunk(row.data(), std::min(left, row.size()));
+          std::size_t written = PutAsciiRunLocked(chunk);
+          if (written == 0) {
+            PutGlyphLocked(text);
+            written = 1;
+          }
+          left -= written;
+        }
+        return;
+      }
       for (std::size_t i = 0; i < count; ++i) {
         PutGlyphLocked(text);
       }
