@@ -265,6 +265,31 @@ def flow_compare_and_merge(app: q.App) -> None:
                    "accepting current leaves no conflict markers in the file")
 
 
+def flow_terminal_curses_box(app: q.App) -> None:
+    """A curses program's box draws as box characters in the terminal. Under
+    TERM=xterm-256color ncurses draws it with DEC Special Graphics (`ESC ( 0`
+    then `lqqk`); with the designation dropped every border read as letters."""
+    assert app.project is not None
+    script = app.project / "qa_box.py"
+    script.write_text("import curses, time\n"
+                      "def main(s):\n"
+                      "    s.box(); s.addstr(1, 1, 'qa-curses-box'); s.refresh(); time.sleep(4)\n"
+                      "curses.wrapper(main)\n")
+    if not app.ui()["panel"]["visible"]:
+        app.send("term-toggle")
+        app.wait_until(lambda: app.ui()["panel"]["visible"], 5.0, "the terminal")
+    app.send("focus", "panel")
+    app.type(f"python3 -I {script}\n")
+    text = lambda: app.query("terminal-output").get("text", "")
+    app.wait_until(lambda: "qa-curses-box" in text(), 8.0, "the curses program to draw")
+    step(app, "curses box", 0.3)
+    shown = text()
+    app.expect("\u250c" in shown and "\u2500" in shown and "\u2502" in shown,
+               f"the box draws with box characters: {shown[:120]!r}")
+    app.expect("lqq" not in shown, "and not as the letters that select them")
+    app.wait_until(lambda: "qa-curses-box" not in text(), 10.0, "the program to exit")
+
+
 PLUGINS: dict[str, tuple[str, ...]] = {"outline": ("cpp-lsp",), "goto-symbol": ("cpp-lsp",)}
 
 FLOWS: dict[str, Callable[[q.App], None]] = {
@@ -273,6 +298,7 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "unicode-editing": flow_unicode_editing,
     "drag-drop-text": flow_drag_drop_text,
     "terminal-find": flow_terminal_find,
+    "terminal-curses-box": flow_terminal_curses_box,
     "projects": flow_projects,
     "outline": flow_outline,
     "goto-symbol": flow_goto_symbol,
