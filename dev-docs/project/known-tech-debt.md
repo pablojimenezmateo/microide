@@ -1,5 +1,12 @@
 # MicroIDE Known Tech Debt
 
+Reviewed 2026-10-29 (§ TD-2026-10-29-422 for the subsystem sweep: peer-supplied
+counts sized allocations in four remote/host-terminal decoders and a frame could
+hang the client; a trailing-separator root mapped paths to the wrong mirror file;
+nine `".."` text-prefix tests, the tree's copy guard among them; TD-419 and
+TD-418 items 2 and 4 resolved. Open: language-server events past a flood's
+itemization cap, TD-412's remainder, and two smaller items).
+
 Reviewed 2026-10-28 (§ TD-2026-10-28-414, 416 through 419 for the remote
 idle/live-cost pass: measured with the new `tools/qa/remote.py` W and X scenarios
 and named threads; fixed a port sampler walking the kernel's whole connection table
@@ -458,6 +465,76 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-10-29-422 — the 2026-10-29 subsystem sweep: what it found, fixed and measured, and the four things it left. [OPEN — items 1-4 below]
+
+A whole-repo pass taken by mechanical sweeps rather than reading (this tree's
+reading hit rate is low; validation-traps § Mechanical Sweeps), each aimed at a
+class rather than a site.
+
+**Fixed, one commit each:**
+
+- **Peer-supplied counts and sizes, N-of-N over the remote and host-terminal
+  decoders.** Four allocations sized by what the peer claimed before anything
+  decoded or was bounded: a host frame's screen/scrollback line counts and a
+  scrollback page's (one empty line is one byte on the wire and a `TerminalLine`
+  here: ~2 GiB from a 64 MiB frame); a frame's `Promote` total, which the client
+  loops over line by line (10^12 promoted lines in a small frame hung the client);
+  a manifest chunk's row count and a watch delta's path count (25-32x reservations
+  before the first row decoded); and the object stream, where the server honoured
+  the fetch's `max_bytes` but the client buffered whatever arrived. New fuzz target
+  `TerminalHostWireFuzz` (none of the three host-wire decoders had one).
+- **`RemotePathMap` under a root spelled with a trailing separator** mapped
+  `/repo/src/main.cpp` to the mirror's `main.cpp`: the skip of the empty final
+  component advanced the path iterator too. Latent (the entry parser strips the
+  slash), fixed at the primitive.
+- **The three lexical containment helpers disagreed on a trailing separator**
+  (`/a/b` was outside its own root spelled `/a/b/`).
+- **A `..`-prefixed folder name read as "outside"** at nine sites, the tree's copy
+  guard among them (TD-2026-10-29-423, with a lint), and **a refused tree paste
+  toasted twice**.
+- **TD-419** (a sync repainting per watcher batch) and **TD-418 items 2 and 4**
+  (the mirror entry's duplicate path; the server's git sampler polling every
+  second, now inotify) -- see those entries. Applying TD-419 found its own trap:
+  merging held batches pushed floods toward the coalescer's itemization cap, so
+  the rate releases a held batch at half the cap.
+- Five thread sites started anonymous (LSP/DAP initialize and shutdown, search
+  helpers, the server's hash workers, the client's deferred release).
+
+**Measured clean, so not to be redone blind:** a `_GLIBCXX_DEBUG` build of both
+test binaries (32/32 shards; one remote LSP parity timeout under load that did
+not recur); 14 monkey seeds over the default, editor and command profiles; a
+20,000-body snippet-parser property sweep (now a test); the local editor's idle
+cost (after the caret's blink window closes: 0 frames, ~2.3 wakeups/s, the
+control channel's own 1/s included); startup to first frame (~45 ms on the main
+thread on this repository, 26 ms of it the first software-rendered frame); and
+N-of-N audits that found nothing: every numeric setting is range-clamped, every
+plugin integer argument is checked or only shifts paint, every descriptor/thread
+the remote server makes is named and CLOEXEC, LSP position encoding, DAP variable
+depth, terminal OSC accumulation, the remote search and ack paths. The two open
+remote-terminal flakes (TD-413, TD-406) passed 40 consecutive runs on a machine
+loaded with four sanitizer builds; still not reproduced.
+
+**Left open:**
+
+1. **A single watcher batch past 1,024 changes still loses language-server
+   events.** The coalescer collapses it to a rescan with `file_changes_truncated`,
+   the apply re-checks open buffers, but `LspService::NotifyWatchedFileChanges`
+   is told only the first 1,024 paths, so a large `git checkout` leaves clangd
+   answering from a partly stale index for the rest. The cap predates the
+   coalescer's path index (TD-418), which removed the O(n^2) it was for; what
+   remains is apply cost per itemized change on the shell thread. Either raise
+   the cap (measure the apply) or, for a truncated batch, tell the servers about
+   the whole tree diff the rescan computes.
+2. **TD-412's remaining `Operations` fields** mostly land on shell members, which
+   the TD's own test says only move the bag; not continued here.
+3. **The client's per-file mirror state** beyond the entry (TD-418 item 2's
+   remainder) has not been attributed.
+4. **`GitStatusSampler` cannot watch a ref directory that does not exist yet**
+   (the first commit on `feature/x` creates `refs/heads/feature/`); a commit also
+   writes the gitdir's index, which is watched, so this rests on that and on the
+   30 s safety sample. `git update-ref` from outside on such a branch is seen only
+   by the safety sample.
 
 ### TD-2026-10-29-423 — nine sites asked whether a relative path climbs out with a `".."` text prefix; a folder named `..cache` read as outside, and a folder copied into it copied itself. [RESOLVED 2026-10-29]
 
