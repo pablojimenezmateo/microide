@@ -548,7 +548,21 @@ loaded with four sanitizer builds; still not reproduced.
    updates the ref HEAD names (reflogs off too), and the gitdir is watched. The
    test pins it (an orphan `later/orphan`, its ref written by `update-ref`).
 
-### TD-2026-10-29-424 — `qa-remote` F: a save after the ssh link is killed reaches the host only after 90 s in the full suite. [OPEN — reproduced, predates 2026-10-29]
+### TD-2026-10-29-424 — `qa-remote` F: a save after the ssh link is killed reaches the host only after 90 s in the full suite. [RESOLVED 2026-10-29 — a QA precondition, not the product]
+
+**Resolution.** Bisected over the scenarios ahead of F on the loopback host:
+`A B Q F` fails every time; `A B F`, `A B E F` and `A B C D D2 F` pass in ~0.5 s
+(`A F` fails too, but only because B is what opens the edited file). Q ends in the
+Conflicts view with the keyboard in the sidebar and its second file active; F's
+`type_line` (`goto` + `type`) typed into the sidebar and saved a clean tab, so
+nothing was pushed and the 90 s check timed out. Neither lead below was it. F now
+opens the file and focuses the editor itself (`A B Q F`: on the host 0.36 s after
+the kill). Running the bisect beside the lane found a second trap -- two suites on
+one host reset each other's repository mid-scenario -- so remote.py now holds a
+per-host lock and a second run waits.
+
+Original entry:
+
 
 `tools/qa/remote.py` scenario F kills the host's ssh ControlMasters, waits for the
 Reconnecting row (there in 0.02 s), saves, and expects the edit on the host within
