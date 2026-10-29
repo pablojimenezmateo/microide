@@ -183,6 +183,26 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
     return CursorScrollSpan(cursor_row_, PrimaryScreenTopLocked(), ActiveScrollRegionTopLocked(),
                             ActiveScrollRegionBottomLocked());
   };
+  if (final == 'p' && intermediate == '!') {
+    // DECSTR soft reset: terminfo's is2/rs2, so `reset` and `tput init` send it.
+    // The modes, rendition, margins, character sets and saved cursor go back to
+    // their defaults; the screen and the cursor's position stay (VT510; autowrap
+    // stays on, as xterm's default resource has it).
+    cursor_visible_ = true;
+    insert_mode_ = false;
+    origin_mode_ = false;
+    auto_wrap_mode_ = true;
+    application_cursor_keys_mode_ = false;
+    current_style_ = TerminalStyle{};
+    charsets_ = {};
+    ResetScrollRegionLocked();
+    saved_cursor_row_ = 0;
+    saved_cursor_column_ = 0;
+    saved_style_ = TerminalStyle{};
+    saved_origin_mode_ = false;
+    saved_charsets_ = {};
+    return;
+  }
   switch (final) {
     case 'c':
       SendBytesLocked("\x1b[?1;2c");
@@ -370,21 +390,36 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
         }
       }
       return;
-    case 'S':
-      // SU scrolls the scroll region up. Works on the alt screen, and on the
-      // primary buffer when a custom DECSTBM region is active (a full-screen
-      // primary SU would discard the top line rather than accumulate scrollback,
-      // so it stays a no-op there — the common case is unchanged).
+    case 'S': {
+      // SU (terminfo's indn) scrolls the scroll region up; the cursor stays. On a
+      // full-screen primary region the lines it scrolls off go to scrollback, as
+      // xterm's do (saveLines) and as a linefeed's would: the screen gains blank
+      // rows at the bottom. This was a no-op there, so a program that scrolled
+      // the screen with indn redrew over rows that never moved.
+      const std::size_t count = static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1));
       if (use_alternate_screen_ || HasCustomScrollRegionLocked()) {
-        ScrollRegionUpLocked(ActiveScrollRegionTopLocked(), ActiveScrollRegionBottomLocked(),
-                             static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1)));
+        ScrollRegionUpLocked(ActiveScrollRegionTopLocked(), ActiveScrollRegionBottomLocked(), count);
+        return;
       }
+      // Past a screenful it only pushes blank rows into history.
+      const std::size_t screen_rows = std::max<std::size_t>(1, rows_);
+      const std::size_t shift = std::min(count, screen_rows);
+      const std::size_t screen_end = PrimaryScreenTopLocked() + screen_rows;
+      while (lines_.size() < screen_end) {
+        lines_.push_back(line_buffer_pool_.Take());
+      }
+      for (std::size_t i = 0; i < shift; ++i) {
+        lines_.push_back(line_buffer_pool_.Take());
+        BlankLineToCurrentBackgroundLocked(lines_.back());
+      }
+      cursor_row_ += shift;  // the same row on the screen
       return;
+    }
     case 'T':
-      if (use_alternate_screen_ || HasCustomScrollRegionLocked()) {
-        ScrollRegionDownLocked(ActiveScrollRegionTopLocked(), ActiveScrollRegionBottomLocked(),
-                               static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1)));
-      }
+      // SD (rin) scrolls the region down, on either screen: what leaves the
+      // region's bottom is gone, as in xterm.
+      ScrollRegionDownLocked(ActiveScrollRegionTopLocked(), ActiveScrollRegionBottomLocked(),
+                             static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1)));
       return;
     case 'n':
       if (!params.empty()) {

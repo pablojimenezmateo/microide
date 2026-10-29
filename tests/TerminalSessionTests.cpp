@@ -2599,6 +2599,37 @@ void TestTerminalSessionDecSpecialGraphicsDrawsBoxes() {
   ExpectLineText(session.SnapshotLines(), 0, "ABC", "bytes outside the graphics range stay as they are");
 }
 
+// SU / SD (terminfo's indn / rin) on the primary screen with no custom region,
+// and DECSTR (is2 / rs2, which `reset` and `tput init` send). The scrolls were
+// no-ops there, so a program that scrolled the screen with them redrew over rows
+// that never moved; DECSTR was ignored, leaving insert mode, origin mode, the
+// graphics set and the margins in place after a `reset`.
+void TestTerminalSessionPrimaryScrollsAndSoftReset() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 3, 8);
+  TerminalSessionTestAccess::AppendOutput(session, "a\r\nb\r\nc\x1b[SX");
+  auto lines = session.SnapshotLines();
+  Expect(lines.size() == 4, "SU scrolls the top row into scrollback");
+  ExpectLineText(lines, 0, "a", "the row SU scrolled off is history");
+  Expect(lines.size() == 4 && lines[3].cells.size() == 2 && lines[3].cells[1].ascii_character() == 'X',
+         "and the cursor keeps its screen row and column");
+
+  TerminalSessionTestAccess::Reset(session, 3, 8);
+  TerminalSessionTestAccess::AppendOutput(session, "a\r\nb\r\nc\x1b[T");
+  lines = session.SnapshotLines();
+  Expect(lines.size() == 3 && lines[0].cells.empty(), "SD opens a blank row at the screen's top");
+  ExpectLineText(lines, 1, "a", "and moves the screen down");
+  ExpectLineText(lines, 2, "b", "dropping the bottom row");
+
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+  TerminalSessionTestAccess::AppendOutput(session,
+                                          "abc\x1b[4h\x1b[2;3r\x1b[?6h\x1b(0\x1b[31m\x1b[!p\x1b[1;1Hq");
+  lines = session.SnapshotLines();
+  ExpectLineText(lines, 0, "qbc", "after DECSTR: no insert mode, no origin mode, ASCII");
+  Expect(!lines[0].cells.empty() && !lines[0].cells[0].style.foreground.has_value(), "and the default rendition");
+  Expect(TerminalSessionTestAccess::ScrollRegionBottom(session) == 3, "and the full-screen margins");
+}
+
 // REP (`CSI Ps b`) and IRM (`CSI 4 h` / `CSI 4 l`) are in the xterm-256color
 // terminfo entry this terminal sets TERM to (rep, smir/rmir), so ncurses uses
 // them: a run of one character comes as the character and a repeat count. Both
@@ -3330,6 +3361,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionEraseAndDeleteTakeAWideGlyphWhole);
   AddTest(tests, "TerminalSession/DecSpecialGraphicsDrawsBoxes",
           TestTerminalSessionDecSpecialGraphicsDrawsBoxes);
+  AddTest(tests, "TerminalSession/PrimaryScrollsAndSoftReset",
+          TestTerminalSessionPrimaryScrollsAndSoftReset);
   AddTest(tests, "TerminalSession/ClearPreservesScrollback",
           TestTerminalSessionClearPreservesScrollback);
   AddTest(tests, "TerminalSession/PrimaryCupIsViewportRelative",
