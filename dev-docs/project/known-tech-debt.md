@@ -5,7 +5,7 @@ counts sized allocations in four remote/host-terminal decoders and a frame could
 hang the client; a trailing-separator root mapped paths to the wrong mirror file;
 nine `".."` text-prefix tests, the tree's copy guard among them; TD-419 and
 TD-418 items 2 and 4 resolved. Open: language-server events past a flood's
-itemization cap, TD-412's remainder, and two smaller items).
+itemization cap, TD-412's remainder, the mirror's unattributed per-file state).
 
 Reviewed 2026-10-28 (§ TD-2026-10-28-414, 416 through 419 for the remote
 idle/live-cost pass: measured with the new `tools/qa/remote.py` W and X scenarios
@@ -466,7 +466,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-29-422 — the 2026-10-29 subsystem sweep: what it found, fixed and measured, and the four things it left. [OPEN — items 1-4 below]
+### TD-2026-10-29-422 — the 2026-10-29 subsystem sweep: what it found, fixed and measured, and what it left. [OPEN — items 1-3 below]
 
 A whole-repo pass taken by mechanical sweeps rather than reading (this tree's
 reading hit rate is low; validation-traps § Mechanical Sweeps), each aimed at a
@@ -530,11 +530,10 @@ loaded with four sanitizer builds; still not reproduced.
    the TD's own test says only move the bag; not continued here.
 3. **The client's per-file mirror state** beyond the entry (TD-418 item 2's
    remainder) has not been attributed.
-4. **`GitStatusSampler` cannot watch a ref directory that does not exist yet**
-   (the first commit on `feature/x` creates `refs/heads/feature/`); a commit also
-   writes the gitdir's index, which is watched, so this rests on that and on the
-   30 s safety sample. `git update-ref` from outside on such a branch is seen only
-   by the safety sample.
+4. ~~**`GitStatusSampler` cannot watch a ref directory that does not exist yet**~~
+   Not a gap, checked with strace: git takes `HEAD.lock` in the gitdir whenever it
+   updates the ref HEAD names (reflogs off too), and the gitdir is watched. The
+   test pins it (an orphan `later/orphan`, its ref written by `update-ref`).
 
 ### TD-2026-10-29-423 — nine sites asked whether a relative path climbs out with a `".."` text prefix; a folder named `..cache` read as outside, and a folder copied into it copied itself. [RESOLVED 2026-10-29]
 

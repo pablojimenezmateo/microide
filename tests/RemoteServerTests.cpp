@@ -625,6 +625,19 @@ void TestTheGitSamplerSleepsUntilTheRepositoryMoves() {
   seen = count();
   git({"commit", "-q", "--allow-empty", "-m", "three"}, "commit on the new branch");
   expect_past(seen, "a commit on the branch checked out since is noticed");
+
+  // An orphan branch in a directory that does not exist yet, whose ref is then
+  // written from outside. refs/heads/later/ is not watched (it did not exist), but
+  // git takes HEAD.lock in the gitdir whenever it updates the ref HEAD names --
+  // with reflogs off too -- and the gitdir is watched. Pinned here because the
+  // sampler relies on it.
+  seen = count();
+  git({"checkout", "-q", "--orphan", "later/orphan"}, "an orphan branch");
+  expect_past(seen, "the orphan checkout is noticed");
+  std::this_thread::sleep_for(std::chrono::milliseconds(400));
+  seen = count();
+  git({"update-ref", "refs/heads/later/orphan", "main"}, "the orphan's ref written from outside");
+  expect_past(seen, "a ref created in a directory that did not exist is noticed");
 }
 
 // A connection that dies before the hello carries the host's own reason. The
