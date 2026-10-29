@@ -4,7 +4,9 @@
 #include "editor/TextViewport.h"
 #include "util/StringUtil.h"
 
+#include <cstdint>
 #include <optional>
+#include <random>
 #include <string>
 #include <string_view>
 
@@ -24,6 +26,74 @@ using microide::editor::ExpandSnippetAtSelection;
 using microide::editor::ParseSnippetBody;
 using microide::editor::TextViewport;
 using microide::util::IsValidUtf8;
+
+// Property sweep over bodies built from the grammar's own tokens, so most of them
+// reach deep into the parser rather than failing on the first byte: whatever the
+// body, every occurrence lies inside the expansion, on a UTF-8 boundary, and inside
+// the placeholder it names as its parent; and expanding it into a buffer never
+// fails to leave valid text behind.
+void TestSnippetParseHoldsItsInvariantsOnRandomBodies() {
+  static constexpr std::string_view kTokens[] = {
+      "$", "{", "}", "0", "1", "2", "12", ":", "|", ",", "\\", "/", "a", " ", "\xc3\xa9",
+      "\n", "TM_FILENAME", "UNKNOWN", "${1:", "${2|x,y|}", "$0", "${1/a/b/}", "\\$", "\\}"};
+  std::mt19937 rng(20261029);
+  std::uniform_int_distribution<std::size_t> pick(0, std::size(kTokens) - 1);
+  std::uniform_int_distribution<int> length(1, 40);
+  const auto resolve = [](std::string_view name) -> std::optional<std::string> {
+    if (name == "TM_FILENAME") {
+      return std::string("f\xc3\xa9.cpp");
+    }
+    return std::nullopt;
+  };
+  int failures = 0;
+  for (int round = 0; round < 20000 && failures == 0; ++round) {
+    std::string body;
+    for (int i = length(rng); i > 0; --i) {
+      body += kTokens[pick(rng)];
+    }
+    const auto parsed = ParseSnippetBody(body, resolve);
+    const std::string_view expanded = parsed.expanded;
+    for (std::size_t i = 0; i < parsed.occurrences.size(); ++i) {
+      const auto& occurrence = parsed.occurrences[i];
+      bool ok = occurrence.start_off <= occurrence.end_off && occurrence.end_off <= expanded.size();
+      for (const std::size_t off : {occurrence.start_off, occurrence.end_off}) {
+        ok = ok && (off >= expanded.size() ||
+                    !microide::util::IsUtf8ContinuationByte(static_cast<unsigned char>(expanded[off])));
+      }
+      if (ok && occurrence.parent != microide::editor::SnippetParseResult::kNoParent) {
+        ok = occurrence.parent < parsed.occurrences.size() && occurrence.parent != i;
+        if (ok) {
+          const auto& parent = parsed.occurrences[occurrence.parent];
+          ok = parent.start_off <= occurrence.start_off && occurrence.end_off <= parent.end_off;
+        }
+      }
+      if (!ok) {
+        ++failures;
+        Expect(false, "occurrence " + std::to_string(i) + " is out of place for body '" + body + "'");
+        break;
+      }
+    }
+    if (round % 50 == 0 && failures == 0) {
+      TextViewport viewport;
+      viewport.LoadContent("x\ny", "/tmp/snippet.cpp");
+      viewport.MoveCursorTo(0, 1);
+      SnippetSessionState session;
+      (void)ExpandSnippetAtSelection(viewport, session, SelectionRange{{0, 1}, {0, 1}}, body);
+      for (int tab = 0; tab < 4 && session.active; ++tab) {
+        (void)SnippetNavigateTab(viewport, session, false);
+        (void)SnippetTryInsertText(viewport, session, "\xc3\xa9");
+        (void)SnippetTryBackspace(viewport, session);
+      }
+      for (const std::string& line : viewport.lines()) {
+        if (!IsValidUtf8(line)) {
+          ++failures;
+          Expect(false, "expanding '" + body + "' left invalid UTF-8 in the buffer");
+          break;
+        }
+      }
+    }
+  }
+}
 
 void TestSnippetSimpleExpansion() {
   TextViewport viewport;
@@ -768,6 +838,8 @@ void RegisterEditorSnippetTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorSnippet/TypingReplacesSelectedDefault",
           TestSnippetTypingReplacesSelectedDefault);
   AddTest(tests, "EditorSnippet/ParseTopLevelEscapes", TestSnippetParseTopLevelEscapes);
+  AddTest(tests, "EditorSnippet/ParseHoldsItsInvariantsOnRandomBodies",
+          TestSnippetParseHoldsItsInvariantsOnRandomBodies);
   AddTest(tests, "EditorSnippet/ParseNestedPlaceholders", TestSnippetParseNestedPlaceholders);
   AddTest(tests, "EditorSnippet/ParseVariables", TestSnippetParseVariables);
   AddTest(tests, "EditorSnippet/EditorVariables", TestSnippetEditorVariables);
