@@ -4,6 +4,7 @@
 #include "project/GitRepository.h"
 #include "project/GitStatusRefresh.h"
 #include "project/ProjectSearchService.h"
+#include "project/remote/RemotePathMap.h"
 #include "project/remote/RemoteProcessLauncher.h"
 #include "project/remote/RemoteProtocol.h"
 #include "project/remote/RemoteServerClient.h"
@@ -53,6 +54,26 @@ struct Session {
 
 // Run maps the working directory onto the host tree, passes argv and stdin through
 // untouched, and reports exit status like the local layer.
+// Paths re-root component by component, whichever root is spelled with a trailing
+// separator: the empty component that leaves after normalizing was skipped while
+// the path's own iterator moved on, so `/repo/src/main.cpp` under a root of
+// `/repo/` came back as the mirror's `main.cpp` -- a different file, silently.
+void TestPathMapReRootsUnderARootWithATrailingSeparator() {
+  for (const char* host_root : {"/home/me/repo", "/home/me/repo/"}) {
+    for (const char* local_root : {"/mirror/tree", "/mirror/tree/"}) {
+      const remote::RemotePathMap map(local_root, host_root);
+      const std::string where = std::string(" (host root ") + host_root + ", local root " + local_root + ")";
+      Expect(map.ToLocal("/home/me/repo/src/main.cpp") == std::optional<std::filesystem::path>("/mirror/tree/src/main.cpp"),
+             "a host path keeps every component" + where);
+      Expect(map.ToHost("/mirror/tree/src/main.cpp") == std::optional<std::filesystem::path>("/home/me/repo/src/main.cpp"),
+             "a local path keeps every component" + where);
+      Expect(!map.ToLocal("/home/me/repository/x").has_value(), "a sibling with a longer name is outside" + where);
+      Expect(map.ToLocal("/home/me/repo") == std::optional<std::filesystem::path>("/mirror/tree"),
+             "the root maps to the root" + where);
+    }
+  }
+}
+
 void TestRunMapsCwdAndReportsLikeALocalRun() {
   Session session;
   const auto pwd = session.launcher->Run({"pwd"}, platform::SubprocessOptions{.cwd = session.local});
@@ -440,6 +461,8 @@ void TestRunReturnsWhenTheLinkDrops() {
 }  // namespace
 
 void RegisterRemoteLauncherTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RemoteLauncher/PathMapReRootsUnderARootWithATrailingSeparator",
+          TestPathMapReRootsUnderARootWithATrailingSeparator);
   AddTest(tests, "RemoteLauncher/RunMapsCwdAndReportsLikeALocalRun",
           TestRunMapsCwdAndReportsLikeALocalRun);
   AddTest(tests, "RemoteLauncher/StartAsyncAdoptsAHostProcess", TestStartAsyncAdoptsAHostProcess);
