@@ -503,7 +503,9 @@ Remote only; Merge asked for anyway answers "nothing to merge". QA:
 `tools/qa/remote.py` Y runs the archived-folder, deleted-while-edited and
 folder-delete shapes against the real host. The matrix keeps rename-versus-delete
 and move-versus-delete as the user's call (parked), never auto-settled: no bytes
-are lost either way, and the intent is not the engine's to guess.
+are lost either way, and the intent is not the engine's to guess. Left: a parked rename's row reads
+*"<new path> deleted on <host>, changed locally"* -- true of the new path, but the
+file was renamed here; naming the old path would take a `renamed_from` on the entry.
 
 ### TD-2026-10-29-420 — files the host changed while the user edited nothing came up as Keep Mine / Take Host's conflicts after a restart. [RESOLVED 2026-10-29 — a watched pull's base was never saved, and quit never saved it either]
 

@@ -25,6 +25,14 @@ What it checks, each as the user would see it, with the measured latencies:
                                 no row per file; Manage… opens the Conflicts view, Enter
                                 ticks a file, Keep Local settles the ticked one, and
                                 remote-resolve-all remote settles the rest
+  Y  tree conflicts             a folder the host archived while a file in it was
+                                edited here: ONE row saying deleted on the host, Keep
+                                Local / Take Remote only; Take Remote settles it. A file
+                                deleted here that the host edited: "deleted locally,
+                                changed on host", Take Remote restores it. A folder
+                                deleted here goes from the host. A rename here of a file
+                                the host edited parks; Keep Local puts the renamed copy
+                                on the host beside the host's edit
   F  link death                 the ssh master is killed; a save still lands after the
                                 automatic reconnect
   G  terminals                  Terminal > New prints the host's `hostname`; Remote:
@@ -749,6 +757,110 @@ class Suite:
         app.send("sidebar-show", "tree"); app.settle(0.3)
         app.check("Q")
 
+    def run_tree_conflicts(self) -> None:
+        """Y: the one-sided and tree-operation conflicts, each as the user meets it
+        on a real host (TD-2026-10-29-421). The local operations are made offline
+        and meet the host's change on reconnect, which is the ordering that hid a
+        push never replayed; a folder delete is made live."""
+        app, host, tok = self.app, self.host, self.token
+        errors = lambda: [n["message"] for n in self.notifs() if n["message"].lower().startswith("cannot")]
+        settled = lambda: (self.remote().get("conflicts") == 0 and self.remote().get("unsentPushes") == 0) or None
+
+        # Y1: the host archives a folder (renames its directory away) while a file
+        # in it holds an edit the host never received.
+        folder, rel = f"qa/y-{tok}", f"qa/y-{tok}/design.md"
+        host.ssh(f"mkdir -p {host.root}/{folder} && echo base > {host.root}/{rel}")
+        ok, dt = self.mirror_has(rel, "base", 30)
+        self.record("Y.folder-pulled", bool(ok), f"{dt:.1f}s")
+        app.send("remote-disconnect", host.name); app.settle(1.0)
+        app.send("open", rel); app.settle(0.3)
+        self.type_line(f"LOCAL-Y-{tok}"); app.send("save"); app.settle(0.3)
+        host.ssh(f"cd {host.root}/qa && mkdir -p archive && mv y-{tok} archive/y-{tok}")
+        app.send("remote-reconnect", host.name)
+        got, dt = wait_for(lambda: self.remote().get("conflicts") == 1 or None, 60, 0.5)
+        key = f"remote.conflict.{self.mirror / rel}"
+        rows = [n for n in self.notifs() if n["key"] == key]
+        labels = [a["label"] for a in rows[0].get("actions", [])] if rows else []
+        self.record("Y.archived-folder-is-a-one-sided-row",
+                    bool(got) and len(rows) == 1 and labels == ["Keep Local", "Take Remote"]
+                    and f"deleted on {host.name}" in rows[0]["message"] and "changed locally" in rows[0]["message"],
+                    f"{dt:.1f}s remote={self.remote()} rows={[(n['message'], labels) for n in rows]}")
+        app.screenshot("Y-archived-folder-row")
+        reply = app.send("notification-action", key, "Take Remote") if rows else {}
+        gone, dt = wait_for(lambda: (not (self.mirror / rel).exists() and settled()) or None, 30, 0.5)
+        self.record("Y.take-remote-settles-the-archived-file", bool(reply.get("ok")) and bool(gone) and not errors(),
+                    f"{dt:.1f}s reply={reply} remote={self.remote()} errors={errors()}")
+
+        # Y2: a file deleted here (offline) that the host edited meanwhile.
+        rel2 = f"qa/y2-{tok}.txt"
+        host.ssh(f"echo base > {host.root}/{rel2}")
+        self.mirror_has(rel2, "base", 30)
+        app.send("remote-disconnect", host.name); app.settle(1.0)
+        app.send("open", rel2); app.settle(0.5)
+        app.send("sidebar-show", "tree"); app.send("focus", "sidebar"); app.settle(0.5)
+        app.send("key", "Delete"); app.settle(0.4); app.send("key", "enter"); app.settle(0.5)
+        deleted = not (self.mirror / rel2).exists()
+        host.ssh(f"cd {host.root} && sed -i '1i HOST-Y2-{tok}' {rel2}")
+        app.send("remote-reconnect", host.name)
+        got, dt = wait_for(lambda: self.remote().get("conflicts") == 1 or None, 60, 0.5)
+        key2 = f"remote.conflict.{self.mirror / rel2}"
+        rows = [n for n in self.notifs() if n["key"] == key2]
+        labels = [a["label"] for a in rows[0].get("actions", [])] if rows else []
+        self.record("Y.delete-of-a-host-edited-file-is-a-row",
+                    deleted and bool(got) and len(rows) == 1 and labels == ["Keep Local", "Take Remote"]
+                    and "deleted locally" in rows[0]["message"] and f"changed on {host.name}" in rows[0]["message"],
+                    f"deleted={deleted} {dt:.1f}s remote={self.remote()} rows={[(n['message'], labels) for n in rows]}")
+        app.screenshot("Y-deleted-locally-row")
+        reply = app.send("notification-action", key2, "Take Remote") if rows else {}
+        back, dt = self.mirror_has(rel2, f"HOST-Y2-{tok}", 30)
+        done, _ = wait_for(settled, 30, 0.5)
+        self.record("Y.take-remote-restores-it", bool(reply.get("ok")) and bool(back) and bool(done) and not errors(),
+                    f"{dt:.1f}s reply={reply} remote={self.remote()} errors={errors()}")
+
+        # Y3: a folder deleted here, live, goes from the host.
+        folder3 = f"qa/y3-{tok}"
+        host.ssh(f"mkdir -p {host.root}/{folder3} && echo a > {host.root}/{folder3}/a.txt && echo b > {host.root}/{folder3}/b.txt")
+        self.mirror_has(f"{folder3}/b.txt", "b", 30)
+        app.send("open", f"{folder3}/a.txt"); app.settle(0.5)  # reveals its folder, expanded
+        app.send("sidebar-show", "tree"); app.send("focus", "sidebar"); app.settle(0.5)
+        app.click_named(f"row:tree/y3-{tok}"); app.settle(0.3)
+        selected = [e["name"] for e in app.elements("row", prefix="row:tree/") if e.get("selected")]
+        app.send("key", "Delete"); app.settle(0.4); app.send("key", "enter")
+        gone, dt = wait_for(lambda: f"y3-{tok}" not in host.ssh(f"ls {host.root}/qa") or None, 30, 0.5)
+        done, _ = wait_for(settled, 30, 0.5)
+        self.record("Y.folder-delete-reaches-host",
+                    selected == [f"row:tree/y3-{tok}"] and bool(gone) and bool(done) and not errors(),
+                    f"selected={selected} {dt:.1f}s ls={host.ssh(f'ls {host.root}/qa')!r} remote={self.remote()} errors={errors()}")
+
+        # Y4: a file renamed here (offline) that the host edited meanwhile: parked;
+        # Keep Local puts the renamed copy on the host, beside the host's edit.
+        rel4, new4 = f"qa/y4-{tok}.txt", f"qa/y4-renamed-{tok}.txt"
+        host.ssh(f"echo base > {host.root}/{rel4}")
+        self.mirror_has(rel4, "base", 30)
+        app.send("remote-disconnect", host.name); app.settle(1.0)
+        app.send("open", rel4); app.settle(0.5)
+        app.send("sidebar-show", "tree"); app.send("focus", "sidebar"); app.settle(0.5)
+        app.send("key", "F2"); app.settle(0.4)
+        app.send("key", "ctrl+a"); app.send("type", f"y4-renamed-{tok}.txt"); app.send("key", "enter"); app.settle(0.5)
+        renamed = (self.mirror / new4).exists() and not (self.mirror / rel4).exists()
+        host.ssh(f"cd {host.root} && sed -i '1i HOST-Y4-{tok}' {rel4}")
+        app.send("remote-reconnect", host.name)
+        got, dt = wait_for(lambda: self.remote().get("conflicts") == 1 or None, 60, 0.5)
+        key4 = f"remote.conflict.{self.mirror / new4}"
+        rows = [n for n in self.notifs() if n["key"] == key4]
+        self.record("Y.rename-of-a-host-edited-file-parks", renamed and bool(got) and len(rows) == 1,
+                    f"renamed={renamed} {dt:.1f}s remote={self.remote()} rows={[n['message'] for n in rows]} "
+                    f"all={[n['key'] for n in self.notifs() if n['key'].startswith('remote.conflict')]}")
+        reply = app.send("notification-action", key4, "Keep Local") if rows else {}
+        both, dt = wait_for(lambda: ("base" in host.file(new4) and f"HOST-Y4-{tok}" in host.file(rel4)) or None, 30, 0.5)
+        back, _ = self.mirror_has(rel4, f"HOST-Y4-{tok}", 30)
+        done, _ = wait_for(settled, 30, 0.5)
+        self.record("Y.keep-local-puts-the-renamed-copy-on-host",
+                    bool(reply.get("ok")) and bool(both) and bool(back) and bool(done) and not errors(),
+                    f"{dt:.1f}s reply={reply} ls={host.ssh(f'ls {host.root}/qa')!r} remote={self.remote()} errors={errors()}")
+        app.send("sidebar-show", "tree"); app.settle(0.3)
+        app.check("Y")
+
     # ---- scenarios -------------------------------------------------------
     def run_remote_menu(self) -> None:
         """R: the host's status segment opens the Remote menu above itself, the
@@ -1217,6 +1329,8 @@ class Suite:
             self.record("N.delete-reaches-host", bool(gone) or state.get("heldDeletes", 0) > 0,
                         f"{dt:.1f}s held={state.get('heldDeletes')} ls={host.ssh(f'ls {host.root}/qa')!r}")
             app.check("N")
+        if self.runs("Y"):
+            self.run_tree_conflicts()
         if self.runs("T"):
             self.run_terminal_restore()
         if self.runs("V"):
