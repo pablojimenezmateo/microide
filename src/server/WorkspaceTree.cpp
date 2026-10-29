@@ -16,6 +16,7 @@
 #include "project/ProjectTraversalFilter.h"
 #include "util/ByteCodec.h"
 #include "util/PosixFd.h"
+#include "util/ThreadName.h"
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -387,7 +388,10 @@ std::optional<std::vector<ManifestRow>> WorkspaceTree::RowsFor(
       std::min<std::size_t>(thread_cap, std::max<std::size_t>(1, pending.size() / 32));
   std::vector<std::thread> workers;
   for (std::size_t t = 1; t < threads; ++t) {
-    workers.emplace_back(work);
+    workers.emplace_back([&work] {
+      util::NameCurrentThread("tree-hash");
+      work();
+    });
   }
   work();
   for (std::thread& worker : workers) {

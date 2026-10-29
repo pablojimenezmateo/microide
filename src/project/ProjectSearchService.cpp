@@ -21,6 +21,7 @@
 #include "util/RegexUtil.h"
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
+#include "util/ThreadName.h"
 
 namespace microide::project {
 
@@ -540,7 +541,10 @@ ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
     std::vector<std::thread> helpers;
     helpers.reserve(worker_count - 1);
     for (std::size_t i = 0; i + 1 < worker_count; ++i) {
-      helpers.emplace_back(run_worker);
+      helpers.emplace_back([&run_worker] {
+        util::NameCurrentThread("search-helper");
+        run_worker();
+      });
     }
     run_worker();
     for (auto& helper : helpers) {

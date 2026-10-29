@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "util/PerformanceCounters.h"
+#include "util/ThreadName.h"
 #include "util/WakePipe.h"
 #include "workspace/HostPathTranslator.h"
 #include "workspace/JsonRpcMessageFraming.h"
@@ -323,7 +324,10 @@ class StdioJsonRpcClientTransport {
     shutting_down.store(false, std::memory_order_release);
     process_shutdown_started.store(false, std::memory_order_release);
     stop_init.store(false);
-    init_thread = std::thread([this]() { derived().DoInitializeBlocking(); });
+    init_thread = std::thread([this]() {
+      util::NameCurrentThread("rpc-initialize");
+      derived().DoInitializeBlocking();
+    });
   }
 
   // The initialize handshake failed or was cancelled: kill the process, and fail
@@ -342,7 +346,10 @@ class StdioJsonRpcClientTransport {
       return;
     }
     shutdown_complete.store(false, std::memory_order_release);
-    shutdown_thread = std::thread([this]() { derived().DoShutdown(); });
+    shutdown_thread = std::thread([this]() {
+      util::NameCurrentThread("rpc-shutdown");
+      derived().DoShutdown();
+    });
   }
 
   void WaitForShutdown() {

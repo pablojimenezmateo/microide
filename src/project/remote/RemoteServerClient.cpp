@@ -10,6 +10,8 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 
+#include "util/ThreadName.h"
+
 namespace microide::project::remote {
 namespace {
 
@@ -39,7 +41,10 @@ std::shared_ptr<RemoteServerClient> RemoteServerClient::Create() {
       // Released inside one of its own callbacks. The destructor stops the peer
       // (joining this thread) before any member goes, so the callback returns
       // into a live peer and the I/O loop then exits on the stop.
-      std::thread([client] { delete client; }).detach();
+      std::thread([client] {
+        util::NameCurrentThread("client-release");
+        delete client;
+      }).detach();
       return;
     }
     delete client;
