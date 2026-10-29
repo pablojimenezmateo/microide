@@ -141,7 +141,10 @@ RuleResult CheckTerminalSessionHeaderSize(const std::filesystem::path& repo_root
   // 305: +4 for state, not helpers -- IRM's flag and REP's last glyph (both in
   // the xterm-256color terminfo entry TERM names); <array> for the latter. Their
   // shared insert helper lives in TerminalSessionEscapeInternal.h instead.
-  constexpr std::size_t kCap = 305;
+  // 307: +2, the G0/G1 charsets and DECSC's copy of them (DEC Special Graphics,
+  // ncurses's box drawing); the type and its glyph table live in
+  // TerminalScreenState.h.
+  constexpr std::size_t kCap = 307;
   const std::filesystem::path path = repo_root / "src/terminal/TerminalSession.h";
   const std::size_t lines = CountFileLines(path);
   if (lines > kCap) {

@@ -43,6 +43,7 @@ void TerminalSession::SaveCursorLocked() {
   saved_cursor_column_ = cursor_column_;
   saved_style_ = current_style_;
   saved_origin_mode_ = origin_mode_;
+  saved_charsets_ = charsets_;
 }
 
 void TerminalSession::RestoreCursorLocked() {
@@ -50,6 +51,7 @@ void TerminalSession::RestoreCursorLocked() {
   // cursor move (origin mode affects how MoveCursorLocked clamps the row).
   current_style_ = saved_style_;
   origin_mode_ = saved_origin_mode_;
+  charsets_ = saved_charsets_;
   MoveCursorLocked(PrimaryScreenTopLocked() + saved_cursor_row_, saved_cursor_column_);
 }
 
@@ -63,6 +65,7 @@ void TerminalSession::SaveActiveScreenMetadataLocked(TerminalScreenState& screen
   screen.saved_cursor_column = saved_cursor_column_;
   screen.saved_style = saved_style_;
   screen.saved_origin_mode = saved_origin_mode_;
+  screen.saved_charsets = saved_charsets_;
   screen.scroll_region_top = scroll_region_top_;
   screen.scroll_region_bottom = scroll_region_bottom_;
 }
@@ -94,6 +97,7 @@ void TerminalSession::RestoreSavedScreenLocked() {
   saved_cursor_column_ = screen.saved_cursor_column;
   saved_style_ = screen.saved_style;
   saved_origin_mode_ = screen.saved_origin_mode;
+  saved_charsets_ = screen.saved_charsets;
   scroll_region_top_ = screen.scroll_region_top;
   scroll_region_bottom_ = screen.scroll_region_bottom;
   if (rows_ > 0) {
@@ -289,7 +293,13 @@ void TerminalSession::PutGlyphLocked(std::string_view glyph) {
   std::string_view effective_glyph = glyph;
   int width;
   if (ascii) {
-    width = 1;
+    width = 1;  // DEC Special Graphics maps a byte to one column too
+    if (charsets_.DecGraphicsActive()) {
+      if (const std::string_view mapped = DecSpecialGraphicsGlyph(static_cast<unsigned char>(glyph.front()));
+          !mapped.empty()) {
+        effective_glyph = mapped;
+      }
+    }
   } else {
     const char32_t codepoint = util::DecodeUtf8Codepoint(glyph);
     // A multibyte sequence that decodes to U+FFFD is malformed (overlong form,
@@ -404,8 +414,9 @@ std::size_t TerminalSession::PutAsciiRunLocked(std::string_view run) {
     }
     ++length;
   }
-  // Insert mode shifts the row per glyph; that is PutGlyphLocked's.
-  if (length == 0 || insert_mode_) {
+  // Insert mode shifts the row per glyph, and DEC Special Graphics maps bytes to
+  // other glyphs: both are PutGlyphLocked's.
+  if (length == 0 || insert_mode_ || charsets_.DecGraphicsActive()) {
     return 0;
   }
   // Stop at the right margin. PutGlyphLocked defers the wrap to the NEXT write
@@ -656,6 +667,8 @@ void TerminalSession::ResetEmulationStateLocked() {
   auto_wrap_mode_ = true;
   insert_mode_ = false;
   last_glyph_length_ = 0;
+  charsets_ = {};
+  saved_charsets_ = {};
   bracketed_paste_mode_ = false;
   focus_event_mode_ = false;
   cursor_visible_ = true;
@@ -902,6 +915,18 @@ void TerminalSession::TrimScrollbackLocked() {
     lines_.push_back(TerminalLine{});
   }
 }
+std::string_view DecSpecialGraphicsGlyph(unsigned char byte) {
+  // VT100 DEC Special Graphics, 0x5F..0x7E, as xterm renders it.
+  static constexpr std::string_view kGlyphs[] = {
+      "\u00a0", "\u25c6", "\u2592", "\u2409", "\u240c", "\u240d", "\u240a", "\u00b0",
+      "\u00b1", "\u2424", "\u240b", "\u2518", "\u2510", "\u250c", "\u2514", "\u253c",
+      "\u23ba", "\u23bb", "\u2500", "\u23bc", "\u23bd", "\u251c", "\u2524", "\u2534",
+      "\u252c", "\u2502", "\u2264", "\u2265", "\u03c0", "\u2260", "\u00a3", "\u00b7",
+  };
+  static_assert(std::size(kGlyphs) == 0x7F - 0x5F);
+  return byte >= 0x5F && byte < 0x7F ? kGlyphs[byte - 0x5F] : std::string_view();
+}
+
 namespace detail {
 
 void InsertBlankCells(TerminalLine& line, std::size_t at, std::size_t count, std::size_t columns,

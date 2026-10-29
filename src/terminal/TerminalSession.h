@@ -493,6 +493,8 @@ class TerminalSession {
   // glyph is printed.
   std::array<char, 4> last_glyph_ = {};
   std::uint8_t last_glyph_length_ = 0;
+  TerminalCharsets charsets_ = {};
+  TerminalCharsets saved_charsets_ = {};  // with DECSC's other saved state
   bool bracketed_paste_mode_ = false;
   bool focus_event_mode_ = false;
   bool cursor_visible_ = true;

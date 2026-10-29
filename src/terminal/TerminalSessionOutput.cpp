@@ -238,6 +238,16 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
         escape_sequence_buffer_.push_back(static_cast<char>(byte));
         continue;
       }
+      // The final byte: G0 (`(`) or G1 (`)`) becomes DEC Special Graphics for
+      // '0' and ASCII for anything else (G2/G3 and multi-byte sets are not drawn).
+      if (escape_sequence_buffer_.size() == 1) {
+        const bool graphics = byte == '0';
+        if (escape_sequence_buffer_.front() == '(') {
+          charsets_.g0_dec_graphics = graphics;
+        } else if (escape_sequence_buffer_.front() == ')') {
+          charsets_.g1_dec_graphics = graphics;
+        }
+      }
       escape_sequence_buffer_.clear();
       escape_mode_ = EscapeMode::None;
       continue;
@@ -442,6 +452,12 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
         // (ConsumeBell), and a host session carries it in the next frame.
         pending_bell_ = true;
         pending_host_bell_ = true;
+        break;
+      case 0x0e:  // SO: G1 into GL
+        charsets_.shifted_out = true;
+        break;
+      case 0x0f:  // SI: G0 back into GL
+        charsets_.shifted_out = false;
         break;
       case 0x7f:
         // DEL received in the output stream is ignored (ECMA-48 / xterm / VTE).

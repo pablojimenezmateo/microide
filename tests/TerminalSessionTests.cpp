@@ -2573,6 +2573,32 @@ void TestTerminalSessionEraseAndDeleteTakeAWideGlyphWhole() {
   ExpectLineText(session.SnapshotLines(), 0, "ab cd", "DCH of the spacer blanks the lead");
 }
 
+// DEC Special Graphics. ncurses draws every box with it under TERM=xterm-256color,
+// UTF-8 locale or not: smacs is `ESC ( 0`, then `lqqk` for a box's top. The
+// designation was parsed and dropped, so every border in dialog, mc or tig read
+// as a row of letters. SO/SI shift G1 in and out, and DECSC saves the sets.
+void TestTerminalSessionDecSpecialGraphicsDrawsBoxes() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 12);
+  // Exactly the bytes python's curses box() emitted for the top-left corner.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b(0lqqk\x1b(Bok\r\n\x1b(0x\x1b(B x");
+  auto lines = session.SnapshotLines();
+  ExpectLineText(lines, 0, "\u250c\u2500\u2500\u2510ok", "the box's top draws, and ESC ( B is ASCII again");
+  ExpectLineText(lines, 1, "\u2502 x", "a side");
+
+  TerminalSessionTestAccess::Reset(session, 4, 12);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b)0a\x0eq\x0fq");
+  ExpectLineText(session.SnapshotLines(), 0, "a\u2500q", "SO shifts G1 in, SI shifts it out");
+
+  TerminalSessionTestAccess::Reset(session, 4, 12);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b(0\x1b""7\x1b(Bq\x1b""8q");
+  ExpectLineText(session.SnapshotLines(), 0, "\u2500", "DECRC restores the set DECSC saved");
+
+  TerminalSessionTestAccess::Reset(session, 4, 12);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b(0ABC\x1b(B");
+  ExpectLineText(session.SnapshotLines(), 0, "ABC", "bytes outside the graphics range stay as they are");
+}
+
 // REP (`CSI Ps b`) and IRM (`CSI 4 h` / `CSI 4 l`) are in the xterm-256color
 // terminfo entry this terminal sets TERM to (rep, smir/rmir), so ncurses uses
 // them: a run of one character comes as the character and a repeat count. Both
@@ -3302,6 +3328,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionOriginModeAppliesOnThePrimaryScreen);
   AddTest(tests, "TerminalSession/EraseAndDeleteTakeAWideGlyphWhole",
           TestTerminalSessionEraseAndDeleteTakeAWideGlyphWhole);
+  AddTest(tests, "TerminalSession/DecSpecialGraphicsDrawsBoxes",
+          TestTerminalSessionDecSpecialGraphicsDrawsBoxes);
   AddTest(tests, "TerminalSession/ClearPreservesScrollback",
           TestTerminalSessionClearPreservesScrollback);
   AddTest(tests, "TerminalSession/PrimaryCupIsViewportRelative",
