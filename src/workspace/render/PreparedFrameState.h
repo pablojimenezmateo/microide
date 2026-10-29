@@ -154,8 +154,10 @@ struct PreparedFrameState {
   // tab). Many paths change a buffer's dirty state -- typing, but also Replace
   // All, a banner Reload, an undo back to the saved text, a save -- and each used
   // to have to remember to repaint the tab strip; the ones that forgot left the
-  // tab's close button where its dirty dot belonged.
-  std::uint64_t painted_editor_tab_dirty = 0;
+  // tab's close button where its dirty dot belonged. Each tab's title is in the
+  // hash too: a title re-derived on activation (a split's untitled tab) changed
+  // on a frame that damaged no strip.
+  std::uint64_t painted_editor_tab_labels = 0;
   // The focused pane's occurrence highlights as painted: its viewport and, per
   // highlighted line, a hash of that line's ranges, by line. The highlight follows
   // the word at the caret, so a keystroke or a click changes it on lines nothing

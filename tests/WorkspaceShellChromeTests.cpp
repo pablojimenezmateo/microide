@@ -6177,6 +6177,71 @@ void TestWorkspaceShellToggleDebuggerAgreesWithTheMenus() {
   }
 }
 
+// Splitting an untitled tab cloned its title but not its number, and activation
+// re-derives the title from the number: the split's "Untitled-2" became
+// "Untitled" (QA monkey, commands profile, seed 19).
+void TestWorkspaceShellSplitKeepsTheUntitledNumber() {
+  TemporaryDirectory temp;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, temp.path());
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  for (int i = 0; i < 2; ++i) {
+    Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::Tab, {}),
+           "a new untitled tab opens");
+  }
+  auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
+  const std::string title = state.focused_group().active_tab().title;
+  Expect(title == "Untitled-2", "the second untitled tab is numbered: " + title);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, microide::workspace::EditorSplitOrientation::Vertical),
+         "the untitled tab splits");
+  // Activating the split's tab (a click on it) re-derives its title.
+  WorkspaceShellTestAccess::FocusEditorGroup(shell, 1);
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
+  const std::string split_title = state.editor_groups[1].active_tab().title;
+  Expect(split_title == "Untitled-2",
+         "the split shows the same buffer under the same name after activation: " + split_title);
+}
+
+// A tab title changed on a frame that damaged no tab strip -- a title re-derived
+// on activation -- left the old title painted. Frame prep hashes the titles with
+// the dirty marks.
+void TestWorkspaceShellTabTitleChangeRepaintsTheStrip() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "project";
+  WriteFile(root / "a.txt", "alpha\n");
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  // An untitled tab: a file tab's strip label is its path's name, and the title
+  // is only what an untitled one shows.
+  for (int i = 0; i < 2; ++i) {  // two, so the strip is drawn
+    Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::Tab, {}),
+           "a new untitled tab opens");
+  }
+  // In a pane that is NOT focused: the focused tab's title is also the window
+  // title, whose own fingerprint repainted it and hid the gap.
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+             shell, microide::workspace::EditorSplitOrientation::Vertical),
+         "the editor splits");
+  WorkspaceShellTestAccess::FocusEditorGroup(shell, 0);
+  microide::tests::SoftwareCanvas canvas(kWidth, kHeight);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  WorkspaceShellTestAccess::CurrentProjectState(shell).editor_groups[1].active_tab().title =
+      "Untitled-99";
+  workspace::RenderInvalidation unrelated;
+  unrelated.rects.push_back(SDL_FRect{0.0f, kHeight - 8.0f, 8.0f, 8.0f});
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, unrelated);
+  Expect(diff.identical(), "the strip shows the new title: " + DescribePixelDiff(diff));
+}
+
 }  // namespace
 
 // Regression: a left-click in a horizontally-scrolled (non-soft-wrapped) editor must
@@ -6634,6 +6699,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellStatusBarRepaintsWhenItsValuesChange);
   AddTest(tests, "WorkspaceShell/SettingsAndHelpDimTheEditorBehindThem",
           TestWorkspaceShellSettingsAndHelpDimTheEditorBehindThem);
+  AddTest(tests, "WorkspaceShell/SplitKeepsTheUntitledNumber", TestWorkspaceShellSplitKeepsTheUntitledNumber);
+  AddTest(tests, "WorkspaceShell/TabTitleChangeRepaintsTheStrip", TestWorkspaceShellTabTitleChangeRepaintsTheStrip);
   AddTest(tests, "WorkspaceShell/ToggleDebuggerAgreesWithTheMenus",
           TestWorkspaceShellToggleDebuggerAgreesWithTheMenus);
   AddTest(tests, "WorkspaceShell/UnfocusedSplitPaneTabIsDimmed",

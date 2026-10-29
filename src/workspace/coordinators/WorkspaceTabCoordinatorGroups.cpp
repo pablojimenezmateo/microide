@@ -180,6 +180,10 @@ TabEntry TabCoordinator::CloneEditorTabForSplit(const TabEntry& tab) {
   clone.kind = TabEntry::Kind::Editor;
   clone.path = tab.path;
   clone.title = tab.title;
+  // The number is what the title is re-derived from (TabTitleForPath): without it
+  // the split's "Untitled-2" became "Untitled" on its first activation (QA monkey,
+  // commands profile, seed 19). Not the stable id: that names one tab.
+  clone.untitled_number = tab.untitled_number;
   if (tab.editor_state.has_value()) {
     TabEntry::EditorTabState editor_state;
     // Copying the viewport shares the underlying DocumentState (live shared

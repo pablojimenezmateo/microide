@@ -1222,21 +1222,25 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     }
     frame_state_.painted_focus = focus;
   }
-  // The editor tabs' dirty markers: repaint the strips when the set of dirty tabs
+  // The editor tabs' dirty markers and titles: repaint the strips when either
   // moved, whatever path moved it (see PreparedFrameState).
   {
-    std::uint64_t dirty = 0xCBF29CE484222325ull;
+    std::uint64_t labels = 0xCBF29CE484222325ull;
     for (std::size_t g = 0; g < project_state.editor_groups.size(); ++g) {
       const auto& tabs = project_state.editor_groups[g].open_tabs;
       for (std::size_t i = 0; i < tabs.size(); ++i) {
         if (TabEntryIsDirty(tabs[i])) {
-          dirty = (dirty ^ ((static_cast<std::uint64_t>(g) << 32) | (i + 1))) * 0x100000001B3ull;
+          labels = (labels ^ ((static_cast<std::uint64_t>(g) << 32) | (i + 1))) * 0x100000001B3ull;
         }
+        for (const char c : tabs[i].title) {
+          labels = (labels ^ static_cast<unsigned char>(c)) * 0x100000001B3ull;
+        }
+        labels = (labels ^ 0xFFu) * 0x100000001B3ull;  // ends the title: "ab","c" != "a","bc"
       }
     }
-    if (dirty != frame_state_.painted_editor_tab_dirty) {
+    if (labels != frame_state_.painted_editor_tab_labels) {
       RequestTabStripRedraw();
-      frame_state_.painted_editor_tab_dirty = dirty;
+      frame_state_.painted_editor_tab_labels = labels;
     }
   }
   // The sidebar's selected row: activating a tab selects its file in the tree (as
