@@ -430,13 +430,13 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       MoveCursorLocked(PrimaryScreenTopLocked(), 0);
       return;
     }
+    // SCOSC / SCORC: xterm treats them as DECSC / DECRC (CASE_ANSI_SC calls
+    // CursorSave), rendition and origin mode included.
     case 's':
-      saved_cursor_row_ = cursor_row_;
-      ClampPendingWrapColumn(cursor_column_, columns_);
-      saved_cursor_column_ = cursor_column_;
+      SaveCursorLocked();
       return;
     case 'u':
-      MoveCursorLocked(saved_cursor_row_, saved_cursor_column_);
+      RestoreCursorLocked();
       return;
     default:
       return;

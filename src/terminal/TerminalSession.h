@@ -514,6 +514,11 @@ class TerminalSession {
   std::uint64_t scrollback_trim_total_ = 0;
   std::size_t cursor_row_ = 0;
   std::size_t cursor_column_ = 0;
+  // Relative to the top of the visible screen, as xterm saves it: on the primary
+  // buffer the screen scrolls on through scrollback, and an absolute deque row
+  // saved before output scrolled it restored the cursor INTO history, so a program
+  // that saved, printed, and restored then wrote over lines the user had scrolled
+  // past. A scrollback trim leaves it alone; a resize clamps it.
   std::size_t saved_cursor_row_ = 0;
   std::size_t saved_cursor_column_ = 0;
   // DECSC (ESC 7 / CSI s) saves the graphic rendition and origin mode alongside the

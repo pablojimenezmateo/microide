@@ -2517,6 +2517,69 @@ void TestTerminalSessionSaveRestoreCursorRestoresGraphicRendition() {
          "DECRC should restore the default graphic rendition saved by DECSC");
 }
 
+// DECSC saves the cursor's row on the SCREEN, as xterm does: output that scrolls
+// the primary screen between the save and the restore leaves the restored cursor
+// on the same screen row, never in scrollback. The row was an absolute deque
+// index, so `ESC 7`, five lines, `ESC 8 X` overwrote a line the user had scrolled
+// past. SCOSC/SCORC (`CSI s` / `CSI u`) behave the same, and like DECSC they
+// save the rendition too (xterm's CASE_ANSI_SC is CursorSave).
+void TestTerminalSessionSavedCursorRowIsScreenRelative() {
+  for (const auto& [save, restore] : {std::pair<std::string_view, std::string_view>{"\x1b""7", "\x1b""8"},
+                                      {"\x1b[s", "\x1b[u"}}) {
+    microide::terminal::TerminalSession session;
+    TerminalSessionTestAccess::Reset(session, 3, 8);
+    TerminalSessionTestAccess::AppendOutput(
+        session, std::string(save) + "\x1b[31ma\r\nb\r\nc\r\nd\r\ne" + std::string(restore) + "X");
+    const auto lines = session.SnapshotLines();
+    // a, b in scrollback; the screen is c, d, e.
+    Expect(lines.size() == 5, "five lines, two of them scrollback");
+    Expect(lines.size() == 5 && lines[0].cells.size() > 0 && lines[0].cells[0].ascii_character() == 'a',
+           "the scrollback line the cursor was saved on is untouched");
+    Expect(lines.size() == 5 && lines[2].cells.size() > 0 && lines[2].cells[0].ascii_character() == 'X',
+           "the restore lands on the screen's top row, where the save was");
+    Expect(lines.size() == 5 && lines[2].cells.size() > 0 && !lines[2].cells[0].style.foreground.has_value(),
+           "and restores the saved rendition");
+  }
+  // A scrollback trim between the save and the restore does not move it either.
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 3, 8);
+  std::string output = "\r\n\r\n\x1b""7";  // saved on the screen's bottom row
+  for (int i = 0; i < 4000; ++i) {
+    output += "\r\nline";
+  }
+  output += "\x1b""8X";
+  TerminalSessionTestAccess::AppendOutput(session, output);
+  const auto lines = session.SnapshotLines();
+  Expect(!lines.empty() && !lines.back().cells.empty() && lines.back().cells[0].ascii_character() == 'X',
+         "after the scrollback was trimmed the restore is still the screen's bottom row");
+}
+
+// A cursor move stops at the visible screen's bottom row. The ceiling was the
+// deque's size after the end-of-chunk trim, so in one chunk carrying more lines
+// than the scrollback holds (`cat big.log; clear`) a CUP to the screen's top
+// landed far up in history; and CUD on the bottom row grew the deque, scrolling.
+void TestTerminalSessionCursorMovesStopAtTheScreensBottomRow() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 3, 8);
+  std::string output;
+  for (int i = 0; i < 4000; ++i) {
+    output += "line\r\n";
+  }
+  output += "\x1b[HX";
+  TerminalSessionTestAccess::AppendOutput(session, output);
+  auto lines = session.SnapshotLines();
+  Expect(lines.size() >= 3 && !lines[lines.size() - 3].cells.empty() &&
+             lines[lines.size() - 3].cells[0].ascii_character() == 'X',
+         "CUP in an over-long chunk lands on the screen's top row");
+
+  TerminalSessionTestAccess::Reset(session, 3, 8);
+  TerminalSessionTestAccess::AppendOutput(session, "a\r\nb\r\nc\x1b[5BX");
+  lines = session.SnapshotLines();
+  Expect(lines.size() == 3, "CUD on the bottom row does not scroll");
+  Expect(lines.size() == 3 && lines[2].cells.size() > 1 && lines[2].cells[1].ascii_character() == 'X',
+         "it stays on the bottom row");
+}
+
 // Regression: toggling DECOM (origin mode, `CSI ?6h`/`CSI ?6l`) on the primary buffer
 // homes the cursor to the VISIBLE-screen top, not absolute row 0 in scrollback. The
 // old code passed a screen-relative 0 as an absolute deque index, so a bare
@@ -3151,6 +3214,10 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionVerticalTabAndFormFeedIndexLikeLineFeed);
   AddTest(tests, "TerminalSession/SaveRestoreCursorRestoresGraphicRendition",
           TestTerminalSessionSaveRestoreCursorRestoresGraphicRendition);
+  AddTest(tests, "TerminalSession/SavedCursorRowIsScreenRelative",
+          TestTerminalSessionSavedCursorRowIsScreenRelative);
+  AddTest(tests, "TerminalSession/CursorMovesStopAtTheScreensBottomRow",
+          TestTerminalSessionCursorMovesStopAtTheScreensBottomRow);
   AddTest(tests, "TerminalSession/ClearPreservesScrollback",
           TestTerminalSessionClearPreservesScrollback);
   AddTest(tests, "TerminalSession/PrimaryCupIsViewportRelative",

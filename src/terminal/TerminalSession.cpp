@@ -302,9 +302,12 @@ void TerminalSession::Resize(std::size_t rows, std::size_t columns) {
         alternate_screen_.scroll_region_bottom = rows_ - 1;
       }
     }
+    if (rows_ > 0) {
+      saved_cursor_row_ = std::min(saved_cursor_row_, rows_ - 1);  // screen-relative on both
+      primary_screen_.saved_cursor_row = std::min(primary_screen_.saved_cursor_row, rows_ - 1);
+    }
     if (use_alternate_screen_ && rows_ > 0) {
       cursor_row_ = std::min(cursor_row_, rows_ - 1);
-      saved_cursor_row_ = std::min(saved_cursor_row_, rows_ - 1);
     }
     if (columns_ > 0) {
       cursor_column_ = std::min(cursor_column_, columns_ - 1);
