@@ -153,6 +153,20 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **A folder named like `..cache` is inside its parent.** Copying a folder into its
+  own `..cache` subfolder (Ctrl+drag, or Copy and Paste in the tree) copied it into
+  its own copy until the path grew too long and then reported "Failed to copy"; it
+  is refused at once now. Search's live hits, conflict resolution from the commit
+  view and the drop preview had read such folders as outside the project too. A
+  refused tree paste shows its reason once instead of twice.
+
+- **A misbehaving remote host cannot hang or exhaust the editor.** A host terminal
+  frame could make the client append an unbounded number of lines, and screen,
+  scrollback, manifest and watch-delta counts reserved memory for what the host
+  claimed before any of it arrived; a fetch now also fails a host that streams more
+  of a file than was asked for. A remote root typed with a trailing `/` no longer
+  maps host paths onto the wrong mirror file.
+
 - **Workbench shortcuts work from the tree, a panel or the debug pane.** Find in
   files (`Ctrl+Shift+F`), close/next/previous/move tab, split, go to line and word
   wrap were bound to the editor only, so with the tree focused `Ctrl+Shift+F` did
@@ -238,6 +252,16 @@ project (see [README](README.md)); versions track meaningful shipped work.
   itself requested.
 
 ### Performance
+
+- **A long sync or build repaints a few times a second, not per file batch.**
+  Changes that keep arriving (a first remote sync, a build, a checkout) are applied
+  at most four times a second after the first few, instead of repainting the tree
+  and status bar for every watcher batch; a single save still shows at once. On a
+  slow link a first sync drew ~176 frames, now at most ~68.
+
+- **An idle remote host server no longer polls git every second**: it waits on
+  file-system events for the repository's HEAD, branch, index and packed refs. The
+  editor keeps each mirrored path once instead of twice.
 
 - **Typing in a host terminal during a big transfer.** The bulk lane's window
   aimed at ~100 ms of bandwidth whatever the round trip, so a backfill or a large
