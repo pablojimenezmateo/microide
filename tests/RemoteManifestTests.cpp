@@ -108,12 +108,28 @@ void TestRemoteManifestRejectsMalformedBytes() {
   Expect(!DecodeManifestRows(huge_count, decoded), "a count the payload cannot hold is refused");
 }
 
+// A row count is the peer's to write and a row is 128 bytes here against five on
+// the wire: a refused decode must not have reserved for the count it claimed
+// (1 MiB of padding claimed ~200,000 rows, 26 MB, before the first row failed).
+void TestRemoteManifestForgedCountReservesNoMoreThanAChunk() {
+  std::string forged;
+  util::PutVarint(forged, 200'000);
+  forged.append(1u << 20, '\xff');  // decodes as no row at all
+  std::vector<ManifestRow> rows;
+  Expect(!DecodeManifestRows(forged, rows), "the forged chunk is refused");
+  Expect(rows.empty(), "and leaves no row behind");
+  Expect(rows.capacity() <= (1u << 16),
+         "having reserved at most a chunk: " + std::to_string(rows.capacity()) + " rows");
+}
+
 }  // namespace
 
 void RegisterRemoteManifestTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteManifest/RoundTrip", TestRemoteManifestRoundTrip);
   AddTest(tests, "RemoteManifest/RejectsUnsafePaths", TestRemoteManifestRejectsUnsafePaths);
   AddTest(tests, "RemoteManifest/RejectsMalformedBytes", TestRemoteManifestRejectsMalformedBytes);
+  AddTest(tests, "RemoteManifest/ForgedCountReservesNoMoreThanAChunk",
+          TestRemoteManifestForgedCountReservesNoMoreThanAChunk);
 }
 
 }  // namespace microide::tests

@@ -14,6 +14,8 @@ using util::PutBytes;
 using util::PutVarint;
 
 constexpr std::size_t kMaxComponentBytes = 255;
+// The most rows (or deleted paths) a decode reserves before any has decoded.
+constexpr std::uint64_t kMaxReservedRows = 1u << 16;
 
 std::uint64_t ZigZag(std::int64_t value) {
   return (static_cast<std::uint64_t>(value) << 1) ^ static_cast<std::uint64_t>(value >> 63);
@@ -93,7 +95,11 @@ bool DecodeManifestRows(std::string_view bytes, std::vector<ManifestRow>& rows) 
   if (in.failed() || count > in.remaining() / 5 + 1) {
     return false;
   }
-  rows.reserve(original + static_cast<std::size_t>(count));
+  // Reserved up to a chunk's worth only: rows are appended as they decode, so a
+  // genuine count past this costs a few regrowths, while a forged one -- five
+  // bytes on the wire per 128-byte row reserved -- costs nothing it cannot back
+  // with rows that actually decode.
+  rows.reserve(original + static_cast<std::size_t>(std::min<std::uint64_t>(count, kMaxReservedRows)));
   const auto fail = [&]() {
     rows.resize(original);
     return false;
@@ -180,7 +186,8 @@ bool DecodeWatchDelta(std::string_view bytes, std::vector<std::string>& deleted,
     return false;
   }
   std::vector<std::string> paths;
-  paths.reserve(static_cast<std::size_t>(count));
+  // As for the rows: the count is the peer's, a path is a whole std::string here.
+  paths.reserve(static_cast<std::size_t>(std::min<std::uint64_t>(count, kMaxReservedRows)));
   for (std::uint64_t i = 0; i < count; ++i) {
     std::string path(in.Bytes(kMaxManifestPathBytes));
     if (in.failed() || !IsSafeRelativePath(path)) {
