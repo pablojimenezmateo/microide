@@ -6161,6 +6161,22 @@ void TestWorkspaceShellSettingsKeepSelectionVisibleScrollsToRow() {
          "the first row is fully visible at the top of the pane");
 }
 
+// Toggle Debugger read `debug.enabled` through a private token list that took
+// "no" for on, while the menus (SettingFlagEnabled) took it for off: the first
+// press "disabled" a debugger the menus already showed as off and changed nothing.
+void TestWorkspaceShellToggleDebuggerAgreesWithTheMenus() {
+  WorkspaceShell shell;
+  for (const char* off : {"no", "Off", "FALSE"}) {
+    // As a hand-edited config file loads it: the setter would canonicalize.
+    WorkspaceShellTestAccess::SetRawUserSetting(shell, "debug.enabled", off);
+    Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::DebugToggleEnabled, {}),
+           "Toggle Debugger runs");
+    const auto value = WorkspaceShellTestAccess::GetSettingValue(shell, "debug.enabled");
+    Expect(value.has_value() && *value == "true",
+           std::string("a debugger stored as \"") + off + "\" is off, so the toggle turns it on");
+  }
+}
+
 }  // namespace
 
 // Regression: a left-click in a horizontally-scrolled (non-soft-wrapped) editor must
@@ -6618,6 +6634,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellStatusBarRepaintsWhenItsValuesChange);
   AddTest(tests, "WorkspaceShell/SettingsAndHelpDimTheEditorBehindThem",
           TestWorkspaceShellSettingsAndHelpDimTheEditorBehindThem);
+  AddTest(tests, "WorkspaceShell/ToggleDebuggerAgreesWithTheMenus",
+          TestWorkspaceShellToggleDebuggerAgreesWithTheMenus);
   AddTest(tests, "WorkspaceShell/UnfocusedSplitPaneTabIsDimmed",
           TestWorkspaceShellUnfocusedSplitPaneTabIsDimmed);
 }

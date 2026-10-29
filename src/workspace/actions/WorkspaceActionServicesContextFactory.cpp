@@ -14,6 +14,7 @@
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/actions/WorkspaceActionServices.h"
+#include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
 #include "workspace/coordinators/WorkspaceDirtyPromptCoordinator.h"
@@ -48,11 +49,9 @@ bool WorkspaceActionContext::DebuggerEnabled() const {
   if (!operations_.get_setting_value) {
     return false;
   }
-  const auto value = operations_.get_setting_value("debug.enabled");
-  if (!value.has_value()) {
-    return false;
-  }
-  return !(*value == "false" || *value == "0" || *value == "off" || value->empty());
+  // The menus' predicate: a private token list read "no" as on, so Toggle
+  // Debugger first "disabled" a debugger the menus already showed as off.
+  return SettingFlagEnabled(operations_.get_setting_value("debug.enabled"));
 }
 
 void WorkspaceActionContext::ToggleDebuggerEnabled() {

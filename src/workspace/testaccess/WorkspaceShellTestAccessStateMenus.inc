@@ -908,6 +908,12 @@
   static bool IsSettingTransient(const WorkspaceShell& shell, std::string_view id) {
     return shell.context_.transient_setting_keys.count(std::string(id)) != 0;
   }
+  // A user-layer value as RestoreUserConfig loads it from a hand-edited file: raw,
+  // not through the setter's validation and canonicalization.
+  static void SetRawUserSetting(WorkspaceShell& shell, std::string_view id, std::string value) {
+    settings_layer::Upsert(shell.context_.user_settings, id, std::move(value));
+    shell.settings_store_.Reindex();
+  }
   static std::optional<std::string> GetSettingValue(const WorkspaceShell& shell,
                                                     std::string_view id) {
     return shell.GetSettingValue(id);

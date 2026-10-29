@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include "workspace/SettingFlags.h"
+
 #include "editor/BreakpointStore.h"
 #include "editor/SingleLineEditor.h"
 #include "editor/EditorViewModel.h"
@@ -1047,6 +1049,48 @@ void TestSidebarSurfaceResolvesPluginViews() {
 
 }  // namespace
 
+// The checkbox is drawn with the predicate the toggle and every reader use. A
+// private token list drew "no" checked (a click then wrote "true": still checked)
+// and "" unchecked (a click wrote "false": still unchecked).
+void TestSettingsOverlayCheckboxAgreesWithTheToggle() {
+  WorkspaceContext context;
+  RenderViewModelBuilder builder(context);
+  TextRenderer text_renderer;
+  const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 280.0f, 160.0f,
+                                    LayoutModeInputs{}, true);
+  SettingsOverlayService service;
+  service.OpenSettings();
+  const std::vector<std::pair<std::string, bool>> cases = {
+      {"true", true}, {"yes", true}, {"", true},     {"no", false},
+      {"Off", false}, {"0", false},  {"FALSE", false}};
+  std::vector<SettingsOverlayRow> rows;
+  for (std::size_t index = 0; index < cases.size(); ++index) {
+    SettingsOverlayRow row;
+    row.id = "test.bool" + std::to_string(index);
+    row.label = "Bool " + std::to_string(index);
+    row.value = cases[index].first;
+    row.value_display = cases[index].first;
+    row.type = microide::workspace::SettingType::Bool;
+    row.control_kind = microide::workspace::SettingsControlKind::Checkbox;
+    rows.push_back(std::move(row));
+  }
+  service.RebuildSettingsRows({}, {}, {}, rows);
+  service.SetSelectedCategory(0);
+  const auto vm = builder.BuildSettingsOverlay(layout, service, text_renderer);
+  std::size_t checked = 0;
+  for (const SettingsRowViewModel& row : vm.rows) {
+    for (std::size_t index = 0; index < cases.size(); ++index) {
+      if (row.id == "test.bool" + std::to_string(index)) {
+        ++checked;
+        Expect(row.control.checkbox_on == microide::workspace::SettingFlagEnabled(std::optional(cases[index].first)) &&
+                   row.control.checkbox_on == cases[index].second,
+               "a Bool stored as \"" + cases[index].first + "\" is drawn as the toggle reads it");
+      }
+    }
+  }
+  Expect(checked == cases.size(), "every Bool row is built");
+}
+
 void TestSettingsOverlayWrapsLongDescriptions() {
   WorkspaceContext context;
   RenderViewModelBuilder builder(context);
@@ -1653,6 +1697,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestBottomPanelCarriesEmptyStateHints);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayControlValueIsPrecomputed",
           TestSettingsOverlayControlValueIsPrecomputed);
+  AddTest(tests, "RenderViewModelBuilder/SettingsOverlayCheckboxAgreesWithTheToggle",
+          TestSettingsOverlayCheckboxAgreesWithTheToggle);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayWrapsLongDescriptions",
           TestSettingsOverlayWrapsLongDescriptions);
   AddTest(tests, "RenderViewModelBuilder/PrefersSemanticOccurrencesOverWordScan",

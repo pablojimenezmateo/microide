@@ -2171,10 +2171,6 @@ std::string_view SettingsSubsectionLabel(std::string_view group) {
 }
 constexpr float kSettingsControlGap = 6.0f;
 
-bool SettingBoolIsOn(std::string_view value) {
-  return !(value == "false" || value == "0" || value == "off" || value.empty());
-}
-
 }  // namespace
 
 SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
@@ -2413,7 +2409,11 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
         const float box_y = head_top + (head_band - kSettingsCheckBox) * 0.5f;
         control.checkbox_rect =
             MakeRect(content_right - kSettingsCheckBox, box_y, kSettingsCheckBox, kSettingsCheckBox);
-        control.checkbox_on = SettingBoolIsOn(row.value);
+        // The predicate the toggle and every reader use: a private token list here
+        // drew "no" checked (a click then wrote "true": still checked) and ""
+        // unchecked (a click wrote "false": still unchecked).
+        // (SettingFlagEnabled of a present value, without copying it per row).
+        control.checkbox_on = !util::IsFalseyToken(row.value);
         leftmost = control.checkbox_rect.x;
         break;
       }
