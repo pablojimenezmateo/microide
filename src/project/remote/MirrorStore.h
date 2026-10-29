@@ -145,11 +145,15 @@ class MirrorStore {
   // whose file still hashes to it, or whose path has a push pending (the save came
   // after the pull, on top of it).
   void NotePulled(std::string_view path, const util::ContentHash& hash);
-  // meta/pulled: the NotePulled set, written atomically but NOT flushed -- the
-  // pulled files it vouches for were written the same way (Durability::Deferred),
-  // and Open checks each against the file's bytes, so a power loss that loses the
-  // hint loses nothing the hint could have told. A corrupt or missing hint is an
-  // empty one, never an error. Removed by Save.
+  // meta/pulled: the NotePulled set, NOT flushed -- the pulled files it vouches
+  // for were written the same way (Durability::Deferred), and Open checks each
+  // against the file's bytes, so a power loss that loses the hint loses nothing
+  // the hint could have told. Append-only: each call adds the records noted since
+  // the last one, so a pull batch costs its own size, not every path pulled since
+  // the last Save (rewritten whole per batch and per journal write, it was
+  // quadratic over a first sync -- TD-2026-10-28-418). Open keeps every complete
+  // record and ignores a torn tail; a missing or foreign hint is an empty one,
+  // never an error. Removed by Save.
   bool WritePulledHint() const;
   std::filesystem::path pulled_hint_path() const { return meta_ / "pulled"; }
   std::filesystem::path journal_path() const { return meta_ / "journal"; }
@@ -190,6 +194,9 @@ class MirrorStore {
   std::deque<PendingTreeOp> pending_tree_ops_;
   // Pulls the saved state does not record yet (NotePulled); Save clears it.
   mutable std::map<std::string, util::ContentHash, std::less<>> pulled_unsaved_;
+  // The NotePulled records meta/pulled does not hold yet (WritePulledHint appends
+  // and clears them).
+  mutable std::vector<std::pair<std::string, util::ContentHash>> pulled_unwritten_;
   std::uint64_t manifest_id_ = 0;
   std::array<std::mutex, 64> path_locks_;
 };

@@ -1,9 +1,11 @@
 #include "TestSupport.h"
 
 #include "project/remote/MirrorStore.h"
+#include "util/ByteCodec.h"
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <thread>
 
@@ -144,6 +146,82 @@ void TestMirrorStoreJournalCarriesPullsTheStateLacks() {
   }
 }
 
+// meta/pulled is appended per pull batch, never rewritten: rewritten whole per
+// batch (and per journal write) it cost O(paths pulled since the last save) each
+// time -- quadratic over a first sync, and the largest source of the allocator
+// slack TD-2026-10-28-418 measured. A later record for a path wins; a torn last
+// record (a crash mid-append) is dropped and appends after it still read; a
+// version-1 hint written before the format changed is still adopted.
+void TestMirrorStorePulledHintIsAppendedAndSurvivesATornTail() {
+  TemporaryDirectory temp;
+  std::string error;
+  const auto base = util::HashContent("base\n");
+  const auto first = util::HashContent("first\n");
+  const auto second = util::HashContent("second\n");
+  const std::filesystem::path dir = temp.path() / "m";
+  {
+    MirrorStore store(dir);
+    Expect(store.Open(&error), "opens");
+    for (const char* name : {"a.txt", "b.txt"}) {
+      MirrorStore::Entry& entry = store.entries()[name];
+      entry.has_remote = true;
+      entry.remote.hash = base;
+      entry.base = base;
+      WriteFile(store.tree() / name, "base\n");
+    }
+    Expect(store.Save(&error), "the state");
+    // Two batches, each pulling a.txt.
+    WriteFile(store.tree() / "a.txt", "first\n");
+    store.NotePulled("a.txt", first);
+    Expect(store.WritePulledHint(), "batch one");
+    WriteFile(store.tree() / "a.txt", "second\n");
+    store.NotePulled("a.txt", second);
+    Expect(store.WritePulledHint(), "batch two");
+    Expect(store.WritePulledHint(), "a write with nothing new adds nothing");
+    // A version byte, then two records of (length 5, "a.txt", 32-byte hash).
+    Expect(std::filesystem::file_size(store.pulled_hint_path()) == 1 + 2 * (1 + 5 + 32),
+           "each batch appended its own record: " +
+               std::to_string(std::filesystem::file_size(store.pulled_hint_path())));
+  }
+  {
+    MirrorStore reopened(dir);
+    Expect(reopened.Open(&error) && reopened.Find("a.txt")->base == std::optional(second),
+           "the later record wins: " + error);
+  }
+  {
+    std::ofstream torn(MirrorStore(dir).pulled_hint_path(), std::ios::binary | std::ios::app);
+    torn << "\x05a.t";  // a record cut short
+  }
+  {
+    MirrorStore reopened(dir);
+    Expect(reopened.Open(&error) && reopened.Find("a.txt")->base == std::optional(second),
+           "a torn last record is dropped, the rest kept");
+    WriteFile(reopened.tree() / "b.txt", "first\n");
+    reopened.NotePulled("b.txt", first);
+    Expect(reopened.WritePulledHint(), "an append after the torn tail");
+  }
+  {
+    MirrorStore reopened(dir);
+    Expect(reopened.Open(&error) && reopened.Find("b.txt")->base == std::optional(first) &&
+               reopened.Find("a.txt")->base == std::optional(second),
+           "the hint was rewritten whole, so what came after the tear is read");
+  }
+  {
+    // Version 1: a count, then the records.
+    std::string v1;
+    util::PutVarint(v1, 1);
+    util::PutVarint(v1, 1);
+    util::PutBytes(v1, "b.txt");
+    v1.append(second.raw());
+    MirrorStore probe(dir);
+    WriteFile(probe.tree() / "b.txt", "second\n");
+    WriteFile(probe.pulled_hint_path(), v1);
+    MirrorStore reopened(dir);
+    Expect(reopened.Open(&error) && reopened.Find("b.txt")->base == std::optional(second),
+           "a version-1 hint is adopted");
+  }
+}
+
 void TestMirrorStoreCorruptStateIsAnError() {
   TemporaryDirectory temp;
   std::string error;
@@ -203,6 +281,8 @@ void RegisterMirrorStoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorStore/RoundTrips", TestMirrorStoreRoundTrips);
   AddTest(tests, "MirrorStore/CorruptStateIsAnError", TestMirrorStoreCorruptStateIsAnError);
   AddTest(tests, "MirrorStore/JournalOverridesALaggingState", TestMirrorStoreJournalOverridesALaggingState);
+  AddTest(tests, "MirrorStore/PulledHintIsAppendedAndSurvivesATornTail",
+          TestMirrorStorePulledHintIsAppendedAndSurvivesATornTail);
   AddTest(tests, "MirrorStore/JournalCarriesPullsTheStateLacks", TestMirrorStoreJournalCarriesPullsTheStateLacks);
   AddTest(tests, "MirrorStore/CheckLocal", TestMirrorStoreCheckLocal);
   AddTest(tests, "MirrorStore/DefaultDirectory", TestMirrorStoreDefaultDirectory);

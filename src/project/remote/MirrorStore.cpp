@@ -1,7 +1,9 @@
 #include "project/remote/MirrorStore.h"
 
+#include <cerrno>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <span>
 #include <system_error>
 #include <vector>
@@ -11,9 +13,12 @@
 #include "platform/AppDirectories.h"
 #include "platform/RuntimePaths.h"
 #include "util/ByteCodec.h"
+#include "util/PosixFd.h"
 #include "util/TextFileIO.h"
 
+#include <fcntl.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 namespace microide::project::remote {
 namespace {
@@ -23,7 +28,10 @@ namespace {
 // field is flagged, so an older binary refuses the file instead of misreading it.
 constexpr std::uint64_t kStateVersion = 4;
 constexpr std::uint64_t kJournalVersion = 1;
-constexpr std::uint64_t kPulledHintVersion = 1;
+// 1: a count, then that many records, rewritten whole. 2: records until the end,
+// appended (MirrorStore::WritePulledHint).
+constexpr std::uint64_t kPulledHintVersionRewritten = 1;
+constexpr std::uint64_t kPulledHintVersion = 2;
 
 enum EntryFlag : std::uint8_t {
   kHasRemote = 1u << 0,
@@ -167,6 +175,7 @@ bool MirrorStore::Open(std::string* error) {
   entries_.clear();
   pending_tree_ops_.clear();
   pulled_unsaved_.clear();
+  pulled_unwritten_.clear();
   manifest_id_ = 0;
   persistence::PersistedRecordReaderError read_error = persistence::PersistedRecordReaderError::None;
   const auto record = persistence::PersistedRecordReader::ReadFile(state_path(), &read_error);
@@ -288,24 +297,40 @@ bool MirrorStore::Open(std::string* error) {
   if (const std::optional<std::string> hint = util::ReadTextFile(pulled_hint_path()); hint.has_value()) {
     util::ByteReader hin(*hint);
     std::vector<std::pair<std::string, util::ContentHash>> pulled;
-    const std::uint64_t count = hin.Varint() == kPulledHintVersion ? hin.Varint() : 0;
-    for (std::uint64_t i = 0; i < count && !hin.failed() && i <= hint->size(); ++i) {
-      std::string path(hin.Bytes(kMaxManifestPathBytes));
-      const std::optional<util::ContentHash> hash = util::ContentHash::FromRaw(hin.Raw(util::ContentHash::kBytes));
-      if (!IsSafeRelativePath(path) || !hash.has_value()) {
-        hin.Fail();
-        break;
-      }
-      pulled.emplace_back(std::move(path), *hash);
-    }
-    if (!hin.failed() && hin.at_end()) {
-      for (auto& [path, hash] : pulled) {
-        Entry& entry = entries_[path];
-        if (entry.push_pending || util::HashFileContent(tree_ / path) == std::optional(hash)) {
-          entry.base = hash;
-          entry.local_known = false;
+    const std::uint64_t version = hin.Varint();
+    // Version 1 says how many records follow; version 2 runs to the end, and an
+    // append a crash cut short leaves a torn last record, which is dropped.
+    const bool counted = version == kPulledHintVersionRewritten;
+    const std::uint64_t count = counted ? hin.Varint() : std::numeric_limits<std::uint64_t>::max();
+    bool whole = false;  // read to its end with no torn or foreign bytes
+    if (!hin.failed() && (counted || version == kPulledHintVersion)) {
+      for (std::uint64_t i = 0; i < count && !hin.at_end() && i <= hint->size(); ++i) {
+        std::string path(hin.Bytes(kMaxManifestPathBytes));
+        const std::optional<util::ContentHash> hash =
+            util::ContentHash::FromRaw(hin.Raw(util::ContentHash::kBytes));
+        if (hin.failed() || !IsSafeRelativePath(path) || !hash.has_value()) {
+          break;
         }
-        pulled_unsaved_.insert_or_assign(path, hash);
+        pulled.emplace_back(std::move(path), *hash);
+      }
+      whole = hin.at_end() && !hin.failed();
+    }
+    for (auto& [path, hash] : pulled) {
+      Entry& entry = entries_[path];
+      if (entry.push_pending || util::HashFileContent(tree_ / path) == std::optional(hash)) {
+        entry.base = hash;
+        entry.local_known = false;
+      }
+      pulled_unsaved_.insert_or_assign(path, hash);
+    }
+    if (counted || !whole) {
+      // A version-1 hint, or one with a torn or foreign tail, cannot be appended
+      // to (what followed would not be read): start a version-2 one holding what it
+      // said, on the next write.
+      std::error_code ignored;
+      std::filesystem::remove(pulled_hint_path(), ignored);
+      for (const auto& [path, hash] : pulled_unsaved_) {
+        pulled_unwritten_.emplace_back(path, hash);
       }
     }
   }
@@ -314,17 +339,39 @@ bool MirrorStore::Open(std::string* error) {
 
 void MirrorStore::NotePulled(std::string_view path, const util::ContentHash& hash) {
   pulled_unsaved_.insert_or_assign(std::string(path), hash);
+  pulled_unwritten_.emplace_back(std::string(path), hash);
 }
 
 bool MirrorStore::WritePulledHint() const {
+  if (pulled_unwritten_.empty()) {
+    return true;
+  }
+  const util::UniqueFd fd(::open(pulled_hint_path().c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600));
+  if (fd.Get() < 0) {
+    return false;
+  }
   std::string body;
-  util::PutVarint(body, kPulledHintVersion);
-  util::PutVarint(body, pulled_unsaved_.size());
-  for (const auto& [path, hash] : pulled_unsaved_) {
+  struct stat info {};
+  if (::fstat(fd.Get(), &info) == 0 && info.st_size == 0) {
+    util::PutVarint(body, kPulledHintVersion);
+  }
+  // A later record for the same path wins on read, as the map does here.
+  for (const auto& [path, hash] : pulled_unwritten_) {
     util::PutBytes(body, path);
     body.append(hash.raw());
   }
-  return util::WriteTextFileAtomically(pulled_hint_path(), body);
+  for (std::size_t off = 0; off < body.size();) {
+    const ssize_t n = ::write(fd.Get(), body.data() + off, body.size() - off);
+    if (n < 0 && errno == EINTR) {
+      continue;
+    }
+    if (n <= 0) {
+      return false;
+    }
+    off += static_cast<std::size_t>(n);
+  }
+  pulled_unwritten_.clear();
+  return true;
 }
 
 bool MirrorStore::SaveJournal(std::string* error) const {
@@ -354,6 +401,9 @@ bool MirrorStore::SaveJournal(std::string* error) const {
 
 bool MirrorStore::Save(std::string* error) const {
   std::string body;
+  // Sized once: grown by doubling, a 5,000-file state reallocated through a dozen
+  // buffers past the allocator's mmap threshold per save (TD-2026-10-28-418).
+  body.reserve(64 + entries_.size() * 96);
   util::PutVarint(body, kStateVersion);
   util::PutVarint(body, manifest_id_);
   util::PutVarint(body, entries_.size());
@@ -397,6 +447,7 @@ bool MirrorStore::Save(std::string* error) const {
     return false;
   }
   pulled_unsaved_.clear();  // the state just written records them
+  pulled_unwritten_.clear();
   std::error_code ignored;
   std::filesystem::remove(pulled_hint_path(), ignored);
   return SaveJournal(error);
