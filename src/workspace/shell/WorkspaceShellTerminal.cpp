@@ -551,8 +551,42 @@ std::optional<TerminalLinkHit> WorkspaceShell::TerminalLinkAtPoint(float x, floa
     return std::nullopt;
   }
 
-  const std::size_t hit_index = position->row - first_row;
-  const terminal::TerminalLine& hit_line = lines[hit_index];
+  // A row the terminal wrapped onto continues past the snapshot's edge when the
+  // hit's logical line reaches that edge: snapshot a range widened by up to
+  // kMaxTerminalLinkWrapRows each way so the join, the URL scan and the OSC 8 run
+  // see the whole link, not the part on screen (TD-2026-10-29-425 item 4).
+  std::size_t base_row = first_row;
+  std::size_t hit_index = position->row - first_row;
+  {
+    std::size_t first = hit_index;
+    while (first > 0 && lines[first].wrapped_from_previous) {
+      --first;
+    }
+    std::size_t last = hit_index;
+    while (last + 1 < lines.size() && lines[last + 1].wrapped_from_previous) {
+      ++last;
+    }
+    const bool continues_above = first == 0 && lines[0].wrapped_from_previous && first_row > 0;
+    const bool may_continue_below =
+        last + 1 == lines.size() && first_row + lines.size() < line_count;
+    if (continues_above || may_continue_below) {
+      constexpr std::size_t kMaxTerminalLinkWrapRows = 64;
+      thread_local std::vector<terminal::TerminalLine> widened_lines;
+      base_row = continues_above ? first_row - std::min(first_row, kMaxTerminalLinkWrapRows)
+                                 : first_row;
+      const std::size_t widened_count = (first_row - base_row) + lines.size() +
+                                        (may_continue_below ? kMaxTerminalLinkWrapRows : 0);
+      terminal_tab->session.SnapshotLineRangeInto(base_row, widened_count, widened_lines);
+      if (position->row - base_row < widened_lines.size()) {
+        lines_ptr = &widened_lines;
+        hit_index = position->row - base_row;
+      } else {
+        base_row = first_row;
+      }
+    }
+  }
+  const std::vector<terminal::TerminalLine>& link_lines = *lines_ptr;
+  const terminal::TerminalLine& hit_line = link_lines[hit_index];
   // An OSC 8 hyperlink is what the program said the text links to; it wins over
   // anything the text looks like. A `file://` link for another machine (the
   // session keeps those verbatim) has no local path to open.
@@ -565,53 +599,53 @@ std::optional<TerminalLinkHit> WorkspaceShell::TerminalLinkAtPoint(float x, floa
       std::size_t begin_index = hit_index;
       std::size_t begin = position->column;
       while (true) {
-        const auto& cells = lines[begin_index].cells;
+        const auto& cells = link_lines[begin_index].cells;
         while (begin > 0 && cells[begin - 1].link == id) {
           --begin;
         }
-        if (begin != 0 || !lines[begin_index].wrapped_from_previous || begin_index == 0 ||
-            lines[begin_index - 1].cells.empty() || lines[begin_index - 1].cells.back().link != id) {
+        if (begin != 0 || !link_lines[begin_index].wrapped_from_previous || begin_index == 0 ||
+            link_lines[begin_index - 1].cells.empty() || link_lines[begin_index - 1].cells.back().link != id) {
           break;
         }
         --begin_index;
-        begin = lines[begin_index].cells.size();
+        begin = link_lines[begin_index].cells.size();
       }
       std::size_t end_index = hit_index;
       std::size_t end = position->column + 1;
       while (true) {
-        const auto& cells = lines[end_index].cells;
+        const auto& cells = link_lines[end_index].cells;
         while (end < cells.size() && cells[end].link == id) {
           ++end;
         }
-        if (end != cells.size() || end_index + 1 >= lines.size() ||
-            !lines[end_index + 1].wrapped_from_previous || lines[end_index + 1].cells.empty() ||
-            lines[end_index + 1].cells.front().link != id) {
+        if (end != cells.size() || end_index + 1 >= link_lines.size() ||
+            !link_lines[end_index + 1].wrapped_from_previous || link_lines[end_index + 1].cells.empty() ||
+            link_lines[end_index + 1].cells.front().link != id) {
           break;
         }
         ++end_index;
         end = 0;
       }
       return TerminalLinkHit{.target = std::move(uri),
-                             .span = {.row = first_row + begin_index,
+                             .span = {.row = base_row + begin_index,
                                       .begin_column = begin,
-                                      .end_row = first_row + end_index,
+                                      .end_row = base_row + end_index,
                                       .end_column = end},
                              .pane = pane_index};
     }
   }
-  const TerminalLogicalLine joined = JoinTerminalLogicalLine(lines, hit_index);
+  const TerminalLogicalLine joined = JoinTerminalLogicalLine(link_lines, hit_index);
   const std::string& line_text = joined.text;
   const std::size_t target_byte = joined.row_starts[hit_index - joined.first] +
                                   TerminalColumnToByteOffset(hit_line, position->column);
   const auto hit = [&](TerminalTextLink link) {
     const auto [begin_index, begin_column] =
-        TerminalLogicalByteToCell(lines, joined, link.begin, /*exclusive_end=*/false);
+        TerminalLogicalByteToCell(link_lines, joined, link.begin, /*exclusive_end=*/false);
     const auto [end_index, end_column] =
-        TerminalLogicalByteToCell(lines, joined, link.end, /*exclusive_end=*/true);
+        TerminalLogicalByteToCell(link_lines, joined, link.end, /*exclusive_end=*/true);
     return TerminalLinkHit{.target = std::move(link.target),
-                           .span = {.row = first_row + begin_index,
+                           .span = {.row = base_row + begin_index,
                                     .begin_column = begin_column,
-                                    .end_row = first_row + end_index,
+                                    .end_row = base_row + end_index,
                                     .end_column = end_column},
                            .pane = pane_index};
   };

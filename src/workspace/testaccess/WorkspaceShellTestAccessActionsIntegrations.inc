@@ -889,6 +889,14 @@
              panel_layout.line_height * 0.5f,
     };
   }
+  static std::size_t TerminalVisibleRowCount(WorkspaceShell& shell) {
+    const auto* terminal_tab = shell.ActiveTerminalPane();
+    const std::size_t line_count =
+        terminal_tab != nullptr ? terminal_tab->session.LineCount() : 0;
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return static_cast<std::size_t>(
+        std::max(0, shell.ComputeBottomPanelLogLayout(layout, line_count).scroll.visible_rows));
+  }
   static SDL_FPoint BottomPanelTextOrigin(WorkspaceShell& shell) {
     const auto* terminal_tab = shell.ActiveTerminalPane();
     const std::size_t line_count =

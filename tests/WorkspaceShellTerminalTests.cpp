@@ -1505,6 +1505,54 @@ void TestWorkspaceShellTerminalWrappedLinkIsOneLink() {
               "the OSC 8 run's span crosses the wrap");
 }
 
+// A wrapped link whose first rows are scrolled above the window, or whose last
+// rows are below it, is still the whole link: the join used to stop at the visible
+// snapshot's edge and resolve only the part on screen (TD-2026-10-29-425 item 4).
+void TestWorkspaceShellTerminalWrappedLinkPastTheWindowIsWhole() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  // 50 characters wrapped at 20 columns: rows 0-2. With the window starting at
+  // row 1, row 0 is above it.
+  const std::string url = "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  TerminalSessionTestAccess::Reset(session, 24, 20);
+  std::string output = url + "\r\n";
+  for (int line = 0; line < 60; ++line) {
+    output += "line\r\n";
+  }
+  TerminalSessionTestAccess::AppendOutput(session, output);
+  WorkspaceShellTestAccess::SetActiveTerminalScrollRow(shell, 1);
+  WorkspaceShellTestAccess::SetActiveTerminalFollowTail(shell, false);
+  const SDL_FPoint below_top = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 3);
+  const auto whole = WorkspaceShellTestAccess::TerminalLinkAtPoint(shell, below_top.x, below_top.y);
+  Expect(whole.has_value() && whole->target == url,
+         "a link whose first row is above the window resolves whole");
+  Expect(whole.has_value() && whole->span.row == 0 && whole->span.begin_column == 0 &&
+             whole->span.end_row == 2 && whole->span.end_column == 10,
+         "and its span starts above the window");
+
+  // The same link with its last row below the window's bottom.
+  const std::size_t visible = WorkspaceShellTestAccess::TerminalVisibleRowCount(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 20);
+  output.clear();
+  for (std::size_t line = 0; line + 2 < visible; ++line) {
+    output += "line\r\n";
+  }
+  output += url + "\r\n";
+  for (int line = 0; line < 60; ++line) {
+    output += "line\r\n";
+  }
+  TerminalSessionTestAccess::AppendOutput(session, output);
+  WorkspaceShellTestAccess::SetActiveTerminalScrollRow(shell, 0);
+  WorkspaceShellTestAccess::SetActiveTerminalFollowTail(shell, false);
+  const SDL_FPoint at_bottom = WorkspaceShellTestAccess::TerminalCellPoint(shell, visible - 2, 3);
+  const auto tail = WorkspaceShellTestAccess::TerminalLinkAtPoint(shell, at_bottom.x, at_bottom.y);
+  Expect(tail.has_value() && tail->target == url,
+         "a link whose last row is below the window resolves whole");
+}
+
 // OSC 8: `ls --hyperlink`, gcc and Claude Code print a link whose TEXT is not a
 // URL (a file name, "docs"). The cell carries the target, so clicking the text
 // opens it — a web link externally, a file link in the editor — as VS Code's
@@ -2798,6 +2846,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalLeftClickOpensUrls);
   AddTest(tests, "WorkspaceShell/TerminalLinkUnderlinesOnHover", TestWorkspaceShellTerminalLinkUnderlinesOnHover);
   AddTest(tests, "WorkspaceShell/TerminalWrappedLinkIsOneLink", TestWorkspaceShellTerminalWrappedLinkIsOneLink);
+  AddTest(tests, "WorkspaceShell/TerminalWrappedLinkPastTheWindowIsWhole",
+          TestWorkspaceShellTerminalWrappedLinkPastTheWindowIsWhole);
   AddTest(tests, "WorkspaceShell/TerminalOsc8LinkClickOpensItsTarget",
           TestWorkspaceShellTerminalOsc8LinkClickOpensItsTarget);
   AddTest(tests, "WorkspaceShellTerminal/UrlHitTestHonorsMultibytePrefix",

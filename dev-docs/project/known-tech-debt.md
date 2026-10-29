@@ -472,7 +472,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-29-425 — the terminal answered to `TERM=xterm-256color` without implementing what that entry advertises. [OPEN — items 1, 2, 4 below; 3 resolved for ASCII, 5 resolved]
+### TD-2026-10-29-425 — the terminal answered to `TERM=xterm-256color` without implementing what that entry advertises. [OPEN — items 1, 2 below; 3 resolved for ASCII, 4 and 5 resolved]
 
 Found by checking every string capability `infocmp -1 xterm-256color` lists
 against the CSI/ESC dispatchers, after a reading pass had already found DECSC
@@ -511,8 +511,13 @@ as two-sided (the `AOneSidedConflictOffersNoMerge` flake), and TD-424.
    per run write); a multibyte glyph still repeats per cell. Was: so `x` + `CSI 2147483647 b` costs one
    screenful of glyph writes per 12 bytes on the reader thread (xterm has no bound
    at all). A run-length write of the repeated glyph would make it O(1) per row.
-4. **A link wrapped past the visible window** is detected only over its on-screen
-   part (the joined logical line stops at the snapshot's edge).
+4. ~~**A link wrapped past the visible window** is detected only over its on-screen
+   part (the joined logical line stops at the snapshot's edge).~~ RESOLVED 2026-10-29:
+   when the hit's logical line reaches the snapshot's top or bottom edge with rows
+   beyond it, the hit-test snapshots a range widened by up to 64 rows each way and
+   joins over that, for the URL/path scan and the OSC 8 run alike
+   (`WorkspaceShell/TerminalWrappedLinkPastTheWindowIsWhole`). A logical line longer
+   than the window plus 64 rows each way is still cut there.
 5. ~~**EditorConfig** has no `{n..m}` numeric ranges, and a single-element `{a}` is
    expanded where the reference core keeps it literal.~~ RESOLVED 2026-10-29: section
    headers expand through their own `ExpandSectionBraces` (the search box keeps
