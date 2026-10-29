@@ -1,5 +1,11 @@
 # MicroIDE Known Tech Debt
 
+Reviewed 2026-10-29 (§ TD-2026-10-29-425 for the terminal-conformance pass: every
+capability the xterm-256color terminfo entry advertises, checked against the
+emulator -- DEC Special Graphics (ncurses boxes drew as `lqqqk`), REP, IRM, SU/SD,
+DECSTR, screen-relative DECSC and cursor bounds, DECOM on the primary, wide-pair
+erases, DCH under bce. Open: DECSLRM, DECSCNM, REP's bound, EditorConfig ranges).
+
 Reviewed 2026-10-29 (§ TD-2026-10-29-422 for the subsystem sweep: peer-supplied
 counts sized allocations in four remote/host-terminal decoders and a frame could
 hang the client; a trailing-separator root mapped paths to the wrong mirror file;
@@ -465,6 +471,50 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-10-29-425 — the terminal answered to `TERM=xterm-256color` without implementing what that entry advertises. [OPEN — items 1-5 below; the conformance pass is done]
+
+Found by checking every string capability `infocmp -1 xterm-256color` lists
+against the CSI/ESC dispatchers, after a reading pass had already found DECSC
+restoring into scrollback. ncurses emits what the entry promises, so each gap is a
+visible rendering bug in a real TUI. **Fixed, one commit each, with tests:**
+
+- **DEC Special Graphics** (`smacs` = `ESC ( 0`): ncurses draws every box with it
+  even in a UTF-8 locale (checked against python's `curses.box()` bytes); the
+  designation was parsed and dropped, so every border in dialog, mc, tig and htop
+  read `lqqqk`. G0/G1, SO/SI, DECSC saving the sets. QA: `terminal-curses-box`.
+- **REP** (`rep`, CSI b) and **IRM** (`smir`/`rmir`, CSI 4 h/l): ignored, so a run
+  ncurses sent as one character plus a count was one character long.
+- **SU/SD** (`indn`/`rin`) were no-ops on the primary screen; **DECSTR** (`is2`/`rs2`,
+  sent by `reset`) was ignored.
+- **DECSC/SCOSC** saved an absolute deque row, so a restore after output scrolled
+  landed in scrollback; and the primary cursor's ceiling was the deque size AFTER
+  the end-of-chunk trim, so a CUP inside one over-long chunk (`cat big.log; clear`)
+  landed thousands of rows up, and CUD on the bottom row scrolled.
+- **DECOM** was ignored on the primary screen (CUP, DECSTBM's home, CPR).
+- **Wide glyphs**: EL, ECH and DCH cut a pair without breaking it; ICH left a lead
+  whose spacer it pushed past the margin. **DCH under `bce`** left default-background
+  gaps.
+
+Elsewhere in the same pass: wrapped terminal links (TD-422 item 4), a flood's tail
+reaching the language servers (TD-422 item 1), a lone JSON surrogate escape
+dropping a whole LSP/DAP message, a refused push's one-sided conflict first shown
+as two-sided (the `AOneSidedConflictOffersNoMerge` flake), and TD-424.
+
+**Left open:**
+
+1. **DECSLRM** (`smglp`/`smglr`, `CSI ? 69 h` + `CSI l ; r s`) is advertised and not
+   implemented; ncurses uses it only when a program asks for margins.
+2. **DECSCNM** (`CSI ? 5 h`, terminfo's `flash`) is not drawn: a visual bell shows
+   nothing. And G2/G3 and multi-byte charset designations are parsed and ignored.
+3. **REP's bound** is the screen's cell count, so `x` + `CSI 2147483647 b` costs one
+   screenful of glyph writes per 12 bytes on the reader thread (xterm has no bound
+   at all). A run-length write of the repeated glyph would make it O(1) per row.
+4. **A link wrapped past the visible window** is detected only over its on-screen
+   part (the joined logical line stops at the snapshot's edge).
+5. **EditorConfig** has no `{n..m}` numeric ranges, and a single-element `{a}` is
+   expanded where the reference core keeps it literal (`ExpandGlobBraces` is shared
+   with the search box, which wants that).
 
 ### TD-2026-10-29-422 — the 2026-10-29 subsystem sweep: what it found, fixed and measured, and what it left. [OPEN — items 2-3 below; 1 and 4 resolved]
 
