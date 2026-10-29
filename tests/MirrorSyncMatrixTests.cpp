@@ -38,8 +38,6 @@ enum class LocalOp { None, Edit, Create, Delete, Rename, MoveDir, DeleteDir };
 enum class RemoteOp { None, Edit, Create, Delete, Rename, RenameElsewhere, MoveDir, MoveDirElsewhere, DeleteDir };
 enum class Ordering { Live, Offline };
 
-constexpr LocalOp kLocalOps[] = {LocalOp::None,   LocalOp::Edit,    LocalOp::Create,   LocalOp::Delete,
-                                 LocalOp::Rename, LocalOp::MoveDir, LocalOp::DeleteDir};
 constexpr RemoteOp kRemoteOps[] = {RemoteOp::None,    RemoteOp::Edit,            RemoteOp::Create,
                                    RemoteOp::Delete,  RemoteOp::Rename,          RemoteOp::RenameElsewhere,
                                    RemoteOp::MoveDir, RemoteOp::MoveDirElsewhere, RemoteOp::DeleteDir};
