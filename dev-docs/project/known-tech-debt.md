@@ -1247,6 +1247,18 @@ lint then caught `TextInputCoordinator::Operations::active_sidebar_mode` as dead
 (it had only looked called because the context's field of the same name was), and
 it went. Operations 125 -> 117.
 
+**Rename seed, terminal selection and last command** (2026-10-29, `661d898ae`,
+`e3affc5e6`) -- `symbol_at_cursor` was a forwarder to the `AssistService` the context
+holds. The five terminal selection / last-command readers (shell members reading only
+the active pane's state) are static readers on `TerminalPanelService` taking the
+project state, so the action context (three fields), `ActionAvailability` (two
+lambdas per painted menu row) and the terminal key handler call them directly; the
+shell lost the five members (members cap 1619 -> 1614). Operations 117 -> 113.
+Checked and left: `refine_rename_prompt`, `find_lsp_references`,
+`show_call_hierarchy` (shell prompt/output-tab/redraw calls), `remote_hosts`
+(`RemoteHostService` is built lazily; a reference in `Services` would build it for
+every action).
+
 Original plan, one area per commit so each slice is reviewable and lane-checked: give each
 executor its own context type holding references to the services it calls
 (`AssistService&`, `EditorTabService&`, `TerminalPanelService&`, …, the
