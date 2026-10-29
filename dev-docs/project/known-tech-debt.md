@@ -1091,7 +1091,22 @@ handle and every row the host listed on its last poll, which separates "the
 background terminal never opened" from "it opened with no client" (the
 TD-2026-10-27-400 shape).
 
-### TD-2026-10-28-413 — `RemoteTerminal/ADetachedTerminalHoldsAnOnDemandServer` once saw a detached shell that never exited. [OPEN — not reproduced; the evidence is now kept]
+### TD-2026-10-28-413 — `RemoteTerminal/ADetachedTerminalHoldsAnOnDemandServer` once saw a detached shell that never exited. [RESOLVED 2026-10-29 — the relay was killed with the last frames in its pipe]
+
+**Resolution (2026-10-29).** The kept evidence came back on the UBSan lane with eight
+lanes running: `listed, clients=0 exited=no command=''` -- the shell idle at its
+prompt, so the typed line never ran (not "ran but was not reaped"). The test talks
+through an `attach` relay process, and nothing above had followed the bytes past
+`FlushForTeardown`: that only puts the final frames into the relay's stdin pipe,
+and `AsyncSubprocess::Shutdown` then closed the pipes and sent SIGTERM at once, so
+a relay not yet scheduled to read them died with the typed line and the detach
+still in the pipe. The same teardown runs over ssh in production (quit's
+term/close). `AsyncSubprocess::Finish` now closes stdin and lets the child exit on
+the EOF within a grace (1 s for the client's relay) before signalling;
+`AsyncSubprocess/FinishLetsTheChildReadWhatWasWrittenLast` pins it with a child
+that reads after 300 ms. Not reproduced on demand (0 of 48 concurrent UBSan runs
+under the same load), so the fix is by mechanism; the evidence assertion stays.
+
 
 2026-10-28, later: a candidate tested and ruled out. `2b8a56ef2` (the client's
 destructor now flushes what is queued) landed three hours after this entry, and
