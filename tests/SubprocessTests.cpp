@@ -9,6 +9,9 @@
 
 #include <atomic>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -249,6 +252,33 @@ void TestAsyncSubprocessMovedFromAccessorsDoNotCrash() {
   // The live object still works.
   Expect(moved.pid() > 0, "the moved-to object retains a valid pid");
   moved.Shutdown();
+}
+
+// Finish lets a child that ends on stdin EOF read what was written last. A relay
+// (`microide-server attach`, ssh) is exactly that child: the remote client's
+// teardown flushed its final frames into the relay's stdin and then Shutdown sent
+// SIGTERM at once, killing a relay that had not been scheduled to read them yet --
+// a typed line or a term/close never reached the host (TD-2026-10-28-413). Here
+// the child reads only after 300 ms, which Shutdown never waited for.
+void TestAsyncSubprocessFinishLetsTheChildReadWhatWasWrittenLast() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path out = temp_dir.path() / "got";
+  microide::platform::AsyncSubprocess process;
+  Expect(process.Start({"sh", "-c", "sleep 0.3; cat > '" + out.string() + "'"}), "the child starts");
+  Expect(process.Write("the last frame\n"), "the write lands in the pipe");
+  process.Finish(/*grace_ms=*/5000, /*kill_timeout_ms=*/2000);
+  Expect(!process.IsRunning(), "and the child is gone");
+  std::ifstream in(out);
+  const std::string got((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  Expect(got == "the last frame\n", "what was written last was read: '" + got + "'");
+
+  // A child that does not end on EOF is still ended, after the grace.
+  microide::platform::AsyncSubprocess stuck;
+  Expect(stuck.Start({"sh", "-c", "trap '' HUP; sleep 30"}), "the stuck child starts");
+  const auto start = std::chrono::steady_clock::now();
+  stuck.Finish(/*grace_ms=*/100, /*kill_timeout_ms=*/2000);
+  Expect(!stuck.IsRunning(), "a child that ignores EOF is ended");
+  Expect(std::chrono::steady_clock::now() - start < std::chrono::seconds(5), "within the bounds");
 }
 
 void TestAsyncSubprocessReadTimeoutDoesNotBlockConcurrentWrite() {
@@ -601,6 +631,8 @@ void RegisterSubprocessTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Subprocess/IgnoreBrokenPipeSignalPreventsCrash",
           TestIgnoreBrokenPipeSignalPreventsCrash);
   AddTest(tests, "Subprocess/ChildGetsDefaultSigpipe", TestSubprocessChildGetsDefaultSigpipe);
+  AddTest(tests, "AsyncSubprocess/FinishLetsTheChildReadWhatWasWrittenLast",
+          TestAsyncSubprocessFinishLetsTheChildReadWhatWasWrittenLast);
   AddTest(tests, "AsyncSubprocess/ChildGetsDefaultSigpipe",
           TestAsyncSubprocessChildGetsDefaultSigpipe);
   AddTest(tests, "Subprocess/LargeStdinDoesNotDeadlock",

@@ -72,6 +72,13 @@ class AsyncSubprocess {
   // Send SIGTERM; if the process does not exit within `timeout_ms` ms, send SIGKILL.
   void Shutdown(int timeout_ms = 3000);
 
+  // End a child that is meant to finish on stdin EOF: close stdin, give it up to
+  // `grace_ms` to exit by itself, and only then Shutdown(kill_timeout_ms). For a
+  // relay (an `attach` or `ssh` carrying a protocol) what was written last is
+  // still in the pipe when the write returns; Shutdown's immediate SIGTERM killed
+  // it before it read those bytes, and the final frames never left.
+  void Finish(int grace_ms, int kill_timeout_ms = 3000);
+
   // pid of the child, or -1 if not running.
   int pid() const;
 

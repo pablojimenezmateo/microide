@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <thread>
 #include <cstring>
 #include <mutex>
 
@@ -441,6 +442,17 @@ void AsyncSubprocess::CloseStdin() {
   }
   std::lock_guard lock(impl_->state_mutex);
   impl_->CloseStdin();
+}
+
+void AsyncSubprocess::Finish(int grace_ms, int kill_timeout_ms) {
+  CloseStdin();
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(grace_ms);
+  while (IsRunning() && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  if (IsRunning()) {
+    Shutdown(kill_timeout_ms);
+  }
 }
 
 void AsyncSubprocess::Shutdown(int timeout_ms) {

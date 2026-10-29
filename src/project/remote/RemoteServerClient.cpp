@@ -59,8 +59,14 @@ RemoteServerClient::~RemoteServerClient() {
   // (RemoteServer), and immediate on a link that is already closed.
   (void)peer_.FlushForTeardown();
   peer_.Stop();
+  // The flush only put those frames into the command's stdin pipe. The relay
+  // (`microide-server attach`, or ssh to one) forwards them and exits once it
+  // reads the EOF and the server closes; SIGTERM at once killed it with the bytes
+  // still in the pipe whenever it had not been scheduled yet -- a loaded machine
+  // -- and a typed line, a term/close or a term/detach never reached the host
+  // (TD-2026-10-28-413). A dead link's ssh never exits on EOF: bounded.
   if (command_.IsRunning()) {
-    command_.Shutdown(2000);
+    command_.Finish(/*grace_ms=*/1000, /*kill_timeout_ms=*/2000);
   }
   if (command_stderr_fd_ >= 0) {
     ::close(command_stderr_fd_);
