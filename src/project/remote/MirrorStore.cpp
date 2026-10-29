@@ -19,7 +19,9 @@ namespace microide::project::remote {
 namespace {
 
 // 2: the tree-operation journal follows the entries. 3: entries record ctime.
-constexpr std::uint64_t kStateVersion = 3;
+// 4: a parked rename records its original path (kRenamedFrom). Bumped although the
+// field is flagged, so an older binary refuses the file instead of misreading it.
+constexpr std::uint64_t kStateVersion = 4;
 constexpr std::uint64_t kJournalVersion = 1;
 constexpr std::uint64_t kPulledHintVersion = 1;
 
@@ -30,6 +32,7 @@ enum EntryFlag : std::uint8_t {
   kPushPending = 1u << 3,
   kConflict = 1u << 4,
   kLocalOnly = 1u << 5,
+  kRenamedFrom = 1u << 6,
 };
 
 std::uint64_t ZigZag(std::int64_t value) {
@@ -222,6 +225,13 @@ bool MirrorStore::Open(std::string* error) {
     entry.push_pending = (flags & kPushPending) != 0;
     entry.conflict = (flags & kConflict) != 0;
     entry.local_only = (flags & kLocalOnly) != 0;
+    if ((flags & kRenamedFrom) != 0) {
+      entry.renamed_from = std::string(in.Bytes(kMaxManifestPathBytes));
+      if (!IsSafeRelativePath(entry.renamed_from)) {
+        in.Fail();
+        break;
+      }
+    }
     if (!IsSafeRelativePath(path)) {
       in.Fail();
       break;
@@ -364,6 +374,7 @@ bool MirrorStore::Save(std::string* error) const {
     flags |= entry.push_pending ? kPushPending : 0;
     flags |= entry.conflict ? kConflict : 0;
     flags |= entry.local_only ? kLocalOnly : 0;
+    flags |= entry.renamed_from.empty() ? 0 : kRenamedFrom;
     body.push_back(static_cast<char>(flags));
     if (entry.has_remote) {
       body.push_back(static_cast<char>(entry.remote.kind));
@@ -383,6 +394,9 @@ bool MirrorStore::Save(std::string* error) const {
       util::PutVarint(body, entry.local_size);
       util::PutVarint(body, ZigZag(entry.local_mtime_ns));
       util::PutVarint(body, ZigZag(entry.local_ctime_ns));
+    }
+    if (!entry.renamed_from.empty()) {
+      util::PutBytes(body, entry.renamed_from);
     }
   }
   EncodeTreeOps(pending_tree_ops_, body);

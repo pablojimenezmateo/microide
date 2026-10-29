@@ -31,8 +31,9 @@ What it checks, each as the user would see it, with the measured latencies:
                                 deleted here that the host edited: "deleted locally,
                                 changed on host", Take Remote restores it. A folder
                                 deleted here goes from the host. A rename here of a file
-                                the host edited parks; Keep Local puts the renamed copy
-                                on the host beside the host's edit
+                                the host edited parks, its row saying renamed from where;
+                                Keep Local puts the renamed copy on the host beside the
+                                host's edit
   F  link death                 the ssh master is killed; a save still lands after the
                                 automatic reconnect
   G  terminals                  Terminal > New prints the host's `hostname`; Remote:
@@ -848,7 +849,9 @@ class Suite:
         got, dt = wait_for(lambda: self.remote().get("conflicts") == 1 or None, 60, 0.5)
         key4 = f"remote.conflict.{self.mirror / new4}"
         rows = [n for n in self.notifs() if n["key"] == key4]
-        self.record("Y.rename-of-a-host-edited-file-parks", renamed and bool(got) and len(rows) == 1,
+        self.record("Y.rename-of-a-host-edited-file-parks",
+                    renamed and bool(got) and len(rows) == 1
+                    and f"renamed locally from {rel4}, which changed on {host.name}" in rows[0]["message"],
                     f"renamed={renamed} {dt:.1f}s remote={self.remote()} rows={[n['message'] for n in rows]} "
                     f"all={[n['key'] for n in self.notifs() if n['key'].startswith('remote.conflict')]}")
         reply = app.send("notification-action", key4, "Keep Local") if rows else {}

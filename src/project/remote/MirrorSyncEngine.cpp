@@ -383,6 +383,7 @@ bool MirrorSyncEngine::TreeOpNow(const LocalTreeOp& op) {
       moved.base.reset();
       moved.push_pending = false;
       moved.conflict = true;
+      moved.renamed_from = path;
       entries[to] = std::move(moved);
     }
   }
@@ -561,7 +562,7 @@ std::vector<MirrorSyncEngine::Conflict> MirrorSyncEngine::ConflictDetails() cons
     std::lock_guard lock(mutex_);
     for (const auto& [path, entry] : store_.entries()) {
       if (entry.conflict) {
-        conflicts.push_back(Conflict{.path = path, .on_host = entry.has_remote});
+        conflicts.push_back(Conflict{.path = path, .on_host = entry.has_remote, .renamed_from = entry.renamed_from});
       }
     }
   }
@@ -625,6 +626,7 @@ void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution
       return;
     }
     entry->conflict = false;
+        entry->renamed_from.clear();
     entry->push_pending = false;
     if (!local_exists) {
       store_.entries().erase(path);
@@ -687,6 +689,7 @@ void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution
       store_.entries().erase(path);
     } else {
       entry->conflict = false;
+        entry->renamed_from.clear();
       entry->push_pending = false;
       entry->local_only = false;
       entry->has_remote = true;
@@ -989,6 +992,7 @@ void MirrorSyncEngine::ReconcileRowLocked(ManifestRow row, Plan& plan, std::uint
     // and conflicts are rare.
     if (util::HashFileContent(store_.tree() / path) == std::optional(entry.remote.hash)) {
       entry.conflict = false;
+      entry.renamed_from.clear();
       entry.base = entry.remote.hash;
       store_.RecordLocal(path, entry);
     }
@@ -1689,6 +1693,7 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
         entry->base = *result.hash;
         entry->push_pending = false;
         entry->conflict = false;
+        entry->renamed_from.clear();
         entry->pushed_manifest = result.manifest_id;
         if (entry->has_remote) {
           entry->remote.hash = *result.hash;
@@ -1709,6 +1714,7 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
         entry->base = result.hash;
         entry->push_pending = false;
         entry->conflict = false;
+        entry->renamed_from.clear();
         entry->pushed_manifest = result.manifest_id;
         if (entry->has_remote) {
           entry->remote.hash = *result.hash;
@@ -1719,6 +1725,7 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
         // of its own. They are the base now; push the current bytes over them.
         entry->base = result.hash;
         entry->conflict = false;
+        entry->renamed_from.clear();
         entry->pushed_manifest = result.manifest_id;
         if (entry->has_remote) {
           entry->remote.hash = *result.hash;

@@ -200,6 +200,9 @@ class MirrorSyncEngine {
     std::string path;
     bool on_host = true;    // false: the host deleted it, the mirror changed it
     bool in_mirror = true;  // false: deleted here, changed on the host
+    // Not empty: a rename made here that the host refused, parked at its new path;
+    // this is the path it was renamed from (MirrorStore::Entry::renamed_from).
+    std::string renamed_from;
   };
   std::vector<Conflict> ConflictDetails() const;
   // Apply the held delete diff after all.

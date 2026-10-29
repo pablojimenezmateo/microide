@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 #include "support/MirrorSession.h"
 
+#include "project/FileWriteGate.h"
 #include "project/remote/MirrorObjects.h"
 #include "project/remote/MirrorStore.h"
 #include "project/remote/MirrorSyncEngine.h"
@@ -731,6 +732,38 @@ void TestMirrorASaveIntoADirectoryTheHostMovedAwayIsAConflict() {
          "one the remote deleted and the local side changed");
 }
 
+// A rename made here that the host refused (the original edited there since) parks
+// the renamed copy at its new path. Its conflict says it was renamed and from
+// where -- read as "deleted on remote", the row described a file the user had
+// just renamed -- across a restart, and no longer once it is settled.
+void TestMirrorAParkedRenameRemembersWhereItCameFrom() {
+  MirrorSession session;
+  WriteFile(session.host / "dir/a.txt", "base\n");
+  session.Connect();
+  session.Sync();
+  WriteFile(session.host / "dir/a.txt", "remote\n");
+  {
+    remote::MirrorWriteGate gate(*session.store, *session.engine);
+    using TreeOp = project::FileWriteGate::TreeOp;
+    const std::vector<TreeOp> ops = {TreeOp{.kind = TreeOp::Kind::Rename,
+                                            .path = session.Tree("dir/a.txt"),
+                                            .new_path = session.Tree("dir/r.txt")}};
+    Expect(gate.ApplyTreeOps(ops).ok, "the rename applies locally");
+    session.engine->Flush();
+  }
+  const auto details = [&] { return session.engine->ConflictDetails(); };
+  Expect(details().size() == 1 && details()[0].path == "dir/r.txt" && details()[0].renamed_from == "dir/a.txt",
+         "the parked copy says it was renamed from dir/a.txt");
+  session.Connect();  // a restart: the store reopened from disk
+  Expect(details().size() == 1 && details()[0].renamed_from == "dir/a.txt", "and still does after a restart");
+  session.engine->ResolveConflict("dir/r.txt", remote::MirrorSyncEngine::Resolution::KeepLocal);
+  session.engine->Flush();
+  Expect(details().empty() && ReadFile(session.host / "dir/r.txt") == "base\n",
+         "Keep Local puts the renamed copy on the host");
+  Expect(session.store->Find("dir/r.txt") != nullptr && session.store->Find("dir/r.txt")->renamed_from.empty(),
+         "and the settled entry forgets the rename");
+}
+
 // Every resolution on every shape a conflict comes in. A choice offered on a row
 // must do what it says for that row's shape -- the deleted-on-host shape under a
 // directory the host moved away failed Take Remote with "cannot open changes/x"
@@ -1350,6 +1383,8 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
           TestMirrorTakeRemoteFollowsAFileTheHostMovedAway);
   AddTest(tests, "MirrorSyncEngine/ASaveIntoADirectoryTheHostMovedAwayIsAConflict",
           TestMirrorASaveIntoADirectoryTheHostMovedAwayIsAConflict);
+  AddTest(tests, "MirrorSyncEngine/AParkedRenameRemembersWhereItCameFrom",
+          TestMirrorAParkedRenameRemembersWhereItCameFrom);
   AddTest(tests, "MirrorSyncEngine/EveryResolutionOfEveryConflictShape",
           TestMirrorEveryResolutionOfEveryConflictShape);
   AddTest(tests, "MirrorSyncEngine/ConflictClearsWhenTheHostAdoptsTheMirrorsBytes",

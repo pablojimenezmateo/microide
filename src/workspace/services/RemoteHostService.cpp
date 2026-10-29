@@ -760,7 +760,9 @@ void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, P
       operations_.notify(NotificationService::Request{
           .tone = NotificationService::Tone::Warning,
           .key = row_key(path),
-          .message = !detail.on_host     ? path + " deleted on " + host + ", changed locally"
+          .message = !detail.renamed_from.empty()
+                         ? path + " renamed locally from " + detail.renamed_from + ", which changed on " + host
+                     : !detail.on_host   ? path + " deleted on " + host + ", changed locally"
                      : !detail.in_mirror ? path + " deleted locally, changed on " + host
                                          : path + " changed locally and on " + host,
           .sticky = true,
@@ -857,9 +859,10 @@ std::vector<plugin::PluginHost::SidebarItem> RemoteHostService::ConflictRows(
   for (const remote::MirrorSyncEngine::Conflict& conflict : conflicts) {
     const bool ticked = entry.selected_conflicts.contains(conflict.path);
     rows.push_back(Item{.label = (ticked ? "[x] " : "[ ] ") + conflict.path,
-                        .detail = !conflict.on_host     ? "deleted on remote, changed locally"
-                                  : !conflict.in_mirror ? "deleted locally, changed on remote"
-                                                        : "changed on both sides",
+                        .detail = !conflict.renamed_from.empty() ? "renamed locally, original changed on remote"
+                                  : !conflict.on_host                    ? "deleted on remote, changed locally"
+                                  : !conflict.in_mirror                  ? "deleted locally, changed on remote"
+                                                                         : "changed on both sides",
                         .path = root / conflict.path,
                         .id = conflict.path});
   }

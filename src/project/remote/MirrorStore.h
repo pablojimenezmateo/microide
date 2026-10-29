@@ -53,6 +53,11 @@ class MirrorStore {
     // Written or created here, and not in the host's content set (an ignored path,
     // a .env, an empty directory): never deleted for not being listed (§ 6.3).
     bool local_only = false;
+    // Parked from a rename made here that the host refused (the original edited,
+    // deleted or moved there since): the path it was renamed from, so the conflict
+    // row says what happened rather than "deleted on host" of a file the user
+    // renamed. Set only with `conflict`, cleared when it is settled.
+    std::string renamed_from;
     // The host's newest manifest id when it acknowledged this path's last push
     // (RemoteWorkspace::WriteResult::manifest_id). A row from a manifest at or below
     // it was built before the host saw that write -- the echo of an earlier push,
