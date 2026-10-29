@@ -234,8 +234,8 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::CompareToggleShowWhitespace, "Diff: Show Whitespace"),
       MenuItem(ActionId::CompareCopyHunkPatch, "Copy Change as Patch"),
       MenuItem(ActionId::CompareCopyFilePatch, "Copy File as Patch"),
-      MenuItem(ActionId::MergeCopyIncoming, "Copy Incoming Side"),
-      MenuItem(ActionId::MergeCopyCurrent, "Copy Current Side"),
+      MenuItem(ActionId::MergeCopyIncoming, "Copy Remote Side"),
+      MenuItem(ActionId::MergeCopyCurrent, "Copy Local Side"),
       MenuItem(ActionId::MergeResetConflict, "Reset Conflict"),
   });
   // Every remote verb that needs no typed argument, in one place (the Remote menu
@@ -467,8 +467,8 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
       MenuItem(ActionId::GitStageToggleEntry, "Stage"),
       MenuItem(ActionId::GitDiscardEntry, "Discard…"),
       MenuSeparator(),
-      MenuItem(ActionId::GitAcceptCurrent, "Accept Current"),
-      MenuItem(ActionId::GitAcceptIncoming, "Accept Incoming"),
+      MenuItem(ActionId::GitAcceptCurrent, "Accept Local"),
+      MenuItem(ActionId::GitAcceptIncoming, "Accept Remote"),
       MenuSeparator(),
       MenuItem(ActionId::CopyRelativePath),
       MenuItem(ActionId::CopyAbsolutePath),

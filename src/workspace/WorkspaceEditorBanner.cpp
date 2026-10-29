@@ -111,13 +111,13 @@ void WorkspaceShell::ActivateEditorBannerAction(EditorBannerAction action,
       std::optional<CompareInput> on_disk = ReadFileCompareInput(path, /*editable=*/false);
       if (viewport != nullptr && on_disk.has_value()) {
         on_disk->label = path.filename().string() + " (on disk)";
-        CompareInput mine{
+        CompareInput unsaved{
             .content = viewport->SerializeDocumentText(),
-            .label = path.filename().string() + " (your changes)",
+            .label = path.filename().string() + " (unsaved)",
             .path = {},
             .editable = false,
         };
-        (void)MakeCompareMergeService().OpenPlainComparison(std::move(*on_disk), std::move(mine));
+        (void)MakeCompareMergeService().OpenPlainComparison(std::move(*on_disk), std::move(unsaved));
       }
       RequestEditorSurfaceRedraw();
       return;

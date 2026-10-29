@@ -602,7 +602,7 @@ std::vector<plugin::PluginHost::SidebarItem> RemoteHostService::HostChangeRows(
         row.detail += " · syncing";
         break;
       case ContentState::Dirty:
-        row.detail += " · your edits";
+        row.detail += " · local edits";
         break;
       case ContentState::Conflict:
         row.detail += " · conflict";
@@ -702,8 +702,8 @@ void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, P
   // Nothing is settled automatically, and a row stays until it is (§ 6.3). One
   // conflict gets a row of its own with the choice on it (VS Code's save-conflict
   // row). From two on there is ONE counted row (§ 7.6: never a row per file -- a
-  // branch checked out on the host makes dozens at once) whose Keep All Mine and
-  // Take All Host's settle every one of them, and whose Manage… opens the
+  // branch checked out on the host makes dozens at once) whose Keep All Local and
+  // Take All Remote settle every one of them, and whose Manage… opens the
   // Conflicts view (§ 7.9b) to choose per file.
   std::vector<std::string> conflicts = entry.project->engine().Conflicts();
   const std::string summary_key = "remote.conflicts." + tree.string();
@@ -738,19 +738,19 @@ void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, P
       operations_.notify(NotificationService::Request{
           .tone = NotificationService::Tone::Warning,
           .key = row_key(path),
-          .message = path + " changed on " + host + " and here",
+          .message = path + " changed locally and on " + host,
           .sticky = true,
           .actions = {
               NotificationAction{.label = "Merge",
                                  .id = ActionId::RemoteResolveConflict,
                                  .args = {absolute, "merge"},
                                  .keep_open = true},
-              NotificationAction{.label = "Keep Mine",
+              NotificationAction{.label = "Keep Local",
                                  .id = ActionId::RemoteResolveConflict,
-                                 .args = {absolute, "mine"}},
-              NotificationAction{.label = "Take Host's",
+                                 .args = {absolute, "local"}},
+              NotificationAction{.label = "Take Remote",
                                  .id = ActionId::RemoteResolveConflict,
-                                 .args = {absolute, "host"}},
+                                 .args = {absolute, "remote"}},
           },
       });
     }
@@ -759,15 +759,15 @@ void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, P
     operations_.notify(NotificationService::Request{
         .tone = NotificationService::Tone::Warning,
         .key = summary_key,
-        .message = std::to_string(current.size()) + " files changed on " + host + " and here",
+        .message = std::to_string(current.size()) + " files changed locally and on " + host,
         .sticky = true,
         .actions = {
-            NotificationAction{.label = "Keep All Mine",
+            NotificationAction{.label = "Keep All Local",
                                .id = ActionId::RemoteResolveAllConflicts,
-                               .args = {tree.string(), "mine"}},
-            NotificationAction{.label = "Take All Host's",
+                               .args = {tree.string(), "local"}},
+            NotificationAction{.label = "Take All Remote",
                                .id = ActionId::RemoteResolveAllConflicts,
-                               .args = {tree.string(), "host"}},
+                               .args = {tree.string(), "remote"}},
             NotificationAction{.label = "Manage\u2026",
                                .id = ActionId::RemoteShowConflicts,
                                .args = {tree.string()},
@@ -779,7 +779,7 @@ void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, P
   }
 }
 
-bool RemoteHostService::ResolveAllConflicts(const std::filesystem::path& root, bool keep_mine) {
+bool RemoteHostService::ResolveAllConflicts(const std::filesystem::path& root, bool keep_local) {
   const auto it = projects_.find(root);
   if (it == projects_.end()) {
     return false;
@@ -788,18 +788,18 @@ bool RemoteHostService::ResolveAllConflicts(const std::filesystem::path& root, b
   if (conflicts.empty()) {
     return false;
   }
-  ResolveConflicts(it->second, conflicts, keep_mine);
+  ResolveConflicts(it->second, conflicts, keep_local);
   return true;
 }
 
 void RemoteHostService::ResolveConflicts(Project& entry, const std::vector<std::string>& paths,
-                                         bool keep_mine) {
+                                         bool keep_local) {
   using Resolution = remote::MirrorSyncEngine::Resolution;
   // Each is a job at the FRONT of the engine's queue, so the last posted runs
   // first: posted in reverse, they settle in list order, and the counted row
   // counts down as each lands.
   for (auto it = paths.rbegin(); it != paths.rend(); ++it) {
-    entry.project->engine().ResolveConflict(*it, keep_mine ? Resolution::KeepMine : Resolution::TakeHost);
+    entry.project->engine().ResolveConflict(*it, keep_local ? Resolution::KeepLocal : Resolution::TakeRemote);
   }
 }
 
@@ -830,12 +830,12 @@ std::vector<plugin::PluginHost::SidebarItem> RemoteHostService::ConflictRows(
   rows.push_back(Item{.label = all ? "Clear selection" : "Select all",
                       .detail = chosen + " of " + total + " selected",
                       .id = std::string(kConflictSelectAll)});
-  rows.push_back(Item{.label = "Keep Mine",
-                      .detail = selected == 0 ? none : "host gets your " + files,
-                      .id = std::string(kConflictKeepMine)});
-  rows.push_back(Item{.label = "Take Host's",
-                      .detail = selected == 0 ? none : "you get the host's " + files,
-                      .id = std::string(kConflictTakeHost)});
+  rows.push_back(Item{.label = "Keep Local",
+                      .detail = selected == 0 ? none : "overwrites remote: " + files,
+                      .id = std::string(kConflictKeepLocal)});
+  rows.push_back(Item{.label = "Take Remote",
+                      .detail = selected == 0 ? none : "overwrites local: " + files,
+                      .id = std::string(kConflictTakeRemote)});
   rows.push_back(Item{.label = "Merge",
                       .detail = selected == 0            ? none
                                 : selected > kMaxMergeTabs ? "the first " + std::to_string(kMaxMergeTabs) + " of " + files
@@ -844,8 +844,8 @@ std::vector<plugin::PluginHost::SidebarItem> RemoteHostService::ConflictRows(
   for (const remote::MirrorSyncEngine::Conflict& conflict : conflicts) {
     const bool ticked = entry.selected_conflicts.contains(conflict.path);
     rows.push_back(Item{.label = (ticked ? "[x] " : "[ ] ") + conflict.path,
-                        .detail = !conflict.on_host     ? "deleted on host, changed here"
-                                  : !conflict.in_mirror ? "deleted here, changed on host"
+                        .detail = !conflict.on_host     ? "deleted on remote, changed locally"
+                                  : !conflict.in_mirror ? "deleted locally, changed on remote"
                                                         : "changed on both sides",
                         .path = root / conflict.path,
                         .id = conflict.path});
@@ -874,7 +874,7 @@ bool RemoteHostService::ActivateConflictRow(const std::filesystem::path& root, s
     changed();
     return true;
   }
-  if (id == kConflictKeepMine || id == kConflictTakeHost || id == kConflictMerge) {
+  if (id == kConflictKeepLocal || id == kConflictTakeRemote || id == kConflictMerge) {
     std::vector<std::string> selected;  // in list order
     for (const std::string& path : conflicts) {
       if (entry.selected_conflicts.contains(path)) {
@@ -904,7 +904,7 @@ bool RemoteHostService::ActivateConflictRow(const std::filesystem::path& root, s
       }
       return true;
     }
-    ResolveConflicts(entry, selected, id == kConflictKeepMine);
+    ResolveConflicts(entry, selected, id == kConflictKeepLocal);
     return true;
   }
   if (!std::binary_search(conflicts.begin(), conflicts.end(), id)) {
@@ -935,14 +935,14 @@ std::pair<RemoteHostService::Project*, std::string> RemoteHostService::ConflictO
   return {nullptr, {}};
 }
 
-bool RemoteHostService::ResolveConflict(const std::filesystem::path& path, bool keep_mine) {
+bool RemoteHostService::ResolveConflict(const std::filesystem::path& path, bool keep_local) {
   const auto [entry, relative] = ConflictOwner(path);
   if (entry == nullptr) {
     return false;
   }
   entry->project->engine().ResolveConflict(
-      relative, keep_mine ? remote::MirrorSyncEngine::Resolution::KeepMine
-                          : remote::MirrorSyncEngine::Resolution::TakeHost);
+      relative, keep_local ? remote::MirrorSyncEngine::Resolution::KeepLocal
+                          : remote::MirrorSyncEngine::Resolution::TakeRemote);
   return true;
 }
 
@@ -1054,13 +1054,13 @@ bool RemoteHostService::CompareConflict(const std::filesystem::path& path) {
           std::string why = error;
           if (copy.has_value() && operations_.compare_files) {
             const std::string name = mirror_file.filename().string();
-            why = operations_.compare_files(*copy, name + " (on " + host + ")", mirror_file,
-                                            name + " (yours)");
+            why = operations_.compare_files(*copy, name + " (remote: " + host + ")", mirror_file,
+                                            name + " (local)");
           }
           if (!why.empty() && operations_.notify) {
             operations_.notify(NotificationService::Request{
                 .tone = NotificationService::Tone::Error,
-                .message = "Cannot compare with the host's version: " + why});
+                .message = "Cannot compare with the remote version: " + why});
           }
         });
       });
@@ -1082,13 +1082,13 @@ bool RemoteHostService::MergeConflict(const std::filesystem::path& path) {
             if (!CompareConflict(mirror_file) && operations_.notify) {
               operations_.notify(NotificationService::Request{
                   .tone = NotificationService::Tone::Error,
-                  .message = "Cannot merge with the host's version: " + error});
+                  .message = "Cannot merge with the remote version: " + error});
             }
             return;
           }
           std::string why = "the merge editor is not available";
           if (operations_.open_merge) {
-            // The mirror's file is both "mine" and where the result goes; Mark
+            // The mirror's file is both the local side and where the result goes; Mark
             // Resolved pushes it over exactly the host version merged against.
             why = operations_.open_merge(sides->base, sides->host, mirror_file, mirror_file);
             if (why.empty()) {
@@ -1098,7 +1098,7 @@ bool RemoteHostService::MergeConflict(const std::filesystem::path& path) {
           if (!why.empty() && operations_.notify) {
             operations_.notify(NotificationService::Request{
                 .tone = NotificationService::Tone::Error,
-                .message = "Cannot merge with the host's version: " + why});
+                .message = "Cannot merge with the remote version: " + why});
           }
         });
       });
@@ -1122,7 +1122,7 @@ bool RemoteHostService::ResolveMerged(const std::filesystem::path& path) {
   if (entry == nullptr || !host_hash.has_value()) {
     return false;
   }
-  entry->project->engine().ResolveConflict(relative, remote::MirrorSyncEngine::Resolution::KeepMine,
+  entry->project->engine().ResolveConflict(relative, remote::MirrorSyncEngine::Resolution::KeepLocal,
                                            *host_hash);
   return true;
 }

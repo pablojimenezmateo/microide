@@ -95,13 +95,13 @@ std::string BuildSummary(MergeFileConflictKind kind) {
     case MergeFileConflictKind::BothDeleted:
       return "Both sides deleted this file.";
     case MergeFileConflictKind::DeletedByUs:
-      return "Current side deleted the file; incoming side modified it.";
+      return "Local side deleted the file; remote side modified it.";
     case MergeFileConflictKind::DeletedByThem:
-      return "Incoming side deleted the file; current side modified it.";
+      return "Remote side deleted the file; local side modified it.";
     case MergeFileConflictKind::AddedByUs:
-      return "Current side added this file.";
+      return "Local side added this file.";
     case MergeFileConflictKind::AddedByThem:
-      return "Incoming side added this file.";
+      return "Remote side added this file.";
     case MergeFileConflictKind::RenameRename:
       return "Both sides renamed this path differently.";
     case MergeFileConflictKind::RenameDelete:
@@ -109,7 +109,7 @@ std::string BuildSummary(MergeFileConflictKind kind) {
     case MergeFileConflictKind::FileDirectory:
       return "One side changed the path to a file and the other to a directory.";
     case MergeFileConflictKind::Binary:
-      return "Binary conflict: keep a whole side with Accept Current or Accept Incoming.";
+      return "Binary conflict: keep a whole side with Accept Local or Accept Remote.";
     case MergeFileConflictKind::Submodule:
       return "Submodule conflict; resolve in the submodule checkout.";
     case MergeFileConflictKind::LineEndingHeavy:

@@ -257,7 +257,7 @@ def flow_compare_and_merge(app: q.App) -> None:
     tab = app.active_tab() or {}
     path = tab.get("path", "")
     app.expect(bool(path), "the merge tab names its file")
-    app.send("git-accept-current", path)
+    app.send("git-accept-local", path)
     step(app, "accept current", 0.6)
     if path:
         text = Path(path).read_text()

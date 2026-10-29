@@ -164,25 +164,25 @@ def flow_diff_review_files(app: q.App) -> None:
 
 def flow_merge_commands(app: q.App) -> None:
     """The merge editor's commands from the palette: Copy Incoming / Copy Current
-    Side of the conflict (read back by pasting), then Git: Accept Incoming taking
+    Side of the conflict (read back by pasting), then Git: Accept Remote taking
     the whole file's incoming side, staged."""
     assert app.project is not None
     if not open_conflict(app):
         return
     merge_tab = next((e["name"] for e in app.elements("tab") if e.get("active")), "")
     # The copies go through the clipboard (not on the Wayland backend: TD-2026-10-19-366).
-    for label, want, not_want in () if app.wayland else (("Merge: Copy Incoming Side", "line 2 incoming", "line 2 current"),
-                                  ("Merge: Copy Current Side", "line 2 current", "line 2 incoming")):
+    for label, want, not_want in () if app.wayland else (("Merge: Copy Remote Side", "line 2 incoming", "line 2 current"),
+                                  ("Merge: Copy Local Side", "line 2 current", "line 2 incoming")):
         if _run(app, label):
             pasted = _paste_into_scratch(app, merge_tab, "merge")
             app.expect(want in pasted and not_want not in pasted,
                        f"{label} copies that side of the conflict alone ({pasted!r})")
-    if _run(app, "Git: Accept Incoming"):
+    if _run(app, "Git: Accept Remote"):
         path = app.project / "notes" / "merge.txt"
         app.wait_until(lambda: "<<<<<<<" not in path.read_text(), 8.0, "the file to take the incoming side")
         text = path.read_text()
         app.expect("line 2 incoming\n" in text and "line 10 incoming\n" in text and "current" not in text,
-                   f"Accept Incoming takes the incoming side of every conflict ({text!r})")
+                   f"Accept Remote takes the incoming side of every conflict ({text!r})")
         app.wait_until(lambda: "UU" not in git(app, "status", "--porcelain"), 8.0, "the file to be resolved")
         status = git(app, "status", "--porcelain", "notes/merge.txt")
         app.expect(status.startswith("M ") or status == "",

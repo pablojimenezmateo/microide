@@ -47,13 +47,13 @@ void TestNotificationServiceShowReportsPaintedChanges() {
                    .sticky = true,
                    .actions = std::move(actions)};
   };
-  const workspace::NotificationAction keep{.label = "Keep Mine",
+  const workspace::NotificationAction keep{.label = "Keep Local",
                                            .id = workspace::ActionId::RemoteResolveConflict,
-                                           .args = {"/m/a", "mine"}};
-  Expect(service.Show(row("a changed on h and here", {keep}), 0), "a new row paints");
-  Expect(!service.Show(row("a changed on h and here", {keep}), 10), "the same row again paints nothing");
-  Expect(service.Show(row("a changed on h and here (2)", {keep}), 20), "new text paints");
-  Expect(service.Show(row("a changed on h and here (2)"), 30), "a removed button paints");
+                                           .args = {"/m/a", "local"}};
+  Expect(service.Show(row("a changed locally and on h", {keep}), 0), "a new row paints");
+  Expect(!service.Show(row("a changed locally and on h", {keep}), 10), "the same row again paints nothing");
+  Expect(service.Show(row("a changed locally and on h (2)", {keep}), 20), "new text paints");
+  Expect(service.Show(row("a changed locally and on h (2)"), 30), "a removed button paints");
   Expect(service.Show(Request{.tone = NotificationService::Tone::Info, .message = "hi"}, 40),
          "a new anonymous row paints");
   Expect(!service.Show(Request{.tone = NotificationService::Tone::Info, .message = "hi"}, 50),

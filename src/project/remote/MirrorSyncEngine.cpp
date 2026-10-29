@@ -578,7 +578,7 @@ void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution
       return;
     }
   }
-  if (resolution == Resolution::KeepMine) {
+  if (resolution == Resolution::KeepLocal) {
     std::string content;
     const FileOpResult read = ReadTreeFile(store_.tree(), path, kMaxPushBytes,
                                            [&](std::string_view chunk) { content.append(chunk); });
@@ -635,7 +635,7 @@ void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution
     (void)store_.CheckLocal(path, *entry);
     return;
   }
-  // TakeHost.
+  // TakeRemote.
   std::string error;
   std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects =
       workspace_.FetchObjectsSync({path}, Lane::Interactive, &error);

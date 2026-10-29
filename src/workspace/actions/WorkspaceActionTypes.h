@@ -35,15 +35,15 @@ enum class ActionId {
   // Open a host directory as a remote project: `remote-open [user@]host[:port]:/path`
   // (no argument: prompt for one). The editor opens the project's local mirror.
   RemoteOpenFolder,
-  // `remote-resolve <mirror-path> <mine|host|compare|merge>`: settle a file both the
+  // `remote-resolve <mirror-path> <local|remote|compare|merge>`: settle a file both the
   // host and the mirror changed — the buttons on its conflict row.
   RemoteResolveConflict,
-  // `remote-resolve-all [root] <mine|host>`: every conflict of the remote project
-  // at `root` (the active one when omitted) -- Keep All Mine / Take All Host's on
+  // `remote-resolve-all [root] <local|remote>`: every conflict of the remote project
+  // at `root` (the active one when omitted) -- Keep All Local / Take All Remote on
   // the counted conflict row (§ 7.7).
   RemoteResolveAllConflicts,
   // `remote-conflicts [root]`: the Conflicts view (§ 7.9b) -- the files both sides
-  // changed, each tickable, with Keep Mine / Take Host's / Merge for the ticked
+  // changed, each tickable, with Keep Local / Take Remote / Merge for the ticked
   // ones. The counted row's Manage…; the Remote menu's Show Conflicts.
   RemoteShowConflicts,
   // `remote-show-log [host]`: the host server's log in an output channel.
@@ -173,7 +173,7 @@ enum class ActionId {
   GitStageToggleEntry,
   GitDiscardEntry,
   // Keep one side of a conflicted file whole and stage it (VS Code's Accept
-  // Current / Accept Incoming): the selected conflict row, the active merge tab's
+  // Current / Accept Remote): the selected conflict row, the active merge tab's
   // file, or a path argument.
   GitAcceptCurrent,
   GitAcceptIncoming,

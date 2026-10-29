@@ -170,7 +170,7 @@ void TestWorkspaceShellGitSidebarEntryRightClickOpensContextMenu() {
   const auto labels = WorkspaceShellTestAccess::GitEntryContextMenuLabels(shell);
   const std::vector<std::string> expected = {"Open Changes",       "Open File",
                                              "Stage",              "Discard…",
-                                             "Accept Current",     "Accept Incoming",
+                                             "Accept Local",     "Accept Remote",
                                              "Copy Relative Path", "Copy Absolute Path"};
   Expect(labels == expected,
          "the git entry context menu should expose the expected action labels");
@@ -1087,7 +1087,7 @@ void TestWorkspaceShellGitBranchActionsSwitchHead() {
   Expect(CurrentGitBranch(root) == base_branch, "git-switch-branch should move HEAD back");
 }
 
-// Accept Current / Accept Incoming (VS Code's whole-file conflict choices): the
+// Accept Local / Accept Remote (VS Code's whole-file conflict choices): the
 // only resolution a binary conflict has in the editor. From its merge tab the
 // action resolves that file and closes the tab; from a git sidebar conflict row's
 // context menu it resolves the row; with a path it resolves that path.
@@ -1124,7 +1124,7 @@ void TestWorkspaceShellAcceptConflictSideResolvesWholeFiles() {
   WorkspaceShellTestAccess::FlushPendingFileReads(shell);
   Expect(WorkspaceShellTestAccess::ActiveTabIsMerge(shell), "the merge tab is on screen");
   Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::GitAcceptCurrent, {}),
-         "Accept Current is accepted in the merge tab");
+         "Accept Local is accepted in the merge tab");
   Expect(SettleGitOperation(shell), "the resolution completes");
   Expect(ReadFile(root / "img.bin") == std::string("\0ours\1", 6), "the current bytes are kept");
   Expect(!WorkspaceShellTestAccess::ActiveTabIsMerge(shell), "and the merge tab closes");
@@ -1143,13 +1143,13 @@ void TestWorkspaceShellAcceptConflictSideResolvesWholeFiles() {
   WorkspaceShellTestAccess::RevealGitSidebarEntry(shell, row);
   Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::GitAcceptIncoming, {},
                                                  WorkspaceShell::ActionSource::ContextMenu),
-         "Accept Incoming is accepted on the selected conflict row");
+         "Accept Remote is accepted on the selected conflict row");
   Expect(SettleGitOperation(shell), "the resolution completes");
   Expect(ReadFile(root / "a.txt") == "incoming\n", "the incoming bytes are taken");
 
   // By path, from the command line.
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "git-accept-current b.txt"),
-         "git-accept-current takes a path");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "git-accept-local b.txt"),
+         "git-accept-local takes a path");
   Expect(SettleGitOperation(shell), "the resolution completes");
   Expect(ReadFile(root / "b.txt") == "current\n", "the named file keeps the current side");
   Expect(RunCommand("test -z \"$(git -C " + EscapedRepoPath(root) + " ls-files -u)\"") == 0,

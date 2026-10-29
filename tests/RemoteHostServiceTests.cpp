@@ -659,9 +659,9 @@ void TestConflictMergesThreeWaysToTheHost() {
 }
 
 // Two or more conflicts are ONE counted row (§ 7.6: never a row per file -- a
-// branch checked out on the host makes dozens at once), whose Keep All Mine and
-// Take All Host's settle every one and whose Manage… opens the Conflicts view:
-// the files, each ticked with Enter, and Keep Mine / Take Host's / Merge rows that
+// branch checked out on the host makes dozens at once), whose Keep All Local and
+// Take All Remote settle every one and whose Manage… opens the Conflicts view:
+// the files, each ticked with Enter, and Keep Local / Take Remote / Merge rows that
 // act on the ticked ones. Down to one conflict, that one gets its own row again.
 void TestConflictsBatchIntoOneRowAndTheConflictsView() {
   FakeSshHost host;
@@ -718,15 +718,15 @@ void TestConflictsBatchIntoOneRowAndTheConflictsView() {
              [&] {
                Pump(shell);
                const auto* row = row_with_key(summary_key);
-               return row != nullptr && row->message.rfind("3 files changed on", 0) == 0;
+               return row != nullptr && row->message.rfind("3 files changed locally and on", 0) == 0;
              },
              std::chrono::seconds(30), std::chrono::milliseconds(10)),
          "one counted row for the three conflicts");
   {
     const auto* row = row_with_key(summary_key);
-    Expect(row != nullptr && row->actions.size() == 3 && row->actions[0].label == "Keep All Mine" &&
-               row->actions[1].label == "Take All Host's" && row->actions[2].label == "Manage\u2026",
-           "with Keep All Mine, Take All Host's and Manage…");
+    Expect(row != nullptr && row->actions.size() == 3 && row->actions[0].label == "Keep All Local" &&
+               row->actions[1].label == "Take All Remote" && row->actions[2].label == "Manage\u2026",
+           "with Keep All Local, Take All Remote and Manage…");
     Expect(own_rows() == 0, "and no row per file: " + std::to_string(own_rows()));
   }
 
@@ -743,7 +743,7 @@ void TestConflictsBatchIntoOneRowAndTheConflictsView() {
     return ids;
   };
   Expect(rows().size() == 7 && rows()[0].id == "@select-all" && rows()[0].label == "Select all" &&
-             rows()[1].id == "@keep-mine" && rows()[2].id == "@take-host" && rows()[3].id == "@merge" &&
+             rows()[1].id == "@keep-local" && rows()[2].id == "@take-remote" && rows()[3].id == "@merge" &&
              rows()[4].id == "a.txt" && rows()[4].label == "[ ] a.txt" && rows()[5].id == "b.txt" &&
              rows()[6].id == "c.txt",
          "four action rows, then the three files unticked:" + row_ids());
@@ -753,15 +753,15 @@ void TestConflictsBatchIntoOneRowAndTheConflictsView() {
   WorkspaceShellTestAccess::SetPluginSidebarSelectedIndex(shell, 4);
   Expect(WorkspaceShellTestAccess::OpenSelectedPluginSidebarItem(shell), "Enter on a.txt is taken");
   Expect(rows().size() == 7 && rows()[4].label == "[x] a.txt" && rows()[0].detail == "1 of 3 selected" &&
-             rows()[1].detail == "host gets your 1 file",
+             rows()[1].detail == "overwrites remote: 1 file",
          "a.txt is ticked and counted:" + row_ids());
   WorkspaceShellTestAccess::SetPluginSidebarSelectedIndex(shell, 5);
   Expect(WorkspaceShellTestAccess::OpenSelectedPluginSidebarItem(shell), "Enter on b.txt is taken");
   Expect(rows()[5].label == "[x] b.txt" && rows()[0].detail == "2 of 3 selected", "b.txt too:" + row_ids());
-  // Keep Mine for the ticked two: the host takes them; c.txt stays a conflict --
+  // Keep Local for the ticked two: the host takes them; c.txt stays a conflict --
   // and, alone now, gets its own row while the counted one goes.
   WorkspaceShellTestAccess::SetPluginSidebarSelectedIndex(shell, 1);
-  Expect(WorkspaceShellTestAccess::OpenSelectedPluginSidebarItem(shell), "Keep Mine is taken");
+  Expect(WorkspaceShellTestAccess::OpenSelectedPluginSidebarItem(shell), "Keep Local is taken");
   Expect(WaitUntil(
              [&] {
                Pump(shell);
@@ -774,14 +774,14 @@ void TestConflictsBatchIntoOneRowAndTheConflictsView() {
   Expect(rows().size() == 5 && rows()[4].id == "c.txt" && rows()[4].label == "[ ] c.txt" &&
              rows()[0].detail == "0 of 1 selected",
          "the view follows: one file left, its tick gone with the settled ones:" + row_ids());
-  // Select all, then the counted row's other button by command: Take Host's for
+  // Select all, then the counted row's other button by command: Take Remote for
   // the rest.
   WorkspaceShellTestAccess::SetPluginSidebarSelectedIndex(shell, 0);
   Expect(WorkspaceShellTestAccess::OpenSelectedPluginSidebarItem(shell), "Select all is taken");
   Expect(rows().size() == 5 && rows()[0].label == "Clear selection" && rows()[4].label == "[x] c.txt",
          "every file is ticked and the row offers to clear:" + row_ids());
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-resolve-all " + mirror.string() + " host"),
-         "Take All Host's is accepted");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-resolve-all " + mirror.string() + " remote"),
+         "Take All Remote is accepted");
   Expect(WaitUntil(
              [&] {
                Pump(shell);
@@ -789,7 +789,7 @@ void TestConflictsBatchIntoOneRowAndTheConflictsView() {
              },
              std::chrono::seconds(30), std::chrono::milliseconds(10)),
          "the mirror takes the host's c.txt; no row and no conflict is left:" + row_ids());
-  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-resolve-all host"),
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-resolve-all remote"),
          "with nothing in conflict the command is rejected");
   RemoveFakeMaster(target);
 }
@@ -1171,8 +1171,8 @@ void TestOpenFolderOnHostEditsTheHostTree() {
          "a conflict row appears");
   const auto* row = find_row();
   Expect(row != nullptr && row->actions.size() == 3 && row->actions[0].label == "Merge" &&
-             row->actions[1].label == "Keep Mine" && row->actions[2].label == "Take Host's",
-         "with Merge, Keep Mine and Take Host's");
+             row->actions[1].label == "Keep Local" && row->actions[2].label == "Take Remote",
+         "with Merge, Keep Local and Take Remote");
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(
              shell, "remote-resolve " + (mirror / "main.c").string() + " compare"),
          "Compare is accepted");
@@ -1187,15 +1187,15 @@ void TestOpenFolderOnHostEditsTheHostTree() {
            for (const auto& n : WorkspaceShellTestAccess::ActiveNotifications(shell)) all += " | " + n.message;
            return all;
          }());
-  Expect(WorkspaceShellTestAccess::ActiveCompare(shell).left_label == "main.c (on " + target + ")" &&
-             WorkspaceShellTestAccess::ActiveCompare(shell).right_label == "main.c (yours)",
+  Expect(WorkspaceShellTestAccess::ActiveCompare(shell).left_label == "main.c (remote: " + target + ")" &&
+             WorkspaceShellTestAccess::ActiveCompare(shell).right_label == "main.c (local)",
          "each side says whose it is: '" + WorkspaceShellTestAccess::ActiveCompare(shell).left_label +
              "' / '" + WorkspaceShellTestAccess::ActiveCompare(shell).right_label + "'");
   Expect(ReadFile(host_root / "main.c") == "// the agent's version\n" &&
              ReadFile(mirror / "main.c").rfind("// mine\n", 0) == 0,
          "and neither side was overwritten");
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(
-             shell, "remote-resolve " + (mirror / "main.c").string() + " host"),
+             shell, "remote-resolve " + (mirror / "main.c").string() + " remote"),
          "taking the host's version is accepted");
   Expect(WaitUntil(
              [&] {

@@ -162,25 +162,25 @@ class RemoteHostService {
   // Settle the conflict at `path` (a file in a remote project's mirror): keep the
   // mirror's bytes over the host's, or take the host's. False when `path` is not a
   // conflict of any remote project.
-  bool ResolveConflict(const std::filesystem::path& path, bool keep_mine);
-  // Keep All Mine / Take All Host's on the counted conflict row: every conflict of
+  bool ResolveConflict(const std::filesystem::path& path, bool keep_local);
+  // Keep All Local / Take All Remote on the counted conflict row: every conflict of
   // the remote project at `root`, each settled as ResolveConflict would. False when
   // `root` is not a remote project or has no conflict.
-  bool ResolveAllConflicts(const std::filesystem::path& root, bool keep_mine);
+  bool ResolveAllConflicts(const std::filesystem::path& root, bool keep_local);
   // The Conflicts view (§ 7.9b) for the remote project at `root`: the action rows
-  // first (ids kConflictSelectAll, kConflictKeepMine, kConflictTakeHost,
+  // first (ids kConflictSelectAll, kConflictKeepLocal, kConflictTakeRemote,
   // kConflictMerge), then one row per conflicted file, id = relative path, its
   // label marked `[x]` when selected. Empty for any other root.
   static constexpr std::string_view kConflictSelectAll = "@select-all";
-  static constexpr std::string_view kConflictKeepMine = "@keep-mine";
-  static constexpr std::string_view kConflictTakeHost = "@take-host";
+  static constexpr std::string_view kConflictKeepLocal = "@keep-local";
+  static constexpr std::string_view kConflictTakeRemote = "@take-remote";
   static constexpr std::string_view kConflictMerge = "@merge";
   // Merge opens a tab per selected file: at most this many at once.
   static constexpr std::size_t kMaxMergeTabs = 8;
   std::vector<plugin::PluginHost::SidebarItem> ConflictRows(const std::filesystem::path& root) const;
   // Enter on a row of that view: a file row flips its selection; Select all selects
-  // every file (or clears the selection when every file is selected); Keep Mine,
-  // Take Host's and Merge act on the selected files. False for an unknown row.
+  // every file (or clears the selection when every file is selected); Keep Local,
+  // Take Remote and Merge act on the selected files. False for an unknown row.
   bool ActivateConflictRow(const std::filesystem::path& root, std::string_view id);
   // Compare: fetch the host's bytes of the conflicted `path` and open them beside
   // the mirror's file. False when `path` is not a conflict of any remote project.
@@ -460,7 +460,7 @@ class RemoteHostService {
   std::pair<Project*, std::string> ConflictOwner(const std::filesystem::path& path);
   // Settle `paths` (relative, in list order) of `entry`'s project, each as
   // ResolveConflict would.
-  void ResolveConflicts(Project& entry, const std::vector<std::string>& paths, bool keep_mine);
+  void ResolveConflicts(Project& entry, const std::vector<std::string>& paths, bool keep_local);
   void PublishStatusSegment();
   // Once per host, when it is Ready: warn when its processes end at logout (the
   // hello's session-survival report), which makes "terminals survive a

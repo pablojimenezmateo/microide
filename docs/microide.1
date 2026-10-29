@@ -286,8 +286,8 @@ Every runnable command (also printed by
   banner-action <Compare|Reload|Overwrite|Keep|Retry|Save As>
   show-output <channel-id>
   remote-open [[user@]host[:port]:/path]
-  remote-resolve <path> <mine|host|compare|merge>
-  remote-resolve-all [root] <mine|host>
+  remote-resolve <path> <local|remote|compare|merge>
+  remote-resolve-all [root] <local|remote>
   remote-conflicts [root]
   remote-remove-mirror <root> [discard]
   remote-show-log [host]
@@ -353,8 +353,8 @@ Every runnable command (also printed by
   git-stage-selected-ranges
   git-unstage-selected-ranges
   git-revert-selected-ranges
-  git-accept-current [path]
-  git-accept-incoming [path]
+  git-accept-local [path]
+  git-accept-remote [path]
   terminal-find [query]
   mark-branch-file-reviewed
   unmark-branch-file-reviewed
@@ -369,8 +369,8 @@ Every runnable command (also printed by
   diff-copy-path
   diff-next-file
   diff-previous-file
-  merge-copy-incoming
-  merge-copy-current
+  merge-copy-remote
+  merge-copy-local
   merge-reset-conflict
   indent-width [n]
   jump <line[:col]>

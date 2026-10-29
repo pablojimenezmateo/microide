@@ -156,16 +156,16 @@ class MirrorSyncEngine {
   };
   void NotifyLocalTreeOps(std::vector<LocalTreeOp> ops);
   // Settle a conflict (§ 6.3: nothing is done automatically, both versions exist
-  // until the user chooses). KeepMine pushes the mirror's bytes over whatever the
+  // until the user chooses). KeepLocal pushes the mirror's bytes over whatever the
   // host has — the explicit Overwrite, the one write with `expect: any` — or
-  // deletes the host's file when the mirror's is gone. TakeHost writes the host's
+  // deletes the host's file when the mirror's is gone. TakeRemote writes the host's
   // current bytes over the mirror's, or removes the mirror's file when the host has
   // none.
   //
-  // `expect_host` (KeepMine only): push only over that host version — a three-way
+  // `expect_host` (KeepLocal only): push only over that host version — a three-way
   // merge's, made against it. A host that has moved on since keeps the conflict
   // (and says so in status().error) rather than losing what it wrote meanwhile.
-  enum class Resolution { KeepMine, TakeHost };
+  enum class Resolution { KeepLocal, TakeRemote };
   void ResolveConflict(std::string path, Resolution resolution,
                        std::optional<util::ContentHash> expect_host = std::nullopt);
   // The host's current bytes of `path`, written to a read-only copy outside tree/

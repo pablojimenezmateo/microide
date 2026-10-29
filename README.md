@@ -147,9 +147,9 @@ for what is actually measured, and what is not.
   lands locally at once and is pushed under compare-and-swap, so it can never overwrite an
   edit an agent made on the host meanwhile: both versions are kept and the file gets a
   conflict row with **Merge** (a three-way merge editor: the version both started
-  from, the host's and yours), **Keep Mine** and **Take Host's** (`remote-resolve`). Several
+  from, the host's and yours), **Keep Local** and **Take Remote** (`remote-resolve`). Several
   conflicts at once (a branch checked out on the host) are one counted row with **Keep All
-  Mine**, **Take All Host's** and **Manage…**, which opens a Conflicts view to tick files and
+  Mine**, **Take All Remote** and **Manage…**, which opens a Conflicts view to tick files and
   settle the ticked ones (`remote-conflicts`, `remote-resolve-all`). Host changes stream into the mirror as they happen; a sync that would delete
   most of the mirror (an unmounted host disk) is held instead of applied. Saves made while
   offline are journaled and replayed on reconnect. The mirror lives under
@@ -344,7 +344,7 @@ Known workflow boundaries:
 
 - Binary, submodule, and some complex rename/file-directory conflicts are recognized but not
   merged hunk by hunk in the three-way merge UI; a binary one is resolved whole with Accept
-  Current / Accept Incoming (`git-accept-current` / `git-accept-incoming`).
+  Current / Accept Remote (`git-accept-local` / `git-accept-remote`).
 - Patch staging for hunk/selected-lines can fail when the diff is stale; refresh and retry.
 - Branch review markers should not be treated as a durable review database.
 
@@ -711,8 +711,8 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `banner-action <Compare|Reload|Overwrite|Keep|Retry|Save As>`
 - `show-output <channel-id>`
 - `remote-open [[user@]host[:port]:/path]`
-- `remote-resolve <path> <mine|host|compare|merge>`
-- `remote-resolve-all [root] <mine|host>`
+- `remote-resolve <path> <local|remote|compare|merge>`
+- `remote-resolve-all [root] <local|remote>`
 - `remote-conflicts [root]`
 - `remote-remove-mirror <root> [discard]`
 - `remote-show-log [host]`
@@ -778,8 +778,8 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `git-stage-selected-ranges`
 - `git-unstage-selected-ranges`
 - `git-revert-selected-ranges`
-- `git-accept-current [path]`
-- `git-accept-incoming [path]`
+- `git-accept-local [path]`
+- `git-accept-remote [path]`
 - `terminal-find [query]`
 - `mark-branch-file-reviewed`
 - `unmark-branch-file-reviewed`
@@ -794,8 +794,8 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `diff-copy-path`
 - `diff-next-file`
 - `diff-previous-file`
-- `merge-copy-incoming`
-- `merge-copy-current`
+- `merge-copy-remote`
+- `merge-copy-local`
 - `merge-reset-conflict`
 - `indent-width [n]`
 - `jump <line[:col]>`

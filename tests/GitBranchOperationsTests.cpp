@@ -229,7 +229,7 @@ void TestGitOperationsOutsideRepositoryAreRejected() {
          "an empty root should report not-a-repo");
 }
 
-// Accept Current / Accept Incoming keep one side whole and stage it, for a text
+// Accept Local / Accept Remote keep one side whole and stage it, for a text
 // conflict, a binary one (the only resolution the merge tab cannot offer), and a
 // modify/delete one (where keeping the deleting side IS the deletion).
 void TestGitResolveConflictWithSide() {

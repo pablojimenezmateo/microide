@@ -52,8 +52,8 @@ enum class SidebarMode {
   // their CPU and memory -- on the same item surface; Enter and Delete act on a row.
   Host,
   // Remote projects' "Conflicts" (§ 7.9b): the files both the host and the mirror
-  // changed, each tickable with Enter, and action rows (Select all, Keep Mine,
-  // Take Host's, Merge) that act on the ticked ones; on the same item surface.
+  // changed, each tickable with Enter, and action rows (Select all, Keep Local,
+  // Take Remote, Merge) that act on the ticked ones; on the same item surface.
   Conflicts,
 };
 

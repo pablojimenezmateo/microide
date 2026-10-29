@@ -258,29 +258,29 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
         }
         case ActionId::RemoteResolveConflict: {
           if (args.size() < 2 ||
-              (args[1] != "mine" && args[1] != "host" && args[1] != "compare" && args[1] != "merge")) {
-            return reject("usage: remote-resolve <path> <mine|host|compare|merge>");
+              (args[1] != "local" && args[1] != "remote" && args[1] != "compare" && args[1] != "merge")) {
+            return reject("usage: remote-resolve <path> <local|remote|compare|merge>");
           }
           const bool known = args[1] == "compare" ? hosts->CompareConflict(args[0])
                              : args[1] == "merge" ? hosts->MergeConflict(args[0])
-                                                  : hosts->ResolveConflict(args[0], args[1] == "mine");
+                                                  : hosts->ResolveConflict(args[0], args[1] == "local");
           if (!known) {
             return reject("\"" + args[0] + "\" is not a conflict in a remote project");
           }
           return DispatchResult::Handled;
         }
         case ActionId::RemoteResolveAllConflicts: {
-          // `[root] <mine|host>`: the root defaults to the active project.
+          // `[root] <local|remote>`: the root defaults to the active project.
           const std::string& mode = args.empty() ? std::string() : args.back();
-          if (args.empty() || args.size() > 2 || (mode != "mine" && mode != "host")) {
-            return reject("usage: remote-resolve-all [root] <mine|host>");
+          if (args.empty() || args.size() > 2 || (mode != "local" && mode != "remote")) {
+            return reject("usage: remote-resolve-all [root] <local|remote>");
           }
           if (args.size() == 1 && !context_.HasProjectRoot()) {
             return reject("No active project");
           }
           const std::filesystem::path root = args.size() == 2 ? std::filesystem::path(args[0])
                                                               : context_.ProjectRoot();
-          if (!hosts->ResolveAllConflicts(root, mode == "mine")) {
+          if (!hosts->ResolveAllConflicts(root, mode == "local")) {
             return reject("No conflicts in " + root.string());
           }
           return DispatchResult::Handled;

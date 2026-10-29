@@ -258,11 +258,11 @@ this document's § 7, what a user still missed:
   host version. **Per-host port forwards**: one `HostPortForwards` shared by a
   host's sessions.
 - **Conflicts in bulk** (§ 7.7, § 7.9b; 2026-10-29): from two conflicts on there
-  is one counted row (Keep All Mine / Take All Host's / Manage…,
-  `remote-resolve-all [root] <mine|host>`), never a row per file, and Manage…
+  is one counted row (Keep All Local / Take All Remote / Manage…,
+  `remote-resolve-all [root] <local|remote>`), never a row per file, and Manage…
   opens the **Conflicts** sidebar view (`remote-conflicts [root]`, Remote > Show
-  Conflicts): the files, each ticked with Enter, with Select all / Keep Mine /
-  Take Host's / Merge rows acting on the ticked ones. A parked conflict whose two
+  Conflicts): the files, each ticked with Enter, with Select all / Keep Local /
+  Take Remote / Merge rows acting on the ticked ones. A parked conflict whose two
   sides come to hold the same bytes settles itself on the next row.
 - **Automatic port forwarding**: `ports/subscribe` pushes the host user's
   listening ports (sampled every 2 s through sock_diag netlink, LISTEN sockets only;
@@ -2176,12 +2176,12 @@ remote's current hash as the precondition, so a second remote change in between
 becomes a second conflict, not a lost write.
 
 **A parked conflict** (a refused push, a pull held off a dirty path) is a sticky
-notification row naming the file, with **Merge**, **Keep Mine** and **Take
-Host's**; nothing is written either way until one is chosen. **From two
-conflicts on, the rows collapse into one counted row** -- *"59 files changed on
-host and here"* -- because a branch checked out on the host, or a night of agent
+notification row naming the file, with **Merge**, **Keep Local** and **Take
+Remote**; nothing is written either way until one is chosen. **From two
+conflicts on, the rows collapse into one counted row** -- *"59 files changed locally
+and on host"* -- because a branch checked out on the host, or a night of agent
 commits, conflicts with dozens of files at once and § 7.6's rule holds here too:
-its **Keep All Mine** and **Take All Host's** settle every one of them, and its
+its **Keep All Local** and **Take All Remote** settle every one of them, and its
 **Manage…** opens the Conflicts view (§ 7.9b) to choose per file. Down to one
 conflict the file gets its own row again. A conflict whose two sides come to hold
 the same bytes (the same fix made on both sides) has nothing left to choose and
@@ -2304,13 +2304,13 @@ Where a batch of conflicts is settled per file (`remote-conflicts [root]`; the
 counted row's Manage…; Remote > Show Conflicts). A contextual sidebar view on the
 same item surface as Changed on Host, for the active remote project: four action
 rows first -- **Select all** (or **Clear selection** once every file is ticked,
-with *"3 of 12 selected"*), **Keep Mine**, **Take Host's** and **Merge**, each
+with *"3 of 12 selected"*), **Keep Local**, **Take Remote** and **Merge**, each
 saying what it would do to the ticked files -- then one row per conflicted file,
 `[ ]` or `[x]`, with which side still holds it (*changed on both sides*,
 *deleted on host, changed here*, *deleted here, changed on host*). **Enter** on a
 file row ticks it; Enter on an action row acts on the ticked files (with none
 ticked it says so). Merge opens a merge tab per ticked file, at most eight at
-once; Keep Mine and Take Host's settle each as the single-file row would, one
+once; Keep Local and Take Remote settle each as the single-file row would, one
 engine job per file at the front of its queue, so the counted row counts down as
 they land. Ticks live in `RemoteHostService` and go with the conflicts they
 named; the view refreshes through `conflicts_updated` as conflicts come and go.

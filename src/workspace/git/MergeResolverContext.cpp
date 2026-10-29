@@ -69,8 +69,8 @@ MergeResolverLabels BuildMergeResolverLabels(const std::filesystem::path& projec
   const std::string incoming_ref = IncomingRefLabel(repository_state);
   const std::string path_label = RelativePathLabel(project_root, output_path);
   return MergeResolverLabels{
-      .incoming_label = PaneLabel("Incoming", incoming_ref),
-      .current_label = PaneLabel("Current", current_ref),
+      .incoming_label = PaneLabel("Remote", incoming_ref),
+      .current_label = PaneLabel("Local", current_ref),
       .result_label = PaneLabel("Result", path_label),
       .base_label = "Base (common ancestor)",
   };

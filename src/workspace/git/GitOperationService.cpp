@@ -251,7 +251,7 @@ bool GitOperationService::ResolveConflict(const std::filesystem::path& repositor
                                           const project::GitConflictSide side,
                                           std::function<void()> resolved) {
   const bool current = side == project::GitConflictSide::Current;
-  std::string success = (current ? "Kept the current version of " : "Took the incoming version of ") +
+  std::string success = (current ? "Kept the local version of " : "Took the remote version of ") +
                         relative_path;
   return Dispatch(repository_root, "Resolving conflict…", std::move(success),
                   [repository_root, launcher = &ProjectLauncher(),

@@ -613,7 +613,7 @@ bool DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path,
   auto merge_tab = operations_.build_merge_tab_from_buffers(
       normalized_path, base_content.has_value() && base_content->exists ? base_content->content : "",
       incoming_content->exists ? incoming_content->content : "",
-      current_content->exists ? current_content->content : "", "Theirs", "Result", "Ours", 0,
+      current_content->exists ? current_content->content : "", "Remote", "Result", "Local", 0,
       false);
   if (!merge_tab.has_value() || !merge_tab->merge.has_value()) {
     return false;

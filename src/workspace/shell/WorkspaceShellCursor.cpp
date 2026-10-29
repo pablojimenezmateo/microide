@@ -832,14 +832,14 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         .result = BuildMergeResultInteractionLayout(layout.editor_surface, surface_layout,
                                                     *merge_tab),
         .incoming_accept_button_width =
-            ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Accept Theirs")),
+            ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Accept Remote")),
         .current_accept_button_width =
-            ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Accept Ours")),
+            ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Accept Local")),
         .result_action_widths =
             {
                 ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Base")),
-                ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Theirs")),
-                ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Ours")),
+                ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Remote")),
+                ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Local")),
                 ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Both")),
             },
     };

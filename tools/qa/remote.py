@@ -21,10 +21,10 @@ What it checks, each as the user would see it, with the measured latencies:
   E  offline save               journaled (status.remote.unsentPushes == 1), replayed
                                 on reconnect
   Q  many conflicts             two offline saves meet two host edits on reconnect: ONE
-                                counted row (Keep All Mine / Take All Host's / Manage…),
+                                counted row (Keep All Local / Take All Remote / Manage…),
                                 no row per file; Manage… opens the Conflicts view, Enter
-                                ticks a file, Keep Mine settles the ticked one, and
-                                remote-resolve-all host settles the rest
+                                ticks a file, Keep Local settles the ticked one, and
+                                remote-resolve-all remote settles the rest
   F  link death                 the ssh master is killed; a save still lands after the
                                 automatic reconnect
   G  terminals                  Terminal > New prints the host's `hostname`; Remote:
@@ -672,9 +672,9 @@ class Suite:
 
     def run_many_conflicts(self) -> None:
         """Q: two offline saves meet two host edits on reconnect. One counted row
-        with Keep All Mine / Take All Host's / Manage… and no row per file; Manage…
-        opens the Conflicts view, where Enter ticks a file and Keep Mine settles the
-        ticked one; remote-resolve-all host settles what is left."""
+        with Keep All Local / Take All Remote / Manage… and no row per file; Manage…
+        opens the Conflicts view, where Enter ticks a file and Keep Local settles the
+        ticked one; remote-resolve-all remote settles what is left."""
         app, host, tok = self.app, self.host, self.token
         second = f"qa/conflict-{tok}.txt"
         host.ssh(f"mkdir -p {host.root}/qa && echo base > {host.root}/{second}")
@@ -694,8 +694,8 @@ class Suite:
         per_file = [n for n in self.notifs() if n["key"].startswith("remote.conflict.")]
         labels = [a["label"] for a in (counted[0].get("actions", []) if counted else [])]
         self.record("Q.one-counted-row-no-row-per-file",
-                    len(counted) == 1 and not per_file and labels == ["Keep All Mine", "Take All Host's", "Manage\u2026"]
-                    and counted[0]["message"].startswith("2 files changed on"),
+                    len(counted) == 1 and not per_file and labels == ["Keep All Local", "Take All Remote", "Manage\u2026"]
+                    and counted[0]["message"].startswith("2 files changed locally and on"),
                     f"counted={[(c['message'], labels) for c in counted]} per_file={len(per_file)}")
         app.screenshot("Q-counted-row")
         # Manage…: the view. Its rows are driven as a user would, with the keyboard.
@@ -705,8 +705,8 @@ class Suite:
         names = [r["name"] for r in rows]
         self.record("Q.manage-opens-the-view",
                     bool(reply.get("ok")) and view.get("view") == "conflicts" and len(rows) == 6
-                    and names[:4] == ["row:conflicts/Select all", "row:conflicts/Keep Mine",
-                                      "row:conflicts/Take Host's", "row:conflicts/Merge"]
+                    and names[:4] == ["row:conflicts/Select all", "row:conflicts/Keep Local",
+                                      "row:conflicts/Take Remote", "row:conflicts/Merge"]
                     and names[4] == f"row:conflicts/[ ] {EDIT_FILE}" and names[5] == f"row:conflicts/[ ] {second}",
                     f"reply={reply} sidebar={view} rows={names}")
         app.screenshot("Q-view")
@@ -723,14 +723,14 @@ class Suite:
         self.record("Q.enter-ticks-a-file", ticked and "1 of 2 selected" in count.get("label", ""),
                     f"rows={[(r['name'], r.get('label')) for r in rows]}")
         for _ in range(8):
-            if any(r.get("selected") and r["name"] == "row:conflicts/Keep Mine" for r in self.conflict_rows()):
+            if any(r.get("selected") and r["name"] == "row:conflicts/Keep Local" for r in self.conflict_rows()):
                 break
             app.key("Up"); app.settle(0.1)
         app.key("Return")
         ok, dt = self.host_has(f"QA-MINE-{tok}", 30)
         left, _ = wait_for(lambda: self.remote().get("conflicts") == 1 or None, 30, 0.5)
         content = host.file(EDIT_FILE)
-        self.record("Q.keep-mine-settles-the-ticked-file",
+        self.record("Q.keep-local-settles-the-ticked-file",
                     bool(ok) and bool(left) and f"HOST-Q-{tok}" not in content,
                     f"{dt:.1f}s conflicts={self.remote().get('conflicts')} head={content.splitlines()[:2]}")
         rows = self.conflict_rows()
@@ -739,7 +739,7 @@ class Suite:
         self.record("Q.one-left-gets-its-own-row",
                     len(rows) == 5 and len(per_file) == 1 and not counted and second in per_file[0]["message"],
                     f"rows={[r['name'] for r in rows]} per_file={[n['message'] for n in per_file]} counted={len(counted)}")
-        reply = app.send("remote-resolve-all", "host")
+        reply = app.send("remote-resolve-all", "remote")
         taken, dt = wait_for(lambda: f"HOST-Q2-{tok}" in (self.mirror / second).read_text(errors="replace") or None, 30, 0.5)
         settled, _ = wait_for(lambda: self.remote().get("conflicts") == 0 or None, 30, 0.5)
         self.record("Q.resolve-all-host-takes-the-rest",

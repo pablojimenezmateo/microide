@@ -101,8 +101,8 @@ GitOperationReport StashGitChanges(const std::filesystem::path& repository_root,
 GitOperationReport PopGitStash(const std::filesystem::path& repository_root,
                                const platform::ProcessLauncher& launcher);
 
-// Which side of a conflicted file to keep whole (VS Code's Accept Current /
-// Accept Incoming): Current is the checked-out branch (`--ours`, index stage 2),
+// Which side of a conflicted file to keep whole (VS Code's Accept Local /
+// Accept Remote): Current is the checked-out branch (`--ours`, index stage 2),
 // Incoming the one being merged in (`--theirs`, stage 3).
 enum class GitConflictSide { Current, Incoming };
 

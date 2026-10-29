@@ -644,8 +644,8 @@ void TestMirrorResolvesConflictsTheUsersWay() {
   Expect(copy.has_value() && ReadFile(*copy) == "agent\n" &&
              copy->string().find("/tree/") == std::string::npos,
          "Compare's host copy holds the host's bytes, outside the tree: " + copy_error);
-  session.engine->ResolveConflict("mine.txt", remote::MirrorSyncEngine::Resolution::KeepMine);
-  session.engine->ResolveConflict("theirs.txt", remote::MirrorSyncEngine::Resolution::TakeHost);
+  session.engine->ResolveConflict("mine.txt", remote::MirrorSyncEngine::Resolution::KeepLocal);
+  session.engine->ResolveConflict("theirs.txt", remote::MirrorSyncEngine::Resolution::TakeRemote);
   session.engine->Flush();
   Expect(ReadFile(session.host / "mine.txt") == "human\n" &&
              ReadFile(session.Tree("mine.txt")) == "human\n",
@@ -700,6 +700,70 @@ void TestMirrorConflictClearsWhenTheHostAdoptsTheMirrorsBytes() {
   Expect(ReadFile(session.Tree("a.txt")) == "agent again\n", "the next host edit is pulled like any other");
 }
 
+// Keep Local on a file the host deleted puts the mirror's copy back on the host --
+// also when the host moved its whole directory away (an openspec change archived
+// on the host: `changes/x/` renamed to `changes/archive/<date>-x/`), and also for a
+// copy the mirror never recorded a base for.
+void TestMirrorKeepLocalRestoresAFileTheHostMovedAway() {
+  MirrorSession session;
+  WriteFile(session.host / "changes/x/design.md", "base\n");
+  WriteFile(session.host / "changes/x/tasks.md", "base\n");
+  session.Connect();
+  session.Sync();
+  WriteFile(session.Tree("changes/x/design.md"), "kept here\n");
+  WriteFile(session.Tree("changes/x/tasks.md"), "kept here too\n");
+  std::filesystem::create_directories(session.host / "changes/archive");
+  std::filesystem::rename(session.host / "changes/x", session.host / "changes/archive/2026-10-29-x");
+  session.Sync();
+  Expect(session.engine->Conflicts() == std::vector<std::string>{"changes/x/design.md", "changes/x/tasks.md"},
+         "both are deleted-on-host conflicts");
+
+  for (const char* path : {"changes/x/design.md", "changes/x/tasks.md"}) {
+    session.engine->ResolveConflict(path, remote::MirrorSyncEngine::Resolution::KeepLocal);
+  }
+  session.engine->Flush();
+  const auto status = session.engine->status();
+  Expect(status.error.empty(), "Keep Local raised no error: " + status.error);
+  Expect(ReadFile(session.host / "changes/x/design.md") == "kept here\n" &&
+             ReadFile(session.host / "changes/x/tasks.md") == "kept here too\n",
+         "the host has the mirror's copies again");
+  Expect(session.engine->Conflicts().empty(), "and they are no longer conflicts");
+  session.Sync();
+  Expect(session.engine->Conflicts().empty() && session.engine->status().error.empty(),
+         "the next sync agrees: " + session.engine->status().error);
+  Expect(session.engine->StateOf("changes/x/design.md") == ContentState::Current, "it is current");
+}
+
+// Take Remote on a file the host deleted removes the mirror's copy -- also when the
+// host moved the file's whole directory away, so that the host has no parent
+// directory to look the file up in either.
+void TestMirrorTakeRemoteFollowsAFileTheHostMovedAway() {
+  MirrorSession session;
+  WriteFile(session.host / "changes/x/design.md", "base\n");
+  WriteFile(session.host / "changes/y.md", "base\n");
+  session.Connect();
+  session.Sync();
+  WriteFile(session.Tree("changes/x/design.md"), "kept here\n");
+  WriteFile(session.Tree("changes/y.md"), "kept here\n");
+  std::filesystem::create_directories(session.host / "changes/archive");
+  std::filesystem::rename(session.host / "changes/x", session.host / "changes/archive/2026-10-29-x");
+  std::filesystem::remove(session.host / "changes/y.md");
+  session.Sync();
+  Expect(session.engine->Conflicts() == std::vector<std::string>{"changes/x/design.md", "changes/y.md"},
+         "both are deleted-on-host conflicts");
+
+  for (const char* path : {"changes/x/design.md", "changes/y.md"}) {
+    session.engine->ResolveConflict(path, remote::MirrorSyncEngine::Resolution::TakeRemote);
+  }
+  session.engine->Flush();
+  const auto status = session.engine->status();
+  Expect(status.error.empty(), "Take Remote raised no error: " + status.error);
+  Expect(!std::filesystem::exists(session.Tree("changes/x/design.md")) &&
+             !std::filesystem::exists(session.Tree("changes/y.md")),
+         "the mirror's copies are gone, as on the host");
+  Expect(session.engine->Conflicts().empty(), "and they are no longer conflicts");
+}
+
 // A conflict merged three ways: the sides are the base both started from (kept in
 // meta/objects), the host's current bytes and the mirror's file; the result is
 // pushed only over the host version it was merged against.
@@ -736,7 +800,7 @@ void TestMirrorMergesAConflictThreeWays() {
 
   WriteFile(session.Tree("merge.txt"), "ONE\ntwo\nTHREE\n");  // the merge's result
   WriteFile(session.host / "merge.txt", "ONE!\ntwo\nthree\n");  // an agent, meanwhile
-  session.engine->ResolveConflict("merge.txt", remote::MirrorSyncEngine::Resolution::KeepMine, sides.host_hash);
+  session.engine->ResolveConflict("merge.txt", remote::MirrorSyncEngine::Resolution::KeepLocal, sides.host_hash);
   session.engine->Flush();
   Expect(ReadFile(session.host / "merge.txt") == "ONE!\ntwo\nthree\n" &&
              session.engine->Conflicts() == std::vector<std::string>{"merge.txt"},
@@ -745,7 +809,7 @@ void TestMirrorMergesAConflictThreeWays() {
          "and says why: " + session.engine->status().error);
 
   const remote::MirrorSyncEngine::MergeSides again = fetch_sides();
-  session.engine->ResolveConflict("merge.txt", remote::MirrorSyncEngine::Resolution::KeepMine, again.host_hash);
+  session.engine->ResolveConflict("merge.txt", remote::MirrorSyncEngine::Resolution::KeepLocal, again.host_hash);
   session.engine->Flush();
   Expect(ReadFile(session.host / "merge.txt") == "ONE\ntwo\nTHREE\n" && session.engine->Conflicts().empty() &&
              session.engine->StateOf("merge.txt") == ContentState::Current,
@@ -846,7 +910,7 @@ void TestMirrorFollowsTheHostWatch() {
 // save still queued -- or never queued -- is lost, and the next start finds the
 // pulled bytes unrecorded. Measured on a real host: a branch checkout pulled 1,700
 // files minutes before a quit, and after the host moved on overnight the 59 it
-// had touched again each came up as a Keep Mine / Take Host's conflict the user
+// had touched again each came up as a Keep Local / Take Remote conflict the user
 // never made. The snapshot below is the directory as quick_exit would leave it:
 // taken while the engine is alive, so its destructor's save cannot hide the bug.
 void TestMirrorRecordsWatchedPullsBeforeAQuit() {
@@ -1229,6 +1293,10 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/TreeOpsMadeOfflineReplay", TestMirrorTreeOpsMadeOfflineReplay);
   AddTest(tests, "MirrorSyncEngine/FollowsTheHostWatch", TestMirrorFollowsTheHostWatch);
   AddTest(tests, "MirrorSyncEngine/RecordsWatchedPullsBeforeAQuit", TestMirrorRecordsWatchedPullsBeforeAQuit);
+  AddTest(tests, "MirrorSyncEngine/KeepLocalRestoresAFileTheHostMovedAway",
+          TestMirrorKeepLocalRestoresAFileTheHostMovedAway);
+  AddTest(tests, "MirrorSyncEngine/TakeRemoteFollowsAFileTheHostMovedAway",
+          TestMirrorTakeRemoteFollowsAFileTheHostMovedAway);
   AddTest(tests, "MirrorSyncEngine/ConflictClearsWhenTheHostAdoptsTheMirrorsBytes",
           TestMirrorConflictClearsWhenTheHostAdoptsTheMirrorsBytes);
 }
