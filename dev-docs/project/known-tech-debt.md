@@ -967,8 +967,11 @@ Left open:
    batch named, blamed or not, and only `Clear()` removed them, so it grew with every
    file a sync, a checkout or an agent touched for the whole session; only files blame
    was requested for are tracked now (`GitBlame/InvalidateTracksOnlyRequestedFiles`).
-   Then `DecodeManifestRows` 0.25 MB and `FrameDecoder::Feed` 0.2 MB (buffers kept
-   after the sync), the rest under 0.05 MB each. Moving `renamed_from`,
+   Then `DecodeManifestRows` 0.25 MB -- the rows' path strings themselves, which the
+   reconcile moves into the store's keys, so charged to where they were allocated --
+   and `FrameDecoder::Feed` 0.2 MB, the transport's receive buffer; the rest under
+   0.05 MB each. With the blame leak gone, nothing remote-specific beyond the store
+   is left to cut. Moving `renamed_from`,
    `unacknowledged` and `link_target` behind one pointer would save ~80 B a path
    (~0.4 MB here): not taken for that alone.
 3. ~~**Per-file state, server:** ~0.6 KB per file in use (8.8 MB at 15,000 files).
