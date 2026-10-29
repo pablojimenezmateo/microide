@@ -466,7 +466,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-29-422 — the 2026-10-29 subsystem sweep: what it found, fixed and measured, and what it left. [OPEN — items 1-3 below]
+### TD-2026-10-29-422 — the 2026-10-29 subsystem sweep: what it found, fixed and measured, and what it left. [OPEN — items 1-4 below]
 
 A whole-repo pass taken by mechanical sweeps rather than reading (this tree's
 reading hit rate is low; validation-traps § Mechanical Sweeps), each aimed at a
@@ -530,7 +530,13 @@ loaded with four sanitizer builds; still not reproduced.
    the TD's own test says only move the bag; not continued here.
 3. **The client's per-file mirror state** beyond the entry (TD-418 item 2's
    remainder) has not been attributed.
-4. ~~**`GitStatusSampler` cannot watch a ref directory that does not exist yet**~~
+4. **A terminal link that soft-wraps is a link only up to the wrap.** Found when
+   the QA fixture sat under a long path: `file:///…/taskflow/` was underlined on its
+   first row and `README.md` on the next was not, so a click opened nothing
+   (`terminal-links` on qa-asan with `MICROIDE_LOG_DIR` in the scratchpad). The
+   detector reads one row; VS Code's joins rows marked `wrapped_from_previous`.
+   Passes on the lane's own short `/tmp` paths.
+5. ~~**`GitStatusSampler` cannot watch a ref directory that does not exist yet**~~
    Not a gap, checked with strace: git takes `HEAD.lock` in the gitdir whenever it
    updates the ref HEAD names (reflogs off too), and the gitdir is watched. The
    test pins it (an orphan `later/orphan`, its ref written by `update-ref`).
