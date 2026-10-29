@@ -94,6 +94,8 @@ inline constexpr std::size_t kMaxEditorConfigBytes = 256 * 1024;
 // Upper bound on sections retained from one file, so a pathological file cannot
 // turn every buffer's property resolution into an unbounded match loop.
 inline constexpr std::size_t kMaxEditorConfigSections = 256;
+// The spec's longest section name; a longer header is skipped.
+inline constexpr std::size_t kMaxEditorConfigSectionNameBytes = 4096;
 
 // Resolves EditorConfig properties for a file, caching both the parsed
 // `.editorconfig` files and the per-path result.

@@ -1,5 +1,9 @@
 #include "project/EditorConfig.h"
 
+#include <algorithm>
+#include <cstdint>
+#include <optional>
+#include <string>
 #include <system_error>
 #include <utility>
 
@@ -35,6 +39,198 @@ std::optional<bool> ParseBool(std::string_view value) {
   return std::nullopt;
 }
 
+// Append glob fragments matching exactly the canonical decimal spellings of the
+// numbers in [lo, hi], both the same digit count: "120".."345" becomes
+// "1[2-9][0-9]", "2[0-9][0-9]", "3[0-3][0-9]", "34[0-5]". O(digits) fragments.
+void AppendSameWidthRange(std::string_view lo, std::string_view hi, std::string& prefix,
+                          std::vector<std::string>& out) {
+  if (lo.empty()) {
+    out.push_back(prefix);
+    return;
+  }
+  const auto digit_class = [](char from, char to) {
+    if (from == to) {
+      return std::string(1, from);
+    }
+    return std::string{'[', from, '-', to, ']'};
+  };
+  const std::size_t prefix_size = prefix.size();
+  if (lo.front() == hi.front()) {
+    prefix.push_back(lo.front());
+    AppendSameWidthRange(lo.substr(1), hi.substr(1), prefix, out);
+    prefix.resize(prefix_size);
+    return;
+  }
+  const std::string_view lo_rest = lo.substr(1);
+  const std::string_view hi_rest = hi.substr(1);
+  const bool lo_rest_floor = lo_rest.find_first_not_of('0') == std::string_view::npos;
+  const bool hi_rest_ceiling = hi_rest.find_first_not_of('9') == std::string_view::npos;
+  char middle_from = lo.front();
+  char middle_to = hi.front();
+  if (!lo_rest_floor) {
+    prefix.push_back(lo.front());
+    AppendSameWidthRange(lo_rest, std::string(lo_rest.size(), '9'), prefix, out);
+    prefix.resize(prefix_size);
+    ++middle_from;
+  }
+  if (!hi_rest_ceiling) {
+    --middle_to;
+  }
+  if (middle_from <= middle_to) {
+    std::string fragment = prefix + digit_class(middle_from, middle_to);
+    for (std::size_t index = 0; index < lo_rest.size(); ++index) {
+      fragment += "[0-9]";
+    }
+    out.push_back(std::move(fragment));
+  }
+  if (!hi_rest_ceiling) {
+    prefix.push_back(hi.front());
+    AppendSameWidthRange(std::string(hi_rest.size(), '0'), hi_rest, prefix, out);
+    prefix.resize(prefix_size);
+  }
+}
+
+// Fragments for every unsigned value in [from, to], split at each digit-count
+// boundary so each piece is a same-width range.
+void AppendUnsignedRange(std::uint64_t from, std::uint64_t to, std::vector<std::string>& out) {
+  std::string prefix;
+  std::uint64_t width_floor = 1;
+  while (true) {
+    while (width_floor <= from / 10) {
+      width_floor *= 10;
+    }
+    const std::uint64_t width_ceiling =
+        width_floor > UINT64_MAX / 10 ? UINT64_MAX : width_floor * 10 - 1;
+    const std::uint64_t piece_to = std::min(width_ceiling, to);
+    AppendSameWidthRange(std::to_string(from), std::to_string(piece_to), prefix, out);
+    if (piece_to == to) {
+      return;
+    }
+    from = piece_to + 1;
+  }
+}
+
+// Fragments matching the canonical decimal spelling of every integer in [lo, hi]
+// (none when lo > hi), the meaning EditorConfig gives `{lo..hi}`.
+void AppendIntegerRange(std::int64_t lo, std::int64_t hi, std::vector<std::string>& out) {
+  if (lo > hi) {
+    return;
+  }
+  if (lo < 0) {
+    // -5..-2 is "-" followed by 2..5. Magnitudes stay in uint64 so INT64_MIN fits.
+    std::vector<std::string> magnitudes;
+    AppendUnsignedRange(hi < 0 ? 0 - static_cast<std::uint64_t>(hi) : 1,
+                        0 - static_cast<std::uint64_t>(lo), magnitudes);
+    for (const std::string& magnitude : magnitudes) {
+      out.push_back("-" + magnitude);
+    }
+    if (hi < 0) {
+      return;
+    }
+    lo = 0;
+  }
+  AppendUnsignedRange(static_cast<std::uint64_t>(lo), static_cast<std::uint64_t>(hi), out);
+}
+
+// `{lo..hi}` with two signed decimal integers, as EditorConfig spells a range.
+std::optional<std::pair<std::int64_t, std::int64_t>> ParseBraceRange(std::string_view body) {
+  const std::size_t dots = body.find("..");
+  if (dots == std::string_view::npos) {
+    return std::nullopt;
+  }
+  const auto parse = [](std::string_view text) -> std::optional<std::int64_t> {
+    if (text.starts_with('+')) {
+      text.remove_prefix(1);
+    }
+    const std::string_view digits = text.starts_with('-') ? text.substr(1) : text;
+    if (digits.empty() || digits.find_first_not_of("0123456789") != std::string_view::npos) {
+      return std::nullopt;
+    }
+    return util::ParseInt64(text);
+  };
+  const auto lo = parse(body.substr(0, dots));
+  const auto hi = parse(body.substr(dots + 2));
+  if (!lo.has_value() || !hi.has_value()) {
+    return std::nullopt;
+  }
+  return std::pair{*lo, *hi};
+}
+
+// Brace groups one header may hold. Each expanded group is one level of
+// recursion, so this, not the header's length, bounds the stack.
+constexpr std::size_t kMaxSectionBraceGroups = 64;
+
+// Expansion steps one header may take. The pattern cap alone does not bound the
+// work: a path ending in an empty range (`{a,b}...{5..1}`) emits nothing, so
+// 2^groups of them never fill it.
+constexpr std::size_t kMaxSectionExpansionSteps = 16 * 1024;
+
+// EditorConfig's brace rules, which are not the search box's `{a,b}`: a group with
+// no top-level ',' is either an integer range `{n..m}` or literal text -- `[{a}]`
+// names the file "{a}". `steps_left` is the remaining kMaxSectionExpansionSteps.
+void ExpandSectionBraces(std::string pattern, std::vector<std::string>& out,
+                         std::size_t& steps_left) {
+  if (out.size() >= kMaxExpandedGlobPatterns || steps_left == 0) {
+    return;
+  }
+  --steps_left;
+  std::size_t depth = 0;
+  std::size_t open = std::string::npos;
+  std::vector<std::size_t> commas;
+  for (std::size_t index = 0; index < pattern.size(); ++index) {
+    const char c = pattern[index];
+    if (c == '\\') {
+      ++index;
+      continue;
+    }
+    if (c == '{') {
+      if (depth++ == 0) {
+        open = index;
+        commas.clear();
+      }
+    } else if (c == '}' && depth > 0) {
+      if (--depth != 0) {
+        continue;
+      }
+      const std::string_view head = std::string_view(pattern).substr(0, open);
+      const std::string_view tail = std::string_view(pattern).substr(index + 1);
+      const auto emit = [&](std::string_view middle) {
+        std::string expanded(head);
+        expanded += middle;
+        expanded += tail;
+        ExpandSectionBraces(std::move(expanded), out, steps_left);
+      };
+      if (!commas.empty()) {
+        // Alternation. Split here rather than through ExpandGlobBraces, which
+        // would flatten a nested `{1..3}` or `{a}` before these rules saw it.
+        std::size_t alternative_start = open + 1;
+        commas.push_back(index);
+        for (const std::size_t comma : commas) {
+          emit(std::string_view(pattern).substr(alternative_start, comma - alternative_start));
+          alternative_start = comma + 1;
+        }
+        return;
+      }
+      const std::string_view body = std::string_view(pattern).substr(open + 1, index - open - 1);
+      if (const auto range = ParseBraceRange(body); range.has_value()) {
+        std::vector<std::string> numbers;
+        AppendIntegerRange(range->first, range->second, numbers);
+        for (const std::string& number : numbers) {
+          emit(number);
+        }
+        return;
+      }
+      // Literal: escape both braces so neither expander nor matcher reads them.
+      pattern.insert(index, 1, '\\');
+      pattern.insert(open, 1, '\\');
+      index += 2;
+    } else if (c == ',' && depth == 1) {
+      commas.push_back(index);
+    }
+  }
+  out.push_back(std::move(pattern));
+}
+
 // Turn one section header into the concrete patterns it means, normalized to match
 // against a path relative to the .editorconfig's own directory.
 //
@@ -42,7 +238,8 @@ std::optional<bool> ParseBool(std::string_view value) {
 //   - a pattern containing no '/' matches in any directory ("*.py" is "**/*.py")
 //   - a pattern with a leading '/' is anchored to this directory
 //   - a pattern that otherwise contains '/' is also anchored here
-//   - '{a,b}' alternation is expanded (GlobMatches has no brace support)
+//   - '{a,b}' alternation and '{n..m}' integer ranges are expanded, and any other
+//     brace group is literal (GlobMatches has no brace support)
 // There is deliberately no "bare name also means its subtree" expansion: that is a
 // search-box affordance and would make "[build]" silently capture build/**.
 void AppendSectionPatterns(std::string_view header, std::vector<std::string>& out) {
@@ -59,7 +256,12 @@ void AppendSectionPatterns(std::string_view header, std::vector<std::string>& ou
   } else {
     normalized = std::string(pattern);
   }
-  ExpandGlobBraces(std::move(normalized), out);
+  if (std::count(normalized.begin(), normalized.end(), '{') >
+      static_cast<std::ptrdiff_t>(kMaxSectionBraceGroups)) {
+    return;  // dropped, as the parser drops any header with no pattern
+  }
+  std::size_t steps_left = kMaxSectionExpansionSteps;
+  ExpandSectionBraces(std::move(normalized), out, steps_left);
 }
 
 void ApplyProperty(std::string_view key, std::string_view raw_value,
@@ -223,9 +425,11 @@ EditorConfigFile ParseEditorConfig(std::string_view text) {
 
     if (line.front() == '[') {
       const std::size_t close = line.rfind(']');
-      if (close == std::string_view::npos || close == 0) {
+      if (close == std::string_view::npos || close == 0 ||
+          close - 1 > kMaxEditorConfigSectionNameBytes) {
         // Unterminated header: skip the line rather than swallowing the rest of
-        // the file into a bogus section.
+        // the file into a bogus section. An over-long name is skipped the same
+        // way; the reference core truncates it, which matches nothing it meant.
         continue;
       }
       in_preamble = false;

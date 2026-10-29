@@ -281,6 +281,106 @@ indent_size = 7
          "an anchored pattern must not match a sibling directory");
 }
 
+// EditorConfig's brace rules are not the search box's: `{n..m}` is an integer
+// range, and a group with no ',' that is not a range is literal text. Both were
+// read through the shared `{a,b}` expansion, which matched `{1..3}` only against
+// the text "1..3" and `{a}` against "a" (TD-2026-10-29-425 item 5).
+void TestResolverHandlesBraceRangesAndLiterals() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "proj";
+  std::filesystem::create_directories(root);
+
+  WriteFile(root / ".editorconfig", R"(root = true
+
+[file{8..120}.txt]
+indent_size = 2
+
+[neg{-12..-3}.txt]
+indent_size = 3
+
+[span{-2..2}.txt]
+indent_size = 4
+
+[{lit}.txt]
+indent_size = 5
+
+[alt{x,{7..9}}.txt]
+indent_size = 6
+
+[empty{5..1}.txt]
+indent_size = 7
+)");
+
+  EditorConfigResolver resolver;
+  resolver.SetProjectRoot(root);
+  const auto width = [&](const char* name) {
+    return resolver.Resolve(root / name).indent_width.value_or(0);
+  };
+
+  for (const char* inside : {"file8.txt", "file9.txt", "file10.txt", "file99.txt", "file100.txt",
+                             "file119.txt", "file120.txt"}) {
+    Expect(width(inside) == 2, std::string("a range must match ") + inside);
+  }
+  for (const char* outside : {"file7.txt", "file121.txt", "file200.txt", "file1000.txt",
+                              "file08.txt", "file..txt", "file8..120.txt"}) {
+    Expect(width(outside) == 0, std::string("a range must not match ") + outside);
+  }
+  Expect(width("neg-12.txt") == 3 && width("neg-3.txt") == 3 && width("neg-7.txt") == 3,
+         "a negative range matches its negative members");
+  Expect(width("neg-2.txt") == 0 && width("neg-13.txt") == 0 && width("neg3.txt") == 0,
+         "a negative range must not match outside it or the positive values");
+  Expect(width("span-2.txt") == 4 && width("span0.txt") == 4 && width("span2.txt") == 4,
+         "a range across zero matches both signs and zero");
+  Expect(width("span-0.txt") == 0 && width("span3.txt") == 0,
+         "a range across zero has no -0 and stops at its bound");
+  Expect(width("{lit}.txt") == 5, "a comma-free, non-range group is literal text");
+  Expect(width("lit.txt") == 0, "a literal group must not be read as one alternative");
+  Expect(width("altx.txt") == 6 && width("alt8.txt") == 6,
+         "a range nested in an alternation is still a range");
+  Expect(width("alt7..9.txt") == 0, "a nested range must not be flattened to its text");
+  Expect(width("empty3.txt") == 0, "a range written high..low matches nothing");
+}
+
+// Each brace group a header expands is one level of recursion, and neither the
+// header's length nor its group count was bounded: a 256 KiB `[{a,{a,{a,...` line
+// recursed once per group.
+void TestParseBoundsSectionHeaders() {
+  std::string many_groups = "[";
+  for (int index = 0; index < 100; ++index) {
+    many_groups += "{a,b}";
+  }
+  many_groups += "]\nindent_size = 2\n";
+  Expect(ParseEditorConfig(many_groups).sections.empty(),
+         "a header past the group cap expands to nothing and is dropped");
+
+  std::string nested = "[";
+  for (int index = 0; index < 60000; ++index) {
+    nested += "{a,";
+  }
+  nested += "]\nindent_size = 2\n[ok]\nindent_size = 3\n";
+  const auto file = ParseEditorConfig(nested);
+  Expect(file.sections.size() == 1, "an over-long header is skipped, later ones kept");
+
+  // Every path ends in an empty range, so no path fills the pattern cap: only the
+  // step budget stops 2^60 expansions.
+  std::string never_emits = "[";
+  for (int index = 0; index < 60; ++index) {
+    never_emits += "{a,b}";
+  }
+  never_emits += "{5..1}]\nindent_size = 2\n";
+  Expect(ParseEditorConfig(never_emits).sections.empty(),
+         "a header whose every expansion is empty is dropped, and quickly");
+
+  std::string few_groups = "[";
+  for (int index = 0; index < 8; ++index) {
+    few_groups += "{a,b}";
+  }
+  few_groups += "]\nindent_size = 2\n";
+  const auto kept = ParseEditorConfig(few_groups);
+  Expect(kept.sections.size() == 1 && kept.sections[0].patterns.size() == 256,
+         "a header under the caps expands to the pattern cap");
+}
+
 void TestResolverAppliesIndentSizeTabAndTabWidthDefault() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "proj";
@@ -396,6 +496,9 @@ void RegisterEditorConfigTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorConfig/ResolverStopsAtRootTrueAndProjectRoot",
           TestResolverStopsAtRootTrueAndProjectRoot);
   AddTest(tests, "EditorConfig/ResolverHandlesGlobShapes", TestResolverHandlesGlobShapes);
+  AddTest(tests, "EditorConfig/ResolverHandlesBraceRangesAndLiterals",
+          TestResolverHandlesBraceRangesAndLiterals);
+  AddTest(tests, "EditorConfig/ParseBoundsSectionHeaders", TestParseBoundsSectionHeaders);
   AddTest(tests, "EditorConfig/ResolverAppliesIndentSizeTabAndTabWidthDefault",
           TestResolverAppliesIndentSizeTabAndTabWidthDefault);
   AddTest(tests, "EditorConfig/ResolverMemoizesAndInvalidates",

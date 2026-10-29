@@ -472,7 +472,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-29-425 — the terminal answered to `TERM=xterm-256color` without implementing what that entry advertises. [OPEN — items 1, 2, 4, 5 below; 3 resolved for ASCII]
+### TD-2026-10-29-425 — the terminal answered to `TERM=xterm-256color` without implementing what that entry advertises. [OPEN — items 1, 2, 4 below; 3 resolved for ASCII, 5 resolved]
 
 Found by checking every string capability `infocmp -1 xterm-256color` lists
 against the CSI/ESC dispatchers, after a reading pass had already found DECSC
@@ -513,9 +513,17 @@ as two-sided (the `AOneSidedConflictOffersNoMerge` flake), and TD-424.
    at all). A run-length write of the repeated glyph would make it O(1) per row.
 4. **A link wrapped past the visible window** is detected only over its on-screen
    part (the joined logical line stops at the snapshot's edge).
-5. **EditorConfig** has no `{n..m}` numeric ranges, and a single-element `{a}` is
-   expanded where the reference core keeps it literal (`ExpandGlobBraces` is shared
-   with the search box, which wants that).
+5. ~~**EditorConfig** has no `{n..m}` numeric ranges, and a single-element `{a}` is
+   expanded where the reference core keeps it literal.~~ RESOLVED 2026-10-29: section
+   headers expand through their own `ExpandSectionBraces` (the search box keeps
+   `ExpandGlobBraces`); a range becomes O(digits) digit-class globs over the
+   canonical decimal spellings (`file08` is not in `{8..120}`; the reference core's
+   regex would accept it), a comma-free non-range group is escaped to literal text,
+   and a nested range inside an alternation stays a range. The same pass found the
+   expansion unbounded: no header-length cap (now the spec's 4096) and a path ending
+   in an empty range never filled the pattern cap, so `{a,b}`x60`{5..1}` was 2^60
+   steps (now a 16 Ki step budget and at most 64 groups).
+   `EditorConfig/ResolverHandlesBraceRangesAndLiterals`, `EditorConfig/ParseBoundsSectionHeaders`.
 
 ### TD-2026-10-29-422 — the 2026-10-29 subsystem sweep: what it found, fixed and measured, and what it left. [OPEN — items 2-3 below; 1 and 4 resolved]
 
