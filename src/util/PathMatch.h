@@ -34,12 +34,22 @@ namespace microide::util {
   if (candidate_text.empty() || root_text.empty()) {
     return false;
   }
-  if (candidate_text == root_text) {
-    return true;
-  }
   const auto is_separator = [](char c) {
     return c == '/';
   };
+  // `/a/b/` and `/a/b` are one location (a normal path keeps a trailing separator
+  // as an empty final component): without this, `/a/b` was not within its own
+  // root spelled `/a/b/`, while `/a/b/` was within `/a/b`.
+  const auto drop_trailing_separator = [&](std::string_view& text) {
+    if (text.size() > 1 && is_separator(text.back())) {
+      text.remove_suffix(1);
+    }
+  };
+  drop_trailing_separator(candidate_text);
+  drop_trailing_separator(root_text);
+  if (candidate_text == root_text) {
+    return true;
+  }
   // A "." root is the current directory, whose members are spelled without any
   // "./" prefix once normalized ("./x" normalizes to "x"), so the prefix compare
   // below would miss them. Every relative path that does not climb out is within.
@@ -274,10 +284,17 @@ inline bool SameAsNormalizedPath(const std::filesystem::path& candidate,
   if (candidate == root) {
     return true;  // already-normalized identical paths: skip the normalize cost
   }
-  const std::filesystem::path normalized_candidate = candidate.lexically_normal();
-  const std::filesystem::path normalized_root = root.lexically_normal();
+  std::filesystem::path normalized_candidate = candidate.lexically_normal();
+  std::filesystem::path normalized_root = root.lexically_normal();
   if (normalized_candidate.empty() || normalized_root.empty()) {
     return false;
+  }
+  // As NormalizedPathTextEqualsOrWithin: a trailing separator names the same
+  // location, and left in it made `/a/b` "outside" a root spelled `/a/b/`.
+  for (std::filesystem::path* path : {&normalized_candidate, &normalized_root}) {
+    if (path->has_relative_path() && !path->has_filename()) {
+      *path = path->parent_path();
+    }
   }
   if (normalized_candidate == normalized_root) {
     return true;

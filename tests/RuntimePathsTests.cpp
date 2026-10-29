@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include "util/PathMatch.h"
+
 #include "platform/HostPlatform.h"
 #include "platform/RuntimePaths.h"
 
@@ -138,9 +140,41 @@ void TestCharacterLocaleIsUtf8EvenFromAPosixEnvironment() {
   Expect(codeset == "UTF-8", "LC_CTYPE " + locale + " should be UTF-8, its codeset is " + codeset);
 }
 
+// The three lexical containment helpers answer one question and must agree on it,
+// including where a path or root is spelled with a trailing separator: `/a/b` is
+// within (equal to) its root spelled `/a/b/`. They disagreed -- the root itself
+// was "outside" a slash-terminated spelling of itself, and `/a/b/` was within
+// `/a/b` for one helper and not for the other two.
+void TestPathContainmentHelpersAgreeOnTrailingSeparators() {
+  struct Case {
+    const char* candidate;
+    const char* root;
+    bool within;
+  };
+  const Case cases[] = {
+      {"/a/b/c", "/a/b/", true}, {"/a/b", "/a/b/", true},  {"/a/b/", "/a/b", true},
+      {"/a/b/", "/a/b/", true},  {"/a/bc", "/a/b/", false}, {"/a/b/c", "/a/b", true},
+      {"/a/bc", "/a/b", false},  {"/x", "/", true},         {"/", "/", true},
+      {"/a/b/../c", "/a/b", false}, {"/a", "/a/b/", false},
+  };
+  for (const Case& c : cases) {
+    const std::filesystem::path candidate(c.candidate);
+    const std::filesystem::path root(c.root);
+    const std::string what = std::string(c.candidate) + " in " + c.root;
+    Expect(microide::util::PathEqualsOrWithin(candidate, root) == c.within, "PathEqualsOrWithin: " + what);
+    Expect(microide::util::PathEqualsOrWithinNormalized(candidate, root.lexically_normal()) == c.within,
+           "PathEqualsOrWithinNormalized: " + what);
+    Expect(microide::util::NormalizedPathEqualsOrWithin(candidate.lexically_normal(), root.lexically_normal()) ==
+               c.within,
+           "NormalizedPathEqualsOrWithin: " + what);
+  }
+}
+
 }  // namespace
 
 void RegisterRuntimePathsTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PathMatch/ContainmentHelpersAgreeOnTrailingSeparators",
+          TestPathContainmentHelpersAgreeOnTrailingSeparators);
   AddTest(tests, "RuntimePaths/PreferExplicitAssetRootOverride",
           TestRuntimePathsPreferExplicitAssetRootOverride);
   AddTest(tests, "RuntimePaths/BundledServerBinaryIsChosenByArchitecture",
