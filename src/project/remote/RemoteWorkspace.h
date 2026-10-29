@@ -82,8 +82,11 @@ class RemoteWorkspace {
     std::optional<util::ContentHash> delta_base;
   };
   // The largest object one fetch may stream (FetchObjectToFile); object/fetch
-  // without a byte limit stops at 64 MiB, the most one answer holds in memory.
+  // without a byte limit (and file/read) stops at kMaxBufferedObjectBytes, the most
+  // one answer holds in memory. Both sides read these: the server serves no more,
+  // and the client fails a stream that sends more rather than buffering it.
   static constexpr std::uint64_t kMaxStreamedObjectBytes = 16ull * 1024 * 1024 * 1024;
+  static constexpr std::uint64_t kMaxBufferedObjectBytes = 64ull * 1024 * 1024;
   using FetchDone =
       std::function<void(std::optional<std::vector<FetchedObject>> objects, std::string error)>;
   // `bases[i]`, when set, is the version of paths[i] this side holds: the host may
@@ -140,9 +143,12 @@ class RemoteWorkspace {
 
  private:
   std::shared_ptr<RemoteServerClient> Client() const;
-  // object/fetch and file/read share the streaming and the checking.
+  // object/fetch and file/read share the streaming and the checking. `object_limit`
+  // is the most bytes any one object may stream: what the request let the server
+  // send. A server that sends more is failed, not buffered.
   std::uint64_t StreamObjects(std::string_view method, util::JsonValue params,
                               std::vector<std::string> names, Lane lane, FetchDone done,
+                              std::uint64_t object_limit,
                               std::vector<std::optional<util::ContentHash>> bases = {});
 
   std::shared_ptr<RemoteConnection> connection_;

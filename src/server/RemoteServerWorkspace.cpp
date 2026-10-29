@@ -24,8 +24,9 @@
 namespace microide::server {
 namespace {
 
-// The largest object a fetch serves unless the request asks for less.
-constexpr std::uint64_t kMaxObjectBytes = 64u * 1024 * 1024;
+// The largest object a fetch serves unless the request asks for less (the client
+// holds the server to it).
+constexpr std::uint64_t kMaxObjectBytes = remote::RemoteWorkspace::kMaxBufferedObjectBytes;
 // The invalid-params reply for a request that needs a workspace: a missing
 // workspace is reported first, else `problem` (what was wrong with the params).
 void ReplyInvalidParams(remote::RemotePeer& peer, std::uint64_t id, bool has_workspace,

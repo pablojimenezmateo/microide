@@ -230,7 +230,9 @@ std::uint64_t RemoteWorkspace::FetchObjects(std::vector<std::string> paths, Lane
     params["max_bytes"] = util::JsonValue(static_cast<std::int64_t>(max_bytes));
   }
   return StreamObjects(method::kObjectFetch, util::JsonValue(std::move(params)), std::move(paths),
-                       lane, std::move(done), std::move(bases));
+                       lane, std::move(done),
+                       max_bytes > 0 ? std::min(max_bytes, kMaxStreamedObjectBytes) : kMaxBufferedObjectBytes,
+                       std::move(bases));
 }
 
 std::uint64_t RemoteWorkspace::ReadHostFile(std::string host_path, FetchDone done) {
@@ -239,7 +241,7 @@ std::uint64_t RemoteWorkspace::ReadHostFile(std::string host_path, FetchDone don
   std::vector<std::string> names;
   names.push_back(std::move(host_path));
   return StreamObjects(method::kFileRead, util::JsonValue(std::move(params)), std::move(names),
-                       Lane::Interactive, std::move(done));
+                       Lane::Interactive, std::move(done), kMaxBufferedObjectBytes);
 }
 
 std::uint64_t RemoteWorkspace::FetchObjectToFile(
@@ -249,6 +251,7 @@ std::uint64_t RemoteWorkspace::FetchObjectToFile(
     std::filesystem::path staging;
     FetchedObject object;
     util::ContentHasher hasher;
+    std::uint64_t streamed = 0;
     int fd = -1;
     bool failed = false;
     std::string write_error;
@@ -293,6 +296,14 @@ std::uint64_t RemoteWorkspace::FetchObjectToFile(
           return;
         }
         const std::string_view chunk = std::string_view(bytes).substr(bytes.size() - in.remaining());
+        state->streamed += chunk.size();
+        if (state->streamed > kMaxStreamedObjectBytes) {
+          if (!state->failed) {
+            state->failed = true;
+            raw->peer().Fail("the server sent more bytes for one object than the request allows");
+          }
+          return;
+        }
         state->hasher.Update(chunk);
         for (std::size_t written = 0; written < chunk.size() && !state->failed;) {
           const ssize_t count = ::write(state->fd, chunk.data() + written, chunk.size() - written);
@@ -346,7 +357,7 @@ std::uint64_t RemoteWorkspace::FetchObjectToFile(
 
 std::uint64_t RemoteWorkspace::StreamObjects(std::string_view stream_method, util::JsonValue params,
                                              std::vector<std::string> names, Lane lane,
-                                             FetchDone done,
+                                             FetchDone done, std::uint64_t object_limit,
                                              std::vector<std::optional<util::ContentHash>> bases) {
   struct State {
     std::vector<FetchedObject> objects;
@@ -365,7 +376,7 @@ std::uint64_t RemoteWorkspace::StreamObjects(std::string_view stream_method, uti
   RemoteServerClient* raw = client.get();
   const std::uint64_t id = client->RequestStream(
       stream_method, params, lane,
-      [state, raw](FrameType, std::string bytes) {
+      [state, raw, object_limit](FrameType, std::string bytes) {
         util::ByteReader in(bytes);
         const std::uint64_t index = in.Varint();
         if (state->malformed || in.failed() || index >= state->objects.size()) {
@@ -375,8 +386,14 @@ std::uint64_t RemoteWorkspace::StreamObjects(std::string_view stream_method, uti
           }
           return;
         }
-        state->objects[static_cast<std::size_t>(index)].content.append(
-            std::string_view(bytes).substr(bytes.size() - in.remaining()));
+        const std::string_view chunk = std::string_view(bytes).substr(bytes.size() - in.remaining());
+        std::string& content = state->objects[static_cast<std::size_t>(index)].content;
+        if (content.size() + chunk.size() > object_limit) {
+          state->malformed = true;
+          raw->peer().Fail("the server sent more bytes for one object than the request allows");
+          return;
+        }
+        content.append(chunk);
       },
       [state, done, bases = std::move(bases)](std::optional<util::JsonValue> result,
                                               std::optional<RemotePeer::RpcError> error) {

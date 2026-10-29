@@ -1,9 +1,12 @@
 #include "TestSupport.h"
 
 #include "project/remote/RemoteConnection.h"
+#include "project/remote/RemotePeer.h"
+#include "project/remote/RemoteProtocol.h"
 #include "project/remote/RemoteServerClient.h"
 #include "project/remote/RemoteWorkspace.h"
 #include "util/ContentHash.h"
+#include "util/ByteCodec.h"
 #include "util/Zstd.h"
 
 #include <algorithm>
@@ -13,6 +16,8 @@
 #include <memory>
 #include <string>
 #include <vector>
+
+#include <sys/socket.h>
 
 namespace microide::tests {
 namespace {
@@ -255,6 +260,53 @@ void TestWriteAndTreeOpsAreCompareAndSwap() {
          "a delete on its base removes the file");
 }
 
+// A fetch tells the server how many bytes one object may take (64 MiB unless it
+// asks), and the server honours it -- but the client is the side holding the bytes,
+// and it buffered whatever arrived. A server streaming past the limit now fails the
+// connection instead of growing the client without bound. The fake server here
+// answers the hello and then streams twice what the fetch allowed.
+void TestAnObjectStreamedPastItsLimitFailsTheConnection() {
+  int fds[2];
+  Expect(::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds) == 0, "socketpair");
+  remote::RemotePeer server;
+  server.OnRequest(remote::method::kServerHello, [&server](std::uint64_t id, const util::JsonValue&) {
+    server.Reply(id, remote::ToJson(remote::HelloReply{.release = "test"}));
+  });
+  server.OnRequest(remote::method::kObjectFetch, [&server](std::uint64_t id, const util::JsonValue&) {
+    for (int chunk = 0; chunk < 2; ++chunk) {
+      std::string frame;
+      util::PutVarint(frame, 0);
+      frame.append(1024, 'x');
+      (void)server.SendContent(remote::FrameType::ObjectData, id, frame, remote::Lane::Interactive);
+    }
+    util::JsonObject answer;
+    answer["hash"] = util::JsonValue(util::HashContent(std::string(2048, 'x')).Hex());
+    util::JsonArray objects;
+    objects.push_back(util::JsonValue(std::move(answer)));
+    util::JsonObject result;
+    result["objects"] = util::JsonValue(std::move(objects));
+    server.Reply(id, util::JsonValue(std::move(result)));
+  });
+  Expect(server.Start(fds[1], fds[1], {}), "the fake server starts");
+  auto client = remote::RemoteServerClient::Create();
+  std::string error;
+  Expect(client->ConnectFds(fds[0], fds[0], remote::HelloRequest{.release = "test", .root = "/"}, &error),
+         "connects to the fake server: " + error);
+  remote::RemoteWorkspace workspace(std::make_shared<remote::RemoteConnection>(client));
+  std::promise<std::pair<bool, std::string>> answered;
+  (void)workspace.FetchObjects(
+      {"big.bin"}, remote::Lane::Interactive,
+      [&answered](std::optional<std::vector<remote::RemoteWorkspace::FetchedObject>> objects, std::string why) {
+        answered.set_value({objects.has_value(), std::move(why)});
+      },
+      /*max_bytes=*/1024);
+  auto future = answered.get_future();
+  Expect(future.wait_for(std::chrono::seconds(10)) == std::future_status::ready, "the fetch is answered");
+  const auto [delivered, why] = future.get();
+  Expect(!delivered, "an object streamed past the fetch's limit is not delivered: " + why);
+  Expect(WaitUntil([&] { return !client->connected(); }), "and the connection to that server ends");
+}
+
 }  // namespace
 
 void RegisterRemoteWorkspaceTests(std::vector<TestCase>& tests) {
@@ -263,6 +315,8 @@ void RegisterRemoteWorkspaceTests(std::vector<TestCase>& tests) {
           TestManifestFailureIsAnErrorNotAnEmptyTree);
   AddTest(tests, "RemoteWorkspace/ManifestNeedsAWorkspace", TestManifestNeedsAWorkspace);
   AddTest(tests, "RemoteWorkspace/ObjectFetchServesVerifiedBytes", TestObjectFetchServesVerifiedBytes);
+  AddTest(tests, "RemoteWorkspace/AnObjectStreamedPastItsLimitFailsTheConnection",
+          TestAnObjectStreamedPastItsLimitFailsTheConnection);
   AddTest(tests, "RemoteWorkspace/AChangedFileIsADeltaWithoutKeepingTheFirstSync",
           TestAChangedFileIsADeltaWithoutKeepingTheFirstSync);
   AddTest(tests, "RemoteWorkspace/WriteAndTreeOpsAreCompareAndSwap",
