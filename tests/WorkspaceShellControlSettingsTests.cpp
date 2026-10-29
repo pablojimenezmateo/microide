@@ -252,6 +252,35 @@ void TestForceStartedControlChannelSurvivesSettingChange() {
 // setting present in the user config: two `watch::NativeSetupWalk` calls
 // totalling 214 ms and a 49 ms project scan, none of which changed anything.
 //
+// A config file is read back raw, so a hand-edited "no" reached every reader as
+// "no" and each reader's own parse decided what it meant (the Settings checkbox
+// and Toggle Debugger disagreed with the menus). Loaded values are now stored as
+// the setter would store them; what does not parse is kept as written.
+void TestRestoredSettingsAreCanonicalized() {
+  TemporaryDirectory temp;
+  ScopedAppHomes homes(temp.path() / "state", temp.path() / "config");
+  {
+    WorkspaceShell writer;
+    writer.Initialize({});
+    WorkspaceShellTestAccess::SetRawUserSetting(writer, "debug.enabled", "no");
+    WorkspaceShellTestAccess::SetRawUserSetting(writer, "editor.fold.enabled", "On");
+    WorkspaceShellTestAccess::SetRawUserSetting(writer, "editor.font_size", "999");
+    WorkspaceShellTestAccess::SetRawUserSetting(writer, "lsp.enabled", "maybe");
+    WorkspaceShellTestAccess::SetRawUserSetting(writer, "someplugin.flag", "no");
+    WorkspaceShellTestAccess::SaveUserConfig(writer);
+  }
+  WorkspaceShell shell;
+  shell.Initialize({});
+  const auto value = [&](std::string_view id) {
+    return WorkspaceShellTestAccess::GetSettingValue(shell, id).value_or("<unset>");
+  };
+  Expect(value("debug.enabled") == "false", "a hand-edited \"no\" loads as false: " + value("debug.enabled"));
+  Expect(value("editor.fold.enabled") == "true", "\"On\" loads as true: " + value("editor.fold.enabled"));
+  Expect(value("editor.font_size") != "999", "an int loads clamped to its range: " + value("editor.font_size"));
+  Expect(value("lsp.enabled") == "maybe", "a value that does not parse is kept as written");
+  Expect(value("someplugin.flag") == "no", "a setting no built-in spec names is kept as written");
+}
+
 // The setting has to arrive the way a launch delivers it — persisted, then
 // restored by a fresh shell's Initialize. Writing it through SetSettingValue on
 // a live shell cannot exhibit this: that path ends in ApplyLiveSettings, which
@@ -335,6 +364,8 @@ void RegisterWorkspaceShellControlSettingsTests(std::vector<TestCase>& tests) {
           TestTransientSettingNotPersisted);
   AddTest(tests, "WorkspaceShellControlSettings/StartupOverridesAreTransient",
           TestStartupOverridesAreTransient);
+  AddTest(tests, "WorkspaceShellControlSettings/RestoredSettingsAreCanonicalized",
+          TestRestoredSettingsAreCanonicalized);
   AddTest(tests, "WorkspaceShellControlSettings/ExplicitProjectWinsOverRestore",
           TestExplicitProjectWinsOverRestore);
   AddTest(tests, "WorkspaceShellControlSettings/RestoredExcludeGlobsDoNotRescanOnFirstLiveSettingsPass",

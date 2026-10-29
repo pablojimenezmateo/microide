@@ -93,6 +93,13 @@ std::string SerializeSettingValue(const SettingValue& value);
 // every keystroke of its filter (TD-2026-08-15-243).
 void SerializeSettingValueInto(const SettingValue& value, std::string* out);
 
+// A value read from a config file, in the form the setter would have stored: a
+// built-in setting's value parsed and re-serialized ("no" -> "false", an int
+// clamped to its range), so every reader sees what the setter guarantees. A value
+// that does not parse, or a setting no built-in spec names (a plugin's, unknown
+// at load), is kept as written -- dropping it would lose it on the next save.
+void CanonicalizeLoadedSettingValue(std::string_view id, std::string& value);
+
 // Unified view merging built-ins and plugin-contributed settings.
 struct SettingInfo {
   std::string id;

@@ -1352,6 +1352,16 @@ std::optional<SettingValue> ParseSettingValue(const SettingSpec& spec, std::stri
   return std::nullopt;
 }
 
+void CanonicalizeLoadedSettingValue(std::string_view id, std::string& value) {
+  const SettingSpec* spec = FindBuiltinSettingSpec(id);
+  if (spec == nullptr) {
+    return;
+  }
+  if (const std::optional<SettingValue> parsed = ParseSettingValue(*spec, value)) {
+    SerializeSettingValueInto(*parsed, &value);
+  }
+}
+
 void SerializeSettingValueInto(const SettingValue& value, std::string* out) {
   if (out == nullptr) {
     return;

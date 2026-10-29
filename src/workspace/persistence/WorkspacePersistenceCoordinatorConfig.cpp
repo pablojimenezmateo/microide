@@ -187,8 +187,11 @@ bool PersistenceCoordinator::RestoreUserConfig() {
   context_.user_settings.clear();
   context_.disabled_keybinding_ids = state.disabled_keybinding_ids;
   context_.disabled_plugin_ids = state.disabled_plugin_ids;
-  for (const auto& [id, value] : state.settings) {
-    settings_layer::Upsert(context_.user_settings, id, value);
+  // Canonicalized as the setter would store them: the file may be hand-edited,
+  // and a reader with its own parse of "no" or "Off" then disagreed with the rest.
+  for (auto& [id, value] : state.settings) {
+    CanonicalizeLoadedSettingValue(id, value);
+    settings_layer::Upsert(context_.user_settings, id, std::move(value));
   }
 
   const bool applied_scale = ApplyUiScale(state.ui_scale, false, false);
@@ -268,8 +271,9 @@ bool PersistenceCoordinator::RestoreConfigState() {
   // in its own typed field (colorscheme_name) and is applied explicitly after
   // materialization, because its enum spec only validates "default" and real theme
   // names never round-trip through the layered store.
-  for (const auto& [id, value] : persisted_state.settings) {
-    settings_layer::Upsert(mutable_current.settings, id, value);
+  for (auto& [id, value] : persisted_state.settings) {
+    CanonicalizeLoadedSettingValue(id, value);  // as the user layer's, above
+    settings_layer::Upsert(mutable_current.settings, id, std::move(value));
   }
   // Strip auto-synced default-valued canonical editor entries left by older builds
   // so they can no longer shadow the user-level "set as default" (see helper).
