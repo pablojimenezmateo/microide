@@ -272,6 +272,11 @@ std::optional<TerminalHostFrame> DecodeTerminalHostFrame(std::string_view bytes)
   frame.scrollback.resize(static_cast<std::size_t>(runs));
   std::uint64_t covered = 0;
   std::uint64_t line_runs = 0;
+  // A Promote names lines of the client's PREVIOUS screen, so together they are at
+  // most one screen. Bounded by nothing else (`moved` is the peer's to choose), a
+  // count the client then loops over -- a line appended per promoted line -- let one
+  // small frame hang the client and exhaust its memory.
+  std::uint64_t promoted = 0;
   for (TerminalHostRun& run : frame.scrollback) {
     const std::uint64_t kind = in.Le(1);
     run.count = in.Varint();
@@ -282,6 +287,10 @@ std::optional<TerminalHostFrame> DecodeTerminalHostFrame(std::string_view bytes)
     run.kind = static_cast<TerminalHostRun::Kind>(kind);
     covered += run.count;
     line_runs += run.kind == TerminalHostRun::Kind::Lines ? run.count : 0;
+    promoted += run.kind == TerminalHostRun::Kind::Promote ? run.count : 0;
+    if (promoted > kMaxHostTerminalDimension) {
+      return std::nullopt;
+    }
   }
   if (covered != moved || !GetLines(in, frame.scrollback_lines, line_runs) ||
       frame.scrollback_lines.size() != line_runs) {

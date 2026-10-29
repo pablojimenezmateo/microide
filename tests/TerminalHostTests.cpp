@@ -176,6 +176,23 @@ void TestHostFrameDecoderRefusesInconsistentFrames() {
   Expect(!DecodeTerminalHostFrame(encode(too_many_rows)).has_value(),
          "more screen lines than rows are refused");
 
+  // More promoted lines than any screen holds: the client would append one line
+  // per promoted line, so a frame moving the screen by 10^12 lines as Promote is a
+  // hang, not a scroll.
+  TerminalHostFrame promotes_past_a_screen = base;
+  promotes_past_a_screen.previous_top = 0;
+  promotes_past_a_screen.screen_top = 1'000'000'000'000;
+  promotes_past_a_screen.scrollback = {{TerminalHostRun::Kind::Promote, 1'000'000'000'000}};
+  Expect(!DecodeTerminalHostFrame(encode(promotes_past_a_screen)).has_value(),
+         "promoted lines beyond one screen are refused");
+  TerminalHostFrame promotes_a_screen = base;
+  promotes_a_screen.previous_top = 0;
+  promotes_a_screen.screen_top = terminal::kMaxHostTerminalDimension + 5;
+  promotes_a_screen.scrollback = {{TerminalHostRun::Kind::Promote, terminal::kMaxHostTerminalDimension},
+                                  {TerminalHostRun::Kind::Gap, 5}};
+  Expect(DecodeTerminalHostFrame(encode(promotes_a_screen)).has_value(),
+         "a whole screen of promoted lines (and a gap past it) decodes");
+
   TerminalHostFrame grew_with_runs = base;
   grew_with_runs.screen_top = 1;
   Expect(!DecodeTerminalHostFrame(encode(grew_with_runs)).has_value(),

@@ -5,7 +5,8 @@
 //
 // Invariants: a successful decode re-encodes to bytes that decode again to the same
 // encoding (nothing dropped, invented or altered on a second pass); a frame never
-// holds more screen lines than rows, nor a cursor outside them; a scrollback page
+// holds more screen lines than rows, nor a cursor outside them, nor more promoted
+// lines than a screen holds (the client loops over them); a scrollback page
 // never holds more lines than its caller allowed. Run with `-malloc_limit_mb=512`:
 // a count the decoder trusts before checking it shows up as an allocation far
 // larger than the input, which no output invariant can see.
@@ -31,6 +32,14 @@ void Frame(std::string_view bytes) {
   }
   if (frame->screen_keep.size() > frame->rows || frame->screen_lines.size() > frame->rows ||
       frame->cursor_row >= frame->rows || frame->cursor_column >= frame->columns) {
+    std::abort();
+  }
+  // The client appends a line per promoted line: never more than one screen.
+  std::uint64_t promoted = 0;
+  for (const TerminalHostRun& run : frame->scrollback) {
+    promoted += run.kind == TerminalHostRun::Kind::Promote ? run.count : 0;
+  }
+  if (promoted > kMaxHostTerminalDimension) {
     std::abort();
   }
   std::string once;
