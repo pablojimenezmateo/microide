@@ -979,6 +979,7 @@ add_test(NAME microide_kernel_link_probe COMMAND microide_kernel_link_probe)
 # tools/build-server.sh); dev and sanitizer builds link it normally so every lane
 # covers it.
 add_executable(microide-server
+  src/server/GitStatusSampler.cpp
   src/server/ListeningPorts.cpp
   src/server/ProcessActivity.cpp
   src/server/ProcessTable.cpp
@@ -1563,6 +1564,7 @@ add_executable(microide_kernel_tests
   tests/MirrorSyncMatrixTests.cpp
   tests/RemoteProjectTests.cpp
   tests/ProjectIdTests.cpp
+  src/server/GitStatusSampler.cpp
   src/server/ListeningPorts.cpp
   src/server/ProcessActivity.cpp
   src/server/ProcessTable.cpp

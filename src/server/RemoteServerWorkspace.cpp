@@ -260,7 +260,7 @@ void RemoteServer::InstallGitHandlers(Connection& connection) {
       tree->git_last_pushed.reset();  // a new subscriber holds nothing: push in full
       if (!tree->git_sampler && !tree->closing.load()) {
         tree->git_sampler = std::make_unique<GitStatusSampler>(
-            tree->tree.root(), std::chrono::milliseconds(1000), [this, tree]() {
+            tree->tree.root(), std::chrono::seconds(30), [this, tree]() {
               ScheduleGitStatus(*tree);
               // A HEAD move with no worktree batch after it (a checkout whose files
               // were all published before it moved) is still announced.

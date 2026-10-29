@@ -25,6 +25,13 @@ class GitRepositoryMetadataTracker {
   void Reset();
   void SetProjectRoot(const std::filesystem::path& project_root);
   std::vector<RepositoryChange> SampleChanges();
+  // Every directory whose entries the fingerprint reads: the project root (where
+  // `.git` appears or goes), the gitdir (HEAD, index), the common gitdir
+  // (packed-refs) and the directory of the branch ref HEAD names. A change to any
+  // file a sample compares is an entry of one of these being created, written or
+  // renamed over, so watching them is enough to know when to sample. Recomputed
+  // per call: a checkout moves the branch ref's directory.
+  std::vector<std::filesystem::path> WatchedDirectories() const;
 
  private:
   // What the tracker compares between samples to decide whether the repository

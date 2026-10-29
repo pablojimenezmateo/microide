@@ -8,6 +8,7 @@
 #include "project/remote/RemoteProtocol.h"
 #include "project/remote/RemoteServerClient.h"
 #include "project/remote/RemoteServerPaths.h"
+#include "server/GitStatusSampler.h"
 #include "server/ListeningPorts.h"
 #include "server/ProcessTable.h"
 #include "util/JsonValue.h"
@@ -571,6 +572,61 @@ void TestAProcessTableWithNothingRunningSleeps() {
   Expect(woke <= 1, "an idle table does not poll: woke " + std::to_string(woke) + " times in 1.5 s");
 }
 
+// The git sampler is event-driven (TD-2026-10-28-418 item 4): it notices a commit,
+// a commit on a branch checked out since it started and a repository created under
+// it, each well inside a safety interval it never reaches here -- and between them
+// its thread sleeps. It stat-polled once a second, an idle server's largest wakeup
+// source.
+void TestTheGitSamplerSleepsUntilTheRepositoryMoves() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "repo";
+  std::filesystem::create_directories(root);
+  std::mutex mutex;
+  std::condition_variable moved;
+  int changes = 0;
+  server::GitStatusSampler sampler(root, std::chrono::hours(1), [&] {
+    std::lock_guard lock(mutex);
+    ++changes;
+    moved.notify_all();
+  });
+  const auto count = [&] {
+    std::lock_guard lock(mutex);
+    return changes;
+  };
+  const auto expect_past = [&](int seen, const std::string& what) {
+    std::unique_lock lock(mutex);
+    Expect(moved.wait_for(lock, std::chrono::seconds(5), [&] { return changes > seen; }), what);
+  };
+  const auto git = [&](std::vector<std::string> args, const std::string& what) {
+    for (const char* config : {"user.email=t@t", "user.name=t", "commit.gpgsign=false"}) {
+      args.insert(args.begin(), config);
+      args.insert(args.begin(), "-c");
+    }
+    RequireGitCommandSuccess(root, args, what);
+  };
+
+  int seen = count();
+  git({"init", "-q", "-b", "main"}, "init");
+  git({"commit", "-q", "--allow-empty", "-m", "one"}, "first commit");
+  expect_past(seen, "a repository created under the root is noticed");
+  std::this_thread::sleep_for(std::chrono::milliseconds(400));  // the burst settles
+  const long before = ThreadSwitches("srv-git");
+  Expect(before >= 0, "the sampler names its thread");
+  std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+  const long woke = ThreadSwitches("srv-git") - before;
+  Expect(woke <= 1, "an unmoving repository is not polled: woke " + std::to_string(woke) + " times in 1.5 s");
+  seen = count();
+  git({"commit", "-q", "--allow-empty", "-m", "two"}, "second commit");
+  expect_past(seen, "a commit is noticed");
+  seen = count();
+  git({"checkout", "-q", "-b", "feature/nested"}, "checkout a nested branch");
+  expect_past(seen, "a checkout is noticed");
+  std::this_thread::sleep_for(std::chrono::milliseconds(400));
+  seen = count();
+  git({"commit", "-q", "--allow-empty", "-m", "three"}, "commit on the new branch");
+  expect_past(seen, "a commit on the branch checked out since is noticed");
+}
+
 // A connection that dies before the hello carries the host's own reason. The
 // attach command's stderr went wherever the editor's did, so a server refusing to
 // start ("... has mode 0775 ...; a parent of the socket directory must ...")
@@ -685,6 +741,8 @@ void RegisterRemoteServerTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteServer/ConcurrentCallersCreateTheSocketDirTogether",
           TestConcurrentCallersCreateTheSocketDirTogether);
   AddTest(tests, "RemoteServer/AProcessTableWithNothingRunningSleeps", TestAProcessTableWithNothingRunningSleeps);
+  AddTest(tests, "RemoteServer/TheGitSamplerSleepsUntilTheRepositoryMoves",
+          TestTheGitSamplerSleepsUntilTheRepositoryMoves);
   AddTest(tests, "RemoteServer/ListeningPortsSourcesAgreeOnTheLiveHost",
           TestListeningPortsSourcesAgreeOnTheLiveHost);
   AddTest(tests, "RemoteServer/PortsSubscribePushesANewListener", TestPortsSubscribePushesANewListener);

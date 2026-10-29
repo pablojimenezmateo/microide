@@ -597,7 +597,7 @@ bucket on a fake clock) and `ProjectChangeRedraw/AHeldChangeBatchIsAppliedByTheS
 (the wiring; fails with the idle-wait term removed). A sustained stream now repaints
 at most ~4 times a second, so the 16 s slow-link sync's 176 frames bound to ~68.
 
-### TD-2026-10-28-418 — the remote link's idle wakeups and memory, measured end to end: what was fixed, and what is left. [PARTLY RESOLVED 2026-10-28 — open: the client's per-file state, allocator slack after a first sync, the git sampler's polling]
+### TD-2026-10-28-418 — the remote link's idle wakeups and memory, measured end to end: what was fixed, and what is left. [PARTLY RESOLVED 2026-10-29 — open: the rest of the client's per-file state, allocator slack after a first sync]
 
 Measured with `tools/qa/remote.py` W (idle) and X (live), loopback host, this
 repository (4,767 files, 36 MB) unless stated. Per thread now: every remote and
@@ -715,10 +715,18 @@ Left open:
    once into the next vector. 15,000 files: 8.8 -> 6.2 MB in use. Left: the hash
    cache (`cache_`) is keyed by a third copy of every path; keying it by the row
    would save another ~1 MB there.
-4. **The git sampler stat-polls once a second** per watched tree (HEAD, the branch
+4. ~~**The git sampler stat-polls once a second** per watched tree (HEAD, the branch
    ref, packed-refs, the index): ~0.01% CPU, but it is the server's largest idle
    wakeup source. An inotify watch on `.git` and `refs/heads` would make it
-   event-driven.
+   event-driven.~~ RESOLVED 2026-10-29: `GitStatusSampler` sleeps on inotify watches
+   of the directories `GitRepositoryMetadataTracker::WatchedDirectories` names (the
+   root, for `.git` itself; the gitdir; the common gitdir; the branch ref's
+   directory, re-resolved after every sample so a checkout moves it), samples once a
+   burst settles (20 ms quiet, at most 250 ms), and keeps a 30 s safety sample for
+   what no watch sees. `RemoteServer/TheGitSamplerSleepsUntilTheRepositoryMoves`
+   (an init, a commit, a checkout to a nested branch and a commit there, each
+   noticed with the safety interval at an hour; idle, at most one wakeup in 1.5 s --
+   five with the interval at 300 ms).
 5. ~~**Live, X (agent churn: four host agents for 15 s):** the client spent 1.5 s of
    CPU over 20 s against the server's 0.6 s.~~ Broken down 2026-10-28, per thread:
    `mirror-sync` 0.13 s; the main thread 0.77 s and the sixteen llvmpipe threads

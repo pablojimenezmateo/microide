@@ -2,6 +2,7 @@
 
 #include "project/GitMetadataSource.h"
 
+#include <algorithm>
 #include <string>
 #include <system_error>
 
@@ -148,6 +149,32 @@ std::vector<RepositoryChange> GitRepositoryMetadataTracker::SampleChanges() {
   }
   baseline_ = current;
   return changes;
+}
+
+std::vector<std::filesystem::path> GitRepositoryMetadataTracker::WatchedDirectories() const {
+  std::vector<std::filesystem::path> directories;
+  if (project_root_.empty()) {
+    return directories;
+  }
+  const auto add = [&directories](std::filesystem::path directory) {
+    if (std::find(directories.begin(), directories.end(), directory) == directories.end()) {
+      directories.push_back(std::move(directory));
+    }
+  };
+  add(project_root_);
+  const std::optional<std::filesystem::path> git_dir = internal::ResolveGitDirectory(project_root_);
+  if (!git_dir.has_value()) {
+    return directories;
+  }
+  add(git_dir->lexically_normal());
+  const std::filesystem::path common_dir = ResolveCommonDir(*git_dir);
+  add(common_dir);
+  if (const std::optional<std::string> ref =
+          SymbolicRefFromHeadLine(internal::ReadFirstLineOfGitFile(*git_dir / "HEAD"));
+      ref.has_value()) {
+    add((common_dir / *ref).parent_path().lexically_normal());
+  }
+  return directories;
 }
 
 std::optional<GitRepositoryMetadataTracker::MetadataFingerprint>
