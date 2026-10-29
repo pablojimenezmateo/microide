@@ -1045,7 +1045,15 @@ void TestRemoveMirrorDimsForAMirrorDeletedOutsideTheEditor() {
              },
              std::chrono::seconds(10), std::chrono::milliseconds(10)),
          "closed, its mirror is removable");
-  std::filesystem::remove_all(mirror.parent_path());  // outside the editor
+  // Outside the editor, as `rm -rf` would: the closed project's engine may still
+  // be finishing a state write (a temp file and a rename) in that directory, and
+  // the throwing remove_all failed the test when the temp file went first ("cannot
+  // remove all: No such file or directory", CI 2026-10-29).
+  for (int attempt = 0; attempt < 100 && std::filesystem::exists(mirror.parent_path()); ++attempt) {
+    std::error_code ignored;
+    std::filesystem::remove_all(mirror.parent_path(), ignored);
+  }
+  Expect(!std::filesystem::exists(mirror.parent_path()), "the mirror is gone from disk");
   Expect(WorkspaceShellTestAccess::ExecuteMenuAction(shell, ActionId::RemoteRemoveMirror), "the row runs");
   Expect(WorkspaceShellTestAccess::QuickPick(shell).items.empty(), "the pick finds nothing to remove");
   SDL_Event escape{};
