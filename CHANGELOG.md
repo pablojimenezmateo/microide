@@ -291,6 +291,10 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Changed
 
+- **The sidebar widens as far as you drag it.** It stopped at 520 px whatever the
+  window's size, so a deep tree or a long search hit could not be read whole; it
+  now takes everything but the editor's minimum width.
+
 - The bottom panel's terminal tab, pane and panel logic moved from `WorkspaceShell`
   onto `TerminalPanelService`, which owns the state edits; the shell supplies only
   session launch, redraw requests and the clipboard/selection glue. The per-session

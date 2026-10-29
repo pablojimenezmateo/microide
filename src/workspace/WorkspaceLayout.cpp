@@ -20,7 +20,6 @@ constexpr float kResizeHandleThickness = kWorkspaceResizeHandleThickness;
 constexpr float kScrollbarThickness = kWorkspaceScrollbarThickness;
 constexpr float kScrollbarInset = kWorkspaceScrollbarInset;
 constexpr float kScrollbarMinThumbLength = kWorkspaceScrollbarMinThumbLength;
-constexpr float kMaxSidebarWidth = kWorkspaceMaxSidebarWidth;
 constexpr float kMinEditorAreaWidth = kWorkspaceMinEditorAreaWidth;
 constexpr float kMinEditorAreaHeight = kWorkspaceMinEditorAreaHeight;
 constexpr float kBottomPanelHeaderHeight = kWorkspaceBottomPanelHeaderHeight;
@@ -354,11 +353,12 @@ namespace {
 constexpr float kSideSurfaceMinWidth = 120.0f;
 }  // namespace
 
+// No fixed ceiling: the sidebar may take everything but the editor's minimum, so a
+// deep tree or a long search hit can be read whole. It used to stop at 520 px
+// whatever the window's width.
 float ClampSidebarWidth(float width, float window_width) {
   const float viable_min_width = kSideSurfaceMinWidth;
-  const float max_width = std::min(
-      kMaxSidebarWidth,
-      std::max(viable_min_width, window_width - kMinEditorAreaWidth - kDivider));
+  const float max_width = std::max(viable_min_width, window_width - kMinEditorAreaWidth - kDivider);
   return std::clamp(width, viable_min_width, max_width);
 }
 

@@ -97,6 +97,10 @@ void TestWorkspaceSharedLayoutHelpers() {
          "sidebar width stops at the width its header controls need");
   Expect(ClampSidebarWidth(700.0f, 800.0f) == 519.0f,
          "sidebar width should leave room for the minimum editor width");
+  Expect(ClampSidebarWidth(1200.0f, 2560.0f) == 1200.0f,
+         "on a wide window the sidebar widens past the old 520 px ceiling");
+  Expect(ClampSidebarWidth(3000.0f, 2560.0f) == 2560.0f - 280.0f - 1.0f,
+         "and stops only where the editor keeps its minimum width");
   Expect(ClampBottomPanelHeight(50.0f, 240.0f) == 52.0f,
          "bottom panel height should clamp to the available content height");
 }

@@ -279,7 +279,6 @@ inline constexpr float kWorkspaceResizeHandleThickness = 6.0f;
 inline constexpr float kWorkspaceScrollbarThickness = 10.0f;
 inline constexpr float kWorkspaceScrollbarInset = 2.0f;
 inline constexpr float kWorkspaceScrollbarMinThumbLength = 24.0f;
-inline constexpr float kWorkspaceMaxSidebarWidth = 520.0f;
 inline constexpr float kWorkspaceMaxRightPaneWidth = 520.0f;
 // Out-of-the-box pane sizes. These are what a fresh project gets, what a session
 // restore falls back to when the persisted value is unusable, and what

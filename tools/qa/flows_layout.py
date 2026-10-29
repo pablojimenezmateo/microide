@@ -238,8 +238,39 @@ def flow_chrome_commands(app: q.App) -> None:
                 layout_sane(app, f"after Toggle Full Screen ({state})")
 
 
+def flow_sidebar_wide(app: q.App) -> None:
+    """The sidebar widens as far as the editor's minimum allows, not to a fixed
+    520 px: a deep tree or a long search hit can be read whole. Dragged past where
+    the old ceiling stopped it, then into the editor's minimum, then back; every
+    frame on the way is checked against a full repaint."""
+    def sidebar_width() -> float:
+        return app.ui()["surfaces"]["sidebar"][2]
+
+    window_width = app.size[0]
+    for target in (900, window_width - 50, 300):
+        x, y = app.center(app.element("divider:sidebar"))
+        app.drag(x, y, target, y, steps=10)
+        app.settle(0.3)
+        app.check(f"drag the sidebar divider to x={target}")
+    x, y = app.center(app.element("divider:sidebar"))
+    app.drag(x, y, 900, y, steps=10)
+    app.settle(0.3)
+    width = sidebar_width()
+    app.expect(width > 800, f"the sidebar widens past the old 520 px ceiling (width {width})")
+    x, y = app.center(app.element("divider:sidebar"))
+    app.drag(x, y, window_width - 20, y, steps=10)
+    app.settle(0.3)
+    editor = app.ui()["surfaces"]["editorSurface"]
+    app.expect(editor[2] >= 270, f"and stops where the editor keeps its minimum width (editor {editor})")
+    x, y = app.center(app.element("divider:sidebar"))
+    app.drag(x, y, 300, y, steps=10)
+    app.settle(0.3)
+    app.check("the sidebar dragged back")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "groups-move": flow_groups_move,
     "resize-overlays": flow_resize_overlays,
     "chrome-commands": flow_chrome_commands,
+    "sidebar-wide": flow_sidebar_wide,
 }
