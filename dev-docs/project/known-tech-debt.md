@@ -541,6 +541,19 @@ loaded with four sanitizer builds; still not reproduced.
    updates the ref HEAD names (reflogs off too), and the gitdir is watched. The
    test pins it (an orphan `later/orphan`, its ref written by `update-ref`).
 
+### TD-2026-10-29-424 — `qa-remote` F: a save after the ssh link is killed reaches the host only after 90 s in the full suite. [OPEN — reproduced, predates 2026-10-29]
+
+`tools/qa/remote.py` scenario F kills the host's ssh ControlMasters, waits for the
+Reconnecting row (there in 0.02 s), saves, and expects the edit on the host within
+90 s; in a full run it is not there at 90 s, on the loopback host and over the 60 ms
+link alike (`tools/run-checks.sh qa-remote`). Alone (`remote.py A B F`) it lands in
+0.36 s. The session-start binaries (eccb230d4, app and static server) fail it the
+same way in a full run, so it predates the 2026-10-29 sweep. Leads: F kills EVERY
+ssh master whose command line names the host, including ones earlier scenarios (T,
+V, P) left behind; and the scenarios before it (Q's many conflicts, P's stop-server
+then reconnect) leave state a reconnect has to settle first. Bisect by removing
+scenarios ahead of F.
+
 ### TD-2026-10-29-423 — nine sites asked whether a relative path climbs out with a `".."` text prefix; a folder named `..cache` read as outside, and a folder copied into it copied itself. [RESOLVED 2026-10-29]
 
 Found reading the tree's drag-and-drop (TD-386) for edge cases. The copy guard in
