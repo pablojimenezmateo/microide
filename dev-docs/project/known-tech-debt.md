@@ -459,6 +459,52 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-29-421 — the tree-operation matrix: a folder deleted here never left the host, a save of a file the host deleted stayed "unsent" forever, and a conflict under a folder the host moved away could not be settled. [RESOLVED 2026-10-29 — every cell of local × remote op tested, both orderings]
+
+Found one at a time on the real project (tempo on worky), then all at once by a
+matrix test. The host had archived an openspec change (`changes/x/` renamed to
+`changes/archive/<date>-x/`); the four files under it the user had edited came up
+as conflicts, and Take Remote on each failed with *"cannot open changes/x: No such
+file or directory"* -- so they could never be settled. Asking the full question
+(`tests/MirrorSyncMatrixTests.cpp`: a local edit / create / delete / rename / move
+of a directory / delete of a directory against a remote one on the same file or
+its directory, the local one made live against a stale base and made offline then
+replayed through the journal on reconnect, every cell ending with no error, no
+conflict left, equal trees and no bytes lost without a conflict) found four more:
+
+- **A missing parent directory was an error, not "nothing there".** `OpenParent`
+  reported ENOENT on a directory on the way as an error while every caller treats a
+  missing last component as absent. Read, delete, set-aside and the source of a
+  rename now answer as for a missing file (`TreeFiles/AMissingDirectoryIsNothingThere`).
+- **A refused update created the parents first.** A save into a folder the host
+  had moved away was refused (right) but left an empty `changes/x/` behind on the
+  host. A write whose precondition names bytes opens its parents without creating
+  them; a missing one is the conflict.
+- **A folder deleted here never went from the host.** The host was asked to delete
+  the directory as one entry, which fails on any non-empty one; the error toast
+  named it and the files stayed. `DeleteTreeNow` deletes each file under its own
+  base, all in one round trip, then the directories bottom-up; a file the host
+  changed since is refused and parks as *deleted locally, changed on remote* (no
+  silent put-back, no silent loss), one the host removed already is gone on both
+  sides, and a directory holding more than the mirror knew of (a file the host made
+  since) stays, as a conflict the next sync shows rather than an error.
+- **A save the host never received, of a file it deleted meanwhile, stayed "unsent"
+  forever with no row.** `ReconcileDeleteLocked` returned without replaying a
+  pending push the host no longer listed; it is in the plan now, refused against
+  its base and parked as a conflict -- or, with no base (a file made offline), it
+  lands. The status no longer counts a conflicted push as unsent as well.
+- **A refused rename was replayed as a push** once the first fix landed, which put
+  the renamed copy -- and the folder the host had archived -- back on the host on
+  its own. It parks now (`conflict`, not `push_pending`): Keep Local puts it on the
+  host there, Take Remote drops it here; both sides renaming to the same name agree.
+
+The one-sided row says which side deleted the file and offers Keep Local / Take
+Remote only; Merge asked for anyway answers "nothing to merge". QA:
+`tools/qa/remote.py` Y runs the archived-folder, deleted-while-edited and
+folder-delete shapes against the real host. The matrix keeps rename-versus-delete
+and move-versus-delete as the user's call (parked), never auto-settled: no bytes
+are lost either way, and the intent is not the engine's to guess.
+
 ### TD-2026-10-29-420 — files the host changed while the user edited nothing came up as Keep Mine / Take Host's conflicts after a restart. [RESOLVED 2026-10-29 — a watched pull's base was never saved, and quit never saved it either]
 
 Reported on a real project (tempo on worky): after a night of host-side commits,

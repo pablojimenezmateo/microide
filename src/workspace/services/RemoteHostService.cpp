@@ -705,7 +705,12 @@ void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, P
   // branch checked out on the host makes dozens at once) whose Keep All Local and
   // Take All Remote settle every one of them, and whose Manage… opens the
   // Conflicts view (§ 7.9b) to choose per file.
-  std::vector<std::string> conflicts = entry.project->engine().Conflicts();
+  std::vector<remote::MirrorSyncEngine::Conflict> details = entry.project->engine().ConflictDetails();
+  std::vector<std::string> conflicts;
+  conflicts.reserve(details.size());
+  for (const remote::MirrorSyncEngine::Conflict& conflict : details) {
+    conflicts.push_back(conflict.path);
+  }
   const std::string summary_key = "remote.conflicts." + tree.string();
   const auto row_key = [&](const std::string& path) {
     return "remote.conflict." + (tree / path).string();
@@ -735,23 +740,31 @@ void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, P
     const std::string absolute = (tree / path).string();
     entry.conflict_rows.push_back(path);
     if (operations_.notify) {
+      // One side deleted it: there is nothing to merge, and the row says which
+      // side so the two buttons read right (Keep Local on a file the remote
+      // deleted puts it back there; Take Remote removes it here).
+      const remote::MirrorSyncEngine::Conflict& detail = details.front();
+      std::vector<NotificationAction> actions;
+      if (detail.on_host && detail.in_mirror) {
+        actions.push_back(NotificationAction{.label = "Merge",
+                                             .id = ActionId::RemoteResolveConflict,
+                                             .args = {absolute, "merge"},
+                                             .keep_open = true});
+      }
+      actions.push_back(NotificationAction{.label = "Keep Local",
+                                           .id = ActionId::RemoteResolveConflict,
+                                           .args = {absolute, "local"}});
+      actions.push_back(NotificationAction{.label = "Take Remote",
+                                           .id = ActionId::RemoteResolveConflict,
+                                           .args = {absolute, "remote"}});
       operations_.notify(NotificationService::Request{
           .tone = NotificationService::Tone::Warning,
           .key = row_key(path),
-          .message = path + " changed locally and on " + host,
+          .message = !detail.on_host     ? path + " deleted on " + host + ", changed locally"
+                     : !detail.in_mirror ? path + " deleted locally, changed on " + host
+                                         : path + " changed locally and on " + host,
           .sticky = true,
-          .actions = {
-              NotificationAction{.label = "Merge",
-                                 .id = ActionId::RemoteResolveConflict,
-                                 .args = {absolute, "merge"},
-                                 .keep_open = true},
-              NotificationAction{.label = "Keep Local",
-                                 .id = ActionId::RemoteResolveConflict,
-                                 .args = {absolute, "local"}},
-              NotificationAction{.label = "Take Remote",
-                                 .id = ActionId::RemoteResolveConflict,
-                                 .args = {absolute, "remote"}},
-          },
+          .actions = std::move(actions),
       });
     }
   }
@@ -1073,6 +1086,18 @@ bool RemoteHostService::MergeConflict(const std::filesystem::path& path) {
     return false;
   }
   const std::filesystem::path mirror_file = path.lexically_normal();
+  for (const remote::MirrorSyncEngine::Conflict& conflict : entry->project->engine().ConflictDetails()) {
+    if (conflict.path == relative && (!conflict.on_host || !conflict.in_mirror)) {
+      if (operations_.notify) {
+        operations_.notify(NotificationService::Request{
+            .tone = NotificationService::Tone::Info,
+            .message = relative + ": nothing to merge, " +
+                       (conflict.on_host ? "it was deleted locally" : "it was deleted on " + entry->host) +
+                       " -- Keep Local or Take Remote"});
+      }
+      return true;
+    }
+  }
   entry->project->engine().FetchMergeSides(
       relative, [this, mirror_file](std::optional<remote::MirrorSyncEngine::MergeSides> sides, std::string error) {
         mailbox_.Post([this, mirror_file, sides = std::move(sides), error = std::move(error)]() {

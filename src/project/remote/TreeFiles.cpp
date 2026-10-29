@@ -533,6 +533,11 @@ FileOpResult DeleteTreeEntry(const std::filesystem::path& root, std::string_view
       ::fstatat(parent->dir.Get(), parent->name.c_str(), &info, AT_SYMLINK_NOFOLLOW) == 0 &&
       S_ISDIR(info.st_mode);
   if (::unlinkat(parent->dir.Get(), parent->name.c_str(), directory ? AT_REMOVEDIR : 0) != 0) {
+    if (directory && (errno == ENOTEMPTY || errno == EEXIST)) {
+      // The directory holds something the caller did not account for: refused,
+      // as a write over other bytes is, never deleted whole.
+      return Conflict(std::nullopt);
+    }
     return Error(Errno("cannot delete " + std::string(path)));
   }
   return Ok(std::nullopt);

@@ -2175,6 +2175,20 @@ existing compare surface; saving the local side from there pushes with the
 remote's current hash as the precondition, so a second remote change in between
 becomes a second conflict, not a lost write.
 
+**A tree operation made here is checked on the host like a save.** A rename or a
+delete of one file is made under that file's base; a directory's move under
+nothing (its files were each the user's to move, and the host's newer bytes move
+with it); a directory's delete is each file under its own base, in one round trip,
+then the directories bottom-up. Refused -- the host edited, deleted or moved the
+file since -- the operation is never undone silently and the host's bytes are
+never lost: a refused delete parks as *deleted locally, changed on remote*, a
+refused rename parks the renamed copy as a conflict at its new path (Keep Local
+puts it on the host there, Take Remote drops it here), and a file the host had
+already removed is simply gone on both sides. A path under a directory the host
+has moved away is a path with nothing at it, as a missing file is, not an error.
+`tests/MirrorSyncMatrixTests.cpp` holds every local operation against every
+remote one, live and replayed from the journal.
+
 **A parked conflict** (a refused push, a pull held off a dirty path) is a sticky
 notification row naming the file, with **Merge**, **Keep Local** and **Take
 Remote**; nothing is written either way until one is chosen. **From two

@@ -1560,6 +1560,7 @@ add_executable(microide_kernel_tests
   tests/TreeFilesTests.cpp
   tests/MirrorStoreTests.cpp
   tests/MirrorSyncEngineTests.cpp
+  tests/MirrorSyncMatrixTests.cpp
   tests/RemoteProjectTests.cpp
   tests/ProjectIdTests.cpp
   src/server/ListeningPorts.cpp

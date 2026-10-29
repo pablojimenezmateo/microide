@@ -663,6 +663,98 @@ void TestConflictMergesThreeWaysToTheHost() {
 // Take All Remote settle every one and whose Manage… opens the Conflicts view:
 // the files, each ticked with Enter, and Keep Local / Take Remote / Merge rows that
 // act on the ticked ones. Down to one conflict, that one gets its own row again.
+// A conflict one side deleted -- the host archived the folder the file was in
+// while it was edited here -- has nothing to merge. Its row says which side
+// deleted it and offers only the two choices that mean something; a Merge asked
+// for anyway (the command, the Conflicts view) says so instead of failing with an
+// error toast; and Take Remote settles it -- which it could not do at all while a
+// missing parent directory read as an error on the host (TD-2026-10-29-421).
+void TestAOneSidedConflictOffersNoMerge() {
+  FakeSshHost host;
+  const std::filesystem::path host_root = host.home / "src" / "onesided";
+  WriteFile(host_root / "changes/x/design.md", "base\n");
+  const std::string target = "dev@fake-onesided-" + std::to_string(::getpid());
+  WorkspaceShell shell;
+  PointAtFakeHost(shell, host);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open " + target + ":" + host_root.string()),
+         "the command is accepted");
+  const std::filesystem::path mirror = WorkspaceShellTestAccess::ProjectRoot(shell);
+  const std::filesystem::path file = mirror / "changes/x/design.md";
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return std::filesystem::exists(file) &&
+                      WorkspaceShellTestAccess::ProjectRemoteStatus(shell).stages.size() == 3 &&
+                      WorkspaceShellTestAccess::ProjectRemoteStatus(shell).stages[2].text.rfind("synced ", 0) == 0;
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(10)),
+         "the mirror fills");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-disconnect " + target), "disconnects");
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("local ");
+  Expect(WorkspaceShellTestAccess::SaveTab(shell, 0), "the offline save succeeds locally");
+  std::filesystem::create_directories(host_root / "changes/archive");
+  std::filesystem::rename(host_root / "changes/x", host_root / "changes/archive/2026-10-29-x");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-reconnect " + target), "reconnects");
+
+  const std::string row_key = "remote.conflict." + file.string();
+  const auto find = [&](const std::string& key) -> const workspace::NotificationService::Notification* {
+    for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+      if (row.key == key) {
+        return &row;
+      }
+    }
+    return nullptr;
+  };
+  const auto messages = [&] {
+    std::string all;
+    for (const auto& n : WorkspaceShellTestAccess::ActiveNotifications(shell)) all += " | " + n.message;
+    return all;
+  };
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return find(row_key) != nullptr;
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(10)),
+         "a conflict row appears:" + messages());
+  {
+    const auto* row = find(row_key);
+    std::string labels;
+    for (const auto& action : row->actions) labels += " " + action.label;
+    Expect(row->message.find("deleted on " + target) != std::string::npos,
+           "the row says the remote deleted it: " + row->message);
+    Expect(row->actions.size() == 2 && row->actions[0].label == "Keep Local" &&
+               row->actions[1].label == "Take Remote",
+           "and offers Keep Local and Take Remote, no Merge:" + labels);
+  }
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-resolve " + file.string() + " merge"),
+         "a Merge asked for anyway is answered");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return messages().find("nothing to merge") != std::string::npos;
+             },
+             std::chrono::seconds(10), std::chrono::milliseconds(10)),
+         "it says there is nothing to merge:" + messages());
+  for (const auto& n : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+    Expect(n.tone != workspace::NotificationService::Tone::Error, "and raises no error: " + n.message);
+  }
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-resolve " + file.string() + " remote"),
+         "Take Remote is accepted");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return !std::filesystem::exists(file) && find(row_key) == nullptr;
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+         "the local copy goes as the remote's did, and the row with it:" + messages());
+  for (const auto& n : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+    Expect(n.tone != workspace::NotificationService::Tone::Error, "no error after Take Remote: " + n.message);
+  }
+}
+
 void TestConflictsBatchIntoOneRowAndTheConflictsView() {
   FakeSshHost host;
   const std::filesystem::path host_root = host.home / "src" / "many";
@@ -1684,6 +1776,7 @@ void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostService/ConflictMergesThreeWaysToTheHost", TestConflictMergesThreeWaysToTheHost);
   AddTest(tests, "RemoteHostService/ConflictsBatchIntoOneRowAndTheConflictsView",
           TestConflictsBatchIntoOneRowAndTheConflictsView);
+  AddTest(tests, "RemoteHostService/AOneSidedConflictOffersNoMerge", TestAOneSidedConflictOffersNoMerge);
   AddTest(tests, "RemoteHostService/APortThatStartsListeningIsForwarded", TestAPortThatStartsListeningIsForwarded);
   AddTest(tests, "RemoteHostService/ProjectHomeStatusBlockFollowsTheConnection",
           TestProjectHomeStatusBlockFollowsTheConnection);

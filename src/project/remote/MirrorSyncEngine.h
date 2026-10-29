@@ -280,6 +280,9 @@ class MirrorSyncEngine {
   std::size_t RemoteCountLocked() const;
   // `on_done` runs on the worker once every pull of the plan has landed.
   void Execute(Plan plan, std::function<void()> on_done);
+  // TreeOpNow's delete: every file at or under `path` on the host, each under its
+  // own base, then the directories; false when the host is out of reach.
+  bool DeleteTreeNow(const std::string& path);
   // SaveLocked when pulls have written bytes no save records yet (tree_unsynced_).
   // A pull updates its entry's base in memory only: a pipeline's or a priority
   // pull's end saves, never each batch (one tree flush per save).

@@ -324,8 +324,11 @@ bool MirrorSyncEngine::TreeOpNow(const LocalTreeOp& op) {
     }
     return true;
   }
-  // A rename or delete of one file is checked against its base; a directory's
-  // (no entry of its own) against nothing — its files were each the user's to move.
+  if (op.kind == LocalTreeOp::Kind::Delete) {
+    return DeleteTreeNow(op.path);
+  }
+  // A rename of one file is checked against its base; a directory's (no entry of
+  // its own) against nothing — its files were each the user's to move.
   Precondition expect = Precondition::Anything();
   {
     std::lock_guard lock(mutex_);
@@ -364,10 +367,13 @@ bool MirrorSyncEngine::TreeOpNow(const LocalTreeOp& op) {
     status_.error = result.error;
     return true;
   }
-  // Refused: the host's copy moved since our base. The local tree already shows
-  // the operation; the next sync restores the host's version at the old path (an
-  // agent's newer bytes are never lost to a delete of older ones), and a renamed
-  // file waits at its new path as a conflict.
+  // Refused: the host's copy moved since our base (edited there, or gone -- deleted,
+  // or its directory moved away). The local tree already shows the rename; the
+  // next sync restores the host's version at the old path when it has one (an
+  // agent's newer bytes are never lost to a move of older ones), and the renamed
+  // file waits at its new path as a conflict the user settles: Keep Local puts it
+  // on the host there, Take Remote drops it here. Parked, not pending: replayed
+  // as a push it landed on its own, and put a folder the host had archived back.
   if (rename) {
     for (const std::string& path : affected) {
       MirrorStore::Entry moved = entries[path];
@@ -375,7 +381,7 @@ bool MirrorSyncEngine::TreeOpNow(const LocalTreeOp& op) {
       moved.remote.path = to;
       moved.has_remote = false;
       moved.base.reset();
-      moved.push_pending = true;
+      moved.push_pending = false;
       moved.conflict = true;
       entries[to] = std::move(moved);
     }
@@ -848,7 +854,8 @@ void MirrorSyncEngine::RecountLocked() {
         ++status.stale;
       }
     }
-    status.dirty += entry.push_pending ? 1 : 0;
+    // A conflicted push is a conflict, not also an unsent save (StateOf says the same).
+    status.dirty += entry.push_pending && !entry.conflict ? 1 : 0;
     status.conflicts += entry.conflict ? 1 : 0;
   }
   ListPendingLocked();
@@ -1037,6 +1044,14 @@ bool MirrorSyncEngine::ReconcileDeleteLocked(std::map<std::string, MirrorStore::
       if (!entry.local_only && !entry.push_pending) {
         entry.conflict = true;  // gone on the host, kept here: the user decides
       }
+    }
+    if (entry.push_pending) {
+      // A save the host never received, of a file it no longer lists (deleted
+      // there meanwhile) -- or a file made here while offline that it never had.
+      // Replayed like any journaled push: against its base it is refused and
+      // parks as "deleted on remote, changed locally"; with no base it lands.
+      // Left out of the plan, it stayed "unsent" forever with no row (TD-421).
+      plan.pushes.push_back(it->first);
     }
     return false;
   }
@@ -1728,6 +1743,124 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
     }
   }
   Changed();
+}
+
+bool MirrorSyncEngine::DeleteTreeNow(const std::string& path) {
+  using TreeOp = RemoteWorkspace::TreeOp;
+  using Status = RemoteWorkspace::WriteResult::Status;
+  // The host's side of a delete made here: every file at or under `path`, each
+  // under its own base, all on the wire at once (one round trip, not one per
+  // file), then the directories bottom-up. A file the host changed since its base
+  // is refused and stays there, as a conflict the user settles ("deleted locally,
+  // changed on remote" -- never a silent put-back, and never a silent loss of the
+  // host's newer bytes); one the host removed already is simply gone on both
+  // sides. A directory that still holds something afterwards (a refused file, or
+  // one the host made since) stays, and the next sync brings its contents here.
+  // Deleting the directory as one entry on the host used to fail on any that was
+  // not empty, so a folder deleted here never went from there (TD-421).
+  struct Item {
+    std::string path;
+    Precondition expect;
+    RemoteWorkspace::WriteResult result;
+  };
+  struct Batch {
+    std::mutex mutex;
+    std::condition_variable done;
+    std::vector<Item> items;
+    std::size_t outstanding = 0;
+  };
+  auto batch = std::make_shared<Batch>();
+  {
+    std::lock_guard lock(mutex_);
+    const auto& entries = store_.entries();
+    const std::string prefix = path + "/";
+    for (auto it = entries.lower_bound(path);
+         it != entries.end() && (it->first == path || it->first.rfind(prefix, 0) == 0); ++it) {
+      const MirrorStore::Entry& entry = it->second;
+      // Never fetched: the manifest's hash is the version being deleted unseen.
+      const Precondition expect =
+          entry.base.has_value() ? Precondition::Of(*entry.base)
+          : entry.has_remote && entry.remote.kind == ManifestEntryKind::File ? Precondition::Of(entry.remote.hash)
+                                                                             : Precondition::Anything();
+      batch->items.push_back(Item{.path = it->first, .expect = expect, .result = {}});
+    }
+  }
+  // The batch outlives this call: a late answer (after the timeout below) lands in
+  // it, not in a frame that is gone.
+  batch->outstanding = batch->items.size();
+  for (std::size_t i = 0; i < batch->items.size(); ++i) {
+    workspace_.ApplyTreeOp(TreeOp::Delete, batch->items[i].path, {}, batch->items[i].expect,
+                           [batch, i](RemoteWorkspace::WriteResult result) {
+                             std::lock_guard lock(batch->mutex);
+                             batch->items[i].result = std::move(result);
+                             --batch->outstanding;
+                             batch->done.notify_all();
+                           });
+  }
+  {
+    std::unique_lock lock(batch->mutex);
+    if (!batch->done.wait_for(lock, std::chrono::seconds(120), [&] { return batch->outstanding == 0; })) {
+      return false;  // retried whole when the host answers again
+    }
+  }
+  bool unreachable = false;
+  bool kept = false;
+  std::set<std::string> directories;  // bottom-up below
+  const bool directory = batch->items.empty() || batch->items.size() > 1 || batch->items.front().path != path;
+  {
+    std::lock_guard path_lock(store_.PathLock(path));
+    std::lock_guard lock(mutex_);
+    auto& entries = store_.entries();
+    for (Item& item : batch->items) {
+      if (directory) {
+        for (std::size_t slash = item.path.rfind('/'); slash != std::string::npos && slash > path.size();
+             slash = item.path.rfind('/', slash - 1)) {
+          directories.insert(item.path.substr(0, slash));
+        }
+      }
+      if (item.result.unreachable) {
+        unreachable = true;
+        continue;
+      }
+      MirrorStore::Entry* entry = store_.Find(item.path);
+      if (entry == nullptr) {
+        continue;
+      }
+      if (item.result.status == Status::Ok ||
+          (item.result.status == Status::Conflict && !item.result.hash.has_value())) {
+        entries.erase(item.path);  // deleted now, or gone there already
+      } else if (item.result.status == Status::Conflict) {
+        entry->conflict = true;  // other bytes there: the user decides
+        entry->push_pending = false;
+        kept = true;
+      } else {
+        status_.error = item.result.error;
+      }
+    }
+  }
+  if (unreachable) {
+    return false;
+  }
+  if (directory) {
+    directories.insert(path);
+    // Deepest first: a parent goes only once its children have.
+    std::vector<std::string> ordered(directories.begin(), directories.end());
+    std::sort(ordered.begin(), ordered.end(),
+              [](const std::string& a, const std::string& b) { return a.size() > b.size(); });
+    for (const std::string& dir : ordered) {
+      const auto result = workspace_.ApplyTreeOpSync(TreeOp::Delete, dir, {}, Precondition::Anything());
+      if (result.unreachable) {
+        return false;
+      }
+      // Conflict: the host holds more there than the mirror knew of (a refused
+      // file, one made there since); the sync shows it. Not an error.
+      if (result.status == Status::Error && !kept) {
+        std::lock_guard lock(mutex_);
+        status_.error = result.error;
+      }
+    }
+  }
+  return true;
 }
 
 void MirrorSyncEngine::DeleteNow(const std::vector<std::string>& paths, bool undoable) {
