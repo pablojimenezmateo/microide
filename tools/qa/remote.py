@@ -945,7 +945,23 @@ class Suite:
         """The editor's own idle cost on the local fixture, before any remote
         project: the baseline the client's remote figures are measured against."""
         self.settle_quiet()
+        self.info("W.heap-local", self.heap_line())
         return idle_cost_over(self.app.proc.pid, self.IDLE_WINDOW_S)
+
+    def heap_line(self) -> str:
+        """The client's allocator split (status `heap`): live bytes, and bytes freed
+        but kept -- what TD-2026-10-28-418 is about -- plus the mirror's file count."""
+        heap = self.app.query("status").get("heap") or {}
+        files = self.remote().get("files", 0) if self.mirror is not None else 0
+        # mallinfo's "free" counts chunks whose pages malloc_trim already gave back:
+        # the resident anonymous memory is what the free list actually costs.
+        anon = 0
+        with open(f"/proc/{self.app.proc.pid}/status") as status:
+            for line in status:
+                if line.startswith("RssAnon:"):
+                    anon = int(line.split()[1]) // 1024
+        return (f"in use {heap.get('inUse', 0) / 1048576:.1f} MB, free {heap.get('free', 0) / 1048576:.1f} MB, "
+                f"resident anon {anon} MB" + (f", {files} mirrored files" if files else ""))
 
     def run_idle_cost(self, local: IdleCost) -> None:
         app = self.app
@@ -1069,6 +1085,9 @@ class Suite:
         for project in app.query("projects"):
             if project.get("host") == host.name:
                 self.mirror = Path(project["root"])
+        if self.runs("X") and self.mirror is not None:
+            self.settle_quiet()
+            self.info("X.heap-after-first-sync", self.heap_line())
         self.record("A.open-sync", ok and self.mirror is not None and self.mirror.exists(),
                     f"{msg} in {dt:.1f}s; mirror={self.mirror}")
         if self.mirror is None:
@@ -1421,6 +1440,12 @@ def main() -> int:
     print("host reset:", host.reset())
     fixture = q.make_fixture(out / "fixture")
     env = {"MICROIDE_SERVER_BINARY": server}
+    # The redraw verifier renders every partial frame twice and allocates a full
+    # frame's pixels each time: on by default (stale paint is a finding here too),
+    # but it inflates every memory figure W and X report -- ~9 MB of the heap's free
+    # list after a first sync. MQA_REMOTE_MEASURE=1 turns it off for a memory read.
+    if os.environ.get("MQA_REMOTE_MEASURE") == "1":
+        env["MICROIDE_QA_VERIFY_REDRAW"] = "0"
     ssh_args = ["--set", "remote.ssh_command", f"ssh -F {SSH_CONFIG}"] if SSH_CONFIG else []
     results: list[tuple[str, str, str]] = []
     findings: list[q.Finding] = []
