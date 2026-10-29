@@ -107,14 +107,19 @@ void TestAsIntClampsOutOfRangeDouble() {
   Expect(nan_value.AsInt(-7) == -7, "AsInt() on NaN must return the fallback, not trap");
 }
 
-// A lone low surrogate must be rejected, not emitted as invalid (CESU-8) UTF-8.
-// This mirrors the parser's existing rejection of a lone high surrogate and keeps
-// every host string satisfying the valid-UTF-8 invariant.
-void TestLoneLowSurrogateRejected() {
-  Expect(!ParseJson("\"\\udc00\"").has_value(),
-         "lone low surrogate should be rejected as a parse error");
-  Expect(!ParseJson("\"\\ud800\"").has_value(),
-         "lone high surrogate should stay rejected");
+// A lone surrogate is never emitted as invalid (CESU-8) UTF-8, which keeps every
+// host string satisfying the valid-UTF-8 invariant -- and it does not fail the
+// document either: it decodes to U+FFFD, as a JavaScript string holding one
+// renders. A rejection dropped a whole JSON-RPC message, and Node-based language
+// servers escape lone surrogates since ES2019 (RFC 8259 § 8.2 leaves it to us).
+void TestLoneSurrogateDecodesToReplacement() {
+  for (const char* text : {"\"\\udc00\"", "\"\\ud800\"", "[\"\\uD800\\n\"]"}) {
+    const auto lone = ParseJson(text);
+    Expect(lone.has_value(), std::string("a lone surrogate does not fail the document: ") + text);
+  }
+  Expect(ParseJson("\"\\udc00\"")->AsString() == "\xEF\xBF\xBD", "a lone low surrogate is U+FFFD");
+  Expect(ParseJson("[\"\\uD800\\n\"]").value()[0].AsString() == "\xEF\xBF\xBD\n",
+         "a lone high surrogate is U+FFFD and the escape after it is read on its own");
   // A well-formed surrogate pair must still decode and stay valid UTF-8.
   const auto pair = ParseJson("\"\\ud83d\\ude00\"");  // U+1F600
   Expect(pair.has_value() && pair->IsString(), "valid surrogate pair should parse");
@@ -414,7 +419,8 @@ void TestDoubleSerializesInShortestRoundTripForm() {
 // Grammar conformance table derived from the JSONTestSuite y_/n_ cases (RFC 8259):
 // every accepted text is well-formed JSON and every rejected one is not. The parser
 // feeds LSP/DAP/control-channel decoding, so a lenient accept or a strict reject
-// here is a protocol bug, not a style choice.
+// here is a protocol bug, not a style choice. Lone surrogates are i_ cases there
+// (RFC 8259 § 8.2: implementation-defined) and are pinned on their own below.
 void TestParseJsonConformanceTable() {
   static constexpr std::string_view kValid[] = {
       "[]", " [] ", "{}", "[1]", "[1,2]", "{\"a\":1}", "{\"a\":\"b\",\"a\":\"c\"}",
@@ -426,7 +432,7 @@ void TestParseJsonConformanceTable() {
   };
   static constexpr std::string_view kInvalid[] = {
       "[1,]", "{\"a\":1,}", "[,1]", "[1,,2]", "{1:1}", "{\"a\" 1}", "{\"a\":}", "[\"\\x00\"]",
-      "[\"\\a\"]", "[\"\\uD800\"]", "[\"\\uD800\\n\"]", "[\"\\uDC00\"]", "[\"\\u12\"]",
+      "[\"\\a\"]", "[\"\\u12\"]",
       "[\"\"]x", "{\"a\":1} \"x\"", "[1] [2]", "01", "-01", "1.", ".5", "+1", "1e", "1e+",
       "1eE2", "0x42", "Infinity", "NaN", "- 1", "1 000", "[1", "{\"a\":1", "\"abc", "'a'",
       "[\f1]", "[\"a\tb\"]", "[\xe2\x80\xa8]", "tru", "nul", "True", "", "  ", "[1]x",
@@ -478,7 +484,7 @@ void RegisterJsonValueTests(std::vector<TestCase>& tests) {
   AddTest(tests, "JsonValue/AsIntClampsOutOfRangeDouble", TestAsIntClampsOutOfRangeDouble);
   AddTest(tests, "JsonValue/OutOfRangeIntegerFallsBackToDouble",
           TestOutOfRangeIntegerFallsBackToDouble);
-  AddTest(tests, "JsonValue/LoneLowSurrogateRejected", TestLoneLowSurrogateRejected);
+  AddTest(tests, "JsonValue/LoneSurrogateDecodesToReplacement", TestLoneSurrogateDecodesToReplacement);
   AddTest(tests, "JsonValue/StringEscapeRunsRoundTrip", TestStringEscapeRunsRoundTrip);
   AddTest(tests, "JsonValue/NonFiniteDoubleSerializesAsNull",
           TestNonFiniteDoubleSerializesAsNull);

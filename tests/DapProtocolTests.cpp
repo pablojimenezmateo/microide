@@ -115,6 +115,24 @@ void TestFramingIsIndependentOfChunkBoundaries() {
   }
 }
 
+// A lone UTF-16 surrogate escape is decoded as U+FFFD, not a parse failure. A
+// failed parse drops the whole JSON-RPC message, so a Node-based language server
+// (whose JSON.stringify escapes a lone surrogate as `\udXXX`) that put one in a
+// hover or a single completion item lost the entire response. The decoded text
+// stays valid UTF-8, and a real pair still decodes to its code point.
+void TestFramerKeepsAMessageWithALoneSurrogate() {
+  microide::workspace::JsonRpcMessageFramer framer;
+  framer.Append(FramedMessage(R"({"id":7,"result":"a\ud800b\udc00c\ud83d\ude00\ud83d\u0041"})"));
+  const std::vector<std::string> got = DrainFramer(framer);
+  Expect(got.size() == 1, "the message arrives");
+  const auto parsed = microide::util::ParseJson(
+      R"({"s":"a\ud800b\udc00c\ud83d\ude00\ud83d\u0041"})");
+  Expect(parsed.has_value(), "a lone surrogate does not fail the document");
+  const std::string text = parsed.has_value() ? (*parsed)["s"].AsString() : std::string();
+  Expect(text == "a\xEF\xBF\xBD" "b\xEF\xBF\xBD" "c\xF0\x9F\x98\x80\xEF\xBF\xBD" "A",
+         "lone halves become U+FFFD, a pair its code point, and the escape after a lone high one is read");
+}
+
 void TestFramerResyncsAfterABadFrame() {
   const std::string good = FramedMessage(R"({"jsonrpc":"2.0","id":1})");
 
@@ -679,6 +697,7 @@ void RegisterDapProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "JsonRpcFraming/IndependentOfChunkBoundaries",
           TestFramingIsIndependentOfChunkBoundaries);
   AddTest(tests, "JsonRpcFraming/ResyncsAfterABadFrame", TestFramerResyncsAfterABadFrame);
+  AddTest(tests, "JsonRpcFraming/KeepsAMessageWithALoneSurrogate", TestFramerKeepsAMessageWithALoneSurrogate);
 }
 
 }  // namespace microide::tests

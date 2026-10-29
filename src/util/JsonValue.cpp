@@ -218,27 +218,32 @@ struct Parser {
             if (d < 0) return std::nullopt;
             cp = (cp << 4) | static_cast<unsigned int>(d);
           }
-          // Surrogate pair
+          // A lone surrogate -- a high one not followed by `\u` and a low one,
+          // or a low one on its own -- is not a scalar value, and emitting it
+          // would be invalid UTF-8 (CESU-8 `ED A0 80`) that poisons every consumer
+          // assuming util::IsValidUtf8. It becomes U+FFFD, as a JavaScript string
+          // with one renders. Rejecting it failed the whole document, and the
+          // JSON-RPC framing then dropped the whole MESSAGE: a language server on
+          // Node (which escapes a lone surrogate as `\udXXX` since ES2019) that
+          // put one in a hover or one completion item lost the entire response.
           if (cp >= 0xD800 && cp <= 0xDBFF) {
-            if (pos + 6 > src.size() || src[pos] != '\\' || src[pos + 1] != 'u') {
-              return std::nullopt;
-            }
-            pos += 2;
             unsigned int lo = 0;
-            for (int i = 0; i < 4; ++i) {
-              const int d = HexDigitValue(Advance());
-              if (d < 0) return std::nullopt;
-              lo = (lo << 4) | static_cast<unsigned int>(d);
+            bool paired = pos + 6 <= src.size() && src[pos] == '\\' && src[pos + 1] == 'u';
+            for (std::size_t i = 0; paired && i < 4; ++i) {
+              const int d = HexDigitValue(src[pos + 2 + i]);
+              paired = d >= 0;
+              lo = (lo << 4) | static_cast<unsigned int>(d < 0 ? 0 : d);
             }
-            if (lo < 0xDC00 || lo > 0xDFFF) return std::nullopt;
-            cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+            paired = paired && lo >= 0xDC00 && lo <= 0xDFFF;
+            if (paired) {
+              pos += 6;
+              cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+            } else {
+              cp = 0xFFFD;  // the escape after it, if any, is read on its own
+            }
+          } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
+            cp = 0xFFFD;
           }
-          // A lone low surrogate (0xDC00–0xDFFF) never followed a high surrogate
-          // above, so it is not a valid scalar value. Emitting it would produce
-          // invalid UTF-8 (a CESU-8 ED B0 80 sequence) and poison every consumer
-          // that assumes host strings satisfy util::IsValidUtf8. Reject it, matching
-          // the lone-high-surrogate rejection above.
-          if (cp >= 0xDC00 && cp <= 0xDFFF) return std::nullopt;
           AppendUtf8(result, static_cast<char32_t>(cp));
           break;
         }
