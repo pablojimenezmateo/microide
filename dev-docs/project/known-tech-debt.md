@@ -918,8 +918,13 @@ Left open:
    so ~5.6 MB (~1.2 KB a file) is the remote's own. `MirrorStore`'s entries are 1.7 MB
    of it (355 B a path, measured by populating a store with the tree's real paths:
    `sizeof(Entry)` 216 B plus the map node and a 51-byte average path). The other
-   ~3.9 MB is not attributed yet; the client's copy of the last manifest's rows and
-   the engine's per-path side tables are the next to measure. Moving `renamed_from`,
+   ~3.9 MB is not attributed yet. The client keeps no copy of the manifest's rows
+   (checked); the engine's per-path side tables and the UI-side state are next.
+   Attribute it with heaptrack (installed on the dev machine, 1.5.0): run the app
+   under `heaptrack` through a first sync -- `remote.py X` with
+   `MQA_REMOTE_MEASURE=1` -- and read the allocations still live at the end, by
+   call site, with `heaptrack_print`. The mallinfo/RssAnon figures above say how
+   much; heaptrack says where. Moving `renamed_from`,
    `unacknowledged` and `link_target` behind one pointer would save ~80 B a path
    (~0.4 MB here): not taken for that alone.
 3. ~~**Per-file state, server:** ~0.6 KB per file in use (8.8 MB at 15,000 files).
