@@ -106,6 +106,8 @@ class GitBlameService {
   // no request is queued or running.
   bool HasReadyResults() const;
   bool WorkerIdle() const;
+  // How many files hold an invalidation generation.
+  std::size_t TrackedFileCount() const;
 
   struct Impl;
   std::unique_ptr<Impl> impl_;

@@ -472,7 +472,9 @@ struct GitBlameService::Impl {
     PendingRequest pending_request;
     {
       std::lock_guard lock(mutex);
-      const std::uint64_t file_generation = CurrentFileGenerationLocked(file_key);
+      // Registered here, the one place a file's blame is asked for, so that
+      // InvalidatePath bumps only files something could hold a stale answer for.
+      const std::uint64_t file_generation = file_generations.try_emplace(file_key, 0).first->second;
       const std::uint64_t request_clear_generation = clear_generation;
       const std::string& request_key =
           BuildRequestKey(file_key, window, file_generation, request_clear_generation);
@@ -617,7 +619,16 @@ struct GitBlameService::Impl {
 
     const std::string file_key = BuildFileKey(root, *relative_path);
     std::lock_guard lock(mutex);
-    ++file_generations[file_key];
+    // Only a file blame was requested for has a generation to overtake: every
+    // request registers its file first. `++file_generations[key]` inserted one
+    // entry per path ever invalidated -- every file a watcher batch, a first remote
+    // sync or a checkout touched -- and nothing but Clear() removed them (~1 MB
+    // after a 4,780-file first sync, growing for the whole session).
+    const auto generation = file_generations.find(file_key);
+    if (generation == file_generations.end()) {
+      return;
+    }
+    ++generation->second;
     file_caches.erase(file_key);
     published.erase(file_key);
     latest_request_keys.erase(file_key);
@@ -1048,6 +1059,14 @@ bool GitBlameService::ApplyReadyResults() {
 
 bool GitBlameService::HasReadyResults() const {
   return impl_ != nullptr && impl_->HasReadyResults();
+}
+
+std::size_t GitBlameService::TrackedFileCount() const {
+  if (impl_ == nullptr) {
+    return 0;
+  }
+  std::lock_guard lock(impl_->mutex);
+  return impl_->file_generations.size();
 }
 
 bool GitBlameService::WorkerIdle() const {

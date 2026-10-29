@@ -20,6 +20,9 @@ struct GitBlameServiceTestAccess {
   static bool WorkerIdle(const microide::project::GitBlameService& service) {
     return service.WorkerIdle();
   }
+  static std::size_t TrackedFileCount(const microide::project::GitBlameService& service) {
+    return service.TrackedFileCount();
+  }
 };
 
 }  // namespace microide::tests

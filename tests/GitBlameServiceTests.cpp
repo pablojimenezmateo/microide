@@ -333,6 +333,44 @@ void TestGitBlameServiceInvalidateDropsStaleCache() {
          "invalidated blame snapshot should reflect the new commit metadata");
 }
 
+// Invalidation is called for every path a watcher batch reports, and used to
+// insert a generation per path whether or not blame had ever been asked for it:
+// a 4,780-file first remote sync left ~1 MB of them, and nothing but Clear()
+// removed one. Only a file blame was requested for is tracked now.
+void TestGitBlameServiceInvalidateTracksOnlyRequestedFiles() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  const auto file_path = repo_path / "main.cpp";
+  WriteFile(file_path, "int main() {\n  return 1;\n}\n");
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "Initial blame", "initial blame");
+
+  GitBlameService service;
+  const GitBlameRequest request{
+      .root = repo_path,
+      .absolute_path = file_path,
+      .visible_start_line = 1,
+      .visible_line_count = 1,
+      .total_line_count = 3,
+      .dirty = false,
+  };
+  // Blame for one file first: the service builds its state on the first request,
+  // and an invalidation before that is a no-op that would make this vacuous.
+  const auto snapshot = WaitForSnapshot(service, request);
+  Expect(snapshot.eligible && snapshot.lines.size() == 1, "the requested file loads");
+
+  for (int index = 0; index < 1000; ++index) {
+    service.InvalidatePath(repo_path, repo_path / ("never-blamed-" + std::to_string(index) + ".txt"));
+  }
+  Expect(GitBlameServiceTestAccess::TrackedFileCount(service) <= 1,
+         "invalidating files nobody asked blame for tracks none of them: " +
+             std::to_string(GitBlameServiceTestAccess::TrackedFileCount(service)));
+  service.InvalidatePath(repo_path, file_path);
+  Expect(GitBlameServiceTestAccess::TrackedFileCount(service) == 1,
+         "and invalidating the requested one bumps its generation in place");
+  service.Stop();
+}
+
 void TestGitBlameServiceInvalidateDropsInFlightResults() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -641,6 +679,8 @@ void RegisterGitBlameServiceTests(std::vector<TestCase>& tests) {
           TestGitBlameServiceUsesWorkingTreeContentsForSavedTrackedChanges);
   AddTest(tests, "GitBlame/HandlesQuotedAndSpacedPaths",
           TestGitBlameServiceHandlesQuotedAndSpacedPaths);
+  AddTest(tests, "GitBlame/InvalidateTracksOnlyRequestedFiles",
+          TestGitBlameServiceInvalidateTracksOnlyRequestedFiles);
   AddTest(tests, "GitBlame/InvalidateDropsStaleCache",
           TestGitBlameServiceInvalidateDropsStaleCache);
   AddTest(tests, "GitBlame/InvalidateDropsInFlightResults",

@@ -956,7 +956,19 @@ Left open:
    under `heaptrack` through a first sync -- `remote.py X` with
    `MQA_REMOTE_MEASURE=1` -- and read the allocations still live at the end, by
    call site, with `heaptrack_print`. The mallinfo/RssAnon figures above say how
-   much; heaptrack says where. Moving `renamed_from`,
+   much; heaptrack says where.
+   *Attributed 2026-10-29* with heaptrack over `remote.py X` (`MQA_REMOTE_MEASURE=1`,
+   `MICROIDE_BIN` a wrapper that runs only the app under heaptrack -- the driver also
+   execs the binary for `control-send`, which overwrote a plain wrapper's trace):
+   79 MB live at the kill, 58 MB of it the GL driver, SDL and fonts under
+   `Application::Initialize`. Remote-specific: the mirror store 1.34 MB
+   (`ReconcileRowLocked`, the 355 B a path above), **`GitBlameService::InvalidatePath`
+   1.03 MB -- a leak, fixed**: it inserted a generation for every path a watcher
+   batch named, blamed or not, and only `Clear()` removed them, so it grew with every
+   file a sync, a checkout or an agent touched for the whole session; only files blame
+   was requested for are tracked now (`GitBlame/InvalidateTracksOnlyRequestedFiles`).
+   Then `DecodeManifestRows` 0.25 MB and `FrameDecoder::Feed` 0.2 MB (buffers kept
+   after the sync), the rest under 0.05 MB each. Moving `renamed_from`,
    `unacknowledged` and `link_target` behind one pointer would save ~80 B a path
    (~0.4 MB here): not taken for that alone.
 3. ~~**Per-file state, server:** ~0.6 KB per file in use (8.8 MB at 15,000 files).
