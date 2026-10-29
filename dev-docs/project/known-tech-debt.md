@@ -466,7 +466,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-29-422 — the 2026-10-29 subsystem sweep: what it found, fixed and measured, and what it left. [OPEN — items 1-3 below; 4 resolved]
+### TD-2026-10-29-422 — the 2026-10-29 subsystem sweep: what it found, fixed and measured, and what it left. [OPEN — items 2-3 below; 1 and 4 resolved]
 
 A whole-repo pass taken by mechanical sweeps rather than reading (this tree's
 reading hit rate is low; validation-traps § Mechanical Sweeps), each aimed at a
@@ -517,8 +517,11 @@ loaded with four sanitizer builds; still not reproduced.
 
 **Left open:**
 
-1. **A single watcher batch past 1,024 changes still loses language-server
-   events.** The coalescer collapses it to a rescan with `file_changes_truncated`,
+1. ~~**A single watcher batch past 1,024 changes still loses language-server
+   events.**~~ RESOLVED 2026-10-29: the batch carries the changes past the cap
+   (`unitemized_file_changes`, bounded at 15 Ki more) for the servers alone; the
+   per-path apply keeps its cap. Past 16 Ki a server still misses changes.
+   Was: The coalescer collapses it to a rescan with `file_changes_truncated`,
    the apply re-checks open buffers, but `LspService::NotifyWatchedFileChanges`
    is told only the first 1,024 paths, so a large `git checkout` leaves clangd
    answering from a partly stale index for the rest. The cap predates the
