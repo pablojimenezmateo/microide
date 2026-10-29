@@ -566,9 +566,19 @@ check_coverage() {
     # versioned ones (Ubuntu ships llvm-cov-17, ...); they must match clang.
     llvm_tool() { command -v "$1" || ls /usr/bin/"$1"-[0-9]* 2>/dev/null | sort -V | tail -1; }
     profdata=$(llvm_tool llvm-profdata); cov=$(llvm_tool llvm-cov)
-    LLVM_PROFILE_FILE=coverage-shell.profraw ./microide/microide_tests
-    LLVM_PROFILE_FILE=coverage-kernel.profraw ./microide/microide_kernel_tests
-    "$profdata" merge -sparse coverage-shell.profraw coverage-kernel.profraw -o coverage.profdata
+    if [[ -z "$profdata" || -z "$cov" ]]; then
+      echo "run-checks: coverage needs llvm-profdata and llvm-cov matching clang (apt install llvm)" >&2
+      exit 1
+    fi
+    # %m, not one fixed name: the tests start instrumented children (forks of the
+    # test binary, the server they build) that inherit LLVM_PROFILE_FILE, and
+    # several writers to one file corrupted it -- the CI merge failed with "failed to
+    # uncompress data (zlib) / no profile can be merged". %m merges writers of the
+    # same binary under a lock and gives each binary its own file.
+    rm -f coverage-*.profraw
+    LLVM_PROFILE_FILE=coverage-shell-%m.profraw ./microide/microide_tests
+    LLVM_PROFILE_FILE=coverage-kernel-%m.profraw ./microide/microide_kernel_tests
+    "$profdata" merge -sparse coverage-*.profraw -o coverage.profdata
     "$cov" report ./microide/microide_tests \
       -object ./microide/microide_kernel_tests \
       -instr-profile=coverage.profdata \
