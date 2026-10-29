@@ -153,6 +153,35 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **Terminal programs draw as they would in xterm.** The terminal sets
+  `TERM=xterm-256color` and now implements what that entry advertises: box
+  borders drawn by ncurses (dialog, whiptail, mc, tig, htop) show as lines instead
+  of `lqqqk`; a run of one character sent as a repeat count (REP) and insert mode
+  are honoured; `reset` soft-resets the terminal; scrolling the whole screen with
+  `CSI S`/`CSI T` works on the main screen; a saved cursor comes back to the same
+  screen row after output scrolled (it used to land in scrollback), and a screen
+  clear right after a long burst of output no longer writes into history; origin
+  mode works on the main screen; deleting or erasing half of a wide (CJK) glyph
+  removes all of it; and deleting characters under a background colour no longer
+  leaves default-coloured gaps.
+
+- **A link the terminal wrapped is one link.** A URL or `path:line` that wrapped
+  at the terminal's width was a link only up to the wrap; the rest of it is now
+  part of the same link, underlined across the wrap, and clicking either part
+  opens it.
+
+- **Language servers hear about every file a large checkout changes.** Past the
+  first 1,024 changes in one burst they were told nothing, so go to definition
+  and diagnostics could answer from stale files after a big `git checkout`.
+
+- **One odd character no longer loses a language server's whole reply.** A hover
+  or completion carrying a lone UTF-16 surrogate (Node-based servers send one for
+  text with broken encoding) was dropped entirely; it now shows as `�`.
+
+- **A remote conflict with a file the host deleted says so from the start.** It
+  was first shown as changed on both sides, with a Merge button that could not
+  work, until the next sync corrected it.
+
 - **A folder named like `..cache` is inside its parent.** Copying a folder into its
   own `..cache` subfolder (Ctrl+drag, or Copy and Paste in the tree) copied it into
   its own copy until the path grew too long and then reported "Failed to copy"; it
