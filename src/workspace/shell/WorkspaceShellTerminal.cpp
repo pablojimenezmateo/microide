@@ -798,6 +798,7 @@ void WorkspaceShell::PrepareTerminalPanesForFrame(TerminalTabState& tab,
     pane->visible_lines_max_rows = visible_rows;
     pane->frame_cursor = pane->session.CursorSnapshot();
     pane->frame_line_count = line_count;
+    pane->frame_reverse_video = pane->session.screen_reverse_video();
     // The caret this frame paints against the one on screen: a cursor that hid or
     // moved without its rows changing (DECTCEM, a bare cursor move) left the old
     // caret painted in a pane nothing else repainted (QA monkey, seed 1).

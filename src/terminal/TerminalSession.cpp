@@ -540,9 +540,9 @@ std::size_t TerminalSession::cursor_column() const {
   return cursor_column_;
 }
 
-bool TerminalSession::cursor_visible() const {
+bool TerminalSession::screen_reverse_video() const {
   std::scoped_lock lock(mutex_);
-  return cursor_visible_;
+  return screen_reverse_video_;
 }
 
 TerminalCursorSnapshot TerminalSession::CursorSnapshot() const {

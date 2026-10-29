@@ -72,6 +72,8 @@ int TerminalSession::QueryPrivateModeStateLocked(int mode) const {
   switch (mode) {
     case 1:
       return application_cursor_keys_mode_ ? 1 : 2;
+    case 5:
+      return screen_reverse_video_ ? 1 : 2;
     case 6:
       return origin_mode_ ? 1 : 2;
     case 7:
@@ -109,6 +111,14 @@ void TerminalSession::HandlePrivateModeLocked(int mode, bool enabled) {
   switch (mode) {
     case 1:
       application_cursor_keys_mode_ = enabled;
+      return;
+    case 5:
+      // DECSCNM changes every cell on screen and no row's text, so the snapshot
+      // generation is what tells the UI to repaint.
+      if (screen_reverse_video_ != enabled) {
+        screen_reverse_video_ = enabled;
+        AdvanceSnapshotGenerationLocked();
+      }
       return;
     case 6:
       origin_mode_ = enabled;

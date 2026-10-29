@@ -625,6 +625,8 @@ struct TerminalPaneState {
   // damage covers; frame prep repaints the old and new rects when this moves.
   std::optional<SDL_FRect> painted_caret_rect;
   std::size_t frame_line_count = 0;
+  // DECSCNM as of this frame: paint swaps every cell's colours and the pane's fill.
+  bool frame_reverse_video = false;
   std::size_t visible_lines_first_row = 0;
   std::size_t visible_lines_max_rows = 0;
   int scroll_row = 0;

@@ -159,6 +159,19 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
         if (cursor_column_ < tab_stops_.size()) {
           tab_stops_[cursor_column_] = true;
         }
+      } else if (byte == 'c') {
+        // RIS, terminfo's rs1, so the first thing `reset` sends. xterm's full
+        // reset: back to the primary screen, every mode and the tab stops to
+        // their defaults, the screen cleared and the cursor home. Scrollback, the
+        // title and the shell's reported directory stay -- not terminal state.
+        SetAlternateScreenLocked(false, false);
+        ResetTerminalModesLocked();
+        tab_stops_.clear();
+        ResetScrollRegionLocked();
+        cursor_row_ = PrimaryScreenTopLocked();
+        cursor_column_ = 0;
+        EraseInDisplayLocked(2);
+        AdvanceSnapshotGenerationLocked();
       } else if (byte == 'Z') {
         SendBytesLocked("\x1b[?1;2c");
       } else if (byte == 'D' || byte == 'E') {

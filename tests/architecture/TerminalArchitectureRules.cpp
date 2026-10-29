@@ -144,7 +144,10 @@ RuleResult CheckTerminalSessionHeaderSize(const std::filesystem::path& repo_root
   // 307: +2, the G0/G1 charsets and DECSC's copy of them (DEC Special Graphics,
   // ncurses's box drawing); the type and its glyph table live in
   // TerminalScreenState.h.
-  constexpr std::size_t kCap = 307;
+  // 309: +2, DECSCNM's flag and its accessor (the dead cursor_visible() went to
+  // make room for the latter), and the mode reset RIS shares with a restart (see
+  // the Locked-helper cap's 45).
+  constexpr std::size_t kCap = 309;
   const std::filesystem::path path = repo_root / "src/terminal/TerminalSession.h";
   const std::size_t lines = CountFileLines(path);
   if (lines > kCap) {
@@ -186,7 +189,13 @@ RuleResult CheckTerminalSessionPrivateMethodCount(const std::filesystem::path& r
   // TerminalLine's cells vector and rebuilds it, so a per-frame or per-wheel-tick
   // re-snapshot allocated and freed one vector per visible row every time. One
   // buffer-reusing body now backs all of them.
-  constexpr std::size_t kCap = 44;
+  // 45: +1 for ResetTerminalModesLocked, on the same terms: RIS (`ESC c`, the
+  // first thing `reset` sends) was dropped, and needs the very mode reset a
+  // restart does. That list had already drifted as an inline block -- a restart
+  // kept DECSC's saved rendition and a DEC 2031 subscription from the last
+  // child -- so one list now serves both. RIS itself stays inline at its one
+  // dispatch site rather than taking a slot.
+  constexpr std::size_t kCap = 45;
   const std::filesystem::path path = repo_root / "src/terminal/TerminalSession.h";
   const std::string text = ReadRuleTarget(result, path);
   const std::regex locked_helper_pattern(R"((?:void|bool|std::size_t)\s+\w+Locked\s*\()");

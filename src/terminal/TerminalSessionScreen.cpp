@@ -655,32 +655,8 @@ void TerminalSession::ResetEmulationStateLocked() {
   osc_escape_pending_ = false;
   pending_clipboard_text_.reset();
 
-  // DEC/xterm private modes. auto_wrap_mode_ and cursor_visible_ default on;
-  // every other mode defaults off.
   use_alternate_screen_ = false;
-  mouse_tracking_normal_ = false;
-  mouse_tracking_drag_ = false;
-  mouse_tracking_any_ = false;
-  mouse_sgr_ext_mode_ = false;
-  application_cursor_keys_mode_ = false;
-  origin_mode_ = false;
-  auto_wrap_mode_ = true;
-  insert_mode_ = false;
-  last_glyph_length_ = 0;
-  charsets_ = {};
-  saved_charsets_ = {};
-  bracketed_paste_mode_ = false;
-  focus_event_mode_ = false;
-  cursor_visible_ = true;
-
-  // Negotiated protocol state. Stale Kitty-keyboard flags mis-encode Enter/Tab,
-  // and a stuck synchronized-output flag suppresses the first redraw wakes.
-  kitty_keyboard_flags_ = 0;
-  kitty_keyboard_stack_.clear();
-  synchronized_output_ = false;
-  sync_suppressed_wakes_ = 0;
-  cursor_shape_ = CursorShape::Block;
-  cursor_blinking_ = true;
+  ResetTerminalModesLocked();
   reported_working_directory_.clear();
   tab_stops_.clear();
 
@@ -691,9 +667,46 @@ void TerminalSession::ResetEmulationStateLocked() {
   alternate_screen_ = TerminalScreenState{};
   cursor_row_ = 0;
   cursor_column_ = 0;
+  ResetScrollRegionLocked();
+}
+
+void TerminalSession::ResetTerminalModesLocked() {
+  // DEC/xterm private modes. auto_wrap_mode_ and cursor_visible_ default on;
+  // every other mode defaults off. use_alternate_screen_ is the caller's: it
+  // names which grid lines_ holds.
+  mouse_tracking_normal_ = false;
+  mouse_tracking_drag_ = false;
+  mouse_tracking_any_ = false;
+  mouse_sgr_ext_mode_ = false;
+  application_cursor_keys_mode_ = false;
+  origin_mode_ = false;
+  auto_wrap_mode_ = true;
+  insert_mode_ = false;
+  last_glyph_length_ = 0;
+  charsets_ = {};
+  bracketed_paste_mode_ = false;
+  focus_event_mode_ = false;
+  cursor_visible_ = true;
+  screen_reverse_video_ = false;
+  color_scheme_updates_ = false;
+  current_style_ = TerminalStyle{};
+  current_link_ = 0;
+
+  // DECSC's saved state.
   saved_cursor_row_ = 0;
   saved_cursor_column_ = 0;
-  ResetScrollRegionLocked();
+  saved_style_ = TerminalStyle{};
+  saved_origin_mode_ = false;
+  saved_charsets_ = {};
+
+  // Negotiated protocol state. Stale Kitty-keyboard flags mis-encode Enter/Tab,
+  // and a stuck synchronized-output flag suppresses the first redraw wakes.
+  kitty_keyboard_flags_ = 0;
+  kitty_keyboard_stack_.clear();
+  synchronized_output_ = false;
+  sync_suppressed_wakes_ = 0;
+  cursor_shape_ = CursorShape::Block;
+  cursor_blinking_ = true;
 }
 
 void TerminalSession::ReseedForStartLocked(const std::filesystem::path& working_directory,

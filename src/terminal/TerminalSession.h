@@ -146,7 +146,9 @@ class TerminalSession {
   std::size_t columns() const;
   std::size_t cursor_row() const;
   std::size_t cursor_column() const;
-  bool cursor_visible() const;
+  // DECSCNM (`CSI ? 5 h`): the whole screen is drawn in reverse video. terminfo's
+  // `flash` sets it for 100 ms as the visual bell.
+  bool screen_reverse_video() const;
   TerminalCursorSnapshot CursorSnapshot() const;
   bool using_alternate_screen() const;
   CursorShape cursor_shape() const;
@@ -420,6 +422,9 @@ class TerminalSession {
   // differences on top (Start seeds the 24x80 geometry and the launch label,
   // Stop clears the label and keeps the geometry).
   void ResetEmulationStateLocked();
+  // The modes, rendition, character sets, saved cursor and negotiated protocol
+  // state a new child and RIS (`ESC c`) both start from. Leaves the screens alone.
+  void ResetTerminalModesLocked();
   // The rest of what a starting session needs, on top of ResetEmulationStateLocked:
   // the launch identity, a one-line buffer, the 24x80 seed geometry, and the wake /
   // snapshot bookkeeping. Start() and StartPlaceholderForTesting() were still
@@ -498,6 +503,7 @@ class TerminalSession {
   bool bracketed_paste_mode_ = false;
   bool focus_event_mode_ = false;
   bool cursor_visible_ = true;
+  bool screen_reverse_video_ = false;
   bool synchronized_output_ = false;
   // DEC mode 2031: the app wants `CSI ? 997 ; 1|2 n` when the colour scheme
   // flips between dark and light (Claude Code, neovim, helix follow the theme).

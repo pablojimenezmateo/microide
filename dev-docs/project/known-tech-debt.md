@@ -472,7 +472,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-29-425 — the terminal answered to `TERM=xterm-256color` without implementing what that entry advertises. [OPEN — items 1, 2 below; 3 resolved for ASCII, 4 and 5 resolved]
+### TD-2026-10-29-425 — the terminal answered to `TERM=xterm-256color` without implementing what that entry advertises. [OPEN — item 1 and 2's charsets below; 3 resolved for ASCII, 4 and 5 resolved, 2's DECSCNM resolved]
 
 Found by checking every string capability `infocmp -1 xterm-256color` lists
 against the CSI/ESC dispatchers, after a reading pass had already found DECSC
@@ -505,8 +505,18 @@ as two-sided (the `AOneSidedConflictOffersNoMerge` flake), and TD-424.
 
 1. **DECSLRM** (`smglp`/`smglr`, `CSI ? 69 h` + `CSI l ; r s`) is advertised and not
    implemented; ncurses uses it only when a program asks for margins.
-2. **DECSCNM** (`CSI ? 5 h`, terminfo's `flash`) is not drawn: a visual bell shows
-   nothing. And G2/G3 and multi-byte charset designations are parsed and ignored.
+2. ~~**DECSCNM** (`CSI ? 5 h`, terminfo's `flash`) is not drawn: a visual bell shows
+   nothing.~~ RESOLVED 2026-10-29: tracked, answered by DECRQM, carried on the host
+   wire (`kReverseVideo`), sampled per frame into the pane and painted as an XOR with
+   each cell's inverse plus the pane's fill; a toggle bumps the snapshot generation,
+   so the next frame of any cause repaints the pane. The same reading found **RIS
+   (`ESC c`) dropped** -- terminfo's rs1, the first thing `reset` sends -- so a
+   crashed program's alternate screen, modes, margins and rendition survived
+   `reset`; it is now xterm's full reset, through a mode reset shared with a
+   restart, which had itself drifted (a restarted shell kept DECSC's saved
+   rendition and a DEC 2031 subscription). `TerminalSession/FullResetAndReverseVideo`,
+   `TerminalHost/ClientMirrorsReverseVideo`, `WorkspaceShell/TerminalReverseVideoPaintsThePane`.
+   **Still open:** G2/G3 and multi-byte charset designations are parsed and ignored.
 3. ~~**REP's bound** is the screen's cell count,~~ RESOLVED 2026-10-29 for ASCII (a row
    per run write); a multibyte glyph still repeats per cell. Was: so `x` + `CSI 2147483647 b` costs one
    screenful of glyph writes per 12 bytes on the reader thread (xterm has no bound

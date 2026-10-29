@@ -95,6 +95,8 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   // Per-cell emphasis, in precedence order. An explicit selection outranks a find
   // hit: the user made it, and it is the one they are about to copy.
   enum class CellEmphasis : std::uint8_t { None, FindMatch, FindCurrent, Selection };
+  // Set per pane before its rows paint: DECSCNM (the visual bell's flash).
+  bool pane_reverse_video = false;
   const auto resolve_terminal_colors = [&](const terminal::TerminalStyle& style,
                                            CellEmphasis emphasis) {
     // The terminal model carries util::Rgba8 (it is kernel code and names no SDL
@@ -105,7 +107,8 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     SDL_Color background = style.background.has_value()
                                ? render::ToSdlColor(*style.background)
                                : theme_.surface_background;
-    if (style.inverse()) {
+    // DECSCNM reverses the whole screen, an explicitly inverse cell included.
+    if (style.inverse() != pane_reverse_video) {
       std::swap(foreground, background);
     }
     if (style.dim()) {
@@ -494,7 +497,12 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       }
       const bool is_active = pane_index == tab->active_pane;
       pane_emphasis_enabled = is_active;
+      pane_reverse_video = pane->frame_reverse_video;
       const SDL_FRect& body = rects.panes[pane_index];
+      if (pane_reverse_video) {
+        // The blank the rows do not cover takes the default foreground too.
+        FillRect(renderer, body, theme_.text_primary);
+      }
       const std::size_t line_count = pane->frame_line_count;
       const LogSurfaceLayout pane_layout =
           ComputeTerminalPaneLogLayout(body, panel_height, *pane, line_count);

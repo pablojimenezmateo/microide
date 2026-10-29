@@ -67,6 +67,8 @@ struct TerminalHostFrame {
   // The client must hold nothing of the previous screen (first frame, attach,
   // resize, screen switch): every Keep and Promote is invalid in this frame.
   static constexpr std::uint16_t kReset = 1u << 9;
+  // DECSCNM: the screen is drawn in reverse video.
+  static constexpr std::uint16_t kReverseVideo = 1u << 10;
 
   std::uint32_t rows = 24;
   std::uint32_t columns = 80;

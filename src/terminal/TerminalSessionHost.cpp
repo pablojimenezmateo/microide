@@ -495,6 +495,7 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
     }
     use_alternate_screen_ = alternate;
     cursor_visible_ = frame.has(TerminalHostFrame::kCursorVisible);
+    screen_reverse_video_ = frame.has(TerminalHostFrame::kReverseVideo);
     cursor_blinking_ = frame.has(TerminalHostFrame::kCursorBlinking);
     cursor_shape_ = frame.cursor_shape;
     mouse_tracking_normal_ = frame.has(TerminalHostFrame::kMouseNormal);
@@ -806,6 +807,7 @@ void TerminalSession::CaptureForHost(std::uint64_t from, std::size_t max_lines_b
   };
   flag(TerminalHostFrame::kAlternateScreen, use_alternate_screen_);
   flag(TerminalHostFrame::kCursorVisible, cursor_visible_);
+  flag(TerminalHostFrame::kReverseVideo, screen_reverse_video_);
   flag(TerminalHostFrame::kCursorBlinking, cursor_blinking_);
   flag(TerminalHostFrame::kMouseNormal, mouse_tracking_normal_);
   flag(TerminalHostFrame::kMouseDrag, mouse_tracking_drag_);

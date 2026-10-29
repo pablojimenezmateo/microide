@@ -322,6 +322,20 @@ void TestClientMirrorsTheAlternateScreen() {
   mirror.ExpectSame("back on the primary screen, scrollback intact");
 }
 
+// DECSCNM reaches a client: the flag rides the frame, and a toggle with no row
+// changed still ships one.
+void TestClientMirrorsReverseVideo() {
+  Mirror mirror(4, 16);
+  mirror.Write("$ ");
+  Expect(mirror.Sync(), "sync");
+  mirror.Write("\x1b[?5h");
+  Expect(mirror.Sync(), "a reverse-video toggle alone ships a frame");
+  Expect(mirror.client.screen_reverse_video(), "the client draws the screen reversed");
+  mirror.Write("\x1b[?5l");
+  Expect(mirror.Sync(), "and the toggle back ships one");
+  Expect(!mirror.client.screen_reverse_video(), "the client draws it normally again");
+}
+
 void TestClientMirrorsAResize() {
   Mirror mirror(6, 20);
   for (int i = 0; i < 20; ++i) {
@@ -671,6 +685,7 @@ void RegisterTerminalHostTests(std::vector<TestCase>& tests) {
           TestHostDecodersBoundALineCountByWhatTheyExpect);
   AddTest(tests, "TerminalHost/InputEventsRoundTrip", TestInputEventsRoundTrip);
   AddTest(tests, "TerminalHost/ClientMirrorsTheHostAsItScrolls", TestClientMirrorsTheHostAsItScrolls);
+  AddTest(tests, "TerminalHost/ClientMirrorsReverseVideo", TestClientMirrorsReverseVideo);
   AddTest(tests, "TerminalHost/ClientMirrorsClearsAndRewrites", TestClientMirrorsClearsAndRewrites);
   AddTest(tests, "TerminalHost/ClientMirrorsTheAlternateScreen", TestClientMirrorsTheAlternateScreen);
   AddTest(tests, "TerminalHost/ClientMirrorsAResize", TestClientMirrorsAResize);

@@ -493,6 +493,47 @@ void TestWorkspaceShellTerminalCaretBlinkRetainedRedrawPreservesGlyphEdges() {
 #endif
 }
 
+// DECSCNM (the `flash` visual bell) reverses the whole pane, the blank below the
+// text included, and a retained frame that arrives for something else (a caret
+// blink) paints it: the toggle changes no row, only the snapshot generation.
+void TestWorkspaceShellTerminalReverseVideoPaintsThePane() {
+  EnsureDummySdlVideo();
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "$ ");
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const SDL_FPoint blank = WorkspaceShellTestAccess::TerminalCellPoint(shell, 3, 20);
+  const auto pixel = [&]() {
+    return canvas.PixelAt(static_cast<int>(blank.x), static_cast<int>(blank.y));
+  };
+  const auto same = [](SDL_Color a, SDL_Color b) {
+    return a.r == b.r && a.g == b.g && a.b == b.b;
+  };
+  const SDL_Color normal = pixel();
+
+  // Any small damage outside the pane, as a caret blink elsewhere would be.
+  workspace::RenderInvalidation unrelated;
+  unrelated.rects.push_back(SDL_FRect{0.0f, 0.0f, 8.0f, 8.0f});
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?5h");
+  const auto on = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, unrelated);
+  Expect(on.count == 0, "the reversed pane is painted by the next frame: " + DescribePixelDiff(on));
+  Expect(!same(pixel(), normal), "the blank below the text takes the reversed colour");
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?5l");
+  const auto off = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, unrelated);
+  Expect(off.count == 0, "and the restored pane too: " + DescribePixelDiff(off));
+  Expect(same(pixel(), normal), "the pane is back to its normal colour");
+}
+
 void TestWorkspaceShellTypingReenablesTerminalTailFollow() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -2846,6 +2887,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalLeftClickOpensUrls);
   AddTest(tests, "WorkspaceShell/TerminalLinkUnderlinesOnHover", TestWorkspaceShellTerminalLinkUnderlinesOnHover);
   AddTest(tests, "WorkspaceShell/TerminalWrappedLinkIsOneLink", TestWorkspaceShellTerminalWrappedLinkIsOneLink);
+  AddTest(tests, "WorkspaceShell/TerminalReverseVideoPaintsThePane",
+          TestWorkspaceShellTerminalReverseVideoPaintsThePane);
   AddTest(tests, "WorkspaceShell/TerminalWrappedLinkPastTheWindowIsWhole",
           TestWorkspaceShellTerminalWrappedLinkPastTheWindowIsWhole);
   AddTest(tests, "WorkspaceShell/TerminalOsc8LinkClickOpensItsTarget",

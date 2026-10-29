@@ -2640,6 +2640,44 @@ void TestTerminalSessionPrimaryScrollsAndSoftReset() {
   Expect(TerminalSessionTestAccess::ScrollRegionBottom(session) == 3, "and the full-screen margins");
 }
 
+// RIS (`ESC c`) is the first thing terminfo's rs1 sends, so `reset` relies on it,
+// and it was dropped: the alternate screen, the modes, the margins and the
+// rendition a crashed full-screen program left behind all survived a `reset`.
+// DECSCNM (`CSI ? 5 h`, the `flash` visual bell) was not tracked at all.
+void TestTerminalSessionFullResetAndReverseVideo() {
+  microide::terminal::TerminalSession session;
+  const auto reply_to = [&](std::string_view query) {
+    TerminalSessionTestAccess::ClearSentBytes(session);
+    TerminalSessionTestAccess::AppendOutput(session, query);
+    return TerminalSessionTestAccess::SentBytes(session);
+  };
+  TerminalSessionTestAccess::Reset(session, 4, 10);
+  Expect(reply_to("\x1b[?5$p") == "\x1b[?5;2$y", "DECSCNM is a known mode, reset at start");
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?5h");
+  Expect(session.screen_reverse_video(), "CSI ? 5 h reverses the screen");
+  Expect(reply_to("\x1b[?5$p") == "\x1b[?5;1$y", "and DECRQM reads it set");
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?5l");
+  Expect(!session.screen_reverse_video(), "CSI ? 5 l restores it");
+
+  TerminalSessionTestAccess::Reset(session, 4, 10);
+  TerminalSessionTestAccess::AppendOutput(
+      session, "shell$\r\n\x1b[?1049h\x1b[4h\x1b[?1h\x1b[?2004h\x1b[?5h\x1b[?25l\x1b[2;3r\x1b(0\x1b[31mvim");
+  Expect(session.using_alternate_screen(), "the program is on the alternate screen");
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b" "c" "qx");
+  Expect(!session.using_alternate_screen(), "RIS returns to the primary screen");
+  Expect(!session.screen_reverse_video() && session.CursorSnapshot().visible,
+         "with reverse video off and the cursor shown");
+  Expect(reply_to("\x1b[?2004$p") == "\x1b[?2004;2$y" && reply_to("\x1b[?1$p") == "\x1b[?1;2$y",
+         "bracketed paste and application cursor keys are off");
+  Expect(TerminalSessionTestAccess::ScrollRegionBottom(session) == 3, "the margins are the screen's");
+  const auto lines = session.SnapshotLines();
+  const std::size_t top = lines.size() >= 4 ? lines.size() - 4 : 0;
+  ExpectLineText(lines, top, "qx", "the screen is cleared, the cursor home, no insert mode, ASCII");
+  Expect(lines.size() > top && !lines[top].cells.empty() &&
+             !lines[top].cells[0].style.foreground.has_value(),
+         "and the rendition is the default");
+}
+
 // REP (`CSI Ps b`) and IRM (`CSI 4 h` / `CSI 4 l`) are in the xterm-256color
 // terminfo entry this terminal sets TERM to (rep, smir/rmir), so ncurses uses
 // them: a run of one character comes as the character and a repeat count. Both
@@ -3380,6 +3418,7 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionEraseAndDeleteTakeAWideGlyphWhole);
   AddTest(tests, "TerminalSession/DecSpecialGraphicsDrawsBoxes",
           TestTerminalSessionDecSpecialGraphicsDrawsBoxes);
+  AddTest(tests, "TerminalSession/FullResetAndReverseVideo", TestTerminalSessionFullResetAndReverseVideo);
   AddTest(tests, "TerminalSession/PrimaryScrollsAndSoftReset",
           TestTerminalSessionPrimaryScrollsAndSoftReset);
   AddTest(tests, "TerminalSession/ClearPreservesScrollback",
