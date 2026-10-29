@@ -159,6 +159,16 @@ void TestTreeFilesAMissingDirectoryIsNothingThere() {
   Expect(rename.status == Status::Conflict && !rename.current.has_value() &&
              !std::filesystem::exists(root / "here"),
          "a rename from a missing directory has nothing to move, and makes no destination");
+  // A write that names bytes to replace finds none there -- and makes nothing on
+  // the way; a create still makes its parents.
+  const FileOpResult update = project::remote::WriteTreeFile(root, "gone/a.txt", "new",
+                                                             Precondition::Of(HashContent("a")), std::nullopt);
+  Expect(update.status == Status::Conflict && !update.current.has_value() &&
+             !std::filesystem::exists(root / "gone"),
+         "an update under a missing directory conflicts and creates no directory");
+  Expect(project::remote::WriteTreeFile(root, "made/a.txt", "new", Precondition::NotThere(), std::nullopt).ok() &&
+             ReadFile(root / "made/a.txt") == "new",
+         "a create still makes its parents");
   WriteFile(root / "file", "x");
   Expect(project::remote::ReadTreeFile(root, "file/a.txt", 1024, {}).status == Status::Error,
          "a file in a parent position is still an error");

@@ -262,9 +262,17 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
                                const Precondition& expect, std::optional<std::uint32_t> mode,
                                std::optional<std::int64_t> mtime_ns, Durability durability) {
   std::string error;
-  std::optional<Parent> parent = OpenParent(root, path, /*create=*/true, &error);
+  // An update names bytes that must already be there: a missing directory on the
+  // way means they are not, which is a conflict decided before anything is made --
+  // creating the parents first left an empty directory behind on a host that had
+  // moved the folder away.
+  const bool update = expect.kind == Precondition::Kind::Hash;
+  std::optional<Parent> parent = OpenParent(root, path, /*create=*/!update, &error);
   if (!parent.has_value()) {
     return Error(error);
+  }
+  if (parent->absent) {
+    return Conflict(std::nullopt);
   }
   FileOpResult refused;
   bool exists = false;

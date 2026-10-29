@@ -764,6 +764,128 @@ void TestMirrorTakeRemoteFollowsAFileTheHostMovedAway() {
   Expect(session.engine->Conflicts().empty(), "and they are no longer conflicts");
 }
 
+// A save of a file whose directory the host moved away while the save was on its
+// way (or made offline): the push is made against the base, finds nothing there,
+// and is a conflict ("deleted on remote, changed locally") -- not a re-creation of
+// the file on the host, and not an empty directory left behind on the host by the
+// refused write.
+void TestMirrorASaveIntoADirectoryTheHostMovedAwayIsAConflict() {
+  MirrorSession session;
+  WriteFile(session.host / "changes/x/design.md", "base\n");
+  session.Connect();
+  session.Sync();
+  std::filesystem::create_directories(session.host / "changes/archive");
+  std::filesystem::rename(session.host / "changes/x", session.host / "changes/archive/2026-10-29-x");
+  WriteFile(session.Tree("changes/x/design.md"), "local\n");
+  session.engine->NotifyLocalWrite("changes/x/design.md");
+  session.engine->Flush();
+  Expect(session.engine->Conflicts() == std::vector<std::string>{"changes/x/design.md"},
+         "the save is a conflict: " + session.engine->status().error);
+  Expect(!std::filesystem::exists(session.host / "changes/x"),
+         "and the refused write left no directory on the host");
+  session.Sync();
+  Expect(session.engine->Conflicts() == std::vector<std::string>{"changes/x/design.md"},
+         "the next sync keeps it a conflict");
+  const auto details = session.engine->ConflictDetails();
+  Expect(details.size() == 1 && !details[0].on_host && details[0].in_mirror,
+         "one the remote deleted and the local side changed");
+}
+
+// Every resolution on every shape a conflict comes in. A choice offered on a row
+// must do what it says for that row's shape -- the deleted-on-host shape under a
+// directory the host moved away failed Take Remote with "cannot open changes/x"
+// for as long as it existed, because the tests only ever settled conflicts both
+// sides still had. Compare and Merge fetch the remote side: where there is no
+// remote file they answer that plainly, never with a filesystem error.
+void TestMirrorEveryResolutionOfEveryConflictShape() {
+  using Resolution = remote::MirrorSyncEngine::Resolution;
+  enum class Shape { BothChanged, DeletedOnRemote, MovedAwayOnRemote, DeletedLocally };
+  struct Case {
+    Shape shape;
+    const char* name;
+    const char* path;
+  };
+  const Case cases[] = {
+      {Shape::BothChanged, "changed on both sides", "dir/a.txt"},
+      {Shape::DeletedOnRemote, "deleted on remote", "dir/a.txt"},
+      {Shape::MovedAwayOnRemote, "its directory moved away on remote", "dir/a.txt"},
+      {Shape::DeletedLocally, "deleted locally", "dir/a.txt"},
+  };
+  for (const Case& c : cases) {
+    for (const Resolution resolution : {Resolution::KeepLocal, Resolution::TakeRemote}) {
+      const std::string label = std::string(c.name) + ", " +
+                                (resolution == Resolution::KeepLocal ? "Keep Local" : "Take Remote");
+      MirrorSession session;
+      WriteFile(session.host / c.path, "base\n");
+      session.Connect();
+      session.Sync();
+      switch (c.shape) {
+        case Shape::BothChanged:
+          WriteFile(session.host / c.path, "remote\n");
+          WriteFile(session.Tree(c.path), "local\n");
+          session.Sync();
+          break;
+        case Shape::DeletedOnRemote:
+          std::filesystem::remove(session.host / c.path);
+          WriteFile(session.Tree(c.path), "local\n");
+          session.Sync();
+          break;
+        case Shape::MovedAwayOnRemote:
+          std::filesystem::rename(session.host / "dir", session.host / "moved");
+          WriteFile(session.Tree(c.path), "local\n");
+          session.Sync();
+          break;
+        case Shape::DeletedLocally:
+          // A parked conflict whose local file is then deleted ("deleted locally,
+          // changed on remote"). A plain local delete the host refuses is not one:
+          // the next sync restores the host's newer bytes by design.
+          WriteFile(session.host / c.path, "remote\n");
+          WriteFile(session.Tree(c.path), "local\n");
+          session.Sync();
+          std::filesystem::remove(session.Tree(c.path));
+          break;
+      }
+      Expect(session.engine->Conflicts() == std::vector<std::string>{c.path}, label + ": a conflict");
+      const bool remote_has = c.shape == Shape::BothChanged || c.shape == Shape::DeletedLocally;
+      const bool local_has = c.shape != Shape::DeletedLocally;
+
+      // Compare's and Merge's fetch of the remote side, before the choice.
+      std::optional<std::filesystem::path> copy;
+      std::string copy_error;
+      session.engine->FetchHostCopy(c.path, [&](std::optional<std::filesystem::path> got, std::string why) {
+        copy = std::move(got);
+        copy_error = std::move(why);
+      });
+      session.engine->Flush();
+      if (remote_has) {
+        Expect(copy.has_value() && ReadFile(*copy) == "remote\n", label + ": Compare fetches the remote side");
+      } else {
+        Expect(!copy.has_value() && copy_error.find("no longer exists") != std::string::npos,
+               label + ": Compare says the remote side is gone: " + copy_error);
+      }
+
+      session.engine->ResolveConflict(c.path, resolution);
+      session.engine->Flush();
+      const auto status = session.engine->status();
+      Expect(status.error.empty(), label + ": no error: " + status.error);
+      Expect(session.engine->Conflicts().empty(), label + ": settled");
+      const bool keep = resolution == Resolution::KeepLocal;
+      const bool want_file = keep ? local_has : remote_has;
+      const std::string want = keep ? "local\n" : "remote\n";
+      Expect(std::filesystem::exists(session.host / c.path) == want_file &&
+                 std::filesystem::exists(session.Tree(c.path)) == want_file,
+             label + ": both sides " + (want_file ? "hold the file" : "are without it"));
+      if (want_file) {
+        Expect(ReadFile(session.host / c.path) == want && ReadFile(session.Tree(c.path)) == want,
+               label + ": with the chosen bytes");
+      }
+      session.Sync();
+      Expect(session.engine->Conflicts().empty() && session.engine->status().error.empty(),
+             label + ": the next sync agrees: " + session.engine->status().error);
+    }
+  }
+}
+
 // A conflict merged three ways: the sides are the base both started from (kept in
 // meta/objects), the host's current bytes and the mirror's file; the result is
 // pushed only over the host version it was merged against.
@@ -1297,6 +1419,10 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
           TestMirrorKeepLocalRestoresAFileTheHostMovedAway);
   AddTest(tests, "MirrorSyncEngine/TakeRemoteFollowsAFileTheHostMovedAway",
           TestMirrorTakeRemoteFollowsAFileTheHostMovedAway);
+  AddTest(tests, "MirrorSyncEngine/ASaveIntoADirectoryTheHostMovedAwayIsAConflict",
+          TestMirrorASaveIntoADirectoryTheHostMovedAwayIsAConflict);
+  AddTest(tests, "MirrorSyncEngine/EveryResolutionOfEveryConflictShape",
+          TestMirrorEveryResolutionOfEveryConflictShape);
   AddTest(tests, "MirrorSyncEngine/ConflictClearsWhenTheHostAdoptsTheMirrorsBytes",
           TestMirrorConflictClearsWhenTheHostAdoptsTheMirrorsBytes);
 }
