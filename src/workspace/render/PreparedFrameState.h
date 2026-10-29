@@ -130,6 +130,20 @@ struct PreparedFrameState {
     bool operator==(const CompareScroll&) const = default;
   };
   CompareScroll painted_compare_scroll{};
+  // The focused compare or merge tab's scrollbars as painted (no track: hidden).
+  // An edit that widens a line or adds one moves a thumb that sits on none of the
+  // rows the edit damages -- typing into a compare tab's long line left the
+  // horizontal thumb at its old width (QA monkey, seed 17). As painted_horizontal_bars
+  // does for an editor pane: a bar shown or hidden repaints the surface, a moved one
+  // its strip.
+  struct DiffSurfaceBars {
+    const void* tab = nullptr;
+    std::optional<SDL_FRect> horizontal_track;
+    SDL_FRect horizontal_thumb{};
+    std::optional<SDL_FRect> vertical_lane;  // the overview lane, track included
+    SDL_FRect vertical_thumb{};
+  };
+  DiffSurfaceBars painted_diff_surface_bars{};
   // Where the editor split's dividers were painted (a hash of their rects). A
   // divider that moved -- the split's shares changed -- moves every pane beside
   // it; the change is repainted whatever damage the next frame carries.

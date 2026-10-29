@@ -2653,6 +2653,52 @@ void TestWorkspaceShellCompareHorizontalScrollRepaintsTheSurface() {
          "the fixture must actually scroll the panes sideways");
 }
 
+
+// Typing into a compare tab's long line WITHOUT scrolling (the caret mid-line)
+// widens the content, so the horizontal thumb shrinks -- on a strip none of the
+// edited row's damage covers. The thumb stayed at its old width (QA monkey, seed
+// 17). Frame prep diffs the surface's bars as painted.
+void TestWorkspaceShellCompareTypingRepaintsTheHorizontalThumb() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "notes.md";
+  const std::string long_line(150, 'w');
+  WriteFile(source, long_line + "\nA tiny, dependency-free task scheduler\nsecond row of text\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare thumb fixture", "compare thumb fixture");
+  WriteFile(source, long_line + "\nA tiny, dependency-free task scheduler\nsecond row, edited\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(compare.right_editable && compare.right_view_active, "the editable pane is active");
+  compare.right_viewport.MoveCursorTo(0, 10);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+  microide::tests::SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const std::size_t scroll_before = compare.horizontal_scroll;
+  for (int i = 0; i < 4; ++i) {
+    const auto diff = PaintAndDiffWithFullRepaint(
+        shell, canvas, kWidth, kHeight, DispatchEvents(shell, {TextInputEvent("xxxxxxxx")}),
+        pin_caret);
+    Expect(diff.identical(), "typing mid-line should paint what a full repaint paints; " +
+                                 DescribePixelDiff(diff));
+  }
+  Expect(compare.horizontal_scroll == scroll_before,
+         "the fixture must NOT scroll, or the surface repaints for that instead");
+}
+
 }  // namespace
 
 // H11/J41: an unreadable or binary working-tree file must NOT open as an editable
@@ -3654,6 +3700,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareHunkJumpMovesTheEditableCaret);
   AddTest(tests, "WorkspaceShell/CompareHunkJumpFromBetweenChangesGoesToTheNearestOne",
           TestWorkspaceShellCompareHunkJumpFromBetweenChangesGoesToTheNearestOne);
+  AddTest(tests, "WorkspaceShell/CompareTypingRepaintsTheHorizontalThumb",
+          TestWorkspaceShellCompareTypingRepaintsTheHorizontalThumb);
   AddTest(tests, "WorkspaceShell/CompareHorizontalScrollRepaintsTheSurface",
           TestWorkspaceShellCompareHorizontalScrollRepaintsTheSurface);
   AddTest(tests, "WorkspaceShell/StagesHunksInSequence",

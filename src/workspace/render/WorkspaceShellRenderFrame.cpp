@@ -993,6 +993,47 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     }
   }
   {
+    PreparedFrameState::DiffSurfaceBars bars;
+    const auto take = [&](const void* tab, const ScrollSurfaceLayout& scroll) {
+      bars.tab = tab;
+      if (scroll.horizontal_scrollbar.has_value()) {
+        bars.horizontal_track = scroll.horizontal_scrollbar->track;
+        bars.horizontal_thumb = scroll.horizontal_scrollbar->thumb;
+      }
+      if (scroll.vertical_scrollbar.has_value()) {
+        bars.vertical_lane = overview::LaneRect(scroll.vertical_scrollbar->track, layout.editor_surface.x);
+        bars.vertical_thumb = scroll.vertical_scrollbar->thumb;
+      }
+    };
+    if (const CompareTabState* compare = ActiveCompareTab(); compare != nullptr) {
+      const CompareSurfaceLayout surface = ComputeCompareSurfaceLayout(layout.editor_surface, *compare);
+      take(compare, ComputeCompareScrollLayout(layout.editor_surface, surface, *compare));
+    } else if (const MergeTabState* merge = ActiveMergeTab(); merge != nullptr) {
+      const MergeSurfaceLayout surface = ComputeMergeSurfaceLayout(layout.editor_surface, *merge);
+      take(merge, ComputeMergeScrollLayout(layout.editor_surface, surface, *merge));
+    }
+    PreparedFrameState::DiffSurfaceBars& painted = frame_state_.painted_diff_surface_bars;
+    // Another tab in front repaints the surface on its own (a tab switch).
+    if (bars.tab != nullptr && painted.tab == bars.tab) {
+      const auto same_rect = [](const SDL_FRect& a, const SDL_FRect& b) {
+        return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
+      };
+      const auto diff_bar = [&](const std::optional<SDL_FRect>& was, const SDL_FRect& was_thumb,
+                                const std::optional<SDL_FRect>& now, const SDL_FRect& now_thumb) {
+        if (was.has_value() != now.has_value()) {
+          RequestEditorSurfaceRedraw();
+        } else if (now.has_value() && (!same_rect(*was, *now) || !same_rect(was_thumb, now_thumb))) {
+          RequestRedrawRect(*was);
+          RequestRedrawRect(*now);
+        }
+      };
+      diff_bar(painted.horizontal_track, painted.horizontal_thumb, bars.horizontal_track,
+               bars.horizontal_thumb);
+      diff_bar(painted.vertical_lane, painted.vertical_thumb, bars.vertical_lane, bars.vertical_thumb);
+    }
+    painted = bars;
+  }
+  {
     std::uint64_t dividers = 0;
     for (const EditorSplitDividerRect& divider : ComputeEditorGroupRectsForState(layout).dividers) {
       for (const float edge : {divider.rect.x, divider.rect.y, divider.rect.w, divider.rect.h}) {
