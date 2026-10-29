@@ -172,6 +172,11 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
   if (!batch.file_changes.empty()) {
     lsp_service_.NotifyWatchedFileChanges(batch.file_changes);
   }
+  // A flood's changes past the itemization cap: nothing above acted on them one
+  // by one, but a server learns of them only here.
+  if (!batch.unitemized_file_changes.empty()) {
+    lsp_service_.NotifyWatchedFileChanges(batch.unitemized_file_changes);
+  }
 
   if (repository_changed || !batch.file_changes.empty() || batch.tree_rescan_requested) {
     RequestAutomaticGitSidebarRefresh();

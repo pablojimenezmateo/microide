@@ -145,7 +145,8 @@ void TestProjectChangeCoalescerMergesBursts() {
 
 // A file-change flood (thousands of distinct paths) must not grow the pending
 // list without bound or make the merge O(N^2). Past the cap the coalescer
-// collapses to a single full-tree rescan and stops tracking individual paths.
+// collapses to a single full-tree rescan and stops itemizing paths for the apply,
+// keeping a bounded list more for the language servers.
 void TestProjectChangeCoalescerCollapsesFloodToRescan() {
   project::ProjectChangeCoalescer coalescer;
   project::ProjectChangeBatch flood;
@@ -170,6 +171,34 @@ void TestProjectChangeCoalescerCollapsesFloodToRescan() {
   // open file past the cap was never reloaded.
   Expect(ready->file_changes_truncated,
          "a flood past the cap must say its itemized list is incomplete");
+  // The language servers still hear the rest, to a bound (TD-2026-10-29-422 item
+  // 1): before, a server was told the first 1024 of a 20,000-file checkout.
+  Expect(ready->file_changes.size() + ready->unitemized_file_changes.size() == 16 * 1024,
+         "the changes past the cap are kept for the servers, up to a bound: " +
+             std::to_string(ready->unitemized_file_changes.size()));
+  Expect(ready->unitemized_file_changes.front().relative_path == "gen/file_1024.o",
+         "starting with the first one past the cap");
+
+  // A later event for a path in either list merges into it rather than adding one.
+  project::ProjectChangeBatch first;
+  for (int i = 0; i < 1100; ++i) {
+    const std::string name = "f" + std::to_string(i);
+    first.file_changes.push_back(project::ProjectFileChange{
+        .kind = project::ProjectFileChangeKind::Modified, .relative_path = name, .absolute_path = "/r/" + name});
+  }
+  coalescer.Ingest(std::move(first));
+  project::ProjectChangeBatch again;
+  again.file_changes.push_back(project::ProjectFileChange{
+      .kind = project::ProjectFileChangeKind::Deleted, .relative_path = "f1050", .absolute_path = "/r/f1050"});
+  again.file_changes.push_back(project::ProjectFileChange{
+      .kind = project::ProjectFileChangeKind::Deleted, .relative_path = "f3", .absolute_path = "/r/f3"});
+  coalescer.Ingest(std::move(again));
+  const auto merged = coalescer.ConsumeReady();
+  Expect(merged.has_value() && merged->file_changes.size() == 1024 && merged->unitemized_file_changes.size() == 76,
+         "no path is listed twice");
+  Expect(merged.has_value() && merged->file_changes[3].kind == project::ProjectFileChangeKind::Deleted &&
+             merged->unitemized_file_changes[26].kind == project::ProjectFileChangeKind::Deleted,
+         "and the later event wins in whichever list holds the path");
 
   project::ProjectChangeBatch small;
   small.file_changes.push_back(project::ProjectFileChange{

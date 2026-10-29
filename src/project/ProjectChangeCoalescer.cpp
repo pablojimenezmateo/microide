@@ -21,6 +21,27 @@ constexpr std::size_t kMaxPendingFileChanges = 1024;
 // kMaxPendingFileChanges a flood collapses to a rescan, and the language servers
 // hear only the itemized changes (LspService::NotifyWatchedFileChanges).
 constexpr std::size_t kReleaseHeldAtFileChanges = kMaxPendingFileChanges / 2;
+// Past kMaxPendingFileChanges a change is still kept, for the language servers
+// alone (ProjectChangeBatch::unitemized_file_changes), up to this many. What it
+// costs is the servers' notification on the shell thread -- a path conversion
+// and a glob match per change per watching server -- once per flood.
+constexpr std::size_t kMaxUnitemizedFileChanges = 15 * 1024;
+
+// One more event for a path already pending: a delete wins, a modify of a
+// deleted path is a re-creation, and anything else takes the new kind.
+void MergeIntoPendingChange(ProjectFileChange& existing, ProjectFileChange change) {
+  if (change.kind == ProjectFileChangeKind::Deleted) {
+    existing.kind = ProjectFileChangeKind::Deleted;
+    return;
+  }
+  if (existing.kind == ProjectFileChangeKind::Deleted && change.kind == ProjectFileChangeKind::Modified) {
+    existing.kind = ProjectFileChangeKind::Created;
+    existing.absolute_path = std::move(change.absolute_path);
+    return;
+  }
+  existing.kind = change.kind;
+  existing.absolute_path = std::move(change.absolute_path);
+}
 
 }  // namespace
 
@@ -130,47 +151,42 @@ std::optional<ProjectChangeBatch> ProjectChangeCoalescer::TakePendingLocked(
 
 
 void ProjectChangeCoalescer::MergeFileChange(ProjectFileChange change) {
-  // Past the cap, collapse to a full-tree rescan and stop tracking individual
-  // paths. This is the O(1) short-circuit that keeps a flood from turning the
-  // scan below into O(N^2) on the watcher thread and from growing pending_
-  // without bound. The first kMaxPendingFileChanges keep per-file handling; the
-  // dropped ones are covered by `file_changes_truncated`, on which the apply
-  // re-checks every open buffer. A rescan alone did not cover them: the apply
-  // re-checked buffers only for a rescan with NO itemized change, which a flood
-  // never is, so an open file past the cap kept its old text.
-  if (pending_.file_changes.size() >= kMaxPendingFileChanges) {
-    pending_.tree_rescan_requested = true;
-    pending_.file_changes_truncated = true;
-    return;
-  }
   // Looked up by its normalized text. This was a scan of every pending change
   // with a path comparison each -- up to 1024 per incoming change, under the lock
   // the shell thread's ConsumeReady waits on: a first remote sync's batches kept
   // the watcher thread busy 0.4 s and stalled a frame for 138 ms
   // (TD-2026-10-28-418). Watcher paths are already normal in practice, so the key
-  // is usually the path's own text.
+  // is usually the path's own text. An index past kMaxPendingFileChanges names a
+  // slot in `unitemized_file_changes`.
   std::string key = util::PathTextNeedsNormalizing(change.relative_path.native())
                         ? change.relative_path.lexically_normal().native()
                         : change.relative_path.native();
-  const auto [slot, inserted] = pending_index_.try_emplace(std::move(key), pending_.file_changes.size());
-  if (inserted) {
+  if (const auto found = pending_index_.find(key); found != pending_index_.end()) {
+    MergeIntoPendingChange(found->second < kMaxPendingFileChanges
+                               ? pending_.file_changes[found->second]
+                               : pending_.unitemized_file_changes[found->second - kMaxPendingFileChanges],
+                           std::move(change));
+    return;
+  }
+  if (pending_.file_changes.size() < kMaxPendingFileChanges) {
+    pending_index_.emplace(std::move(key), pending_.file_changes.size());
     pending_.file_changes.push_back(std::move(change));
     return;
   }
-  const auto existing = pending_.file_changes.begin() + static_cast<std::ptrdiff_t>(slot->second);
-
-  if (change.kind == ProjectFileChangeKind::Deleted) {
-    existing->kind = ProjectFileChangeKind::Deleted;
-    return;
+  // Past the cap the flood collapses to a full-tree rescan, which bounds what is
+  // acted on per path: the first kMaxPendingFileChanges keep per-file handling,
+  // and `file_changes_truncated` makes the apply re-check every open buffer for
+  // the rest. A rescan alone did not cover them: the apply re-checked buffers
+  // only for a rescan with NO itemized change, which a flood never is, so an open
+  // file past the cap kept its old text. The language servers still hear each
+  // change, up to kMaxUnitemizedFileChanges more; past that, nothing is kept.
+  pending_.tree_rescan_requested = true;
+  pending_.file_changes_truncated = true;
+  if (pending_.unitemized_file_changes.size() < kMaxUnitemizedFileChanges) {
+    pending_index_.emplace(std::move(key),
+                           kMaxPendingFileChanges + pending_.unitemized_file_changes.size());
+    pending_.unitemized_file_changes.push_back(std::move(change));
   }
-  if (existing->kind == ProjectFileChangeKind::Deleted &&
-      change.kind == ProjectFileChangeKind::Modified) {
-    existing->kind = ProjectFileChangeKind::Created;
-    existing->absolute_path = change.absolute_path;
-    return;
-  }
-  existing->kind = change.kind;
-  existing->absolute_path = change.absolute_path;
 }
 
 void ProjectChangeCoalescer::MergeRepositoryChange(RepositoryChange change) {
