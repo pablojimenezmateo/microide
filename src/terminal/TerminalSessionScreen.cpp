@@ -494,6 +494,9 @@ void TerminalSession::ClearLineRangeLocked(TerminalLine& line, std::size_t start
   }
 
   ResizeLineLocked(line, end);
+  // Erasing half of a wide glyph erases all of it (xterm): a lead left without
+  // its spacer still painted two columns, over the erased one.
+  BreakWideGlyphPairForWriteLocked(line, start, end - start);
   for (std::size_t i = start; i < end; ++i) {
     line.cells[i] = MakeAsciiTerminalCell(' ', current_style_);
   }

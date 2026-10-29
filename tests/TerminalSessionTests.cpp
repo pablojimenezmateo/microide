@@ -2554,6 +2554,25 @@ void TestTerminalSessionSavedCursorRowIsScreenRelative() {
          "after the scrollback was trimmed the restore is still the screen's bottom row");
 }
 
+// Erasing or deleting half of a wide glyph takes the whole glyph (xterm). EL,
+// ECH and DCH left the other half: a lead whose spacer was erased still painted
+// two columns over the erased cell, and a spacer whose lead went was a gap.
+void TestTerminalSessionEraseAndDeleteTakeAWideGlyphWhole() {
+  microide::terminal::TerminalSession session;
+  const std::string text = "ab\xe4\xb8\xad" "cd";  // the wide glyph is columns 2-3
+  TerminalSessionTestAccess::Reset(session, 3, 8);
+  TerminalSessionTestAccess::AppendOutput(session, text + "\x1b[1;4H\x1b[K");
+  Expect(LineText(session.SnapshotLines()[0]).rfind("ab ", 0) == 0 &&
+             LineText(session.SnapshotLines()[0]).find("\xe4\xb8\xad") == std::string::npos,
+         "EL from the spacer erases the lead too");
+  TerminalSessionTestAccess::Reset(session, 3, 8);
+  TerminalSessionTestAccess::AppendOutput(session, text + "\x1b[1;3H\x1b[X");
+  ExpectLineText(session.SnapshotLines(), 0, "ab  cd", "ECH of the lead erases its spacer");
+  TerminalSessionTestAccess::Reset(session, 3, 8);
+  TerminalSessionTestAccess::AppendOutput(session, text + "\x1b[1;4H\x1b[P");
+  ExpectLineText(session.SnapshotLines(), 0, "ab cd", "DCH of the spacer blanks the lead");
+}
+
 // REP (`CSI Ps b`) and IRM (`CSI 4 h` / `CSI 4 l`) are in the xterm-256color
 // terminfo entry this terminal sets TERM to (rep, smir/rmir), so ncurses uses
 // them: a run of one character comes as the character and a repeat count. Both
@@ -3281,6 +3300,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionRepeatAndInsertModeFromTheAdvertisedTerminfo);
   AddTest(tests, "TerminalSession/OriginModeAppliesOnThePrimaryScreen",
           TestTerminalSessionOriginModeAppliesOnThePrimaryScreen);
+  AddTest(tests, "TerminalSession/EraseAndDeleteTakeAWideGlyphWhole",
+          TestTerminalSessionEraseAndDeleteTakeAWideGlyphWhole);
   AddTest(tests, "TerminalSession/ClearPreservesScrollback",
           TestTerminalSessionClearPreservesScrollback);
   AddTest(tests, "TerminalSession/PrimaryCupIsViewportRelative",

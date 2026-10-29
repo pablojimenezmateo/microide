@@ -279,6 +279,8 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       auto& line = lines_[cursor_row_];
       if (cursor_column_ < line.cells.size()) {
         const std::size_t erase_end = std::min(line.cells.size(), cursor_column_ + count);
+        // A wide pair the deletion cuts goes whole: its other half is blanked.
+        BreakWideGlyphPairForWriteLocked(line, cursor_column_, erase_end - cursor_column_);
         line.cells.erase(line.cells.begin() + static_cast<std::ptrdiff_t>(cursor_column_),
                          line.cells.begin() + static_cast<std::ptrdiff_t>(erase_end));
       }
