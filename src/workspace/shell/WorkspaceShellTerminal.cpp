@@ -143,6 +143,54 @@ std::size_t TerminalByteOffsetToColumn(const terminal::TerminalLine& line, std::
   return line.cells.size();
 }
 
+// The logical line through row `hit` of `lines`: the rows soft-wrap joins (each
+// row `wrapped_from_previous` continues the one above) as one text, and the byte
+// offset in it where each row starts. A URL or path the terminal wrapped is one
+// token here, where the row alone held only the part up to the wrap
+// (TD-2026-10-29-422 item 4). Bounded by the rows `lines` holds: a link wrapped
+// past the visible window is a link over the part on screen.
+struct TerminalLogicalLine {
+  std::size_t first = 0;  // index into `lines` of the logical line's first row
+  std::string text;
+  std::vector<std::size_t> row_starts;  // row_starts[i]: where row first + i begins
+};
+
+TerminalLogicalLine JoinTerminalLogicalLine(const std::vector<terminal::TerminalLine>& lines,
+                                            std::size_t hit) {
+  std::size_t first = hit;
+  while (first > 0 && lines[first].wrapped_from_previous) {
+    --first;
+  }
+  std::size_t last = hit;
+  while (last + 1 < lines.size() && lines[last + 1].wrapped_from_previous) {
+    ++last;
+  }
+  TerminalLogicalLine joined{.first = first};
+  joined.row_starts.reserve(last - first + 1);
+  for (std::size_t row = first; row <= last; ++row) {
+    joined.row_starts.push_back(joined.text.size());
+    // Only the last row drops its trailing blanks: a wrapped row's every cell is
+    // part of the text, and TerminalColumnToByteOffset counts every cell.
+    joined.text += TerminalLineSliceText(lines[row], 0, lines[row].cells.size(), row == last);
+  }
+  return joined;
+}
+
+// The (index into `lines`, column) of byte `byte` of `joined.text`. `exclusive_end`
+// resolves a byte that is exactly a row boundary to the end of the row before it,
+// so a link that ends at a wrap does not reach onto the next row.
+std::pair<std::size_t, std::size_t> TerminalLogicalByteToCell(
+    const std::vector<terminal::TerminalLine>& lines, const TerminalLogicalLine& joined,
+    std::size_t byte, bool exclusive_end) {
+  std::size_t index = 0;
+  while (index + 1 < joined.row_starts.size() &&
+         (exclusive_end ? joined.row_starts[index + 1] < byte : joined.row_starts[index + 1] <= byte)) {
+    ++index;
+  }
+  const std::size_t row = joined.first + index;
+  return {row, TerminalByteOffsetToColumn(lines[row], byte - joined.row_starts[index])};
+}
+
 std::optional<TerminalTextLink> TerminalUrlAtColumn(std::string_view text, std::size_t target_byte) {
   static constexpr std::string_view kSchemes[] = {
       "https://",
@@ -539,7 +587,8 @@ std::optional<TerminalLinkHit> WorkspaceShell::TerminalLinkAtPoint(float x, floa
     return std::nullopt;
   }
 
-  const terminal::TerminalLine& hit_line = lines[position->row - first_row];
+  const std::size_t hit_index = position->row - first_row;
+  const terminal::TerminalLine& hit_line = lines[hit_index];
   // An OSC 8 hyperlink is what the program said the text links to; it wins over
   // anything the text looks like. A `file://` link for another machine (the
   // session keeps those verbatim) has no local path to open.
@@ -547,27 +596,59 @@ std::optional<TerminalLinkHit> WorkspaceShell::TerminalLinkAtPoint(float x, floa
     const auto id = hit_line.cells[position->column].link;
     std::string uri = terminal_tab->session.LinkUri(id);
     if (!uri.empty() && (!uri.starts_with("file://") || uri.starts_with("file:///"))) {
-      // The span is the run of cells the program marked with this link.
+      // The span is the run of cells the program marked with this link, across
+      // a soft wrap: the run continues onto a wrapped row from its first cell.
+      std::size_t begin_index = hit_index;
       std::size_t begin = position->column;
-      while (begin > 0 && hit_line.cells[begin - 1].link == id) {
-        --begin;
+      while (true) {
+        const auto& cells = lines[begin_index].cells;
+        while (begin > 0 && cells[begin - 1].link == id) {
+          --begin;
+        }
+        if (begin != 0 || !lines[begin_index].wrapped_from_previous || begin_index == 0 ||
+            lines[begin_index - 1].cells.empty() || lines[begin_index - 1].cells.back().link != id) {
+          break;
+        }
+        --begin_index;
+        begin = lines[begin_index].cells.size();
       }
+      std::size_t end_index = hit_index;
       std::size_t end = position->column + 1;
-      while (end < hit_line.cells.size() && hit_line.cells[end].link == id) {
-        ++end;
+      while (true) {
+        const auto& cells = lines[end_index].cells;
+        while (end < cells.size() && cells[end].link == id) {
+          ++end;
+        }
+        if (end != cells.size() || end_index + 1 >= lines.size() ||
+            !lines[end_index + 1].wrapped_from_previous || lines[end_index + 1].cells.empty() ||
+            lines[end_index + 1].cells.front().link != id) {
+          break;
+        }
+        ++end_index;
+        end = 0;
       }
       return TerminalLinkHit{.target = std::move(uri),
-                             .span = {.row = position->row, .begin_column = begin, .end_column = end},
+                             .span = {.row = first_row + begin_index,
+                                      .begin_column = begin,
+                                      .end_row = first_row + end_index,
+                                      .end_column = end},
                              .pane = pane_index};
     }
   }
-  const std::string line_text = TerminalLineText(hit_line);
-  const std::size_t target_byte = TerminalColumnToByteOffset(hit_line, position->column);
+  const TerminalLogicalLine joined = JoinTerminalLogicalLine(lines, hit_index);
+  const std::string& line_text = joined.text;
+  const std::size_t target_byte = joined.row_starts[hit_index - joined.first] +
+                                  TerminalColumnToByteOffset(hit_line, position->column);
   const auto hit = [&](TerminalTextLink link) {
+    const auto [begin_index, begin_column] =
+        TerminalLogicalByteToCell(lines, joined, link.begin, /*exclusive_end=*/false);
+    const auto [end_index, end_column] =
+        TerminalLogicalByteToCell(lines, joined, link.end, /*exclusive_end=*/true);
     return TerminalLinkHit{.target = std::move(link.target),
-                           .span = {.row = position->row,
-                                    .begin_column = TerminalByteOffsetToColumn(hit_line, link.begin),
-                                    .end_column = TerminalByteOffsetToColumn(hit_line, link.end)},
+                           .span = {.row = first_row + begin_index,
+                                    .begin_column = begin_column,
+                                    .end_row = first_row + end_index,
+                                    .end_column = end_column},
                            .pane = pane_index};
   };
   if (auto url = TerminalUrlAtColumn(line_text, target_byte); url.has_value()) {

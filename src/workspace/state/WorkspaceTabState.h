@@ -594,11 +594,14 @@ inline bool TabEntryIsDirty(const TabEntry& tab) {
 }
 static_assert(std::is_default_constructible_v<TabEntry::DeferredTabHandle>);
 
-// A link in a terminal pane: what it opens and where it sits (an absolute row,
-// a half-open column range). From the pointer's hit-test.
+// A link in a terminal pane: what it opens and where it sits, from
+// (`row`, `begin_column`) to (`end_row`, `end_column`) exclusive, rows absolute.
+// A link the terminal soft-wrapped spans several rows (`end_row` > `row`); every
+// row but the last is underlined to its end. From the pointer's hit-test.
 struct TerminalLinkSpan {
   std::size_t row = 0;
   std::size_t begin_column = 0;
+  std::size_t end_row = 0;
   std::size_t end_column = 0;
   friend bool operator==(const TerminalLinkSpan&, const TerminalLinkSpan&) = default;
 };

@@ -1446,6 +1446,65 @@ void TestWorkspaceShellTerminalLinkUnderlinesOnHover() {
   Expect(!WorkspaceShellTestAccess::TerminalHoveredLink(shell).has_value(), "and none off a link");
 }
 
+// A link the terminal soft-wraps is one link on both rows (TD-2026-10-29-422 item
+// 4): the detector reads the logical line, so pointing at the part past the wrap
+// resolves the whole target and the underline spans the wrap. Before, the first
+// row held a truncated URL and the second row was no link at all.
+void TestWorkspaceShellTerminalWrappedLinkIsOneLink() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path();
+  WriteFile(root / "src" / "main.cpp", "int x;\nint y;\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  const auto expect_span = [&](const std::optional<workspace::TerminalLinkSpan>& span, std::size_t row,
+                               std::size_t begin, std::size_t end_row, std::size_t end,
+                               const std::string& what) {
+    Expect(span.has_value() && span->row == row && span->begin_column == begin &&
+               span->end_row == end_row && span->end_column == end,
+           what);
+  };
+
+  // A URL: "see " then 27 characters, wrapped at 20 columns.
+  TerminalSessionTestAccess::Reset(session, 24, 20);
+  TerminalSessionTestAccess::AppendOutput(session, "see https://example.com/abc/def end");
+  for (const auto& [row, column] : {std::pair<std::size_t, std::size_t>{0, 6}, {1, 3}}) {
+    const SDL_FPoint point = WorkspaceShellTestAccess::TerminalCellPoint(shell, row, column);
+    const auto link = WorkspaceShellTestAccess::TerminalLinkAtPoint(shell, point.x, point.y);
+    Expect(link.has_value() && link->target == "https://example.com/abc/def",
+           "the wrapped URL resolves whole from row " + std::to_string(row));
+    (void)SendMouseMotion(shell, point.x, point.y, 0);
+    expect_span(WorkspaceShellTestAccess::TerminalHoveredLink(shell), 0, 4, 1, 11,
+                "the underline runs from the first row onto the wrapped one");
+  }
+  const SDL_FPoint after = WorkspaceShellTestAccess::TerminalCellPoint(shell, 1, 13);
+  Expect(!WorkspaceShellTestAccess::TerminalLinkAtPoint(shell, after.x, after.y).has_value(),
+         "the word after the wrapped URL is not part of it");
+
+  // A file reference wrapped at 10 columns.
+  TerminalSessionTestAccess::Reset(session, 24, 10);
+  TerminalSessionTestAccess::AppendOutput(session, "at src/main.cpp:2 x");
+  const SDL_FPoint file = WorkspaceShellTestAccess::TerminalCellPoint(shell, 1, 2);
+  const auto file_link = WorkspaceShellTestAccess::TerminalLinkAtPoint(shell, file.x, file.y);
+  Expect(file_link.has_value() &&
+             file_link->target == "file://" + (root / "src" / "main.cpp").lexically_normal().generic_string() + "#L2",
+         "the wrapped file reference resolves whole");
+  expect_span(file_link.has_value() ? std::optional(file_link->span) : std::nullopt, 0, 3, 1, 7,
+              "and spans the wrap");
+
+  // An OSC 8 run the terminal wrapped is one link too.
+  TerminalSessionTestAccess::Reset(session, 24, 20);
+  TerminalSessionTestAccess::AppendOutput(
+      session, "\x1b]8;;https://example.com/g\x1b\\abcdefghijklmnopqrstuvwxy\x1b]8;;\x1b\\ z");
+  const SDL_FPoint osc = WorkspaceShellTestAccess::TerminalCellPoint(shell, 1, 1);
+  const auto osc_link = WorkspaceShellTestAccess::TerminalLinkAtPoint(shell, osc.x, osc.y);
+  Expect(osc_link.has_value() && osc_link->target == "https://example.com/g", "the OSC 8 run resolves");
+  expect_span(osc_link.has_value() ? std::optional(osc_link->span) : std::nullopt, 0, 0, 1, 5,
+              "the OSC 8 run's span crosses the wrap");
+}
+
 // OSC 8: `ls --hyperlink`, gcc and Claude Code print a link whose TEXT is not a
 // URL (a file name, "docs"). The cell carries the target, so clicking the text
 // opens it — a web link externally, a file link in the editor — as VS Code's
@@ -2738,6 +2797,7 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/TerminalLeftClickOpensUrls",
           TestWorkspaceShellTerminalLeftClickOpensUrls);
   AddTest(tests, "WorkspaceShell/TerminalLinkUnderlinesOnHover", TestWorkspaceShellTerminalLinkUnderlinesOnHover);
+  AddTest(tests, "WorkspaceShell/TerminalWrappedLinkIsOneLink", TestWorkspaceShellTerminalWrappedLinkIsOneLink);
   AddTest(tests, "WorkspaceShell/TerminalOsc8LinkClickOpensItsTarget",
           TestWorkspaceShellTerminalOsc8LinkClickOpensItsTarget);
   AddTest(tests, "WorkspaceShellTerminal/UrlHitTestHonorsMultibytePrefix",
