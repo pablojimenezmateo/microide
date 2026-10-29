@@ -51,6 +51,10 @@ std::string Errno(std::string_view what) {
 struct Parent {
   UniqueFd dir;
   std::string name;
+  // Not creating, a directory on the way does not exist: nothing is at the path, as
+  // when only its last component is missing (a host that moved a whole directory
+  // away). `dir` is not open; the caller answers as for a missing file.
+  bool absent = false;
 };
 
 std::optional<Parent> OpenParent(const std::filesystem::path& root, std::string_view path,
@@ -69,6 +73,9 @@ std::optional<Parent> OpenParent(const std::filesystem::path& root, std::string_
        start = slash + 1, slash = path.find('/', start)) {
     const std::string component(path.substr(start, slash - start));
     UniqueFd next(::openat(dir.Get(), component.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+    if (next.Get() < 0 && errno == ENOENT && !create) {
+      return Parent{UniqueFd(), std::string(path.substr(path.rfind('/') + 1)), /*absent=*/true};
+    }
     if (next.Get() < 0 && errno == ENOENT && create) {
       if (::mkdirat(dir.Get(), component.c_str(), 0755) != 0 && errno != EEXIST) {
         *error = Errno("cannot create " + std::string(path.substr(0, slash)));
@@ -155,6 +162,12 @@ bool CheckExpect(int dir, const std::string& name, const Precondition& expect, b
   return false;
 }
 
+// A delete's answer for a path with nothing at it, as CheckExpect would give it:
+// gone already unless `expect` named bytes, which are not there.
+FileOpResult AbsentVerdict(const Precondition& expect) {
+  return expect.kind == Precondition::Kind::Hash ? Conflict(std::nullopt) : Ok(std::nullopt);
+}
+
 // renameat2(RENAME_NOREPLACE), falling back to link+unlink where the filesystem
 // does not support it (link refuses an existing destination just the same).
 int RenameNoReplace(int from_dir, const char* from, int to_dir, const char* to) {
@@ -188,6 +201,9 @@ FileOpResult ReadTreeFile(const std::filesystem::path& root, std::string_view pa
   std::optional<Parent> parent = OpenParent(root, path, /*create=*/false, &error);
   if (!parent.has_value()) {
     return Error(error);
+  }
+  if (parent->absent) {
+    return Conflict(std::nullopt);
   }
   // The final component may be a link: an out-of-root link ships as its target.
   const UniqueFd fd(::openat(parent->dir.Get(), parent->name.c_str(),
@@ -456,6 +472,9 @@ FileOpResult RenameTreeEntry(const std::filesystem::path& root, std::string_view
   if (!source.has_value()) {
     return Error(error);
   }
+  if (source->absent) {
+    return Conflict(std::nullopt);  // what CheckExpect and !exists below answer for nothing
+  }
   std::optional<Parent> target = OpenParent(root, to, /*create=*/true, &error);
   if (!target.has_value()) {
     return Error(error);
@@ -489,6 +508,9 @@ FileOpResult DeleteTreeEntry(const std::filesystem::path& root, std::string_view
   if (!parent.has_value()) {
     return Error(error);
   }
+  if (parent->absent) {
+    return AbsentVerdict(expect);
+  }
   FileOpResult refused;
   bool exists = false;
   if (!CheckExpect(parent->dir.Get(), parent->name, expect, /*allow_non_file=*/true, &refused,
@@ -516,6 +538,9 @@ FileOpResult SetAsideTreeEntry(const std::filesystem::path& root, std::string_vi
   std::optional<Parent> parent = OpenParent(root, path, /*create=*/false, &error);
   if (!parent.has_value()) {
     return Error(error);
+  }
+  if (parent->absent) {
+    return AbsentVerdict(expect);
   }
   FileOpResult refused;
   bool exists = false;

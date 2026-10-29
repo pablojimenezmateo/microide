@@ -131,6 +131,39 @@ void TestTreeFilesTreeOps() {
          "an empty directory is deleted under Any");
 }
 
+// A path under a directory that does not exist is a path with nothing at it -- the
+// answer each operation gives a missing file -- not an error: a host that moved a
+// whole directory away (an archived openspec change) left Take Remote on its files
+// failing with "cannot open changes/x: No such file or directory", so the conflict
+// could never be settled. A file in a parent position is still an error.
+void TestTreeFilesAMissingDirectoryIsNothingThere() {
+  TemporaryDirectory temp;
+  const auto root = temp.path();
+  using Status = FileOpResult::Status;
+  const FileOpResult read = project::remote::ReadTreeFile(root, "gone/deeper/a.txt", 1024, {});
+  Expect(read.status == Status::Conflict && !read.current.has_value(),
+         "a read under a missing directory finds nothing: " + read.error);
+  Expect(project::remote::DeleteTreeEntry(root, "gone/a.txt", Precondition::Anything()).ok(),
+         "a delete under a missing directory is done already");
+  Expect(project::remote::DeleteTreeEntry(root, "gone/a.txt", Precondition::Of(HashContent("a"))).status ==
+             Status::Conflict,
+         "unless it named bytes, which are not there");
+  bool moved = true;
+  Expect(project::remote::SetAsideTreeEntry(root, "gone/a.txt", Precondition::Anything(),
+                                            root / "aside", &moved)
+                 .ok() &&
+             !moved,
+         "a set-aside under a missing directory moves nothing");
+  const FileOpResult rename =
+      project::remote::RenameTreeEntry(root, "gone/a.txt", "here/a.txt", Precondition::Anything());
+  Expect(rename.status == Status::Conflict && !rename.current.has_value() &&
+             !std::filesystem::exists(root / "here"),
+         "a rename from a missing directory has nothing to move, and makes no destination");
+  WriteFile(root / "file", "x");
+  Expect(project::remote::ReadTreeFile(root, "file/a.txt", 1024, {}).status == Status::Error,
+         "a file in a parent position is still an error");
+}
+
 }  // namespace
 
 void RegisterTreeFilesTests(std::vector<TestCase>& tests) {
@@ -138,6 +171,7 @@ void RegisterTreeFilesTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TreeFiles/StayUnderTheRoot", TestTreeFilesStayUnderTheRoot);
   AddTest(tests, "TreeFiles/Read", TestTreeFilesRead);
   AddTest(tests, "TreeFiles/TreeOps", TestTreeFilesTreeOps);
+  AddTest(tests, "TreeFiles/AMissingDirectoryIsNothingThere", TestTreeFilesAMissingDirectoryIsNothingThere);
 }
 
 }  // namespace microide::tests
