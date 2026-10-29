@@ -462,13 +462,16 @@ bool FileIndex::ApplySegmentLocked(std::vector<Op*>& segment) {
   for (Op*& op : segment) {
     const auto it = std::lower_bound(files_.begin(), files_.end(), op->path, LessProjectPath);
     const bool present = it != files_.end() && it->relative_path == op->path;
-    if (op->file.has_value() && present) {
-      if (it->mtime != op->file->mtime || it->size != op->file->size) {
-        *it = std::move(*op->file);
+    // A local the guard is visible on: through `op->` clang-tidy's optional check
+    // cannot see the has_value() it is under.
+    std::optional<ProjectFile>& file = op->file;
+    if (file.has_value() && present) {
+      if (it->mtime != file->mtime || it->size != file->size) {
+        *it = std::move(*file);
         changed = true;
       }
       op = nullptr;  // done in place
-    } else if (!op->file.has_value() && !present) {
+    } else if (!file.has_value() && !present) {
       op = nullptr;  // removing what is not there
     } else {
       ++structural;
