@@ -26,16 +26,17 @@ namespace {
 // CPR: the answer to `CSI 6 n` (or `CSI ? 6 n` when `private_form`), the cursor's
 // 1-based screen row and column.
 std::string CursorPositionReport(bool private_form, std::size_t cursor_row,
-                                 std::size_t cursor_column, std::size_t screen_top,
+                                 std::size_t cursor_column, std::size_t origin_row,
                                  std::size_t columns) {
   // At the pending-wrap (LCF) column cursor_column == columns; a real terminal
   // reports the last on-screen column, never one past the edge.
   const std::size_t reported_column = columns > 0 ? std::min(cursor_column, columns - 1)
                                                   : cursor_column;
-  // Report the row relative to the visible screen: on the primary buffer the
-  // cursor row is an absolute deque index that includes scrollback, so a raw
-  // cursor_row+1 would grossly overstate the row.
-  const std::size_t reported_row = cursor_row > screen_top ? cursor_row - screen_top : 0;
+  // Report the row relative to the visible screen (the scroll region under
+  // DECOM, as xterm does): on the primary buffer the cursor row is an absolute
+  // deque index that includes scrollback, so a raw cursor_row+1 would grossly
+  // overstate the row.
+  const std::size_t reported_row = cursor_row > origin_row ? cursor_row - origin_row : 0;
   return (private_form ? "\x1b[?" : "\x1b[") + std::to_string(reported_row + 1) + ";" +
          std::to_string(reported_column + 1) + "R";
 }
@@ -102,6 +103,12 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
   ParseCsiParametersInto(body, params_scratch);
   std::vector<int>& params = params_scratch;
 
+  // The deque row that row-addressing CSIs (CUP, VPA) count from and that
+  // CUU/CPL stop at: the visible screen's top (0 on the alternate screen), or the
+  // scroll region's top under origin mode (DECOM) -- on either screen, as in xterm.
+  const auto addressing_origin_row = [this]() -> std::size_t {
+    return PrimaryScreenTopLocked() + (origin_mode_ ? ActiveScrollRegionTopLocked() : 0);
+  };
   // Kitty keyboard protocol negotiation: CSI ? u (query), CSI > flags u (push),
   // CSI < n u (pop), CSI = flags ; mode u (set).
   if (final == 'u' && (prefix == '?' || prefix == '>' || prefix == '<' || prefix == '=')) {
@@ -132,7 +139,7 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
         }
         if (mode == 6) {
           SendBytesLocked(CursorPositionReport(/*private_form=*/true, cursor_row_, cursor_column_,
-                                               PrimaryScreenTopLocked(), columns_));
+                                               addressing_origin_row(), columns_));
         }
       }
     }
@@ -172,15 +179,6 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       ClampPendingWrapColumn(cursor_column_, columns_);
       break;
   }
-  // The deque row that row-addressing CSIs (CUP, VPA) count from and that
-  // CUU/CPL stop at: the visible screen's top on the primary buffer; on the
-  // alternate screen 0, or the scroll region's top under origin mode (DECOM).
-  const auto addressing_origin_row = [this]() -> std::size_t {
-    if (use_alternate_screen_) {
-      return origin_mode_ ? ActiveScrollRegionTopLocked() : 0;
-    }
-    return PrimaryScreenTopLocked();
-  };
   const auto cursor_scroll_span = [this]() {
     return CursorScrollSpan(cursor_row_, PrimaryScreenTopLocked(), ActiveScrollRegionTopLocked(),
                             ActiveScrollRegionBottomLocked());
@@ -392,7 +390,7 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
           SendBytesLocked("\x1b[0n");
         } else if (params.front() == 6) {
           SendBytesLocked(CursorPositionReport(/*private_form=*/false, cursor_row_,
-                                               cursor_column_, PrimaryScreenTopLocked(), columns_));
+                                               cursor_column_, addressing_origin_row(), columns_));
         }
       }
       return;
@@ -423,7 +421,7 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       }
       scroll_region_top_ = scroll_region_top;
       scroll_region_bottom_ = clamped_bottom;
-      MoveCursorLocked(PrimaryScreenTopLocked(), 0);
+      MoveCursorLocked(addressing_origin_row(), 0);  // home: the region's top under DECOM
       return;
     }
     // SCOSC / SCORC: xterm treats them as DECSC / DECRC (CASE_ANSI_SC calls

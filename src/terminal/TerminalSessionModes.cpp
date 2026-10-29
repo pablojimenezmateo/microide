@@ -112,16 +112,11 @@ void TerminalSession::HandlePrivateModeLocked(int mode, bool enabled) {
       return;
     case 6:
       origin_mode_ = enabled;
-      // DECOM set/reset homes the cursor. On the primary buffer cursor_row_ is an
-      // absolute scrollback index, so home to the visible-screen top — mirroring CUP
-      // (`CSI H`), which ignores origin/scroll-region on primary. Passing a
-      // screen-relative 0 here (as before) jumped into scrollback and overwrote
-      // history. On the alternate screen, origin mode selects the scroll-region top.
-      if (use_alternate_screen_) {
-        MoveCursorLocked(enabled ? ActiveScrollRegionTopLocked() : 0, 0);
-      } else {
-        MoveCursorLocked(PrimaryScreenTopLocked(), 0);
-      }
+      // DECOM set/reset homes the cursor: to the scroll region's top when set, the
+      // screen's when reset -- rows counted from the visible screen's top, since on
+      // the primary buffer cursor_row_ is a deque index (a bare 0 jumped into
+      // scrollback and overwrote history).
+      MoveCursorLocked(PrimaryScreenTopLocked() + (enabled ? ActiveScrollRegionTopLocked() : 0), 0);
       return;
     case 7:
       auto_wrap_mode_ = enabled;

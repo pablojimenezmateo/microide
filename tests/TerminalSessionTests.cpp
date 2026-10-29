@@ -2589,6 +2589,30 @@ void TestTerminalSessionRepeatAndInsertModeFromTheAdvertisedTerminfo() {
   ExpectLineText(session.SnapshotLines(), 0, " abcd ", "the wide glyph whose spacer left is blanked");
 }
 
+// Origin mode (DECOM) applies on the primary screen as on the alternate one, as
+// in xterm: CUP counts from the scroll region's top and stays inside it, DECSTBM
+// homes there, and CPR reports relative to it. On the primary buffer all three
+// ignored it, so a program that set a region and DECOM drew its first row at
+// the screen's top, over whatever was above the region.
+void TestTerminalSessionOriginModeAppliesOnThePrimaryScreen() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 5, 8);
+  // Two lines of scrollback first, so the primary screen's top is not row 0.
+  TerminalSessionTestAccess::AppendOutput(session, "s0\r\ns1\r\n0\r\n1\r\n2\r\n3\r\n4");
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[2;4r\x1b[?6hA\x1b[9;1HB");
+  auto lines = session.SnapshotLines();
+  ExpectLineText(lines, 3, "A", "DECOM homes to the region's top (screen row 2)");
+  ExpectLineText(lines, 5, "B", "a CUP past the region stops at its bottom (screen row 4)");
+  ExpectLineText(lines, 0, "s0", "scrollback is untouched");
+  TerminalSessionTestAccess::ClearSentBytes(session);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[6n");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[3;2R",
+         "CPR reports relative to the region: " + TerminalSessionTestAccess::SentBytes(session));
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?6l\x1b[1;1HC");
+  lines = session.SnapshotLines();
+  ExpectLineText(lines, 2, "C", "with DECOM reset CUP counts from the screen's top again");
+}
+
 // A cursor move stops at the visible screen's bottom row. The ceiling was the
 // deque's size after the end-of-chunk trim, so in one chunk carrying more lines
 // than the scrollback holds (`cat big.log; clear`) a CUP to the screen's top
@@ -3255,6 +3279,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionCursorMovesStopAtTheScreensBottomRow);
   AddTest(tests, "TerminalSession/RepeatAndInsertModeFromTheAdvertisedTerminfo",
           TestTerminalSessionRepeatAndInsertModeFromTheAdvertisedTerminfo);
+  AddTest(tests, "TerminalSession/OriginModeAppliesOnThePrimaryScreen",
+          TestTerminalSessionOriginModeAppliesOnThePrimaryScreen);
   AddTest(tests, "TerminalSession/ClearPreservesScrollback",
           TestTerminalSessionClearPreservesScrollback);
   AddTest(tests, "TerminalSession/PrimaryCupIsViewportRelative",

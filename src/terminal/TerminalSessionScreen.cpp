@@ -263,25 +263,22 @@ std::size_t TerminalSession::PrimaryScreenTopLocked() const {
 }
 
 void TerminalSession::MoveCursorLocked(std::size_t row, std::size_t column) {
-  if (use_alternate_screen_) {
-    const std::size_t max_row = origin_mode_ ? ActiveScrollRegionBottomLocked()
-                                             : std::max<std::size_t>(1, rows_) - 1;
-    const std::size_t min_row = origin_mode_ ? ActiveScrollRegionTopLocked() : 0;
-    cursor_row_ = std::clamp(row, min_row, max_row);
-  } else {
-    // Primary screen: a move (CUP, CUD `CSI B`, CNL `CSI E`, VPA, DECRC) stops at
-    // the visible screen's bottom row, as in xterm -- a cursor move never scrolls,
-    // and a stream of `\x1b[65535B` cannot balloon the line deque on the reader
-    // thread. The ceiling is the screen's, not an absolute deque row: this was
-    // `max_scrollback_lines_ + rows_`, which is the deque's size only AFTER the
-    // end-of-chunk trim, so inside one chunk carrying more lines than the
-    // scrollback holds (`cat big.log; clear`), a CUP to the screen's top landed
-    // thousands of rows up in history; and CUD on the bottom row grew the deque.
-    const std::size_t screen_rows = std::max<std::size_t>(1, rows_);
-    cursor_row_ = std::min(row, std::max(lines_.size(), screen_rows) - 1);
-  }
-  cursor_column_ =
-      columns_ > 0 ? std::min(column, columns_ - 1) : column;
+  // Rows are deque rows, and the screen starts at PrimaryScreenTopLocked() (0 on
+  // the alternate screen). A move (CUP, CUD `CSI B`, CNL `CSI E`, VPA, DECRC)
+  // stops at the screen's bottom row, as in xterm: a cursor move never scrolls,
+  // and a stream of `\x1b[65535B` cannot balloon the line deque on the reader
+  // thread. Under origin mode (DECOM) it stays inside the scroll region, on
+  // either screen. The primary ceiling was `max_scrollback_lines_ + rows_`, the
+  // deque's size only AFTER the end-of-chunk trim, so in one chunk carrying more
+  // lines than the scrollback holds (`cat big.log; clear`) a CUP to the screen's
+  // top landed thousands of rows up in history, and CUD on the bottom row grew
+  // the deque.
+  const std::size_t screen_top = PrimaryScreenTopLocked();
+  const std::size_t min_row = origin_mode_ ? screen_top + ActiveScrollRegionTopLocked() : 0;
+  const std::size_t max_row = screen_top + (origin_mode_ ? ActiveScrollRegionBottomLocked()
+                                                         : std::max<std::size_t>(1, rows_) - 1);
+  cursor_row_ = std::clamp(row, min_row, max_row);
+  cursor_column_ = columns_ > 0 ? std::min(column, columns_ - 1) : column;
   EnsureCursorLineExistsLocked();
 }
 
