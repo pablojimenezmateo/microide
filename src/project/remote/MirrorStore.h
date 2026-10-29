@@ -30,20 +30,38 @@ namespace microide::project::remote {
 // Not thread-safe: the sync engine owns it and serializes access.
 class MirrorStore {
  public:
+  // What the host's content set holds at an entry's path: a manifest row without
+  // the path, which the entries map already keys. The row's own copy was a second
+  // heap string per mirrored file, written everywhere and read nowhere
+  // (TD-2026-10-28-418 item 2).
+  struct RemoteContent {
+    util::ContentHash hash;  // File only
+    std::uint64_t size = 0;
+    std::int64_t mtime_ns = 0;
+    std::uint32_t mode = 0;
+    ManifestEntryKind kind = ManifestEntryKind::File;
+    std::string link_target;  // Symlink only
+
+    RemoteContent() = default;
+    explicit RemoteContent(ManifestRow&& row)
+        : hash(row.hash),
+          size(row.size),
+          mtime_ns(row.mtime_ns),
+          mode(row.mode),
+          kind(row.kind),
+          link_target(std::move(row.link_target)) {}
+    friend bool operator==(const RemoteContent&, const RemoteContent&) = default;
+  };
+
+  // Laid out large-to-small: the flags fill the optional hash's padding.
   struct Entry {
     // What the host's content set holds here, from the latest manifest or watch row.
-    ManifestRow remote;
-    bool has_remote = false;
+    RemoteContent remote;
     // The content the host and the mirror last agreed on. None: never synced.
     std::optional<util::ContentHash> base;
-    // tree/<path>'s size and mtime when it was last known to hold `base`: a stat
-    // that still matches means "unchanged since" without rereading the file.
+    bool has_remote = false;
+    // tree/<path>'s size and mtime are known to hold `base` (local_size and below).
     bool local_known = false;
-    std::uint64_t local_size = 0;
-    std::int64_t local_mtime_ns = 0;
-    // ctime too: a tool that rewrites a file and puts its mtime back (rsync -t,
-    // cp -p) cannot put the ctime back.
-    std::int64_t local_ctime_ns = 0;
     // Journal: the local bytes are newer than the base and not yet acked by the
     // host. Survives a crash and a dropped link; replayed on the next sync.
     bool push_pending = false;
@@ -53,11 +71,13 @@ class MirrorStore {
     // Written or created here, and not in the host's content set (an ignored path,
     // a .env, an empty directory): never deleted for not being listed (§ 6.3).
     bool local_only = false;
-    // Parked from a rename made here that the host refused (the original edited,
-    // deleted or moved there since): the path it was renamed from, so the conflict
-    // row says what happened rather than "deleted on host" of a file the user
-    // renamed. Set only with `conflict`, cleared when it is settled.
-    std::string renamed_from;
+    // tree/<path>'s size and mtime when it was last known to hold `base`: a stat
+    // that still matches means "unchanged since" without rereading the file.
+    std::uint64_t local_size = 0;
+    std::int64_t local_mtime_ns = 0;
+    // ctime too: a tool that rewrites a file and puts its mtime back (rsync -t,
+    // cp -p) cannot put the ctime back.
+    std::int64_t local_ctime_ns = 0;
     // The host's newest manifest id when it acknowledged this path's last push
     // (RemoteWorkspace::WriteResult::manifest_id). A row from a manifest at or below
     // it was built before the host saw that write -- the echo of an earlier push,
@@ -66,6 +86,11 @@ class MirrorStore {
     // new tree that counts from 1). Not persisted: after a reload the next manifest
     // is newer than any push this window made.
     std::uint64_t pushed_manifest = 0;
+    // Parked from a rename made here that the host refused (the original edited,
+    // deleted or moved there since): the path it was renamed from, so the conflict
+    // row says what happened rather than "deleted on host" of a file the user
+    // renamed. Set only with `conflict`, cleared when it is settled.
+    std::string renamed_from;
     // The bytes of pushes whose answer never came (the link dropped mid-write), by
     // hash, newest last and bounded: the host may hold any of them. A later push
     // that conflicts with exactly one of these finds its own write, not a host

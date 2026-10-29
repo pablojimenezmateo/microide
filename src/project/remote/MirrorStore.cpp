@@ -194,7 +194,6 @@ bool MirrorStore::Open(std::string* error) {
     Entry entry;
     if ((flags & kHasRemote) != 0) {
       entry.has_remote = true;
-      entry.remote.path = path;
       const std::uint64_t kind = in.Le(1);
       entry.remote.kind = static_cast<ManifestEntryKind>(
           kind > static_cast<std::uint64_t>(ManifestEntryKind::Submodule) ? 0 : kind);
@@ -273,11 +272,7 @@ bool MirrorStore::Open(std::string* error) {
         entry.push_pending = false;
       }
       for (std::string& path : pending) {
-        Entry& entry = entries_[path];
-        if (!entry.has_remote) {
-          entry.remote.path = path;
-        }
-        entry.push_pending = true;
+        entries_[path].push_pending = true;
       }
       pending_tree_ops_ = std::move(ops);
     } else {
@@ -306,9 +301,6 @@ bool MirrorStore::Open(std::string* error) {
     if (!hin.failed() && hin.at_end()) {
       for (auto& [path, hash] : pulled) {
         Entry& entry = entries_[path];
-        if (!entry.has_remote) {
-          entry.remote.path = path;
-        }
         if (entry.push_pending || util::HashFileContent(tree_ / path) == std::optional(hash)) {
           entry.base = hash;
           entry.local_known = false;

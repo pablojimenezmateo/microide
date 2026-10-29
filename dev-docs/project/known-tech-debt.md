@@ -696,6 +696,15 @@ Left open:
    and `Entry::remote.path` both hold the path, plus a whole `ManifestRow` (~130 B
    with `link_target`) and bookkeeping per entry: one path copy and a compact row
    would roughly halve it.
+   *Partly done 2026-10-29:* `Entry::remote` is a `MirrorStore::RemoteContent` -- the
+   row without its path, which was written at eight sites and read at none -- and the
+   flags pack into the optional base hash's padding: `sizeof(Entry)` 264 -> 216 and
+   one heap string fewer per path longer than 15 bytes (~100 B a file, ~1.5 MB at
+   15,000). The reconcile also moves the row's path into the key instead of copying
+   it. Left: `renamed_from`, `unacknowledged` and `link_target` (56+24 B, set on a
+   handful of entries) could move behind one rarely-allocated pointer, and the rest
+   of the ~1 KB per file has not been attributed -- measure (the control channel's
+   `heap`) before cutting further.
 3. ~~**Per-file state, server:** ~0.6 KB per file in use (8.8 MB at 15,000 files).
    `WorkspaceTree::last_rows_` and the watch subscribers' snapshot are two full
    copies of the row vector, and `UpdateManifest` moves every row out of

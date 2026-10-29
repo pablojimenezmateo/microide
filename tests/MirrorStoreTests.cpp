@@ -23,7 +23,6 @@ void TestMirrorStoreRoundTrips() {
     store.set_manifest_id(42);
     MirrorStore::Entry& file = store.entries()["src/a.c"];
     file.has_remote = true;
-    file.remote.path = "src/a.c";
     file.remote.size = 3;
     file.remote.mode = 0755;
     file.remote.mtime_ns = -7;
@@ -35,7 +34,6 @@ void TestMirrorStoreRoundTrips() {
     file.push_pending = true;
     MirrorStore::Entry& link = store.entries()["lnk"];
     link.has_remote = true;
-    link.remote.path = "lnk";
     link.remote.kind = ManifestEntryKind::Symlink;
     link.remote.link_target = "src/a.c";
     MirrorStore::Entry& local_only = store.entries()[".env"];
@@ -101,7 +99,6 @@ void TestMirrorStoreJournalCarriesPullsTheStateLacks() {
     for (const char* name : {"a.txt", "saved.txt", "edited.txt"}) {
       MirrorStore::Entry& entry = store.entries()[name];
       entry.has_remote = true;
-      entry.remote.path = name;
       entry.remote.hash = old;
       entry.base = old;
       WriteFile(store.tree() / name, "one\n");

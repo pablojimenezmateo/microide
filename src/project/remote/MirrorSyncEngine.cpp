@@ -218,12 +218,8 @@ void MirrorSyncEngine::NotifyLocalWrite(std::string path) {
   queue_.Post([this, path = std::move(path)]() {
     {
       std::lock_guard lock(mutex_);
-      MirrorStore::Entry& entry = store_.entries()[path];
-      if (!entry.has_remote) {
-        entry.remote.path = path;
-      }
       // Journaled before it is attempted: a crash or a dropped link loses nothing.
-      entry.push_pending = true;
+      store_.entries()[path].push_pending = true;
       SaveLocked();
       RecountLocked();
     }
@@ -242,9 +238,8 @@ void MirrorSyncEngine::NotifyLocalTreeOps(std::vector<LocalTreeOp> ops) {
       for (const LocalTreeOp& op : ops) {
         switch (op.kind) {
           case LocalTreeOp::Kind::CreateFile: {
-            MirrorStore::Entry& entry = store_.entries()[op.path];
-            entry.remote.path = op.path;
-            entry.push_pending = true;  // a create is a push, journaled as one
+            // A create is a push, journaled as one.
+            store_.entries()[op.path].push_pending = true;
             break;
           }
           case LocalTreeOp::Kind::CreateDirectory:
@@ -357,7 +352,6 @@ bool MirrorSyncEngine::TreeOpNow(const LocalTreeOp& op) {
       auto node = entries.extract(path);
       if (rename) {
         node.key() = op.new_path + path.substr(op.path.size());
-        node.mapped().remote.path = node.key();
         entries.insert(std::move(node));
       }
     }
@@ -378,7 +372,6 @@ bool MirrorSyncEngine::TreeOpNow(const LocalTreeOp& op) {
     for (const std::string& path : affected) {
       MirrorStore::Entry moved = entries[path];
       const std::string to = op.new_path + path.substr(op.path.size());
-      moved.remote.path = to;
       moved.has_remote = false;
       moved.base.reset();
       moved.push_pending = false;
@@ -694,7 +687,6 @@ void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution
       entry->local_only = false;
       entry->has_remote = true;
       entry->base = *object.hash;
-      entry->remote.path = path;
       entry->remote.hash = *object.hash;
       entry->remote.size = object.content.size();
       store_.RecordLocal(path, *entry);
@@ -942,7 +934,8 @@ void MirrorSyncEngine::JournalLocked() {
 }
 
 void MirrorSyncEngine::ReconcileRowLocked(ManifestRow row, Plan& plan, std::uint64_t manifest_id) {
-  auto [it, inserted] = store_.entries().try_emplace(row.path);
+  // The key is the only copy of the path an entry keeps (RemoteContent drops it).
+  auto [it, inserted] = store_.entries().try_emplace(std::move(row.path));
   MirrorStore::Entry& entry = it->second;
   const std::string& path = it->first;
   // Built before the host acknowledged a push to this path, so older than what
@@ -969,7 +962,7 @@ void MirrorSyncEngine::ReconcileRowLocked(ManifestRow row, Plan& plan, std::uint
   }
   entry.has_remote = true;
   entry.local_only = false;
-  entry.remote = std::move(row);
+  entry.remote = MirrorStore::RemoteContent(std::move(row));
   switch (entry.remote.kind) {
     case ManifestEntryKind::Symlink:
       plan.links.emplace_back(path, entry.remote.link_target);
