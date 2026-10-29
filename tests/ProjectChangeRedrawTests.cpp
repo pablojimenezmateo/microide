@@ -17,6 +17,7 @@
 #include "support/SoftwareCanvas.h"
 
 #include "platform/FileIndexWatcher.h"
+#include "project/ProjectChangeCoalescer.h"
 #include "platform/Filesystem.h"
 #include "workspace/shell/WorkspaceShell.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
@@ -205,6 +206,48 @@ void TestAWriteToAnUnopenedFileRepaintsTheSidebarNotTheEditor() {
 
   Expect(CountPixelDifferences(before.get(), fixture.Snapshot().get()) > 0,
          "the new file should have changed the tree on screen (or the comparison proves nothing)");
+}
+
+// The apply rate (TD-2026-10-28-419): batches that keep arriving are held past the
+// coalescer's burst, and a held batch must not wait for unrelated input -- the idle
+// wait names its deadline, and the scheduled wake at that deadline applies it.
+void TestAHeldChangeBatchIsAppliedByTheScheduledWake() {
+  Fixture fixture(/*sidebar_visible=*/true);
+  const auto deliver = [&](int serial) {
+    const std::filesystem::path created = fixture.root / ("burst-" + std::to_string(serial) + ".md");
+    WriteFile(created, "burst\n");
+    platform::IndexUpdateBatch batch;
+    batch.changes.push_back(fixture.Modified(created));
+    Expect(WorkspaceShellTestAccess::DispatchFileIndexWatcherBatchForTesting(fixture.shell, std::move(batch)),
+           "the fixture should deliver its batch");
+    const std::uint64_t before = WorkspaceShellTestAccess::LastAppliedProjectChangeGeneration(fixture.shell);
+    (void)WorkspaceShellTestAccess::HandleScheduledWake(fixture.shell);
+    return WorkspaceShellTestAccess::LastAppliedProjectChangeGeneration(fixture.shell) > before;
+  };
+  // Deliveries back to back, as a sync's are: within a few the burst is spent.
+  bool held = false;
+  for (int serial = 0; serial < 4 * static_cast<int>(project::ProjectChangeCoalescer::kApplyBurst) && !held;
+       ++serial) {
+    held = !deliver(serial);
+  }
+  Expect(held, "a batch arriving past the burst should be held, or the rate is not in the path");
+  if (!held) {
+    return;
+  }
+  const WorkspaceShell::IdleWaitState wait = fixture.shell.CurrentIdleWaitState();
+  Expect(wait.hint != WorkspaceShell::IdleHint::Idle &&
+             wait.caret_remaining_ms <= project::ProjectChangeCoalescer::kApplyIntervalMs,
+         "a held batch should bound the idle wait by the apply interval");
+  const std::uint64_t before = WorkspaceShellTestAccess::LastAppliedProjectChangeGeneration(fixture.shell);
+  Expect(WaitUntil(
+             [&] {
+               fixture.Paint(WorkspaceShellTestAccess::HandleScheduledWake(fixture.shell).redraw);
+               return WorkspaceShellTestAccess::LastAppliedProjectChangeGeneration(fixture.shell) > before;
+             },
+             std::chrono::seconds(5), std::chrono::milliseconds(5)),
+         "the scheduled wake should apply the held batch once the interval passes");
+  fixture.Settle();
+  fixture.ExpectRetainedMatchesFull("the held batch's frame should leave the window as a full repaint would");
 }
 
 void TestAWriteToTheOpenFileRepaintsItsPane() {
@@ -428,6 +471,8 @@ void RegisterProjectChangeRedrawTests(std::vector<TestCase>& tests) {
 #if MICROIDE_HAS_SDL3_TTF
   AddTest(tests, "ProjectChangeRedraw/AnUnopenedFileRepaintsTheSidebarNotTheEditor",
           TestAWriteToAnUnopenedFileRepaintsTheSidebarNotTheEditor);
+  AddTest(tests, "ProjectChangeRedraw/AHeldChangeBatchIsAppliedByTheScheduledWake",
+          TestAHeldChangeBatchIsAppliedByTheScheduledWake);
   AddTest(tests, "ProjectChangeRedraw/AnOpenFileRepaintsItsPane",
           TestAWriteToTheOpenFileRepaintsItsPane);
   AddTest(tests, "ProjectChangeRedraw/AWriteToAFileOpenInAnotherGroupRepaintsThatPane",

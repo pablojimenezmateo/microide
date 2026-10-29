@@ -1048,6 +1048,15 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
   // to re-arm a 2 s timer forever, and (before that) walk the whole tree on it.
   // The poll fallback for hosts without native events lives inside the watcher and
   // wakes the same way (TD-2026-08-15-252).
+  // File changes the apply rate held back (TD-2026-10-28-419): the scheduled wake
+  // calls ReloadProjectIfFilesChanged, which applies them once the budget allows.
+  if (const auto change_delay = project_change_coalescer_.NextReadyDelayMs(SDL_GetTicks());
+      change_delay.has_value()) {
+    const Uint32 change_delay_ms = static_cast<Uint32>(*change_delay);
+    if (!next_delay.has_value() || change_delay_ms < *next_delay) {
+      next_delay = change_delay_ms;
+    }
+  }
   if (const auto toast_delay = notification_service_.NextExpiryDelayMs(SDL_GetTicks());
       toast_delay.has_value()) {
     const Uint32 toast_delay_ms = static_cast<Uint32>(*toast_delay);
@@ -1245,7 +1254,11 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
 
   const std::optional<project::ProjectChangeBatch> ready = [&] {
     util::PerformanceTrace::Scope consume_scope("WorkspaceShell::ReloadProjectIfFilesChanged::ConsumeReady");
-    return project_change_coalescer_.ConsumeReady();
+    // Unforced, at the coalescer's apply rate: a sync or a build that keeps writing
+    // repaints a few times a second, not once per watcher batch. The scheduled
+    // wake (NextAnimationDelayMs) comes back for what this leaves pending.
+    return force_check ? project_change_coalescer_.ConsumeReady()
+                       : project_change_coalescer_.ConsumeReadyAt(SDL_GetTicks());
   }();
   if (!ready.has_value()) {
     if (!index_metadata_pending) {

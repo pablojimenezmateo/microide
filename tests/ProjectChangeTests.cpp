@@ -184,6 +184,55 @@ void TestProjectChangeCoalescerCollapsesFloodToRescan() {
          "the flag clears with the batch that carried it; a rescan under the cap is complete");
 }
 
+// The apply rate (TD-2026-10-28-419): the first kApplyBurst batches apply at once,
+// then one per kApplyIntervalMs while changes keep coming, the held-back changes
+// merging into the next apply rather than being dropped; a quiet spell refills the
+// burst; and NextReadyDelayMs names exactly when the held batch becomes ready.
+void TestProjectChangeCoalescerRateLimitsAppliesWhileChangesKeepArriving() {
+  using project::ProjectChangeCoalescer;
+  ProjectChangeCoalescer coalescer;
+  int serial = 0;
+  const auto write = [&] {
+    project::ProjectChangeBatch batch;
+    const std::string name = "f" + std::to_string(serial++) + ".txt";
+    batch.file_changes.push_back(project::ProjectFileChange{
+        .kind = project::ProjectFileChangeKind::Modified,
+        .relative_path = name,
+        .absolute_path = "/r/" + name,
+    });
+    coalescer.Ingest(std::move(batch));
+  };
+  std::uint64_t now = 1000;
+  Expect(!coalescer.NextReadyDelayMs(now).has_value(), "nothing pending, no wake");
+  for (std::size_t i = 0; i < ProjectChangeCoalescer::kApplyBurst; ++i) {
+    write();
+    Expect(coalescer.NextReadyDelayMs(now) == std::optional<std::uint64_t>(0), "a burst batch is ready now");
+    Expect(coalescer.ConsumeReadyAt(now).has_value(), "the burst applies at once");
+    now += 10;
+  }
+  write();
+  Expect(!coalescer.ConsumeReadyAt(now).has_value(), "past the burst the batch is held");
+  const std::optional<std::uint64_t> delay = coalescer.NextReadyDelayMs(now);
+  Expect(delay.has_value() && *delay > 0 && *delay <= ProjectChangeCoalescer::kApplyIntervalMs,
+         "and the held batch names a wake within one interval");
+  write();
+  Expect(!coalescer.ConsumeReadyAt(now + *delay - 1).has_value(), "not a millisecond early");
+  const std::optional<project::ProjectChangeBatch> held = coalescer.ConsumeReadyAt(now + *delay);
+  Expect(held.has_value() && held->file_changes.size() == 2,
+         "on time, with both held changes merged into one apply");
+  now += *delay;
+  write();
+  Expect(!coalescer.ConsumeReadyAt(now).has_value(), "the steady rate holds the next one");
+  Expect(coalescer.NextReadyDelayMs(now) == std::optional<std::uint64_t>(ProjectChangeCoalescer::kApplyIntervalMs),
+         "for a whole interval");
+  Expect(coalescer.ConsumeReady().has_value(), "an unforced hold never blocks a forced consume");
+  now += ProjectChangeCoalescer::kApplyBurst * ProjectChangeCoalescer::kApplyIntervalMs;
+  for (std::size_t i = 0; i < ProjectChangeCoalescer::kApplyBurst; ++i) {
+    write();
+    Expect(coalescer.ConsumeReadyAt(now).has_value(), "a quiet spell refills the whole burst");
+  }
+}
+
 void TestProjectChangeCoalescerSuppressesStaleGeneration() {
   project::ProjectChangeCoalescer coalescer;
   project::ProjectChangeBatch batch;
@@ -498,6 +547,8 @@ void RegisterProjectChangeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ProjectChange/CoalescerCollapsesFloodToRescan",
           TestProjectChangeCoalescerCollapsesFloodToRescan);
   AddTest(tests, "ProjectChange/CoalescerGeneration", TestProjectChangeCoalescerSuppressesStaleGeneration);
+  AddTest(tests, "ProjectChange/CoalescerRateLimitsAppliesWhileChangesKeepArriving",
+          TestProjectChangeCoalescerRateLimitsAppliesWhileChangesKeepArriving);
   AddTest(tests, "ProjectChange/GitMetadataHeadChange", TestGitRepositoryMetadataTrackerDetectsHeadChanges);
   AddTest(tests, "ProjectChange/GitMetadataIgnoresIdenticalHeadRewrite",
           TestGitRepositoryMetadataTrackerIgnoresIdenticalHeadRewrite);

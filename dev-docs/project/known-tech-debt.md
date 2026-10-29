@@ -562,7 +562,7 @@ the same way -- now carries each pull until a state save records it
 still hashes to it, or whose path has a save journaled after the pull; a hint
 that does not decode is ignored (`MirrorStore/JournalCarriesPullsTheStateLacks`).
 
-### TD-2026-10-28-419 — a long first sync drives the UI at ~11 frames a second for its whole length. [OPEN — measured; design below]
+### TD-2026-10-28-419 — a long first sync drives the UI at ~11 frames a second for its whole length. [RESOLVED 2026-10-29 — applies are rate-limited while batches keep arriving]
 
 Found by `tools/qa/remote.py` X over the 60 ms slow link (`qa-slow`): the same
 first sync that costs the client ~1.3 s of CPU on loopback cost 3.2-4.3 s there.
@@ -583,6 +583,19 @@ scheduled wake (which already calls `ReloadProjectIfFilesChanged`) applies it;
 immediately is what keeps the many tests that write a file and pump once
 deterministic: those need an explicit flush (or the throttle off under test) before
 the change lands, and that is its own reviewed change.
+
+**Resolved 2026-10-29.** `ProjectChangeCoalescer::ConsumeReadyAt` is a token bucket:
+`kApplyBurst` (4) applies at once, then one per `kApplyIntervalMs` (250 ms) while
+batches keep arriving, the held changes merging into the next apply. The burst is
+what answers the test concern above without a test-only switch: a test that writes
+and pumps a few times still sees every apply at once (the whole suite passed
+unchanged), and only a sustained stream -- a sync, a build -- is held. `force_check`
+takes the unthrottled `ConsumeReady`. `NextReadyDelayMs` joins `NextAnimationDelayMs`,
+so a held batch bounds the idle wait and the scheduled wake applies it with no input.
+Tests: `ProjectChange/CoalescerRateLimitsAppliesWhileChangesKeepArriving` (the
+bucket on a fake clock) and `ProjectChangeRedraw/AHeldChangeBatchIsAppliedByTheScheduledWake`
+(the wiring; fails with the idle-wait term removed). A sustained stream now repaints
+at most ~4 times a second, so the 16 s slow-link sync's 176 frames bound to ~68.
 
 ### TD-2026-10-28-418 — the remote link's idle wakeups and memory, measured end to end: what was fixed, and what is left. [PARTLY RESOLVED 2026-10-28 — open: the client's per-file state, allocator slack after a first sync, the git sampler's polling]
 

@@ -24,6 +24,8 @@ void ProjectChangeCoalescer::Reset() {
   pending_ = ProjectChangeBatch{};
   pending_index_.clear();
   generation_ = 0;
+  apply_budget_ = kApplyBurst;
+  budget_epoch_ms_ = 0;
 }
 
 void ProjectChangeCoalescer::Ingest(ProjectChangeBatch batch) {
@@ -48,8 +50,58 @@ void ProjectChangeCoalescer::Ingest(ProjectChangeBatch batch) {
 std::optional<ProjectChangeBatch> ProjectChangeCoalescer::ConsumeReady(
     std::uint64_t* out_generation) {
   std::scoped_lock lock(mutex_);
-  if (pending_.file_changes.empty() && pending_.repository_changes.empty() &&
-      !pending_.tree_rescan_requested) {
+  return TakePendingLocked(out_generation);
+}
+
+std::optional<ProjectChangeBatch> ProjectChangeCoalescer::ConsumeReadyAt(std::uint64_t now_ms) {
+  std::scoped_lock lock(mutex_);
+  if (!HasPendingLocked()) {
+    return std::nullopt;
+  }
+  std::uint64_t epoch_ms = 0;
+  const std::size_t budget = BudgetAtLocked(now_ms, &epoch_ms);
+  if (budget == 0) {
+    return std::nullopt;
+  }
+  apply_budget_ = budget - 1;
+  budget_epoch_ms_ = epoch_ms;
+  return TakePendingLocked(nullptr);
+}
+
+std::optional<std::uint64_t> ProjectChangeCoalescer::NextReadyDelayMs(std::uint64_t now_ms) const {
+  std::scoped_lock lock(mutex_);
+  if (!HasPendingLocked()) {
+    return std::nullopt;
+  }
+  std::uint64_t epoch_ms = 0;
+  if (BudgetAtLocked(now_ms, &epoch_ms) > 0) {
+    return 0;
+  }
+  return kApplyIntervalMs - (now_ms - epoch_ms);
+}
+
+std::size_t ProjectChangeCoalescer::BudgetAtLocked(std::uint64_t now_ms,
+                                                   std::uint64_t* epoch_ms) const {
+  // A clock that went backwards (or a first call) refills nothing and loses nothing.
+  const std::uint64_t elapsed = now_ms > budget_epoch_ms_ ? now_ms - budget_epoch_ms_ : 0;
+  const std::uint64_t refilled = elapsed / kApplyIntervalMs;
+  if (apply_budget_ + refilled >= kApplyBurst) {
+    // Full: the refill clock restarts when the next token is spent.
+    *epoch_ms = now_ms;
+    return kApplyBurst;
+  }
+  *epoch_ms = budget_epoch_ms_ + refilled * kApplyIntervalMs;
+  return apply_budget_ + static_cast<std::size_t>(refilled);
+}
+
+bool ProjectChangeCoalescer::HasPendingLocked() const {
+  return !pending_.file_changes.empty() || !pending_.repository_changes.empty() ||
+         pending_.tree_rescan_requested;
+}
+
+std::optional<ProjectChangeBatch> ProjectChangeCoalescer::TakePendingLocked(
+    std::uint64_t* out_generation) {
+  if (!HasPendingLocked()) {
     return std::nullopt;
   }
 
