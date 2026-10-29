@@ -405,6 +405,90 @@ int WorkspaceShell::CompareMaxScrollRow(const CompareTabState& compare_tab, int 
                             std::max(1, visible_rows));
 }
 
+// The visible window's syntax tokens, for a compare surface painted into `rect`.
+// Frame prep, not paint: the tokenizer is capped per call, so tokenizing while
+// painting let the redraw verifier's second paint of a frame run 256 rows ahead
+// of the partial paint it checks, and the two disagreed on which rows were
+// highlighted (QA monkey, commands profile, seed 20).
+void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compare_tab,
+                                                          const SDL_FRect& rect) {
+  if (!compare_tab.syntax_highlighting_enabled || compare_tab.model.rows.empty() ||
+      rect.w <= 0.0f || rect.h <= 0.0f) {
+    return;
+  }
+  const CompareSurfaceLayout surface = ComputeCompareSurfaceLayout(rect, compare_tab);
+  // The clamp paint applies, applied first so both read the same scroll row.
+  ClampCompareScrollRow(compare_tab, surface.visible_rows);
+  const std::size_t visible_start_row = static_cast<std::size_t>(std::max(0, compare_tab.scroll_row));
+  const std::size_t visible_end_row =
+      visible_start_row + static_cast<std::size_t>(std::max(1, surface.visible_rows)) + 64;
+  // The compare view collapses large unchanged runs, so a visible presentation row
+  // can map to a MODEL row far below its presentation index. The cumulative
+  // tokenizer indexes by model row, so derive its window in MODEL space from the
+  // presentation rows actually on screen (a CollapsedContext row spans through the
+  // end of its run so rows below inherit the correct syntax state). Feeding the
+  // presentation scroll position directly capped tokenization far below the visible
+  // model rows, leaving hunks deep in a collapsed diff unhighlighted.
+  const std::size_t presentation_row_count = compare_tab.presentation.rows.size();
+  const auto model_row_for_visual = [&](std::size_t visual_index) -> std::size_t {
+    if (presentation_row_count == 0) {
+      return compare_tab.model.rows.size();
+    }
+    const compare::ComparePresentationRow* row = CompareTabPresentationRowAt(
+        compare_tab,
+        std::min(CompareVisualRowToPresentationRow(compare_tab, visual_index),
+                 presentation_row_count - 1));
+    if (row == nullptr) {
+      return compare_tab.model.rows.size();
+    }
+    if (row->kind == compare::ComparePresentationRowKind::CollapsedContext) {
+      return row->collapsed_run_start_model_row + row->collapsed_run_length;
+    }
+    return row->model_row_index;
+  };
+  const std::size_t window_start = model_row_for_visual(visible_start_row);
+  const std::size_t window_end =
+      std::min(compare_tab.model.rows.size(), model_row_for_visual(visible_end_row) + 1);
+  // 95 % of `RenderCompareSurface`'s per-frame self time sat here, with nothing
+  // naming it (TD-2026-08-15-248).
+  util::PerformanceTrace::Scope syntax_scope("WorkspaceShell::RenderCompareSurface::SyntaxTokens");
+
+  // Both panes tokenize cumulatively down the MODEL rows, so reaching a row means
+  // walking every row above it. SurfaceTokenWindow does that walk with
+  // `AdvanceState` -- which allocates nothing -- and keeps token buffers only for a
+  // bounded band around the viewport, where this used to hold one heap buffer per
+  // row of the diff for the tab's life (TD-2026-08-15-242).
+  //
+  // A row absent on a side reads as the empty line, which is exactly what the
+  // per-row form did: it left that side's tokens empty and carried the side's
+  // syntax state forward untouched, and `AdvanceState`/`HighlightLineInto` both
+  // do that for an empty line.
+  constexpr std::size_t kCompareSyntaxRowsPerFrame = 256;
+  compare_tab.left_token_window.EnsureWindow(
+      window_start, window_end, compare_tab.path, kCompareSyntaxRowsPerFrame,
+      [&](std::size_t row) -> std::string_view {
+        const compare::CompareRow& compare_row = compare_tab.model.rows[row];
+        return compare_row.left_line > 0 ? compare_row.left_text : std::string_view{};
+      });
+  compare_tab.right_token_window.EnsureWindow(
+      window_start, window_end, compare_tab.path, kCompareSyntaxRowsPerFrame,
+      [&](std::size_t row) -> std::string_view {
+        const compare::CompareRow& compare_row = compare_tab.model.rows[row];
+        return compare_row.right_line > 0 ? compare_row.right_text : std::string_view{};
+      },
+      // Skip the rows whose tokens the render site will read from the LEFT window
+      // -- an unchanged row identical on both sides. Left is ensured first, so its
+      // states are current when this asks.
+      [&](std::size_t row) { return !CompareRowRightTokensAliasLeft(compare_tab, row); });
+  // Capped per frame: if it has not yet reached the deepest visible model row (after
+  // scrolling past a giant collapsed run), ask for another frame so it catches up
+  // instead of leaving those rows unhighlighted. Self-terminates once caught up.
+  if (compare_tab.left_token_window.frontier() < window_end ||
+      compare_tab.right_token_window.frontier() < window_end) {
+    RequestRedrawRect(rect);
+  }
+}
+
 void WorkspaceShell::ClampCompareScrollRow(CompareTabState& compare_tab, int visible_rows) const {
   compare_tab.scroll_row =
       std::clamp(compare_tab.scroll_row, 0, CompareMaxScrollRow(compare_tab, visible_rows));

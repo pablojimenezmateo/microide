@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <fstream>
 #include <optional>
 #include <string>
@@ -2699,6 +2700,60 @@ void TestWorkspaceShellCompareTypingRepaintsTheHorizontalThumb() {
          "the fixture must NOT scroll, or the surface repaints for that instead");
 }
 
+
+// Two paints of one prepared frame must agree: the redraw verifier paints a frame
+// partially, then in full, and compares. Compare tokenization ran inside paint,
+// capped per call, so on a diff whose visible rows lie past the cap the second
+// paint highlighted rows the first had left plain (QA monkey, commands profile,
+// seed 20). It runs in frame prep now.
+void TestWorkspaceShellComparePaintsOfOneFrameAgree() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "big.cpp";
+  std::string before;
+  // ~300 model rows: the visible context at the end lies past one paint's 256-row
+  // tokenizer cap and within two paints', which is where the two disagreed.
+  for (int line = 0; line < 150; ++line) {
+    before += "// comment line " + std::to_string(line) + "\nint value_" + std::to_string(line) + " = 1;\n";
+  }
+  WriteFile(source, before);
+  InitializeGitRepo(root);
+  CommitAll(root, "Add big compare fixture", "big compare fixture");
+  WriteFile(source, before + "// a new last comment\nint tail = 2;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  compare.scroll_row = std::numeric_limits<int>::max() / 2;  // clamped to the bottom
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  // One canvas: glyph textures are per renderer, so two canvases differ wherever
+  // there is text.
+  microide::tests::SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  const WorkspaceShell::FrameToken token = shell.PrepareFrameOnce(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const SDL_FRect everything{0.0f, 0.0f, static_cast<float>(kWidth), static_cast<float>(kHeight)};
+  shell.RenderClip(token, canvas.renderer(), kWidth, kHeight, everything);
+  SDL_FlushRenderer(canvas.renderer());
+  SDL_Surface* first = SDL_DuplicateSurface(canvas.surface());
+  shell.RenderClip(token, canvas.renderer(), kWidth, kHeight);
+  SDL_FlushRenderer(canvas.renderer());
+  const std::size_t differing = CountPixelDifferences(first, canvas.surface());
+  SDL_DestroySurface(first);
+  Expect(differing == 0, "a hinted paint and a full paint of the same frame paint the same pixels: " +
+                             std::to_string(differing) + " differ");
+}
+
 }  // namespace
 
 // H11/J41: an unreadable or binary working-tree file must NOT open as an editable
@@ -3700,6 +3755,7 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareHunkJumpMovesTheEditableCaret);
   AddTest(tests, "WorkspaceShell/CompareHunkJumpFromBetweenChangesGoesToTheNearestOne",
           TestWorkspaceShellCompareHunkJumpFromBetweenChangesGoesToTheNearestOne);
+  AddTest(tests, "WorkspaceShell/ComparePaintsOfOneFrameAgree", TestWorkspaceShellComparePaintsOfOneFrameAgree);
   AddTest(tests, "WorkspaceShell/CompareTypingRepaintsTheHorizontalThumb",
           TestWorkspaceShellCompareTypingRepaintsTheHorizontalThumb);
   AddTest(tests, "WorkspaceShell/CompareHorizontalScrollRepaintsTheSurface",

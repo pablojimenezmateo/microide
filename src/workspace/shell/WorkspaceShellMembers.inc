@@ -994,9 +994,7 @@
                        const std::filesystem::path& current_path,
                        const std::filesystem::path& output_path);
   void RefreshMergeTabDerivedState(MergeTabState& merge_tab) const;
-  void PopulateCompareSyntaxTokensForWindow(CompareTabState& compare_tab,
-                                            std::size_t visible_start_row,
-                                            std::size_t visible_end_row);
+  void PopulateCompareSyntaxTokensForWindow(CompareTabState& compare_tab, const SDL_FRect& rect);
   std::vector<MergeTrackedConflict> BuildMergeTrackedConflicts(
       const compare::MergeModel& model) const;
   std::vector<MergeTrackedConflict> BuildMergeTrackedConflictsForResult(
