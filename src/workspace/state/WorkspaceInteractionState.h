@@ -39,6 +39,24 @@ enum class DragTarget {
   SingleLineSelection,
 };
 
+// A divider drag owns the pointer for the whole gesture: it keeps its resize
+// cursor wherever the pointer travels, and nothing it passes over hovers.
+inline bool IsDividerDrag(DragTarget target) {
+  switch (target) {
+    case DragTarget::SidebarDivider:
+    case DragTarget::RightPaneDivider:
+    case DragTarget::BottomPanelDivider:
+    case DragTarget::EditorSplitDivider:
+    case DragTarget::TerminalPaneDivider:
+    case DragTarget::CompareDivider:
+    case DragTarget::MergeLeftDivider:
+    case DragTarget::MergeRightDivider:
+      return true;
+    default:
+      return false;
+  }
+}
+
 enum class TabDragKind {
   None,
   Project,

@@ -156,19 +156,8 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   // cover only the sidebar and bottom panel, so the other five resize drags
   // (right pane, editor split, compare, and both merge dividers) flickered back to
   // an arrow the moment the pointer left the thin divider band.
-  switch (context_.interaction_state.drag_target) {
-    case DragTarget::SidebarDivider:
-    case DragTarget::RightPaneDivider:
-    case DragTarget::EditorSplitDivider:
-    case DragTarget::TerminalPaneDivider:
-    case DragTarget::CompareDivider:
-    case DragTarget::MergeLeftDivider:
-    case DragTarget::MergeRightDivider:
-      return CursorKind::EwResize;
-    case DragTarget::BottomPanelDivider:
-      return CursorKind::NsResize;
-    default:
-      break;
+  if (const DragTarget target = context_.interaction_state.drag_target; IsDividerDrag(target)) {
+    return target == DragTarget::BottomPanelDivider ? CursorKind::NsResize : CursorKind::EwResize;
   }
 
   const auto window_rect = CurrentWindowRect();

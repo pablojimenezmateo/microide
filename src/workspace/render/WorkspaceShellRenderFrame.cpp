@@ -1271,7 +1271,13 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   } else if (settings_overlay_service_.Visible()) {
     modal = layout.editor_area;
   }
-  if (modal.has_value()) {
+  if (IsDividerDrag(context_.interaction_state.drag_target)) {
+    // A divider drag owns the pointer: the rows and buttons it crosses must not
+    // light up. Nothing invalidated them as it passed -- the drag repaints the
+    // layout it changes, not what lies under the pointer -- so a sidebar wide
+    // enough to sit under a panel drag kept a stale hovered row.
+    frame_state_.pointer_occluder = SDL_FRect{};
+  } else if (modal.has_value()) {
     frame_state_.pointer_occluder =
         last_mouse_position_valid_ && Contains(*modal, last_mouse_x_, last_mouse_y_) ? *modal
                                                                                       : SDL_FRect{};
