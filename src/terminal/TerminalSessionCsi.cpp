@@ -304,6 +304,16 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
         line.cells.erase(line.cells.begin() + static_cast<std::ptrdiff_t>(cursor_column_),
                          line.cells.begin() + static_cast<std::ptrdiff_t>(erase_end));
       }
+      // Background Color Erase (terminfo's `bce`, which ncurses relies on): the
+      // cells the shift vacates at the right margin take the current background.
+      // The row only got shorter, so a coloured TUI (mc, a themed vim) showed
+      // default-background gaps after deleting characters. A default background
+      // needs nothing: past the row's end already paints that way.
+      if ((current_style_.background.has_value() || current_style_.has(cell_attr::kInverse)) &&
+          columns_ > 0 && cursor_column_ < columns_) {
+        const std::size_t vacated = std::min(count, columns_ - cursor_column_);
+        ClearLineRangeLocked(line, columns_ - vacated, columns_);
+      }
       return;
     }
     case 'X': {  // ECH — erase characters.

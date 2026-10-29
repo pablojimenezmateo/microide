@@ -2571,6 +2571,16 @@ void TestTerminalSessionEraseAndDeleteTakeAWideGlyphWhole() {
   TerminalSessionTestAccess::Reset(session, 3, 8);
   TerminalSessionTestAccess::AppendOutput(session, text + "\x1b[1;4H\x1b[P");
   ExpectLineText(session.SnapshotLines(), 0, "ab cd", "DCH of the spacer blanks the lead");
+
+  // DCH under a background colour fills what it vacates at the right margin with
+  // that background (bce), as ECH and EL already did.
+  TerminalSessionTestAccess::Reset(session, 3, 8);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[44mabcdefgh\x1b[1;2H\x1b[2P");
+  const auto lines = session.SnapshotLines();
+  Expect(lines[0].cells.size() == 8 && lines[0].cells[6].style.background.has_value() &&
+             lines[0].cells[7].style.background.has_value(),
+         "the two vacated cells take the current background");
+  ExpectLineText(lines, 0, "adefgh  ", "and the rest shifts left");
 }
 
 // DEC Special Graphics. ncurses draws every box with it under TERM=xterm-256color,
