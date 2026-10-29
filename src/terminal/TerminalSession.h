@@ -371,11 +371,6 @@ class TerminalSession {
   // of bytes consumed, or 0 when the fast path does not apply and the caller must
   // fall back to the per-byte parser.
   std::size_t PutAsciiRunLocked(std::string_view run);
-  // Open `count` blank cells at `at`, shifting the rest of the row right; cells
-  // pushed past the right margin are lost (ICH, and IRM's per-glyph insert).
-  void InsertBlankCellsLocked(TerminalLine& line, std::size_t at, std::size_t count);
-  // REP: print the last graphic glyph `count` more times, bounded by the screen.
-  void RepeatLastGlyphLocked(std::size_t count);
   // Blank any dangling half of a previously written double-width pair that a
   // fresh write over [start, start+advance) would orphan, so the renderer never
   // sees a lead without its trailing spacer (stale gap) or a spacer without its

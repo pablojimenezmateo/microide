@@ -7,6 +7,7 @@
 #include "terminal/TerminalSessionEscapeInternal.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstddef>
 #include <optional>
@@ -305,8 +306,9 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       // Sized to one past the cursor so the insert always has a row to shift
       // (InsertBlankCellsLocked clamps `CSI 65535 @` to the width).
       ResizeLineLocked(line, cursor_column_ + 1);
-      InsertBlankCellsLocked(line, cursor_column_,
-                             static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1)));
+      detail::InsertBlankCells(line, cursor_column_,
+                               static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1)), columns_,
+                               current_style_);
       return;
     }
     case 'I': {  // CHT — cursor forward tabulation.
@@ -426,9 +428,23 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
     }
     // SCOSC / SCORC: xterm treats them as DECSC / DECRC (CASE_ANSI_SC calls
     // CursorSave), rendition and origin mode included.
-    case 'b':  // REP — repeat the preceding graphic character.
-      RepeatLastGlyphLocked(static_cast<std::size_t>(std::max(1, CsiParamOrDefault(params, 0, 1))));
+    case 'b': {  // REP — repeat the preceding graphic character.
+      if (last_glyph_length_ == 0) {
+        return;
+      }
+      // A repeat past the whole screen only overwrites what it just wrote: capped
+      // there so `CSI 2147483647 b` is not a hang on the reader thread.
+      const std::size_t count =
+          std::min(static_cast<std::size_t>(std::max(1, CsiParamOrDefault(params, 0, 1))),
+                   std::max<std::size_t>(1, rows_) * std::max<std::size_t>(1, columns_));
+      // Copied: PutGlyphLocked rewrites `last_glyph_` with the same bytes.
+      const std::array<char, 4> glyph = last_glyph_;
+      const std::string_view text(glyph.data(), last_glyph_length_);
+      for (std::size_t i = 0; i < count; ++i) {
+        PutGlyphLocked(text);
+      }
       return;
+    }
     case 'h':
     case 'l':
       // ANSI (non-private) modes: only IRM (4) has an effect here.

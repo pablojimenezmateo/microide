@@ -138,7 +138,10 @@ RuleResult CheckTerminalSessionHeaderSize(const std::filesystem::path& repo_root
   result.hard_fail = true;
   // 301: +1 for util/Revision.h, the snapshot generation's shared counter type
   // (it replaced a hand-rolled skip-zero increment in the .cpp).
-  constexpr std::size_t kCap = 301;
+  // 305: +4 for state, not helpers -- IRM's flag and REP's last glyph (both in
+  // the xterm-256color terminfo entry TERM names); <array> for the latter. Their
+  // shared insert helper lives in TerminalSessionEscapeInternal.h instead.
+  constexpr std::size_t kCap = 305;
   const std::filesystem::path path = repo_root / "src/terminal/TerminalSession.h";
   const std::size_t lines = CountFileLines(path);
   if (lines > kCap) {

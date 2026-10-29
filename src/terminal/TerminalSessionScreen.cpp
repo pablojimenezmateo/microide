@@ -1,6 +1,7 @@
 #include "terminal/TerminalSession.h"
 
 #include "terminal/TerminalAnsiColors.h"
+#include "terminal/TerminalSessionEscapeInternal.h"
 #include "terminal/TerminalCsiParser.h"
 #include "terminal/TerminalInternalConstants.h"
 #include "terminal/TerminalMouseEncoder.h"
@@ -372,7 +373,7 @@ void TerminalSession::PutGlyphLocked(std::string_view glyph) {
   auto& line = lines_[cursor_row_];
   if (insert_mode_) {
     // IRM: the glyph goes in front of the rest of the row, as after ICH.
-    InsertBlankCellsLocked(line, cursor_column_, advance);
+    detail::InsertBlankCells(line, cursor_column_, advance, columns_, current_style_);
   }
   ResizeLineLocked(line, cursor_column_ + advance);
   BreakWideGlyphPairForWriteLocked(line, cursor_column_, advance);
@@ -444,23 +445,6 @@ std::size_t TerminalSession::PutAsciiRunLocked(std::string_view run) {
   return length;
 }
 
-void TerminalSession::RepeatLastGlyphLocked(std::size_t count) {
-  if (last_glyph_length_ == 0) {
-    return;
-  }
-  // xterm bounds nothing, but a repeat past the whole screen only overwrites
-  // what it just wrote: cap it there so `CSI 2147483647 b` is not a hang.
-  const std::size_t screen_cells =
-      std::max<std::size_t>(1, rows_) * std::max<std::size_t>(1, columns_);
-  count = std::min(count, screen_cells);
-  // Copied: PutGlyphLocked rewrites `last_glyph_` with the same bytes.
-  const std::array<char, 4> glyph = last_glyph_;
-  const std::string_view text(glyph.data(), last_glyph_length_);
-  for (std::size_t i = 0; i < count; ++i) {
-    PutGlyphLocked(text);
-  }
-}
-
 void TerminalSession::ResizeLineLocked(TerminalLine& line, std::size_t size) {
   if (line.cells.size() >= size) {
     return;
@@ -504,30 +488,6 @@ void TerminalSession::BreakWideGlyphPairForWriteLocked(TerminalLine& line, std::
   const std::size_t last = start + advance - 1;
   if (last + 1 < line.cells.size() && line.cells[last + 1].style.wide_trailing()) {
     line.cells[last + 1] = MakeAsciiTerminalCell(' ', current_style_);
-  }
-}
-
-void TerminalSession::InsertBlankCellsLocked(TerminalLine& line, std::size_t at, std::size_t count) {
-  if (at >= line.cells.size() || count == 0) {
-    return;
-  }
-  // Inserting inside a wide pair splits it: both halves become blanks.
-  if (line.cells[at].style.wide_trailing() && at > 0) {
-    line.cells[at - 1] = MakeAsciiTerminalCell(' ', current_style_);
-    line.cells[at] = MakeAsciiTerminalCell(' ', current_style_);
-  }
-  // Nothing is shifted further than the margin, so never insert more than fits.
-  if (columns_ > 0) {
-    count = std::min(count, columns_);
-  }
-  line.cells.insert(line.cells.begin() + static_cast<std::ptrdiff_t>(at), count,
-                    MakeAsciiTerminalCell(' ', current_style_));
-  if (columns_ > 0 && line.cells.size() > columns_) {
-    // A lead whose spacer is pushed past the margin would be half a pair.
-    if (line.cells[columns_].style.wide_trailing()) {
-      line.cells[columns_ - 1] = MakeAsciiTerminalCell(' ', current_style_);
-    }
-    line.cells.resize(columns_);
   }
 }
 
@@ -942,4 +902,33 @@ void TerminalSession::TrimScrollbackLocked() {
     lines_.push_back(TerminalLine{});
   }
 }
+namespace detail {
+
+void InsertBlankCells(TerminalLine& line, std::size_t at, std::size_t count, std::size_t columns,
+                      const TerminalStyle& style) {
+  if (at >= line.cells.size() || count == 0) {
+    return;
+  }
+  // Inserting inside a wide pair splits it: both halves become blanks.
+  if (line.cells[at].style.wide_trailing() && at > 0) {
+    line.cells[at - 1] = MakeAsciiTerminalCell(' ', style);
+    line.cells[at] = MakeAsciiTerminalCell(' ', style);
+  }
+  // Nothing is shifted further than the margin, so never insert more than fits:
+  // `CSI 65535 @` must not churn a 65535-cell insert before the trim.
+  if (columns > 0) {
+    count = std::min(count, columns);
+  }
+  line.cells.insert(line.cells.begin() + static_cast<std::ptrdiff_t>(at), count,
+                    MakeAsciiTerminalCell(' ', style));
+  if (columns > 0 && line.cells.size() > columns) {
+    // A lead whose spacer is pushed past the margin would be half a pair.
+    if (line.cells[columns].style.wide_trailing()) {
+      line.cells[columns - 1] = MakeAsciiTerminalCell(' ', style);
+    }
+    line.cells.resize(columns);
+  }
+}
+
+}  // namespace detail
 }  // namespace microide::terminal
