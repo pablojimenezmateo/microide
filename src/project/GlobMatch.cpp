@@ -247,7 +247,9 @@ bool HasWildcard(std::string_view text) {
 }  // namespace
 
 void ExpandGlobBraces(std::string pattern, std::vector<std::string>& out) {
-  if (out.size() >= kMaxExpandedGlobPatterns) {
+  // Alternatives are never longer than the pattern they came from, so checking
+  // every level checks the first.
+  if (out.size() >= kMaxExpandedGlobPatterns || pattern.size() > kMaxBraceExpansionPatternBytes) {
     return;
   }
 

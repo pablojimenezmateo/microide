@@ -43,6 +43,11 @@ bool GlobMatches(std::string_view pattern, std::string_view text,
 // otherwise expand without bound. Past it the remaining alternatives are dropped.
 inline constexpr std::size_t kMaxExpandedGlobPatterns = 256;
 
+// Longest pattern ExpandGlobBraces expands; a longer one expands to nothing.
+// Expansion recurses once per brace group and copies the pattern per level, so a
+// language server's `{a}` x 10^6 was a million-deep recursion over megabytes.
+inline constexpr std::size_t kMaxBraceExpansionPatternBytes = 4096;
+
 // Expand `{a,b}` alternation into concrete patterns, appending to `out` and
 // stopping once `out` reaches kMaxExpandedGlobPatterns. Braces are matched with
 // nesting awareness and '\\' escapes are respected, so "a\\{b" is a literal brace;

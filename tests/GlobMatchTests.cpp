@@ -292,6 +292,25 @@ void TestGlobMatchesAgreesWithRecursiveReference() {
   Expect(mismatches == 0, "GlobMatches must agree with the recursive reference everywhere");
 }
 
+// A language server's watcher glob reaches ExpandGlobBraces unbounded; each group
+// is a level of recursion that copies the pattern, so 300,000 `{a}` groups were a
+// stack overflow (and quadratic copying before it).
+void TestExpandGlobBracesBoundsPatternLength() {
+  std::string deep;
+  for (int index = 0; index < 300000; ++index) {
+    deep += "{a}";
+  }
+  std::vector<std::string> out;
+  microide::project::ExpandGlobBraces(deep, out);
+  Expect(out.empty(), "a pattern past the length cap expands to nothing");
+
+  std::string fits(microide::project::kMaxBraceExpansionPatternBytes - 6, 'x');
+  fits += "{a,b}";
+  out.clear();
+  microide::project::ExpandGlobBraces(fits, out);
+  Expect(out.size() == 2, "a pattern at the cap still expands");
+}
+
 }  // namespace
 
 void RegisterGlobMatchTests(std::vector<TestCase>& tests) {
@@ -303,6 +322,8 @@ void RegisterGlobMatchTests(std::vector<TestCase>& tests) {
   AddTest(tests, "GlobMatch/AgreesWithRecursiveReference",
           TestGlobMatchesAgreesWithRecursiveReference);
   AddTest(tests, "GlobMatch/PathnameSemantics", TestGlobMatchesPathnameSemantics);
+  AddTest(tests, "GlobMatch/ExpandBracesBoundsPatternLength",
+          TestExpandGlobBracesBoundsPatternLength);
   AddTest(tests, "GlobSet/FloatsBareNamesAndAnchorsPaths",
           TestGlobSetFloatsBareNamesAndAnchorsPaths);
   AddTest(tests, "GlobSet/WildcardFreeEntriesAreSubtrees",
