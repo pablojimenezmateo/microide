@@ -18,6 +18,7 @@
 #include "util/Revision.h"
 #include "util/Waker.h"
 
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <filesystem>
@@ -370,6 +371,11 @@ class TerminalSession {
   // of bytes consumed, or 0 when the fast path does not apply and the caller must
   // fall back to the per-byte parser.
   std::size_t PutAsciiRunLocked(std::string_view run);
+  // Open `count` blank cells at `at`, shifting the rest of the row right; cells
+  // pushed past the right margin are lost (ICH, and IRM's per-glyph insert).
+  void InsertBlankCellsLocked(TerminalLine& line, std::size_t at, std::size_t count);
+  // REP: print the last graphic glyph `count` more times, bounded by the screen.
+  void RepeatLastGlyphLocked(std::size_t count);
   // Blank any dangling half of a previously written double-width pair that a
   // fresh write over [start, start+advance) would orphan, so the renderer never
   // sees a lead without its trailing spacer (stale gap) or a spacer without its
@@ -481,6 +487,17 @@ class TerminalSession {
   bool application_cursor_keys_mode_ = false;
   bool origin_mode_ = false;
   bool auto_wrap_mode_ = true;
+  // IRM (`CSI 4 h`): a printed glyph shifts the rest of the row right instead of
+  // overwriting it. `TERM=xterm-256color` advertises it (smir/rmir), so ncurses
+  // may use it to insert characters.
+  bool insert_mode_ = false;
+  // The last graphic glyph printed, for REP (`CSI Ps b`), which that terminfo
+  // entry advertises too: ncurses 6.1+ draws a run of one character -- a box
+  // rule, a row of spaces -- as the character and a repeat count, so without it
+  // the run was missing and the rest of the row shifted left. Empty until a
+  // glyph is printed.
+  std::array<char, 4> last_glyph_ = {};
+  std::uint8_t last_glyph_length_ = 0;
   bool bracketed_paste_mode_ = false;
   bool focus_event_mode_ = false;
   bool cursor_visible_ = true;

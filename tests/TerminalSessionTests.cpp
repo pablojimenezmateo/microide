@@ -2554,6 +2554,41 @@ void TestTerminalSessionSavedCursorRowIsScreenRelative() {
          "after the scrollback was trimmed the restore is still the screen's bottom row");
 }
 
+// REP (`CSI Ps b`) and IRM (`CSI 4 h` / `CSI 4 l`) are in the xterm-256color
+// terminfo entry this terminal sets TERM to (rep, smir/rmir), so ncurses uses
+// them: a run of one character comes as the character and a repeat count. Both
+// were ignored, so the run was one character long and the rest of the row
+// shifted left; an IRM insert overwrote instead.
+void TestTerminalSessionRepeatAndInsertModeFromTheAdvertisedTerminfo() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 3, 12);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[5bab\x1b[3bc");
+  ExpectLineText(session.SnapshotLines(), 0, "abbbbc", "REP repeats the last glyph; before any glyph it is ignored");
+
+  TerminalSessionTestAccess::Reset(session, 3, 12);
+  TerminalSessionTestAccess::AppendOutput(session, "\xe2\x94\x80\x1b[4b|");
+  ExpectLineText(session.SnapshotLines(), 0, "\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80|",
+                 "a box rule repeats too");
+
+  TerminalSessionTestAccess::Reset(session, 3, 4);
+  TerminalSessionTestAccess::AppendOutput(session, "x\x1b[2147483647b");
+  Expect(session.SnapshotLines().size() <= 4, "a huge count is bounded by the screen");
+
+  TerminalSessionTestAccess::Reset(session, 3, 10);
+  TerminalSessionTestAccess::AppendOutput(session, "abcdef\r\x1b[4hXY\x1b[4lZ");
+  ExpectLineText(session.SnapshotLines(), 0, "XYZbcdef", "IRM inserts; after rmir the next glyph overwrites");
+
+  TerminalSessionTestAccess::Reset(session, 3, 6);
+  TerminalSessionTestAccess::AppendOutput(session, "abcdef\r\x1b[4hX");
+  ExpectLineText(session.SnapshotLines(), 0, "Xabcde", "what an insert pushes past the margin is lost");
+
+  // An insert that pushes a wide glyph's spacer past the margin leaves no half
+  // pair: the lead goes too (ICH and IRM share the insert).
+  TerminalSessionTestAccess::Reset(session, 3, 6);
+  TerminalSessionTestAccess::AppendOutput(session, "abcd\xe4\xb8\xad\r\x1b[@");
+  ExpectLineText(session.SnapshotLines(), 0, " abcd ", "the wide glyph whose spacer left is blanked");
+}
+
 // A cursor move stops at the visible screen's bottom row. The ceiling was the
 // deque's size after the end-of-chunk trim, so in one chunk carrying more lines
 // than the scrollback holds (`cat big.log; clear`) a CUP to the screen's top
@@ -3218,6 +3253,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionSavedCursorRowIsScreenRelative);
   AddTest(tests, "TerminalSession/CursorMovesStopAtTheScreensBottomRow",
           TestTerminalSessionCursorMovesStopAtTheScreensBottomRow);
+  AddTest(tests, "TerminalSession/RepeatAndInsertModeFromTheAdvertisedTerminfo",
+          TestTerminalSessionRepeatAndInsertModeFromTheAdvertisedTerminfo);
   AddTest(tests, "TerminalSession/ClearPreservesScrollback",
           TestTerminalSessionClearPreservesScrollback);
   AddTest(tests, "TerminalSession/PrimaryCupIsViewportRelative",

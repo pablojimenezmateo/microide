@@ -164,6 +164,8 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
     case 'q':
     case 'g':
     case 'r':
+    case 'h':
+    case 'l':
       break;
     default:
       ClampPendingWrapColumn(cursor_column_, columns_);
@@ -298,21 +300,13 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       return;
     }
     case '@': {
-      std::size_t count = static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1));
       EnsureCursorLineExistsLocked();
       auto& line = lines_[cursor_row_];
-      ResizeLineLocked(line, cursor_column_);
-      // The row is resized back to columns_ immediately below, so inserting more
-      // than columns_ cells is wasted; clamp so `CSI 65535 @` can't churn a
-      // 65535-cell insert + memmove before the down-resize.
-      if (columns_ > 0) {
-        count = std::min(count, columns_);
-      }
-      line.cells.insert(line.cells.begin() + static_cast<std::ptrdiff_t>(cursor_column_), count,
-                        MakeAsciiTerminalCell(' ', current_style_));
-      if (columns_ > 0 && line.cells.size() > columns_) {
-        line.cells.resize(columns_);
-      }
+      // Sized to one past the cursor so the insert always has a row to shift
+      // (InsertBlankCellsLocked clamps `CSI 65535 @` to the width).
+      ResizeLineLocked(line, cursor_column_ + 1);
+      InsertBlankCellsLocked(line, cursor_column_,
+                             static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1)));
       return;
     }
     case 'I': {  // CHT — cursor forward tabulation.
@@ -432,6 +426,18 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
     }
     // SCOSC / SCORC: xterm treats them as DECSC / DECRC (CASE_ANSI_SC calls
     // CursorSave), rendition and origin mode included.
+    case 'b':  // REP — repeat the preceding graphic character.
+      RepeatLastGlyphLocked(static_cast<std::size_t>(std::max(1, CsiParamOrDefault(params, 0, 1))));
+      return;
+    case 'h':
+    case 'l':
+      // ANSI (non-private) modes: only IRM (4) has an effect here.
+      for (const int mode : params) {
+        if (mode == 4) {
+          insert_mode_ = final == 'h';
+        }
+      }
+      return;
     case 's':
       SaveCursorLocked();
       return;

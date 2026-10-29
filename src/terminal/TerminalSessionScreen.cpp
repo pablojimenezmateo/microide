@@ -370,8 +370,16 @@ void TerminalSession::PutGlyphLocked(std::string_view glyph) {
 
   EnsureCursorLineExistsLocked();
   auto& line = lines_[cursor_row_];
+  if (insert_mode_) {
+    // IRM: the glyph goes in front of the rest of the row, as after ICH.
+    InsertBlankCellsLocked(line, cursor_column_, advance);
+  }
   ResizeLineLocked(line, cursor_column_ + advance);
   BreakWideGlyphPairForWriteLocked(line, cursor_column_, advance);
+  if (effective_glyph.size() <= last_glyph_.size()) {
+    std::copy(effective_glyph.begin(), effective_glyph.end(), last_glyph_.begin());
+    last_glyph_length_ = static_cast<std::uint8_t>(effective_glyph.size());
+  }
   line.cells[cursor_column_] = MakeUtf8TerminalCell(effective_glyph, current_style_);
   line.cells[cursor_column_].link = current_link_;
   if (advance == 2) {
@@ -398,7 +406,8 @@ std::size_t TerminalSession::PutAsciiRunLocked(std::string_view run) {
     }
     ++length;
   }
-  if (length == 0) {
+  // Insert mode shifts the row per glyph; that is PutGlyphLocked's.
+  if (length == 0 || insert_mode_) {
     return 0;
   }
   // Stop at the right margin. PutGlyphLocked defers the wrap to the NEXT write
@@ -430,7 +439,26 @@ std::size_t TerminalSession::PutAsciiRunLocked(std::string_view run) {
     line.cells[cursor_column_ + i] = cell;
   }
   cursor_column_ += length;
+  last_glyph_[0] = run[length - 1];
+  last_glyph_length_ = 1;
   return length;
+}
+
+void TerminalSession::RepeatLastGlyphLocked(std::size_t count) {
+  if (last_glyph_length_ == 0) {
+    return;
+  }
+  // xterm bounds nothing, but a repeat past the whole screen only overwrites
+  // what it just wrote: cap it there so `CSI 2147483647 b` is not a hang.
+  const std::size_t screen_cells =
+      std::max<std::size_t>(1, rows_) * std::max<std::size_t>(1, columns_);
+  count = std::min(count, screen_cells);
+  // Copied: PutGlyphLocked rewrites `last_glyph_` with the same bytes.
+  const std::array<char, 4> glyph = last_glyph_;
+  const std::string_view text(glyph.data(), last_glyph_length_);
+  for (std::size_t i = 0; i < count; ++i) {
+    PutGlyphLocked(text);
+  }
 }
 
 void TerminalSession::ResizeLineLocked(TerminalLine& line, std::size_t size) {
@@ -476,6 +504,30 @@ void TerminalSession::BreakWideGlyphPairForWriteLocked(TerminalLine& line, std::
   const std::size_t last = start + advance - 1;
   if (last + 1 < line.cells.size() && line.cells[last + 1].style.wide_trailing()) {
     line.cells[last + 1] = MakeAsciiTerminalCell(' ', current_style_);
+  }
+}
+
+void TerminalSession::InsertBlankCellsLocked(TerminalLine& line, std::size_t at, std::size_t count) {
+  if (at >= line.cells.size() || count == 0) {
+    return;
+  }
+  // Inserting inside a wide pair splits it: both halves become blanks.
+  if (line.cells[at].style.wide_trailing() && at > 0) {
+    line.cells[at - 1] = MakeAsciiTerminalCell(' ', current_style_);
+    line.cells[at] = MakeAsciiTerminalCell(' ', current_style_);
+  }
+  // Nothing is shifted further than the margin, so never insert more than fits.
+  if (columns_ > 0) {
+    count = std::min(count, columns_);
+  }
+  line.cells.insert(line.cells.begin() + static_cast<std::ptrdiff_t>(at), count,
+                    MakeAsciiTerminalCell(' ', current_style_));
+  if (columns_ > 0 && line.cells.size() > columns_) {
+    // A lead whose spacer is pushed past the margin would be half a pair.
+    if (line.cells[columns_].style.wide_trailing()) {
+      line.cells[columns_ - 1] = MakeAsciiTerminalCell(' ', current_style_);
+    }
+    line.cells.resize(columns_);
   }
 }
 
@@ -642,6 +694,8 @@ void TerminalSession::ResetEmulationStateLocked() {
   application_cursor_keys_mode_ = false;
   origin_mode_ = false;
   auto_wrap_mode_ = true;
+  insert_mode_ = false;
+  last_glyph_length_ = 0;
   bracketed_paste_mode_ = false;
   focus_event_mode_ = false;
   cursor_visible_ = true;
