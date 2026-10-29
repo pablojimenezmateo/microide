@@ -1,3 +1,4 @@
+#include "workspace/services/TerminalPanelService.h"
 #include "workspace/actions/WorkspaceActionServices.h"
 
 #include "workspace/services/AssistService.h"
@@ -1533,8 +1534,8 @@ std::string WorkspaceActionContext::CopySelectionText(bool* whole_line) const {
     // falling through to the background editor and copying its current line.
     return services_.text_input.SelectedTextAtActiveSingleLineSurface();
   }
-  if (state_.surface.focus == FocusTarget::Panel && operations_.terminal_has_selection()) {
-    return operations_.selected_terminal_text();
+  if (state_.surface.focus == FocusTarget::Panel && TerminalPanelService::HasSelection(state_)) {
+    return TerminalPanelService::SelectedText(state_);
   }
   if (const auto* viewport = operations_.active_navigable_viewport(); viewport != nullptr) {
     // VSCode multi-caret copy: each caret's selection joined by newline, so a
@@ -1573,7 +1574,7 @@ void WorkspaceActionContext::RememberLineClipboardCopy(std::string_view text, bo
 }
 
 std::optional<std::string> WorkspaceActionContext::LastTerminalCommandText() const {
-  return operations_.last_terminal_command_text();
+  return TerminalPanelService::LastCommandText(state_);
 }
 
 std::optional<std::string> WorkspaceActionContext::SelectionTextWithContext() {

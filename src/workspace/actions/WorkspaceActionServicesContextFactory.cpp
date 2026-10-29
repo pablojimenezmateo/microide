@@ -478,8 +478,8 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 }
                 // A seedless invocation preloads the terminal selection, matching
                 // "Ctrl+F with something selected" everywhere else in the shell.
-                if (query.empty() && TerminalHasSelection()) {
-                  query = SelectedTerminalText();
+                if (query.empty() && TerminalPanelService::HasSelection(context_.current_project_state)) {
+                  query = TerminalPanelService::SelectedText(context_.current_project_state);
                   // A multi-line selection is not a useful seed for a per-row scan.
                   if (const std::size_t newline = query.find('\n');
                       newline != std::string::npos) {
@@ -810,9 +810,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this](std::size_t before_line, std::size_t after_line) {
                 RequestActiveEditableBlameNeighborhoodRedraw(before_line, after_line);
               },
-          .terminal_has_selection = [this]() { return TerminalHasSelection(); },
-          .selected_terminal_text = [this]() { return SelectedTerminalText(); },
-          .last_terminal_command_text = [this]() { return LastTerminalCommandText(); },
           .selection_text_with_context = [this]() { return SelectionTextWithContext(); },
           .press_key =
               [dispatch_injected](SDL_Keycode key, SDL_Keymod modifiers) {

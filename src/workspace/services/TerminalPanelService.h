@@ -88,6 +88,18 @@ class TerminalPanelService {
   // project's: StartPendingHostPanes).
   static TerminalLayoutRecord CaptureLayout(const ProjectWorkspaceState& state);
 
+  // The active pane's selection and last command, read from the state alone: the
+  // copy actions, their menu enablement and the terminal's own Ctrl+C all ask, and
+  // none of them needs a shell to forward through (TD-2026-10-28-412).
+  static std::optional<TerminalSelectionBounds> ActiveSelectionBounds(const ProjectWorkspaceState& state);
+  // A non-empty selection: an anchor and head on the same cell select nothing.
+  static bool HasSelection(const ProjectWorkspaceState& state);
+  static std::string SelectedText(const ProjectWorkspaceState& state);
+  // The exact precondition under which LastCommandText returns a value, without
+  // snapshotting the transcript.
+  static bool HasLastCommand(const ProjectWorkspaceState& state);
+  static std::optional<std::string> LastCommandText(const ProjectWorkspaceState& state);
+
   // --- host terminals across quit and close-project (remote-projects.md § 6.12)
   // These take a state rather than acting on the active one: quit reaches every
   // open project's, and a connection becomes ready for an inactive project too.

@@ -410,8 +410,10 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
               [this](std::string_view input) { AppendTerminalPendingInput(input); },
           .request_bottom_panel_content_redraw =
               [this]() { RequestBottomPanelContentRedraw(); },
-          .terminal_has_selection = [this]() { return TerminalHasSelection(); },
-          .selected_terminal_text = [this]() { return SelectedTerminalText(); },
+          .terminal_has_selection =
+              [this]() { return TerminalPanelService::HasSelection(context_.current_project_state); },
+          .selected_terminal_text =
+              [this]() { return TerminalPanelService::SelectedText(context_.current_project_state); },
           .write_clipboard_text =
               [this](std::string_view text) { return WriteClipboardText(text); },
           .write_primary_selection_text =

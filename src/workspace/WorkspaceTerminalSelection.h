@@ -35,6 +35,10 @@ std::string TerminalLineSliceText(const terminal::TerminalLine& line,
                                   std::size_t start,
                                   std::size_t end,
                                   bool trim_trailing);
+// A row's text with its trailing blanks dropped (TerminalLineSliceText over the
+// whole row), and the same trim on text already extracted.
+std::string TerminalLineText(const terminal::TerminalLine& line);
+std::string TrimTrailingTerminalBlanks(std::string text);
 // Default byte budget for a single terminal selection copy. Generous enough for any
 // real selection, but bounded so a drag over the full 100k-line scrollback cap cannot
 // materialize an unbounded transcript on the UI thread (TD-2026-07-17A-090).

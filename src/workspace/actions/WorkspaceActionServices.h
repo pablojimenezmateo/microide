@@ -199,9 +199,6 @@ class WorkspaceActionContext {
     std::function<void(const std::vector<std::string>&, const std::vector<std::string>&)>
         request_active_editable_change_redraw;
     std::function<void(std::size_t, std::size_t)> request_active_editable_blame_neighborhood_redraw;
-    std::function<bool()> terminal_has_selection;
-    std::function<std::string()> selected_terminal_text;
-    std::function<std::optional<std::string>()> last_terminal_command_text;
     std::function<std::optional<std::string>()> selection_text_with_context;
     // A key press (down then up) delivered through the window's event path, as
     // the keyboard would: shortcuts, the focused surface, the terminal's encoder.

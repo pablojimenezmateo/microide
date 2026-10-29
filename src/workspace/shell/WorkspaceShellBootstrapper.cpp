@@ -261,8 +261,6 @@ ActionAvailability WorkspaceShell::Bootstrapper::BuildActionAvailability() const
               [shell]() {
                 return shell->MakeTextInputCoordinator().HasSelectionAtActiveSingleLineSurface();
               },
-          .has_last_terminal_command = [shell]() { return shell->HasLastTerminalCommand(); },
-          .terminal_has_selection = [shell]() { return shell->TerminalHasSelection(); },
           .active_tab_is_editor = [shell]() { return shell->ActiveTabIsEditor(); },
           .editor_group_count = [shell]() { return shell->EditorGroupCount(); },
           .active_tab_is_compare = [shell]() { return shell->ActiveTabIsCompare(); },

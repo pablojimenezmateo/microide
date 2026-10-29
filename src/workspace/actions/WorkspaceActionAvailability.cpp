@@ -1,3 +1,4 @@
+#include "workspace/services/TerminalPanelService.h"
 #include "workspace/actions/WorkspaceActionAvailability.h"
 
 #include <filesystem>
@@ -469,14 +470,14 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::PanelToggleMaximized:
       return !context_.current_project_state.root.empty();
     case ActionId::CopyLastTerminalCommand:
-      return active_terminal_pane != nullptr && operations_.has_last_terminal_command();
+      return TerminalPanelService::HasLastCommand(context_.current_project_state);
     case ActionId::CopySelectionWithContext:
       return active_viewport != nullptr;
     case ActionId::CopySelection:
       return active_viewport != nullptr ||
              active_single_line_selection ||
              (context_.current_project_state.surface.focus == FocusTarget::Panel &&
-              operations_.terminal_has_selection());
+              TerminalPanelService::HasSelection(context_.current_project_state));
     case ActionId::CutSelection:
       return active_editable_viewport != nullptr || active_single_line_selection;
     case ActionId::Redo:

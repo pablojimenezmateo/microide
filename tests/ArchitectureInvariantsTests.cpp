@@ -264,8 +264,10 @@ void TestArchitectureFileSizes() {
              // the action context (it holds SidebarService now).
              // 1619: ToggleDebugPane / StopAllDebugSessions; the action context holds
              // DebugPaneService.
+             // 1614: the terminal's selection and last-command readers are
+             // TerminalPanelService's static state readers (TD-2026-10-28-412).
              return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShellMembers.inc",
-                                                     1619);
+                                                     1614);
            });
 
   AssertRuleResultsPass(results);

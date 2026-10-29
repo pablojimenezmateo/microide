@@ -911,7 +911,7 @@
     return shell.HandleTerminalFindKeyDown(event, modifiers);
   }
   static bool TerminalHasSelection(const WorkspaceShell& shell) {
-    return shell.TerminalHasSelection();
+    return TerminalPanelService::HasSelection(shell.context_.current_project_state);
   }
   // Sets (or with nullopt clears) the active pane's selection directly, with no
   // damage of its own: what a path that forgets to repaint does.
@@ -924,7 +924,7 @@
     }
   }
   static std::string ActiveTerminalSelectedText(WorkspaceShell& shell) {
-    return shell.SelectedTerminalText();
+    return TerminalPanelService::SelectedText(shell.context_.current_project_state);
   }
   static SDL_FRect ProjectSearchResultRect(WorkspaceShell& shell, std::size_t result_index) {
     const WorkspaceLayout layout = CurrentLayout(shell);

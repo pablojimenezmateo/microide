@@ -217,6 +217,12 @@ TerminalLayoutRecord TerminalPanelService::CaptureLayout(const ProjectWorkspaceS
 
 namespace {
 
+// The first line of `text`: a multi-line invocation's transcript header.
+std::string FirstLine(std::string_view text) {
+  return std::string(text.substr(0, text.find('\n')));
+}
+
+
 template <typename Visit>
 void ForEachProjectHostPane(ProjectWorkspaceState& state, Visit&& visit) {
   for (const std::unique_ptr<TerminalTabState>& tab : state.terminal_tabs) {
@@ -648,6 +654,99 @@ void TerminalPanelService::NoteActiveTabShown() {
     tab->has_unseen_bell = false;
     operations_.request_bottom_panel_redraw();
   }
+}
+
+std::optional<TerminalSelectionBounds> TerminalPanelService::ActiveSelectionBounds(const ProjectWorkspaceState& state) {
+  const auto* terminal_tab = state.active_terminal_pane();
+  if (terminal_tab == nullptr || !terminal_tab->selection_anchor.has_value() ||
+      !terminal_tab->selection_head.has_value()) {
+    return std::nullopt;
+  }
+
+  return NormalizeTerminalSelection(terminal_tab->selection_anchor, terminal_tab->selection_head);
+}
+
+bool TerminalPanelService::HasSelection(const ProjectWorkspaceState& state) {
+  const auto selection = ActiveSelectionBounds(state);
+  return selection.has_value() &&
+         (selection->start.row != selection->end.row ||
+          selection->start.column != selection->end.column);
+}
+
+std::string TerminalPanelService::SelectedText(const ProjectWorkspaceState& state) {
+  const auto selection = ActiveSelectionBounds(state);
+  if (!selection.has_value()) {
+    return {};
+  }
+
+  const auto* terminal_tab = state.active_terminal_pane();
+  if (terminal_tab == nullptr) {
+    return {};
+  }
+
+  const std::size_t first_row = selection->start.row;
+  const auto lines = terminal_tab->session.SnapshotLineRange(
+      first_row, selection->end.row - first_row + 1);
+  if (lines.empty()) {
+    return {};
+  }
+
+  TerminalSelectionBounds rebased = *selection;
+  rebased.start.row -= first_row;
+  rebased.end.row -= first_row;
+  return ExtractTerminalSelectionText(lines, rebased);
+}
+
+bool TerminalPanelService::HasLastCommand(const ProjectWorkspaceState& state) {
+  // Cheap predicate for action enablement: the exact precondition under which
+  // LastCommandText() is guaranteed to return a value. Menu/context enablement
+  // must not snapshot + join the whole scrollback transcript just to answer "is Copy Last
+  // Command available?" (TD-2026-07-17A-065).
+  const auto* terminal_tab = state.active_terminal_pane();
+  return terminal_tab != nullptr && terminal_tab->has_last_command &&
+         !terminal_tab->last_command_invocation.empty();
+}
+
+std::optional<std::string> TerminalPanelService::LastCommandText(const ProjectWorkspaceState& state) {
+  if (!HasLastCommand(state)) {
+    return std::nullopt;
+  }
+  const auto* terminal_tab = state.active_terminal_pane();
+
+  if (terminal_tab->session.using_alternate_screen()) {
+    return terminal_tab->last_command_invocation;
+  }
+
+  const std::size_t line_count = terminal_tab->session.LineCount();
+  if (terminal_tab->last_command_start_row >= line_count) {
+    return terminal_tab->last_command_invocation;
+  }
+  // Cap the snapshot to a bounded window of the most-recent-command output. A
+  // long-running command can retain output up to the full scrollback cap, so copying
+  // every retained row (and then joining a second full transcript) would let the invoke
+  // path allocate unboundedly on the UI thread (TD-2026-07-17A-037). Keep the head of the
+  // output and mark the tail truncated.
+  const std::size_t available = line_count - terminal_tab->last_command_start_row;
+  const std::size_t capped_lines = std::min(available, kDefaultLastTerminalCommandMaxLines);
+  const bool source_truncated = available > capped_lines;
+  const auto lines =
+      terminal_tab->session.SnapshotLineRange(terminal_tab->last_command_start_row, capped_lines);
+  if (lines.empty()) {
+    return terminal_tab->last_command_invocation;
+  }
+
+  std::vector<std::string> rows;
+  rows.reserve(lines.size());
+  for (const auto& line : lines) {
+    rows.push_back(TerminalLineText(line));
+  }
+
+  std::string transcript = BuildLastTerminalCommandTranscript(
+      rows, TrimTrailingTerminalBlanks(terminal_tab->last_command_prompt_prefix),
+      FirstLine(terminal_tab->last_command_invocation), source_truncated);
+
+  return transcript.empty() ? std::optional<std::string>(terminal_tab->last_command_invocation)
+                            : std::optional<std::string>(std::move(transcript));
 }
 
 }  // namespace microide::workspace

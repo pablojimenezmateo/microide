@@ -1,3 +1,4 @@
+#include "workspace/services/TerminalPanelService.h"
 #include "workspace/coordinators/SelectionAutoscroll.h"
 #include "workspace/shell/WorkspaceShell.h"
 
@@ -22,16 +23,7 @@ constexpr float kBottomPanelTextInset = 12.0f;
 constexpr float kBottomPanelTextTopInset = 8.0f;
 constexpr float kBottomPanelScrollbarTextReserve = 16.0f;
 
-std::string TrimTrailingTerminalBlanks(std::string text) {
-  while (!text.empty() && (text.back() == '\0' || text.back() == ' ')) {
-    text.pop_back();
-  }
-  return text;
-}
 
-std::string TerminalLineText(const terminal::TerminalLine& line) {
-  return TerminalLineSliceText(line, 0, line.cells.size(), true);
-}
 
 // The cell under (x, y) in a laid-out terminal pane whose visible lines start at
 // `first_row`. A template so it can take the shell's private LogSurfaceLayout.
@@ -59,10 +51,6 @@ std::optional<TerminalSelectionPoint> CellInPaneLayout(int x, int y, const Layou
   };
 }
 
-std::string FirstLine(std::string_view text) {
-  const std::size_t newline = text.find('\n');
-  return std::string(text.substr(0, newline));
-}
 
 bool IsTerminalUrlTerminator(char character) {
   return util::IsAsciiSpace(static_cast<unsigned char>(character)) != 0 || character == '"' ||
@@ -364,30 +352,6 @@ std::size_t FindWrappedInvocationStartRow(const terminal::TerminalSession& sessi
 
 }  // namespace
 
-std::string TerminalLineSliceText(const terminal::TerminalLine& line,
-                                  std::size_t start,
-                                  std::size_t end,
-                                  bool trim_trailing) {
-  const std::size_t clamped_start = std::min(start, line.cells.size());
-  const std::size_t clamped_end = std::min(std::max(clamped_start, end), line.cells.size());
-  std::string text;
-  text.reserve(clamped_end - clamped_start);
-  for (std::size_t column = clamped_start; column < clamped_end; ++column) {
-    const auto& cell = line.cells[column];
-    // The trailing spacer of a double-width glyph holds no text of its own;
-    // skipping it keeps copied/selected text free of phantom spaces.
-    if (cell.style.wide_trailing()) {
-      continue;
-    }
-    const auto display_text = cell.DisplayText();
-    if (!display_text.empty()) {
-      text.append(display_text);
-      continue;
-    }
-    text.push_back(' ');
-  }
-  return trim_trailing ? TrimTrailingTerminalBlanks(std::move(text)) : text;
-}
 
 bool WorkspaceShell::BottomPanelShowsTerminal() const {
   return context_.current_project_state.panel.content == PanelContentKind::Terminal &&
@@ -967,64 +931,8 @@ void WorkspaceShell::SubmitTerminalPendingInput() {
   terminal_tab->pending_input_truncated = false;
 }
 
-bool WorkspaceShell::HasLastTerminalCommand() const {
-  // Cheap predicate for action enablement: the exact precondition under which
-  // LastTerminalCommandText() is guaranteed to return a value. Menu/context enablement
-  // must not snapshot + join the whole scrollback transcript just to answer "is Copy Last
-  // Command available?" (TD-2026-07-17A-065).
-  const auto* terminal_tab = ActiveTerminalPane();
-  return terminal_tab != nullptr && terminal_tab->has_last_command &&
-         !terminal_tab->last_command_invocation.empty();
-}
 
-std::optional<std::string> WorkspaceShell::LastTerminalCommandText() const {
-  if (!HasLastTerminalCommand()) {
-    return std::nullopt;
-  }
-  const auto* terminal_tab = ActiveTerminalPane();
 
-  if (terminal_tab->session.using_alternate_screen()) {
-    return terminal_tab->last_command_invocation;
-  }
-
-  const std::size_t line_count = terminal_tab->session.LineCount();
-  if (terminal_tab->last_command_start_row >= line_count) {
-    return terminal_tab->last_command_invocation;
-  }
-  // Cap the snapshot to a bounded window of the most-recent-command output. A
-  // long-running command can retain output up to the full scrollback cap, so copying
-  // every retained row (and then joining a second full transcript) would let the invoke
-  // path allocate unboundedly on the UI thread (TD-2026-07-17A-037). Keep the head of the
-  // output and mark the tail truncated.
-  const std::size_t available = line_count - terminal_tab->last_command_start_row;
-  const std::size_t capped_lines = std::min(available, kDefaultLastTerminalCommandMaxLines);
-  const bool source_truncated = available > capped_lines;
-  const auto lines =
-      terminal_tab->session.SnapshotLineRange(terminal_tab->last_command_start_row, capped_lines);
-  if (lines.empty()) {
-    return terminal_tab->last_command_invocation;
-  }
-
-  std::vector<std::string> rows;
-  rows.reserve(lines.size());
-  for (const auto& line : lines) {
-    rows.push_back(TerminalLineText(line));
-  }
-
-  std::string transcript = BuildLastTerminalCommandTranscript(
-      rows, TrimTrailingTerminalBlanks(terminal_tab->last_command_prompt_prefix),
-      FirstLine(terminal_tab->last_command_invocation), source_truncated);
-
-  return transcript.empty() ? std::optional<std::string>(terminal_tab->last_command_invocation)
-                            : std::optional<std::string>(std::move(transcript));
-}
-
-bool WorkspaceShell::TerminalHasSelection() const {
-  const auto selection = ActiveTerminalSelectionBounds();
-  return selection.has_value() &&
-         (selection->start.row != selection->end.row ||
-          selection->start.column != selection->end.column);
-}
 
 std::optional<WorkspaceShell::TerminalSelectionPoint>
 WorkspaceShell::TerminalSelectionPointAt(
@@ -1100,42 +1008,11 @@ terminal::TerminalSession::MouseButton WorkspaceShell::TerminalMouseButtonForSdl
   return TerminalMouseButtonFromSdl(button);
 }
 
-std::optional<TerminalSelectionBounds> WorkspaceShell::ActiveTerminalSelectionBounds() const {
-  const auto* terminal_tab = ActiveTerminalPane();
-  if (terminal_tab == nullptr || !terminal_tab->selection_anchor.has_value() ||
-      !terminal_tab->selection_head.has_value()) {
-    return std::nullopt;
-  }
 
-  return NormalizeTerminalSelection(terminal_tab->selection_anchor, terminal_tab->selection_head);
-}
-
-std::string WorkspaceShell::SelectedTerminalText() const {
-  const auto selection = ActiveTerminalSelectionBounds();
-  if (!selection.has_value()) {
-    return {};
-  }
-
-  const auto* terminal_tab = ActiveTerminalPane();
-  if (terminal_tab == nullptr) {
-    return {};
-  }
-
-  const std::size_t first_row = selection->start.row;
-  const auto lines = terminal_tab->session.SnapshotLineRange(
-      first_row, selection->end.row - first_row + 1);
-  if (lines.empty()) {
-    return {};
-  }
-
-  TerminalSelectionBounds rebased = *selection;
-  rebased.start.row -= first_row;
-  rebased.end.row -= first_row;
-  return ExtractTerminalSelectionText(lines, rebased);
-}
 
 bool WorkspaceShell::TerminalCellSelected(std::size_t row, std::size_t column) const {
-  const std::optional<TerminalSelectionBounds> selection = ActiveTerminalSelectionBounds();
+  const std::optional<TerminalSelectionBounds> selection =
+      TerminalPanelService::ActiveSelectionBounds(context_.current_project_state);
   if (!selection.has_value()) {
     return false;
   }

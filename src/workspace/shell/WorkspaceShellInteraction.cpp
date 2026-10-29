@@ -1,3 +1,4 @@
+#include "workspace/services/TerminalPanelService.h"
 #include "workspace/shell/WorkspaceShell.h"
 
 #include "workspace/WorkspacePathUtils.h"
@@ -232,11 +233,11 @@ void WorkspaceShell::SyncPrimarySelectionWithActiveEditor() {
 }
 
 void WorkspaceShell::SyncPrimarySelectionWithTerminalSelection() {
-  if (!TerminalHasSelection()) {
+  if (!TerminalPanelService::HasSelection(context_.current_project_state)) {
     return;
   }
 
-  const std::string text = SelectedTerminalText();
+  const std::string text = TerminalPanelService::SelectedText(context_.current_project_state);
   if (!text.empty()) {
     WritePrimarySelectionText(text);
   }

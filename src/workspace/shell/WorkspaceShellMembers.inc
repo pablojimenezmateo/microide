@@ -1494,8 +1494,6 @@
   void AppendTerminalPendingInput(std::string_view input);
   void EraseLastTerminalPendingInputCodepoint();
   void SubmitTerminalPendingInput();
-  bool HasLastTerminalCommand() const;
-  std::optional<std::string> LastTerminalCommandText() const;
   TextInputSurface CurrentTextInputSurface() const;
   TerminalPaneState* ActiveTerminalPane();
   const TerminalPaneState* ActiveTerminalPane() const;
@@ -1535,7 +1533,6 @@
   void RebaseActiveTerminalForScrollbackTrim();
   void PrepareTerminalPanesForFrame(TerminalTabState& tab, const TerminalPaneRectsLayout& rects, float panel_height);
   void ClearTerminalSelection();
-  bool TerminalHasSelection() const;
   std::optional<TerminalLinkHit> TerminalLinkAtPoint(float x, float y) const;
   std::optional<TerminalSelectionPoint> TerminalSelectionPointAt(
       int x,
@@ -1544,8 +1541,6 @@
       std::size_t first_row = 0) const;
   std::optional<TerminalSelectionPoint> TerminalViewportPositionForPoint(int x, int y) const;
   terminal::TerminalSession::MouseButton TerminalMouseButtonForSdl(Uint8 button) const;
-  std::optional<TerminalSelectionBounds> ActiveTerminalSelectionBounds() const;
-  std::string SelectedTerminalText() const;
   bool TerminalCellSelected(std::size_t row, std::size_t column) const;
   bool OpenExternalUrl(std::string_view url);
   void OpenExternalUrlPrompt(std::string url);
