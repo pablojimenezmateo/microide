@@ -30,11 +30,15 @@ class ProjectChangeCoalescer {
   // and the batch keeps merging; NextReadyDelayMs says when to ask again.
   std::optional<ProjectChangeBatch> ConsumeReadyAt(std::uint64_t now_ms);
   // nullopt when nothing is pending; 0 when a batch is ready now; else the wait
-  // until the budget allows the pending one.
+  // until the budget allows the pending one. The rate only ever delays: a held
+  // batch that grows to half the itemization cap is ready at once.
   std::optional<std::uint64_t> NextReadyDelayMs(std::uint64_t now_ms) const;
 
  private:
   bool HasPendingLocked() const;
+  // A held batch large enough that holding it longer could push it past the
+  // itemization cap is released whatever the budget.
+  bool MustReleaseLocked() const;
   std::optional<ProjectChangeBatch> TakePendingLocked(std::uint64_t* out_generation);
   // The budget at `now_ms` without spending it, and the epoch it refills from.
   std::size_t BudgetAtLocked(std::uint64_t now_ms, std::uint64_t* epoch_ms) const;

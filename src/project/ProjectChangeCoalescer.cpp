@@ -16,6 +16,11 @@ namespace {
 // kMaxPendingFileChanges changes keep their per-file handling (open-buffer
 // reloads, diagnostics clearing).
 constexpr std::size_t kMaxPendingFileChanges = 1024;
+// A batch the apply rate holds is released anyway once it holds this many changes:
+// holding may delay a change, never cost it its itemization. Past
+// kMaxPendingFileChanges a flood collapses to a rescan, and the language servers
+// hear only the itemized changes (LspService::NotifyWatchedFileChanges).
+constexpr std::size_t kReleaseHeldAtFileChanges = kMaxPendingFileChanges / 2;
 
 }  // namespace
 
@@ -61,7 +66,10 @@ std::optional<ProjectChangeBatch> ProjectChangeCoalescer::ConsumeReadyAt(std::ui
   std::uint64_t epoch_ms = 0;
   const std::size_t budget = BudgetAtLocked(now_ms, &epoch_ms);
   if (budget == 0) {
-    return std::nullopt;
+    if (!MustReleaseLocked()) {
+      return std::nullopt;
+    }
+    return TakePendingLocked(nullptr);  // released, not paid for: the budget stays spent
   }
   apply_budget_ = budget - 1;
   budget_epoch_ms_ = epoch_ms;
@@ -74,10 +82,14 @@ std::optional<std::uint64_t> ProjectChangeCoalescer::NextReadyDelayMs(std::uint6
     return std::nullopt;
   }
   std::uint64_t epoch_ms = 0;
-  if (BudgetAtLocked(now_ms, &epoch_ms) > 0) {
+  if (BudgetAtLocked(now_ms, &epoch_ms) > 0 || MustReleaseLocked()) {
     return 0;
   }
   return kApplyIntervalMs - (now_ms - epoch_ms);
+}
+
+bool ProjectChangeCoalescer::MustReleaseLocked() const {
+  return pending_.file_changes.size() >= kReleaseHeldAtFileChanges || pending_.file_changes_truncated;
 }
 
 std::size_t ProjectChangeCoalescer::BudgetAtLocked(std::uint64_t now_ms,

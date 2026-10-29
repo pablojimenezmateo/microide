@@ -231,6 +231,22 @@ void TestProjectChangeCoalescerRateLimitsAppliesWhileChangesKeepArriving() {
     write();
     Expect(coalescer.ConsumeReadyAt(now).has_value(), "a quiet spell refills the whole burst");
   }
+
+  // Holding only delays. A flood past 1,024 pending changes collapses to a rescan,
+  // and the language servers hear only itemized changes, so a held batch that grows
+  // to half that is released at once rather than merged toward the cap.
+  write();
+  Expect(!coalescer.ConsumeReadyAt(now).has_value(), "the spent budget holds a small batch");
+  for (int i = 0; i < 600; ++i) {
+    write();
+  }
+  Expect(coalescer.NextReadyDelayMs(now) == std::optional<std::uint64_t>(0),
+         "a held batch past half the itemization cap is ready now");
+  const std::optional<project::ProjectChangeBatch> big = coalescer.ConsumeReadyAt(now);
+  Expect(big.has_value() && big->file_changes.size() == 601 && !big->file_changes_truncated,
+         "and released whole, every change itemized");
+  write();
+  Expect(!coalescer.ConsumeReadyAt(now).has_value(), "the release did not refill the budget");
 }
 
 void TestProjectChangeCoalescerSuppressesStaleGeneration() {
