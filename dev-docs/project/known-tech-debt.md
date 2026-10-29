@@ -472,7 +472,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-29-425 — the terminal answered to `TERM=xterm-256color` without implementing what that entry advertises. [OPEN — items 1-5 below; the conformance pass is done]
+### TD-2026-10-29-425 — the terminal answered to `TERM=xterm-256color` without implementing what that entry advertises. [OPEN — items 1, 2, 4, 5 below; 3 resolved for ASCII]
 
 Found by checking every string capability `infocmp -1 xterm-256color` lists
 against the CSI/ESC dispatchers, after a reading pass had already found DECSC
@@ -507,7 +507,8 @@ as two-sided (the `AOneSidedConflictOffersNoMerge` flake), and TD-424.
    implemented; ncurses uses it only when a program asks for margins.
 2. **DECSCNM** (`CSI ? 5 h`, terminfo's `flash`) is not drawn: a visual bell shows
    nothing. And G2/G3 and multi-byte charset designations are parsed and ignored.
-3. **REP's bound** is the screen's cell count, so `x` + `CSI 2147483647 b` costs one
+3. ~~**REP's bound** is the screen's cell count,~~ RESOLVED 2026-10-29 for ASCII (a row
+   per run write); a multibyte glyph still repeats per cell. Was: so `x` + `CSI 2147483647 b` costs one
    screenful of glyph writes per 12 bytes on the reader thread (xterm has no bound
    at all). A run-length write of the repeated glyph would make it O(1) per row.
 4. **A link wrapped past the visible window** is detected only over its on-screen
