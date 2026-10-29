@@ -793,7 +793,7 @@ and the language servers hear only the itemized changes, so a held batch merging
 toward that cap would have cost them events a per-batch apply delivered. A held
 batch is released whatever the budget once it holds 512 changes (the same test).
 
-### TD-2026-10-28-418 — the remote link's idle wakeups and memory, measured end to end: what was fixed, and what is left. [PARTLY RESOLVED 2026-10-29 — open: the rest of the client's per-file state, allocator slack after a first sync]
+### TD-2026-10-28-418 — the remote link's idle wakeups and memory, measured end to end: what was fixed, and what is left. [PARTLY RESOLVED 2026-10-29 — open: the rest of the client's per-file state]
 
 Measured with `tools/qa/remote.py` W (idle) and X (live), loopback host, this
 repository (4,767 files, 36 MB) unless stated. Per thread now: every remote and
@@ -877,7 +877,19 @@ buffers then each cost an mmap/munmap and fresh page faults: on the perf gate
 
 Left open:
 
-1. **Allocator slack after a first sync, client** (~25-34 MB held free). Not a
+1. ~~**Allocator slack after a first sync, client** (~25-34 MB held free).~~
+   RESOLVED 2026-10-29 -- mostly a measurement artifact. Re-measured on the loopback
+   host (4,780 files) with `remote.py W X`, which now reports the heap split and
+   RssAnon: mallinfo2's free list counts chunks whose pages `malloc_trim` (run after
+   a full sync) already returned, and the QA harness's redraw verifier added ~9 MB
+   to it (`MQA_REMOTE_MEASURE=1` turns it off). Free list 23 MB, but resident anon
+   74 MB against 69 MB with one arena (`MALLOC_ARENA_MAX=1`): ~5 MB is actually held,
+   in worker-thread arenas. Not pursued further (an arena cap trades thread
+   contention for 5 MB). What a uprobe on malloc found churning 128 KiB+ buffers was
+   real and is fixed: the full state saved ~40 times per first sync (now once per
+   burst of deltas and pulls, 31af1f543 / 6a655ce10) and the pulled hint rewritten
+   whole per batch (now appended) -- the first sync's client CPU 1.41 -> 1.13 s.
+   Was: Not a
    leak and bounded: 4.4x the data (a synthetic 15,000-file, 159 MB repository)
    held 34 MB against 25-30. A trim at any later time returns only ~5 MB of it:
    it is fragmentation -- long-lived small allocations (the mirror store's entries)
