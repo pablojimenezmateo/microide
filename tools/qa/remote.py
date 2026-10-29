@@ -96,6 +96,7 @@ screenshots land in --out (default /tmp/mqa-remote-<time>).
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -1175,6 +1176,11 @@ class Suite:
             self.run_many_conflicts()
 
         if self.runs("F"):
+            # F's own preconditions: the edited file active and the editor focused.
+            # Q ends in the Conflicts view with the keyboard in the sidebar and its
+            # second file active, so the line below typed into the sidebar, the save
+            # pushed nothing, and the check waited out its 90 s (TD-2026-10-29-424).
+            app.send("open", EDIT_FILE); app.send("focus", "editor"); app.settle(0.3)
             out = subprocess.run(["ps", "-eo", "pid,args"], capture_output=True, text=True).stdout
             masters = [int(l.split()[0]) for l in out.splitlines()[1:]
                        if "ssh" in l and host.name in l and "ControlMaster" in l]
@@ -1398,6 +1404,19 @@ def main() -> int:
     if not Path(server).exists():
         print(f"no static server at {server} (tools/build-server.sh x86_64, or set MICROIDE_SERVER_BINARY)")
         return 1
+    # One suite per host repository at a time: each run resets the host's repo and
+    # edits it, so two at once -- a second lane, a bisect beside a lane -- failed
+    # each other's checks with files "deleted on the host" mid-scenario. Keyed by
+    # the machine the repo is on (qa-slow is qa-local behind a delay) and the root.
+    lock_key = hashlib.sha256(f"{CHECK_HOST or args.host}:{args.root}".encode()).hexdigest()[:16]
+    lock_dir = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "microide-qa"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    host_lock = open(lock_dir / f"remote-suite-{lock_key}.lock", "w")  # held until exit
+    try:
+        fcntl.flock(host_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print(f"another remote suite is using {args.host}:{args.root}; waiting for it", flush=True)
+        fcntl.flock(host_lock, fcntl.LOCK_EX)
     host = Host(args.host, args.root, args.base)
     print("host reset:", host.reset())
     fixture = q.make_fixture(out / "fixture")
