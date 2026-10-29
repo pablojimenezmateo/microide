@@ -85,6 +85,13 @@ void MirrorSyncEngine::Flush() {
   idle_cv_.wait(lock, [this] { return outstanding_ == 0; });
 }
 
+void MirrorSyncEngine::PersistNow() {
+  std::lock_guard lock(mutex_);
+  if (state_save_queued_ || tree_unsynced_) {
+    SaveNowLocked();
+  }
+}
+
 MirrorSyncEngine::~MirrorSyncEngine() {
   {
     // A fetch completing from now on finds no engine.
@@ -93,10 +100,8 @@ MirrorSyncEngine::~MirrorSyncEngine() {
   }
   queue_.Shutdown();
   // A deferred state save the shutdown cancelled still lands.
+  PersistNow();
   std::lock_guard lock(mutex_);
-  if (state_save_queued_) {
-    SaveNowLocked();
-  }
   ExpireSetAsideLocked(/*all=*/true);  // nothing can put them back any more
 }
 
@@ -150,8 +155,15 @@ void MirrorSyncEngine::Prioritize(std::vector<std::string> paths, std::function<
     // `done` once every pull has landed: the in-memory ones below, and each
     // streamed one when its last byte is in.
     auto remaining = std::make_shared<std::size_t>(1);
-    const auto finished = [remaining, done]() {
-      if (--*remaining == 0 && done) {
+    const auto finished = [this, remaining, done]() {
+      if (--*remaining != 0) {
+        return;
+      }
+      {
+        std::lock_guard lock(mutex_);
+        SavePulledLocked();
+      }
+      if (done) {
         done();
       }
     };
@@ -537,6 +549,24 @@ std::vector<std::string> MirrorSyncEngine::Conflicts() const {
   return paths;
 }
 
+std::vector<MirrorSyncEngine::Conflict> MirrorSyncEngine::ConflictDetails() const {
+  std::vector<Conflict> conflicts;
+  {
+    std::lock_guard lock(mutex_);
+    for (const auto& [path, entry] : store_.entries()) {
+      if (entry.conflict) {
+        conflicts.push_back(Conflict{.path = path, .on_host = entry.has_remote});
+      }
+    }
+  }
+  // The stats outside the lock: the worker is not held up by a view's refresh.
+  for (Conflict& conflict : conflicts) {
+    std::error_code ignored;
+    conflict.in_mirror = std::filesystem::exists(store_.tree() / conflict.path, ignored);
+  }
+  return conflicts;
+}
+
 void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution,
                                   const std::optional<util::ContentHash>& expect_host) {
   using Status = RemoteWorkspace::WriteResult::Status;
@@ -659,6 +689,7 @@ void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution
       entry->remote.hash = *object.hash;
       entry->remote.size = object.content.size();
       store_.RecordLocal(path, *entry);
+      store_.NotePulled(path, *object.hash);
     }
     materialized.push_back(path);
   }
@@ -944,7 +975,17 @@ void MirrorSyncEngine::ReconcileRowLocked(ManifestRow row, Plan& plan, std::uint
     return;
   }
   if (entry.conflict) {
-    return;  // parked until the user chooses
+    // Parked until the user chooses -- unless the host now holds exactly the
+    // mirror's bytes (the same edit made on both sides; the user's version applied
+    // on the host by hand): nothing is left to choose, and either choice would be
+    // a write of what is already there. One hash per conflicted row per manifest,
+    // and conflicts are rare.
+    if (util::HashFileContent(store_.tree() / path) == std::optional(entry.remote.hash)) {
+      entry.conflict = false;
+      entry.base = entry.remote.hash;
+      store_.RecordLocal(path, entry);
+    }
+    return;
   }
   const LocalState local = store_.CheckLocal(path, entry);
   const bool host_moved = !entry.base.has_value() || *entry.base != entry.remote.hash;
@@ -1204,8 +1245,18 @@ void MirrorSyncEngine::ApplyWatchDelta(RemoteWorkspace::WatchDelta delta) {
       SaveLocked();
     }
     Changed();
-    Execute(std::move(plan), {});
+    // The save above ran before the pulls: once they land, record them too.
+    Execute(std::move(plan), [this]() {
+      std::lock_guard lock(mutex_);
+      SavePulledLocked();
+    });
   });
+}
+
+void MirrorSyncEngine::SavePulledLocked() {
+  if (tree_unsynced_) {
+    SaveLocked();
+  }
 }
 
 void MirrorSyncEngine::Execute(Plan plan, std::function<void()> on_done) {
@@ -1548,6 +1599,7 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
       entry->remote.hash = fetched_hash;
       entry->remote.size = size;
       store_.RecordLocal(object.path, *entry);
+      store_.NotePulled(object.path, fetched_hash);
       written.push_back(object.path);
     } else if (result.status == FileOpResult::Status::Conflict) {
       entry->conflict = true;  // a save landed between the check and the write
@@ -1564,6 +1616,12 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
   {
     std::lock_guard lock(mutex_);
     RecountLocked();
+    if (!written.empty()) {
+      // The hint, not the state: one small unflushed write per batch, no tree
+      // flush, so a crash before the deferred state save still finds these bytes
+      // recorded as the host's (MirrorStore::NotePulled).
+      (void)store_.WritePulledHint();
+    }
   }
   if (!written.empty() && callbacks_.materialized) {
     callbacks_.materialized(written);

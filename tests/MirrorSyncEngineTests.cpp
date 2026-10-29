@@ -662,6 +662,44 @@ void TestMirrorResolvesConflictsTheUsersWay() {
   Expect(session.engine->Conflicts().empty(), "a sync does not reopen them");
 }
 
+// A parked conflict whose two sides come to hold the same bytes -- the user's
+// version applied on the host by hand, the same fix made on both sides -- has
+// nothing left to choose: it settles itself on the next row, instead of staying a
+// row whose either button would write what is already there. ConflictDetails says
+// what each side still holds while it is one.
+void TestMirrorConflictClearsWhenTheHostAdoptsTheMirrorsBytes() {
+  MirrorSession session;
+  WriteFile(session.host / "a.txt", "base\n");
+  WriteFile(session.host / "gone.txt", "base\n");
+  session.Connect();
+  session.Sync();
+  // A write into tree/ outside the gate (no journal entry) while the host moves
+  // too: the next sync parks it. And a host delete of a file changed here.
+  WriteFile(session.host / "a.txt", "agent\n");
+  WriteFile(session.Tree("a.txt"), "human\n");
+  std::filesystem::remove(session.host / "gone.txt");
+  WriteFile(session.Tree("gone.txt"), "kept here\n");
+  session.Sync();
+  Expect(session.engine->Conflicts() == std::vector<std::string>{"a.txt", "gone.txt"}, "both are conflicts");
+  const std::vector<remote::MirrorSyncEngine::Conflict> details = session.engine->ConflictDetails();
+  Expect(details.size() == 2 && details[0].path == "a.txt" && details[0].on_host && details[0].in_mirror &&
+             details[1].path == "gone.txt" && !details[1].on_host && details[1].in_mirror,
+         "the details say which side still holds each");
+  Expect(ReadFile(session.Tree("a.txt")) == "human\n", "nothing was written either way");
+
+  // The host comes to hold the mirror's bytes.
+  WriteFile(session.host / "a.txt", "human\n");
+  session.Sync();
+  Expect(session.engine->Conflicts() == std::vector<std::string>{"gone.txt"},
+         "a conflict both sides hold the same bytes of is no conflict");
+  Expect(session.engine->StateOf("a.txt") == ContentState::Current, "it is current");
+  Expect(ReadFile(session.host / "a.txt") == "human\n" && ReadFile(session.Tree("a.txt")) == "human\n",
+         "and neither side was written");
+  WriteFile(session.host / "a.txt", "agent again\n");
+  session.Sync();
+  Expect(ReadFile(session.Tree("a.txt")) == "agent again\n", "the next host edit is pulled like any other");
+}
+
 // A conflict merged three ways: the sides are the base both started from (kept in
 // meta/objects), the host's current bytes and the mirror's file; the result is
 // pushed only over the host version it was merged against.
@@ -801,6 +839,63 @@ void TestMirrorFollowsTheHostWatch() {
   Expect(ReadFile(session.Tree("a.txt")) == "three\n" &&
              session.engine->StateOf("a.txt") == ContentState::Current,
          "our own push echoed by the watch is current, not a change");
+}
+
+// What a host change pulls is recorded on disk once its pulls land, not only when
+// something later happens to save: the app leaves through quick_exit, so a state
+// save still queued -- or never queued -- is lost, and the next start finds the
+// pulled bytes unrecorded. Measured on a real host: a branch checkout pulled 1,700
+// files minutes before a quit, and after the host moved on overnight the 59 it
+// had touched again each came up as a Keep Mine / Take Host's conflict the user
+// never made. The snapshot below is the directory as quick_exit would leave it:
+// taken while the engine is alive, so its destructor's save cannot hide the bug.
+void TestMirrorRecordsWatchedPullsBeforeAQuit() {
+  MirrorSession session;
+  WriteFile(session.host / "a.txt", "one\n");
+  WriteFile(session.host / "b.txt", "same\n");
+  session.Connect();
+  bool native = false;
+  std::string error;
+  Expect(session.workspace->SubscribeWatch(session.engine->WatchSink(), &native, &error),
+         "subscribes: " + error);
+  session.Sync();
+
+  WriteFile(session.host / "a.txt", "two\n");
+  Expect(WaitFor(
+             [&] {
+               session.engine->Flush();
+               return ReadFile(session.Tree("a.txt")) == "two\n";
+             },
+             std::chrono::seconds(10)),
+         "the host's edit reaches the mirror through the watch");
+  session.engine->Flush();
+  const std::filesystem::path snapshot = session.temp.path() / "after-quit";
+  std::filesystem::copy(session.mirror_dir, snapshot, std::filesystem::copy_options::recursive);
+  {
+    remote::MirrorStore on_disk(snapshot);
+    Expect(on_disk.Open(&error), "the snapshot opens: " + error);
+    const remote::MirrorStore::Entry* entry = on_disk.Find("a.txt");
+    Expect(entry != nullptr && entry->base == std::optional(util::HashContent("two\n")),
+           "the state on disk records the pulled bytes as the base");
+  }
+
+  // Restart from what the quit left, after the host moved on again.
+  session.engine.reset();
+  std::filesystem::remove_all(session.mirror_dir);
+  std::filesystem::rename(snapshot, session.mirror_dir);
+  WriteFile(session.host / "a.txt", "three\n");
+  session.Connect();
+  session.Sync();
+  Expect(session.engine->Conflicts().empty(),
+         "a file the user never edited is not a conflict after a restart");
+  Expect(ReadFile(session.Tree("a.txt")) == "three\n", "it is pulled like any other host edit");
+
+  // Quitting with nothing pulled since the last save costs no flush.
+  session.engine->Flush();
+  util::ResetPerformanceCounters();
+  session.engine->PersistNow();
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::RemoteTreeFlushes) == 0,
+         "PersistNow with nothing unrecorded does not flush the tree");
 }
 
 // A mass delete is held in case the host root vanished (§ 6.3), but a branch
@@ -1133,6 +1228,9 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/WriteGateReachesTheHost", TestMirrorWriteGateReachesTheHost);
   AddTest(tests, "MirrorSyncEngine/TreeOpsMadeOfflineReplay", TestMirrorTreeOpsMadeOfflineReplay);
   AddTest(tests, "MirrorSyncEngine/FollowsTheHostWatch", TestMirrorFollowsTheHostWatch);
+  AddTest(tests, "MirrorSyncEngine/RecordsWatchedPullsBeforeAQuit", TestMirrorRecordsWatchedPullsBeforeAQuit);
+  AddTest(tests, "MirrorSyncEngine/ConflictClearsWhenTheHostAdoptsTheMirrorsBytes",
+          TestMirrorConflictClearsWhenTheHostAdoptsTheMirrorsBytes);
 }
 
 }  // namespace microide::tests

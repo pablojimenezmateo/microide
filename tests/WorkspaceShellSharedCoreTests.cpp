@@ -660,18 +660,18 @@ void TestWorkspaceSidebarRegistry() {
 
   microide::plugin::PluginHost plugin_host;
   const auto views = SidebarViews(plugin_host);
-  Expect(views.size() == 8, "sidebar registry should expose eight built-in views");
+  Expect(views.size() == 9, "sidebar registry should expose nine built-in views");
   Expect(views[0].id == "tree" && views[0].label == "Project" &&
              views[1].id == "search" && views[2].id == "git" && views[3].id == "problems" &&
              views[4].id == "tests" && views[5].id == "outline" && views[6].id == "host-changes" &&
-             views[7].id == "host",
+             views[7].id == "host" && views[8].id == "conflicts",
          "sidebar registry should preserve built-in view declaration ordering");
 
   const auto view_ids = SidebarViewIds(plugin_host);
-  // Alphabetical order: git, host, host-changes, outline, problems, search, tests, tree
-  Expect(view_ids.size() == 8 && view_ids[0] == "git" && view_ids[1] == "host" &&
-             view_ids[2] == "host-changes" && view_ids[3] == "outline" && view_ids[4] == "problems" &&
-             view_ids[5] == "search" && view_ids[6] == "tests" && view_ids[7] == "tree",
+  // Alphabetical order: conflicts, git, host, host-changes, outline, problems, search, tests, tree
+  Expect(view_ids.size() == 9 && view_ids[0] == "conflicts" && view_ids[1] == "git" && view_ids[2] == "host" &&
+             view_ids[3] == "host-changes" && view_ids[4] == "outline" && view_ids[5] == "problems" &&
+             view_ids[6] == "search" && view_ids[7] == "tests" && view_ids[8] == "tree",
          "sidebar registry should preserve built-in view completion ids");
 
   const SidebarViewRequest search_request =

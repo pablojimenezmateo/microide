@@ -11,6 +11,7 @@
 #include "platform/AppDirectories.h"
 #include "platform/RuntimePaths.h"
 #include "util/ByteCodec.h"
+#include "util/TextFileIO.h"
 
 #include <sys/stat.h>
 
@@ -19,6 +20,8 @@ namespace {
 
 // 2: the tree-operation journal follows the entries. 3: entries record ctime.
 constexpr std::uint64_t kStateVersion = 3;
+constexpr std::uint64_t kJournalVersion = 1;
+constexpr std::uint64_t kPulledHintVersion = 1;
 
 enum EntryFlag : std::uint8_t {
   kHasRemote = 1u << 0,
@@ -160,6 +163,7 @@ bool MirrorStore::Open(std::string* error) {
   }
   entries_.clear();
   pending_tree_ops_.clear();
+  pulled_unsaved_.clear();
   manifest_id_ = 0;
   persistence::PersistedRecordReaderError read_error = persistence::PersistedRecordReaderError::None;
   const auto record = persistence::PersistedRecordReader::ReadFile(state_path(), &read_error);
@@ -242,7 +246,7 @@ bool MirrorStore::Open(std::string* error) {
                                  journal->body.size());
     util::ByteReader jin(jbody);
     std::vector<std::string> pending;
-    const bool version_ok = jin.Varint() == 1;
+    const bool version_ok = jin.Varint() == kJournalVersion;
     const std::uint64_t paths = jin.Varint();
     for (std::uint64_t i = 0; version_ok && i < paths && !jin.failed() && i <= jbody.size(); ++i) {
       std::string path(jin.Bytes(kMaxManifestPathBytes));
@@ -271,12 +275,59 @@ bool MirrorStore::Open(std::string* error) {
       return false;
     }
   }
+  // Pulls the state missed (NotePulled, meta/pulled): the base moves to the pulled
+  // bytes where the file still holds them, or where a save journaled after the
+  // pull was made on top of them. Anything else (a file written since, outside the
+  // gate) is left for the reconcile to judge as before. Kept until a Save records
+  // them. A hint that does not decode is no hint: it is checked, never trusted.
+  if (const std::optional<std::string> hint = util::ReadTextFile(pulled_hint_path()); hint.has_value()) {
+    util::ByteReader hin(*hint);
+    std::vector<std::pair<std::string, util::ContentHash>> pulled;
+    const std::uint64_t count = hin.Varint() == kPulledHintVersion ? hin.Varint() : 0;
+    for (std::uint64_t i = 0; i < count && !hin.failed() && i <= hint->size(); ++i) {
+      std::string path(hin.Bytes(kMaxManifestPathBytes));
+      const std::optional<util::ContentHash> hash = util::ContentHash::FromRaw(hin.Raw(util::ContentHash::kBytes));
+      if (!IsSafeRelativePath(path) || !hash.has_value()) {
+        hin.Fail();
+        break;
+      }
+      pulled.emplace_back(std::move(path), *hash);
+    }
+    if (!hin.failed() && hin.at_end()) {
+      for (auto& [path, hash] : pulled) {
+        Entry& entry = entries_[path];
+        if (!entry.has_remote) {
+          entry.remote.path = path;
+        }
+        if (entry.push_pending || util::HashFileContent(tree_ / path) == std::optional(hash)) {
+          entry.base = hash;
+          entry.local_known = false;
+        }
+        pulled_unsaved_.insert_or_assign(path, hash);
+      }
+    }
+  }
   return true;
+}
+
+void MirrorStore::NotePulled(std::string_view path, const util::ContentHash& hash) {
+  pulled_unsaved_.insert_or_assign(std::string(path), hash);
+}
+
+bool MirrorStore::WritePulledHint() const {
+  std::string body;
+  util::PutVarint(body, kPulledHintVersion);
+  util::PutVarint(body, pulled_unsaved_.size());
+  for (const auto& [path, hash] : pulled_unsaved_) {
+    util::PutBytes(body, path);
+    body.append(hash.raw());
+  }
+  return util::WriteTextFileAtomically(pulled_hint_path(), body);
 }
 
 bool MirrorStore::SaveJournal(std::string* error) const {
   std::string body;
-  util::PutVarint(body, 1);
+  util::PutVarint(body, kJournalVersion);
   std::size_t pending = 0;
   for (const auto& [path, entry] : entries_) {
     (void)path;
@@ -292,6 +343,9 @@ bool MirrorStore::SaveJournal(std::string* error) const {
   if (!WriteRecord(journal_path(), body)) {
     *error = "cannot write the mirror's journal " + journal_path().string();
     return false;
+  }
+  if (!pulled_unsaved_.empty()) {
+    (void)WritePulledHint();  // a hint: its loss costs nothing the journal must not lose
   }
   return true;
 }
@@ -336,6 +390,9 @@ bool MirrorStore::Save(std::string* error) const {
     *error = "cannot write the mirror's state file " + state_path().string();
     return false;
   }
+  pulled_unsaved_.clear();  // the state just written records them
+  std::error_code ignored;
+  std::filesystem::remove(pulled_hint_path(), ignored);
   return SaveJournal(error);
 }
 

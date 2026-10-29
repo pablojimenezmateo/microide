@@ -1196,7 +1196,8 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
       case SidebarMode::Plugin:
       case SidebarMode::Outline:
       case SidebarMode::HostChanges:
-      case SidebarMode::Host: {
+      case SidebarMode::Host:
+      case SidebarMode::Conflicts: {
         const std::size_t count = context_.current_project_state.sidebar.plugin.items.size();
         return row_band(ComputePluginSidebarListLayout(layout.sidebar, count), count);
       }

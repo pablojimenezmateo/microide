@@ -256,7 +256,8 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
   // a Port… offers the forwards there are rather than asking for a number.
   for (const ActionId id : {ActionId::RemoteShowStatus, ActionId::RemoteShowLog, ActionId::RemoteReconnect,
                             ActionId::RemoteDisconnect, ActionId::RemoteStopServer, ActionId::RemoteForwardPort,
-                            ActionId::RemoteUnforwardPort, ActionId::RemoteShowHostChanges}) {
+                            ActionId::RemoteUnforwardPort, ActionId::RemoteShowHostChanges,
+                            ActionId::RemoteShowConflicts}) {
     Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, id),
            "a Remote menu verb is available with a host connected: " + std::to_string(static_cast<int>(id)));
   }
@@ -654,6 +655,142 @@ void TestConflictMergesThreeWaysToTheHost() {
              },
              std::chrono::seconds(20), std::chrono::milliseconds(10)),
          "the result reaches the host and the row goes: '" + ReadFile(host_root / "notes.txt") + "'");
+  RemoveFakeMaster(target);
+}
+
+// Two or more conflicts are ONE counted row (§ 7.6: never a row per file -- a
+// branch checked out on the host makes dozens at once), whose Keep All Mine and
+// Take All Host's settle every one and whose Manage… opens the Conflicts view:
+// the files, each ticked with Enter, and Keep Mine / Take Host's / Merge rows that
+// act on the ticked ones. Down to one conflict, that one gets its own row again.
+void TestConflictsBatchIntoOneRowAndTheConflictsView() {
+  FakeSshHost host;
+  const std::filesystem::path host_root = host.home / "src" / "many";
+  WriteFile(host_root / "a.txt", "a\n");
+  WriteFile(host_root / "b.txt", "b\n");
+  WriteFile(host_root / "c.txt", "c\n");
+  const std::string target = "dev@fake-many-" + std::to_string(::getpid());
+  WorkspaceShell shell;
+  PointAtFakeHost(shell, host);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open " + target + ":" + host_root.string()),
+         "the command is accepted");
+  const std::filesystem::path mirror = WorkspaceShellTestAccess::ProjectRoot(shell);
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               const auto holds = [&](const char* name, const char* bytes) {
+                 return std::filesystem::exists(mirror / name) && ReadFile(mirror / name) == bytes;
+               };
+               return holds("a.txt", "a\n") && holds("b.txt", "b\n") && holds("c.txt", "c\n") &&
+                      WorkspaceShellTestAccess::ProjectRemoteStatus(shell).stages.size() == 3 &&
+                      WorkspaceShellTestAccess::ProjectRemoteStatus(shell).stages[2].text.rfind("synced ", 0) == 0;
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(10)),
+         "the mirror fills");
+  // Three saves made offline, three host edits meanwhile: on reconnect each push
+  // is refused, and the three conflicts arrive together.
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-disconnect " + target), "disconnects");
+  for (std::size_t i = 0; const char* name : {"a.txt", "b.txt", "c.txt"}) {
+    WorkspaceShellTestAccess::OpenFile(shell, mirror / name);
+    WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
+    WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("mine ");
+    Expect(WorkspaceShellTestAccess::SaveTab(shell, i++), std::string("the offline save of ") + name + " succeeds locally");
+    WriteFile(host_root / name, std::string("agent ") + name + "\n");
+  }
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-reconnect " + target), "reconnects");
+  const std::string summary_key = "remote.conflicts." + mirror.string();
+  const auto row_with_key = [&](const std::string& key) -> const workspace::NotificationService::Notification* {
+    for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+      if (row.key == key) {
+        return &row;
+      }
+    }
+    return nullptr;
+  };
+  const auto own_rows = [&]() {
+    std::size_t count = 0;
+    for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+      count += row.key.rfind("remote.conflict.", 0) == 0 ? 1 : 0;
+    }
+    return count;
+  };
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               const auto* row = row_with_key(summary_key);
+               return row != nullptr && row->message.rfind("3 files changed on", 0) == 0;
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(10)),
+         "one counted row for the three conflicts");
+  {
+    const auto* row = row_with_key(summary_key);
+    Expect(row != nullptr && row->actions.size() == 3 && row->actions[0].label == "Keep All Mine" &&
+               row->actions[1].label == "Take All Host's" && row->actions[2].label == "Manage\u2026",
+           "with Keep All Mine, Take All Host's and Manage…");
+    Expect(own_rows() == 0, "and no row per file: " + std::to_string(own_rows()));
+  }
+
+  // Manage…: the Conflicts view, with its action rows above the files.
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-conflicts"), "Manage… is accepted");
+  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "conflicts", "the Conflicts view opens");
+  using Item = plugin::PluginHost::SidebarItem;
+  const auto rows = [&]() -> const std::vector<Item>& { return WorkspaceShellTestAccess::PluginSidebarItems(shell); };
+  const auto row_ids = [&]() {
+    std::string ids;
+    for (const Item& item : rows()) {
+      ids += " " + item.id + "=" + item.label;
+    }
+    return ids;
+  };
+  Expect(rows().size() == 7 && rows()[0].id == "@select-all" && rows()[0].label == "Select all" &&
+             rows()[1].id == "@keep-mine" && rows()[2].id == "@take-host" && rows()[3].id == "@merge" &&
+             rows()[4].id == "a.txt" && rows()[4].label == "[ ] a.txt" && rows()[5].id == "b.txt" &&
+             rows()[6].id == "c.txt",
+         "four action rows, then the three files unticked:" + row_ids());
+  Expect(rows()[1].detail == "tick files first" && rows()[4].detail == "changed on both sides",
+         "the actions say they need a tick: " + rows()[1].detail + " / " + rows()[4].detail);
+  // Enter on a file ticks it; the counts follow.
+  WorkspaceShellTestAccess::SetPluginSidebarSelectedIndex(shell, 4);
+  Expect(WorkspaceShellTestAccess::OpenSelectedPluginSidebarItem(shell), "Enter on a.txt is taken");
+  Expect(rows().size() == 7 && rows()[4].label == "[x] a.txt" && rows()[0].detail == "1 of 3 selected" &&
+             rows()[1].detail == "host gets your 1 file",
+         "a.txt is ticked and counted:" + row_ids());
+  WorkspaceShellTestAccess::SetPluginSidebarSelectedIndex(shell, 5);
+  Expect(WorkspaceShellTestAccess::OpenSelectedPluginSidebarItem(shell), "Enter on b.txt is taken");
+  Expect(rows()[5].label == "[x] b.txt" && rows()[0].detail == "2 of 3 selected", "b.txt too:" + row_ids());
+  // Keep Mine for the ticked two: the host takes them; c.txt stays a conflict --
+  // and, alone now, gets its own row while the counted one goes.
+  WorkspaceShellTestAccess::SetPluginSidebarSelectedIndex(shell, 1);
+  Expect(WorkspaceShellTestAccess::OpenSelectedPluginSidebarItem(shell), "Keep Mine is taken");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return ReadFile(host_root / "a.txt") == "mine a\n" && ReadFile(host_root / "b.txt") == "mine b\n" &&
+                      row_with_key(summary_key) == nullptr && own_rows() == 1 &&
+                      row_with_key("remote.conflict." + (mirror / "c.txt").string()) != nullptr;
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(10)),
+         "the host takes the two; the one left has its own row and the counted row is gone");
+  Expect(rows().size() == 5 && rows()[4].id == "c.txt" && rows()[4].label == "[ ] c.txt" &&
+             rows()[0].detail == "0 of 1 selected",
+         "the view follows: one file left, its tick gone with the settled ones:" + row_ids());
+  // Select all, then the counted row's other button by command: Take Host's for
+  // the rest.
+  WorkspaceShellTestAccess::SetPluginSidebarSelectedIndex(shell, 0);
+  Expect(WorkspaceShellTestAccess::OpenSelectedPluginSidebarItem(shell), "Select all is taken");
+  Expect(rows().size() == 5 && rows()[0].label == "Clear selection" && rows()[4].label == "[x] c.txt",
+         "every file is ticked and the row offers to clear:" + row_ids());
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-resolve-all " + mirror.string() + " host"),
+         "Take All Host's is accepted");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return ReadFile(mirror / "c.txt") == "agent c.txt\n" && own_rows() == 0 && rows().empty();
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(10)),
+         "the mirror takes the host's c.txt; no row and no conflict is left:" + row_ids());
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-resolve-all host"),
+         "with nothing in conflict the command is rejected");
   RemoveFakeMaster(target);
 }
 
@@ -1545,6 +1682,8 @@ void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostService/UnfetchedFilesAreListedAndOpenWhenFetched",
           TestUnfetchedFilesAreListedAndOpenWhenFetched);
   AddTest(tests, "RemoteHostService/ConflictMergesThreeWaysToTheHost", TestConflictMergesThreeWaysToTheHost);
+  AddTest(tests, "RemoteHostService/ConflictsBatchIntoOneRowAndTheConflictsView",
+          TestConflictsBatchIntoOneRowAndTheConflictsView);
   AddTest(tests, "RemoteHostService/APortThatStartsListeningIsForwarded", TestAPortThatStartsListeningIsForwarded);
   AddTest(tests, "RemoteHostService/ProjectHomeStatusBlockFollowsTheConnection",
           TestProjectHomeStatusBlockFollowsTheConnection);

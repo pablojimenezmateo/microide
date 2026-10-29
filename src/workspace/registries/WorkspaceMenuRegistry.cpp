@@ -242,13 +242,15 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   // between Git and Terminal: where work lives, like a repository). The menu is
   // the category, so the labels drop the palette's "Remote: " prefix; the palette
   // keeps it, because there the prefix is what typing "remote" finds. Resolve
-  // Conflict, Copy Command, Clear Changed on Host and Apply Held Deletes act on a
-  // row or a view and stay there; New Local Terminal is a terminal verb.
+  // Conflict, Resolve All Conflicts, Copy Command, Clear Changed on Host and Apply
+  // Held Deletes act on a row or a view and stay there; New Local Terminal is a
+  // terminal verb.
   static const auto kRemoteItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::RemoteOpenFolder, "Open Folder on Host…"),
       MenuSeparator(),
       MenuItem(ActionId::RemoteShowStatus, "Show Status"),
       MenuItem(ActionId::RemoteShowHostChanges, "Show Changed on Host"),
+      MenuItem(ActionId::RemoteShowConflicts, "Show Conflicts"),
       MenuItem(ActionId::RemoteShowLog, "Show Host Server Log"),
       MenuSeparator(),
       MenuItem(ActionId::RemoteForwardPort, "Forward a Port…"),

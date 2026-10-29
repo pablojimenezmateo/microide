@@ -38,6 +38,14 @@ enum class ActionId {
   // `remote-resolve <mirror-path> <mine|host|compare|merge>`: settle a file both the
   // host and the mirror changed — the buttons on its conflict row.
   RemoteResolveConflict,
+  // `remote-resolve-all [root] <mine|host>`: every conflict of the remote project
+  // at `root` (the active one when omitted) -- Keep All Mine / Take All Host's on
+  // the counted conflict row (§ 7.7).
+  RemoteResolveAllConflicts,
+  // `remote-conflicts [root]`: the Conflicts view (§ 7.9b) -- the files both sides
+  // changed, each tickable, with Keep Mine / Take Host's / Merge for the ticked
+  // ones. The counted row's Manage…; the Remote menu's Show Conflicts.
+  RemoteShowConflicts,
   // `remote-show-log [host]`: the host server's log in an output channel.
   RemoteShowLog,
   RemoteShowStatus,

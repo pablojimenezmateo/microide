@@ -104,7 +104,24 @@ class MirrorStore {
   // Only the journal (meta/journal): which paths have a push pending and the tree
   // operations not yet acknowledged. Small, so it is written before every attempt;
   // the full state can then be saved lazily, and Open lets the journal override it.
+  // Writes the pulled hint too (WritePulledHint) when there is one to write.
   bool SaveJournal(std::string* error) const;
+  // tree/<path> was written with the host's bytes `hash` and the entry's base moved
+  // to it in memory only: the state is saved lazily (and a tree flush must come
+  // first), so a crash before that save would leave the bytes unrecorded -- read
+  // back as an edit made here, a conflict where the host moved on, and a PUSH over
+  // the host where it moved back to the old base. meta/pulled carries these until a
+  // Save records them (WritePulledHint, after every pull batch); Open adopts each
+  // whose file still hashes to it, or whose path has a push pending (the save came
+  // after the pull, on top of it).
+  void NotePulled(std::string_view path, const util::ContentHash& hash);
+  // meta/pulled: the NotePulled set, written atomically but NOT flushed -- the
+  // pulled files it vouches for were written the same way (Durability::Deferred),
+  // and Open checks each against the file's bytes, so a power loss that loses the
+  // hint loses nothing the hint could have told. A corrupt or missing hint is an
+  // empty one, never an error. Removed by Save.
+  bool WritePulledHint() const;
+  std::filesystem::path pulled_hint_path() const { return meta_ / "pulled"; }
   std::filesystem::path journal_path() const { return meta_ / "journal"; }
 
   // Tree operations applied to tree/ and not yet acknowledged by the host, in the
@@ -141,6 +158,8 @@ class MirrorStore {
   std::filesystem::path meta_;
   std::map<std::string, Entry, std::less<>> entries_;
   std::deque<PendingTreeOp> pending_tree_ops_;
+  // Pulls the saved state does not record yet (NotePulled); Save clears it.
+  mutable std::map<std::string, util::ContentHash, std::less<>> pulled_unsaved_;
   std::uint64_t manifest_id_ = 0;
   std::array<std::mutex, 64> path_locks_;
 };

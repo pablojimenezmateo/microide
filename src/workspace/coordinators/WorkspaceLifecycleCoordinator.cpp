@@ -18,6 +18,7 @@
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 #include "workspace/coordinators/WorkspaceProjectCatalogCoordinator.h"
 #include "workspace/services/ProjectCatalogService.h"
+#include "workspace/services/RemoteHostService.h"
 #include "workspace/shell/WorkspaceShell.h"
 
 namespace microide::workspace {
@@ -136,6 +137,9 @@ void LifecycleCoordinator::Shutdown() {
   // exits via quick_exit() right after Shutdown() returns, so nothing downstream
   // of this point runs.
   operations_.flush_persisted_state();
+  // Same reason: a remote mirror's sync state is saved lazily by its engine, and
+  // pulled files no save recorded come back as conflicts on the next start.
+  operations_.persist_remote_mirrors();
   operations_.shutdown_project_search_runtime();
   // Stop the control listener and remove the discovery descriptor. Cheap (the
   // I/O thread wakes via its self-pipe, so the join returns immediately) and off
@@ -399,6 +403,7 @@ LifecycleCoordinator& WorkspaceShell::MakeLifecycleCoordinator() {
               [this]() { MakePersistenceCoordinator().SaveWorkspaceSession(); },
           .flush_recents = [this]() { recents_service_.FlushPendingSave(); },
           .flush_persisted_state = [this]() { persistence_service_.FlushPendingWrites(); },
+          .persist_remote_mirrors = [this]() { MakeRemoteHostService().PersistMirrors(); },
           .shutdown_project_search_runtime = [this]() { project_search_runtime_.Shutdown(); },
           .stop_control_channel = [this]() { control_channel_service_.Stop(); },
           .stop_debug_sessions =

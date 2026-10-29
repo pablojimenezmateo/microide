@@ -264,6 +264,13 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
               MakeSidebarService().RefreshHostView();
             }
           },
+      .conflicts_updated =
+          [this](const std::filesystem::path& root) {
+            if (context_.current_project_state.root == root &&
+                context_.current_project_state.sidebar.view_id == "conflicts") {
+              MakeSidebarService().RefreshHostView();
+            }
+          },
       .open_url = [this](std::string_view url) { return OpenExternalUrl(url); },
       .open_merge =
           [this](const std::filesystem::path& base, const std::filesystem::path& incoming,

@@ -459,6 +459,58 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-29-420 — files the host changed while the user edited nothing came up as Keep Mine / Take Host's conflicts after a restart. [RESOLVED 2026-10-29 — a watched pull's base was never saved, and quit never saved it either]
+
+Reported on a real project (tempo on worky): after a night of host-side commits,
+every file the host had changed got its own conflict toast, though the mirror had
+not been edited. Decoding the mirror's `meta/state`: 59 conflicts, each with local
+bytes equal to neither the recorded base nor the host -- and each local version
+checked (56 of 59) was a blob in the host's git history, written by a pull at 20:27
+the previous evening (ctime), when the host checked out another branch. The state
+on disk still named the version before that checkout as each file's base.
+
+Two holes made that. (1) `ApplyWatchDelta` saved its state *before* executing its
+pulls (`SaveLocked`, then `Execute(plan, {})`), and `ApplyFetched` updates a
+pulled entry's base in memory only; only a full sync saved after its pulls
+drained. A watch-driven pull was therefore recorded only if something later
+happened to save -- and 1,700 files pulled by the checkout never were. (2) The app
+quits through `std::quick_exit`; `~MirrorSyncEngine`, the only place that landed a
+deferred save, never runs. On the next start each such file reads as edited here
+(`CheckLocal` → `Differs`): the ones the host still held converged silently, the
+59 it had changed again overnight became conflicts. Latent and worse: a file whose
+host copy had gone *back* to the stale base (a branch switched back while the
+editor was closed) satisfied the reconcile's "edited in tree/ by something other
+than the editor's save" branch and would have been *pushed* over the host. Not hit
+here (no host write after the restart), but the same lost save feeds it.
+
+Fixed: the watch delta's pipeline saves once its pulls drain, and a priority pull
+(`Prioritize`, in-memory or streamed) saves when it ends -- both only when pulls
+wrote something no save records (`SavePulledLocked`, keyed on `tree_unsynced_`),
+never per batch, so `FlushesAPullOncePerSaveNotPerFile` holds. `PersistNow()`
+writes the state on the caller's thread when it lags the tree, and the lifecycle
+`Shutdown()` calls it on every mirror (`RemoteHostService::PersistMirrors`) before
+`quick_exit`; the destructor uses the same condition (it used to miss pulled bytes
+with no save queued). Pinned by `MirrorSyncEngine/RecordsWatchedPullsBeforeAQuit`,
+which snapshots the mirror directory while the engine is alive -- what quick_exit
+leaves -- restarts from it after the host moves again, and requires no conflict
+(failed first: the state on disk held the pre-pull base). The batch itself is no
+longer a row per file: from two conflicts on there is one counted row (Keep All
+Mine / Take All Host's / Manage…, `remote-resolve-all`) and a Conflicts sidebar
+view to tick files and settle the ticked ones (`remote-conflicts`; design § 7.7,
+§ 7.9b; `RemoteHostService/ConflictsBatchIntoOneRowAndTheConflictsView`, QA
+`remote.py` Q). Found on the way: a parked conflict stayed parked when the host
+came to hold exactly the mirror's bytes -- either button a write of what was
+there -- and now settles itself on the next row
+(`MirrorSyncEngine/ConflictClearsWhenTheHostAdoptsTheMirrorsBytes`). And the
+crash variant of the hole above: the state save is lazy and `PersistNow` runs
+only on a quit, so a crash (or a kill) between a pull and the next save left the
+same unrecorded bytes. A `meta/pulled` hint -- one small atomic write per pull
+batch, no fsync and no tree flush, since the files it vouches for were written
+the same way -- now carries each pull until a state save records it
+(`MirrorStore::NotePulled`, `WritePulledHint`), and Open adopts each whose file
+still hashes to it, or whose path has a save journaled after the pull; a hint
+that does not decode is ignored (`MirrorStore/JournalCarriesPullsTheStateLacks`).
+
 ### TD-2026-10-28-419 — a long first sync drives the UI at ~11 frames a second for its whole length. [OPEN — measured; design below]
 
 Found by `tools/qa/remote.py` X over the 60 ms slow link (`qa-slow`): the same

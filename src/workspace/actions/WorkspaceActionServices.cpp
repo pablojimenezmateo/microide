@@ -167,6 +167,7 @@ bool WorkspaceActionContext::ShowSidebarView(const SidebarViewInfo& view,
       return true;
     case SidebarMode::HostChanges:
     case SidebarMode::Host:
+    case SidebarMode::Conflicts:
       services_.sidebar.ShowHostView(view.mode);
       return true;
     case SidebarMode::Plugin:
@@ -189,6 +190,7 @@ bool WorkspaceActionContext::ToggleSidebarView(const SidebarViewInfo& view,
     case SidebarMode::Outline:
     case SidebarMode::HostChanges:
     case SidebarMode::Host:
+    case SidebarMode::Conflicts:
     case SidebarMode::Plugin:
       if (same_view) {
         services_.sidebar.Close();

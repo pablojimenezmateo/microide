@@ -134,6 +134,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     // Row- and notification-driven, with arguments naming what they act on: each
     // rejects naming the host, path or handle it cannot find.
     case ActionId::RemoteResolveConflict:
+    case ActionId::RemoteResolveAllConflicts:
     case ActionId::RemoteAttachHostTerminals:
     case ActionId::RemoteCloseHostTerminals:
     case ActionId::RemoteCopyCommand:
@@ -438,6 +439,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return hosts != nullptr && hosts->HasForwardedPort();
     }
     case ActionId::RemoteShowHostChanges:
+    case ActionId::RemoteShowConflicts:
       return context_.current_project_state.id.IsRemote();
     case ActionId::RemoteRemoveMirror: {
       // A closed remote project's mirror (an open one's goes with its close).
@@ -709,6 +711,7 @@ std::string_view ActionAvailability::PossibleDisabledReason(ActionId id) {
     case ActionId::RemoteUnforwardPort:
       return "no port is forwarded";
     case ActionId::RemoteShowHostChanges:
+    case ActionId::RemoteShowConflicts:
       return "not a remote project";
     case ActionId::RemoteRemoveMirror:
       return "no closed remote project";

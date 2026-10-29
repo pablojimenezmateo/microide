@@ -85,6 +85,68 @@ void TestMirrorStoreJournalOverridesALaggingState() {
          "and its tree operations");
 }
 
+// A pull moves its entry's base in memory and the state is saved lazily: between
+// the two a crash leaves the pulled bytes in tree/ unrecorded (read back as an edit
+// made here). The journal, written at once, carries them (NotePulled) and Open
+// adopts each whose file still holds them -- or whose path has a save journaled
+// after the pull, made on top of them -- and leaves alone one written since.
+void TestMirrorStoreJournalCarriesPullsTheStateLacks() {
+  TemporaryDirectory temp;
+  std::string error;
+  const auto old = util::HashContent("one\n");
+  const auto pulled = util::HashContent("two\n");
+  {
+    MirrorStore store(temp.path() / "m");
+    Expect(store.Open(&error), "opens");
+    for (const char* name : {"a.txt", "saved.txt", "edited.txt"}) {
+      MirrorStore::Entry& entry = store.entries()[name];
+      entry.has_remote = true;
+      entry.remote.path = name;
+      entry.remote.hash = old;
+      entry.base = old;
+      WriteFile(store.tree() / name, "one\n");
+    }
+    Expect(store.Save(&error), "the state, every base at the old version");
+    // Then, before any save: three pulls land, one is saved over through the
+    // gate, one is rewritten outside it.
+    for (const char* name : {"a.txt", "saved.txt", "edited.txt"}) {
+      WriteFile(store.tree() / name, "two\n");
+      store.Find(name)->base = pulled;
+      store.NotePulled(name, pulled);
+    }
+    WriteFile(store.tree() / "saved.txt", "user\n");
+    store.Find("saved.txt")->push_pending = true;
+    WriteFile(store.tree() / "edited.txt", "tool\n");
+    Expect(store.WritePulledHint(), "only the hint (what a pull batch writes)");
+    Expect(store.SaveJournal(&error), "and the journal (what the save made through the gate writes): " + error);
+  }
+  {
+    MirrorStore reopened(temp.path() / "m");
+    Expect(reopened.Open(&error), "reopens: " + error);
+    Expect(reopened.Find("a.txt")->base == std::optional(pulled), "the pulled bytes are the base");
+    Expect(reopened.Find("saved.txt")->base == std::optional(pulled) && reopened.Find("saved.txt")->push_pending,
+           "a save journaled after the pull was made on top of it: its base is the pull");
+    Expect(reopened.Find("edited.txt")->base == std::optional(old),
+           "a file rewritten since holds neither: left for the reconcile");
+    // Kept until a Save records them, in case a journal-only write comes first
+    // (SaveJournal rewrites the hint); a Save then drops the hint.
+    Expect(reopened.SaveJournal(&error), "the journal again");
+    MirrorStore again(temp.path() / "m");
+    Expect(again.Open(&error) && again.Find("a.txt")->base == std::optional(pulled), "still carried");
+    Expect(again.Save(&error), "the state");
+  }
+  {
+    MirrorStore reopened(temp.path() / "m");
+    Expect(reopened.Open(&error) && reopened.Find("a.txt")->base == std::optional(pulled), "recorded by the state");
+    Expect(!std::filesystem::exists(reopened.pulled_hint_path()), "and the hint is gone");
+    // A hint that does not decode is no hint, never an error.
+    WriteFile(reopened.pulled_hint_path(), "garbage");
+    MirrorStore tolerant(temp.path() / "m");
+    Expect(tolerant.Open(&error) && tolerant.Find("a.txt")->base == std::optional(pulled),
+           "a corrupt hint is ignored: " + error);
+  }
+}
+
 void TestMirrorStoreCorruptStateIsAnError() {
   TemporaryDirectory temp;
   std::string error;
@@ -144,6 +206,7 @@ void RegisterMirrorStoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorStore/RoundTrips", TestMirrorStoreRoundTrips);
   AddTest(tests, "MirrorStore/CorruptStateIsAnError", TestMirrorStoreCorruptStateIsAnError);
   AddTest(tests, "MirrorStore/JournalOverridesALaggingState", TestMirrorStoreJournalOverridesALaggingState);
+  AddTest(tests, "MirrorStore/JournalCarriesPullsTheStateLacks", TestMirrorStoreJournalCarriesPullsTheStateLacks);
   AddTest(tests, "MirrorStore/CheckLocal", TestMirrorStoreCheckLocal);
   AddTest(tests, "MirrorStore/DefaultDirectory", TestMirrorStoreDefaultDirectory);
 }

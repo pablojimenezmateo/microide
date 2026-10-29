@@ -315,6 +315,7 @@ void TestMenuRegistryRemoteMenuHoldsTheRemoteVerbs() {
       {true, {}, {}},
       {false, ActionId::RemoteShowStatus, "Show Status"},
       {false, ActionId::RemoteShowHostChanges, "Show Changed on Host"},
+      {false, ActionId::RemoteShowConflicts, "Show Conflicts"},
       {false, ActionId::RemoteShowLog, "Show Host Server Log"},
       {true, {}, {}},
       {false, ActionId::RemoteForwardPort, "Forward a Port…"},

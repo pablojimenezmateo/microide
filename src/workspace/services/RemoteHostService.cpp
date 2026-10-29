@@ -699,29 +699,46 @@ bool RemoteHostService::ApplyHeldDeletes(const std::filesystem::path& root) {
 }
 
 void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, Project& entry) {
-  // One row per conflicted file, with the choice on it (VS Code's save-conflict
-  // row): nothing is settled automatically, and a row stays until it is.
-  constexpr std::size_t kMaxRows = 3;
-  const std::vector<std::string> conflicts = entry.project->engine().Conflicts();
+  // Nothing is settled automatically, and a row stays until it is (§ 6.3). One
+  // conflict gets a row of its own with the choice on it (VS Code's save-conflict
+  // row). From two on there is ONE counted row (§ 7.6: never a row per file -- a
+  // branch checked out on the host makes dozens at once) whose Keep All Mine and
+  // Take All Host's settle every one of them, and whose Manage… opens the
+  // Conflicts view (§ 7.9b) to choose per file.
+  std::vector<std::string> conflicts = entry.project->engine().Conflicts();
   const std::string summary_key = "remote.conflicts." + tree.string();
   const auto row_key = [&](const std::string& path) {
     return "remote.conflict." + (tree / path).string();
   };
+  if (conflicts != entry.conflicts) {
+    // A tick on a file no longer in conflict goes with it.
+    for (auto it = entry.selected_conflicts.begin(); it != entry.selected_conflicts.end();) {
+      it = std::binary_search(conflicts.begin(), conflicts.end(), *it) ? std::next(it)
+                                                                        : entry.selected_conflicts.erase(it);
+    }
+    entry.conflicts = std::move(conflicts);
+    if (operations_.conflicts_updated) {
+      operations_.conflicts_updated(tree);
+    }
+  }
+  const std::vector<std::string>& current = entry.conflicts;
+  const bool own_row = current.size() == 1;
   for (const std::string& shown : entry.conflict_rows) {
-    if (!std::binary_search(conflicts.begin(), conflicts.end(), shown) && operations_.dismiss_notification) {
+    if ((!own_row || shown != current.front()) && operations_.dismiss_notification) {
       operations_.dismiss_notification(row_key(shown));
     }
   }
   entry.conflict_rows.clear();
   const std::string host = entry.host;
-  for (std::size_t i = 0; i < conflicts.size() && i < kMaxRows; ++i) {
-    const std::string absolute = (tree / conflicts[i]).string();
-    entry.conflict_rows.push_back(conflicts[i]);
+  if (own_row) {
+    const std::string& path = current.front();
+    const std::string absolute = (tree / path).string();
+    entry.conflict_rows.push_back(path);
     if (operations_.notify) {
       operations_.notify(NotificationService::Request{
           .tone = NotificationService::Tone::Warning,
-          .key = row_key(conflicts[i]),
-          .message = conflicts[i] + " changed on " + host + " and here",
+          .key = row_key(path),
+          .message = path + " changed on " + host + " and here",
           .sticky = true,
           .actions = {
               NotificationAction{.label = "Merge",
@@ -738,17 +755,168 @@ void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, P
       });
     }
   }
-  if (conflicts.size() > kMaxRows && operations_.notify) {
+  if (current.size() >= 2 && operations_.notify) {
     operations_.notify(NotificationService::Request{
         .tone = NotificationService::Tone::Warning,
         .key = summary_key,
-        .message = std::to_string(conflicts.size() - kMaxRows) + " more files changed on " + host +
-                   " and here (Remote: Show Status lists them)",
+        .message = std::to_string(current.size()) + " files changed on " + host + " and here",
         .sticky = true,
+        .actions = {
+            NotificationAction{.label = "Keep All Mine",
+                               .id = ActionId::RemoteResolveAllConflicts,
+                               .args = {tree.string(), "mine"}},
+            NotificationAction{.label = "Take All Host's",
+                               .id = ActionId::RemoteResolveAllConflicts,
+                               .args = {tree.string(), "host"}},
+            NotificationAction{.label = "Manage\u2026",
+                               .id = ActionId::RemoteShowConflicts,
+                               .args = {tree.string()},
+                               .keep_open = true},
+        },
     });
   } else if (operations_.dismiss_notification) {
     operations_.dismiss_notification(summary_key);
   }
+}
+
+bool RemoteHostService::ResolveAllConflicts(const std::filesystem::path& root, bool keep_mine) {
+  const auto it = projects_.find(root);
+  if (it == projects_.end()) {
+    return false;
+  }
+  const std::vector<std::string> conflicts = it->second.project->engine().Conflicts();
+  if (conflicts.empty()) {
+    return false;
+  }
+  ResolveConflicts(it->second, conflicts, keep_mine);
+  return true;
+}
+
+void RemoteHostService::ResolveConflicts(Project& entry, const std::vector<std::string>& paths,
+                                         bool keep_mine) {
+  using Resolution = remote::MirrorSyncEngine::Resolution;
+  // Each is a job at the FRONT of the engine's queue, so the last posted runs
+  // first: posted in reverse, they settle in list order, and the counted row
+  // counts down as each lands.
+  for (auto it = paths.rbegin(); it != paths.rend(); ++it) {
+    entry.project->engine().ResolveConflict(*it, keep_mine ? Resolution::KeepMine : Resolution::TakeHost);
+  }
+}
+
+std::vector<plugin::PluginHost::SidebarItem> RemoteHostService::ConflictRows(
+    const std::filesystem::path& root) const {
+  using Item = plugin::PluginHost::SidebarItem;
+  std::vector<Item> rows;
+  const auto it = projects_.find(root);
+  if (it == projects_.end()) {
+    return rows;
+  }
+  const Project& entry = it->second;
+  const std::vector<remote::MirrorSyncEngine::Conflict> conflicts = entry.project->engine().ConflictDetails();
+  if (conflicts.empty()) {
+    return rows;
+  }
+  std::size_t selected = 0;
+  for (const remote::MirrorSyncEngine::Conflict& conflict : conflicts) {
+    selected += entry.selected_conflicts.contains(conflict.path) ? 1 : 0;
+  }
+  const std::string total = std::to_string(conflicts.size());
+  const std::string chosen = std::to_string(selected);
+  const std::string files = chosen + (selected == 1 ? " file" : " files");
+  const bool all = selected == conflicts.size();
+  // Short: the sidebar shows some thirty characters of label and detail together.
+  const std::string none = "tick files first";
+  rows.reserve(conflicts.size() + 4);
+  rows.push_back(Item{.label = all ? "Clear selection" : "Select all",
+                      .detail = chosen + " of " + total + " selected",
+                      .id = std::string(kConflictSelectAll)});
+  rows.push_back(Item{.label = "Keep Mine",
+                      .detail = selected == 0 ? none : "host gets your " + files,
+                      .id = std::string(kConflictKeepMine)});
+  rows.push_back(Item{.label = "Take Host's",
+                      .detail = selected == 0 ? none : "you get the host's " + files,
+                      .id = std::string(kConflictTakeHost)});
+  rows.push_back(Item{.label = "Merge",
+                      .detail = selected == 0            ? none
+                                : selected > kMaxMergeTabs ? "the first " + std::to_string(kMaxMergeTabs) + " of " + files
+                                                           : "a merge tab per file (" + chosen + ")",
+                      .id = std::string(kConflictMerge)});
+  for (const remote::MirrorSyncEngine::Conflict& conflict : conflicts) {
+    const bool ticked = entry.selected_conflicts.contains(conflict.path);
+    rows.push_back(Item{.label = (ticked ? "[x] " : "[ ] ") + conflict.path,
+                        .detail = !conflict.on_host     ? "deleted on host, changed here"
+                                  : !conflict.in_mirror ? "deleted here, changed on host"
+                                                        : "changed on both sides",
+                        .path = root / conflict.path,
+                        .id = conflict.path});
+  }
+  return rows;
+}
+
+bool RemoteHostService::ActivateConflictRow(const std::filesystem::path& root, std::string_view id) {
+  const auto it = projects_.find(root);
+  if (it == projects_.end()) {
+    return false;
+  }
+  Project& entry = it->second;
+  const std::vector<std::string> conflicts = entry.project->engine().Conflicts();
+  const auto changed = [&]() {
+    if (operations_.conflicts_updated) {
+      operations_.conflicts_updated(root);
+    }
+  };
+  if (id == kConflictSelectAll) {
+    if (entry.selected_conflicts.size() == conflicts.size()) {
+      entry.selected_conflicts.clear();
+    } else {
+      entry.selected_conflicts.insert(conflicts.begin(), conflicts.end());
+    }
+    changed();
+    return true;
+  }
+  if (id == kConflictKeepMine || id == kConflictTakeHost || id == kConflictMerge) {
+    std::vector<std::string> selected;  // in list order
+    for (const std::string& path : conflicts) {
+      if (entry.selected_conflicts.contains(path)) {
+        selected.push_back(path);
+      }
+    }
+    if (selected.empty()) {
+      if (operations_.notify) {
+        operations_.notify(NotificationService::Request{
+            .tone = NotificationService::Tone::Info,
+            .message = "Tick the files to act on first (Enter on a row ticks it)"});
+      }
+      return true;
+    }
+    if (id == kConflictMerge) {
+      if (selected.size() > kMaxMergeTabs) {
+        if (operations_.notify) {
+          operations_.notify(NotificationService::Request{
+              .tone = NotificationService::Tone::Info,
+              .message = "Merging the first " + std::to_string(kMaxMergeTabs) + " of the " +
+                         std::to_string(selected.size()) + " ticked files; mark them resolved, then merge the rest"});
+        }
+        selected.resize(kMaxMergeTabs);
+      }
+      for (const std::string& path : selected) {
+        (void)MergeConflict(root / path);
+      }
+      return true;
+    }
+    ResolveConflicts(entry, selected, id == kConflictKeepMine);
+    return true;
+  }
+  if (!std::binary_search(conflicts.begin(), conflicts.end(), id)) {
+    return false;
+  }
+  if (const auto ticked = entry.selected_conflicts.find(id); ticked != entry.selected_conflicts.end()) {
+    entry.selected_conflicts.erase(ticked);
+  } else {
+    entry.selected_conflicts.emplace(id);
+  }
+  changed();
+  return true;
 }
 
 std::pair<RemoteHostService::Project*, std::string> RemoteHostService::ConflictOwner(
@@ -1011,6 +1179,13 @@ void RemoteHostService::Disconnect(std::string_view host) {
     if (!project.closed && (host.empty() || project.host == host)) {
       project.project->session().Disconnect();
     }
+  }
+}
+
+void RemoteHostService::PersistMirrors() {
+  for (auto& [tree, project] : projects_) {
+    (void)tree;
+    project.project->engine().PersistNow();
   }
 }
 

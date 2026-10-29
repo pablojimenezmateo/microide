@@ -445,6 +445,7 @@ void SidebarCoordinator::RecomputePluginSidebarPlaceholder() {
     const SidebarMode mode = ActiveSidebarMode();
     plugin.placeholder = mode == SidebarMode::HostChanges ? std::string("Nothing changed on the host since you connected")
                          : mode == SidebarMode::Host  ? std::string("Not connected to a host")
+                         : mode == SidebarMode::Conflicts ? std::string("No conflicts: the host and the mirror agree")
                                                       : FormatEmptyState(mode == SidebarMode::Outline ? "symbols" : "items");
   } else {
     plugin.placeholder.clear();

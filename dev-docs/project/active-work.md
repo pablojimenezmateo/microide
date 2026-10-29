@@ -337,6 +337,19 @@ new terminal behaviour lands there.
 > (`remote-remove-mirror` now takes its root) and the host verbs ask which host
 > when several are open. See `openspec/changes/archive/2026-10-27-remote-menu`.
 >
+> **Conflicts in bulk, and no false ones (2026-10-29).** Files the host changed
+> overnight came up as Keep Mine / Take Host's conflicts the user never made: a
+> watched pull's base was saved only if something later happened to save, and a
+> quit (`quick_exit`) never did (TD-2026-10-29-420). The pipeline now saves once
+> its pulls drain, `Shutdown` persists every mirror, and an unflushed
+> `meta/pulled` hint records each pull batch until the lazy state save does, so a
+> crash cannot read a pull back as an edit either. From two conflicts on there is
+> ONE counted row -- Keep All Mine / Take All Host's / Manage… -- and Manage…
+> opens a Conflicts sidebar view (`remote-conflicts`; Enter ticks a file; Select
+> all / Keep Mine / Take Host's / Merge act on the ticked ones;
+> `remote-resolve-all [root] <mine|host>`). A parked conflict whose sides come to
+> hold the same bytes settles itself. Design § 7.7, § 7.9b; QA `remote.py` Q.
+>
 > **`Remote: Open Terminal on Host…` removed (2026-10-27).** A remote project's
 > Terminal > New runs on its host; the terminal-only host session behind the
 > command (`RemoteHostService::Host`, its own status machine and auth path) is

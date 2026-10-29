@@ -113,6 +113,9 @@ class RemoteHostService {
     std::function<void(const std::filesystem::path& path)> open_file;
     // The Changed on Host list of the remote project at `root` changed.
     std::function<void(const std::filesystem::path& root)> host_changes_updated;
+    // The Conflicts view's rows for the remote project at `root` changed: a
+    // conflict came or went, or a row's selection flipped.
+    std::function<void(const std::filesystem::path& root)> conflicts_updated;
     // The desktop's browser (a host-local link, once its port is forwarded).
     std::function<bool(std::string_view url)> open_url;
     // Open the three-way merge editor (base, incoming, current) writing to
@@ -160,6 +163,25 @@ class RemoteHostService {
   // mirror's bytes over the host's, or take the host's. False when `path` is not a
   // conflict of any remote project.
   bool ResolveConflict(const std::filesystem::path& path, bool keep_mine);
+  // Keep All Mine / Take All Host's on the counted conflict row: every conflict of
+  // the remote project at `root`, each settled as ResolveConflict would. False when
+  // `root` is not a remote project or has no conflict.
+  bool ResolveAllConflicts(const std::filesystem::path& root, bool keep_mine);
+  // The Conflicts view (§ 7.9b) for the remote project at `root`: the action rows
+  // first (ids kConflictSelectAll, kConflictKeepMine, kConflictTakeHost,
+  // kConflictMerge), then one row per conflicted file, id = relative path, its
+  // label marked `[x]` when selected. Empty for any other root.
+  static constexpr std::string_view kConflictSelectAll = "@select-all";
+  static constexpr std::string_view kConflictKeepMine = "@keep-mine";
+  static constexpr std::string_view kConflictTakeHost = "@take-host";
+  static constexpr std::string_view kConflictMerge = "@merge";
+  // Merge opens a tab per selected file: at most this many at once.
+  static constexpr std::size_t kMaxMergeTabs = 8;
+  std::vector<plugin::PluginHost::SidebarItem> ConflictRows(const std::filesystem::path& root) const;
+  // Enter on a row of that view: a file row flips its selection; Select all selects
+  // every file (or clears the selection when every file is selected); Keep Mine,
+  // Take Host's and Merge act on the selected files. False for an unknown row.
+  bool ActivateConflictRow(const std::filesystem::path& root, std::string_view id);
   // Compare: fetch the host's bytes of the conflicted `path` and open them beside
   // the mirror's file. False when `path` is not a conflict of any remote project.
   bool CompareConflict(const std::filesystem::path& path);
@@ -235,6 +257,10 @@ class RemoteHostService {
   bool Reconnect(std::string_view host);
   // Empty = every host. Open projects only (a closed one is down already).
   void Disconnect(std::string_view host = {});
+  // Quit: every mirror's sync state written now (MirrorSyncEngine::PersistNow),
+  // closed ones too -- the process leaves through quick_exit, which runs no engine
+  // destructor, and pulled bytes no save records read as conflicts next start.
+  void PersistMirrors();
   // `microide-server stop` on the host, off the UI thread; the result is a row.
   bool StopServer(std::string_view host);
   // Remote: Show Host Server Log — fetched off the UI thread, shown in an output
@@ -359,7 +385,9 @@ class RemoteHostService {
     bool announced_sync = false;
     bool warned_polling = false;
     bool closed = false;  // its project tab is closed: disconnected, and not shown
-    std::vector<std::string> conflict_rows;  // relative paths with a row showing
+    std::vector<std::string> conflict_rows;  // relative paths with a row of their own showing
+    std::vector<std::string> conflicts;      // the engine's, sorted, as last published
+    std::set<std::string, std::less<>> selected_conflicts;  // the Conflicts view's ticks
     // Changed on Host: the engine's change counter last seen, and when the "N files
     // changed on host" row was last raised (it is raised at most every 30 s).
     std::size_t seen_host_changes = 0;
@@ -430,6 +458,9 @@ class RemoteHostService {
   }
   // The project and relative path a conflicted mirror path belongs to.
   std::pair<Project*, std::string> ConflictOwner(const std::filesystem::path& path);
+  // Settle `paths` (relative, in list order) of `entry`'s project, each as
+  // ResolveConflict would.
+  void ResolveConflicts(Project& entry, const std::vector<std::string>& paths, bool keep_mine);
   void PublishStatusSegment();
   // Once per host, when it is Ready: warn when its processes end at logout (the
   // hello's session-survival report), which makes "terminals survive a

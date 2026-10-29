@@ -195,6 +195,13 @@ class MirrorSyncEngine {
   void FetchHostFile(std::string host_path, std::filesystem::path local_path, HostCopyDone done);
   // Paths in conflict, sorted.
   std::vector<std::string> Conflicts() const;
+  // The same, with what each side still holds: a row of the Conflicts view.
+  struct Conflict {
+    std::string path;
+    bool on_host = true;    // false: the host deleted it, the mirror changed it
+    bool in_mirror = true;  // false: deleted here, changed on the host
+  };
+  std::vector<Conflict> ConflictDetails() const;
   // Apply the held delete diff after all.
   void ApproveHeldDeletes();
   // The host's changes, newest first (one row per path: its latest change).
@@ -216,6 +223,12 @@ class MirrorSyncEngine {
   // Block until the engine is idle: every job posted, and every job those posted,
   // has run (tests, shutdown).
   void Flush();
+  // Write the state now, on the caller's thread, when it lags what the tree holds:
+  // a deferred save not run yet, or pulled bytes no save has recorded. The app
+  // leaves through quick_exit, which runs no destructor, so its shutdown calls this
+  // -- without it the next start finds those bytes unrecorded, as conflicts. Never
+  // waits for the worker (which may be blocked on the network).
+  void PersistNow();
 
  private:
   struct PullItem {
@@ -267,6 +280,10 @@ class MirrorSyncEngine {
   std::size_t RemoteCountLocked() const;
   // `on_done` runs on the worker once every pull of the plan has landed.
   void Execute(Plan plan, std::function<void()> on_done);
+  // SaveLocked when pulls have written bytes no save records yet (tree_unsynced_).
+  // A pull updates its entry's base in memory only: a pipeline's or a priority
+  // pull's end saves, never each batch (one tree flush per save).
+  void SavePulledLocked();
   struct PullPipeline {  // worker thread only
     std::deque<std::vector<PullItem>> batches;  // small files, batched, then large ones alone
     std::size_t in_flight = 0;

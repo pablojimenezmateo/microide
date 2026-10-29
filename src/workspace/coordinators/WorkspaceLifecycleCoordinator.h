@@ -56,6 +56,8 @@ class LifecycleCoordinator {
     // flush_recents: the process leaves via quick_exit(), which runs no
     // destructors, so shutdown is the only point that can land what is queued.
     std::function<void()> flush_persisted_state;
+    // Every remote mirror's sync state written now (RemoteHostService::PersistMirrors).
+    std::function<void()> persist_remote_mirrors;
     std::function<void()> shutdown_project_search_runtime;
     std::function<void()> stop_control_channel;
     // End every debug session, each with its launched debuggee. quick_exit() does

@@ -205,6 +205,8 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
     case ActionId::RemoteOpenLocalTerminal:
     case ActionId::RemoteOpenFolder:
     case ActionId::RemoteResolveConflict:
+    case ActionId::RemoteResolveAllConflicts:
+    case ActionId::RemoteShowConflicts:
     case ActionId::RemoteShowLog:
     case ActionId::RemoteShowStatus:
     case ActionId::RemoteStopServer:
@@ -264,6 +266,41 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
                                                   : hosts->ResolveConflict(args[0], args[1] == "mine");
           if (!known) {
             return reject("\"" + args[0] + "\" is not a conflict in a remote project");
+          }
+          return DispatchResult::Handled;
+        }
+        case ActionId::RemoteResolveAllConflicts: {
+          // `[root] <mine|host>`: the root defaults to the active project.
+          const std::string& mode = args.empty() ? std::string() : args.back();
+          if (args.empty() || args.size() > 2 || (mode != "mine" && mode != "host")) {
+            return reject("usage: remote-resolve-all [root] <mine|host>");
+          }
+          if (args.size() == 1 && !context_.HasProjectRoot()) {
+            return reject("No active project");
+          }
+          const std::filesystem::path root = args.size() == 2 ? std::filesystem::path(args[0])
+                                                              : context_.ProjectRoot();
+          if (!hosts->ResolveAllConflicts(root, mode == "mine")) {
+            return reject("No conflicts in " + root.string());
+          }
+          return DispatchResult::Handled;
+        }
+        case ActionId::RemoteShowConflicts: {
+          // The counted row names its project's root: with another project in
+          // front, that one is brought forward first.
+          const std::filesystem::path root = args.empty() ? context_.ProjectRoot()
+                                                          : std::filesystem::path(args[0]);
+          if (!hosts->IsRemoteProject(root)) {
+            return reject("The active project is not a remote project");
+          }
+          if (root != context_.ProjectRoot() && !context_.OpenProject(root, true, true)) {
+            return reject("Cannot bring " + root.string() + " forward");
+          }
+          const SidebarViewSpec* view = FindBuiltinSidebarView(SidebarMode::Conflicts);
+          if (view == nullptr ||
+              !context_.ShowSidebarView(
+                  SidebarViewInfo{.id = view->id, .label = view->label, .mode = view->mode}, {}, {})) {
+            return reject("Cannot show the Conflicts view");
           }
           return DispatchResult::Handled;
         }

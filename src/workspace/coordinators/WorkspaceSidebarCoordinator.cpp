@@ -419,8 +419,9 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
                 if (hosts == nullptr) {
                   return std::vector<plugin::PluginHost::SidebarItem>{};
                 }
-                return mode == SidebarMode::Host ? hosts->HostRows()
-                                                 : hosts->HostChangeRows(context_.current_project_state.root);
+                return mode == SidebarMode::Host        ? hosts->HostRows()
+                       : mode == SidebarMode::Conflicts ? hosts->ConflictRows(context_.current_project_state.root)
+                                                        : hosts->HostChangeRows(context_.current_project_state.root);
               },
           .open_host_view_row =
               [this, run_row_command](SidebarMode mode, const plugin::PluginHost::SidebarItem& item) {
@@ -430,6 +431,9 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
                 }
                 if (mode == SidebarMode::HostChanges) {
                   return hosts->OpenHostChange(context_.current_project_state.root, item.id);
+                }
+                if (mode == SidebarMode::Conflicts) {
+                  return hosts->ActivateConflictRow(context_.current_project_state.root, item.id);
                 }
                 return run_row_command(hosts->HostRowOpenCommand(item.id));
               },
