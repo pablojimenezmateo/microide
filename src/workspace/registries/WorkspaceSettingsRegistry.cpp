@@ -1457,7 +1457,9 @@ SettingInfo SettingInfoForContribution(const plugin::PluginHost::ContributedSett
 
   if (contrib.type == "bool") {
     info.type = SettingType::Bool;
-    info.default_value = contrib.default_value == "true";
+    // The tokens a stored value is parsed with: an exact "true" read a plugin's
+    // "yes", "on", "1" or "True" default as off.
+    info.default_value = util::ParseBoolToken(contrib.default_value).value_or(false);
   } else if (contrib.type == "int") {
     info.type = SettingType::Int;
     int v = 0;

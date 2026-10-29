@@ -1189,6 +1189,49 @@ void TestSidebarReorderViews() {
 // Settings get callback
 // ---------------------------------------------------------------------------
 
+// A plugin declares a bool's default the way Lua spells a bool, `default = true`,
+// or as a token. The string reader refused the boolean, so the default became ""
+// and the setting started off; and the registry took only an exact "true", so
+// "yes"/"on"/"1"/"True" were off too.
+void TestPluginBoolSettingDefaults() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp;
+  const std::filesystem::path plugins_dir = temp.path() / "config" / "microide" / "plugins";
+  WriteFile(plugins_dir / "bool-defaults" / "init.lua", R"(
+local ide = require("microide")
+return ide.plugin({
+  id = "bools",
+  setup = function(ctx)
+    ctx.settings.declare({ id = "lua_true", type = "bool", default = true, label = "A" })
+    ctx.settings.declare({ id = "lua_false", type = "bool", default = false, label = "B" })
+    ctx.settings.declare({ id = "yes", type = "bool", default = "yes", label = "C" })
+    ctx.settings.declare({ id = "upper", type = "bool", default = "True", label = "D" })
+    ctx.settings.declare({ id = "no", type = "bool", default = "no", label = "E" })
+  end,
+})
+)");
+  PluginHost host;
+  ScopedPluginConfigHomeEnv config_home(temp.path() / "config");
+  host.Reload(temp.path() / "project");
+  const auto default_of = [&](std::string_view id) -> std::optional<bool> {
+    const auto info = microide::workspace::FindSettingInfo(id, host);
+    if (!info.has_value()) {
+      return std::nullopt;
+    }
+    if (const bool* value = std::get_if<bool>(&info->default_value)) {
+      return *value;
+    }
+    return std::nullopt;
+  };
+  Expect(default_of("bools.lua_true") == true, "default = true (a Lua boolean) is on");
+  Expect(default_of("bools.lua_false") == false, "default = false is off");
+  Expect(default_of("bools.yes") == true, "default = \"yes\" is on");
+  Expect(default_of("bools.upper") == true, "default = \"True\" is on");
+  Expect(default_of("bools.no") == false, "default = \"no\" is off");
+}
+
 void TestPluginSettingsGetCallback() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1604,6 +1647,7 @@ return ide.plugin({
 }
 
 void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ContributionRegistry/PluginBoolSettingDefaults", TestPluginBoolSettingDefaults);
   AddTest(tests, "KeybindingRegistry/BuiltinsNonEmpty",
           TestKeybindingRegistryBuiltinsNonEmpty);
   AddTest(tests, "KeybindingRegistry/FindById", TestKeybindingRegistryFindById);

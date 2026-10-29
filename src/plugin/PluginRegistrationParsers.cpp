@@ -348,6 +348,14 @@ bool ParseSettingRegistration(lua_State* state,
   std::string default_value;
   if (auto default_opt = ReadStringField(state, table_index, "default")) {
     default_value = std::move(*default_opt);
+  } else {
+    // `default = true` is how Lua spells a bool, and the string reader refuses a
+    // boolean: the default became "" and every such setting started off.
+    lua_interop::GetFieldProtected(state, table_index, "default");
+    if (lua_isboolean(state, -1)) {
+      default_value = lua_toboolean(state, -1) != 0 ? "true" : "false";
+    }
+    lua_pop(state, 1);
   }
 
   std::vector<std::string> enum_values;
