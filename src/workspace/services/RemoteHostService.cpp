@@ -13,6 +13,7 @@
 #include "project/remote/ServerStatusText.h"
 #include "util/CommandLine.h"
 #include "util/Parse.h"
+#include "util/PathMatch.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceUiText.h"
 
@@ -939,7 +940,7 @@ std::pair<RemoteHostService::Project*, std::string> RemoteHostService::ConflictO
     const std::filesystem::path& path) {
   for (auto& [tree, entry] : projects_) {
     const std::string text = path.lexically_normal().lexically_relative(tree).generic_string();
-    if (text.empty() || text.rfind("..", 0) == 0) {
+    if (text.empty() || util::RelativeTextClimbsOut(text)) {
       continue;
     }
     const std::vector<std::string> conflicts = entry.project->engine().Conflicts();

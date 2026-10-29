@@ -9,6 +9,7 @@
 
 #include "project/GlobMatch.h"
 #include "project/ProjectSearchService.h"
+#include "util/PathMatch.h"
 
 namespace microide::workspace {
 
@@ -20,7 +21,7 @@ bool RederiveProjectSearchHits(ProjectSearchState& search,
     return false;
   }
   const std::filesystem::path relative = viewport.path().lexically_normal().lexically_relative(root.lexically_normal());
-  if (relative.empty() || relative.native().starts_with("..")) {
+  if (relative.empty() || util::RelativePathClimbsOut(relative)) {
     return false;
   }
   const std::string relative_path = relative.generic_string();

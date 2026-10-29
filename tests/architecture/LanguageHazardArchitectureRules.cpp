@@ -192,4 +192,84 @@ void RunRangeForTemporaryRuleFixtures() {
          "the range-for rule must fail loudly when it finds no range-for to scan");
 }
 
+RuleResult CheckRelativeClimbOutTestsTheFirstComponent(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "a relative path climbs out by its first component, not by a \"..\" text prefix";
+  result.hard_fail = true;
+  // The literal is not code (BuildCodeMask), so the match is anchored on the call's
+  // `.` -- which is -- and a mention in a comment or a string is not a call.
+  const std::regex prefix_test(R"re(\.(?:starts_with\(\s*"\.\."\s*\)|rfind\(\s*"\.\."\s*,\s*0\s*\)))re");
+  const std::filesystem::path helper = repo_root / "src/util/PathMatch.h";
+  if (!RequireRuleTarget(result, helper)) {
+    return result;
+  }
+  if (ReadText(helper).find("RelativePathClimbsOut") == std::string::npos) {
+    result.violations.push_back(Violation{
+        .path = helper,
+        .line = 1,
+        .message = "rule target moved -- util::RelativePathClimbsOut is gone; re-anchor "
+                   "CheckRelativeClimbOutTestsTheFirstComponent",
+    });
+  }
+  const std::filesystem::path dir = repo_root / "src";
+  if (!RequireRuleTarget(result, dir)) {
+    return result;
+  }
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(dir)) {
+    const std::filesystem::path extension = entry.path().extension();
+    if (!entry.is_regular_file() || (extension != ".cpp" && extension != ".h" && extension != ".inc")) {
+      continue;
+    }
+    const std::string text = ReadText(entry.path());
+    if (text.find("\"..\"") == std::string::npos) {
+      continue;
+    }
+    const std::vector<bool> is_code = BuildCodeMask(text);
+    for (std::sregex_iterator it(text.begin(), text.end(), prefix_test), last; it != last; ++it) {
+      const auto at = static_cast<std::size_t>(it->position());
+      if (at >= is_code.size() || !is_code[at]) {
+        continue;
+      }
+      result.violations.push_back(Violation{
+          .path = entry.path(),
+          .line = LineNumberAt(text, at),
+          .message = "a \"..\" text-prefix test reads a child named `..cache` as outside its base; "
+                     "use util::RelativePathClimbsOut / RelativeTextClimbsOut (TD-2026-10-29-423)",
+      });
+    }
+  }
+  return result;
+}
+
+void RunRelativeClimbOutRuleFixtures() {
+  TemporaryDirectory fixture;
+  const std::filesystem::path& root = fixture.path();
+  std::filesystem::create_directories(root / "src/util");
+  WriteFile(root / "src/util/PathMatch.h", "inline bool RelativePathClimbsOut(const path& p);\n");
+
+  WriteFile(root / "src/Bad.cpp",
+            "bool A(const path& r){ return r.native().starts_with(\"..\"); }\n"
+            "bool B(const std::string& t){ return t.rfind(\"..\", 0) == 0; }\n"
+            "bool C(const path& r){ return r.string().starts_with( \"..\" ); }\n");
+  Expect(CheckRelativeClimbOutTestsTheFirstComponent(root).violations.size() == 3,
+         "the climb-out rule must flag starts_with(\"..\") and rfind(\"..\", 0)");
+
+  // Positive control: the helpers, a "../" prefix (a separator makes it a component
+  // test), an unanchored rfind, and the text in a comment or a string.
+  WriteFile(root / "src/Bad.cpp",
+            "bool A(const path& r){ return util::RelativePathClimbsOut(r); }\n"
+            "bool B(std::string_view t){ return t == \"..\" || t.starts_with(\"../\"); }\n"
+            "std::size_t C(const std::string& t){ return t.rfind(\"..\"); }\n"
+            "// r.native().starts_with(\"..\") is how it was written before\n"
+            "const char* kDoc = \"t.rfind(\\\"..\\\", 0) == 0\";\n");
+  Expect(CheckRelativeClimbOutTestsTheFirstComponent(root).violations.empty(),
+         "the climb-out rule must accept the helpers, a \"../\" prefix, an unanchored rfind, and "
+         "comment or string text");
+
+  // Loud-missing-target guard: the helper the message names must exist.
+  WriteFile(root / "src/util/PathMatch.h", "// nothing here\n");
+  Expect(!CheckRelativeClimbOutTestsTheFirstComponent(root).violations.empty(),
+         "the climb-out rule must fail loudly when util::RelativePathClimbsOut is gone");
+}
+
 }  // namespace microide::tests::architecture

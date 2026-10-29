@@ -13,6 +13,7 @@
 #include <utility>
 
 #include "platform/AsyncSubprocess.h"
+#include "util/PathMatch.h"
 #include "util/PosixFd.h"
 #include "util/PosixPipe.h"
 #include "util/WakePipe.h"
@@ -380,7 +381,7 @@ std::optional<std::filesystem::path> RemoteProcessLauncher::HostPathOfCached(
   const std::filesystem::path relative =
       local_path.lexically_normal().lexically_relative(options_.host_file_cache);
   const std::string text = relative.generic_string();
-  if (text.empty() || text == "." || text.rfind("..", 0) == 0) {
+  if (text.empty() || text == "." || util::RelativeTextClimbsOut(text)) {
     return std::nullopt;
   }
   return std::filesystem::path("/") / relative;

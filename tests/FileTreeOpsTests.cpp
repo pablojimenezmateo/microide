@@ -55,6 +55,22 @@ void TestTreeOpCopy() {
   const auto into_itself = Op({.kind = TreeOp::Kind::Copy, .path = root / "dir", .new_path = root / "dir" / "inner" / "dir"});
   Expect(!into_itself.ok && !std::filesystem::exists(root / "dir" / "inner" / "dir"),
          "a folder is not copied into itself");
+  // Nor into a subfolder whose NAME starts with "..": that is a child, and the
+  // guard's text-prefix test read `..cache/dir` as outside the source and copied
+  // the folder into its own copy (TD-2026-10-29-423).
+  std::filesystem::create_directories(root / "dir" / "..cache");
+  const auto into_dotdot_child =
+      Op({.kind = TreeOp::Kind::Copy, .path = root / "dir", .new_path = root / "dir" / "..cache" / "dir"});
+  // Refused up front, not attempted: the old guard let the copy recurse into its
+  // own output until the path grew too long, and only the failed copy's cleanup
+  // left the tree as it was -- after copying the folder a few hundred times.
+  Expect(!into_dotdot_child.ok && !std::filesystem::exists(root / "dir" / "..cache" / "dir") &&
+             into_dotdot_child.error_message.find("into itself") != std::string::npos,
+         "a folder is refused a copy into a child folder named ..cache: " + into_dotdot_child.error_message);
+  const auto beside_dotdot =
+      Op({.kind = TreeOp::Kind::Copy, .path = root / "dir" / "inner", .new_path = root / "..beside"});
+  Expect(beside_dotdot.ok && ReadFile(root / "..beside" / "b.txt") == "beta\n",
+         "and a folder copied to a sibling named ..beside is copied");
 
   const std::vector<TreeOp> batch = {
       {.kind = TreeOp::Kind::Copy, .path = root / "a.txt", .new_path = root / "rolled.txt"},

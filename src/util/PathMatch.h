@@ -18,6 +18,19 @@ namespace microide::util {
   return a == b || a.lexically_normal() == b.lexically_normal();
 }
 
+// True when a lexically relative path (a `lexically_relative` result, or git's
+// '/'-separated relative text) climbs out of its base: its FIRST COMPONENT is
+// "..". Not a text-prefix test. `..cache/x` is a child folder named `..cache`, and
+// nine sites that asked `starts_with("..")` read it as outside -- the tree's copy
+// guard among them, so a folder copied into its own `..cache` subfolder copied its
+// own copy (TD-2026-10-29-423).
+[[nodiscard]] inline bool RelativeTextClimbsOut(std::string_view relative) {
+  return relative == ".." || relative.starts_with("../");
+}
+[[nodiscard]] inline bool RelativePathClimbsOut(const std::filesystem::path& relative) {
+  return !relative.empty() && *relative.begin() == "..";
+}
+
 // True when `candidate` is `root` itself or a path nested under it, for inputs the
 // caller has ALREADY normalized. Allocation-free: it answers with a prefix compare
 // on the two native strings instead of building the `lexically_normal()` /

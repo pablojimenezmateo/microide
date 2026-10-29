@@ -8,6 +8,7 @@
 #include "workspace/services/EditorTabService.h"
 #include "workspace/git/GitOperationService.h"
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
+#include "util/PathMatch.h"
 
 namespace microide::workspace {
 
@@ -264,7 +265,7 @@ std::string WorkspaceShell::DispatchGitOperationAction(const ActionId id,
           break;
         }
       }
-      if (relative.empty() || relative.starts_with("..")) {
+      if (relative.empty() || util::RelativeTextClimbsOut(relative)) {
         return "The file is outside the project";
       }
       dispatched = git_operation_service_.ResolveConflict(

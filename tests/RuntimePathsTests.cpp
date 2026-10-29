@@ -140,6 +140,22 @@ void TestCharacterLocaleIsUtf8EvenFromAPosixEnvironment() {
   Expect(codeset == "UTF-8", "LC_CTYPE " + locale + " should be UTF-8, its codeset is " + codeset);
 }
 
+// "Climbs out" is a question about the first component, not the first two bytes:
+// `..cache` is a folder name (TD-2026-10-29-423).
+void TestRelativeClimbOutIsAboutTheFirstComponent() {
+  using microide::util::RelativePathClimbsOut;
+  using microide::util::RelativeTextClimbsOut;
+  for (const char* outside : {"..", "../x", "../../a/b"}) {
+    Expect(RelativeTextClimbsOut(outside) && RelativePathClimbsOut(outside), std::string(outside) + " climbs out");
+  }
+  for (const char* inside : {"..cache", "..cache/x", "...", "a/../b", ".", "x/.."}) {
+    Expect(!RelativeTextClimbsOut(inside) && !RelativePathClimbsOut(inside), std::string(inside) + " stays in");
+  }
+  Expect(RelativePathClimbsOut(std::filesystem::path("/p/q").lexically_relative("/p/r")), "a sibling climbs out");
+  Expect(!RelativePathClimbsOut(std::filesystem::path("/p/..q/x").lexically_relative("/p")),
+         "a child named ..q does not");
+}
+
 // The three lexical containment helpers answer one question and must agree on it,
 // including where a path or root is spelled with a trailing separator: `/a/b` is
 // within (equal to) its root spelled `/a/b/`. They disagreed -- the root itself
@@ -173,6 +189,8 @@ void TestPathContainmentHelpersAgreeOnTrailingSeparators() {
 }  // namespace
 
 void RegisterRuntimePathsTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PathMatch/RelativeClimbOutIsAboutTheFirstComponent",
+          TestRelativeClimbOutIsAboutTheFirstComponent);
   AddTest(tests, "PathMatch/ContainmentHelpersAgreeOnTrailingSeparators",
           TestPathContainmentHelpersAgreeOnTrailingSeparators);
   AddTest(tests, "RuntimePaths/PreferExplicitAssetRootOverride",

@@ -459,6 +459,31 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-29-423 — nine sites asked whether a relative path climbs out with a `".."` text prefix; a folder named `..cache` read as outside, and a folder copied into it copied itself. [RESOLVED 2026-10-29]
+
+Found reading the tree's drag-and-drop (TD-386) for edge cases. The copy guard in
+`LocalTreeOps::Copy` refused a folder copied into its own subtree only when
+`destination.lexically_relative(source)` did not start with `".."` -- a text test,
+so a child folder whose name starts with two dots (`..cache`, `..build`) read as
+OUTSIDE the source. Ctrl-dragging (or copy-pasting) a folder into such a child
+went ahead: `std::filesystem::copy` recursed into its own output until the path
+was too long, and only the failed copy's cleanup left the tree as it was --
+after copying the folder a few hundred times, and reporting "Failed to copy"
+instead of the refusal. An N-of-N over the idiom found it in eight more places:
+the drop preview's own into-itself test (the same hole, offering the drop),
+search live hits and the remote conflict owner (files under such a folder treated
+as outside the project / mirror), conflict resolution from the commit workflow
+("The file is outside the project"), the remote host-file cache, and three
+display-only labels.
+
+Fixed with `util::RelativePathClimbsOut` / `RelativeTextClimbsOut` (the first
+component is `..`), used at all nine, and a lint so a tenth cannot come back:
+`CheckRelativeClimbOutTestsTheFirstComponent` (code-masked, anchored on the
+call's `.` since the literal is not code; negative, positive and missing-target
+fixtures; fires on a reintroduced site). Tests: `Project/TreeOpCopy` (refused
+with the into-itself reason -- at the old guard it fails with "Failed to copy
+dir", the recursion's error) and `PathMatch/RelativeClimbOutIsAboutTheFirstComponent`.
+
 ### TD-2026-10-29-421 — the tree-operation matrix: a folder deleted here never left the host, a save of a file the host deleted stayed "unsent" forever, and a conflict under a folder the host moved away could not be settled. [RESOLVED 2026-10-29 — every cell of local × remote op tested, both orderings]
 
 Found one at a time on the real project (tempo on worky), then all at once by a

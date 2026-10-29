@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "editor/RuntimeSyntaxRegistry.h"
+#include "util/PathMatch.h"
 #include "util/StringUtil.h"
 #include "workspace/WorkspaceUiText.h"
 #include "workspace/debug/LaunchConfig.h"
@@ -307,7 +308,7 @@ QuickPickState QuickPickService::RecentEditors(const EditorGroup& group, const s
     std::string where;
     if (!tab.path.empty()) {
       const std::filesystem::path relative = tab.path.lexically_relative(root);
-      where = relative.empty() || relative.native().starts_with("..") ? tab.path.parent_path().generic_string()
+      where = relative.empty() || util::RelativePathClimbsOut(relative) ? tab.path.parent_path().generic_string()
                                                                      : relative.parent_path().generic_string();
     }
     picker.items.push_back(QuickPickItem{

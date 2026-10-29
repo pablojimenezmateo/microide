@@ -9,6 +9,7 @@
 
 #include "platform/FsOps.h"
 #include "platform/Trash.h"
+#include "util/PathMatch.h"
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -229,7 +230,7 @@ class Batch {
     }
     // A folder copied into itself would copy its own copy, forever.
     const fs::path relative = destination.lexically_relative(source);
-    if (fs::is_directory(status) && !relative.empty() && !relative.native().starts_with("..")) {
+    if (fs::is_directory(status) && !relative.empty() && !util::RelativePathClimbsOut(relative)) {
       return "A folder cannot be copied into itself";
     }
     if (NodeExists(destination)) {

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "util/Parse.h"
+#include "util/PathMatch.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/actions/WorkspaceActionRequests.h"
 #include "workspace/WorkspacePathUtils.h"
@@ -267,7 +268,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
         std::error_code error;
         const std::filesystem::path relative =
             std::filesystem::relative(viewport->path(), context_.ProjectRoot(), error);
-        initial = !error && !relative.empty() && !relative.string().starts_with("..")
+        initial = !error && !relative.empty() && !util::RelativePathClimbsOut(relative)
                       ? relative.generic_string()
                       : viewport->path().string();
       }

@@ -539,7 +539,7 @@ void WorkspaceShell::Bootstrapper::WireQuickPick() const {
                       items.reserve(hits.size());
                       for (NavigationAssist::WorkspaceSymbolHit& hit : hits) {
                         const std::filesystem::path relative = hit.path.lexically_relative(root);
-                        std::string where = relative.empty() || relative.native().starts_with("..")
+                        std::string where = relative.empty() || util::RelativePathClimbsOut(relative)
                                                 ? hit.path.generic_string()
                                                 : relative.generic_string();
                         items.push_back(QuickPickItem{

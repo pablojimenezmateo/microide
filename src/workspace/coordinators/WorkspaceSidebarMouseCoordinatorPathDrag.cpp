@@ -5,6 +5,7 @@
 
 #include "workspace/EditorBodyDrop.h"
 #include "workspace/SidebarMetrics.h"
+#include "util/PathMatch.h"
 
 // The tree drag (TD-2026-10-24-386): a file or folder pressed on a tree row and
 // dropped on an editor pane, a folder or the terminal. The press is armed in
@@ -117,7 +118,7 @@ void SidebarMouseCoordinator::ResolvePathDropTarget(const WorkspaceLayout& layou
   const std::filesystem::path source = drag.path.lexically_normal();
   folder = folder.lexically_normal();
   const std::filesystem::path inside = folder.lexically_relative(source);
-  const bool into_itself = drag.is_directory && !inside.empty() && !inside.native().starts_with("..");
+  const bool into_itself = drag.is_directory && !inside.empty() && !util::RelativePathClimbsOut(inside);
   if (folder == source.parent_path() || into_itself) {
     return;
   }

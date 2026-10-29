@@ -15,4 +15,11 @@ RuleResult CheckRangeForDoesNotSubscriptATemporary(const std::filesystem::path& 
 // Negative + positive control for the rule above.
 void RunRangeForTemporaryRuleFixtures();
 
+// "Does this relative path climb out?" asked as a text prefix -- `starts_with("..")`,
+// `rfind("..", 0) == 0` -- reads a child named `..cache` as outside; nine sites did,
+// the tree's copy guard among them (TD-2026-10-29-423). util::RelativePathClimbsOut /
+// RelativeTextClimbsOut test the first component.
+RuleResult CheckRelativeClimbOutTestsTheFirstComponent(const std::filesystem::path& repo_root);
+void RunRelativeClimbOutRuleFixtures();
+
 }  // namespace microide::tests::architecture
