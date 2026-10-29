@@ -445,7 +445,7 @@ bool RemoteTerminalChannel::FetchHistory(std::uint64_t before, std::size_t count
   return client->peer().Request(
              "term/scrollback", HandleParams(handle, {{"before", before}, {"count", count}}),
              Lane::Bulk,
-             [weak = weak_from_this(), done = std::move(done)](std::optional<util::JsonValue> result,
+             [weak = weak_from_this(), count, done = std::move(done)](std::optional<util::JsonValue> result,
                                                                std::optional<RemotePeer::RpcError>) {
                // Only to a session the channel still serves, under its lock, as
                // frames are: a reply after Close() reaches nothing.
@@ -461,7 +461,7 @@ bool RemoteTerminalChannel::FetchHistory(std::uint64_t before, std::size_t count
                std::uint64_t first = 0;
                if (result.has_value() && (*result)["first"].IsInt() && (*result)["first"].AsInt() >= 0) {
                  first = static_cast<std::uint64_t>((*result)["first"].AsInt());
-                 lines = terminal::DecodeTerminalLines((*result)["lines"].AsString());
+                 lines = terminal::DecodeTerminalLines((*result)["lines"].AsString(), count);
                }
                done(first, lines.has_value() ? std::move(*lines) : std::vector<terminal::TerminalLine>{});
              }) != 0;

@@ -135,9 +135,13 @@ bool GetLine(ByteReader& in, TerminalLine& line) {
   return !in.failed();
 }
 
-bool GetLines(ByteReader& in, std::vector<TerminalLine>& lines) {
+// `max_count` is what the caller already knows the count may be: the frame's
+// header has fixed it before the lines arrive. Checked BEFORE the resize: an
+// empty line is one byte on the wire and a `TerminalLine` in memory, so a count
+// bounded only by the bytes left would let one 64 MiB frame allocate 2 GiB.
+bool GetLines(ByteReader& in, std::vector<TerminalLine>& lines, std::uint64_t max_count) {
   const std::uint64_t count = in.Varint();
-  if (in.failed() || count > in.remaining()) {
+  if (in.failed() || count > max_count || count > in.remaining()) {
     return false;
   }
   lines.resize(static_cast<std::size_t>(count));
@@ -279,8 +283,8 @@ std::optional<TerminalHostFrame> DecodeTerminalHostFrame(std::string_view bytes)
     covered += run.count;
     line_runs += run.kind == TerminalHostRun::Kind::Lines ? run.count : 0;
   }
-  if (covered != moved ||
-      !GetLines(in, frame.scrollback_lines) || frame.scrollback_lines.size() != line_runs) {
+  if (covered != moved || !GetLines(in, frame.scrollback_lines, line_runs) ||
+      frame.scrollback_lines.size() != line_runs) {
     return std::nullopt;
   }
 
@@ -297,7 +301,8 @@ std::optional<TerminalHostFrame> DecodeTerminalHostFrame(std::string_view bytes)
       sent_rows += frame.screen_keep[i + bit] ? 0 : 1;
     }
   }
-  if (in.failed() || !GetLines(in, frame.screen_lines) || frame.screen_lines.size() != sent_rows) {
+  if (in.failed() || !GetLines(in, frame.screen_lines, sent_rows) ||
+      frame.screen_lines.size() != sent_rows) {
     return std::nullopt;
   }
 
@@ -340,10 +345,11 @@ void EncodeTerminalLines(std::string& out, const std::vector<TerminalLine>& line
   PutLines(out, lines);
 }
 
-std::optional<std::vector<TerminalLine>> DecodeTerminalLines(std::string_view bytes) {
+std::optional<std::vector<TerminalLine>> DecodeTerminalLines(std::string_view bytes,
+                                                             std::uint64_t max_lines) {
   ByteReader in(bytes);
   std::vector<TerminalLine> lines;
-  if (!GetLines(in, lines) || !in.at_end()) {
+  if (!GetLines(in, lines, max_lines) || !in.at_end()) {
     return std::nullopt;
   }
   return lines;

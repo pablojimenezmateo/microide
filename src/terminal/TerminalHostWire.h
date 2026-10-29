@@ -111,9 +111,11 @@ void EncodeTerminalHostFrame(std::string& out, const TerminalHostFrame& frame);
 // nullopt on any malformed, truncated or out-of-range field.
 std::optional<TerminalHostFrame> DecodeTerminalHostFrame(std::string_view bytes);
 
-// A run of lines (term/scrollback's page), and back; nullopt on malformed bytes.
+// A run of lines (term/scrollback's page), and back; nullopt on malformed bytes or
+// on more than `max_lines` lines (the page size the caller asked for).
 void EncodeTerminalLines(std::string& out, const std::vector<TerminalLine>& lines);
-std::optional<std::vector<TerminalLine>> DecodeTerminalLines(std::string_view bytes);
+std::optional<std::vector<TerminalLine>> DecodeTerminalLines(std::string_view bytes,
+                                                             std::uint64_t max_lines);
 
 // A batch of input events in one content frame.
 void EncodeTerminalInputEvent(std::string& out, const TerminalInputEvent& event);

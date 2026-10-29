@@ -182,6 +182,33 @@ void TestHostFrameDecoderRefusesInconsistentFrames() {
          "a screen that grew upward carries no runs");
 }
 
+// A page or a frame's lines are counted by their sender, and an empty line is one
+// byte on the wire but a whole `TerminalLine` here: the count is held against the
+// bound the receiver already knows (the page it asked for, the rows the frame's
+// keep bits left to send) BEFORE anything is allocated for it.
+void TestHostDecodersBoundALineCountByWhatTheyExpect() {
+  std::vector<TerminalLine> three(3);
+  three[1].cells.resize(2);
+  std::string page;
+  terminal::EncodeTerminalLines(page, three);
+  Expect(terminal::DecodeTerminalLines(page, 3).has_value(), "a page of the size asked for decodes");
+  Expect(!terminal::DecodeTerminalLines(page, 2).has_value(),
+         "a page with more lines than were asked for is refused");
+
+  TerminalHostFrame frame;
+  frame.rows = 4;
+  frame.screen_keep = {true, false};
+  frame.screen_lines = {TerminalLine{}, TerminalLine{}};
+  std::string wire;
+  EncodeTerminalHostFrame(wire, frame);
+  Expect(!DecodeTerminalHostFrame(wire).has_value(),
+         "more screen lines than the keep bits leave to send are refused");
+  frame.screen_lines.resize(1);
+  wire.clear();
+  EncodeTerminalHostFrame(wire, frame);
+  Expect(DecodeTerminalHostFrame(wire).has_value(), "and exactly that many decode");
+}
+
 void TestInputEventsRoundTrip() {
   std::vector<TerminalInputEvent> events;
   TerminalInputEvent key{.kind = TerminalInputEvent::Kind::Key, .seq = 1};
@@ -623,6 +650,8 @@ void RegisterTerminalHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TerminalHost/FrameRoundTripsEveryField", TestHostFrameRoundTripsEveryField);
   AddTest(tests, "TerminalHost/DecoderRefusesInconsistentFrames",
           TestHostFrameDecoderRefusesInconsistentFrames);
+  AddTest(tests, "TerminalHost/DecodersBoundALineCountByWhatTheyExpect",
+          TestHostDecodersBoundALineCountByWhatTheyExpect);
   AddTest(tests, "TerminalHost/InputEventsRoundTrip", TestInputEventsRoundTrip);
   AddTest(tests, "TerminalHost/ClientMirrorsTheHostAsItScrolls", TestClientMirrorsTheHostAsItScrolls);
   AddTest(tests, "TerminalHost/ClientMirrorsClearsAndRewrites", TestClientMirrorsClearsAndRewrites);

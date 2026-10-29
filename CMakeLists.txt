@@ -1785,6 +1785,14 @@ if(MICROIDE_FUZZ)
   target_link_libraries(RemoteManifestDecodeFuzz PRIVATE microide_blake3)
   microide_configure_fuzz_target(RemoteManifestDecodeFuzz)
 
+  # The host terminal's frame, scrollback-page and input decoders: a frame comes
+  # from the host's server and an input batch from the client.
+  add_executable(TerminalHostWireFuzz
+    src/terminal/TerminalHostWire.cpp
+    tests/fuzz/TerminalHostWireFuzz.cpp
+  )
+  microide_configure_fuzz_target(TerminalHostWireFuzz)
+
   # `.editorconfig` comes out of the OPENED REPOSITORY, so its bytes are supplied
   # by whoever wrote the checkout — the same trust level as `.gitignore`. The
   # parser is hand-rolled: section headers, brace expansion, key=value, an
