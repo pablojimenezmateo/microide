@@ -466,7 +466,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-29-422 — the 2026-10-29 subsystem sweep: what it found, fixed and measured, and what it left. [OPEN — items 1-4 below]
+### TD-2026-10-29-422 — the 2026-10-29 subsystem sweep: what it found, fixed and measured, and what it left. [OPEN — items 1-3 below; 4 resolved]
 
 A whole-repo pass taken by mechanical sweeps rather than reading (this tree's
 reading hit rate is low; validation-traps § Mechanical Sweeps), each aimed at a
@@ -530,7 +530,11 @@ loaded with four sanitizer builds; still not reproduced.
    the TD's own test says only move the bag; not continued here.
 3. **The client's per-file mirror state** beyond the entry (TD-418 item 2's
    remainder) has not been attributed.
-4. **A terminal link that soft-wraps is a link only up to the wrap.** Found when
+4. ~~**A terminal link that soft-wraps is a link only up to the wrap.**~~ RESOLVED
+   2026-10-29 (2b21b390a): the hit-test joins the wrapped rows into the logical
+   line and the span carries an end row (`WorkspaceShell/TerminalWrappedLinkIsOneLink`).
+   A link wrapped past the visible window is a link over the part on screen.
+   Was: Found when
    the QA fixture sat under a long path: `file:///…/taskflow/` was underlined on its
    first row and `README.md` on the next was not, so a click opened nothing
    (`terminal-links` on qa-asan with `MICROIDE_LOG_DIR` in the scratchpad). The
