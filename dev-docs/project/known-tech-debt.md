@@ -472,7 +472,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-30-426 — the 2026-10-29/30 bug sweep: what it found, fixed and ran. [OPEN — one 3-pixel monkey finding not diagnosed; everything else resolved]
+### TD-2026-10-30-426 — the 2026-10-29/30 bug sweep: what it found, fixed and ran. [OPEN — a soft-wrap width cross-check abort and a 3-pixel menu finding, both narrowed, not fixed]
 
 Driven mostly by the QA monkey on fresh seeds (default 15-34, editor 15-35,
 commands 15-45 -- the commands profile found every GUI bug below) and by every
@@ -526,6 +526,29 @@ deterministically (`tools/qa/run.py replay` on its `replay.json`), but the evide
 bundle keeps only the last frames and the mark could not be placed. Next step: run
 the replay with `MICROIDE_TRACE_REDRAW_VERBOSE` and dump every frame's retained image
 from the View menu's opening on.
+
+**Left open: the soft-wrap width cross-check (default seed 69 at 600 steps).** A
+debug build aborted on `TextLayoutCache.cpp:201` ("per-line width table went stale
+against the buffer") in `VisibleLineLayoutRefCached` under
+`TextViewport::VisibleWrappedRowLayoutRef`. A release build carries on with stale
+width facts -- a row's glyphs laid out against the wrong width for as long as the
+entry lives. Narrowed with a temporary SIGABRT backtrace handler and a check
+right after the edit (both reverted):
+- The state: README.md word-wrapped in the left pane and open as a background tab
+  of the right pane (one shared document), "trace" selected twice by Select All
+  Occurrences, then Enter.
+- The edit: `InsertNewline` -> `ApplyRangeEdit` -> `ApplyHistoryEntry` ->
+  `UpdateWrappedRowsAfterEdit`. Laying out every wrapped row right after that call
+  tripped the same check at the edit.
+- Timing-dependent: it failed 4 replays of 7, and the replay's churn agent rewrites
+  README.md on its own clock. So an external reload interleaving with the edit is
+  the leading suspect -- not confirmed. The content revision is a monotonic,
+  per-document base, so a reused revision is ruled out.
+- Two tests now lay out every wrapped row after random wrapped multi-caret edits and
+  after newlines over the monkey's two selections; neither reproduces it.
+
+Next step: replay with a check after every edit and every reload (not just the
+splice), logging which of the width table and the wrapped-row table disagrees.
 
 **Ran clean at the end:** tests, asan, tsan, hardened, clang-build, tidy (0 new),
 qa (222/222), qa-remote (loopback and slow link), perf-tests, every fuzz target for

@@ -351,11 +351,129 @@ void TestMultiCaretEditsAgreeWithReference() {
   }
 }
 
+// Newlines at a soft-wrap boundary and over two selected words in two wrapped lines
+// (the state seed 69 reached), every width, every row laid out after the edit.
+void TestNewlineAtASoftWrapBoundaryKeepsTheWrappedRowTableCurrent() {
+  const std::string line =
+      "Jobs run highest-priority first; ties keep insertion order. The trace prints a";
+  const std::size_t boundary = line.find("trace");
+  for (std::size_t columns = 20; columns <= 90; ++columns) {
+    for (std::size_t column = boundary - 2; column <= boundary + 1; ++column) {
+      TextViewport viewport;
+      viewport.SetViewportSize(20, columns);
+      viewport.LoadContent("# taskflow\n\n" + line + "\nrunning cost total.\n",
+                           "/tmp/wrap-boundary.md");
+      viewport.SetSoftWrap(true);
+      for (std::size_t row = 0; row < 40; ++row) {
+        (void)viewport.VisibleWrappedRowLayoutRef(row);
+      }
+      viewport.MoveCursorTo(2, column);
+      viewport.InsertNewline();
+      for (std::size_t row = 0; row < 40; ++row) {
+        (void)viewport.VisibleWrappedRowLayoutRef(row);
+      }
+    }
+  }
+  Expect(true, "every row laid out against a current table");
+
+  // As the monkey had it: Select All Occurrences left both "trace" words selected,
+  // in two wrapped lines, and Enter replaced both selections with a newline.
+  const std::string readme =
+      "# taskflow\n\nA tiny scheduler that runs a fixed batch of jobs by priority and prints a\n"
+      "short trace, which makes it a clean target for the debugger walkthrough.\n\n"
+      "## Priorities\n\n" + line + "\nrunning cost total so you can watch the schedule unfold.\n";
+  for (std::size_t columns = 20; columns <= 90; ++columns) {
+    TextViewport viewport;
+    viewport.SetViewportSize(20, columns);
+    viewport.LoadContent(readme, "/tmp/wrap-occurrences.md");
+    viewport.SetSoftWrap(true);
+    for (std::size_t row = 0; row < 60; ++row) {
+      (void)viewport.VisibleWrappedRowLayoutRef(row);
+    }
+    const std::size_t first = std::string("short ").size();
+    const std::size_t second = line.find("trace");
+    viewport.MoveCursorTo(3, first);
+    viewport.MoveCursorTo(3, first + 5, /*extend_selection=*/true);
+    viewport.AddSecondaryCaretWithRange(SelectionRange{{7, second}, {7, second + 5}});
+    viewport.InsertNewline();
+    for (std::size_t row = 0; row < 60; ++row) {
+      (void)viewport.VisibleWrappedRowLayoutRef(row);
+    }
+  }
+}
+
+// Soft-wrapped rows are laid out with the line's width taken from the width table
+// or the wrapped-row table, cross-checked (in debug builds) against the buffer.
+// The QA monkey tripped that check once after a newline over a selection in a
+// wrapped, split README (seed 69 at 600 steps; TD-2026-10-30-426); this lays out
+// every row of every line after random multi-caret edits so a stale entry trips it
+// here. It has not reproduced that finding, which needed the run's timing.
+void TestMultiCaretEditsKeepTheWrappedRowTableCurrent() {
+  std::uint64_t seed = 0x2545F4914F6CDD1Dull;
+  const auto pick = [&seed](std::size_t bound) {
+    seed ^= seed << 13;
+    seed ^= seed >> 7;
+    seed ^= seed << 17;
+    return static_cast<std::size_t>(seed % bound);
+  };
+  static constexpr std::string_view kPieces[] = {"ab", "\t", "x y", "\xc3\xa9", "{", "}", "  ",
+                                                 "word word word"};
+  for (int round = 0; round < 300; ++round) {
+    std::string content;
+    const std::size_t lines = 1 + pick(8);
+    for (std::size_t line = 0; line < lines; ++line) {
+      if (line > 0) {
+        content.push_back('\n');
+      }
+      const std::size_t parts = pick(6);
+      for (std::size_t part = 0; part < parts; ++part) {
+        content += kPieces[pick(std::size(kPieces))];
+      }
+    }
+    TextViewport viewport;
+    viewport.SetViewportSize(12, 9);  // narrow, so most lines wrap
+    viewport.LoadContent(content, "/tmp/wrapped-multi-caret.txt");
+    viewport.SetSoftWrap(true);
+    const auto lay_out_every_row = [&]() {
+      for (std::size_t row = 0; row < 400; ++row) {
+        (void)viewport.VisibleWrappedRowLayoutRef(row);
+      }
+    };
+    lay_out_every_row();
+    for (int step = 0; step < 6; ++step) {
+      const auto random_position = [&]() {
+        const std::size_t line = pick(viewport.line_count());
+        return std::pair{line, pick(viewport.lines().LineLength(line) + 1)};
+      };
+      viewport.ClearSecondaryCarets();
+      const auto [line, column] = random_position();
+      viewport.MoveCursorTo(line, column);
+      for (std::size_t extra = pick(4); extra > 0; --extra) {
+        const auto [extra_line, extra_column] = random_position();
+        viewport.AddSecondaryCaret(extra_line, extra_column);
+      }
+      switch (pick(5)) {
+        case 0: viewport.InsertNewline(); break;
+        case 1: viewport.InsertCharacter('z'); break;
+        case 2: viewport.InsertText("\tq"); break;
+        case 3: viewport.Backspace(); break;
+        default: viewport.DeleteForward(); break;
+      }
+      lay_out_every_row();
+    }
+  }
+  Expect(true, "every wrapped row laid out against a current table");
+}
+
 }  // namespace
 
 void RegisterTextViewportMultiCaretReferenceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextViewport/TypingTheSelectedTextCollapsesTheSelection",
           TestTypingTheSelectedTextCollapsesTheSelection);
+  AddTest(tests, "TextViewport/NewlineAtASoftWrapBoundaryKeepsTheWrappedRowTableCurrent",
+          TestNewlineAtASoftWrapBoundaryKeepsTheWrappedRowTableCurrent);
+  AddTest(tests, "TextViewport/MultiCaretEditsKeepTheWrappedRowTableCurrent",
+          TestMultiCaretEditsKeepTheWrappedRowTableCurrent);
   AddTest(tests, "TextViewport/MultiCaretEditsAgreeWithReference",
           TestMultiCaretEditsAgreeWithReference);
 }
