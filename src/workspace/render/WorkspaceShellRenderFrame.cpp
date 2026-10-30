@@ -1239,12 +1239,20 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     }
   }
   // The focused editor group: every group's strip and breadcrumb (see
-  // PreparedFrameState::painted_focused_group).
+  // PreparedFrameState::painted_focused_group), and the surfaces of the group that
+  // lost the focus and the one that took it. Only the focused pane draws its caret,
+  // current line, occurrence and bracket highlights, and the per-pane diffs below
+  // read the focused pane alone: a click from one split pane into another left the
+  // first one's selection highlight painted (QA monkey, seed 60 at 600 steps).
   if (const std::size_t group = project_state.clamped_focused_group_index();
       frame_state_.painted_focused_group != group) {
     if (frame_state_.painted_focused_group.has_value()) {
-      for (const EditorGroupRects& rects : ComputeEditorGroupRectsForState(layout).groups) {
-        for (const SDL_FRect& rect : {rects.tab_strip, rects.breadcrumb}) {
+      const EditorGroupRectsLayout group_rects = ComputeEditorGroupRectsForState(layout);
+      for (std::size_t gi = 0; gi < group_rects.groups.size(); ++gi) {
+        const EditorGroupRects& rects = group_rects.groups[gi];
+        const bool focus_moved_here = gi == group || gi == *frame_state_.painted_focused_group;
+        for (const SDL_FRect& rect : {rects.tab_strip, rects.breadcrumb,
+                                      focus_moved_here ? rects.editor_surface : SDL_FRect{}}) {
           if (rect.w > 0.0f && rect.h > 0.0f) {
             RequestRedrawRect(rect);
           }

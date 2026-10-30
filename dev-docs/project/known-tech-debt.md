@@ -527,6 +527,14 @@ bundle keeps only the last frames and the mark could not be placed. Next step: r
 the replay with `MICROIDE_TRACE_REDRAW_VERBOSE` and dump every frame's retained image
 from the View menu's opening on.
 
+**600-step seeds 55-74** found four more: a tab activated under a maximized panel
+left the window title naming the old tab (seed 61, fixed with a test); a focus move
+between split panes left the pane that lost it painted with its highlights (seed 60,
+fixed -- the deterministic replay fails before and passes after, but no unit test
+reaches that frame's damage geometry: three fixtures were repainted by other paths
+at base, so none was kept; a failing-first test is still owed); and the two open
+items below.
+
 **Left open: the soft-wrap width cross-check (default seed 69 at 600 steps).** A
 debug build aborted on `TextLayoutCache.cpp:201` ("per-line width table went stale
 against the buffer") in `VisibleLineLayoutRefCached` under
