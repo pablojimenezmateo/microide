@@ -318,6 +318,16 @@ void WorkspaceShell::RequestTabStripRedraw() {
     RequestWindowRedraw();
     return;
   }
+  // Under a maximized panel the editor area -- every strip with it -- has no area,
+  // and a dropped request prepares no frame. But what a strip shows (the active
+  // tab, its dirty mark) is also the window title, composed in frame prep and drawn
+  // in the menu bar, which is on screen: activating a tab or saving one left the
+  // title naming the old tab or still marked unsaved, in the taskbar too (QA
+  // monkey, seeds 61 and 83 at 600 steps). Then the title is the damage.
+  if (layout->editor_surface.w <= 0.0f || layout->editor_surface.h <= 0.0f) {
+    RequestRedrawRect(layout->menu_bar);
+    return;
+  }
   // `layout.tab_strip` is the TOP row's strip only. A pane below the top row
   // synthesizes its own strip inside the editor area, so dirtying the top band
   // alone left a lower pane's titles painting stale -- a tab going dirty down
@@ -366,16 +376,6 @@ void WorkspaceShell::RequestActiveTabRedraw(bool include_tree_sidebar) {
   RequestBreadcrumbRedraw();
   RequestTabStripRedraw();
   RequestEditorSurfaceRedraw();
-  // Under a maximized panel the editor surface, strip and breadcrumb have no area:
-  // every request above was dropped, no frame was prepared, and the window title --
-  // composed in frame prep, and naming the active tab -- kept naming the tab before
-  // (QA monkey, seed 61 at 600 steps), in the taskbar too. Then the title's own
-  // menu bar is the damage. Only then: this runs for in-place edits as well, and
-  // the menu bar is not theirs to repaint.
-  if (const auto layout = CurrentWorkspaceLayout();
-      layout.has_value() && (layout->editor_surface.w <= 0.0f || layout->editor_surface.h <= 0.0f)) {
-    RequestRedrawRect(layout->menu_bar);
-  }
   if (include_tree_sidebar && context_.current_project_state.sidebar.visible && ActiveSidebarMode() == SidebarMode::Tree) {
     RequestSidebarRedraw();
   }

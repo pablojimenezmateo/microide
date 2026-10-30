@@ -6399,6 +6399,36 @@ void TestWorkspaceShellBracketPairBrokenByAnEditRepaintsTheOpener() {
 // breadcrumb have no area, so every damage the activation asked for was dropped,
 // no frame was prepared, and the window title kept naming the tab before (QA
 // monkey, seed 61 at 600 steps). The title's menu bar is always on screen.
+// The same under a maximized panel for a save: the tab's dirty mark is also the
+// window title's, and the save's strip damage had no area, so the title kept its
+// unsaved mark (QA monkey, seed 83 at 600 steps).
+void TestWorkspaceShellSaveUnderAMaximizedPanelClearsTheTitleMark() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "project";
+  WriteFile(root / "README.md", "readme\n");
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, root / "README.md");
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("edited ");
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::TogglePanelMaximizedForTest(shell);
+  SoftwareCanvas canvas(1280, 720);
+  shell.Render(canvas.renderer(), 1280, 720);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const std::string before = WorkspaceShellTestAccess::ControlUi(shell)["windowTitle"].AsString();
+  Expect(before.starts_with("\xe2\x97\x8f"), "the unsaved buffer marks the title: " + before);
+
+  Expect(WorkspaceShellTestAccess::SaveTab(
+             shell, WorkspaceShellTestAccess::CurrentProjectState(shell).focused_group().active_tab_index),
+         "the buffer saves");
+  const workspace::RenderInvalidation redraw = shell.ConsumePendingRenderInvalidation();
+  Expect(redraw.full || !redraw.rects.empty(), "the save asks for a frame");
+  shell.Render(canvas.renderer(), 1280, 720);
+  const std::string after = WorkspaceShellTestAccess::ControlUi(shell)["windowTitle"].AsString();
+  Expect(after.starts_with("README.md"), "the saved buffer's title has no unsaved mark: " + after);
+}
+
 void TestWorkspaceShellNewTabUnderAMaximizedPanelRetitlesTheWindow() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "project";
@@ -6880,6 +6910,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/SettingsAndHelpDimTheEditorBehindThem",
           TestWorkspaceShellSettingsAndHelpDimTheEditorBehindThem);
   AddTest(tests, "WorkspaceShell/SaveAsRenamesANamedTab", TestWorkspaceShellSaveAsRenamesANamedTab);
+  AddTest(tests, "WorkspaceShell/SaveUnderAMaximizedPanelClearsTheTitleMark",
+          TestWorkspaceShellSaveUnderAMaximizedPanelClearsTheTitleMark);
   AddTest(tests, "WorkspaceShell/NewTabUnderAMaximizedPanelRetitlesTheWindow",
           TestWorkspaceShellNewTabUnderAMaximizedPanelRetitlesTheWindow);
   AddTest(tests, "WorkspaceShell/BracketPairBrokenByAnEditRepaintsTheOpener",
