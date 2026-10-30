@@ -168,11 +168,21 @@ class FileIndex {
   // save's write and its rename, so surfacing it in the finder or the search
   // candidate set only ever shows the user a file that is already gone.
   static bool IsTemporaryStagingRelativePath(const std::filesystem::path& path);
-  // One run of non-recursive changes from ApplyBatch (its `Op`s, in batch order):
+  // One change of an incremental ApplyBatch, built before the lock. A create or
+  // modify carries its ProjectFile, which names the path; only a deletion keeps a
+  // path of its own (a second copy per op was one allocation per change).
+  struct BatchOp {
+    std::optional<ProjectFile> file;  // set: create or modify; unset: delete
+    std::filesystem::path deleted_path;
+    bool recursive = false;
+    const std::filesystem::path& path() const {
+      return file.has_value() ? file->relative_path : deleted_path;
+    }
+  };
+  // One run of non-recursive changes from ApplyBatch (its ops, in batch order):
   // last change per path wins, modifications in place, insertions and removals
   // in one merge. Whether the index changed.
-  template <typename Op>
-  bool ApplySegmentLocked(std::vector<Op*>& segment);
+  bool ApplySegmentLocked(std::vector<BatchOp*>& segment);
   static bool LessProjectPath(const ProjectFile& lhs, const std::filesystem::path& rhs);
   static bool LessProjectFile(const ProjectFile& lhs, const ProjectFile& rhs);
   // `normalized_relative_path` must already be lexically normal. Both callers
@@ -211,6 +221,13 @@ class FileIndex {
   std::uint64_t version_ = 0;
   mutable CacheBucket exclude_hidden_cache_;
   mutable CacheBucket include_hidden_cache_;
+  // ApplyBatch's bookkeeping, kept across batches so a warm one allocates none of
+  // it: a one-file save, the common batch, paid three vectors for a merge it never
+  // runs. Both ApplyBatch callers are on the shell thread; the segment and subtree
+  // scratch are touched only under files_mutex_. Not moved by TakeStateFrom.
+  std::vector<BatchOp> batch_ops_;
+  std::vector<BatchOp*> batch_segment_;
+  std::vector<std::filesystem::path> batch_subtrees_;
 };
 
 }  // namespace microide::project

@@ -382,12 +382,8 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
   // the sorted vector: a first sync's batch of a thousand new files into a few
   // thousand held the lock for 137 ms, and the shell thread waited it out
   // (TD-2026-10-28-418).
-  struct Op {
-    std::filesystem::path path;      // normalized, accepted
-    std::optional<ProjectFile> file;  // set: create or modify; unset: delete
-    bool recursive = false;
-  };
-  std::vector<Op> ops;
+  std::vector<BatchOp>& ops = batch_ops_;
+  ops.clear();
   ops.reserve(batch.changes.size());
   {
     std::filesystem::path normalize_scratch;
@@ -398,20 +394,20 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
           BatchPathEscapesRoot(relative_path)) {
         continue;
       }
-      Op op{.path = relative_path, .recursive = false};
+      BatchOp& op = ops.emplace_back();
       if (change.kind == platform::IndexUpdateBatch::Kind::Deleted) {
+        op.deleted_path = relative_path;
         op.recursive = change.recursive;
       } else {
         op.file = ToProjectFile(change.entry, relative_path);
       }
-      ops.push_back(std::move(op));
     }
   }
 
   std::unique_lock lock(files_mutex_);
   bool changed = false;
-  std::vector<std::filesystem::path> subtree_run;
-  std::vector<Op*> segment;
+  std::vector<std::filesystem::path>& subtree_run = batch_subtrees_;
+  std::vector<BatchOp*>& segment = batch_segment_;
   for (std::size_t i = 0; i < ops.size();) {
     if (ops[i].recursive) {
       // Consume the whole consecutive run of recursive deletions and drop it in
@@ -422,7 +418,7 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
       // of their ranges.
       subtree_run.clear();
       for (; i < ops.size() && ops[i].recursive; ++i) {
-        subtree_run.push_back(std::move(ops[i].path));
+        subtree_run.push_back(std::move(ops[i].deleted_path));
       }
       changed = RemoveProjectSubtreesLocked(subtree_run) || changed;
       continue;
@@ -433,6 +429,9 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
     }
     changed = ApplySegmentLocked(segment) || changed;
   }
+  ops.clear();  // the moved-from files; the capacity stays for the next batch
+  segment.clear();
+  subtree_run.clear();
   if (!changed) {
     return false;
   }
@@ -442,15 +441,14 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
   return true;
 }
 
-template <typename Op>
-bool FileIndex::ApplySegmentLocked(std::vector<Op*>& segment) {
+bool FileIndex::ApplySegmentLocked(std::vector<BatchOp*>& segment) {
   // The last change to each path wins: stable-sort by path and keep the last of
   // every equal run.
   std::stable_sort(segment.begin(), segment.end(),
-                   [](const Op* lhs, const Op* rhs) { return lhs->path.native() < rhs->path.native(); });
+                   [](const BatchOp* lhs, const BatchOp* rhs) { return lhs->path().native() < rhs->path().native(); });
   std::size_t kept = 0;
   for (std::size_t j = 0; j < segment.size(); ++j) {
-    if (j + 1 < segment.size() && segment[j + 1]->path.native() == segment[j]->path.native()) {
+    if (j + 1 < segment.size() && segment[j + 1]->path().native() == segment[j]->path().native()) {
       continue;
     }
     segment[kept++] = segment[j];
@@ -459,9 +457,9 @@ bool FileIndex::ApplySegmentLocked(std::vector<Op*>& segment) {
 
   bool changed = false;
   std::size_t structural = 0;  // insertions and removals, still to merge
-  for (Op*& op : segment) {
-    const auto it = std::lower_bound(files_.begin(), files_.end(), op->path, LessProjectPath);
-    const bool present = it != files_.end() && it->relative_path == op->path;
+  for (BatchOp*& op : segment) {
+    const auto it = std::lower_bound(files_.begin(), files_.end(), op->path(), LessProjectPath);
+    const bool present = it != files_.end() && it->relative_path == op->path();
     // A local the guard is visible on: through `op->` clang-tidy's optional check
     // cannot see the has_value() it is under.
     std::optional<ProjectFile>& file = op->file;
@@ -481,15 +479,15 @@ bool FileIndex::ApplySegmentLocked(std::vector<Op*>& segment) {
     return changed;
   }
   if (structural == 1) {  // one shift is cheaper than a rebuild
-    for (Op* op : segment) {
+    for (BatchOp* op : segment) {
       if (op == nullptr) {
         continue;
       }
       if (op->file.has_value()) {
-        files_.insert(std::lower_bound(files_.begin(), files_.end(), op->path, LessProjectPath),
+        files_.insert(std::lower_bound(files_.begin(), files_.end(), op->path(), LessProjectPath),
                       std::move(*op->file));
       } else {
-        (void)RemoveProjectFileLocked(op->path);
+        (void)RemoveProjectFileLocked(op->path());
       }
     }
     return true;
@@ -497,11 +495,11 @@ bool FileIndex::ApplySegmentLocked(std::vector<Op*>& segment) {
   std::vector<ProjectFile> merged;
   merged.reserve(files_.size() + structural);
   std::size_t f = 0;
-  for (Op* op : segment) {
+  for (BatchOp* op : segment) {
     if (op == nullptr) {
       continue;
     }
-    while (f < files_.size() && files_[f].relative_path.native() < op->path.native()) {
+    while (f < files_.size() && files_[f].relative_path.native() < op->path().native()) {
       merged.push_back(std::move(files_[f++]));
     }
     if (op->file.has_value()) {
