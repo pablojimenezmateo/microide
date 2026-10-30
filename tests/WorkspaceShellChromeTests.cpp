@@ -6242,6 +6242,51 @@ void TestWorkspaceShellTabTitleChangeRepaintsTheStrip() {
   Expect(diff.identical(), "the strip shows the new title: " + DescribePixelDiff(diff));
 }
 
+// `save <path>` on a file that already has a name re-points the buffer; the tab
+// must follow, its path and its label alike. A save to "-1" left the tab saying
+// README.md over a buffer that was now "-1" (QA monkey, commands profile, seed 27).
+void TestWorkspaceShellSaveAsRenamesANamedTab() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "project";
+  WriteFile(root / "README.md", "readme\n");
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, root / "README.md");
+  for (const std::string target : {"-1", "notes/copy.md"}) {
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "save " + target),
+           "save " + target + " writes the buffer");
+    const auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
+    const auto& tab = state.focused_group().active_tab();
+    const std::filesystem::path buffer = WorkspaceShellTestAccess::ActiveEditor(shell).path();
+    Expect(buffer.filename() == std::filesystem::path(target).filename(),
+           "the buffer is named after the save: " + buffer.string());
+    Expect(tab.path == buffer, "the tab's path follows the buffer: " + tab.path.string());
+    Expect(WorkspaceShellTestAccess::TabDisplayTitle(shell, state.focused_group().active_tab_index) ==
+               buffer.filename().string(),
+           "the tab's label follows the buffer: " +
+               WorkspaceShellTestAccess::TabDisplayTitle(shell, state.focused_group().active_tab_index));
+  }
+
+  // The same buffer in a second pane (a split shares the document): a Save As in
+  // one pane re-points the shared buffer, so the other pane's tab must follow too.
+  WorkspaceShellTestAccess::OpenFile(shell, root / "README.md");
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+             shell, microide::workspace::EditorSplitOrientation::Vertical),
+         "the editor splits");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "save renamed.md"),
+         "save renamed.md writes the shared buffer");
+  const auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
+  for (std::size_t g = 0; g < state.editor_groups.size(); ++g) {
+    const auto& tab = state.editor_groups[g].active_tab();
+    Expect(tab.editor_state.has_value(), "each pane shows an editor");
+    const std::filesystem::path buffer = tab.editor_state->viewport.path();
+    Expect(tab.path == buffer && tab.title == buffer.filename().string(),
+           "pane " + std::to_string(g) + "'s tab follows its buffer: tab " + tab.path.string() +
+               " / " + tab.title + ", buffer " + buffer.string());
+  }
+}
+
 }  // namespace
 
 // Regression: a left-click in a horizontally-scrolled (non-soft-wrapped) editor must
@@ -6699,6 +6744,7 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellStatusBarRepaintsWhenItsValuesChange);
   AddTest(tests, "WorkspaceShell/SettingsAndHelpDimTheEditorBehindThem",
           TestWorkspaceShellSettingsAndHelpDimTheEditorBehindThem);
+  AddTest(tests, "WorkspaceShell/SaveAsRenamesANamedTab", TestWorkspaceShellSaveAsRenamesANamedTab);
   AddTest(tests, "WorkspaceShell/SplitKeepsTheUntitledNumber", TestWorkspaceShellSplitKeepsTheUntitledNumber);
   AddTest(tests, "WorkspaceShell/TabTitleChangeRepaintsTheStrip", TestWorkspaceShellTabTitleChangeRepaintsTheStrip);
   AddTest(tests, "WorkspaceShell/ToggleDebuggerAgreesWithTheMenus",
