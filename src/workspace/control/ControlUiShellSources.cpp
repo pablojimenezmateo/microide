@@ -675,16 +675,32 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                     editor_text_renderer_, hit->block_rect, hit->row->previous_hunk_index >= 0,
                     hit->row->next_hunk_index >= 0);
                 const std::string prefix = "compare/context-" + std::to_string(block++) + "/";
+                // What is on the surface, as paint clips it: a block in the last,
+                // partly visible row reported its buttons past the window's edge
+                // (QA monkey, commands profile, seed 85).
+                const auto on_surface = [&](const SDL_FRect& rect) -> std::optional<SDL_FRect> {
+                  SDL_FRect visible{};
+                  if (!SDL_GetRectIntersectionFloat(&rect, &surface_rect, &visible)) {
+                    return std::nullopt;
+                  }
+                  return visible;
+                };
                 if (rects.previous_rect.has_value()) {
-                  AddControlUiElement(out, kButton, prefix + "previous", *rects.previous_rect);
+                  if (const auto visible = on_surface(*rects.previous_rect)) {
+                    AddControlUiElement(out, kButton, prefix + "previous", *visible);
+                  }
                 }
                 // Labelled with the count the row shows: a partial reveal keeps the
                 // block where it was (the view scrolls with it), so the count is
                 // what tells a reveal happened.
-                AddControlUiElement(out, kButton, prefix + "all", rects.all_rect,
-                                    std::to_string(hit->row->collapsed_line_count));
+                if (const auto visible = on_surface(rects.all_rect)) {
+                  AddControlUiElement(out, kButton, prefix + "all", *visible,
+                                      std::to_string(hit->row->collapsed_line_count));
+                }
                 if (rects.next_rect.has_value()) {
-                  AddControlUiElement(out, kButton, prefix + "next", *rects.next_rect);
+                  if (const auto visible = on_surface(*rects.next_rect)) {
+                    AddControlUiElement(out, kButton, prefix + "next", *visible);
+                  }
                 }
               }
             }

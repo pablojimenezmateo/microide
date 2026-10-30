@@ -98,6 +98,54 @@ struct UiFixture {
   SoftwareCanvas canvas{kWidth, kHeight};
 };
 
+// A compare tab's collapsed-context buttons are reported as paint clips them, to
+// the editor surface: a block in the last, partly visible row reported its buttons
+// past the window's edge (QA monkey, commands profile, seed 85). Scrolled through
+// enough positions that some block lands in that row.
+void TestUiQueryClipsCompareContextButtonsToTheSurface() {
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "repo";
+  const std::filesystem::path source = root / "long.txt";
+  std::string before;
+  std::string after;
+  for (int line = 0; line < 1200; ++line) {
+    const std::string text = "line " + std::to_string(line) + "\n";
+    before += text;
+    after += line % 25 == 0 ? "changed " + text : text;  // a hunk every 25 lines
+  }
+  WriteFile(source, before);
+  InitializeGitRepo(root);
+  CommitAll(root, "Add long file", "long file");
+  WriteFile(source, after);
+
+  WorkspaceShell shell;
+  Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
+  TestAccess::SetWindowSize(shell, UiFixture::kWidth, UiFixture::kHeight);
+  Expect(TestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"), "the comparison opens");
+  SoftwareCanvas canvas(UiFixture::kWidth, UiFixture::kHeight);
+  int checked = 0;
+  for (int scroll = 0; scroll < 40; ++scroll) {
+    TestAccess::ActiveCompare(shell).scroll_row = scroll;
+    shell.Render(canvas.renderer(), UiFixture::kWidth, UiFixture::kHeight);
+    (void)shell.ConsumePendingRenderInvalidation();
+    const util::JsonValue ui = TestAccess::ControlUi(shell);
+    const auto& surface_array = ui["surfaces"]["editorSurface"].AsArray();
+    const float top = static_cast<float>(surface_array[1].AsInt());
+    const float bottom = top + static_cast<float>(surface_array[3].AsInt());
+    for (const UiElement& element : Elements(ui)) {
+      if (!element.name.starts_with("button:compare/context-")) {
+        continue;
+      }
+      ++checked;
+      // The query rounds to whole units, so allow the rounding.
+      Expect(element.rect.y >= top - 1.0f && element.rect.y + element.rect.h <= bottom + 1.0f,
+             element.name + " at scroll " + std::to_string(scroll) + " stays on the editor surface");
+    }
+  }
+  Expect(checked > 0, "the fixture shows collapsed-context buttons");
+}
+
 void TestUiQueryIsRegistered() {
   bool found = false;
   for (const std::string_view verb : workspace::ControlQueryVerbs()) {
@@ -633,6 +681,8 @@ void TestPointerCommandClicksWhatTheUiNames() {
 void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/NamesToasts", TestUiQueryNamesToasts);
   AddTest(tests, "ControlUiQuery/IsRegistered", TestUiQueryIsRegistered);
+  AddTest(tests, "ControlUiQuery/ClipsCompareContextButtonsToTheSurface",
+          TestUiQueryClipsCompareContextButtonsToTheSurface);
   AddTest(tests, "ControlUiQuery/ReportsTheWindowScale", TestUiQueryReportsTheWindowScale);
   AddTest(tests, "ControlUiQuery/NamesTheDebugPane", TestUiQueryNamesTheDebugPane);
   AddTest(tests, "ControlUiQuery/NamesTheWorkspaceChrome", TestUiQueryNamesTheWorkspaceChrome);
