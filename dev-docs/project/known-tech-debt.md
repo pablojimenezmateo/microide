@@ -502,6 +502,14 @@ validation lane, each finding landing as a failing-first test plus its fix.
   watcher ever named (heaptrack over `remote.py X`; TD-418's remainder attributed).
 - **Perf:** an incremental index batch allocated three vectors and a path copy per
   batch since 75d45e635 (bisected from the full gate's one deterministic failure).
+  The fix (1f3c408ed) kept that scratch across batches on the claim that both
+  `ApplyBatch` callers are on the shell thread; the index watcher applies on its
+  own, and the suite crashed about one run in three until the scratch took its own
+  mutex (09efac7f7, `FileIndex/ConcurrentBatchesFromTwoThreads`). It landed after
+  the session's TSan run, which is why that lane did not see it.
+- **Follow-up to the prep move:** the catch-up request stayed in prep, where damage
+  belongs to the frame being prepared, so the catch-up painted one step and stopped
+  (seed 61). The next step is now requested from `OnFramePresented`.
 
 **Ran clean at the end:** tests, asan, tsan, hardened, clang-build, tidy (0 new),
 qa (222/222), qa-remote (loopback and slow link), perf-tests, every fuzz target for
