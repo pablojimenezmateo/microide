@@ -472,7 +472,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-30-426 — the 2026-10-29/30 bug sweep: what it found, fixed and ran. [RESOLVED 2026-10-30]
+### TD-2026-10-30-426 — the 2026-10-29/30 bug sweep: what it found, fixed and ran. [OPEN — one 3-pixel monkey finding not diagnosed; everything else resolved]
 
 Driven mostly by the QA monkey on fresh seeds (default 15-34, editor 15-35,
 commands 15-45 -- the commands profile found every GUI bug below) and by every
@@ -510,6 +510,22 @@ validation lane, each finding landing as a failing-first test plus its fix.
 - **Follow-up to the prep move:** the catch-up request stayed in prep, where damage
   belongs to the frame being prepared, so the catch-up painted one step and stopped
   (seed 61). The next step is now requested from `OnFramePresented`.
+
+**600-step default-profile seeds 35-54** (the 300-step runs had gone dry) found five
+more, four fixed: `sidebar-show` under a maximized panel moved the keyboard to a
+collapsed sidebar and asked for no frame (seed 44); the hover probe walked the
+chrome before the overlay, so a palette row over a lower pane's tab strip was never
+damaged (seed 39); collapsing a git sidebar folder repainted only the clicked row
+(seed 45); an edit that broke a bracket pair left the opener lit, now diffed in prep
+through `EditorViewRenderer::BracketMatch` (seed 40). Also the control channel's
+compare context buttons past the window (commands seed 85).
+
+**Left open:** default seed 37 at 600 steps -- a 3-pixel difference inside the open
+View menu, (157,56)-(158,57), on frame 200 after `find-references`; replays
+deterministically (`tools/qa/run.py replay` on its `replay.json`), but the evidence
+bundle keeps only the last frames and the mark could not be placed. Next step: run
+the replay with `MICROIDE_TRACE_REDRAW_VERBOSE` and dump every frame's retained image
+from the View menu's opening on.
 
 **Ran clean at the end:** tests, asan, tsan, hardened, clang-build, tidy (0 new),
 qa (222/222), qa-remote (loopback and slow link), perf-tests, every fuzz target for
