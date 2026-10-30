@@ -1008,6 +1008,26 @@ bool WorkspaceShell::PointerOver(const SDL_FRect& rect) const {
 
 std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceLayout& layout,
                                                                float x, float y) const {
+  // Overlay list rows (command palette / pickers / completion / code actions),
+  // FIRST: the card floats over everything below, and inside it nothing beneath
+  // is hovered. Probed after the chrome, a pointer onto a palette row that lay
+  // over a lower pane's tab strip took that hidden tab as the hover, and the row
+  // it lit was never damaged (QA monkey, seed 39 at 600 steps).
+  if (context_.current_project_state.overlay.visible) {
+    const OverlayMode overlay_mode = context_.current_project_state.overlay.mode;
+    if (overlay_mode != OverlayMode::BufferSearch && overlay_mode != OverlayMode::BufferReplace) {
+      const SDL_FRect overlay = ComputeOverlayRect(layout.overlay_anchor);
+      if (Contains(overlay, x, y)) {
+        const auto list_layout = ComputeOverlayListLayout(overlay);
+        if (const auto idx = ScrollableListItemAt(list_layout, x, y, OverlayItemCount());
+            idx.has_value()) {
+          return ScrollableListItemRect(list_layout, *idx);
+        }
+        return std::nullopt;
+      }
+    }
+  }
+
   // Menu bar: top-level items lift on hover (the dropdown-open case is handled by the
   // chrome coordinator's menu-motion path, so this only matters when no menu is open).
   if (layout.menu_bar.w > 0.0f && Contains(layout.menu_bar, x, y)) {
@@ -1084,21 +1104,6 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
         return buttons.dismiss;
       }
       return std::nullopt;
-    }
-  }
-
-  // Overlay list rows (command palette / pickers / completion / code actions).
-  if (context_.current_project_state.overlay.visible) {
-    const OverlayMode overlay_mode = context_.current_project_state.overlay.mode;
-    if (overlay_mode != OverlayMode::BufferSearch && overlay_mode != OverlayMode::BufferReplace) {
-      const SDL_FRect overlay = ComputeOverlayRect(layout.overlay_anchor);
-      if (Contains(overlay, x, y)) {
-        const auto list_layout = ComputeOverlayListLayout(overlay);
-        if (const auto idx = ScrollableListItemAt(list_layout, x, y, OverlayItemCount());
-            idx.has_value()) {
-          return ScrollableListItemRect(list_layout, *idx);
-        }
-      }
     }
   }
 

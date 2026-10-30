@@ -6318,6 +6318,51 @@ void TestWorkspaceShellSidebarShowUnderAMaximizedPanelShowsIt() {
          "and the keyboard is on a sidebar that is shown");
 }
 
+// The hover probe walked the chrome before the overlay, so a pointer onto a
+// command-palette row lying over a lower pane's tab strip took the hidden tab as
+// its hover; the row it lit was never damaged (QA monkey, seed 39 at 600 steps).
+void TestWorkspaceShellPaletteRowOverATabStripRepaintsOnHover() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "project";
+  for (int i = 0; i < 12; ++i) {
+    WriteFile(root / ("file_" + std::to_string(i) + ".txt"), "x\n");
+  }
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenFile(shell, root / "file_0.txt");
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+             shell, microide::workspace::EditorSplitOrientation::Horizontal),
+         "the editor splits");
+  for (int i = 1; i < 12; ++i) {  // a lower strip full of tabs, running under the palette
+    WorkspaceShellTestAccess::OpenFileInNewTab(shell, root / ("file_" + std::to_string(i) + ".txt"));
+  }
+  WorkspaceShellTestAccess::OpenCommandPalette(shell);
+  Expect(WorkspaceShellTestAccess::CommandPaletteOpen(shell), "the palette opens");
+  SoftwareCanvas canvas(kWidth, kHeight);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  const SDL_FRect palette = WorkspaceShellTestAccess::ActiveOverlayRect(shell);
+  const SDL_FRect strip = WorkspaceShellTestAccess::GroupTabStripRect(shell, 1);
+  const float y = strip.y + strip.h / 2.0f;
+  const float x = palette.x + palette.w / 2.0f;
+  Expect(y > palette.y && y < palette.y + palette.h && strip.h > 0.0f,
+         "the fixture puts the lower pane's tab strip under the palette");
+  (void)DispatchEvents(shell, {MouseMotionEvent(5.0f, kHeight - 5.0f)});
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight,
+                                                DispatchEvents(shell, {MouseMotionEvent(x, y)}));
+  Expect(diff.identical(), "the hovered palette row repaints: " + DescribePixelDiff(diff));
+}
+
 }  // namespace
 
 // Regression: a left-click in a horizontally-scrolled (non-soft-wrapped) editor must
@@ -6776,6 +6821,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/SettingsAndHelpDimTheEditorBehindThem",
           TestWorkspaceShellSettingsAndHelpDimTheEditorBehindThem);
   AddTest(tests, "WorkspaceShell/SaveAsRenamesANamedTab", TestWorkspaceShellSaveAsRenamesANamedTab);
+  AddTest(tests, "WorkspaceShell/PaletteRowOverATabStripRepaintsOnHover",
+          TestWorkspaceShellPaletteRowOverATabStripRepaintsOnHover);
   AddTest(tests, "WorkspaceShell/SidebarShowUnderAMaximizedPanelShowsIt",
           TestWorkspaceShellSidebarShowUnderAMaximizedPanelShowsIt);
   AddTest(tests, "WorkspaceShell/SplitKeepsTheUntitledNumber", TestWorkspaceShellSplitKeepsTheUntitledNumber);
