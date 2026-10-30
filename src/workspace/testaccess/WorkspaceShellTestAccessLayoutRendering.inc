@@ -172,6 +172,17 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.GitSidebarOutgoingBaseButtonRect(layout.sidebar);
   }
+  // Collapses or expands the git sidebar folder row labelled `label`; false when
+  // there is no such row.
+  static bool ToggleGitSidebarFolder(WorkspaceShell& shell, std::string_view label) {
+    for (const auto& line : shell.BuildGitSidebarLines()) {
+      if (line.kind == WorkspaceShell::GitSidebarLine::Kind::Directory && line.label == label) {
+        const std::string key = line.tree_node_key;
+        return shell.ToggleGitSidebarDirectoryCollapsed(key);
+      }
+    }
+    return false;
+  }
   static std::vector<std::string> GitSidebarLineLabels(WorkspaceShell& shell) {
     std::vector<std::string> labels;
     for (const auto& line : shell.BuildGitSidebarLines()) {

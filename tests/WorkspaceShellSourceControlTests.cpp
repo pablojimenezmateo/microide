@@ -13,6 +13,8 @@
 #include <vector>
 #include "WorkspaceShellEventHelpers.h"
 #include "support/GitSidebarWait.h"
+#include "support/RetainedRedraw.h"
+#include "support/SoftwareCanvas.h"
 
 namespace microide::tests {
 namespace {
@@ -174,6 +176,46 @@ void TestWorkspaceShellGitSidebarEntryRightClickOpensContextMenu() {
                                              "Copy Relative Path", "Copy Absolute Path"};
   Expect(labels == expected,
          "the git entry context menu should expose the expected action labels");
+}
+
+// Collapsing a folder in the git sidebar moves every row below it. The toggle asked
+// for no repaint and left it to the click, whose own damage was the clicked row
+// when the sidebar already had the keyboard: the files under the folder and the
+// sections below stayed where they were (QA monkey, seed 45 at 600 steps). The
+// toggle now repaints the sidebar itself, whoever calls it.
+void TestWorkspaceShellGitSidebarFolderCollapseRepaintsTheRowsBelow() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  WriteFile(root / "src" / "alpha.cpp", "int alpha = 1;\n");
+  WriteFile(root / "src" / "beta.cpp", "int beta = 1;\n");
+  WriteFile(root / "README.md", "readme\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "collapse fixture", "collapse fixture");
+  WriteFile(root / "src" / "alpha.cpp", "int alpha = 2;\n");
+  WriteFile(root / "src" / "beta.cpp", "int beta = 2;\n");
+  WriteFile(root / "README.md", "readme, edited\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 3), "the fixture shows three changed entries");
+  SoftwareCanvas canvas(kWidth, kHeight);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  const std::size_t lines_before = WorkspaceShellTestAccess::GitSidebarLineLabels(shell).size();
+  Expect(WorkspaceShellTestAccess::ToggleGitSidebarFolder(shell, "src"), "the src folder toggles");
+  Expect(WorkspaceShellTestAccess::GitSidebarLineLabels(shell).size() < lines_before,
+         "and collapses, hiding its files");
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight,
+                                                shell.ConsumePendingRenderInvalidation());
+  Expect(diff.identical(), "the rows below the folder repaint: " + DescribePixelDiff(diff));
 }
 
 void TestWorkspaceShellGitSidebarLeftClickDoesNotFireActions() {
@@ -1601,6 +1643,8 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitSidebarRefreshPreservesActiveEditorBlameCache);
   AddTest(tests, "WorkspaceShell/GitSidebarEntryRightClickOpensContextMenu",
           TestWorkspaceShellGitSidebarEntryRightClickOpensContextMenu);
+  AddTest(tests, "WorkspaceShell/GitSidebarFolderCollapseRepaintsTheRowsBelow",
+          TestWorkspaceShellGitSidebarFolderCollapseRepaintsTheRowsBelow);
   AddTest(tests, "WorkspaceShell/GitSidebarLeftClickDoesNotFireActions",
           TestWorkspaceShellGitSidebarLeftClickDoesNotFireActions);
   AddTest(tests, "WorkspaceShell/GitSidebarContextMenuActionsActOnSelectedEntry",

@@ -367,6 +367,9 @@ bool WorkspaceShell::ToggleGitSidebarDirectoryCollapsed(const std::string& tree_
       }
     }
   }
+  // The rows below the folder moved up or down: the list is the damage, not the
+  // clicked row the pointer's own redraw covered (QA monkey, seed 45 at 600 steps).
+  RequestSidebarRedraw();
   return true;
 }
 
