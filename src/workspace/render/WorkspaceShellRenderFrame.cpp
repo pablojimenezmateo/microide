@@ -885,6 +885,36 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       painted = bar;
     }
   }
+  // The focused pane's bracket-match pair (see PreparedFrameState): the lines it
+  // left and the lines it reached. Asked through the renderer's cache, which the
+  // pane's paint then hits.
+  {
+    const editor::TextViewport* viewport =
+        GroupActiveViewport(project_state.editor_groups[project_state.clamped_focused_group_index()]);
+    std::optional<editor::BracketMatchPair> pair;
+    if (viewport != nullptr && !viewport->is_placeholder() &&
+        SettingFlagEnabled(GetSettingValue("editor.brackets.match_highlight.enabled"), true)) {
+      pair = editor_view_renderer_.BracketMatch(*viewport);
+    }
+    const auto same_pair = [](const std::optional<editor::BracketMatchPair>& a,
+                              const std::optional<editor::BracketMatchPair>& b) {
+      return a.has_value() == b.has_value() &&
+             (!a.has_value() || (a->open_line == b->open_line && a->open_column == b->open_column &&
+                                 a->close_line == b->close_line && a->close_column == b->close_column));
+    };
+    // Another viewport in front repaints the pane on its own (a tab switch).
+    if (viewport == frame_state_.painted_bracket_viewport &&
+        !same_pair(pair, frame_state_.painted_bracket_pair)) {
+      for (const std::optional<editor::BracketMatchPair>* each : {&frame_state_.painted_bracket_pair, &pair}) {
+        if (each->has_value()) {
+          RequestEditorLineRangeRedraw((*each)->open_line, (*each)->open_line + 1);
+          RequestEditorLineRangeRedraw((*each)->close_line, (*each)->close_line + 1);
+        }
+      }
+    }
+    frame_state_.painted_bracket_viewport = viewport;
+    frame_state_.painted_bracket_pair = pair;
+  }
   // The focused pane's occurrence highlights: the lines whose highlight changed
   // since the last frame, whatever changed it (an edit, a caret move, a semantic
   // answer). Asked here first; the view-model build reads the same caches.

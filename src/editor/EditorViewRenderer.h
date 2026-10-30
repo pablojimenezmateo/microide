@@ -101,6 +101,10 @@ class EditorViewRenderer {
   // Test/diagnostic accessors for the bracket-match cache. The cache is keyed
   // on (viewport, content_revision, primary_caret_line, primary_caret_column)
   // and reused across consecutive frames when nothing actionable changes.
+  // The bracket pair at the viewport's caret, through the same cache Render reads:
+  // frame prep asks first, to repaint the lines a pair left or reached, and the
+  // paint then hits the cache.
+  std::optional<BracketMatchPair> BracketMatch(const TextViewport& viewport) const;
   const std::optional<BracketMatchPair>& last_bracket_match_pair() const {
     return last_bracket_match_pair_;
   }

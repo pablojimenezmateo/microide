@@ -17,6 +17,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+
+#include "editor/BracketScanner.h"
 #include <string>
 #include <utility>
 #include <vector>
@@ -182,6 +184,12 @@ struct PreparedFrameState {
     SDL_FRect thumb{};
   };
   std::array<HorizontalBar, kMaxEditorGroups> painted_horizontal_bars{};
+  // The focused pane's bracket-match pair as painted. An edit can make or break the
+  // pair on a line it does not damage -- commenting out the closer left the opener
+  // lit (QA monkey, seed 40 at 600 steps) -- so prep repaints the lines a pair
+  // left or reached.
+  const void* painted_bracket_viewport = nullptr;
+  std::optional<editor::BracketMatchPair> painted_bracket_pair;
   const void* painted_occurrence_viewport = nullptr;
   std::vector<std::pair<std::size_t, std::uint64_t>> painted_occurrence_lines;
   std::vector<std::pair<std::size_t, std::uint64_t>> occurrence_lines;

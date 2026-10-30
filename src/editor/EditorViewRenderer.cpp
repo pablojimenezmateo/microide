@@ -314,6 +314,61 @@ EditorViewMetrics EditorViewRenderer::ComputeMetrics(const render::TextRenderer&
   return metrics;
 }
 
+std::optional<BracketMatchPair> EditorViewRenderer::BracketMatch(const TextViewport& viewport) const {
+  std::optional<BracketMatchPair> bracket_match_pair;
+  const std::size_t caret_line = viewport.cursor_line();
+  const std::size_t caret_column = viewport.cursor_column();
+  const std::uint64_t content_revision = viewport.content_revision();
+  auto cache_it = std::find_if(
+      bracket_match_cache_entries_.begin(), bracket_match_cache_entries_.end(),
+      [&](const BracketMatchCacheEntry& entry) {
+        return entry.viewport == &viewport && entry.content_revision == content_revision &&
+               entry.caret_line == caret_line && entry.caret_column == caret_column;
+      });
+  if (cache_it != bracket_match_cache_entries_.end()) {
+    bracket_match_pair = cache_it->pair;
+    ++bracket_match_cache_hits_;
+    if (cache_it != bracket_match_cache_entries_.begin()) {
+      std::iter_swap(bracket_match_cache_entries_.begin(), cache_it);
+    }
+  } else {
+    // Scoped: this is a cache MISS, i.e. every caret move next to a bracket, and
+    // the scan behind it is bounded in lines rather than bytes — so on a file
+    // with no line breaks in it one arrow key reads the whole document. It sat
+    // inside Render's self time with everything else that is not a row.
+    util::PerformanceTrace::Scope match_scope("EditorViewRenderer::Render::BracketMatch");
+    bracket_match_pair = FindBracketMatch(viewport, caret_line, caret_column);
+    auto same_viewport_it = std::find_if(
+        bracket_match_cache_entries_.begin(), bracket_match_cache_entries_.end(),
+        [&](const BracketMatchCacheEntry& entry) { return entry.viewport == &viewport; });
+    BracketMatchCacheEntry updated_entry{
+        .viewport = &viewport,
+        .content_revision = content_revision,
+        .caret_line = caret_line,
+        .caret_column = caret_column,
+        .pair = bracket_match_pair,
+    };
+    if (same_viewport_it != bracket_match_cache_entries_.end()) {
+      *same_viewport_it = updated_entry;
+      if (same_viewport_it != bracket_match_cache_entries_.begin()) {
+        std::iter_swap(bracket_match_cache_entries_.begin(), same_viewport_it);
+      }
+    } else if (bracket_match_cache_entries_.size() < kBracketMatchCacheLimit) {
+      bracket_match_cache_entries_.push_back(updated_entry);
+      if (bracket_match_cache_entries_.size() > 1) {
+        std::iter_swap(bracket_match_cache_entries_.begin(),
+                       bracket_match_cache_entries_.end() - 1);
+      }
+    } else {
+      bracket_match_cache_entries_.back() = updated_entry;
+      std::iter_swap(bracket_match_cache_entries_.begin(),
+                     bracket_match_cache_entries_.end() - 1);
+    }
+    ++bracket_match_cache_misses_;
+  }
+  return bracket_match_pair;
+}
+
 void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                 const render::TextRenderer& text_renderer,
                                 const render::Theme& theme,
@@ -352,61 +407,9 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
 
   std::optional<BracketMatchPair> bracket_match_pair;
   if (bracket_match_highlight_enabled) {
-    const std::size_t caret_line = viewport.cursor_line();
-    const std::size_t caret_column = viewport.cursor_column();
-    const std::uint64_t content_revision = viewport.content_revision();
-    auto cache_it = std::find_if(
-        bracket_match_cache_entries_.begin(), bracket_match_cache_entries_.end(),
-        [&](const BracketMatchCacheEntry& entry) {
-          return entry.viewport == &viewport && entry.content_revision == content_revision &&
-                 entry.caret_line == caret_line && entry.caret_column == caret_column;
-        });
-    if (cache_it != bracket_match_cache_entries_.end()) {
-      bracket_match_pair = cache_it->pair;
-      last_bracket_match_pair_ = bracket_match_pair;
-      ++bracket_match_cache_hits_;
-      if (cache_it != bracket_match_cache_entries_.begin()) {
-        std::iter_swap(bracket_match_cache_entries_.begin(), cache_it);
-      }
-    } else {
-      // Scoped: this is a cache MISS, i.e. every caret move next to a bracket, and
-      // the scan behind it is bounded in lines rather than bytes — so on a file
-      // with no line breaks in it one arrow key reads the whole document. It sat
-      // inside Render's self time with everything else that is not a row.
-      util::PerformanceTrace::Scope match_scope("EditorViewRenderer::Render::BracketMatch");
-      bracket_match_pair = FindBracketMatch(viewport, caret_line, caret_column);
-      last_bracket_match_pair_ = bracket_match_pair;
-      auto same_viewport_it = std::find_if(
-          bracket_match_cache_entries_.begin(), bracket_match_cache_entries_.end(),
-          [&](const BracketMatchCacheEntry& entry) { return entry.viewport == &viewport; });
-      BracketMatchCacheEntry updated_entry{
-          .viewport = &viewport,
-          .content_revision = content_revision,
-          .caret_line = caret_line,
-          .caret_column = caret_column,
-          .pair = bracket_match_pair,
-      };
-      if (same_viewport_it != bracket_match_cache_entries_.end()) {
-        *same_viewport_it = updated_entry;
-        if (same_viewport_it != bracket_match_cache_entries_.begin()) {
-          std::iter_swap(bracket_match_cache_entries_.begin(), same_viewport_it);
-        }
-      } else if (bracket_match_cache_entries_.size() < kBracketMatchCacheLimit) {
-        bracket_match_cache_entries_.push_back(updated_entry);
-        if (bracket_match_cache_entries_.size() > 1) {
-          std::iter_swap(bracket_match_cache_entries_.begin(),
-                         bracket_match_cache_entries_.end() - 1);
-        }
-      } else {
-        bracket_match_cache_entries_.back() = updated_entry;
-        std::iter_swap(bracket_match_cache_entries_.begin(),
-                       bracket_match_cache_entries_.end() - 1);
-      }
-      ++bracket_match_cache_misses_;
-    }
-  } else {
-    last_bracket_match_pair_.reset();
+    bracket_match_pair = BracketMatch(viewport);
   }
+  last_bracket_match_pair_ = bracket_match_pair;
 
   const std::size_t sticky_row_count =
       view_model != nullptr ? view_model->sticky_lines.size() : 0;

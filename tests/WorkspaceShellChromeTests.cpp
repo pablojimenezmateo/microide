@@ -6363,6 +6363,38 @@ void TestWorkspaceShellPaletteRowOverATabStripRepaintsOnHover() {
   Expect(diff.identical(), "the hovered palette row repaints: " + DescribePixelDiff(diff));
 }
 
+// An edit can break a bracket pair on a line it does not damage: commenting out the
+// closer left the opener two lines up painted lit (QA monkey, seed 40 at 600
+// steps). Frame prep repaints the lines a pair left or reached.
+void TestWorkspaceShellBracketPairBrokenByAnEditRepaintsTheOpener() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "project";
+  WriteFile(root / "main.cpp", "int main() {\n  return 0;\n}\n");
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenFile(shell, root / "main.cpp");
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.MoveCursorTo(2, 0);  // just before the closing brace: the pair is lit
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight,
+                                                DispatchEvents(shell, {TextInputEvent("//")}), pin_caret);
+  Expect(editor.lines().LineView(2) == "//}",
+         "the closer is commented out: " + std::string(editor.lines().LineView(2)));
+  Expect(diff.identical(), "the opener's highlight goes with the pair: " + DescribePixelDiff(diff));
+}
+
 }  // namespace
 
 // Regression: a left-click in a horizontally-scrolled (non-soft-wrapped) editor must
@@ -6821,6 +6853,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/SettingsAndHelpDimTheEditorBehindThem",
           TestWorkspaceShellSettingsAndHelpDimTheEditorBehindThem);
   AddTest(tests, "WorkspaceShell/SaveAsRenamesANamedTab", TestWorkspaceShellSaveAsRenamesANamedTab);
+  AddTest(tests, "WorkspaceShell/BracketPairBrokenByAnEditRepaintsTheOpener",
+          TestWorkspaceShellBracketPairBrokenByAnEditRepaintsTheOpener);
   AddTest(tests, "WorkspaceShell/PaletteRowOverATabStripRepaintsOnHover",
           TestWorkspaceShellPaletteRowOverATabStripRepaintsOnHover);
   AddTest(tests, "WorkspaceShell/SidebarShowUnderAMaximizedPanelShowsIt",
