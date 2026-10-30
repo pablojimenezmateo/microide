@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <map>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace microide::tests {
@@ -40,6 +41,55 @@ IndexUpdateBatch::Change MakeDeleteChange(std::filesystem::path relative_path) {
 // non-recursive changes (TD-2026-10-28-418); this is what holds it to applying them
 // one by one -- repeated paths, a delete then a recreate, a recreate then a
 // recursive delete of its parent, in any mix.
+// ApplyBatch has two callers on two threads: the index watcher applies on its own
+// thread, the shell thread applies a Replace All's outcome. The batch bookkeeping
+// kept across batches was first shared unguarded, and the two crashed into each
+// other in the suite (path compare in ApplySegmentLocked on freed ops).
+void TestFileIndexConcurrentBatchesFromTwoThreads() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  std::filesystem::create_directories(root);
+  FileIndex index;
+  Expect(index.SetRoot(root, FileIndex::RootPopulationMode::Deferred), "deferred root");
+  IndexUpdateBatch initial;
+  initial.is_initial = true;
+  (void)index.ApplyBatch(initial);
+
+  constexpr int kRounds = 2000;
+  const auto apply_from = [&](const std::string& dir) {
+    for (int round = 0; round < kRounds; ++round) {
+      IndexUpdateBatch batch;
+      batch.is_initial = false;
+      for (int file = 0; file < 4; ++file) {
+        const std::string path = dir + "/file_" + std::to_string((round + file) % 16) + ".txt";
+        batch.changes.push_back(round % 5 == 4 ? MakeDeleteChange(path)
+                                               : MakeCreateChange(path, 1 + (round % 7)));
+      }
+      (void)index.ApplyBatch(batch);
+    }
+  };
+  std::thread watcher([&] { apply_from("watched"); });
+  apply_from("replaced");
+  watcher.join();
+
+  // Each thread's last round leaves the same four paths per directory, so the
+  // index is the union -- and sorted, unique: nothing interleaved into it.
+  const auto files = index.Snapshot();
+  for (std::size_t i = 1; i < files.size(); ++i) {
+    Expect(files[i - 1].relative_path < files[i].relative_path, "the index stays sorted and unique");
+  }
+  std::size_t watched = 0;
+  std::size_t replaced = 0;
+  for (const auto& file : files) {
+    const std::string text = file.relative_path.generic_string();
+    watched += text.starts_with("watched/") ? 1 : 0;
+    replaced += text.starts_with("replaced/") ? 1 : 0;
+  }
+  Expect(watched == replaced && watched > 0, "both threads' batches all landed: " +
+                                                 std::to_string(watched) + " / " +
+                                                 std::to_string(replaced));
+}
+
 void TestFileIndexIncrementalBatchesMatchApplyingEachChangeInOrder() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -636,6 +686,7 @@ void TestFileIndexVisitsPendingPaths() {
 
 void RegisterFileIndexTests(std::vector<TestCase>& tests) {
   AddTest(tests, "FileIndex/VisitsPendingPaths", TestFileIndexVisitsPendingPaths);
+  AddTest(tests, "FileIndex/ConcurrentBatchesFromTwoThreads", TestFileIndexConcurrentBatchesFromTwoThreads);
   AddTest(tests, "FileIndex/IncrementalBatchesMatchApplyingEachChangeInOrder",
           TestFileIndexIncrementalBatchesMatchApplyingEachChangeInOrder);
   AddTest(tests, "FileIndex/HidesAtomicWriteStagingFiles",

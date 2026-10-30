@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <shared_mutex>
 #include <string>
@@ -223,8 +224,12 @@ class FileIndex {
   mutable CacheBucket include_hidden_cache_;
   // ApplyBatch's bookkeeping, kept across batches so a warm one allocates none of
   // it: a one-file save, the common batch, paid three vectors for a merge it never
-  // runs. Both ApplyBatch callers are on the shell thread; the segment and subtree
-  // scratch are touched only under files_mutex_. Not moved by TakeStateFrom.
+  // runs. Guarded by batch_scratch_mutex_, held for a whole incremental apply: the
+  // index watcher applies on its own thread while the shell thread applies a
+  // Replace All's outcome, and the ops are built before files_mutex_ is taken (an
+  // unguarded first version crashed the two into each other). Readers wait only on
+  // files_mutex_. Not moved by TakeStateFrom.
+  std::mutex batch_scratch_mutex_;
   std::vector<BatchOp> batch_ops_;
   std::vector<BatchOp*> batch_segment_;
   std::vector<std::filesystem::path> batch_subtrees_;

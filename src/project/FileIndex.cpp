@@ -382,6 +382,7 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
   // the sorted vector: a first sync's batch of a thousand new files into a few
   // thousand held the lock for 137 ms, and the shell thread waited it out
   // (TD-2026-10-28-418).
+  const std::scoped_lock scratch_lock(batch_scratch_mutex_);
   std::vector<BatchOp>& ops = batch_ops_;
   ops.clear();
   ops.reserve(batch.changes.size());
