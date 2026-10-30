@@ -464,6 +464,8 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
   // syntax state forward untouched, and `AdvanceState`/`HighlightLineInto` both
   // do that for an empty line.
   constexpr std::size_t kCompareSyntaxRowsPerFrame = 256;
+  const std::size_t left_before = compare_tab.left_token_window.frontier();
+  const std::size_t right_before = compare_tab.right_token_window.frontier();
   compare_tab.left_token_window.EnsureWindow(
       window_start, window_end, compare_tab.path, kCompareSyntaxRowsPerFrame,
       [&](std::size_t row) -> std::string_view {
@@ -480,16 +482,20 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
       // -- an unchanged row identical on both sides. Left is ensured first, so its
       // states are current when this asks.
       [&](std::size_t row) { return !CompareRowRightTokensAliasLeft(compare_tab, row); });
+  // Rows this step reached are painted in this frame.
+  if (compare_tab.left_token_window.frontier() != left_before ||
+      compare_tab.right_token_window.frontier() != right_before) {
+    RequestRedrawRect(rect);
+  }
   // Capped per frame: if it has not yet reached the deepest visible model row (after
-  // scrolling past a giant collapsed run), ask for another frame so it catches up
-  // instead of leaving those rows unhighlighted. Self-terminates once caught up.
-  // Against each window's own row count: one never sized walks nothing, and
-  // would otherwise ask for frames forever.
+  // scrolling past a giant collapsed run), the next frame takes the next step
+  // (PreparedFrameState::syntax_catch_up_rect). Against each window's own row
+  // count: one never sized walks nothing, and would otherwise ask forever.
   const auto behind = [&](const SurfaceTokenWindow& window) {
     return window.frontier() < std::min(window_end, window.line_count());
   };
   if (behind(compare_tab.left_token_window) || behind(compare_tab.right_token_window)) {
-    RequestRedrawRect(rect);
+    frame_state_.syntax_catch_up_rect = rect;
   }
 }
 

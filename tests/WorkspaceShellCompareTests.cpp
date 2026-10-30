@@ -2754,6 +2754,58 @@ void TestWorkspaceShellComparePaintsOfOneFrameAgree() {
                              std::to_string(differing) + " differ");
 }
 
+
+// The tokenizer's catch-up takes one capped step per frame, so it must SCHEDULE the
+// next frame. Prep's own damage belongs to the frame it prepares; requested there,
+// the catch-up painted its first step and stopped, and rows reached on a later
+// unrelated frame stayed plain on screen (QA monkey, commands profile, seed 61).
+// The presented-frame hook asks for the next step, and the requests stop once
+// caught up.
+void TestWorkspaceShellCompareSyntaxCatchUpSchedulesTheNextFrame() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "big.cpp";
+  std::string before;
+  for (int line = 0; line < 150; ++line) {  // visible context past one step's reach
+    before += "// comment line " + std::to_string(line) + "\nint value_" + std::to_string(line) + " = 1;\n";
+  }
+  WriteFile(source, before);
+  InitializeGitRepo(root);
+  CommitAll(root, "Add catch-up fixture", "catch-up fixture");
+  WriteFile(source, before + "// a new last comment\nint tail = 2;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+  microide::tests::SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  int frames = 0;
+  for (; frames < 16; ++frames) {
+    shell.OnFramePresented();
+    const workspace::RenderInvalidation next = shell.ConsumePendingRenderInvalidation();
+    const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, next, pin_caret);
+    Expect(diff.identical(), "frame " + std::to_string(frames) +
+                                 " of the catch-up paints what a full repaint paints; " +
+                                 DescribePixelDiff(diff));
+    if (next.rects.empty() && !next.full) {
+      break;
+    }
+  }
+  Expect(frames < 16, "the catch-up stops asking for frames once it has caught up");
+}
+
 }  // namespace
 
 // H11/J41: an unreadable or binary working-tree file must NOT open as an editable
@@ -3756,6 +3808,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/CompareHunkJumpFromBetweenChangesGoesToTheNearestOne",
           TestWorkspaceShellCompareHunkJumpFromBetweenChangesGoesToTheNearestOne);
   AddTest(tests, "WorkspaceShell/ComparePaintsOfOneFrameAgree", TestWorkspaceShellComparePaintsOfOneFrameAgree);
+  AddTest(tests, "WorkspaceShell/CompareSyntaxCatchUpSchedulesTheNextFrame",
+          TestWorkspaceShellCompareSyntaxCatchUpSchedulesTheNextFrame);
   AddTest(tests, "WorkspaceShell/CompareTypingRepaintsTheHorizontalThumb",
           TestWorkspaceShellCompareTypingRepaintsTheHorizontalThumb);
   AddTest(tests, "WorkspaceShell/CompareHorizontalScrollRepaintsTheSurface",

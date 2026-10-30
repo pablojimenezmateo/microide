@@ -532,6 +532,11 @@ void WorkspaceShell::MaybeRequestTreeGitBadgesAfterFirstPaint() {
 
 void WorkspaceShell::OnFramePresented() {
   MaybeRequestTreeGitBadgesAfterFirstPaint();
+  // A compare/merge tokenizer still catching up: the next frame takes its next
+  // step (see PreparedFrameState::syntax_catch_up_rect).
+  if (const std::optional<SDL_FRect> rect = std::exchange(frame_state_.syntax_catch_up_rect, std::nullopt)) {
+    RequestRedrawRect(*rect);
+  }
   // Run any LSP hydration deferred by a tab switch now that the tab-switch frame
   // is on screen (TD-2026-07-17A-033). No-op when nothing was scheduled.
   lsp_service_.ConsumeDeferredBufferOpen();

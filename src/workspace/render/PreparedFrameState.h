@@ -144,6 +144,13 @@ struct PreparedFrameState {
     SDL_FRect vertical_thumb{};
   };
   DiffSurfaceBars painted_diff_surface_bars{};
+  // A compare or merge surface whose syntax tokenizer is still behind its visible
+  // window after this frame's capped step: OnFramePresented requests it, so the
+  // NEXT frame takes the next step. Damage requested during prep belongs to the
+  // frame being prepared, so prep cannot schedule a following frame itself -- the
+  // catch-up stalled after one step, and the rows it then reached on some later
+  // frame were never repainted highlighted (QA monkey, commands profile, seed 61).
+  std::optional<SDL_FRect> syntax_catch_up_rect;
   // Where the editor split's dividers were painted (a hash of their rects). A
   // divider that moved -- the split's shares changed -- moves every pane beside
   // it; the change is repainted whatever damage the next frame carries.

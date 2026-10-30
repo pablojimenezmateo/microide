@@ -546,23 +546,29 @@ void WorkspaceShell::PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab
   // bounded window around the viewport, recycled as it slides -- where this used
   // to keep one heap buffer per line of the file forever (TD-2026-08-15-242).
   constexpr std::size_t kMergeSyntaxRowsPerFrame = 256;
+  const std::size_t incoming_before = merge_tab.incoming_token_window.frontier();
+  const std::size_t current_before = merge_tab.current_token_window.frontier();
   merge_tab.incoming_token_window.EnsureWindow(
       visible_start_row, visible_end_row, merge_tab.output_path, kMergeSyntaxRowsPerFrame,
       [&](std::size_t row) -> std::string_view { return merge_tab.model.incoming_lines[row]; });
   merge_tab.current_token_window.EnsureWindow(
       visible_start_row, visible_end_row, merge_tab.output_path, kMergeSyntaxRowsPerFrame,
       [&](std::size_t row) -> std::string_view { return merge_tab.model.current_lines[row]; });
-  // Capped per frame, so a window deep in a long file takes several: ask for the
-  // next one until the visible rows are reached. The merge surface had no such
-  // request, so rows past the cap stayed plain until something else repainted.
-  // Against the window's own row count, not the model's: a window never sized
-  // walks nothing, and comparing it with the model's count would ask for frames
-  // forever.
+  // Rows this step reached are painted in this frame.
+  if (merge_tab.incoming_token_window.frontier() != incoming_before ||
+      merge_tab.current_token_window.frontier() != current_before) {
+    RequestRedrawRect(rect);
+  }
+  // Capped per frame, so a window deep in a long file takes several: the next frame
+  // takes the next step (PreparedFrameState::syntax_catch_up_rect). The merge
+  // surface had no catch-up at all, so rows past the cap stayed plain until
+  // something else repainted. Against each window's own row count: one never
+  // sized walks nothing, and would otherwise ask forever.
   const auto behind = [&](const SurfaceTokenWindow& window) {
     return window.frontier() < std::min(visible_end_row, window.line_count());
   };
   if (behind(merge_tab.incoming_token_window) || behind(merge_tab.current_token_window)) {
-    RequestRedrawRect(rect);
+    frame_state_.syntax_catch_up_rect = rect;
   }
 }
 
