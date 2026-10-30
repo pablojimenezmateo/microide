@@ -300,19 +300,8 @@ bool TabCoordinator::SaveGroupTabAs(std::size_t group_index, std::size_t index,
     tab.title = std::move(previous_title);
     return fail("Save failed");
   }
-  // Every other tab on this buffer -- a split's pane shares the document, so it
-  // was re-pointed too -- takes the new name. Only the saving tab did, and a
-  // pane left over after closing the other read "README.md" over a buffer now
-  // named "-1" (QA monkey, commands profile, seed 27).
-  for (EditorGroup& group : state_.editor_groups) {
-    for (TabEntry& other : group.open_tabs) {
-      if (&other != &tab && other.kind == TabEntry::Kind::Editor && other.editor_state.has_value() &&
-          other.editor_state->viewport.SharesDocumentWith(viewport)) {
-        other.path = normalized;
-        other.title = TabTitleForPath(normalized, other.untitled_number);
-      }
-    }
-  }
+  // A split's other panes share the document the save just re-pointed.
+  RenameTabsOnDocument(state_.editor_groups, viewport, normalized);
   if (!previous.empty()) {
     operations_.invalidate_editor_blame_path(previous.lexically_normal());
   }

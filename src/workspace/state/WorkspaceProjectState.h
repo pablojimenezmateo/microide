@@ -871,6 +871,23 @@ inline void NumberUntitledTabs(std::vector<EditorGroup>& groups) {
   }
 }
 
+// Names every editor tab showing `document`'s buffer after `path` -- a Save As
+// re-points the document, which a split's other panes share, so their tabs must
+// follow the saving one (QA monkey, commands profile, seed 27).
+inline void RenameTabsOnDocument(std::vector<EditorGroup>& groups,
+                                 const editor::TextViewport& document,
+                                 const std::filesystem::path& path) {
+  for (EditorGroup& group : groups) {
+    for (TabEntry& tab : group.open_tabs) {
+      if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
+          tab.editor_state->viewport.SharesDocumentWith(document)) {
+        tab.path = path;
+        tab.title = TabTitleForPath(path, tab.untitled_number);
+      }
+    }
+  }
+}
+
 // The live viewport that IS the file `normalized_path` in any pane, or nullptr:
 // a loaded editor tab, or a compare tab's editable working-tree side. A file is
 // one buffer however many panes show it (VS Code's model per resource), so a
