@@ -133,7 +133,16 @@ void WorkspaceActionContext::ShowSidebarSurface() {
     services_.sidebar.Toggle();
     return;
   }
-  state_.surface.focus = FocusTarget::Sidebar;
+  // Already shown -- or flagged shown but collapsed under a maximized panel, which
+  // frame prep restores once focus is elsewhere (SyncPanelMaximizedWithFocus).
+  // Moving the keyboard asked for no frame, so nothing restored it: the keys went
+  // to a sidebar nobody could see (QA monkey, seed 44 at 600 steps).
+  if (state_.surface.focus != FocusTarget::Sidebar) {
+    state_.surface.focus = FocusTarget::Sidebar;
+    if (operations_.request_window_redraw) {
+      operations_.request_window_redraw();
+    }
+  }
 }
 
 void WorkspaceActionContext::ToggleSidebar() {

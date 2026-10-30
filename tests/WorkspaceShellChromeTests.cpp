@@ -6287,6 +6287,37 @@ void TestWorkspaceShellSaveAsRenamesANamedTab() {
   }
 }
 
+// `sidebar-show` under a maximized panel, with the sidebar already flagged visible,
+// moved the keyboard to the sidebar and requested no frame: the rule that restores
+// a maximized panel when another surface takes focus runs in frame prep, so the
+// panel stayed up, the sidebar stayed collapsed under it, and the keys went to a
+// surface nobody could see (QA monkey, seed 44 at 600 steps).
+void TestWorkspaceShellSidebarShowUnderAMaximizedPanelShowsIt() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "project";
+  WriteFile(root / "src" / "scheduler.cpp", "int x;\n");
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::ShowTreeSidebar(shell);
+  WorkspaceShellTestAccess::TogglePanelMaximizedForTest(shell);
+  SoftwareCanvas canvas(1280, 720);
+  shell.Render(canvas.renderer(), 1280, 720);
+  (void)shell.ConsumePendingRenderInvalidation();
+  Expect(WorkspaceShellTestAccess::CurrentProjectState(shell).panel.maximized, "the panel is maximized");
+
+  (void)WorkspaceShellTestAccess::ExecuteCommandLine(shell, "sidebar-show src/scheduler.cpp");
+  const workspace::RenderInvalidation redraw = shell.ConsumePendingRenderInvalidation();
+  Expect(redraw.full || !redraw.rects.empty(), "showing the sidebar asks for a frame");
+  shell.Render(canvas.renderer(), 1280, 720);
+  const auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
+  Expect(!state.panel.maximized, "the panel gives the sidebar its room back");
+  Expect(state.surface.focus != microide::workspace::FocusTarget::Sidebar ||
+             WorkspaceShellTestAccess::SidebarVisible(shell),
+         "and the keyboard is on a sidebar that is shown");
+}
+
 }  // namespace
 
 // Regression: a left-click in a horizontally-scrolled (non-soft-wrapped) editor must
@@ -6745,6 +6776,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/SettingsAndHelpDimTheEditorBehindThem",
           TestWorkspaceShellSettingsAndHelpDimTheEditorBehindThem);
   AddTest(tests, "WorkspaceShell/SaveAsRenamesANamedTab", TestWorkspaceShellSaveAsRenamesANamedTab);
+  AddTest(tests, "WorkspaceShell/SidebarShowUnderAMaximizedPanelShowsIt",
+          TestWorkspaceShellSidebarShowUnderAMaximizedPanelShowsIt);
   AddTest(tests, "WorkspaceShell/SplitKeepsTheUntitledNumber", TestWorkspaceShellSplitKeepsTheUntitledNumber);
   AddTest(tests, "WorkspaceShell/TabTitleChangeRepaintsTheStrip", TestWorkspaceShellTabTitleChangeRepaintsTheStrip);
   AddTest(tests, "WorkspaceShell/ToggleDebuggerAgreesWithTheMenus",
