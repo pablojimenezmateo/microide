@@ -6395,6 +6395,33 @@ void TestWorkspaceShellBracketPairBrokenByAnEditRepaintsTheOpener() {
   Expect(diff.identical(), "the opener's highlight goes with the pair: " + DescribePixelDiff(diff));
 }
 
+// A tab activated under a maximized panel: the editor surface, its strip and the
+// breadcrumb have no area, so every damage the activation asked for was dropped,
+// no frame was prepared, and the window title kept naming the tab before (QA
+// monkey, seed 61 at 600 steps). The title's menu bar is always on screen.
+void TestWorkspaceShellNewTabUnderAMaximizedPanelRetitlesTheWindow() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "project";
+  WriteFile(root / "a.txt", "alpha\n");
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, root / "a.txt");
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::TogglePanelMaximizedForTest(shell);
+  SoftwareCanvas canvas(1280, 720);
+  shell.Render(canvas.renderer(), 1280, 720);
+  (void)shell.ConsumePendingRenderInvalidation();
+  Expect(WorkspaceShellTestAccess::CurrentProjectState(shell).panel.maximized, "the panel is maximized");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tab"), "a new untitled tab opens");
+  const workspace::RenderInvalidation redraw = shell.ConsumePendingRenderInvalidation();
+  Expect(redraw.full || !redraw.rects.empty(), "the activation asks for a frame");
+  shell.Render(canvas.renderer(), 1280, 720);
+  const std::string title = WorkspaceShellTestAccess::ControlUi(shell)["windowTitle"].AsString();
+  Expect(title.starts_with("Untitled-1"), "the window title names the new tab: " + title);
+}
+
 }  // namespace
 
 // Regression: a left-click in a horizontally-scrolled (non-soft-wrapped) editor must
@@ -6853,6 +6880,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/SettingsAndHelpDimTheEditorBehindThem",
           TestWorkspaceShellSettingsAndHelpDimTheEditorBehindThem);
   AddTest(tests, "WorkspaceShell/SaveAsRenamesANamedTab", TestWorkspaceShellSaveAsRenamesANamedTab);
+  AddTest(tests, "WorkspaceShell/NewTabUnderAMaximizedPanelRetitlesTheWindow",
+          TestWorkspaceShellNewTabUnderAMaximizedPanelRetitlesTheWindow);
   AddTest(tests, "WorkspaceShell/BracketPairBrokenByAnEditRepaintsTheOpener",
           TestWorkspaceShellBracketPairBrokenByAnEditRepaintsTheOpener);
   AddTest(tests, "WorkspaceShell/PaletteRowOverATabStripRepaintsOnHover",

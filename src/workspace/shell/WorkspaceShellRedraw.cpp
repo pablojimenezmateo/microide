@@ -366,6 +366,16 @@ void WorkspaceShell::RequestActiveTabRedraw(bool include_tree_sidebar) {
   RequestBreadcrumbRedraw();
   RequestTabStripRedraw();
   RequestEditorSurfaceRedraw();
+  // Under a maximized panel the editor surface, strip and breadcrumb have no area:
+  // every request above was dropped, no frame was prepared, and the window title --
+  // composed in frame prep, and naming the active tab -- kept naming the tab before
+  // (QA monkey, seed 61 at 600 steps), in the taskbar too. Then the title's own
+  // menu bar is the damage. Only then: this runs for in-place edits as well, and
+  // the menu bar is not theirs to repaint.
+  if (const auto layout = CurrentWorkspaceLayout();
+      layout.has_value() && (layout->editor_surface.w <= 0.0f || layout->editor_surface.h <= 0.0f)) {
+    RequestRedrawRect(layout->menu_bar);
+  }
   if (include_tree_sidebar && context_.current_project_state.sidebar.visible && ActiveSidebarMode() == SidebarMode::Tree) {
     RequestSidebarRedraw();
   }
