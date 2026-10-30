@@ -472,6 +472,44 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-30-426 — the 2026-10-29/30 bug sweep: what it found, fixed and ran. [RESOLVED 2026-10-30]
+
+Driven mostly by the QA monkey on fresh seeds (default 15-34, editor 15-35,
+commands 15-45 -- the commands profile found every GUI bug below) and by every
+validation lane, each finding landing as a failing-first test plus its fix.
+**Fixed, one commit each:**
+
+- **Paint was not a function of the frame.** Compare and merge tokenized their
+  visible window inside paint, capped at 256 rows a call, so the redraw verifier's
+  second paint of a frame highlighted rows the first left plain; merge had no
+  catch-up request at all, so rows past the cap stayed plain until something else
+  repainted. Signature-help expiry ran in paint only when a clip touched the editor.
+  All three moved to frame prep; `ComparePaintsOfOneFrameAgree`,
+  `MergePaintsOfOneFrameAgree` paint one prepared frame twice and diff.
+- **Stale paint the verifier caught:** a compare tab's horizontal thumb when typing
+  widened a line (prep now diffs the compare/merge bars as painted); a tab retitled
+  in an unfocused pane (the strip fingerprint now covers titles).
+- **Tabs:** a split dropped its untitled number (and was renamed "Untitled" on
+  activation); Save As renamed only the saving tab of a buffer the split shares.
+- **Settings read raw from disk.** A loaded config is now canonicalized as the
+  setter stores it; the Settings checkbox and Toggle Debugger each had a private
+  bool parse that disagreed with the menus; a plugin's `default = true` read as off.
+- **Terminal:** RIS (`ESC c`, the first thing `reset` sends) was dropped; DECSCNM;
+  a wrapped link past the window's edge; TD-425 closed.
+- **Unbounded input:** EditorConfig headers (`{n..m}`, literal `{a}`, and a 2^60
+  expansion), and a language server's watcher glob (a 4 KiB cap).
+- **Leak:** `GitBlameService::InvalidatePath` kept a generation for every path a
+  watcher ever named (heaptrack over `remote.py X`; TD-418's remainder attributed).
+- **Perf:** an incremental index batch allocated three vectors and a path copy per
+  batch since 75d45e635 (bisected from the full gate's one deterministic failure).
+
+**Ran clean at the end:** tests, asan, tsan, hardened, clang-build, tidy (0 new),
+qa (222/222), qa-remote (loopback and slow link), perf-tests, every fuzz target for
+60 s, and the full perf gate (one max-wall sample over, 3/3 reruns pass).
+**Found while doing it:** three first-draft regression tests passed at base (a
+setter that canonicalizes, a file tab whose label is its path, a fixture past the
+tokenizer's reach); each was rewritten until it failed without its fix.
+
 ### TD-2026-10-29-425 — the terminal answered to `TERM=xterm-256color` without implementing what that entry advertises. [RESOLVED 2026-10-29 — 2-5 fixed; 1 and the G2/G3 sets decided, not implemented]
 
 Found by checking every string capability `infocmp -1 xterm-256color` lists
