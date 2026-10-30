@@ -174,7 +174,6 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
                                    *clip_cached_overlay_vm_);
     }
     RenderEditorHoverPopup(renderer);
-    MaybeExpireSignatureHelp();
     RenderSignatureHelpPopup(renderer);
   }
   if (!skip_window_chrome) {

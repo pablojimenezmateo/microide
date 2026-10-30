@@ -1589,6 +1589,17 @@ return ide.plugin({
   WorkspaceShellTestAccess::ExpireSignatureHelp(shell);
   Expect(!WorkspaceShellTestAccess::SignatureHelpPopup(shell).has_value(),
          "moving the caret should dismiss the signature popup");
+
+  // Frame prep expires it, whatever the frame paints: paint did, and only when a
+  // clip touched the editor surface.
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "signature-help"),
+         "signature-help shows the popup again");
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 0);
+  SoftwareCanvas canvas(1280, 720);
+  (void)shell.PrepareFrameOnce(canvas.renderer(), 1280, 720);
+  Expect(!WorkspaceShellTestAccess::SignatureHelpPopup(shell).has_value(),
+         "preparing a frame dismisses a signature popup whose caret moved on");
 }
 
 // Regression: the outline must populate from the language server's documentSymbol

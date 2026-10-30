@@ -652,6 +652,10 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     RefreshBufferSearchIfStale();
     ClampOverlayScrollRow(ComputeOverlayRect(layout.overlay_anchor));
   }
+  // 2a) A signature-help popup whose caret moved on is dropped here, not in paint:
+  //     paint ran it only when a clip touched the editor surface, so whether the
+  //     popup outlived its caret depended on which clips a frame painted.
+  MaybeExpireSignatureHelp();
   // 2b) The focused compare or merge tab's visible syntax tokens, so paint only
   //     reads them (see PopulateCompareSyntaxTokensForWindow).
   if (CompareTabState* compare = ActiveCompareTab(); compare != nullptr) {

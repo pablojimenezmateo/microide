@@ -18,8 +18,10 @@
 //
 // The second render runs after the partial frame was produced, so it cannot
 // change what was compared; render-path side effects it triggers (hover refresh,
-// signature-help expiry, text-input area updates) can only affect the NEXT frame,
-// and only in QA runs.
+// text-input area updates) can only affect the NEXT frame, and only in QA runs.
+// Side effects that change what a paint draws belong in frame prep instead --
+// signature-help expiry and compare/merge tokenizing moved there, after the second
+// paint of a frame drew rows the first had not.
 
 #include <SDL3/SDL.h>
 
