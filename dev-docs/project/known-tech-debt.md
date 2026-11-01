@@ -480,7 +480,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-11-01-427 — results that finish after a project switch: the cases this pass left. [OPEN — items 1-4]
+### TD-2026-11-01-427 — results that finish after a project switch: the cases this pass left. [OPEN — items 1-5]
 
 The 2026-11-01 pass (commits e6e7cc08b through 3507aaa0c) found one shape of bug
 in five places: work dispatched in one project and finished, or reported, after
@@ -517,6 +517,12 @@ Left:
    under the editor tab strip. Whether it should fill the band too (VS Code's
    secondary side bar does) is a product call; the geometry change is the same
    three lines in `ComputeLayout` plus its handle and damage rects.
+5. **A glyph the terminal font lacks draws as tofu.** The regenerated hero
+   video's gdb transcript shows a box where gdb prints its warning marker
+   (`⚠`-style symbol before "No source file named …"): the terminal has no
+   fallback face for symbols outside its font. Seen in the media, not caused by
+   this pass; the non-ASCII glyph cluster atlas (2.12.0) is where a fallback
+   would plug in.
 
 ### TD-2026-10-30-426 — the 2026-10-29/30 bug sweep: what it found, fixed and ran. [OPEN — a soft-wrap width cross-check abort and a 3-pixel menu finding, both narrowed, not fixed]
 
