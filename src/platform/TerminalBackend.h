@@ -32,6 +32,10 @@ struct TerminalStartRequest {
   std::vector<std::string> shell;
   std::size_t rows = 24;
   std::size_t columns = 80;
+  // `KEY=VALUE` entries set in the shell's environment on top of the inherited
+  // one, replacing an inherited entry of the same key (the remote server's
+  // BROWSER forwarder, TerminalTable::Open).
+  std::vector<std::string> environment;
 };
 
 struct TerminalStartResult {

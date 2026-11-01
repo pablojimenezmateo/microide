@@ -38,6 +38,43 @@ namespace microide::platform {
 
 namespace {
 
+#ifndef MICROIDE_VERSION
+#define MICROIDE_VERSION "dev"
+#endif
+constexpr const char* kTerminalProgramVersion = MICROIDE_VERSION;
+
+// Variables a terminal emulator sets to say what it is. Inherited from the
+// terminal microide was started from, they describe a different terminal.
+bool IsTerminalIdentityEntry(std::string_view entry) {
+  static constexpr std::string_view kKeys[] = {
+      "TERM=", "COLORTERM=", "TERM_PROGRAM=", "TERM_PROGRAM_VERSION=", "VTE_VERSION=",
+      "WT_SESSION=", "KITTY_WINDOW_ID=", "KONSOLE_VERSION=", "ITERM_SESSION_ID=",
+      "TERMINAL_EMULATOR=", "WEZTERM_PANE=", "FORCE_HYPERLINK=",
+  };
+  for (const std::string_view key : kKeys) {
+    if (entry.starts_with(key)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Whether `overrides` sets the key of `entry` (`KEY=...`).
+bool OverridesEntry(const std::vector<std::string>& overrides, std::string_view entry) {
+  const std::size_t equals = entry.find('=');
+  if (equals == std::string_view::npos) {
+    return false;
+  }
+  const std::string_view key = entry.substr(0, equals + 1);
+  for (const std::string& override_entry : overrides) {
+    if (std::string_view(override_entry).starts_with(key)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+
 class PosixTerminalBackend final : public TerminalBackend {
  public:
   PosixTerminalBackend() = default;
@@ -118,7 +155,7 @@ class PosixTerminalBackend final : public TerminalBackend {
     std::vector<std::string> env_storage;
     for (char** entry = environ; entry != nullptr && *entry != nullptr; ++entry) {
       const std::string_view text(*entry);
-      if (text.rfind("TERM=", 0) == 0 || text.rfind("COLORTERM=", 0) == 0) {
+      if (IsTerminalIdentityEntry(text) || OverridesEntry(request.environment, text)) {
         continue;
       }
       env_storage.emplace_back(*entry);
@@ -126,6 +163,20 @@ class PosixTerminalBackend final : public TerminalBackend {
     env_storage.emplace_back("TERM=xterm-256color");
     // Advertise 24-bit color so applications enable truecolor output.
     env_storage.emplace_back("COLORTERM=truecolor");
+    // Say which terminal this is, as every emulator does -- and not the one the
+    // editor was launched from: a VTE_VERSION or TERM_PROGRAM=vscode inherited
+    // from the launching terminal claimed features of THAT terminal.
+    env_storage.emplace_back("TERM_PROGRAM=microide");
+    env_storage.emplace_back(std::string("TERM_PROGRAM_VERSION=") + kTerminalProgramVersion);
+    // This terminal renders and opens OSC 8 hyperlinks. Tools built on the
+    // supports-hyperlinks convention (Claude Code, gh, npm's ink apps) only emit
+    // them for terminals on their list; FORCE_HYPERLINK is how a terminal not on
+    // it says so. Without links, a URL such a tool hard-wraps into rows of its own
+    // layout cannot be clicked as one.
+    env_storage.emplace_back("FORCE_HYPERLINK=1");
+    for (const std::string& entry : request.environment) {
+      env_storage.push_back(entry);
+    }
     std::vector<char*> env_pointers;
     env_pointers.reserve(env_storage.size() + 1);
     for (std::string& entry : env_storage) {

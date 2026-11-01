@@ -85,6 +85,10 @@ class TerminalSession {
   // Configure the scrollback cap (lines retained above the visible grid). Clamped
   // to a sane floor; re-trims immediately when lowered below the current backlog.
   void SetMaxScrollbackLines(std::size_t max_lines);
+  // `KEY=VALUE` entries the NEXT local start sets in the shell's environment
+  // (TerminalStartRequest::environment). The remote server's host terminals
+  // carry the BROWSER forwarder this way.
+  void SetLaunchEnvironment(std::vector<std::string> environment);
   void SendBytes(std::string_view bytes);
   // Encode and send a modified key press. Returns true if it produced output.
   bool SendKeyPress(const KeyPress& press);
@@ -458,6 +462,7 @@ class TerminalSession {
   std::shared_ptr<platform::TerminalBackend> backend_;
   std::filesystem::path working_directory_;
   std::string default_launch_label_;
+  std::vector<std::string> launch_environment_;  // SetLaunchEnvironment; main thread, read at Start
   std::string launch_label_;
   TerminalStyle current_style_;
   // The pen's OSC 8 hyperlink (0 = none), stamped onto every glyph written.

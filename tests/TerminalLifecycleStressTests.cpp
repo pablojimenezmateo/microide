@@ -85,6 +85,29 @@ void TestTerminalStressStopDuringAlternateScreen() {
          "Stop should reset the alternate-screen mode for the next Start");
 }
 
+// The shell's environment says which terminal it runs in -- this one, not the
+// terminal microide was launched from -- and that it opens OSC 8 hyperlinks, so
+// tools that only emit links for terminals they know (Claude Code's login URL)
+// emit them here. A launch environment is set on top and wins.
+void TestTerminalEnvironmentNamesThisTerminal() {
+  TemporaryDirectory temp;
+  ScopedEnvVar inherited_vte("VTE_VERSION", "7000");
+  ScopedEnvVar inherited_program("TERM_PROGRAM", "vscode");
+  TerminalSession session;
+  session.SetLaunchEnvironment({"MICROIDE_PROBE=probe-value", "FORCE_HYPERLINK=2"});
+  if (!session.Start(microide::platform::LocalProcessLauncher(), temp.path(),
+                     "printf 'ENV[%s|%s|%s|%s]\\n' \"$TERM_PROGRAM\" \"${VTE_VERSION-unset}\" "
+                     "\"$FORCE_HYPERLINK\" \"$MICROIDE_PROBE\"",
+                     kShell)) {
+    return;
+  }
+  Expect(WaitUntil([&] { return SnapshotContains(session, "ENV[microide|unset|2|probe-value]"); },
+                   std::chrono::seconds(5), std::chrono::milliseconds(2)),
+         "TERM_PROGRAM is microide, an inherited VTE_VERSION is dropped, and the launch "
+         "environment is set over the defaults");
+  session.Stop();
+}
+
 // Child exits on its own first (the close-during-exit half): the session must
 // notice, emit the exit marker, and a subsequent Stop() must reap the
 // already-dead child without hanging.
@@ -160,6 +183,7 @@ void TestTerminalStressMultiTerminalShutdown() {
 }  // namespace
 
 void RegisterTerminalLifecycleStressTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TerminalLifecycleStress/EnvironmentNamesThisTerminal", TestTerminalEnvironmentNamesThisTerminal);
   AddTest(tests, "TerminalLifecycleStress/StopDuringHeavyOutput",
           TestTerminalStressStopDuringHeavyOutput);
   AddTest(tests, "TerminalLifecycleStress/StopDuringAlternateScreen",
