@@ -1186,6 +1186,61 @@ void TestWorkspaceShellGitOperationFinishingInTheBackgroundStaysWithItsProject()
              std::string(WorkspaceShellTestAccess::ActiveEditor(shell).lines().LineView(0)) + "'");
 }
 
+// A commit is its project's even when it finishes after a switch. The completion
+// found its state by ADDRESS -- the front project's commit workflow -- and a
+// switch moves the project's state out of that address and the next project's in,
+// so it cleared the OTHER project's subject and body and closed its panel, and
+// the clear-draft callback wiped the front project's persisted draft too.
+void TestWorkspaceShellCommitFinishingAfterAProjectSwitchLeavesTheOtherDraftAlone() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path alpha = temp_dir.path() / "alpha";
+  const std::filesystem::path beta = temp_dir.path() / "beta";
+  WriteFile(alpha / "main.cpp", "int main() { return 0; }\n");
+  InitializeGitRepo(alpha);
+  CommitAll(alpha, "seed commit", "seed body");
+  WriteFile(alpha / "main.cpp", "int main() { return 1; }\n");
+  RequireGitCommandSuccess(alpha, {"add", "main.cpp"}, "stage the change to commit");
+  WriteFile(beta / "b.txt", "beta\n");
+  InitializeGitRepo(beta);
+  CommitAll(beta, "beta seed", "beta body");
+  const std::filesystem::path home = temp_dir.path() / "home";
+  std::filesystem::create_directories(home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedEnvVar scoped_state("XDG_STATE_HOME", (temp_dir.path() / "state").string());
+  ScopedEnvVar scoped_config("XDG_CONFIG_HOME", (temp_dir.path() / "config").string());
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, alpha, true, false), "open alpha");
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1), "alpha lists its staged change");
+  Expect(WorkspaceShellTestAccess::OpenCommitWorkflow(shell), "alpha's commit workflow opens");
+  WorkspaceShellTestAccess::CommitWorkflow(shell).subject.SetText("Alpha's commit");
+  Expect(WorkspaceShellTestAccess::RequestCommitWorkflowCommit(shell), "alpha's commit is dispatched");
+
+  // Beta in front before the completion is drained; the user starts a draft there.
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, beta, true, false), "beta in front");
+  WorkspaceShellTestAccess::CommitWorkflow(shell).subject.SetText("Beta's draft");
+  const auto toast_with = [&](std::string_view fragment) {
+    const auto& rows = WorkspaceShellTestAccess::ActiveNotifications(shell);
+    return std::any_of(rows.begin(), rows.end(),
+                       [&](const auto& row) { return row.message.find(fragment) != std::string::npos; });
+  };
+  Expect(WaitUntil([&] { return toast_with("Commit created"); }, std::chrono::seconds(10),
+                   std::chrono::milliseconds(5),
+                   [&shell] { WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell); }),
+         "alpha's commit completes");
+  Expect(RunCommand("git -C " + EscapedRepoPath(alpha) + " log -1 --format=%s | grep -qx \"Alpha's commit\"") == 0,
+         "the commit landed in alpha");
+  Expect(WorkspaceShellTestAccess::CommitWorkflow(shell).subject.text() == "Beta's draft",
+         "beta's draft is untouched: '" + WorkspaceShellTestAccess::CommitWorkflow(shell).subject.text() + "'");
+  Expect(toast_with(" in alpha"), "the toast names the project the commit was made in");
+
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0, false), "back to alpha");
+  Expect(WorkspaceShellTestAccess::CommitWorkflow(shell).subject.text().empty(),
+         "alpha's own draft was the one cleared");
+}
+
 // Accept Local / Accept Remote (VS Code's whole-file conflict choices): the
 // only resolution a binary conflict has in the editor. From its merge tab the
 // action resolves that file and closes the tab; from a git sidebar conflict row's
@@ -1684,6 +1739,8 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellAcceptConflictSideResolvesWholeFiles);
   AddTest(tests, "WorkspaceShell/GitOperationFinishingInTheBackgroundStaysWithItsProject",
           TestWorkspaceShellGitOperationFinishingInTheBackgroundStaysWithItsProject);
+  AddTest(tests, "WorkspaceShell/CommitFinishingAfterAProjectSwitchLeavesTheOtherDraftAlone",
+          TestWorkspaceShellCommitFinishingAfterAProjectSwitchLeavesTheOtherDraftAlone);
   AddTest(tests, "WorkspaceShell/GitBranchActionsSwitchHead",
           TestWorkspaceShellGitBranchActionsSwitchHead);
   AddTest(tests, "WorkspaceShell/GitOperationFailuresAreReported",

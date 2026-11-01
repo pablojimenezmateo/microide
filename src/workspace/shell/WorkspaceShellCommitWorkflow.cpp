@@ -12,6 +12,33 @@
 
 namespace microide::workspace {
 
+namespace {
+
+// The three callbacks both git services use to tell a completion for the project
+// in front from one for a project the user switched away from meanwhile.
+struct ProjectInFront {
+  WorkspaceContext& context;
+  bool operator()(const std::filesystem::path& root) const { return context.current_project_state.root == root; }
+};
+struct ProjectLabelOf {
+  WorkspaceContext& context;
+  std::string operator()(const std::filesystem::path& root) const {
+    const ProjectWorkspaceState* state = context.ProjectStateForRoot(root);
+    return state != nullptr ? state->id.Label() : root.filename().string();
+  }
+};
+struct CatchUpOnActivate {
+  WorkspaceContext& context;
+  void operator()(const std::filesystem::path& root) const {
+    // A project closed meanwhile has nothing to catch up.
+    if (ProjectWorkspaceState* state = context.ProjectStateForRoot(root); state != nullptr) {
+      state->catch_up_on_activate = true;
+    }
+  }
+};
+
+}  // namespace
+
 void WorkspaceShell::InitializeCommitWorkflowService() {
   commit_workflow_service_.SetCallbacks(CommitWorkflowService::Callbacks{
       .project_launcher = [this]() { return &context_.current_project_state.launcher(); },
@@ -38,12 +65,15 @@ void WorkspaceShell::InitializeCommitWorkflowService() {
           },
       .persist_commit_draft = [this]() { MakePersistenceCoordinator().SaveConfigState(); },
       .clear_persisted_commit_draft =
-          [this]() {
-            auto& draft = context_.current_project_state.sidebar.git.commit_workflow;
+          [this](CommitWorkflowState& draft) {
             draft.subject.SetText({});
             draft.body.LoadContent({});
             draft.loaded_persisted_draft.reset();
-            MakePersistenceCoordinator().SaveConfigState();
+            // The config file is the front project's: a background project's
+            // cleared draft is written with its state when it is next saved.
+            if (&draft == &context_.current_project_state.sidebar.git.commit_workflow) {
+              MakePersistenceCoordinator().SaveConfigState();
+            }
           },
       .load_persisted_commit_draft =
           [this]() -> std::optional<PersistedCommitDraftState> {
@@ -72,6 +102,15 @@ void WorkspaceShell::InitializeCommitWorkflowService() {
             context_.prompts.surface.detail = std::move(warnings);
           },
       .request_commit_workflow_redraw = [this]() { RequestSidebarRedraw(); },
+      .is_in_front = ProjectInFront{context_},
+      .project_label = ProjectLabelOf{context_},
+      .defer_to_project = CatchUpOnActivate{context_},
+      .front_project_root = [this]() { return context_.current_project_state.root; },
+      .state_for_project =
+          [this](const std::filesystem::path& root) -> CommitWorkflowState* {
+            ProjectWorkspaceState* state = context_.ProjectStateForRoot(root);
+            return state != nullptr ? &state->sidebar.git.commit_workflow : nullptr;
+          },
   });
 }
 
@@ -170,20 +209,9 @@ void WorkspaceShell::InitializeGitOperationService() {
       .notify = [this](NotificationService::Tone tone,
                        std::string message) { Notify(tone, std::move(message)); },
       .request_redraw = [this]() { RequestSidebarRedraw(); },
-      .is_in_front =
-          [this](const std::filesystem::path& root) { return context_.current_project_state.root == root; },
-      .project_label =
-          [this](const std::filesystem::path& root) {
-            const ProjectWorkspaceState* state = context_.ProjectStateForRoot(root);
-            return state != nullptr ? state->id.Label() : root.filename().string();
-          },
-      .defer_to_project =
-          [this](const std::filesystem::path& root) {
-            // A project closed meanwhile has nothing to catch up.
-            if (ProjectWorkspaceState* state = context_.ProjectStateForRoot(root); state != nullptr) {
-              state->catch_up_on_activate = true;
-            }
-          },
+      .is_in_front = ProjectInFront{context_},
+      .project_label = ProjectLabelOf{context_},
+      .defer_to_project = CatchUpOnActivate{context_},
   });
 }
 

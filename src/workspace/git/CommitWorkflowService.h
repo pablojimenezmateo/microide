@@ -38,7 +38,9 @@ class CommitWorkflowService {
     // reads as the Commit button doing nothing.
     std::function<void(NotificationService::Tone, std::string)> notify;
     std::function<void()> persist_commit_draft;
-    std::function<void()> clear_persisted_commit_draft;
+    // The committed project's draft, which is `state` -- not necessarily the
+    // project in front (see is_in_front).
+    std::function<void(CommitWorkflowState& state)> clear_persisted_commit_draft;
     std::function<std::optional<PersistedCommitDraftState>()> load_persisted_commit_draft;
     std::function<void(const std::filesystem::path& path, std::string_view left_ref,
                        std::string_view left_label)>
@@ -49,6 +51,21 @@ class CommitWorkflowService {
     // the acknowledgements and dispatches the parked operation.
     std::function<void(std::string)> open_commit_warning_confirmation;
     std::function<void()> request_commit_workflow_redraw;
+    // A commit's hooks can run long enough for the user to switch projects, and
+    // the callbacks above that name no state act on the project in FRONT. So the
+    // completion asks whether its repository is still in front; when it is not,
+    // the toast names the project, the output panel, the feedback line and the
+    // refresh are skipped, and `defer_to_project` has that project catch up when
+    // it is next activated. Unset = always in front.
+    std::function<bool(const std::filesystem::path& project_root)> is_in_front;
+    std::function<std::string(const std::filesystem::path& project_root)> project_label;
+    std::function<void(const std::filesystem::path& project_root)> defer_to_project;
+    // The front project's root, captured at dispatch, and the commit workflow of
+    // the open project with that root (null once it is closed): how a completion
+    // finds the state that dispatched it after a project switch moved it. Unset =
+    // the state stays where it was dispatched from (a single-project host).
+    std::function<std::filesystem::path()> front_project_root;
+    std::function<CommitWorkflowState*(const std::filesystem::path& project_root)> state_for_project;
   };
 
   explicit CommitWorkflowService(project::ProjectBackgroundExecutor& background_executor,
@@ -124,8 +141,9 @@ class CommitWorkflowService {
   // and a toast, which is all a user who pressed the Commit button ever sees.
   void ReportRefusal(std::string message) const;
   void DispatchCommit(CommitWorkflowState& state, project::CommitOperationKind operation);
-  void PublishResult(CommitWorkflowState& state, project::CommitOperationResult result,
-                     project::CommitOperationKind operation, std::uint64_t repository_generation);
+  void PublishResult(CommitWorkflowState& state, const std::filesystem::path& project_root,
+                     project::CommitOperationResult result, project::CommitOperationKind operation,
+                     std::uint64_t repository_generation);
   project::CommitDraftContext CurrentDraftContext() const;
 
   project::ProjectBackgroundExecutor& background_executor_;

@@ -51,6 +51,13 @@ class CommitOperationClaim {
   CommitOperationClaim(const CommitOperationClaim&) noexcept {}
   CommitOperationClaim& operator=(const CommitOperationClaim&) noexcept;
 
+  // Whether this is the claim of `service`'s operation `generation`: a moved
+  // claim travels with its state, so the state that answers this is the one that
+  // dispatched, wherever a project switch has moved it.
+  bool Holds(const CommitWorkflowService* service, std::uint64_t generation) const {
+    return service != nullptr && service_ == service && generation != 0 && generation_ == generation;
+  }
+
   // Gives up the claim without cancelling — used when the completion has already
   // published, so the operation is finished rather than abandoned.
   void Release() {
@@ -135,8 +142,11 @@ struct CommitWorkflowState {
 
   // Held while a commit dispatched by this state is in flight. See
   // CommitOperationClaim: destroying, moving over, or copying this state gives the
-  // claim up, so the queued completion is dropped rather than publishing into
-  // storage that is gone or now belongs to a different project.
+  // claim up, so the queued completion is dropped. MOVING this state carries the
+  // claim along -- a project switch moves the front project's state into the
+  // catalog -- which is why the completion finds its state by project and checks
+  // the claim (CommitWorkflowService::Callbacks::state_for_project), never by the
+  // address it was dispatched from: that address then holds the NEXT project's.
   //
   // Public rather than private-with-a-friend: workspace code does not use `friend`
   // (AGENTS.md § Do-Not-Regress Patterns), and there is no invariant for privacy to

@@ -334,8 +334,10 @@ void CommitWorkflowService::DispatchCommit(CommitWorkflowState& state,
   // is drained — a project tab closing mid-commit. Without it the completion below
   // publishes into freed memory.
   state.in_flight_claim_ = CommitOperationClaim(this, captured_generation);
+  std::filesystem::path project_root =
+      callbacks_.front_project_root ? callbacks_.front_project_root() : std::filesystem::path();
   background_executor_.Post([this, &state, operation, subject, body, repository_generation,
-                             captured_generation,
+                             captured_generation, project_root = std::move(project_root),
                              repository_root = repository_state.repository_root,
                              launcher = &ProjectLauncher()]() {
     // Worker thread: only run the (possibly slow, hook-invoking) git commit and
@@ -345,20 +347,25 @@ void CommitWorkflowService::DispatchCommit(CommitWorkflowState& state,
     project::CommitOperationResult result =
         project::ExecuteGitCommit(repository_root, *launcher, subject, body, operation);
     completion_mailbox_.Post([this, &state, operation, repository_generation, captured_generation,
-                              result = std::move(result)]() mutable {
+                              project_root, result = std::move(result)]() mutable {
       std::lock_guard completion_lock(mutex_);
       if (captured_generation != operation_generation_) {
         // Superseded by a newer dispatch, or abandoned because the owning state was
-        // destroyed. Either way `state` must not be touched — in the second case it
-        // no longer exists.
+        // destroyed. Either way no state is touched — in the second case it no
+        // longer exists.
         return;
       }
-      // Reaching here proves the state is still alive and still the one that
-      // dispatched: destroying, moving over, or copying it would have cancelled the
-      // claim and bumped the generation. Release rather than cancel — the operation
-      // finished, it was not abandoned.
-      state.in_flight_claim_.Release();
-      PublishResult(state, std::move(result), operation, repository_generation);
+      // The dispatching state, found by its PROJECT: a switch moved it out of the
+      // address it was dispatched from, and that address now holds another
+      // project's draft. The claim moved with it, so holding it proves this is the
+      // one. Release rather than cancel — the operation finished.
+      CommitWorkflowState* target =
+          callbacks_.state_for_project ? callbacks_.state_for_project(project_root) : &state;
+      if (target == nullptr || !target->in_flight_claim_.Holds(this, captured_generation)) {
+        return;
+      }
+      target->in_flight_claim_.Release();
+      PublishResult(*target, project_root, std::move(result), operation, repository_generation);
     });
   });
 }
@@ -380,10 +387,14 @@ void CommitWorkflowService::SetCompletionWakeEvent(std::uint32_t event_type) {
 void CommitWorkflowService::DrainCompletions() { completion_mailbox_.Drain(); }
 
 void CommitWorkflowService::PublishResult(CommitWorkflowState& state,
+                                          const std::filesystem::path& project_root,
                                           project::CommitOperationResult result,
                                           const project::CommitOperationKind operation,
                                           const std::uint64_t repository_generation) {
   (void)operation;
+  // `state` is the committed project's own; what the callbacks without a state
+  // touch is the project in front, which may since be another one.
+  const bool in_front = !callbacks_.is_in_front || callbacks_.is_in_front(project_root);
   state.operation_in_flight = false;
   state.last_result_category = result.category;
   state.last_hook_output = result.hook_output;
@@ -393,21 +404,25 @@ void CommitWorkflowService::PublishResult(CommitWorkflowState& state,
     if (callbacks_.append_output != nullptr) {
       callbacks_.append_output("git.commit", "Git Commit", result.hook_output);
     }
-    if (callbacks_.show_output_panel != nullptr) {
+    if (in_front && callbacks_.show_output_panel != nullptr) {
       callbacks_.show_output_panel("git.commit");
     }
   }
 
   if (result.category == project::CommitOperationResultCategory::Success) {
     if (callbacks_.clear_persisted_commit_draft != nullptr) {
-      callbacks_.clear_persisted_commit_draft();
+      callbacks_.clear_persisted_commit_draft(state);
     }
     state.subject.SetText({});
     SetBodyText(state.body, {});
     state.acknowledged_warning_ids.clear();
     state.draft_restored = false;
     git_repository_service_.MarkStale();
-    if (callbacks_.request_git_refresh != nullptr) {
+    if (!in_front) {
+      if (callbacks_.defer_to_project) {
+        callbacks_.defer_to_project(project_root);
+      }
+    } else if (callbacks_.request_git_refresh != nullptr) {
       // Arm the watch BEFORE asking, so a refresh that is dispatched immediately
       // is still >= the recorded floor. `+ 1` because the request may be
       // throttled or folded into a deferred follow-up, in which case the commit's
@@ -423,11 +438,14 @@ void CommitWorkflowService::PublishResult(CommitWorkflowState& state,
   }
 
   RefreshDerivedState(state);
-  if (callbacks_.set_command_feedback != nullptr) {
+  if (in_front && callbacks_.set_command_feedback != nullptr) {
     callbacks_.set_command_feedback(state.status_message);
   }
   if (callbacks_.notify != nullptr) {
-    callbacks_.notify(ResultTone(result.category), state.status_message);
+    callbacks_.notify(ResultTone(result.category),
+                      in_front || !callbacks_.project_label
+                          ? state.status_message
+                          : state.status_message + " in " + callbacks_.project_label(project_root));
   }
 }
 
