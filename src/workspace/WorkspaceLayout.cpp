@@ -134,7 +134,16 @@ WorkspaceLayout ComputeLayout(const WorkspaceLayoutInputs& inputs) {
   layout.content =
       MakeRect(0.0f, content_top, window_width,
                std::max(0.0f, window_height - content_top - content_bottom_reserved));
-  layout.sidebar = MakeRect(0.0f, layout.content.y, resolved_sidebar_width, layout.content.h);
+  // The sidebar takes the band beside the editor tab strip too. That strip
+  // belongs to the editor column (TD-2026-08-19-267), so above the sidebar the
+  // band was chrome with nothing in it -- a strip-high gap over the tree that
+  // VS Code's side bar does not have. It runs from under the project strip to the
+  // panel, the editor column's full height, and collapses with it under a
+  // maximized panel (content is empty then, and so is this).
+  const float sidebar_top = kMenuBarHeight + project_tab_strip_height;
+  layout.sidebar =
+      MakeRect(0.0f, sidebar_top, resolved_sidebar_width,
+               std::max(0.0f, layout.content.y + layout.content.h - sidebar_top));
   layout.editor_area = MakeRect(editor_area_x, layout.content.y, editor_area_width,
                                 layout.content.h);
   layout.right_pane =
@@ -400,8 +409,16 @@ SDL_FRect SidebarResizeHandleRect(const WorkspaceLayout& layout) {
   if (layout.sidebar.w <= 0.0f || layout.sidebar.h <= 0.0f) {
     return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
   }
-  return MakeRect(layout.sidebar.x + layout.sidebar.w - kResizeHandleThickness * 0.5f,
-                  layout.sidebar.y, kResizeHandleThickness + kDivider, layout.sidebar.h);
+  // Beside the content only: the sidebar also fills the band beside the editor
+  // tab strip, but a handle there would reach half its width into the first
+  // tab and take its left edge's clicks (WelcomeTabUsesLeftEdgeHitArea).
+  const float top = std::max(layout.sidebar.y, layout.content.y);
+  const float bottom = layout.sidebar.y + layout.sidebar.h;
+  if (bottom <= top) {
+    return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
+  }
+  return MakeRect(layout.sidebar.x + layout.sidebar.w - kResizeHandleThickness * 0.5f, top,
+                  kResizeHandleThickness + kDivider, bottom - top);
 }
 
 SDL_FRect BottomPanelResizeHandleRect(const WorkspaceLayout& layout) {
@@ -430,8 +447,17 @@ std::optional<SDL_FRect> DragTargetHighlightRect(const WorkspaceLayout& layout, 
     case DragTarget::None:
     case DragTarget::SingleLineSelection:
       return std::nullopt;
-    case DragTarget::SidebarDivider:
-      return surface(SidebarResizeCursorRect(layout));
+    case DragTarget::SidebarDivider: {
+      // The grab area stops at the content top (SidebarResizeHandleRect), but the
+      // divider LINE it lights up runs the sidebar's full height, past the tab
+      // strip: the damage has to reach that far too.
+      SDL_FRect rect = SidebarResizeCursorRect(layout);
+      if (rect.w > 0.0f && rect.h > 0.0f) {
+        rect.h += rect.y - layout.sidebar.y;
+        rect.y = layout.sidebar.y;
+      }
+      return surface(rect);
+    }
     case DragTarget::RightPaneDivider:
       return surface(RightPaneResizeCursorRect(layout));
     case DragTarget::BottomPanelDivider:

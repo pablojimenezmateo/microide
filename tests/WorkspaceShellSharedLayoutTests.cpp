@@ -7,6 +7,7 @@
 #include "workspace/services/LayoutModeService.h"
 #include "workspace/render/OverviewRuler.h"
 #include "workspace/WorkspaceLayout.h"
+#include "workspace/state/WorkspaceInteractionState.h"
 
 #include <cmath>
 #include <cstdint>
@@ -103,6 +104,31 @@ void TestWorkspaceSharedLayoutHelpers() {
          "and stops only where the editor keeps its minimum width");
   Expect(ClampBottomPanelHeight(50.0f, 240.0f) == 52.0f,
          "bottom panel height should clamp to the available content height");
+}
+
+// The sidebar fills the band beside the editor tab strip (it starts under the
+// project strip, not under the tab strip), down to the panel like the editor
+// column -- that band was empty chrome over the tree. Its resize handle stays
+// beside the content so it never takes the first tab's left edge, while a drag's
+// damage covers the whole divider line it lights.
+void TestWorkspaceSharedSidebarFillsTheTabStripBand() {
+  for (const bool project_strip : {false, true}) {
+    const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 300.0f, 180.0f, {}, true, false, 0.0f,
+                                      project_strip);
+    const float under_project_strip = layout.project_tab_strip.y + layout.project_tab_strip.h;
+    Expect(layout.sidebar.y == under_project_strip && layout.sidebar.y == layout.tab_strip.y,
+           "the sidebar starts level with the editor tab strip");
+    Expect(layout.sidebar.y + layout.sidebar.h == layout.editor_area.y + layout.editor_area.h,
+           "and ends where the editor column does, at the panel");
+    const SDL_FRect handle = microide::workspace::SidebarResizeHandleRect(layout);
+    Expect(handle.y == layout.content.y && handle.y + handle.h == layout.sidebar.y + layout.sidebar.h,
+           "its resize handle runs beside the content only");
+    const auto damage = microide::workspace::DragTargetHighlightRect(
+        layout, microide::workspace::DragTarget::SidebarDivider);
+    Expect(damage.has_value() && damage->y == layout.sidebar.y &&
+               damage->y + damage->h == layout.sidebar.y + layout.sidebar.h,
+           "a divider drag repaints the divider's whole height");
+  }
 }
 
 void TestWorkspaceSharedScrollbarHelpers() {
@@ -1579,6 +1605,7 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/LayoutInputsStructMatchesPositionalForm",
           TestWorkspaceLayoutInputsStructMatchesPositionalForm);
   AddTest(tests, "WorkspaceShared/LayoutHelpers", TestWorkspaceSharedLayoutHelpers);
+  AddTest(tests, "WorkspaceShared/SidebarFillsTheTabStripBand", TestWorkspaceSharedSidebarFillsTheTabStripBand);
   AddTest(tests, "WorkspaceShared/ScrollbarHelpers", TestWorkspaceSharedScrollbarHelpers);
   AddTest(tests, "WorkspaceShared/ScrollbarReserveGeometry",
           TestWorkspaceSharedScrollbarReserveGeometry);
