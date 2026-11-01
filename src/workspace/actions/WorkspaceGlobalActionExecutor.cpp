@@ -230,6 +230,21 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       const auto host_arg = [&]() -> std::string {
         return args.empty() ? hosts->SoleHost() : args[0];
       };
+      // `[root]`: a row about one project's files names that project's root, and
+      // acting on it brings that project forward first -- else the view opened on
+      // whichever project was in front, which with two projects on one host was
+      // the wrong one. No argument means the active project. "" on success.
+      const auto bring_remote_project_forward = [&](std::filesystem::path& root) -> std::string {
+        root = args.empty() ? context_.ProjectRoot() : std::filesystem::path(args[0]);
+        if (!hosts->IsRemoteProject(root)) {
+          return args.empty() ? "The active project is not a remote project"
+                              : root.string() + " is not an open remote project";
+        }
+        if (root != context_.ProjectRoot() && !context_.OpenProject(root, true, true)) {
+          return "Cannot bring " + root.string() + " forward";
+        }
+        return {};
+      };
       switch (id) {
         case ActionId::RemoteOpenLocalTerminal:
           // In a local project Terminal > New is already local.
@@ -286,15 +301,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
           return DispatchResult::Handled;
         }
         case ActionId::RemoteShowConflicts: {
-          // The counted row names its project's root: with another project in
-          // front, that one is brought forward first.
-          const std::filesystem::path root = args.empty() ? context_.ProjectRoot()
-                                                          : std::filesystem::path(args[0]);
-          if (!hosts->IsRemoteProject(root)) {
-            return reject("The active project is not a remote project");
-          }
-          if (root != context_.ProjectRoot() && !context_.OpenProject(root, true, true)) {
-            return reject("Cannot bring " + root.string() + " forward");
+          std::filesystem::path root;
+          if (std::string refusal = bring_remote_project_forward(root); !refusal.empty()) {
+            return reject(std::move(refusal));
           }
           const SidebarViewSpec* view = FindBuiltinSidebarView(SidebarMode::Conflicts);
           if (view == nullptr ||
@@ -452,9 +461,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
         }
         case ActionId::RemoteShowHostChanges:
         case ActionId::RemoteClearHostChanges: {
-          const std::filesystem::path root = context_.ProjectRoot();
-          if (!hosts->IsRemoteProject(root)) {
-            return reject("The active project is not a remote project");
+          std::filesystem::path root;
+          if (std::string refusal = bring_remote_project_forward(root); !refusal.empty()) {
+            return reject(std::move(refusal));
           }
           if (id == ActionId::RemoteClearHostChanges) {
             hosts->ClearHostChanges(root);

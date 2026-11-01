@@ -725,8 +725,8 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `remote-disconnect [host]`
 - `remote-reconnect [host]`
 - `remote-copy-command <host> <ssh|install|linger>`
-- `remote-changes`
-- `remote-clear-changes`
+- `remote-changes [root]`
+- `remote-clear-changes [root]`
 - `remote-apply-deletes [root]`
 - `remote-forward-port <port> [host]`
 - `remote-unforward-port <port> [host]`

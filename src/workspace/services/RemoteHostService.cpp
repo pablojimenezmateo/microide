@@ -224,6 +224,14 @@ std::optional<project::ProjectLocality> RemoteHostService::LocalityFor(const pro
 
 namespace {
 
+// " in <project>": every row about one project's files says which project. Two
+// projects on one host otherwise raised indistinguishable rows ("3 files changed
+// on build-host") in whichever project was in front, which read as news about
+// that one.
+std::string InProject(const std::string& host, const std::string& host_root) {
+  return " in " + project::ProjectId::ForRemote(host, host_root).Label();
+}
+
 // What the project's server said it is in its hello; "" before one answered.
 std::string ServerRelease(remote::RemoteProject& project) {
   const std::shared_ptr<remote::RemoteServerClient> client = project.session().connection()->client();
@@ -419,8 +427,12 @@ void RemoteHostService::PublishHostChanges(const std::filesystem::path& tree, Pr
       .tone = NotificationService::Tone::Info,
       .key = "remote.changes." + tree.string(),
       .message = std::to_string(count) + (count == 1 ? " file" : " files") + " changed on " +
-                 entry.host,
-      .actions = {NotificationAction{.label = "Show", .id = ActionId::RemoteShowHostChanges}},
+                 entry.host + InProject(entry.host, entry.host_root),
+      // The row names its project: Show brings that one forward, not whichever
+      // project happens to be in front when it is clicked.
+      .actions = {NotificationAction{.label = "Show",
+                                     .id = ActionId::RemoteShowHostChanges,
+                                     .args = {tree.string()}}},
   });
 }
 
@@ -736,6 +748,7 @@ void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, P
   }
   entry.conflict_rows.clear();
   const std::string host = entry.host;
+  const std::string in_project = InProject(entry.host, entry.host_root);
   if (own_row) {
     const std::string& path = current.front();
     const std::string absolute = (tree / path).string();
@@ -761,11 +774,12 @@ void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, P
       operations_.notify(NotificationService::Request{
           .tone = NotificationService::Tone::Warning,
           .key = row_key(path),
-          .message = !detail.renamed_from.empty()
-                         ? path + " renamed locally from " + detail.renamed_from + ", which changed on " + host
-                     : !detail.on_host   ? path + " deleted on " + host + ", changed locally"
-                     : !detail.in_mirror ? path + " deleted locally, changed on " + host
-                                         : path + " changed locally and on " + host,
+          .message = (!detail.renamed_from.empty()
+                          ? path + " renamed locally from " + detail.renamed_from + ", which changed on " + host
+                      : !detail.on_host   ? path + " deleted on " + host + ", changed locally"
+                      : !detail.in_mirror ? path + " deleted locally, changed on " + host
+                                          : path + " changed locally and on " + host) +
+                     in_project,
           .sticky = true,
           .actions = std::move(actions),
       });
@@ -775,7 +789,7 @@ void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, P
     operations_.notify(NotificationService::Request{
         .tone = NotificationService::Tone::Warning,
         .key = summary_key,
-        .message = std::to_string(current.size()) + " files changed locally and on " + host,
+        .message = std::to_string(current.size()) + " files changed locally and on " + host + in_project,
         .sticky = true,
         .actions = {
             NotificationAction{.label = "Keep All Local",

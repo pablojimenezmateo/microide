@@ -1314,8 +1314,13 @@ void TestOpenFolderOnHostEditsTheHostTree() {
   const auto pump_watching = [&] {
     Pump(shell);
     for (const auto& note : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+      // The row names its project and its Show carries that project's root: with
+      // two projects on one host, a bare "N files changed on <host>" row raised in
+      // whichever project was in front, and its Show opened THAT project's view.
       counted = counted || (note.key == "remote.changes." + mirror.string() && !note.actions.empty() &&
-                            note.actions[0].label == "Show");
+                            note.actions[0].label == "Show" &&
+                            note.message.ends_with(" changed on " + target + " in app") &&
+                            note.actions[0].args == std::vector<std::string>{mirror.string()});
     }
   };
   WriteFile(host_root / "agent.c", "int agent;\n");
@@ -1363,6 +1368,23 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              },
              std::chrono::seconds(10), std::chrono::milliseconds(10)),
          "and the cleared view is empty");
+
+  // With another project in front, the row's Show brings ITS project forward
+  // rather than opening the front project's view.
+  {
+    const std::filesystem::path other = host.home.parent_path() / "local-other";
+    WriteFile(other / "notes.txt", "local\n");
+    Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, other, true, false), "a local project in front");
+    Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == other.lexically_normal(), "the local one is active");
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-changes " + mirror.string()),
+           "the row's Show is accepted from another project");
+    Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == mirror &&
+               WorkspaceShellTestAccess::SidebarViewId(shell) == "host-changes",
+           "it brings the remote project forward on its Changed on Host view: " +
+               WorkspaceShellTestAccess::ProjectRoot(shell).string());
+    Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-changes " + other.string()),
+           "a root that is not a remote project is refused");
+  }
 
   // Disconnect and Reconnect reach a remote project's own channel too.
   const auto segment = [&] {
