@@ -241,7 +241,7 @@ std::string ProcessActivity::ForegroundCommand(int shell_pid) {
   return command;
 }
 
-std::vector<ProcessActivity::Figures> ProcessActivity::Sample(std::span<const Root> roots) {
+std::vector<ProcessActivity::Stat> ProcessActivity::ReadTable(std::span<const Root> roots) {
   std::vector<Stat> table;
   if (KernelListsChildren()) {
     table = ReadTrees(roots);
@@ -260,6 +260,11 @@ std::vector<ProcessActivity::Figures> ProcessActivity::Sample(std::span<const Ro
     }
     ::closedir(proc);
   }
+  return table;
+}
+
+std::vector<ProcessActivity::Figures> ProcessActivity::Sample(std::span<const Root> roots) {
+  const std::vector<Stat> table = ReadTable(roots);
   static const std::int64_t ticks_per_second = std::max<long>(::sysconf(_SC_CLK_TCK), 1);
   static const std::int64_t page_bytes = std::max<long>(::sysconf(_SC_PAGESIZE), 1);
   return Measure(table, roots, std::chrono::steady_clock::now(), ticks_per_second, page_bytes);

@@ -1444,17 +1444,23 @@ bool RemoteHostService::OpenHostLocalUrl(const platform::ProcessLauncher& launch
   return StartForward(host, port, std::move(parsed));
 }
 
+bool RemoteHostService::HasOpenProject(std::string_view host, std::string_view host_root) const {
+  return std::any_of(projects_.begin(), projects_.end(), [&](const auto& item) {
+    return !item.second.closed && item.second.host == host && item.second.host_root == host_root;
+  });
+}
+
 bool RemoteHostService::StartForward(std::string_view host, std::uint16_t port,
-                                     std::optional<LoopbackUrl> then_open) {
+                                     std::optional<LoopbackUrl> then_open, std::string owner_root) {
   remote::RemoteHostSession* session = SessionFor(host);
   if (session == nullptr) {
     return false;
   }
   const std::string key(host);
-  work_.Post([this, session, key, port, then_open = std::move(then_open)]() {
+  work_.Post([this, session, key, port, then_open = std::move(then_open), owner_root = std::move(owner_root)]() {
     std::string error;
     const std::optional<remote::RemoteHostSession::PortForward> forward = session->ForwardPort(port, &error);
-    mailbox_.Post([this, key, port, forward, error, then_open]() {
+    mailbox_.Post([this, key, port, forward, error, then_open, owner_root]() {
       if (forward.has_value() && then_open.has_value() && operations_.open_url) {
         (void)operations_.open_url(then_open->scheme + "://localhost:" +
                                    std::to_string(forward->local_port) + then_open->rest);
@@ -1463,18 +1469,20 @@ bool RemoteHostService::StartForward(std::string_view host, std::uint16_t port,
         return;
       }
       const std::string row_key = "remote.forward." + key + "." + std::to_string(port);
+      // " in <project>" for a port a project's program opened (ListenerOwners.h).
+      const std::string in_project = owner_root.empty() ? std::string() : InProject(key, owner_root);
       if (!forward.has_value()) {
         operations_.notify(NotificationService::Request{
             .tone = NotificationService::Tone::Error,
             .key = row_key,
-            .message = "Could not forward port " + std::to_string(port) + " on " + key + ": " + error});
+            .message = "Could not forward port " + std::to_string(port) + " on " + key + in_project + ": " + error});
         return;
       }
       const std::string address = "localhost:" + std::to_string(forward->local_port);
       operations_.notify(NotificationService::Request{
           .tone = NotificationService::Tone::Info,
           .key = row_key,
-          .message = "Port " + std::to_string(port) + " on " + key + " is available at " + address,
+          .message = "Port " + std::to_string(port) + " on " + key + in_project + " is available at " + address,
           .actions = {NotificationAction{.label = "Open in Browser", .id = ActionId::OpenUrl,
                                          .args = {"http://" + address}},
                       NotificationAction{.label = "Copy Address", .id = ActionId::RemoteCopyCommand,
@@ -1496,8 +1504,8 @@ void RemoteHostService::WatchPorts(const std::string& host, remote::RemoteHostSe
   watch.client = client;
   work_.Post([this, host, client]() {
     std::string error;
-    std::optional<std::vector<std::uint16_t>> now = client->SubscribePorts(
-        [this, host](const std::vector<std::uint16_t>& ports) { PostHostPorts(host, ports); },
+    std::optional<remote::RemoteServerClient::HostPorts> now = client->SubscribePorts(
+        [this, host](const remote::RemoteServerClient::HostPorts& ports) { PostHostPorts(host, ports); },
         &error);
     if (!now.has_value()) {
       return;  // a server that predates it: forwards stay a command and a click
@@ -1509,7 +1517,7 @@ void RemoteHostService::WatchPorts(const std::string& host, remote::RemoteHostSe
   });
 }
 
-void RemoteHostService::PostHostPorts(const std::string& host, std::vector<std::uint16_t> ports) {
+void RemoteHostService::PostHostPorts(const std::string& host, remote::RemoteServerClient::HostPorts ports) {
   // ONE key for the subscription's answer and its pushes. The mailbox replaces a
   // keyed action IN PLACE, so a push posted before the answer and replaced by a
   // newer push ran ahead of the (older) answer when the answer used a plain Post:
@@ -1525,7 +1533,9 @@ bool RemoteHostService::PortsWatched(std::string_view host) const {
   return it != port_watches_.end() && it->second.baseline.has_value();
 }
 
-void RemoteHostService::OnHostPorts(const std::string& host, const std::vector<std::uint16_t>& ports) {
+void RemoteHostService::OnHostPorts(const std::string& host,
+                                    const remote::RemoteServerClient::HostPorts& listening) {
+  const std::vector<std::uint16_t>& ports = listening.ports;
   PortWatch& watch = port_watches_[host];
   if (!watch.baseline.has_value()) {
     // What already listened when the editor first connected is not news.
@@ -1557,7 +1567,16 @@ void RemoteHostService::OnHostPorts(const std::string& host, const std::vector<s
     if (known != forwards_.end() && known->second->Find(port).has_value()) {
       continue;
     }
-    if (StartForward(host, port, std::nullopt)) {
+    // A port a project's terminal or process opened is that project's: the row
+    // names it, and a project not open in this window (another machine's, or one
+    // closed here) is not forwarded into it. A port of no project -- a shell the
+    // user ssh'd in with -- is the host's, as before.
+    const auto owner = listening.roots.find(port);
+    const std::string owner_root = owner != listening.roots.end() ? owner->second : std::string();
+    if (!owner_root.empty() && !HasOpenProject(host, owner_root)) {
+      continue;
+    }
+    if (StartForward(host, port, std::nullopt, owner_root)) {
       watch.auto_forwarded.insert(port);
     }
   }
@@ -1760,13 +1779,14 @@ void RemoteHostService::OnHostTerminals(const std::filesystem::path& tree,
     if (claims.reattached > 0) {
       operations_.notify(NotificationService::Request{
           .tone = NotificationService::Tone::Info,
-          .message = "Reattached to " + record.host + ": " + count(claims.reattached, "terminal", "terminals")});
+          .message = "Reattached to " + record.host + InProject(record.host, record.host_root) + ": " +
+                     count(claims.reattached, "terminal", "terminals")});
     }
     return;
   }
   // § 7.4a's "reattached to build-box" row: the whole connect in one row --
   // reattached, started fresh and why, running with no tab -- never one per terminal.
-  std::string message = record.host + ":";
+  std::string message = record.host + InProject(record.host, record.host_root) + ":";
   const auto part = [&](std::string text) {
     message += (message.back() == ':' ? " " : " \xc2\xb7 ") + text;
   };

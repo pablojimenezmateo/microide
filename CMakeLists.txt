@@ -980,6 +980,7 @@ add_test(NAME microide_kernel_link_probe COMMAND microide_kernel_link_probe)
 # covers it.
 add_executable(microide-server
   src/server/GitStatusSampler.cpp
+  src/server/ListenerOwners.cpp
   src/server/ListeningPorts.cpp
   src/server/ProcessActivity.cpp
   src/server/ProcessTable.cpp
@@ -1565,6 +1566,7 @@ add_executable(microide_kernel_tests
   tests/RemoteProjectTests.cpp
   tests/ProjectIdTests.cpp
   src/server/GitStatusSampler.cpp
+  src/server/ListenerOwners.cpp
   src/server/ListeningPorts.cpp
   src/server/ProcessActivity.cpp
   src/server/ProcessTable.cpp

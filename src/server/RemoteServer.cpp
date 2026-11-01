@@ -680,48 +680,94 @@ void RemoteServer::DropActivitySubscriber(std::uint64_t connection_id) {
 
 namespace {
 
-util::JsonValue PortsJson(const std::vector<std::uint16_t>& ports) {
+// `{"ports": [...], "roots": {"<port>": "<workspace root>"}}`: `roots` holds the
+// ports a microide terminal or process of a workspace listens on (ListenerOwners.h).
+util::JsonValue PortsJson(const std::vector<std::uint16_t>& ports,
+                          const std::map<std::uint16_t, std::string>& roots) {
   util::JsonArray list;
   list.reserve(ports.size());
   for (const std::uint16_t port : ports) {
     list.push_back(util::JsonValue(static_cast<std::int64_t>(port)));
   }
+  util::JsonObject owners;
+  for (const auto& [port, root] : roots) {
+    owners[std::to_string(port)] = util::JsonValue(root);
+  }
   util::JsonObject object;
   object["ports"] = util::JsonValue(std::move(list));
+  object["roots"] = util::JsonValue(std::move(owners));
   return util::JsonValue(std::move(object));
 }
 
 }  // namespace
 
+std::vector<OwnerRoot> RemoteServer::PortOwnerRoots() const {
+  std::vector<OwnerRoot> roots;
+  for (const TerminalTable::Listing& terminal : terminals_->List()) {
+    if (!terminal.exited && terminal.pid > 0 && !terminal.root.empty()) {
+      roots.push_back(OwnerRoot{.pid = terminal.pid, .root = terminal.root});
+    }
+  }
+  for (const ProcessTable::Listing& process : processes_->List()) {
+    if (!process.exited && process.pid > 0 && !process.root.empty()) {
+      roots.push_back(OwnerRoot{.pid = process.pid, .root = process.root});
+    }
+  }
+  return roots;
+}
+
 void RemoteServer::InstallPortHandlers(Connection& connection) {
   connection.peer.OnRequest(remote::method::kPortsSubscribe,
                             [this, &connection](std::uint64_t id, const util::JsonValue&) {
-                              std::vector<std::uint16_t> ports = ListeningPorts();
+                              const std::vector<Listener> listeners = ListeningSockets();
+                              std::vector<std::uint16_t> ports = PortsOf(listeners);
+                              std::map<std::uint16_t, std::string> roots =
+                                  AttributeListeners(listeners, PortOwnerRoots());
                               {
                                 std::lock_guard lock(ports_mutex_);
                                 port_subscribers_.insert(connection.id);
                                 ports_last_ = ports;
+                                port_roots_ = roots;
                                 if (port_sampler_ == nullptr) {
                                   port_sampler_ = std::make_unique<PeriodicSampler>(
                                       "srv-ports", std::chrono::milliseconds(2000), [this]() { SamplePorts(); });
                                 }
                               }
-                              connection.peer.Reply(id, PortsJson(ports));
+                              connection.peer.Reply(id, PortsJson(ports, roots));
                             });
 }
 
 void RemoteServer::SamplePorts() {
-  std::vector<std::uint16_t> ports = ListeningPorts();
-  std::vector<std::uint64_t> subscribers;
+  const std::vector<Listener> listeners = ListeningSockets();
+  std::vector<std::uint16_t> ports = PortsOf(listeners);
+  std::vector<Listener> fresh;
   {
     std::lock_guard lock(ports_mutex_);
     if (ports == ports_last_) {
       return;
     }
+    // Only a port that just started listening is attributed: the owner of one
+    // already announced does not change, and the fd walk is the costly part.
+    for (const Listener& listener : listeners) {
+      if (!std::binary_search(ports_last_.begin(), ports_last_.end(), listener.port)) {
+        fresh.push_back(listener);
+      }
+    }
+  }
+  // The walk runs with no lock held: the table listings take their own.
+  std::map<std::uint16_t, std::string> found = AttributeListeners(fresh, PortOwnerRoots());
+  std::vector<std::uint64_t> subscribers;
+  util::JsonValue message;
+  {
+    std::lock_guard lock(ports_mutex_);
+    for (auto it = port_roots_.begin(); it != port_roots_.end();) {
+      it = std::binary_search(ports.begin(), ports.end(), it->first) ? std::next(it) : port_roots_.erase(it);
+    }
+    port_roots_.merge(found);
     ports_last_ = ports;
     subscribers.assign(port_subscribers_.begin(), port_subscribers_.end());
+    message = PortsJson(ports, port_roots_);
   }
-  const util::JsonValue message = PortsJson(ports);
   for (const std::uint64_t subscriber : subscribers) {
     WithPeer(subscriber, [&](remote::RemotePeer& peer) { peer.Notify(remote::method::kPortsListening, message); });
   }

@@ -17,6 +17,7 @@
 #include "editor/WelcomeView.h"
 #include "plugin/PluginHost.h"
 #include "project/ProjectId.h"
+#include "project/remote/RemoteServerClient.h"
 #include "project/ProjectLocality.h"
 #include "project/remote/MirrorSyncEngine.h"
 #include "project/remote/RemoteHostSession.h"
@@ -400,12 +401,17 @@ class RemoteHostService {
   };
   // The forward job behind ForwardPort and OpenHostLocalUrl; `then_open` (a
   // LoopbackUrl's scheme and rest) opens the forwarded URL once it is up.
-  bool StartForward(std::string_view host, std::uint16_t port, std::optional<LoopbackUrl> then_open);
+  // `owner_root`: the host root of the project whose program opened the port
+  // ("" = none known), which the row names.
+  bool StartForward(std::string_view host, std::uint16_t port, std::optional<LoopbackUrl> then_open,
+                    std::string owner_root = {});
+  // Whether a project on `host` at `host_root` is open (not closed) here.
+  bool HasOpenProject(std::string_view host, std::string_view host_root) const;
   // Automatic port forwarding (VS Code's): subscribe to `host`'s listening ports
   // over `session`'s connection, once per connection, and forward a port a host
   // program starts listening on after the first connect (remote.auto_forward_ports).
   void WatchPorts(const std::string& host, project::remote::RemoteHostSession& session);
-  void OnHostPorts(const std::string& host, const std::vector<std::uint16_t>& ports);
+  void OnHostPorts(const std::string& host, const project::remote::RemoteServerClient::HostPorts& listening);
   struct PortWatch {
     std::weak_ptr<project::remote::RemoteServerClient> client;  // subscribed through
     // The ports listening now (from the first connect on): only a port not in it
@@ -418,7 +424,7 @@ class RemoteHostService {
   };
   // Queue `ports` (the host's whole listening list, answer or push) for
   // OnHostPorts; only the newest queued list runs.
-  void PostHostPorts(const std::string& host, std::vector<std::uint16_t> ports);
+  void PostHostPorts(const std::string& host, project::remote::RemoteServerClient::HostPorts ports);
   // CancelForward, announced or not (an automatic forward's port went away).
   bool StopForward(std::string_view host, std::uint16_t port, bool announce);
   void PublishHostChanges(const std::filesystem::path& tree, Project& entry,

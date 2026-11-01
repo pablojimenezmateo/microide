@@ -21,6 +21,7 @@
 #include <fstream>
 #include <iterator>
 #include <condition_variable>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -384,8 +385,9 @@ void TestListeningPortsParseProcNetTcp() {
       "   3: 0100007F:1F92 0100007F:D431 01 00000000:00000000 00:00000000 00000000  1000        0 4 1\n"
       "   4: 0A00000A:1F93 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 5 1\n"
       "   5: garbage\n";
-  Expect((server::ParseListeningPorts(tcp, 1000) == std::vector<std::uint16_t>{3000, 8080}),
-         "loopback and wildcard listeners of this user only");
+  Expect((server::ParseListeningSockets(tcp, 1000) ==
+          std::vector<server::Listener>{{.port = 3000, .inode = 1}, {.port = 8080, .inode = 2}}),
+         "loopback and wildcard listeners of this user only, with their inodes");
   const std::string tcp6 =
       "  sl  local_address                         remote_address                        st ...\n"
       "   0: 00000000000000000000000001000000:1538 00000000000000000000000000000000:0000 0A "
@@ -396,7 +398,8 @@ void TestListeningPortsParseProcNetTcp() {
       "00000000:00000000 00:00000000 00000000  1000        0 8 1\n"
       "   3: B80D0120000000000000000001000000:232A 00000000000000000000000000000000:0000 0A "
       "00000000:00000000 00:00000000 00000000  1000        0 9 1\n";
-  Expect((server::ParseListeningPorts(tcp6, 1000) == std::vector<std::uint16_t>{5432, 9000, 9001}),
+  const std::vector<server::Listener> v6 = server::ParseListeningSockets(tcp6, 1000);
+  Expect((server::PortsOf(v6) == std::vector<std::uint16_t>{5432, 9000, 9001}),
          "::1, :: and ::ffff:127.0.0.1, not a global address");
 }
 
@@ -406,6 +409,7 @@ class SockDiagReply {
   SockDiagReply& Listener(int family, const std::vector<std::uint8_t>& address, std::uint16_t port,
                           std::uint32_t uid, std::uint8_t state = TCP_LISTEN) {
     inet_diag_msg message{};
+    message.idiag_inode = 100u + port;
     message.idiag_family = static_cast<std::uint8_t>(family);
     message.idiag_state = state;
     message.idiag_uid = uid;
@@ -458,26 +462,27 @@ void TestListeningPortsParseSockDiag() {
       .Listener(AF_INET6, v6_mapped, 9001, 1000)
       .Listener(AF_INET6, v6_global, 9002, 1000)
       .Done();
-  std::vector<std::uint16_t> ports;
-  Expect(server::ParseSockDiagListeners(reply.bytes(), 1000, ports), "a reply with NLMSG_DONE ends the dump");
-  std::sort(ports.begin(), ports.end());
-  Expect((ports == std::vector<std::uint16_t>{3000, 5432, 8080, 9000, 9001}),
+  std::vector<server::Listener> listeners;
+  Expect(server::ParseSockDiagListeners(reply.bytes(), 1000, listeners), "a reply with NLMSG_DONE ends the dump");
+  std::sort(listeners.begin(), listeners.end());
+  Expect((server::PortsOf(listeners) == std::vector<std::uint16_t>{3000, 5432, 8080, 9000, 9001}),
          "loopback, wildcard and v4-mapped loopback listeners of this user only");
+  Expect(listeners.front().inode == 3100u, "each with the socket's inode");
 
   SockDiagReply partial;
   partial.Listener(AF_INET, v4_loopback, 3000, 1000);
-  ports.clear();
-  Expect(!server::ParseSockDiagListeners(partial.bytes(), 1000, ports) &&
-             ports == std::vector<std::uint16_t>{3000},
+  listeners.clear();
+  Expect(!server::ParseSockDiagListeners(partial.bytes(), 1000, listeners) &&
+             server::PortsOf(listeners) == std::vector<std::uint16_t>{3000},
          "a reply without NLMSG_DONE asks for the next read, keeping what it held");
 
   // A length past the buffer cannot be framed: the dump ends, what came before stays.
   SockDiagReply truncated;
   truncated.Listener(AF_INET, v4_loopback, 3000, 1000).Listener(AF_INET, v4_any, 8080, 1000);
-  ports.clear();
+  listeners.clear();
   const std::span<const std::uint8_t> whole = truncated.bytes();
-  Expect(server::ParseSockDiagListeners(whole.first(whole.size() - 4), 1000, ports) &&
-             ports == std::vector<std::uint16_t>{3000},
+  Expect(server::ParseSockDiagListeners(whole.first(whole.size() - 4), 1000, listeners) &&
+             server::PortsOf(listeners) == std::vector<std::uint16_t>{3000},
          "a truncated message ends the dump without reading past the buffer");
 }
 
@@ -496,18 +501,26 @@ void TestListeningPortsSourcesAgreeOnTheLiveHost() {
              ::getsockname(listener, reinterpret_cast<sockaddr*>(&address), &length) == 0,
          "listening on 127.0.0.1:0");
   const std::uint16_t port = ntohs(address.sin_port);
+  // The socket's own inode, the number /proc/<pid>/fd links name it by.
+  struct stat st{};
+  Expect(::fstat(listener, &st) == 0, "the listener's inode");
+  const server::Listener mine{.port = port, .inode = static_cast<std::uint64_t>(st.st_ino)};
+  const auto has_listener = [&](const std::vector<server::Listener>& listeners) {
+    return std::find(listeners.begin(), listeners.end(), mine) != listeners.end();
+  };
   const auto has = [&](const std::vector<std::uint16_t>& ports) {
     return std::find(ports.begin(), ports.end(), port) != ports.end();
   };
-  const std::optional<std::vector<std::uint16_t>> from_proc = server::ListeningPortsFromProc();
-  Expect(from_proc.has_value() && has(*from_proc), "/proc/net/tcp lists the test's listener");
-  if (const std::optional<std::vector<std::uint16_t>> from_diag = server::ListeningPortsFromSockDiag()) {
-    Expect(has(*from_diag), "sock_diag lists the test's listener");
+  const std::optional<std::vector<server::Listener>> from_proc = server::ListeningSocketsFromProc();
+  Expect(from_proc.has_value() && has_listener(*from_proc),
+         "/proc/net/tcp lists the test's listener with its inode");
+  if (const std::optional<std::vector<server::Listener>> from_diag = server::ListeningSocketsFromSockDiag()) {
+    Expect(has_listener(*from_diag), "sock_diag lists the test's listener with its inode");
     bool agreed = false;
     for (int attempt = 0; attempt < 5 && !agreed; ++attempt) {
-      agreed = server::ListeningPortsFromSockDiag() == server::ListeningPortsFromProc();
+      agreed = server::ListeningSocketsFromSockDiag() == server::ListeningSocketsFromProc();
     }
-    Expect(agreed, "sock_diag and /proc/net/tcp name the same ports");
+    Expect(agreed, "sock_diag and /proc/net/tcp name the same sockets");
   }
   Expect(has(server::ListeningPorts()), "ListeningPorts lists the test's listener");
   ::close(listener);
@@ -672,10 +685,12 @@ void TestPortsSubscribePushesANewListener() {
          "connects: " + error);
   std::mutex mutex;
   std::vector<std::uint16_t> pushed;
+  std::map<std::uint16_t, std::string> pushed_roots;
   const auto now = client->SubscribePorts(
-      [&](const std::vector<std::uint16_t>& ports) {
+      [&](const remote::RemoteServerClient::HostPorts& ports) {
         std::lock_guard lock(mutex);
-        pushed = ports;
+        pushed = ports.ports;
+        pushed_roots = ports.roots;
       },
       &error);
   Expect(now.has_value(), "subscribed: " + error);
@@ -689,7 +704,8 @@ void TestPortsSubscribePushesANewListener() {
              ::getsockname(fd, reinterpret_cast<sockaddr*>(&address), &length) == 0,
          "a listener on the host's loopback");
   const std::uint16_t port = ntohs(address.sin_port);
-  Expect(std::find(now->begin(), now->end(), port) == now->end(), "not listening when subscribed");
+  Expect(std::find(now->ports.begin(), now->ports.end(), port) == now->ports.end(),
+         "not listening when subscribed");
   Expect(WaitUntil(
              [&] {
                std::lock_guard lock(mutex);
@@ -697,7 +713,36 @@ void TestPortsSubscribePushesANewListener() {
              },
              std::chrono::seconds(20), std::chrono::milliseconds(20)),
          "the new listener is pushed");
+  {
+    std::lock_guard lock(mutex);
+    Expect(!pushed_roots.contains(port), "a listener no microide process holds is nobody's project's");
+  }
   ::close(fd);
+
+  // A process the workspace spawned listens: the push names the workspace's root
+  // as the port's owner, so the client's row says which project it came from.
+  // `python3 -c` is the smallest portable listener with a port of the kernel's choosing.
+  const remote::RemoteServerClient::Spawned listener = client->Spawn(
+      {"python3", "-c",
+       "import socket,time\ns=socket.socket()\ns.bind(('127.0.0.1',0))\ns.listen()\ntime.sleep(60)"},
+      root.path(), {}, /*keep_on_detach=*/false, {});
+  Expect(listener.handle != 0, "the listener spawns: " + listener.error);
+  std::string owned_root;
+  Expect(WaitUntil(
+             [&] {
+               std::lock_guard lock(mutex);
+               for (const auto& [owned, owner] : pushed_roots) {
+                 if (owned != port) {
+                   owned_root = owner;
+                   return true;
+                 }
+               }
+               return false;
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(20)),
+         "the spawned process's port is pushed with an owner");
+  Expect(owned_root == root.path().string(), "its owner is the spawning workspace: " + owned_root);
+  client->Signal(listener.handle, "KILL");
 }
 
 }  // namespace

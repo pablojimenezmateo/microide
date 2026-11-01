@@ -143,8 +143,14 @@ class RemoteServerClient {
   // The host's listening ports (ports/subscribe): the set now, then `changed` on
   // the I/O thread with every new set. nullopt with *error when the host refused
   // (a server that predates it).
-  using PortsHandler = std::function<void(const std::vector<std::uint16_t>& ports)>;
-  std::optional<std::vector<std::uint16_t>> SubscribePorts(PortsHandler changed, std::string* error);
+  // `roots`: for a port a microide terminal or process of a workspace listens on,
+  // that workspace's host root -- which project the port came from.
+  struct HostPorts {
+    std::vector<std::uint16_t> ports;  // sorted
+    std::map<std::uint16_t, std::string> roots;
+  };
+  using PortsHandler = std::function<void(const HostPorts& ports)>;
+  std::optional<HostPorts> SubscribePorts(PortsHandler changed, std::string* error);
   // Around a git command that may change a repository (RemoteProcessLauncher::Run).
   void BeginGitMutation();
   void EndGitMutation();

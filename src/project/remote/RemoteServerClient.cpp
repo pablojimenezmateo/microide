@@ -10,23 +10,34 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 
+#include "util/Parse.h"
 #include "util/ThreadName.h"
 
 namespace microide::project::remote {
 namespace {
 
-// {ports: [n]} from the host, untrusted: anything not a port is dropped.
-std::vector<std::uint16_t> PortsFromJson(const util::JsonValue& json) {
-  std::vector<std::uint16_t> ports;
+// {ports: [n], roots: {"<port>": root}} from the host, untrusted: anything not a
+// port is dropped, and a root only for a port the list holds.
+RemoteServerClient::HostPorts PortsFromJson(const util::JsonValue& json) {
+  RemoteServerClient::HostPorts result;
   if (json["ports"].IsArray()) {
     for (const util::JsonValue& port : json["ports"].AsArray()) {
       if (port.IsInt() && port.AsInt() > 0 && port.AsInt() <= 0xFFFF) {
-        ports.push_back(static_cast<std::uint16_t>(port.AsInt()));
+        result.ports.push_back(static_cast<std::uint16_t>(port.AsInt()));
       }
     }
   }
-  std::sort(ports.begin(), ports.end());
-  return ports;
+  std::sort(result.ports.begin(), result.ports.end());
+  if (json["roots"].IsObject()) {
+    for (const auto& [key, root] : json["roots"].AsObject()) {
+      const std::optional<int> port = util::ParseInt(key);
+      if (port.has_value() && *port > 0 && *port <= 0xFFFF && root.IsString() && !root.AsString().empty() &&
+          std::binary_search(result.ports.begin(), result.ports.end(), static_cast<std::uint16_t>(*port))) {
+        result.roots[static_cast<std::uint16_t>(*port)] = root.AsString();
+      }
+    }
+  }
+  return result;
 }
 
 // Output held for a handle whose spawn reply has not been handled yet. Bounded:
@@ -628,7 +639,7 @@ std::optional<RemoteServerClient::GitMetadata> RemoteServerClient::PushedGitMeta
   return it != pushed_git_.end() ? it->second.metadata : std::nullopt;
 }
 
-std::optional<std::vector<std::uint16_t>> RemoteServerClient::SubscribePorts(PortsHandler changed,
+std::optional<RemoteServerClient::HostPorts> RemoteServerClient::SubscribePorts(PortsHandler changed,
                                                                          std::string* error) {
   {
     std::lock_guard lock(mutex_);

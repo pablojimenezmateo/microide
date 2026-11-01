@@ -17,6 +17,7 @@
 #include "project/GitMetadataSource.h"
 #include "project/GitRepositoryMetadataTracker.h"
 #include "server/GitStatusSampler.h"
+#include "server/ListenerOwners.h"
 #include "server/PeriodicSampler.h"
 #include "server/ProcessActivity.h"
 #include "server/RecentObjects.h"
@@ -160,6 +161,8 @@ class RemoteServer {
   // The listening ports now; pushed to every ports/subscribe connection if they
   // changed. The port sampler's thread.
   void SamplePorts();
+  // The terminals and processes whose trees may own a port (ListenerOwners.h).
+  std::vector<OwnerRoot> PortOwnerRoots() const;
   // A connection that closed stops asking; the sampler stops with the last one.
   void DropPortSubscriber(std::uint64_t connection_id);
   // Run `git status` for `tree` on its queue and push it to its git subscribers
@@ -217,6 +220,7 @@ class RemoteServer {
   std::mutex ports_mutex_;
   std::set<std::uint64_t> port_subscribers_;     // guarded by ports_mutex_
   std::vector<std::uint16_t> ports_last_;        // guarded by ports_mutex_
+  std::map<std::uint16_t, std::string> port_roots_;  // of ports_last_; guarded by ports_mutex_
   std::unique_ptr<PeriodicSampler> port_sampler_;  // guarded by ports_mutex_
   // activity/subscribe: the same shape. The sampler reads /proc only while a
   // connection is subscribed; a status that asks for activity samples once.

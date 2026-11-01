@@ -17,6 +17,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "util/Parse.h"
 #include "util/PosixFd.h"
 
 namespace microide::server {
@@ -111,8 +112,13 @@ std::optional<std::string> ReadProcTable(const char* path) {
 
 }  // namespace
 
-std::vector<std::uint16_t> ParseListeningPorts(std::string_view proc_net_tcp, std::uint32_t uid) {
-  std::vector<std::uint16_t> ports;
+void SortUnique(std::vector<Listener>& listeners) {
+  std::sort(listeners.begin(), listeners.end());
+  listeners.erase(std::unique(listeners.begin(), listeners.end()), listeners.end());
+}
+
+std::vector<Listener> ParseListeningSockets(std::string_view proc_net_tcp, std::uint32_t uid) {
+  std::vector<Listener> listeners;
   bool header = true;
   while (!proc_net_tcp.empty()) {
     const std::size_t end = std::min(proc_net_tcp.find('\n'), proc_net_tcp.size());
@@ -121,10 +127,10 @@ std::vector<std::uint16_t> ParseListeningPorts(std::string_view proc_net_tcp, st
     if (std::exchange(header, false)) {
       continue;  // "  sl  local_address rem_address   st ..."
     }
-    // sl local rem st tx:rx tr:when retrnsmt uid ...
-    std::string_view fields[8];
+    // sl local rem st tx:rx tr:when retrnsmt uid timeout inode ...
+    std::string_view fields[10];
     std::size_t count = 0;
-    while (count < 8) {
+    while (count < 10) {
       const std::size_t start = line.find_first_not_of(' ');
       if (start == std::string_view::npos) {
         break;
@@ -134,7 +140,7 @@ std::vector<std::uint16_t> ParseListeningPorts(std::string_view proc_net_tcp, st
       fields[count++] = line.substr(0, stop);
       line.remove_prefix(stop);
     }
-    if (count < 8 || fields[3] != "0A") {
+    if (count < 10 || fields[3] != "0A") {
       continue;  // not a whole line, or not LISTEN
     }
     std::uint64_t line_uid = 0;
@@ -155,17 +161,18 @@ std::vector<std::uint16_t> ParseListeningPorts(std::string_view proc_net_tcp, st
       continue;
     }
     const std::optional<std::uint64_t> port = ParseHex(local.substr(colon + 1));
-    if (port.has_value() && *port > 0 && *port <= 0xFFFF) {
-      ports.push_back(static_cast<std::uint16_t>(*port));
+    const std::optional<std::int64_t> inode = util::ParseInt64(fields[9]);
+    if (port.has_value() && *port > 0 && *port <= 0xFFFF && inode.has_value() && *inode >= 0) {
+      listeners.push_back(Listener{.port = static_cast<std::uint16_t>(*port),
+                                   .inode = static_cast<std::uint64_t>(*inode)});
     }
   }
-  std::sort(ports.begin(), ports.end());
-  ports.erase(std::unique(ports.begin(), ports.end()), ports.end());
-  return ports;
+  SortUnique(listeners);
+  return listeners;
 }
 
 bool ParseSockDiagListeners(std::span<const std::uint8_t> reply, std::uint32_t uid,
-                            std::vector<std::uint16_t>& ports) {
+                            std::vector<Listener>& listeners) {
   std::size_t offset = 0;
   while (reply.size() - offset >= sizeof(nlmsghdr)) {
     nlmsghdr header{};
@@ -188,7 +195,7 @@ bool ParseSockDiagListeners(std::span<const std::uint8_t> reply, std::uint32_t u
           ForwardableAddress(std::span<const std::uint8_t>(address.data(), address_size))) {
         const std::uint16_t port = ntohs(message.id.idiag_sport);
         if (port != 0) {
-          ports.push_back(port);
+          listeners.push_back(Listener{.port = port, .inode = message.idiag_inode});
         }
       }
     }
@@ -197,13 +204,13 @@ bool ParseSockDiagListeners(std::span<const std::uint8_t> reply, std::uint32_t u
   return false;
 }
 
-std::optional<std::vector<std::uint16_t>> ListeningPortsFromSockDiag() {
+std::optional<std::vector<Listener>> ListeningSocketsFromSockDiag() {
   const std::uint32_t uid = static_cast<std::uint32_t>(::getuid());
   util::UniqueFd socket(::socket(AF_NETLINK, SOCK_DGRAM | SOCK_CLOEXEC, NETLINK_SOCK_DIAG));
   if (!socket.IsValid()) {
     return std::nullopt;
   }
-  std::vector<std::uint16_t> ports;
+  std::vector<Listener> listeners;
   // Sized for a dump message's worth: the kernel fills up to a page-sized skb per
   // read, and a smaller buffer truncates a datagram.
   std::vector<std::uint8_t> buffer(32 * 1024);
@@ -235,38 +242,49 @@ std::optional<std::vector<std::uint16_t>> ListeningPortsFromSockDiag() {
         return std::nullopt;  // a refused or broken dump: the caller reads /proc instead
       }
       done = ParseSockDiagListeners(std::span<const std::uint8_t>(buffer.data(), static_cast<std::size_t>(got)),
-                                    uid, ports);
+                                    uid, listeners);
     }
   }
-  std::sort(ports.begin(), ports.end());
-  ports.erase(std::unique(ports.begin(), ports.end()), ports.end());
-  return ports;
+  SortUnique(listeners);
+  return listeners;
 }
 
-std::optional<std::vector<std::uint16_t>> ListeningPortsFromProc() {
+std::optional<std::vector<Listener>> ListeningSocketsFromProc() {
   const std::uint32_t uid = static_cast<std::uint32_t>(::getuid());
-  std::vector<std::uint16_t> ports;
+  std::vector<Listener> listeners;
   bool any = false;
   for (const char* table : {"/proc/net/tcp", "/proc/net/tcp6"}) {
     if (const std::optional<std::string> text = ReadProcTable(table)) {
       any = true;
-      const std::vector<std::uint16_t> found = ParseListeningPorts(*text, uid);
-      ports.insert(ports.end(), found.begin(), found.end());
+      const std::vector<Listener> found = ParseListeningSockets(*text, uid);
+      listeners.insert(listeners.end(), found.begin(), found.end());
     }
   }
   if (!any) {
     return std::nullopt;
   }
-  std::sort(ports.begin(), ports.end());
-  ports.erase(std::unique(ports.begin(), ports.end()), ports.end());
+  SortUnique(listeners);
+  return listeners;
+}
+
+std::vector<Listener> ListeningSockets() {
+  if (std::optional<std::vector<Listener>> listeners = ListeningSocketsFromSockDiag()) {
+    return std::move(*listeners);
+  }
+  return ListeningSocketsFromProc().value_or(std::vector<Listener>{});
+}
+
+std::vector<std::uint16_t> PortsOf(std::span<const Listener> listeners) {
+  std::vector<std::uint16_t> ports;
+  ports.reserve(listeners.size());
+  for (const Listener& listener : listeners) {
+    if (ports.empty() || ports.back() != listener.port) {  // sorted by port first
+      ports.push_back(listener.port);
+    }
+  }
   return ports;
 }
 
-std::vector<std::uint16_t> ListeningPorts() {
-  if (std::optional<std::vector<std::uint16_t>> ports = ListeningPortsFromSockDiag()) {
-    return std::move(*ports);
-  }
-  return ListeningPortsFromProc().value_or(std::vector<std::uint16_t>{});
-}
+std::vector<std::uint16_t> ListeningPorts() { return PortsOf(ListeningSockets()); }
 
 }  // namespace microide::server

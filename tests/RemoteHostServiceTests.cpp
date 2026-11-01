@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "platform/AsyncSubprocess.h"
 #include "RemoteServerTestSupport.h"
 
 #include "terminal/TerminalSession.h"
@@ -963,6 +964,40 @@ void TestAPortThatStartsListeningIsForwarded() {
                        : "gone") +
                   ")";
          });
+
+  // A listener the PROJECT started -- through its launcher, so the server spawns
+  // it under the project's root -- is that project's port: the row says so. With
+  // two projects open on one host, a bare "Port N on <host>" row read as news
+  // about whichever project was in front.
+  {
+    platform::AsyncSubprocess listener;
+    Expect(WorkspaceShellTestAccess::ProjectLauncher(shell).StartAsync(
+               listener,
+               {"python3", "-c",
+                "import socket,time\ns=socket.socket()\ns.bind(('127.0.0.1',0))\ns.listen()\ntime.sleep(60)"},
+               WorkspaceShellTestAccess::ProjectRoot(shell), {}),
+           "the project starts a dev server on the host");
+    const std::string prefix = "remote.forward." + target + ".";
+    std::string seen;
+    Expect(WaitUntil(
+               [&] {
+                 Pump(shell);
+                 for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+                   if (row.key.starts_with(prefix) &&
+                       row.message.find(" on " + target + " in ports is available at localhost:") !=
+                           std::string::npos) {
+                     return true;
+                   }
+                   if (row.key.starts_with(prefix)) {
+                     seen = row.message;
+                   }
+                 }
+                 return false;
+               },
+               std::chrono::seconds(30), std::chrono::milliseconds(10)),
+           "its forward is announced as the project's: " + seen);
+    listener.Shutdown(1000);
+  }
   RemoveFakeMaster(target);
 }
 

@@ -59,6 +59,11 @@ class ProcessActivity {
   // the shell itself is in the foreground, or when it is gone.
   static std::string ForegroundCommand(int shell_pid);
 
+  // The stat lines of `roots` and, for a subtree root, everything under it --
+  // read down the children files; a kernel without them gets every process on
+  // the box instead (a superset: callers relate rows to roots through ppid).
+  static std::vector<Stat> ReadTable(std::span<const Root> roots);
+
   // Walk /proc once and report on each of `roots`, in order.
   std::vector<Figures> Sample(std::span<const Root> roots);
   // The same over a table already read (tests; Sample's own second half), taken
