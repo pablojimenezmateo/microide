@@ -183,6 +183,81 @@ void TestWorkspaceShellProjectSwitchKeepsAMaximizedPanel() {
          "alpha's panel is still maximized after the switch back");
 }
 
+// The ways a user actually switches -- a click on the project tab, Next/Previous
+// Project, the other project maximized too -- each painted between steps as the
+// app paints them (the "sometimes" a single SwitchProject call did not cover).
+void TestWorkspaceShellEveryProjectSwitchKeepsAMaximizedPanel() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path alpha = temp_dir.path() / "alpha";
+  const std::filesystem::path beta = temp_dir.path() / "beta";
+  WriteFile(alpha / "README.md", "alpha\n");
+  WriteFile(beta / "README.md", "beta\n");
+  const std::filesystem::path home = temp_dir.path() / "home";
+  std::filesystem::create_directories(home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(temp_dir.path() / "xdg-state-home",
+                                         temp_dir.path() / "xdg-config-home");
+  using ActionId = WorkspaceShell::ActionId;
+
+  WorkspaceShell shell;
+  SoftwareCanvas canvas(1280, 720);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  const auto frame = [&] { WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer()); };
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, alpha, true, false), "open alpha");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, beta, true, false), "open beta");
+  frame();
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0, false), "alpha in front");
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::PanelToggleMaximized, {}),
+         "maximize alpha's panel");
+  frame();
+  const auto alpha_maximized = [&](const std::string& how) {
+    frame();
+    frame();
+    Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == alpha.lexically_normal(), how + ": alpha is in front");
+    Expect(WorkspaceShellTestAccess::PanelMaximized(shell) &&
+               WorkspaceShellTestAccess::CurrentLayout(shell).panel_maximized,
+           how + ": alpha's panel is still maximized");
+  };
+  const auto click_project_tab = [&](std::size_t index) {
+    const SDL_FRect tab = WorkspaceShellTestAccess::ProjectTabRect(shell, index);
+    Expect(tab.w > 0.0f, "project tab " + std::to_string(index) + " is on screen");
+    (void)SendMouseDown(shell, tab.x + tab.w * 0.5f, tab.y + tab.h * 0.5f, SDL_BUTTON_LEFT);
+    SendMouseUp(shell, tab.x + tab.w * 0.5f, tab.y + tab.h * 0.5f, SDL_BUTTON_LEFT);
+    frame();
+  };
+
+  click_project_tab(1);
+  click_project_tab(0);
+  alpha_maximized("a click on beta's tab and back on alpha's");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "project-next"), "Next Project");
+  frame();
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "project-prev"), "Previous Project");
+  alpha_maximized("Next Project and Previous Project");
+
+  // Beta maximized too: each project keeps its own.
+  click_project_tab(1);
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::PanelToggleMaximized, {}),
+         "maximize beta's panel");
+  frame();
+  click_project_tab(0);
+  alpha_maximized("both maximized, back from beta");
+  click_project_tab(1);
+  frame();
+  Expect(WorkspaceShellTestAccess::PanelMaximized(shell), "beta's panel is still maximized");
+
+  // A hover over the project strip on the way, and a click on the TERMINAL first
+  // (the keyboard is the panel's either way).
+  click_project_tab(0);
+  const SDL_FRect panel = WorkspaceShellTestAccess::CurrentLayout(shell).bottom_panel;
+  (void)SendMouseDown(shell, panel.x + panel.w * 0.5f, panel.y + panel.h * 0.6f, SDL_BUTTON_LEFT);
+  SendMouseUp(shell, panel.x + panel.w * 0.5f, panel.y + panel.h * 0.6f, SDL_BUTTON_LEFT);
+  frame();
+  click_project_tab(1);
+  click_project_tab(0);
+  alpha_maximized("a click in the terminal, then away and back");
+}
+
 void TestWorkspaceShellRestoreSessionPreservesBranchCompareState() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -3469,6 +3544,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalLayoutRevivesAcrossSessions);
   AddTest(tests, "WorkspaceShell/ProjectSwitchKeepsAMaximizedPanel",
           TestWorkspaceShellProjectSwitchKeepsAMaximizedPanel);
+  AddTest(tests, "WorkspaceShell/EveryProjectSwitchKeepsAMaximizedPanel",
+          TestWorkspaceShellEveryProjectSwitchKeepsAMaximizedPanel);
   AddTest(tests, "WorkspaceShell/ShutdownPreservesDistinctWorkspaceProjectRoots",
           TestWorkspaceShellShutdownPreservesDistinctWorkspaceProjectRoots);
 }
