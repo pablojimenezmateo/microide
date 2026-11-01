@@ -1131,6 +1131,12 @@ struct ProjectWorkspaceState {
   // What the restored session's terminal panel looked like, waiting for project
   // init to revive it (TerminalPanelService::OpenTerminalsForProjectInit).
   TerminalLayoutRecord terminal_layout_to_revive;
+  // A git operation of this project finished while another project was in
+  // front (GitOperationService::Callbacks::is_in_front): on its next activation
+  // the project re-reads git state, its tree and its clean buffers -- its file
+  // watcher was stopped, and a re-activated watcher's first batch is a baseline,
+  // not a change list, so a pull's rewrites would otherwise go unseen.
+  bool catch_up_on_activate = false;
   // A host terminal started (StartPendingHostPanes) since this project's session
   // was last written: a project switched away from while its connection came up
   // has a terminal its saved session does not name, so quit re-records its

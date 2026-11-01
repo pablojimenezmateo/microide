@@ -1129,6 +1129,63 @@ void TestWorkspaceShellGitBranchActionsSwitchHead() {
   Expect(CurrentGitBranch(root) == base_branch, "git-switch-branch should move HEAD back");
 }
 
+// A git operation belongs to the project it ran in, not to whichever project is in
+// front when it finishes. The completion used to toast unnamed into the project
+// the user had switched to, refresh THAT project's git view and reload ITS clean
+// buffers -- while the project whose worktree the branch switch rewrote kept
+// showing the old files after the user came back (its watcher was stopped, and a
+// re-activated watcher's first batch is a baseline, not a change list).
+void TestWorkspaceShellGitOperationFinishingInTheBackgroundStaysWithItsProject() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path alpha = temp_dir.path() / "alpha";
+  const std::filesystem::path beta = temp_dir.path() / "beta";
+  WriteFile(alpha / "a.txt", "base\n");
+  InitializeGitRepo(alpha);
+  CommitAll(alpha, "initial", "background git fixture");
+  const std::string base_branch = CurrentGitBranch(alpha);
+  RequireGitCommandSuccess(alpha, {"checkout", "-b", "topic"}, "branch");
+  WriteFile(alpha / "a.txt", "topic\n");
+  CommitAll(alpha, "topic side", "background git fixture");
+  RequireGitCommandSuccess(alpha, {"checkout", base_branch}, "back to base");
+  WriteFile(beta / "b.txt", "beta\n");
+  const std::filesystem::path home = temp_dir.path() / "home";
+  std::filesystem::create_directories(home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedEnvVar scoped_state("XDG_STATE_HOME", (temp_dir.path() / "state").string());
+  ScopedEnvVar scoped_config("XDG_CONFIG_HOME", (temp_dir.path() / "config").string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, alpha, true, false), "open alpha");
+  WorkspaceShellTestAccess::OpenFile(shell, alpha / "a.txt");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines().LineView(0) == "base",
+         "alpha's a.txt is open, clean, on the base branch");
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::GitSwitchBranch, {"topic"}),
+         "git-switch-branch is accepted in alpha");
+  // Switched away before the completion is drained: it lands with beta in front.
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, beta, true, false), "beta in front");
+  Expect(SettleGitOperation(shell), "the switch completes");
+  Expect(CurrentGitBranch(alpha) == "topic", "alpha's HEAD moved");
+  bool named = false;
+  std::string seen;
+  for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+    seen += " | " + row.message;
+    named = named || row.message == "Switched to topic in alpha";
+  }
+  Expect(named, "the toast names the project it ran in:" + seen);
+
+  const std::size_t alpha_index = 0;
+  Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == beta.lexically_normal(), "beta is still in front");
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, alpha_index, false), "back to alpha");
+  WorkspaceShellTestAccess::FlushPendingFileReads(shell);
+  Expect(WaitUntil([&] {
+           WorkspaceShellTestAccess::FlushPendingFileReads(shell);
+           return WorkspaceShellTestAccess::ActiveEditor(shell).lines().LineView(0) == "topic";
+         },
+                   std::chrono::seconds(10), std::chrono::milliseconds(5)),
+         "alpha catches up on activation: its clean buffer shows the branch it switched to, not '" +
+             std::string(WorkspaceShellTestAccess::ActiveEditor(shell).lines().LineView(0)) + "'");
+}
+
 // Accept Local / Accept Remote (VS Code's whole-file conflict choices): the
 // only resolution a binary conflict has in the editor. From its merge tab the
 // action resolves that file and closes the tab; from a git sidebar conflict row's
@@ -1625,6 +1682,8 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitRefreshCommandAsksGitFromAnyView);
   AddTest(tests, "WorkspaceShell/AcceptConflictSideResolvesWholeFiles",
           TestWorkspaceShellAcceptConflictSideResolvesWholeFiles);
+  AddTest(tests, "WorkspaceShell/GitOperationFinishingInTheBackgroundStaysWithItsProject",
+          TestWorkspaceShellGitOperationFinishingInTheBackgroundStaysWithItsProject);
   AddTest(tests, "WorkspaceShell/GitBranchActionsSwitchHead",
           TestWorkspaceShellGitBranchActionsSwitchHead);
   AddTest(tests, "WorkspaceShell/GitOperationFailuresAreReported",

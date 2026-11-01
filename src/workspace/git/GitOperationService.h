@@ -47,6 +47,16 @@ class GitOperationService {
     std::function<void(std::string_view)> show_output_panel;
     std::function<void(NotificationService::Tone, std::string)> notify;
     std::function<void()> request_redraw;
+    // The operation runs on one project's repository, but the user may switch
+    // projects before it finishes, and the callbacks above act on the project in
+    // FRONT. So a completion asks whether its repository is still in front. When
+    // it is not, the toast names the project (`project_label`), the refresh, the
+    // reload, the output panel and `on_success` are skipped, and
+    // `defer_to_project` marks that project to catch up when it is next activated.
+    // Unset = always in front (a single-project host, the tests that do not care).
+    std::function<bool(const std::filesystem::path& repository_root)> is_in_front;
+    std::function<std::string(const std::filesystem::path& repository_root)> project_label;
+    std::function<void(const std::filesystem::path& repository_root)> defer_to_project;
   };
 
   explicit GitOperationService(project::ProjectBackgroundExecutor& background_executor);
@@ -102,6 +112,7 @@ class GitOperationService {
                 std::function<project::GitOperationReport()> work,
                 std::function<void()> on_success = {});
   void Publish(std::uint64_t generation,
+               const std::filesystem::path& repository_root,
                std::string success_message,
                project::GitOperationReport report,
                const std::function<void()>& on_success);

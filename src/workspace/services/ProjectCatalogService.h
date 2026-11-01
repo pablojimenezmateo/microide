@@ -29,6 +29,9 @@ class ProjectCatalogService {
     std::function<void()> ensure_terminal_tab_open;
     std::function<bool()> activate_current_tab_after_state_load;
     std::function<void()> refresh_plugin_surfaces_for_reactivation;
+    // ProjectWorkspaceState::catch_up_on_activate: what the project missed while
+    // it was in the background.
+    std::function<void()> catch_up_background_changes;
     std::function<void()> save_config_state;
     std::function<void()> save_session_state;
     std::function<void()> save_workspace_session;

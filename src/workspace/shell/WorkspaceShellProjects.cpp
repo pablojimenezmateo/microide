@@ -95,6 +95,12 @@ ProjectCatalogService& WorkspaceShell::MakeProjectCatalogService() {
               [this]() { return ActivateCurrentTabAfterStateLoad(); },
           .refresh_plugin_surfaces_for_reactivation =
               [this]() { RefreshPluginSurfacesForReactivation(); },
+          .catch_up_background_changes =
+              [this]() {
+                RequestAutomaticGitSidebarRefresh();
+                RefreshProjectFiles();
+                ReloadCleanOpenBuffersFromDisk();
+              },
           .save_config_state = [this]() { MakePersistenceCoordinator().SaveConfigState(); },
           .save_session_state = [this]() { MakePersistenceCoordinator().SaveSessionState(); },
           .save_workspace_session =

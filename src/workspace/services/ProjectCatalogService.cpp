@@ -102,6 +102,12 @@ bool ProjectCatalogService::ActivateProjectState(ProjectWorkspaceState& state,
         "ProjectCatalogService::ActivateProjectState::ActivateCurrentTabAfterStateLoad");
     operations_.activate_current_tab_after_state_load();
   }
+  if (std::exchange(context_.current_project_state.catch_up_on_activate, false) &&
+      operations_.catch_up_background_changes) {
+    util::PerformanceTrace::Scope scope(
+        "ProjectCatalogService::ActivateProjectState::CatchUpBackgroundChanges");
+    operations_.catch_up_background_changes();
+  }
   {
     util::PerformanceTrace::Scope scope(
         "ProjectCatalogService::ActivateProjectState::RefreshPluginSurfacesForReactivation");

@@ -76,39 +76,44 @@ bool GitOperationService::Dispatch(const std::filesystem::path& repository_root,
     callbacks_.request_redraw();
   }
 
-  background_executor_.Post([this, generation, work = std::move(work),
+  background_executor_.Post([this, generation, repository_root, work = std::move(work),
                              success_message = std::move(success_message),
                              on_success = std::move(on_success)]() mutable {
     // Worker thread: run git and produce a value. Every field the main thread will
     // read is carried in the report; nothing here touches service state.
     project::GitOperationReport report = work();
-    completion_mailbox_.Post([this, generation, success_message = std::move(success_message),
-                              report = std::move(report),
+    completion_mailbox_.Post([this, generation, repository_root = std::move(repository_root),
+                              success_message = std::move(success_message), report = std::move(report),
                               on_success = std::move(on_success)]() mutable {
-      Publish(generation, std::move(success_message), std::move(report), on_success);
+      Publish(generation, repository_root, std::move(success_message), std::move(report), on_success);
     });
   });
   return true;
 }
 
 void GitOperationService::Publish(const std::uint64_t generation,
+                                  const std::filesystem::path& repository_root,
                                   std::string success_message,
                                   project::GitOperationReport report,
                                   const std::function<void()>& on_success) {
   {
     std::lock_guard lock(mutex_);
     if (generation != operation_generation_) {
-      return;  // Superseded (project switched / service reset); drop the stale result.
+      return;  // Superseded by a newer dispatch; drop the stale result.
     }
   }
   status_message_.clear();
   in_flight_.store(false, std::memory_order_release);
+  // A project switch does NOT supersede the operation: the push still happened.
+  // It changes who the result is for (see Callbacks::is_in_front).
+  const bool in_front = !callbacks_.is_in_front || callbacks_.is_in_front(repository_root);
 
   if (!report.output.empty() && callbacks_.append_output != nullptr) {
     callbacks_.append_output(kOutputChannelId, kOutputChannelLabel, report.output);
     // Only surface the panel when something went wrong: a successful fetch/push
-    // prints progress chatter the user did not ask to look at.
-    if (!report.success() && callbacks_.show_output_panel != nullptr) {
+    // prints progress chatter the user did not ask to look at. Not over another
+    // project: the toast says which one failed, and the channel holds the text.
+    if (!report.success() && in_front && callbacks_.show_output_panel != nullptr) {
       callbacks_.show_output_panel(kOutputChannelId);
     }
   }
@@ -121,9 +126,22 @@ void GitOperationService::Publish(const std::uint64_t generation,
     if (message.empty()) {
       message = "Git operation finished";
     }
+    if (!in_front && callbacks_.project_label) {
+      message += " in " + callbacks_.project_label(repository_root);
+    }
     callbacks_.notify(ToneFor(report.outcome), std::move(message));
   }
 
+  if (!in_front) {
+    // Its project catches up when activated: git state, the tree, clean buffers.
+    if ((report.success() || TouchesWorkingTree(report.outcome)) && callbacks_.defer_to_project) {
+      callbacks_.defer_to_project(repository_root);
+    }
+    if (callbacks_.request_redraw != nullptr) {
+      callbacks_.request_redraw();  // the status text cleared
+    }
+    return;
+  }
   if (report.outcome == project::GitOperationOutcome::Success && on_success) {
     on_success();
   }

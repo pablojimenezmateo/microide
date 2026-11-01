@@ -170,6 +170,20 @@ void WorkspaceShell::InitializeGitOperationService() {
       .notify = [this](NotificationService::Tone tone,
                        std::string message) { Notify(tone, std::move(message)); },
       .request_redraw = [this]() { RequestSidebarRedraw(); },
+      .is_in_front =
+          [this](const std::filesystem::path& root) { return context_.current_project_state.root == root; },
+      .project_label =
+          [this](const std::filesystem::path& root) {
+            const ProjectWorkspaceState* state = context_.ProjectStateForRoot(root);
+            return state != nullptr ? state->id.Label() : root.filename().string();
+          },
+      .defer_to_project =
+          [this](const std::filesystem::path& root) {
+            // A project closed meanwhile has nothing to catch up.
+            if (ProjectWorkspaceState* state = context_.ProjectStateForRoot(root); state != nullptr) {
+              state->catch_up_on_activate = true;
+            }
+          },
   });
 }
 
