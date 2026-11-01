@@ -61,9 +61,10 @@ cm_init() {
   chmod 700 "$XDG_RUNTIME_DIR"
 
   # Clean shell rc for the embedded terminal: a tidy prompt + a clear so the
-  # panel never shows distro MOTD noise or the scratch path.
+  # panel never shows distro MOTD noise or the scratch path. The user name is
+  # fixed too: `\u` put whoever ran the capture into the committed media.
   cat > "$CM_WORK/.bashrc" <<'RC'
-PS1='\[\e[38;5;81m\]\u@dev\[\e[0m\]:\[\e[38;5;180m\]\w\[\e[0m\]$ '
+PS1='\[\e[38;5;81m\]user@dev\[\e[0m\]:\[\e[38;5;180m\]\w\[\e[0m\]$ '
 clear
 RC
 
