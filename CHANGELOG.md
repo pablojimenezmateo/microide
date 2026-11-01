@@ -10,6 +10,13 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Added
 
+- **A host program's browser opens on your machine.** In a remote project's
+  terminal, `$BROWSER` hands a URL to the editor, which opens it locally (a
+  `localhost` URL through a port forward): `claude`'s login and `gh auth login
+  --web` open the page where you are. Terminals also identify as
+  `TERM_PROGRAM=microide` and advertise OSC 8 links (`FORCE_HYPERLINK=1`), so such
+  tools print URLs that click whole however they wrap.
+
 - **Folders on a remote host.** `Remote: Open Folder on Host…` (`remote-open
   [user@]host[:port]:/path`) opens a host directory as a project. The editor works
   on a local mirror at local speed — typing, opening, the tree and quick-open never
@@ -152,6 +159,20 @@ project (see [README](README.md)); versions track meaningful shipped work.
   the pane it lands on.
 
 ### Fixed
+
+- A maximized terminal stays maximized across a restart and when switching
+  projects and back; it was restored a frame later whenever the project had a
+  file open.
+- With two projects on one host, "files changed on host", conflict, forwarded-port
+  and reattach rows say which project they are about, and their buttons act on
+  that project. A forwarded port is attributed to the project whose program
+  opened it.
+- A git push, pull, branch switch or commit that finishes after a project switch
+  reports and refreshes its own project instead of the one in front; a commit no
+  longer clears the other project's commit message. The project catches up on its
+  files when it is next activated.
+- The sidebar fills the band beside the editor tab strip instead of leaving a gap
+  above the tree.
 
 - **Terminal programs draw as they would in xterm.** The terminal sets
   `TERM=xterm-256color` and now implements what that entry advertises: box
