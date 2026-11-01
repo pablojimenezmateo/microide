@@ -41,22 +41,20 @@ void TestFailedHashSetIsBounded() {
   }
 
   // Decodes run on the executor's worker thread; drain them into textures/markers
-  // via repeated Upload(nullptr) until the failure count plateaus (or a deadline).
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-  std::size_t stable_iterations = 0;
-  std::size_t last_count = 0;
+  // via repeated Upload(nullptr) until every posted decode has completed and been
+  // drained -- so the cap is checked against ALL of them -- or a deadline only a
+  // failure reaches. It used to stop at a 40 ms plateau (20 polls with no
+  // progress), and a worker descheduled that long -- an ASan build beside five
+  // other check lanes -- ended the drain early and failed the "fills to the cap"
+  // check with nothing wrong.
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
   while (std::chrono::steady_clock::now() < deadline) {
     cache.Upload(nullptr);
     const std::size_t count = cache.failed_hash_count();
     // The invariant under test: the retained failure set never exceeds the cap.
     Expect(count <= 1024, "failed-hash set must never exceed kMaxFailedHashes");
-    if (count == last_count) {
-      if (++stable_iterations >= 20) {
-        break;  // no progress for a while — all reachable decodes processed
-      }
-    } else {
-      stable_iterations = 0;
-      last_count = count;
+    if (cache.in_flight_encoded_bytes() == 0 && cache.pending_decoded_bytes() == 0) {
+      break;  // every decode completed, and the last Upload drained its result
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
