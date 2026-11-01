@@ -110,7 +110,8 @@ bool TerminalSession::StartArgv(const platform::ProcessLauncher& launcher,
                                 const std::filesystem::path& working_directory,
                                 std::string_view command,
                                 std::vector<std::string> shell_argv,
-                                HostIdentity attach) {
+                                HostIdentity attach,
+                                std::vector<std::string> environment) {
   Stop();
   if (const HostTerminalSource* host = HostTerminalsFor(launcher)) {
     return StartOnHost(*host, working_directory, command, std::move(shell_argv), std::move(attach));
@@ -185,7 +186,7 @@ bool TerminalSession::StartArgv(const platform::ProcessLauncher& launcher,
                                              .shell = shell_argv,
                                              .rows = rows_,
                                              .columns = columns_,
-                                             .environment = launch_environment_,
+                                             .environment = std::move(environment),
                                          },
                                          std::move(callbacks));
 
@@ -249,10 +250,6 @@ void TerminalSession::Stop() {
     lines_.push_back(TerminalLine{});
   }
   AdvanceSnapshotGenerationLocked();
-}
-
-void TerminalSession::SetLaunchEnvironment(std::vector<std::string> environment) {
-  launch_environment_ = std::move(environment);
 }
 
 void TerminalSession::SetMaxScrollbackLines(std::size_t max_lines) {

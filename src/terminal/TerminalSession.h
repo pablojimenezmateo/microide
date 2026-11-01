@@ -71,10 +71,13 @@ class TerminalSession {
              std::string_view command = {}, std::string_view shell = {}, HostIdentity attach = {});
   // Same, with the shell already argv (an empty argv is the platform default).
   // The host side of a host terminal starts here: its argv crossed the wire as
-  // an array and must not be re-split.
+  // an array and must not be re-split. `environment`: `KEY=VALUE` entries a LOCAL
+  // start sets in the shell's environment (TerminalStartRequest::environment) --
+  // how the remote server's shells get their BROWSER forwarder.
   bool StartArgv(const platform::ProcessLauncher& launcher,
                  const std::filesystem::path& working_directory, std::string_view command,
-                 std::vector<std::string> shell_argv, HostIdentity attach = {});
+                 std::vector<std::string> shell_argv, HostIdentity attach = {},
+                 std::vector<std::string> environment = {});
   void Stop();
   // Test seam: brings the session up without spawning a real PTY/child process.
   // Always compiled; selected at runtime when placeholder-terminal test mode is
@@ -85,10 +88,6 @@ class TerminalSession {
   // Configure the scrollback cap (lines retained above the visible grid). Clamped
   // to a sane floor; re-trims immediately when lowered below the current backlog.
   void SetMaxScrollbackLines(std::size_t max_lines);
-  // `KEY=VALUE` entries the NEXT local start sets in the shell's environment
-  // (TerminalStartRequest::environment). The remote server's host terminals
-  // carry the BROWSER forwarder this way.
-  void SetLaunchEnvironment(std::vector<std::string> environment);
   void SendBytes(std::string_view bytes);
   // Encode and send a modified key press. Returns true if it produced output.
   bool SendKeyPress(const KeyPress& press);
@@ -185,6 +184,11 @@ class TerminalSession {
     std::string body;
   };
   std::optional<Notification> ConsumeNotification();
+  // A URL a program on this host terminal's machine asked to have opened, through
+  // the BROWSER its server sets (TerminalHostFrame::open_url) -- opened by the
+  // editor on THIS machine, the way VS Code's remote terminals do. Local shells
+  // never raise one: their programs reach the desktop's opener themselves.
+  std::optional<std::string> ConsumeOpenUrlRequest();
   // The URI of an OSC 8 hyperlink a cell carries (TerminalCell::link); empty for
   // 0 or an id the session no longer holds.
   std::string LinkUri(std::uint16_t link) const;
@@ -462,7 +466,6 @@ class TerminalSession {
   std::shared_ptr<platform::TerminalBackend> backend_;
   std::filesystem::path working_directory_;
   std::string default_launch_label_;
-  std::vector<std::string> launch_environment_;  // SetLaunchEnvironment; main thread, read at Start
   std::string launch_label_;
   TerminalStyle current_style_;
   // The pen's OSC 8 hyperlink (0 = none), stamped onto every glyph written.

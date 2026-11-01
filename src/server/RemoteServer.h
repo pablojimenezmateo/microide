@@ -152,6 +152,9 @@ class RemoteServer {
   Connection& Accept(int read_fd, int write_fd);
   void InstallProcessHandlers(Connection& connection);
   void InstallTerminalHandlers(Connection& connection);
+  // Link the BROWSER helper beside the socket and give the shells its path
+  // (term/open-url, remote-projects § 6.5).
+  void InstallBrowserForwarder();
   void InstallTreeHandlers(Connection& connection);
   void InstallFileHandlers(Connection& connection);
   void InstallWatchHandlers(Connection& connection);

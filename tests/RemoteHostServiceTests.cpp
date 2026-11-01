@@ -151,6 +151,31 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
              },
              std::chrono::seconds(15), std::chrono::milliseconds(5)),
          "its shell runs on the host:\n" + ScreenText(host_session));
+  // A program there that opens a page through $BROWSER (claude's login) opens it
+  // HERE, through the editor's opener -- the host has no display to open it on.
+  {
+    std::vector<std::string> opened;
+    WorkspaceShellTestAccess::SetExternalUrlOpener(shell, [&](std::string_view url) {
+      opened.emplace_back(url);
+      return true;
+    });
+    host_session.SendBytes("\"$BROWSER\" https://example.com/from-host; echo BROWSER=$?\n");
+    Expect(WaitUntil(
+               [&] {
+                 Pump(shell);
+                 return !opened.empty();
+               },
+               std::chrono::seconds(15), std::chrono::milliseconds(5)),
+           "the host program's URL reaches this machine's opener:\n" + ScreenText(host_session));
+    Expect(opened.size() == 1 && opened[0] == "https://example.com/from-host", "exactly once, exactly it");
+    Expect(WaitUntil(
+               [&] {
+                 Pump(shell);
+                 return ScreenText(host_session).find("BROWSER=0") != std::string::npos;
+               },
+               std::chrono::seconds(15), std::chrono::milliseconds(5)),
+           "and the program is told it opened");
+  }
 
   // Remote: Open Local Terminal: a shell on this machine, and its title says so.
   Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, workspace::ActionId::RemoteOpenLocalTerminal),

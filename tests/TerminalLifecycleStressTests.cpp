@@ -94,11 +94,10 @@ void TestTerminalEnvironmentNamesThisTerminal() {
   ScopedEnvVar inherited_vte("VTE_VERSION", "7000");
   ScopedEnvVar inherited_program("TERM_PROGRAM", "vscode");
   TerminalSession session;
-  session.SetLaunchEnvironment({"MICROIDE_PROBE=probe-value", "FORCE_HYPERLINK=2"});
-  if (!session.Start(microide::platform::LocalProcessLauncher(), temp.path(),
-                     "printf 'ENV[%s|%s|%s|%s]\\n' \"$TERM_PROGRAM\" \"${VTE_VERSION-unset}\" "
-                     "\"$FORCE_HYPERLINK\" \"$MICROIDE_PROBE\"",
-                     kShell)) {
+  if (!session.StartArgv(microide::platform::LocalProcessLauncher(), temp.path(),
+                         "printf 'ENV[%s|%s|%s|%s]\\n' \"$TERM_PROGRAM\" \"${VTE_VERSION-unset}\" "
+                         "\"$FORCE_HYPERLINK\" \"$MICROIDE_PROBE\"",
+                         {std::string(kShell)}, {}, {"MICROIDE_PROBE=probe-value", "FORCE_HYPERLINK=2"})) {
     return;
   }
   Expect(WaitUntil([&] { return SnapshotContains(session, "ENV[microide|unset|2|probe-value]"); },

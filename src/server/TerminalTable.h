@@ -118,6 +118,15 @@ class TerminalTable {
   void Detach(std::uint64_t connection);
   // term/detach: `connection` leaves terminal `handle` alone, which keeps running.
   void Detach(std::uint64_t connection, std::uint64_t handle);
+  // A program in terminal `handle` asked to open `url` (term/open-url, from the
+  // BROWSER the server sets in its shells): handed to the attached client that
+  // typed into it last -- the person who ran the command -- in its next frame.
+  // False when there is no such terminal or nobody is attached, so the program
+  // falls back to printing the URL.
+  bool RequestOpenUrl(std::uint64_t handle, std::string url);
+  // `KEY=VALUE` entries every shell opened from now on gets, plus
+  // MICROIDE_TERMINAL_HANDLE=<its handle> (what the BROWSER helper names).
+  void SetShellEnvironment(std::vector<std::string> environment);
   // Clients attached to `handle` (for tests and status).
   std::size_t AttachedCount(std::uint64_t handle) const;
 
@@ -163,7 +172,8 @@ class TerminalTable {
     bool bell = false;
     std::optional<std::string> clipboard;
     std::optional<terminal::TerminalHostNotification> notification;
-    bool signal_pending() const { return bell || clipboard || notification; }
+    std::optional<std::string> open_url;  // for THIS client only (RequestOpenUrl)
+    bool signal_pending() const { return bell || clipboard || notification || open_url; }
   };
 
   struct Terminal {
@@ -196,6 +206,7 @@ class TerminalTable {
   bool woken_ = false;
   bool stop_ = false;
   std::uint64_t next_handle_ = 1;
+  std::vector<std::string> shell_environment_;  // guarded by mutex_
   std::map<std::uint64_t, std::shared_ptr<Terminal>> terminals_;
 };
 

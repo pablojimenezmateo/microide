@@ -97,6 +97,10 @@ struct TerminalHostFrame {
   std::optional<std::string> working_directory;  // a HOST path (OSC 7)
   std::optional<std::string> clipboard;          // OSC 52, applied under local policy
   std::optional<TerminalHostNotification> notification;
+  // A program on the host asked for this URL to be opened -- through the BROWSER
+  // the server gives its terminals (TerminalTable::RequestOpenUrl), never through
+  // the byte stream, so printed text cannot raise one. Sent to ONE client.
+  std::optional<std::string> open_url;
   // Every non-zero TerminalCell::link the frame's lines carry, sorted by id.
   std::vector<TerminalHostLink> links;
 
@@ -107,6 +111,8 @@ struct TerminalHostFrame {
 inline constexpr std::uint32_t kMaxHostTerminalDimension = 4096;
 inline constexpr std::size_t kMaxHostTerminalLineCells = 65536;
 inline constexpr std::size_t kMaxHostTerminalTextBytes = 64u << 20;
+// The opener's own cap (platform::IsOpenableExternalUrl).
+inline constexpr std::size_t kMaxHostOpenUrlBytes = 8192;
 
 void EncodeTerminalLine(std::string& out, const TerminalLine& line);
 void EncodeTerminalHostFrame(std::string& out, const TerminalHostFrame& frame);

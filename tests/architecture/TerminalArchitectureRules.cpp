@@ -147,7 +147,11 @@ RuleResult CheckTerminalSessionHeaderSize(const std::filesystem::path& repo_root
   // 309: +2, DECSCNM's flag and its accessor (the dead cursor_visible() went to
   // make room for the latter), and the mode reset RIS shares with a restart (see
   // the Locked-helper cap's 45).
-  constexpr std::size_t kCap = 309;
+  // 311: +2, API not helpers -- StartArgv's `environment` (the remote server's
+  // shells get their BROWSER forwarder through it) and ConsumeOpenUrlRequest (a
+  // host program's URL to open on the client). The pending URL itself lives in
+  // TerminalHostMode, not here.
+  constexpr std::size_t kCap = 311;
   const std::filesystem::path path = repo_root / "src/terminal/TerminalSession.h";
   const std::size_t lines = CountFileLines(path);
   if (lines > kCap) {

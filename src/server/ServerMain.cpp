@@ -9,6 +9,11 @@
 //                                                                  starting one on demand
 //   serve-stdio                                                    serve ONE connection on
 //                                                                  stdin/stdout (tests)
+//   open-url URL                                                   ask the editor attached
+//                                                                  to this terminal to open
+//                                                                  URL (also: run as the
+//                                                                  `microide-browser` link,
+//                                                                  the shells' $BROWSER)
 //
 // Links microide_kernel only: no SDL, no shell, no fonts (CheckServerStaysFreeOf…).
 #include <cerrno>
@@ -441,8 +446,48 @@ int ServeStdio() {
 
 }  // namespace
 
+// The BROWSER of the server's terminals (RemoteServer::InstallBrowserForwarder):
+// hand `url` to the editor attached to the terminal this runs in, which opens it
+// on the user's machine -- what VS Code's remote terminals do, so `claude` or
+// `gh auth login` opens the page where the user is rather than failing to find a
+// display on the host. Exit 0 once an editor has it; 1 when none can take it (no
+// terminal of ours, nobody attached), so the program falls back to printing it.
+int OpenUrl(std::string_view url) {
+  const char* handle_text = std::getenv("MICROIDE_TERMINAL_HANDLE");
+  const std::optional<std::int64_t> handle =
+      handle_text != nullptr ? microide::util::ParseInt64(handle_text) : std::nullopt;
+  if (!handle.has_value() || *handle <= 0) {
+    std::cerr << "microide-server: not in a microide terminal; cannot open " << url << '\n';
+    return 1;
+  }
+  Options options;
+  if (const char* dir = std::getenv("MICROIDE_SERVER_SOCKET_DIR"); dir != nullptr && *dir != '\0') {
+    options.socket_dir = dir;
+  } else if (const auto home = HomeDirectory(); !home.empty()) {
+    options.socket_dir = remote::DefaultServerSocketDir(home);
+  }
+  microide::util::JsonObject params;
+  params["handle"] = microide::util::JsonValue(*handle);
+  params["url"] = microide::util::JsonValue(std::string(url));
+  std::string error;
+  const auto answer = Ask(options, remote::method::kTermOpenUrl, &error,
+                          microide::util::JsonValue(std::move(params)));
+  if (!answer.has_value() || !(*answer)["delivered"].AsBool()) {
+    std::cerr << "microide-server: no editor is attached to this terminal to open " << url
+              << (error.empty() ? std::string() : ": " + error) << '\n';
+    return 1;
+  }
+  return 0;
+}
+
 int main(int argc, char** argv) {
   ::signal(SIGPIPE, SIG_IGN);
+  if (argc >= 1 && std::filesystem::path(argv[0]).filename() == remote::kBrowserHelperName) {
+    return argc == 2 ? OpenUrl(argv[1]) : (std::cerr << "usage: microide-browser URL\n", 2);
+  }
+  if (argc == 3 && std::string_view(argv[1]) == "open-url") {
+    return OpenUrl(argv[2]);
+  }
   const std::optional<Options> options = ParseOptions(argc, argv);
   if (!options.has_value()) {
     return Usage();

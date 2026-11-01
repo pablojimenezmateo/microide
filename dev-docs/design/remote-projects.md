@@ -267,7 +267,27 @@ this document's § 7, what a user still missed:
 - **Automatic port forwarding**: `ports/subscribe` pushes the host user's
   listening ports (sampled every 2 s through sock_diag netlink, LISTEN sockets only;
   `/proc/net/tcp{,6}` where netlink is refused -- TD-2026-10-28-416); a port that starts
-  listening after connect is forwarded (`remote.auto_forward_ports`).
+  listening after connect is forwarded (`remote.auto_forward_ports`). The push
+  also says which project a port came from (`roots: {port: workspace root}`):
+  `ListenerOwners` matches the socket's inode against the fds of microide's own
+  terminal and process trees, for new ports only. The row names that project, and
+  a port of a project not open in this window is not forwarded into it.
+- **Rows say which project** (two projects on one host): "N files changed on
+  host in <project>", the conflict rows, the port rows and the reattach rows end
+  ` in <project>`, and their buttons carry the project's root
+  (`remote-changes [root]`, `remote-clear-changes [root]`, `remote-conflicts
+  [root]` bring it forward).
+- **Host programs open URLs on the client** (`term/open-url`): the server gives
+  its shells `BROWSER=<socket dir>/microide-browser` -- a link to itself that acts
+  as `microide-server open-url URL` -- plus `MICROIDE_TERMINAL_HANDLE`. The helper
+  asks the server, out of band over its socket (printed text cannot do it), and
+  the URL reaches the client that typed into that terminal last as the frame's
+  `open_url`; the editor opens it as a click on the link would (a loopback URL is
+  forwarded first). So `claude` or `gh auth login --web` opens the page where the
+  user is; an OAuth callback on `localhost:<port>` reaches the host through the
+  automatic forward, which binds the same port here when it is free. Every
+  terminal also says `TERM_PROGRAM=microide` and `FORCE_HYPERLINK=1`, so such tools
+  print their URLs as OSC 8 links that click whole however they wrap.
 - **Project home status block** (§ 7.3): the link, the server and the sync as
   stages, a failure's reason with the reproducing ssh command, and Retry.
 - Left: see TD-2026-10-12-336 (a shell-level test of the stale pull-on-open

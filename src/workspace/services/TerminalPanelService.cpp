@@ -34,6 +34,15 @@ bool TerminalPanelService::OpenExternalUrl(std::string_view url) const {
   return operations_.open_external_url(url);
 }
 
+bool TerminalPanelService::OpenUrlForPane(const TerminalPaneState* pane, std::string_view url) const {
+  const platform::ProcessLauncher& launcher =
+      pane != nullptr && pane->launcher != nullptr ? *pane->launcher : state_.launcher();
+  if (operations_.open_host_local_url && operations_.open_host_local_url(launcher, url)) {
+    return true;
+  }
+  return OpenExternalUrl(url);
+}
+
 void TerminalPanelService::SyncPrimarySelectionWithTerminalSelection() {
   operations_.sync_primary_selection_with_terminal_selection();
 }

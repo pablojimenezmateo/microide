@@ -70,6 +70,11 @@ TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
               [this](std::string_view input) { AppendTerminalPendingInput(input); },
           .terminal_link_at_point = [this](float x, float y) { return TerminalLinkAtPoint(x, y); },
           .open_external_url = [this](std::string_view url) { return OpenExternalUrl(url); },
+          .open_host_local_url =
+              [this](const platform::ProcessLauncher& launcher, std::string_view url) {
+                return glue_->remote_host_service != nullptr &&
+                       glue_->remote_host_service->OpenHostLocalUrl(launcher, url);
+              },
           .sync_primary_selection_with_terminal_selection =
               [this]() { SyncPrimarySelectionWithTerminalSelection(); },
           .make_started_pane =
@@ -425,6 +430,12 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
           tab->has_unseen_bell = true;
           badge_changed = true;
         }
+      }
+      // A program on the host asked for a URL through the BROWSER its server
+      // gives it (claude's login, `gh auth login --web`): open it here, where
+      // the user is, as a click on the printed link would.
+      if (std::optional<std::string> url = pane->session.ConsumeOpenUrlRequest(); url.has_value()) {
+        (void)MakeTerminalPanelService().OpenUrlForPane(pane.get(), *url);
       }
       if (pane->session.ConsumeOversizedOsc52Dropped()) {
         // An OSC 52 clipboard write that overran the escape-sequence buffer was

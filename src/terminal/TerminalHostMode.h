@@ -46,6 +46,8 @@ struct TerminalHostMode {
   std::optional<PendingStart> pending;
   HostIdentity detached_identity;  // DetachFromHost's, until Stop or a new start
   bool link_down = false;          // HostConnectionLost, until a reattach or a frame
+  // A frame's open_url, until TerminalSession::ConsumeOpenUrlRequest takes it.
+  std::optional<std::string> open_url;
   bool announce_reattach = false;  // the next cold frame draws the reattached rule
 };
 

@@ -12,6 +12,7 @@
 #include "server/ProcessActivity.h"
 #include "util/HeapUsage.h"
 #include "util/ContentHash.h"
+#include "platform/HostIntegration.h"
 #include "util/Log.h"
 #include "util/TextFileIO.h"
 
@@ -71,6 +72,35 @@ RemoteServer::RemoteServer(Config config)
             });
           },
   });
+  InstallBrowserForwarder();
+}
+
+void RemoteServer::InstallBrowserForwarder() {
+  // Only a daemon with a socket can be reached by the helper; serve-stdio (one
+  // connection, the tests) has nothing for it to connect to.
+  if (config_.socket_path.empty()) {
+    return;
+  }
+  const std::filesystem::path dir = config_.socket_path.parent_path();
+  const std::filesystem::path helper = remote::BrowserHelperPath(dir);
+  // A link to this executable, named so `main` knows to act as the helper: BROWSER
+  // is ONE program path that is given the URL (Claude Code spawns it with no
+  // shell, xdg-open's generic mode runs it as `$BROWSER "$url"`), so neither a
+  // subcommand nor a quoted script line fits it. Re-made at every start: an
+  // upgraded server is at another path.
+  std::error_code error;
+  const std::filesystem::path self = std::filesystem::read_symlink("/proc/self/exe", error);
+  if (error || self.empty()) {
+    return;
+  }
+  std::filesystem::remove(helper, error);
+  std::filesystem::create_symlink(self, helper, error);
+  if (error) {
+    util::Log("microide-server: cannot link the browser helper at " + helper.string() + ": " +
+                     error.message());
+    return;
+  }
+  terminals_->SetShellEnvironment({"BROWSER=" + helper.string(), "MICROIDE_SERVER_SOCKET_DIR=" + dir.string()});
 }
 
 void RemoteServer::WithPeer(std::uint64_t connection_id,
@@ -148,7 +178,7 @@ RemoteServer::Connection& RemoteServer::Accept(int read_fd, int write_fd) {
   InstallActivityHandlers(ref);
   ref.peer.OnDispatch([&ref](std::string_view method) {
     if (method != remote::method::kServerHello && method != remote::method::kServerStatus &&
-        method != remote::method::kServerLog) {
+        method != remote::method::kServerLog && method != remote::method::kTermOpenUrl) {
       ref.active.store(true, std::memory_order_relaxed);
     }
   });
@@ -390,6 +420,22 @@ void RemoteServer::InstallTerminalHandlers(Connection& connection) {
                    result["handle"] = util::JsonValue(static_cast<std::int64_t>(opened.handle));
                    result["credit_bytes"] =
                        util::JsonValue(static_cast<std::int64_t>(opened.credit_bytes));
+                   connection.peer.Reply(id, util::JsonValue(std::move(result)));
+                 });
+  peer.OnRequest(remote::method::kTermOpenUrl,
+                 [this, &connection](std::uint64_t id, const util::JsonValue& params) {
+                   const std::int64_t handle = params["handle"].AsInt(0);
+                   const std::string url = params["url"].IsString() ? params["url"].AsString() : std::string();
+                   // Only what the client's opener would take anyway: a web or mail
+                   // URL, bounded. A refusal here is the helper's exit status.
+                   if (handle <= 0 || !platform::IsOpenableExternalUrl(url)) {
+                     connection.peer.ReplyError(id, remote::kErrorInvalidParams,
+                                                "not a terminal and an http(s) URL");
+                     return;
+                   }
+                   util::JsonObject result;
+                   result["delivered"] = util::JsonValue(
+                       terminals_->RequestOpenUrl(static_cast<std::uint64_t>(handle), url));
                    connection.peer.Reply(id, util::JsonValue(std::move(result)));
                  });
   peer.OnRequest(remote::method::kTermAttach,

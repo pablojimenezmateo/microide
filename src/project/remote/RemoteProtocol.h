@@ -64,6 +64,9 @@ inline constexpr std::string_view kTermResize = "term/resize";
 inline constexpr std::string_view kTermClose = "term/close";
 inline constexpr std::string_view kTermDetach = "term/detach";
 inline constexpr std::string_view kTermAck = "term/ack";
+// {handle, url}: a program in host terminal `handle` asks the client to open
+// `url` (the BROWSER helper, `microide-server open-url`). Answers {delivered}.
+inline constexpr std::string_view kTermOpenUrl = "term/open-url";
 // The workspace tree (Phase 2b, § 6.2). tree/manifest {} -> TreeRows content frames
 // (id = the request) on the bulk lane, then, on the same lane so it cannot overtake
 // them, {manifest_id, rows, git}. Needs a hello with a root.

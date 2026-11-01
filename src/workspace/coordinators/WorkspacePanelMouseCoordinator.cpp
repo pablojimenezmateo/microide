@@ -747,18 +747,8 @@ PanelMouseCoordinator& WorkspaceShell::MakePanelMouseCoordinator() {
               },
           .open_external_url =
               [this](std::string_view url) {
-                // A host terminal's `localhost:3000` is the HOST's: forward it first.
-                if (glue_->remote_host_service != nullptr) {
-                  const TerminalPaneState* pane = context_.current_project_state.active_terminal_pane();
-                  const platform::ProcessLauncher& launcher =
-                      pane != nullptr && pane->launcher != nullptr
-                          ? *pane->launcher
-                          : context_.current_project_state.launcher();
-                  if (glue_->remote_host_service->OpenHostLocalUrl(launcher, url)) {
-                    return true;
-                  }
-                }
-                return MakeTerminalPanelService().OpenExternalUrl(url);
+                return MakeTerminalPanelService().OpenUrlForPane(
+                    context_.current_project_state.active_terminal_pane(), url);
               },
           .terminal_selection_position_for_point =
               [this](int x,

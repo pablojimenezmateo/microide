@@ -20,6 +20,7 @@ constexpr std::uint8_t kHasWorkingDirectory = 1u << 1;
 constexpr std::uint8_t kHasClipboard = 1u << 2;
 constexpr std::uint8_t kHasNotification = 1u << 3;
 constexpr std::uint8_t kHasLinks = 1u << 4;
+constexpr std::uint8_t kHasOpenUrl = 1u << 5;
 
 void PutRgba(std::string& out, const util::Rgba8& color) {
   out.push_back(static_cast<char>(color.r));
@@ -215,7 +216,8 @@ void EncodeTerminalHostFrame(std::string& out, const TerminalHostFrame& frame) {
                                   (frame.working_directory ? kHasWorkingDirectory : 0) |
                                   (frame.clipboard ? kHasClipboard : 0) |
                                   (frame.notification ? kHasNotification : 0) |
-                                  (frame.links.empty() ? 0 : kHasLinks)));
+                                  (frame.links.empty() ? 0 : kHasLinks) |
+                                  (frame.open_url ? kHasOpenUrl : 0)));
   for (const auto* field : {&frame.title, &frame.working_directory, &frame.clipboard}) {
     if (*field) {
       PutBytes(out, **field);
@@ -231,6 +233,9 @@ void EncodeTerminalHostFrame(std::string& out, const TerminalHostFrame& frame) {
       PutVarint(out, link.id);
       PutBytes(out, link.uri);
     }
+  }
+  if (frame.open_url) {
+    PutBytes(out, *frame.open_url);
   }
 }
 
@@ -343,6 +348,9 @@ std::optional<TerminalHostFrame> DecodeTerminalHostFrame(std::string_view bytes)
       link.id = static_cast<std::uint16_t>(id);
       link.uri = std::string(in.Bytes(kMaxHostTerminalTextBytes));
     }
+  }
+  if ((present & kHasOpenUrl) != 0) {
+    frame.open_url = std::string(in.Bytes(kMaxHostOpenUrlBytes));
   }
   if (in.failed() || !in.at_end()) {
     return std::nullopt;

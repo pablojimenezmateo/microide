@@ -26,6 +26,10 @@ class TerminalPanelService {
     std::function<void(std::string_view)> append_terminal_pending_input;
     std::function<std::optional<TerminalLinkHit>(float, float)> terminal_link_at_point;
     std::function<bool(std::string_view)> open_external_url;
+    // A host terminal's `localhost:3000` is the HOST's: forward it and open the
+    // forward (RemoteHostService::OpenHostLocalUrl). False when the launcher is
+    // local or the URL is not a loopback one; unset in a build without remotes.
+    std::function<bool(const platform::ProcessLauncher&, std::string_view)> open_host_local_url;
     std::function<void()> sync_primary_selection_with_terminal_selection;
     // Build and start a pane for the current project (its launcher, `terminal.shell`,
     // scrollback cap and wake channel). Null when the project has no root or the
@@ -58,6 +62,11 @@ class TerminalPanelService {
   void AppendTerminalPendingInput(std::string_view input);
   std::optional<TerminalLinkHit> TerminalLinkAtPoint(float x, float y) const;
   bool OpenExternalUrl(std::string_view url) const;
+  // Open `url` on behalf of terminal `pane` (null = the project's own launcher):
+  // a clicked link, or a URL a host program asked for through $BROWSER
+  // (TerminalSession::ConsumeOpenUrlRequest). A loopback URL from a host
+  // terminal is forwarded first; anything else goes to the desktop opener.
+  bool OpenUrlForPane(const TerminalPaneState* pane, std::string_view url) const;
   void SyncPrimarySelectionWithTerminalSelection();
 
   // --- strip tabs -----------------------------------------------------------

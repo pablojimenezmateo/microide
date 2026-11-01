@@ -28,6 +28,10 @@ std::string_view ServerInstallScript();
 std::string_view ServerInstallDirectory();
 std::filesystem::path ServerSocketPath(const std::filesystem::path& dir);
 std::filesystem::path ServerLogPath(const std::filesystem::path& dir);
+// The BROWSER the server gives its terminals: a link to the server executable
+// named `microide-browser`, which acts as `microide-server open-url`.
+std::filesystem::path BrowserHelperPath(const std::filesystem::path& dir);
+inline constexpr std::string_view kBrowserHelperName = "microide-browser";
 
 // Create `dir` (and missing parents, mode 0700) and verify it the way tmux verifies
 // its socket directory, on every bind: every component is checked WITHOUT following

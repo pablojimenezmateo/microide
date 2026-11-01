@@ -157,9 +157,15 @@ TerminalTable::OpenResult TerminalTable::Open(std::uint64_t connection, OpenRequ
     Notify();
   });
   terminal->session.SetMaxScrollbackLines(request.scrollback_lines);
+  std::vector<std::string> environment;
+  {
+    std::lock_guard lock(mutex_);
+    environment = shell_environment_;
+  }
+  environment.push_back("MICROIDE_TERMINAL_HANDLE=" + std::to_string(terminal->handle));
   // This process IS the host: the shell runs here, through the local launcher.
   if (!terminal->session.StartArgv(platform::LocalProcessLauncher(), request.cwd, request.command,
-                                   std::move(request.shell))) {
+                                   std::move(request.shell), {}, std::move(environment))) {
     terminal->session.Stop();
     return OpenResult{.error = "could not start a shell in " + request.cwd};
   }
@@ -172,6 +178,33 @@ TerminalTable::OpenResult TerminalTable::Open(std::uint64_t connection, OpenRequ
   }
   Notify();
   return OpenResult{.handle = handle, .credit_bytes = credit};
+}
+
+void TerminalTable::SetShellEnvironment(std::vector<std::string> environment) {
+  std::lock_guard lock(mutex_);
+  shell_environment_ = std::move(environment);
+}
+
+bool TerminalTable::RequestOpenUrl(std::uint64_t handle, std::string url) {
+  {
+    std::lock_guard lock(mutex_);
+    const auto it = terminals_.find(handle);
+    if (it == terminals_.end() || it->second->clients.empty()) {
+      return false;
+    }
+    // Two machines on one terminal: the one whose user typed the command opens
+    // the page, not both. A client that never typed sorts first, so with one
+    // client attached it is that one.
+    Client* target = &it->second->clients.front();
+    for (Client& client : it->second->clients) {
+      if (client.written_at > target->written_at) {
+        target = &client;
+      }
+    }
+    target->open_url = std::move(url);
+  }
+  Notify();
+  return true;
 }
 
 bool TerminalTable::Attach(std::uint64_t connection, std::uint64_t handle,
@@ -535,6 +568,8 @@ void TerminalTable::Run() {
       }
       frame.clipboard = std::move(client->clipboard);
       frame.notification = std::move(client->notification);
+      frame.open_url = std::move(client->open_url);
+      client->open_url.reset();
       client->bell = false;
       client->clipboard.reset();
       client->notification.reset();

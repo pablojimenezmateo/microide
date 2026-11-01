@@ -54,6 +54,10 @@ std::filesystem::path ServerSocketPath(const std::filesystem::path& dir) {
   return dir / "server.sock";
 }
 
+std::filesystem::path BrowserHelperPath(const std::filesystem::path& dir) {
+  return dir / std::string(kBrowserHelperName);
+}
+
 std::filesystem::path ServerLogPath(const std::filesystem::path& dir) {
   return dir / "server.log";
 }

@@ -16,6 +16,7 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -129,6 +130,41 @@ void TestHostTerminalRunsTheShellOnTheHost() {
   TypeLine(session, "exit");
   Expect(WaitUntil([&] { return !session.running(); }, std::chrono::seconds(10)),
          "the shell exiting on the host ends the terminal");
+  session.Stop();
+}
+
+// A program in a host terminal that opens a URL through $BROWSER (Claude Code's
+// login, `gh auth login --web`, xdg-open on a host with no display) reaches the
+// EDITOR, which opens it on the user's machine: the server gives its shells a
+// BROWSER that hands the URL to the client attached to that terminal, out of
+// band -- printing the same text does nothing. A URL the opener would refuse is
+// refused at the host, with a failing exit so the program prints it instead.
+void TestHostTerminalBrowserOpensOnTheClient() {
+  ShortServerDir dir;
+  StartServer(dir);
+  const std::filesystem::path host = dir.scratch() / "host" / "project";
+  const std::filesystem::path mirror = dir.scratch() / "mirror" / "project";
+  std::filesystem::create_directories(host);
+  std::filesystem::create_directories(mirror);
+  auto client = Connect(dir);
+  const remote::RemoteProcessLauncher launcher(client, remote::RemotePathMap(mirror, host),
+                                               {.host_paths_readable_locally = true});
+  TerminalSession session;
+  Expect(session.Start(launcher, mirror, {}, "sh"), "the host terminal starts");
+  TypeLine(session, "\"$BROWSER\" 'https://example.com/login?code=1&x=y'; echo OPENED=$?");
+  Expect(WaitForText(session, "OPENED=0"), [&] { return "the helper reports delivery:\n" + ScreenText(session); });
+  std::optional<std::string> requested;
+  Expect(WaitUntil([&] { return (requested = session.ConsumeOpenUrlRequest()).has_value(); },
+                   std::chrono::seconds(10), std::chrono::milliseconds(5)),
+         "the client receives the request");
+  Expect(requested == "https://example.com/login?code=1&x=y", "exactly the URL: " + requested.value_or(""));
+
+  TypeLine(session, "\"$BROWSER\" 'javascript:alert(1)'; echo REFUSED=$?");
+  Expect(WaitForText(session, "REFUSED=1"), [&] { return "a script URL is refused:\n" + ScreenText(session); });
+  TypeLine(session, "printf 'https://example.com/printed\\n'; echo PRINTED");
+  Expect(WaitForText(session, "PRINTED"), "printed text arrives");
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  Expect(!session.ConsumeOpenUrlRequest().has_value(), "neither the refusal nor printed text opens anything");
   session.Stop();
 }
 
@@ -929,6 +965,7 @@ void RegisterRemoteTerminalTests(std::vector<TestCase>& tests) {
           TestADetachedHostTerminalIsReattachedByIdentity);
   AddTest(tests, "RemoteTerminal/APendingHostTerminalStartsOnceConnected",
           TestAPendingHostTerminalStartsOnceConnected);
+  AddTest(tests, "RemoteTerminal/HostTerminalBrowserOpensOnTheClient", TestHostTerminalBrowserOpensOnTheClient);
   AddTest(tests, "RemoteTerminal/HostTerminalRunsTheShellOnTheHost",
           TestHostTerminalRunsTheShellOnTheHost);
   AddTest(tests, "RemoteTerminal/HostTerminalSurvivesADroppedConnection",
