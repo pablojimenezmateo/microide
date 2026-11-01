@@ -677,6 +677,31 @@ def flow_search_query_recovery(app: q.App) -> None:
     step(app, "open the recovered result")
 
 
+def flow_maximized_terminal_survives(app: q.App) -> None:
+    """A maximized terminal stays maximized through what used to restore it a
+    frame later: a restart (the restored session put the keyboard in the editor,
+    and frame prep's focus rule un-maximized the panel) -- with a file open, the
+    condition that made it "sometimes". The sidebar fills the band beside the
+    editor tab strip (no gap above the tree)."""
+    assert app.project is not None
+    open_file(app, "src/scheduler.cpp")
+    surfaces = app.ui()["surfaces"]
+    if surfaces.get("sidebar") and surfaces.get("tabStrip"):
+        app.expect(surfaces["sidebar"][1] == surfaces["tabStrip"][1],
+                   f"the sidebar starts level with the editor tab strip ({surfaces['sidebar']} / {surfaces['tabStrip']})")
+    app.send("panel-maximize")
+    step(app, "maximize the terminal", 0.4)
+    app.expect(app.ui()["panel"]["maximized"], "panel-maximize maximizes the terminal")
+    app.restart()
+    step(app, "after a restart", 1.0)
+    panel = app.ui()["panel"]
+    app.expect(panel["maximized"], f"the terminal comes back maximized and stays so ({panel})")
+    app.expect(app.ui()["focus"] == "panel", f"holding the keyboard ({app.ui()['focus']})")
+    app.send("panel-maximize")
+    step(app, "restore", 0.4)
+    app.expect(not app.ui()["panel"]["maximized"], "and restores on request")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "wb-quick-open": flow_quick_open,
     "wb-command-palette": flow_command_palette,
@@ -693,4 +718,5 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "wb-layouts": flow_layouts,
     "wb-zoom-chrome": flow_zoom_and_chrome_toggles,
     "wb-help": flow_help,
+    "wb-maximized-terminal-survives": flow_maximized_terminal_survives,
 }

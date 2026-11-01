@@ -1,5 +1,13 @@
 # MicroIDE Known Tech Debt
 
+Reviewed 2026-11-01 (§ TD-2026-11-01-427: results finishing after a project
+switch acted on the front project -- a maximized terminal lost on restore and
+switch, remote rows naming only the host, git operations and commits landing in
+the wrong project (a commit cleared the other project's draft); host programs'
+`$BROWSER` now opens on the client, ports are attributed to their project, and
+the sidebar fills the band beside the tab strip. Open: PatchApplyService,
+background projects' terminals, the debug pane's gap).
+
 Reviewed 2026-10-29 (§ TD-2026-10-29-425 for the terminal-conformance pass: every
 capability the xterm-256color terminfo entry advertises, checked against the
 emulator -- DEC Special Graphics (ncurses boxes drew as `lqqqk`), REP, IRM, SU/SD,
@@ -471,6 +479,44 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-11-01-427 — results that finish after a project switch: the cases this pass left. [OPEN — items 1-4]
+
+The 2026-11-01 pass (commits e6e7cc08b through 3507aaa0c) found one shape of bug
+in five places: work dispatched in one project and finished, or reported, after
+the user had brought another project to the front acted on the FRONT project.
+Fixed: the maximized terminal lost on restore and on switching back (tab
+hydration took the keyboard into an editor the panel covered); "N files changed
+on host" and the conflict, port and reattach rows naming only the host, with
+Show acting on the front project; a push/pull/branch switch toasting, refreshing
+and reloading buffers in the wrong project while its own project missed the
+pull's rewrites; a commit whose completion found its state by ADDRESS and so
+cleared the other project's commit draft. The rule now: a completion asks
+whether its project is still in front (`is_in_front`), names the project when it
+is not, and marks it `catch_up_on_activate`.
+
+Left:
+
+1. **PatchApplyService** completes the same way (refresh, clean-tab reload and
+   compare refresh for the front project). Its window is a `git apply`'s
+   milliseconds from a compare-tab key, so it was not converted; the same three
+   callbacks would do it.
+2. **A background project's terminals are not polled.** `ConsumeTerminalSession
+   Updates` walks the front project's panes only, so an OSC 9 "agent needs
+   input", a bell, or a host program's `$BROWSER` request in a background
+   project waits until that project is activated -- a `claude` login started in
+   project B and left there opens its page only when B comes back. Not
+   misattributed, just late. Polling every open project's panes (their wake
+   flags are cheap) and badging the project tab is the shape.
+3. **A project with no editor tab open still loses nothing**, but
+   `SyncPanelMaximizedWithFocus` remains level-triggered: any future path that
+   sets focus to the editor while the panel is maximized restores it on the next
+   frame. The two tests (`EveryProjectSwitchKeepsAMaximizedPanel`,
+   `TerminalLayoutRevivesAcrossSessions`) guard the known paths only.
+4. **The right debug pane keeps the gap the sidebar lost**: it still starts
+   under the editor tab strip. Whether it should fill the band too (VS Code's
+   secondary side bar does) is a product call; the geometry change is the same
+   three lines in `ComputeLayout` plus its handle and damage rects.
 
 ### TD-2026-10-30-426 — the 2026-10-29/30 bug sweep: what it found, fixed and ran. [OPEN — a soft-wrap width cross-check abort and a 3-pixel menu finding, both narrowed, not fixed]
 
