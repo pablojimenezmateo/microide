@@ -112,6 +112,22 @@ void TestWorkspaceShellTerminalLayoutRevivesAcrossSessions() {
   Expect(WorkspaceShellTestAccess::PanelContent(restored) ==
              WorkspaceShell::PanelContentKind::Terminal,
          "showing the terminals");
+  // Regression: the restored session put the keyboard in the editor, and the
+  // first frame's SyncPanelMaximizedWithFocus read "the editor took focus" and
+  // un-maximized the panel. The state above was right; what the user saw was not.
+  // A maximized panel has no editor on screen to hold the keyboard, so it is the
+  // panel's.
+  Expect(WorkspaceShellTestAccess::FocusIsPanel(restored),
+         "a maximized panel comes back holding the keyboard");
+  {
+    SoftwareCanvas canvas(1280, 720);
+    WorkspaceShellTestAccess::SetWindowSize(restored, 1280, 720);
+    WorkspaceShellTestAccess::RenderFrameWithRenderer(restored, canvas.renderer());
+    WorkspaceShellTestAccess::RenderFrameWithRenderer(restored, canvas.renderer());
+    Expect(WorkspaceShellTestAccess::PanelMaximized(restored) &&
+               WorkspaceShellTestAccess::CurrentLayout(restored).panel_maximized,
+           "the restored panel is still maximized after its first frames");
+  }
 
   // Off: the project opens with the one default terminal.
   Expect(WorkspaceShellTestAccess::SetSettingValue(restored, "terminal.restore_sessions", "false"),
@@ -124,6 +140,47 @@ void TestWorkspaceShellTerminalLayoutRevivesAcrossSessions() {
   Expect(WorkspaceShellTestAccess::TerminalTabCount(plain) == 1 &&
              WorkspaceShellTestAccess::TerminalPaneCount(plain) == 1,
          "terminal.restore_sessions off opens the default terminal only");
+}
+
+// Same root cause as the restore above, on the in-memory path: re-activating a
+// project hydrates its active editor tab through `Activate`, which took the
+// keyboard into the editor -- collapsed under the maximized panel -- and the next
+// frame restored the panel. Switching away and back must leave the project as it
+// was: maximized, with the keyboard in the panel.
+void TestWorkspaceShellProjectSwitchKeepsAMaximizedPanel() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path alpha = temp_dir.path() / "alpha";
+  const std::filesystem::path beta = temp_dir.path() / "beta";
+  WriteFile(alpha / "README.md", "alpha\n");
+  WriteFile(beta / "README.md", "beta\n");
+  const std::filesystem::path home = temp_dir.path() / "home";
+  std::filesystem::create_directories(home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(temp_dir.path() / "xdg-state-home",
+                                         temp_dir.path() / "xdg-config-home");
+  using ActionId = WorkspaceShell::ActionId;
+
+  WorkspaceShell shell;
+  SoftwareCanvas canvas(1280, 720);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  const auto frame = [&] { WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer()); };
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, alpha, true, false), "open alpha");
+  Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) > 0,
+         "alpha has an editor tab for re-activation to hydrate");
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::PanelToggleMaximized, {}),
+         "maximize alpha's panel");
+  frame();
+  Expect(WorkspaceShellTestAccess::PanelMaximized(shell), "alpha's panel is maximized");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, beta, true, false), "open beta");
+  frame();
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0, false), "back to alpha");
+  Expect(WorkspaceShellTestAccess::FocusIsPanel(shell),
+         "re-activating alpha leaves the keyboard in its maximized panel");
+  frame();
+  frame();
+  Expect(WorkspaceShellTestAccess::PanelMaximized(shell) &&
+             WorkspaceShellTestAccess::CurrentLayout(shell).panel_maximized,
+         "alpha's panel is still maximized after the switch back");
 }
 
 void TestWorkspaceShellRestoreSessionPreservesBranchCompareState() {
@@ -3410,6 +3467,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoredProjectTabBadgeColorsHydrateOnStartup);
   AddTest(tests, "WorkspaceShell/TerminalLayoutRevivesAcrossSessions",
           TestWorkspaceShellTerminalLayoutRevivesAcrossSessions);
+  AddTest(tests, "WorkspaceShell/ProjectSwitchKeepsAMaximizedPanel",
+          TestWorkspaceShellProjectSwitchKeepsAMaximizedPanel);
   AddTest(tests, "WorkspaceShell/ShutdownPreservesDistinctWorkspaceProjectRoots",
           TestWorkspaceShellShutdownPreservesDistinctWorkspaceProjectRoots);
 }

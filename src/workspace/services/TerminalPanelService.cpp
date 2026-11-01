@@ -118,6 +118,13 @@ bool TerminalPanelService::PushTerminalTab(std::unique_ptr<TerminalPaneState> pa
 void TerminalPanelService::OpenTerminalsForProjectInit() {
   TerminalLayoutRecord layout = std::move(state_.terminal_layout_to_revive);
   state_.terminal_layout_to_revive = {};
+  // The project's terminal is shown, but the keyboard starts in the editor, as in
+  // VS Code: the first Ctrl+N or typed letter of a session is not the shell's
+  // (TD-2026-10-16-348). Unless the panel comes back MAXIMIZED: then there is no
+  // editor on screen to hold the keyboard, and leaving it there made the first
+  // frame's SyncPanelMaximizedWithFocus read "the editor took focus" and restore
+  // the panel the session had just revived maximized.
+  const bool focus_panel = state_.panel.maximized;
   if (!layout.empty() && (!operations_.revive_terminals || operations_.revive_terminals())) {
     for (TerminalTabRecord& record : layout.tabs) {
       std::unique_ptr<TerminalTabState> tab;
@@ -157,26 +164,23 @@ void TerminalPanelService::OpenTerminalsForProjectInit() {
     }
     if (!state_.terminal_tabs.empty()) {
       state_.active_terminal_tab_index = std::min(layout.active_tab, state_.terminal_tabs.size() - 1);
-      ShowTerminalContent(/*focus=*/false);
+      ShowTerminalContent(focus_panel);
       operations_.note_layout_inputs_changed();
       return;
     }
   }
-  // The project's terminal is shown, but the keyboard starts in the editor, as in
-  // VS Code: the first Ctrl+N or typed letter of a session is not the shell's
-  // (TD-2026-10-16-348).
   // Test mode stands in for shells this machine starts only: a remote project's
   // terminal is a host terminal (on the test's fake host) in tests as well.
   if (!terminal::UsePlaceholderTerminalsForTesting() ||
       terminal::HostTerminalsFor(state_.launcher()) != nullptr) {
-    OpenTerminal({}, /*focus_terminal=*/false, false);
-    ShowTerminalContent(/*focus=*/false);
+    OpenTerminal({}, focus_panel, false);
+    ShowTerminalContent(focus_panel);
     return;
   }
   // Test mode: a bare, unstarted pane — no real shell spawn.
   state_.terminal_tabs.push_back(MakeTerminalTab(std::make_unique<TerminalPaneState>()));
   state_.active_terminal_tab_index = state_.terminal_tabs.size() - 1;
-  ShowTerminalContent(/*focus=*/false);
+  ShowTerminalContent(focus_panel);
 }
 
 TerminalLayoutRecord TerminalPanelService::CaptureLayout(const ProjectWorkspaceState& state) {

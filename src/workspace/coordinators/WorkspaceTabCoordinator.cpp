@@ -500,7 +500,16 @@ bool TabCoordinator::ActivateCurrentTabAfterStateLoad() {
 
   const std::size_t active_index = std::min(state_.focused_group().active_tab_index, state_.focused_group().open_tabs.size() - 1);
   state_.focused_group().active_tab_index = state_.focused_group().open_tabs.size();
+  // Hydrating the restored tab is not the user choosing the editor: the keyboard
+  // stays where the loaded state put it (the session restore's editor default,
+  // a revived maximized panel, or the surface a re-activated project was left
+  // on). `Activate` takes focus because a click or a key does; here that moved
+  // the keyboard into an editor collapsed under a maximized panel, and the next
+  // frame's SyncPanelMaximizedWithFocus restored the panel the user had left
+  // maximized -- on every session restore and every project switch back.
+  const FocusTarget loaded_focus = state_.surface.focus;
   Activate(active_index);
+  state_.surface.focus = loaded_focus;
   return state_.focused_group().active_tab_index == active_index;
 }
 
