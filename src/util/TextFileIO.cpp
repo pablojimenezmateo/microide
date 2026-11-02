@@ -1,5 +1,7 @@
 #include "util/TextFileIO.h"
 
+#include <cctype>
+#include <cerrno>
 #include <chrono>
 
 #include <functional>
@@ -358,9 +360,54 @@ std::filesystem::path ResolveSymlinkTarget(const std::filesystem::path& path) {
   return path;  // loop guard tripped: keep the link node rather than chase a cycle
 }
 
-bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text) {
-  if (path.empty()) {
+std::string DescribeWriteError(const std::error_code& error) {
+  if (!error) {
+    return {};
+  }
+  if (error.category() == std::generic_category() || error.category() == std::system_category()) {
+    switch (error.value()) {
+      case EACCES:
+      case EPERM:
+        return "permission denied";
+      case ENOSPC:
+        return "no space left on the device";
+      case EDQUOT:
+        return "the disk quota is exceeded";
+      case EROFS:
+        return "the file system is read-only";
+      case ENOENT:
+        return "its folder no longer exists";
+      case ENOTDIR:
+        return "a part of its path is a file, not a folder";
+      case EISDIR:
+        return "a folder is in the way";
+      case ENAMETOOLONG:
+        return "the name is too long";
+      case EIO:
+        return "an input/output error";
+      case EXDEV:
+        return "it is on another file system";
+      default:
+        break;
+    }
+  }
+  std::string text = error.message();
+  if (!text.empty()) {
+    text[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(text[0])));
+  }
+  return text;
+}
+
+bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text,
+                             std::error_code* error_out) {
+  const auto fail = [error_out](std::error_code why) {
+    if (error_out != nullptr) {
+      *error_out = why;
+    }
     return false;
+  };
+  if (path.empty()) {
+    return fail(std::make_error_code(std::errc::invalid_argument));
   }
 
   // Overwrite the symlink's target, not the link node, so saving a symlinked file
@@ -375,7 +422,7 @@ bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view
   if (!parent.empty()) {
     std::filesystem::create_directories(parent, error);
     if (error) {
-      return false;
+      return fail(error);
     }
   }
 
@@ -397,17 +444,18 @@ bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view
   // saved bytes survive a crash once the rename lands.
   const std::span<const std::byte> bytes(reinterpret_cast<const std::byte*>(text.data()),
                                          text.size());
-  if (!util::WriteFileBytesDurable(temp_path, bytes)) {
+  std::error_code why;
+  if (!util::WriteFileBytesDurable(temp_path, bytes, &why)) {
     std::filesystem::remove(temp_path, error);
-    return false;
+    return fail(why);
   }
 
   // Carry the original mode/owner onto the temp before it takes the target's place.
   ApplyFilePermissions(temp_path, permissions);
 
-  if (!util::RenameReplacing(temp_path, target)) {
+  if (!util::RenameReplacing(temp_path, target, &why)) {
     std::filesystem::remove(temp_path, error);
-    return false;
+    return fail(why);
   }
   return true;
 }

@@ -112,8 +112,12 @@ ProjectReplaceOutcome RunProjectReplace(const std::filesystem::path& root,
   for (auto& buffered : pending) {
     // Atomic temp-file + rename: a failed write leaves the original intact. Keep
     // going and collect failures rather than leaving a partial half-applied set.
-    if (!gate.WriteText(buffered.absolute_path, buffered.content).ok) {
-      ++outcome.failed_write_count;
+    if (const project::FileWriteGate::Result written = gate.WriteText(buffered.absolute_path, buffered.content);
+        !written.ok) {
+      if (outcome.failed_write_count++ == 0) {
+        outcome.first_write_failure = buffered.relative_path.generic_string() + ": " +
+                                      util::DescribeWriteError(written.error);
+      }
       continue;
     }
     outcome.written.push_back(ProjectReplaceOutcome::WrittenFile{
@@ -861,7 +865,8 @@ void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
     const std::size_t attempted = outcome.written.size() + outcome.failed_write_count;
     ps.error = "Replace-all wrote " + std::to_string(outcome.written.size()) + " of " +
                std::to_string(attempted) + " files; " + std::to_string(outcome.failed_write_count) +
-               " could not be written.";
+               " could not be written (" + outcome.first_write_failure +
+               (outcome.failed_write_count > 1 ? ", and others" : "") + ").";
     RequestSidebarRedraw();
   }
 }

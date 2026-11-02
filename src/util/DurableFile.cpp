@@ -20,6 +20,9 @@ int OpenForBinaryWrite(const std::filesystem::path& path) {
   return ::open(path.c_str(), O_CREAT | O_TRUNC | O_WRONLY | O_CLOEXEC, 0644);
 }
 
+// errno as an error_code; a short write that set none (write returning 0) is EIO.
+std::error_code LastError() { return std::error_code(errno != 0 ? errno : EIO, std::generic_category()); }
+
 bool WriteAll(int fd, std::span<const std::byte> bytes) {
   std::size_t offset = 0;
   while (offset < bytes.size()) {
@@ -30,6 +33,9 @@ bool WriteAll(int fd, std::span<const std::byte> bytes) {
       continue;  // interrupted by a signal before any byte was written; retry
     }
     if (wrote <= 0) {
+      if (wrote == 0) {
+        errno = EIO;
+      }
       return false;
     }
     offset += static_cast<std::size_t>(wrote);
@@ -41,24 +47,39 @@ bool FsyncFile(int fd) {
   return fsync(fd) == 0;
 }
 
-void CloseFile(int fd) {
-  close(fd);
+// close's own result: on NFS and some FUSE filesystems a deferred write error
+// (ENOSPC, EDQUOT, EIO) is reported only here.
+bool CloseFile(int fd) {
+  return close(fd) == 0;
 }
 
 }  // namespace
 
-bool WriteFileBytesDurable(const std::filesystem::path& path, std::span<const std::byte> bytes) {
+bool WriteFileBytesDurable(const std::filesystem::path& path, std::span<const std::byte> bytes,
+                           std::error_code* error) {
+  const auto fail = [error] {
+    if (error != nullptr) {
+      *error = LastError();
+    }
+    return false;
+  };
   const int fd = OpenForBinaryWrite(path);
   if (fd < 0) {
+    return fail();
+  }
+  if (!WriteAll(fd, bytes) || !FsyncFile(fd)) {
+    const std::error_code why = LastError();  // before close can overwrite errno
+    (void)CloseFile(fd);
+    if (error != nullptr) {
+      *error = why;
+    }
     return false;
   }
-  const bool write_ok = WriteAll(fd, bytes);
-  const bool flush_ok = write_ok && FsyncFile(fd);
-  CloseFile(fd);
-  return write_ok && flush_ok;
+  return CloseFile(fd) || fail();
 }
 
-bool RenameReplacing(const std::filesystem::path& from, const std::filesystem::path& to) {
+bool RenameReplacing(const std::filesystem::path& from, const std::filesystem::path& to,
+                     std::error_code* error_out) {
   // rename already atomically replaces a regular-file destination, so a failure is
   // something other than "destination exists" (a directory, a cross-device link, a
   // permission or I/O error, an invalid source). Removing `to` cannot help any of
@@ -66,6 +87,9 @@ bool RenameReplacing(const std::filesystem::path& from, const std::filesystem::p
   // surfaced instead.
   std::error_code error;
   std::filesystem::rename(from, to, error);
+  if (error && error_out != nullptr) {
+    *error_out = error;
+  }
   return !error;
 }
 

@@ -12,6 +12,7 @@
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 #include "platform/FileIndexWatcher.h"
 
+#include <unistd.h>
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -8129,6 +8130,34 @@ void TestWorkspaceShellReplaceAllAbortsWithFeedbackPastAggregateCap() {
          "an aborted replace-all must not have written any file");
 }
 
+// A replace-all some files of which cannot be written names the first and why:
+// "1 could not be written" alone left the user to find which, and the cause.
+void TestWorkspaceShellReplaceAllNamesAFileItCouldNotWrite() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "a.txt", "needle\n");
+  WriteFile(root / "locked" / "b.txt", "needle\n");
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "open the project");
+  Expect(WaitForFileIndexPath(shell, std::filesystem::path("locked/b.txt"), true, std::chrono::milliseconds(1000)),
+         "indexed");
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "needle", false);
+  Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)), "search completes");
+  std::filesystem::permissions(root / "locked",
+                               std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec);
+  if (::access((root / "locked").c_str(), W_OK) == 0) {
+    std::filesystem::permissions(root / "locked", std::filesystem::perms::owner_all);
+    return;  // root writes anything
+  }
+  WorkspaceShellTestAccess::ReplaceAllProjectSearchMatches(shell);
+  std::filesystem::permissions(root / "locked", std::filesystem::perms::owner_all);
+  const std::string error = WorkspaceShellTestAccess::ProjectSearchError(shell);
+  Expect(error.find("1 could not be written (locked/b.txt: permission denied)") != std::string::npos,
+         "the error names the file and the cause: " + error);
+  Expect(ReadFile(root / "a.txt") != "needle\n" && ReadFile(root / "locked" / "b.txt") == "needle\n",
+         "the writable file is replaced, the other untouched");
+}
+
 // A file open with unsaved edits is replaced IN ITS BUFFER (VS Code applies a
 // replace-all to the editor): one undoable edit that leaves it dirty, the disk not
 // written beneath it, and the rest of the project replaced as usual. It used to
@@ -9072,6 +9101,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSearchRerunOnAFileChangeKeepsTheListAndSelection);
   AddTest(tests, "WorkspaceShell/InjectedFileIndexBatchUpdatesFinderAndSearch",
           TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch);
+  AddTest(tests, "WorkspaceShell/ReplaceAllNamesAFileItCouldNotWrite",
+          TestWorkspaceShellReplaceAllNamesAFileItCouldNotWrite);
   AddTest(tests, "WorkspaceShell/ReplaceAllAbortsWithFeedbackPastAggregateCap",
           TestWorkspaceShellReplaceAllAbortsWithFeedbackPastAggregateCap);
   AddTest(tests, "WorkspaceShell/ReplaceAllReplacesInADirtyOpenBuffer",

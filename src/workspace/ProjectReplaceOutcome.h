@@ -34,6 +34,9 @@ struct ProjectReplaceOutcome {
   std::string blocked_relative_path;
   std::vector<WrittenFile> written;
   std::size_t failed_write_count = 0;
+  // The first file that could not be written and why ("src/a.txt: permission
+  // denied"): a count alone left nothing to fix.
+  std::string first_write_failure;
 
   // Guards: the apply is dropped when the project was switched away (root mismatch)
   // or a newer replace-all superseded this one (generation mismatch). The on-disk

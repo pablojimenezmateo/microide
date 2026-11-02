@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace microide::util {
@@ -33,7 +34,14 @@ inline constexpr std::uintmax_t kMaxSearchFileBytes = 32ull * 1024 * 1024;
 bool IsRegularFileFollowingSymlinks(const std::filesystem::path& path);
 
 std::optional<std::string> ReadTextFile(const std::filesystem::path& path);
-[[nodiscard]] bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text);
+// On failure `*error` (when given) holds the step's errno: creating the parent, the
+// staging file's write, fsync or close, or the rename into place.
+[[nodiscard]] bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text,
+                                           std::error_code* error = nullptr);
+
+// A write failure in the words a save's error row uses ("permission denied",
+// "no space left on the device"); empty for no error.
+std::string DescribeWriteError(const std::error_code& error);
 
 // Resolve a symlink chain to the real file an atomic temp+rename should target, so a
 // write preserves the link instead of replacing it with a fresh regular file. Follows

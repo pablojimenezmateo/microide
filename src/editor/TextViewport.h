@@ -155,7 +155,8 @@ class TextViewport {
   // answer is per project, and a viewport that HELD a gate lost it on every path
   // that replaces a viewport wholesale (a reload, the LSP's scratch view), then
   // wrote the wrong place while reporting success (TD-2026-09-29-308).
-  [[nodiscard]] bool Save(project::FileWriteGate& gate);
+  // On failure `*error` (when given) is the gate's reason.
+  [[nodiscard]] bool Save(project::FileWriteGate& gate, std::error_code* error = nullptr);
   // Save-time normalization knobs. When set, `Save()` applies these transforms
   // to the in-memory line buffer (recorded as undo) before the file is
   // serialized. Defaults are off; callers should configure them from

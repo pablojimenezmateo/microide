@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <system_error>
 #include <optional>
 #include <span>
 
@@ -16,12 +17,16 @@ namespace microide::util {
 // the bytes survive a crash/power-loss once this returns true. It does NOT fsync
 // the parent directory — callers that need the directory entry itself to be durable
 // must do that separately. (Intentionally omitted on the document-save hot path.)
-bool WriteFileBytesDurable(const std::filesystem::path& path, std::span<const std::byte> bytes);
+// On failure `*error` (when given) says why: the open's, write's, fsync's or
+// close's errno -- ENOSPC and EDQUOT can surface at any of the last three.
+bool WriteFileBytesDurable(const std::filesystem::path& path, std::span<const std::byte> bytes,
+                           std::error_code* error = nullptr);
 
 // Atomically replace `to` with `from` via a single rename, which already clobbers a
 // regular-file destination atomically; a failure is surfaced as-is rather than
-// papered over with a destructive remove+retry. Returns success.
-bool RenameReplacing(const std::filesystem::path& from, const std::filesystem::path& to);
+// papered over with a destructive remove+retry. Returns success; `*error` says why not.
+bool RenameReplacing(const std::filesystem::path& from, const std::filesystem::path& to,
+                     std::error_code* error = nullptr);
 
 // Marks a file as an in-flight atomic-write staging temp. Kept distinctive (rather
 // than a bare ".tmp") because ordinary project files are called things like

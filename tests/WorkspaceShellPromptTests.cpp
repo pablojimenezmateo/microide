@@ -9,6 +9,8 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+
+#include <unistd.h>
 #include <optional>
 #include <string>
 #include <thread>
@@ -255,6 +257,38 @@ void TestWorkspaceShellSavingAReadOnlyFileAsksFirst() {
          "Save As (no ellipsis needed) takes the banner down and asks for a path: " +
              outcome.error);
   std::filesystem::permissions(source, std::filesystem::perms::owner_all);
+}
+
+// A save the file system refuses (here: a folder the user cannot write) says why
+// in its error row; it used to read "Failed to save notes.txt" and nothing more.
+void TestWorkspaceShellAFailedSaveSaysWhy() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path folder = root / "locked";
+  std::filesystem::create_directories(folder);
+  const std::filesystem::path source = folder / "notes.txt";
+  WriteFile(source, "base text\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("edited ");
+  std::filesystem::permissions(folder, std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec);
+  if (::access(folder.c_str(), W_OK) == 0) {
+    std::filesystem::permissions(folder, std::filesystem::perms::owner_all);
+    return;  // root writes anything
+  }
+  const auto outcome = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "save");
+  std::filesystem::permissions(folder, std::filesystem::perms::owner_all);
+  Expect(!outcome.ok, "the save fails");
+  bool said = false;
+  std::string rows;
+  for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+    rows += " [" + row.message + "]";
+    said = said || row.message == "Failed to save notes.txt: permission denied";
+  }
+  Expect(said, "its row says why:" + rows);
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty() && ReadFile(source) == "base text\n",
+         "the edit is kept, the file untouched");
 }
 
 // `banner-action` is the headless route to the changed-on-disk banner: a refused
@@ -1588,6 +1622,7 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellDeleteClosesBackgroundCompareAndMergeTabs);
   AddTest(tests, "WorkspaceShell/ClosingNonActiveDirtyTabDoesNotStrandFocus",
           TestWorkspaceShellClosingNonActiveDirtyTabDoesNotStrandFocus);
+  AddTest(tests, "WorkspaceShell/AFailedSaveSaysWhy", TestWorkspaceShellAFailedSaveSaysWhy);
   AddTest(tests, "WorkspaceShell/SavingAReadOnlyFileAsksFirst",
           TestWorkspaceShellSavingAReadOnlyFileAsksFirst);
   AddTest(tests, "WorkspaceShell/DirtyPromptSaveRefusesToClobberAnExternalChange",

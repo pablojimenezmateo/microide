@@ -226,7 +226,7 @@ void TextViewport::RecordOpenedContentHash(std::size_t raw_content_hash) {
   document_->disk_signature.content_hash = raw_content_hash;
 }
 
-bool TextViewport::Save(project::FileWriteGate& gate) {
+bool TextViewport::Save(project::FileWriteGate& gate, std::error_code* error) {
   EnsureDocument();
   if (document_->path.empty()) {
     return false;
@@ -284,6 +284,9 @@ bool TextViewport::Save(project::FileWriteGate& gate) {
   const project::FileWriteGate::Result written = gate.WriteText(
       document_->path, text, project::FileWriteGate::Signature::Capture);
   if (!written.ok) {
+    if (error != nullptr) {
+      *error = written.error;
+    }
     return false;
   }
 

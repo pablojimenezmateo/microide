@@ -37,6 +37,8 @@ class FileWriteGate {
     // it as an external change. Returning it here is also one fewer stat — the
     // editor save used to write and then stat the same path again.
     util::FileSignature signature;
+    // Why not, when !ok (util::DescribeWriteError words it).
+    std::error_code error;
   };
 
   // Whether the caller wants the written file's signature back. Only the editor's

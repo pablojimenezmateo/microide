@@ -5,6 +5,7 @@
 #include "util/DurableFile.h"
 #include "util/TextFileIO.h"
 
+#include <cctype>
 #include <filesystem>
 #include <string>
 #include <system_error>
@@ -191,10 +192,16 @@ void TestSaveWriteFailureKeepsDirtyAndFileIntact() {
 
   // Make the parent directory unwritable so staging the temp fails.
   Expect(::chmod(temp_dir.path().c_str(), 0500) == 0, "chmod dir 0500 should succeed");
-  const bool saved = viewport.Save(microide::project::LocalFileWriteGate());
+  std::error_code why;
+  const bool saved = viewport.Save(microide::project::LocalFileWriteGate(), &why);
   Expect(::chmod(temp_dir.path().c_str(), 0700) == 0, "restoring dir perms should succeed");
 
   Expect(!saved, "a save into an unwritable directory must fail");
+  // The reason reaches the caller, which words it for the error row: a bare
+  // "Failed to save doc.txt" left nothing to fix.
+  Expect(why == std::errc::permission_denied, "the failure says why: " + why.message());
+  Expect(microide::util::DescribeWriteError(why) == "permission denied",
+         "in the row's words: " + microide::util::DescribeWriteError(why));
   Expect(viewport.dirty(), "a failed save must leave the buffer dirty (no silent data loss)");
   Expect(ReadFile(path) == "original\n",
          "a failed save must leave the on-disk file untouched, not truncated");
@@ -504,8 +511,10 @@ void TestAtomicWriteRefusesDirectoryDestination() {
   const std::filesystem::path sentinel = target / "keep.txt";
   WriteFile(sentinel, "sentinel\n");
 
-  Expect(!WriteTextFileAtomically(target, "bytes\n"),
+  std::error_code why;
+  Expect(!WriteTextFileAtomically(target, "bytes\n", &why),
          "atomic write over a directory destination must fail");
+  Expect(why == std::errc::is_a_directory, "and says a folder is in the way: " + why.message());
   Expect(std::filesystem::is_directory(target, ec) && !ec,
          "the directory destination must still be a directory");
   Expect(std::filesystem::exists(sentinel, ec) && !ec,
@@ -546,7 +555,25 @@ void TestAtomicWriteSupportsRelativeFilenameInCurrentDirectory() {
 
 }  // namespace
 
+// The words of each errno a save meets most, and a sane fallback for the rest.
+void TestDescribeWriteErrorWordsTheCommonCauses() {
+  using microide::util::DescribeWriteError;
+  Expect(DescribeWriteError({}).empty(), "no error, no words");
+  Expect(DescribeWriteError(std::make_error_code(std::errc::no_space_on_device)) == "no space left on the device",
+         "ENOSPC");
+  Expect(DescribeWriteError(std::make_error_code(std::errc::read_only_file_system)) ==
+             "the file system is read-only",
+         "EROFS");
+  Expect(DescribeWriteError(std::error_code(EDQUOT, std::generic_category())) == "the disk quota is exceeded",
+         "EDQUOT");
+  const std::string other = DescribeWriteError(std::make_error_code(std::errc::text_file_busy));
+  Expect(!other.empty() && std::islower(static_cast<unsigned char>(other[0])) != 0,
+         "anything else: the system's own message, lower-cased to sit after a colon: " + other);
+}
+
 void RegisterSaveDataIntegrityTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "SaveDataIntegrity/DescribeWriteErrorWordsTheCommonCauses",
+          TestDescribeWriteErrorWordsTheCommonCauses);
   AddTest(tests, "SaveDataIntegrity/StagingTempNameIsRecognizedByItsOwnPredicate",
           TestStagingTempNameIsRecognizedByItsOwnPredicate);
   AddTest(tests, "SaveDataIntegrity/AtomicWriteRefusesDirectoryDestination",
