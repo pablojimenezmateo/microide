@@ -272,6 +272,15 @@ this document's § 7, what a user still missed:
   `ListenerOwners` matches the socket's inode against the fds of microide's own
   terminal and process trees, for new ports only. The row names that project, and
   a port of a project not open in this window is not forwarded into it.
+  **Narrowed 2026-11-02** (users saw a "Port N is available" row for every
+  daemon, language server and test server the host user ran): by default
+  (`remote.auto_forward_ports_source = project`) only a port a project's own
+  program opened is forwarded -- `any` restores the whole-host behaviour; a port in
+  Linux's default ephemeral range (32768-60999, what `bind(0)` is given) is never
+  forwarded automatically; a port forwarded again within five minutes (a dev
+  server restarting) is not announced again (`PortWatch::announced`); and
+  `remote.auto_forward_ports_notify = false` forwards silently, the status bar
+  still counting the forwards. Forward a Port… is unaffected by all of it.
 - **Rows say which project** (two projects on one host): "N files changed on
   host in <project>", the conflict rows, the port rows and the reattach rows end
   ` in <project>`, and their buttons carry the project's root
@@ -2280,7 +2289,9 @@ true.
 | `remote.server_socket_dir` | User | path | empty | override for the server's socket directory; empty means `~/.local/state/microide/server/`, owner-verified on every bind (§ 6.12) |
 | `remote.mass_delete_threshold` | User | percent | 25 | share of the manifest a single diff may delete before it prompts instead of applying; floor of 100 rows (§ 6.3) |
 | `remote.object_store_budget` | User | int | 2 GiB | per-mirror cap on `meta/objects/`; unreachable objects are swept oldest-first down to it (§ 6.2) |
-| `remote.auto_forward_ports` | User | bool | true | forward a host port that starts listening after connect (VS Code's auto forward) |
+| `remote.auto_forward_ports` | User | bool | true | forward a host port that starts listening after connect (VS Code's auto forward), never one in the ephemeral range |
+| `remote.auto_forward_ports_source` | User | enum | `project` | `project`: only ports a project's terminal or process opened; `any`: any program of the host user |
+| `remote.auto_forward_ports_notify` | User | bool | true | announce an automatic forward (once per port per five minutes); off, forward silently |
 | `remote.backfill_max_file_mib` | User | int (MiB) | 16384 | files over this are left out of the background fetch: listed dimmed, fetched when opened (§ 7.3) |
 | `remote.backfill_inflight_bytes` | User | int | 0 (= adaptive) | unacknowledged bytes bulk traffic may have outstanding; 0 means the measured bandwidth-delay product plus 5 ms, floored at 64 KiB and capped at 1 MiB (§ 6.4) |
 

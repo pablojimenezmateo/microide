@@ -25,6 +25,10 @@ namespace {
 namespace remote = project::remote;
 using State = remote::RemoteHostSession::State;
 
+// Linux's default ip_local_port_range: what a bind to port 0 is given. A host that
+// narrowed or moved its range still has its dev servers on chosen ports below it.
+constexpr bool IsEphemeralPort(std::uint16_t port) { return port >= 32768 && port <= 60999; }
+
 // Short, private and per user: the ControlMaster sockets live here, and AF_UNIX
 // caps the path.
 std::filesystem::path ControlDirectory() {
@@ -1451,21 +1455,24 @@ bool RemoteHostService::HasOpenProject(std::string_view host, std::string_view h
 }
 
 bool RemoteHostService::StartForward(std::string_view host, std::uint16_t port,
-                                     std::optional<LoopbackUrl> then_open, std::string owner_root) {
+                                     std::optional<LoopbackUrl> then_open, std::string owner_root,
+                                     bool announce) {
   remote::RemoteHostSession* session = SessionFor(host);
   if (session == nullptr) {
     return false;
   }
   const std::string key(host);
-  work_.Post([this, session, key, port, then_open = std::move(then_open), owner_root = std::move(owner_root)]() {
+  work_.Post([this, session, key, port, then_open = std::move(then_open), owner_root = std::move(owner_root),
+              announce]() {
     std::string error;
     const std::optional<remote::RemoteHostSession::PortForward> forward = session->ForwardPort(port, &error);
-    mailbox_.Post([this, key, port, forward, error, then_open, owner_root]() {
+    mailbox_.Post([this, key, port, forward, error, then_open, owner_root, announce]() {
       if (forward.has_value() && then_open.has_value() && operations_.open_url) {
         (void)operations_.open_url(then_open->scheme + "://localhost:" +
                                    std::to_string(forward->local_port) + then_open->rest);
       }
-      if (!operations_.notify) {
+      if (!announce || !operations_.notify) {
+        PublishStatusSegment();
         return;
       }
       const std::string row_key = "remote.forward." + key + "." + std::to_string(port);
@@ -1555,13 +1562,24 @@ void RemoteHostService::OnHostPorts(const std::string& host,
       (void)StopForward(host, gone, /*announce=*/false);
     }
   }
-  const auto setting = operations_.setting ? operations_.setting("remote.auto_forward_ports")
-                                           : std::optional<std::string>();
-  const bool forward = SettingFlagEnabled(setting, true);
+  const auto setting = [&](std::string_view name) {
+    return operations_.setting ? operations_.setting(name) : std::optional<std::string>();
+  };
+  const bool forward = SettingFlagEnabled(setting("remote.auto_forward_ports"), true);
+  // Only ports a project's own program opened, unless asked for any: a shared box
+  // runs other users' daemons and services that listen and stop all day, and each
+  // was a "Port N is available" row nobody asked for.
+  const bool any_program = setting("remote.auto_forward_ports_source").value_or("project") == "any";
+  const bool notify = SettingFlagEnabled(setting("remote.auto_forward_ports_notify"), true);
+  const auto now = std::chrono::steady_clock::now();
+  constexpr auto kReannounceAfter = std::chrono::minutes(5);
+  std::erase_if(watch.announced, [&](const auto& item) { return now - item.second >= kReannounceAfter; });
   const auto known = forwards_.find(host);
   for (const std::uint16_t port : ports) {
     // Below 1024 is a system service (sshd), never a program the user started.
-    if (!watch.baseline->insert(port).second || port < 1024 || !forward) {
+    // The ephemeral range is where bind(port 0) lands -- a test's server, a
+    // debugger, a language server -- never a port the user chose to serve on.
+    if (!watch.baseline->insert(port).second || port < 1024 || !forward || IsEphemeralPort(port)) {
       continue;
     }
     if (known != forwards_.end() && known->second->Find(port).has_value()) {
@@ -1573,11 +1591,15 @@ void RemoteHostService::OnHostPorts(const std::string& host,
     // user ssh'd in with -- is the host's, as before.
     const auto owner = listening.roots.find(port);
     const std::string owner_root = owner != listening.roots.end() ? owner->second : std::string();
-    if (!owner_root.empty() && !HasOpenProject(host, owner_root)) {
+    if (owner_root.empty() ? !any_program : !HasOpenProject(host, owner_root)) {
       continue;
     }
-    if (StartForward(host, port, std::nullopt, owner_root)) {
+    const bool announce = notify && !watch.announced.contains(port);
+    if (StartForward(host, port, std::nullopt, owner_root, announce)) {
       watch.auto_forwarded.insert(port);
+      if (announce) {
+        watch.announced[port] = now;
+      }
     }
   }
 }

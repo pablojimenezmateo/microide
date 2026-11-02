@@ -44,6 +44,11 @@ const SettingEnumValue kEditorAutosaveValues[] = {
     {"after_delay", "After delay"},
 };
 
+const SettingEnumValue kAutoForwardSourceValues[] = {
+    {"project", "Programs started from a project"},
+    {"any", "Any program on the host"},
+};
+
 const SettingEnumValue kLayoutModeValues[] = {
     {"auto", "Auto"},
     {"regular", "Regular"},
@@ -525,8 +530,39 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .id = "remote.auto_forward_ports",
           .label = "Forward Ports Automatically",
           .description = "Forward a port a program on a remote host starts listening on (a dev "
-                         "server, a notebook) to the same port here when it is free, and say "
-                         "where it is available.",
+                         "server, a notebook) to the same port here when it is free. Ports in "
+                         "the kernel's ephemeral range (32768-60999, where a program asking for "
+                         "any free port lands: test servers, debuggers) are never forwarded "
+                         "automatically; Forward a Port\xe2\x80\xa6 still can.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Remote",
+      },
+      SettingSpec{
+          .id = "remote.auto_forward_ports_source",
+          .label = "Forward Ports Of",
+          .description = "Which programs' ports are forwarded automatically: only those started "
+                         "from a project's terminal or tasks (the default), or any program on "
+                         "the host, other users' and system services included.",
+          .type = SettingType::Enum,
+          .scope = SettingScope::User,
+          .default_bool = false,
+          .default_int = 0,
+          .default_float = 0.0f,
+          .default_string = "project",
+          .enum_values = kAutoForwardSourceValues,
+          .group = "Remote",
+      },
+      SettingSpec{
+          .id = "remote.auto_forward_ports_notify",
+          .label = "Notify About Forwarded Ports",
+          .description = "Say where an automatically forwarded port is available here, with "
+                         "Open in Browser. Off, ports are forwarded silently: the status bar "
+                         "still counts them. A port that is forwarded again within five "
+                         "minutes (a dev server restarting) is never announced twice.",
           .type = SettingType::Bool,
           .scope = SettingScope::User,
           .default_bool = true,

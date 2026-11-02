@@ -912,15 +912,38 @@ void TestConflictsBatchIntoOneRowAndTheConflictsView() {
   RemoveFakeMaster(target);
 }
 
+// A loopback listener on a free port the user would choose (below the ephemeral
+// range, where a bind to port 0 lands): fd and port, or fd -1.
+std::pair<int, std::uint16_t> ListenOnAChosenPort(std::uint16_t from) {
+  for (std::uint32_t port = from; port < 32000; ++port) {
+    const int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = htons(static_cast<std::uint16_t>(port));
+    if (fd >= 0 && ::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0 && ::listen(fd, 1) == 0) {
+      return {fd, static_cast<std::uint16_t>(port)};
+    }
+    if (fd >= 0) {
+      ::close(fd);
+    }
+  }
+  return {-1, 0};
+}
+
 // Automatic port forwarding (VS Code's): a program on the host that starts
 // listening after the editor connected is forwarded and announced, with no
-// command; what already listened at connect is not.
+// command; what already listened at connect is not. By default only a program a
+// project started counts, never one on an ephemeral port, a restart is not
+// announced twice, and the announcement can be turned off.
 void TestAPortThatStartsListeningIsForwarded() {
   FakeSshHost host;
   WorkspaceShell shell;
   PointAtFakeHost(shell, host);
   Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.auto_forward_ports", "true"),
          "automatic forwards on");
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.auto_forward_ports_source", "any"),
+         "of any program on the host, to start with");
   const std::filesystem::path host_root = host.home / "src" / "ports";
   WriteFile(host_root / "a.txt", "a\n");
   const std::string target = "dev@fake-ports-" + std::to_string(::getpid());
@@ -933,96 +956,105 @@ void TestAPortThatStartsListeningIsForwarded() {
              },
              std::chrono::seconds(30), std::chrono::milliseconds(5)),
          "connected, and the host's ports are watched");
+  const auto row_for = [&](std::uint16_t port) -> const workspace::NotificationService::Notification* {
+    const std::string key = "remote.forward." + target + "." + std::to_string(port);
+    for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+      if (row.key == key) {
+        return &row;
+      }
+    }
+    return nullptr;
+  };
+  const auto announced = [&](std::uint16_t port) {
+    const auto* row = row_for(port);
+    return row != nullptr && row->message.find("is available at localhost:") != std::string::npos;
+  };
+  const auto forwarded = [&](std::uint16_t port) {
+    return WorkspaceShellTestAccess::RemoteHosts(shell).CommandText(target, "port:" + std::to_string(port)).has_value();
+  };
+  const auto pump_until = [&](auto predicate) {
+    return WaitUntil(
+        [&] {
+          Pump(shell);
+          return predicate();
+        },
+        std::chrono::seconds(30), std::chrono::milliseconds(10));
+  };
+
   // The host is this machine: a listener here is one on the host.
-  const int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
-  sockaddr_in address{};
-  address.sin_family = AF_INET;
-  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  socklen_t length = sizeof(address);
-  Expect(fd >= 0 && ::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0 &&
-             ::listen(fd, 1) == 0 && ::getsockname(fd, reinterpret_cast<sockaddr*>(&address), &length) == 0,
-         "a dev server starts listening on the host");
-  const std::uint16_t port = ntohs(address.sin_port);
-  const std::string row_key = "remote.forward." + target + "." + std::to_string(port);
-  const auto announced = [&] {
-    for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
-      if (row.key == row_key) {
-        return row.message.find("is available at localhost:") != std::string::npos;
-      }
-    }
-    return false;
-  };
-  Expect(WaitUntil(
-             [&] {
-               Pump(shell);
-               return announced();
-             },
-             std::chrono::seconds(30), std::chrono::milliseconds(10)),
-         "it is forwarded and announced");
+  auto [fd, port] = ListenOnAChosenPort(20000);
+  Expect(fd >= 0, "a dev server starts listening on the host");
+  Expect(pump_until([&] { return announced(port); }), "it is forwarded and announced");
   ::close(fd);
-  const auto row_present = [&] {
-    for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
-      if (row.key == row_key) {
-        return true;
-      }
-    }
-    return false;
-  };
-  Expect(WaitUntil(
-             [&] {
-               Pump(shell);
-               // This port's forward only: on a shared machine another test's
-               // listener may be forwarded meanwhile.
-               return !row_present() && !WorkspaceShellTestAccess::RemoteHosts(shell)
-                                             .CommandText(target, "port:" + std::to_string(port))
-                                             .has_value();
-             },
-             std::chrono::seconds(30), std::chrono::milliseconds(10)),
+  Expect(pump_until([&] { return row_for(port) == nullptr && !forwarded(port); }),
          [&] {
            // TD-2026-10-28-415: which half stayed.
            return std::string("when it stops listening the automatic forward goes, quietly (row ") +
-                  (row_present() ? "still shown" : "gone") + ", forward " +
-                  (WorkspaceShellTestAccess::RemoteHosts(shell)
-                           .CommandText(target, "port:" + std::to_string(port))
-                           .has_value()
-                       ? "still registered"
-                       : "gone") +
-                  ")";
+                  (row_for(port) != nullptr ? "still shown" : "gone") + ", forward " +
+                  (forwarded(port) ? "still registered" : "gone") + ")";
          });
+  // The dev server restarts on the same port: forwarded again, not announced again.
+  auto [again, again_port] = ListenOnAChosenPort(port);
+  Expect(again >= 0 && again_port == port, "the dev server restarts on its port");
+  Expect(pump_until([&] { return forwarded(port); }), "its forward is made again");
+  Expect(row_for(port) == nullptr, "without a second row");
+  ::close(again);
 
-  // A listener the PROJECT started -- through its launcher, so the server spawns
-  // it under the project's root -- is that project's port: the row says so. With
-  // two projects open on one host, a bare "Port N on <host>" row read as news
-  // about whichever project was in front.
-  {
-    platform::AsyncSubprocess listener;
+  // The default: only what a project started. A listener of no project (another
+  // user's daemon, a service) and a project's listener on an ephemeral port are
+  // left alone; the project's dev server on its chosen port is announced as the
+  // project's -- with two projects open on one host, a bare "Port N on <host>" row
+  // read as news about whichever project was in front.
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.auto_forward_ports_source", "project"),
+         "back to the default");
+  auto [stranger, stranger_port] = ListenOnAChosenPort(static_cast<std::uint16_t>(port + 1));
+  Expect(stranger >= 0, "a program of no project starts listening");
+  const auto spawn_listener = [&](platform::AsyncSubprocess& process, std::uint16_t on) {
     Expect(WorkspaceShellTestAccess::ProjectLauncher(shell).StartAsync(
-               listener,
+               process,
                {"python3", "-c",
-                "import socket,time\ns=socket.socket()\ns.bind(('127.0.0.1',0))\ns.listen()\ntime.sleep(60)"},
+                "import socket,sys,time\ns=socket.socket()\ns.bind(('127.0.0.1',int(sys.argv[1])))\ns.listen()\n"
+                "time.sleep(60)",
+                std::to_string(on)},
                WorkspaceShellTestAccess::ProjectRoot(shell), {}),
-           "the project starts a dev server on the host");
-    const std::string prefix = "remote.forward." + target + ".";
-    std::string seen;
-    Expect(WaitUntil(
-               [&] {
-                 Pump(shell);
-                 for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
-                   if (row.key.starts_with(prefix) &&
-                       row.message.find(" on " + target + " in ports is available at localhost:") !=
-                           std::string::npos) {
-                     return true;
-                   }
-                   if (row.key.starts_with(prefix)) {
-                     seen = row.message;
-                   }
-                 }
-                 return false;
-               },
-               std::chrono::seconds(30), std::chrono::milliseconds(10)),
-           "its forward is announced as the project's: " + seen);
-    listener.Shutdown(1000);
+           "the project starts a listener on the host");
+  };
+  platform::AsyncSubprocess ephemeral;
+  spawn_listener(ephemeral, 0);  // a bind to port 0: the ephemeral range
+  auto [probe, chosen] = ListenOnAChosenPort(static_cast<std::uint16_t>(stranger_port + 1));
+  Expect(probe >= 0, "a free port for the project's dev server");
+  ::close(probe);
+  platform::AsyncSubprocess dev_server;
+  spawn_listener(dev_server, chosen);
+  Expect(pump_until([&] {
+           const auto* row = row_for(chosen);
+           return row != nullptr && row->message.find(" on " + target + " in ports is available at localhost:") !=
+                                        std::string::npos;
+         }),
+         "the project's dev server is forwarded and announced as the project's");
+  Expect(!forwarded(stranger_port) && row_for(stranger_port) == nullptr,
+         "a listener no project started is not forwarded");
+  std::size_t forward_rows = 0;
+  for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+    forward_rows += row.key.starts_with("remote.forward." + target + ".") ? 1 : 0;
   }
+  Expect(forward_rows == 1, "nor is the project's ephemeral one: " + std::to_string(forward_rows) + " forward rows");
+  dev_server.Shutdown(1000);
+  ephemeral.Shutdown(1000);
+  ::close(stranger);
+  Expect(pump_until([&] { return !forwarded(chosen); }), "the dev server's forward goes with it");
+
+  // Announcements off: forwarded all the same, silently.
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.auto_forward_ports_notify", "false"),
+         "announcements off");
+  auto [quiet_probe, quiet] = ListenOnAChosenPort(static_cast<std::uint16_t>(chosen + 1));
+  Expect(quiet_probe >= 0, "a free port");
+  ::close(quiet_probe);
+  platform::AsyncSubprocess quiet_server;
+  spawn_listener(quiet_server, quiet);
+  Expect(pump_until([&] { return forwarded(quiet); }), "the project's dev server is forwarded");
+  Expect(row_for(quiet) == nullptr, "with no row");
+  quiet_server.Shutdown(1000);
   RemoveFakeMaster(target);
 }
 

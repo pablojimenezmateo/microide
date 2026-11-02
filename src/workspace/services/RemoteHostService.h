@@ -408,8 +408,10 @@ class RemoteHostService {
   // LoopbackUrl's scheme and rest) opens the forwarded URL once it is up.
   // `owner_root`: the host root of the project whose program opened the port
   // ("" = none known), which the row names.
+  // `announce` false: no row, success or failure (an automatic forward the user
+  // asked to hear nothing about, or one announced moments ago).
   bool StartForward(std::string_view host, std::uint16_t port, std::optional<LoopbackUrl> then_open,
-                    std::string owner_root = {});
+                    std::string owner_root = {}, bool announce = true);
   // Whether a project on `host` at `host_root` is open (not closed) here.
   bool HasOpenProject(std::string_view host, std::string_view host_root) const;
   // Automatic port forwarding (VS Code's): subscribe to `host`'s listening ports
@@ -426,6 +428,10 @@ class RemoteHostService {
     // Forwarded by this watch rather than by the user: dropped when the port stops
     // listening.
     std::set<std::uint16_t> auto_forwarded;
+    // When each automatically forwarded port was last announced: a dev server that
+    // restarts stops and starts listening, and its forward is made again quietly
+    // within kReannounceAfter. Pruned as it is written, so it holds only recent ports.
+    std::map<std::uint16_t, std::chrono::steady_clock::time_point> announced;
   };
   // Queue `ports` (the host's whole listening list, answer or push) for
   // OnHostPorts; only the newest queued list runs.
