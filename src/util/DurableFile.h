@@ -28,6 +28,13 @@ bool WriteFileBytesDurable(const std::filesystem::path& path, std::span<const st
 bool RenameReplacing(const std::filesystem::path& from, const std::filesystem::path& to,
                      std::error_code* error = nullptr);
 
+// fsync `directory` itself, so a rename (or create) inside it is on stable storage:
+// without it a power cut after an atomic replace can bring the PREVIOUS content
+// back -- the new inode was durable, the directory entry naming it was not. Best
+// effort: false when it could not (a filesystem that refuses fsync on a directory
+// answers EINVAL), and the write it follows stays done either way.
+bool FsyncDirectory(const std::filesystem::path& directory);
+
 // Marks a file as an in-flight atomic-write staging temp. Kept distinctive (rather
 // than a bare ".tmp") because ordinary project files are called things like
 // `build.tmp.json`, and mistaking one for staging would hide it from the finder.

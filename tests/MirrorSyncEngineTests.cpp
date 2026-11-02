@@ -958,6 +958,40 @@ void TestMirrorJournalSurvivesARestart() {
   Expect(ReadFile(session.host / "a.txt") == "a tool wrote this\n", "an outside local edit is pushed");
 }
 
+// A crash BEFORE the journal recorded a save: the editor wrote tree/, the client
+// died before meta/state said so, and the host edited the same file while the
+// client was down. Nothing of either side may be lost: the file whose two sides
+// both moved is a conflict, never overwritten in either direction, and a file
+// only the client changed is still pushed -- the stat no longer vouches for the
+// base, so the bytes are hashed and found newer.
+void TestMirrorACrashBeforeTheJournalLosesNothing() {
+  MirrorSession session;
+  WriteFile(session.host / "a.txt", "v1\n");
+  WriteFile(session.host / "b.txt", "b1\n");
+  session.Connect();
+  session.Sync();
+  Expect(session.engine->StateOf("a.txt") == ContentState::Current, "synced");
+  session.engine.reset();  // a clean stop: meta/state as a crash would find it
+  const std::filesystem::path meta = session.mirror_dir / "meta";
+  const std::filesystem::path snapshot = session.temp.path() / "meta-before-crash";
+  std::filesystem::copy(meta, snapshot, std::filesystem::copy_options::recursive);
+  // What the crashed window did and recorded nowhere, and what the host did meanwhile.
+  WriteFile(session.Tree("a.txt"), "local edit nobody journaled\n");
+  WriteFile(session.Tree("b.txt"), "local only edit\n");
+  WriteFile(session.host / "a.txt", "host edit meanwhile\n");
+  std::filesystem::remove_all(meta);
+  std::filesystem::copy(snapshot, meta, std::filesystem::copy_options::recursive);
+
+  session.Connect();
+  session.Sync();
+  Expect(session.engine->StateOf("a.txt") == ContentState::Conflict,
+         "both moved: a conflict, not an overwrite");
+  Expect(ReadFile(session.Tree("a.txt")) == "local edit nobody journaled\n", "the local edit is kept");
+  Expect(ReadFile(session.host / "a.txt") == "host edit meanwhile\n", "the host's edit is kept");
+  Expect(ReadFile(session.host / "b.txt") == "local only edit\n", "the edit only the client made reaches the host");
+  Expect(session.engine->StateOf("b.txt") == ContentState::Current, "and is current");
+}
+
 void TestMirrorFollowsTheHostWatch() {
   MirrorSession session;
   WriteFile(session.host / "a.txt", "one\n");
@@ -1379,6 +1413,7 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/ResolvesConflictsTheUsersWay", TestMirrorResolvesConflictsTheUsersWay);
   AddTest(tests, "MirrorSyncEngine/MergesAConflictThreeWays", TestMirrorMergesAConflictThreeWays);
   AddTest(tests, "MirrorSyncEngine/JournalSurvivesARestart", TestMirrorJournalSurvivesARestart);
+  AddTest(tests, "MirrorSyncEngine/ACrashBeforeTheJournalLosesNothing", TestMirrorACrashBeforeTheJournalLosesNothing);
   AddTest(tests, "MirrorSyncEngine/WriteGateReachesTheHost", TestMirrorWriteGateReachesTheHost);
   AddTest(tests, "MirrorSyncEngine/TreeOpsMadeOfflineReplay", TestMirrorTreeOpsMadeOfflineReplay);
   AddTest(tests, "MirrorSyncEngine/FollowsTheHostWatch", TestMirrorFollowsTheHostWatch);

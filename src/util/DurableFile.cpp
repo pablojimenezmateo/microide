@@ -93,6 +93,16 @@ bool RenameReplacing(const std::filesystem::path& from, const std::filesystem::p
   return !error;
 }
 
+bool FsyncDirectory(const std::filesystem::path& directory) {
+  const int fd = ::open(directory.empty() ? "." : directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  if (fd < 0) {
+    return false;
+  }
+  const bool synced = ::fsync(fd) == 0;
+  (void)CloseFile(fd);
+  return synced;
+}
+
 std::filesystem::path UniqueTemporaryPath(const std::filesystem::path& path) {
   static std::atomic<std::uint64_t> counter{0};
   const std::uint64_t seq = counter.fetch_add(1, std::memory_order_relaxed);

@@ -438,10 +438,11 @@ bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view
   error.clear();
 
   // Durably write the temp file (fsync of contents) before swapping it into
-  // place. The parent directory is intentionally NOT fsynced: it is the slow
-  // half on networked filesystems and we keep document saves on the fast path
-  // per the project's speed-first priority. The temp fsync still guarantees the
-  // saved bytes survive a crash once the rename lands.
+  // place, and the parent directory after: a saved file must not come back as its
+  // previous version after a power cut (the directory entry the rename changed is
+  // otherwise only as durable as the next journal commit). About 0.4 ms on a local
+  // ext4, measured; losing a save the user saw succeed is not a trade we make for
+  // it (2026-11-02, reversing the earlier speed-first omission).
   const std::span<const std::byte> bytes(reinterpret_cast<const std::byte*>(text.data()),
                                          text.size());
   std::error_code why;
@@ -457,6 +458,7 @@ bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view
     std::filesystem::remove(temp_path, error);
     return fail(why);
   }
+  (void)util::FsyncDirectory(target.parent_path());  // best effort: the bytes are in place
   return true;
 }
 

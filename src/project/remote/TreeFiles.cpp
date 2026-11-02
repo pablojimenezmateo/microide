@@ -337,6 +337,12 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
     errno = saved;
     return Error(Errno("cannot replace " + std::string(path)));
   }
+  // A synced write's rename durable too (a deferred one is covered by the batch's
+  // SyncTreeFilesystem): an acked push must not revert on the host after a power
+  // cut, while the client already took it as the new base.
+  if (durability == Durability::Synced) {
+    (void)::fsync(parent->dir.Get());
+  }
   return Ok(*hash);
 }
 

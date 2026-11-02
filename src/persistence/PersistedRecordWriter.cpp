@@ -125,6 +125,10 @@ bool PersistedRecordWriter::WriteFile(const std::filesystem::path& path,
     SetError(error, PersistedRecordWriterError::RenameFailed);
     return false;
   }
+  // The renames durable too: a session or a hot-exit backup that reverts to its
+  // previous version after a power cut loses exactly the unsaved text it exists
+  // to keep. Off the shell thread (the write queue), so it costs no frame.
+  (void)util::FsyncDirectory(target.parent_path());
 
   return true;
 }

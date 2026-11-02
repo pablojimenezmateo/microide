@@ -571,7 +571,18 @@ void TestDescribeWriteErrorWordsTheCommonCauses() {
          "anything else: the system's own message, lower-cased to sit after a colon: " + other);
 }
 
+// The directory flush after an atomic replace: it flushes a real directory and
+// says so when there is none (callers treat it as best effort).
+void TestFsyncDirectoryFlushesARealDirectory() {
+  TemporaryDirectory temp_dir;
+  Expect(microide::util::FsyncDirectory(temp_dir.path()), "a directory flushes");
+  Expect(!microide::util::FsyncDirectory(temp_dir.path() / "missing"), "a missing one says it could not");
+  WriteFile(temp_dir.path() / "f.txt", "x\n");
+  Expect(!microide::util::FsyncDirectory(temp_dir.path() / "f.txt"), "nor is a file a directory");
+}
+
 void RegisterSaveDataIntegrityTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "SaveDataIntegrity/FsyncDirectoryFlushesARealDirectory", TestFsyncDirectoryFlushesARealDirectory);
   AddTest(tests, "SaveDataIntegrity/DescribeWriteErrorWordsTheCommonCauses",
           TestDescribeWriteErrorWordsTheCommonCauses);
   AddTest(tests, "SaveDataIntegrity/StagingTempNameIsRecognizedByItsOwnPredicate",
