@@ -281,7 +281,9 @@ void TestCtrlQQuits() {
   TestAccess::SetPanelContentTerminal(fixture.shell);
   Expect(TestAccess::ExecuteCommandLine(fixture.shell, "focus panel"), "focus the terminal");
   (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_Q, SDL_KMOD_CTRL)});
-  Expect(fixture.shell.ConsumeQuitRequested(), "Ctrl+Q in a focused terminal should quit too");
+  // Ctrl+Q in a focused terminal is the program's (XON, emacs's quoted-insert):
+  // it used to quit the editor out from under a running program.
+  Expect(!fixture.shell.ConsumeQuitRequested(), "Ctrl+Q in a focused terminal reaches the program");
 }
 
 // monkey (seed 1, step 223): `term-close` on the last terminal while the panel

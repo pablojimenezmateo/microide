@@ -187,9 +187,13 @@ bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
     // Linux terminal; they used to reach the shell as shifted PageUp/PageDown,
     // which left the terminal with no keyboard scrollback at all. Same pan the
     // Output panel's PageUp/PageDown perform, so the two contents agree.
+    // Not on the alternate screen, which has no scrollback to page: there the
+    // keys are the full-screen program's (less, vim, a TUI's own history), as in
+    // xterm. They used to be eaten for a pan that moved nothing.
     if ((modifiers & SDL_KMOD_SHIFT) != 0 &&
         (modifiers & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0 &&
         (event.key == SDLK_PAGEUP || event.key == SDLK_PAGEDOWN) &&
+        !operations_.active_terminal_pane()->session.using_alternate_screen() &&
         operations_.scroll_bottom_panel_rows && operations_.bottom_panel_visible_rows) {
       // One page is the panel's visible rows less one, so a line of context
       // carries over between pages.

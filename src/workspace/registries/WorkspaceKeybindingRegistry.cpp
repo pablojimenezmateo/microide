@@ -69,6 +69,15 @@ std::string FormatBindingKeysOf(const Binding& binding) {
 
 }  // namespace
 
+bool IsTerminalReservedChord(SDL_Keycode key, SDL_Keymod modifiers) {
+  const SDL_Keymod normalized = NormalizedKeyModifiers(modifiers);
+  if (normalized == static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT)) {
+    return true;
+  }
+  return normalized == SDL_KMOD_CTRL && (key == SDLK_GRAVE || key == SDLK_PAGEUP ||
+                                         key == SDLK_PAGEDOWN || key == SDLK_TAB);
+}
+
 bool KeybindingContextsOverlap(KeybindingContext a,
                                bool a_skips_terminal,
                                KeybindingContext b,
@@ -132,7 +141,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
-          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "zoom-reset",
@@ -143,7 +151,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {"reset", {}},
           .arg_count = 1,
           .command_name = {},
-          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "zoom-out",
@@ -154,7 +161,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {"down", {}},
           .arg_count = 1,
           .command_name = {},
-          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "zoom-in",
@@ -165,7 +171,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {"up", {}},
           .arg_count = 1,
           .command_name = {},
-          .skips_terminal = true,
       },
       // Ctrl+B stays with a focused terminal, unlike VS Code (whose default
       // commandsToSkipShell takes it): it is readline's backward-char in every
@@ -234,7 +239,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
-          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "command-palette-f1",
@@ -245,7 +249,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
-          .skips_terminal = true,
       },
       // Ctrl+1..8 stay with a focused terminal: Ctrl+2 is the shell's NUL
       // (Ctrl+@), and the terminal has its own focus keys
@@ -384,7 +387,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
-          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "reopen-closed-editor",
@@ -444,7 +446,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
-          .skips_terminal = true,
       },
       // VS Code's F6 under its other `when`: with no program running (Pause is
       // not enabled), F6 / Shift+F6 move the keyboard between the window's parts.
@@ -457,7 +458,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
-          .skips_terminal = true,
           .shares_chord = true,
       },
       KeybindingSpec{
@@ -469,7 +469,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
-          .skips_terminal = true,
       },
       // F5 starts a session when none is running and continues a stopped one;
       // Shift+F5 stops it (VS Code's pair).
@@ -482,7 +481,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
-          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "debug-stop",
@@ -493,7 +491,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
-          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "debug-step-over",
@@ -504,7 +501,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
-          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "debug-step-in",
@@ -515,7 +511,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
-          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "debug-step-out",
@@ -526,7 +521,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
-          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "debug-restart",
@@ -748,13 +742,12 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
       },
       KeybindingSpec{
-          // VSCode binds Ctrl+F in a focused terminal to its find widget rather
-          // than passing ^F through to the shell; the bar closes on Escape, so
-          // readline's forward-char stays one keystroke away.
+          // Ctrl+Shift+F, as in gnome-terminal, Konsole and kitty: Ctrl+F is the
+          // program's (readline's forward-char, vim's page down, less).
           .id = "terminal-find",
           .action = ActionId::TerminalFind,
           .key = SDLK_F,
-          .modifiers = SDL_KMOD_CTRL,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
           .context = KeybindingContext::Terminal,
           .args = {},
           .arg_count = 0,
@@ -822,9 +815,8 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
-          // Ctrl+Shift+letter: nothing a shell reads, so find-in-files works from a
-          // focused terminal too, like Ctrl+Shift+E/G/M.
-          .skips_terminal = true,
+          // Not from a focused terminal: there Ctrl+Shift+F is the terminal's own
+          // find (terminal-find), as on every Linux terminal.
       },
       KeybindingSpec{
           .id = "completion",
@@ -1533,7 +1525,6 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
-          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "panel-maximize",
@@ -1560,7 +1551,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .id = "terminal-pane-left",
           .action = ActionId::TerminalFocusPaneLeft,
           .key = SDLK_LEFT,
-          .modifiers = SDL_KMOD_ALT,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
           .context = KeybindingContext::Terminal,
           .args = {},
           .arg_count = 0,
@@ -1570,7 +1561,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .id = "terminal-pane-right",
           .action = ActionId::TerminalFocusPaneRight,
           .key = SDLK_RIGHT,
-          .modifiers = SDL_KMOD_ALT,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
           .context = KeybindingContext::Terminal,
           .args = {},
           .arg_count = 0,

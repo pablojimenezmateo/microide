@@ -200,14 +200,21 @@ void TestWorkspaceShellTerminalFocusModeTracksPanelFocus() {
 
   Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[I",
          "focused terminal tabs should receive an initial focus-in notification when focus mode is enabled");
-  Expect(SendKeyDown(shell, SDLK_F6, SDL_KMOD_NONE),
-         "F6 should move focus away from the terminal panel");
-  Expect(SendKeyDown(shell, SDLK_F6, SDL_KMOD_NONE),
-         "F6 should keep cycling focus targets");
-  Expect(SendKeyDown(shell, SDLK_F6, SDL_KMOD_NONE),
-         "F6 should return focus to the terminal panel");
-  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[I\x1b[O\x1b[I",
-         "terminal focus mode should emit focus-out and focus-in notifications as panel focus changes");
+  // F6 in a focused terminal is the program's (htop's sort, mc's move); Focus
+  // Next Part runs from the palette or a menu.
+  TerminalSessionTestAccess::ClearSentBytes(session);
+  Expect(SendKeyDown(shell, SDLK_F6, SDL_KMOD_NONE), "F6 in the terminal is handled");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[17~", "F6 reaches the program");
+  TerminalSessionTestAccess::ClearSentBytes(session);
+  for (int step = 0; step < 3; ++step) {
+    Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::FocusNextPart, {}),
+           "Focus Next Part cycles the focus targets");
+    WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);  // the frame's focus sync
+  }
+  Expect(WorkspaceShellTestAccess::FocusIsPanel(shell), "three steps return to the terminal panel");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[O\x1b[I",
+         "terminal focus mode should emit focus-out and focus-in notifications as panel focus changes: [" +
+             TerminalSessionTestAccess::SentBytes(session) + "]");
 }
 
 void TestWorkspaceShellTerminalFocusModeTracksWindowFocus() {
@@ -1025,9 +1032,15 @@ void TestWorkspaceShellTerminalCtrlShiftCNeverInterrupts() {
   Expect(clipboard == "select", "Ctrl+Shift+C copies the selection: [" + clipboard + "]");
   Expect(TerminalSessionTestAccess::SentBytes(session).empty(), "and still sends nothing");
 
-  // Plain Ctrl+C with no selection is the interrupt the shell expects.
-  WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE);  // clears the selection
+  // Escape clears the selection AND reaches the program: it used to stop at the
+  // selection, so a word double-clicked in vim left vim in insert mode and the
+  // `:w` typed next went into the buffer instead of saving it.
+  WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE);
   Expect(!WorkspaceShellTestAccess::TerminalHasSelection(shell), "Escape cleared the selection");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b",
+         "and the program got the Escape: [" + TerminalSessionTestAccess::SentBytes(session) + "]");
+  TerminalSessionTestAccess::ClearSentBytes(session);
+  // Plain Ctrl+C with no selection is the interrupt the shell expects.
   Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_C, SDL_KMOD_CTRL), "Ctrl+C is handled");
   Expect(TerminalSessionTestAccess::SentBytes(session) == "\x03",
          "plain Ctrl+C without a selection reaches the shell as ^C");
@@ -1059,10 +1072,10 @@ void TestWorkspaceShellTerminalCtrlSlashReachesTheShell() {
 
 // A focused terminal owns the keyboard (VS Code's commandsToSkipShell model):
 // Global bindings the shell has a use for -- Ctrl+O open, Ctrl+S save, Ctrl+N
-// new tab, Ctrl+B sidebar -- reach the PTY as control bytes, so nano's ^O "Write
-// Out" works. They used to be matched before the terminal saw the key, so Ctrl+O
-// opened the file picker over a running nano. The few chords the IDE keeps
-// (Ctrl+P, Ctrl+Shift+P) still dispatch.
+// new tab, Ctrl+B sidebar, Ctrl+P Go to File, Ctrl+J the panel, Ctrl+Q quit,
+// Ctrl+F find -- reach the PTY as control bytes, so nano's ^O "Write Out",
+// readline's ^P and Claude Code's ^J newline work. Only the reserved chords
+// (IsTerminalReservedChord: Ctrl+Shift+<key>, Ctrl+`) still dispatch.
 void TestWorkspaceShellTerminalOwnsGlobalControlChords() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -1081,6 +1094,11 @@ void TestWorkspaceShellTerminalOwnsGlobalControlChords() {
       {SDLK_S, '\x13', "Ctrl+S"},
       {SDLK_N, '\x0e', "Ctrl+N"},
       {SDLK_B, '\x02', "Ctrl+B"},
+      {SDLK_P, '\x10', "Ctrl+P"},
+      {SDLK_J, '\n', "Ctrl+J"},
+      {SDLK_Q, '\x11', "Ctrl+Q"},
+      {SDLK_F, '\x06', "Ctrl+F"},
+      {SDLK_MINUS, '\x1f', "Ctrl+-"},
   };
   for (const auto& chord : chords) {
     TerminalSessionTestAccess::ClearSentBytes(session);
@@ -1096,14 +1114,26 @@ void TestWorkspaceShellTerminalOwnsGlobalControlChords() {
   Expect(WorkspaceShellTestAccess::FocusIsPanel(shell), "the terminal keeps focus");
 
   TerminalSessionTestAccess::ClearSentBytes(session);
-  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_P, SDL_KMOD_CTRL),
-         "Ctrl+P in the terminal is handled");
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+P in the terminal is handled");
   Expect(TerminalSessionTestAccess::SentBytes(session).empty(),
-         "Ctrl+P skips the shell, as in VS Code");
+         "Ctrl+Shift+P skips the shell");
   Expect(WorkspaceShellTestAccess::OverlayVisible(shell) &&
              WorkspaceShellTestAccess::ActiveOverlayMode(shell) ==
-                 WorkspaceShell::OverlayMode::FileFinder,
-         "Ctrl+P still opens Go to File from the terminal");
+                 WorkspaceShell::OverlayMode::CommandPalette,
+         "Ctrl+Shift+P still opens the command palette from the terminal");
+
+  // Shift+PageUp pages the panel's scrollback on the primary screen; on the
+  // alternate screen there is none, and the key is the full-screen program's
+  // (less, a TUI's history) -- it used to be eaten for a pan that moved nothing.
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "Escape closes the palette");
+  WorkspaceShellTestAccess::SetFocusPanel(shell);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1049h");
+  TerminalSessionTestAccess::ClearSentBytes(session);
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_PAGEUP, SDL_KMOD_SHIFT),
+         "Shift+PageUp on the alternate screen is handled");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[5;2~",
+         "and reaches the program: [" + TerminalSessionTestAccess::SentBytes(session) + "]");
 }
 
 // `terminal.commands_to_skip_shell` reaches the dispatch: handing Ctrl+P back to
@@ -2054,8 +2084,8 @@ void TestWorkspaceShellTerminalCtrlFOpensFindBar() {
 
   Expect(!WorkspaceShellTestAccess::TerminalFind(shell).visible(),
          "the find bar should start hidden");
-  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_F, SDL_KMOD_CTRL),
-         "Ctrl+F should be handled while the terminal has focus");
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_F, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+F should be handled while the terminal has focus");
   auto& find = WorkspaceShellTestAccess::TerminalFind(shell);
   Expect(find.visible() && find.focused(),
          "Ctrl+F should open the find bar and give it the keyboard");
@@ -2074,8 +2104,8 @@ void TestWorkspaceShellTerminalFindSelectsNewestMatchFirst() {
     TerminalSessionTestAccess::AppendOutput(session, "needle line\r\n");
   }
 
-  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_F, SDL_KMOD_CTRL),
-         "Ctrl+F should open the find bar");
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_F, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+F should open the find bar");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "needle"),
          "typing should route into the find query, not the terminal");
   auto& find = WorkspaceShellTestAccess::TerminalFind(shell);
@@ -2097,8 +2127,8 @@ void TestWorkspaceShellTerminalFindNavigationWrapsAndReveals() {
   }
   WorkspaceShellTestAccess::SetActiveTerminalFollowTail(shell, true);
 
-  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_F, SDL_KMOD_CTRL),
-         "Ctrl+F should open the find bar");
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_F, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+F should open the find bar");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "needle"),
          "the query should be typed into the bar");
   auto& find = WorkspaceShellTestAccess::TerminalFind(shell);
@@ -2126,8 +2156,8 @@ void TestWorkspaceShellTerminalFindTogglesNarrowMatches() {
   TerminalSessionTestAccess::Reset(session, 24, 80);
   TerminalSessionTestAccess::AppendOutput(session, "Cat concatenate cat\r\n");
 
-  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_F, SDL_KMOD_CTRL),
-         "Ctrl+F should open the find bar");
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_F, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+F should open the find bar");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "cat"),
          "the query should be typed into the bar");
   auto& find = WorkspaceShellTestAccess::TerminalFind(shell);
@@ -2153,8 +2183,8 @@ void TestWorkspaceShellTerminalFindEscapeReturnsKeyboardToTerminal() {
   TerminalSessionTestAccess::Reset(session, 24, 80);
   TerminalSessionTestAccess::AppendOutput(session, "needle\r\n");
 
-  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_F, SDL_KMOD_CTRL),
-         "Ctrl+F should open the find bar");
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_F, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+F should open the find bar");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "needle"),
          "the query should be typed into the bar");
   Expect(WorkspaceShellTestAccess::HandleTerminalFindKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
@@ -2181,8 +2211,8 @@ void TestWorkspaceShellTerminalFindTracksStreamingOutput() {
     TerminalSessionTestAccess::AppendOutput(session, "needle line\r\n");
   }
 
-  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_F, SDL_KMOD_CTRL),
-         "Ctrl+F should open the find bar");
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_F, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+F should open the find bar");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "needle"),
          "the query should be typed into the bar");
   auto& find = WorkspaceShellTestAccess::TerminalFind(shell);
@@ -2215,8 +2245,8 @@ void TestWorkspaceShellTerminalFindClipboardShortcutsTargetTheQuery() {
     return true;
   });
 
-  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_F, SDL_KMOD_CTRL),
-         "Ctrl+F should open the find bar");
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_F, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+F should open the find bar");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "needle"),
          "the query should be typed into the bar");
   Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_A, SDL_KMOD_CTRL),
@@ -2543,11 +2573,12 @@ void TestWorkspaceShellTerminalCloseTerminalClosesThePaneThenTheTab() {
 void TestWorkspaceShellTerminalPaneFocusKeysFallThroughWithOnePane() {
   SplitTerminalFixture fixture;
   WorkspaceShell& shell = fixture.shell;
+  constexpr auto kCtrlShift = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT);
   auto& only = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
   TerminalSessionTestAccess::ClearSentBytes(only);
-  Expect(SendKeyDown(shell, SDLK_LEFT, SDL_KMOD_ALT), "Alt+Left is handled");
+  Expect(SendKeyDown(shell, SDLK_LEFT, kCtrlShift), "Ctrl+Shift+Left is handled");
   Expect(!TerminalSessionTestAccess::SentBytes(only).empty(),
-         "with a single pane Alt+Left reaches the shell as an escape sequence");
+         "with a single pane Ctrl+Shift+Left reaches the shell as an escape sequence");
 
   Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TerminalSplit, {}),
          "split");
@@ -2555,18 +2586,25 @@ void TestWorkspaceShellTerminalPaneFocusKeysFallThroughWithOnePane() {
   auto& right_pane = WorkspaceShellTestAccess::TerminalPaneSession(shell, 1);
   TerminalSessionTestAccess::ClearSentBytes(left_pane);
   TerminalSessionTestAccess::ClearSentBytes(right_pane);
+  // Alt+Left/Right are a shell's word motion (zsh, fish, Claude Code's prompt):
+  // they reach the program even beside another pane.
   Expect(SendKeyDown(shell, SDLK_LEFT, SDL_KMOD_ALT), "Alt+Left is handled with two panes");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 1 &&
+             TerminalSessionTestAccess::SentBytes(right_pane) == "\x1b[1;3D",
+         "Alt+Left is the program's, not a pane move: [" + TerminalSessionTestAccess::SentBytes(right_pane) + "]");
+  TerminalSessionTestAccess::ClearSentBytes(right_pane);
+  Expect(SendKeyDown(shell, SDLK_LEFT, kCtrlShift), "Ctrl+Shift+Left is handled with two panes");
   Expect(WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 0,
-         "with two panes Alt+Left moves the keyboard to the left pane");
+         "with two panes Ctrl+Shift+Left moves the keyboard to the left pane");
   Expect(TerminalSessionTestAccess::SentBytes(left_pane).empty() &&
              TerminalSessionTestAccess::SentBytes(right_pane).empty(),
          "the chord is consumed by the pane move and reaches no shell");
-  Expect(SendKeyDown(shell, SDLK_LEFT, SDL_KMOD_ALT), "Alt+Left at the leftmost pane is handled");
+  Expect(SendKeyDown(shell, SDLK_LEFT, kCtrlShift), "Ctrl+Shift+Left at the leftmost pane is handled");
   Expect(WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 0, "no wrap-around");
   Expect(!TerminalSessionTestAccess::SentBytes(left_pane).empty(),
          "at the edge the chord falls through to the active pane's shell");
-  Expect(SendKeyDown(shell, SDLK_RIGHT, SDL_KMOD_ALT), "Alt+Right is handled");
-  Expect(WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 1, "Alt+Right moves right");
+  Expect(SendKeyDown(shell, SDLK_RIGHT, kCtrlShift), "Ctrl+Shift+Right is handled");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 1, "Ctrl+Shift+Right moves right");
 }
 
 void TestWorkspaceShellPanelMaximizeTakesTheWindowAndRestoresOnEditorFocus() {
@@ -2676,13 +2714,23 @@ void TestWorkspaceShellTerminalToggleAndPanelToggleKeys() {
              "\r",
          "the terminal has the keyboard after Ctrl+`");
 
-  // Ctrl+J toggles the panel and remembers its content.
+  // Ctrl+J in a focused terminal is the program's: Claude Code's newline, a
+  // shell's accept-line. It used to toggle the panel out from under it.
+  TerminalSessionTestAccess::ClearSentBytes(WorkspaceShellTestAccess::ActiveTerminalSession(shell));
+  Expect(SendKeyDown(shell, SDLK_J, SDL_KMOD_CTRL), "Ctrl+J in the terminal is handled");
+  Expect(TerminalSessionTestAccess::SentBytes(WorkspaceShellTestAccess::ActiveTerminalSession(shell)) == "\n",
+         "Ctrl+J reaches the program as LF");
+  Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::Terminal,
+         "and the panel stays up");
+  // Everywhere else Ctrl+J toggles the panel and remembers its content.
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
   Expect(SendKeyDown(shell, SDLK_J, SDL_KMOD_CTRL), "Ctrl+J is handled");
   Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::None,
          "Ctrl+J hides the panel");
   Expect(SendKeyDown(shell, SDLK_J, SDL_KMOD_CTRL), "Ctrl+J is handled again");
   Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::Terminal,
          "Ctrl+J brings the terminal content back");
+  WorkspaceShellTestAccess::SetFocusPanel(shell);
 
   // Ctrl+Shift+` opens a new terminal tab.
   Expect(SendKeyDown(shell, SDLK_GRAVE, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT)),
@@ -2723,8 +2771,9 @@ void TestWorkspaceShellTerminalActivityDotMarksBackgroundOutput() {
   Expect(!WorkspaceShellTestAccess::TerminalTabHasUnseenOutput(shell, 0),
          "the dot clears once the tab is shown");
 
-  // Output behind a hidden panel counts as unseen too.
-  SendKeyDown(shell, SDLK_J, SDL_KMOD_CTRL);
+  // Output behind a hidden panel counts as unseen too. (Ctrl+`, not Ctrl+J: a
+  // focused terminal keeps Ctrl+J for its program.)
+  SendKeyDown(shell, SDLK_GRAVE, SDL_KMOD_CTRL);
   Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::None,
          "panel hidden");
   TerminalSessionTestAccess::MarkOutputArrived(background);

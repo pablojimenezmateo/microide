@@ -2444,12 +2444,13 @@ void TestWorkspaceShellSettingsOverAFocusedTerminalHidesItsCaret() {
   (void)shell.ConsumePendingRenderInvalidation();
   Expect(WorkspaceShellTestAccess::CaretVisibleNow(shell), "the terminal caret should be showing");
 
-  // Ctrl+, opens Settings over the focused terminal (it skips the shell). The
-  // indent status segment used to be the way in; it opens the indentation pick
-  // now (TD-2026-10-18-361).
+  // Settings opens over the focused terminal (from the palette or a menu: Ctrl+,
+  // is the terminal's own key now). The indent status segment used to be the way
+  // in; it opens the indentation pick now (TD-2026-10-18-361).
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "settings"), "the settings command runs");
   const auto open = PaintAndDiffWithFullRepaint(
-      shell, canvas, kWidth, kHeight, DispatchEvents(shell, {KeyDownEvent(SDLK_COMMA, SDL_KMOD_CTRL)}), pin_caret);
-  Expect(WorkspaceShellTestAccess::SettingsOverlayVisible(shell), "Ctrl+, opens Settings over the terminal");
+      shell, canvas, kWidth, kHeight, shell.ConsumePendingRenderInvalidation(), pin_caret);
+  Expect(WorkspaceShellTestAccess::SettingsOverlayVisible(shell), "Settings opens over the terminal");
   Expect(open.identical(), "opening Settings over a focused terminal should paint what a full "
                            "repaint paints; " + DescribePixelDiff(open));
   // Nothing under the modal blinks: the terminal caret is off whatever the phase.
@@ -3772,10 +3773,10 @@ void TestWorkspaceShellTerminalFindBarOwnsTheBlink() {
 
   SoftwareCanvas canvas(kWidth, kHeight);
   shell.Render(canvas.renderer(), kWidth, kHeight);
-  (void)DispatchEvents(shell, {KeyDownEvent(SDLK_F, SDL_KMOD_CTRL)});
+  (void)DispatchEvents(shell, {KeyDownEvent(SDLK_F, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT))});
   Expect(WorkspaceShellTestAccess::CurrentTextInputSurface(shell) ==
              microide::workspace::TextInputSurface::TerminalFind,
-         "Ctrl+F in the terminal should focus its find bar");
+         "Ctrl+Shift+F in the terminal should focus its find bar");
   WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, hidden);
   shell.Render(canvas.renderer(), kWidth, kHeight);
   (void)shell.ConsumePendingRenderInvalidation();

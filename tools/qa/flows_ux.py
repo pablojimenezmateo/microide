@@ -838,8 +838,9 @@ def _active_terminal(app: q.App) -> int:
 def flow_terminal_keys(app: q.App) -> None:
     """The terminal by keyboard: Ctrl+Shift+` opens another, Ctrl+PageDown/PageUp
     cycle them, Shift+PageUp pages back through the scrollback and a keystroke
-    snaps to the bottom, Ctrl+Shift+\\ splits and Alt+Left/Right move between the
-    panes, and a pane whose shell exited relaunches on Enter."""
+    snaps to the bottom, Ctrl+Shift+\\ splits and Ctrl+Shift+Left/Right move
+    between the panes (Alt+Left/Right stay the shell's word motion), and a pane
+    whose shell exited relaunches on Enter."""
     if not app.ui()["panel"]["visible"]:
         app.key("ctrl+grave")
         app.wait_until(lambda: app.ui()["panel"]["visible"], 5.0, "the terminal")
@@ -882,10 +883,15 @@ def flow_terminal_keys(app: q.App) -> None:
     app.key("alt+Left")
     step(app, "alt+Left", 0.3)
     panes = next((t.get("panes", []) for t in terminal_tabs(app) if t.get("active")), [])
+    app.expect(next((i for i, p in enumerate(panes) if p.get("active")), -1) == right,
+               f"Alt+Left is the shell's, not a pane move ({panes})")
+    app.key("ctrl+shift+Left")
+    step(app, "ctrl+shift+Left", 0.3)
+    panes = next((t.get("panes", []) for t in terminal_tabs(app) if t.get("active")), [])
     app.expect(next((i for i, p in enumerate(panes) if p.get("active")), -1) != right,
-               f"Alt+Left moves to the other pane ({panes})")
-    app.key("alt+Right")
-    step(app, "alt+Right", 0.3)
+               f"Ctrl+Shift+Left moves to the other pane ({panes})")
+    app.key("ctrl+shift+Right")
+    step(app, "ctrl+shift+Right", 0.3)
 
     def active_pane() -> dict:
         panes = next((t.get("panes", []) for t in terminal_tabs(app) if t.get("active")), [])

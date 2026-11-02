@@ -31,10 +31,10 @@ struct KeybindingSpec {
   std::string_view command_name;
   // Whether a Global binding still fires while a terminal holds keyboard focus
   // (VS Code's `terminal.integrated.commandsToSkipShell`). Off by default: a
-  // focused terminal owns the keyboard, so Ctrl+O reaches nano as ^O instead of
-  // opening a file. Set only on chords a shell has no use for (F-key debugging,
-  // Ctrl+Shift+letter, zoom) and on the few the IDE must keep (Ctrl+P, Ctrl+`,
-  // Ctrl+J). Terminal-context bindings always fire in a terminal.
+  // focused terminal owns the keyboard, so Ctrl+O reaches nano as ^O, Ctrl+J
+  // reaches Claude Code as a newline and F5 reaches htop. Set only on a
+  // reserved chord (IsTerminalReservedChord). Terminal-context bindings always
+  // fire in a terminal, and are reserved chords too.
   bool skips_terminal = false;
   // This binding takes a chord an EARLIER built-in also holds, whenever that one's
   // action is not enabled (VS Code's `when` clauses: F6 pauses a running program
@@ -47,6 +47,16 @@ struct KeybindingSpec {
   SDL_Keycode leader_key = SDLK_UNKNOWN;
   SDL_Keymod leader_modifiers = SDL_KMOD_NONE;
 };
+
+// The chords a focused terminal leaves to the workbench; every other key is the
+// program's. Ctrl+Shift+<key> is the namespace every Linux terminal reserves for
+// its own UI (copy, paste, find, new tab) -- a legacy encoding cannot tell most
+// of them from Ctrl+<key> -- and Ctrl+` / Ctrl+PageUp / Ctrl+PageDown / Ctrl+Tab
+// are the way out (toggle the panel, switch terminal tab, switch editor). Only a
+// built-in binding on one of these may be active in a focused terminal (a
+// Terminal-context binding, or a Global one that skips the shell); a user can
+// still hand any binding to the workbench with terminal.commands_to_skip_shell.
+bool IsTerminalReservedChord(SDL_Keycode key, SDL_Keymod modifiers);
 
 // Whether two bindings on one chord can both be active in some focus context --
 // then FindKeybinding's first match leaves the other dead. The rule dispatch

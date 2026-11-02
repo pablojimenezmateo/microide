@@ -423,8 +423,9 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           // VS Code's terminal.integrated.commandsToSkipShell, by keybinding id.
           .description =
               "Keybindings that still run while a terminal has focus instead of "
-              "reaching the shell, by id (comma-separated). Prefix an id with '-' "
-              "to give a default one (Ctrl+P, F5, Ctrl+`) back to the shell.",
+              "reaching the shell, by id (comma-separated): 'file-finder' makes "
+              "Ctrl+P open Go to File from a terminal. Prefix an id with '-' to "
+              "give a default one (Ctrl+Shift+P, Ctrl+`) back to the shell.",
           .type = SettingType::String,
           .scope = SettingScope::User,
           .default_string = {},

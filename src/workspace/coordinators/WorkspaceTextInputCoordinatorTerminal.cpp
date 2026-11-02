@@ -51,7 +51,10 @@ bool TextInputCoordinator::HandleTerminalKeyDown(const SDL_KeyboardEvent& event,
     press.super = (modifiers & SDL_KMOD_GUI) != 0;
     return press;
   };
+  // A key the program reads retires the selection, as typed text already did: a
+  // selection left behind kept Ctrl+C copying it instead of interrupting.
   const auto send_key_press = [&](KeyPress::Key key, char32_t codepoint = 0) {
+    operations_.clear_terminal_selection();
     follow_terminal_tail();
     terminal_tab->session.SendKeyPress(make_key_press(key, codepoint));
     return handled_with_panel_redraw();
@@ -73,10 +76,9 @@ bool TextInputCoordinator::HandleTerminalKeyDown(const SDL_KeyboardEvent& event,
     return true;
   }
 
-  if (event.key == SDLK_ESCAPE && operations_.terminal_has_selection()) {
-    operations_.clear_terminal_selection();
-    return handled_with_panel_redraw();
-  }
+  // Escape is the program's even with a selection up (send_key_press clears it):
+  // it used to only clear the selection, so a word double-clicked in vim's
+  // buffer left vim in insert mode and the `:w` typed next went into the file.
 
   // Enter in a pane whose process has exited relaunches it in place — the
   // dropped-ssh-link case: the tab, its position and its scrollback stay, and the
@@ -99,20 +101,21 @@ bool TextInputCoordinator::HandleTerminalKeyDown(const SDL_KeyboardEvent& event,
     return PasteClipboardIntoTerminal();
   }
 
-  // Control combinations that map to C0 control bytes (or CSI-u under Kitty).
-  // Ctrl+2..8 and Ctrl+/ are the xterm digit/punctuation row (NUL, ESC, FS, GS,
-  // RS, US, DEL and US); they used to be swallowed, so Emacs's C-/ undo and
-  // readline's C-/ never reached the shell. Ctrl+- and Ctrl+0 stay with the
-  // global zoom bindings, as in VS Code.
+  // Every Ctrl+<printable key> is the program's: the encoder turns it into the
+  // xterm control byte where one exists (Ctrl+2..8 and Ctrl+/ are the digit and
+  // punctuation row -- NUL, ESC, FS, GS, RS, US, DEL -- and Ctrl+- is readline's
+  // undo), the key's own character where none does, as xterm does, and CSI u
+  // under the kitty protocol, where a program can tell Ctrl+0 or Ctrl+= apart.
+  // A focused terminal used to keep Ctrl+-, Ctrl+0, Ctrl+= and Ctrl+, for the
+  // workbench; it now owns every key but the reserved Ctrl+Shift chords
+  // (IsTerminalReservedChord), which never reach here.
   if (modifiers & SDL_KMOD_CTRL) {
-    if ((event.key >= SDLK_A && event.key <= SDLK_Z) || event.key == SDLK_LEFTBRACKET ||
-        event.key == SDLK_BACKSLASH || event.key == SDLK_RIGHTBRACKET ||
-        event.key == SDLK_SPACE || (event.key >= SDLK_2 && event.key <= SDLK_8)) {
-      return send_key_press(KeyPress::Key::Char, static_cast<char32_t>(event.key));
-    }
     if (event.key == SDLK_SLASH) {
       // Shift+/ is '?': Ctrl+? is DEL, as on a physical terminal.
       return send_key_press(KeyPress::Key::Char, (modifiers & SDL_KMOD_SHIFT) ? U'?' : U'/');
+    }
+    if (event.key >= 0x20 && event.key < 0x7F) {
+      return send_key_press(KeyPress::Key::Char, static_cast<char32_t>(event.key));
     }
   }
 

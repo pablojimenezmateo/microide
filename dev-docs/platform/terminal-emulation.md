@@ -122,7 +122,17 @@ Real per-column tab stops: HTS (`ESC H`), TBC (`CSI g`), CHT (`CSI I`), CBT
   the open frame (see Performance).
 - Cursor shape DECSCUSR (`CSI … SP q`) and blink (mode 12) tracked and exposed.
 - Mouse tracking 1000/1002/1003 + SGR 1006, focus events 1004, bracketed paste
-  2004.
+  2004. While a program owns the mouse the pane shows the arrow (its clicks are
+  the program's), and Shift hands the pointer back to selection (I-beam, and a
+  Shift+drag selects past the program, as in every Linux terminal). Under 1003 the
+  pane shows the **hand** over a control the program lights under the resting
+  pointer (`TerminalHoverAffordance`): no TUI names a pointer shape (Claude Code
+  sends no OSC 22), but one with clickable controls restyles them on hover --
+  Claude Code's "Jump to bottom" and its collapsed tool groups -- so the run of
+  cells under the pointer whose text stayed and whose style changed after the
+  move was reported is the control. Probed on the input path, checked on the
+  cursor path; the output path pays nothing. Host terminals share it (the
+  mirror is the same screen).
 
 ### OSC
 
@@ -147,16 +157,26 @@ Input is encoded by `FormatTerminalKeyPress`
   letters) are emitted in CSI-u form — this is what lets Claude/Codex bind
   Shift+Enter and similar.
 
-**Who gets the key.** A focused terminal owns the keyboard, as in VS Code: a
-Global keybinding fires there only when its spec sets `skips_terminal`
-(`WorkspaceKeybindingRegistry.cpp`, VS Code's
-`terminal.integrated.commandsToSkipShell`). So Ctrl+O/S/N/B/W/Z reach the PTY as
-control bytes (nano's Write Out, readline's back-char), while Ctrl+P, Ctrl+Shift+P,
-Ctrl+`, Ctrl+J, zoom, the debug F-keys and the Ctrl+Shift view chords stay with the
-IDE. Terminal-context bindings (Ctrl+F find, Alt+←/→ pane focus, Ctrl+PgUp/PgDn,
-Ctrl+Shift+\ split) always fire. The user edits the set with
-`terminal.commands_to_skip_shell` — keybinding ids, comma-separated; `id` adds one,
-`-id` hands a default back to the shell (`-file-finder` makes Ctrl+P a ^P). A plugin
+**Who gets the key.** A focused terminal owns the keyboard: every key reaches the
+program except the **reserved chords** (`IsTerminalReservedChord`): Ctrl+Shift+<key>
+— the namespace gnome-terminal, Konsole and kitty keep for their own UI, and one a
+legacy encoding mostly cannot tell from Ctrl+<key> — plus Ctrl+` (toggle the
+terminal), Ctrl+PgUp/PgDn (switch terminal tab) and Ctrl+Tab (switch editor), the
+ways out. So Ctrl+O/S/N/B/W/Z/P/J/Q/F, Ctrl+digits and punctuation (Ctrl+- is
+readline's undo), every F-key and Alt+←/→ reach the PTY — nano's Write Out, Claude
+Code's Ctrl+J newline, readline's ^P, htop's and mc's F-keys, a shell's word motion.
+They used to be taken by Go to File, the panel toggle, quit, zoom, Settings, the
+debug keys and pane focus. A built-in may be active in a focused terminal only on a
+reserved chord: a Terminal-context binding (Ctrl+Shift+F find, Ctrl+Shift+←/→ pane
+focus, Ctrl+PgUp/PgDn, Ctrl+Shift+\ split) or a Global one whose spec sets
+`skips_terminal` (Ctrl+Shift+P, Ctrl+Shift+E/G/M, Ctrl+`) — pinned by
+`KeybindingRegistry/BuiltinsActiveInATerminalAreReservedChords`. Shift+PgUp/PgDn
+page the scrollback on the primary screen only; on the alternate screen they are
+the program's. Escape is the program's even with a selection up (the selection
+clears), as is every other key. The user edits the set with
+`terminal.commands_to_skip_shell` — keybinding ids, comma-separated; `id` adds one
+(`file-finder` makes Ctrl+P open Go to File from a terminal again), `-id` hands a
+default back to the shell. A plugin
 Global binding skips the terminal when its `ctx.keybindings.add` table sets
 `skips_terminal = true` (the setting overrides that too); otherwise a plugin that
 wants a chord there contributes it with `context = "terminal"`. The edits apply

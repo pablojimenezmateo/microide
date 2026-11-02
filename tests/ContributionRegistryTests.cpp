@@ -324,14 +324,34 @@ void TestFindKeybindingTerminalOwnsGlobalChordsUnlessSkipped() {
          "Ctrl+O belongs to the terminal");
   Expect(id_at(SDLK_S, SDL_KMOD_CTRL, KeybindingContext::Terminal) == "<none>",
          "Ctrl+S belongs to the terminal");
-  Expect(id_at(SDLK_P, SDL_KMOD_CTRL, KeybindingContext::Terminal) == "file-finder",
-         "Ctrl+P skips the shell");
-  Expect(id_at(SDLK_F5, SDL_KMOD_NONE, KeybindingContext::Terminal) == "debug-start-or-continue",
-         "F5 skips the shell");
+  // The keys that clashed with programs in the terminal: Ctrl+J is Claude Code's
+  // newline, Ctrl+P readline's previous-history, F5/F10 htop's and mc's keys.
+  for (const auto& [key, mods, what] :
+       {std::tuple<SDL_Keycode, SDL_Keymod, const char*>{SDLK_J, SDL_KMOD_CTRL, "Ctrl+J"},
+        {SDLK_P, SDL_KMOD_CTRL, "Ctrl+P"},
+        {SDLK_Q, SDL_KMOD_CTRL, "Ctrl+Q"},
+        {SDLK_F, SDL_KMOD_CTRL, "Ctrl+F"},
+        {SDLK_MINUS, SDL_KMOD_CTRL, "Ctrl+-"},
+        {SDLK_COMMA, SDL_KMOD_CTRL, "Ctrl+,"},
+        {SDLK_F1, SDL_KMOD_NONE, "F1"},
+        {SDLK_F5, SDL_KMOD_NONE, "F5"},
+        {SDLK_F6, SDL_KMOD_NONE, "F6"},
+        {SDLK_F10, SDL_KMOD_NONE, "F10"},
+        {SDLK_LEFT, SDL_KMOD_ALT, "Alt+Left"}}) {
+    Expect(id_at(key, mods, KeybindingContext::Terminal) == "<none>",
+           std::string(what) + " belongs to the terminal: " + id_at(key, mods, KeybindingContext::Terminal));
+  }
   Expect(id_at(SDLK_GRAVE, SDL_KMOD_CTRL, KeybindingContext::Terminal) == "terminal-toggle",
          "Ctrl+` skips the shell");
-  Expect(id_at(SDLK_F, SDL_KMOD_CTRL, KeybindingContext::Terminal) == "terminal-find",
-         "a Terminal-context binding still matches in the terminal");
+  Expect(id_at(SDLK_P, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+               KeybindingContext::Terminal) == "command-palette",
+         "Ctrl+Shift+P skips the shell");
+  Expect(id_at(SDLK_F, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+               KeybindingContext::Terminal) == "terminal-find",
+         "a Terminal-context binding still matches in the terminal: Ctrl+Shift+F finds");
+  Expect(id_at(SDLK_F, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+               KeybindingContext::Editor) == "project-search",
+         "and stays find-in-files everywhere else");
   const auto* builtin = FindBuiltinKeybindingByKey(SDLK_O, SDL_KMOD_CTRL, KeybindingContext::Terminal);
   Expect(builtin == nullptr, "the built-in lookup applies the same terminal rule");
 
@@ -350,9 +370,37 @@ void TestFindKeybindingTerminalOwnsGlobalChordsUnlessSkipped() {
   const auto* terminal_o = FindKeybinding(with_plugin, SDLK_O, SDL_KMOD_CTRL, KeybindingContext::Terminal);
   Expect(terminal_o != nullptr && terminal_o->id == "plugin.terminal-ctrl-o",
          "a terminal Ctrl+O contribution does not collide with the Global open-file");
-  const bool has_ctrl_p = std::any_of(with_plugin.begin(), with_plugin.end(),
-                                      [](const auto& rb) { return rb.id == "plugin.terminal-ctrl-p"; });
-  Expect(!has_ctrl_p, "a terminal Ctrl+P contribution collides with the skip-shell Go to File");
+  contributed[1].key_chord = "Ctrl+Shift+P";
+  const auto with_palette = ResolveKeybindings(contributed);
+  const bool has_ctrl_shift_p = std::any_of(with_palette.begin(), with_palette.end(),
+                                            [](const auto& rb) { return rb.id == "plugin.terminal-ctrl-p"; });
+  Expect(!has_ctrl_shift_p, "a terminal Ctrl+Shift+P contribution collides with the skip-shell palette");
+}
+
+// A focused terminal owns every key but the reserved chords
+// (IsTerminalReservedChord): any built-in active there -- a Terminal-context
+// binding, or a Global one that skips the shell -- must sit on one. Ctrl+J
+// (panel), Ctrl+P (Go to File), Ctrl+F (terminal find), Alt+Left/Right (pane
+// focus) and the F-keys were active there and took keys Claude Code, readline,
+// vim, htop and mc read.
+void TestBuiltinsActiveInATerminalAreReservedChords() {
+  std::string offenders;
+  for (const auto& binding :
+       ResolveKeybindings(std::vector<PluginHost::ContributedKeybinding>{})) {
+    const bool active_in_terminal =
+        binding.context == KeybindingContext::Terminal ||
+        (binding.context == KeybindingContext::Global && binding.skips_terminal);
+    if (active_in_terminal && binding.leader_key == SDLK_UNKNOWN &&
+        !microide::workspace::IsTerminalReservedChord(binding.key, binding.modifiers)) {
+      offenders += binding.id + " (" + microide::workspace::FormatBindingKeys(binding) + "); ";
+    }
+  }
+  Expect(offenders.empty(), "built-ins that take a key from a focused terminal: " + offenders);
+  Expect(microide::workspace::IsTerminalReservedChord(SDLK_C, static_cast<SDL_Keymod>(SDL_KMOD_LCTRL | SDL_KMOD_RSHIFT)),
+         "Ctrl+Shift+<key> is reserved, either side's modifiers");
+  Expect(!microide::workspace::IsTerminalReservedChord(SDLK_J, SDL_KMOD_CTRL), "Ctrl+J is not");
+  Expect(!microide::workspace::IsTerminalReservedChord(SDLK_F5, SDL_KMOD_NONE), "F5 is not");
+  Expect(!microide::workspace::IsTerminalReservedChord(SDLK_LEFT, SDL_KMOD_ALT), "Alt+Left is not");
 }
 
 // `terminal.commands_to_skip_shell` edits the skip-shell set by binding id, and a
@@ -365,17 +413,18 @@ void TestResolveKeybindingsSkipShellOverrides() {
     const auto* found = FindKeybinding(bindings, key, mods, KeybindingContext::Terminal);
     return found == nullptr ? std::string("<none>") : found->id;
   };
+  constexpr auto kCtrlShift = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT);
   const auto edited = ResolveKeybindings(std::vector<PluginHost::ContributedKeybinding>{}, {},
-                                         {"-file-finder", "open-file"});
-  Expect(id_at(edited, SDLK_P, SDL_KMOD_CTRL) == "<none>",
-         "'-file-finder' gives Ctrl+P back to the shell");
+                                         {"-command-palette", "open-file"});
+  Expect(id_at(edited, SDLK_P, kCtrlShift) == "<none>",
+         "'-command-palette' gives Ctrl+Shift+P back to the shell");
   Expect(id_at(edited, SDLK_O, SDL_KMOD_CTRL) == "open-file",
          "'open-file' makes Ctrl+O skip the shell");
-  Expect(id_at(edited, SDLK_F5, SDL_KMOD_NONE) == "debug-start-or-continue",
+  Expect(id_at(edited, SDLK_E, kCtrlShift) == "sidebar-explorer",
          "unlisted defaults keep skipping the shell");
   const auto last_wins = ResolveKeybindings(std::vector<PluginHost::ContributedKeybinding>{}, {},
-                                            {"-file-finder", "file-finder"});
-  Expect(id_at(last_wins, SDLK_P, SDL_KMOD_CTRL) == "file-finder",
+                                            {"-command-palette", "command-palette"});
+  Expect(id_at(last_wins, SDLK_P, kCtrlShift) == "command-palette",
          "the last entry for an id wins");
 
   std::vector<PluginHost::ContributedKeybinding> contributed(3);
@@ -386,17 +435,17 @@ void TestResolveKeybindingsSkipShellOverrides() {
   contributed[1].id = "plugin.global-stays";
   contributed[1].key_chord = "Ctrl+Alt+U";
   contributed[1].action = "plugin.cmd";
-  contributed[2].id = "plugin.terminal-ctrl-p";
-  contributed[2].key_chord = "Ctrl+P";
+  contributed[2].id = "plugin.terminal-ctrl-shift-p";
+  contributed[2].key_chord = "Ctrl+Shift+P";
   contributed[2].action = "plugin.term";
   contributed[2].context = "terminal";
-  const auto with_plugin = ResolveKeybindings(contributed, {}, {"-file-finder"});
+  const auto with_plugin = ResolveKeybindings(contributed, {}, {"-command-palette"});
   Expect(id_at(with_plugin, SDLK_Y, SDL_KMOD_CTRL | SDL_KMOD_ALT) == "plugin.global-skips",
          "a plugin Global binding with skips_terminal fires in a terminal");
   Expect(id_at(with_plugin, SDLK_U, SDL_KMOD_CTRL | SDL_KMOD_ALT) == "<none>",
          "a plugin Global binding without it yields to the terminal");
-  Expect(id_at(with_plugin, SDLK_P, SDL_KMOD_CTRL) == "plugin.terminal-ctrl-p",
-         "a terminal Ctrl+P contribution takes the chord the user gave back to the shell");
+  Expect(id_at(with_plugin, SDLK_P, kCtrlShift) == "plugin.terminal-ctrl-shift-p",
+         "a terminal Ctrl+Shift+P contribution takes the chord the user gave back to the shell");
   const auto overridden = ResolveKeybindings(contributed, {}, {"-plugin.global-skips"});
   Expect(id_at(overridden, SDLK_Y, SDL_KMOD_CTRL | SDL_KMOD_ALT) == "<none>",
          "the setting overrides a plugin's own skips_terminal");
@@ -1679,6 +1728,8 @@ void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ContributionRegistry/PluginMenuNamesAreTheBarsMenus", TestPluginMenuNamesAreTheBarsMenus);
   AddTest(tests, "ContributionRegistry/FindKeybindingTerminalOwnsGlobalChordsUnlessSkipped",
           TestFindKeybindingTerminalOwnsGlobalChordsUnlessSkipped);
+  AddTest(tests, "KeybindingRegistry/BuiltinsActiveInATerminalAreReservedChords",
+          TestBuiltinsActiveInATerminalAreReservedChords);
   AddTest(tests, "ContributionRegistry/ResolveKeybindingsSkipShellOverrides",
           TestResolveKeybindingsSkipShellOverrides);
   AddTest(tests, "SettingsRegistry/BuiltinsNonEmpty", TestSettingsRegistryBuiltinsNonEmpty);
