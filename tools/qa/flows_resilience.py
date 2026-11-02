@@ -80,6 +80,35 @@ def flow_signal_quit(app: q.App) -> None:
                f"SIGHUP kept the newest edit too ({buffer.get('text')!r})")
 
 
+def flow_crash_restore_external_change(app: q.App) -> None:
+    """Killed with an unsaved edit; while the app is down another program changes
+    the file; after the relaunch, Ctrl+S on the restored buffer must REFUSE (the
+    changed-on-disk banner) rather than write the backup over that change -- which
+    it did, silently, until 2026-11-02 (TD-2026-11-02-429)."""
+    import os
+    import signal as _signal
+    open_file(app, "notes/shared.txt", "before\n")
+    app.click_text(1, 1)
+    app.type("mine ")
+    step(app, "edit", 0.3)
+    time.sleep(4.0)  # past the session flush's debounce
+    os.killpg(app.proc.pid, _signal.SIGKILL)
+    app.proc.wait(timeout=5)
+    path = app.project / "notes" / "shared.txt"
+    path.write_text("theirs, written while microide was down\n")
+    app.crash_and_relaunch()
+    app.wait_until(lambda: (app.buffer().get("path") or "").endswith("notes/shared.txt"), 8.0,
+                   "the unsaved tab to come back")
+    app.expect(app.buffer().get("dirty") is True, "restored dirty")
+    app.send("focus", "editor")
+    app.key("ctrl+s")
+    app.settle(0.6)
+    app.expect(read(app, "notes/shared.txt") == "theirs, written while microide was down\n",
+               f"the save did not overwrite the other program's change ({read(app, 'notes/shared.txt')!r})")
+    app.expect(app.buffer().get("dirty") is True and "mine before" in (app.buffer().get("text") or ""),
+               "the restored text is kept, unsaved")
+
+
 REPO = Path(__file__).resolve().parents[2]
 
 
@@ -225,4 +254,5 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "huge-file": flow_huge_file,
     "crash-recovery": flow_crash_recovery,
     "signal-quit": flow_signal_quit,
+    "crash-restore-external-change": flow_crash_restore_external_change,
 }
