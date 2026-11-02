@@ -513,8 +513,7 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
   if (host_terminal_unrecorded) {
     // Recorded the way unsaved text is: the crash-safety session flush, debounced.
     context_.current_project_state.host_terminals_unrecorded = true;
-    session_flush_armed_ = true;
-    session_flush_edit_epoch_ms_ = SDL_GetTicks();
+    session_flush_.Note(SDL_GetTicks());
   }
   auto& catalog = context_.project_catalog;
   for (std::size_t i = 0; i < catalog.entries.size(); ++i) {

@@ -1110,22 +1110,11 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
   return next_delay;
 }
 
-namespace {
-// How long after the last edit the crash-safety session flush waits before staging the
-// snapshot. Long enough that active typing coalesces into a single flush (keeping disk
-// churn low), short enough that a crash loses only a couple of seconds of unsaved edits.
-constexpr Uint64 kSessionFlushDebounceMs = 2500;
-}  // namespace
-
+// When it is due: CrashSafetyFlushSchedule (quiet after the last edit, bounded after
+// the first unstaged one).
 std::optional<Uint32> WorkspaceShell::NextSessionFlushDelayMs() const {
-  if (!session_flush_armed_) {
-    return std::nullopt;
-  }
-  const Uint64 elapsed = SDL_GetTicks() - session_flush_edit_epoch_ms_;
-  if (elapsed >= kSessionFlushDebounceMs) {
-    return 0;
-  }
-  return static_cast<Uint32>(kSessionFlushDebounceMs - elapsed);
+  const std::optional<std::uint64_t> delay = session_flush_.DelayMs(SDL_GetTicks());
+  return delay.has_value() ? std::optional<Uint32>(static_cast<Uint32>(*delay)) : std::nullopt;
 }
 
 void WorkspaceShell::FlushSessionStateForCrashSafety() {
@@ -1333,9 +1322,8 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
   // persistence (no user-file write, no UI change), so disarm and fall through WITHOUT
   // returning — other wake work (autosave, project reload, animation) still runs this
   // tick. Disarming stops the deadline from busy-looping the wake until the next edit.
-  if (session_flush_armed_ &&
-      (SDL_GetTicks() - session_flush_edit_epoch_ms_) >= kSessionFlushDebounceMs) {
-    session_flush_armed_ = false;
+  if (session_flush_.Due(SDL_GetTicks())) {
+    session_flush_.Disarm();
     FlushSessionStateForCrashSafety();
   }
   // Search as you type: run the search on the text in the field being edited once

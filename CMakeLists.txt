@@ -1343,6 +1343,7 @@ add_executable(microide_tests
   tests/SurfaceTextureCacheTests.cpp
   tests/WorkspaceShellFormatJsonTests.cpp
   tests/SaveDataIntegrityTests.cpp
+  tests/CrashSafetyFlushScheduleTests.cpp
   tests/ArchitectureInvariantsTests.cpp
   tests/architecture/ArchitectureFileScanner.cpp
   tests/architecture/ArchitectureRuleFixtures.cpp

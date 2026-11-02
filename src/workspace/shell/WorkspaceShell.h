@@ -71,6 +71,7 @@
 #include "workspace/debug/DebugService.h"
 #include "workspace/lsp/LspService.h"
 #include "workspace/services/EditorBlameOverlayService.h"
+#include "workspace/state/CrashSafetyFlushSchedule.h"
 #include "workspace/state/WorkspaceInteractionState.h"
 #include "workspace/state/WorkspaceMenuState.h"
 #include "workspace/registries/WorkspaceMenuRegistry.h"

@@ -33,7 +33,7 @@
     FlushPendingStateWrites(shell);
   }
   static void ArmSessionFlushTimer(WorkspaceShell& shell) { shell.MaybeArmSessionFlushTimer(); }
-  static bool SessionFlushArmed(WorkspaceShell& shell) { return shell.session_flush_armed_; }
+  static bool SessionFlushArmed(WorkspaceShell& shell) { return shell.session_flush_.armed(); }
   static bool ActivateCurrentTabAfterStateLoad(WorkspaceShell& shell) {
     return shell.ActivateCurrentTabAfterStateLoad();
   }

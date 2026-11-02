@@ -600,11 +600,14 @@ void WorkspaceShell::MaybeArmSessionFlushTimer() {
     return;  // Navigation/focus only: keep any pending debounce.
   }
   session_flush_last_content_revision_ = revision;
-  session_flush_edit_epoch_ms_ = SDL_GetTicks();
   // Arm only when there is unsaved content somewhere to persist (across all groups),
   // and never disarm one already armed: a host terminal that just got its handle
   // (ConsumeTerminalSessionUpdates) is owed the same flush, dirty buffers or not.
-  session_flush_armed_ = session_flush_armed_ || !MakeEditorTabService().DirtyGroupTabs().empty();
+  if (!MakeEditorTabService().DirtyGroupTabs().empty()) {
+    session_flush_.Note(SDL_GetTicks());
+  } else {
+    session_flush_.Touch(SDL_GetTicks());
+  }
 }
 
 std::optional<Uint32> WorkspaceShell::NextAutosaveDelayMs() const {

@@ -144,6 +144,7 @@ void RegisterPhase4Tests(std::vector<TestCase>& tests);
 void RegisterPhase5Tests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellFormatJsonTests(std::vector<TestCase>& tests);
 void RegisterSaveDataIntegrityTests(std::vector<TestCase>& tests);
+void RegisterCrashSafetyFlushScheduleTests(std::vector<TestCase>& tests);
 void RegisterControlClientTests(std::vector<TestCase>& tests);
 void RegisterControlProtocolRobustnessTests(std::vector<TestCase>& tests);
 void RegisterControlProtocolTests(std::vector<TestCase>& tests);
@@ -254,6 +255,7 @@ void RegisterShellTests(std::vector<TestCase>& tests) {
   RegisterSurfaceTextureCacheTests(tests);
   RegisterWorkspaceShellFormatJsonTests(tests);
   RegisterSaveDataIntegrityTests(tests);
+  RegisterCrashSafetyFlushScheduleTests(tests);
   RegisterControlClientTests(tests);
   RegisterControlProtocolRobustnessTests(tests);
   RegisterControlProtocolTests(tests);
