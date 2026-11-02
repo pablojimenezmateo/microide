@@ -1,3 +1,4 @@
+#include "workspace/ProjectRootPresence.h"
 #include "workspace/shell/WorkspaceShell.h"
 
 #include "workspace/services/SidebarService.h"
@@ -1277,6 +1278,11 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
   }
 
   ApplyProjectChangeBatch(*ready);
+  // A batch is also how the root's own delete or move arrives (IN_DELETE_SELF /
+  // IN_MOVE_SELF): one stat per applied batch says whether the folder is still there.
+  if (PublishProjectRootPresence(notification_service_, context_.current_project_state.root, SDL_GetTicks())) {
+    RequestFullRedraw();
+  }
   return true;
 }
 

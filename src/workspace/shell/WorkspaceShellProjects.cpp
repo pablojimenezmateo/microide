@@ -1,5 +1,6 @@
 #include <memory>
 
+#include "workspace/ProjectRootPresence.h"
 #include "workspace/shell/WorkspaceShell.h"
 
 #include "workspace/services/TerminalPanelService.h"
@@ -190,6 +191,10 @@ bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
   const bool switched = MakeProjectCatalogService().Switch(index);
   if (switched) {
     NoteLayoutInputsChanged();
+    // A background project's folder can go while another is in front.
+    if (PublishProjectRootPresence(notification_service_, context_.current_project_state.root, SDL_GetTicks())) {
+      RequestFullRedraw();
+    }
   }
   return switched;
 }

@@ -4,6 +4,7 @@
 
 #include "util/PerformanceCounters.h"
 #include "util/TextFileIO.h"
+#include "workspace/ProjectRootPresence.h"
 #include "workspace/ListSelection.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/TabReorder.h"
@@ -7839,6 +7840,41 @@ void TestWorkspaceShellTruncatedIndexBatchNotifiesOnce() {
          "restarting the index watcher clears the notice about the old index");
 }
 
+// A project whose folder is deleted while it is open says so, in a sticky row,
+// instead of quietly emptying; a switch to a project that is there clears it.
+void TestWorkspaceShellAProjectWhoseFolderIsDeletedSaysSo() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "doomed";
+  const std::filesystem::path other = temp_dir.path() / "other";
+  WriteFile(root / "README.md", "root\n");
+  WriteFile(other / "README.md", "other\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, other, false, false), "the other project");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "the doomed one, in front");
+  Expect(WaitForFileIndexPath(shell, std::filesystem::path("README.md"), true, std::chrono::seconds(5)), "indexed");
+  const auto row = [&]() -> const workspace::NotificationService::Notification* {
+    for (const auto& note : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+      if (note.key == workspace::kProjectRootMissingNotificationKey) {
+        return &note;
+      }
+    }
+    return nullptr;
+  };
+  Expect(row() == nullptr, "no row while the folder is there");
+  std::filesystem::remove_all(root);
+  Expect(WaitUntil(
+             [&] {
+               (void)WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false);
+               return row() != nullptr;
+             },
+             std::chrono::seconds(10)),
+         "the watcher's batch raises the row");
+  Expect(row()->sticky && row()->message.find(root.string()) != std::string::npos, "sticky, naming the folder");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, other, false, false), "switch to the other project");
+  Expect(row() == nullptr, "which is there: the row goes");
+}
+
 void TestWorkspaceShellProjectWatcherIgnoresGitignoredDirectories() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -9081,6 +9117,7 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEmptyDirectoryCreationRefreshesTree);
   AddTest(tests, "WorkspaceShell/TruncatedIndexBatchNotifiesOnce",
           TestWorkspaceShellTruncatedIndexBatchNotifiesOnce);
+  AddTest(tests, "WorkspaceShell/AProjectWhoseFolderIsDeletedSaysSo", TestWorkspaceShellAProjectWhoseFolderIsDeletedSaysSo);
   AddTest(tests, "WorkspaceShell/ProjectWatcherIgnoresGitignoredDirectories",
           TestWorkspaceShellProjectWatcherIgnoresGitignoredDirectories);
   AddTest(tests, "WorkspaceShell/ProjectWatcherIgnoresGitMetadataLockfiles",
