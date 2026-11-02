@@ -118,7 +118,8 @@ class LoopbackWriteGate final : public project::FileWriteGate {
   explicit LoopbackWriteGate(LoopbackPathMap map) : map_(std::move(map)) {}
 
   [[nodiscard]] Result WriteText(const std::filesystem::path& path, std::string_view text,
-                                 Signature signature = Signature::Skip) override;
+                                 Signature signature = Signature::Skip,
+                                 util::WriteTarget target = util::WriteTarget::Replace) override;
   [[nodiscard]] TreeResult ApplyTreeOps(std::span<const TreeOp> ops) override;
   void DisposeStaged(std::span<const std::filesystem::path> staged) override;
 

@@ -281,8 +281,14 @@ bool TextViewport::Save(project::FileWriteGate& gate, std::error_code* error) {
     // the file keeps it.
     text.insert(0, util::kUtf8Bom);
   }
+  // A buffer whose baseline found no file there (a Save As's new name, a new
+  // file's first save) creates, never replaces: a file that appeared at the path
+  // since -- between Save As's existence check and this write, or while a new file
+  // was being typed -- is someone else's, and replacing it lost it silently.
+  const util::WriteTarget target =
+      document_->disk_signature.exists ? util::WriteTarget::Replace : util::WriteTarget::CreateNew;
   const project::FileWriteGate::Result written = gate.WriteText(
-      document_->path, text, project::FileWriteGate::Signature::Capture);
+      document_->path, text, project::FileWriteGate::Signature::Capture, target);
   if (!written.ok) {
     if (error != nullptr) {
       *error = written.error;

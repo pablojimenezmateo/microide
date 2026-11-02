@@ -4086,10 +4086,10 @@ return ide.plugin({
 class RecordingWriteGate final : public microide::project::FileWriteGate {
  public:
   std::vector<std::filesystem::path> writes;
-  Result WriteText(const std::filesystem::path& path, std::string_view text,
-                   Signature signature) override {
+  Result WriteText(const std::filesystem::path& path, std::string_view text, Signature signature,
+                   microide::util::WriteTarget target) override {
     writes.push_back(path);
-    return microide::project::LocalFileWriteGate().WriteText(path, text, signature);
+    return microide::project::LocalFileWriteGate().WriteText(path, text, signature, target);
   }
   TreeResult ApplyTreeOps(std::span<const TreeOp> ops) override {
     return microide::project::LocalFileWriteGate().ApplyTreeOps(ops);

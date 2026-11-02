@@ -387,6 +387,8 @@ std::string DescribeWriteError(const std::error_code& error) {
         return "an input/output error";
       case EXDEV:
         return "it is on another file system";
+      case EEXIST:
+        return "a file was created there meanwhile; it was left as it is";
       default:
         break;
     }
@@ -399,7 +401,7 @@ std::string DescribeWriteError(const std::error_code& error) {
 }
 
 bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text,
-                             std::error_code* error_out) {
+                             std::error_code* error_out, WriteTarget write_target) {
   const auto fail = [error_out](std::error_code why) {
     if (error_out != nullptr) {
       *error_out = why;
@@ -454,7 +456,9 @@ bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view
   // Carry the original mode/owner onto the temp before it takes the target's place.
   ApplyFilePermissions(temp_path, permissions);
 
-  if (!util::RenameReplacing(temp_path, target, &why)) {
+  const bool placed = write_target == WriteTarget::CreateNew ? util::RenameNoReplace(temp_path, target, &why)
+                                                             : util::RenameReplacing(temp_path, target, &why);
+  if (!placed) {
     std::filesystem::remove(temp_path, error);
     return fail(why);
   }

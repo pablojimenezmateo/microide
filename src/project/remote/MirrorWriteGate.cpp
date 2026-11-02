@@ -19,15 +19,16 @@ std::optional<std::string> MirrorWriteGate::MirrorRelative(const std::filesystem
 }
 
 FileWriteGate::Result MirrorWriteGate::WriteText(const std::filesystem::path& path,
-                                                 std::string_view text, Signature signature) {
+                                                 std::string_view text, Signature signature,
+                                                 util::WriteTarget target) {
   const std::optional<std::string> relative = MirrorRelative(path);
   if (!relative.has_value()) {
-    return LocalFileWriteGate().WriteText(path, text, signature);
+    return LocalFileWriteGate().WriteText(path, text, signature, target);
   }
   Result result;
   {
     std::lock_guard path_lock(store_.PathLock(*relative));
-    result = LocalFileWriteGate().WriteText(path, text, signature);
+    result = LocalFileWriteGate().WriteText(path, text, signature, target);
   }
   if (result.ok) {
     engine_.NotifyLocalWrite(*relative);

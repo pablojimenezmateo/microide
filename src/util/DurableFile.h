@@ -28,6 +28,12 @@ bool WriteFileBytesDurable(const std::filesystem::path& path, std::span<const st
 bool RenameReplacing(const std::filesystem::path& from, const std::filesystem::path& to,
                      std::error_code* error = nullptr);
 
+// Move `from` to `to` only if nothing is at `to` (renameat2 RENAME_NOREPLACE, or
+// link+unlink where the filesystem lacks it): a file that appeared at `to` is
+// never replaced. `*error` is errc::file_exists then.
+bool RenameNoReplace(const std::filesystem::path& from, const std::filesystem::path& to,
+                     std::error_code* error = nullptr);
+
 // fsync `directory` itself, so a rename (or create) inside it is on stable storage:
 // without it a power cut after an atomic replace can bring the PREVIOUS content
 // back -- the new inode was durable, the directory entry naming it was not. Best

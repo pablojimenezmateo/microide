@@ -8,6 +8,7 @@
 #include <system_error>
 
 #include <fcntl.h>
+#include <stdio.h>  // renameat2
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -91,6 +92,29 @@ bool RenameReplacing(const std::filesystem::path& from, const std::filesystem::p
     *error_out = error;
   }
   return !error;
+}
+
+bool RenameNoReplace(const std::filesystem::path& from, const std::filesystem::path& to,
+                     std::error_code* error_out) {
+  const auto fail = [error_out](int code) {
+    if (error_out != nullptr) {
+      *error_out = std::error_code(code, std::generic_category());
+    }
+    return false;
+  };
+#if defined(RENAME_NOREPLACE)
+  if (::renameat2(AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), RENAME_NOREPLACE) == 0) {
+    return true;
+  }
+  if (errno != EINVAL && errno != ENOSYS) {
+    return fail(errno);
+  }
+#endif
+  if (::linkat(AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), 0) != 0) {
+    return fail(errno);
+  }
+  ::unlink(from.c_str());
+  return true;
 }
 
 bool FsyncDirectory(const std::filesystem::path& directory) {

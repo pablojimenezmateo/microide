@@ -93,6 +93,33 @@ void TestEditorSaveRecordsTheGatesSignature() {
 // refused the save and raised an external-change banner for every one of them.
 // Rewriting a file with the same bytes is what an agent editing alongside you does,
 // so this was the common case, not the exotic one.
+// TD-2026-11-02-429 item 6: Save As checked that its new name was free, then wrote
+// with a rename that REPLACES -- a file created at the name in between was lost,
+// silently. A buffer whose baseline found no file there (Save As's new name, a new
+// file's first save) now creates, never replaces; one that had a file replaces it.
+void TestASaveWhereNoFileWasNeverReplacesOneThatAppeared() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path original = temp_dir.path() / "original.txt";
+  const std::filesystem::path file = temp_dir.path() / "new.txt";
+  WriteFile(original, "mine\n");
+  editor::TextViewport viewport;
+  Expect(viewport.OpenFile(original), "the fixture opens");
+  viewport.RebindToPath(file);  // what Save As does after finding the new name free
+  WriteFile(file, "theirs\n");  // ...and someone else creates it now
+  std::error_code error;
+  project::FileWriteGate& gate = LocalFileWriteGate();
+  Expect(!viewport.Save(gate, &error), "the save is refused");
+  Expect(error == std::errc::file_exists, "because a file appeared there: " + error.message());
+  Expect(ReadFile(file) == "theirs\n", "and that file is untouched");
+
+  std::filesystem::remove(file);
+  Expect(viewport.Save(gate, &error), "with the name free again, it saves: " + error.message());
+  Expect(ReadFile(file) == "mine\n", "and creates the file: '" + ReadFile(file) + "'");
+  Expect(ReadFile(original) == "mine\n", "the original is left as it was");
+  viewport.InsertText("more ");
+  Expect(viewport.Save(gate, &error), "the next save replaces its own file: " + error.message());
+}
+
 void TestIdenticalRewriteIsNotADiskConflict() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path file = temp_dir.path() / "touched.txt";
@@ -224,10 +251,10 @@ void TestGateSkipsTheSignatureStatByDefault() {
 class RecordingGate final : public FileWriteGate {
  public:
   std::vector<std::filesystem::path> writes;
-  Result WriteText(const std::filesystem::path& path, std::string_view text,
-                   Signature signature) override {
+  Result WriteText(const std::filesystem::path& path, std::string_view text, Signature signature,
+                   util::WriteTarget target) override {
     writes.push_back(path);
-    return LocalFileWriteGate().WriteText(path, text, signature);
+    return LocalFileWriteGate().WriteText(path, text, signature, target);
   }
   TreeResult ApplyTreeOps(std::span<const TreeOp> ops) override {
     return LocalFileWriteGate().ApplyTreeOps(ops);
@@ -317,6 +344,8 @@ void RegisterFileWriteGateTests(std::vector<TestCase>& tests) {
           TestLocalGateReportsFailureWithoutTouchingTheFile);
   AddTest(tests, "FileWriteGate/EditorSaveRecordsTheGatesSignature",
           TestEditorSaveRecordsTheGatesSignature);
+  AddTest(tests, "FileWriteGate/ASaveWhereNoFileWasNeverReplacesOneThatAppeared",
+          TestASaveWhereNoFileWasNeverReplacesOneThatAppeared);
   AddTest(tests, "FileWriteGate/IdenticalRewriteIsNotADiskConflict",
           TestIdenticalRewriteIsNotADiskConflict);
   AddTest(tests, "FileWriteGate/RealEditIsStillADiskConflict",

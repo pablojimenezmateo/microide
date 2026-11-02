@@ -89,10 +89,10 @@ struct MirrorLocality {
    public:
     FlushingGate(project::remote::MirrorStore& store, project::remote::MirrorSyncEngine& engine)
         : inner_(store, engine), engine_(engine) {}
-    Result WriteText(const std::filesystem::path& path, std::string_view text,
-                     Signature signature) override {
+    Result WriteText(const std::filesystem::path& path, std::string_view text, Signature signature,
+                     util::WriteTarget target) override {
       ++writes_;
-      Result result = inner_.WriteText(path, text, signature);
+      Result result = inner_.WriteText(path, text, signature, target);
       engine_.Flush();
       return result;
     }

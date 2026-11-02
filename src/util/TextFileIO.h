@@ -36,8 +36,13 @@ bool IsRegularFileFollowingSymlinks(const std::filesystem::path& path);
 std::optional<std::string> ReadTextFile(const std::filesystem::path& path);
 // On failure `*error` (when given) holds the step's errno: creating the parent, the
 // staging file's write, fsync or close, or the rename into place.
+// What an atomic write may find at its path: Replace swaps the new bytes in over
+// whatever is there; CreateNew only creates, and fails with errc::file_exists when a
+// file appeared there meanwhile (a Save As, a new file's first save).
+enum class WriteTarget { Replace, CreateNew };
 [[nodiscard]] bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text,
-                                           std::error_code* error = nullptr);
+                                           std::error_code* error = nullptr,
+                                           WriteTarget target = WriteTarget::Replace);
 
 // A write failure in the words a save's error row uses ("permission denied",
 // "no space left on the device"); empty for no error.

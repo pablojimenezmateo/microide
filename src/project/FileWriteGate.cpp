@@ -15,9 +15,10 @@ class LocalGate final : public FileWriteGate {
  public:
   Result WriteText(const std::filesystem::path& path,
                    std::string_view text,
-                   Signature signature) override {
+                   Signature signature,
+                   util::WriteTarget target) override {
     Result result;
-    result.ok = util::WriteTextFileAtomically(path, text, &result.error);
+    result.ok = util::WriteTextFileAtomically(path, text, &result.error, target);
     if (result.ok && signature == Signature::Capture) {
       // Stat only on success: a failed write left the original in place, and its
       // signature is whatever the caller already had. The bytes are right here, so

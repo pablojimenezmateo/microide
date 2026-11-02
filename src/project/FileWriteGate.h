@@ -51,10 +51,12 @@ class FileWriteGate {
   virtual ~FileWriteGate() = default;
 
   // Replace `path`'s contents with `text`. Atomic: a failed write leaves the
-  // original intact.
+  // original intact. `target` CreateNew writes only where nothing is (a Save As, a
+  // new file's first save): a file that appeared there since is never replaced.
   [[nodiscard]] virtual Result WriteText(const std::filesystem::path& path,
                            std::string_view text,
-                           Signature signature = Signature::Skip) = 0;
+                           Signature signature = Signature::Skip,
+                           util::WriteTarget target = util::WriteTarget::Replace) = 0;
 
   // ---- Tree operations (TD-2026-09-29-305) ------------------------------------
   //

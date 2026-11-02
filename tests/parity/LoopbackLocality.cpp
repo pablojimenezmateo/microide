@@ -109,8 +109,9 @@ std::vector<std::string> RecordingLocalLauncher::spawns() const {
 
 project::FileWriteGate::Result LoopbackWriteGate::WriteText(const std::filesystem::path& path,
                                                             std::string_view text,
-                                                            Signature signature) {
-  Result result = project::LocalFileWriteGate().WriteText(path, text, signature);
+                                                            Signature signature,
+                                                            util::WriteTarget target) {
+  Result result = project::LocalFileWriteGate().WriteText(path, text, signature, target);
   if (!result.ok) {
     return result;
   }

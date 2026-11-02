@@ -27,7 +27,8 @@ class MirrorWriteGate final : public FileWriteGate {
   MirrorWriteGate(MirrorStore& store, MirrorSyncEngine& engine) : store_(store), engine_(engine) {}
 
   [[nodiscard]] Result WriteText(const std::filesystem::path& path, std::string_view text,
-                                 Signature signature = Signature::Skip) override;
+                                 Signature signature = Signature::Skip,
+                                 util::WriteTarget target = util::WriteTarget::Replace) override;
   [[nodiscard]] TreeResult ApplyTreeOps(std::span<const TreeOp> ops) override;
   void DisposeStaged(std::span<const std::filesystem::path> staged) override;
 
