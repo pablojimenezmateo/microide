@@ -49,6 +49,10 @@ What it checks, each as the user would see it, with the measured latencies:
   N  tree operations            a new file, a rename and a delete reach the host
   R  the Remote menu            the host's segment opens it above itself; the verbs are
                                 live; the arrows walk them; Enter runs Show Status
+  O  a mouse-owning TUI         a program on the host that owns the mouse (flows_cursor's
+                                stand-in for Claude Code's fullscreen mode): the arrow,
+                                the hand on the control it lights under the pointer,
+                                a click that reaches it, Ctrl+J/F5/Escape as its keys
   P  remote commands            status, the server log, the ssh command copied, a port
                                 forwarded and unforwarded, host changes listed and
                                 cleared, the server stopped and reconnected
@@ -371,6 +375,49 @@ class Suite:
         self.app.send("term"); self.app.settle(0.5)
         if line is not None:
             self.app.send("type", line); self.app.send("key", "enter")
+
+    def run_mouse_owner_tui(self) -> None:
+        """O: the hover hand and the terminal's keys over the wire. Every pointer
+        move is a message to the host and the program's repaint a frame back, so
+        the hand is the round trip end to end."""
+        from flows_cursor import TUI
+        app = self.app
+        self.host.ssh("cat > \"$HOME/mqa-tui.py\" <<'MQA_TUI_EOF'\n" + TUI + "\nMQA_TUI_EOF")
+        self.new_terminal("python3 \"$HOME/mqa-tui.py\"")
+        app.send("focus", "panel")
+        app.send("panel-maximize")
+
+        def screen() -> list[str]:
+            return app.query("terminal-output").get("text", "").split("\n")
+
+        ready, dt = wait_for(lambda: any("TUI READY" in line for line in screen()) or None, 20, 0.25)
+        self.record("O.tui-starts", ready is not None, f"{dt:.2f}s")
+        if ready is None:
+            app.send("panel-maximize")
+            return
+        rows = screen()
+        button_row = next(i for i, line in enumerate(rows) if "[ Click me ]" in line)
+        button_col = rows[button_row].index("[ Click me ]")
+        text_row = next(i for i, line in enumerate(rows) if "SELECT THIS TEXT" in line)
+        app.move(*app.terminal_point(text_row, 6))
+        arrow, _ = wait_for(lambda: app.ui().get("cursor") == "default" or None, 5, 0.1)
+        self.record("O.arrow", arrow is not None, f"cursor {app.ui().get('cursor')}")
+        app.move(*app.terminal_point(button_row, button_col + 3))
+        hand, dt = wait_for(lambda: app.ui().get("cursor") == "pointer" or None, 5, 0.05)
+        self.record("O.hand-on-lit-control", hand is not None, f"{dt:.2f}s, cursor {app.ui().get('cursor')}")
+        app.click(*app.terminal_point(button_row, button_col + 3))
+        clicked, dt = wait_for(lambda: any("clicked" in line for line in screen()) or None, 5, 0.1)
+        self.record("O.click-reaches-program", clicked is not None, f"{dt:.2f}s")
+        keys_ok = True
+        for chord, sent in (("ctrl+j", "0a"), ("F5", "1b5b31357e"), ("Escape", "1b")):
+            app.key(chord)
+            got, _ = wait_for(lambda: any(f"key:{sent}" in line for line in screen()) or None, 5, 0.1)
+            keys_ok = keys_ok and got is not None
+        self.record("O.keys-reach-program", keys_ok, " ".join(screen()[7:8]))
+        app.key("q")
+        wait_for(lambda: not any("TUI READY" in line for line in screen()) or None, 10, 0.25)
+        app.send("panel-maximize")
+        app.screenshot("O-tui"); app.check("O")
 
     def run_terminal_restore(self) -> None:
         app, tok = self.app, self.token
@@ -1235,6 +1282,9 @@ class Suite:
                 app.query("terminal-output")), 20, 0.5)
             self.record("G.local-terminal", bool(reply.get("ok")) and out is not None, f"{reply} {dt:.2f}s")
             app.screenshot("G-local-terminal"); app.check("G")
+
+        if self.runs("O"):
+            self.run_mouse_owner_tui()
 
         if self.runs("H"):
             # The bundled cpp-lsp plugin registers clangd; the isolated config starts empty.
