@@ -207,6 +207,21 @@ HostIdentity TerminalSession::host_identity() const {
   return channel->identity();
 }
 
+std::uint64_t TerminalSession::host_handle() const {
+  std::shared_ptr<TerminalHostChannel> channel;
+  {
+    std::scoped_lock lock(mutex_);
+    if (host_.pending.has_value()) {
+      return host_.pending->attach.handle;
+    }
+    if (host_.channel == nullptr) {
+      return host_.detached_identity.handle;
+    }
+    channel = host_.channel;
+  }
+  return channel->handle();  // outside the session lock, as host_identity
+}
+
 HostReattach TerminalSession::host_reattach() const {
   const std::shared_ptr<TerminalHostChannel> channel = HostChannel();
   return channel != nullptr ? channel->reattach() : HostReattach::None;

@@ -71,7 +71,7 @@ class RemoteTerminalChannel final : public terminal::TerminalHostChannel,
   bool FetchHistory(std::uint64_t before, std::size_t count, HistoryDone done) override;
 
   // The host's handle; 0 until term/open answers.
-  std::uint64_t handle() const;
+  std::uint64_t handle() const override;
   // Frame bytes applied since the last attach: what tells "no frame came" from "a
   // frame came and showed nothing" when a screen stays blank.
   std::uint64_t received_bytes() const;

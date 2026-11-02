@@ -481,14 +481,6 @@ void TerminalSession::SnapshotLineRangeInto(std::size_t start_row,
   (void)CopyLineRangeIntoLocked(start_row, max_lines, out);
 }
 
-const std::vector<TerminalLine>& TerminalSession::SnapshotLineRangeCached(
-    std::size_t start_row,
-    std::size_t max_lines) const {
-  thread_local std::vector<TerminalLine> snapshot;
-  SnapshotLineRangeInto(start_row, max_lines, snapshot);
-  return snapshot;
-}
-
 bool TerminalSession::SnapshotLineRangeIfChanged(std::size_t start_row,
                                                  std::size_t max_lines,
                                                  std::uint64_t previous_generation,

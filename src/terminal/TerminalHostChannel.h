@@ -60,6 +60,8 @@ class TerminalHostChannel {
   // The host terminal this channel serves; an empty handle until the host
   // answered. Any thread.
   virtual HostIdentity identity() const { return {}; }
+  // identity().handle without copying the epoch: what a per-wake check reads.
+  virtual std::uint64_t handle() const { return identity().handle; }
   // What became of a requested reattach (OpenRequest::attach). Any thread.
   virtual HostReattach reattach() const { return HostReattach::None; }
   // The link's measured round trip, for adaptive echo prediction; nullopt until

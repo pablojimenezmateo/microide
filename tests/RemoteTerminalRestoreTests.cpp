@@ -642,6 +642,39 @@ void TestAnUnclaimedTerminalIsAdoptedByItsBackgroundProject() {
   Expect(Listed(HostTerminals(host), orphan) != nullptr, "quit detaches it, as any recorded terminal");
 }
 
+// A host terminal is recorded the way unsaved text is: once its handle arrives the
+// crash-safety session flush is armed, so a crash or a kill after it leaves a
+// session that names it -- not a terminal running on the host that no tab knows.
+void TestAHostTerminalArmsTheCrashSafetyFlush() {
+  ScopedAppHomes homes;
+  FakeSshHost host;
+  const std::filesystem::path root = host.home / "src" / "flush";
+  WriteFile(root / "a.txt", "a\n");
+  WorkspaceShell shell;
+  PointAtFakeHost(shell, host);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open " + Target("fake-flush") + ":" +
+                                                                 root.string()),
+         "the remote project opens");
+  TerminalSession& session = WorkspaceShellTestAccess::TerminalTabSession(shell, 0);
+  bool armed = false;
+  Expect(PumpUntil(shell,
+                   [&] {
+                     armed = armed || WorkspaceShellTestAccess::SessionFlushArmed(shell);
+                     return session.host_identity().handle != 0 && armed;
+                   }),
+         "its handle arms the flush, with no buffer dirty");
+  Expect(PumpUntil(shell,
+                   [&] {
+                     // What the event loop runs when the idle wait's deadline passes.
+                     (void)WorkspaceShellTestAccess::HandleScheduledWake(shell);
+                     return !WorkspaceShellTestAccess::SessionFlushArmed(shell) &&
+                            !WorkspaceShellTestAccess::CurrentProjectState(shell).host_terminals_unrecorded;
+                   },
+                   std::chrono::seconds(10)),
+         "and the flush writes the session that names it");
+  shell.Shutdown();
+}
+
 }  // namespace
 
 void RegisterRemoteTerminalRestoreTests(std::vector<TestCase>& tests) {
@@ -654,6 +687,7 @@ void RegisterRemoteTerminalRestoreTests(std::vector<TestCase>& tests) {
           TestATerminalOpenedWhileTheLinkIsDownStartsAfterACoalescedReconnect);
   AddTest(tests, "RemoteTerminalRestore/HostTerminalLifetimeAndUnclaimedTerminals",
           TestHostTerminalLifetimeAndUnclaimedTerminals);
+  AddTest(tests, "RemoteTerminalRestore/AHostTerminalArmsTheCrashSafetyFlush", TestAHostTerminalArmsTheCrashSafetyFlush);
   AddTest(tests, "RemoteTerminalRestore/AnUnclaimedTerminalIsAdoptedByItsBackgroundProject",
           TestAnUnclaimedTerminalIsAdoptedByItsBackgroundProject);
 }

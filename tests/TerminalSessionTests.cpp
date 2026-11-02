@@ -529,31 +529,6 @@ void TestTerminalSnapshotRangeReusesDestinationCellBuffers() {
   }
 }
 
-void TestTerminalSessionCachedSnapshotRangeRefreshesAfterOutput() {
-  microide::terminal::TerminalSession session;
-  TerminalSessionTestAccess::Reset(session, 4, 8);
-  TerminalSessionTestAccess::AppendOutput(session, "ABCD\nEFGH");
-
-  const auto& cached_before = session.SnapshotLineRangeCached(0, 2);
-  Expect(cached_before.size() == 2, "cached snapshot should return the requested visible rows");
-  ExpectLineText(cached_before, 1, "EFGH",
-                 "cached snapshot should expose the current terminal content");
-
-  TerminalSessionTestAccess::AppendOutput(session, "\nIJKL");
-  Expect(cached_before.size() == 2,
-         "cached snapshot references should remain stable when terminal output changes");
-  ExpectLineText(cached_before, 1, "EFGH",
-                 "terminal output invalidation should not mutate an outstanding cached snapshot");
-
-  const auto& cached_after = session.SnapshotLineRangeCached(1, 2);
-  Expect(cached_after.size() == 2,
-         "cached snapshot should refresh after output changes with a new range request");
-  ExpectLineText(cached_after, 0, "EFGH",
-                 "cached snapshot should keep existing rows after output changes");
-  ExpectLineText(cached_after, 1, "IJKL",
-                 "cached snapshot should include newly appended rows after invalidation");
-}
-
 void TestTerminalSessionLineRangeSnapshotSkipsUnchangedGeneration() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
@@ -3481,8 +3456,6 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionTracksSoftWrappedRowsSeparatelyFromHardNewlines);
   AddTest(tests, "TerminalSession/SnapshotRangeReusesDestinationCellBuffers",
           TestTerminalSnapshotRangeReusesDestinationCellBuffers);
-  AddTest(tests, "TerminalSession/CachedSnapshotRangeRefreshesAfterOutput",
-          TestTerminalSessionCachedSnapshotRangeRefreshesAfterOutput);
   AddTest(tests, "TerminalSession/LineRangeSnapshotSkipsUnchangedGeneration",
           TestTerminalSessionLineRangeSnapshotSkipsUnchangedGeneration);
   AddTest(tests, "TerminalSession/CursorSnapshotCapturesPositionAndVisibility",

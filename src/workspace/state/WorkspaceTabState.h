@@ -671,6 +671,10 @@ struct TerminalPaneState {
   // A pending host pane started when its connection came up, and the connect's
   // summary row has not counted how (reattached, or fresh and why) yet.
   bool reattach_unreported = false;
+  // The host terminal handle the drain last saw this pane hold (0: none). A change
+  // -- a fresh open answered, a reattach that fell back to a new shell -- is a
+  // terminal the saved session does not name yet (ConsumeTerminalSessionUpdates).
+  std::uint64_t seen_host_handle = 0;
 };
 
 // One tab of the bottom panel's terminal strip: one to `kMaxTerminalPanes`

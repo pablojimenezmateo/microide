@@ -109,8 +109,6 @@ class TerminalSession {
   void SnapshotLineRangeInto(std::size_t start_row,
                              std::size_t max_lines,
                              std::vector<TerminalLine>& out) const;
-  const std::vector<TerminalLine>& SnapshotLineRangeCached(std::size_t start_row,
-                                                           std::size_t max_lines) const;
   bool SnapshotLineRangeIfChanged(std::size_t start_row,
                                   std::size_t max_lines,
                                   std::uint64_t previous_generation,
@@ -237,6 +235,9 @@ class TerminalSession {
   // it will reattach to while pending, the one it let go of after DetachFromHost.
   // Empty for a local session, a fresh open not yet answered, and after Stop().
   HostIdentity host_identity() const;
+  // host_identity().handle, allocation-free: the per-wake check of whether a host
+  // pane's terminal changed since the session last recorded it.
+  std::uint64_t host_handle() const;
   // What became of the reattach this session asked for (None when it asked none).
   HostReattach host_reattach() const;
   // Let go of the host terminal and leave it RUNNING on the host (quit and

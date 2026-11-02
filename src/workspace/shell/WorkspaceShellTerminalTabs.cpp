@@ -408,9 +408,13 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
   // `claude` login) started in project B surfaced only when B was activated
   // (TD-2026-11-01-427 item 2). Its toasts name the project, as every result
   // finishing behind the front project does.
+  // Whether a drained project's host pane holds a terminal its saved session does
+  // not name: set by `drain`, read after it.
+  bool host_terminal_unrecorded = false;
   const auto drain = [&](std::vector<std::unique_ptr<TerminalTabState>>& tabs,
                          std::optional<std::size_t> on_screen_index, std::string_view project_label) {
     bool marked = false;
+    host_terminal_unrecorded = false;
     for (std::size_t index = 0; index < tabs.size(); ++index) {
       TerminalTabState* tab = tabs[index].get();
       if (tab == nullptr) {
@@ -423,6 +427,15 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
         }
         pane->session.SetDefaultColors(default_foreground, default_background);
         const bool output_arrived = pane->session.ConsumeWakeEvent();
+        // A host terminal's handle arrives with its term/open (or attach) answer,
+        // after the pane started: from here on a crash would leave it running on
+        // the host with no record of which tab it was.
+        if (pane->launcher == nullptr) {
+          if (const std::uint64_t handle = pane->session.host_handle(); handle != pane->seen_host_handle) {
+            pane->seen_host_handle = handle;
+            host_terminal_unrecorded = host_terminal_unrecorded || handle != 0;
+          }
+        }
         // Output in a tab the user cannot see lights its strip tab up, so an agent
         // finishing in a background tab (or behind a hidden panel) is visible
         // without switching to it. The frame that shows the tab clears it.
@@ -497,11 +510,20 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
   badge_changed = drain(context_.current_project_state.terminal_tabs,
                         terminal_on_screen ? std::optional<std::size_t>(active_index) : std::nullopt,
                         {});
+  if (host_terminal_unrecorded) {
+    // Recorded the way unsaved text is: the crash-safety session flush, debounced.
+    context_.current_project_state.host_terminals_unrecorded = true;
+    session_flush_armed_ = true;
+    session_flush_edit_epoch_ms_ = SDL_GetTicks();
+  }
   auto& catalog = context_.project_catalog;
   for (std::size_t i = 0; i < catalog.entries.size(); ++i) {
     if (ProjectWorkspaceState* background = catalog.entries[i].get();
         background != nullptr && i != catalog.active_index && background != &context_.current_project_state) {
       (void)drain(background->terminal_tabs, std::nullopt, background->id.Label());
+      // Quit re-records it (record_inactive_host_terminals), even when a switch
+      // wrote this project's session before the handle was known.
+      background->host_terminals_unrecorded = background->host_terminals_unrecorded || host_terminal_unrecorded;
     }
   }
   // Exited terminal tabs are intentionally retained until the user closes them,
