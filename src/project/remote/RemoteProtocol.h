@@ -82,6 +82,13 @@ inline constexpr std::string_view kFileWrite = "file/write";
 // fs/op {op: "mkdir"|"rename"|"delete", path, to?, expect?} -> {} or
 // {conflict: true, current: hash | null}.
 inline constexpr std::string_view kFsOp = "fs/op";
+// file/upload {name} after its WriteData frames -> {path}: a file from the
+// editor's machine that is not in the project (a screenshot dropped onto a host
+// terminal), written to a private per-user directory on the host and named by
+// its absolute host path, for a program there to read. Servers that have it
+// list the "upload" capability; uploads older than a day are removed.
+inline constexpr std::string_view kFileUpload = "file/upload";
+inline constexpr std::string_view kUploadCapability = "upload";
 // watch/subscribe {} -> {native: bool}. From the next tree/manifest on, every change
 // to the content set arrives as WatchDelta frames against what this connection was
 // last sent. Subscribe first, then fetch the manifest: changes in between are in

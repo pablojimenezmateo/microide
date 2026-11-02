@@ -5,8 +5,16 @@
 #include "server/RemoteServer.h"
 
 #include <algorithm>
+#include <atomic>
+#include <cerrno>
+#include <chrono>
+#include <cstring>
+#include <span>
 #include <map>
 #include <utility>
+
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "platform/ProcessLauncher.h"
 #include "project/GitMetadataSource.h"
@@ -17,6 +25,7 @@
 #include "project/remote/TreeFiles.h"
 #include "util/ByteCodec.h"
 #include "util/ContentHash.h"
+#include "util/DurableFile.h"
 #include "util/HeapUsage.h"
 #include "util/Zstd.h"
 #include "util/Log.h"
@@ -553,6 +562,58 @@ util::JsonValue StreamObject(std::size_t index, const Send& send, const Read& re
 
 }  // namespace
 
+std::filesystem::path RemoteServer::UploadsDirectory() const {
+  if (!config_.socket_path.empty()) {
+    return config_.socket_path.parent_path() / "uploads";
+  }
+  return std::filesystem::temp_directory_path() / ("microide-uploads-" + std::to_string(::geteuid()));
+}
+
+std::optional<std::filesystem::path> RemoteServer::StoreUpload(const std::filesystem::path& root,
+                                                               const std::string& name, std::string_view content,
+                                                               std::string* error) {
+  std::error_code ec;
+  std::filesystem::create_directories(root, ec);
+  struct stat info {};
+  // Ours and a real directory: a link planted there must not redirect the write.
+  if (::lstat(root.c_str(), &info) != 0 || !S_ISDIR(info.st_mode) || info.st_uid != ::geteuid()) {
+    *error = "the uploads directory " + root.string() + " is not usable";
+    return std::nullopt;
+  }
+  ::chmod(root.c_str(), 0700);
+  const auto now = std::filesystem::file_time_type::clock::now();
+  for (std::filesystem::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
+    std::error_code age_error;
+    const auto written = std::filesystem::last_write_time(it->path(), age_error);
+    if (!age_error && now - written > std::chrono::hours(24)) {
+      std::error_code ignored;
+      std::filesystem::remove_all(it->path(), ignored);
+    }
+  }
+  // A directory per upload, so two drops of one name (two "Screenshot.png") never
+  // overwrite each other, and the file keeps the name a program shows.
+  static std::atomic<std::uint64_t> counter{0};
+  const std::string token = util::HashContent(name + "\n" + std::to_string(now.time_since_epoch().count()) + "\n" +
+                                              std::to_string(counter.fetch_add(1)))
+                                .Hex()
+                                .substr(0, 16);
+  const std::filesystem::path directory = root / token;
+  if (::mkdir(directory.c_str(), 0700) != 0) {
+    *error = "cannot create " + directory.string() + ": " + std::strerror(errno);
+    return std::nullopt;
+  }
+  const std::filesystem::path path = directory / name;
+  std::error_code write_error;
+  if (!util::WriteFileBytesDurable(
+          path, std::span<const std::byte>(reinterpret_cast<const std::byte*>(content.data()), content.size()),
+          &write_error)) {
+    *error = "cannot write " + path.string() + ": " + write_error.message();
+    return std::nullopt;
+  }
+  ::chmod(path.c_str(), 0600);
+  return path;
+}
+
 void RemoteServer::InstallFileHandlers(Connection& connection) {
   remote::RemotePeer& peer = connection.peer;
   peer.OnRequest(remote::method::kObjectFetch, [this, &connection](std::uint64_t id,
@@ -738,6 +799,41 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
         } else {
           peer.Reply(id, OpResultJson(result, manifest));
         }
+      });
+    });
+  });
+
+  peer.OnRequest(remote::method::kFileUpload, [this, &connection](std::uint64_t id,
+                                                                  const util::JsonValue& params) {
+    std::string content;  // claimed first, as file/write's
+    if (const auto upload = connection.uploads.find(id); upload != connection.uploads.end()) {
+      content = std::move(upload->second);
+      connection.upload_bytes -= content.size();
+      connection.uploads.erase(upload);
+    }
+    const std::shared_ptr<ServedTree> served = TreeOf(connection);
+    const std::string name = params["name"].AsString();
+    // A file NAME, never a path: it cannot reach outside its own directory.
+    const bool named = !name.empty() && name.size() <= 200 && name != "." && name != ".." &&
+                       name.find_first_of(std::string_view("/\0", 2)) == std::string::npos;
+    if (!served || !named) {
+      ReplyInvalidParams(connection.peer, id, served != nullptr, "file/upload needs a file name");
+      return;
+    }
+    const std::filesystem::path root = UploadsDirectory();
+    ServedTree* tree = served.get();
+    const std::uint64_t connection_id = connection.id;
+    tree->io_queue.Post([this, root, connection_id, id, name, content = std::move(content)]() {
+      std::string error;
+      const std::optional<std::filesystem::path> path = StoreUpload(root, name, content, &error);
+      WithPeer(connection_id, [&](remote::RemotePeer& peer) {
+        if (!path.has_value()) {
+          peer.ReplyError(id, remote::kErrorInvalidParams, error);
+          return;
+        }
+        util::JsonObject reply;
+        reply["path"] = util::JsonValue(path->string());
+        peer.Reply(id, util::JsonValue(std::move(reply)));
       });
     });
   });

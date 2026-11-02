@@ -131,6 +131,12 @@ class RemoteWorkspace {
   using WriteDone = std::function<void(WriteResult result)>;
   std::uint64_t WriteFile(std::string path, std::string_view content, const Precondition& expect,
                           std::optional<std::uint32_t> mode, Lane lane, WriteDone done);
+  // file/upload: `content` as `name` in the host's private uploads directory, for
+  // a program there to read. `done` (the connection's thread) gets its absolute
+  // host path, or nullopt and why -- a server without the "upload" capability says
+  // so here, before anything is sent.
+  using UploadDone = std::function<void(std::optional<std::string> host_path, std::string error)>;
+  void UploadFile(std::string name, std::string_view content, UploadDone done);
   WriteResult WriteFileSync(std::string path, std::string_view content, const Precondition& expect,
                             std::optional<std::uint32_t> mode = std::nullopt,
                             std::chrono::milliseconds timeout = std::chrono::seconds(120));

@@ -255,6 +255,24 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
           [this](const terminal::HostIdentity& identity, bool focus) {
             return MakeTerminalPanelService().FindHostTerminal(identity, focus);
           },
+      .type_into_host_terminal =
+          [this](const std::filesystem::path& root, const terminal::HostIdentity& identity, std::string text) {
+            ProjectWorkspaceState* state = context_.ProjectStateForRoot(root);
+            if (state == nullptr) {
+              return false;
+            }
+            for (const auto& tab : state->terminal_tabs) {
+              for (const auto& pane : tab->panes) {
+                if (pane != nullptr && pane->session.running() && pane->session.host_identity() == identity) {
+                  pane->follow_tail = true;
+                  pane->session.PasteText(text);
+                  RequestBottomPanelRedraw();
+                  return true;
+                }
+              }
+            }
+            return false;  // closed meanwhile
+          },
       .host_activity_updated =
           [this]() {
             if (HostViewShown(context_.current_project_state.sidebar)) {

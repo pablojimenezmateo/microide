@@ -83,6 +83,7 @@ class RemoteProject {
   std::filesystem::path host_file_cache() const { return store_->meta() / "host-files"; }
   RemoteHostSession& session() { return *session_; }
   MirrorSyncEngine& engine() { return *engine_; }
+  RemoteWorkspace& workspace() { return *workspace_; }
   const std::shared_ptr<RemoteProcessLauncher>& launcher() const { return launcher_; }
   // Whether the host watches the tree natively (false: it polls — inotify
   // unavailable or out of watches). Unknown until the first connection subscribes.

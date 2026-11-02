@@ -428,6 +428,57 @@ void TestAHostTerminalOpeningAtQuitIsRecorded() {
   }
 }
 
+// A file from outside the project dropped onto a HOST terminal (a screenshot for
+// an agent running on the host): its local path means nothing there, so it is
+// sent to the host first and the path it has THERE is typed (TD-2026-11-02-428
+// item 5; the local path used to be typed, and the agent could not open it).
+void TestAFileDroppedOnAHostTerminalIsSentAndItsHostPathTyped() {
+  ScopedAppHomes homes;
+  FakeSshHost host;
+  const std::filesystem::path root = host.home / "src" / "dropped";
+  WriteFile(root / "a.txt", "a\n");
+  TemporaryDirectory elsewhere;
+  const std::filesystem::path shot = elsewhere.path() / "Screen shot.png";
+  WriteFile(shot, std::string(100 * 1024, 'p'));
+
+  WorkspaceShell shell;
+  PointAtFakeHost(shell, host);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open " + Target("fake-drop") + ":" + root.string()),
+         "the remote project opens");
+  TerminalSession& session = WorkspaceShellTestAccess::TerminalTabSession(shell, 0);
+  Expect(PumpUntil(shell, [&] { return session.running() && session.host_identity().handle != 0; }),
+         "its host terminal starts");
+  Pump(shell);
+  const SDL_FPoint cell = WorkspaceShellTestAccess::TerminalCellPoint(shell, 2, 4);
+  SDL_Event drop{};
+  drop.type = SDL_EVENT_DROP_FILE;
+  drop.drop.x = cell.x;
+  drop.drop.y = cell.y;
+  const std::string dropped = shot.string();
+  drop.drop.data = dropped.c_str();
+  Expect(shell.HandleEvent(drop).handled, "the drop is handled");
+
+  const std::filesystem::path uploads = host.server_dir() / "uploads";
+  std::filesystem::path on_host;
+  Expect(PumpUntil(shell,
+                   [&] {
+                     std::error_code error;
+                     for (std::filesystem::recursive_directory_iterator it(uploads, error), end; !error && it != end;
+                          it.increment(error)) {
+                       if (it->path().filename() == "Screen shot.png") {
+                         on_host = it->path();
+                       }
+                     }
+                     return !on_host.empty() && ScreenText(session).find(on_host.parent_path().filename().string()) !=
+                                                    std::string::npos;
+                   },
+                   std::chrono::seconds(20)),
+         [&] { return "the file reaches the host and its host path is typed:\n" + ScreenText(session); });
+  Expect(ReadFile(on_host) == ReadFile(shot), "byte for byte");
+  Expect(ScreenText(session).find(elsewhere.path().string()) == std::string::npos, "not the local path");
+}
+
 // TD-2026-10-28-414's one found path: a terminal opened while the link is down
 // waits for it, and the UI learns of the reconnect through a coalesced wake --
 // "Reconnecting" overwritten by "Ready" before the shell drained it. Waiting
@@ -738,6 +789,8 @@ void RegisterRemoteTerminalRestoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteTerminalRestore/HostTerminalsSurviveQuitAndReattach",
           TestHostTerminalsSurviveQuitAndReattach);
   AddTest(tests, "RemoteTerminalRestore/AHostTerminalOpeningAtQuitIsRecorded", TestAHostTerminalOpeningAtQuitIsRecorded);
+  AddTest(tests, "RemoteTerminalRestore/AFileDroppedOnAHostTerminalIsSentAndItsHostPathTyped",
+          TestAFileDroppedOnAHostTerminalIsSentAndItsHostPathTyped);
   AddTest(tests, "RemoteTerminalRestore/ABackgroundStartedHostTerminalIsRecordedAtQuit",
           TestABackgroundStartedHostTerminalIsRecordedAtQuit);
   AddTest(tests, "RemoteTerminalRestore/ATerminalOpenedWhileTheLinkIsDownStartsAfterACoalescedReconnect",

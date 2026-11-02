@@ -108,6 +108,10 @@ class RemoteHostService {
     // Whether a terminal tab of this window holds `identity`'s terminal; with
     // `focus`, that tab is brought forward too.
     std::function<bool(const terminal::HostIdentity& identity, bool focus)> host_terminal_tab;
+    // Type `text` into the pane of the project at `root` holding `identity`'s host
+    // terminal, if it is still open (a dropped file's uploaded path).
+    std::function<bool(const std::filesystem::path& root, const terminal::HostIdentity& identity, std::string text)>
+        type_into_host_terminal;
     // The Host view's rows changed (a push, a group toggled, a reconnect).
     std::function<void()> host_activity_updated;
     // The host pushed a new git status for the remote project at `root`.
@@ -237,6 +241,16 @@ class RemoteHostService {
     project::remote::MirrorSyncEngine::Status sync;
   };
   std::optional<ProjectSnapshot> SnapshotOf(const std::filesystem::path& root) const;
+  // A local file dropped onto a host terminal of the remote project at `root`
+  // (the pane holding `terminal`) that the host has no copy of -- a screenshot
+  // from ~/Pictures: uploaded to the host (file/upload), then its host path typed
+  // into that pane, as the local path is typed into a local one (TD-2026-11-02-428
+  // item 5). Read and sent off this thread; a row says why when it cannot be.
+  // False when nothing was started (no such project, not a regular file).
+  bool UploadDroppedFile(const std::filesystem::path& root, const terminal::HostIdentity& terminal,
+                         const std::filesystem::path& local_path);
+  // Past this a drop is refused rather than read into memory and sent.
+  static constexpr std::uint64_t kMaxDroppedUploadBytes = 64u * 1024 * 1024;
   // The home's status block for a project in `state` with `sync` (§ 7.3): the
   // link, the server and the sync, each as far as it got, and what to do about a
   // failure. `command` reproduces the connection in a terminal; `server_release`

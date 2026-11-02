@@ -157,6 +157,14 @@ class RemoteServer {
   void InstallBrowserForwarder();
   void InstallTreeHandlers(Connection& connection);
   void InstallFileHandlers(Connection& connection);
+  // file/upload's home: private to the user, beside the socket (whose directory
+  // is 0700); a server with no socket (serve-stdio, tests) uses one under $TMPDIR.
+  std::filesystem::path UploadsDirectory() const;
+  // `content` as `name` in a fresh directory under `root`, which it creates and
+  // prunes of uploads older than a day. The host path, or nullopt and *error.
+  static std::optional<std::filesystem::path> StoreUpload(const std::filesystem::path& root,
+                                                          const std::string& name, std::string_view content,
+                                                          std::string* error);
   void InstallWatchHandlers(Connection& connection);
   void InstallGitHandlers(Connection& connection);
   void InstallSearchHandlers(Connection& connection);

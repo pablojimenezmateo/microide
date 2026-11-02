@@ -1,13 +1,16 @@
 #include "TestSupport.h"
+#include "RemoteServerTestSupport.h"
 
 #include "platform/AsyncSubprocess.h"
 #include "platform/Subprocess.h"
 #include "platform/UnixSocket.h"
+#include "project/remote/RemoteConnection.h"
 #include "project/remote/RemoteFrame.h"
 #include "project/remote/RemotePeer.h"
 #include "project/remote/RemoteProtocol.h"
 #include "project/remote/RemoteServerClient.h"
 #include "project/remote/RemoteServerPaths.h"
+#include "project/remote/RemoteWorkspace.h"
 #include "server/GitStatusSampler.h"
 #include "server/ListeningPorts.h"
 #include "server/ProcessTable.h"
@@ -19,6 +22,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iterator>
 #include <condition_variable>
 #include <map>
@@ -379,6 +383,52 @@ void TestPollingStatusDoesNotKeepAnOnDemandServerAlive() {
 // The host's ephemeral range, as the kernel prints net.ipv4.ip_local_port_range,
 // and this host's own read the same way (TD-2026-11-02-429 item 4: the client used
 // Linux's default even on a host that had moved it).
+// file/upload (TD-2026-11-02-428 item 5): a file from the editor's machine that
+// is not in the project -- a screenshot dropped onto a host terminal -- lands on
+// the host, privately, under the name it had, and its host path comes back for
+// the terminal to type. Two uploads of one name do not collide; a name that is a
+// path is refused, so nothing escapes the uploads directory.
+void TestUploadPutsAFileOnTheHostPrivately() {
+  ShortServerDir dir;
+  StartServer(dir);
+  const std::filesystem::path root = dir.scratch() / "project";
+  std::filesystem::create_directories(root);
+  auto client = remote::RemoteServerClient::Create();
+  const int fd = platform::ConnectUnixSocket(remote::ServerSocketPath(dir.path()));
+  std::string error;
+  Expect(fd >= 0 && client->ConnectFds(fd, fd, remote::HelloRequest{.release = "test", .root = root.string()}, &error),
+         "connects: " + error);
+  const auto& capabilities = client->hello().capabilities;
+  Expect(std::find(capabilities.begin(), capabilities.end(), remote::method::kUploadCapability) != capabilities.end(),
+         "the server lists the capability");
+  remote::RemoteWorkspace workspace(std::make_shared<remote::RemoteConnection>(client));
+  const auto upload = [&](std::string name, std::string_view bytes) {
+    std::promise<std::pair<std::optional<std::string>, std::string>> answered;
+    workspace.UploadFile(std::move(name), bytes, [&](std::optional<std::string> path, std::string why) {
+      answered.set_value({std::move(path), std::move(why)});
+    });
+    return answered.get_future().get();
+  };
+  const std::string png(200 * 1024, '\x89');  // several WriteData chunks
+  const auto [first, first_error] = upload("Screen shot.png", png);
+  Expect(first.has_value(), "uploaded: " + first_error);
+  const std::filesystem::path path(first.value_or(""));
+  Expect(path.filename() == "Screen shot.png" && ReadFile(path) == png, "under its own name, byte for byte");
+  Expect(path.parent_path().parent_path() == dir.path() / "uploads", "in the server's private uploads directory");
+  Expect((std::filesystem::status(path).permissions() & std::filesystem::perms::all) ==
+             (std::filesystem::perms::owner_read | std::filesystem::perms::owner_write),
+         "readable by its owner only");
+  const auto [second, second_error] = upload("Screen shot.png", "other");
+  Expect(second.has_value() && *second != *first && ReadFile(path) == png,
+         "a second upload of the name does not overwrite the first: " + second_error);
+  for (const char* odd : {"../escape", "a/b", "..", ""}) {
+    const auto [refused, why] = upload(odd, "x");
+    Expect(!refused.has_value() && !why.empty(), std::string("a name that is not a file name is refused: ") + odd);
+  }
+  Expect(!std::filesystem::exists(dir.path() / "escape") && !std::filesystem::exists(dir.scratch() / "escape"),
+         "and nothing escaped");
+}
+
 void TestEphemeralPortRangeIsTheHosts() {
   using project::remote::PortRange;
   Expect(server::ParsePortRange("32768\t60999\n") == PortRange{.low = 32768, .high = 60999}, "the default");
@@ -811,6 +861,7 @@ void RegisterRemoteServerTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteServer/AttachStartsOnDemandAndTheServerIdlesOut",
           TestAttachStartsOnDemandAndTheServerIdlesOut);
   AddTest(tests, "RemoteServer/EphemeralPortRangeIsTheHosts", TestEphemeralPortRangeIsTheHosts);
+  AddTest(tests, "RemoteServer/UploadPutsAFileOnTheHostPrivately", TestUploadPutsAFileOnTheHostPrivately);
   AddTest(tests, "RemoteServer/ListeningPortsParseProcNetTcp", TestListeningPortsParseProcNetTcp);
   AddTest(tests, "RemoteServer/ListeningPortsParseSockDiag", TestListeningPortsParseSockDiag);
   AddTest(tests, "RemoteServer/ConcurrentStartsLeaveOneDaemon", TestConcurrentStartsLeaveOneDaemon);

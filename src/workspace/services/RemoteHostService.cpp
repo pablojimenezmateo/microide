@@ -10,11 +10,14 @@
 #include "platform/RuntimePaths.h"
 #include "project/remote/RemoteProcessLauncher.h"
 #include "project/remote/RemoteProject.h"
+#include "project/remote/RemoteWorkspace.h"
 #include "project/remote/ServerStatusText.h"
 #include "util/CommandLine.h"
+#include "util/TextFileIO.h"
 #include "util/Parse.h"
 #include "util/PathMatch.h"
 #include "workspace/SettingFlags.h"
+#include "workspace/WorkspaceFileDrop.h"
 #include "workspace/WorkspaceUiText.h"
 
 #include <unistd.h>
@@ -509,6 +512,61 @@ bool RemoteHostService::RemoveMirror(const std::filesystem::path& root, bool dis
     });
   }
   PublishStatusSegment();
+  return true;
+}
+
+bool RemoteHostService::UploadDroppedFile(const std::filesystem::path& root, const terminal::HostIdentity& terminal,
+                                          const std::filesystem::path& local_path) {
+  const auto it = projects_.find(root);
+  if (it == projects_.end() || it->second.closed || terminal.empty()) {
+    return false;
+  }
+  const std::string host = it->second.host;
+  const std::string name = local_path.filename().string();
+  const std::string key = "remote.upload." + root.string();
+  const auto say = [this, key](NotificationService::Tone tone, std::string message) {
+    if (operations_.notify) {
+      operations_.notify(NotificationService::Request{.tone = tone, .key = key, .message = std::move(message)});
+    }
+  };
+  std::error_code error;
+  if (!std::filesystem::is_regular_file(local_path, error)) {
+    say(NotificationService::Tone::Warning, "Only a file can be sent to " + host + "; " + name + " is not one");
+    return true;
+  }
+  say(NotificationService::Tone::Info, "Sending " + name + " to " + host + "\xe2\x80\xa6");
+  // Over the project's connection (shared: a reconnect replaces its client, and
+  // the project may close meanwhile without leaving this a dangling pointer).
+  std::shared_ptr<remote::RemoteConnection> connection = it->second.project->session().connection();
+  work_.Post([this, connection, root, terminal, local_path, host, name, say]() {
+    const auto finish = [this, root, terminal, host, name, say](std::optional<std::string> path, std::string why) {
+      mailbox_.Post([this, root, terminal, host, name, say, path = std::move(path), why = std::move(why)]() {
+        if (!path.has_value()) {
+          say(NotificationService::Tone::Warning, "Could not send " + name + " to " + host + ": " + why);
+          return;
+        }
+        if (operations_.dismiss_notification) {
+          operations_.dismiss_notification("remote.upload." + root.string());
+        }
+        if (!operations_.type_into_host_terminal ||
+            !operations_.type_into_host_terminal(root, terminal, TerminalDropText(*path))) {
+          say(NotificationService::Tone::Info, name + " is on " + host + " at " + *path);
+        }
+      });
+    };
+    std::error_code size_error;
+    const std::uintmax_t size = std::filesystem::file_size(local_path, size_error);
+    if (size_error || size > kMaxDroppedUploadBytes) {
+      finish(std::nullopt, size_error ? size_error.message() : "it is over 64 MiB");
+      return;
+    }
+    std::optional<std::string> bytes = util::ReadTextFile(local_path);  // binary-safe, regular files only
+    if (!bytes.has_value()) {
+      finish(std::nullopt, "it could not be read");
+      return;
+    }
+    remote::RemoteWorkspace(connection).UploadFile(name, *bytes, finish);
+  });
   return true;
 }
 

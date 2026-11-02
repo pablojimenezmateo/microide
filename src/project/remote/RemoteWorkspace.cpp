@@ -1,5 +1,6 @@
 #include "project/remote/RemoteWorkspace.h"
 
+#include <algorithm>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -497,6 +498,40 @@ std::uint64_t RemoteWorkspace::WriteFile(std::string path, std::string_view cont
     done(WriteResult{.error = "not connected", .unreachable = true});
   }
   return id;
+}
+
+void RemoteWorkspace::UploadFile(std::string name, std::string_view content, UploadDone done) {
+  const std::shared_ptr<RemoteServerClient> client = Client();
+  if (!client) {
+    done(std::nullopt, kNotConnected);
+    return;
+  }
+  const std::vector<std::string>& capabilities = client->hello().capabilities;
+  if (std::find(capabilities.begin(), capabilities.end(), method::kUploadCapability) == capabilities.end()) {
+    done(std::nullopt, "the host's server is too old to take a file; update it (Remote: Stop Host Server)");
+    return;
+  }
+  util::JsonObject params;
+  params["name"] = util::JsonValue(std::move(name));
+  RemotePeer& peer = client->peer();
+  const std::uint64_t id = peer.Request(
+      method::kFileUpload, util::JsonValue(std::move(params)), Lane::Bulk,
+      [done](std::optional<util::JsonValue> result, std::optional<RemotePeer::RpcError> error) {
+        if (!result.has_value() || !(*result)["path"].IsString()) {
+          done(std::nullopt, error.has_value() ? error->message : "the host did not say where it put the file");
+          return;
+        }
+        done((*result)["path"].AsString(), {});
+      },
+      [&](std::uint64_t allocated) {
+        constexpr std::size_t kChunk = RemoteFrameTransport::kMaxBulkChunkBytes;
+        for (std::size_t offset = 0; offset < content.size(); offset += kChunk) {
+          peer.SendContent(FrameType::WriteData, allocated, content.substr(offset, kChunk), Lane::Bulk);
+        }
+      });
+  if (id == 0) {
+    done(std::nullopt, "not connected");
+  }
 }
 
 RemoteWorkspace::WriteResult RemoteWorkspace::WriteFileSync(std::string path,
