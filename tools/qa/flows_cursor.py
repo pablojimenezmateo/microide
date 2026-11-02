@@ -3,7 +3,7 @@ the shell would show over its centre (`cursor`), and this walks the app through
 its surfaces -- menus, overlays, every sidebar view, Settings and Help, the
 editor's find widget and banner, split editors, the terminal with tabs, a split,
 its find bar and a program that owns the mouse, the Output panel, the debug pane,
-the unsaved-changes prompt, a narrow window's overflow chips -- and holds each
+the unsaved-changes prompt, an overflowing tab strip's chips -- and holds each
 clickable element to the hand, each text field to the I-beam.
 
 The rule a user reads: what lights up and does something when clicked shows a
@@ -15,7 +15,7 @@ here rather than in a bug report.
 from __future__ import annotations
 
 import microide_qa as q
-from flows_common import dismiss, open_file, resize_window, step, write
+from flows_common import dismiss, open_file, step, write
 
 # Element kinds a click acts on, held to the hand cursor.
 POINTER_KINDS = frozenset({
@@ -190,14 +190,14 @@ def flow_cursor_sweep(app: q.App) -> None:
     _visit(app, "unsaved prompt")
     dismiss(app)
 
-    # A narrow window: overflow chips on every strip.
-    for i in range(6):
-        open_file(app, f"notes/wide-{i}.txt", "x\n")
-    resize_window(app, 760, 600)
-    _visit(app, "narrow window")
+    # More tabs than the strip holds: its overflow chips. By opening tabs, not by
+    # narrowing the window -- a Wayland compositor owns the window's size.
+    for i in range(24):
+        open_file(app, f"notes/a-rather-long-file-name-{i:02}.txt", "x\n")
+    _visit(app, "overflowing tab strip")
     chips = [e["name"] for e in app.elements("button") if "/more-" in e["name"]]
     app.expect(any(n.startswith("button:tabs/") for n in chips),
-               f"a narrow window shows the editor strip's overflow chip ({chips})")
+               f"an overflowing strip shows the editor strip's overflow chip ({chips})")
 
 
 # A stand-in for a TUI that owns the mouse (Claude Code's fullscreen mode): any-
