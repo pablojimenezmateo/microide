@@ -317,7 +317,14 @@ void TestABackgroundStartedHostTerminalIsRecordedAtQuit() {
                            background = row.handle;
                          }
                        }
-                       return background != 0;
+                       // And the CLIENT knows it: the host lists the shell as soon as
+                       // it opens, before its term/open reply reaches the background
+                       // pane -- a quit in that window recorded a pane with no
+                       // identity, and the reopen started a fresh shell (CI, once:
+                       // "naming the shell that started in the background").
+                       const auto& tabs = WorkspaceShellTestAccess::ProjectState(shell, 0).terminal_tabs;
+                       return background != 0 && !tabs.empty() && !tabs.front()->panes.empty() &&
+                              tabs.front()->panes.front()->session.host_identity().handle == background;
                      }),
            [&] {
              return "the background project's terminal started too, with nobody looking at it; "
