@@ -132,6 +132,15 @@ new terminal behaviour lands there.
   closing the project, and reopening reattaches the same shells with their
   screen and history (remote-terminal-restore, below). Local terminals still
   revive as fresh shells.
+- keyboard and pointer ownership is settled as of 2026-11-02 (TD-2026-11-02-428):
+  a focused terminal gets every key but the reserved chords
+  (`IsTerminalReservedChord`: Ctrl+Shift+<key>, Ctrl+`, Ctrl+PageUp/PageDown,
+  Ctrl+Tab), linted for every built-in; a program that owns the mouse gets the
+  arrow, the hand over a control it lights on hover (`TerminalHoverAffordance`)
+  and Shift-to-select past it; motion is reported once per cell. New workbench
+  shortcuts that must work from a terminal go on a reserved chord. Next on this
+  axis: OSC 22 (a program naming its pointer shape) when a program people use
+  sends it.
 
 ### 4. Editor correctness and scale
 
