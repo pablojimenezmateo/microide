@@ -1808,9 +1808,10 @@ void RemoteHostService::OnHostTerminals(const std::filesystem::path& tree,
     // The identity a reopen would record: the epoch of the server that listed it
     // (the connection's hello names the same one; an older reply may omit it).
     const std::shared_ptr<remote::RemoteServerClient> client = entry.project->session().connection()->client();
-    const std::string epoch = !status->daemon_epoch.empty() ? status->daemon_epoch
-                              : client != nullptr           ? client->hello().daemon_epoch
-                                                            : std::string();
+    // (`status` is set: unclaimed terminals come only from its listing.)
+    const std::string epoch = status.has_value() && !status->daemon_epoch.empty() ? status->daemon_epoch
+                              : client != nullptr ? client->hello().daemon_epoch
+                                                  : std::string();
     std::erase_if(entry.unclaimed_terminals, [&](const remote::ServerTerminal& terminal) {
       const terminal::HostIdentity identity{.epoch = epoch, .handle = terminal.handle};
       if (identity.epoch.empty() || !operations_.attach_host_terminal(tree, identity, /*focus=*/false)) {
