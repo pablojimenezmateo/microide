@@ -112,6 +112,11 @@ class RemoteHostService {
     // terminal, if it is still open (a dropped file's uploaded path).
     std::function<bool(const std::filesystem::path& root, const terminal::HostIdentity& identity, std::string text)>
         type_into_host_terminal;
+    // The recent lines -- the screen and some scrollback above it -- of each host
+    // terminal of the project at `root`, until `visit` returns true. Asked only when
+    // a port nobody's process owns starts listening (not per line of output).
+    std::function<void(const std::filesystem::path& root, const std::function<bool(std::string_view line)>& visit)>
+        recent_terminal_lines;
     // The Host view's rows changed (a push, a group toggled, a reconnect).
     std::function<void()> host_activity_updated;
     // The host pushed a new git status for the remote project at `root`.
@@ -251,6 +256,10 @@ class RemoteHostService {
                          const std::filesystem::path& local_path);
   // Past this a drop is refused rather than read into memory and sent.
   static constexpr std::uint64_t kMaxDroppedUploadBytes = 64u * 1024 * 1024;
+  // Whether `line` names `port` on this machine's loopback or any-address
+  // (localhost:N, 127.0.0.1:N, 0.0.0.0:N, [::1]:N, [::]:N) -- what a dev server
+  // prints when it starts (Vite's "Local: http://localhost:5173/").
+  static bool MentionsLocalPort(std::string_view line, std::uint16_t port);
   // The home's status block for a project in `state` with `sync` (§ 7.3): the
   // link, the server and the sync, each as far as it got, and what to do about a
   // failure. `command` reproduces the connection in a terminal; `server_release`
@@ -466,6 +475,9 @@ class RemoteHostService {
   // After a connect's reattaches went out: ask server/status (off the UI thread)
   // and sum the connect up in one row (OnHostTerminals).
   void ListHostTerminals(const std::filesystem::path& tree, Project& entry);
+  // The host root of an open project on `host` whose host terminal printed `port`'s
+  // address (MentionsLocalPort); "" when none did.
+  std::string ProjectPrintingPort(std::string_view host, std::uint16_t port) const;
   void OnHostTerminals(const std::filesystem::path& tree,
                        const std::optional<project::remote::ServerStatus>& status);
   void DropUnclaimed(std::string_view host, const std::vector<std::uint64_t>& handles);

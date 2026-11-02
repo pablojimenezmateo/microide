@@ -1655,7 +1655,14 @@ void RemoteHostService::OnHostPorts(const std::string& host,
     // closed here) is not forwarded into it. A port of no project -- a shell the
     // user ssh'd in with -- is the host's, as before.
     const auto owner = listening.roots.find(port);
-    const std::string owner_root = owner != listening.roots.end() ? owner->second : std::string();
+    std::string owner_root = owner != listening.roots.end() ? owner->second : std::string();
+    // A server the project's terminal started whose socket no process of the
+    // project's own holds -- a container (`docker run -p`), a service that
+    // double-forked -- is the project's when that terminal printed its address
+    // (VS Code's "hybrid" source; TD-2026-11-02-429 item 5).
+    if (owner_root.empty() && !any_program) {
+      owner_root = ProjectPrintingPort(host, port);
+    }
     if (owner_root.empty() ? !any_program : !HasOpenProject(host, owner_root)) {
       continue;
     }
@@ -1667,6 +1674,41 @@ void RemoteHostService::OnHostPorts(const std::string& host,
       }
     }
   }
+}
+
+bool RemoteHostService::MentionsLocalPort(std::string_view line, std::uint16_t port) {
+  const std::string digits = std::to_string(port);
+  for (const std::string_view address : {"localhost:", "127.0.0.1:", "0.0.0.0:", "[::1]:", "[::]:"}) {
+    for (std::size_t at = line.find(address); at != std::string_view::npos; at = line.find(address, at + 1)) {
+      const std::size_t start = at + address.size();
+      const std::size_t end = start + digits.size();
+      if (line.compare(start, digits.size(), digits) == 0 &&
+          (end == line.size() || line[end] < '0' || line[end] > '9')) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+std::string RemoteHostService::ProjectPrintingPort(std::string_view host, std::uint16_t port) const {
+  if (!operations_.recent_terminal_lines) {
+    return {};
+  }
+  for (const auto& [tree, entry] : projects_) {
+    if (entry.closed || entry.host != host) {
+      continue;
+    }
+    bool printed = false;
+    operations_.recent_terminal_lines(tree, [&](std::string_view line) {
+      printed = MentionsLocalPort(line, port);
+      return printed;
+    });
+    if (printed) {
+      return entry.host_root;
+    }
+  }
+  return {};
 }
 
 bool RemoteHostService::CancelForward(std::string_view host, std::uint16_t port) {

@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 #include "platform/AsyncSubprocess.h"
 #include "RemoteServerTestSupport.h"
+#include "TerminalSessionTestAccess.h"
 
 #include "terminal/TerminalSession.h"
 #include "util/Sha256.h"
@@ -929,6 +930,67 @@ std::pair<int, std::uint16_t> ListenOnAChosenPort(std::uint16_t from) {
     }
   }
   return {-1, 0};
+}
+
+// TD-2026-11-02-429 item 5: the default "project" source counts a port a project's
+// process holds -- which a server the project's terminal started in a container
+// (`docker run -p`) or one that double-forked is not, so it was never forwarded.
+// A port whose address that terminal printed is the project's too (VS Code's
+// "hybrid"); one nobody printed is still left alone.
+void TestMentionsLocalPortReadsADevServersBanner() {
+  using workspace::RemoteHostService;
+  Expect(RemoteHostService::MentionsLocalPort("  Local:   http://localhost:5173/", 5173), "Vite's banner");
+  Expect(RemoteHostService::MentionsLocalPort("Listening on 0.0.0.0:8000", 8000), "any-address");
+  Expect(RemoteHostService::MentionsLocalPort("http://127.0.0.1:3000", 3000), "loopback v4");
+  Expect(RemoteHostService::MentionsLocalPort("serving at http://[::1]:9000/x", 9000), "loopback v6");
+  Expect(!RemoteHostService::MentionsLocalPort("http://localhost:51730/", 5173), "not a prefix of a longer port");
+  Expect(!RemoteHostService::MentionsLocalPort("http://example.com:5173/", 5173), "not another host");
+  Expect(!RemoteHostService::MentionsLocalPort("port 5173 is busy", 5173), "not a bare number");
+}
+
+void TestAPortTheProjectsTerminalPrintedIsTheProjects() {
+  FakeSshHost host;
+  WorkspaceShell shell;
+  PointAtFakeHost(shell, host);
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.auto_forward_ports", "true"),
+         "automatic forwards on, the default source");
+  const std::filesystem::path host_root = host.home / "src" / "printed";
+  WriteFile(host_root / "a.txt", "a\n");
+  const std::string target = "dev@fake-printed-" + std::to_string(::getpid());
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open " + target + ":" + host_root.string()),
+         "connect");
+  const auto pump_until = [&](auto predicate, std::chrono::milliseconds timeout) {
+    return WaitUntil(
+        [&] {
+          Pump(shell);
+          return predicate();
+        },
+        timeout, std::chrono::milliseconds(10));
+  };
+  terminal::TerminalSession& terminal = WorkspaceShellTestAccess::TerminalTabSession(shell, 0);
+  Expect(pump_until([&] { return WorkspaceShellTestAccess::RemoteHosts(shell).PortsWatched(target) &&
+                                 terminal.running() && terminal.is_host_terminal(); },
+                    std::chrono::seconds(30)),
+         "connected, ports watched, the project's host terminal up");
+  const auto forwarded = [&](std::uint16_t port) {
+    return WorkspaceShellTestAccess::RemoteHosts(shell).CommandText(target, "port:" + std::to_string(port)).has_value();
+  };
+  auto [probe, port] = ListenOnAChosenPort(23000);
+  Expect(probe >= 0, "a free port");
+  ::close(probe);
+  // What the terminal shows once the container is up (the host is this machine,
+  // and this process -- no process of the project's -- holds the socket).
+  TerminalSessionTestAccess::AppendOutput(terminal, "  Local:   http://localhost:" + std::to_string(port) + "/\r\n");
+  auto [server, same] = ListenOnAChosenPort(port);
+  Expect(server >= 0 && same == port, "the server listens");
+  auto [unprinted, unprinted_port] = ListenOnAChosenPort(static_cast<std::uint16_t>(port + 1));
+  Expect(unprinted >= 0, "and a listener nobody printed");
+  Expect(pump_until([&] { return forwarded(port); }, std::chrono::seconds(30)),
+         "the printed one is forwarded as the project's");
+  (void)pump_until([] { return false; }, std::chrono::seconds(3));  // a few more polls
+  Expect(!forwarded(unprinted_port), "the unprinted one is left alone");
+  ::close(server);
+  ::close(unprinted);
 }
 
 // Automatic port forwarding (VS Code's): a program on the host that starts
@@ -1900,6 +1962,9 @@ void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
           TestConflictsBatchIntoOneRowAndTheConflictsView);
   AddTest(tests, "RemoteHostService/AOneSidedConflictOffersNoMerge", TestAOneSidedConflictOffersNoMerge);
   AddTest(tests, "RemoteHostService/APortThatStartsListeningIsForwarded", TestAPortThatStartsListeningIsForwarded);
+  AddTest(tests, "RemoteHostService/MentionsLocalPortReadsADevServersBanner", TestMentionsLocalPortReadsADevServersBanner);
+  AddTest(tests, "RemoteHostService/APortTheProjectsTerminalPrintedIsTheProjects",
+          TestAPortTheProjectsTerminalPrintedIsTheProjects);
   AddTest(tests, "RemoteHostService/ProjectHomeStatusBlockFollowsTheConnection",
           TestProjectHomeStatusBlockFollowsTheConnection);
   AddTest(tests, "RemoteHostService/RemoveMirrorDimsForAMirrorDeletedOutsideTheEditor",

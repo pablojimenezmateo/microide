@@ -273,6 +273,33 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
             }
             return false;  // closed meanwhile
           },
+      .recent_terminal_lines =
+          [this](const std::filesystem::path& root, const std::function<bool(std::string_view line)>& visit) {
+            ProjectWorkspaceState* state = context_.ProjectStateForRoot(root);
+            if (state == nullptr) {
+              return;
+            }
+            constexpr std::size_t kLines = 200;  // the screen and what scrolled just above it
+            std::string text;
+            for (const auto& tab : state->terminal_tabs) {
+              for (const auto& pane : tab->panes) {
+                if (pane == nullptr || pane->launcher != nullptr || !pane->session.is_host_terminal()) {
+                  continue;
+                }
+                const std::size_t count = pane->session.LineCount();
+                for (const terminal::TerminalLine& line :
+                     pane->session.SnapshotLineRange(count > kLines ? count - kLines : 0, kLines)) {
+                  text.clear();
+                  for (const terminal::TerminalCell& cell : line.cells) {
+                    text += cell.DisplayText();
+                  }
+                  if (visit(text)) {
+                    return;
+                  }
+                }
+              }
+            }
+          },
       .host_activity_updated =
           [this]() {
             if (HostViewShown(context_.current_project_state.sidebar)) {
