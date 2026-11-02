@@ -160,6 +160,34 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **No more lost work after a crash, a power cut or a mirror removal.** A buffer
+  restored after a crash no longer saves over a change someone made to the file
+  while microide was down (it shows the changed-on-disk banner instead). The
+  unsaved-text backup also runs during steady typing (at least every 10 s), not
+  only after a pause. Saves fsync their folder, so a power cut cannot bring back
+  the previous version of a file you saved. `Remote: Remove Mirror` refuses while
+  the mirror holds anything the host does not, including edits the journal never
+  recorded and files that exist only in the mirror, and it refuses a mirror whose
+  state cannot be read.
+- **Logout, `kill` and closing the launching terminal quit cleanly.** SIGTERM no
+  longer waits behind an open unsaved-changes prompt, and SIGHUP no longer kills
+  microide without saving: both quit as a window close does, with unsaved text
+  kept for the next start.
+- **Remote terminals come back on their own.** Host terminals left running with no
+  tab (after a crash, or detached by another machine) reopen on connect instead of
+  waiting behind an Attach toast; with `terminal.restore_sessions` off they are
+  still offered.
+- **Fewer port toasts.** Only ports opened by a program started from the project
+  are forwarded automatically (`remote.auto_forward_ports_source`), never ports in
+  the ephemeral range, and a restarting dev server is announced once.
+  `remote.auto_forward_ports_notify` turns the announcements off.
+- **Errors say why.** A failed save names the cause (permission denied, no space
+  left, read-only file system…); replace-all names the file it could not write;
+  opening a missing path as a project says so; a project whose folder is deleted
+  or moved shows a warning (and re-indexes when the folder comes back); with git
+  missing from PATH the git view and git actions say git could not be run
+  instead of "failed" and "No changes".
+
 - **A focused terminal gets the keyboard.** Every key reaches the program except
   Ctrl+Shift+<key>, Ctrl+`, Ctrl+PageUp/PageDown and Ctrl+Tab: Ctrl+J is Claude
   Code's newline again (it toggled the panel), and Ctrl+P, Ctrl+Q, Ctrl+F, Ctrl+-,
