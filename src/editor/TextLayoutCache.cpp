@@ -198,8 +198,12 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
   // wrapped-row table knows widths, not encodings) but never to overstate.
   if (facts.known && lines.LineLength(line_index) <= 4096) {
     const LineLayoutFacts measured = TextLayout::MeasureLineFacts(lines[line_index], tab_size);
-    assert(measured.visual_columns == facts.visual_columns &&
+    // Which source was stale, in the message: one QA finding (TD-2026-10-30-426,
+    // seed 69) hit this without saying, and could not be told apart afterwards.
+    assert((!facts_from_width_table || measured.visual_columns == facts.visual_columns) &&
            "per-line width table went stale against the buffer");
+    assert((facts_from_width_table || measured.visual_columns == facts.visual_columns) &&
+           "the wrapped-row table's width hint went stale against the buffer");
     assert((facts_from_width_table ? measured.plain_ascii == facts.plain_ascii
                                    : (!facts.plain_ascii || measured.plain_ascii)) &&
            "line layout facts claim plain ASCII for a line that is not");
