@@ -1,5 +1,13 @@
 # MicroIDE Known Tech Debt
 
+Reviewed 2026-11-02 (§ TD-2026-11-02-429 for the error-management and data-safety
+pass: four data-loss paths closed -- a crash-restored buffer saved over a change made
+while down, steady typing never backed up, no directory fsync after a save, Remove
+Mirror deleting unjournaled work -- SIGTERM/SIGHUP now quit with hot exit, host
+terminals reopen on connect, port toasts narrowed, failures say why. Open: a stale
+root-missing row, the stat-only restore baseline, the flush's UI-thread wait, four
+smaller ones).
+
 Reviewed 2026-11-02 (§ TD-2026-11-02-428 for the terminal UX pass, local and
 remote: a focused terminal owns every key but the reserved Ctrl+Shift chords
 (Ctrl+J, Ctrl+P, F-keys, Alt+arrows reached the workbench), Escape reaches the
@@ -488,6 +496,84 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-11-02-429 — the error-management and data-safety pass: what it fixed and what it left. [OPEN — items 1-8]
+
+The 2026-11-02 pass probed the shipped binary (control channel, SIGKILL / SIGTERM /
+SIGHUP, chmod, deleted and moved roots, a crash between an edit and the file
+changing) and the remote mirror (a crash before the journal, Remove Mirror), and
+fixed, each with a failing-first test:
+
+- **Data loss: a crash-restored buffer overwrote a change made while down.** The
+  hot-exit snapshot was restored with no disk baseline, which `DetectDiskConflict`
+  reads as "no conflict": Ctrl+S wrote the backup over the other edit, silently.
+  The snapshot records its baseline (`PersistedEditorTabState::DiskBaseline`,
+  `EditorTabTag` 35) and the restore rebinds it.
+- **Data loss: steady typing never got a backup.** The crash-safety flush was a
+  pure 2.5 s debounce every key reset; it is now bounded at 10 s after the first
+  unstaged edit (`CrashSafetyFlushSchedule`).
+- **Data loss: a power cut could revert a saved file.** No atomic replace fsynced
+  its directory; the editor's save, persisted records and the host's synced tree
+  writes now do (`util::FsyncDirectory`, ~0.44 ms per save measured on ext4).
+- **Data loss: Remove Mirror deleted unjournaled work.** An edit in `tree/` nothing
+  journaled, a file the state never heard of and an ignored file that exists only
+  in the mirror counted as nothing; an unreadable state counted as empty
+  (`MirrorStore::LocalWorkNotOnHost`).
+- **Signals.** SIGTERM was ignored while the unsaved-changes prompt was open (a
+  logout then SIGKILLed the app); SIGHUP killed it with nothing saved. One
+  `TerminationSignalWatcher` turns all three into a forced quit with hot exit.
+- **Remote terminals.** Unclaimed host terminals (a crash, another machine that
+  detached) are reopened on connect instead of behind an Attach toast; a host
+  terminal arms the crash-safety flush when its handle arrives.
+- **Port-forward noise.** Only ports a project's program opened
+  (`remote.auto_forward_ports_source`), never the ephemeral range, not announced
+  twice in 5 minutes, and `remote.auto_forward_ports_notify` to forward silently.
+- **Errors that said nothing.** A failed save names the cause (errno through the
+  whole write chain, `util::DescribeWriteError`); replace-all names the first file
+  it could not write; `project-open` says "no such folder" / "a file, not a
+  folder"; an open project whose folder is deleted or moved says so.
+- **Validation.** A killed QA driver's `/tmp/mqa-*` tree is swept by the next
+  launch (37 leaked trees, ~2 GB, had filled the user's tmpfs quota: every test
+  then failed with EDQUOT). A crash-before-journal test pins the sync engine's
+  stat/ctime detection.
+
+Checked and found sound: 40 saves interleaved with typing, 60 project switches in
+a second with dirty buffers, close-project and quit with unsaved edits (hot exit),
+Save As onto an existing file (refused), tree renames (`RENAME_NOREPLACE`), tree
+deletes (trash), the read-only-file banner.
+
+Left open:
+
+1. **The root-missing row can go stale.** The watcher's root watch dies with the
+   root, so a folder put back is noticed only on the next project switch. A
+   periodic stat while the row is up, or re-arming the watch on the parent.
+2. **A restored snapshot's baseline is stat-only.** The in-memory content hash is
+   process-local (`std::hash`), so a `touch` while microide was down reads as a
+   change and the save asks. Safe, but a stable digest (blake3, already linked)
+   recorded at load would let it save.
+3. **The crash-safety flush waits on the UI thread** (`FlushPendingWrites`), now
+   up to every 10 s during steady typing. Unmeasured with a large dirty buffer; a
+   completion barrier the next flush waits on instead would keep the bound.
+4. **The ephemeral range is Linux's default**, not the host's
+   `ip_local_port_range`; the server could report the real one in `server/status`.
+5. **`project` port source misses daemonized programs** (a `docker run -p`, a
+   service that double-forks): their socket's owner is outside microide's trees.
+   Forward a Port… and `any` cover them; a terminal-output URL scan (VS Code's
+   "hybrid") would too.
+6. **Save As has a check-then-write window**: `exists()` then a rename that
+   replaces. A RENAME_NOREPLACE for a Save As target would close it.
+7. **Tests build failure text before the wait they report on**:
+   `Expect(PumpUntil(...), "..." + ScreenText(x))` evaluates the message first
+   (argument order), so a failure shows the state from BEFORE the wait. Fixed in
+   the tests this pass touched; the pattern is common elsewhere. A lint, or an
+   `Expect` overload taking only callables for waits.
+8. **The test binaries write their temp trees to /tmp**, a 31 GB tmpfs shared
+   with every other tool; when another project filled the user's quota the whole
+   suite failed with EDQUOT for reasons outside the product. `run-checks.sh`
+   could point `TMPDIR` at `build/tmp` -- not done blind: every test's socket
+   path grows with it, and the daemon tests already keep short directories
+   (`mis.XXXXXX`, `mip.XXXXXX`) because of the 108-byte AF_UNIX limit; measure
+   the longest socket path first.
 
 ### TD-2026-11-02-428 — the terminal UX pass, local and remote: what it fixed and what it left. [OPEN — items 1-6]
 
