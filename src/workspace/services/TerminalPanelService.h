@@ -137,6 +137,11 @@ class TerminalPanelService {
   // client watched is closed either way: there is no process to keep, and the
   // server counts its buffer as live.
   void ReleaseHostTerminals(ProjectWorkspaceState& state) const;
+  // A host pane of `state` whose term/open is on the wire: running, and no handle
+  // yet. Quit waits a moment for these (TD-2026-11-02-428 item 6): recorded now,
+  // such a pane has no identity, and the reopen starts a fresh shell beside the
+  // one the host already runs for it.
+  static bool HasHostOpenInFlight(const ProjectWorkspaceState& state);
   // Start every pending host pane of `state` (its connection is up now): each
   // opens, or reattaches to the terminal it recorded. Returns how many started.
   static std::size_t StartPendingHostPanes(ProjectWorkspaceState& state);

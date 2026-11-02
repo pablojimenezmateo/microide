@@ -17,6 +17,8 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <thread>
+#include <csignal>
 #include <vector>
 
 #include <unistd.h>
@@ -372,6 +374,60 @@ void TestABackgroundStartedHostTerminalIsRecordedAtQuit() {
   }
 }
 
+// TD-2026-11-02-428 item 6: a host terminal whose term/open was still being
+// answered at quit was recorded with no identity. The host already ran its shell,
+// so the reopen started a fresh one beside it and offered the original as nobody's.
+// Quit now waits a bounded moment for the answer. The window is made exact here:
+// the host server is stopped while the open goes out and resumed after the quit
+// began.
+void TestAHostTerminalOpeningAtQuitIsRecorded() {
+  ScopedAppHomes homes;
+  FakeSshHost host;
+  const std::filesystem::path root = host.home / "src" / "quitopen";
+  WriteFile(root / "a.txt", "a\n");
+  const std::string open = "remote-open " + Target("fake-quitopen") + ":" + root.string();
+  std::uint64_t opened_at_quit = 0;
+  {
+    WorkspaceShell shell;
+    PointAtFakeHost(shell, host);
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, open), "the remote project opens");
+    TerminalSession& first = WorkspaceShellTestAccess::TerminalTabSession(shell, 0);
+    Expect(PumpUntil(shell, [&] { return first.running() && first.host_identity().handle != 0; }),
+           "its terminal starts");
+    const int fd = platform::ConnectUnixSocket(remote::ServerSocketPath(host.server_dir()));
+    auto client = remote::RemoteServerClient::Create();
+    std::string error;
+    Expect(fd >= 0 && client->ConnectFds(fd, fd, remote::HelloRequest{.release = "test"}, &error), error);
+    const std::optional<remote::ServerStatus> status = client->Status(&error);
+    const pid_t server = static_cast<pid_t>(status.has_value() ? status->pid.value_or(0) : 0);
+    Expect(server > 0, "the host server's pid is known: " + error);
+    ::kill(server, SIGSTOP);
+    std::thread resume([server] {
+      std::this_thread::sleep_for(std::chrono::milliseconds(300));
+      ::kill(server, SIGCONT);
+    });
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "term"), "a second terminal");
+    TerminalSession& opening = WorkspaceShellTestAccess::TerminalTabSession(shell, 1);
+    Expect(opening.running() && opening.host_identity().empty(), "its open is on the wire, unanswered");
+    shell.Shutdown();  // quit, inside the window
+    resume.join();
+    opened_at_quit = opening.host_identity().handle;
+    Expect(opened_at_quit != 0, "the quit waited for its answer");
+  }
+  {
+    WorkspaceShell shell;
+    PointAtFakeHost(shell, host);
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, open), "the project reopens");
+    Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 2, "with both tabs");
+    TerminalSession& second = WorkspaceShellTestAccess::TerminalTabSession(shell, 1);
+    Expect(PumpUntil(shell, [&] { return second.host_reattach() == terminal::HostReattach::Reattached; }),
+           [&] { return "the one opened at quit reattaches by its identity:" +
+                        WorkspaceShellTestAccess::TerminalPanesSummary(shell); });
+    Expect(second.host_identity().handle == opened_at_quit, "to the same shell");
+    Expect(HostTerminals(host).size() == 2, "and no fresh shell was started beside it");
+  }
+}
+
 // TD-2026-10-28-414's one found path: a terminal opened while the link is down
 // waits for it, and the UI learns of the reconnect through a coalesced wake --
 // "Reconnecting" overwritten by "Ready" before the shell drained it. Waiting
@@ -681,6 +737,7 @@ void RegisterRemoteTerminalRestoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteTerminalRestore/ARemoteProjectOpensWithItsTerminal", TestARemoteProjectOpensWithItsTerminal);
   AddTest(tests, "RemoteTerminalRestore/HostTerminalsSurviveQuitAndReattach",
           TestHostTerminalsSurviveQuitAndReattach);
+  AddTest(tests, "RemoteTerminalRestore/AHostTerminalOpeningAtQuitIsRecorded", TestAHostTerminalOpeningAtQuitIsRecorded);
   AddTest(tests, "RemoteTerminalRestore/ABackgroundStartedHostTerminalIsRecordedAtQuit",
           TestABackgroundStartedHostTerminalIsRecordedAtQuit);
   AddTest(tests, "RemoteTerminalRestore/ATerminalOpenedWhileTheLinkIsDownStartsAfterACoalescedReconnect",

@@ -6,7 +6,9 @@
 #include <optional>
 #include <system_error>
 
+#include <chrono>
 #include <filesystem>
+#include <thread>
 #include <utility>
 
 #include "app/SdlWaker.h"
@@ -121,6 +123,9 @@ void LifecycleCoordinator::Shutdown() {
   operations_.shutdown_plugin_runtime();
   operations_.save_user_config();
   operations_.stop_git_blame_service();
+  if (operations_.await_host_terminal_opens) {
+    operations_.await_host_terminal_opens();
+  }
   operations_.release_host_terminals();
   operations_.persist_active_project();
   // Inactive projects are already durably persisted the moment they are switched
@@ -367,6 +372,30 @@ LifecycleCoordinator& WorkspaceShell::MakeLifecycleCoordinator() {
               [this]() {
                 git_blame_service_.Stop();
                 highlight_prefetch_service_.Shutdown();
+              },
+          .await_host_terminal_opens =
+              [this]() {
+                // The answer lands on the connection's own thread and sets the
+                // handle there: nothing on this thread needs to run for it. A
+                // second covers a slow link's round trip; a host that does not
+                // answer by then gets the pane recorded as it is.
+                const auto in_flight = [this]() {
+                  if (TerminalPanelService::HasHostOpenInFlight(context_.current_project_state)) {
+                    return true;
+                  }
+                  for (std::size_t i = 0; i < context_.project_catalog.entries.size(); ++i) {
+                    const ProjectWorkspaceState* state = context_.project_catalog.entries[i].get();
+                    if (i != context_.project_catalog.active_index && state != nullptr &&
+                        TerminalPanelService::HasHostOpenInFlight(*state)) {
+                      return true;
+                    }
+                  }
+                  return false;
+                };
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+                while (in_flight() && std::chrono::steady_clock::now() < deadline) {
+                  std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
               },
           .release_host_terminals =
               [this]() {

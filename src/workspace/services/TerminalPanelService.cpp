@@ -281,6 +281,18 @@ void ForEachProjectHostPane(ProjectWorkspaceState& state, Visit&& visit) {
 
 }  // namespace
 
+bool TerminalPanelService::HasHostOpenInFlight(const ProjectWorkspaceState& state) {
+  for (const std::unique_ptr<TerminalTabState>& tab : state.terminal_tabs) {
+    for (const std::unique_ptr<TerminalPaneState>& pane : tab->panes) {
+      if (pane != nullptr && pane->launcher == nullptr && pane->session.is_host_terminal() &&
+          pane->session.running() && pane->session.host_identity().empty()) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 void TerminalPanelService::ReleaseHostTerminals(ProjectWorkspaceState& state) const {
   const bool keep = !operations_.revive_terminals || operations_.revive_terminals();
   ForEachProjectHostPane(state, [keep](TerminalPaneState& pane) {

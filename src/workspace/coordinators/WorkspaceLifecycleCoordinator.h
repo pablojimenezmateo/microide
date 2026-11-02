@@ -35,6 +35,9 @@ class LifecycleCoordinator {
     std::function<void()> shutdown_plugin_runtime;
     std::function<void()> save_user_config;
     std::function<void()> stop_git_blame_service;
+    // First, a bounded wait for host terminals whose open is still being answered,
+    // so each is recorded with the identity the reopen reattaches by.
+    std::function<void()> await_host_terminal_opens;
     // Every open project's host terminals, active or not, let go of explicitly
     // (TerminalPanelService::ReleaseHostTerminals) before anything is persisted:
     // whether a host shell survives a quit must not depend on how the process
