@@ -1,12 +1,35 @@
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 
+#include <filesystem>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
 #include "workspace/actions/WorkspaceActionRequests.h"
 
 namespace microide::workspace {
+
+namespace {
+
+// Why `path` did not open as a project, for the rejection's toast: ": no such
+// folder" said up front beats a bare "Failed to open project".
+std::string WhyNotAFolder(const std::filesystem::path& path) {
+  std::error_code error;
+  const std::filesystem::file_status status = std::filesystem::status(path, error);
+  if (status.type() == std::filesystem::file_type::not_found) {
+    return ": no such folder";
+  }
+  if (error) {
+    return ": " + error.message();
+  }
+  if (!std::filesystem::is_directory(status)) {
+    return ": it is a file, not a folder";
+  }
+  return {};
+}
+
+}  // namespace
 
 ActionCoordinator::DispatchResult ActionCoordinator::ExecuteProject(
     ActionId id,
@@ -34,7 +57,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteProject(
         return DispatchResult::Handled;
       }
       if (!context_.OpenProject(request.path, true, true)) {
-        return reject("Failed to open project: " + request.path.string());
+        return reject("Failed to open project " + request.path.string() + WhyNotAFolder(request.path));
       }
       return DispatchResult::Handled;
     }

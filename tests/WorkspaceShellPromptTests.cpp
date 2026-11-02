@@ -259,6 +259,19 @@ void TestWorkspaceShellSavingAReadOnlyFileAsksFirst() {
   std::filesystem::permissions(source, std::filesystem::perms::owner_all);
 }
 
+// Opening a path that is not a folder says which way it is not.
+void TestWorkspaceShellOpeningAMissingProjectSaysWhy() {
+  TemporaryDirectory temp_dir;
+  WriteFile(temp_dir.path() / "file.txt", "x\n");
+  WorkspaceShell shell;
+  auto outcome = WorkspaceShellTestAccess::ExecuteControlCommand(
+      shell, "project-open " + (temp_dir.path() / "gone").string());
+  Expect(!outcome.ok && outcome.error.ends_with(": no such folder"), "a missing folder: " + outcome.error);
+  outcome = WorkspaceShellTestAccess::ExecuteControlCommand(
+      shell, "project-open " + (temp_dir.path() / "file.txt").string());
+  Expect(!outcome.ok && outcome.error.ends_with(": it is a file, not a folder"), "a file: " + outcome.error);
+}
+
 // A save the file system refuses (here: a folder the user cannot write) says why
 // in its error row; it used to read "Failed to save notes.txt" and nothing more.
 void TestWorkspaceShellAFailedSaveSaysWhy() {
@@ -1623,6 +1636,7 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/ClosingNonActiveDirtyTabDoesNotStrandFocus",
           TestWorkspaceShellClosingNonActiveDirtyTabDoesNotStrandFocus);
   AddTest(tests, "WorkspaceShell/AFailedSaveSaysWhy", TestWorkspaceShellAFailedSaveSaysWhy);
+  AddTest(tests, "WorkspaceShell/OpeningAMissingProjectSaysWhy", TestWorkspaceShellOpeningAMissingProjectSaysWhy);
   AddTest(tests, "WorkspaceShell/SavingAReadOnlyFileAsksFirst",
           TestWorkspaceShellSavingAReadOnlyFileAsksFirst);
   AddTest(tests, "WorkspaceShell/DirtyPromptSaveRefusesToClobberAnExternalChange",
