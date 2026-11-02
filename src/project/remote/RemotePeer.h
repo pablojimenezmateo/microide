@@ -81,7 +81,9 @@ class RemotePeer {
 
   // Send a request; `handler` runs once with its result or error — including when
   // the connection closes first (a kErrorCancelled-coded "connection closed").
-  // Returns the request id, 0 when the request could not be sent (handler not run).
+  // Returns the request id, or 0 when the request could not be sent -- and then the
+  // handler never runs. Exactly one of the two: a close that answered the request
+  // before its send failed still returns the id.
   std::uint64_t Request(std::string_view method, const util::JsonValue& params, Lane lane,
                         ResponseHandler handler);
   // As above, with `before_send(id)` run after the id is allocated and before the

@@ -120,7 +120,12 @@ std::uint64_t RemotePeer::SendRequest(std::string_view method, const util::JsonV
   body["params"] = params;
   if (!SendControl(FrameType::Request, lane, id, util::JsonValue(std::move(body)))) {
     std::lock_guard lock(mutex_);
-    pending_.erase(id);
+    if (pending_.erase(id) == 0) {
+      // The close took it between the registration and this send, and answered
+      // it ("connection closed"): its handler has the outcome. 0 would tell the
+      // caller to complete it too -- one request, two completions.
+      return id;
+    }
     return 0;
   }
   {

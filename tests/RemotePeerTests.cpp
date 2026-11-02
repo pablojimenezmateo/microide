@@ -289,6 +289,32 @@ void TestPendingRequestsAreAnsweredOnClose() {
          "nothing can be sent afterwards");
 }
 
+// A request the link's close takes between its registration and its send is
+// completed exactly once: by the close's "connection closed" answer, with Request
+// returning its id -- not ALSO by a 0 return that every caller reads as "never
+// sent, complete it yourself". Found by the remote fault matrix
+// (MirrorFaultMatrix/*/Pull/KillServer): a pull whose link died there finished
+// twice, the sync engine's outstanding-work count went below zero, and from then
+// on Flush returned with work still running and a recovered mirror reported the
+// dead link's error.
+void TestARequestTheCloseTookIsCompletedOnce() {
+  Pair pair;
+  remote::RemotePeer client;
+  Expect(client.Start(pair.a, pair.a, {}), "start");
+  std::atomic<int> answered{0};
+  const std::uint64_t id = client.Request(
+      "racing", util::JsonValue(nullptr), remote::Lane::Interactive,
+      [&](std::optional<util::JsonValue>, std::optional<remote::RemotePeer::RpcError>) { answered.fetch_add(1); },
+      [&](std::uint64_t) {
+        // The link dies in the window: the close answers the request before it is sent.
+        client.Fail("the link dropped");
+        Expect(WaitUntil([&]() { return answered.load() > 0; }), "the close answers the request");
+      });
+  const int completions = answered.load() + (id == 0 ? 1 : 0);
+  Expect(completions == 1, "completed exactly once, not " + std::to_string(completions) + " (id " +
+                               std::to_string(id) + ", handler ran " + std::to_string(answered.load()) + ")");
+}
+
 // Pings flow and are answered automatically; a peer that stops answering is
 // declared dead by the heartbeat, not by waiting on the transport.
 void TestHeartbeatMeasuresRttAndDetectsADeadPeer() {
@@ -340,6 +366,7 @@ void RegisterRemotePeerTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemotePeer/ReleaseOrderingIsNumericAndRefusesTheUnparseable",
           TestReleaseOrderingIsNumericAndRefusesTheUnparseable);
   AddTest(tests, "RemotePeer/RequestsAndErrorsRoundTrip", TestRequestsAndErrorsRoundTrip);
+  AddTest(tests, "RemotePeer/ARequestTheCloseTookIsCompletedOnce", TestARequestTheCloseTookIsCompletedOnce);
   AddTest(tests, "RemotePeer/MalformedBodyIsRejectedAndTheConnectionContinues",
           TestMalformedBodyIsRejectedAndTheConnectionContinues);
   AddTest(tests, "RemotePeer/CancelReachesTheHandler", TestCancelReachesTheHandler);
