@@ -28,8 +28,12 @@ class ProjectBackgroundExecutor {
     queue_.PostLatest(std::move(key), std::move(task));
   }
 
-  // Mark all queued (not in-flight) tasks as cancelled. Does not wait for the
-  // in-flight task.
+  // A task Cancel() leaves queued: a git write the user asked for, which a project
+  // switch must not drop (SerialWorkQueue::PostDurable).
+  void PostDurable(std::function<void()> task) { queue_.PostDurable(std::move(task)); }
+
+  // Mark all queued (not in-flight) tasks as cancelled, but the durable ones.
+  // Does not wait for the in-flight task.
   void Cancel() { queue_.Cancel(); }
 
   // Block until the worker is idle without stopping it: cancel queued tasks, then

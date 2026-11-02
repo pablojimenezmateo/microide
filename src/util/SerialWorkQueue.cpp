@@ -87,6 +87,21 @@ void SerialWorkQueue::Post(std::function<void()> task, Shedding shedding) {
   cv_.notify_one();
 }
 
+void SerialWorkQueue::PostDurable(std::function<void()> task) {
+  {
+    std::lock_guard lock(mutex_);
+    if (stop_) {
+      return;
+    }
+    EnsureStartedLocked();
+    if (hooks_.on_enqueue) {
+      hooks_.on_enqueue();
+    }
+    queue_.push_back(Job{.key = {}, .task = std::move(task), .durable = true});
+  }
+  cv_.notify_one();
+}
+
 void SerialWorkQueue::PostFront(std::function<void()> task) {
   {
     std::lock_guard lock(mutex_);
@@ -140,7 +155,7 @@ void SerialWorkQueue::PostLatest(std::string key, std::function<void()> task, Sh
 void SerialWorkQueue::Cancel() {
   std::lock_guard lock(mutex_);
   for (auto& job : queue_) {
-    job.cancelled = true;
+    job.cancelled = job.cancelled || !job.durable;
   }
   // Every queued node is now cancelled, so none is a live dedup target.
   ClearKeyIndexLocked();

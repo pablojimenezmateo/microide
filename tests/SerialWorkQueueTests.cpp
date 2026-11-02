@@ -144,6 +144,46 @@ void TestCancelSkipsQueuedJobs() {
   Expect(ran.load() == 0, "Cancel skips queued (not yet running) jobs");
 }
 
+// A PostDurable job survives Cancel(): a git write queued behind a project's
+// refreshes when the user switched projects was cancelled with them, and the
+// service that posted it waited for its completion forever, refusing every git
+// action after (WorkspaceShell/GitOperationFinishingInTheBackgroundStaysWithItsProject,
+// under load). Drain() still drops it.
+void TestDurableJobSurvivesCancelNotDrain() {
+  SerialWorkQueue queue(SerialWorkQueue::StartMode::kEager);
+  std::atomic<bool> release{false};
+  std::atomic<int> refreshes{0};
+  std::atomic<int> writes{0};
+  queue.Post([&release]() {
+    while (!release.load()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  });
+  queue.Post([&refreshes]() { refreshes.fetch_add(1); });
+  queue.PostDurable([&writes]() { writes.fetch_add(1); });
+  queue.Post([&refreshes]() { refreshes.fetch_add(1); });
+  queue.Cancel();
+  release.store(true);
+  queue.Flush();
+  Expect(refreshes.load() == 0, "Cancel skips the ordinary queued jobs");
+  Expect(writes.load() == 1, "and runs the durable one");
+
+  release.store(false);
+  queue.Post([&release]() {
+    while (!release.load()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  });
+  queue.PostDurable([&writes]() { writes.fetch_add(1); });
+  std::thread unblock([&release]() {
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    release.store(true);
+  });
+  queue.Drain();
+  unblock.join();
+  Expect(writes.load() == 1, "Drain drops even a durable job (it reaches idle by cancelling)");
+}
+
 // The accounting contract: on_complete fires exactly once per admitted job on
 // every path (normal run, cancelled-skip, PostLatest dedup-drop, and a backlog
 // drained during Shutdown), so a global in-flight counter nets to zero.
@@ -416,6 +456,7 @@ void RegisterSerialWorkQueueTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SerialWorkQueue/PostLatestCollapsesQueued",
           TestPostLatestCollapsesQueuedButNotStarted);
   AddTest(tests, "SerialWorkQueue/PostFrontJumpsTheQueue", TestPostFrontJumpsTheQueue);
+  AddTest(tests, "SerialWorkQueue/DurableJobSurvivesCancelNotDrain", TestDurableJobSurvivesCancelNotDrain);
   AddTest(tests, "SerialWorkQueue/CancelSkipsQueuedJobs", TestCancelSkipsQueuedJobs);
   AddTest(tests, "SerialWorkQueue/HookBalanceAcrossAllPaths", TestHookBalanceAcrossAllPaths);
   AddTest(tests, "SerialWorkQueue/LazyQueueStartsOnFirstPost", TestLazyQueueStartsOnFirstPost);

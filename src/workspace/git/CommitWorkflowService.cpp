@@ -336,7 +336,10 @@ void CommitWorkflowService::DispatchCommit(CommitWorkflowState& state,
   state.in_flight_claim_ = CommitOperationClaim(this, captured_generation);
   std::filesystem::path project_root =
       callbacks_.front_project_root ? callbacks_.front_project_root() : std::filesystem::path();
-  background_executor_.Post([this, &state, operation, subject, body, repository_generation,
+  // Durable: a project switch cancels the executor's backlog, and a write
+  // dropped there never completes -- the service stayed busy, refusing every git
+  // action after (WorkspaceShell/GitOperationFinishingInTheBackground...).
+  background_executor_.PostDurable([this, &state, operation, subject, body, repository_generation,
                              captured_generation, project_root = std::move(project_root),
                              repository_root = repository_state.repository_root,
                              launcher = &ProjectLauncher()]() {

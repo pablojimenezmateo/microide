@@ -208,7 +208,10 @@ std::optional<std::string> PatchApplyService::BuildPatchForRequest(
 }
 
 void PatchApplyService::DispatchApply(project::PatchApplyRequest request, std::string patch_text) {
-  background_executor_.Post([this, request = std::move(request),
+  // Durable: a project switch cancels the executor's backlog, and a write
+  // dropped there never completes -- the service stayed busy, refusing every git
+  // action after (WorkspaceShell/GitOperationFinishingInTheBackground...).
+  background_executor_.PostDurable([this, request = std::move(request),
                              patch_text = std::move(patch_text)]() mutable {
     // Background half: the `git apply` itself and the repository-service
     // invalidation (mutex-protected). Everything that touches shell state waits

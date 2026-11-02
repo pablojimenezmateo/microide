@@ -88,9 +88,15 @@ class SerialWorkQueue {
   void PostLatest(std::string key, std::function<void()> task,
                   Shedding shedding = Shedding::kCritical);
   void PostFront(std::function<void()> task);
+  // A job whose loss would be silent and permanent -- a git write the user asked
+  // for: Cancel() leaves it queued (a project switch cancels the old project's
+  // refreshes, not a branch switch it was asked to make). Drain() and Shutdown()
+  // still drop it. Never shed.
+  void PostDurable(std::function<void()> task);
 
-  // Mark all queued (not in-flight) jobs cancelled. The worker stays alive; the
-  // cancelled jobs are still popped (and still fire on_complete) but not run.
+  // Mark all queued (not in-flight) jobs cancelled, but a PostDurable one. The
+  // worker stays alive; the cancelled jobs are still popped (and still fire
+  // on_complete) but not run.
   void Cancel();
 
   // Block until the worker is idle WITHOUT stopping it: cancel every queued job,
@@ -130,6 +136,8 @@ class SerialWorkQueue {
     // a concurrent Cancel()/Shutdown() flags the whole queue cancelled, or Drain()
     // would block forever on a promise no one ever fulfills.
     bool run_even_if_cancelled = false;
+    // PostDurable: Cancel() passes it over.
+    bool durable = false;
   };
 
   using JobIter = std::list<Job>::iterator;

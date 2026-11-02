@@ -1007,6 +1007,55 @@ void RegisterBuiltInScenarios() {
             context.CloseAllTerminals();
           },
   });
+  // Pointer travel over a program that owns the mouse (Claude Code's fullscreen
+  // TUI: alternate screen, DECSET 1003 + SGR): every move resolves the cursor --
+  // which asks the session whether the program lit the cell under it
+  // (TerminalHoverAffordance) -- and reports the move to the program once per cell
+  // crossed. Half-cell steps, so half the moves stay in their cell and must cost
+  // no report; midway the program lights the control under the pointer, as
+  // Claude Code's "Jump to bottom" does on hover.
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "terminal_mouse_owner_hover",
+      .smoke = false,
+      // Iteration 0 pays the project open and the emulator's first buffer growth.
+      .warmup_iterations = 1,
+      .run =
+          [](ScenarioContext& context) {
+            (void)context.Open("tests/perf/fixtures/small_project");
+            context.PumpFrames(2);
+            context.OpenTerminal("perf-mouse-owner");
+            std::string screen = "\x1b[?1049h\x1b[?1003h\x1b[?1006h";
+            for (int row = 1; row <= 20; ++row) {
+              screen += "\x1b[" + std::to_string(row) + ";1H transcript line " + std::to_string(row);
+            }
+            screen += "\x1b[22;40H\x1b[38;2;120;120;120m Jump to bottom (ctrl+End) \x1b[0m";
+            context.FeedTerminalOutput(screen);
+            context.PumpFrames(2);
+            auto& shell = context.Shell();
+            const SDL_FPoint start = workspace::WorkspaceShell::TestAccess::TerminalCellPoint(shell, 21, 2);
+            const SDL_FPoint end = workspace::WorkspaceShell::TestAccess::TerminalCellPoint(shell, 21, 62);
+            const SDL_FPoint next = workspace::WorkspaceShell::TestAccess::TerminalCellPoint(shell, 21, 3);
+            const float step = (next.x - start.x) * 0.5f;
+            context.Measure("terminal.mouse_owner_hover_320_moves", [&]() {
+              float x = start.x;
+              for (int i = 0; i < 320; ++i) {
+                const auto result = context.MouseMoveHover(x, start.y);
+                context.PumpPartialFrame(result.redraw);
+                if (i == 160) {
+                  // The program lights the control the pointer is over.
+                  context.FeedTerminalOutput(
+                      "\x1b[22;40H\x1b[38;2;255;255;255;48;2;70;70;70m Jump to bottom (ctrl+End) \x1b[0m");
+                }
+                x += step;
+                if (x > end.x) {
+                  x = start.x;
+                }
+              }
+            });
+            context.PumpFrames(2);
+            context.CloseAllTerminals();
+          },
+  });
   PerfHarness::RegisterScenario(Scenario{
       .name = "terminal_alt_screen_toggle",
       .smoke = false,

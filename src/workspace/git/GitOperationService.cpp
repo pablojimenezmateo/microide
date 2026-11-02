@@ -76,7 +76,10 @@ bool GitOperationService::Dispatch(const std::filesystem::path& repository_root,
     callbacks_.request_redraw();
   }
 
-  background_executor_.Post([this, generation, repository_root, work = std::move(work),
+  // Durable: a project switch cancels the executor's backlog, and a write
+  // dropped there never completes -- the service stayed busy, refusing every git
+  // action after (WorkspaceShell/GitOperationFinishingInTheBackground...).
+  background_executor_.PostDurable([this, generation, repository_root, work = std::move(work),
                              success_message = std::move(success_message),
                              on_success = std::move(on_success)]() mutable {
     // Worker thread: run git and produce a value. Every field the main thread will
