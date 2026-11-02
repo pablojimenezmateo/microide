@@ -1259,6 +1259,65 @@ void TestWorkspaceShellCrashSafetyFlushPersistsUnsavedContent() {
   Expect(reopened.dirty(), "restored crash-safety content must stay dirty (still unsaved to disk)");
 }
 
+// The crash-recovery half of "never overwrite what you have not seen": a dirty
+// buffer restored after a crash, whose file someone changed while microide was
+// down, must not be saved over that change. The restored snapshot used to carry
+// no disk baseline, and DetectDiskConflict read "no baseline" as "no conflict":
+// Ctrl+S wrote the backup over the other edit without a word (found by a crash
+// probe, 2026-11-02). A file that did not change still saves; and a never-saved
+// buffer whose path someone created meanwhile is not written over either.
+void TestWorkspaceShellACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path changed = root / "changed.txt";
+  const std::filesystem::path unchanged = root / "unchanged.txt";
+  WriteFile(changed, "alpha\n");
+  WriteFile(unchanged, "gamma\n");
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(temp_dir.path() / "home");
+  ScopedEnvVar scoped_home("HOME", (temp_dir.path() / "home").string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+  {
+    WorkspaceShell shell;
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    for (const auto& path : {changed, unchanged}) {
+      WorkspaceShellTestAccess::OpenFile(shell, path);
+      Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "mine "), "an unsaved edit");
+    }
+    WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell);
+    // ... and the crash: no clean shutdown writes anything after this.
+  }
+  // Someone else edits one file while microide is down. A different size, so the
+  // change cannot hide in the same mtime tick.
+  WriteFile(changed, "alpha, edited elsewhere\n");
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored), "restore after the crash");
+  bool saw_changed = false;
+  bool saw_unchanged = false;
+  for (std::size_t i = 0; i < 2; ++i) {
+    WorkspaceShellTestAccess::ActivateTab(restored, i);
+    auto& editor = WorkspaceShellTestAccess::ActiveEditor(restored);
+    Expect(editor.dirty(), "the restored buffer is dirty");
+    const auto outcome = WorkspaceShellTestAccess::ExecuteControlCommand(restored, "save");
+    if (editor.path() == changed) {
+      saw_changed = true;
+      Expect(!outcome.ok, "the save is refused: the file changed while microide was down");
+      Expect(ReadFile(changed) == "alpha, edited elsewhere\n", "the other edit is still on disk");
+      Expect(editor.dirty(), "and the restored text is kept, unsaved");
+      Expect(WorkspaceShellTestAccess::HasEditorBanner(
+                 restored, changed, microide::workspace::EditorBannerState::Kind::ExternalChange),
+             "with the changed-on-disk banner's choices: " + WorkspaceShellTestAccess::DescribeEditorBanners(restored));
+    } else {
+      saw_unchanged = true;
+      Expect(outcome.ok && ReadFile(unchanged) == "mine gamma\n", "an unchanged file saves: " + outcome.error);
+    }
+  }
+  Expect(saw_changed && saw_unchanged, "both tabs came back");
+}
+
 // B1: the crash-safety flush debounce arms once a real edit lands on a dirty buffer.
 void TestWorkspaceShellCrashSafetyFlushTimerArmsOnEdit() {
   TemporaryDirectory temp_dir;
@@ -3450,6 +3509,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellFoldAllUnfoldAllCtrlKChord);
   AddTest(tests, "WorkspaceShell/CrashSafetyFlushPersistsUnsavedContent",
           TestWorkspaceShellCrashSafetyFlushPersistsUnsavedContent);
+  AddTest(tests, "WorkspaceShell/ACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown",
+          TestWorkspaceShellACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown);
   AddTest(tests, "WorkspaceShell/CrashSafetyFlushTimerArmsOnEdit",
           TestWorkspaceShellCrashSafetyFlushTimerArmsOnEdit);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesDirtyEditorBufferContent",

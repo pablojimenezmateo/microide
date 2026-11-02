@@ -25,7 +25,19 @@ Persisted files SHALL be written atomically and SHALL include an integrity check
 
 #### Scenario: Atomic write
 - **WHEN** any persisted artifact is saved
-- **THEN** the writer SHALL write to a sibling temporary file, call `fsync` (or platform equivalent), rename it over the destination, and SHALL NOT leave the destination in a partially-written state on crash
+- **THEN** the writer SHALL write to a sibling temporary file, call `fsync` (or platform equivalent), rename it over the destination, `fsync` the destination's directory so the rename itself survives a power cut, and SHALL NOT leave the destination in a partially-written state on crash
+
+### Requirement: A restored unsaved buffer keeps its disk baseline
+
+A session's snapshot of a dirty editor buffer SHALL record the file's stat (existence, modification time, size) as the buffer last saw it, and restoring the snapshot SHALL restore that baseline, so that the save-time check that refuses to overwrite a file changed on disk applies across a crash or restart exactly as within one run.
+
+#### Scenario: A file changed while the editor was down
+- **WHEN** the editor crashed with unsaved edits to a file, the file was changed by another program before the relaunch, and the user saves the restored buffer
+- **THEN** the save SHALL be refused with the changed-on-disk banner, the other program's content SHALL remain on disk, and the restored text SHALL stay in the buffer, unsaved
+
+#### Scenario: A file nobody touched
+- **WHEN** the restored buffer's file did not change while the editor was down
+- **THEN** the save SHALL write it as usual
 
 #### Scenario: CRC verification on read
 - **WHEN** a persisted file is read

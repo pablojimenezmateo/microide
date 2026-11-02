@@ -22,6 +22,34 @@ namespace microide::workspace {
 
 namespace {
 
+// The disk signature a restored dirty snapshot compares the file against before
+// its save (TextViewport::DetectDiskConflict). Its stat as the buffer last saw it;
+// no content hash -- the process-local one cannot cross a restart -- so a touch
+// while microide was down reads as a change and asks, the safe way to be wrong.
+// A buffer of a file that did not exist yet (never saved) gets a baseline no real
+// file matches once one appears: a file someone created at that path meanwhile is
+// a change to show, not one to overwrite.
+util::FileSignature RestoredDiskBaseline(const PersistedEditorTabState::DiskBaseline& baseline,
+                                         const std::filesystem::path& path) {
+  util::FileSignature signature;
+  if (baseline.exists) {
+    signature.exists = true;
+    signature.mtime_ticks = baseline.mtime_ticks;
+    signature.size = static_cast<std::uintmax_t>(baseline.size);
+    return signature;
+  }
+  std::error_code error;
+  if (std::filesystem::exists(path, error) || error) {
+    signature.exists = true;  // mtime 0, size max: nothing on disk matches it
+    signature.size = static_cast<std::uintmax_t>(-1);
+  }
+  return signature;
+}
+
+}  // namespace
+
+namespace {
+
 // Dirty-buffer snapshot byte budget (mirrors the reader's kMaxSessionBufferBytes);
 // process-wide, overridable for tests via SetMaxDirtySnapshotBytesForTesting.
 std::size_t& MaxDirtySnapshotBytesStorage() {
@@ -417,6 +445,9 @@ bool PersistenceCoordinator::RestoreSessionState() {
         // over the buffer plus a throwaway joined string.
         restored_view.LoadLines(persisted_tab.buffer_lines, view_path, persisted_tab.line_ending);
         restored_view.SetUtf8Bom(persisted_tab.utf8_bom);
+        if (persisted_tab.disk_baseline.has_value() && !view_path.empty()) {
+          restored_view.RebindToPath(view_path, RestoredDiskBaseline(*persisted_tab.disk_baseline, view_path));
+        }
         // Apply preferences / indent detection first (they re-run EnsureCursorVisible),
         // then restore view state last so scroll survives independent of the caret.
         operations_.apply_editor_preferences(restored_view);
@@ -823,6 +854,11 @@ PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t /*tab_index*/,
   persisted_tab.utf8_bom = persist_dirty && persisted_viewport->has_utf8_bom();
   persisted_tab.buffer_lines =
       persist_dirty ? persisted_viewport->lines().Snapshot() : std::vector<std::string>{};
+  if (persist_dirty && !normalized_path.empty()) {
+    const util::FileSignature& seen = persisted_viewport->disk_signature();
+    persisted_tab.disk_baseline = PersistedEditorTabState::DiskBaseline{
+        .exists = seen.exists, .mtime_ticks = seen.mtime_ticks, .size = static_cast<std::uint64_t>(seen.size)};
+  }
   return persisted_tab;
 }
 

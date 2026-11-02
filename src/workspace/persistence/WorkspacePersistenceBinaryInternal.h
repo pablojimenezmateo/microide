@@ -187,6 +187,7 @@ enum class EditorTabTag : std::uint16_t {
   CompareStagingView = 32,
   Utf8Bom = 33,
   CollapsedFold = 34,  // repeated; one opener line per record
+  DiskBaseline = 35,   // bool exists, u64 mtime ticks, u64 size: a dirty snapshot's baseline
 };
 
 enum class WorkspaceSessionTag : std::uint16_t {
@@ -452,6 +453,15 @@ bool ReadStringRecord(EnumTag expected_tag,
     return false;
   }
 
+  if (tab.disk_baseline.has_value() &&
+      !AppendRecord(EditorTabTag::DiskBaseline,
+                    [&](PrimitiveWriter& w) {
+                      return w.WriteBool(tab.disk_baseline->exists) && w.WriteU64(tab.disk_baseline->mtime_ticks) &&
+                             w.WriteU64(tab.disk_baseline->size);
+                    },
+                    out)) {
+    return false;
+  }
   for (const std::size_t opener : tab.collapsed_fold_openers) {
     if (!AppendRecord(EditorTabTag::CollapsedFold,
                       [&](PrimitiveWriter& w) { return WriteSize(w, opener); }, out)) {
@@ -509,6 +519,15 @@ inline constexpr std::size_t kMaxSessionClosedEditors = kMaxPersistedClosedEdito
             return reader.ReadBool(&tab->dirty_snapshot) && reader.remaining() == 0;
           case EditorTabTag::Utf8Bom:
             return reader.ReadBool(&tab->utf8_bom) && reader.remaining() == 0;
+          case EditorTabTag::DiskBaseline: {
+            PersistedEditorTabState::DiskBaseline baseline;
+            if (!reader.ReadBool(&baseline.exists) || !reader.ReadU64(&baseline.mtime_ticks) ||
+                !reader.ReadU64(&baseline.size) || reader.remaining() != 0) {
+              return false;
+            }
+            tab->disk_baseline = baseline;
+            return true;
+          }
           case EditorTabTag::CollapsedFold: {
             std::size_t opener = 0;
             if (!ReadSize(reader, &opener) || reader.remaining() != 0) {

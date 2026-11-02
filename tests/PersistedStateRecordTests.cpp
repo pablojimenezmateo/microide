@@ -836,7 +836,7 @@ void TestPersistedStateProjectSessionRoundTripsRandomContent() {
            a.compare_divider_fraction == b.compare_divider_fraction &&
            a.compare_review_mode == b.compare_review_mode &&
            a.compare_staging_view == b.compare_staging_view &&
-           a.utf8_bom == b.utf8_bom &&
+           a.utf8_bom == b.utf8_bom && a.disk_baseline == b.disk_baseline &&
            a.merge_base_path == b.merge_base_path &&
            a.merge_incoming_path == b.merge_incoming_path &&
            a.merge_current_path == b.merge_current_path &&
@@ -889,6 +889,10 @@ void TestPersistedStateProjectSessionRoundTripsRandomContent() {
                                            : microide::util::LineEnding::CRLF;
             if (tab.dirty_snapshot) {
               tab.buffer_lines = random_lines(6);
+              if (next(3) != 0) {
+                tab.disk_baseline = microide::workspace::PersistedEditorTabState::DiskBaseline{
+                    .exists = next(2) == 0, .mtime_ticks = random_size(), .size = random_size()};
+              }
             }
             break;
           case 1:

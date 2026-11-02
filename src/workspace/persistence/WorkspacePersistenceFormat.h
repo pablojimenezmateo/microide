@@ -42,6 +42,18 @@ struct PersistedEditorTabState {
   // A dirty snapshot of a file that opened with a UTF-8 BOM: the buffer lines
   // hold the text after the mark, and the restored viewport writes it back.
   bool utf8_bom = false;
+  // A dirty snapshot's baseline: the file on disk as the buffer last saw it (its
+  // viewport's disk signature). Restored with the snapshot so a save after a crash
+  // still refuses to overwrite a file someone changed while microide was down --
+  // without it the restored buffer had no baseline, and a save wrote over the
+  // change without a word. nullopt: an older session, or no snapshot.
+  struct DiskBaseline {
+    bool exists = false;
+    std::uint64_t mtime_ticks = 0;
+    std::uint64_t size = 0;
+    friend bool operator==(const DiskBaseline&, const DiskBaseline&) = default;
+  };
+  std::optional<DiskBaseline> disk_baseline;
   std::vector<std::string> buffer_lines;
   std::filesystem::path compare_path;
   std::filesystem::path compare_left_path;
