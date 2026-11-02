@@ -497,7 +497,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-11-02-429 — the error-management and data-safety pass: what it fixed and what it left. [OPEN — items 1-8]
+### TD-2026-11-02-429 — the error-management and data-safety pass: what it fixed and what it left. [OPEN — items 1-6, 8; 7 resolved]
 
 The 2026-11-02 pass probed the shipped binary (control channel, SIGKILL / SIGTERM /
 SIGHUP, chmod, deleted and moved roots, a crash between an edit and the file
@@ -569,9 +569,10 @@ Left open:
    replaces. A RENAME_NOREPLACE for a Save As target would close it.
 7. **Tests build failure text before the wait they report on**:
    `Expect(PumpUntil(...), "..." + ScreenText(x))` evaluates the message first
-   (argument order), so a failure shows the state from BEFORE the wait. Fixed in
-   the tests this pass touched; the pattern is common elsewhere. A lint, or an
-   `Expect` overload taking only callables for waits.
+   (argument order), so a failure shows the state from BEFORE the wait.
+   **Resolved in the same pass:** the 34 instances (all in remote and git tests)
+   are lambdas, and `CheckWaitFailureMessagesAreLazy` (hard, with controls) keeps
+   it that way.
 8. **The test binaries write their temp trees to /tmp**, a 31 GB tmpfs shared
    with every other tool; when another project filled the user's quota the whole
    suite failed with EDQUOT for reasons outside the product. `run-checks.sh`

@@ -168,7 +168,7 @@ void TestHostViewShowsAndEndsWhatTheHostRuns() {
                      return terminal != nullptr && tool != nullptr && CpuOf(*terminal).value_or(0) > 100 &&
                             tool->detail.rfind("kept", 0) == 0;
                    }),
-         "the terminal running yes uses CPU, the tool is kept:" + Rows(shell));
+         [&] { return "the terminal running yes uses CPU, the tool is kept:" + Rows(shell); });
   Expect(RowWithId(shell, "group:server") != nullptr && RowWithId(shell, "server") != nullptr &&
              RowWithId(shell, "workspace:" + host_root.string()) != nullptr,
          "with the server and the workspace:" + Rows(shell));
@@ -201,7 +201,7 @@ void TestHostViewShowsAndEndsWhatTheHostRuns() {
          "a confirm: " + WorkspaceShellTestAccess::PromptSurfaceMessage(shell));
   WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
   Expect(PumpUntil(shell, [&] { return RowWithId(shell, terminal_id) == nullptr; }),
-         "the terminal ends on the host and leaves the view:" + Rows(shell));
+         [&] { return "the terminal ends on the host and leaves the view:" + Rows(shell); });
 
   // Delete on the kept tool: confirm, proc/end, gone from the host.
   Expect(SelectRow(shell, tool_id), "the tool row");
@@ -211,7 +211,7 @@ void TestHostViewShowsAndEndsWhatTheHostRuns() {
          "a confirm naming it: " + WorkspaceShellTestAccess::PromptSurfaceMessage(shell));
   WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
   Expect(PumpUntil(shell, [&] { return RowWithId(shell, tool_id) == nullptr && ::kill(tool_pid, 0) != 0; }),
-         "the tool ends and leaves the view:" + Rows(shell));
+         [&] { return "the tool ends and leaves the view:" + Rows(shell); });
 
   // Hide it: the host keeps no subscriber, and nothing changes the rows any more.
   const auto hidden = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "sidebar-show tree");
@@ -310,7 +310,7 @@ void TestHostViewListsEveryOpenHost() {
                               a != nullptr && b != nullptr && a->detail.find("pid ") != std::string::npos &&
                               b->detail.find("pid ") != std::string::npos;
                      }),
-           "both hosts, each a group with its own server row:" + Rows(shell));
+           [&] { return "both hosts, each a group with its own server row:" + Rows(shell); });
     Expect(RowWithId(shell, first_group)->depth == 0 && RowWithId(shell, first_group + " group:server")->depth == 1 &&
                RowWithId(shell, first_group + " server")->depth == 2,
            "one level down under the host" + Rows(shell));

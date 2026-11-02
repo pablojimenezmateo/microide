@@ -815,6 +815,7 @@ const std::vector<NamedRule>& KernelArchitectureRuleList() {
       {"CheckProjectWritesGoThroughTheWriteGate", CheckProjectWritesGoThroughTheWriteGate},
       {"CheckRangeForDoesNotSubscriptATemporary", CheckRangeForDoesNotSubscriptATemporary},
       {"CheckRelativeClimbOutTestsTheFirstComponent", CheckRelativeClimbOutTestsTheFirstComponent},
+      {"CheckWaitFailureMessagesAreLazy", CheckWaitFailureMessagesAreLazy},
   };
   return rules;
 }

@@ -169,7 +169,7 @@ void TestARemoteProjectOpensWithItsTerminal() {
   Expect(first.host_pending() && !first.running(), "waiting for the connection");
   Expect(PumpUntil(shell, [&] { return ScreenText(first).find("connecting to " + target) != std::string::npos; },
                    std::chrono::seconds(10)),
-         "and saying so:\n" + ScreenText(first));
+         [&] { return "and saying so:\n" + ScreenText(first); });
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "term"), "+ while connecting");
   Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 2, "a second tab, at once");
   TerminalSession& second = WorkspaceShellTestAccess::TerminalTabSession(shell, 1);
@@ -179,14 +179,14 @@ void TestARemoteProjectOpensWithItsTerminal() {
   second.SendBytes("echo TYPED-WHILE-PENDING\n");
 
   Expect(PumpUntil(shell, [&] { return first.running() && second.running(); }),
-         "both start once the link is Ready:\n" + ScreenText(first));
+         [&] { return "both start once the link is Ready:\n" + ScreenText(first); });
   Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 2, "no tab added or removed");
   for (TerminalSession* session : {&first, &second}) {
     Expect(session->is_host_terminal(), "a host terminal");
     session->SendBytes("echo ON-HOST-$((40+2))\n");
     Expect(PumpUntil(shell, [&] { return ScreenText(*session).find("ON-HOST-42") != std::string::npos; },
                      std::chrono::seconds(15)),
-           "its shell runs on the host:\n" + ScreenText(*session));
+           [&] { return "its shell runs on the host:\n" + ScreenText(*session); });
   }
   Expect(ScreenText(second).find("TYPED-WHILE-PENDING") == std::string::npos,
          "what was typed while pending never reached a shell");
@@ -221,7 +221,7 @@ void TestHostTerminalsSurviveQuitAndReattach() {
     Expect(PumpUntil(shell, [&] { return session.running(); }), "its terminal starts");
     session.SendBytes("echo BEFORE-$((6*7)); sleep 2; echo AFTER-$((7*7))\n");
     Expect(PumpUntil(shell, [&] { return ScreenText(session).find("BEFORE-42") != std::string::npos; }),
-           "the shell answers:\n" + ScreenText(session));
+           [&] { return "the shell answers:\n" + ScreenText(session); });
     kept = session.host_identity().handle;
     inactive = other.host_identity().handle;
     Expect(kept != 0 && inactive != 0 && kept != inactive, "two host terminals");
@@ -246,7 +246,7 @@ void TestHostTerminalsSurviveQuitAndReattach() {
     TerminalSession& session = WorkspaceShellTestAccess::TerminalTabSession(shell, 0);
     Expect(session.host_identity().handle == kept, "naming the recorded host terminal");
     Expect(PumpUntil(shell, [&] { return ScreenText(session).find("AFTER-49") != std::string::npos; }),
-           "the same shell: what it printed after the quit is on screen:\n" + ScreenText(session));
+           [&] { return "the same shell: what it printed after the quit is on screen:\n" + ScreenText(session); });
     const std::string text = ScreenText(session);
     Expect(text.find("BEFORE-42") != std::string::npos, "and what it printed before");
     Expect(text.find("\xe2\x8b\xaf reattached \xe2\x8b\xaf") != std::string::npos, "under a reattached rule");
@@ -442,7 +442,7 @@ void TestHostTerminalLifetimeAndUnclaimedTerminals() {
            "it starts");
     exited = second.host_identity().handle;
     second.SendBytes("exit\n");
-    Expect(PumpUntil(shell, [&] { return !second.running(); }), "the second shell is ended (Ctrl+D)");
+    Expect(PumpUntil(shell, [&] { return !second.running(); }), [&] { return "the second shell is ended (Ctrl+D)"; });
     Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "term-prev"), "back to the first tab");
     Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "term-close"), "close it with its X");
     Expect(WaitUntil([&] { return Listed(HostTerminals(host), closed_by_x) == nullptr; }, std::chrono::seconds(10)),

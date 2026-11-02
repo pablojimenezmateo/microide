@@ -1363,6 +1363,7 @@ void RunAllRuleFixtures() {
   RunTextViewportDefaultedSpecialMembersRuleFixtures();
   RunRangeForTemporaryRuleFixtures();
   RunRelativeClimbOutRuleFixtures();
+  RunWaitFailureMessageRuleFixtures();
 }
 
 }  // namespace microide::tests::architecture

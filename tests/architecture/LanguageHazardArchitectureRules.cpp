@@ -272,4 +272,102 @@ void RunRelativeClimbOutRuleFixtures() {
          "the climb-out rule must fail loudly when util::RelativePathClimbsOut is gone");
 }
 
+RuleResult CheckWaitFailureMessagesAreLazy(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "a wait's failure message that calls something is a lambda, built after the wait";
+  result.hard_fail = true;
+  const std::filesystem::path dir = repo_root / "tests";
+  if (!RequireRuleTarget(result, dir)) {
+    return result;
+  }
+  const std::regex wait_pattern(R"(\bExpect\s*\(\s*(PumpUntil|WaitUntil|WaitFor|WaitForFileIndexPath)\s*\()");
+  std::size_t waits = 0;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(dir)) {
+    const std::filesystem::path extension = entry.path().extension();
+    if (!entry.is_regular_file() || (extension != ".cpp" && extension != ".h")) {
+      continue;
+    }
+    const std::string text = ReadText(entry.path());
+    const std::vector<bool> is_code = BuildCodeMask(text);
+    // Literals and comments blanked: their parens and commas count for nothing.
+    std::string code = text;
+    for (std::size_t i = 0; i < code.size() && i < is_code.size(); ++i) {
+      if (!is_code[i] && code[i] != '\n') {
+        code[i] = ' ';
+      }
+    }
+    for (std::sregex_iterator it(code.begin(), code.end(), wait_pattern), last; it != last; ++it) {
+      const std::size_t open = code.find('(', static_cast<std::size_t>(it->position()));
+      std::size_t close = open;
+      std::size_t last_comma = std::string::npos;
+      for (int depth = 0; close < code.size(); ++close) {
+        const char c = code[close];
+        if (c == '(' || c == '[' || c == '{') {
+          ++depth;
+        } else if (c == ')' || c == ']' || c == '}') {
+          if (--depth == 0) {
+            break;
+          }
+        } else if (c == ',' && depth == 1) {
+          last_comma = close;
+        }
+      }
+      if (close >= code.size() || last_comma == std::string::npos) {
+        continue;
+      }
+      ++waits;
+      const std::string_view message(code.data() + last_comma + 1, close - last_comma - 1);
+      const std::size_t first = message.find_first_not_of(" \t\r\n");
+      if (first == std::string_view::npos || message[first] == '[') {
+        continue;  // a lambda: built only when the wait failed
+      }
+      if (message.find('(') != std::string_view::npos && message.find('+') != std::string_view::npos) {
+        result.violations.push_back(Violation{
+            .path = entry.path(),
+            .line = LineNumberAt(text, last_comma),
+            .message = "this wait's failure text calls something before the wait runs, so it "
+                       "shows the state from BEFORE it; wrap it: [&] { return ...; }",
+        });
+      }
+    }
+  }
+  if (waits == 0) {
+    result.violations.push_back(Violation{
+        .path = dir,
+        .line = 1,
+        .message = "no Expect(PumpUntil|WaitUntil|WaitFor...) found under tests/: the rule is "
+                   "scanning nothing; re-anchor CheckWaitFailureMessagesAreLazy",
+    });
+  }
+  return result;
+}
+
+void RunWaitFailureMessageRuleFixtures() {
+  TemporaryDirectory fixture;
+  const std::filesystem::path& root = fixture.path();
+  std::filesystem::create_directories(root / "tests");
+  // Negative control: a described state built eagerly, in either wait.
+  WriteFile(root / "tests/Bad.cpp",
+            "void T(){ Expect(PumpUntil(shell, [&] { return f(a, b); }), \"panes:\" + Summary(shell));\n"
+            "  Expect(WaitUntil([&]{ return g(); }, std::chrono::seconds(1)),\n"
+            "         \"screen: \" + ScreenText(s)); }\n");
+  Expect(CheckWaitFailureMessagesAreLazy(root).violations.size() == 2,
+         "the lazy-message rule must flag an eager described-state message on each wait");
+  // Positive control: a lambda message, a plain literal, a literal with a comma in
+  // it, and a plain Expect that waits for nothing.
+  WriteFile(root / "tests/Bad.cpp",
+            "void T(){ Expect(PumpUntil(shell, done), [&] { return \"panes:\" + Summary(shell); });\n"
+            "  Expect(WaitUntil(done, std::chrono::seconds(1)), \"it lands, then (f) + g\");\n"
+            "  Expect(ok, \"now: \" + Describe(x)); }\n");
+  {
+    const RuleResult clean = CheckWaitFailureMessagesAreLazy(root);
+    Expect(clean.violations.empty() && clean.missing_targets.empty(),
+           "the lazy-message rule must accept lambdas, literals and non-wait Expects");
+  }
+  // Loud when it finds no wait at all.
+  WriteFile(root / "tests/Bad.cpp", "int x = 0;\n");
+  Expect(!CheckWaitFailureMessagesAreLazy(root).violations.empty(),
+         "the lazy-message rule must fail loudly when it scans no wait");
+}
+
 }  // namespace microide::tests::architecture

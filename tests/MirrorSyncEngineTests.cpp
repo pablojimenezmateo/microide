@@ -1188,8 +1188,8 @@ void TestMirrorHoldsAMassDeleteTheRepositoryDidNotExplain() {
                return session.engine->status().held_deletes == 140;
              },
              std::chrono::seconds(10)),
-         "removed with no HEAD move, the delete is held: " +
-             std::to_string(session.engine->status().held_deletes));
+         [&] { return "removed with no HEAD move, the delete is held: " +
+             std::to_string(session.engine->status().held_deletes); });
   // Past the host's repository sampler: nothing announces a move it did not see.
   std::this_thread::sleep_for(std::chrono::milliseconds(1500));
   session.engine->Flush();
@@ -1251,8 +1251,8 @@ void TestMirrorHoldsAMassDeleteSplitAcrossBatches() {
                return session.engine->status().held_deletes == 120;
              },
              std::chrono::seconds(10)),
-         "sixty more within the window make 120: all of them held: " +
-             std::to_string(session.engine->status().held_deletes));
+         [&] { return "sixty more within the window make 120: all of them held: " +
+             std::to_string(session.engine->status().held_deletes); });
   Expect(ReadFile(session.Tree("f0")) == "x0" && ReadFile(session.Tree("f119")) == "x119",
          "the first batch's files are back, with their bytes, and the second's were never deleted");
   Expect(session.engine->StateOf("f0") == ContentState::Current, "as the host last listed them");

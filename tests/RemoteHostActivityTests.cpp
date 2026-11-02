@@ -354,11 +354,11 @@ void TestStatusListsTerminalsAndProcessesAcrossRoots() {
                       status->terminals->front().command == "sleep";
              },
              std::chrono::seconds(10)),
-         "a terminal running `sleep 30` says so: '" +
+         [&] { return "a terminal running `sleep 30` says so: '" +
              (status.has_value() && status->terminals.has_value() && !status->terminals->empty()
                   ? status->terminals->front().command
                   : std::string("?")) +
-             "'");
+             "'"; });
 
   // The table names both.
   const std::string table = remote::FormatServerStatusTable(*status);

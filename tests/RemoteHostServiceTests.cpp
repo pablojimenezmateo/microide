@@ -132,7 +132,7 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
                return segment() == target;
              },
              std::chrono::seconds(30), std::chrono::milliseconds(5)),
-         "authenticated there, the project connects and the status bar names its host: '" + segment() + "'");
+         [&] { return "authenticated there, the project connects and the status bar names its host: '" + segment() + "'"; });
 
   // Terminal > New in a remote project: a host terminal.
   const std::size_t before_host = WorkspaceShellTestAccess::TerminalTabCount(shell);
@@ -150,7 +150,7 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
                return ScreenText(host_session).find("ON-HOST-42 " + host.home.string()) != std::string::npos;
              },
              std::chrono::seconds(15), std::chrono::milliseconds(5)),
-         "its shell runs on the host:\n" + ScreenText(host_session));
+         [&] { return "its shell runs on the host:\n" + ScreenText(host_session); });
   // A program there that opens a page through $BROWSER (claude's login) opens it
   // HERE, through the editor's opener -- the host has no display to open it on.
   {
@@ -166,7 +166,7 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
                  return !opened.empty();
                },
                std::chrono::seconds(15), std::chrono::milliseconds(5)),
-           "the host program's URL reaches this machine's opener:\n" + ScreenText(host_session));
+           [&] { return "the host program's URL reaches this machine's opener:\n" + ScreenText(host_session); });
     Expect(opened.size() == 1 && opened[0] == "https://example.com/from-host", "exactly once, exactly it");
     Expect(WaitUntil(
                [&] {
@@ -201,7 +201,7 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
                return ScreenText(local_session).find("LOCAL-42-local-shell") != std::string::npos;
              },
              std::chrono::seconds(15), std::chrono::milliseconds(5)),
-         "its shell is terminal.shell, on this machine:\n" + ScreenText(local_session));
+         [&] { return "its shell is terminal.shell, on this machine:\n" + ScreenText(local_session); });
   {
     const auto all = labels();
     Expect(all.size() == before_host + 2 && all[host_tab].rfind(target + " \xc2\xb7 ", 0) == 0 &&
@@ -680,7 +680,7 @@ void TestConflictMergesThreeWaysToTheHost() {
                return ReadFile(host_root / "notes.txt") == "A\nb\nXc\n" && find_row() == nullptr;
              },
              std::chrono::seconds(20), std::chrono::milliseconds(10)),
-         "the result reaches the host and the row goes: '" + ReadFile(host_root / "notes.txt") + "'");
+         [&] { return "the result reaches the host and the row goes: '" + ReadFile(host_root / "notes.txt") + "'"; });
   RemoveFakeMaster(target);
 }
 
@@ -744,7 +744,7 @@ void TestAOneSidedConflictOffersNoMerge() {
                return find(row_key) != nullptr;
              },
              std::chrono::seconds(30), std::chrono::milliseconds(10)),
-         "a conflict row appears:" + messages());
+         [&] { return "a conflict row appears:" + messages(); });
   {
     const auto* row = find(row_key);
     std::string labels;
@@ -763,7 +763,7 @@ void TestAOneSidedConflictOffersNoMerge() {
                return messages().find("nothing to merge") != std::string::npos;
              },
              std::chrono::seconds(10), std::chrono::milliseconds(10)),
-         "it says there is nothing to merge:" + messages());
+         [&] { return "it says there is nothing to merge:" + messages(); });
   for (const auto& n : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
     Expect(n.tone != workspace::NotificationService::Tone::Error, "and raises no error: " + n.message);
   }
@@ -775,7 +775,7 @@ void TestAOneSidedConflictOffersNoMerge() {
                return !std::filesystem::exists(file) && find(row_key) == nullptr;
              },
              std::chrono::seconds(20), std::chrono::milliseconds(10)),
-         "the local copy goes as the remote's did, and the row with it:" + messages());
+         [&] { return "the local copy goes as the remote's did, and the row with it:" + messages(); });
   for (const auto& n : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
     Expect(n.tone != workspace::NotificationService::Tone::Error, "no error after Take Remote: " + n.message);
   }
@@ -906,7 +906,7 @@ void TestConflictsBatchIntoOneRowAndTheConflictsView() {
                return ReadFile(mirror / "c.txt") == "agent c.txt\n" && own_rows() == 0 && rows().empty();
              },
              std::chrono::seconds(30), std::chrono::milliseconds(10)),
-         "the mirror takes the host's c.txt; no row and no conflict is left:" + row_ids());
+         [&] { return "the mirror takes the host's c.txt; no row and no conflict is left:" + row_ids(); });
   Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-resolve-all remote"),
          "with nothing in conflict the command is rejected");
   RemoveFakeMaster(target);
@@ -1337,7 +1337,7 @@ void TestOpenFolderOnHostEditsTheHostTree() {
                return ReadFile(host_root / "main.c") == "// edited\nint main(void) { return 0; }\n";
              },
              std::chrono::seconds(20), std::chrono::milliseconds(10)),
-         "and the edit reaches the host's file: '" + ReadFile(host_root / "main.c") + "'");
+         [&] { return "and the edit reaches the host's file: '" + ReadFile(host_root / "main.c") + "'"; });
 
   // An agent rewrites the file on the host while the user saves another edit: the
   // push is refused, both versions survive, and a row offers the choice.
@@ -1374,11 +1374,11 @@ void TestOpenFolderOnHostEditsTheHostTree() {
                return WorkspaceShellTestAccess::ActiveTabIsCompare(shell);
              },
              std::chrono::seconds(20), std::chrono::milliseconds(10)),
-         "a compare tab opens: the host's version beside the mirror's" + [&] {
+         [&] { return "a compare tab opens: the host's version beside the mirror's" + [&] {
            std::string all;
            for (const auto& n : WorkspaceShellTestAccess::ActiveNotifications(shell)) all += " | " + n.message;
            return all;
-         }());
+         }(); });
   Expect(WorkspaceShellTestAccess::ActiveCompare(shell).left_label == "main.c (remote: " + target + ")" &&
              WorkspaceShellTestAccess::ActiveCompare(shell).right_label == "main.c (local)",
          "each side says whose it is: '" + WorkspaceShellTestAccess::ActiveCompare(shell).left_label +
@@ -1445,13 +1445,13 @@ void TestOpenFolderOnHostEditsTheHostTree() {
                       WorkspaceShellTestAccess::ActiveCompare(shell).left_label == "main.c (before)";
              },
              std::chrono::seconds(20), std::chrono::milliseconds(10)),
-         "as a compare of the version before against the host's" + [&] {
+         [&] { return "as a compare of the version before against the host's" + [&] {
            std::string all = WorkspaceShellTestAccess::ActiveTabIsCompare(shell)
                                  ? " compare:" + WorkspaceShellTestAccess::ActiveCompare(shell).left_label
                                  : std::string(" not a compare");
            for (const auto& n : WorkspaceShellTestAccess::ActiveNotifications(shell)) all += " | " + n.message;
            return all;
-         }());
+         }(); });
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-clear-changes"), "Clear is accepted");
   Expect(WaitUntil(
              [&] {
@@ -1489,7 +1489,7 @@ void TestOpenFolderOnHostEditsTheHostTree() {
                return segment().find("disconnected") != std::string::npos;
              },
              std::chrono::seconds(10), std::chrono::milliseconds(10)),
-         "the project's connection goes down: '" + segment() + "'");
+         [&] { return "the project's connection goes down: '" + segment() + "'"; });
   // A save made offline is kept for the host, and the status bar counts it (§ 7.4).
   WorkspaceShellTestAccess::OpenFile(shell, mirror / "main.c");
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
@@ -1501,7 +1501,7 @@ void TestOpenFolderOnHostEditsTheHostTree() {
                return segment().find("1 unsent") != std::string::npos;
              },
              std::chrono::seconds(10), std::chrono::milliseconds(10)),
-         "the segment counts the unsent save: '" + segment() + "'");
+         [&] { return "the segment counts the unsent save: '" + segment() + "'"; });
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-reconnect " + target), "reconnect");
   Expect(WaitUntil(
              [&] {
@@ -1509,7 +1509,7 @@ void TestOpenFolderOnHostEditsTheHostTree() {
                return segment() == target;
              },
              std::chrono::seconds(60), std::chrono::milliseconds(10)),
-         "and comes back: '" + segment() + "'");
+         [&] { return "and comes back: '" + segment() + "'"; });
 
   // Git while the link is down answers nothing — the status bar says unknown, not
   // a made-up clean HEAD — and the reconnect asks git again by itself.
@@ -1532,11 +1532,11 @@ void TestOpenFolderOnHostEditsTheHostTree() {
   // link, and under a parallel ctest run that took longer than 10 s.
   Expect(WaitUntil([&] { return settle_git().find("scm-unknown") != std::string::npos; },
                    std::chrono::seconds(30), std::chrono::milliseconds(10)),
-         "a git refresh that could not reach the host reads as unknown: '" + settle_git() + "'");
+         [&] { return "a git refresh that could not reach the host reads as unknown: '" + settle_git() + "'"; });
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-reconnect " + target), "reconnect");
   Expect(WaitUntil([&] { return settle_git().find("scm-unknown") == std::string::npos; },
                    std::chrono::seconds(60), std::chrono::milliseconds(10)),
-         "and the reconnect refreshes git by itself: '" + settle_git() + "'");
+         [&] { return "and the reconnect refreshes git by itself: '" + settle_git() + "'"; });
 
   // The host server's log, in an output channel.
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-show-log " + target),
@@ -1654,8 +1654,8 @@ void TestOpenFolderOnHostEditsTheHostTree() {
                return !WorkspaceShellTestAccess::StatusBarSegmentVisible(shell, StatusBarSegmentId::Remote);
              },
              std::chrono::seconds(10), std::chrono::milliseconds(10)),
-         "a closed remote project leaves no connection behind: '" +
-             WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Remote) + "'");
+         [&] { return "a closed remote project leaves no connection behind: '" +
+             WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Remote) + "'"; });
   Expect(WorkspaceShellTestAccess::OpenProjectTabWithLocality(shell, mirror, {}), "reopened");
   Expect(WaitUntil(
              [&] {
@@ -1664,13 +1664,13 @@ void TestOpenFolderOnHostEditsTheHostTree() {
                       target;
              },
              std::chrono::seconds(60), std::chrono::milliseconds(10)),
-         "and connected again: '" +
+         [&] { return "and connected again: '" +
              WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Remote) + "' " + [&] {
                (void)WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-status");
                std::string all;
                for (const auto& n : WorkspaceShellTestAccess::ActiveNotifications(shell)) all += " | " + n.message;
                return all;
-             }());
+             }(); });
   }
   {
     // A later run opening the mirror as a plain folder.

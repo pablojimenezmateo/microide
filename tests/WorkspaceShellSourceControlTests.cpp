@@ -1182,8 +1182,8 @@ void TestWorkspaceShellGitOperationFinishingInTheBackgroundStaysWithItsProject()
            return WorkspaceShellTestAccess::ActiveEditor(shell).lines().LineView(0) == "topic";
          },
                    std::chrono::seconds(10), std::chrono::milliseconds(5)),
-         "alpha catches up on activation: its clean buffer shows the branch it switched to, not '" +
-             std::string(WorkspaceShellTestAccess::ActiveEditor(shell).lines().LineView(0)) + "'");
+         [&] { return "alpha catches up on activation: its clean buffer shows the branch it switched to, not '" +
+             std::string(WorkspaceShellTestAccess::ActiveEditor(shell).lines().LineView(0)) + "'"; });
 }
 
 // A commit is its project's even when it finishes after a switch. The completion

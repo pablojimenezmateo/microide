@@ -22,4 +22,13 @@ void RunRangeForTemporaryRuleFixtures();
 RuleResult CheckRelativeClimbOutTestsTheFirstComponent(const std::filesystem::path& repo_root);
 void RunRelativeClimbOutRuleFixtures();
 
+// `Expect(PumpUntil(...), "..." + Describe(x))` builds its failure text BEFORE the
+// wait runs (the order of a call's argument evaluations is unspecified, and GCC
+// goes right to left), so a failure shows the state from before the wait: a remote
+// test's "panes:" dump read "[not connected ...]" for panes that had connected
+// (TD-2026-11-02-429 item 7). The message of a wait that describes state with a
+// call is a lambda: `[&] { return "..." + Describe(x); }`, built only on failure.
+RuleResult CheckWaitFailureMessagesAreLazy(const std::filesystem::path& repo_root);
+void RunWaitFailureMessageRuleFixtures();
+
 }  // namespace microide::tests::architecture

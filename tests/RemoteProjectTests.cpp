@@ -72,8 +72,8 @@ void TestRemoteProjectOpensAMirrorOverSsh() {
   project.session().Disconnect();
   Expect(WaitUntil([&] { return project.session().status().state == remote::RemoteHostSession::State::Disconnected; },
                    std::chrono::seconds(10), std::chrono::milliseconds(10)),
-         std::string("Disconnect takes the project offline: ") +
-             std::string(remote::RemoteHostSession::StateName(project.session().status().state)));
+         [&] { return std::string("Disconnect takes the project offline: ") +
+             std::string(remote::RemoteHostSession::StateName(project.session().status().state)); });
 }
 
 // MICROIDE_BENCH_REMOTE=1: open this repository's src/ and tests/ as a remote
