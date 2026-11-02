@@ -36,6 +36,14 @@ What it checks, each as the user would see it, with the measured latencies:
                                 host's edit
   F  link death                 the ssh master is killed; a save still lands after the
                                 automatic reconnect
+  Z  data safety under faults   a push, a pull and a conflict resolution, each with the
+                                app SIGKILLed (and relaunched), the host's server SIGKILLed,
+                                or the ssh master killed, 0 and 150 ms after the action;
+                                then: ready again, nothing unsent or in conflict (an
+                                interrupted resolution is chosen again), the action's bytes
+                                on both sides, and the two trees equal -- no stray
+                                temporary either side (tests/MirrorFaultMatrixTests.cpp is
+                                the same at every wire frame, in-process)
   G  terminals                  Terminal > New prints the host's `hostname`; Remote:
                                 Open Local Terminal runs a shell on this machine
   H  clangd on the host         go to definition in a self-contained file
@@ -100,6 +108,7 @@ screenshots land in --out (default /tmp/mqa-remote-<time>).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import fcntl
 import hashlib
 import json
@@ -838,6 +847,91 @@ class Suite:
         app.send("sidebar-show", "tree"); app.settle(0.3)
         app.check("Q")
 
+    # ---- group Z: data safety under fault injection ------------------------------
+    def inject(self, fault: str) -> None:
+        if fault == "client":
+            self.app.crash_and_relaunch(self.mirror)
+        elif fault == "server":
+            pid = self.server_pid()
+            if pid:
+                self.host.ssh(f"kill -9 {pid}")
+        else:
+            out = subprocess.run(["ps", "-eo", "pid,args"], capture_output=True, text=True).stdout
+            for line in out.splitlines()[1:]:
+                if "ssh" in line and self.host.name in line and "ControlMaster" in line:
+                    with contextlib.suppress(ProcessLookupError):
+                        os.kill(int(line.split()[0]), 9)
+
+    def run_fault_matrix(self) -> None:
+        """Z: every cell is an action, a fault a moment later, the recovery the user
+        gets, and the checks for loss on both sides."""
+        app, host, tok = self.app, self.host, self.token
+        n = 0
+        for action in ("push", "pull", "resolve"):
+            for fault in ("client", "server", "link"):
+                for delay in (0.0, 0.15):
+                    n += 1
+                    cell = f"Z.{action}.{fault}.{int(delay * 1000)}ms"
+                    mark = f"QA-Z{n}-{tok}"
+                    side = "local" if n % 2 else "remote"
+                    msg, _, ready = self.wait_ready(120)
+                    if not ready:
+                        self.record(cell + ".starts-ready", False, msg)
+                        continue
+                    app.send("open", EDIT_FILE); app.send("focus", "editor"); app.settle(0.3)
+                    if action == "resolve":
+                        app.send("remote-disconnect", host.name); app.settle(1.0)
+                        self.type_line(mark); app.send("save"); app.settle(0.3)
+                        host.ssh(f"cd {host.root} && sed -i '1i HOST-{mark}' {EDIT_FILE}")
+                        app.send("remote-reconnect", host.name)
+                        got, _ = wait_for(lambda: self.remote().get("conflicts") == 1 or None, 90, 0.5)
+                        if not got:
+                            self.record(cell + ".conflict-raised", False, f"remote={self.remote()}")
+                            continue
+                        app.send("remote-resolve-all", side)
+                    elif action == "push":
+                        self.type_line(mark); app.send("save")
+                    else:
+                        host.ssh(f"cd {host.root} && sed -i '1i HOST-{mark}' {EDIT_FILE}")
+                    time.sleep(delay)
+                    self.inject(fault)
+                    if action == "push" or (action == "resolve" and side == "local"):
+                        want, gone = mark, f"HOST-{mark}"
+                    else:
+                        want, gone = f"HOST-{mark}", (mark if action == "resolve" else None)
+                    seen: dict = {}
+
+                    def outcome():
+                        # Whole lines: "HOST-QA-Z1" contains "QA-Z1".
+                        host_lines = host.file(EDIT_FILE).splitlines()
+                        path = self.mirror / EDIT_FILE
+                        mirror_lines = path.read_text(errors="replace").splitlines() if path.exists() else []
+                        r = self.remote()
+                        seen.update(remote=r, host=host_lines[:2], mirror=mirror_lines[:2])
+                        if r.get("conflicts") and action == "resolve" and not seen.get("chosen_again"):
+                            # The resolution the fault interrupted, chosen again.
+                            seen["chosen_again"] = True
+                            app.send("remote-resolve-all", side)
+                            return None
+                        if r.get("state") != "ready" or r.get("unsentPushes", 1) or r.get("conflicts", 1) \
+                                or r.get("filesPending", 1):
+                            return None
+                        if want not in host_lines or want not in mirror_lines or \
+                                (gone is not None and (gone in host_lines or gone in mirror_lines)):
+                            return None
+                        _, _, diff = self.trees_equal()
+                        seen["diff"] = sorted(diff)[:6]
+                        return True if not diff else None
+                    ok, dt = wait_for(outcome, 120, 0.5)
+                    self.record(cell, bool(ok),
+                                f"{dt:.1f}s want={want} gone={gone} chosen again={bool(seen.get('chosen_again'))} "
+                                f"remote={seen.get('remote')} host head={seen.get('host')} "
+                                f"mirror head={seen.get('mirror')} differing={seen.get('diff')}")
+                    tab = self.active_tab()
+                    if tab and tab.get("dirty"):
+                        app.send("revert-file")  # a crash-restored buffer the next cell must not type over
+        app.check("Z")
+
     def run_tree_conflicts(self) -> None:
         """Y: the one-sided and tree-operation conflicts, each as the user meets it
         on a real host (TD-2026-10-29-421). The local operations are made offline
@@ -1293,6 +1387,9 @@ class Suite:
             ok, dt = self.host_has(f"QA-AFTER-DROP-{tok}", 90)
             self.record("F.save-after-link-death", bool(ok), f"on the host {dt:.2f}s after the kill")
             app.check("F")
+
+        if self.runs("Z"):
+            self.run_fault_matrix()
 
         if self.runs("G"):
             # Terminal > New in the remote project runs on its host. The host's own
