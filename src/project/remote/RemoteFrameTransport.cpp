@@ -354,6 +354,22 @@ void RemoteFrameTransport::QueueAck() {
   interactive_.frames.push_back(std::move(encoded));
 }
 
+// Bandwidth x (base RTT + the allowance): see the class comment. A window below
+// the true product measures as window / RTT and the allowance grows it back each
+// round, so it converges on the link from either side. Always from the values
+// published as bulk_bandwidth() and base_rtt(), so the window is their rule.
+void RemoteFrameTransport::RetargetBulkWindow() {
+  const double horizon =
+      base_rtt_.has_value() ? std::chrono::duration<double>(*base_rtt_ + kQueueAllowance).count()
+                            : 0.1;
+  // A base-RTT sample is frame-to-ack, so it includes that frame's own time on
+  // the wire: one chunk's worth of window is already in it.
+  const double chunk = base_rtt_.has_value() ? static_cast<double>(kMaxBulkChunkBytes) : 0.0;
+  const auto target = static_cast<std::size_t>(std::max(0.0, bulk_bandwidth_ * horizon - chunk));
+  bulk_window_.store(std::clamp(target, options_.bulk_window_floor, options_.bulk_window_cap),
+                     std::memory_order_relaxed);
+}
+
 void RemoteFrameTransport::HandleAck(std::string_view payload) {
   const std::uint64_t acked = DecodeU64(payload);
   // A peer acknowledging bytes never sent, or taking an ack back, is lying about
@@ -369,8 +385,10 @@ void RemoteFrameTransport::HandleAck(std::string_view payload) {
     covered_sent = bulk_in_flight_.front().second;
     bulk_in_flight_.pop_front();
   }
+  bool base_rtt_dropped = false;
   if (covered_sent.has_value()) {
     const auto sample = now - *covered_sent;
+    base_rtt_dropped = !base_rtt_.has_value() || sample < *base_rtt_;
     base_rtt_ = base_rtt_.has_value() ? std::min(*base_rtt_, sample) : sample;
     base_rtt_us_.store(std::chrono::duration_cast<std::chrono::microseconds>(*base_rtt_).count(),
                        std::memory_order_relaxed);
@@ -392,23 +410,15 @@ void RemoteFrameTransport::HandleAck(std::string_view payload) {
       const double sample = static_cast<double>(acked - last_ack_bytes_) / seconds;
       bulk_bandwidth_ = bulk_bandwidth_ > 0.0 ? bulk_bandwidth_ + (sample - bulk_bandwidth_) / 8.0
                                               : sample;
-      const double bytes_per_second = bulk_bandwidth_;
       bulk_bandwidth_seen_.store(bulk_bandwidth_, std::memory_order_relaxed);
-      // Bandwidth x (base RTT + the allowance): see the class comment. A window
-      // below the true product measures as window / RTT and the allowance grows it
-      // back each round, so it converges on the link from either side.
-      const double horizon =
-          base_rtt_.has_value()
-              ? std::chrono::duration<double>(*base_rtt_ + kQueueAllowance).count()
-              : 0.1;
-      // A base-RTT sample is frame-to-ack, so it includes that frame's own time on
-      // the wire: one chunk's worth of window is already in it.
-      const double chunk = base_rtt_.has_value() ? static_cast<double>(kMaxBulkChunkBytes) : 0.0;
-      const auto target =
-          static_cast<std::size_t>(std::max(0.0, bytes_per_second * horizon - chunk));
-      bulk_window_.store(std::clamp(target, options_.bulk_window_floor, options_.bulk_window_cap),
-                         std::memory_order_relaxed);
+      RetargetBulkWindow();
     }
+  } else if (base_rtt_dropped && bulk_bandwidth_ > 0.0 &&
+             fixed_bulk_window_.load(std::memory_order_relaxed) == 0) {
+    // A lower base RTT is a smaller product even with no new bandwidth sample
+    // (an ack that arrives once the queue drained): the window follows it, so it
+    // is never left sized for a round trip the link has since shown to be shorter.
+    RetargetBulkWindow();
   }
   last_ack_time_ = now;
   last_ack_bytes_ = acked;

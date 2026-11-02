@@ -138,6 +138,7 @@ class RemoteFrameTransport {
   // I/O thread: read what is available and dispatch. False on EOF/error/protocol error.
   bool ReadAvailable();
   void HandleAck(std::string_view payload);
+  void RetargetBulkWindow();
   void QueueAck();
   bool HasWritable();
 
