@@ -123,12 +123,12 @@ struct FileSignature {
   // were already in hand — a read, or a write. A bare stat cannot produce one and
   // leaves it unset.
   //
-  // Process-local and ephemeral BY DESIGN. It is never persisted and never compared
-  // across machines, so std::hash is exactly the right tool: fast, free of a new
-  // dependency, and its lack of a stable value across builds cannot matter to
-  // something that only ever compares two values recorded by the same process. The
-  // remote manifest needs the opposite properties and gets a different hash (blake3,
-  // per dev-docs/design/remote-projects.md § 6.2).
+  // std::hash, BY DESIGN: fast and free of a new dependency, and never compared
+  // across machines. Its one persisted use -- a crash snapshot's baseline -- stores
+  // QuickContentHashProbe() beside it and is trusted only by a process whose probe
+  // matches, so a build that hashes differently reads it as absent (the safe way:
+  // the save asks). The remote manifest needs a stable, cross-machine hash and gets
+  // a different one (blake3, per dev-docs/design/remote-projects.md § 6.2).
   bool has_content_hash = false;
   std::size_t content_hash = 0;
 
@@ -158,6 +158,10 @@ struct FileSignature {
 // BLAKE3 util::ContentHash). See the field's comment for why
 // std::hash is the right choice here and blake3 is the right one for the manifest.
 std::size_t QuickContentHash(std::string_view bytes);
+// QuickContentHash of a fixed string: stored beside a QuickContentHash that is
+// persisted (a crash snapshot's baseline), it says whether a later process hashes
+// the same way -- the one condition under which the stored value means anything.
+std::uint64_t QuickContentHashProbe();
 
 FileSignature StatFileSignature(const std::filesystem::path& path);
 

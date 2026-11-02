@@ -51,6 +51,12 @@ struct PersistedEditorTabState {
     bool exists = false;
     std::uint64_t mtime_ticks = 0;
     std::uint64_t size = 0;
+    // The content hash the buffer had for that file (util::QuickContentHash), and
+    // that function's value for a fixed probe when it was written: a restore trusts
+    // the hash only under the same function, so a `touch` while microide was down
+    // is told from a real edit (TD-2026-11-02-429 item 2). nullopt: none was known.
+    std::optional<std::uint64_t> content_hash;
+    std::uint64_t hash_probe = 0;
     friend bool operator==(const DiskBaseline&, const DiskBaseline&) = default;
   };
   std::optional<DiskBaseline> disk_baseline;

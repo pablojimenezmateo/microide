@@ -266,6 +266,10 @@ std::size_t QuickContentHash(std::string_view bytes) {
   return std::hash<std::string_view>{}(bytes);
 }
 
+std::uint64_t QuickContentHashProbe() {
+  return static_cast<std::uint64_t>(QuickContentHash("microide QuickContentHash probe, v1"));
+}
+
 FileSignature SignatureForKnownContent(const std::filesystem::path& path,
                                        std::string_view bytes) {
   FileSignature signature = StatFileSignature(path);

@@ -892,6 +892,10 @@ void TestPersistedStateProjectSessionRoundTripsRandomContent() {
               if (next(3) != 0) {
                 tab.disk_baseline = microide::workspace::PersistedEditorTabState::DiskBaseline{
                     .exists = next(2) == 0, .mtime_ticks = random_size(), .size = random_size()};
+                if (next(2) == 0) {  // the content hash and its probe (tag 36)
+                  tab.disk_baseline->content_hash = random_size();
+                  tab.disk_baseline->hash_probe = random_size();
+                }
               }
             }
             break;

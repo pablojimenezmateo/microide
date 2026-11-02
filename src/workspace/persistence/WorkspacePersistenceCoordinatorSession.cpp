@@ -23,9 +23,11 @@ namespace microide::workspace {
 namespace {
 
 // The disk signature a restored dirty snapshot compares the file against before
-// its save (TextViewport::DetectDiskConflict). Its stat as the buffer last saw it;
-// no content hash -- the process-local one cannot cross a restart -- so a touch
-// while microide was down reads as a change and asks, the safe way to be wrong.
+// its save (TextViewport::DetectDiskConflict). Its stat as the buffer last saw it,
+// and its content hash when the snapshot recorded one under the same hash function
+// (the probe matches): then a touch while microide was down -- the stat moved, the
+// bytes did not -- saves. Without one it reads as a change and asks, the safe way
+// to be wrong.
 // A buffer of a file that did not exist yet (never saved) gets a baseline no real
 // file matches once one appears: a file someone created at that path meanwhile is
 // a change to show, not one to overwrite.
@@ -36,6 +38,10 @@ util::FileSignature RestoredDiskBaseline(const PersistedEditorTabState::DiskBase
     signature.exists = true;
     signature.mtime_ticks = baseline.mtime_ticks;
     signature.size = static_cast<std::uintmax_t>(baseline.size);
+    if (baseline.content_hash.has_value() && baseline.hash_probe == util::QuickContentHashProbe()) {
+      signature.has_content_hash = true;
+      signature.content_hash = static_cast<std::size_t>(*baseline.content_hash);
+    }
     return signature;
   }
   std::error_code error;
@@ -858,6 +864,10 @@ PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t /*tab_index*/,
     const util::FileSignature& seen = persisted_viewport->disk_signature();
     persisted_tab.disk_baseline = PersistedEditorTabState::DiskBaseline{
         .exists = seen.exists, .mtime_ticks = seen.mtime_ticks, .size = static_cast<std::uint64_t>(seen.size)};
+    if (seen.exists && seen.has_content_hash) {
+      persisted_tab.disk_baseline->content_hash = static_cast<std::uint64_t>(seen.content_hash);
+      persisted_tab.disk_baseline->hash_probe = util::QuickContentHashProbe();
+    }
   }
   return persisted_tab;
 }

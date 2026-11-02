@@ -1271,8 +1271,10 @@ void TestWorkspaceShellACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown(
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path changed = root / "changed.txt";
   const std::filesystem::path unchanged = root / "unchanged.txt";
+  const std::filesystem::path touched = root / "touched.txt";
   WriteFile(changed, "alpha\n");
   WriteFile(unchanged, "gamma\n");
+  WriteFile(touched, "delta\n");
   const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
   const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
   std::filesystem::create_directories(temp_dir.path() / "home");
@@ -1281,7 +1283,7 @@ void TestWorkspaceShellACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown(
   {
     WorkspaceShell shell;
     WorkspaceShellTestAccess::SetProjectRoot(shell, root);
-    for (const auto& path : {changed, unchanged}) {
+    for (const auto& path : {changed, unchanged, touched}) {
       WorkspaceShellTestAccess::OpenFile(shell, path);
       Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "mine "), "an unsaved edit");
     }
@@ -1291,13 +1293,21 @@ void TestWorkspaceShellACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown(
   // Someone else edits one file while microide is down. A different size, so the
   // change cannot hide in the same mtime tick.
   WriteFile(changed, "alpha, edited elsewhere\n");
+  // And another is only touched -- the same bytes, a new mtime (a checkout that
+  // restored it, a build tool): not a change. The snapshot's baseline carries the
+  // buffer's content hash, so this one saves (TD-2026-11-02-429 item 2; it asked).
+  WriteFile(touched, "delta\n");
+  std::error_code touch_error;
+  std::filesystem::last_write_time(touched, std::filesystem::file_time_type::clock::now() + std::chrono::seconds(5),
+                                   touch_error);
 
   WorkspaceShell restored;
   WorkspaceShellTestAccess::SetProjectRoot(restored, root);
   Expect(WorkspaceShellTestAccess::RestoreSessionState(restored), "restore after the crash");
   bool saw_changed = false;
   bool saw_unchanged = false;
-  for (std::size_t i = 0; i < 2; ++i) {
+  bool saw_touched = false;
+  for (std::size_t i = 0; i < 3; ++i) {
     WorkspaceShellTestAccess::ActivateTab(restored, i);
     auto& editor = WorkspaceShellTestAccess::ActiveEditor(restored);
     Expect(editor.dirty(), "the restored buffer is dirty");
@@ -1310,12 +1320,15 @@ void TestWorkspaceShellACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown(
       Expect(WorkspaceShellTestAccess::HasEditorBanner(
                  restored, changed, microide::workspace::EditorBannerState::Kind::ExternalChange),
              "with the changed-on-disk banner's choices: " + WorkspaceShellTestAccess::DescribeEditorBanners(restored));
+    } else if (editor.path() == touched) {
+      saw_touched = true;
+      Expect(outcome.ok && ReadFile(touched) == "mine delta\n", "a touched file saves: " + outcome.error);
     } else {
       saw_unchanged = true;
       Expect(outcome.ok && ReadFile(unchanged) == "mine gamma\n", "an unchanged file saves: " + outcome.error);
     }
   }
-  Expect(saw_changed && saw_unchanged, "both tabs came back");
+  Expect(saw_changed && saw_unchanged && saw_touched, "all three tabs came back");
 }
 
 // B1: the crash-safety flush debounce arms once a real edit lands on a dirty buffer.
