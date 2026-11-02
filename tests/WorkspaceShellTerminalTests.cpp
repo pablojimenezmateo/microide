@@ -2837,6 +2837,40 @@ void TestWorkspaceShellTerminalNotificationToastsFromABackgroundTab() {
   Expect(WorkspaceShellTestAccess::TerminalTabHasUnseenBell(shell, 0), "and marks its tab");
 }
 
+// The same from a terminal in a BACKGROUND PROJECT: it surfaced only once that
+// project came back to the front (TD-2026-11-01-427 item 2) -- an agent asking
+// for input in project A said nothing while the user worked in project B. The
+// toast names the project, and the terminal's tab carries the mark back.
+void TestWorkspaceShellTerminalNotificationToastsFromABackgroundProject() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path alpha = temp_dir.path() / "alpha";
+  const std::filesystem::path beta = temp_dir.path() / "beta";
+  WriteFile(alpha / "a.txt", "a\n");
+  WriteFile(beta / "b.txt", "b\n");
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, alpha), "project alpha opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& agent = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(agent, 24, 80);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, beta), "project beta opens in front");
+
+  TerminalSessionTestAccess::AppendOutput(agent, "\x1b]9;needs your input\x07");
+  WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+  std::string toast;
+  for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+    if (row.message.find("needs your input") != std::string::npos) {
+      toast = row.message;
+    }
+  }
+  Expect(!toast.empty(), "a background project's terminal notification toasts at once");
+  Expect(toast.find("alpha") != std::string::npos, "and names the project it came from: " + toast);
+
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0), "back to alpha");
+  Expect(WorkspaceShellTestAccess::TerminalTabHasUnseenBell(shell, 0),
+         "its terminal tab carries the mark back to the front");
+}
+
 void TestWorkspaceShellTerminalRelaunchRestartsAnExitedPane() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3031,6 +3065,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/TerminalLeftClickOpensUrls",
           TestWorkspaceShellTerminalLeftClickOpensUrls);
   AddTest(tests, "WorkspaceShell/TerminalLinkUnderlinesOnHover", TestWorkspaceShellTerminalLinkUnderlinesOnHover);
+  AddTest(tests, "WorkspaceShell/TerminalNotificationToastsFromABackgroundProject",
+          TestWorkspaceShellTerminalNotificationToastsFromABackgroundProject);
   AddTest(tests, "WorkspaceShell/TerminalMouseOwnerShowsAHandOnLitControls",
           TestWorkspaceShellTerminalMouseOwnerShowsAHandOnLitControls);
   AddTest(tests, "WorkspaceShell/TerminalShiftDragSelectsPastAMouseOwner",

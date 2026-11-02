@@ -378,87 +378,112 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
       context_.current_project_state.panel.content == PanelContentKind::Terminal;
   const std::size_t active_index = context_.current_project_state.active_terminal_tab_index;
   bool badge_changed = false;
-  const auto& tabs = context_.current_project_state.terminal_tabs;
   // What the bottom panel paints an unstyled cell with (resolve_terminal_colors):
   // programs ask for it to pick their own light or dark palette.
   const util::Rgba8 default_foreground{theme_.text_primary.r, theme_.text_primary.g,
                                        theme_.text_primary.b, 0xff};
   const util::Rgba8 default_background{theme_.surface_background.r, theme_.surface_background.g,
                                        theme_.surface_background.b, 0xff};
-  for (std::size_t index = 0; index < tabs.size(); ++index) {
-    TerminalTabState* tab = tabs[index].get();
-    if (tab == nullptr) {
-      continue;
-    }
-    const bool tab_on_screen = terminal_on_screen && index == active_index;
-    for (const auto& pane : tab->panes) {
-      if (pane == nullptr) {
+  // One drain for every pane of every open project. A background project's
+  // terminals used to wait for that project to come to the front: an agent's
+  // "needs your input" (OSC 9), a bell, or a host program's $BROWSER request (a
+  // `claude` login) started in project B surfaced only when B was activated
+  // (TD-2026-11-01-427 item 2). Its toasts name the project, as every result
+  // finishing behind the front project does.
+  const auto drain = [&](std::vector<std::unique_ptr<TerminalTabState>>& tabs,
+                         std::optional<std::size_t> on_screen_index, std::string_view project_label) {
+    bool marked = false;
+    for (std::size_t index = 0; index < tabs.size(); ++index) {
+      TerminalTabState* tab = tabs[index].get();
+      if (tab == nullptr) {
         continue;
       }
-      pane->session.SetDefaultColors(default_foreground, default_background);
-      const bool output_arrived = pane->session.ConsumeWakeEvent();
-      // Output in a tab the user cannot see lights its strip tab up, so an agent
-      // finishing in a background tab (or behind a hidden panel) is visible
-      // without switching to it. The frame that shows the tab clears it.
-      if (output_arrived && !tab_on_screen && !tab->has_unseen_output) {
-        tab->has_unseen_output = true;
-        badge_changed = true;
-      }
-      // Consumed whether or not the tab is on screen, so a bell rung while the
-      // user was watching does not mark the tab later.
-      if (pane->session.ConsumeBell() && !tab_on_screen && !tab->has_unseen_bell) {
-        tab->has_unseen_bell = true;
-        badge_changed = true;
-      }
-      // A program's desktop notification (OSC 9 / 777): a toast when its terminal
-      // is not on screen — an agent asking for input in a background tab. On
-      // screen the program is already showing it.
-      if (std::optional<terminal::TerminalSession::Notification> notification =
-              pane->session.ConsumeNotification();
-          notification.has_value() && !tab_on_screen) {
-        std::string message = pane->session.LaunchLabel();
-        message += ": ";
-        if (!notification->title.empty()) {
-          message += notification->title;
-          if (!notification->body.empty()) {
-            message += " — ";
+      const bool tab_on_screen = on_screen_index == index;
+      for (const auto& pane : tab->panes) {
+        if (pane == nullptr) {
+          continue;
+        }
+        pane->session.SetDefaultColors(default_foreground, default_background);
+        const bool output_arrived = pane->session.ConsumeWakeEvent();
+        // Output in a tab the user cannot see lights its strip tab up, so an agent
+        // finishing in a background tab (or behind a hidden panel) is visible
+        // without switching to it. The frame that shows the tab clears it.
+        if (output_arrived && !tab_on_screen && !tab->has_unseen_output) {
+          tab->has_unseen_output = true;
+          marked = true;
+        }
+        // Consumed whether or not the tab is on screen, so a bell rung while the
+        // user was watching does not mark the tab later.
+        if (pane->session.ConsumeBell() && !tab_on_screen && !tab->has_unseen_bell) {
+          tab->has_unseen_bell = true;
+          marked = true;
+        }
+        // A program's desktop notification (OSC 9 / 777): a toast when its terminal
+        // is not on screen — an agent asking for input in a background tab. On
+        // screen the program is already showing it.
+        if (std::optional<terminal::TerminalSession::Notification> notification =
+                pane->session.ConsumeNotification();
+            notification.has_value() && !tab_on_screen) {
+          std::string message;
+          if (!project_label.empty()) {
+            message.append(project_label).append(" \u2014 ");
+          }
+          message += pane->session.LaunchLabel();
+          message += ": ";
+          if (!notification->title.empty()) {
+            message += notification->title;
+            if (!notification->body.empty()) {
+              message += " — ";
+            }
+          }
+          message += notification->body;
+          Notify(NotificationService::Tone::Info, std::move(message));
+          if (!tab->has_unseen_bell) {
+            tab->has_unseen_bell = true;
+            marked = true;
           }
         }
-        message += notification->body;
-        Notify(NotificationService::Tone::Info, std::move(message));
-        if (!tab->has_unseen_bell) {
-          tab->has_unseen_bell = true;
-          badge_changed = true;
+        // A program on the host asked for a URL through the BROWSER its server
+        // gives it (claude's login, `gh auth login --web`): open it here, where
+        // the user is, as a click on the printed link would -- whichever project
+        // the terminal belongs to (the pane carries its own launcher).
+        if (std::optional<std::string> url = pane->session.ConsumeOpenUrlRequest(); url.has_value()) {
+          (void)MakeTerminalPanelService().OpenUrlForPane(pane.get(), *url);
         }
-      }
-      // A program on the host asked for a URL through the BROWSER its server
-      // gives it (claude's login, `gh auth login --web`): open it here, where
-      // the user is, as a click on the printed link would.
-      if (std::optional<std::string> url = pane->session.ConsumeOpenUrlRequest(); url.has_value()) {
-        (void)MakeTerminalPanelService().OpenUrlForPane(pane.get(), *url);
-      }
-      if (pane->session.ConsumeOversizedOsc52Dropped()) {
-        // An OSC 52 clipboard write that overran the escape-sequence buffer was
-        // dropped. Surface it rather than fail silently so the user knows their
-        // (too-large) clipboard write did not land.
-        Notify(NotificationService::Tone::Info,
-               "A terminal program tried to set the clipboard (OSC 52), but the payload "
-               "was too large and was ignored.");
-      }
-      const std::optional<std::string> clipboard_text =
-          pane->session.ConsumePendingClipboardText();
-      if (clipboard_text.has_value()) {
-        if (allow_osc52_clipboard) {
-          WriteClipboardText(*clipboard_text);
-        } else {
-          // Surface every blocked write so it is not a silent regression for users
-          // who rely on OSC 52 yank-to-clipboard (tmux/vim over SSH). The toast
-          // service coalesces/expires duplicates, so this cannot flood the UI.
+        if (pane->session.ConsumeOversizedOsc52Dropped()) {
+          // An OSC 52 clipboard write that overran the escape-sequence buffer was
+          // dropped. Surface it rather than fail silently so the user knows their
+          // (too-large) clipboard write did not land.
           Notify(NotificationService::Tone::Info,
-                 "A terminal program tried to set the clipboard (OSC 52). Enable "
-                 "\"Allow Terminal Clipboard Writes (OSC 52)\" in Settings to permit it.");
+                 "A terminal program tried to set the clipboard (OSC 52), but the payload "
+                 "was too large and was ignored.");
+        }
+        const std::optional<std::string> clipboard_text =
+            pane->session.ConsumePendingClipboardText();
+        if (clipboard_text.has_value()) {
+          if (allow_osc52_clipboard) {
+            WriteClipboardText(*clipboard_text);
+          } else {
+            // Surface every blocked write so it is not a silent regression for users
+            // who rely on OSC 52 yank-to-clipboard (tmux/vim over SSH). The toast
+            // service coalesces/expires duplicates, so this cannot flood the UI.
+            Notify(NotificationService::Tone::Info,
+                   "A terminal program tried to set the clipboard (OSC 52). Enable "
+                   "\"Allow Terminal Clipboard Writes (OSC 52)\" in Settings to permit it.");
+          }
         }
       }
+    }
+    return marked;
+  };
+  badge_changed = drain(context_.current_project_state.terminal_tabs,
+                        terminal_on_screen ? std::optional<std::size_t>(active_index) : std::nullopt,
+                        {});
+  auto& catalog = context_.project_catalog;
+  for (std::size_t i = 0; i < catalog.entries.size(); ++i) {
+    if (ProjectWorkspaceState* background = catalog.entries[i].get();
+        background != nullptr && i != catalog.active_index && background != &context_.current_project_state) {
+      (void)drain(background->terminal_tabs, std::nullopt, background->id.Label());
     }
   }
   // Exited terminal tabs are intentionally retained until the user closes them,

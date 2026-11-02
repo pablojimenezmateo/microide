@@ -480,7 +480,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-11-01-427 — results that finish after a project switch: the cases this pass left. [OPEN — items 1-5]
+### TD-2026-11-01-427 — results that finish after a project switch: the cases this pass left. [OPEN — items 1, 3-5; 2 resolved 2026-11-02]
 
 The 2026-11-01 pass (commits e6e7cc08b through 3507aaa0c) found one shape of bug
 in five places: work dispatched in one project and finished, or reported, after
@@ -501,13 +501,13 @@ Left:
    compare refresh for the front project). Its window is a `git apply`'s
    milliseconds from a compare-tab key, so it was not converted; the same three
    callbacks would do it.
-2. **A background project's terminals are not polled.** `ConsumeTerminalSession
-   Updates` walks the front project's panes only, so an OSC 9 "agent needs
-   input", a bell, or a host program's `$BROWSER` request in a background
-   project waits until that project is activated -- a `claude` login started in
-   project B and left there opens its page only when B comes back. Not
-   misattributed, just late. Polling every open project's panes (their wake
-   flags are cheap) and badging the project tab is the shape.
+2. ~~**A background project's terminals are not polled.**~~ **Resolved
+   2026-11-02**: `ConsumeTerminalSessionUpdates` drains every open project's
+   panes through one function, so an OSC 9 "agent needs input" toasts at once
+   naming its project, a `$BROWSER` request opens at once, and a bell or output
+   marks the terminal's tab for when the project comes back
+   (`WorkspaceShell/TerminalNotificationToastsFromABackgroundProject`). Left: the
+   PROJECT tab carries no badge of its own -- the mark waits on its terminal tab.
 3. **A project with no editor tab open still loses nothing**, but
    `SyncPanelMaximizedWithFocus` remains level-triggered: any future path that
    sets focus to the editor while the panel is maximized restores it on the next
