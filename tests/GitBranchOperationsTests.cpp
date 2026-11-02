@@ -47,6 +47,10 @@ std::string CurrentBranchLabel(const std::vector<microide::project::GitBranchRef
 // phrases git emits, so a message the UI relies on cannot silently fall back to
 // UnknownError.
 void TestGitOperationFailureClassification() {
+  Expect(ClassifyGitOperationFailure(127, "") == GitOperationOutcome::GitNotFound,
+         "a silent 127 is git missing from PATH");
+  Expect(ClassifyGitOperationFailure(127, "hook: exec failed\n") != GitOperationOutcome::GitNotFound,
+         "a 127 that said something is not");
   Expect(ClassifyGitOperationFailure(0, "") == GitOperationOutcome::Success,
          "a clean exit should classify as success");
   Expect(ClassifyGitOperationFailure(0, "Already up to date.\n") ==

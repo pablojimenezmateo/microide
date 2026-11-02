@@ -43,6 +43,8 @@ std::string DefaultDetail(const GitOperationOutcome outcome, const std::string_v
       return std::string("Git ").append(verb).append(" timed out and was aborted");
     case GitOperationOutcome::NotARepo:
       return "Not a git repository";
+    case GitOperationOutcome::GitNotFound:
+      return "git could not be run: install it, or put it on the PATH microide starts with";
     case GitOperationOutcome::UnknownError:
     default:
       return std::string("Git ").append(verb).append(" failed");
@@ -110,6 +112,11 @@ GitOperationOutcome ClassifyGitOperationFailure(const int exit_code,
     return GitOperationOutcome::Success;
   }
 
+  // execvp's ENOENT (Subprocess.cpp): no git to run. A hook or alias that exits 127
+  // says something on stderr, so only a silent 127 is this.
+  if (exit_code == 127 && (util::TrimAsciiWhitespaceView(lowered).empty() || Contains(lowered, "execvp"))) {
+    return GitOperationOutcome::GitNotFound;
+  }
   // Order matters: the more specific phrase wins. Auth is checked before network
   // because an auth failure over https also mentions the remote URL.
   if (Contains(lowered, "authentication failed") || Contains(lowered, "could not read username") ||

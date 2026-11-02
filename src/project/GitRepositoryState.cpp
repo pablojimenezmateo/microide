@@ -72,8 +72,20 @@ GitRefreshErrorCategory ClassifyGitRefreshFailure(int exit_code,
   if (stderr_text.find("Submodule") != std::string_view::npos) {
     return GitRefreshErrorCategory::SubmoduleError;
   }
-  (void)exit_code;
+  // Subprocess's child exits 127 when execvp finds no git; a hook or alias that
+  // exits 127 says something first.
+  if (exit_code == 127 && (stderr_text.find_first_not_of(" \t\r\n") == std::string_view::npos ||
+                           stderr_text.find("execvp") != std::string_view::npos)) {
+    return GitRefreshErrorCategory::GitNotFound;
+  }
   return GitRefreshErrorCategory::UnknownError;
+}
+
+std::string DescribeSilentGitFailure(GitRefreshErrorCategory category, int exit_code) {
+  if (category == GitRefreshErrorCategory::GitNotFound) {
+    return "git could not be run: install it, or put it on the PATH microide starts with";
+  }
+  return "git status exited with code " + std::to_string(exit_code);
 }
 
 GitConflictKind ConflictKindFromUnmergedCodes(std::string_view xy) {

@@ -38,6 +38,10 @@ enum class GitOperationOutcome {
   NetworkFailed,
   TimedOut,
   NotARepo,
+  // The git executable could not be run (not installed, not on PATH): the shell's
+  // 127 with nothing on stderr. Said as such -- "Git push failed" left the user to
+  // guess that git itself was missing.
+  GitNotFound,
   UnknownError,
 };
 

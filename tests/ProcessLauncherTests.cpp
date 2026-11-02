@@ -305,6 +305,12 @@ void TestStatusRefreshDistinguishesItsFailures() {
   Expect(missing.refresh_error.category != project::GitRefreshErrorCategory::None,
          "git failing to run is reported as a refresh error");
   Expect(missing.stale, "and leaves the state marked stale");
+  // ... and says so: the detail was git's (empty) stderr, which hid the failure
+  // banner, and the git view read "No changes" for a repository it never read.
+  Expect(missing.refresh_error.category == project::GitRefreshErrorCategory::GitNotFound,
+         "classified as git missing, not an unknown error");
+  Expect(missing.refresh_error.detail.find("git could not be run") != std::string::npos,
+         "with a sentence to show: '" + missing.refresh_error.detail + "'");
 
   // git exited 0 but its output was cut at the capture ceiling. This is the
   // dangerous one: the entries that came back are REAL, so a parse succeeds and

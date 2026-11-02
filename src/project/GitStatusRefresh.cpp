@@ -53,9 +53,13 @@ GitRepositoryState BuildGitRepositoryStateFromStatus(const GitRepository& repo,
   }
   if (!result.success()) {
     state.repo_available = true;
+    const GitRefreshErrorCategory category = ClassifyGitRefreshFailure(result.exit_code, result.output);
     state.refresh_error = {
-        .category = ClassifyGitRefreshFailure(result.exit_code, result.output),
-        .detail = result.output,
+        .category = category,
+        .detail = category == GitRefreshErrorCategory::GitNotFound ||
+                          result.output.find_first_not_of(" \t\r\n") == std::string::npos
+                      ? DescribeSilentGitFailure(category, result.exit_code)
+                      : result.output,
     };
     state.stale = true;
     state.refreshing = false;

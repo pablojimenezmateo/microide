@@ -42,8 +42,16 @@ enum class GitRefreshErrorCategory {
   Cancelled,
   AuthFailed,
   SubmoduleError,
+  // The git executable could not be run (127 with nothing on stderr).
+  GitNotFound,
   UnknownError,
 };
+
+// The sentence a failed refresh shows when git itself said nothing (its stderr is
+// the detail otherwise): a missing git, or a bare exit code. Never empty -- an empty
+// detail hid the failure banner, and the view said "No changes" of a repository it
+// had not been able to read.
+std::string DescribeSilentGitFailure(GitRefreshErrorCategory category, int exit_code);
 
 enum class GitOperationStateKind {
   None,
