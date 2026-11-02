@@ -2,7 +2,11 @@
 
 #include "project/remote/TreeFiles.h"
 
+#include <unistd.h>
+
+#include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -176,10 +180,43 @@ void TestTreeFilesAMissingDirectoryIsNothingThere() {
 
 }  // namespace
 
+// The temporary a tree write makes is recognizable by name, with its writer's pid.
+// A write given a staging directory makes it there instead of beside the file (the
+// mirror: a crash mid-pull leaves nothing in tree/), and leaves nothing behind.
+void TestTreeFilesWriteTemporaries() {
+  using project::remote::TreeWriteTemporaryIsAbandoned;
+  using project::remote::TreeWriteTemporaryOwner;
+  Expect(TreeWriteTemporaryOwner(".a.txt.microide-123-4.tmp") == std::optional<std::int64_t>(123), "a temp");
+  Expect(TreeWriteTemporaryOwner(".x.y.microide-9-0.tmp") == std::optional<std::int64_t>(9), "dots in the name");
+  for (const char* other : {"a.txt", "a.txt.microide-1-0.tmp", ".microide-1-0.tmp", ".a.microide-1a-0.tmp",
+                            ".a.microide--0.tmp", ".a.microide-1-.tmp", ".a.microide-1-0.tmpx", ".a.tmp"}) {
+    Expect(!TreeWriteTemporaryOwner(other).has_value(), std::string("not a temp: ") + other);
+  }
+  Expect(!TreeWriteTemporaryIsAbandoned(".a.microide-" + std::to_string(::getpid()) + "-0.tmp"),
+         "this process's own is not abandoned");
+  Expect(TreeWriteTemporaryIsAbandoned(".a.microide-2147483646-0.tmp"), "a dead writer's is");
+  Expect(!TreeWriteTemporaryIsAbandoned("a.txt"), "a file is not a temporary at all");
+
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "tree";
+  const std::filesystem::path staging = temp.path() / "staging";
+  std::filesystem::create_directories(root);
+  std::filesystem::create_directories(staging);
+  const FileOpResult written = project::remote::WriteTreeFile(
+      root, "dir/a.txt", "staged\n", Precondition::NotThere(), std::nullopt, std::nullopt,
+      project::remote::Durability::Synced, staging);
+  Expect(written.ok() && ReadFile(root / "dir/a.txt") == "staged\n", "the staged write lands: " + written.error);
+  Expect(std::filesystem::is_empty(staging), "and leaves nothing in the staging directory");
+  Expect(std::filesystem::directory_iterator(root / "dir") != std::filesystem::directory_iterator() &&
+             std::next(std::filesystem::directory_iterator(root / "dir")) == std::filesystem::directory_iterator(),
+         "nor beside the file");
+}
+
 void RegisterTreeFilesTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TreeFiles/WriteIsCompareAndSwap", TestTreeFilesWriteIsCompareAndSwap);
   AddTest(tests, "TreeFiles/StayUnderTheRoot", TestTreeFilesStayUnderTheRoot);
   AddTest(tests, "TreeFiles/Read", TestTreeFilesRead);
+  AddTest(tests, "TreeFiles/WriteTemporaries", TestTreeFilesWriteTemporaries);
   AddTest(tests, "TreeFiles/TreeOps", TestTreeFilesTreeOps);
   AddTest(tests, "TreeFiles/AMissingDirectoryIsNothingThere", TestTreeFilesAMissingDirectoryIsNothingThere);
 }

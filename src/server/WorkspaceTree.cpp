@@ -14,6 +14,7 @@
 #include "platform/ProcessLauncher.h"
 #include "project/GitMetadataSource.h"
 #include "project/ProjectTraversalFilter.h"
+#include "project/remote/TreeFiles.h"
 #include "util/ByteCodec.h"
 #include "util/PosixFd.h"
 #include "util/ThreadName.h"
@@ -288,6 +289,19 @@ std::optional<std::vector<std::string>> WorkspaceTree::ContentSet(bool* git, std
 std::optional<std::vector<ManifestRow>> WorkspaceTree::RowsFor(
     std::vector<std::string> paths, int root_fd, const std::function<bool()>& cancelled,
     std::string* error, std::unordered_map<std::string, CacheEntry>& out_cache) {
+  // A tree write's temporary is never content (TreeFiles.h): one in progress is not
+  // listed, and one a crash abandoned -- a server SIGKILLed between writing it and
+  // renaming it into place -- is removed rather than pulled into every mirror.
+  std::erase_if(paths, [&](const std::string& path) {
+    const std::string_view name = std::string_view(path).substr(path.rfind('/') + 1);
+    if (!project::remote::TreeWriteTemporaryOwner(name).has_value()) {
+      return false;
+    }
+    if (project::remote::TreeWriteTemporaryIsAbandoned(name)) {
+      (void)project::remote::DeleteTreeEntry(root_, path, project::remote::Precondition::Anything());
+    }
+    return true;
+  });
   // Pass 1: lstat every member. Rows that need a hash are queued with whether the
   // read must follow a link (an out-of-root link is shipped as the file it names).
   struct PendingHash {

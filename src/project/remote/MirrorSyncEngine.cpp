@@ -661,7 +661,8 @@ void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution
   }
   const FileOpResult written =
       object.missing ? DeleteTreeEntry(store_.tree(), path, Precondition::Anything())
-                     : WriteTreeFile(store_.tree(), path, object.content, Precondition::Anything(), mode);
+                     : WriteTreeFile(store_.tree(), path, object.content, Precondition::Anything(), mode,
+                                     std::nullopt, Durability::Synced, store_.staging());
   if (written.ok() && !object.missing) {
     // Like any pulled version: a later switch back, or Changed on Host's compare of
     // what came before the host's next change, finds the bytes here.
@@ -1630,10 +1631,10 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
       std::error_code ignored;
       size = std::filesystem::file_size(object.staged_file, ignored);
       result = CopyFileIntoTree(store_.tree(), object.path, object.staged_file, fetched_hash, expect,
-                                mode, mtime_ns, Durability::Deferred);
+                                mode, mtime_ns, Durability::Deferred, store_.staging());
     } else {
       result = WriteTreeFile(store_.tree(), object.path, object.content, expect, mode, mtime_ns,
-                             Durability::Deferred);
+                             Durability::Deferred, store_.staging());
     }
     std::lock_guard lock(mutex_);
     // Not flushed per file: SaveNowLocked flushes the tree before any state that

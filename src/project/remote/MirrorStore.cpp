@@ -12,6 +12,7 @@
 #include "persistence/PersistedRecordWriter.h"
 #include "platform/AppDirectories.h"
 #include "platform/RuntimePaths.h"
+#include "project/remote/TreeFiles.h"
 #include "util/ByteCodec.h"
 #include "util/DurableFile.h"
 #include "util/PosixFd.h"
@@ -167,10 +168,21 @@ std::filesystem::path MirrorStore::DefaultDirectory(std::string_view host,
 }
 
 bool MirrorStore::Open(std::string* error) {
-  for (const std::filesystem::path& dir : {directory_, tree_, meta_}) {
+  for (const std::filesystem::path& dir : {directory_, tree_, meta_, staging()}) {
     if (!platform::EnsureSecurePrivateDirectory(dir)) {
       *error = "cannot create the mirror directory " + dir.string();
       return false;
+    }
+  }
+  {
+    // A write a crash interrupted left its temporary here; a live writer's (another
+    // instance on this mirror) stays.
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(staging(), ec), end; !ec && it != end; it.increment(ec)) {
+      if (TreeWriteTemporaryIsAbandoned(it->path().filename().string())) {
+        std::error_code ignored;
+        std::filesystem::remove(it->path(), ignored);
+      }
     }
   }
   entries_.clear();

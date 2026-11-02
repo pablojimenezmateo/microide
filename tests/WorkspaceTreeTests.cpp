@@ -77,6 +77,37 @@ void TestWorkspaceTreeWalksWithoutGit() {
          "the walk uses the scanner's skip rules (node_modules is not content)");
 }
 
+// A tree write's temporary is never content (TreeFiles.h). One a SIGKILLed server
+// left between writing it and renaming it into place used to be listed, and so
+// pulled into every mirror as a file nobody made (MirrorFaultMatrix/*/PushLarge/
+// KillServer); it is now removed by the next manifest. One whose writer is alive
+// is a write in progress: skipped, and left alone -- by the full walk and by a
+// watch update that names it alike.
+void TestWorkspaceTreeWriteTemporariesAreNotContent() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "plain";
+  WriteFile(root / "a.txt", "a\n");
+  const std::string live = ".a.txt.microide-" + std::to_string(::getpid()) + "-7.tmp";
+  const std::string abandoned = "sub/.b.txt.microide-2147483646-0.tmp";  // no such pid
+  WriteFile(root / live, "half");
+  WriteFile(root / abandoned, "half");
+  WorkspaceTree tree(root);
+  std::string error;
+  const auto manifest = tree.BuildManifest(&error);
+  Expect(manifest.has_value(), "the walk builds: " + error);
+  Expect(Paths(*manifest) == std::vector<std::string>{"a.txt"}, "neither temporary is listed");
+  Expect(std::filesystem::exists(root / live), "a live writer's temporary is left alone");
+  Expect(!std::filesystem::exists(root / abandoned), "an abandoned one is removed");
+
+  const std::string arriving = ".c.txt.microide-" + std::to_string(::getpid()) + "-8.tmp";
+  WriteFile(root / arriving, "half");
+  WriteFile(root / "c.txt", "c\n");
+  const auto updated = tree.UpdateManifest(WorkspaceTree::Changes{.touched = {arriving, "c.txt"}}, &error);
+  Expect(updated.has_value(), "the update builds: " + error);
+  Expect(Paths(*updated) == std::vector<std::string>{"a.txt", "c.txt"},
+         "a watch update does not list a temporary it names either");
+}
+
 void TestWorkspaceTreeHashCache() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "plain";
@@ -331,6 +362,7 @@ void RegisterWorkspaceTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceTree/GitContentSet", TestWorkspaceTreeGitContentSet);
   AddTest(tests, "WorkspaceTree/WalksWithoutGit", TestWorkspaceTreeWalksWithoutGit);
   AddTest(tests, "WorkspaceTree/HashCache", TestWorkspaceTreeHashCache);
+  AddTest(tests, "WorkspaceTree/WriteTemporariesAreNotContent", TestWorkspaceTreeWriteTemporariesAreNotContent);
   AddTest(tests, "WorkspaceTree/FailsLoudly", TestWorkspaceTreeFailsLoudly);
   AddTest(tests, "WorkspaceTree/DropsOnlyWhatItCannotHash", TestWorkspaceTreeDropsOnlyWhatItCannotHash);
   AddTest(tests, "WorkspaceTree/CachePersists", TestWorkspaceTreeCachePersists);

@@ -124,8 +124,13 @@ class MirrorStore {
   const std::filesystem::path& tree() const { return tree_; }
   const std::filesystem::path& meta() const { return meta_; }
   std::filesystem::path state_path() const { return meta_ / "state"; }
+  // Where the engine's writes into tree/ make their temporary files (TreeFiles'
+  // `staging`): on tree/'s filesystem, outside it, so a crash mid-pull leaves no
+  // partial file for the user to find in the project. Open() creates it and removes
+  // what a crashed writer left there.
+  std::filesystem::path staging() const { return meta_ / "staging"; }
 
-  // Create tree/ and meta/ (0700) and read meta/state. A missing state file is an
+  // Create tree/, meta/ and meta/staging (0700) and read meta/state. A missing state file is an
   // empty mirror; a corrupt one is an error (never silently an empty mirror, which
   // would re-pull everything and forget every pending push).
   bool Open(std::string* error);

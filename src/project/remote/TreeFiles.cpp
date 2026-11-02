@@ -7,6 +7,8 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <limits>
+#include <signal.h>
 #include <utility>
 
 #include "project/remote/RemoteManifest.h"
@@ -186,13 +188,56 @@ int RenameNoReplace(int from_dir, const char* from, int to_dir, const char* to) 
   return 0;
 }
 
+constexpr std::string_view kTempMarker = ".microide-";
+constexpr std::string_view kTempSuffix = ".tmp";
+
+// "." + name + ".microide-<pid>-<n>.tmp": TreeWriteTemporaryOwner reads it back.
 std::string TempName(const std::string& name) {
   static std::atomic<std::uint64_t> counter{0};
-  return "." + name.substr(0, 200) + ".microide-" + std::to_string(::getpid()) + "-" +
-         std::to_string(counter.fetch_add(1)) + ".tmp";
+  return "." + name.substr(0, 200) + std::string(kTempMarker) + std::to_string(::getpid()) + "-" +
+         std::to_string(counter.fetch_add(1)) + std::string(kTempSuffix);
+}
+
+bool AllDigits(std::string_view text) {
+  return !text.empty() && text.size() <= 18 &&
+         text.find_first_not_of("0123456789") == std::string_view::npos;
 }
 
 }  // namespace
+
+std::optional<std::int64_t> TreeWriteTemporaryOwner(std::string_view name) {
+  if (name.size() < 2 || name.front() != '.' || !name.ends_with(kTempSuffix)) {
+    return std::nullopt;
+  }
+  name.remove_suffix(kTempSuffix.size());
+  const std::size_t dash = name.rfind('-');
+  if (dash == std::string_view::npos || !AllDigits(name.substr(dash + 1))) {
+    return std::nullopt;
+  }
+  name = name.substr(0, dash);
+  const std::size_t marker = name.rfind(kTempMarker);
+  if (marker == std::string_view::npos || marker == 0) {
+    return std::nullopt;
+  }
+  const std::string_view pid = name.substr(marker + kTempMarker.size());
+  if (!AllDigits(pid)) {
+    return std::nullopt;
+  }
+  std::int64_t value = 0;
+  for (const char c : pid) {
+    value = value * 10 + (c - '0');
+  }
+  return value;
+}
+
+bool TreeWriteTemporaryIsAbandoned(std::string_view name) {
+  const std::optional<std::int64_t> owner = TreeWriteTemporaryOwner(name);
+  if (!owner.has_value() || *owner <= 0 || *owner > std::numeric_limits<pid_t>::max()) {
+    return owner.has_value();  // not a pid this machine could have: nobody's
+  }
+  const pid_t pid = static_cast<pid_t>(*owner);
+  return pid != ::getpid() && ::kill(pid, 0) != 0 && errno == ESRCH;
+}
 
 FileOpResult ReadTreeFile(const std::filesystem::path& root, std::string_view path,
                                std::uint64_t max_bytes,
@@ -260,7 +305,8 @@ namespace {
 FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_view path,
                                const std::function<std::optional<util::ContentHash>(int fd, std::string* error)>& fill,
                                const Precondition& expect, std::optional<std::uint32_t> mode,
-                               std::optional<std::int64_t> mtime_ns, Durability durability) {
+                               std::optional<std::int64_t> mtime_ns, Durability durability,
+                               const std::filesystem::path& staging) {
   std::string error;
   // An update names bytes that must already be there: a missing directory on the
   // way means they are not, which is a conflict decided before anything is made --
@@ -290,17 +336,27 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
     }
   }
   const std::string temp = TempName(parent->name);
+  // Where the temp lives: beside the file, or in the caller's staging directory
+  // (same filesystem), so that a crash mid-write leaves nothing in the tree.
+  UniqueFd staging_dir;
+  if (!staging.empty()) {
+    staging_dir = UniqueFd(::open(staging.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+    if (staging_dir.Get() < 0) {
+      return Error(Errno("cannot open the staging directory " + staging.string()));
+    }
+  }
+  const int temp_dir = staging_dir.Get() >= 0 ? staging_dir.Get() : parent->dir.Get();
   std::optional<util::ContentHash> hash;
   {
-    const UniqueFd out(::openat(parent->dir.Get(), temp.c_str(),
+    const UniqueFd out(::openat(temp_dir, temp.c_str(),
                           O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600));
     if (out.Get() < 0) {
-      return Error(Errno("cannot create a temporary file beside " + std::string(path)));
+      return Error(Errno("cannot create a temporary file for " + std::string(path)));
     }
     std::string fill_error;
     hash = fill(out.Get(), &fill_error);
     if (!hash.has_value()) {
-      ::unlinkat(parent->dir.Get(), temp.c_str(), 0);
+      ::unlinkat(temp_dir, temp.c_str(), 0);
       return Error(fill_error.empty() ? Errno("cannot write " + std::string(path)) : fill_error);
     }
     if (mtime_ns.has_value()) {
@@ -316,17 +372,17 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
     if (::fchmod(out.Get(), final_mode) != 0 ||
         (durability == Durability::Synced && ::fsync(out.Get()) != 0)) {
       const std::string why = Errno("cannot finish " + std::string(path));
-      ::unlinkat(parent->dir.Get(), temp.c_str(), 0);
+      ::unlinkat(temp_dir, temp.c_str(), 0);
       return Error(why);
     }
   }
   const int renamed =
       expect.kind == Precondition::Kind::Absent
-          ? RenameNoReplace(parent->dir.Get(), temp.c_str(), parent->dir.Get(), parent->name.c_str())
-          : ::renameat(parent->dir.Get(), temp.c_str(), parent->dir.Get(), parent->name.c_str());
+          ? RenameNoReplace(temp_dir, temp.c_str(), parent->dir.Get(), parent->name.c_str())
+          : ::renameat(temp_dir, temp.c_str(), parent->dir.Get(), parent->name.c_str());
   if (renamed != 0) {
     const int saved = errno;
-    ::unlinkat(parent->dir.Get(), temp.c_str(), 0);
+    ::unlinkat(temp_dir, temp.c_str(), 0);
     if (saved == EEXIST) {
       // Created on the host between the check and the rename.
       bool now_exists = false;
@@ -357,7 +413,7 @@ bool SyncTreeFilesystem(const std::filesystem::path& root) {
 FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view path,
                            std::string_view content, const Precondition& expect,
                            std::optional<std::uint32_t> mode, std::optional<std::int64_t> mtime_ns,
-                           Durability durability) {
+                           Durability durability, const std::filesystem::path& staging) {
   return WriteTreeFileFrom(
       root, path,
       [&](int fd, std::string* error) -> std::optional<util::ContentHash> {
@@ -375,13 +431,14 @@ FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view p
         }
         return util::HashContent(content);
       },
-      expect, mode, mtime_ns, durability);
+      expect, mode, mtime_ns, durability, staging);
 }
 
 FileOpResult CopyFileIntoTree(const std::filesystem::path& root, std::string_view path,
                               const std::filesystem::path& source, const util::ContentHash& hash,
                               const Precondition& expect, std::optional<std::uint32_t> mode,
-                              std::optional<std::int64_t> mtime_ns, Durability durability) {
+                              std::optional<std::int64_t> mtime_ns, Durability durability,
+                              const std::filesystem::path& staging) {
   return WriteTreeFileFrom(
       root, path,
       [&](int fd, std::string* error) -> std::optional<util::ContentHash> {
@@ -433,7 +490,7 @@ FileOpResult CopyFileIntoTree(const std::filesystem::path& root, std::string_vie
           }
         }
       },
-      expect, mode, mtime_ns, durability);
+      expect, mode, mtime_ns, durability, staging);
 }
 
 FileOpResult MakeTreeSymlink(const std::filesystem::path& root, std::string_view path,

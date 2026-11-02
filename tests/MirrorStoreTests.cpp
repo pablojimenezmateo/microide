@@ -9,6 +9,8 @@
 #include <string>
 #include <thread>
 
+#include <unistd.h>
+
 namespace microide::tests {
 namespace {
 
@@ -277,8 +279,28 @@ void TestMirrorStoreDefaultDirectory() {
 
 }  // namespace
 
+// A pull's temporary is made in meta/staging (TreeFiles' `staging`), so a crash
+// mid-write leaves nothing in tree/; Open removes what a dead writer left there
+// and keeps a live one's (MirrorFaultMatrix/*/PullLarge/KillClient).
+void TestMirrorStoreOpenSweepsAbandonedStaging() {
+  TemporaryDirectory temp;
+  MirrorStore store(temp.path() / "mirror");
+  std::string error;
+  Expect(store.Open(&error), "opens: " + error);
+  Expect(std::filesystem::is_directory(store.staging()), "the staging directory exists");
+  const std::filesystem::path abandoned = store.staging() / ".big.bin.microide-2147483646-0.tmp";
+  const std::filesystem::path live = store.staging() / (".a.txt.microide-" + std::to_string(::getpid()) + "-1.tmp");
+  WriteFile(abandoned, "partial");
+  WriteFile(live, "in progress");
+  MirrorStore reopened(temp.path() / "mirror");
+  Expect(reopened.Open(&error), "reopens: " + error);
+  Expect(!std::filesystem::exists(abandoned), "a crashed writer's temporary is removed");
+  Expect(std::filesystem::exists(live), "a live writer's stays");
+}
+
 void RegisterMirrorStoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorStore/RoundTrips", TestMirrorStoreRoundTrips);
+  AddTest(tests, "MirrorStore/OpenSweepsAbandonedStaging", TestMirrorStoreOpenSweepsAbandonedStaging);
   AddTest(tests, "MirrorStore/CorruptStateIsAnError", TestMirrorStoreCorruptStateIsAnError);
   AddTest(tests, "MirrorStore/JournalOverridesALaggingState", TestMirrorStoreJournalOverridesALaggingState);
   AddTest(tests, "MirrorStore/PulledHintIsAppendedAndSurvivesATornTail",

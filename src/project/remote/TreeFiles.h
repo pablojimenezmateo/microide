@@ -62,6 +62,16 @@ enum class Durability { Synced, Deferred };
 // it could not; the caller then must not persist state that relies on the writes.
 bool SyncTreeFilesystem(const std::filesystem::path& root);
 
+// The temporary a tree write makes beside its target ("." + name +
+// ".microide-<pid>-<n>.tmp"), and the pid of the process that made it. Never
+// content: the server's manifest skips these names, so a write in progress -- or
+// one a SIGKILL interrupted -- is not listed and pulled into every mirror as a
+// file nobody made.
+std::optional<std::int64_t> TreeWriteTemporaryOwner(std::string_view name);
+// A temporary (above) whose writer is no longer running on this machine: what a
+// crash mid-write left, safe to remove.
+bool TreeWriteTemporaryIsAbandoned(std::string_view name);
+
 // Replace `path`'s content with `content` if `expect` holds: a temp file beside it,
 // fsynced (unless `durability` is Deferred), then renamed into place (RENAME_NOREPLACE for Absent). Missing parent
 // directories are created. `mode` (permission bits) applies when given; otherwise an
@@ -69,11 +79,15 @@ bool SyncTreeFilesystem(const std::filesystem::path& root);
 // refused rather than replaced.
 // `mtime_ns`, when given, is the written file's modification time (a pull keeps the
 // host's, which is what lets the mirror's recorded stat vouch for it at once).
+// `staging`, when given, is a directory on the tree's filesystem the temp file is
+// made in instead (the mirror's meta/staging): a crash mid-write then leaves
+// nothing in the tree.
 FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view path,
                                 std::string_view content, const Precondition& expect,
                                 std::optional<std::uint32_t> mode,
                                 std::optional<std::int64_t> mtime_ns = std::nullopt,
-                                Durability durability = Durability::Synced);
+                                Durability durability = Durability::Synced,
+                                const std::filesystem::path& staging = {});
 
 // WriteTreeFile with the bytes copied from `source` (a fetched object staged
 // outside the tree, already verified to hash to `hash`) — for files too large to
@@ -82,7 +96,8 @@ FileOpResult CopyFileIntoTree(const std::filesystem::path& root, std::string_vie
                               const std::filesystem::path& source, const util::ContentHash& hash,
                               const Precondition& expect, std::optional<std::uint32_t> mode,
                               std::optional<std::int64_t> mtime_ns = std::nullopt,
-                              Durability durability = Durability::Synced);
+                              Durability durability = Durability::Synced,
+                              const std::filesystem::path& staging = {});
 
 // Make `path` a symlink to `target`. Replaces only a link (never a file or a
 // directory: those are content); creates missing parents.
