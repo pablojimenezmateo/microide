@@ -82,6 +82,7 @@ void RegisterTreeFilesTests(std::vector<TestCase>& tests);
 void RegisterMirrorStoreTests(std::vector<TestCase>& tests);
 void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests);
 void RegisterMirrorSyncMatrixTests(std::vector<TestCase>& tests);
+void RegisterMirrorFaultMatrixTests(std::vector<TestCase>& tests);
 void RegisterRemoteProjectTests(std::vector<TestCase>& tests);
 void RegisterProjectIdTests(std::vector<TestCase>& tests);
 void RegisterRemoteWorkspaceTests(std::vector<TestCase>& tests);
@@ -105,6 +106,7 @@ void RegisterKernelTests(std::vector<TestCase>& tests) {
   RegisterMirrorStoreTests(tests);
   RegisterMirrorSyncEngineTests(tests);
   RegisterMirrorSyncMatrixTests(tests);
+  RegisterMirrorFaultMatrixTests(tests);
   RegisterRemoteProjectTests(tests);
   RegisterProjectIdTests(tests);
   RegisterRemoteWorkspaceTests(tests);
@@ -186,7 +188,16 @@ void RegisterKernelTests(std::vector<TestCase>& tests) {
 
 }  // namespace microide::tests
 
+namespace microide::tests {
+// tests/MirrorFaultMatrixTests.cpp re-executes this binary as the client it kills.
+bool IsMirrorFaultClient(int argc, char** argv);
+int RunMirrorFaultClient(int argc, char** argv);
+}  // namespace microide::tests
+
 int main(int argc, char** argv) {
+  if (microide::tests::IsMirrorFaultClient(argc, argv)) {
+    return microide::tests::RunMirrorFaultClient(argc, argv);
+  }
   microide::tests::TestSuiteConfig config;
   config.binary_name = "microide_kernel_tests";
   config.register_tests = &microide::tests::RegisterKernelTests;

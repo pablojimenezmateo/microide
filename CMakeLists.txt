@@ -1567,6 +1567,7 @@ add_executable(microide_kernel_tests
   tests/MirrorStoreTests.cpp
   tests/MirrorSyncEngineTests.cpp
   tests/MirrorSyncMatrixTests.cpp
+  tests/MirrorFaultMatrixTests.cpp
   tests/RemoteProjectTests.cpp
   tests/ProjectIdTests.cpp
   src/server/GitStatusSampler.cpp
