@@ -25,6 +25,8 @@
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <memory>
@@ -164,8 +166,16 @@ Files ReadTree(const std::filesystem::path& root) {
   std::error_code error;
   for (auto it = std::filesystem::recursive_directory_iterator(root, error);
        !error && it != std::filesystem::recursive_directory_iterator(); it.increment(error)) {
-    if (!it->is_directory(error)) {
-      files[it->path().lexically_relative(root).generic_string()] = ReadFile(it->path());
+    if (it->is_directory(error)) {
+      continue;
+    }
+    // Read without throwing: the waits below read the tree while the engine is
+    // applying a pull, and a file it deletes between the listing and the read is
+    // simply not there (ReadFile throws for it -- an ASan run caught one).
+    std::ifstream in(it->path(), std::ios::binary);
+    if (in) {
+      files[it->path().lexically_relative(root).generic_string()] =
+          std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
     }
   }
   return files;
