@@ -667,7 +667,12 @@ class Suite:
                 other_app.check("T11")
             app.check("T11")
 
-        # T4 / T9: the host server restarted between quit and relaunch.
+        # T4 / T9: the host server restarted between quit and relaunch. Its own
+        # precondition: a host terminal the quit records (T4 used to lean on
+        # whatever tab T11 happened to leave open).
+        if not any(p["hostHandle"] for p in self.panes()):
+            self.new_terminal()
+            wait_for(lambda: any(p["hostHandle"] for p in self.panes()), 15, 0.3)
         self.app.restart(self.mirror, between=lambda: self.host.ssh(
             '"$HOME/.local/share/microide/server/microide-server" stop'))
         app.send("term")
