@@ -166,6 +166,7 @@ void RemoteTerminalChannel::Reattach(std::shared_ptr<RemoteServerClient> client)
   std::shared_ptr<RemoteServerClient> previous;
   std::uint64_t handle = 0;
   std::optional<terminal::TerminalSession::HostResumePoint> resume;
+  bool restarted = false;
   {
     std::lock_guard lock(mutex_);
     if (session_ == nullptr || handle_ == 0 || client == nullptr) {
@@ -178,11 +179,30 @@ void RemoteTerminalChannel::Reattach(std::shared_ptr<RemoteServerClient> client)
     reattaching_ = false;
     received_bytes_ = 0;
     acked_bytes_ = 0;
+    // A different server process (it was killed, or the host rebooted): its
+    // handles name nothing of ours -- the shell ended with the old one, as Open
+    // decides for a recorded terminal. Asking would at best be refused, at worst
+    // attach to another terminal the new server numbered the same.
+    const std::string& before = previous != nullptr ? previous->hello().daemon_epoch : std::string();
+    restarted = !before.empty() && before != client->hello().daemon_epoch;
   }
   if (previous != nullptr) {
     previous->UnregisterTerminal(handle);
   }
+  if (restarted) {
+    Ended(terminal::HostReattach::ServerRestarted, "the host's server restarted");
+    return;
+  }
   SendAttach(client, handle, resume, /*reattach=*/true);
+}
+
+void RemoteTerminalChannel::Ended(terminal::HostReattach outcome, const std::string& reason) {
+  std::lock_guard lock(mutex_);
+  handle_ = 0;  // claims nothing on the host any more
+  reattach_state_ = outcome;
+  if (session_ != nullptr) {
+    session_->HostTerminalEnded(reason);
+  }
 }
 
 bool RemoteTerminalChannel::SendAttach(
@@ -203,6 +223,15 @@ bool RemoteTerminalChannel::SendAttach(
                  // A recorded terminal the server no longer has: a fresh shell in
                  // its place, when this attach was a reopen's.
                  if (!reattach && channel->FallBackToOpen(client)) {
+                   return;
+                 }
+                 // A live terminal the reconnect's server refused: it is gone, not
+                 // waiting on the link (which is back) -- say so instead of
+                 // leaving it "detached" for good.
+                 if (reattach && client->connected()) {
+                   channel->Ended(terminal::HostReattach::Gone,
+                                  "the host no longer has this terminal (" +
+                                      (error.has_value() ? error->message : std::string("refused")) + ")");
                    return;
                  }
                  channel->OpenFailed(error.has_value() ? error->message

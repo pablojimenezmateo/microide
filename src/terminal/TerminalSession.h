@@ -260,6 +260,10 @@ class TerminalSession {
   // The connection carrying this terminal went away (not the shell): it is shown
   // as ended until it reattaches.
   void HostConnectionLost(std::string_view reason);
+  // The connection came back and the host no longer has this terminal (its server
+  // restarted, so its shells ended with it): no longer waiting on a link, shown as
+  // an ended shell -- Enter starts a new one -- with `reason` on a status line.
+  void HostTerminalEnded(std::string_view reason);
   // What a warm reattach tells the host this mirror still holds: the absolute
   // index of its screen's first line, and which screen it shows. nullopt when the
   // session has never mirrored a host terminal.

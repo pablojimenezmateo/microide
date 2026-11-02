@@ -87,6 +87,8 @@ class RemoteTerminalChannel final : public terminal::TerminalHostChannel,
   // A refused cold attach that has an open to fall back on: sends it. False when
   // there is none (the caller reports the refusal).
   bool FallBackToOpen(const std::shared_ptr<RemoteServerClient>& client);
+  // The host terminal is gone (`outcome` says how): the session shows an ended shell.
+  void Ended(terminal::HostReattach outcome, const std::string& reason);
   void OpenFailed(const std::string& error);
   void ApplyFrame(std::string_view bytes);
   static void SendResize(const std::shared_ptr<RemoteServerClient>& client, std::uint64_t handle,

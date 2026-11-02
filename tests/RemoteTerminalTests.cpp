@@ -14,11 +14,14 @@
 #include "util/JsonValue.h"
 
 #include <chrono>
+#include <csignal>
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
 #include <thread>
+
+#include <unistd.h>
 
 namespace microide::tests {
 namespace {
@@ -911,6 +914,57 @@ void TestADetachedHostTerminalIsReattachedByIdentity() {
 // A host terminal asked for before the connection is up is PENDING: it shows
 // one status line, drops input (it must not reach a shell that may turn out to be
 // another), and starts -- the open it was waiting for -- once the connection is.
+// A live host terminal whose server is killed: the reconnect reaches the server
+// that replaced it, where the terminal's handle names nothing -- its shell ended
+// with the old process. The pane is then an ended shell that says why (Enter
+// starts a new one), claiming no handle; it used to stay "detached" for good,
+// waiting on a link that was long back, with no word of what happened (remote.py
+// Z: both host tabs read "bash · detached" after a server kill, the project ready).
+void TestALiveTerminalWhoseServerRestartedEndsAndSaysWhy() {
+  ShortServerDir dir;
+  StartServer(dir);
+  const std::filesystem::path root = dir.scratch() / "project";
+  std::filesystem::create_directories(root);
+  const auto identity = [](const std::filesystem::path& path) { return path; };
+  auto first = Connect(dir);
+  std::string error;
+  const std::optional<remote::ServerStatus> before = first->Status(&error);
+  Expect(before.has_value() && before->pid.has_value(), "the server's pid is known: " + error);
+  TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  auto channel = remote::RemoteTerminalChannel::Open(
+      first, terminal::HostTerminalSource::OpenRequest{.working_directory = root, .shell = {"sh"}}, session,
+      identity);
+  Expect(channel != nullptr, "the terminal opens");
+  TerminalSessionTestAccess::EnterHostMode(session, channel);
+  TypeLine(session, "echo before-$((1+1))");
+  Expect(WaitForText(session, "before-2"), [&] { return "the shell runs:\n" + ScreenText(session); });
+
+  ::kill(static_cast<pid_t>(before.value_or(remote::ServerStatus{}).pid.value_or(0)), SIGKILL);
+  Expect(WaitUntil([&] { return session.host_link_down(); }, std::chrono::seconds(10)),
+         "the server's death drops the link");
+  // Until its socket refuses: `start` asks that before starting another.
+  Expect(WaitUntil([&] {
+           const int fd = platform::ConnectUnixSocket(remote::ServerSocketPath(dir.path()));
+           if (fd >= 0) {
+             ::close(fd);
+           }
+           return fd < 0;
+         }, std::chrono::seconds(10)),
+         "the killed server is gone");
+  StartServer(dir);
+  auto second = Connect(dir);
+  channel->Reattach(second);
+  Expect(WaitUntil([&] { return !session.host_link_down() && session.host_shell_exited(); },
+                   std::chrono::seconds(10)),
+         [&] { return "an ended shell, not a detached one:\n" + ScreenText(session); });
+  Expect(ScreenText(session).find("the host's server restarted") != std::string::npos,
+         [&] { return "and it says why:\n" + ScreenText(session); });
+  Expect(channel->identity().empty() && channel->reattach() == terminal::HostReattach::ServerRestarted,
+         "it claims nothing on the new server");
+  session.Stop();
+}
+
 void TestAPendingHostTerminalStartsOnceConnected() {
   ShortServerDir dir;
   StartServer(dir);
@@ -968,6 +1022,8 @@ void RegisterRemoteTerminalTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteTerminal/HostTerminalBrowserOpensOnTheClient", TestHostTerminalBrowserOpensOnTheClient);
   AddTest(tests, "RemoteTerminal/HostTerminalRunsTheShellOnTheHost",
           TestHostTerminalRunsTheShellOnTheHost);
+  AddTest(tests, "RemoteTerminal/ALiveTerminalWhoseServerRestartedEndsAndSaysWhy",
+          TestALiveTerminalWhoseServerRestartedEndsAndSaysWhy);
   AddTest(tests, "RemoteTerminal/HostTerminalSurvivesADroppedConnection",
           TestHostTerminalSurvivesADroppedConnection);
   AddTest(tests, "RemoteTerminal/PredictionLeadsTheEchoByARoundTrip",

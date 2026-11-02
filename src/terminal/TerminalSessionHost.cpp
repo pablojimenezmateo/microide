@@ -573,6 +573,22 @@ void TerminalSession::HostConnectionLost(std::string_view reason) {
   PushWakeEvent();
 }
 
+void TerminalSession::HostTerminalEnded(std::string_view reason) {
+  {
+    std::scoped_lock lock(mutex_);
+    if (host_.channel == nullptr || !host_.link_down) {
+      return;
+    }
+    running_ = false;
+    host_.link_down = false;
+    InsertHostRule(lines_, host_, scrollback_trim_total_, cursor_row_,
+                   MakeStatusLine("[" + std::string(reason) + ": the shell ended; Enter starts a new one]",
+                                  /*dim=*/false));
+    AdvanceSnapshotGenerationLocked();
+  }
+  PushWakeEvent();
+}
+
 std::optional<TerminalSession::HostResumePoint> TerminalSession::host_resume_point() const {
   std::scoped_lock lock(mutex_);
   if (host_.channel == nullptr || !host_.mirrored) {
