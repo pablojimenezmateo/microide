@@ -19,25 +19,6 @@ namespace {
 // a click that wobbles still opens the row.
 constexpr float kPathDragThresholdPx = 4.0f;
 
-// `path` as a shell word: bare when it holds nothing a shell reads specially,
-// else single-quoted with each embedded quote spelled '\'' (what VS Code types
-// into a terminal for a dropped file).
-std::string ShellQuoted(const std::filesystem::path& path) {
-  std::string text = path.string();
-  const bool plain = !text.empty() && text.find_first_not_of(
-                                          "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./-+=:@%,") ==
-                                          std::string::npos;
-  if (plain) {
-    return text;
-  }
-  std::string quoted = "'";
-  for (const char c : text) {
-    quoted += c == '\'' ? std::string("'\\''") : std::string(1, c);
-  }
-  quoted += "'";
-  return quoted;
-}
-
 }  // namespace
 
 bool SidebarMouseCoordinator::HandlePathDragMotion(float x, float y, const WorkspaceLayout& layout) {
@@ -157,8 +138,8 @@ bool SidebarMouseCoordinator::FinishPathDrag(bool copy) {
       }
       break;
     case PathDragState::Target::Terminal:
-      if (operations_.type_into_terminal) {
-        operations_.type_into_terminal(ShellQuoted(drag.path));
+      if (operations_.type_path_into_terminal) {
+        operations_.type_path_into_terminal(drag.path);
       }
       break;
     case PathDragState::Target::None:

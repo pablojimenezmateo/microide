@@ -83,7 +83,8 @@ class SidebarMouseCoordinator {
         open_path_in_new_group;
     std::function<std::string(const std::filesystem::path& source, bool cut, const std::filesystem::path& folder)>
         paste_tree_path;
-    std::function<void(std::string)> type_into_terminal;
+    // Types a dragged row's path into the active terminal (DroppedPathText).
+    std::function<void(const std::filesystem::path&)> type_path_into_terminal;
   };
 
   SidebarMouseCoordinator(ProjectWorkspaceState& state,

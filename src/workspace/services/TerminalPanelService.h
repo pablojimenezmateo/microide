@@ -67,6 +67,11 @@ class TerminalPanelService {
   // (TerminalSession::ConsumeOpenUrlRequest). A loopback URL from a host
   // terminal is forwarded first; anything else goes to the desktop opener.
   bool OpenUrlForPane(const TerminalPaneState* pane, std::string_view url) const;
+  // What dropping `local_path` onto terminal `pane` types (null = the project's
+  // launcher): the path as the pane's machine names it -- a remote project's
+  // mirror path mapped to the host's -- quoted for its shell (TerminalDropText).
+  // One rule for a file dragged in from another application and a tree row.
+  std::string DroppedPathText(const TerminalPaneState* pane, const std::filesystem::path& local_path) const;
   void SyncPrimarySelectionWithTerminalSelection();
 
   // --- strip tabs -----------------------------------------------------------

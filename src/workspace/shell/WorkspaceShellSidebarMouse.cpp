@@ -1,6 +1,7 @@
 #include <memory>
 
 #include "workspace/shell/WorkspaceShell.h"
+#include "workspace/services/TerminalPanelService.h"
 
 #include "workspace/ProjectSearchPanelLayout.h"
 #include "workspace/git/GitSidebarHeaderLayout.h"
@@ -174,10 +175,11 @@ SidebarMouseCoordinator& WorkspaceShell::MakeSidebarMouseCoordinator() {
                 }
                 return refusal;
               },
-          .type_into_terminal =
-              [this](std::string text) {
+          .type_path_into_terminal =
+              [this](const std::filesystem::path& path) {
                 context_.current_project_state.surface.focus = FocusTarget::Panel;
-                MakeTextInputCoordinator().PasteTextIntoTerminal(std::move(text));
+                MakeTextInputCoordinator().PasteTextIntoTerminal(
+                    MakeTerminalPanelService().DroppedPathText(ActiveTerminalPane(), path));
               },
       });
   return *glue_->sidebar_mouse_coordinator;

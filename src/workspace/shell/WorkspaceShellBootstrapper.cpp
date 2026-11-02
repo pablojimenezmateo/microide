@@ -452,13 +452,10 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
                   TerminalPanelService& terminals = shell->MakeTerminalPanelService();
                   if (TerminalPaneState* pane = terminals.PaneAt(*layout, x, y);
                       pane != nullptr && pane->session.running()) {
-                    const platform::ProcessLauncher& launcher =
-                        pane->launcher != nullptr ? *pane->launcher
-                                                  : shell->context_.current_project_state.launcher();
                     (void)terminals.ActivatePaneAt(*layout, x, y);
                     shell->context_.current_project_state.surface.focus = FocusTarget::Panel;
-                    return shell->MakeTextInputCoordinator().PasteTextIntoTerminal(TerminalDropText(
-                        launcher.ResolveWorkingDirectory(std::filesystem::path(dropped_path))));
+                    return shell->MakeTextInputCoordinator().PasteTextIntoTerminal(
+                        terminals.DroppedPathText(pane, std::filesystem::path(dropped_path)));
                   }
                 }
                 // What a drop means is decided in WorkspaceFileDrop.h and executed

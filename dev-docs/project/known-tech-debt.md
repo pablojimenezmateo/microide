@@ -537,7 +537,9 @@ Left:
    project tab itself carries no badge (TD-427 item 2's remainder).
 5. **A local file dropped onto a HOST terminal pastes its local path** when it is
    outside the project (a screenshot in ~/Pictures): only the mirror maps to the
-   host (`ResolveWorkingDirectory`). Uploading it to a host temp file and pasting
+   host (`TerminalPanelService::DroppedPathText` through
+   `ResolveWorkingDirectory`; a tree row dragged onto a host terminal used to type
+   the MIRROR's path, fixed by the same call). Uploading it to a host temp file and pasting
    that path is the shape (VS Code's remote terminal has the same gap).
 4. **Two load-only flakes, not reproduced.** In one full `-j32` shard run while
    three sanitizer trees compiled: `RemoteTerminalRestore/

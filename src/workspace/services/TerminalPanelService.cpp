@@ -8,6 +8,7 @@
 #include "platform/ProcessLauncher.h"
 #include "terminal/TerminalSession.h"
 #include "workspace/TabReorder.h"
+#include "workspace/WorkspaceFileDrop.h"
 
 namespace microide::workspace {
 
@@ -32,6 +33,13 @@ std::optional<TerminalLinkHit> TerminalPanelService::TerminalLinkAtPoint(float x
 
 bool TerminalPanelService::OpenExternalUrl(std::string_view url) const {
   return operations_.open_external_url(url);
+}
+
+std::string TerminalPanelService::DroppedPathText(const TerminalPaneState* pane,
+                                                  const std::filesystem::path& local_path) const {
+  const platform::ProcessLauncher& launcher =
+      pane != nullptr && pane->launcher != nullptr ? *pane->launcher : state_.launcher();
+  return TerminalDropText(launcher.ResolveWorkingDirectory(local_path));
 }
 
 bool TerminalPanelService::OpenUrlForPane(const TerminalPaneState* pane, std::string_view url) const {
