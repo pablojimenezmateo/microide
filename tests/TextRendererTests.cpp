@@ -556,6 +556,43 @@ void TestAsciiGlyphAtlasMatchesPerColorRendering() {
 // rather than as nothing -- a difference no allocation count or draw-call count
 // would report, and one the atlas's own unit tests missed by passing a format that
 // happened to have alpha.
+// A glyph no face of the fixed fallback chain has is looked up with fontconfig
+// and drawn with the face it names, as terminals do -- gdb 17's error prefix
+// (U+274C CROSS MARK, followed by VS16) drew as a box in the hero video's debug
+// console (TD-2026-11-01-427 item 5). Compared against a private-use code point,
+// which no face has: that one IS the box.
+void TestAGlyphNoFallbackHasIsFoundWithFontconfig() {
+  EnsureDummySdlVideo();
+  if (microide::render::SdlTtfTextBackend::FaceCoveringCodepointForTesting(0x274C).empty()) {
+    std::fprintf(stderr, "skipped: this machine has no monochrome face with U+274C\n");
+    return;
+  }
+  SoftwareCanvas canvas(160, 40);
+  auto backend = microide::render::SdlTtfTextBackend::Create(canvas.renderer());
+  Expect(backend != nullptr, "the real SDL_ttf backend builds");
+  microide::render::StringTextureCache texture_cache;
+  const auto lit = [&](std::string_view text) {
+    Expect(SDL_SetRenderDrawColor(canvas.renderer(), 0, 0, 0, 0xff) && SDL_RenderClear(canvas.renderer()),
+           "the canvas clears");
+    backend->DrawString(canvas.renderer(), texture_cache, 6.0f, 5.0f, SDL_Color{0xff, 0xff, 0xff, 0xff}, text);
+    SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+    std::vector<bool> on;
+    for (int y = 0; pixels != nullptr && y < pixels->h; ++y) {
+      for (int x = 0; x < pixels->w; ++x) {
+        Uint8 r = 0, g = 0, b = 0, a = 0;
+        SDL_ReadSurfacePixel(pixels, x, y, &r, &g, &b, &a);
+        on.push_back(g > 0x40);
+      }
+    }
+    SDL_DestroySurface(pixels);
+    return on;
+  };
+  const std::vector<bool> box = lit("\xee\x80\x80");          // U+E000: no face has it
+  const std::vector<bool> cross = lit("\xe2\x9d\x8c\xef\xb8\x8f");  // U+274C U+FE0F, as gdb prints it
+  Expect(std::count(cross.begin(), cross.end(), true) > 0, "the cross mark draws something");
+  Expect(cross != box, "and it is the glyph, not the box a missing one draws");
+}
+
 void TestEphemeralRunsMatchTheCachedCompositePath() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(160, 40);
@@ -3323,6 +3360,7 @@ void TestMeasureWidthDoesNotCacheOversizedStrings() {
 }  // namespace
 
 void RegisterTextRendererTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TextRenderer/AGlyphNoFallbackHasIsFoundWithFontconfig", TestAGlyphNoFallbackHasIsFoundWithFontconfig);
   AddTest(tests, "TextRenderer/FontSizeSetBeforeInitializeIsKept", TestSdlTtfFontSizeSetBeforeInitializeIsKept);
   AddTest(tests, "TextRenderer/NonAsciiMeasuresAndDrawsOnTheCellGrid",
           TestSdlTtfNonAsciiMeasuresAndDrawsOnTheCellGrid);

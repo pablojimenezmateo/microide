@@ -18,6 +18,7 @@
 #include <string_view>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace microide::render {
@@ -45,6 +46,9 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   // Test seam: derive the picker's display family name from a font file stem the
   // way the no-fontconfig fallback does (strips weight/style tails, splits words).
   static std::string FontDisplayNameFromStemForTesting(std::string_view stem);
+  // The face EnsureCodepointCovered would add for `codepoint` (empty: none, or no
+  // fontconfig). For tests, which must know whether the machine can draw it.
+  static std::filesystem::path FaceCoveringCodepointForTesting(char32_t codepoint);
   float CharWidth() const override { return char_width_; }
   float LineHeight() const override { return line_height_; }
   TextClipPadding ClipPadding() const override { return clip_padding_; }
@@ -137,6 +141,9 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   // set is freed rather than leaked, and by CloseFonts during teardown.
   void CloseFallbackFonts();
   void LoadFallbackFonts();
+  // A code point no face of the chain has: fontconfig's nearest monochrome face
+  // that does joins the chain (once per code point).
+  void EnsureCodepointCovered(char32_t codepoint) const;
   // Open the broad-Unicode / symbol fallbacks the first time a caller actually
   // asks the primary font about a non-ASCII subject.
   //
@@ -200,6 +207,8 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   // Reset by a primary-font change (SetFontFamily) so the next non-ASCII subject
   // re-resolves fallbacks against the new primary.
   mutable bool fallback_fonts_loaded_ = false;
+  // Code points EnsureCodepointCovered has answered for the current chain.
+  mutable std::unordered_set<char32_t> checked_codepoints_;
   std::filesystem::path font_path_;
   // The requested editor font family (empty = platform default). Retained so a
   // later size / presentation-scale change re-resolves the same family.

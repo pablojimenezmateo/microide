@@ -607,6 +607,9 @@ SDL_Surface* SdlTtfTextBackend::BuildGridCompositeSurface(std::string_view text,
     const int span_px =
         static_cast<int>(std::lround(static_cast<float>(cell + width) * cell_width_px)) - dst_x;
     const bool ascii_cell = cluster.size() == 1 && base >= 0x20 && base <= 0x7E;
+    if (!ascii_cell) {
+      EnsureCodepointCovered(base);  // before its first raster, so no box is cached
+    }
     if (ascii_cell && base == ' ') {
       // Spaces contribute no coverage.
     } else if (ascii_cell && atlas_ok && ascii_atlas_ != nullptr &&
@@ -1151,6 +1154,7 @@ void SdlTtfTextBackend::CloseFallbackFonts() {
   }
   fallback_fonts_.clear();
   fallback_fonts_loaded_ = false;
+  checked_codepoints_.clear();  // a new chain answers them afresh
 }
 
 void SdlTtfTextBackend::CloseFonts() {
@@ -1192,6 +1196,113 @@ void SdlTtfTextBackend::LoadFallbackFonts() {
     }
     fallback_fonts_.push_back(fallback_font);
   }
+}
+
+namespace {
+
+#if MICROIDE_HAS_FONTCONFIG
+// A scalable, monochrome face that has `codepoint`, nearest the defaults first;
+// empty when the machine has none. Not a colour face: a bitmap emoji font draws
+// at its own fixed strike size, not the cell's.
+std::filesystem::path FaceCoveringCodepoint(char32_t codepoint) {
+  static const bool initialized = FcInit() == FcTrue;
+  FcConfig* config = initialized ? FcConfigGetCurrent() : nullptr;
+  if (config == nullptr) {
+    return {};
+  }
+  std::filesystem::path result;
+  FcPattern* pattern = FcPatternCreate();
+  FcCharSet* wanted = FcCharSetCreate();
+  if (pattern != nullptr && wanted != nullptr && FcCharSetAddChar(wanted, codepoint) == FcTrue) {
+    FcPatternAddCharSet(pattern, FC_CHARSET, wanted);
+    FcPatternAddBool(pattern, FC_SCALABLE, FcTrue);
+    FcConfigSubstitute(config, pattern, FcMatchPattern);
+    FcDefaultSubstitute(pattern);
+    FcResult sort_result = FcResultNoMatch;
+    if (FcFontSet* sorted = FcFontSort(config, pattern, FcFalse, nullptr, &sort_result)) {
+      for (int i = 0; i < sorted->nfont && result.empty(); ++i) {
+        FcPattern* font = sorted->fonts[i];
+        FcCharSet* has = nullptr;
+        FcBool color = FcFalse;
+        FcBool scalable = FcTrue;
+        FcChar8* file = nullptr;
+        if (FcPatternGetCharSet(font, FC_CHARSET, 0, &has) != FcResultMatch || has == nullptr ||
+            FcCharSetHasChar(has, codepoint) != FcTrue) {
+          continue;
+        }
+#ifdef FC_COLOR
+        (void)FcPatternGetBool(font, FC_COLOR, 0, &color);
+#endif
+        (void)FcPatternGetBool(font, FC_SCALABLE, 0, &scalable);
+        if (color == FcTrue || scalable != FcTrue) {
+          continue;
+        }
+        if (FcPatternGetString(font, FC_FILE, 0, &file) == FcResultMatch && file != nullptr) {
+          result = std::filesystem::path(reinterpret_cast<const char*>(file));
+        }
+      }
+      FcFontSetDestroy(sorted);
+    }
+  }
+  if (wanted != nullptr) {
+    FcCharSetDestroy(wanted);
+  }
+  if (pattern != nullptr) {
+    FcPatternDestroy(pattern);
+  }
+  return result;
+}
+#endif
+
+}  // namespace
+
+std::filesystem::path SdlTtfTextBackend::FaceCoveringCodepointForTesting(char32_t codepoint) {
+#if MICROIDE_HAS_FONTCONFIG
+  return FaceCoveringCodepoint(codepoint);
+#else
+  (void)codepoint;
+  return {};
+#endif
+}
+
+void SdlTtfTextBackend::EnsureCodepointCovered(char32_t codepoint) const {
+  // Once per code point: a hit is the common case (every later cell of a script).
+  constexpr std::size_t kMaxRemembered = 4096;
+  if (font_ == nullptr || checked_codepoints_.contains(codepoint)) {
+    return;
+  }
+  if (checked_codepoints_.size() < kMaxRemembered) {
+    checked_codepoints_.insert(codepoint);
+  }
+  if (TTF_FontHasGlyph(font_, codepoint)) {
+    return;
+  }
+  for (TTF_Font* fallback : fallback_fonts_) {
+    if (fallback != nullptr && TTF_FontHasGlyph(fallback, codepoint)) {
+      return;
+    }
+  }
+#if MICROIDE_HAS_FONTCONFIG
+  // No face the chain knows has it (gdb's error prefix, U+274C, is in none of the
+  // fixed fallbacks, and drew as a box: TD-2026-11-01-427 item 5): ask fontconfig
+  // for one that does, as terminals do, and put it at the end of the chain.
+  const std::filesystem::path face = FaceCoveringCodepoint(codepoint);
+  if (face.empty() || face == font_path_) {
+    return;
+  }
+  TTF_Font* added = TTF_OpenFont(face.string().c_str(), font_point_size_);
+  if (added == nullptr) {
+    return;
+  }
+  TTF_SetFontHinting(added, TTF_HINTING_LIGHT_SUBPIXEL);
+  TTF_SetFontKerning(added, false);
+  TTF_SetFontSizeDPI(added, font_point_size_, CurrentHorizontalDpi(), CurrentVerticalDpi());
+  if (!TTF_AddFallbackFont(font_, added)) {
+    TTF_CloseFont(added);
+    return;
+  }
+  fallback_fonts_.push_back(added);
+#endif
 }
 
 void SdlTtfTextBackend::EnsureFallbackFontsLoaded() const {
