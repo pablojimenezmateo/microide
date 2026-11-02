@@ -180,6 +180,9 @@ project (see [README](README.md)); versions track meaningful shipped work.
 - A file dropped onto a terminal is typed into it as its (quoted) path, as in
   gnome-terminal and VS Code -- drag a screenshot into Claude Code's prompt. It
   opened in an editor tab wherever it was dropped.
+- Switching projects right after starting a branch switch, push, pull, commit or
+  hunk stage no longer drops it: under load the operation could be cancelled
+  before it ran, after which git stayed "busy" and refused every later action.
 - A notification, bell or browser request from a terminal in a background project
   shows at once, naming the project, instead of when the project is next opened.
 - A maximized terminal stays maximized across a restart and when switching
