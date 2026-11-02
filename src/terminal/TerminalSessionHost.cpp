@@ -503,9 +503,9 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
     screen_reverse_video_ = frame.has(TerminalHostFrame::kReverseVideo);
     cursor_blinking_ = frame.has(TerminalHostFrame::kCursorBlinking);
     cursor_shape_ = frame.cursor_shape;
-    mouse_tracking_normal_ = frame.has(TerminalHostFrame::kMouseNormal);
-    mouse_tracking_drag_ = frame.has(TerminalHostFrame::kMouseDrag);
-    mouse_tracking_any_ = frame.has(TerminalHostFrame::kMouseAny);
+    mouse_.normal = frame.has(TerminalHostFrame::kMouseNormal);
+    mouse_.drag = frame.has(TerminalHostFrame::kMouseDrag);
+    mouse_.any = frame.has(TerminalHostFrame::kMouseAny);
     focus_event_mode_ = frame.has(TerminalHostFrame::kFocusEvents);
     running_ = frame.has(TerminalHostFrame::kRunning);
     if (frame.has(TerminalHostFrame::kBell)) {
@@ -817,9 +817,9 @@ void TerminalSession::CaptureForHost(std::uint64_t from, std::size_t max_lines_b
   flag(TerminalHostFrame::kCursorVisible, cursor_visible_);
   flag(TerminalHostFrame::kReverseVideo, screen_reverse_video_);
   flag(TerminalHostFrame::kCursorBlinking, cursor_blinking_);
-  flag(TerminalHostFrame::kMouseNormal, mouse_tracking_normal_);
-  flag(TerminalHostFrame::kMouseDrag, mouse_tracking_drag_);
-  flag(TerminalHostFrame::kMouseAny, mouse_tracking_any_);
+  flag(TerminalHostFrame::kMouseNormal, mouse_.normal);
+  flag(TerminalHostFrame::kMouseDrag, mouse_.drag);
+  flag(TerminalHostFrame::kMouseAny, mouse_.any);
   flag(TerminalHostFrame::kFocusEvents, focus_event_mode_);
   flag(TerminalHostFrame::kRunning, running_);
   flag(TerminalHostFrame::kBell, pending_host_bell_);

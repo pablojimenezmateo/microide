@@ -590,14 +590,14 @@ bool TerminalSession::ConsumeWakeEvent() {
 
 bool TerminalSession::WantsMouseCapture() const {
   std::scoped_lock lock(mutex_);
-  return CurrentTerminalMouseTrackingMode(mouse_tracking_any_, mouse_tracking_drag_,
-                                          mouse_tracking_normal_) != TerminalMouseTrackingMode::Disabled;
+  return CurrentTerminalMouseTrackingMode(mouse_.any, mouse_.drag,
+                                          mouse_.normal) != TerminalMouseTrackingMode::Disabled;
 }
 
 bool TerminalSession::WantsMouseMotionCapture(bool buttons_down) const {
   std::scoped_lock lock(mutex_);
-  switch (CurrentTerminalMouseTrackingMode(mouse_tracking_any_, mouse_tracking_drag_,
-                                           mouse_tracking_normal_)) {
+  switch (CurrentTerminalMouseTrackingMode(mouse_.any, mouse_.drag,
+                                           mouse_.normal)) {
     case TerminalMouseTrackingMode::Any:
       return true;
     case TerminalMouseTrackingMode::Drag:

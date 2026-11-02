@@ -437,6 +437,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/terminal/TerminalBase64.cpp
   src/terminal/TerminalCsiParser.cpp
   src/terminal/TerminalMouseEncoder.cpp
+  src/terminal/TerminalHoverAffordance.cpp
   src/terminal/TerminalOscClipboard.cpp
   src/terminal/TerminalSearch.cpp
   src/terminal/TerminalSession.cpp
@@ -1638,6 +1639,7 @@ add_executable(microide_kernel_tests
   tests/TerminalInvariantSweepTests.cpp
   tests/TerminalLifecycleStressTests.cpp
   tests/TerminalSearchTests.cpp
+  tests/TerminalHoverAffordanceTests.cpp
   tests/TerminalHostTests.cpp
   tests/TerminalSessionTests.cpp
   tests/TestRunnerCliTests.cpp
@@ -1879,6 +1881,7 @@ if(MICROIDE_FUZZ)
     src/terminal/TerminalBase64.cpp
     src/terminal/TerminalCsiParser.cpp
     src/terminal/TerminalMouseEncoder.cpp
+    src/terminal/TerminalHoverAffordance.cpp
     src/terminal/TerminalOscClipboard.cpp
     src/terminal/TerminalSearch.cpp
     src/terminal/TerminalPredictionOverlay.cpp

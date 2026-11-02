@@ -4,6 +4,7 @@
 #include "platform/ProcessLauncher.h"
 #include "platform/TerminalBackend.h"
 #include "terminal/TerminalCell.h"
+#include "terminal/TerminalHoverAffordance.h"
 #include "terminal/TerminalLinkTable.h"
 #include "terminal/TerminalHostChannel.h"
 #include "terminal/TerminalHostHistory.h"
@@ -207,6 +208,10 @@ class TerminalSession {
                        std::size_t row,
                        std::size_t column,
                        util::KeyModifiers modifiers);
+  // Whether the program that owns the mouse lit the control under screen
+  // (row, column) in answer to the pointer resting there -- what the panel shows
+  // a hand for. See TerminalHoverAffordance.
+  bool HoverAffordanceAt(std::size_t row, std::size_t column) const;
 
   // ---- Host terminals (dev-docs/design/remote-projects.md § 6.5) ----
   //
@@ -488,10 +493,10 @@ class TerminalSession {
   std::optional<Notification> pending_notification_;
   bool pending_host_bell_ = false;
   bool use_alternate_screen_ = false;
-  bool mouse_tracking_normal_ = false;
-  bool mouse_tracking_drag_ = false;
-  bool mouse_tracking_any_ = false;
-  bool mouse_sgr_ext_mode_ = false;
+  TerminalMouseModes mouse_;
+  // The screen row under the last reported pointer move, before the program
+  // answered it (any-motion tracking only).
+  TerminalHoverAffordance hover_affordance_;
   bool application_cursor_keys_mode_ = false;
   bool origin_mode_ = false;
   bool auto_wrap_mode_ = true;

@@ -249,11 +249,21 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
     case SDL_EVENT_KEY_DOWN:
       {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::KeyDown");
+        const bool shift_changed = ((state_.key_modifiers ^ event.key.mod) & SDL_KMOD_SHIFT) != 0;
         state_.key_modifiers = event.key.mod;
+        if (shift_changed && operations_.pointer_modifiers_changed) {
+          operations_.pointer_modifiers_changed();
+        }
         return finish(operations_.handle_key_down(event.key));
       }
     case SDL_EVENT_KEY_UP:
-      state_.key_modifiers = event.key.mod;
+      {
+        const bool shift_changed = ((state_.key_modifiers ^ event.key.mod) & SDL_KMOD_SHIFT) != 0;
+        state_.key_modifiers = event.key.mod;
+        if (shift_changed && operations_.pointer_modifiers_changed) {
+          operations_.pointer_modifiers_changed();
+        }
+      }
       return finish(operations_.handle_key_up && operations_.handle_key_up(event.key));
     default:
       return finish(false);

@@ -62,6 +62,10 @@ class WorkspaceEventDispatcher {
     std::function<bool(const SDL_TextInputEvent&)> handle_text_input;
     std::function<void()> handle_window_mouse_leave;
     std::function<void()> force_cursor_reassert;
+    // Shift went down or up with the pointer still: Shift is part of what the
+    // pointer means over a terminal whose program owns the mouse (it selects
+    // instead), so the cursor is resolved again where it rests.
+    std::function<void()> pointer_modifiers_changed;
     // Autosave hook fired when the window loses focus (honors editor.autosave).
     std::function<void()> autosave_on_focus_lost;
     // End any in-flight mouse selection gesture. Fired on focus loss: the

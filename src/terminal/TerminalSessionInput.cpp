@@ -99,7 +99,7 @@ bool TerminalSession::SendMouseToHost(TerminalInputEvent::Kind kind, MouseButton
       return false;
     }
     const TerminalMouseTrackingMode mode = CurrentTerminalMouseTrackingMode(
-        mouse_tracking_any_, mouse_tracking_drag_, mouse_tracking_normal_);
+        mouse_.any, mouse_.drag, mouse_.normal);
     if (mode == TerminalMouseTrackingMode::Disabled ||
         (kind == TerminalInputEvent::Kind::MouseMotion && mode == TerminalMouseTrackingMode::Normal)) {
       return true;  // handled: nothing to send
@@ -129,8 +129,8 @@ bool TerminalSession::SendMouseButton(MouseButton button,
     // production (flag off) this is exactly `backend_ && backend_->running()`.
     const bool can_encode = (backend_ && backend_->running()) ||
                             (UsePlaceholderTerminalsForTesting() && running_);
-    if (!EncodeTerminalSessionMouseEvent(mouse_tracking_any_, mouse_tracking_drag_,
-                                         mouse_tracking_normal_, mouse_sgr_ext_mode_, rows_,
+    if (!EncodeTerminalSessionMouseEvent(mouse_.any, mouse_.drag,
+                                         mouse_.normal, mouse_.sgr, rows_,
                                          columns_, button, pressed, false, row, column, modifiers,
                                          can_encode, bytes)) {
       return false;
@@ -140,10 +140,29 @@ bool TerminalSession::SendMouseButton(MouseButton button,
   return true;
 }
 
+bool TerminalSession::HoverAffordanceAt(std::size_t row, std::size_t column) const {
+  std::scoped_lock lock(mutex_);
+  const std::size_t line = PrimaryScreenTopLocked() + row;
+  return mouse_.any && row < rows_ && line < lines_.size() &&
+         hover_affordance_.Contains(row, column, lines_[line]);
+}
+
 bool TerminalSession::SendMouseMotion(MouseButton button,
                                       std::size_t row,
                                       std::size_t column,
                                       util::KeyModifiers modifiers) {
+  {
+    // Before the program sees the move: the snapshot is what the row looked like
+    // with the pointer elsewhere. A host terminal's mirror is the same screen, so
+    // this holds for both.
+    std::scoped_lock lock(mutex_);
+    if (mouse_.any && button == MouseButton::None) {
+      const std::size_t line = PrimaryScreenTopLocked() + row;
+      if (row < rows_ && line < lines_.size()) {
+        hover_affordance_.Probe(row, column, lines_[line]);
+      }
+    }
+  }
   if (SendMouseToHost(TerminalInputEvent::Kind::MouseMotion, button, true, row, column, modifiers)) {
     return true;
   }
@@ -154,8 +173,8 @@ bool TerminalSession::SendMouseMotion(MouseButton button,
     // production (flag off) this is exactly `backend_ && backend_->running()`.
     const bool can_encode = (backend_ && backend_->running()) ||
                             (UsePlaceholderTerminalsForTesting() && running_);
-    if (!EncodeTerminalSessionMouseEvent(mouse_tracking_any_, mouse_tracking_drag_,
-                                         mouse_tracking_normal_, mouse_sgr_ext_mode_, rows_,
+    if (!EncodeTerminalSessionMouseEvent(mouse_.any, mouse_.drag,
+                                         mouse_.normal, mouse_.sgr, rows_,
                                          columns_, button, true, true, row, column, modifiers,
                                          can_encode, bytes)) {
       return false;

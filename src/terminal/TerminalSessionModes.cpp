@@ -87,15 +87,15 @@ int TerminalSession::QueryPrivateModeStateLocked(int mode) const {
     case 1049:
       return use_alternate_screen_ ? 1 : 2;
     case 1000:
-      return mouse_tracking_normal_ ? 1 : 2;
+      return mouse_.normal ? 1 : 2;
     case 1002:
-      return mouse_tracking_drag_ ? 1 : 2;
+      return mouse_.drag ? 1 : 2;
     case 1003:
-      return mouse_tracking_any_ ? 1 : 2;
+      return mouse_.any ? 1 : 2;
     case 1004:
       return focus_event_mode_ ? 1 : 2;
     case 1006:
-      return mouse_sgr_ext_mode_ ? 1 : 2;
+      return mouse_.sgr ? 1 : 2;
     case 2004:
       return bracketed_paste_mode_ ? 1 : 2;
     case 2026:
@@ -132,16 +132,16 @@ void TerminalSession::HandlePrivateModeLocked(int mode, bool enabled) {
       auto_wrap_mode_ = enabled;
       return;
     case 1000:
-      mouse_tracking_normal_ = enabled;
+      mouse_.normal = enabled;
       return;
     case 1002:
-      mouse_tracking_drag_ = enabled;
+      mouse_.drag = enabled;
       return;
     case 1003:
-      mouse_tracking_any_ = enabled;
+      mouse_.any = enabled;
       return;
     case 1006:
-      mouse_sgr_ext_mode_ = enabled;
+      mouse_.sgr = enabled;
       return;
     case 2004:
       bracketed_paste_mode_ = enabled;

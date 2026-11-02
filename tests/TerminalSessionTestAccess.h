@@ -130,9 +130,9 @@ struct TerminalSessionTestAccess {
                                bool drag,
                                bool any) {
     std::scoped_lock lock(session.mutex_);
-    session.mouse_tracking_normal_ = normal;
-    session.mouse_tracking_drag_ = drag;
-    session.mouse_tracking_any_ = any;
+    session.mouse_.normal = normal;
+    session.mouse_.drag = drag;
+    session.mouse_.any = any;
   }
 
   // Put `session` in host mode over `channel`, as StartOnHost would after the

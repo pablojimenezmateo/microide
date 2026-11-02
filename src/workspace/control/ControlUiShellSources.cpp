@@ -98,9 +98,38 @@ std::string DebugValueRowLabel(const DebugVariableRowView& row) {
 // redraw or changes state.
 ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
   using namespace control_ui_kind;
+  const auto cursor_name = [](CursorKind kind) -> std::string_view {
+        switch (kind) {
+          case CursorKind::Default: return "default";
+          case CursorKind::Text: return "text";
+          case CursorKind::Pointer: return "pointer";
+          case CursorKind::EwResize: return "ew-resize";
+          case CursorKind::NsResize: return "ns-resize";
+          case CursorKind::NResize: return "n-resize";
+          case CursorKind::EResize: return "e-resize";
+          case CursorKind::SResize: return "s-resize";
+          case CursorKind::WResize: return "w-resize";
+          case CursorKind::NeResize: return "ne-resize";
+          case CursorKind::SeResize: return "se-resize";
+          case CursorKind::SwResize: return "sw-resize";
+          case CursorKind::NwResize: return "nw-resize";
+        }
+        return "default";
+      };
+  const auto cursor_at = [this, cursor_name](float x, float y) {
+    return cursor_name(CursorKindForPosition(x, y));
+  };
   return ControlUiQuery::Operations{
       .layout = [this]() { return CurrentWorkspaceLayout(); },
       .window_per_unit = [this]() { return window_presentation_.window_per_unit; },
+      .cursor_at = cursor_at,
+      .pointer_cursor =
+          // The shape the window SHOWS, not one resolved afresh: a shape that
+          // should change without a pointer move (a program lighting a control
+          // under it) is only right if the shell re-resolved it.
+          [this, cursor_name]() -> std::string_view {
+            return last_mouse_position_valid_ ? cursor_name(cursor_kind_) : std::string_view{};
+          },
       .menu_label =
           [](MenuId id) {
             const MenuSpec* spec = FindMenuSpec(id);
@@ -287,6 +316,7 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
             if (mode == SidebarMode::Tree) {
               AddControlUiElement(out, kButton, "sidebar/Collapse",
                                   TreeSidebarCollapseButtonRect(layout.sidebar));
+              out.back().enabled = state.directory_tree.CanCollapseAll();
               AddControlUiElement(out, kButton, "sidebar/Refresh",
                                   TreeSidebarRefreshButtonRect(layout.sidebar));
             }

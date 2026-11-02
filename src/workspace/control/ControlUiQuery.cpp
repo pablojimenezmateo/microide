@@ -232,9 +232,18 @@ util::JsonValue ControlUiQuery::Build(const WorkspaceContext& context, const Ope
     if (element.thumb.has_value()) {
       entry["thumb"] = RectJson(*element.thumb);
     }
+    if (operations.cursor_at && HasArea(element.rect)) {
+      entry["cursor"] = util::JsonValue(std::string(operations.cursor_at(
+          element.rect.x + element.rect.w * 0.5f, element.rect.y + element.rect.h * 0.5f)));
+    }
     array.push_back(util::JsonValue(std::move(entry)));
   }
   object["elements"] = util::JsonValue(std::move(array));
+  if (operations.pointer_cursor) {
+    if (const std::string_view cursor = operations.pointer_cursor(); !cursor.empty()) {
+      object["cursor"] = util::JsonValue(std::string(cursor));
+    }
+  }
   if (operations.details) {
     operations.details(*layout, object);
   }

@@ -389,6 +389,13 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
               },
           .handle_window_mouse_leave = [shell]() { shell->ClearMouseHoverState(); },
           .force_cursor_reassert = [shell]() { shell->ForceCursorReassert(); },
+          .pointer_modifiers_changed =
+              [shell]() {
+                if (shell->last_mouse_position_valid_) {
+                  shell->InvalidateCursorKindFingerprint();
+                  shell->UpdateMouseCursor(shell->last_mouse_x_, shell->last_mouse_y_);
+                }
+              },
           .autosave_on_focus_lost = [shell]() { shell->MaybeAutosaveDirtyTabs(true); },
           .end_selection_gesture =
               [shell]() {

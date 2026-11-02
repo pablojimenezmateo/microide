@@ -21,6 +21,15 @@ enum class TerminalMouseButton : std::uint8_t {
   WheelDown,
 };
 
+// The mouse reporting a program asked for: DECSET 1000 (presses), 1002 (drags),
+// 1003 (every move) and 1006 (SGR coordinates).
+struct TerminalMouseModes {
+  bool normal = false;
+  bool drag = false;
+  bool any = false;
+  bool sgr = false;
+};
+
 enum class TerminalCursorShape : std::uint8_t {
   Block,
   Underline,

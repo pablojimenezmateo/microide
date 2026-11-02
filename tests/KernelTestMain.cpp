@@ -52,6 +52,7 @@ void RegisterTerminalBackendTests(std::vector<TestCase>& tests);
 void RegisterTerminalInvariantSweepTests(std::vector<TestCase>& tests);
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests);
 void RegisterTerminalSearchTests(std::vector<TestCase>& tests);
+void RegisterTerminalHoverAffordanceTests(std::vector<TestCase>& tests);
 void RegisterWindowPresentationTests(std::vector<TestCase>& tests);
 void RegisterAsyncBufferWorkTests(std::vector<TestCase>& tests);
 void RegisterFileReadServiceTests(std::vector<TestCase>& tests);
@@ -152,6 +153,7 @@ void RegisterKernelTests(std::vector<TestCase>& tests) {
   RegisterTerminalInvariantSweepTests(tests);
   RegisterTerminalSessionTests(tests);
   RegisterTerminalSearchTests(tests);
+  RegisterTerminalHoverAffordanceTests(tests);
   RegisterRegexUtilTests(tests);
   RegisterRuntimePathsTests(tests);
   RegisterStringUtilTests(tests);

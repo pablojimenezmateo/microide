@@ -1461,6 +1461,102 @@ void TestWorkspaceShellTerminalFileReferenceClickOpensTheFile() {
 
 // A link under the pointer is underlined, as VS Code's terminal does: the whole
 // link (a URL in the text, or an OSC 8 run), and only while the pointer is on it.
+// A program that owns the mouse (Claude Code's fullscreen TUI: DECSET 1003 +
+// SGR) gets the clicks, so the pane shows the arrow, not the I-beam -- and the
+// hand over a control it lit under the resting pointer, the only sign of a
+// button such a program gives (it sends no OSC 22). The bytes are Claude Code's
+// own grey / hovered paints of a collapsed tool group. Shift is selection, so it
+// shows the I-beam. And the shape follows the program's repaint with no further
+// pointer move: the frame after the output re-resolves it.
+void TestWorkspaceShellTerminalMouseOwnerShowsAHandOnLitControls() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, temp_dir.path());
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::SetRunning(session, true);
+  TerminalSessionTestAccess::AppendOutput(session, "plain text here\r\n");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetFocusPanel(shell);
+  const SDL_FPoint plain = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 2);
+  Expect(WorkspaceShellTestAccess::CursorKindAtIsText(shell, plain.x, plain.y),
+         "a shell that does not own the mouse keeps the I-beam (selection)");
+
+  TerminalSessionTestAccess::AppendOutput(
+      session, "\x1b[?1003h\x1b[?1006h\x1b[2;3H\x1b[38;2;153;153;153mListed \x1b[1m1\x1b[22m directory\x1b[39m");
+  const SDL_FPoint group = WorkspaceShellTestAccess::TerminalCellPoint(shell, 1, 4);
+  Expect(WorkspaceShellTestAccess::CursorKindAtIsDefault(shell, plain.x, plain.y),
+         "over a program that owns the mouse, plain text shows the arrow");
+  Expect(WorkspaceShellTestAccess::CursorKindAtIsDefault(shell, group.x, group.y),
+         "a control the program has not lit is not known to be one");
+
+  Expect(SendMouseMotion(shell, group.x, group.y, 0), "the move is reported to the program");
+  SoftwareCanvas canvas(1280, 720);
+  shell.Render(canvas.renderer(), 1280, 720);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[2;3HListed \x1b[1m1\x1b[22m directory\x1b[K");
+  WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+  shell.Render(canvas.renderer(), 1280, 720);
+  Expect(WorkspaceShellTestAccess::CachedCursorIsPointer(shell),
+         "the program lit the group under the still pointer: the window shows the hand");
+  const SDL_FPoint digit = WorkspaceShellTestAccess::TerminalCellPoint(shell, 1, 9);
+  Expect(WorkspaceShellTestAccess::CursorKindAtIsPointer(shell, digit.x, digit.y),
+         "the whole lit run is the control, its bold digit included");
+  Expect(WorkspaceShellTestAccess::CursorKindAtIsDefault(shell, plain.x, plain.y),
+         "text the program did not light keeps the arrow");
+
+  SDL_Event shift{};
+  shift.type = SDL_EVENT_KEY_DOWN;
+  shift.key.key = SDLK_LSHIFT;
+  shift.key.mod = SDL_KMOD_LSHIFT;
+  (void)shell.HandleEvent(shift);
+  Expect(WorkspaceShellTestAccess::CachedCursorIsText(shell),
+         "Shift down over the program shows the I-beam at once: Shift selects");
+  shift.type = SDL_EVENT_KEY_UP;
+  shift.key.mod = SDL_KMOD_NONE;
+  (void)shell.HandleEvent(shift);
+  Expect(WorkspaceShellTestAccess::CachedCursorIsPointer(shell), "and letting go gives the hand back");
+}
+
+// Shift+drag selects text past a program that owns the mouse, as in every Linux
+// terminal (and as Claude Code's fullscreen mode tells its users to) -- the
+// panel had no way to select a word of such a program's output. The program is
+// sent nothing for the gesture, even when Shift is let go before the release.
+void TestWorkspaceShellTerminalShiftDragSelectsPastAMouseOwner() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, temp_dir.path());
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::SetRunning(session, true);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1000h\x1b[?1006hselect me");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetFocusPanel(shell);
+  const SDL_FPoint start = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 0);
+  const SDL_FPoint end = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 6);
+
+  SDL_Event shift{};
+  shift.type = SDL_EVENT_KEY_DOWN;
+  shift.key.key = SDLK_LSHIFT;
+  shift.key.mod = SDL_KMOD_LSHIFT;
+  (void)shell.HandleEvent(shift);
+  Expect(SendMouseDown(shell, start.x, start.y, SDL_BUTTON_LEFT), "Shift+press starts a selection");
+  Expect(SendMouseMotion(shell, end.x, end.y, SDL_BUTTON_LMASK), "the drag extends it");
+  shift.type = SDL_EVENT_KEY_UP;
+  shift.key.mod = SDL_KMOD_NONE;
+  (void)shell.HandleEvent(shift);
+  Expect(SendMouseUp(shell, end.x, end.y, SDL_BUTTON_LEFT), "the release ends it");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalSelectedText(shell) == "select",
+         "Shift+drag selected the text: [" + WorkspaceShellTestAccess::ActiveTerminalSelectedText(shell) + "]");
+  Expect(TerminalSessionTestAccess::SentBytes(session).empty(),
+         "and the program was sent no mouse report for it: [" + TerminalSessionTestAccess::SentBytes(session) + "]");
+
+  Expect(SendMouseDown(shell, start.x, start.y, SDL_BUTTON_LEFT), "a plain press");
+  Expect(TerminalSessionTestAccess::SentBytes(session).find("\x1b[<0;1;1M") != std::string::npos,
+         "without Shift the press is the program's: [" + TerminalSessionTestAccess::SentBytes(session) + "]");
+}
+
 void TestWorkspaceShellTerminalLinkUnderlinesOnHover() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -2886,6 +2982,10 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/TerminalLeftClickOpensUrls",
           TestWorkspaceShellTerminalLeftClickOpensUrls);
   AddTest(tests, "WorkspaceShell/TerminalLinkUnderlinesOnHover", TestWorkspaceShellTerminalLinkUnderlinesOnHover);
+  AddTest(tests, "WorkspaceShell/TerminalMouseOwnerShowsAHandOnLitControls",
+          TestWorkspaceShellTerminalMouseOwnerShowsAHandOnLitControls);
+  AddTest(tests, "WorkspaceShell/TerminalShiftDragSelectsPastAMouseOwner",
+          TestWorkspaceShellTerminalShiftDragSelectsPastAMouseOwner);
   AddTest(tests, "WorkspaceShell/TerminalWrappedLinkIsOneLink", TestWorkspaceShellTerminalWrappedLinkIsOneLink);
   AddTest(tests, "WorkspaceShell/TerminalReverseVideoPaintsThePane",
           TestWorkspaceShellTerminalReverseVideoPaintsThePane);

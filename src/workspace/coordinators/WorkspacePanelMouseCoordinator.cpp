@@ -452,7 +452,8 @@ bool PanelMouseCoordinator::HandleMotion(const SDL_Event& event) {
   if (auto* terminal_tab = ActivePanelTerminalPane()) {
     const bool buttons_down =
         (event.motion.state & (SDL_BUTTON_LMASK | SDL_BUTTON_MMASK | SDL_BUTTON_RMASK)) != 0;
-    if (terminal_tab->session.WantsMouseMotionCapture(buttons_down)) {
+    if (ProgramOwnsPointer(*terminal_tab) &&
+        terminal_tab->session.WantsMouseMotionCapture(buttons_down)) {
       if (const auto viewport_position =
               operations_.terminal_viewport_position_for_point(event.motion.x, event.motion.y);
           viewport_position.has_value()) {
@@ -660,6 +661,16 @@ float PanelMouseCoordinator::PanelPixelsPerScrollRow(const WorkspaceLayout& layo
   return line_height > 0.0f ? line_height : 14.0f;
 }
 
+bool PanelMouseCoordinator::ProgramOwnsPointer(const TerminalPaneState& pane) const {
+  // While the program asked for the mouse it gets presses and moves -- except
+  // under Shift, which every Linux terminal reserves for selecting text past such
+  // a program (Claude Code's fullscreen mode says "hold Shift to select"), and
+  // for the rest of a selection drag started that way, so letting go of Shift
+  // mid-drag does not hand the program a release it never saw pressed.
+  return pane.session.WantsMouseCapture() && !pane.mouse_selecting &&
+         (interaction_state_.key_modifiers & SDL_KMOD_SHIFT) == 0;
+}
+
 TerminalPaneState* PanelMouseCoordinator::ActivePanelTerminalPane() {
   return state_.panel.content == PanelContentKind::Terminal ? state_.active_terminal_pane()
                                                             : nullptr;
@@ -676,7 +687,7 @@ bool PanelMouseCoordinator::HandleMouseCaptureButton(const SDL_Event& event, boo
   const auto mouse_button = operations_.terminal_mouse_button_for_sdl(event.button.button);
   if (!viewport_position.has_value() ||
       mouse_button == terminal::TerminalSession::MouseButton::None ||
-      !terminal_tab->session.WantsMouseCapture()) {
+      !ProgramOwnsPointer(*terminal_tab)) {
     return false;
   }
 

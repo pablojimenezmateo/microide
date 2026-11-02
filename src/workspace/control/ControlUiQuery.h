@@ -106,6 +106,13 @@ class ControlUiQuery {
     // Window coordinates per layout unit (x, y): every rect and geometry field the
     // query reports is in layout units; a driver multiplies by this to point.
     std::function<SDL_FPoint()> window_per_unit;
+    // The mouse cursor the shell would show at a point (`pointer`, `text`,
+    // `default`, `ew-resize`, ...). Each element reports the one at its centre, so
+    // a sweep can hold every clickable element to the hand cursor.
+    std::function<std::string_view(float, float)> cursor_at;
+    // The cursor the window shows where the pointer last was (`cursor` in the
+    // answer); empty before the pointer has been seen.
+    std::function<std::string_view()> pointer_cursor;
     // The display label of a menu (`Edit`), for the menu state block.
     std::function<std::string(MenuId)> menu_label;
     // `<menu>/<label>` of a menu's row, the locator its `menu-item:` element uses.

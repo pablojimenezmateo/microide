@@ -92,6 +92,7 @@ class PanelMouseCoordinator {
   // pixel-scrolled plugin surface preview.
   float PanelPixelsPerScrollRow(const WorkspaceLayout& layout);
   bool HandleMouseCaptureButton(const SDL_Event& event, bool pressed);
+  bool ProgramOwnsPointer(const TerminalPaneState& pane) const;
   // Active terminal tab when the bottom panel is showing a terminal, else null.
   // Consolidates the "panel is a terminal AND a live tab exists" guard and routes
   // it through the bounds-checked ProjectWorkspaceState::active_terminal_pane()

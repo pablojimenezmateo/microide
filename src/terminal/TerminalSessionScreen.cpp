@@ -124,6 +124,7 @@ void TerminalSession::RestoreSavedScreenLocked() {
 
 void TerminalSession::ResetScreenLocked(bool fill_rows) {
   lines_.assign(fill_rows ? std::max<std::size_t>(1, rows_) : 1, TerminalLine{});
+  hover_affordance_.Reset();
   pending_utf8_sequence_.clear();
   cursor_row_ = 0;
   cursor_column_ = 0;
@@ -134,6 +135,7 @@ void TerminalSession::ResetScreenLocked(bool fill_rows) {
 }
 
 void TerminalSession::SetAlternateScreenLocked(bool enabled, bool clear) {
+  hover_affordance_.Reset();  // a probed row of the other screen describes nothing here
   if (enabled) {
     bool should_clear = clear;
     if (!use_alternate_screen_) {
@@ -674,10 +676,7 @@ void TerminalSession::ResetTerminalModesLocked() {
   // DEC/xterm private modes. auto_wrap_mode_ and cursor_visible_ default on;
   // every other mode defaults off. use_alternate_screen_ is the caller's: it
   // names which grid lines_ holds.
-  mouse_tracking_normal_ = false;
-  mouse_tracking_drag_ = false;
-  mouse_tracking_any_ = false;
-  mouse_sgr_ext_mode_ = false;
+  mouse_ = {};
   application_cursor_keys_mode_ = false;
   origin_mode_ = false;
   auto_wrap_mode_ = true;
