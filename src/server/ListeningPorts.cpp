@@ -274,6 +274,36 @@ std::vector<Listener> ListeningSockets() {
   return ListeningSocketsFromProc().value_or(std::vector<Listener>{});
 }
 
+std::optional<project::remote::PortRange> ParsePortRange(std::string_view text) {
+  const std::size_t gap = text.find_first_of(" \t");
+  if (gap == std::string_view::npos) {
+    return std::nullopt;
+  }
+  std::string_view second = text.substr(gap);
+  while (!second.empty() && (second.front() == ' ' || second.front() == '\t')) {
+    second.remove_prefix(1);
+  }
+  while (!second.empty() && (second.back() == '\n' || second.back() == ' ')) {
+    second.remove_suffix(1);
+  }
+  const std::optional<int> low = util::ParseInt(text.substr(0, gap));
+  const std::optional<int> high = util::ParseInt(second);
+  if (!low.has_value() || !high.has_value() || *low < 1 || *low > *high || *high > 65535) {
+    return std::nullopt;
+  }
+  return project::remote::PortRange{.low = static_cast<std::uint16_t>(*low), .high = static_cast<std::uint16_t>(*high)};
+}
+
+std::optional<project::remote::PortRange> EphemeralPortRange() {
+  const util::UniqueFd fd(::open("/proc/sys/net/ipv4/ip_local_port_range", O_RDONLY | O_CLOEXEC));
+  if (fd.Get() < 0) {
+    return std::nullopt;
+  }
+  char buffer[64];
+  const ssize_t count = ::read(fd.Get(), buffer, sizeof(buffer) - 1);
+  return count > 0 ? ParsePortRange(std::string_view(buffer, static_cast<std::size_t>(count))) : std::nullopt;
+}
+
 std::vector<std::uint16_t> PortsOf(std::span<const Listener> listeners) {
   std::vector<std::uint16_t> ports;
   ports.reserve(listeners.size());

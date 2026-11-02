@@ -6,6 +6,8 @@
 #include <string_view>
 #include <vector>
 
+#include "project/remote/RemoteProtocol.h"
+
 namespace microide::server {
 
 // The TCP ports `uid` listens on that a forward to the host's `localhost:<port>`
@@ -34,6 +36,10 @@ struct Listener {
 // TD-2026-10-28-416). The procfs text stays as the fallback where netlink is
 // refused (a seccomp profile, a sandbox without NETLINK_SOCK_DIAG).
 std::vector<Listener> ListeningSockets();
+// net.ipv4.ip_local_port_range as the kernel prints it ("32768\t60999"); nullopt for
+// anything else. EphemeralPortRange reads this host's.
+std::optional<project::remote::PortRange> ParsePortRange(std::string_view text);
+std::optional<project::remote::PortRange> EphemeralPortRange();
 // The ports of `listeners`, sorted and unique.
 std::vector<std::uint16_t> PortsOf(std::span<const Listener> listeners);
 // PortsOf(ListeningSockets()).

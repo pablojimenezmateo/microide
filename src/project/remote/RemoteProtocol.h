@@ -166,6 +166,16 @@ struct HelloRequest {
   HelloSettings settings;
 };
 
+// The host's ephemeral port range (net.ipv4.ip_local_port_range): where a bind to
+// port 0 lands -- a test's server, a debugger -- never a port a user chose to serve
+// on. Linux's default until a server reports its own.
+struct PortRange {
+  std::uint16_t low = 32768;
+  std::uint16_t high = 60999;
+  bool Contains(std::uint16_t port) const { return port >= low && port <= high; }
+  bool operator==(const PortRange&) const = default;
+};
+
 struct HelloReply {
   std::int64_t protocol = kProtocolVersion;
   std::int64_t min_protocol = kMinProtocolVersion;
@@ -176,6 +186,8 @@ struct HelloReply {
   std::vector<std::string> capabilities;
   SessionSurvival session_survival;
   HelloSettings settings;  // effective, as the server applies them
+  // nullopt: not reported (an older server, or one that could not read it).
+  std::optional<PortRange> ephemeral_ports;
 };
 
 util::JsonValue ToJson(const HelloRequest& hello);

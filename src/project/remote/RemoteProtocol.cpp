@@ -99,6 +99,12 @@ util::JsonValue ToJson(const HelloReply& hello) {
   survival["linger"] = util::JsonValue(hello.session_survival.linger);
   object["session_survival"] = util::JsonValue(std::move(survival));
   object["settings"] = SettingsJson(hello.settings);
+  if (hello.ephemeral_ports.has_value()) {
+    util::JsonArray range;
+    range.push_back(util::JsonValue(static_cast<std::int64_t>(hello.ephemeral_ports->low)));
+    range.push_back(util::JsonValue(static_cast<std::int64_t>(hello.ephemeral_ports->high)));
+    object["ephemeral_ports"] = util::JsonValue(std::move(range));
+  }
   return util::JsonValue(std::move(object));
 }
 
@@ -161,6 +167,16 @@ std::optional<HelloReply> HelloReplyFromJson(const util::JsonValue& json, std::s
     }
     hello.session_survival.kill_user_processes = survival["kill_user_processes"].AsBool(false);
     hello.session_survival.linger = survival["linger"].AsBool(false);
+  }
+  // Advisory: a malformed range reads as not reported, never as a failed hello.
+  const util::JsonValue& range = json["ephemeral_ports"];
+  if (range.IsArray() && range.AsArray().size() == 2 && range.AsArray()[0].IsInt() &&
+      range.AsArray()[1].IsInt()) {
+    const std::int64_t low = range.AsArray()[0].AsInt();
+    const std::int64_t high = range.AsArray()[1].AsInt();
+    if (low >= 1 && low <= high && high <= 65535) {
+      hello.ephemeral_ports = PortRange{.low = static_cast<std::uint16_t>(low), .high = static_cast<std::uint16_t>(high)};
+    }
   }
   return hello;
 }

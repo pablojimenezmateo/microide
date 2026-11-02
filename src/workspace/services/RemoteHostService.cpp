@@ -25,10 +25,6 @@ namespace {
 namespace remote = project::remote;
 using State = remote::RemoteHostSession::State;
 
-// Linux's default ip_local_port_range: what a bind to port 0 is given. A host that
-// narrowed or moved its range still has its dev servers on chosen ports below it.
-constexpr bool IsEphemeralPort(std::uint16_t port) { return port >= 32768 && port <= 60999; }
-
 // Short, private and per user: the ControlMaster sockets live here, and AF_UNIX
 // caps the path.
 std::filesystem::path ControlDirectory() {
@@ -1517,6 +1513,9 @@ void RemoteHostService::WatchPorts(const std::string& host, remote::RemoteHostSe
     return;  // one subscription per connection: the host's other sessions share it
   }
   watch.client = client;
+  // The host's own range when its server says (a host that moved or narrowed it
+  // has its dev servers on chosen ports outside it); else Linux's default.
+  watch.ephemeral = client->hello().ephemeral_ports.value_or(remote::PortRange{});
   work_.Post([this, host, client]() {
     std::string error;
     std::optional<remote::RemoteServerClient::HostPorts> now = client->SubscribePorts(
@@ -1587,7 +1586,7 @@ void RemoteHostService::OnHostPorts(const std::string& host,
     // Below 1024 is a system service (sshd), never a program the user started.
     // The ephemeral range is where bind(port 0) lands -- a test's server, a
     // debugger, a language server -- never a port the user chose to serve on.
-    if (!watch.baseline->insert(port).second || port < 1024 || !forward || IsEphemeralPort(port)) {
+    if (!watch.baseline->insert(port).second || port < 1024 || !forward || watch.ephemeral.Contains(port)) {
       continue;
     }
     if (known != forwards_.end() && known->second->Find(port).has_value()) {

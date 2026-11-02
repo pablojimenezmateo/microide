@@ -376,6 +376,23 @@ void TestPollingStatusDoesNotKeepAnOnDemandServerAlive() {
 // /proc/net/tcp{,6}: this user's LISTEN sockets on a loopback or wildcard address,
 // whatever the table's spacing; another user's, a connected socket and one bound to
 // an outside address are not forwardable ports.
+// The host's ephemeral range, as the kernel prints net.ipv4.ip_local_port_range,
+// and this host's own read the same way (TD-2026-11-02-429 item 4: the client used
+// Linux's default even on a host that had moved it).
+void TestEphemeralPortRangeIsTheHosts() {
+  using project::remote::PortRange;
+  Expect(server::ParsePortRange("32768\t60999\n") == PortRange{.low = 32768, .high = 60999}, "the default");
+  Expect(server::ParsePortRange("1024 65535") == PortRange{.low = 1024, .high = 65535}, "spaces, a wide range");
+  for (const char* odd : {"", "32768", "abc def", "60999\t32768", "0\t10", "1\t70000"}) {
+    Expect(!server::ParsePortRange(odd).has_value(), std::string("not a range: '") + odd + "'");
+  }
+  std::ifstream proc("/proc/sys/net/ipv4/ip_local_port_range");
+  std::string text((std::istreambuf_iterator<char>(proc)), std::istreambuf_iterator<char>());
+  if (!text.empty()) {
+    Expect(server::EphemeralPortRange() == server::ParsePortRange(text), "this host's range is read: " + text);
+  }
+}
+
 void TestListeningPortsParseProcNetTcp() {
   const std::string tcp =
       "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
@@ -793,6 +810,7 @@ void RegisterRemoteServerTests(std::vector<TestCase>& tests) {
           TestPollingStatusDoesNotKeepAnOnDemandServerAlive);
   AddTest(tests, "RemoteServer/AttachStartsOnDemandAndTheServerIdlesOut",
           TestAttachStartsOnDemandAndTheServerIdlesOut);
+  AddTest(tests, "RemoteServer/EphemeralPortRangeIsTheHosts", TestEphemeralPortRangeIsTheHosts);
   AddTest(tests, "RemoteServer/ListeningPortsParseProcNetTcp", TestListeningPortsParseProcNetTcp);
   AddTest(tests, "RemoteServer/ListeningPortsParseSockDiag", TestListeningPortsParseSockDiag);
   AddTest(tests, "RemoteServer/ConcurrentStartsLeaveOneDaemon", TestConcurrentStartsLeaveOneDaemon);

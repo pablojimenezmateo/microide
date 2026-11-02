@@ -531,9 +531,10 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .label = "Forward Ports Automatically",
           .description = "Forward a port a program on a remote host starts listening on (a dev "
                          "server, a notebook) to the same port here when it is free. Ports in "
-                         "the kernel's ephemeral range (32768-60999, where a program asking for "
-                         "any free port lands: test servers, debuggers) are never forwarded "
-                         "automatically; Forward a Port\xe2\x80\xa6 still can.",
+                         "the host's ephemeral range (its ip_local_port_range, 32768-60999 by "
+                         "default: where a program asking for any free port lands, test "
+                         "servers, debuggers) are never forwarded automatically; Forward a "
+                         "Port\xe2\x80\xa6 still can.",
           .type = SettingType::Bool,
           .scope = SettingScope::User,
           .default_bool = true,

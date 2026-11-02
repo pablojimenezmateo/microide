@@ -238,6 +238,7 @@ void RemoteServer::InstallHandlers(Connection& connection) {
                                .capabilities = {"proc", "term", "tree", "watch"},
                                .session_survival = config_.session_survival,
                                .settings = {.backfill_inflight_bytes = backfill},
+                               .ephemeral_ports = EphemeralPortRange(),
                            }));
                  });
   peer.OnRequest(remote::method::kServerStatus, [this, &connection](std::uint64_t id, const util::JsonValue& params) {

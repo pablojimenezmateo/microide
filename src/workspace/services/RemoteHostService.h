@@ -432,6 +432,8 @@ class RemoteHostService {
     // restarts stops and starts listening, and its forward is made again quietly
     // within kReannounceAfter. Pruned as it is written, so it holds only recent ports.
     std::map<std::uint16_t, std::chrono::steady_clock::time_point> announced;
+    // Where bind(port 0) lands on this host: never auto-forwarded.
+    project::remote::PortRange ephemeral;
   };
   // Queue `ports` (the host's whole listening list, answer or push) for
   // OnHostPorts; only the newest queued list runs.

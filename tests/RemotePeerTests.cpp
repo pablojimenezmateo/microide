@@ -90,6 +90,23 @@ void TestHelloRoundTripsAndValidates() {
              decoded->capabilities.size() == 2 && decoded->session_survival.kill_user_processes &&
              decoded->settings.backfill_inflight_bytes == 131072,
          "a hello reply round-trips: " + error);
+  Expect(!decoded.has_value() || !decoded->ephemeral_ports.has_value(),
+         "an unreported ephemeral range stays unreported");
+  // The host's ephemeral range (TD-2026-11-02-429 item 4): carried, and advisory --
+  // a malformed one reads as not reported, never as a failed hello.
+  reply.ephemeral_ports = remote::PortRange{.low = 40000, .high = 50000};
+  const auto with_range = remote::HelloReplyFromJson(
+      *util::ParseJson(util::SerializeJson(remote::ToJson(reply))), &error);
+  Expect(with_range.has_value() && with_range->ephemeral_ports == remote::PortRange{.low = 40000, .high = 50000} &&
+             with_range->ephemeral_ports->Contains(40000) && !with_range->ephemeral_ports->Contains(39999),
+         "the host's ephemeral range round-trips: " + error);
+  for (const char* range : {R"([50000,40000])", R"([0,10])", R"([1,70000])", R"(["1","2"])", R"([1])", R"(7)"}) {
+    const std::string json = R"({"protocol":1,"min_protocol":1,"release":"x","daemon_epoch":"e","ephemeral_ports":)" +
+                             std::string(range) + "}";
+    const auto odd = remote::HelloReplyFromJson(*util::ParseJson(json), &error);
+    Expect(odd.has_value() && !odd->ephemeral_ports.has_value(),
+           std::string("a malformed range is not reported, and not a failure: ") + range + " " + error);
+  }
   const auto request = remote::HelloRequestFromJson(
       *util::ParseJson(util::SerializeJson(remote::ToJson(
           remote::HelloRequest{.release = "x", .settings = {.backfill_inflight_bytes = 5}}))),
