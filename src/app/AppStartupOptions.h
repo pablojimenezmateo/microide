@@ -32,6 +32,9 @@ struct AppStartupOptions {
   // Shutdown() to skip destructor chains. Tests set this false so they can run
   // Initialize()/Shutdown() in-process and verify clean teardown under ASAN.
   bool quick_exit_on_shutdown = true;
+  // SIGTERM / SIGINT / SIGHUP quit the way a window close does
+  // (TerminationSignalWatcher). Tests leave a test runner's signals alone.
+  bool handle_termination_signals = true;
 
   bool plugins_disabled() const { return disable_plugins || safe_mode; }
 };

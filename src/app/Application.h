@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -10,6 +11,7 @@
 #include "app/RedrawTraceAccumulator.h"
 #include "app/RedrawVerifier.h"
 #include "app/SceneTexturePresenter.h"
+#include "app/TerminationSignals.h"
 #include "workspace/shell/WorkspaceShell.h"
 
 namespace microide::tests {
@@ -63,6 +65,9 @@ class Application {
   SDL_Renderer* renderer_ = nullptr;
   bool initialized_ = false;
   bool running_ = false;
+  // SIGTERM / SIGINT / SIGHUP as an SDL event (0: not handled), and its watcher.
+  std::uint32_t termination_event_type_ = 0;
+  std::unique_ptr<TerminationSignalWatcher> termination_signals_;
   bool first_render_complete_ = false;
   bool presentation_state_dirty_ = true;
   float last_presented_ui_scale_ = 1.0f;

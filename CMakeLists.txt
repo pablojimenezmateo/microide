@@ -1018,6 +1018,7 @@ add_executable(microide
   src/app/main.cpp
   src/app/AppStartupOptions.cpp
   src/app/Application.cpp
+  src/app/TerminationSignals.cpp
   src/app/DirtyRegionPolicy.cpp
   src/app/RedrawTraceAccumulator.cpp
   src/app/RedrawVerifier.cpp
@@ -1255,6 +1256,7 @@ include(CPack)
 
 add_executable(microide_tests
   src/app/Application.cpp
+  src/app/TerminationSignals.cpp
   src/app/SceneTexturePresenter.cpp
   src/app/DirtyRegionPolicy.cpp
   src/app/RedrawTraceAccumulator.cpp

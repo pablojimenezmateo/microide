@@ -203,6 +203,7 @@ app::AppStartupOptions HeadlessStartupOptions() {
   // Run Initialize()/Shutdown() in-process instead of std::quick_exit()-ing, and
   // keep the plugin runtime out of the headless path.
   options.quick_exit_on_shutdown = false;
+  options.handle_termination_signals = false;
   options.disable_plugins = true;
   options.safe_mode = true;
   return options;

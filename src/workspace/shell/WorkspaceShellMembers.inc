@@ -141,7 +141,7 @@
   void OnFramePresented();
   std::optional<SDL_FRect> CurrentCaretDirtyRect() const;
   RenderInvalidation ConsumePendingRenderInvalidation();
-  void RequestQuit();
+  void RequestQuit(bool forced = false);  // forced: past any open prompt (a signal)
   bool ConsumeQuitRequested();
   float UiScale() const { return ui_scale_; }
   render::TextClipPadding PartialRedrawClipPadding() const;

@@ -431,8 +431,14 @@ void WorkspaceShell::Shutdown() {
   MakeLifecycleCoordinator().Shutdown();
 }
 
-void WorkspaceShell::RequestQuit() {
+void WorkspaceShell::RequestQuit(bool forced) {
   SettleTabIoBeforeTeardown(save_formatter_service_, file_read_service_);
+  // A quit nobody can answer a prompt for (SIGTERM at logout): the unsaved-changes
+  // prompt goes, and the buffers it asked about are kept the way a window close
+  // keeps them -- in the session the shutdown writes, restored on the next start.
+  if (forced && context_.prompts.dirty_visible) {
+    DismissDirtyPrompt(/*restore_focus=*/false);
+  }
   MakeLifecycleCoordinator().RequestQuit();
 }
 

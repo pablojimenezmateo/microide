@@ -33,6 +33,53 @@ def flow_crash_recovery(app: q.App) -> None:
                f"the unsaved edit survives the crash ({buffer.get('dirty')}, {buffer.get('text')!r})")
 
 
+def _signal_and_relaunch(app: q.App, signo: int, label: str) -> None:
+    """Sends `signo` to the app (the process itself, as a session manager or a
+    closing terminal does), expects it to EXIT on its own, then starts it again."""
+    import os
+    import signal as _signal
+    app.proc.send_signal(signo)
+    try:
+        app.proc.wait(timeout=10 * q.SLOW_FACTOR)
+    except Exception:
+        app.expect(False, f"{label}: the app did not exit (an unsaved-changes prompt held it?)")
+        os.killpg(app.proc.pid, _signal.SIGKILL)
+        app.proc.wait(timeout=5)
+    app.expect(app.proc.returncode == 0, f"{label}: a clean exit, not a kill (status {app.proc.returncode})")
+    app.crash_and_relaunch()  # nothing left to kill: it only starts the app again
+
+
+def flow_signal_quit(app: q.App) -> None:
+    """SIGTERM (logout, shutdown) with an unsaved buffer AND the quit prompt open,
+    then SIGHUP (the launching terminal closed): each quits the way a window close
+    does, the unsaved text kept for the next start and the file left alone. Before,
+    SIGTERM was ignored while the prompt was open (the session manager then
+    SIGKILLs) and SIGHUP killed the app with nothing saved since the last flush."""
+    import signal as _signal
+    open_file(app, "notes/term.txt", "before\n")
+    app.click_text(1, 1)
+    app.type("edited ")
+    step(app, "edit", 0.3)
+    app.send("quit")  # the unsaved-changes prompt: nobody will answer it
+    app.settle(0.3)
+    _signal_and_relaunch(app, _signal.SIGTERM, "SIGTERM")
+    app.wait_until(lambda: (app.buffer().get("path") or "").endswith("notes/term.txt"), 8.0,
+                   "the unsaved tab to come back after SIGTERM")
+    buffer = app.buffer()
+    app.expect(buffer.get("dirty") is True and buffer.get("text") == "edited before\n",
+               f"SIGTERM kept the unsaved edit ({buffer.get('dirty')}, {buffer.get('text')!r})")
+    app.expect(read(app, "notes/term.txt") == "before\n", "and left the file on disk alone")
+    app.click_text(1, 1)
+    app.type("again ")
+    step(app, "edit", 0.3)
+    _signal_and_relaunch(app, _signal.SIGHUP, "SIGHUP")  # at once: no flush debounce to lean on
+    app.wait_until(lambda: (app.buffer().get("path") or "").endswith("notes/term.txt"), 8.0,
+                   "the unsaved tab to come back after SIGHUP")
+    buffer = app.buffer()
+    app.expect(buffer.get("text") == "again edited before\n",
+               f"SIGHUP kept the newest edit too ({buffer.get('text')!r})")
+
+
 REPO = Path(__file__).resolve().parents[2]
 
 
@@ -177,4 +224,5 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "big-repo": flow_big_repo,
     "huge-file": flow_huge_file,
     "crash-recovery": flow_crash_recovery,
+    "signal-quit": flow_signal_quit,
 }

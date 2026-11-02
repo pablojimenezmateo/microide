@@ -373,11 +373,24 @@ bool Application::Initialize() {
   // both focuses the window and activates what was clicked.
   SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
 
+  // SDL's own SIGINT/SIGTERM handlers raise SDL_EVENT_QUIT, which the shell ignores
+  // while an unsaved-changes prompt is open (and SIGHUP had no handler at all): ours
+  // force the quit instead (TerminationSignalWatcher).
+  if (startup_options_.handle_termination_signals) {
+    SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
+  }
   {
     util::StartupTrace::Scope sdl_init_scope("SDL_Init");
     if (!SDL_Init(SDL_INIT_VIDEO)) {
       SDL_Log("SDL_Init failed: %s", SDL_GetError());
       return false;
+    }
+  }
+  if (startup_options_.handle_termination_signals && termination_signals_ == nullptr) {
+    termination_event_type_ = RegisterSdlWakeChannel();
+    termination_signals_ = std::make_unique<TerminationSignalWatcher>(termination_event_type_);
+    if (!termination_signals_->installed()) {
+      termination_event_type_ = 0;
     }
   }
 
@@ -677,6 +690,16 @@ void Application::Shutdown() {
 }
 
 workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event& event) {
+  if (termination_event_type_ != 0 && event.type == termination_event_type_) {
+    // Nobody is there to answer a prompt: quit the way a window close does, every
+    // session and unsaved buffer persisted for the next start (hot exit).
+    SDL_Log("microide: signal %d received; saving the session and quitting", static_cast<int>(event.user.code));
+    workspace_shell_.RequestQuit(/*forced=*/true);
+    if (workspace_shell_.ConsumeQuitRequested()) {
+      running_ = false;
+    }
+    return workspace::WorkspaceShell::EventResult{.handled = true, .redraw = {}};
+  }
   switch (event.type) {
     case SDL_EVENT_QUIT:
       workspace_shell_.RequestQuit();
