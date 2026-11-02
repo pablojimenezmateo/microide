@@ -1764,6 +1764,32 @@ void RemoteHostService::OnHostTerminals(const std::filesystem::path& tree,
       }
     }
   }
+  // What nobody claims is this project's own work -- a session that ended without
+  // recording it (a crash, a kill, a power cut) or another machine's window that
+  // detached -- so it comes back the way a recorded one does, in a tab of its own,
+  // as VS Code revives a workspace's detached terminals. Only with
+  // terminal.restore_sessions off (quit then ends every host terminal, so these are
+  // leftovers the user opted out of keeping) are they offered instead.
+  std::size_t adopted = 0;
+  if (!entry.unclaimed_terminals.empty() && operations_.attach_host_terminal &&
+      SettingFlagEnabled(operations_.setting ? operations_.setting("terminal.restore_sessions")
+                                             : std::optional<std::string>(),
+                         true)) {
+    // The identity a reopen would record: the epoch of the server that listed it
+    // (the connection's hello names the same one; an older reply may omit it).
+    const std::shared_ptr<remote::RemoteServerClient> client = entry.project->session().connection()->client();
+    const std::string epoch = !status->daemon_epoch.empty() ? status->daemon_epoch
+                              : client != nullptr           ? client->hello().daemon_epoch
+                                                            : std::string();
+    std::erase_if(entry.unclaimed_terminals, [&](const remote::ServerTerminal& terminal) {
+      const terminal::HostIdentity identity{.epoch = epoch, .handle = terminal.handle};
+      if (identity.epoch.empty() || !operations_.attach_host_terminal(tree, identity, /*focus=*/false)) {
+        return false;  // still offered: Attach says why it cannot
+      }
+      ++adopted;
+      return true;
+    });
+  }
   if (!operations_.notify) {
     return;
   }
@@ -1772,15 +1798,23 @@ void RemoteHostService::OnHostTerminals(const std::filesystem::path& tree,
     return std::to_string(n) + " " + std::string(n == 1 ? one : many);
   };
   const std::size_t fresh = claims.server_restarted + claims.gone;
+  // An adopted terminal was running with no tab and has one now: say so, once.
+  const std::string adopted_text =
+      adopted == 0 ? std::string() : count(adopted, "terminal", "terminals") + " left running with no tab, reopened";
   if (fresh == 0 && entry.unclaimed_terminals.empty()) {
     if (operations_.dismiss_notification) {
       operations_.dismiss_notification(key);
     }
-    if (claims.reattached > 0) {
-      operations_.notify(NotificationService::Request{
-          .tone = NotificationService::Tone::Info,
-          .message = "Reattached to " + record.host + InProject(record.host, record.host_root) + ": " +
-                     count(claims.reattached, "terminal", "terminals")});
+    if (claims.reattached > 0 || adopted > 0) {
+      std::string message = "Reattached to " + record.host + InProject(record.host, record.host_root) + ": ";
+      if (claims.reattached > 0) {
+        message += count(claims.reattached, "terminal", "terminals");
+      }
+      if (adopted > 0) {
+        message += (claims.reattached > 0 ? " \xc2\xb7 " : "") + adopted_text;
+      }
+      operations_.notify(
+          NotificationService::Request{.tone = NotificationService::Tone::Info, .message = std::move(message)});
     }
     return;
   }
@@ -1802,6 +1836,9 @@ void RemoteHostService::OnHostTerminals(const std::filesystem::path& tree,
       why += "; the host ends your processes at logout";
     }
     part(std::to_string(fresh) + " started fresh (" + why + ")");
+  }
+  if (adopted > 0) {
+    part(adopted_text);
   }
   if (!entry.unclaimed_terminals.empty()) {
     part(count(entry.unclaimed_terminals.size(), "running with no tab", "running with no tab"));
@@ -1842,7 +1879,7 @@ bool RemoteHostService::AttachHostTerminals(const std::filesystem::path& active_
     if (operations_.host_terminal_tab && operations_.host_terminal_tab(identity, /*focus=*/true)) {
       continue;
     }
-    (void)operations_.attach_host_terminal(identity);
+    (void)operations_.attach_host_terminal(active_root, identity, /*focus=*/true);
   }
   DropUnclaimed(host, handles);
   return true;

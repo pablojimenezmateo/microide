@@ -116,15 +116,23 @@ The project session SHALL record, for each host pane, the server epoch and the h
 - **THEN** on reopen the tab shows the build's last output and the exit line, and Enter starts a new shell in the same directory
 
 ### Requirement: Host terminals nobody is attached to are discoverable
-The `server/status` reply SHALL list the server's live terminals — handle, the workspace root of the connection that opened it (empty for a terminal-only session), current directory, number of attached clients and whether the shell has exited — bounded by its terminal cap, and its per-workspace terminal count SHALL be derived from that list. After its connection reaches `Ready` and the session's own reattaches have been sent, the client SHALL ask once and report the terminals it did not claim and no other client is attached to, under the project's root. The report SHALL be one row per host that sums the connect — terminals reattached, started fresh (with the reason) and running with no tab — with **Attach** (open each unclaimed one in a new terminal tab, cold) and **Close** (end them) actions, each an `ActionId` taking the host and the handles so the palette, the control channel and later surfaces reach them. `Remote: Show Status` SHALL list the unclaimed terminals. The client SHALL decode the listing as untrusted, a missing or malformed field reading as not reported; an older server whose reply has no listing SHALL be treated as having nothing to list, and the protocol version SHALL NOT change.
+The `server/status` reply SHALL list the server's live terminals — handle, the workspace root of the connection that opened it (empty for a terminal-only session), current directory, number of attached clients and whether the shell has exited — bounded by its terminal cap, and its per-workspace terminal count SHALL be derived from that list. After its connection reaches `Ready` and the session's own reattaches have been sent, the client SHALL ask once for the terminals it did not claim and no other client is attached to, under the project's root. With `terminal.restore_sessions` on, the client SHALL adopt each such terminal into a new last terminal tab of that project — active or not — cold (its screen and history), without changing the active terminal tab, the panel's visibility or keyboard focus, so a session that ended without recording its terminals (a crash, a kill) or another machine's window that detached loses nothing and asks nothing. With `terminal.restore_sessions` off they SHALL be offered instead. The report SHALL be one row per host that sums the connect — terminals reattached, started fresh (with the reason), reopened from no tab, and (opted out) running with no tab — the last with **Attach** (open each unclaimed one in a new terminal tab, cold) and **Close** (end them) actions, each an `ActionId` taking the host and the handles so the palette, the control channel and later surfaces reach them. `Remote: Show Status` SHALL list the unclaimed terminals. The client SHALL decode the listing as untrusted, a missing or malformed field reading as not reported; an older server whose reply has no listing SHALL be treated as having nothing to list, and the protocol version SHALL NOT change.
 
-#### Scenario: A terminal left by a crash is found
+#### Scenario: A terminal left by a crash is reopened
 - **WHEN** microide crashed while a host terminal was open, so the session never recorded its handle, and the user reopens the project
+- **THEN** the terminal is back in a new tab with its screen and history, without a button to press, and the host's row reports one terminal left running with no tab, reopened
+
+#### Scenario: An unclaimed terminal of a background project
+- **WHEN** the project whose connection lists an unclaimed terminal is not the active one
+- **THEN** the terminal is adopted into that project's tabs, not the active project's
+
+#### Scenario: Opted out of revival, a crash's terminal is offered
+- **WHEN** `terminal.restore_sessions` is off and a crash left a host terminal running
 - **THEN** the host's row reports one terminal running with no tab, and Attach opens it in a new tab with its screen and history
 
 #### Scenario: A terminal another machine is using is not offered
 - **WHEN** a second machine is attached to a host terminal of the same project
-- **THEN** that terminal is not reported as unclaimed
+- **THEN** that terminal is neither adopted nor reported as unclaimed
 
 #### Scenario: An older server
 - **WHEN** the host runs a server whose `server/status` reply carries no terminal listing

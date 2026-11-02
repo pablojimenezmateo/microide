@@ -517,7 +517,8 @@ class Suite:
         relaunched, dt = wait_for(lambda: (lambda ps: ps if ps and ps[0]["running"] else None)(self.panes()), 20, 0.3)
         self.record("T5.enter-relaunches", relaunched is not None, f"{dt:.1f}s")
 
-        # T6 / T12: a crash leaves two orphans; the connect offers them.
+        # T6: a crash leaves two orphans; the connect reopens them on its own, in
+        # tabs of their own, as a recorded terminal is reattached.
         self.close_all_terminals()
         orphan = f"QA-T6-{tok}"
         self.new_terminal(f"while :; do echo {orphan}-A-$(date +%s); sleep 1; done")
@@ -525,9 +526,32 @@ class Suite:
         wait_for(lambda: len([p for p in self.panes() if p["hostHandle"]]) == 2, 15, 0.3)
         # The session last written (T5's relaunch) names neither: a crash records nothing.
         msg, dt, ok = self.relaunch(crash=True)
+        row, dt = wait_for(lambda: next((n for n in self.notifs() if "left running with no tab, reopened"
+                                         in n["message"]), None), 30, 0.3)
+        self.record("T6.orphans-reopened", row is not None and "2 terminals left running" in row["message"],
+                    f"{dt:.1f}s {row['message'] if row else [n['message'] for n in self.notifs()]}")
+        held = [r["handle"] for r in self.host_terminals() if r.get("clients") == 0]
+        shows, dt = wait_for(lambda: all(any(f"{orphan}-{side}-" in self.term_text(i)
+                                             for i in range(len(self.panes()))) for side in "AB"), 15, 0.3)
+        self.record("T6.reopened-tabs-show-them", bool(shows) and not held,
+                    f"{dt:.1f}s panes={self.panes()} unattached={held}")
+        app.screenshot("T6-reopened"); app.check("T6")
+
+        # T12: opted out of revival, a crash's orphan is offered instead (Attach /
+        # Close), and Show Status lists it.
+        self.close_all_terminals()
+        app.send("set-setting", "terminal.restore_sessions", "false")
+        # A clean quit first, so the window the crash takes down was started with
+        # the setting already on disk; it leaves nothing (no terminals are open).
+        self.relaunch()
+        self.close_all_terminals()
+        self.new_terminal(f"while :; do echo {orphan}-C-$(date +%s); sleep 1; done")
+        self.new_terminal(f"while :; do echo {orphan}-D-$(date +%s); sleep 1; done")
+        wait_for(lambda: len([p for p in self.panes() if p["hostHandle"]]) == 2, 15, 0.3)
+        msg, dt, ok = self.relaunch(crash=True)
         row, dt = wait_for(lambda: next((n for n in self.notifs() if "running with no tab" in n["message"]), None),
                            30, 0.3)
-        self.record("T6.orphans-offered", row is not None and "2 running with no tab" in row["message"],
+        self.record("T12.opted-out-orphans-offered", row is not None and "2 running with no tab" in row["message"],
                     f"{dt:.1f}s {row['message'] if row else [n['message'] for n in self.notifs()]}")
         status = app.send("remote-status")
         # Show Status opens the Host view; its text answer is the control reply's.
@@ -542,13 +566,14 @@ class Suite:
             attached, dt = wait_for(lambda: (lambda ts: ts if len(ts) == tabs + 1 else None)(
                 app.query("terminals")), 10, 0.3)
             shows, _ = wait_for(lambda: f"{orphan}-" in self.term_text(tabs), 15, 0.3)
-            self.record("T6.attach-opens-it", attached is not None and bool(shows), f"{dt:.1f}s")
+            self.record("T12.attach-opens-it", attached is not None and bool(shows), f"{dt:.1f}s")
             app.send("remote-close-terminals", self.host.name, str(orphans[1]))
             gone, dt = wait_for(lambda: orphans[1] not in [r["handle"] for r in self.host_terminals()], 10, 0.3)
-            self.record("T6.close-ends-it", bool(gone), f"{dt:.1f}s")
+            self.record("T12.close-ends-it", bool(gone), f"{dt:.1f}s")
         else:
-            self.record("T6.attach-opens-it", False, f"host orphans={orphans}")
-        app.screenshot("T6-attached"); app.check("T6")
+            self.record("T12.attach-opens-it", False, f"host orphans={orphans}")
+        app.screenshot("T12-attached"); app.check("T12")
+        app.send("set-setting", "terminal.restore_sessions", "true")
 
         # T7: opted out of revival, quit ends the shell.
         self.close_all_terminals()
@@ -625,16 +650,18 @@ class Suite:
                 mine, _ = wait_for(lambda: next((p["hostHandle"] for p in self.panes() if p["hostHandle"]), 0),
                                    30, 0.3)
                 msg, dt, ok = self.relaunch(crash=True)
-                row, dt = wait_for(lambda: next((n for n in self.notifs() if "running with no tab" in n["message"]),
+                row, dt = wait_for(lambda: next((n for n in self.notifs()
+                                                 if "left running with no tab, reopened" in n["message"]),
                                                 None), 30, 0.3)
                 listed = {r["handle"]: r.get("clients") for r in self.host_terminals()}
-                self.record("T11.another-clients-terminal-not-offered",
+                handles = [p["hostHandle"] for p in self.panes()]
+                self.record("T11.another-clients-terminal-not-taken",
                             bool(theirs) and bool(mine) and row is not None and
-                            "1 running with no tab" in row["message"] and listed.get(theirs) == 1,
-                            f"theirs={theirs} mine={mine} host={listed} "
+                            "1 terminal left running" in row["message"] and listed.get(theirs) == 1 and
+                            mine in handles and theirs not in handles,
+                            f"theirs={theirs} mine={mine} host={listed} panes={handles} "
                             f"row={row['message'] if row else [n['message'] for n in self.notifs()]}")
-                if mine:
-                    app.send("remote-close-terminals", self.host.name, str(mine))
+                self.close_all_terminals()
                 other.close_all_terminals()
                 wait_for(lambda: theirs not in [r["handle"] for r in self.host_terminals()], 10, 0.3)
                 other_app.check("T11")

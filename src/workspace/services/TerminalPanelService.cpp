@@ -117,6 +117,28 @@ bool TerminalPanelService::OpenTerminalAttached(terminal::HostIdentity identity)
                          /*show=*/true, /*focus=*/true, was_visible);
 }
 
+bool TerminalPanelService::AdoptHostTerminal(ProjectWorkspaceState& state, terminal::HostIdentity identity) {
+  if (state.root.empty() || identity.empty() || !operations_.make_host_pane) {
+    return false;
+  }
+  std::unique_ptr<TerminalPaneState> pane = operations_.make_host_pane(state, std::move(identity));
+  if (pane == nullptr) {
+    return false;
+  }
+  const bool first = state.terminal_tabs.empty();
+  state.terminal_tabs.push_back(MakeTerminalTab(std::move(pane)));
+  if (first) {
+    state.active_terminal_tab_index = 0;
+  }
+  // The session the next save writes names it, as it names every started pane.
+  state.host_terminals_unrecorded = true;
+  if (&state == &state_) {
+    operations_.note_layout_inputs_changed();
+    operations_.request_bottom_panel_redraw();
+  }
+  return true;
+}
+
 bool TerminalPanelService::PushTerminalTab(std::unique_ptr<TerminalPaneState> pane, bool show, bool focus,
                                            bool was_visible) {
   if (pane == nullptr) {

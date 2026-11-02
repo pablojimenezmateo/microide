@@ -115,6 +115,30 @@ const workspace::NotificationService::Notification* RowContaining(WorkspaceShell
   return nullptr;
 }
 
+// A client of the host's server that is not a window: what a crashed window, or
+// another machine's, leaves behind.
+std::shared_ptr<remote::RemoteServerClient> ConnectRawClient(const FakeSshHost& host,
+                                                             const std::filesystem::path& root) {
+  auto client = remote::RemoteServerClient::Create();
+  const int fd = platform::ConnectUnixSocket(remote::ServerSocketPath(host.server_dir()));
+  std::string error;
+  Expect(fd >= 0 && client->ConnectFds(fd, fd, remote::HelloRequest{.release = "test", .root = root.string()},
+                                       &error),
+         "a second client connects: " + error);
+  return client;
+}
+
+std::shared_ptr<remote::RemoteTerminalChannel> OpenRawHostTerminal(
+    const std::shared_ptr<remote::RemoteServerClient>& client, const std::filesystem::path& root,
+    TerminalSession& session) {
+  auto channel = remote::RemoteTerminalChannel::Open(
+      client, terminal::HostTerminalSource::OpenRequest{.working_directory = root, .shell = {"sh"}}, session,
+      [](const std::filesystem::path& path) { return path; });
+  Expect(channel != nullptr && WaitUntil([&] { return channel->handle() != 0; }, std::chrono::seconds(10)),
+         "a raw host terminal opens");
+  return channel;
+}
+
 // State and config homes of the test's own: sessions are written and read back.
 struct ScopedAppHomes {
   TemporaryDirectory dir;
@@ -448,22 +472,9 @@ void TestHostTerminalLifetimeAndUnclaimedTerminals() {
   // A terminal left by a crash: opened and dropped by a client that recorded it
   // nowhere. And one another client is still attached to.
   const auto open_raw = [&](const std::shared_ptr<remote::RemoteServerClient>& client, TerminalSession& session) {
-    auto channel = remote::RemoteTerminalChannel::Open(
-        client, terminal::HostTerminalSource::OpenRequest{.working_directory = root, .shell = {"sh"}}, session,
-        [](const std::filesystem::path& path) { return path; });
-    Expect(channel != nullptr && WaitUntil([&] { return channel->handle() != 0; }, std::chrono::seconds(10)),
-           "a raw host terminal opens");
-    return channel;
+    return OpenRawHostTerminal(client, root, session);
   };
-  const auto connect_raw = [&] {
-    auto client = remote::RemoteServerClient::Create();
-    const int fd = platform::ConnectUnixSocket(remote::ServerSocketPath(host.server_dir()));
-    std::string error;
-    Expect(fd >= 0 && client->ConnectFds(fd, fd, remote::HelloRequest{.release = "test", .root = root.string()},
-                                         &error),
-           "a second client connects: " + error);
-    return client;
-  };
+  const auto connect_raw = [&] { return ConnectRawClient(host, root); };
   std::uint64_t orphan = 0;
   std::uint64_t orphan_to_close = 0;
   {
@@ -483,24 +494,71 @@ void TestHostTerminalLifetimeAndUnclaimedTerminals() {
   auto holder = connect_raw();
   TerminalSession held;
   auto held_channel = open_raw(holder, held);
+  const auto offered_handle = [](const std::vector<std::string>& args, std::uint64_t handle) {
+    return std::find(args.begin(), args.end(), std::to_string(handle)) != args.end();
+  };
+  const auto holds = [](WorkspaceShell& shell, std::uint64_t handle) {
+    for (std::size_t i = 0; i < WorkspaceShellTestAccess::TerminalTabCount(shell); ++i) {
+      if (WorkspaceShellTestAccess::TerminalTabSession(shell, i).host_identity().handle == handle) {
+        return true;
+      }
+    }
+    return false;
+  };
 
+  // Default (terminal.restore_sessions on): what nobody claims comes back on its
+  // own, in tabs of its own, without a button to press and without taking focus.
+  {
+    WorkspaceShell shell;
+    PointAtFakeHost(shell, host);
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, open), "reopen");
+    const workspace::NotificationService::Notification* row = nullptr;
+    Expect(PumpUntil(shell,
+                     [&] {
+                       row = RowContaining(shell, "2 terminals left running with no tab, reopened");
+                       return row != nullptr;
+                     },
+                     std::chrono::seconds(15)),
+           "the connect's row says the two terminals nobody was attached to are reopened");
+    Expect(row->actions.empty() || row->actions[0].label != "Attach", "with nothing left to Attach");
+    Expect(holds(shell, orphan) && holds(shell, orphan_to_close), "each in a tab of its own");
+    Expect(!holds(shell, held_channel->handle()), "a terminal another client is attached to is not taken");
+    std::size_t adopted_tab = 0;
+    for (std::size_t i = 0; i < WorkspaceShellTestAccess::TerminalTabCount(shell); ++i) {
+      if (WorkspaceShellTestAccess::TerminalTabSession(shell, i).host_identity().handle == orphan) {
+        adopted_tab = i;
+      }
+    }
+    Expect(adopted_tab != 0, "appended after the project's own tab");
+    TerminalSession& adopted = WorkspaceShellTestAccess::TerminalTabSession(shell, adopted_tab);
+    Expect(PumpUntil(shell, [&] { return ScreenText(adopted).find("ORPHAN-25") != std::string::npos; }),
+           [&] { return "showing its screen:\n" + ScreenText(adopted); });
+    Expect(WorkspaceShellTestAccess::RemoteHosts(shell).StatusText().find("with no tab") == std::string::npos,
+           "Show Status lists none left: " + WorkspaceShellTestAccess::RemoteHosts(shell).StatusText());
+    // Quit records them like any other tab: the next window reattaches them.
+    shell.Shutdown();
+  }
+
+  // Opted out of revival, they are offered instead: Attach and Close.
   WorkspaceShell shell;
   PointAtFakeHost(shell, host);
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "terminal.restore_sessions", "false"),
+         "opt out of revival before connecting");
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, open), "reopen");
   const workspace::NotificationService::Notification* row = nullptr;
   Expect(PumpUntil(shell,
                    [&] {
-                     row = RowContaining(shell, "2 running with no tab");
-                     return row != nullptr;
+                     row = RowContaining(shell, "running with no tab");
+                     return row != nullptr && row->actions.size() == 2;
                    },
                    std::chrono::seconds(15)),
-         "the connect's row offers the two terminals nobody is attached to");
-  Expect(row->actions.size() == 2 && row->actions[0].label == "Attach" && row->actions[1].label == "Close",
-         "with Attach and Close");
+         "the connect's row offers the terminals nobody is attached to");
+  Expect(row->actions[0].label == "Attach" && row->actions[1].label == "Close", "with Attach and Close");
   const std::vector<std::string> offered = row->actions[0].args;
-  Expect(std::find(offered.begin(), offered.end(), std::to_string(held_channel->handle())) == offered.end(),
-         "a terminal another client is attached to is not offered");
-  Expect(WorkspaceShellTestAccess::RemoteHosts(shell).StatusText().find("2 host terminals with no tab") !=
+  Expect(offered_handle(offered, orphan) && offered_handle(offered, orphan_to_close),
+         "the two recorded by the last window, which this one does not revive");
+  Expect(!offered_handle(offered, held_channel->handle()), "a terminal another client is attached to is not offered");
+  Expect(WorkspaceShellTestAccess::RemoteHosts(shell).StatusText().find("host terminals with no tab") !=
              std::string::npos,
          "Show Status lists them: " + WorkspaceShellTestAccess::RemoteHosts(shell).StatusText());
 
@@ -511,15 +569,77 @@ void TestHostTerminalLifetimeAndUnclaimedTerminals() {
   Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == tabs + 1, "in a new tab");
   TerminalSession& attached = WorkspaceShellTestAccess::TerminalTabSession(shell, tabs);
   Expect(PumpUntil(shell, [&] { return ScreenText(attached).find("ORPHAN-25") != std::string::npos; }),
-         "showing its screen:\n" + ScreenText(attached));
+         [&] { return "showing its screen:\n" + ScreenText(attached); });
   Expect(attached.host_identity().handle == orphan, "the orphan itself");
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(
-             shell, "remote-close-terminals " + target + " " + std::to_string(orphan_to_close)),
-         "Close the other");
+  std::string close_line = "remote-close-terminals " + target;
+  for (const std::string& handle : offered) {
+    if (handle != target && handle != std::to_string(orphan)) {
+      close_line += " " + handle;
+    }
+  }
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, close_line), "Close the others");
   Expect(WaitUntil([&] { return Listed(HostTerminals(host), orphan_to_close) == nullptr; }, std::chrono::seconds(10)),
          "Close ends it on the host");
   Expect(RowContaining(shell, "running with no tab") == nullptr, "and with none left the row goes");
   held.Stop();
+}
+
+// An unclaimed terminal of a project that is NOT the active one is adopted into
+// that project, where it belongs, and the window's focus stays where it was.
+void TestAnUnclaimedTerminalIsAdoptedByItsBackgroundProject() {
+  ScopedAppHomes homes;
+  FakeSshHost host;
+  const std::filesystem::path front_root = host.home / "src" / "front";
+  const std::filesystem::path back_root = host.home / "src" / "back";
+  WriteFile(front_root / "a.txt", "a\n");
+  WriteFile(back_root / "b.txt", "b\n");
+  const std::string target = Target("fake-adopt");
+  const std::string open_front = "remote-open " + target + ":" + front_root.string();
+  const std::string open_back = "remote-open " + target + ":" + back_root.string();
+  {
+    // Starts the host's server, which outlives the window.
+    WorkspaceShell shell;
+    PointAtFakeHost(shell, host);
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, open_back), "the background project, once");
+    TerminalSession& first = WorkspaceShellTestAccess::TerminalTabSession(shell, 0);
+    Expect(PumpUntil(shell, [&] { return first.running() && first.host_identity().handle != 0; }),
+           "its terminal starts");
+    shell.Shutdown();
+  }
+  std::uint64_t orphan = 0;
+  {
+    auto crashed = ConnectRawClient(host, back_root);
+    TerminalSession session;
+    auto channel = OpenRawHostTerminal(crashed, back_root, session);
+    orphan = channel->handle();
+    channel->Detach();
+  }
+  WorkspaceShell shell;
+  PointAtFakeHost(shell, host);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, open_back), "reopen the background project");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, open_front), "and switch away from it at once");
+  const auto back_holds_orphan = [&] {
+    // The project opened first is catalog entry 0, and the background one.
+    for (const auto& tab : WorkspaceShellTestAccess::ProjectState(shell, 0).terminal_tabs) {
+      for (const auto& pane : tab->panes) {
+        if (pane != nullptr && pane->session.host_identity().handle == orphan) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  Expect(PumpUntil(shell, back_holds_orphan, std::chrono::seconds(15)),
+         [&] {
+           return "the orphan is adopted into the background project:" +
+                  WorkspaceShellTestAccess::TerminalPanesSummary(shell);
+         });
+  for (std::size_t i = 0; i < WorkspaceShellTestAccess::TerminalTabCount(shell); ++i) {
+    Expect(WorkspaceShellTestAccess::TerminalTabSession(shell, i).host_identity().handle != orphan,
+           "not into the active one");
+  }
+  shell.Shutdown();
+  Expect(Listed(HostTerminals(host), orphan) != nullptr, "quit detaches it, as any recorded terminal");
 }
 
 }  // namespace
@@ -534,6 +654,8 @@ void RegisterRemoteTerminalRestoreTests(std::vector<TestCase>& tests) {
           TestATerminalOpenedWhileTheLinkIsDownStartsAfterACoalescedReconnect);
   AddTest(tests, "RemoteTerminalRestore/HostTerminalLifetimeAndUnclaimedTerminals",
           TestHostTerminalLifetimeAndUnclaimedTerminals);
+  AddTest(tests, "RemoteTerminalRestore/AnUnclaimedTerminalIsAdoptedByItsBackgroundProject",
+          TestAnUnclaimedTerminalIsAdoptedByItsBackgroundProject);
 }
 
 }  // namespace microide::tests

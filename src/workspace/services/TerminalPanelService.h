@@ -45,6 +45,12 @@ class TerminalPanelService {
         std::string command, std::shared_ptr<const platform::ProcessLauncher> launcher,
         std::string label_prefix, std::filesystem::path cwd, terminal::HostIdentity attach)>
         make_started_pane;
+    // Build and start a pane attached to host terminal `attach` for `state`'s
+    // project, active or not: its launcher, not the active project's. Null when the
+    // launch failed. What AdoptHostTerminal pushes into a background project.
+    std::function<std::unique_ptr<TerminalPaneState>(const ProjectWorkspaceState& state,
+                                                     terminal::HostIdentity attach)>
+        make_host_pane;
     // Restart an exited pane's session in place with its recorded cwd/command.
     // False when the launch failed.
     std::function<bool(TerminalPaneState&)> relaunch_pane;
@@ -87,6 +93,12 @@ class TerminalPanelService {
   // tab claims, offered after a connect), cold: its screen and history. False
   // with no project.
   bool OpenTerminalAttached(terminal::HostIdentity identity);
+  // A connect's unclaimed host terminal (one this window's session never recorded:
+  // a crash, another machine that detached) adopted into `state`'s project, active
+  // or not, as a new LAST tab: the active tab, the panel's visibility and the
+  // keyboard are left alone, so a connect never steals focus. False when the
+  // launch failed.
+  bool AdoptHostTerminal(ProjectWorkspaceState& state, terminal::HostIdentity identity);
   // The terminals at project init: the restored session's layout revived (fresh
   // shells in the same tabs, splits and directories, VS Code's revive), else the
   // default terminal. In placeholder-terminal test mode the default is a bare,

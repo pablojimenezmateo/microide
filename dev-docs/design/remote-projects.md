@@ -2131,6 +2131,21 @@ terminal's tab reads `<label> · detached`, its title in the secondary colour
 `[connection to the host lost: …]` line stays in its scrollback, and the badge
 goes on reattach.
 
+**Revised (2026-11-02): unclaimed terminals are reopened, not offered.** A host
+terminal of the project's root that no tab claims and no client is attached to
+is the user's own work that a session failed to record -- the window crashed or
+was killed before quit wrote its layout, or another machine's window detached
+from it. With `terminal.restore_sessions` on (the default) the connect adopts
+each one into a new LAST tab of that project, active or background
+(`TerminalPanelService::AdoptHostTerminal`), moving neither the active tab, the
+panel nor the keyboard, and the row says *"2 terminals left running with no tab,
+reopened"* (transient when nothing else is to report). This is what VS Code does
+with a workspace's detached terminals. Only with `terminal.restore_sessions` off
+-- where quit ends every host terminal, so these are leftovers the user opted
+out of keeping -- is the old **Attach** / **Close** offer kept. The user-facing
+symptom it fixes: "sometimes my terminals are not attached, I get a toast
+instead" after any non-graceful exit.
+
 ### 7.5 Labels
 
 Window title, project tab, editor and compare breadcrumbs, and welcome recents

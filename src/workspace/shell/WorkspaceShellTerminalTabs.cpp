@@ -35,8 +35,11 @@ TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
   // project's launcher (a remote project's terminal is this same call and its
   // shell runs on the host, TD-2026-09-22-301), the project's `terminal.shell`,
   // the scrollback cap and the shell's wake channel.
-  const auto start_pane = [this](TerminalPaneState& pane, const std::filesystem::path& cwd,
-                                 const std::string& command, terminal::HostIdentity attach) {
+  // `project_launcher`: the launcher of the project the pane belongs to -- the
+  // active one's, except for a host terminal adopted into a background project.
+  const auto start_pane = [this](TerminalPaneState& pane, const platform::ProcessLauncher& project_launcher,
+                                 const std::filesystem::path& cwd, const std::string& command,
+                                 terminal::HostIdentity attach) {
     if (terminal_event_type_ != 0) {
       pane.session.SetWakeChannel(terminal_event_type_);
     }
@@ -49,8 +52,7 @@ TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
     // A pane with its own launcher (the ssh authentication tab, a local terminal in
     // a remote project) runs through it, else through the project's. A host's shell
     // is the host's login shell: `terminal.shell` names a program on THIS machine.
-    const platform::ProcessLauncher& launcher =
-        pane.launcher != nullptr ? *pane.launcher : context_.current_project_state.launcher();
+    const platform::ProcessLauncher& launcher = pane.launcher != nullptr ? *pane.launcher : project_launcher;
     // Test mode stands in for the project's own local shells only: a host terminal
     // runs on the (fake) host, and an own-launcher pane is started on purpose — the
     // authentication tab's ssh must really run for the connection to go on.
@@ -88,8 +90,9 @@ TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
                 auto pane = std::make_unique<TerminalPaneState>();
                 pane->launcher = std::move(launcher);
                 pane->label_prefix = std::move(label_prefix);
-                if (!start_pane(*pane, cwd.empty() ? context_.current_project_state.root : cwd,
-                                command, std::move(attach))) {
+                if (!start_pane(*pane, context_.current_project_state.launcher(),
+                                cwd.empty() ? context_.current_project_state.root : cwd, command,
+                                std::move(attach))) {
                   return nullptr;
                 }
                 // Waiting for the project's connection: say for what, in the
@@ -100,9 +103,19 @@ TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
                 }
                 return pane;
               },
+          .make_host_pane =
+              [start_pane](const ProjectWorkspaceState& state,
+                           terminal::HostIdentity attach) -> std::unique_ptr<TerminalPaneState> {
+                auto pane = std::make_unique<TerminalPaneState>();
+                if (!start_pane(*pane, state.launcher(), state.root, {}, std::move(attach))) {
+                  return nullptr;
+                }
+                return pane;
+              },
           .relaunch_pane =
-              [start_pane](TerminalPaneState& pane) {
-                return start_pane(pane, pane.launch_working_directory, pane.launch_command, {});
+              [this, start_pane](TerminalPaneState& pane) {
+                return start_pane(pane, context_.current_project_state.launcher(),
+                                  pane.launch_working_directory, pane.launch_command, {});
               },
           .note_layout_inputs_changed = [this]() { NoteLayoutInputsChanged(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },
@@ -229,9 +242,14 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
             return claims;
           },
       .attach_host_terminal =
-          [this](terminal::HostIdentity identity) {
+          [this](const std::filesystem::path& root, terminal::HostIdentity identity, bool focus) {
             TerminalPanelService& panel = MakeTerminalPanelService();
-            return panel.OpenTerminalAttached(std::move(identity));
+            if (focus) {
+              return context_.current_project_state.root == root &&
+                     panel.OpenTerminalAttached(std::move(identity));
+            }
+            ProjectWorkspaceState* state = context_.ProjectStateForRoot(root);
+            return state != nullptr && panel.AdoptHostTerminal(*state, std::move(identity));
           },
       .host_terminal_tab =
           [this](const terminal::HostIdentity& identity, bool focus) {

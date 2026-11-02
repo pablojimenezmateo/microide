@@ -98,8 +98,13 @@ class RemoteHostService {
     // What the project's tabs claim of its host's terminals (see HostTerminalClaims);
     // marks the starts it counts as reported.
     std::function<HostTerminalClaims(const std::filesystem::path& root)> host_terminals_claimed;
-    // Open a terminal tab in the ACTIVE project attached to `identity`'s terminal.
-    std::function<bool(terminal::HostIdentity identity)> attach_host_terminal;
+    // Open a terminal tab of the project at `root` attached to `identity`'s
+    // terminal. `focus` (the user's Attach): a new active tab of the ACTIVE project,
+    // shown and focused -- false when `root` is not active. Otherwise (a connect
+    // adopting what nobody claims): a last tab of that project, active or not, that
+    // moves neither the active tab nor the keyboard.
+    std::function<bool(const std::filesystem::path& root, terminal::HostIdentity identity, bool focus)>
+        attach_host_terminal;
     // Whether a terminal tab of this window holds `identity`'s terminal; with
     // `focus`, that tab is brought forward too.
     std::function<bool(const terminal::HostIdentity& identity, bool focus)> host_terminal_tab;
