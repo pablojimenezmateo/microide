@@ -701,6 +701,14 @@ struct PanelState {
   // meaningful while `content != None`; a hidden panel keeps the flag so it
   // comes back maximized, as VS Code's does.
   bool maximized = false;
+  // The keyboard's surface as of the last frame that saw the panel maximized
+  // (TerminalPanelService::SyncPanelMaximizedWithFocus); nullopt when it was not.
+  // Runtime only: a restored or re-activated project starts with none, so the
+  // focus it arrives with is the baseline, never a "move" that restores.
+  std::optional<FocusTarget> maximized_seen_focus;
+  // ...and whether an overlay of the editor's (find, completion) was up then: the
+  // focus stays Overlay from a quick-open to Find, and only the second restores.
+  bool maximized_seen_editor_overlay = false;
   // What the panel showed before it was hidden by the panel toggle, so showing
   // it again brings the same content back rather than always a terminal.
   PanelContentKind restore_content = PanelContentKind::None;

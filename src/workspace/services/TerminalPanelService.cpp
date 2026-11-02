@@ -663,6 +663,9 @@ void TerminalPanelService::SetPanelMaximized(bool maximized) {
   if (maximized) {
     state_.surface.focus = FocusTarget::Panel;
   }
+  if (maximized != state_.panel.maximized) {
+    state_.panel.maximized_seen_focus.reset();  // a new maximize: the next frame sets the baseline
+  }
   state_.panel.maximized = maximized;
   operations_.note_layout_inputs_changed();
   if (PanelVisible() != was_visible || PanelVisible()) {
@@ -676,14 +679,44 @@ void TerminalPanelService::TogglePanelMaximized() {
 
 void TerminalPanelService::SyncPanelMaximizedWithFocus() {
   if (!state_.panel.maximized || !PanelVisible()) {
+    state_.panel.maximized_seen_focus.reset();
     return;
   }
+  const FocusTarget focus = state_.surface.focus;
+  const bool hidden_surface =
+      focus == FocusTarget::Editor || focus == FocusTarget::Sidebar || focus == FocusTarget::DebugPane;
+  const bool editor_overlay = focus == FocusTarget::Overlay && state_.overlay.visible &&
+                              !OverlayIsQuickOpen(state_.overlay.mode);
+  // Edge-triggered (TD-2026-11-01-427 item 3): the first frame that sees the
+  // panel maximized takes the focus as it found it -- a session restore, a
+  // project switch back, a tab hydrated on load all arrive with the keyboard
+  // wherever their state put it, and reading that as "the editor took focus"
+  // restored the panel the user had left maximized. A keyboard on a surface the
+  // maximized panel hides goes to the panel instead: the one thing on screen.
+  if (!state_.panel.maximized_seen_focus.has_value()) {
+    if (hidden_surface) {
+      state_.surface.focus = FocusTarget::Panel;
+      operations_.request_window_redraw();
+    }
+    state_.panel.maximized_seen_focus = state_.surface.focus;
+    state_.panel.maximized_seen_editor_overlay = editor_overlay;
+    return;
+  }
+  const bool moved = focus != *state_.panel.maximized_seen_focus ||
+                     editor_overlay != state_.panel.maximized_seen_editor_overlay;
+  state_.panel.maximized_seen_focus = focus;
+  state_.panel.maximized_seen_editor_overlay = editor_overlay;
+  if (!moved) {
+    return;
+  }
+  // Then a MOVE of the keyboard to another surface brings it back.
   const auto restore = [this]() {
     state_.panel.maximized = false;
+    state_.panel.maximized_seen_focus.reset();
     operations_.note_layout_inputs_changed();
     operations_.request_window_redraw();
   };
-  switch (state_.surface.focus) {
+  switch (focus) {
     case FocusTarget::Editor:
     case FocusTarget::Sidebar:
     case FocusTarget::DebugPane:
@@ -696,7 +729,7 @@ void TerminalPanelService::SyncPanelMaximizedWithFocus() {
       // monkey's stale terminal highlights, TD-2026-10-22-379, sat under one).
       // Like focusing the editor, they bring it back. A quick-open modal is
       // centered over whatever is there and leaves the panel as it is.
-      if (state_.overlay.visible && !OverlayIsQuickOpen(state_.overlay.mode)) {
+      if (editor_overlay) {
         restore();
       }
       break;

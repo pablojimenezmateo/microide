@@ -2648,9 +2648,19 @@ void TestWorkspaceShellPanelMaximizeTakesTheWindowAndRestoresOnEditorFocus() {
              WorkspaceShellTestAccess::CurrentLayout(shell) == before,
          "restoring returns the exact previous layout");
 
-  // Focusing the editor restores too: immersive mode never traps a file the
-  // user just opened from a terminal link.
+  // State that ARRIVES with the keyboard in the editor -- a session restore, a
+  // project switched back to, a tab hydrated on load, set before any frame saw
+  // the panel maximized -- keeps the panel maximized and hands the keyboard to
+  // it, the one thing on screen (TD-2026-11-01-427 item 3: the frame sync was
+  // level-triggered and restored the panel every such time).
   WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::PanelToggleMaximized, {});
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  fixture.PaintFrame();
+  Expect(WorkspaceShellTestAccess::PanelMaximized(shell) && WorkspaceShellTestAccess::FocusIsPanel(shell),
+         "focus that arrived with the state is a baseline: still maximized, the keyboard on the panel");
+
+  // Focusing the editor after that restores: immersive mode never traps a file
+  // the user just opened from a terminal link.
   WorkspaceShellTestAccess::SetFocusEditor(shell);
   fixture.PaintFrame();
   Expect(!WorkspaceShellTestAccess::PanelMaximized(shell),
@@ -2662,6 +2672,7 @@ void TestWorkspaceShellPanelMaximizeTakesTheWindowAndRestoresOnEditorFocus() {
   // the editor's find widget over the maximized panel's tab strip, at a buffer
   // nobody could see. A quick-open modal leaves the panel maximized.
   WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::PanelToggleMaximized, {});
+  fixture.PaintFrame();
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "command-palette"), "the palette opens");
   fixture.PaintFrame();
   Expect(WorkspaceShellTestAccess::PanelMaximized(shell),
