@@ -699,7 +699,7 @@ void PersistenceCoordinator::SaveSessionState() {
     persisted_session.closed_editors.push_back(std::move(persisted_closed));
   }
 
-  operations_.persistence_service->SaveProjectSession(session_path, persisted_session);
+  operations_.persistence_service->SaveProjectSession(session_path, std::move(persisted_session));
   state.host_terminals_unrecorded = false;
   SaveDebugState();
 }
@@ -716,7 +716,7 @@ bool PersistenceCoordinator::SaveTerminalLayout(const std::filesystem::path& roo
     return false;
   }
   persisted_session.terminal_layout = std::move(layout);
-  return operations_.persistence_service->SaveProjectSession(session_path, persisted_session);
+  return operations_.persistence_service->SaveProjectSession(session_path, std::move(persisted_session));
 }
 
 std::optional<PersistedEditorTabState>

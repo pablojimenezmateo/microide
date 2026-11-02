@@ -25,8 +25,10 @@ class PersistenceService {
 
   bool LoadProjectSession(const std::filesystem::path& target_path,
                           PersistedProjectSessionState* state) const;
-  bool SaveProjectSession(const std::filesystem::path& target_path,
-                          const PersistedProjectSessionState& state) const;
+  // Takes the state by value: it is encoded on the write queue's worker, not the
+  // caller's thread (the crash-safety flush's dirty buffers made that ~28 ms).
+  // True when accepted, as every save here: Flush() is what waits for the disk.
+  bool SaveProjectSession(const std::filesystem::path& target_path, PersistedProjectSessionState state) const;
 
   bool LoadWorkspaceSession(const std::filesystem::path& target_path,
                             PersistedWorkspaceSessionState* state) const;

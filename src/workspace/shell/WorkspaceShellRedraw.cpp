@@ -1125,13 +1125,13 @@ void WorkspaceShell::FlushSessionStateForCrashSafety() {
   // write. Deliberately does NOT touch the user's files — this is a restore snapshot,
   // not a save.
   MakePersistenceCoordinator().SaveSessionState();
-  // ...and WAIT for it to land. State writes are applied on a background worker so
-  // an ordinary save never stalls the shell, but this is the crash-safety seam:
-  // its whole purpose is that the snapshot survives a kill, which a write still
-  // sitting in the queue would not. Flushing here bounds the loss window to the
-  // debounce interval -- exactly what it was before the writes went async -- and
-  // it is debounced, so the wait is not on any per-keystroke path.
-  persistence_service_.FlushPendingWrites();
+  // NOT waited for. The session is encoded and written on the persistence worker
+  // (SaveProjectSession takes it by value): waiting here held the shell thread for
+  // the encode of every unsaved buffer -- ~30 ms measured with a 1 MiB one, the
+  // same at 32 MiB -- and since the flush fires during steady typing too
+  // (CrashSafetyFlushSchedule's maximum wait), that was a hitch mid-keystroke. The
+  // write lands a few milliseconds behind this call, which is all a kill in that
+  // window can cost; quit still flushes (flush_persisted_state) before it exits.
 }
 
 WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() const {

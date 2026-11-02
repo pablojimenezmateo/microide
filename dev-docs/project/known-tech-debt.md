@@ -551,9 +551,14 @@ Left open:
    process-local (`std::hash`), so a `touch` while microide was down reads as a
    change and the save asks. Safe, but a stable digest (blake3, already linked)
    recorded at load would let it save.
-3. **The crash-safety flush waits on the UI thread** (`FlushPendingWrites`), now
-   up to every 10 s during steady typing. Unmeasured with a large dirty buffer; a
-   completion barrier the next flush waits on instead would keep the bound.
+3. **The crash-safety flush still snapshots buffers on the UI thread.** Measured
+   (1-32 MiB dirty, 4 lanes loading the disk): the flush held the shell thread
+   ~37 ms, ~28 of it ENCODING the session, ~1 ms the disk -- and with the new
+   10 s bound it fired mid-typing. Fixed in the same pass: the session is encoded
+   on the persistence worker (`PersistedRecordWriteQueue::QueueEncoded`) and the
+   flush no longer waits; ~3.5 ms remain, copying the dirty buffers' lines
+   (`lines().Snapshot()`), growing with their size. A shared piece-tree snapshot
+   handed to the worker would remove that too.
 4. **The ephemeral range is Linux's default**, not the host's
    `ip_local_port_range`; the server could report the real one in `server/status`.
 5. **`project` port source misses daemonized programs** (a `docker run -p`, a

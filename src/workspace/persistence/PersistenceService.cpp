@@ -1,5 +1,7 @@
 #include "workspace/persistence/PersistenceService.h"
 
+#include <memory>
+
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -183,13 +185,27 @@ bool PersistenceService::LoadProjectSession(const std::filesystem::path& target_
 }
 
 bool PersistenceService::SaveProjectSession(const std::filesystem::path& target_path,
-                                            const PersistedProjectSessionState& state) const {
+                                            PersistedProjectSessionState state) const {
   if (target_path.empty()) {
     return false;
   }
-  std::vector<std::byte> body;
-  return EncodeProjectSessionRecord(state, &body) &&
-         WriteGuardedRecord(target_path, body, 3u, backup_recovery_baseline_, write_queue_);
+  // A path guarded after a corrupt-primary recovery compares the encoded bytes
+  // with its baseline before anything is written (WriteGuardedRecord): that rare
+  // case encodes here. Every other save encodes on the worker.
+  if (backup_recovery_baseline_.contains(GuardKey(target_path))) {
+    std::vector<std::byte> body;
+    return EncodeProjectSessionRecord(state, &body) &&
+           WriteGuardedRecord(target_path, body, 3u, backup_recovery_baseline_, write_queue_);
+  }
+  // Shared, not captured by value: the callable is a std::function, wrapped again
+  // by the queue, and each copy of a session holding the lines of every unsaved
+  // buffer cost as much as the encode it was moved off the thread to avoid.
+  auto shared = std::make_shared<const PersistedProjectSessionState>(std::move(state));
+  write_queue_.QueueEncoded(
+      target_path,
+      [shared = std::move(shared)](std::vector<std::byte>* body) { return EncodeProjectSessionRecord(*shared, body); },
+      3u);
+  return true;
 }
 
 bool PersistenceService::LoadWorkspaceSession(const std::filesystem::path& target_path,

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <mutex>
 #include <unordered_map>
@@ -43,6 +44,14 @@ class PersistedRecordWriteQueue {
   void Queue(const std::filesystem::path& path, std::vector<std::byte> body,
              std::uint32_t capability_flags);
 
+  // The same, with the body ENCODED on the worker: `encode` fills it (false: the
+  // record is dropped, as an encode failure on the caller's thread would drop it).
+  // For a record whose encoding is the expensive part -- a session holding the text
+  // of every unsaved buffer took ~28 ms to encode on the shell thread, every
+  // crash-safety flush. Coalesces with Queue on the same path.
+  void QueueEncoded(const std::filesystem::path& path, std::function<bool(std::vector<std::byte>*)> encode,
+                    std::uint32_t capability_flags);
+
   // Block until every write queued so far has been applied. Call before reading a
   // record back, before deleting one, and at shutdown.
   void Flush();
@@ -77,6 +86,11 @@ class PersistedRecordWriteQueue {
   // have already recorded success for a write that then failed, and the state
   // would be lost until the body happened to change.
   static constexpr std::size_t kMaxMemoizedBodyBytes = 1024ull * 1024;
+
+  // The worker's half of Queue / QueueEncoded: skip a body already on disk, else
+  // write it and remember it.
+  void ApplyWrite(const std::filesystem::path& path, const std::string& key, std::vector<std::byte> body,
+                  std::uint32_t capability_flags);
 
   mutable std::mutex memo_mutex_;
   std::unordered_map<std::string, std::vector<std::byte>> written_body_;

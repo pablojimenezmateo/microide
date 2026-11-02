@@ -53,6 +53,24 @@ std::string ReadRecordText(const std::filesystem::path& path) {
   return record.has_value() ? BodyText(record->body) : std::string{};
 }
 
+// A body encoded on the worker lands like a queued one, takes its place in the
+// path's coalescing, and an encode that fails writes nothing over what is there.
+void TestEncodedWriteLandsCoalescesAndDropsAFailedEncode() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path path = temp_dir.path() / "session.record";
+  PersistedRecordWriteQueue queue;
+  queue.QueueEncoded(path, [](std::vector<std::byte>* body) { *body = Body("encoded there"); return true; }, 1u);
+  queue.Flush();
+  Expect(ReadRecordText(path) == "encoded there", "an encoded body lands: " + ReadRecordText(path));
+  queue.Queue(path, Body("plain"), 1u);
+  queue.QueueEncoded(path, [](std::vector<std::byte>* body) { *body = Body("latest"); return true; }, 1u);
+  queue.Flush();
+  Expect(ReadRecordText(path) == "latest", "the newest of the two wins, whichever kind: " + ReadRecordText(path));
+  queue.QueueEncoded(path, [](std::vector<std::byte>*) { return false; }, 1u);
+  queue.Flush();
+  Expect(ReadRecordText(path) == "latest", "a failed encode leaves the record as it was");
+}
+
 // The core promise: an accepted save reaches disk.
 void TestQueuedWriteLandsAfterFlush() {
   TemporaryDirectory temp_dir;
@@ -276,6 +294,8 @@ void TestServiceLoadSeesAnUnflushedSave() {
 }  // namespace
 
 void RegisterPersistedRecordWriteQueueTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PersistedRecordWriteQueue/EncodedWriteLandsCoalescesAndDropsAFailedEncode",
+          TestEncodedWriteLandsCoalescesAndDropsAFailedEncode);
   AddTest(tests, "PersistedRecordWriteQueue/QueuedWriteLandsAfterFlush",
           TestQueuedWriteLandsAfterFlush);
   AddTest(tests, "PersistedRecordWriteQueue/CoalescedWritesKeepTheLatestBody",

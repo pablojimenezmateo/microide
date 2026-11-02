@@ -34,35 +34,52 @@ void PersistedRecordWriteQueue::Queue(const std::filesystem::path& path, std::ve
   // Coalesce on the path: a burst of saves for the same record collapses to the
   // last one, which is the only one whose bytes matter.
   queue_.PostLatest(key, [this, path, key, body = std::move(body), capability_flags]() mutable {
-    {
-      std::lock_guard lock(memo_mutex_);
-      const auto it = written_body_.find(key);
-      if (it != written_body_.end() && it->second == body) {
-        // Already on disk byte for byte. The existence check keeps that honest:
-        // if the file went away underneath us the memo is stale and the record
-        // has to be rewritten.
-        std::error_code error;
-        if (std::filesystem::exists(path, error) && !error) {
-          return;
-        }
-        written_body_.erase(it);
-      }
-    }
-    if (!PersistedRecordWriter::WriteFile(path, body, capability_flags)) {
-      // Leave the memo without an entry for this path so the next save retries
-      // rather than treating the failed write as persisted.
-      std::lock_guard lock(memo_mutex_);
-      written_body_.erase(key);
-      return;
-    }
-    std::lock_guard lock(memo_mutex_);
-    if (body.size() > kMaxMemoizedBodyBytes) {
-      written_body_.erase(key);
-    } else {
-      written_body_[key] = std::move(body);
-    }
-    ++applied_writes_;
+    ApplyWrite(path, key, std::move(body), capability_flags);
   });
+}
+
+void PersistedRecordWriteQueue::QueueEncoded(const std::filesystem::path& path,
+                                             std::function<bool(std::vector<std::byte>*)> encode,
+                                             std::uint32_t capability_flags) {
+  std::string key = MemoKey(path);
+  queue_.PostLatest(key, [this, path, key, encode = std::move(encode), capability_flags]() {
+    std::vector<std::byte> body;
+    if (encode && encode(&body)) {
+      ApplyWrite(path, key, std::move(body), capability_flags);
+    }
+  });
+}
+
+void PersistedRecordWriteQueue::ApplyWrite(const std::filesystem::path& path, const std::string& key,
+                                           std::vector<std::byte> body, std::uint32_t capability_flags) {
+  {
+    std::lock_guard lock(memo_mutex_);
+    const auto it = written_body_.find(key);
+    if (it != written_body_.end() && it->second == body) {
+      // Already on disk byte for byte. The existence check keeps that honest:
+      // if the file went away underneath us the memo is stale and the record
+      // has to be rewritten.
+      std::error_code error;
+      if (std::filesystem::exists(path, error) && !error) {
+        return;
+      }
+      written_body_.erase(it);
+    }
+  }
+  if (!PersistedRecordWriter::WriteFile(path, body, capability_flags)) {
+    // Leave the memo without an entry for this path so the next save retries
+    // rather than treating the failed write as persisted.
+    std::lock_guard lock(memo_mutex_);
+    written_body_.erase(key);
+    return;
+  }
+  std::lock_guard lock(memo_mutex_);
+  if (body.size() > kMaxMemoizedBodyBytes) {
+    written_body_.erase(key);
+  } else {
+    written_body_[key] = std::move(body);
+  }
+  ++applied_writes_;
 }
 
 void PersistedRecordWriteQueue::Flush() { queue_.Flush(); }
