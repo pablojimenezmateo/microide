@@ -160,6 +160,25 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **A focused terminal gets the keyboard.** Every key reaches the program except
+  Ctrl+Shift+<key>, Ctrl+`, Ctrl+PageUp/PageDown and Ctrl+Tab: Ctrl+J is Claude
+  Code's newline again (it toggled the panel), and Ctrl+P, Ctrl+Q, Ctrl+F, Ctrl+-,
+  Ctrl+0, Ctrl+=, Ctrl+,, F1, F5, F6, F10, F11 and Alt+Left/Right reach readline,
+  vim, htop, mc and the shell instead of the workbench. Find in the terminal is
+  Ctrl+Shift+F, and moving between split terminal panes is Ctrl+Shift+Left/Right;
+  `terminal.commands_to_skip_shell` still hands any binding back to the workbench.
+- Escape reaches a terminal program even while text is selected in the terminal:
+  it only cleared the selection, so in vim a stray selection left insert mode
+  untouched and the `:w` typed next went into the file instead of saving it.
+  Shift+PageUp/PageDown reach a full-screen program, which has no scrollback to page.
+- **Hand cursors.** Over a terminal program that owns the mouse (Claude Code's
+  fullscreen mode) the pointer is an arrow, and a hand over a control the program
+  lights under it ("Jump to bottom", a collapsed tool group); hold Shift to select
+  its text, which was not possible at all. Across the app, dimmed menu rows and
+  the dimmed Commit button show the arrow, the terminal find bar's buttons and
+  the panel's tab overflow chips the hand.
+- A notification, bell or browser request from a terminal in a background project
+  shows at once, naming the project, instead of when the project is next opened.
 - A maximized terminal stays maximized across a restart and when switching
   projects and back; it was restored a frame later whenever the project had a
   file open.
@@ -303,6 +322,9 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Performance
 
+- **Pointer moves over a mouse-tracking terminal program are reported once per
+  cell**, as xterm does, not once per pixel: fewer bytes into the program and
+  fewer redraws in it, and far fewer messages over the wire for a remote terminal.
 - **A long sync or build repaints a few times a second, not per file batch.**
   Changes that keep arriving (a first remote sync, a build, a checkout) are applied
   at most four times a second after the first few, instead of repainting the tree

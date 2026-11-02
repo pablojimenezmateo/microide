@@ -1,5 +1,14 @@
 # MicroIDE Known Tech Debt
 
+Reviewed 2026-11-02 (§ TD-2026-11-02-428 for the terminal UX pass, local and
+remote: a focused terminal owns every key but the reserved Ctrl+Shift chords
+(Ctrl+J, Ctrl+P, F-keys, Alt+arrows reached the workbench), Escape reaches the
+program over a selection (vim's `:w` went into the buffer), a hand over a
+mouse-owning TUI's lit controls and Shift to select past it, an app-wide cursor
+sweep, motion reported once per cell, background projects' terminals heard at
+once. Open: OSC 22, the hover inference's limits, a project-tab badge, two
+load-only flakes).
+
 Reviewed 2026-11-01 (§ TD-2026-11-01-427: results finishing after a project
 switch acted on the front project -- a maximized terminal lost on restore and
 switch, remote rows naming only the host, git operations and commits landing in
@@ -479,6 +488,60 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-11-02-428 — the terminal UX pass, local and remote: what it fixed and what it left. [OPEN — items 1-4]
+
+The 2026-11-02 pass drove Claude Code 2.1.316 (fullscreen TUI: alt screen,
+DECSET 1003 + SGR, kitty keyboard flags 5) and vim in local and host terminals
+(the loopback sshd, `tools/qa/local-sshd.sh`) through the control channel, xdotool
+and a pty tap, and fixed:
+
+- **Shortcut clashes.** A focused terminal now owns every key except the
+  reserved chords (`IsTerminalReservedChord`: Ctrl+Shift+<key>, Ctrl+`,
+  Ctrl+PageUp/PageDown, Ctrl+Tab), linted by
+  `KeybindingRegistry/BuiltinsActiveInATerminalAreReservedChords`. Ctrl+J
+  (Claude Code's newline) toggled the panel; Ctrl+P/Q/F/-/0/=/, , F1/F5/F6/F10/F11
+  and Alt+Left/Right were the workbench's. Terminal find is Ctrl+Shift+F, pane
+  focus Ctrl+Shift+Left/Right.
+- **vim's `:w` on the host.** Escape with a terminal selection up only cleared
+  the selection; a double-clicked word left vim in insert mode and `:w` went into
+  the buffer. Reproduced on a host terminal; any key now retires the selection
+  and reaches the program. Shift+PageUp/PageDown reach a program on the
+  alternate screen.
+- **Cursor shapes.** The arrow over a program that owns the mouse, the hand over
+  a control it lights under the resting pointer (`TerminalHoverAffordance`), the
+  I-beam under Shift, which now selects past the program (impossible before).
+  An app-wide sweep (`tools/qa` `cursor-sweep`, the `cursor` field of every `ui`
+  element) found dimmed menu rows and the dimmed Commit button showing the hand,
+  the terminal find bar's buttons the I-beam, the panel's overflow chips the arrow.
+- **Speed.** Pointer motion is reported once per cell, not per pixel: ~10x fewer
+  reports into a 1003 program, and as many fewer wire messages for a host one.
+- **Background projects' terminals** are drained every tick (TD-427 item 2).
+- **`RemoteFrameTransport`'s bulk window** now follows a base RTT that drops
+  after the queue drained (the once-seen BulkWindowSettles... failure).
+
+Left:
+
+1. **OSC 22 (pointer shape) is not implemented.** kitty, foot, Ghostty and xterm
+   let a program name its pointer (`OSC 22 ; pointer ST`). Claude Code does not
+   send it today (checked: no `]22;` in 2.1.316), so the hover inference above is
+   what gives it a hand; a program that does send it would get exact shapes. Needs
+   a per-pane shape, the cursor rule to prefer it, and a host-wire field (protocol
+   bump) for remote terminals.
+2. **The hover inference's limits.** It shows a hand where a program restyles the
+   cell under a resting pointer and keeps its text; a program that highlights a
+   non-clickable hover (a tooltip-ish row tint) gets a hand too, and one with
+   clickable cells and no hover feedback gets the arrow. Only DECSET 1003
+   programs are probed (1000/1002 programs are never told about a resting pointer).
+3. **A background project's terminal marks wait on its terminal tab.** The
+   project tab itself carries no badge (TD-427 item 2's remainder).
+4. **Two load-only flakes, not reproduced.** In one full `-j32` shard run while
+   three sanitizer trees compiled: `RemoteTerminalRestore/
+   HostTerminalLifetimeAndUnclaimedTerminals` ("opted out, quit closes the host
+   terminal": the shell outlived its 10 s wait) passed 32/32 concurrently after;
+   `RemoteFrameTransport/BulkWindowSettlesAtTheBandwidthDelayProduct` (window
+   0.8% over its rule) passed 72/72 concurrently, before and after its fix --
+   kept here so a recurrence has its history.
 
 ### TD-2026-11-01-427 — results that finish after a project switch: the cases this pass left. [OPEN — items 1, 3-5; 2 resolved 2026-11-02]
 
