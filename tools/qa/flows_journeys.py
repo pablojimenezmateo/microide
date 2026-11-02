@@ -222,7 +222,9 @@ def flow_journey_layout(app: q.App) -> None:
     app.send("term")
     app.send("term-split")
     step(app, "terminal split", 0.4)
-    app.key("ctrl+comma")
+    # The split terminal has the keyboard, and Ctrl+, is its program's key now:
+    # Settings opens through its command.
+    app.send("settings")
     step(app, "settings over the layout", 0.4)
     app.expect(app.ui().get("modal") == "settings", "Settings opens as a modal over the layout")
     app.key("Escape")

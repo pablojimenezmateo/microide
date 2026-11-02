@@ -389,8 +389,13 @@ def flow_tab_recent_editors(app: q.App) -> None:
     app.key("F6")
     step(app, "F6", 0.2)
     app.expect(app.ui().get("focus") != "editor", f"F6 moves focus off the editor ({app.ui().get('focus')})")
-    app.key("shift+F6")
-    step(app, "shift+F6", 0.2)
+    if app.ui().get("focus") == "panel":
+        # F6 landed in the terminal, which owns Shift+F6 (htop's and mc's keys):
+        # the way back from there is the command (the palette, the View menu).
+        app.send("focus-previous-part")
+    else:
+        app.key("shift+F6")
+    step(app, "focus previous part", 0.2)
     app.expect(app.ui().get("focus") == "editor", f"Shift+F6 brings focus back ({app.ui().get('focus')})")
 
 

@@ -121,7 +121,10 @@ def scenario_keys(app: q.App) -> None:
             ran = after["dispatched"] > before["dispatched"]
             label = f"{binding['chord']} ({binding['id']}) in the {where}"
             if where in refusals:
-                owner = terminal_owner.get(binding["chord"])
+                # A two-step chord's leader is the program's key in a terminal (Ctrl+K
+                # is readline's kill-line), so its second key dispatches on its own:
+                # Ctrl+K Ctrl+Shift+Left is term-pane-left there.
+                owner = terminal_owner.get(binding["chord"].split()[-1])
                 if ran and after["last"] != owner:
                     app.expect(False, f"{label}: the terminal owns this key, but {after['last']} ran")
                 if not ran and owner is not None:
