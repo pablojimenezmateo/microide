@@ -2865,8 +2865,18 @@ void TestWorkspaceShellTerminalNotificationToastsFromABackgroundProject() {
   }
   Expect(!toast.empty(), "a background project's terminal notification toasts at once");
   Expect(toast.find("alpha") != std::string::npos, "and names the project it came from: " + toast);
+  // The project's own tab carries the mark while it is in the background
+  // (TD-2026-11-02-428 item 3: only its terminal tab did, unseen until switched to).
+  Expect(WorkspaceShellTestAccess::ProjectTabDisplayTitle(shell, 0) == "alpha \xe2\x80\xa2",
+         "alpha's project tab is marked: " + WorkspaceShellTestAccess::ProjectTabDisplayTitle(shell, 0));
+  Expect(WorkspaceShellTestAccess::ProjectTabTooltipLabel(shell, 0).find("A terminal printed or rang") !=
+             std::string::npos,
+         "and its tooltip says why");
+  Expect(WorkspaceShellTestAccess::ProjectTabDisplayTitle(shell, 1) == "beta", "the front project is not");
 
   Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0), "back to alpha");
+  Expect(WorkspaceShellTestAccess::ProjectTabDisplayTitle(shell, 0) == "alpha",
+         "in front, its terminal tab carries the mark instead");
   Expect(WorkspaceShellTestAccess::TerminalTabHasUnseenBell(shell, 0),
          "its terminal tab carries the mark back to the front");
 }

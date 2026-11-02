@@ -281,6 +281,12 @@ void ForEachProjectHostPane(ProjectWorkspaceState& state, Visit&& visit) {
 
 }  // namespace
 
+bool TerminalPanelService::HasUnseenTerminalActivity(const ProjectWorkspaceState& state) {
+  return std::any_of(state.terminal_tabs.begin(), state.terminal_tabs.end(), [](const auto& tab) {
+    return tab != nullptr && (tab->has_unseen_output || tab->has_unseen_bell);
+  });
+}
+
 bool TerminalPanelService::HasHostOpenInFlight(const ProjectWorkspaceState& state) {
   for (const std::unique_ptr<TerminalTabState>& tab : state.terminal_tabs) {
     for (const std::unique_ptr<TerminalPaneState>& pane : tab->panes) {

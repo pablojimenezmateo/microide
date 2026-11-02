@@ -1,3 +1,4 @@
+#include "workspace/services/TerminalPanelService.h"
 #include "workspace/shell/WorkspaceShell.h"
 
 #include <algorithm>
@@ -116,6 +117,18 @@ std::string WorkspaceShell::ProjectLabel() const {
   return id.empty() ? "microide" : id.Label();
 }
 
+namespace {
+
+// The catalog entry of a project that is not the one in front; nullptr for the
+// front project (whose own terminal tabs show their marks) and out of range.
+const ProjectWorkspaceState* BackgroundProjectEntry(const WorkspaceContext& context, std::size_t index) {
+  const bool front = !context.current_project_state.root.empty() && index == context.project_catalog.active_index;
+  return front || index >= context.project_catalog.entries.size() ? nullptr
+                                                                  : context.project_catalog.entries[index].get();
+}
+
+}  // namespace
+
 std::string WorkspaceShell::ProjectTabDisplayTitle(std::size_t index) const {
   if (index >= context_.project_catalog.entries.size()) {
     return {};
@@ -126,7 +139,14 @@ std::string WorkspaceShell::ProjectTabDisplayTitle(std::size_t index) const {
   // frame, and DirtyEditorTabIndicesForProject reserves a vector sized to the
   // tab count before it finds out whether anything is dirty -- so the common
   // "nothing dirty" answer cost a heap allocation per tab per frame.
-  return HasDirtyEditorTabForProject(index) ? "*" + label : label;
+  std::string title = HasDirtyEditorTabForProject(index) ? "*" + label : label;
+  // A project in the background whose terminal printed or rang meanwhile: the
+  // mark its terminal tab carries, carried up to where the user can see it.
+  if (const ProjectWorkspaceState* project = BackgroundProjectEntry(context_, index);
+      project != nullptr && TerminalPanelService::HasUnseenTerminalActivity(*project)) {
+    title += " \xe2\x80\xa2";
+  }
+  return title;
 }
 
 std::string WorkspaceShell::ProjectTabTooltipLabel(std::size_t index) const {
@@ -137,7 +157,12 @@ std::string WorkspaceShell::ProjectTabTooltipLabel(std::size_t index) const {
   // never shown. Location() skips `lexically_normal()` for an already-normal path
   // (catalog roots are normalized on the way in; TD-2026-08-10-174).
   const project::ProjectId& id = context_.ProjectCatalogId(index);
-  return id.empty() ? "Welcome" : id.Location();
+  std::string label = id.empty() ? "Welcome" : id.Location();
+  if (const ProjectWorkspaceState* project = BackgroundProjectEntry(context_, index);
+      project != nullptr && TerminalPanelService::HasUnseenTerminalActivity(*project)) {
+    label += "\nA terminal printed or rang since you left";
+  }
+  return label;
 }
 
 SDL_FRect WorkspaceShell::ComputeCaretAnchoredOverlayRect(const SDL_FRect& editor_area,

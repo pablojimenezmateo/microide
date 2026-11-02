@@ -142,6 +142,9 @@ class TerminalPanelService {
   // such a pane has no identity, and the reopen starts a fresh shell beside the
   // one the host already runs for it.
   static bool HasHostOpenInFlight(const ProjectWorkspaceState& state);
+  // A terminal tab of `state` with output or a bell nobody has seen: what a
+  // background project's tab marks (TD-2026-11-02-428 item 3).
+  static bool HasUnseenTerminalActivity(const ProjectWorkspaceState& state);
   // Start every pending host pane of `state` (its connection is up now): each
   // opens, or reattaches to the terminal it recorded. Returns how many started.
   static std::size_t StartPendingHostPanes(ProjectWorkspaceState& state);

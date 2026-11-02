@@ -1,3 +1,4 @@
+#include "workspace/services/TerminalPanelService.h"
 #include "workspace/WorkspaceTabStripChrome.h"
 
 #include <algorithm>
@@ -89,6 +90,10 @@ std::uint64_t WorkspaceTabStripChrome::ComputeProjectStripFingerprint() const {
                   (static_cast<std::uint64_t>(color.a) << 32);
     }
     fingerprint = util::Fnv1aValue(fingerprint, color_key);
+    // The terminal-activity mark a background project's title carries.
+    fingerprint = util::Fnv1aValue(
+        fingerprint,
+        !is_active_project && project != nullptr && TerminalPanelService::HasUnseenTerminalActivity(*project) ? 1u : 0u);
     // A remote project's corner follows its connection: the worst stage, not the
     // status revision, so a sync count ticking under a steady state re-lays nothing.
     // (The host is in the id, which the root already pins.)
