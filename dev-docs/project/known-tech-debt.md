@@ -810,7 +810,7 @@ Left:
    this pass; the non-ASCII glyph cluster atlas (2.12.0) is where a fallback
    would plug in.
 
-### TD-2026-10-30-426 — the 2026-10-29/30 bug sweep: what it found, fixed and ran. [OPEN — the soft-wrap abort and the 3-pixel menu finding not reproduced at HEAD; the seed-60 focus test still owed]
+### TD-2026-10-30-426 — the 2026-10-29/30 bug sweep: what it found, fixed and ran. [CLOSED 2026-11-02 — both findings not reproduced at HEAD (the soft-wrap check now names its source); the seed-60 unit test shown unwritable]
 
 Driven mostly by the QA monkey on fresh seeds (default 15-34, editor 15-35,
 commands 15-45 -- the commands profile found every GUI bug below) and by every
@@ -901,7 +901,14 @@ HEAD, and seed 37 clean once on release (the monkey's actions follow the UI, whi
 has changed); the debug lanes and qa-asan keep the asserts armed. Seed 60 at 600
 steps found a NEW stale paint at HEAD -- typing before a shebang changed the
 buffer's language and only the edited line repainted -- fixed with
-`WorkspaceShell/AnEditThatChangesTheLanguageRepaintsThePane`.
+`WorkspaceShell/AnEditThatChangesTheLanguageRepaintsThePane`. The owed seed-60
+focus test was tried a fourth time, through state alone (the focus moved with no
+damage asked, a selection over two lines, an unrelated sliver painted): prep queued
+both pane surfaces WITHOUT the focused-group rule -- the per-pane diffs that came
+after it now cover the move -- so no fixture can fail without that rule against
+today's prep, and keeping one that passes without its fix is what this entry
+refused. The rule stays (two compares a frame); the qa lanes' redraw verifier is
+its guard.
 
 **Ran clean at the end:** tests, asan, tsan, hardened, clang-build, tidy (0 new),
 qa (222/222), qa-remote (loopback and slow link), perf-tests, every fuzz target for
