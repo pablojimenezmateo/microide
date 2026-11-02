@@ -40,6 +40,18 @@ namespace {
 
 bool UiRectHasArea(const SDL_FRect& rect) { return rect.w > 0.0f && rect.h > 0.0f; }
 
+// A tab strip's overflow chips ("<3", "5>"), `<strip>/more-left|right`, while
+// they hide tabs: clickable, so a driver and the cursor sweep can reach them.
+void AddOverflowChips(ControlUiElements& out, const std::string& strip,
+                      const TabStripOverflowControls& overflow) {
+  if (overflow.hidden_left > 0) {
+    AddControlUiElement(out, control_ui_kind::kButton, strip + "/more-left", overflow.left_button);
+  }
+  if (overflow.hidden_right > 0) {
+    AddControlUiElement(out, control_ui_kind::kButton, strip + "/more-right", overflow.right_button);
+  }
+}
+
 // The text field the open overlay types into, per mode (the editor the overlay
 // view model draws its query row from); null for the caret-anchored lists.
 const editor::SingleLineEditor* OverlayQueryEditor(const ProjectWorkspaceState& state) {
@@ -247,12 +259,15 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
       .tabs =
           [this](const WorkspaceLayout& layout, ControlUiElements& out) {
             if (UiRectHasArea(layout.project_tab_strip)) {
-              for (const VisibleStripTab& tab :
-                   tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip)) {
+              const auto& project_tabs = tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
+              for (const VisibleStripTab& tab : project_tabs) {
                 AddControlUiElement(out, kProjectTab, tab.display_title, tab.rect,
                                     tab.display_title);
                 out.back().active = tab.active;
               }
+              AddOverflowChips(out, "project-tabs",
+                               tab_strip_chrome_.ComputeProjectTabOverflowControls(
+                                   layout.project_tab_strip, project_tabs));
             }
             if (!HasActiveProjectCatalogEntry()) {
               return;
@@ -264,7 +279,8 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                 continue;
               }
               const std::string group = std::to_string(gi);
-              for (const VisibleStripTab& tab : tab_strip_chrome_.ComputeVisibleTabsForGroup(gi, strip)) {
+              const auto& group_tabs = tab_strip_chrome_.ComputeVisibleTabsForGroup(gi, strip);
+              for (const VisibleStripTab& tab : group_tabs) {
                 const std::string locator = group + "/" + tab.display_title;
                 AddControlUiElement(out, kTab, locator, tab.rect, tab.display_title);
                 out.back().active = tab.active;
@@ -272,6 +288,8 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                   AddControlUiElement(out, kButton, "close-tab/" + locator, tab.close_rect);
                 }
               }
+              AddOverflowChips(out, "tabs/" + group,
+                               tab_strip_chrome_.ComputeTabOverflowControlsForGroup(gi, strip, group_tabs));
             }
             for (std::size_t i = 0; i < groups.dividers.size(); ++i) {
               AddControlUiElement(out, kDivider, "editor/" + std::to_string(i),
@@ -327,6 +345,9 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
             std::size_t selected = 0;
             std::function<std::string(std::size_t)> label;
             std::function<std::string(std::size_t)> shown;  // the painted text, when it differs
+            // Whether a click acts on the row, when not every row does (a git view's
+            // section headers and "No outgoing files" take none).
+            std::function<bool(std::size_t)> clickable;
             if (mode == SidebarMode::Search) {
               const std::vector<int> line_map = BuildProjectSearchLineMap();
               const auto& search = state.overlay.workflow.project_search;
@@ -375,6 +396,10 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               shown = [&lines](std::size_t index) {
                 return lines[index].display_label.empty() ? lines[index].label
                                                           : lines[index].display_label;
+              };
+              clickable = [&lines](std::size_t index) {
+                return lines[index].kind == GitSidebarLine::Kind::Directory ||
+                       (lines[index].kind == GitSidebarLine::Kind::Entry && lines[index].entry_index >= 0);
               };
             } else if (mode == SidebarMode::Problems) {
               const auto& entries = state.sidebar.problems.entries;
@@ -427,6 +452,9 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                                   view + (text.empty() ? "#" + std::to_string(index) : text),
                                   ScrollableListRowRect(list, visible), shown ? shown(index) : text);
               out.back().selected = index == selected;
+              if (clickable) {
+                out.back().enabled = clickable(index);
+              }
             }
             if (const auto bar = MakeVerticalScrollbarGeometry(
                     list.list_rect, static_cast<float>(count), list.visible_units,
@@ -444,15 +472,33 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                                               layout.bottom_panel.w,
                                               kWorkspaceBottomPanelHeaderHeight);
             const LayoutMode mode = layout_mode_service_.CurrentMode();
-            for (const VisibleStripTab& tab : tab_strip_service_.ComputeVisibleBottomPanelTabs(
-                     context_.current_project_state, header, mode,
-                     [this](std::string_view text) { return text_renderer_.MeasureWidth(text); },
-                     output_channels_.Channels())) {
+            const auto& panel_tabs = tab_strip_service_.ComputeVisibleBottomPanelTabs(
+                context_.current_project_state, header, mode,
+                [this](std::string_view text) { return text_renderer_.MeasureWidth(text); },
+                output_channels_.Channels());
+            for (const VisibleStripTab& tab : panel_tabs) {
               AddControlUiElement(out, kPanelTab, tab.display_title, tab.rect, tab.display_title);
               out.back().active = tab.active;
               if (UiRectHasArea(tab.close_rect)) {
                 AddControlUiElement(out, kButton, "close-panel-tab/" + tab.display_title, tab.close_rect);
               }
+            }
+            AddOverflowChips(out, "panel-tabs",
+                             tab_strip_service_.ComputeBottomPanelTabOverflowControls(
+                                 context_.current_project_state, header, mode, panel_tabs,
+                                 output_channels_.Channels()));
+            // The terminal's find bar, as its paint and click path lay it out.
+            if (terminal_find_service_.visible() && prepare_cached_bottom_panel_vm_.has_value() &&
+                prepare_cached_bottom_panel_vm_->find_visible) {
+              const FindWidgetLayout& fw = prepare_cached_bottom_panel_vm_->find.fw;
+              AddControlUiElement(out, kField, "terminal-find/query", fw.search_field,
+                                  terminal_find_service_.query().text());
+              out.back().active = terminal_find_service_.focused();
+              AddControlUiElement(out, kButton, "terminal-find/match-case", fw.toggle_buttons[0]);
+              AddControlUiElement(out, kButton, "terminal-find/whole-word", fw.toggle_buttons[1]);
+              AddControlUiElement(out, kButton, "terminal-find/previous", fw.prev_button);
+              AddControlUiElement(out, kButton, "terminal-find/next", fw.next_button);
+              AddControlUiElement(out, kButton, "terminal-find/close", fw.close_button);
             }
             if (context_.current_project_state.panel.content == PanelContentKind::Terminal) {
               AddControlUiElement(out, kButton, "panel/new-terminal",

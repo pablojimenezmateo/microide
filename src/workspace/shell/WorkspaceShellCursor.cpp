@@ -273,12 +273,19 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   // Hit-test the popup using geometry only. The full ComputeVisiblePopupMenuItems
   // path here was calling IsMenuItemEnabled/IsMenuItemChecked for every row, and
   // CursorKindForPosition runs on every mouse motion — that cost roughly half of
-  // the per-motion handler budget while a menu was open.
+  // the per-motion handler budget while a menu was open. Only the row under the
+  // pointer is asked whether it is enabled: a dimmed row takes no click, so it
+  // shows the arrow (it showed the hand).
+  const auto row_cursor = [this](std::span<const MenuItemSpec> items,
+                                 const PopupRowGeometry& hit) {
+    return hit.separator || !IsMenuItemEnabled(items[hit.index]) ? CursorKind::Default
+                                                                 : CursorKind::Pointer;
+  };
   if (context_.menu_state.tree_context_menu.open) {
     if (const auto popup_rect = ComputeTreeContextMenuRect(); popup_rect.has_value()) {
       const auto items = TreeContextMenuItems(context_.menu_state.tree_context_menu.target);
       if (const auto hit = HitTestPopupRow(items, *popup_rect, x, y); hit.has_value()) {
-        return hit->separator ? CursorKind::Default : CursorKind::Pointer;
+        return row_cursor(items, *hit);
       }
       if (Contains(*popup_rect, x, y)) {
         return CursorKind::Default;
@@ -290,7 +297,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     if (const auto popup_rect = ActiveSubmenuRect(layout.menu_bar); popup_rect.has_value()) {
       const auto items = MenuItems(context_.menu_state.active_submenu_id);
       if (const auto hit = HitTestPopupRow(items, *popup_rect, x, y); hit.has_value()) {
-        return hit->separator ? CursorKind::Default : CursorKind::Pointer;
+        return row_cursor(items, *hit);
       }
       if (Contains(*popup_rect, x, y)) {
         return CursorKind::Default;
@@ -301,7 +308,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         popup_rect.has_value()) {
       const auto items = MenuItems(context_.menu_state.active_menu_id);
       if (const auto hit = HitTestPopupRow(items, *popup_rect, x, y); hit.has_value()) {
-        return hit->separator ? CursorKind::Default : CursorKind::Pointer;
+        return row_cursor(items, *hit);
       }
       if (Contains(*popup_rect, x, y)) {
         return CursorKind::Default;
@@ -528,11 +535,10 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
           button_rect.has_value() && Contains(*button_rect, x, y)) {
         return CursorKind::Pointer;
       }
-      // Top-level Commit button (shown before the commit draft opens — see
-      // GitSidebarCommandCenter, show_commit_button = repo_available && !workflow.open).
-      // It is clearly clickable, so it must claim the pointer like every other action.
-      if (const auto& git_state = context_.current_project_state.sidebar.git;
-          git_state.repo_available && !git_state.commit_workflow.open &&
+      // Top-level Commit button (shown before the commit draft opens). It takes a
+      // click only with something staged (CanOpenGitCommitButton, what the click
+      // path asks); dimmed, it is not a button, so it shows the arrow.
+      if (CanOpenGitCommitButton() &&
           Contains(git_sidebar_header::CommitButtonRect(layout.sidebar), x, y)) {
         return CursorKind::Pointer;
       }
@@ -649,7 +655,34 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
           return CursorKind::Pointer;
         }
       }
+      // The overflow chips light up and page the strip; they showed the arrow.
+      if (OverflowChipAt(tab_strip_service_.ComputeBottomPanelTabOverflowControls(
+                             context_.current_project_state, panel_header,
+                             layout_mode_service_.CurrentMode(), visible_panel_tabs,
+                             output_channels_.Channels()),
+                         x, y)
+              .has_value()) {
+        return CursorKind::Pointer;
+      }
       return CursorKind::Default;
+    }
+    // The terminal's find bar floats over the pane: its buttons are buttons and
+    // its query a text field, not the transcript's I-beam under them.
+    if (terminal_find_service_.visible() && prepare_cached_bottom_panel_vm_.has_value() &&
+        prepare_cached_bottom_panel_vm_->find_visible) {
+      const FindWidgetLayout& fw = prepare_cached_bottom_panel_vm_->find.fw;
+      if (Contains(fw.widget, x, y)) {
+        if (Contains(fw.search_field, x, y)) {
+          return CursorKind::Text;
+        }
+        for (const SDL_FRect& button : {fw.toggle_buttons[0], fw.toggle_buttons[1], fw.prev_button,
+                                        fw.next_button, fw.close_button}) {
+          if (Contains(button, x, y)) {
+            return CursorKind::Pointer;
+          }
+        }
+        return CursorKind::Default;
+      }
     }
     // Plugin surface preview: pointer over a published hit region (TD-2026-07-16-61).
     if (context_.current_project_state.panel.content == PanelContentKind::PluginSurface) {
@@ -1167,7 +1200,7 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
                git_sidebar_header::RefreshButtonRect(sidebar),
                // The header's Commit button, or the open draft's confirm button
                // (its rect is the one the draft's render cached).
-               if_enabled(!workflow.open, git_sidebar_header::CommitButtonRect(sidebar)),
+               if_enabled(CanOpenGitCommitButton(), git_sidebar_header::CommitButtonRect(sidebar)),
                if_enabled(workflow.open, workflow.commit_button_rect),
                GitSidebarOutgoingBaseButtonRect(sidebar)});
           break;

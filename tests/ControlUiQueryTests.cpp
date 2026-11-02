@@ -176,6 +176,55 @@ void TestUiQueryNamesTheWorkspaceChrome() {
   Expect(beta.has_value() && beta->active == true, "the active tab should be marked active");
 }
 
+// Each element reports the cursor over its centre, and the cursor follows what a
+// click does (tools/qa cursor-sweep holds the whole app to it). The misses that
+// sweep found: a dimmed menu row and the dimmed Commit button showed the hand,
+// and the terminal find bar's buttons showed the transcript's I-beam.
+void TestUiQueryCursorFollowsWhatAClickDoes() {
+  UiFixture fixture;
+  const auto cursor_of = [](const util::JsonValue& ui, std::string_view name) -> std::string {
+    for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+      if (entry["name"].AsString() == name) {
+        return entry.HasKey("cursor") ? entry["cursor"].AsString() : "<none>";
+      }
+    }
+    return "<absent>";
+  };
+  const auto debug = Find(TestAccess::ControlUi(fixture.shell), "menu:Debug");
+  Expect(debug.has_value(), "the Debug menu should be on the bar");
+  Expect(cursor_of(TestAccess::ControlUi(fixture.shell), "menu:Debug") == "pointer", "a menu shows the hand");
+  fixture.ClickCenter(*debug);
+  const util::JsonValue open = TestAccess::ControlUi(fixture.shell);
+  std::size_t enabled = 0;
+  std::size_t dimmed = 0;
+  for (const util::JsonValue& entry : open["elements"].AsArray()) {
+    if (entry["kind"].AsString() != "menu-item") {
+      continue;
+    }
+    const bool on = entry["enabled"].AsBool();
+    (on ? enabled : dimmed) += 1;
+    Expect(entry["cursor"].AsString() == (on ? "pointer" : "default"),
+           entry["name"].AsString() + (on ? " takes a click: the hand" : " is dimmed: the arrow") +
+               ", not " + entry["cursor"].AsString());
+  }
+  Expect(enabled > 0 && dimmed > 0, "the Debug menu (no session) has rows of both kinds: " +
+                                          std::to_string(enabled) + " enabled, " + std::to_string(dimmed) + " dimmed");
+  Expect(SendKeyDown(fixture.shell, SDLK_ESCAPE, SDL_KMOD_NONE), "Escape closes the menu");
+
+  TestAccess::EnsureTerminalTab(fixture.shell);
+  TestAccess::SetFocusPanel(fixture.shell);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "terminal-find x"), "the terminal's find bar opens");
+  fixture.shell.Render(fixture.canvas.renderer(), UiFixture::kWidth, UiFixture::kHeight);
+  const util::JsonValue find = TestAccess::ControlUi(fixture.shell);
+  for (const std::string_view name :
+       {"button:terminal-find/match-case", "button:terminal-find/whole-word",
+        "button:terminal-find/previous", "button:terminal-find/next", "button:terminal-find/close"}) {
+    Expect(cursor_of(find, name) == "pointer",
+           std::string(name) + " is a button over the transcript: " + cursor_of(find, name));
+  }
+  Expect(cursor_of(find, "field:terminal-find/query") == "text", "the find query is a text field");
+}
+
 // Rects are in layout units; window.scale says how many window coordinates one is.
 // Without it a driver pointing at ui.scale 1.5 clicked two thirds of the way to
 // every row and ran the row above (tools/qa menu-clicks, "scaled" layout).
@@ -687,6 +736,7 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/NamesTheDebugPane", TestUiQueryNamesTheDebugPane);
   AddTest(tests, "ControlUiQuery/NamesTheWorkspaceChrome", TestUiQueryNamesTheWorkspaceChrome);
   AddTest(tests, "ControlUiQuery/HitsWhatItNames", TestUiQueryHitsWhatItNames);
+  AddTest(tests, "ControlUiQuery/CursorFollowsWhatAClickDoes", TestUiQueryCursorFollowsWhatAClickDoes);
   AddTest(tests, "ControlUiQuery/IsReadOnly", TestUiQueryIsReadOnly);
   AddTest(tests, "ControlUiQuery/ReportsTheModal", TestUiQueryReportsTheModal);
   AddTest(tests, "ControlUiQuery/TypingInTheTreeNavigates", TestTypingInTheTreeNavigates);
