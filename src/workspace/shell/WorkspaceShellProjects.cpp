@@ -101,6 +101,20 @@ ProjectCatalogService& WorkspaceShell::MakeProjectCatalogService() {
                 RequestAutomaticGitSidebarRefresh();
                 RefreshProjectFiles();
                 ReloadCleanOpenBuffersFromDisk();
+                // A stage, a pull or a branch switch that finished in the
+                // background changed what this project's compares show.
+                std::vector<std::filesystem::path> compared;
+                for (const EditorGroup& group : context_.current_project_state.editor_groups) {
+                  for (const TabEntry& tab : group.open_tabs) {
+                    if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+                        std::find(compared.begin(), compared.end(), tab.compare->path) == compared.end()) {
+                      compared.push_back(tab.compare->path);
+                    }
+                  }
+                }
+                for (const std::filesystem::path& path : compared) {
+                  RefreshOpenCompareTabsForPath(path);
+                }
               },
           .save_config_state = [this]() { MakePersistenceCoordinator().SaveConfigState(); },
           .save_session_state = [this]() { MakePersistenceCoordinator().SaveSessionState(); },

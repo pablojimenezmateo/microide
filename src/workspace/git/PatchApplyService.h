@@ -29,6 +29,15 @@ class PatchApplyService {
     std::function<void(const std::filesystem::path&)> invalidate_editor_blame_path;
     std::function<void(const std::filesystem::path&)> reload_clean_editor_tabs_for_path;
     std::function<void(std::string_view)> set_command_feedback;
+    // The callbacks above act on the project in FRONT, but the user may switch
+    // before an apply finishes (TD-2026-11-01-427 item 1). So the project is read
+    // at dispatch, and a completion for one no longer in front leaves its compare
+    // tab, clean tabs and git state to catch up on activation, and names it in
+    // the feedback. Unset = always in front.
+    std::function<std::filesystem::path()> front_project_root;
+    std::function<bool(const std::filesystem::path& project_root)> is_in_front;
+    std::function<std::string(const std::filesystem::path& project_root)> project_label;
+    std::function<void(const std::filesystem::path& project_root)> defer_to_project;
     std::function<void(project::PatchApplyPreview preview)> open_discard_preview_prompt;
   };
 
@@ -109,9 +118,7 @@ class PatchApplyService {
   std::optional<std::string> BuildPatchForRequest(const project::PatchApplyRequest& request,
                                                   const compare::CompareModel& model) const;
   void DispatchApply(project::PatchApplyRequest request, std::string patch_text);
-  void PublishResult(project::PatchApplyResult result,
-                     const project::PatchApplyRequest& request);
-  void ReportResult(const project::PatchApplyResult& result);
+  void ReportResult(const project::PatchApplyResult& result, std::string_view project_suffix = {});
   // Ignore-whitespace narrows the diff model: lines that differ only in
   // whitespace are folded into Unchanged rows, so a generated patch can neither
   // stage a whitespace-only change nor discard cleanly (its context, built from

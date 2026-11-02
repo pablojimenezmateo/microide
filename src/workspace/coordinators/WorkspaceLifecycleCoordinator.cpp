@@ -21,6 +21,7 @@
 #include "workspace/coordinators/WorkspaceProjectCatalogCoordinator.h"
 #include "workspace/services/ProjectCatalogService.h"
 #include "workspace/services/RemoteHostService.h"
+#include "workspace/shell/ProjectInFront.h"
 #include "workspace/shell/WorkspaceShell.h"
 
 namespace microide::workspace {
@@ -239,6 +240,10 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
           [this](std::string_view feedback) {
             context_.current_project_state.panel.feedback.text = std::string(feedback);
           },
+      .front_project_root = [this]() { return context_.current_project_state.root; },
+      .is_in_front = ProjectInFront{context_},
+      .project_label = ProjectLabelOf{context_},
+      .defer_to_project = CatchUpOnActivate{context_},
       .open_discard_preview_prompt =
           [this](project::PatchApplyPreview preview) {
             OpenPromptSurface(PromptSurfaceState::Action::DiscardPatchPreview,

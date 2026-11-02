@@ -8,36 +8,11 @@
 #include "workspace/services/EditorTabService.h"
 #include "workspace/git/GitOperationService.h"
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
+#include "workspace/shell/ProjectInFront.h"
 #include "util/PathMatch.h"
 
 namespace microide::workspace {
 
-namespace {
-
-// The three callbacks both git services use to tell a completion for the project
-// in front from one for a project the user switched away from meanwhile.
-struct ProjectInFront {
-  WorkspaceContext& context;
-  bool operator()(const std::filesystem::path& root) const { return context.current_project_state.root == root; }
-};
-struct ProjectLabelOf {
-  WorkspaceContext& context;
-  std::string operator()(const std::filesystem::path& root) const {
-    const ProjectWorkspaceState* state = context.ProjectStateForRoot(root);
-    return state != nullptr ? state->id.Label() : root.filename().string();
-  }
-};
-struct CatchUpOnActivate {
-  WorkspaceContext& context;
-  void operator()(const std::filesystem::path& root) const {
-    // A project closed meanwhile has nothing to catch up.
-    if (ProjectWorkspaceState* state = context.ProjectStateForRoot(root); state != nullptr) {
-      state->catch_up_on_activate = true;
-    }
-  }
-};
-
-}  // namespace
 
 void WorkspaceShell::InitializeCommitWorkflowService() {
   commit_workflow_service_.SetCallbacks(CommitWorkflowService::Callbacks{

@@ -211,8 +211,12 @@ void PatchApplyService::DispatchApply(project::PatchApplyRequest request, std::s
   // Durable: a project switch cancels the executor's backlog, and a write
   // dropped there never completes -- the service stayed busy, refusing every git
   // action after (WorkspaceShell/GitOperationFinishingInTheBackground...).
-  background_executor_.PostDurable([this, request = std::move(request),
-                             patch_text = std::move(patch_text)]() mutable {
+  // Whose apply it is: the project in front now, which the user may leave before
+  // it finishes.
+  std::filesystem::path project_root =
+      callbacks_.front_project_root ? callbacks_.front_project_root() : std::filesystem::path{};
+  background_executor_.PostDurable([this, request = std::move(request), patch_text = std::move(patch_text),
+                                    project_root = std::move(project_root)]() mutable {
     // Background half: the `git apply` itself and the repository-service
     // invalidation (mutex-protected). Everything that touches shell state waits
     // for the main thread below.
@@ -240,31 +244,42 @@ void PatchApplyService::DispatchApply(project::PatchApplyRequest request, std::s
     // rendering all three — a data race no test exercised because the tests
     // drained the executor before looking. The two sibling git services already
     // marshal their completions through a mailbox; this one does now too.
-    completion_mailbox_.Post([this, request = std::move(request), result = std::move(result),
-                              patch_applied]() mutable {
+    completion_mailbox_.Post([this, request = std::move(request), result = std::move(result), patch_applied,
+                              project_root = std::move(project_root)]() mutable {
+      const bool in_front =
+          project_root.empty() || !callbacks_.is_in_front || callbacks_.is_in_front(project_root);
       // If the patch actually applied, the working tree / index changed ON DISK —
       // so run the cache invalidations for the applied path, whatever refresh
       // raced it: skipping them left blame/compare/clean-tab caches stale until
       // an unrelated refresh and produced a misleading "nothing applied" message.
+      // The refresh, the clean-tab reload and the compare rebuild act on the
+      // project in front: for another, its own catch up on activation.
       if (patch_applied) {
-        if (callbacks_.request_git_refresh != nullptr) {
-          callbacks_.request_git_refresh();
-        }
         const std::filesystem::path absolute_path =
             request.target.repository_root / request.target.relative_path;
         if (callbacks_.invalidate_editor_blame_path != nullptr) {
-          callbacks_.invalidate_editor_blame_path(absolute_path);
+          callbacks_.invalidate_editor_blame_path(absolute_path);  // keyed by path, not project
         }
-        if (callbacks_.reload_clean_editor_tabs_for_path != nullptr) {
-          callbacks_.reload_clean_editor_tabs_for_path(absolute_path);
-        }
-        if (callbacks_.refresh_compare_tab_for_path != nullptr) {
-          callbacks_.refresh_compare_tab_for_path(absolute_path);
+        if (!in_front) {
+          if (callbacks_.defer_to_project) {
+            callbacks_.defer_to_project(project_root);
+          }
+        } else {
+          if (callbacks_.request_git_refresh != nullptr) {
+            callbacks_.request_git_refresh();
+          }
+          if (callbacks_.reload_clean_editor_tabs_for_path != nullptr) {
+            callbacks_.reload_clean_editor_tabs_for_path(absolute_path);
+          }
+          if (callbacks_.refresh_compare_tab_for_path != nullptr) {
+            callbacks_.refresh_compare_tab_for_path(absolute_path);
+          }
         }
       }
       // A patch that applied is reported as applied, whatever refresh landed
       // while it ran: "Diff is stale; try again" sent the user to apply it twice.
-      PublishResult(std::move(result), request);
+      ReportResult(result, in_front || !callbacks_.project_label ? std::string()
+                                                                  : " in " + callbacks_.project_label(project_root));
     });
   });
 }
@@ -275,26 +290,20 @@ void PatchApplyService::SetCompletionWakeEvent(std::uint32_t event_type) {
 
 void PatchApplyService::DrainCompletions() { completion_mailbox_.Drain(); }
 
-void PatchApplyService::PublishResult(project::PatchApplyResult result,
-                                      const project::PatchApplyRequest& request) {
-  (void)request;
-  ReportResult(result);
-}
-
-void PatchApplyService::ReportResult(const project::PatchApplyResult& result) {
+void PatchApplyService::ReportResult(const project::PatchApplyResult& result, std::string_view project_suffix) {
   if (callbacks_.set_command_feedback == nullptr) {
     return;
   }
   switch (result.category) {
     case PatchApplyResultCategory::Success:
-      callbacks_.set_command_feedback("Patch applied");
+      callbacks_.set_command_feedback("Patch applied" + std::string(project_suffix));
       break;
     case PatchApplyResultCategory::StaleDiff:
       callbacks_.set_command_feedback(
           "Diff is stale; refresh the compare tab and try again. " + result.detail);
       break;
     case PatchApplyResultCategory::PatchDidNotApply:
-      callbacks_.set_command_feedback("Patch did not apply: " + result.detail);
+      callbacks_.set_command_feedback("Patch did not apply" + std::string(project_suffix) + ": " + result.detail);
       break;
     case PatchApplyResultCategory::UnsupportedTarget:
       callbacks_.set_command_feedback(result.detail);

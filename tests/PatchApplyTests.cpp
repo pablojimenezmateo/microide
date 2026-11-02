@@ -743,6 +743,66 @@ void TestPatchApplyRejectsIgnoreWhitespace() {
   executor.Shutdown();
 }
 
+// TD-2026-11-01-427 item 1: a stage that finishes after the user switched to
+// another project refreshed the git view, reloaded clean tabs and rebuilt compare
+// tabs in the project in FRONT, and said "Patch applied" there as if it were its
+// own. The completion now knows the project it was dispatched in: the front
+// project is left alone, the applying one catches up on activation, and the
+// feedback names it.
+void TestPatchApplyFinishingInTheBackgroundStaysWithItsProject() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "alpha";
+  std::filesystem::create_directories(repo_path);
+  InitializeGitRepo(repo_path);
+  const auto file_path = repo_path / "file.txt";
+  WriteFile(file_path, "a\nb\n");
+  CommitAll(repo_path, "base", "base");
+  WriteFile(file_path, "A\nb\n");
+
+  microide::project::ProjectBackgroundExecutor executor;
+  microide::workspace::GitRepositoryService git_service(executor);
+  microide::workspace::PatchApplyService service(executor, git_service);
+  std::filesystem::path front = repo_path;
+  int front_project_touched = 0;
+  std::filesystem::path deferred;
+  std::string feedback;
+  microide::workspace::PatchApplyService::Callbacks callbacks;
+  callbacks.current_repository_state = [&]() {
+    microide::project::GitRepositoryState state;
+    state.repository_root = repo_path;
+    state.repo_available = true;
+    return state;
+  };
+  callbacks.request_git_refresh = [&]() { ++front_project_touched; };
+  callbacks.reload_clean_editor_tabs_for_path = [&](const std::filesystem::path&) { ++front_project_touched; };
+  callbacks.refresh_compare_tab_for_path = [&](const std::filesystem::path&) { ++front_project_touched; };
+  callbacks.set_command_feedback = [&](std::string_view message) { feedback = std::string(message); };
+  callbacks.front_project_root = [&]() { return front; };
+  callbacks.is_in_front = [&](const std::filesystem::path& root) { return root == front; };
+  callbacks.project_label = [](const std::filesystem::path& root) { return root.filename().string(); };
+  callbacks.defer_to_project = [&](const std::filesystem::path& root) { deferred = root; };
+  service.SetCallbacks(std::move(callbacks));
+
+  microide::workspace::CompareTabState compare_tab;
+  compare_tab.path = file_path;
+  compare_tab.review_mode = microide::compare::CompareReviewMode::WorkingTree;
+  compare_tab.right_ref = "WORKTREE";
+  compare_tab.staging_view = microide::compare::WorkingTreeStagingView::Unstaged;
+  compare_tab.model = BuildCompareModel("a\nb\n", "A\nb\n");
+  Expect(service.RequestStageHunk(compare_tab), "the stage is dispatched in alpha");
+  front = temp_dir.path() / "beta";  // switched before it finishes
+  Expect(WaitUntil([&] { return service.PendingCompletionCount() > 0; }), "the apply finishes");
+  service.DrainCompletions();
+
+  GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
+  Expect(repo.Execute({"diff", "--cached", "--", "file.txt"}).output.find("+A") != std::string::npos,
+         "the hunk was staged in alpha");
+  Expect(front_project_touched == 0, "the front project's git view, tabs and compares are left alone");
+  Expect(deferred == repo_path, "alpha catches up when it is activated");
+  Expect(feedback == "Patch applied in alpha", "and the feedback names it: " + feedback);
+  executor.Shutdown();
+}
+
 void TestPatchUnstageSelectedLinesWithStagedAndUnstagedChanges() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -1582,6 +1642,8 @@ void RegisterPatchApplyTests(std::vector<TestCase>& tests) {
                    TestPatchGeneratorSelectedLinesBesideBlankContext});
   tests.push_back({"PatchApply/CrlfContextLines", TestPatchGeneratorCrlfContextLines});
   tests.push_back({"PatchApply/StageCrlfFileApplies", TestPatchStageCrlfFileApplies});
+  tests.push_back({"PatchApply/FinishingInTheBackgroundStaysWithItsProject",
+                   TestPatchApplyFinishingInTheBackgroundStaysWithItsProject});
   tests.push_back({"PatchApply/RejectsIgnoreWhitespace", TestPatchApplyRejectsIgnoreWhitespace});
   tests.push_back({"PatchApply/UnstageMixedIndexWorktree",
                    TestPatchUnstageSelectedLinesWithStagedAndUnstagedChanges});
