@@ -131,6 +131,30 @@ void TestWorkspaceSharedSidebarFillsTheTabStripBand() {
   }
 }
 
+// The debug pane is the sidebar's mirror on the right and takes the same band
+// (VS Code's secondary side bar does; TD-2026-11-01-427 item 4) -- it started
+// under the editor tab strip, a strip-high gap of chrome over it. Its handle stays
+// beside the content, clear of the strip's overflow chevrons at its right end.
+void TestWorkspaceSharedDebugPaneFillsTheTabStripBand() {
+  for (const bool project_strip : {false, true}) {
+    const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 300.0f, 180.0f, {}, true,
+                                      /*right_pane_visible=*/true, 320.0f, project_strip);
+    Expect(layout.right_pane.w > 0.0f && layout.right_pane.y == layout.sidebar.y &&
+               layout.right_pane.h == layout.sidebar.h,
+           "the debug pane spans the sidebar's band");
+    Expect(layout.right_pane.x >= layout.tab_strip.x + layout.tab_strip.w,
+           "beside the editor tab strip, not over it");
+    const SDL_FRect handle = microide::workspace::RightPaneResizeHandleRect(layout);
+    Expect(handle.y == layout.content.y && handle.y + handle.h == layout.right_pane.y + layout.right_pane.h,
+           "its resize handle runs beside the content only");
+    const auto damage = microide::workspace::DragTargetHighlightRect(
+        layout, microide::workspace::DragTarget::RightPaneDivider);
+    Expect(damage.has_value() && damage->y == layout.right_pane.y &&
+               damage->y + damage->h == layout.right_pane.y + layout.right_pane.h,
+           "a divider drag repaints the divider's whole height");
+  }
+}
+
 void TestWorkspaceSharedScrollbarHelpers() {
   const auto vertical =
       MakeVerticalScrollbarGeometry(MakeRect(0.0f, 0.0f, 100.0f, 200.0f), 100.0f, 20.0f, 30.0f, false);
@@ -1606,6 +1630,7 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
           TestWorkspaceLayoutInputsStructMatchesPositionalForm);
   AddTest(tests, "WorkspaceShared/LayoutHelpers", TestWorkspaceSharedLayoutHelpers);
   AddTest(tests, "WorkspaceShared/SidebarFillsTheTabStripBand", TestWorkspaceSharedSidebarFillsTheTabStripBand);
+  AddTest(tests, "WorkspaceShared/DebugPaneFillsTheTabStripBand", TestWorkspaceSharedDebugPaneFillsTheTabStripBand);
   AddTest(tests, "WorkspaceShared/ScrollbarHelpers", TestWorkspaceSharedScrollbarHelpers);
   AddTest(tests, "WorkspaceShared/ScrollbarReserveGeometry",
           TestWorkspaceSharedScrollbarReserveGeometry);

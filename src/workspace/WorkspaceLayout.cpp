@@ -146,10 +146,14 @@ WorkspaceLayout ComputeLayout(const WorkspaceLayoutInputs& inputs) {
                std::max(0.0f, layout.content.y + layout.content.h - sidebar_top));
   layout.editor_area = MakeRect(editor_area_x, layout.content.y, editor_area_width,
                                 layout.content.h);
+  // The debug pane is the right-hand mirror of the sidebar and takes the same
+  // band, beside the editor tab strip as well (VS Code's secondary side bar does;
+  // TD-2026-11-01-427 item 4): it used to start under the strip, leaving a
+  // strip-high gap of chrome over it.
   layout.right_pane =
       right_pane_effective_visible
-          ? MakeRect(layout.editor_area.x + layout.editor_area.w + kDivider, layout.content.y,
-                     resolved_right_pane_width, layout.content.h)
+          ? MakeRect(layout.editor_area.x + layout.editor_area.w + kDivider, layout.sidebar.y,
+                     resolved_right_pane_width, layout.sidebar.h)
           : MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
   layout.breadcrumb =
       MakeRect(layout.editor_area.x, layout.editor_area.y, layout.editor_area.w, kHeaderHeight);
@@ -435,8 +439,16 @@ SDL_FRect RightPaneResizeHandleRect(const WorkspaceLayout& layout) {
   if (layout.right_pane.w <= 0.0f || layout.right_pane.h <= 0.0f) {
     return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
   }
-  return MakeRect(layout.right_pane.x - kResizeHandleThickness * 0.5f - kDivider,
-                  layout.right_pane.y, kResizeHandleThickness + kDivider, layout.right_pane.h);
+  // Beside the content only, as the sidebar's: the pane also fills the band
+  // beside the editor tab strip, where a handle would reach into the strip's
+  // right end and take its overflow chevrons' clicks.
+  const float top = std::max(layout.right_pane.y, layout.content.y);
+  const float bottom = layout.right_pane.y + layout.right_pane.h;
+  if (bottom <= top) {
+    return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
+  }
+  return MakeRect(layout.right_pane.x - kResizeHandleThickness * 0.5f - kDivider, top,
+                  kResizeHandleThickness + kDivider, bottom - top);
 }
 
 std::optional<SDL_FRect> DragTargetHighlightRect(const WorkspaceLayout& layout, DragTarget target) {
@@ -458,8 +470,16 @@ std::optional<SDL_FRect> DragTargetHighlightRect(const WorkspaceLayout& layout, 
       }
       return surface(rect);
     }
-    case DragTarget::RightPaneDivider:
-      return surface(RightPaneResizeCursorRect(layout));
+    case DragTarget::RightPaneDivider: {
+      // As the sidebar's: the grab area stops at the content top, the line it
+      // lights up runs the pane's full height.
+      SDL_FRect rect = RightPaneResizeCursorRect(layout);
+      if (rect.w > 0.0f && rect.h > 0.0f) {
+        rect.h += rect.y - layout.right_pane.y;
+        rect.y = layout.right_pane.y;
+      }
+      return surface(rect);
+    }
     case DragTarget::BottomPanelDivider:
       return surface(BottomPanelResizeCursorRect(layout));
     case DragTarget::SidebarScrollbar:
