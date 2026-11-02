@@ -4,6 +4,7 @@
 #include "TerminalSessionTestAccess.h"
 
 #include "terminal/TerminalSession.h"
+#include "util/Parse.h"
 #include "util/Sha256.h"
 #include "workspace/services/RemoteHostService.h"
 #include "workspace/FileUri.h"
@@ -18,6 +19,8 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <iterator>
+#include <fstream>
 #include <string>
 
 #include <arpa/inet.h>
@@ -1096,11 +1099,30 @@ void TestAPortThatStartsListeningIsForwarded() {
          "the project's dev server is forwarded and announced as the project's");
   Expect(!forwarded(stranger_port) && row_for(stranger_port) == nullptr,
          "a listener no project started is not forwarded");
-  std::size_t forward_rows = 0;
+  // Only rows for ports in the host's ephemeral range: the host is this machine,
+  // and test shards run beside each other on it -- under source "any" above, a
+  // listener another shard's test holds (RemoteHostService/APortTheProjects-
+  // TerminalPrintedIsTheProjects keeps two for seconds) is forwarded too, and
+  // counting every row read those as this listener's (CI's TSan job, 2026-11-02:
+  // "3 forward rows").
+  std::ifstream range_file("/proc/sys/net/ipv4/ip_local_port_range");
+  std::uint32_t low = 32768;
+  std::uint32_t high = 60999;
+  range_file >> low >> high;
+  std::string ephemeral_rows;
   for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
-    forward_rows += row.key.starts_with("remote.forward." + target + ".") ? 1 : 0;
+    const std::string prefix = "remote.forward." + target + ".";
+    if (!row.key.starts_with(prefix)) {
+      continue;
+    }
+    const auto row_port = util::ParseInt(std::string_view(row.key).substr(prefix.size()));
+    if (row_port.has_value() && static_cast<std::uint32_t>(*row_port) >= low &&
+        static_cast<std::uint32_t>(*row_port) <= high) {
+      ephemeral_rows += " | " + row.key + ": " + row.message;
+    }
   }
-  Expect(forward_rows == 1, "nor is the project's ephemeral one: " + std::to_string(forward_rows) + " forward rows");
+  Expect(ephemeral_rows.empty(), "nor is the project's ephemeral one (range " + std::to_string(low) + "-" +
+                                     std::to_string(high) + "):" + ephemeral_rows);
   dev_server.Shutdown(1000);
   ephemeral.Shutdown(1000);
   ::close(stranger);
