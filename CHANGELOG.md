@@ -10,6 +10,20 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Added
 
+- **Drop a file onto a remote terminal.** A file from your machine dropped onto
+  a host terminal (a screenshot for an agent running there) is sent to the host
+  and its path there is typed, not the local path the host cannot open. Uploads
+  live privately on the host and are removed after a day.
+- **Programs can set the mouse pointer.** A terminal program that names its
+  pointer (OSC 22, as kitty, foot and Ghostty support) gets that exact shape over
+  its pane, on local and remote terminals alike; Shift still selects text.
+- **A project in the background says when its terminal needs you.** Its project
+  tab carries a dot while one of its terminals printed or rang since you left.
+- **Ports a container publishes are forwarded too.** With the default
+  `remote.auto_forward_ports_source`, a port whose address the project's terminal
+  printed (`http://localhost:3000`) is forwarded even when a container or a
+  daemon, not the project's own process, holds it.
+
 - **A host program's browser opens on your machine.** In a remote project's
   terminal, `$BROWSER` hands a URL to the editor, which opens it locally (a
   `localhost` URL through a port forward): `claude`'s login and `gh auth login
@@ -159,6 +173,31 @@ project (see [README](README.md)); versions track meaningful shipped work.
   the pane it lands on.
 
 ### Fixed
+
+- **Remote projects lose nothing when a connection dies mid-sync.** Killing the
+  editor, the host's server or the ssh link at any moment of a save, a pull or a
+  conflict resolution now always comes back to both sides holding the same files.
+  A server or editor killed mid-write no longer leaves a half-written temporary
+  file in the project that then synced to every machine; a sync after the link
+  died mid-pull no longer stays stuck reporting "not connected"; a terminal
+  whose host server restarted says its shell ended instead of showing "detached"
+  forever; and quitting just after opening a host terminal keeps it for the next
+  start.
+- **Save As never overwrites a file that appeared meanwhile.** Nor does the first
+  save of a new file: a file someone created at that path is left alone and the
+  save says so.
+- **A touched file no longer blocks saving a crash-restored buffer.** A file whose
+  timestamp changed but whose content did not (a checkout, a build tool) saves
+  without the changed-on-disk banner.
+- **Highlighting follows a change of language.** Typing before a script's `#!`
+  line repaints the whole file in its new language instead of leaving the old
+  colours on every other line.
+- **Missing symbols draw.** A character no configured font has (gdb's ❌ error
+  prefix) is drawn with a system font that has it instead of a box.
+- **The debug pane fills its column** to the top, beside the editor tabs, as the
+  sidebar does; a maximized terminal stays maximized across a session restore or a
+  project switch; a stage finishing after a project switch updates its own
+  project; automatic port forwarding uses the host's own ephemeral port range.
 
 - **No more lost work after a crash, a power cut or a mirror removal.** A buffer
   restored after a crash no longer saves over a change someone made to the file

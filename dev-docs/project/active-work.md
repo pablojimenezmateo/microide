@@ -346,6 +346,18 @@ new terminal behaviour lands there.
 > (`remote-remove-mirror` now takes its root) and the host verbs ask which host
 > when several are open. See `openspec/changes/archive/2026-10-27-remote-menu`.
 >
+> **Remote data safety under fault injection (2026-11-02, TD-2026-11-02-430).**
+> `MirrorFaultMatrix` kills the client, kills the host's daemon or drops the link at
+> every wire frame of a push, a journal replay, a pull and a conflict resolution,
+> over a direct and a 60 ms link, and checks both trees hold exactly the expected
+> files afterwards; `remote.py` Z does the same on the real app over ssh. It found a
+> request completed twice when the link died mid-send (`RemotePeer`), write
+> temporaries left as files by a killed writer (the server now never lists them; the
+> mirror stages in `meta/staging`), and a host terminal left "detached" after a
+> server restart. A file dropped onto a host terminal is uploaded
+> (`file/upload`), and OSC 22 pointer shapes reach host terminals in a frame's flag
+> bits.
+>
 > **Conflicts in bulk, and no false ones (2026-10-29).** Files the host changed
 > overnight came up as Keep Local / Take Remote conflicts the user never made: a
 > watched pull's base was saved only if something later happened to save, and a

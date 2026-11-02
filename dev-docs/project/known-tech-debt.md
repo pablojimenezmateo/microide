@@ -497,7 +497,63 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-11-02-429 — the error-management and data-safety pass: what it fixed and what it left. [OPEN — items 2-6, 8; 1 and 7 resolved]
+### TD-2026-11-02-430 — remote data safety under fault injection, and the open-TD sweep after it. [OPEN — item 1 below]
+
+The 2026-11-02 pass had only *probed* the remote sync engine. This one stressed it:
+`MirrorFaultMatrix` (tests/MirrorFaultMatrixTests.cpp, 66 tests) runs a push (edit,
+new file, large file, rename, delete), an offline journal's replay, a pull (by sync,
+a large streamed one, and one a watch delta announces) and both conflict
+resolutions against a real daemon (`microide-server start`), and kills the client,
+kills the server or drops the link at EVERY wire frame the operation exchanges --
+before the frame arrives and 0 µs, 300 µs and 2 ms after -- over a direct link and
+a 60 ms one (`tests/support/FaultRelay.h` counts frames and fires at a boundary;
+the client's crash is a real SIGKILL of this binary re-executed as
+`--mirror-fault-client`). Every cell must recover to no error, nothing unsent or in
+conflict, no conflict at all for a one-sided operation, and both trees exactly the
+expected files. `tools/qa/remote.py` Z is the same end to end on the real app over
+real ssh (app SIGKILLed and relaunched, host server SIGKILLed, ssh master killed),
+in qa-remote's loopback and 60 ms passes: 36/36.
+
+Found and fixed, each with a failing-first test:
+
+- **A request the link's close answered was completed twice.** `RemotePeer` returned
+  0 from a send that failed after the close had already failed its handler; every
+  caller completed it again. The sync engine's outstanding-work count went below
+  zero, `Flush()` returned with work running, and a mirror recovered after a link
+  death mid-pull kept reporting "not connected" with the host's changes unpulled.
+- **A write a crash interrupted left its temporary as a file.** A server killed
+  mid-push left `.name.microide-<pid>-<n>.tmp` in the project, which the manifest
+  listed and every mirror pulled; a client killed mid-pull left a partial copy in
+  `tree/`. The server's content set never lists a write temporary and removes one
+  whose writer is gone; the mirror stages its writes in `meta/staging`.
+- **A host terminal whose server restarted stayed "detached" for good** (found by Z):
+  the reattach's refusal was swallowed. It ends now, says why, and claims no handle.
+
+Measured and found sound: every other cell of the matrix -- a push the host applied
+without the answer arriving, a resolution interrupted at every frame, a pull the
+client crashed while recording, journal replay -- recovers with nothing lost on
+either side.
+
+The sweep of every open TD after it, one commit each with a test (see each entry):
+Save As's check-then-write window (429.6), the host's ephemeral port range (429.4),
+quit waiting for a host terminal's open (428.6), a background stage staying with its
+project (427.1), a crash snapshot's content hash crossing a restart (429.2), test temp
+trees reaped and `$TMPDIR` checked (429.8), the background project tab's terminal
+mark (428.3), the edge-triggered maximized panel (427.3), the debug pane filling the
+band (427.4), a file dropped onto a host terminal uploaded (428.5), OSC 22 (428.1),
+the hybrid port source (429.5), fontconfig per-glyph fallback (427.5), and a stale
+paint QA seed 60 found at HEAD (a language change repaints the pane).
+
+Left open:
+
+1. **The matrix's steps are wire frames.** A client crash between two disk writes
+   with no frame between them (the tree file and the journal of one save) is reached
+   only through the after-delivery timings (0/300/2000 µs), not exhaustively; a
+   power cut (lost unsynced writes) is not simulated at all. A link that dies
+   without a FIN (a NAT timeout) is the heartbeat's to detect and is tested there,
+   not in the matrix.
+
+### TD-2026-11-02-429 — the error-management and data-safety pass: what it fixed and what it left. [OPEN — item 3; the rest resolved 2026-11-02]
 
 The 2026-11-02 pass probed the shipped binary (control channel, SIGKILL / SIGTERM /
 SIGHUP, chmod, deleted and moved roots, a crash between an edit and the file
@@ -548,7 +604,11 @@ Left open:
    window's focus gain re-checks while the row is up, and a folder that is back
    clears it and restarts the watcher (which re-indexes). Left: a folder put back
    while microide keeps the focus waits for the next focus change or switch.
-2. **A restored snapshot's baseline is stat-only.** The in-memory content hash is
+2. ~~**A restored snapshot's baseline is stat-only.**~~ **Resolved 2026-11-02**
+   (TD-430's sweep): the snapshot records the buffer's QuickContentHash beside a
+   probe of the same function (`EditorTabTag::DiskBaselineContent`, 36); a restore
+   trusts it only when the probe matches, so no new hashing (blake3 was not needed).
+   Was: **A restored snapshot's baseline is stat-only.** The in-memory content hash is
    process-local (`std::hash`), so a `touch` while microide was down reads as a
    change and the save asks. Safe, but a stable digest (blake3, already linked)
    recorded at load would let it save.
@@ -559,14 +619,27 @@ Left open:
    on the persistence worker (`PersistedRecordWriteQueue::QueueEncoded`) and the
    flush no longer waits; ~3.5 ms remain, copying the dirty buffers' lines
    (`lines().Snapshot()`), growing with their size. A shared piece-tree snapshot
-   handed to the worker would remove that too.
-4. **The ephemeral range is Linux's default**, not the host's
+   handed to the worker would remove that too. *Looked at 2026-11-02*: the piece
+   tree owns `original_` and its add chunks by value, and the UI thread appends into
+   the current chunk, so a shared snapshot means storage as shared immutable chunks
+   (the full ones `shared_ptr<const>`, the open one copied or sealed at snapshot
+   time) -- a redesign of PieceTree's storage, not a call-site change. The 3.5 ms at
+   32 MiB is memcpy bandwidth: a cheaper copy does not exist. Left for that change.
+4. ~~**The ephemeral range is Linux's default**~~ **Resolved 2026-11-02**: the server
+   reports net.ipv4.ip_local_port_range in its hello (`ephemeral_ports`, advisory).
+   Was: **The ephemeral range is Linux's default**, not the host's
    `ip_local_port_range`; the server could report the real one in `server/status`.
-5. **`project` port source misses daemonized programs** (a `docker run -p`, a
+5. ~~**`project` port source misses daemonized programs**~~ **Resolved 2026-11-02**:
+   a port nobody's process owns is the project's when its host terminal printed the
+   address (the hybrid source, asked only when such a port appears).
+   Was: **`project` port source misses daemonized programs** (a `docker run -p`, a
    service that double-forks): their socket's owner is outside microide's trees.
    Forward a Port… and `any` cover them; a terminal-output URL scan (VS Code's
    "hybrid") would too.
-6. **Save As has a check-then-write window**: `exists()` then a rename that
+6. ~~**Save As has a check-then-write window**~~ **Resolved 2026-11-02**: a buffer
+   whose baseline found no file writes with `WriteTarget::CreateNew`
+   (RENAME_NOREPLACE) -- Save As and a new file's first save alike.
+   Was: **Save As has a check-then-write window**: `exists()` then a rename that
    replaces. A RENAME_NOREPLACE for a Save As target would close it.
 7. **Tests build failure text before the wait they report on**:
    `Expect(PumpUntil(...), "..." + ScreenText(x))` evaluates the message first
@@ -574,7 +647,12 @@ Left open:
    **Resolved in the same pass:** the 34 instances (all in remote and git tests)
    are lambdas, and `CheckWaitFailureMessagesAreLazy` (hard, with controls) keeps
    it that way.
-8. **The test binaries write their temp trees to /tmp**, a 31 GB tmpfs shared
+8. ~~**The test binaries write their temp trees to /tmp**~~ **Resolved 2026-11-02**,
+   measured first: a disk-backed TMPDIR made a kernel shard 26% slower and a long
+   worktree path overflows the fake-ssh socket, so TMPDIR stays; test temp trees
+   carry their owner pid and are reaped after a crash (91 removed on the first run),
+   and run-checks.sh refuses to start with under 2 GiB free in $TMPDIR.
+   Was: **The test binaries write their temp trees to /tmp**, a 31 GB tmpfs shared
    with every other tool; when another project filled the user's quota the whole
    suite failed with EDQUOT for reasons outside the product. `run-checks.sh`
    could point `TMPDIR` at `build/tmp` -- not done blind: every test's socket
@@ -582,7 +660,7 @@ Left open:
    (`mis.XXXXXX`, `mip.XXXXXX`) because of the 108-byte AF_UNIX limit; measure
    the longest socket path first.
 
-### TD-2026-11-02-428 — the terminal UX pass, local and remote: what it fixed and what it left. [OPEN — items 1-6]
+### TD-2026-11-02-428 — the terminal UX pass, local and remote: what it fixed and what it left. [RESOLVED 2026-11-02 — 1, 3, 5, 6 done; 2 decided; 4 still not reproduced]
 
 The 2026-11-02 pass drove Claude Code 2.1.316 (fullscreen TUI: alt screen,
 DECSET 1003 + SGR, kitty keyboard flags 5) and vim in local and host terminals
@@ -625,20 +703,32 @@ and a pty tap, and fixed:
 
 Left:
 
-1. **OSC 22 (pointer shape) is not implemented.** kitty, foot, Ghostty and xterm
+1. ~~**OSC 22 (pointer shape) is not implemented.**~~ **Resolved 2026-11-02**:
+   `TerminalPointerShape` (CSS and X names), `TerminalSession::PointerShapeAt`, carried
+   in a host frame's free flag bits 11-15 (no protocol version), `CursorKind` out of
+   the shell's member list with the SDL shapes it lacked.
+   Was: **OSC 22 (pointer shape) is not implemented.** kitty, foot, Ghostty and xterm
    let a program name its pointer (`OSC 22 ; pointer ST`). Claude Code does not
    send it today (checked: no `]22;` in 2.1.316), so the hover inference above is
    what gives it a hand; a program that does send it would get exact shapes. Needs
    a per-pane shape, the cursor rule to prefer it, and a host-wire field (protocol
    bump) for remote terminals.
-2. **The hover inference's limits.** It shows a hand where a program restyles the
+2. **The hover inference's limits.** DECIDED 2026-11-02: inherent to inferring --
+   a program that names its pointer (OSC 22, item 1) now gets the exact shape, and
+   the inference stays the fallback for those that do not.
+   Was: **The hover inference's limits.** It shows a hand where a program restyles the
    cell under a resting pointer and keeps its text; a program that highlights a
    non-clickable hover (a tooltip-ish row tint) gets a hand too, and one with
    clickable cells and no hover feedback gets the arrow. Only DECSET 1003
    programs are probed (1000/1002 programs are never told about a resting pointer).
-3. **A background project's terminal marks wait on its terminal tab.** The
+3. ~~**A background project's terminal marks wait on its terminal tab.**~~
+   **Resolved 2026-11-02**: the project tab carries a dot while in the background.
+   Was: **A background project's terminal marks wait on its terminal tab.** The
    project tab itself carries no badge (TD-427 item 2's remainder).
-6. **A host terminal whose open is still being answered at quit is not
+6. ~~**A host terminal whose open is still being answered at quit is not
+   recorded.**~~ **Resolved 2026-11-02**: Shutdown waits up to a second for every
+   running host pane's handle (`RemoteTerminalRestore/AHostTerminalOpeningAtQuitIsRecorded`).
+   Was: **A host terminal whose open is still being answered at quit is not
    recorded.** The host lists a shell the moment it opens; the client learns its
    handle when the term/open reply lands. A quit between the two (a background
    project's terminal, milliseconds) records a pane with no identity, and the
@@ -647,7 +737,10 @@ Left:
    RecordedAtQuit` hit exactly this on CI because it waited for the host's listing
    only; it now waits for the client's handle too. Waiting a bounded moment for
    in-flight opens at quit is the product fix.
-5. **A local file dropped onto a HOST terminal pastes its local path** when it is
+5. ~~**A local file dropped onto a HOST terminal pastes its local path**~~
+   **Resolved 2026-11-02**: `file/upload` (the "upload" capability) puts it in the
+   server's private uploads directory and the host path is typed.
+   Was: **A local file dropped onto a HOST terminal pastes its local path** when it is
    outside the project (a screenshot in ~/Pictures): only the mirror maps to the
    host (`TerminalPanelService::DroppedPathText` through
    `ResolveWorkingDirectory`; a tree row dragged onto a host terminal used to type
@@ -659,9 +752,10 @@ Left:
    terminal": the shell outlived its 10 s wait) passed 32/32 concurrently after;
    `RemoteFrameTransport/BulkWindowSettlesAtTheBandwidthDelayProduct` (window
    0.8% over its rule) passed 72/72 concurrently, before and after its fix --
-   kept here so a recurrence has its history.
+   kept here so a recurrence has its history. *2026-11-02*: 60 + 60 + 40 concurrent
+   runs of these and TwoClientsShare… under load, all passed.
 
-### TD-2026-11-01-427 — results that finish after a project switch: the cases this pass left. [OPEN — items 1, 3-5; 2 resolved 2026-11-02]
+### TD-2026-11-01-427 — results that finish after a project switch: the cases this pass left. [RESOLVED 2026-11-02]
 
 The 2026-11-01 pass (commits e6e7cc08b through 3507aaa0c) found one shape of bug
 in five places: work dispatched in one project and finished, or reported, after
@@ -678,7 +772,9 @@ is not, and marks it `catch_up_on_activate`.
 
 Left:
 
-1. **PatchApplyService** completes the same way (refresh, clean-tab reload and
+1. ~~**PatchApplyService**~~ **Resolved 2026-11-02**: it reads the project at
+   dispatch and defers to it, as the git services do; catch-up also rebuilds compare
+   tabs. Was: **PatchApplyService** completes the same way (refresh, clean-tab reload and
    compare refresh for the front project). Its window is a `git apply`'s
    milliseconds from a compare-tab key, so it was not converted; the same three
    callbacks would do it.
@@ -689,23 +785,32 @@ Left:
    marks the terminal's tab for when the project comes back
    (`WorkspaceShell/TerminalNotificationToastsFromABackgroundProject`). Left: the
    PROJECT tab carries no badge of its own -- the mark waits on its terminal tab.
-3. **A project with no editor tab open still loses nothing**, but
+3. ~~**SyncPanelMaximizedWithFocus is level-triggered.**~~ **Resolved 2026-11-02**:
+   edge-triggered -- the first frame of a maximize takes the focus as its baseline
+   (a keyboard on a hidden surface goes to the panel), a later MOVE restores.
+   Was: **A project with no editor tab open still loses nothing**, but
    `SyncPanelMaximizedWithFocus` remains level-triggered: any future path that
    sets focus to the editor while the panel is maximized restores it on the next
    frame. The two tests (`EveryProjectSwitchKeepsAMaximizedPanel`,
    `TerminalLayoutRevivesAcrossSessions`) guard the known paths only.
-4. **The right debug pane keeps the gap the sidebar lost**: it still starts
+4. ~~**The right debug pane keeps the gap the sidebar lost**~~ **Resolved
+   2026-11-02** as VS Code's secondary side bar: it fills the band, its handle beside
+   the content only. Was: **The right debug pane keeps the gap the sidebar lost**: it still starts
    under the editor tab strip. Whether it should fill the band too (VS Code's
    secondary side bar does) is a product call; the geometry change is the same
    three lines in `ComputeLayout` plus its handle and damage rects.
-5. **A glyph the terminal font lacks draws as tofu.** The regenerated hero
+5. ~~**A glyph the terminal font lacks draws as tofu.**~~ **Resolved 2026-11-02**:
+   the glyph was U+274C (gdb 17's error prefix), in no fixed fallback face; a code
+   point no face of the chain has is now looked up with fontconfig (monochrome,
+   scalable) and that face joins the chain. Was: **A glyph the terminal font lacks
+   draws as tofu.** The regenerated hero
    video's gdb transcript shows a box where gdb prints its warning marker
    (`⚠`-style symbol before "No source file named …"): the terminal has no
    fallback face for symbols outside its font. Seen in the media, not caused by
    this pass; the non-ASCII glyph cluster atlas (2.12.0) is where a fallback
    would plug in.
 
-### TD-2026-10-30-426 — the 2026-10-29/30 bug sweep: what it found, fixed and ran. [OPEN — a soft-wrap width cross-check abort and a 3-pixel menu finding, both narrowed, not fixed]
+### TD-2026-10-30-426 — the 2026-10-29/30 bug sweep: what it found, fixed and ran. [OPEN — the soft-wrap abort and the 3-pixel menu finding not reproduced at HEAD; the seed-60 focus test still owed]
 
 Driven mostly by the QA monkey on fresh seeds (default 15-34, editor 15-35,
 commands 15-45 -- the commands profile found every GUI bug below) and by every
@@ -790,6 +895,13 @@ right after the edit (both reverted):
 
 Next step: replay with a check after every edit and every reload (not just the
 splice), logging which of the width table and the wrapped-row table disagrees.
+*2026-11-02*: the cross-check is two asserts now, one per source, so a recurrence
+names the table. Seed 69 at 600 steps ran clean three times on a debug build of
+HEAD, and seed 37 clean once on release (the monkey's actions follow the UI, which
+has changed); the debug lanes and qa-asan keep the asserts armed. Seed 60 at 600
+steps found a NEW stale paint at HEAD -- typing before a shebang changed the
+buffer's language and only the edited line repainted -- fixed with
+`WorkspaceShell/AnEditThatChangesTheLanguageRepaintsThePane`.
 
 **Ran clean at the end:** tests, asan, tsan, hardened, clang-build, tidy (0 new),
 qa (222/222), qa-remote (loopback and slow link), perf-tests, every fuzz target for
@@ -875,7 +987,7 @@ as two-sided (the `AOneSidedConflictOffersNoMerge` flake), and TD-424.
    steps (now a 16 Ki step budget and at most 64 groups).
    `EditorConfig/ResolverHandlesBraceRangesAndLiterals`, `EditorConfig/ParseBoundsSectionHeaders`.
 
-### TD-2026-10-29-422 — the 2026-10-29 subsystem sweep: what it found, fixed and measured, and what it left. [OPEN — items 2-3 below; 1 and 4 resolved]
+### TD-2026-10-29-422 — the 2026-10-29 subsystem sweep: what it found, fixed and measured, and what it left. [RESOLVED 2026-11-02 — 2 decided with TD-412; 3 attributed in TD-418]
 
 A whole-repo pass taken by mechanical sweeps rather than reading (this tree's
 reading hit rate is low; validation-traps § Mechanical Sweeps), each aimed at a
@@ -940,8 +1052,9 @@ loaded with four sanitizer builds; still not reproduced.
    the whole tree diff the rescan computes.
 2. **TD-412's remaining `Operations` fields** mostly land on shell members, which
    the TD's own test says only move the bag; not continued here.
-3. **The client's per-file mirror state** beyond the entry (TD-418 item 2's
-   remainder) has not been attributed.
+3. ~~**The client's per-file mirror state** beyond the entry (TD-418 item 2's
+   remainder) has not been attributed.~~ It was, the same day (TD-418 item 2's
+   *Attributed 2026-10-29*): the store is all that is remote-specific.
 4. ~~**A terminal link that soft-wraps is a link only up to the wrap.**~~ RESOLVED
    2026-10-29 (2b21b390a): the hit-test joins the wrapped rows into the logical
    line and the span carries an end row (`WorkspaceShell/TerminalWrappedLinkIsOneLink`).
@@ -1151,7 +1264,7 @@ and the language servers hear only the itemized changes, so a held batch merging
 toward that cap would have cost them events a per-batch apply delivered. A held
 batch is released whatever the budget once it holds 512 changes (the same test).
 
-### TD-2026-10-28-418 — the remote link's idle wakeups and memory, measured end to end: what was fixed, and what is left. [PARTLY RESOLVED 2026-10-29 — open: the rest of the client's per-file state]
+### TD-2026-10-28-418 — the remote link's idle wakeups and memory, measured end to end: what was fixed, and what is left. [RESOLVED 2026-11-02 — attributed 2026-10-29; the ~80 B/path left is not worth a cut on its own]
 
 Measured with `tools/qa/remote.py` W (idle) and X (live), loopback host, this
 repository (4,767 files, 36 MB) unless stated. Per thread now: every remote and
@@ -1533,7 +1646,7 @@ The assertion now reports the row it last saw (clients, exited, foreground
 command): `command='sleep'` or `'sh'` next time separates "the line never ran"
 from "it ran but the exit was not reaped".
 
-### TD-2026-10-28-412 — `WorkspaceActionContext` is a God object, and half of it only forwards. [OPEN — measured, slicing plan below]
+### TD-2026-10-28-412 — `WorkspaceActionContext` is a God object, and half of it only forwards. [DECIDED 2026-11-02 — sliced 214 -> 112 Operations; the rest land on shell members]
 
 `src/workspace/actions/WorkspaceActionServices.{h,cpp}` + the shell's
 `WorkspaceActionServicesContextFactory.cpp`: one class with 200 member functions
@@ -1646,6 +1759,13 @@ Checked and left: `refine_rename_prompt`, `find_lsp_references`,
 (`RemoteHostService` is built lazily; a reference in `Services` would build it for
 every action).
 
+*Decided 2026-11-02*: of the 112 fields left, the lambdas that reach a service at
+all (terminal find, the layout-mode toggles, revert / Save As / move-tab) each mix it
+with shell members -- a setting write, a redraw request, the save mutex, a banner --
+so by this entry's own test (a slice pays only where the parts are services the new
+owner can hold) none is a slice; moving them would move the bag. Further work here
+starts with a new service owning an area's behaviour, not with the context.
+
 Original plan, one area per commit so each slice is reviewable and lane-checked: give each
 executor its own context type holding references to the services it calls
 (`AssistService&`, `EditorTabService&`, `TerminalPanelService&`, …, the
@@ -1754,7 +1874,7 @@ pressure), not at the tree. Not reproduced; next time keep the failing object's
 `.d` file and the PCH beside the log, and check `ccache -s` for errors, before
 deciding.
 
-### TD-2026-10-27-407 — remote-host-activity leftovers: the hand check on worky, the walk's cost on a busy host, a terminal row's command, `status` and the idle timer. [PARTLY RESOLVED 2026-10-27 — open: the hand check on worky only]
+### TD-2026-10-27-407 — remote-host-activity leftovers: the hand check on worky, the walk's cost on a busy host, a terminal row's command, `status` and the idle timer. [PARTLY RESOLVED 2026-10-27 — open: the hand check on worky only (2026-11-02: ssh to worky fails host-key verification here; trusting a host key is the user's call)]
 
 Done (2026-10-27):
 - **The walk**: `ProcessActivity::Sample` reads only the reported trees, down
@@ -1806,7 +1926,7 @@ What `openspec/changes/archive/2026-10-27-remote-host-activity` did not finish:
   (or the menu's host pick) switches it; there is no per-host grouping, and the
   collapsed groups are not persisted with the session.
 
-### TD-2026-10-27-406 — `RemoteTerminal/TwoClientsShareAHostTerminalAtTheSmallerSize` once saw a blank screen for 15 s. [OPEN — not reproduced; the evidence is now kept]
+### TD-2026-10-27-406 — `RemoteTerminal/TwoClientsShareAHostTerminalAtTheSmallerSize` once saw a blank screen for 15 s. [OPEN — not reproduced; the evidence is now kept; 2026-11-02: 60 concurrent runs under load, all passed]
 
 2026-10-28 correction: the "blank screen" was never observed. The failure
 message was `Expect(WaitForText(a, ...), "..." + ScreenText(a))`, and C++ leaves
