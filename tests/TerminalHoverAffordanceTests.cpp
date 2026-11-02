@@ -109,6 +109,25 @@ void TestScreenSwitchForgetsTheProbe() {
          "a probe of the primary screen says nothing about the alternate one");
 }
 
+// A move inside one cell is not reported, as in xterm: under any-motion tracking
+// every pixel of travel was a report -- PTY bytes, a redraw in the program, a
+// wire message for a host terminal. A tracking mode set again reports afresh.
+void TestMotionIsReportedOncePerCell() {
+  TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 6, 40);
+  TerminalSessionTestAccess::SetRunning(session, true);
+  TerminalSessionTestAccess::AppendOutput(session, kAnyMotion);
+  Expect(session.SendMouseMotion(Button::None, 1, 4, {}), "the first move into a cell is reported");
+  Expect(!session.SendMouseMotion(Button::None, 1, 4, {}), "a move within it is not");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[<35;5;2M",
+         "one report for the cell: [" + TerminalSessionTestAccess::SentBytes(session) + "]");
+  Expect(session.SendMouseMotion(Button::None, 1, 5, {}), "the next cell is");
+  Expect(session.SendMouseMotion(Button::Left, 1, 5, {}), "and the same cell with a button held is");
+  TerminalSessionTestAccess::ClearSentBytes(session);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1003h");
+  Expect(session.SendMouseMotion(Button::Left, 1, 5, {}), "re-enabled tracking hears the pointer again");
+}
+
 }  // namespace
 
 void RegisterTerminalHoverAffordanceTests(std::vector<TestCase>& tests) {
@@ -120,6 +139,7 @@ void RegisterTerminalHoverAffordanceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TerminalHoverAffordance/NeedsAnyMotionTracking", TestNeedsAnyMotionTracking);
   AddTest(tests, "TerminalHoverAffordance/ScreenSwitchForgetsTheProbe",
           TestScreenSwitchForgetsTheProbe);
+  AddTest(tests, "TerminalHoverAffordance/MotionIsReportedOncePerCell", TestMotionIsReportedOncePerCell);
 }
 
 }  // namespace microide::tests

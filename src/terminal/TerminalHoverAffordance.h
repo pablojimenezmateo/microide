@@ -1,9 +1,11 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 #include "terminal/TerminalCell.h"
+#include "terminal/TerminalInput.h"
 
 namespace microide::terminal {
 
@@ -52,6 +54,13 @@ class TerminalHoverAffordance {
   // The probed row as it looked before the program saw the pointer; its buffer
   // is reused across probes.
   std::vector<TerminalCell> before_;
+};
+
+// The pointer as the program last saw it.
+struct TerminalPointerState {
+  // The cell the last motion report named: a move inside it is not reported.
+  std::optional<TerminalMotionCell> last_motion;
+  TerminalHoverAffordance hover;
 };
 
 }  // namespace microide::terminal

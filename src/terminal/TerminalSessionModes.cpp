@@ -131,14 +131,19 @@ void TerminalSession::HandlePrivateModeLocked(int mode, bool enabled) {
     case 7:
       auto_wrap_mode_ = enabled;
       return;
+    // A program (re)starting to track is told where the pointer is on its first
+    // move, not left with the cell an earlier report named.
     case 1000:
       mouse_.normal = enabled;
+      pointer_.last_motion.reset();
       return;
     case 1002:
       mouse_.drag = enabled;
+      pointer_.last_motion.reset();
       return;
     case 1003:
       mouse_.any = enabled;
+      pointer_.last_motion.reset();
       return;
     case 1006:
       mouse_.sgr = enabled;

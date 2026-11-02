@@ -144,7 +144,7 @@ bool TerminalSession::HoverAffordanceAt(std::size_t row, std::size_t column) con
   std::scoped_lock lock(mutex_);
   const std::size_t line = PrimaryScreenTopLocked() + row;
   return mouse_.any && row < rows_ && line < lines_.size() &&
-         hover_affordance_.Contains(row, column, lines_[line]);
+         pointer_.hover.Contains(row, column, lines_[line]);
 }
 
 bool TerminalSession::SendMouseMotion(MouseButton button,
@@ -152,14 +152,19 @@ bool TerminalSession::SendMouseMotion(MouseButton button,
                                       std::size_t column,
                                       util::KeyModifiers modifiers) {
   {
+    std::scoped_lock lock(mutex_);
+    const TerminalMotionCell cell{.row = row, .column = column, .button = button};
+    if (pointer_.last_motion == cell) {
+      return false;  // still in the cell the last report named
+    }
+    pointer_.last_motion = cell;
     // Before the program sees the move: the snapshot is what the row looked like
     // with the pointer elsewhere. A host terminal's mirror is the same screen, so
     // this holds for both.
-    std::scoped_lock lock(mutex_);
     if (mouse_.any && button == MouseButton::None) {
       const std::size_t line = PrimaryScreenTopLocked() + row;
       if (row < rows_ && line < lines_.size()) {
-        hover_affordance_.Probe(row, column, lines_[line]);
+        pointer_.hover.Probe(row, column, lines_[line]);
       }
     }
   }

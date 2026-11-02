@@ -498,14 +498,21 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
                        MakeStatusLine("\xe2\x8b\xaf reattached \xe2\x8b\xaf", /*dim=*/true));
       }
     }
+    if (alternate != use_alternate_screen_) {
+      pointer_.hover.Reset();  // as SetAlternateScreenLocked does for a local screen
+    }
     use_alternate_screen_ = alternate;
     cursor_visible_ = frame.has(TerminalHostFrame::kCursorVisible);
     screen_reverse_video_ = frame.has(TerminalHostFrame::kReverseVideo);
     cursor_blinking_ = frame.has(TerminalHostFrame::kCursorBlinking);
     cursor_shape_ = frame.cursor_shape;
+    const TerminalMouseModes was = mouse_;
     mouse_.normal = frame.has(TerminalHostFrame::kMouseNormal);
     mouse_.drag = frame.has(TerminalHostFrame::kMouseDrag);
     mouse_.any = frame.has(TerminalHostFrame::kMouseAny);
+    if (mouse_.normal != was.normal || mouse_.drag != was.drag || mouse_.any != was.any) {
+      pointer_.last_motion.reset();  // as a local DECSET does (SetPrivateModeLocked)
+    }
     focus_event_mode_ = frame.has(TerminalHostFrame::kFocusEvents);
     running_ = frame.has(TerminalHostFrame::kRunning);
     if (frame.has(TerminalHostFrame::kBell)) {

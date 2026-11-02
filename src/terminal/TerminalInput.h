@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -28,6 +29,17 @@ struct TerminalMouseModes {
   bool drag = false;
   bool any = false;
   bool sgr = false;
+};
+
+// The cell (and held button) the last motion report named. A move inside one cell
+// is not reported, as in xterm: under any-motion tracking every pixel of pointer
+// travel was a report -- bytes into the PTY, a redraw for the program, and a
+// message over the wire for a host terminal.
+struct TerminalMotionCell {
+  std::size_t row = 0;
+  std::size_t column = 0;
+  TerminalMouseButton button = TerminalMouseButton::None;
+  friend bool operator==(const TerminalMotionCell&, const TerminalMotionCell&) = default;
 };
 
 enum class TerminalCursorShape : std::uint8_t {

@@ -494,9 +494,9 @@ class TerminalSession {
   bool pending_host_bell_ = false;
   bool use_alternate_screen_ = false;
   TerminalMouseModes mouse_;
-  // The screen row under the last reported pointer move, before the program
-  // answered it (any-motion tracking only).
-  TerminalHoverAffordance hover_affordance_;
+  // The pointer as the program last saw it: the cell of the last motion report
+  // and the row under it before the program answered (TerminalPointerState).
+  TerminalPointerState pointer_;
   bool application_cursor_keys_mode_ = false;
   bool origin_mode_ = false;
   bool auto_wrap_mode_ = true;

@@ -124,7 +124,7 @@ void TerminalSession::RestoreSavedScreenLocked() {
 
 void TerminalSession::ResetScreenLocked(bool fill_rows) {
   lines_.assign(fill_rows ? std::max<std::size_t>(1, rows_) : 1, TerminalLine{});
-  hover_affordance_.Reset();
+  pointer_ = {};
   pending_utf8_sequence_.clear();
   cursor_row_ = 0;
   cursor_column_ = 0;
@@ -135,7 +135,7 @@ void TerminalSession::ResetScreenLocked(bool fill_rows) {
 }
 
 void TerminalSession::SetAlternateScreenLocked(bool enabled, bool clear) {
-  hover_affordance_.Reset();  // a probed row of the other screen describes nothing here
+  pointer_.hover.Reset();  // a probed row of the other screen describes nothing here
   if (enabled) {
     bool should_clear = clear;
     if (!use_alternate_screen_) {
