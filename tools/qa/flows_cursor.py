@@ -250,7 +250,8 @@ def flow_terminal_mouse_owner(app: q.App) -> None:
     """A program that owns the mouse: the pane shows the arrow, the hand over the
     control the program lights under the pointer (and the arrow again once it
     dims it), a click reaches the program, Shift+drag selects its text instead,
-    and Ctrl+J / F5 / Ctrl+P / Escape reach it as keys."""
+    Ctrl+J / F5 / Ctrl+P / Escape reach it as keys, and a file dropped on it is
+    typed in as its quoted path."""
     write(app, "tui.py", TUI)
     app.send("term", "python3", "tui.py")
     app.send("panel-maximize")
@@ -283,6 +284,16 @@ def flow_terminal_mouse_owner(app: q.App) -> None:
         app.key(chord)
         app.wait_until(lambda: any(f"key:{sent}" in line for line in screen()), 3.0,
                        f"{chord} to reach the program as {sent}")
+
+    # A file dragged in from another application and dropped on the program is
+    # typed into it, quoted (how a screenshot reaches Claude Code's prompt).
+    dropped = write(app, "drop me.txt", "dropped\n")
+    x, y = app.terminal_point(text_row, text_col)
+    app.send("pointer", "drop", str(round(x)), str(round(y)), str(dropped))
+    typed = f"'{dropped}' ".encode().hex()
+    # The hex runs past the pane's width: read the screen joined.
+    app.wait_until(lambda: f"key:{typed}" in "".join(screen()), 3.0,
+                   "a dropped file's quoted path to reach the program")
 
     app.drag(*app.terminal_point(text_row, text_col), *app.terminal_point(text_row, text_col + 6),
              modifiers=("shift",))

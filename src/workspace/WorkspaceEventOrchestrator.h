@@ -82,7 +82,8 @@ class WorkspaceEventDispatcher {
     std::function<bool(const SDL_KeyboardEvent&)> handle_key_up;
     // Files dropped onto the window. Takes the raw SDL path; the decision of what
     // a drop means lives in WorkspaceFileDrop.h, not here and not in the shell.
-    std::function<bool(const char*)> handle_file_drop;
+    // A file dropped at (x, y), render coordinates.
+    std::function<bool(const char*, float, float)> handle_file_drop;
   };
 
   WorkspaceEventDispatcher(Runtime runtime, State state, Operations operations);

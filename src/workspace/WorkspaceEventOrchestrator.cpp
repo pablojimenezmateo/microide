@@ -186,7 +186,7 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
         }
         // SDL owns event.drop.data and frees it after dispatch, so the handler
         // must copy anything it keeps. It does (into a std::filesystem::path).
-        return finish(operations_.handle_file_drop(event.drop.data));
+        return finish(operations_.handle_file_drop(event.drop.data, event.drop.x, event.drop.y));
       }
     case SDL_EVENT_WINDOW_MOUSE_LEAVE:
       {

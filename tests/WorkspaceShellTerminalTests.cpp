@@ -2871,6 +2871,37 @@ void TestWorkspaceShellTerminalNotificationToastsFromABackgroundProject() {
          "its terminal tab carries the mark back to the front");
 }
 
+// A file dropped onto a running terminal is typed into it (shell-quoted), as in
+// gnome-terminal and VS Code -- how a screenshot reaches Claude Code's prompt.
+// It used to open in an editor tab whatever was under the pointer. Off the
+// terminal a drop still opens the file.
+void TestWorkspaceShellFileDroppedOnTheTerminalTypesItsPath() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "root\n");
+  const std::filesystem::path shot = temp_dir.path() / "Screen shot.png";
+  WriteFile(shot, "png");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::SetRunning(session, true);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  const SDL_FPoint cell = WorkspaceShellTestAccess::TerminalCellPoint(shell, 2, 4);
+  SDL_Event drop{};
+  drop.type = SDL_EVENT_DROP_FILE;
+  drop.drop.x = cell.x;
+  drop.drop.y = cell.y;
+  const std::string path = shot.string();
+  drop.drop.data = path.c_str();
+  Expect(shell.HandleEvent(drop).handled, "the drop is handled");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "'" + path + "' ",
+         "the terminal gets the quoted path: [" + TerminalSessionTestAccess::SentBytes(session) + "]");
+  Expect(WorkspaceShellTestAccess::FocusIsPanel(shell), "and the keyboard, to go on typing");
+}
+
 void TestWorkspaceShellTerminalRelaunchRestartsAnExitedPane() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3065,6 +3096,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/TerminalLeftClickOpensUrls",
           TestWorkspaceShellTerminalLeftClickOpensUrls);
   AddTest(tests, "WorkspaceShell/TerminalLinkUnderlinesOnHover", TestWorkspaceShellTerminalLinkUnderlinesOnHover);
+  AddTest(tests, "WorkspaceShell/FileDroppedOnTheTerminalTypesItsPath",
+          TestWorkspaceShellFileDroppedOnTheTerminalTypesItsPath);
   AddTest(tests, "WorkspaceShell/TerminalNotificationToastsFromABackgroundProject",
           TestWorkspaceShellTerminalNotificationToastsFromABackgroundProject);
   AddTest(tests, "WorkspaceShell/TerminalMouseOwnerShowsAHandOnLitControls",

@@ -22,6 +22,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <string>
 
 namespace microide::workspace {
 
@@ -59,5 +60,12 @@ struct FileDropOperations {
 // sequence — opening the file into the previous project's shell state would be
 // worse than doing nothing.
 bool ApplyFileDrop(const FileDropRequest& request, const FileDropOperations& operations);
+
+// A file dropped onto a TERMINAL pane is typed into it, not opened: its path as
+// the pane's machine names it (a remote project's mirror path mapped to the
+// host's), as gnome-terminal and VS Code do -- how a screenshot gets into Claude
+// Code's prompt. Single-quoted only when the shell would split or expand it, and
+// followed by a space so a second drop does not run into the first.
+std::string TerminalDropText(const std::filesystem::path& path_on_shell_machine);
 
 }  // namespace microide::workspace

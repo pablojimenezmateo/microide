@@ -441,9 +441,25 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
                 return shell->ActivateOverlaySelection();
               },
           .handle_file_drop =
-              [shell](const char* dropped_path) {
+              [shell](const char* dropped_path, float x, float y) {
                 if (dropped_path == nullptr) {
                   return false;
+                }
+                // Onto a running terminal pane: type its path there (TerminalDropText).
+                if (const auto layout = shell->CurrentWorkspaceLayout();
+                    layout.has_value() && shell->BottomPanelVisible() &&
+                    Contains(BottomPanelContentRect(*layout), x, y)) {
+                  TerminalPanelService& terminals = shell->MakeTerminalPanelService();
+                  if (TerminalPaneState* pane = terminals.PaneAt(*layout, x, y);
+                      pane != nullptr && pane->session.running()) {
+                    const platform::ProcessLauncher& launcher =
+                        pane->launcher != nullptr ? *pane->launcher
+                                                  : shell->context_.current_project_state.launcher();
+                    (void)terminals.ActivatePaneAt(*layout, x, y);
+                    shell->context_.current_project_state.surface.focus = FocusTarget::Panel;
+                    return shell->MakeTextInputCoordinator().PasteTextIntoTerminal(TerminalDropText(
+                        launcher.ResolveWorkingDirectory(std::filesystem::path(dropped_path))));
+                  }
                 }
                 // What a drop means is decided in WorkspaceFileDrop.h and executed
                 // through the two-call port below, so the shell gains no member and

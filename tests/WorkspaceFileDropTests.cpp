@@ -25,6 +25,7 @@ using microide::workspace::FileDropAction;
 using microide::workspace::FileDropOperations;
 using microide::workspace::FileDropRequest;
 using microide::workspace::ResolveFileDrop;
+using microide::workspace::TerminalDropText;
 
 void TestDroppedDirectoryOpensAsProject() {
   TemporaryDirectory temp;
@@ -177,9 +178,20 @@ void TestApplyFileDropIgnoresAnEmptyRequest() {
   Expect(!touched, "a None request should call nothing");
 }
 
+void TestTerminalDropTextQuotesOnlyWhatAShellWouldSplit() {
+  Expect(TerminalDropText("/home/me/shot-1.png") == "/home/me/shot-1.png ", "a plain path is typed as is");
+  Expect(TerminalDropText("/home/me/Screenshot 2026.png") == "'/home/me/Screenshot 2026.png' ",
+         "a space is quoted");
+  Expect(TerminalDropText("/tmp/it's $HOME") == "'/tmp/it'\\''s $HOME' ",
+         "a quote closes, escapes and reopens; $ stays literal: " + TerminalDropText("/tmp/it's $HOME"));
+  Expect(TerminalDropText("/tmp/caf\xc3\xa9.txt") == "/tmp/caf\xc3\xa9.txt ", "UTF-8 needs no quoting");
+}
+
 }  // namespace
 
 void RegisterWorkspaceFileDropTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceFileDrop/TerminalDropTextQuotesOnlyWhatAShellWouldSplit",
+          TestTerminalDropTextQuotesOnlyWhatAShellWouldSplit);
   AddTest(tests, "WorkspaceFileDrop/DirectoryOpensAsProject", TestDroppedDirectoryOpensAsProject);
   AddTest(tests, "WorkspaceFileDrop/FileWithProjectOpensATab",
           TestDroppedFileWithProjectOpenOpensATab);

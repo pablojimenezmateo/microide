@@ -489,7 +489,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-11-02-428 — the terminal UX pass, local and remote: what it fixed and what it left. [OPEN — items 1-4]
+### TD-2026-11-02-428 — the terminal UX pass, local and remote: what it fixed and what it left. [OPEN — items 1-5]
 
 The 2026-11-02 pass drove Claude Code 2.1.316 (fullscreen TUI: alt screen,
 DECSET 1003 + SGR, kitty keyboard flags 5) and vim in local and host terminals
@@ -535,6 +535,10 @@ Left:
    programs are probed (1000/1002 programs are never told about a resting pointer).
 3. **A background project's terminal marks wait on its terminal tab.** The
    project tab itself carries no badge (TD-427 item 2's remainder).
+5. **A local file dropped onto a HOST terminal pastes its local path** when it is
+   outside the project (a screenshot in ~/Pictures): only the mirror maps to the
+   host (`ResolveWorkingDirectory`). Uploading it to a host temp file and pasting
+   that path is the shape (VS Code's remote terminal has the same gap).
 4. **Two load-only flakes, not reproduced.** In one full `-j32` shard run while
    three sanitizer trees compiled: `RemoteTerminalRestore/
    HostTerminalLifetimeAndUnclaimedTerminals` ("opted out, quit closes the host

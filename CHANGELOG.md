@@ -177,6 +177,9 @@ project (see [README](README.md)); versions track meaningful shipped work.
   its text, which was not possible at all. Across the app, dimmed menu rows and
   the dimmed Commit button show the arrow, the terminal find bar's buttons and
   the panel's tab overflow chips the hand.
+- A file dropped onto a terminal is typed into it as its (quoted) path, as in
+  gnome-terminal and VS Code -- drag a screenshot into Claude Code's prompt. It
+  opened in an editor tab wherever it was dropped.
 - A notification, bell or browser request from a terminal in a background project
   shows at once, naming the project, instead of when the project is next opened.
 - A maximized terminal stays maximized across a restart and when switching
