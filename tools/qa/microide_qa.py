@@ -192,6 +192,47 @@ def chord_for_key_command(chord: str) -> str:
 DOUBLE_CLICK_RADIUS = 40
 
 
+WORK_OWNER_FILE = "owner.pid"
+_swept_orphans = False
+
+
+def sweep_orphaned_work_trees(root: Path = Path("/tmp"), legacy_age_s: float = 24 * 3600) -> list[Path]:
+    """Removes this user's /tmp/mqa-* work trees whose driver process is gone.
+
+    A tree is removed by App.stop() in a `finally`, which a killed driver never
+    runs: a remote run left its whole mirror behind each time (~100 MB), and dozens
+    of them filled the user's tmpfs quota until every test failed with EDQUOT
+    (2026-11-02). A tree records its driver's pid (WORK_OWNER_FILE); one with no
+    record (made before it existed) goes once it is a day old. MQA_KEEP_WORK=1
+    keeps them, as it keeps a tree at stop. Once per process; returns what went."""
+    global _swept_orphans
+    if _swept_orphans or os.environ.get("MQA_KEEP_WORK") == "1":
+        return []
+    _swept_orphans = True
+    removed: list[Path] = []
+    for tree in root.glob("mqa-*"):
+        try:
+            if not tree.is_dir() or tree.is_symlink() or tree.stat().st_uid != os.getuid():
+                continue
+            owner = tree / WORK_OWNER_FILE
+            if owner.exists():
+                pid = int(owner.read_text().strip() or "0")
+                try:
+                    os.kill(pid, 0)
+                    continue  # its driver still runs
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    continue  # a live process of someone else's: not ours to judge
+            elif time.time() - tree.stat().st_mtime < legacy_age_s:
+                continue
+        except (OSError, ValueError):
+            continue
+        shutil.rmtree(tree, ignore_errors=True)
+        removed.append(tree)
+    return removed
+
+
 class QaFailure(AssertionError):
     pass
 
@@ -264,7 +305,11 @@ class App:
             raise FileNotFoundError(f"no microide binary at {binary} (set MICROIDE_BIN)")
         # Short path: the control socket lives under XDG_RUNTIME_DIR and AF_UNIX
         # paths stop at 108 bytes.
+        sweep_orphaned_work_trees()
         work = Path(tempfile.mkdtemp(prefix="mqa-", dir="/tmp"))
+        # Whose it is: a driver killed before its `finally` (a CI timeout, a SIGKILL,
+        # a suite interrupted) leaves the tree, and the next launch removes it.
+        (work / WORK_OWNER_FILE).write_text(str(os.getpid()))
         env = app_base_env(dict(os.environ))
         env.update({
             "SDL_VIDEODRIVER": "wayland" if BACKEND == "wayland" else "x11",

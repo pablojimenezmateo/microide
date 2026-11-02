@@ -271,5 +271,34 @@ class GitSettleTests(unittest.TestCase):
             app.send.assert_called_once_with("git-refresh")
             self.assertFalse(app.outside_change_pending)
 
+class OrphanedWorkTreeTests(unittest.TestCase):
+    """A killed driver's /tmp/mqa-* tree is removed by the next launch; a live
+    driver's, a fresh unrecorded one and a non-match are left alone."""
+
+    def test_sweep_removes_only_dead_drivers_trees(self):
+        import os
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            dead, live, fresh, other = (root / "mqa-dead", root / "mqa-live", root / "mqa-fresh", root / "keep-me")
+            for tree in (dead, live, fresh, other):
+                (tree / "data").mkdir(parents=True)
+            child = subprocess.Popen(["true"]); child.wait()  # a pid that is gone now
+            (dead / q.WORK_OWNER_FILE).write_text(str(child.pid))
+            (live / q.WORK_OWNER_FILE).write_text(str(os.getpid()))
+            with patch.object(q, "_swept_orphans", False), patch.dict(os.environ, {"MQA_KEEP_WORK": "0"}):
+                removed = q.sweep_orphaned_work_trees(root)
+            self.assertEqual(removed, [dead])
+            self.assertTrue(live.exists() and fresh.exists() and other.exists())
+
+    def test_an_old_unrecorded_tree_goes(self):
+        import os
+        with tempfile.TemporaryDirectory() as root:
+            old = Path(root) / "mqa-old"
+            old.mkdir()
+            os.utime(old, (0, 0))
+            with patch.object(q, "_swept_orphans", False), patch.dict(os.environ, {"MQA_KEEP_WORK": "0"}):
+                self.assertEqual(q.sweep_orphaned_work_trees(Path(root)), [old])
+
+
 if __name__ == "__main__":
     unittest.main()
