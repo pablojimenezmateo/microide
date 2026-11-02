@@ -336,6 +336,29 @@ void TestClientMirrorsReverseVideo() {
   Expect(!mirror.client.screen_reverse_video(), "the client draws it normally again");
 }
 
+// OSC 22 reaches a client: the shape rides the frame's flag bits (no protocol
+// version: an older client ignores them), and a change alone ships a frame.
+void TestClientMirrorsThePointerShape() {
+  Mirror mirror(4, 16);
+  mirror.Write("$ ");
+  Expect(mirror.Sync(), "sync");
+  mirror.Write("\x1b]22;hand2\x07");
+  Expect(mirror.Sync(), "a pointer change alone ships a frame");
+  Expect(mirror.client.PointerShapeAt(0, 0) == terminal::TerminalPointerShape::Pointer,
+         "the client shows the program's pointer");
+  mirror.Write("\x1b]22;\x07");
+  Expect(mirror.Sync(), "and its reset ships one");
+  Expect(mirror.client.PointerShapeAt(0, 0) == terminal::TerminalPointerShape::None, "the panel decides again");
+  terminal::TerminalHostFrame frame;
+  frame.flags |= terminal::TerminalHostFrame::PointerShapeFlags(terminal::TerminalPointerShape::NeswResize);
+  std::string bytes;
+  terminal::EncodeTerminalHostFrame(bytes, frame);
+  const auto decoded = terminal::DecodeTerminalHostFrame(bytes);
+  Expect(decoded.has_value() && decoded->pointer_shape() == terminal::TerminalPointerShape::NeswResize &&
+             decoded->has(terminal::TerminalHostFrame::kRunning),
+         "the shape and the other flags share the field without touching each other");
+}
+
 void TestClientMirrorsAResize() {
   Mirror mirror(6, 20);
   for (int i = 0; i < 20; ++i) {
@@ -686,6 +709,7 @@ void RegisterTerminalHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TerminalHost/InputEventsRoundTrip", TestInputEventsRoundTrip);
   AddTest(tests, "TerminalHost/ClientMirrorsTheHostAsItScrolls", TestClientMirrorsTheHostAsItScrolls);
   AddTest(tests, "TerminalHost/ClientMirrorsReverseVideo", TestClientMirrorsReverseVideo);
+  AddTest(tests, "TerminalHost/ClientMirrorsThePointerShape", TestClientMirrorsThePointerShape);
   AddTest(tests, "TerminalHost/ClientMirrorsClearsAndRewrites", TestClientMirrorsClearsAndRewrites);
   AddTest(tests, "TerminalHost/ClientMirrorsTheAlternateScreen", TestClientMirrorsTheAlternateScreen);
   AddTest(tests, "TerminalHost/ClientMirrorsAResize", TestClientMirrorsAResize);

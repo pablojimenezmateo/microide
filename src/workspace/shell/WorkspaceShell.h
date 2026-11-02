@@ -22,6 +22,7 @@
 #include "editor/EditorViewRenderer.h"
 #include "editor/HighlightPrefetchService.h"
 #include "editor/TextViewport.h"
+#include "workspace/WorkspaceCursorKind.h"
 #include "plugin/PluginHost.h"
 #include "platform/FileIndexWatcher.h"
 #include "project/DirectoryTree.h"

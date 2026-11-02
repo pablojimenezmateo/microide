@@ -206,10 +206,11 @@ class TerminalSession {
                        std::size_t row,
                        std::size_t column,
                        util::KeyModifiers modifiers);
-  // Whether the program that owns the mouse lit the control under screen
-  // (row, column) in answer to the pointer resting there -- what the panel shows
-  // a hand for. See TerminalHoverAffordance.
-  bool HoverAffordanceAt(std::size_t row, std::size_t column) const;
+  // The pointer over screen (row, column): the program's own (OSC 22) when it named
+  // one; else, for a program that owns the mouse, the hand over a control it lit in
+  // answer to the resting pointer (TerminalHoverAffordance) and the arrow elsewhere;
+  // else None, and the panel's rules apply (the I-beam, a link's hand).
+  TerminalPointerShape PointerShapeAt(std::size_t row, std::size_t column) const;
 
   // ---- Host terminals (dev-docs/design/remote-projects.md § 6.5) ----
   //

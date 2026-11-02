@@ -256,21 +256,7 @@
   using TextCompositionState = workspace::TextCompositionState;
   using TextInputState = workspace::TextInputState;
 
-  enum class CursorKind {
-    Default,
-    Text,
-    Pointer,
-    EwResize,
-    NsResize,
-    NResize,
-    EResize,
-    SResize,
-    WResize,
-    NeResize,
-    SeResize,
-    SwResize,
-    NwResize,
-  };
+  using CursorKind = workspace::CursorKind;  // workspace/WorkspaceCursorKind.h
 
  public:
   struct CompareSurfaceLayout {
@@ -2306,9 +2292,7 @@
   struct SdlCursorDeleter {
     void operator()(SDL_Cursor* cursor) const;
   };
-  std::array<std::unique_ptr<SDL_Cursor, SdlCursorDeleter>,
-             static_cast<std::size_t>(CursorKind::NwResize) + 1>
-      system_cursors_{};
+  std::array<std::unique_ptr<SDL_Cursor, SdlCursorDeleter>, kCursorKindCount> system_cursors_{};
   float last_mouse_x_ = 0.0f;
   float last_mouse_y_ = 0.0f;
   bool last_mouse_position_valid_ = false;

@@ -525,6 +525,7 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
     mouse_.normal = frame.has(TerminalHostFrame::kMouseNormal);
     mouse_.drag = frame.has(TerminalHostFrame::kMouseDrag);
     mouse_.any = frame.has(TerminalHostFrame::kMouseAny);
+    mouse_.pointer_shape = frame.pointer_shape();
     if (mouse_.normal != was.normal || mouse_.drag != was.drag || mouse_.any != was.any) {
       pointer_.last_motion.reset();  // as a local DECSET does (SetPrivateModeLocked)
     }
@@ -844,6 +845,7 @@ void TerminalSession::CaptureForHost(std::uint64_t from, std::size_t max_lines_b
   flag(TerminalHostFrame::kMouseNormal, mouse_.normal);
   flag(TerminalHostFrame::kMouseDrag, mouse_.drag);
   flag(TerminalHostFrame::kMouseAny, mouse_.any);
+  header.flags |= TerminalHostFrame::PointerShapeFlags(mouse_.pointer_shape);
   flag(TerminalHostFrame::kFocusEvents, focus_event_mode_);
   flag(TerminalHostFrame::kRunning, running_);
   flag(TerminalHostFrame::kBell, pending_host_bell_);

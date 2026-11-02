@@ -739,19 +739,21 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
           }
         }
       }
-      // A program that asked for the mouse (DECSET 1000-1003) gets the clicks, so
-      // the I-beam would promise a selection a click does not make: the arrow, as
-      // in xterm.js, VTE and kitty -- and the hand over a control the program lit
-      // under the resting pointer, the only sign of a button it gives (Claude
-      // Code's "Jump to bottom", a collapsed tool group). Shift hands the pointer
-      // back to selection (and to links), as in every Linux terminal.
+      // The program's own pointer when it named one (OSC 22: kitty, foot, Ghostty,
+      // xterm). Else a program that asked for the mouse (DECSET 1000-1003) gets the
+      // clicks, so the I-beam would promise a selection a click does not make: the
+      // arrow, as in xterm.js, VTE and kitty -- and the hand over a control the
+      // program lit under the resting pointer, the only sign of a button it gives
+      // (Claude Code's "Jump to bottom", a collapsed tool group). Shift hands the
+      // pointer back to selection (and to links), as in every Linux terminal.
       const TerminalPaneState* pane = ActiveTerminalPane();
-      if (pane->session.WantsMouseCapture() &&
-          (context_.interaction_state.key_modifiers & SDL_KMOD_SHIFT) == 0) {
+      if ((context_.interaction_state.key_modifiers & SDL_KMOD_SHIFT) == 0) {
         if (const auto cell = TerminalViewportPositionForPoint(static_cast<int>(x), static_cast<int>(y));
             cell.has_value()) {
-          return pane->session.HoverAffordanceAt(cell->row, cell->column) ? CursorKind::Pointer
-                                                                          : CursorKind::Default;
+          if (const terminal::TerminalPointerShape shape = pane->session.PointerShapeAt(cell->row, cell->column);
+              shape != terminal::TerminalPointerShape::None) {
+            return CursorKindFor(shape);
+          }
         }
       }
       if (TerminalLinkAtPoint(x, y).has_value()) {
@@ -1003,6 +1005,13 @@ SDL_Cursor* WorkspaceShell::CursorHandle(CursorKind kind) {
       case CursorKind::SeResize: return SDL_SYSTEM_CURSOR_SE_RESIZE;
       case CursorKind::SwResize: return SDL_SYSTEM_CURSOR_SW_RESIZE;
       case CursorKind::NwResize: return SDL_SYSTEM_CURSOR_NW_RESIZE;
+      case CursorKind::Wait: return SDL_SYSTEM_CURSOR_WAIT;
+      case CursorKind::Progress: return SDL_SYSTEM_CURSOR_PROGRESS;
+      case CursorKind::Crosshair: return SDL_SYSTEM_CURSOR_CROSSHAIR;
+      case CursorKind::Move: return SDL_SYSTEM_CURSOR_MOVE;
+      case CursorKind::NotAllowed: return SDL_SYSTEM_CURSOR_NOT_ALLOWED;
+      case CursorKind::NwseResize: return SDL_SYSTEM_CURSOR_NWSE_RESIZE;
+      case CursorKind::NeswResize: return SDL_SYSTEM_CURSOR_NESW_RESIZE;
       case CursorKind::Default: break;
     }
     return SDL_SYSTEM_CURSOR_DEFAULT;

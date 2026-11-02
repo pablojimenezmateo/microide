@@ -110,24 +110,7 @@ std::string DebugValueRowLabel(const DebugVariableRowView& row) {
 // redraw or changes state.
 ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
   using namespace control_ui_kind;
-  const auto cursor_name = [](CursorKind kind) -> std::string_view {
-        switch (kind) {
-          case CursorKind::Default: return "default";
-          case CursorKind::Text: return "text";
-          case CursorKind::Pointer: return "pointer";
-          case CursorKind::EwResize: return "ew-resize";
-          case CursorKind::NsResize: return "ns-resize";
-          case CursorKind::NResize: return "n-resize";
-          case CursorKind::EResize: return "e-resize";
-          case CursorKind::SResize: return "s-resize";
-          case CursorKind::WResize: return "w-resize";
-          case CursorKind::NeResize: return "ne-resize";
-          case CursorKind::SeResize: return "se-resize";
-          case CursorKind::SwResize: return "sw-resize";
-          case CursorKind::NwResize: return "nw-resize";
-        }
-        return "default";
-      };
+  const auto cursor_name = [](CursorKind kind) { return CursorKindName(kind); };
   const auto cursor_at = [this, cursor_name](float x, float y) {
     return cursor_name(CursorKindForPosition(x, y));
   };

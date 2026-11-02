@@ -69,6 +69,17 @@ struct TerminalHostFrame {
   static constexpr std::uint16_t kReset = 1u << 9;
   // DECSCNM: the screen is drawn in reverse video.
   static constexpr std::uint16_t kReverseVideo = 1u << 10;
+  // Bits 11-15: the program's OSC 22 pointer (TerminalPointerShape, 0 = None). A
+  // client older than it ignores them, so it needs no protocol version.
+  static constexpr unsigned kPointerShapeShift = 11;
+  static constexpr std::uint16_t kPointerShapeMask = 0x1fu << kPointerShapeShift;
+  TerminalPointerShape pointer_shape() const {
+    const auto value = static_cast<std::uint8_t>((flags & kPointerShapeMask) >> kPointerShapeShift);
+    return value < kTerminalPointerShapeCount ? static_cast<TerminalPointerShape>(value) : TerminalPointerShape::None;
+  }
+  static std::uint16_t PointerShapeFlags(TerminalPointerShape shape) {
+    return static_cast<std::uint16_t>(static_cast<unsigned>(shape) << kPointerShapeShift) & kPointerShapeMask;
+  }
 
   std::uint32_t rows = 24;
   std::uint32_t columns = 80;

@@ -143,6 +143,15 @@ void TerminalSession::HandleOscSequenceLocked(std::string_view sequence) {
     return;
   }
 
+  if (command == "22") {
+    if (const std::optional<TerminalPointerShape> shape = TerminalPointerShapeFromOsc22(payload);
+        shape.has_value() && *shape != mouse_.pointer_shape) {
+      mouse_.pointer_shape = *shape;
+      AdvanceSnapshotGenerationLocked();  // a host terminal ships it even with no row changed
+    }
+    return;
+  }
+
   if (command == "7") {
     // Working-directory report: OSC 7 ; file://host/path
     std::string decoded = DecodeOsc7Path(payload);

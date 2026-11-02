@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 
+#include "terminal/TerminalPointerShape.h"
 #include "util/KeyModifiers.h"
 
 namespace microide::terminal {
@@ -29,6 +30,8 @@ struct TerminalMouseModes {
   bool drag = false;
   bool any = false;
   bool sgr = false;
+  // OSC 22's pointer (TerminalPointerShape.h): mouse state a mode reset clears.
+  TerminalPointerShape pointer_shape = TerminalPointerShape::None;
 };
 
 // The cell (and held button) the last motion report named. A move inside one cell

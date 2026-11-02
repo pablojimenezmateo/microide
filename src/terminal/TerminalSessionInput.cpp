@@ -140,11 +140,18 @@ bool TerminalSession::SendMouseButton(MouseButton button,
   return true;
 }
 
-bool TerminalSession::HoverAffordanceAt(std::size_t row, std::size_t column) const {
+TerminalPointerShape TerminalSession::PointerShapeAt(std::size_t row, std::size_t column) const {
   std::scoped_lock lock(mutex_);
+  if (mouse_.pointer_shape != TerminalPointerShape::None) {
+    return mouse_.pointer_shape;
+  }
+  if (CurrentTerminalMouseTrackingMode(mouse_.any, mouse_.drag, mouse_.normal) == TerminalMouseTrackingMode::Disabled) {
+    return TerminalPointerShape::None;
+  }
   const std::size_t line = PrimaryScreenTopLocked() + row;
-  return mouse_.any && row < rows_ && line < lines_.size() &&
-         pointer_.hover.Contains(row, column, lines_[line]);
+  return mouse_.any && row < rows_ && line < lines_.size() && pointer_.hover.Contains(row, column, lines_[line])
+             ? TerminalPointerShape::Pointer
+             : TerminalPointerShape::Default;
 }
 
 bool TerminalSession::SendMouseMotion(MouseButton button,

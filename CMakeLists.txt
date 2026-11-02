@@ -438,6 +438,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/terminal/TerminalCsiParser.cpp
   src/terminal/TerminalMouseEncoder.cpp
   src/terminal/TerminalHoverAffordance.cpp
+  src/terminal/TerminalPointerShape.cpp
   src/terminal/TerminalOscClipboard.cpp
   src/terminal/TerminalSearch.cpp
   src/terminal/TerminalSession.cpp
@@ -1886,6 +1887,7 @@ if(MICROIDE_FUZZ)
     src/terminal/TerminalCsiParser.cpp
     src/terminal/TerminalMouseEncoder.cpp
     src/terminal/TerminalHoverAffordance.cpp
+    src/terminal/TerminalPointerShape.cpp
     src/terminal/TerminalOscClipboard.cpp
     src/terminal/TerminalSearch.cpp
     src/terminal/TerminalPredictionOverlay.cpp

@@ -1546,6 +1546,18 @@ void TestWorkspaceShellTerminalMouseOwnerShowsAHandOnLitControls() {
   shift.key.mod = SDL_KMOD_NONE;
   (void)shell.HandleEvent(shift);
   Expect(WorkspaceShellTestAccess::CachedCursorIsPointer(shell), "and letting go gives the hand back");
+
+  // A program that NAMES its pointer (OSC 22, TD-2026-11-02-428 item 1) gets it
+  // exactly, over the whole pane, in place of the inference above -- Shift still
+  // selects.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]22;wait\x07");
+  Expect(WorkspaceShellTestAccess::CursorKindAtIs(shell, plain.x, plain.y, microide::workspace::CursorKind::Wait) &&
+             WorkspaceShellTestAccess::CursorKindAtIs(shell, digit.x, digit.y, microide::workspace::CursorKind::Wait),
+         "the program's own pointer, everywhere on the pane");
+  shift.type = SDL_EVENT_KEY_DOWN;
+  shift.key.mod = SDL_KMOD_LSHIFT;
+  (void)shell.HandleEvent(shift);
+  Expect(WorkspaceShellTestAccess::CursorKindAtIsText(shell, plain.x, plain.y), "Shift still selects");
 }
 
 // Shift+drag selects text past a program that owns the mouse, as in every Linux
