@@ -457,31 +457,39 @@ bool RemoteHostService::RemoveMirror(const std::filesystem::path& root, bool dis
     *error = "close the project first; its mirror is removed once it is closed";
     return false;
   }
-  std::size_t unsent = 0;
   if (it != projects_.end()) {
     // A save tells the engine through its queue (NotifyLocalWrite journals it there),
     // so a removal right after a save could count before the journal and delete an
-    // edit the host never got (CI hit it). Let the queue drain first: the project is
-    // closed, so what is left is that journaling and any push already under way.
+    // edit the host never got (CI hit it). Let the queue drain first, and the state
+    // reach the disk the count below reads: the project is closed, so what is left
+    // is that journaling and any push already under way.
     it->second.project->engine().Flush();
-    const remote::MirrorSyncEngine::Status sync = it->second.project->engine().status();
-    unsent = sync.dirty + sync.conflicts;
-  } else {
-    // Never opened this run: the journal on disk says what the host has not got.
-    remote::MirrorStore store(root.parent_path(), root.filename().string());
-    std::string ignored;
-    if (store.Open(&ignored)) {
-      for (const auto& [path, entry] : store.entries()) {
-        (void)path;
-        unsent += (entry.push_pending || entry.conflict) ? 1 : 0;
-      }
-      unsent += store.pending_tree_ops().size();
-    }
+    it->second.project->engine().PersistNow();
   }
-  if (unsent > 0 && !discard_unsent) {
-    *error = std::to_string(unsent) + (unsent == 1 ? " save" : " saves") + " in " + root.string() +
-             " never reached " + record->host +
-             "; reopen the project to push them, or add `discard` to remove them with the mirror";
+  // Counted from the disk -- the journal AND the tree, the tree being what a crash
+  // between a write and its journal leaves the only record of -- for a mirror open
+  // this run or not. One whose state cannot be read is not counted as empty: it is
+  // refused, as a mirror with work in it is.
+  remote::MirrorStore store(root.parent_path(), root.filename().string());
+  std::string open_error;
+  if (!store.Open(&open_error) && !discard_unsent) {
+    *error = "cannot read the mirror's state (" + open_error + "), so what it holds that " + record->host +
+             " does not is unknown; add `discard` to remove it anyway";
+    return false;
+  }
+  const remote::MirrorStore::LocalWork work = store.LocalWorkNotOnHost();
+  if (!work.empty() && !discard_unsent) {
+    std::string what;
+    if (work.unsent > 0) {
+      what = std::to_string(work.unsent) + (work.unsent == 1 ? " change" : " changes") + " that never reached " +
+             record->host;
+    }
+    if (work.only_here > 0) {
+      what += (what.empty() ? "" : " and ") + std::to_string(work.only_here) +
+              (work.only_here == 1 ? " file" : " files") + " that exist only here (ignored by the host)";
+    }
+    *error = root.string() + " holds " + what + ", " + work.first + " among them; reopen the project to push " +
+             "them, or add `discard` to remove them with the mirror";
     return false;
   }
   if (it != projects_.end()) {

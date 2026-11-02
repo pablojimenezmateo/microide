@@ -992,6 +992,33 @@ void TestMirrorACrashBeforeTheJournalLosesNothing() {
   Expect(session.engine->StateOf("b.txt") == ContentState::Current, "and is current");
 }
 
+// What Remove Mirror counts as lost: the journal is not the whole story. An edit
+// in tree/ nothing journaled (a crash between the write and the journal, a tool
+// writing while the project was closed) and a file made here that the state never
+// heard of are the user's too; a file that still holds its base is not.
+void TestMirrorLocalWorkCountsWhatTheJournalMissed() {
+  MirrorSession session;
+  WriteFile(session.host / "a.txt", "a1\n");
+  WriteFile(session.host / "b.txt", "b1\n");
+  session.Connect();
+  session.Sync();
+  session.engine.reset();
+  {
+    remote::MirrorStore store(session.mirror_dir);
+    std::string error;
+    Expect(store.Open(&error), "reopens: " + error);
+    Expect(store.LocalWorkNotOnHost().empty(), "a synced mirror holds nothing the host lacks");
+  }
+  WriteFile(session.Tree("a.txt"), "edited, journaled nowhere\n");
+  WriteFile(session.Tree("notes/new.txt"), "made here\n");
+  remote::MirrorStore store(session.mirror_dir);
+  std::string error;
+  Expect(store.Open(&error), "reopens: " + error);
+  const remote::MirrorStore::LocalWork work = store.LocalWorkNotOnHost();
+  Expect(work.unsent == 2 && work.only_here == 0,
+         "the unjournaled edit and the unknown file: " + std::to_string(work.unsent) + " " + work.first);
+}
+
 void TestMirrorFollowsTheHostWatch() {
   MirrorSession session;
   WriteFile(session.host / "a.txt", "one\n");
@@ -1414,6 +1441,7 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/MergesAConflictThreeWays", TestMirrorMergesAConflictThreeWays);
   AddTest(tests, "MirrorSyncEngine/JournalSurvivesARestart", TestMirrorJournalSurvivesARestart);
   AddTest(tests, "MirrorSyncEngine/ACrashBeforeTheJournalLosesNothing", TestMirrorACrashBeforeTheJournalLosesNothing);
+  AddTest(tests, "MirrorSyncEngine/LocalWorkCountsWhatTheJournalMissed", TestMirrorLocalWorkCountsWhatTheJournalMissed);
   AddTest(tests, "MirrorSyncEngine/WriteGateReachesTheHost", TestMirrorWriteGateReachesTheHost);
   AddTest(tests, "MirrorSyncEngine/TreeOpsMadeOfflineReplay", TestMirrorTreeOpsMadeOfflineReplay);
   AddTest(tests, "MirrorSyncEngine/FollowsTheHostWatch", TestMirrorFollowsTheHostWatch);

@@ -178,6 +178,20 @@ class MirrorStore {
   // Compare tree/<path> with `entry.base`: the recorded stat first, a hash only
   // when the stat moved (and then the stat is re-recorded if the bytes still match).
   LocalState CheckLocal(std::string_view path, Entry& entry) const;
+  // What removing this mirror would lose that the host does not hold: pushes the
+  // journal has pending and conflicts (`unsent`), a tracked file whose bytes no
+  // longer match its base though nothing journaled it (a crash between the write
+  // and the journal, a tool writing into tree/ while the project was closed), a
+  // file in tree/ the state does not know at all, and the host's ignored paths
+  // that exist only here (`only_here`: a .env the host never had). Walks tree/ and
+  // hashes what moved: for a removal, not a hot path. `first` names one of them.
+  struct LocalWork {
+    std::size_t unsent = 0;
+    std::size_t only_here = 0;
+    std::string first;
+    bool empty() const { return unsent == 0 && only_here == 0; }
+  };
+  LocalWork LocalWorkNotOnHost();
   // Record tree/<path>'s current stat as the one that holds `entry.base`.
   void RecordLocal(std::string_view path, Entry& entry) const;
 

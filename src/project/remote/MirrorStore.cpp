@@ -13,6 +13,7 @@
 #include "platform/AppDirectories.h"
 #include "platform/RuntimePaths.h"
 #include "util/ByteCodec.h"
+#include "util/DurableFile.h"
 #include "util/PosixFd.h"
 #include "util/TextFileIO.h"
 
@@ -483,6 +484,45 @@ MirrorStore::LocalState MirrorStore::CheckLocal(std::string_view path, Entry& en
     return LocalState::MatchesBase;
   }
   return LocalState::Differs;
+}
+
+MirrorStore::LocalWork MirrorStore::LocalWorkNotOnHost() {
+  LocalWork work;
+  const auto note = [&](std::size_t& count, std::string_view path) {
+    ++count;
+    if (work.first.empty()) {
+      work.first = std::string(path);
+    }
+  };
+  for (auto& [path, entry] : entries_) {
+    if (entry.push_pending || entry.conflict) {
+      note(work.unsent, path);
+    } else if (entry.local_only) {
+      if (StatNoFollow(tree_ / path).exists) {
+        note(work.only_here, path);
+      }
+    } else if (entry.remote.kind == ManifestEntryKind::File && entry.base.has_value() &&
+               CheckLocal(path, entry) == LocalState::Differs) {
+      note(work.unsent, path);
+    }
+  }
+  work.unsent += pending_tree_ops_.size();
+  std::error_code error;
+  for (auto it = std::filesystem::recursive_directory_iterator(
+           tree_, std::filesystem::directory_options::skip_permission_denied, error);
+       !error && it != std::filesystem::recursive_directory_iterator(); it.increment(error)) {
+    const std::filesystem::file_status status = it->symlink_status(error);
+    if (error || std::filesystem::is_directory(status) ||
+        util::IsTemporaryStagingFilename(it->path().filename().string())) {
+      error.clear();
+      continue;
+    }
+    const std::string relative = it->path().lexically_relative(tree_).generic_string();
+    if (!entries_.contains(relative)) {
+      note(work.unsent, relative);  // made here, recorded nowhere
+    }
+  }
+  return work;
 }
 
 void MirrorStore::RecordLocal(std::string_view path, Entry& entry) const {

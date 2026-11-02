@@ -1226,7 +1226,7 @@ void TestRemoveMirrorDeletesAClosedMirrorAndKeepsUnsentSaves() {
     (void)shell.HandleEvent(escape);
   }
   outcome = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "remote-remove-mirror " + mirror.string());
-  Expect(!outcome.ok && outcome.error.find("1 save") != std::string::npos &&
+  Expect(!outcome.ok && outcome.error.find("1 change that never reached") != std::string::npos &&
              outcome.error.find("discard") != std::string::npos,
          "a mirror with an unsent save is kept, and the refusal names the count: " + outcome.error);
   Expect(std::filesystem::exists(mirror / "main.c"), "the mirror is still there");
