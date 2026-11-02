@@ -201,7 +201,7 @@ void RemoteTerminalChannel::Ended(terminal::HostReattach outcome, const std::str
   handle_ = 0;  // claims nothing on the host any more
   reattach_state_ = outcome;
   if (session_ != nullptr) {
-    session_->HostTerminalEnded(reason);
+    session_->HostEnded(terminal::HostEnd::TerminalGone, reason);
   }
 }
 
@@ -342,7 +342,7 @@ void RemoteTerminalChannel::Attached(const std::shared_ptr<RemoteServerClient>& 
       std::lock_guard lock(channel->mutex_);
       channel->attached_ = false;
       if (channel->session_ != nullptr) {
-        channel->session_->HostConnectionLost(reason);
+        channel->session_->HostEnded(terminal::HostEnd::LinkLost, reason);
       }
     }
   };
@@ -362,7 +362,7 @@ void RemoteTerminalChannel::Attached(const std::shared_ptr<RemoteServerClient>& 
 void RemoteTerminalChannel::OpenFailed(const std::string& error) {
   std::lock_guard lock(mutex_);
   if (session_ != nullptr) {
-    session_->HostConnectionLost("could not open a terminal on the host: " + error);
+    session_->HostEnded(terminal::HostEnd::LinkLost, "could not open a terminal on the host: " + error);
   }
 }
 

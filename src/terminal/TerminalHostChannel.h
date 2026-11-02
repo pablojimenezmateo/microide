@@ -41,6 +41,13 @@ enum class HostReattach : std::uint8_t {
   Gone,             // the server no longer has it: a fresh shell instead
 };
 
+// How a host terminal's session ended (TerminalSession::HostEnded).
+enum class HostEnd : std::uint8_t {
+  LinkLost,      // the connection went away, not the shell: ended until it reattaches
+  TerminalGone,  // the connection is back and the host no longer has the terminal (its
+                 // server restarted): an ended shell, Enter starts a new one
+};
+
 // The client's end of one host terminal (dev-docs/design/remote-projects.md
 // § 6.5): what a TerminalSession in host mode sends its input, size and close
 // through. Frames come back the other way, into TerminalSession::ApplyHostFrame.

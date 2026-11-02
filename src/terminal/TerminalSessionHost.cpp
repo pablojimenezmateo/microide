@@ -556,34 +556,20 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
   return consistent;
 }
 
-void TerminalSession::HostConnectionLost(std::string_view reason) {
+void TerminalSession::HostEnded(HostEnd end, std::string_view reason) {
+  const bool link_lost = end == HostEnd::LinkLost;
   {
     std::scoped_lock lock(mutex_);
-    if (host_.channel == nullptr || !running_) {
+    if (host_.channel == nullptr || (link_lost ? !running_ : !host_.link_down)) {
       return;
     }
     running_ = false;
-    host_.link_down = true;
+    host_.link_down = link_lost;
     prediction_.Withdraw(PredictionViewLocked());
     prediction_.Clear();
-    InsertHostRule(lines_, host_, scrollback_trim_total_, cursor_row_,
-                   MakeStatusLine("[connection to the host lost: " + std::string(reason) + "]", /*dim=*/false));
-    AdvanceSnapshotGenerationLocked();
-  }
-  PushWakeEvent();
-}
-
-void TerminalSession::HostTerminalEnded(std::string_view reason) {
-  {
-    std::scoped_lock lock(mutex_);
-    if (host_.channel == nullptr || !host_.link_down) {
-      return;
-    }
-    running_ = false;
-    host_.link_down = false;
-    InsertHostRule(lines_, host_, scrollback_trim_total_, cursor_row_,
-                   MakeStatusLine("[" + std::string(reason) + ": the shell ended; Enter starts a new one]",
-                                  /*dim=*/false));
+    const std::string line = link_lost ? "[connection to the host lost: " + std::string(reason) + "]"
+                                       : "[" + std::string(reason) + ": the shell ended; Enter starts a new one]";
+    InsertHostRule(lines_, host_, scrollback_trim_total_, cursor_row_, MakeStatusLine(line, /*dim=*/false));
     AdvanceSnapshotGenerationLocked();
   }
   PushWakeEvent();
