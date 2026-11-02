@@ -497,7 +497,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-11-02-429 — the error-management and data-safety pass: what it fixed and what it left. [OPEN — items 1-6, 8; 7 resolved]
+### TD-2026-11-02-429 — the error-management and data-safety pass: what it fixed and what it left. [OPEN — items 2-6, 8; 1 and 7 resolved]
 
 The 2026-11-02 pass probed the shipped binary (control channel, SIGKILL / SIGTERM /
 SIGHUP, chmod, deleted and moved roots, a crash between an edit and the file
@@ -544,9 +544,10 @@ deletes (trash), the read-only-file banner.
 
 Left open:
 
-1. **The root-missing row can go stale.** The watcher's root watch dies with the
-   root, so a folder put back is noticed only on the next project switch. A
-   periodic stat while the row is up, or re-arming the watch on the parent.
+1. ~~The root-missing row can go stale.~~ **Resolved in the same pass:** the
+   window's focus gain re-checks while the row is up, and a folder that is back
+   clears it and restarts the watcher (which re-indexes). Left: a folder put back
+   while microide keeps the focus waits for the next focus change or switch.
 2. **A restored snapshot's baseline is stat-only.** The in-memory content hash is
    process-local (`std::hash`), so a `touch` while microide was down reads as a
    change and the save asks. Safe, but a stable digest (blake3, already linked)

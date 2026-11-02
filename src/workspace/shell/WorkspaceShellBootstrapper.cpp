@@ -1,5 +1,6 @@
 #include <memory>
 
+#include "workspace/ProjectRootPresence.h"
 #include "workspace/services/RemoteHostService.h"
 #include "workspace/shell/WorkspaceShellBootstrapper.h"
 
@@ -389,6 +390,20 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
               },
           .handle_window_mouse_leave = [shell]() { shell->ClearMouseHoverState(); },
           .force_cursor_reassert = [shell]() { shell->ForceCursorReassert(); },
+          .window_focus_gained =
+              [shell]() {
+                // A missing project folder put back while the user was elsewhere (a
+                // file manager, a `git clone` over it): its watcher died with it, so
+                // nothing else would notice. Only while the row is up: one stat.
+                NotificationService& notes = shell->notification_service_;
+                if (!notes.FindRow(kProjectRootMissingNotificationKey).has_value() ||
+                    !PublishProjectRootPresence(notes, shell->context_.current_project_state.root, SDL_GetTicks()) ||
+                    notes.FindRow(kProjectRootMissingNotificationKey).has_value()) {
+                  return;
+                }
+                (void)shell->StartFileIndexWatcherForCurrentProject();  // re-indexes the folder
+                shell->RequestFullRedraw();
+              },
           .pointer_modifiers_changed =
               [shell]() {
                 if (shell->last_mouse_position_valid_) {

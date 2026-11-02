@@ -62,6 +62,9 @@ class WorkspaceEventDispatcher {
     std::function<bool(const SDL_TextInputEvent&)> handle_text_input;
     std::function<void()> handle_window_mouse_leave;
     std::function<void()> force_cursor_reassert;
+    // The window took the keyboard back: what may have changed outside it while it
+    // had not (a project folder put back) is worth one look. Optional.
+    std::function<void()> window_focus_gained;
     // Shift went down or up with the pointer still: Shift is part of what the
     // pointer means over a terminal whose program owns the mouse (it selects
     // instead), so the cursor is resolved again where it rests.

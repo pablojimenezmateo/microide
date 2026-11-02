@@ -7871,6 +7871,23 @@ void TestWorkspaceShellAProjectWhoseFolderIsDeletedSaysSo() {
              std::chrono::seconds(10)),
          "the watcher's batch raises the row");
   Expect(row()->sticky && row()->message.find(root.string()) != std::string::npos, "sticky, naming the folder");
+  // Put back while the window was elsewhere: its watcher died with it, so the
+  // window's next focus looks, clears the row and indexes the folder again.
+  WriteFile(root / "BACK.md", "back\n");
+  SDL_Event focus{};
+  focus.type = SDL_EVENT_WINDOW_FOCUS_GAINED;
+  (void)shell.HandleEvent(focus);
+  Expect(row() == nullptr, "the folder is back: the row goes");
+  Expect(WaitForFileIndexPath(shell, std::filesystem::path("BACK.md"), true, std::chrono::seconds(5)),
+         "and the folder is indexed again");
+  std::filesystem::remove_all(root);
+  Expect(WaitUntil(
+             [&] {
+               (void)WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false);
+               return row() != nullptr;
+             },
+             std::chrono::seconds(10)),
+         "gone again: the restarted watcher sees it");
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, other, false, false), "switch to the other project");
   Expect(row() == nullptr, "which is there: the row goes");
 }

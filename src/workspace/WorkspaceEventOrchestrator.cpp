@@ -215,6 +215,9 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
       state_.window_has_input_focus = true;
       // Keys pressed or released while another window had the focus sent us nothing.
       state_.key_modifiers = SDL_GetModState();
+      if (operations_.window_focus_gained) {
+        operations_.window_focus_gained();
+      }
       if (operations_.force_cursor_reassert) {
         operations_.force_cursor_reassert();
       }
