@@ -190,6 +190,16 @@ struct PreparedFrameState {
   // left or reached.
   const void* painted_bracket_viewport = nullptr;
   std::optional<editor::BracketMatchPair> painted_bracket_pair;
+  // Per editor pane, its active viewport and the language its rows were
+  // highlighted as. An edit can change the language of the whole buffer --
+  // typing before a shebang turns a shell script into plain text -- while it
+  // damages only its own line, and every other row kept the old colours (QA
+  // monkey, seed 60 at 600 steps). Prep repaints the pane when it changes.
+  struct PaintedLanguage {
+    const void* viewport = nullptr;
+    std::string language;
+  };
+  std::array<PaintedLanguage, kMaxEditorGroups> painted_languages{};
   const void* painted_occurrence_viewport = nullptr;
   std::vector<std::pair<std::size_t, std::uint64_t>> painted_occurrence_lines;
   std::vector<std::pair<std::size_t, std::uint64_t>> occurrence_lines;

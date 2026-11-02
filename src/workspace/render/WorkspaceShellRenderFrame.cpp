@@ -915,6 +915,26 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     frame_state_.painted_bracket_viewport = viewport;
     frame_state_.painted_bracket_pair = pair;
   }
+  // Every pane's language as painted (see PreparedFrameState::painted_languages).
+  {
+    const EditorGroupRectsLayout group_rects = ComputeEditorGroupRectsForState(layout);
+    for (std::size_t gi = 0; gi < project_state.editor_groups.size() && gi < kMaxEditorGroups; ++gi) {
+      const editor::TextViewport* viewport = GroupActiveViewport(project_state.editor_groups[gi]);
+      auto& painted = frame_state_.painted_languages[gi];
+      if (viewport == nullptr || viewport->is_placeholder()) {
+        painted = {};
+        continue;
+      }
+      const std::string& language = viewport->language_id();
+      if (painted.viewport == viewport && painted.language != language && gi < group_rects.groups.size()) {
+        RequestRedrawRect(group_rects.groups[gi].editor_surface);  // another tab in front repaints on its own
+      }
+      if (painted.viewport != viewport || painted.language != language) {
+        painted.viewport = viewport;
+        painted.language = language;
+      }
+    }
+  }
   // The focused pane's occurrence highlights: the lines whose highlight changed
   // since the last frame, whatever changed it (an edit, a caret move, a semantic
   // answer). Asked here first; the view-model build reads the same caches.

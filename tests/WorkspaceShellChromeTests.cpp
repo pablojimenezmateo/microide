@@ -6633,6 +6633,38 @@ void TestWorkspaceShellSameNameTabsShowTheirParentFolder() {
          "a uniquely named tab stays bare");
 }
 
+// An edit that changes the language of the whole buffer -- typing before a
+// shebang turns a shell script into plain text -- damaged only its own line, and
+// every other row kept the shell colours (QA monkey, seed 60 at 600 steps: a
+// stale `exec` keyword and grey comments under a Plain Text status bar). Prep
+// diffs each pane's language as painted and repaints the pane when it changes.
+void TestWorkspaceShellAnEditThatChangesTheLanguageRepaintsThePane() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path hook = root / "post-update";  // no extension: the shebang decides
+  WriteFile(hook, "#!/bin/sh\n#\n# An example hook\n#\nexec git update-server-info\n");
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, hook);
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).language_id() == "shell",
+         "a shell script by its shebang: " + WorkspaceShellTestAccess::ActiveEditor(shell).language_id());
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const auto typed = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight,
+                                                 DispatchEvents(shell, {TextInputEvent(" ")}), pin_caret);
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).language_id() != "shell",
+         "the shebang no longer starts the file: no longer a shell script");
+  Expect(typed.identical(), "every row repaints in the new language; " + DescribePixelDiff(typed));
+}
+
 void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/TreeContextMenuHoverMatchesTheRowBuilder",
           TestWorkspaceShellTreeContextMenuHoverMatchesTheRowBuilder);
@@ -6717,6 +6749,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellStatusRowShowsLspReadinessAndInFlightState);
   AddTest(tests, "WorkspaceShell/EditorCaretDirtyRectFollowsActiveCaret",
           TestWorkspaceShellEditorCaretDirtyRectFollowsActiveCaret);
+  AddTest(tests, "WorkspaceShell/AnEditThatChangesTheLanguageRepaintsThePane",
+          TestWorkspaceShellAnEditThatChangesTheLanguageRepaintsThePane);
   AddTest(tests, "WorkspaceShell/EditorTypingReturnsPartialEditorInvalidation",
           TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation);
   AddTest(tests, "WorkspaceShell/ActionWithNoTreeMenuOpenLeavesTheChromeAlone",
