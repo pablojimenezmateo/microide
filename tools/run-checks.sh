@@ -808,8 +808,28 @@ usage() {
   exit 2
 }
 
+# The test binaries and the QA driver make their temporary trees under $TMPDIR
+# (default /tmp: a tmpfs shared with every other tool on the machine). When
+# something else filled it, every test failed with EDQUOT/ENOSPC for reasons
+# outside the product (TD-2026-11-02-429 item 8). Say so up front instead.
+# Not moved under build/ -- measured: a disk-backed TMPDIR made a kernel shard 26%
+# slower (fsync is free on tmpfs), and a long worktree path pushes the fake-ssh
+# daemon's socket past AF_UNIX's 107 bytes.
+check_temp_space() {
+  local dir="${TMPDIR:-/tmp}"
+  local need_kb=$(( 2 * 1024 * 1024 ))  # 2 GiB: a conservative floor, not a measured peak
+  local free_kb
+  free_kb="$(df -Pk "$dir" 2>/dev/null | awk 'NR==2 {print $4}')"
+  if [[ -n "$free_kb" && "$free_kb" -lt "$need_kb" ]]; then
+    echo "run-checks: only $(( free_kb / 1024 )) MiB free in $dir; the suites need ~2 GiB of temporary space." >&2
+    echo "run-checks: free it (du -sh $dir/* | sort -h) or point TMPDIR at a directory with room." >&2
+    return 1
+  fi
+}
+
 main() {
   [[ $# -ge 1 ]] || usage
+  check_temp_space || exit 1
   case "$1" in
     tests) check_tests ;;
     asan)  check_sanitizer asan ;;

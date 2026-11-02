@@ -1,17 +1,25 @@
 #include "TestSupport.h"
 
 #include "platform/Subprocess.h"
+#include "util/Parse.h"
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <algorithm>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <mutex>
+#include <string_view>
 #include <thread>
 #include <utility>
+
+#include <signal.h>
+#include <unistd.h>
 
 namespace microide::tests {
 
@@ -278,14 +286,55 @@ void WritePluginInit(const std::filesystem::path& root, std::string_view directo
   WriteFile(root / directory_name / "init.lua", std::string(content));
 }
 
+namespace {
+
+constexpr std::string_view kTemporaryPrefix = "microide-tests-";
+
+// A test process killed mid-test (a ctest timeout, a sanitizer abort, a Ctrl-C)
+// never runs its TemporaryDirectory destructors, and its trees stayed in /tmp --
+// a tmpfs shared with every other tool -- for good: 93 of them on one machine. The
+// name carries the owner's pid ("microide-tests-p<pid>-..."), and the first
+// temporary directory a test process makes removes those whose owner is gone;
+// one named before the pid was (no "p") once it is an hour old.
+void ReapOrphanedTemporaryDirectories(const std::filesystem::path& base) {
+  const auto now = std::filesystem::file_time_type::clock::now();
+  std::error_code walk;
+  for (std::filesystem::directory_iterator it(base, walk), end; !walk && it != end; it.increment(walk)) {
+    const std::string name = it->path().filename().string();
+    if (name.rfind(kTemporaryPrefix, 0) != 0) {
+      continue;
+    }
+    const std::string_view rest = std::string_view(name).substr(kTemporaryPrefix.size());
+    bool orphaned = false;
+    if (!rest.empty() && rest.front() == 'p') {
+      const std::size_t dash = rest.find('-');
+      const std::optional<int> pid = util::ParseInt(rest.substr(1, dash == std::string_view::npos ? rest.size() : dash - 1));
+      orphaned = pid.has_value() && *pid > 0 && ::kill(static_cast<pid_t>(*pid), 0) != 0 && errno == ESRCH;
+    } else {
+      std::error_code ec;
+      const auto written = std::filesystem::last_write_time(it->path(), ec);
+      orphaned = !ec && now - written > std::chrono::hours(1);
+    }
+    if (orphaned) {
+      std::error_code ec;
+      std::filesystem::remove_all(it->path(), ec);
+    }
+  }
+}
+
+}  // namespace
+
 TemporaryDirectory::TemporaryDirectory() {
   static std::atomic<unsigned long long> counter{0};
   const auto base = std::filesystem::temp_directory_path();
+  static std::once_flag reaped;
+  std::call_once(reaped, [&base] { ReapOrphanedTemporaryDirectories(base); });
+  const std::string owner = "p" + std::to_string(::getpid()) + "-";
   for (;;) {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto id = counter.fetch_add(1, std::memory_order_relaxed);
     const auto candidate =
-        base / ("microide-tests-" + std::to_string(stamp) + "-" + std::to_string(id));
+        base / (std::string(kTemporaryPrefix) + owner + std::to_string(stamp) + "-" + std::to_string(id));
     std::error_code error;
     if (std::filesystem::create_directories(candidate, error) && !error) {
       path_ = candidate;
