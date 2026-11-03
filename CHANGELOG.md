@@ -174,6 +174,10 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **The caret is where you type.** Go to File and the project search box drew
+  their caret above the input field. In a terminal running a full-screen program
+  that redraws per keystroke (Claude Code), the screen — caret included — could
+  stay one keystroke behind until the next output arrived.
 - **Language servers keep up with snippet placeholders.** Typing into a snippet
   placeholder that appears in several places sent clangd (and any server that syncs
   edits incrementally) only one of the copies, so diagnostics, completion and
