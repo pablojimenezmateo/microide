@@ -174,6 +174,23 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **Language servers keep up with snippet placeholders.** Typing into a snippet
+  placeholder that appears in several places sent clangd (and any server that syncs
+  edits incrementally) only one of the copies, so diagnostics, completion and
+  go-to-definition ran against text that was not in the buffer until the next full
+  sync. Every edit since the server's last copy now reaches it.
+- **"Conflict markers remain" no longer misfires on resolved files.** A file whose
+  text merely mentions `<<<<<<<` or has a `// =======` banner — a test fixture, a
+  tool that handles merges — could never be marked resolved. Markers count only as
+  git writes them: whole lines.
+- **A tool in a remote project's relative `PATH` is found.** `PATH=bin:...` now
+  looks in the project's `bin`, not the host server's directory. A file with a long
+  name dropped onto a host terminal is sent (up to the host's 255-byte limit) and a
+  longer one says why.
+- **Language servers and tools start with a working stdin** even when microide
+  itself was launched with its standard input closed.
+- The `bookmark` gutter icon a plugin sets is drawn the right way up.
+
 - **Remote projects lose nothing when a connection dies mid-sync.** Killing the
   editor, the host's server or the ssh link at any moment of a save, a pull or a
   conflict resolution now always comes back to both sides holding the same files.
@@ -394,6 +411,10 @@ project (see [README](README.md)); versions track meaningful shipped work.
   itself requested.
 
 ### Performance
+
+- **Scrolling text full of rare characters stays fast.** A glyph no installed font
+  has was looked up again on every redraw of its line once a document held more
+  than 4,096 distinct characters; each is now looked up once.
 
 - **Pointer moves over a mouse-tracking terminal program are reported once per
   cell**, as xterm does, not once per pixel: fewer bytes into the program and
