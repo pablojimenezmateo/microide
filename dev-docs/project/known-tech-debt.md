@@ -51,6 +51,15 @@ Fixed, each with a failing-first test:
   "disconnected"; 0 of 80 since.
 - **perf-tests and perf-canary built one tree without its lock** and, side by side,
   clobbered a configure; both take `locked_build` now.
+- **The caret misplaced (user report, 2026-11-03), three causes.** Go to File and
+  project search drew their caret 8 px above the field: the five quick-open modals
+  share one field row since e55931205 and the caret kept the old one; it reads the
+  view model's row now, and `QaFlowRegressionUx/EveryFieldsCaretSitsOnItsText`
+  checks ten fields with a pixel oracle. In a terminal running Claude Code the
+  screen, caret included, was one keystroke behind: a PTY read holding one
+  synchronized frame's close and the next one's open suppressed the wake for the
+  finished frame. And frame prep read a terminal's cursor under a second lock from
+  its lines, so a frame could pair them across an output.
 - QA: `lsp-snippet-mirrors` (clangd's copy keeps up with a snippet's mirrors; it
   times out with the old sync check restored).
 - The server build's three GCC warnings; and this file, split back to the open
