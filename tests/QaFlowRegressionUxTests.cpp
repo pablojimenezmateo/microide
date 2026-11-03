@@ -638,6 +638,112 @@ void TestTheQuickOpenCaretSitsInItsField() {
   check("the command palette", workspace::OverlayMode::CommandPalette);
 }
 
+// Every focused single-line field draws its caret on the text it types: the caret
+// comes from one place (BuildActiveTextInputVisual) and each field from its own
+// renderer, and the two had drifted for Go to File (8 px high). An oracle that
+// restates no layout: render the field empty, type a marker, render again; the
+// pixels that changed in the strip just left of the caret are the typed text, and
+// the caret must sit on that text's row. Run over every field a test can reach.
+void TestEveryFieldsCaretSitsOnItsText() {
+  UxFixture fixture("fields.txt", "alpha\nbeta\n");
+  const auto snapshot = [&] {
+    TestAccess::SetCaretBlinkEpochMs(fixture.shell, SDL_GetTicks());  // the caret's visible phase
+    fixture.shell.Render(fixture.canvas.renderer(), UxFixture::kWidth, UxFixture::kHeight);
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+    SDL_FlushRenderer(fixture.canvas.renderer());
+    return SDL_DuplicateSurface(fixture.canvas.surface());
+  };
+  const auto pixel = [](SDL_Surface* surface, int x, int y) {
+    Uint8 r = 0, g = 0, b = 0, a = 0;
+    SDL_ReadSurfacePixel(surface, x, y, &r, &g, &b, &a);
+    return (static_cast<Uint32>(r) << 16) | (static_cast<Uint32>(g) << 8) | b;
+  };
+  const auto check = [&](const std::string& what) {
+    fixture.Frame();
+    // The field is the one typed into: a chord that opened nothing would type the
+    // marker into the editor, whose caret passes vacuously.
+    const auto surface = TestAccess::CurrentTextInputSurface(fixture.shell);
+    Expect(surface != workspace::TextInputSurface::Editor && surface != workspace::TextInputSurface::None &&
+               surface != workspace::TextInputSurface::Terminal,
+           what + ": the field has the keyboard");
+    SDL_Surface* empty = snapshot();
+    Expect(TestAccess::HandleTextInput(fixture.shell, "MMMM"), what + ": the marker is typed into the field");
+    SDL_Surface* typed = snapshot();
+    const std::optional<SDL_FRect> caret = TestAccess::CaretDirtyRect(fixture.shell);
+    Expect(caret.has_value(), what + ": a caret is drawn");
+    if (caret.has_value() && empty != nullptr && typed != nullptr) {
+      // The strip of the last three typed cells, left of the caret's own column.
+      const float cell = caret->w;
+      const int x0 = std::max(0, static_cast<int>(caret->x - cell * 3.0f));
+      const int x1 = std::max(0, static_cast<int>(caret->x) - 1);
+      // Changed rows in the strip, as runs; the run nearest the caret is its text.
+      int best_top = -1;
+      int best_bottom = -1;
+      float best_distance = 1e9f;
+      const float caret_middle = caret->y + caret->h * 0.5f;
+      int run_top = -1;
+      for (int y = 0; y <= UxFixture::kHeight; ++y) {
+        bool changed = false;
+        for (int x = x0; y < UxFixture::kHeight && x < x1 && !changed; ++x) {
+          changed = pixel(empty, x, y) != pixel(typed, x, y);
+        }
+        if (changed && run_top < 0) {
+          run_top = y;
+        } else if (!changed && run_top >= 0) {
+          const float middle = (static_cast<float>(run_top) + static_cast<float>(y - 1)) * 0.5f;
+          if (std::fabs(middle - caret_middle) < best_distance) {
+            best_distance = std::fabs(middle - caret_middle);
+            best_top = run_top;
+            best_bottom = y - 1;
+          }
+          run_top = -1;
+        }
+      }
+      Expect(best_top >= 0, what + ": the typed text is drawn just left of the caret (x " +
+                                std::to_string(caret->x) + ")");
+      // The glyphs' ink is inside the caret's line box; an "M" has no descender,
+      // so its ink sits in the upper part, never above the caret nor below it.
+      Expect(best_top >= 0 && static_cast<float>(best_top) >= caret->y &&
+                 static_cast<float>(best_bottom) <= caret->y + caret->h,
+             what + ": the caret (y " + std::to_string(caret->y) + "-" + std::to_string(caret->y + caret->h) +
+                 ") is on its text's row (ink " + std::to_string(best_top) + "-" + std::to_string(best_bottom) + ")");
+    }
+    SDL_DestroySurface(empty);
+    SDL_DestroySurface(typed);
+    (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)});
+    TestAccess::SetFocusEditor(fixture.shell);
+    fixture.Frame();
+  };
+
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "files"), "Go to File opens");
+  check("Go to File");
+  TestAccess::OpenCommandPalette(fixture.shell);
+  check("the command palette");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "language-mode"), "the language picker opens");
+  check("a quick pick (Change Language Mode)");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_G, SDL_KMOD_CTRL)});
+  check("the Go to Line prompt");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_S, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT))});
+  check("the Save As prompt");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_F, SDL_KMOD_CTRL)});
+  check("the find widget");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_H, SDL_KMOD_CTRL)});
+  check("the replace widget's search field");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_H, SDL_KMOD_CTRL), KeyDownEvent(SDLK_TAB)});
+  check("the replace widget's replace field");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_F, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT))});
+  check("the sidebar search");
+  if (TestAccess::TerminalTabCount(fixture.shell) == 0) {
+    TestAccess::OpenTerminalViaService(fixture.shell);
+  }
+  TestAccess::SetPanelContentTerminal(fixture.shell);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "focus panel"), "focus the terminal");
+  // Ctrl+Shift+F: Ctrl+F is the program's in a terminal.
+  (void)DispatchEvents(fixture.shell,
+                       {KeyDownEvent(SDLK_F, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT))});
+  check("the terminal's find bar");
+}
+
 // TD-2026-10-20-370: `files src` opened `src` as a second project and showed
 // the finder there; its argument is now Go to File's query.
 void TestTheFinderCommandsArgumentIsAQuery() {
@@ -758,6 +864,7 @@ void TestARenderInvalidationKeepsNoCoveredRect() {
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/ALineNumberPressSelectsWholeLines", TestALineNumberPressSelectsWholeLines);
   AddTest(tests, "QaFlowRegressionUx/TheQuickOpenCaretSitsInItsField", TestTheQuickOpenCaretSitsInItsField);
+  AddTest(tests, "QaFlowRegressionUx/EveryFieldsCaretSitsOnItsText", TestEveryFieldsCaretSitsOnItsText);
   AddTest(tests, "QaFlowRegressionUx/AltEnterInTheFindWidgetSelectsEveryMatch",
           TestAltEnterInTheFindWidgetSelectsEveryMatch);
   AddTest(tests, "QaFlowRegressionUx/ARightClickInsideASelectionKeepsIt", TestARightClickInsideASelectionKeepsIt);
