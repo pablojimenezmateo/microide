@@ -1373,11 +1373,15 @@ void LspService::SyncLspForActiveEditableLastChange() {
     sync_uri_path_ = viewport->path();
     sync_uri_ = FileUriForPath(sync_uri_path_);
   }
+  // The revision the server has, for the incremental check below (nullopt: none
+  // recorded, so a delta has nothing it is known to apply to).
+  std::optional<std::uint64_t> server_revision;
   if (const auto it = synced_content_revision_.find(sync_uri_); it == synced_content_revision_.end()) {
     synced_content_revision_.emplace(sync_uri_, viewport->content_revision());
   } else if (it->second == viewport->content_revision()) {
     return;
   } else {
+    server_revision = it->second;
     it->second = viewport->content_revision();
   }
 
@@ -1408,7 +1412,12 @@ void LspService::SyncLspForActiveEditableLastChange() {
   const std::string& uri = target->uri;
   const bool was_open = target->was_open;
 
-  const auto& applied_edit = viewport->last_applied_edit();
+  // The last edit, only when it is the whole step from what the server has. A
+  // snippet keystroke edits every mirror with one ReplaceRange each, and the record
+  // holds the last of them: sent as the delta, it left the server without the
+  // others (TD-2026-11-03-431). Any such gap resends the text.
+  const editor::AppliedEdit* applied_edit =
+      server_revision.has_value() ? viewport->AppliedEditFromRevision(*server_revision) : nullptr;
 
   if (was_open) {
     // The incremental range carries PRE-edit byte columns; we no longer have the
@@ -1418,7 +1427,7 @@ void LspService::SyncLspForActiveEditableLastChange() {
     // needs no per-column encoding and stays desync-proof.
     const bool utf8_positions =
         LspEncodingForClient(*client) == lsp_encoding::PositionEncoding::Utf8;
-    if (!applied_edit.has_value() || !client->SupportsIncrementalSync() || !utf8_positions) {
+    if (applied_edit == nullptr || !client->SupportsIncrementalSync() || !utf8_positions) {
       util::PerformanceTrace::Scope scope(
           "LspService::SyncLspForActiveEditableLastChange::FullSync");
       client->DidChange(uri, viewport->SerializeText());

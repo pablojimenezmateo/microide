@@ -854,6 +854,19 @@ class TextViewport {
   // extended); nullopt with no selection anchor.
   const std::optional<TextPosition>& selection_anchor() const { return selection_anchor_; }
   const std::optional<AppliedEdit>& last_applied_edit() const { return last_applied_edit_; }
+  // The last_applied_edit() as the step from `base_revision` to the current content,
+  // or null when it is not that step: several edits since (a snippet's mirrors, a
+  // choice, a plugin's edits applied one by one) or a change it does not describe.
+  // A consumer that mirrors the buffer incrementally (the LSP sync) may send it as
+  // a delta only from that exact revision; from any other it must resend the text.
+  const AppliedEdit* AppliedEditFromRevision(std::uint64_t base_revision) const {
+    if (!last_applied_edit_.has_value() || document_ == nullptr ||
+        last_applied_edit_base_revision_ != base_revision ||
+        last_applied_edit_revision_ != document_->content_revision) {
+      return nullptr;
+    }
+    return &*last_applied_edit_;
+  }
   // Whole-line-trimmed span of the last applied edit (see AppliedEditLineSpan).
   // Set/cleared in lockstep with last_applied_edit(); empty for multi-region edits.
   const std::optional<AppliedEditLineSpan>& last_applied_edit_line_span() const {
@@ -942,13 +955,20 @@ class TextViewport {
   // Stamp/clear the last-applied-edit metadata (character-level AppliedEdit + the
   // whole-line-trimmed line span) in lockstep, so consumers never see one without
   // the other. Called from every edit primitive that sets/resets the metadata.
-  void SetLastAppliedEditFromEntry(const HistoryEntry& entry, bool forward) {
+  // `base_revision` is the content revision the edit was applied ON (read before
+  // its first apply); the revision it produced is the current one. Together they
+  // say whether the record is the WHOLE step from a revision a consumer holds.
+  void SetLastAppliedEditFromEntry(const HistoryEntry& entry, bool forward, std::uint64_t base_revision) {
     last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(entry, forward);
     last_applied_edit_line_span_ = TextViewportUndoHistory::BuildAppliedEditLineSpan(entry, forward);
+    last_applied_edit_base_revision_ = base_revision;
+    last_applied_edit_revision_ = document_ != nullptr ? document_->content_revision : 0;
   }
   void ClearLastAppliedEdit() {
     last_applied_edit_.reset();
     last_applied_edit_line_span_.reset();
+    last_applied_edit_base_revision_ = 0;
+    last_applied_edit_revision_ = 0;
   }
 
   // A revision no other document has used: the high half counts documents.
@@ -1548,6 +1568,8 @@ class TextViewport {
   // selection is still the one the last expansion made.
   std::vector<SelectionRange> expand_selection_history_;
   std::optional<AppliedEdit> last_applied_edit_;
+  std::uint64_t last_applied_edit_base_revision_ = 0;
+  std::uint64_t last_applied_edit_revision_ = 0;
   std::optional<AppliedEditLineSpan> last_applied_edit_line_span_;
   // Set only by SuppressEntryCaretCapture, above; see its comment. Transient, so
   // a copy or move starts it false rather than carrying it — a viewport cannot be

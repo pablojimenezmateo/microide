@@ -440,6 +440,7 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
   //
   // Held in an optional purely so it can be released at the point below where the
   // aggregate's state is captured, without indenting the whole loop.
+  const std::uint64_t edit_base_revision = document_->content_revision;
   std::optional<SuppressEntryCaretCapture> suppress_dead_caret_copies;
   suppress_dead_caret_copies.emplace(*this);
   for (std::size_t i = carets.size(); i-- > 0;) {
@@ -532,7 +533,7 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
     if (plan.has_value()) ++edited_region_count;
   }
   if (!aggregate_entry.is_multi_range() && edited_region_count <= 1) {
-    SetLastAppliedEditFromEntry(aggregate_entry, true);
+    SetLastAppliedEditFromEntry(aggregate_entry, true, edit_base_revision);
   } else {
     ClearLastAppliedEdit();
   }

@@ -308,6 +308,7 @@ bool TextViewport::ApplyHistoryStep(bool redo) {
   }
 
   HistoryEntry entry = redo ? document_->undo_history.PopRedo() : document_->undo_history.PopUndo();
+  const std::uint64_t edit_base_revision = document_->content_revision;
   // Stamp the view state for the side we are leaving, so stepping back lands the
   // caret and scroll where they were.
   (redo ? entry.before_state : entry.after_state) = CaptureViewState();
@@ -335,7 +336,7 @@ bool TextViewport::ApplyHistoryStep(bool redo) {
   {
     util::PerformanceTrace::Scope scope(redo ? "TextViewport::Redo::BuildAppliedEdit"
                                              : "TextViewport::Undo::BuildAppliedEdit");
-    SetLastAppliedEditFromEntry(entry, redo);
+    SetLastAppliedEditFromEntry(entry, redo, edit_base_revision);
   }
   if (redo) {
     document_->undo_history.PushUndo(std::move(entry));
@@ -1095,8 +1096,9 @@ bool TextViewport::ApplyRangeEdit(const SelectionRange& range,
     return false;
   }
 
+  const std::uint64_t edit_base_revision = document_->content_revision;
   ApplyHistoryEntry(*entry, true);
-  SetLastAppliedEditFromEntry(*entry, true);
+  SetLastAppliedEditFromEntry(*entry, true, edit_base_revision);
   if (record_undo) {
     util::PerformanceTrace::Scope scope("TextViewport::ApplyRangeEdit::PushHistoryEntry");
     // `entry` is dead after this read, so move its line vectors into the saved
@@ -1164,8 +1166,9 @@ bool TextViewport::ApplyLineEdit(std::size_t start_line,
     ClearLastAppliedEdit();
     return false;
   }
+  const std::uint64_t edit_base_revision = document_->content_revision;
   ApplyHistoryEntry(entry, true);
-  SetLastAppliedEditFromEntry(entry, true);
+  SetLastAppliedEditFromEntry(entry, true, edit_base_revision);
   if (record_undo) {
     // `entry` is dead after this read; move rather than deep-copy the lines.
     HistoryEntry saved_entry = std::move(entry);

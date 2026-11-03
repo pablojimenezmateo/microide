@@ -3,7 +3,9 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include "editor/TextViewport.h"
 #include "workspace/lsp/WorkspaceLspClient.h"
 #include "workspace/lsp/WorkspaceLspManager.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
@@ -766,6 +768,137 @@ return ide.plugin({
          "opening an editable merge buffer should trigger the normal plugin buffer-open hook");
 }
 
+// A server that mirrors the buffer incrementally sees every edit. Typing into a
+// snippet placeholder edits each of its mirrors with one ReplaceRange; the
+// keystroke's LSP sync sent the last of them as the ranged delta and the server's
+// copy lost the others (TD-2026-11-03-431). The fake server applies each change
+// the way clangd does (utf-8 positions, incremental sync) and writes its copy out.
+void TestPhase5IncrementalSyncCarriesEverySnippetMirrorEdit() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path server_path = temp_dir.path() / "mirror_lsp.py";
+  const std::filesystem::path mirror_path = temp_dir.path() / "mirror.txt";
+  const std::filesystem::path notes = project_root / "notes.md";
+  WriteFile(notes, "head\n");
+  WriteFile(server_path, std::string(R"py(#!/usr/bin/env python3
+import json, os, sys
+mirror_path = sys.argv[1]
+
+def write_message(payload):
+    body = json.dumps(payload).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(body)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(body)
+    sys.stdout.buffer.flush()
+
+def read_message():
+    length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        line = line.strip()
+        if not line:
+            break
+        if line.lower().startswith(b"content-length:"):
+            length = int(line.split(b":", 1)[1])
+    return json.loads(sys.stdin.buffer.read(length)) if length else None
+
+def offset(text, pos):
+    lines = text.split(b"\n")
+    return sum(len(l) + 1 for l in lines[:pos["line"]]) + pos["character"]
+
+doc = b""
+def publish():
+    tmp = mirror_path + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(doc)
+    os.replace(tmp, mirror_path)
+
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+    method = msg.get("method")
+    if method == "initialize":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": {"capabilities": {
+            "textDocumentSync": 2, "positionEncoding": "utf-8"}}})
+    elif method == "textDocument/didOpen":
+        doc = msg["params"]["textDocument"]["text"].encode("utf-8")
+        publish()
+    elif method == "textDocument/didChange":
+        for change in msg["params"]["contentChanges"]:
+            text = change["text"].encode("utf-8")
+            if "range" in change:
+                a = offset(doc, change["range"]["start"])
+                b = offset(doc, change["range"]["end"])
+                doc = doc[:a] + text + doc[b:]
+            else:
+                doc = text
+        publish()
+    elif method == "shutdown":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": None})
+    elif method == "exit":
+        break
+)py"));
+  WritePluginInit(plugins_root, "mirror-lsp",
+                  std::string(R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "mirror-lsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "markdown", language_id = "markdown",
+                  command = { "python3", ")lua") +
+                      server_path.generic_string() + "\", \"" + mirror_path.generic_string() +
+                      std::string(R"lua(" } })
+  end
+})
+)lua"));
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false), "the project opens");
+  WorkspaceShellTestAccess::OpenFile(shell, notes);
+  const auto server_has = [&](const std::string& expected) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    std::string seen;
+    while (std::chrono::steady_clock::now() < deadline) {
+      WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+      if (std::filesystem::exists(mirror_path)) {
+        seen = ReadFile(mirror_path);
+        if (seen == expected) {
+          return std::string();
+        }
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return seen;
+  };
+  // A first keystroke opens the document on the server (and is itself synced).
+  editor::TextViewport& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.MoveCursorTo(1, 0, false);
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "x"), "a keystroke");
+  const std::string opened = server_has(viewport.SerializeText());
+  Expect(opened.empty(), "the server has the buffer after a keystroke (it has '" + opened + "')");
+
+  // Three mirrors of one placeholder, then a keystroke typed into it.
+  Expect(WorkspaceShellTestAccess::PerfExpandSnippetAtCaret(shell, " ${1:ab}=${1:ab}+${1:ab}"),
+         "the snippet expands");
+  Expect(WorkspaceShellTestAccess::SnippetSessionActive(shell), "its session is live");
+  // The seam expands without the sync a real expansion's keystroke runs; run it.
+  WorkspaceShellTestAccess::SyncLspForActiveEditableLastChange(shell);
+  const std::string expanded = server_has(viewport.SerializeText());
+  Expect(expanded.empty(), "the server has the expansion (it has '" + expanded + "')");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "Q"), "a keystroke into the placeholder");
+  Expect(viewport.SerializeText() == "head\nx Q=Q+Q", "every mirror took it: " + viewport.SerializeText());
+  const std::string typed = server_has(viewport.SerializeText());
+  Expect(typed.empty(), "the server's copy has every mirror's edit (it has '" + typed + "')");
+}
+
 void TestPhase5DeferredTabHydrationCompletesBeforeDidOpenDiagnostics() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -972,6 +1105,8 @@ void RegisterPhase5Tests(std::vector<TestCase>& tests) {
           TestPhase3CommandSurfaceDrivesCompletionTasksAndTests);
   AddTest(tests, "Phase5.LspCommandsDriveDiagnosticsNavigationAndActions",
           TestPhase5LspCommandsDriveDiagnosticsNavigationAndActions);
+  AddTest(tests, "Phase5.IncrementalSyncCarriesEverySnippetMirrorEdit",
+          TestPhase5IncrementalSyncCarriesEverySnippetMirrorEdit);
   AddTest(tests, "Phase5.LspMergeBuffersPublishDiagnosticsAndBufferHooks",
           TestPhase5LspMergeBuffersPublishDiagnosticsAndBufferHooks);
   AddTest(tests, "Phase5.DeferredTabHydrationCompletesBeforeDidOpenDiagnostics",
