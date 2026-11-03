@@ -4,6 +4,7 @@
 #include "TerminalSessionTestAccess.h"
 
 #include "terminal/TerminalSession.h"
+#include "util/JsonValue.h"
 #include "util/Parse.h"
 #include "util/Sha256.h"
 #include "workspace/services/RemoteHostService.h"
@@ -60,6 +61,26 @@ std::string ScreenText(const terminal::TerminalSession& session) {
 void Pump(WorkspaceShell& shell) {
   (void)WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false);
   WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+}
+
+// `remote-disconnect` and wait until the link is down. The command returns before
+// it is: a save made in between still reaches the host, so a test that means to
+// save OFFLINE saved online instead -- AOneSidedConflictOffersNoMerge then found no
+// conflict, the edit having moved with the host's rename (about 1 run in 60 under
+// a parallel run, 2026-11-03).
+void DisconnectAndWait(WorkspaceShell& shell, const std::string& target) {
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-disconnect " + target), "disconnects");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Remote)
+                          .find("disconnected") != std::string::npos;
+             },
+             std::chrono::seconds(10), std::chrono::milliseconds(5)),
+         [&] {
+           return "the link goes down: '" +
+                  WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Remote) + "'";
+         });
 }
 
 // The shell's ssh is the fake host's shim. Automatic port forwarding is off: on a
@@ -719,7 +740,7 @@ void TestAOneSidedConflictOffersNoMerge() {
              },
              std::chrono::seconds(30), std::chrono::milliseconds(10)),
          "the mirror fills");
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-disconnect " + target), "disconnects");
+  DisconnectAndWait(shell, target);
   WorkspaceShellTestAccess::OpenFile(shell, file);
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("local ");
@@ -748,7 +769,21 @@ void TestAOneSidedConflictOffersNoMerge() {
                return find(row_key) != nullptr;
              },
              std::chrono::seconds(30), std::chrono::milliseconds(10)),
-         [&] { return "a conflict row appears:" + messages(); });
+         [&] {
+           // What the engine holds when the row did not come (seen once in ~50 runs
+           // under load): the mirror's counts, the local file and the host's tree.
+           std::string host_files;
+           for (const auto& entry : std::filesystem::recursive_directory_iterator(host_root)) {
+             host_files += " " + std::filesystem::relative(entry.path(), host_root).string();
+             if (entry.is_regular_file()) {
+               host_files += "=[" + ReadFile(entry.path()) + "]";
+             }
+           }
+           return "a conflict row appears:" + messages() + " || remote=" +
+                  util::SerializeJson(WorkspaceShellTestAccess::ControlQuery(shell, "status")["remote"]) +
+                  " local=" + (std::filesystem::exists(file) ? "[" + ReadFile(file) + "]" : std::string("missing")) +
+                  " host:" + host_files;
+         });
   {
     const auto* row = find(row_key);
     std::string labels;
@@ -811,7 +846,7 @@ void TestConflictsBatchIntoOneRowAndTheConflictsView() {
          "the mirror fills");
   // Three saves made offline, three host edits meanwhile: on reconnect each push
   // is refused, and the three conflicts arrive together.
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-disconnect " + target), "disconnects");
+  DisconnectAndWait(shell, target);
   for (std::size_t i = 0; const char* name : {"a.txt", "b.txt", "c.txt"}) {
     WorkspaceShellTestAccess::OpenFile(shell, mirror / name);
     WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
