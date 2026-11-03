@@ -5850,6 +5850,36 @@ void TestTextViewportLoadLinesMatchesSerializeRoundTrip() {
   }
 }
 
+// The edit record answers for one step only. AppliedEditFromRevision(rev) is the
+// last edit when it is the whole step from `rev` to now; LatestAppliedEdit() when
+// nothing changed the text after it. A consumer that mirrors the buffer (the LSP
+// sync, breakpoints, diagnostics, the find scope) slides through it only then
+// (TD-2026-11-03-431).
+void TestAppliedEditRecordAnswersForOneStepOnly() {
+  TextViewport viewport;
+  viewport.LoadContent("one\ntwo\n", "/tmp/applied-edit-record.txt");
+  const std::uint64_t loaded = viewport.content_revision();
+  Expect(viewport.LatestAppliedEdit() == nullptr, "a loaded buffer has no edit to slide through");
+
+  Expect(viewport.ReplaceRange({{0, 0}, {0, 0}}, "a"), "one edit");
+  const std::uint64_t after_first = viewport.content_revision();
+  Expect(viewport.AppliedEditFromRevision(loaded) != nullptr, "it is the whole step from the load");
+  Expect(viewport.LatestAppliedEdit() != nullptr, "and the latest change");
+
+  Expect(viewport.ReplaceRange({{1, 0}, {1, 0}}, "b"), "a second edit");
+  Expect(viewport.AppliedEditFromRevision(loaded) == nullptr,
+         "from the load, the second edit alone is not the step (the first is missing)");
+  Expect(viewport.AppliedEditFromRevision(after_first) != nullptr, "from after the first, it is");
+
+  viewport.LoadContent("reloaded\n", "/tmp/applied-edit-record.txt");
+  Expect(viewport.LatestAppliedEdit() == nullptr && viewport.AppliedEditFromRevision(after_first) == nullptr,
+         "a reload is a change the record does not describe: nothing slides through it");
+
+  Expect(viewport.ReplaceRange({{0, 0}, {0, 0}}, "c"), "an edit after the reload");
+  Expect(viewport.Undo(), "undone");
+  Expect(viewport.LatestAppliedEdit() != nullptr, "an undo is a step of its own, recorded");
+}
+
 }  // namespace
 
 // The undo history caps total bytes, not just entry count: a handful of
@@ -6482,6 +6512,7 @@ void TestFormattedTextIsOneUndoStepAndKeepsHistory() {
 }
 
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TextViewport/AppliedEditRecordAnswersForOneStepOnly", TestAppliedEditRecordAnswersForOneStepOnly);
   AddTest(tests, "TextViewport/FormattedTextIsOneUndoStepAndKeepsHistory",
           TestFormattedTextIsOneUndoStepAndKeepsHistory);
   AddTest(tests, "TextViewport/LineVerbsTreatACollapsedFoldAsOneLine",

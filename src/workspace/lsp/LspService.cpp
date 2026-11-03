@@ -1198,12 +1198,17 @@ void LspService::ClearLspEditOverlaysForFile(const editor::TextViewport& viewpor
   }
 }
 
-void LspService::ShiftLspDiagnosticsForAppliedEdit(const editor::TextViewport& viewport) {
+void LspService::ShiftLspDiagnosticsForAppliedEdit(const editor::TextViewport& viewport,
+                                                   std::optional<std::uint64_t> followed_revision) {
   if (viewport.path().empty()) {
     return;
   }
-  const std::optional<editor::AppliedEdit>& applied = viewport.last_applied_edit();
-  if (!applied.has_value()) {
+  const editor::AppliedEdit* applied =
+      followed_revision.has_value() ? viewport.AppliedEditFromRevision(*followed_revision) : nullptr;
+  if (applied == nullptr) {
+    applied = viewport.LatestAppliedEdit();
+  }
+  if (applied == nullptr) {
     return;
   }
   const editor::SelectionRange before =
@@ -1397,7 +1402,7 @@ void LspService::SyncLspForActiveEditableLastChange() {
   // the buffer is dirty, until the server republishes authoritative ranges. Runs
   // before the client early-out (and self-guards on last_applied_edit) so a
   // dead/absent server never strands diagnostics on the pre-edit position.
-  ShiftLspDiagnosticsForAppliedEdit(*viewport);
+  ShiftLspDiagnosticsForAppliedEdit(*viewport, server_revision);
 
   std::optional<BufferSyncTarget> target;
   {

@@ -294,7 +294,11 @@ class LspService {
   // server republishes. The single-edit path maps positions precisely through the
   // viewport's last applied edit; the bulk path (paste/undo/format) shifts
   // diagnostics below the first changed line by the net line delta.
-  void ShiftLspDiagnosticsForAppliedEdit(const editor::TextViewport& viewport);
+  // Through the whole step from `followed_revision` (the revision the diagnostics
+  // were last placed at) when the edit record covers it, else the latest edit;
+  // never through a record that is no longer the latest change.
+  void ShiftLspDiagnosticsForAppliedEdit(const editor::TextViewport& viewport,
+                                         std::optional<std::uint64_t> followed_revision);
   // `after_line_count` is read from the viewport; only the pre-change line count
   // and the first differing line (both supplied by the change site) are needed to
   // slide diagnostics below the edit by the net line delta.

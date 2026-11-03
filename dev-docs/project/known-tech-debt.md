@@ -13,7 +13,7 @@ entries and the guardrails stayed.
 
 ## Open items
 
-### TD-2026-11-03-431 — the 2026-11-03 subsystem bug hunt: what it found and fixed, and what it left. [OPEN — items 1 and 5; 2 decided, 3 and 4 resolved 2026-11-03]
+### TD-2026-11-03-431 — the 2026-11-03 subsystem bug hunt: what it found and fixed, and what it left. [OPEN — item 5; 2 decided, 1, 3 and 4 resolved 2026-11-03]
 
 Every subsystem was read for defects, the 17 fuzz targets ran 15 minutes each (no
 crash), and the QA monkey ran 30 fresh seeds across its three profiles (default
@@ -49,16 +49,17 @@ Fixed, each with a failing-first test:
 
 Left open:
 
-1. **Two more consumers of the last-edit record read it as the whole step.**
-   Breakpoint shifting (`DebugService::ShiftBreakpointsForAppliedEdit`) and the
-   stored diagnostics' shift (`LspService::ShiftLspDiagnosticsForAppliedEdit`) move
-   by the last of several edits. Both only matter when an earlier edit of the
-   step changed the line count (a mirror's edits do not), and diagnostics are
-   republished by the server; neither keeps the revision it last followed, which
-   `AppliedEditFromRevision` needs. The keystroke redraw is sized from the same
-   record and relies on frame prep to repaint a snippet's other mirrors
-   (`QaFlowRegression/TypingIntoAMirroredPlaceholderRepaintsEveryMirrorsLine` keeps
-   that true).
+1. ~~**Two more consumers of the last-edit record read it as the whole step.**~~
+   **Resolved 2026-11-03.** Breakpoints slid through the last edit on EVERY
+   keystroke redraw, including redraws with no new edit (a Tab between snippet
+   placeholders moved a breakpoint again per Tab); they now remember the revision
+   they followed (`DebugService::ShiftBreakpointsForViewportEdit`). The stored
+   diagnostics' shift takes the same rule, and neither slides through a record
+   that is no longer the latest change (a reload does not clear it:
+   `TextViewport::LatestAppliedEdit`). Left: the keystroke redraw is sized from the
+   same record and relies on frame prep to repaint a snippet's other mirrors
+   (`QaFlowRegression/TypingIntoAMirroredPlaceholderRepaintsEveryMirrorsLine`
+   keeps that true).
 2. ~~**A save breaks a hard link.**~~ **Decided, already**: the atomic write renames
    a new inode over the path, so a file's other names keep the old content. That is
    the documented trade-off for crash-atomic saves, pinned by
