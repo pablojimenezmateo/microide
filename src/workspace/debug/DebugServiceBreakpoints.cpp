@@ -1,5 +1,7 @@
 #include "workspace/debug/DebugService.h"
 
+#include "editor/TextViewport.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <string>
@@ -145,6 +147,27 @@ bool DebugService::ShiftBreakpointsForAppliedEdit(const std::filesystem::path& p
   // when no session is running.
   ResendBreakpointsForFile(path);
   return true;
+}
+
+bool DebugService::ShiftBreakpointsForViewportEdit(const editor::TextViewport& viewport) {
+  const std::filesystem::path& path = viewport.path();
+  if (path.empty()) {
+    return false;
+  }
+  const std::uint64_t revision = viewport.content_revision();
+  const auto [it, first] = breakpoints_followed_revision_.try_emplace(path.native(), revision);
+  if (!first && it->second == revision) {
+    return false;  // nothing changed since the last follow: no edit to slide through
+  }
+  const std::uint64_t followed = it->second;
+  it->second = revision;
+  // The whole step from the revision followed when the record covers it; else the
+  // latest edit alone (the first follow of a file, or several edits since).
+  const editor::AppliedEdit* edit = first ? nullptr : viewport.AppliedEditFromRevision(followed);
+  if (edit == nullptr) {
+    edit = viewport.LatestAppliedEdit();
+  }
+  return edit != nullptr && ShiftBreakpointsForAppliedEdit(path, *edit);
 }
 
 void DebugService::SyncBreakpointsPanel() {

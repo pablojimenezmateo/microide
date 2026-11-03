@@ -462,8 +462,7 @@ void WorkspaceShell::RequestActiveEditableLastChangeRedraw() {
   // Slide stored line breakpoints through this edit so a line inserted/removed
   // above a breakpoint keeps it on its statement (VSCode-style). Cheap no-op for
   // files without breakpoints; requests a gutter repaint only when a disc moved.
-  if (applied_edit.has_value() &&
-      debug_service_.ShiftBreakpointsForAppliedEdit(viewport->path(), *applied_edit)) {
+  if (debug_service_.ShiftBreakpointsForViewportEdit(*viewport)) {
     RequestFocusedEditorRedraw();
   }
   if (!applied_edit.has_value()) {

@@ -859,6 +859,14 @@ class TextViewport {
   // choice, a plugin's edits applied one by one) or a change it does not describe.
   // A consumer that mirrors the buffer incrementally (the LSP sync) may send it as
   // a delta only from that exact revision; from any other it must resend the text.
+  // The last_applied_edit() when it is the latest content change (nothing changed
+  // the text after it), whatever revision it started from; null otherwise.
+  const AppliedEdit* LatestAppliedEdit() const {
+    return last_applied_edit_.has_value() && document_ != nullptr &&
+                   last_applied_edit_revision_ == document_->content_revision
+               ? &*last_applied_edit_
+               : nullptr;
+  }
   const AppliedEdit* AppliedEditFromRevision(std::uint64_t base_revision) const {
     if (!last_applied_edit_.has_value() || document_ == nullptr ||
         last_applied_edit_base_revision_ != base_revision ||

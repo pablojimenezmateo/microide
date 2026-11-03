@@ -292,6 +292,44 @@ void TestTypingIntoAMirroredPlaceholderRepaintsEveryMirrorsLine() {
   fixture.ExpectFresh(redraw, "a keystroke into a placeholder mirrored on two lines");
 }
 
+// A breakpoint follows each edit once. The keystroke redraw slid line breakpoints
+// through the viewport's last applied edit whenever it ran -- and it also runs with
+// no new edit (Tab between snippet placeholders), so the same line insertion moved
+// a breakpoint again on every Tab (TD-2026-11-03-431).
+void TestABreakpointFollowsAnEditOnceNotOnEveryRedraw() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("breaks.txt", "zero\none\ntwo\nthree\nfour\nfive\n");
+  TestAccess::ToggleBreakpointForTest(fixture.shell, fixture.file, 5);
+  const auto breakpoint_lines = [&] {
+    std::vector<std::size_t> lines;
+    if (const auto* list = TestAccess::BreakpointStore(fixture.shell).FindByPath(fixture.file)) {
+      for (const auto& bp : *list) lines.push_back(bp.line);
+    }
+    return lines;
+  };
+  editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
+  viewport.MoveCursorTo(1, 0, false);
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RETURN)});
+  Expect(breakpoint_lines() == std::vector<std::size_t>{6}, "a line inserted above moves the breakpoint down one");
+  // A snippet of three lines above it (the seam expands without the redraw, so the
+  // first Tab's redraw is the one that follows the expansion), then two Tabs between
+  // its placeholders; neither Tab edits the buffer.
+  viewport.MoveCursorTo(0, 0, false);
+  Expect(TestAccess::PerfExpandSnippetAtCaret(fixture.shell, "${1:a}\n${2:b}\n${3:c}\n"), "a snippet expands");
+  Expect(TestAccess::SnippetSessionActive(fixture.shell), "its session is live");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_TAB)});
+  Expect(breakpoint_lines() == std::vector<std::size_t>{9}, "the three lines above move it down three");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_TAB)});
+  Expect(viewport.SerializeText().starts_with("a\nb\nc\nzero\n"), "Tab only moved between placeholders: " +
+                                                                    viewport.SerializeText().substr(0, 20));
+  const std::vector<std::size_t> after = breakpoint_lines();
+  Expect(after == std::vector<std::size_t>{9},
+         "moving between placeholders leaves the breakpoint where it is (at " +
+             (after.empty() ? std::string("none") : std::to_string(after.front())) + ")");
+}
+
 void TestCtrlQQuits() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3834,6 +3872,8 @@ void TestTheRemoteSegmentOpensTheRemoteMenu() {
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TypingIntoAMirroredPlaceholderRepaintsEveryMirrorsLine",
           TestTypingIntoAMirroredPlaceholderRepaintsEveryMirrorsLine);
+  AddTest(tests, "QaFlowRegression/ABreakpointFollowsAnEditOnceNotOnEveryRedraw",
+          TestABreakpointFollowsAnEditOnceNotOnEveryRedraw);
   AddTest(tests, "QaFlowRegression/OutputTabRepaintsWhenItsChannelGetsALabel",
           TestOutputTabRepaintsWhenItsChannelGetsALabel);
   AddTest(tests, "QaFlowRegression/TypingRepaintsOnlyTheLinesWhoseOccurrencesChanged",

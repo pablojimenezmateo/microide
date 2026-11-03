@@ -8,6 +8,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "util/Generation.h"
@@ -18,6 +19,7 @@
 
 namespace microide::editor {
 struct AppliedEdit;  // editor/EditTypes.h
+class TextViewport;  // editor/TextViewport.h
 }  // namespace microide::editor
 
 namespace microide::workspace {
@@ -118,6 +120,12 @@ class DebugService {
   // the caller can repaint the gutter).
   bool ShiftBreakpointsForAppliedEdit(const std::filesystem::path& path,
                                       const editor::AppliedEdit& edit);
+  // The same for whatever `viewport` changed since its breakpoints last followed it,
+  // ONCE: the keystroke redraw that calls this also runs with no new edit (a Tab
+  // between snippet placeholders), and sliding through the same edit again moved
+  // a breakpoint again per redraw. Remembers, per file, the content revision it
+  // followed; only an edit newer than that moves anything.
+  bool ShiftBreakpointsForViewportEdit(const editor::TextViewport& viewport);
 
   // Execution control (Phase 3). No-ops when no session is active; the session
   // itself guards on the correct state (Stopped for continue/step, Running for
@@ -333,6 +341,9 @@ class DebugService {
   // frame focus + every transient-view clear); `watch_generation_` covers watch
   // evaluates (bumped on each evaluation pass + clear). This generalizes the
   // pattern DebugHoverModel already uses for hover-eval.
+  // File -> the content revision its breakpoints last followed
+  // (ShiftBreakpointsForViewportEdit). Revisions are unique across documents.
+  std::unordered_map<std::string, std::uint64_t> breakpoints_followed_revision_;
   util::Generation frame_generation_;
   util::Generation watch_generation_;
 };
