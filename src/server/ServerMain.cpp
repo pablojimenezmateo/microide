@@ -452,7 +452,7 @@ int ServeStdio() {
 // `gh auth login` opens the page where the user is rather than failing to find a
 // display on the host. Exit 0 once an editor has it; 1 when none can take it (no
 // terminal of ours, nobody attached), so the program falls back to printing it.
-int OpenUrl(std::string_view url) {
+static int OpenUrl(std::string_view url) {
   const char* handle_text = std::getenv("MICROIDE_TERMINAL_HANDLE");
   const std::optional<std::int64_t> handle =
       handle_text != nullptr ? microide::util::ParseInt64(handle_text) : std::nullopt;

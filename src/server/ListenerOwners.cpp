@@ -23,7 +23,7 @@ void ForEachSocketInode(int pid, Visit&& visit) {
   if (fds == nullptr) {
     return;
   }
-  char link[128];
+  char link[64 + sizeof(dirent::d_name)];  // "/proc/<pid>/fd/" + any entry name
   char target[64];
   while (const dirent* entry = ::readdir(fds)) {
     if (entry->d_name[0] < '0' || entry->d_name[0] > '9') {

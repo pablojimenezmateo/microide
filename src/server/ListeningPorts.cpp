@@ -110,12 +110,12 @@ std::optional<std::string> ReadProcTable(const char* path) {
   return text;
 }
 
-}  // namespace
-
 void SortUnique(std::vector<Listener>& listeners) {
   std::sort(listeners.begin(), listeners.end());
   listeners.erase(std::unique(listeners.begin(), listeners.end()), listeners.end());
 }
+
+}  // namespace
 
 std::vector<Listener> ParseListeningSockets(std::string_view proc_net_tcp, std::uint32_t uid) {
   std::vector<Listener> listeners;
