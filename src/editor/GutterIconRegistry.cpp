@@ -195,8 +195,10 @@ void GutterIconRegistry::Draw(SDL_Renderer* renderer, GutterIconShape shape, SDL
         if (row_y < notch_top) {
           return 0.0f;
         }
+        // The hole opens from nothing at the notch's top to the full half-width at
+        // the bottom edge, leaving the pennant's two points at the corners.
         const float db = (bounds.y + bounds.h) - row_y;  // distance from bottom
-        return std::clamp(db / notch_height, 0.0f, 1.0f) * radius;
+        return (1.0f - std::clamp(db / notch_height, 0.0f, 1.0f)) * radius;
       };
       FillScanlines(renderer, bounds, cx, cy, outer, inner);
       break;

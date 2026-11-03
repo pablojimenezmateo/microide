@@ -1,7 +1,10 @@
 #include "TestSupport.h"
 
+#include "editor/GutterIconRegistry.h"
 #include "editor/PluginDecorationStore.h"
+#include "support/SoftwareCanvas.h"
 
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -201,9 +204,50 @@ void TestAggregateCapBoundsEveryKind() {
          "the retained set should be the lowest-line decorations in render order");
 }
 
+// The bookmark icon is a pennant: a full-width body whose bottom has a V-notch
+// that opens from nothing at the notch's top to its widest at the bottom edge.
+// The notch was drawn inverted -- no hole at the bottom edge and a full-width one
+// at the notch's top -- so a blank row cut the body off from a tent-shaped base.
+void TestBookmarkGutterIconIsAPennant() {
+  SoftwareCanvas canvas(48, 48);
+  SDL_SetRenderDrawColor(canvas.renderer(), 0, 0, 0, 255);
+  SDL_RenderClear(canvas.renderer());
+  constexpr float kLineHeight = 22.0f;
+  editor::GutterIconRegistry::Draw(canvas.renderer(), GutterIconShape::Bookmark,
+                                   SDL_Color{255, 255, 255, 255}, 4.0f, 4.0f, 40.0f, kLineHeight);
+  const SDL_FRect b = editor::GutterIconRegistry::MarkerRect(4.0f, 4.0f, 40.0f, kLineHeight);
+  const auto lit = [&](int x, int y) { return canvas.PixelAt(x, y).r > 127; };
+  const int center = static_cast<int>(b.x + b.w * 0.5f);
+  const int top = static_cast<int>(b.y);
+  const int bottom = static_cast<int>(std::ceil(b.y + b.h)) - 1;
+  const int x0 = static_cast<int>(b.x);
+  const int x1 = static_cast<int>(std::ceil(b.x + b.w)) - 1;
+  const auto row_ink = [&](int y) {
+    int count = 0;
+    for (int x = x0; x <= x1; ++x) count += lit(x, y) ? 1 : 0;
+    return count;
+  };
+  int last_inked = top;
+  for (int y = top; y <= bottom; ++y) {
+    if (row_ink(y) > 0) last_inked = y;
+  }
+  Expect(last_inked > top + static_cast<int>(b.h * 0.6f), "the pennant reaches into its notch");
+  // No blank row inside the icon: the inverted notch emptied the row at its top.
+  for (int y = top; y <= last_inked; ++y) {
+    Expect(row_ink(y) > 0, "row " + std::to_string(y - top) + " of the pennant has ink");
+  }
+  Expect(lit(center, top) && lit(center, top + static_cast<int>(b.h * 0.5f)), "the body is solid down its middle");
+  Expect(!lit(center, last_inked), "the notch is open at the bottom");
+  Expect(lit(x0, last_inked) || lit(x0 + 1, last_inked), "the left point reaches the bottom");
+  Expect(lit(x1, last_inked) || lit(x1 - 1, last_inked), "the right point reaches the bottom");
+}
+
+
 }  // namespace
 
+
 void RegisterPluginDecorationStoreTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "GutterIcon/BookmarkIsAPennant", TestBookmarkGutterIconIsAPennant);
   AddTest(tests, "PluginDecorationStore/MergesOwnersAndSortsByLine",
           TestMergesOwnersAndSortsByLine);
   AddTest(tests, "PluginDecorationStore/PerLineSliceAccessors", TestPerLineSliceAccessors);
