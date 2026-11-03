@@ -13,6 +13,67 @@ entries and the guardrails stayed.
 
 ## Open items
 
+### TD-2026-11-03-431 — the 2026-11-03 subsystem bug hunt: what it found and fixed, and what it left. [OPEN — items 1, 2 and 5; 3 and 4 resolved 2026-11-03]
+
+Every subsystem was read for defects, the 17 fuzz targets ran 15 minutes each (no
+crash), and the QA monkey ran 30 fresh seeds across its three profiles (default
+301-318 at 400 steps, editor and commands 41-46; all clean, redraw verifier on).
+Fixed, each with a failing-first test:
+
+- **A language server lost a snippet's mirror edits.** Typing into a placeholder
+  edits each mirror with one `ReplaceRange`; the keystroke's LSP sync sent the last
+  applied edit as the incremental delta, so a utf-8 incremental server (clangd)
+  held `x Q=ab+ab` for a buffer reading `x Q=Q+Q`. The edit record now carries the
+  revisions it spans and `TextViewport::AppliedEditFromRevision(rev)` hands it out
+  only as the whole step from `rev`; the sync sends a delta only then
+  (`Phase5.IncrementalSyncCarriesEverySnippetMirrorEdit`). The find-in-selection
+  scope had the same shape and uses the same check.
+- **"Conflict markers remain" matched substrings.** A resolved file with a `// ===`
+  banner and a marker quoted in a comment or fixture read as unresolved forever,
+  while the merge parser read it as no conflict. One line-anchored grammar
+  (`util::IsConflict*Line`) serves the scanner, the text test, the staged-diff
+  check and `ParseGitConflictOutput`.
+- **A closed stdin at launch reached the first spawned program.** A pipe that took
+  fd 0 was a no-op `dup2` in the child, which then closed it: an LSP server started
+  with no stdin. `util::EnsureStandardDescriptorsOpen()` runs first in both mains.
+- **fontconfig was asked again per raster** past 4096 distinct code points (the
+  coverage memo was a capped set); it is a bitset over all scalars, and the asks
+  are counted (`render.font_fallback_queries`).
+- **The `bookmark` gutter icon's notch was inverted** (a blank row cut the pennant).
+- **`RemoteHostService/APortThatStartsListeningIsForwarded` failed when the
+  sanitizer lanes ran it at the same time**: each run probed a port, closed it and
+  had a child bind it, all scanning from 20000. The ports are held now (the child
+  binds and reports its own; bind-before-listen; a pid-derived base).
+- The server build's three GCC warnings; and this file, split back to the open
+  queue (290 closed sections to `guidelines/tech-debt/archive/2026-11-03-resolved-debt-ledger.md`).
+
+Left open:
+
+1. **Two more consumers of the last-edit record read it as the whole step.**
+   Breakpoint shifting (`DebugService::ShiftBreakpointsForAppliedEdit`) and the
+   stored diagnostics' shift (`LspService::ShiftLspDiagnosticsForAppliedEdit`) move
+   by the last of several edits. Both only matter when an earlier edit of the
+   step changed the line count (a mirror's edits do not), and diagnostics are
+   republished by the server; neither keeps the revision it last followed, which
+   `AppliedEditFromRevision` needs. The keystroke redraw is sized from the same
+   record and relies on frame prep to repaint a snippet's other mirrors
+   (`QaFlowRegression/TypingIntoAMirroredPlaceholderRepaintsEveryMirrorsLine` keeps
+   that true).
+2. **A save breaks a hard link.** The atomic write renames a new inode over the
+   path, so a file with a second name keeps the old content under it (vim's
+   `backupcopy=auto` writes in place when `nlink > 1`). Symlinks are resolved and
+   kept; hard links are not detected at all.
+3. ~~**`ProcessTable::ResolveExecutable`** resolved a relative `PATH` entry against
+   the server's directory~~ **Resolved 2026-11-03**: against the spawned program's
+   absolute `cwd`, as a shell there would (`RemoteProcess/ARelativePathEntryIsTheChildsDirectory`).
+4. ~~**A dropped file whose name is over 200 bytes** was refused as "needs a file
+   name"~~ **Resolved 2026-11-03**: any name up to NAME_MAX is taken, and a longer
+   one is refused for its length (`RemoteServer/UploadPutsAFileOnTheHostPrivately`).
+5. **qa-remote's 60 ms-link pass failed five cells under a fully loaded machine**
+   (Z.resolve.link.0ms/150ms with one conflict left after 120 s, G.host-terminal,
+   O.tui-starts, H.host-created-file-reaches-mirror); see the run on HEAD below for
+   whether they hold on a quiet one.
+
 ### TD-2026-11-02-430 — remote data safety under fault injection, and the open-TD sweep after it. [OPEN — item 1 below]
 
 The 2026-11-02 pass had only *probed* the remote sync engine. This one stressed it:
