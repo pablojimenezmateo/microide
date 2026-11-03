@@ -813,11 +813,19 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
     }
     const std::shared_ptr<ServedTree> served = TreeOf(connection);
     const std::string name = params["name"].AsString();
-    // A file NAME, never a path: it cannot reach outside its own directory.
-    const bool named = !name.empty() && name.size() <= 200 && name != "." && name != ".." &&
+    // A file NAME, never a path: it cannot reach outside its own directory. Any
+    // length the filesystem takes (NAME_MAX), and a name past it says why.
+    constexpr std::size_t kMaxNameBytes = 255;
+    const bool named = !name.empty() && name != "." && name != ".." &&
                        name.find_first_of(std::string_view("/\0", 2)) == std::string::npos;
     if (!served || !named) {
       ReplyInvalidParams(connection.peer, id, served != nullptr, "file/upload needs a file name");
+      return;
+    }
+    if (name.size() > kMaxNameBytes) {
+      ReplyInvalidParams(connection.peer, id, true,
+                         "the file's name is " + std::to_string(name.size()) +
+                             " bytes; a name on the host can be at most 255");
       return;
     }
     const std::filesystem::path root = UploadsDirectory();

@@ -427,6 +427,15 @@ void TestUploadPutsAFileOnTheHostPrivately() {
   }
   Expect(!std::filesystem::exists(dir.path() / "escape") && !std::filesystem::exists(dir.scratch() / "escape"),
          "and nothing escaped");
+  // Any name the filesystem takes is taken (a 230-byte screenshot name was refused
+  // at 200 as "needs a file name"); one it cannot take says so.
+  const std::string long_name = std::string(226, 'n') + ".png";
+  const auto [long_ok, long_error] = upload(long_name, "x");
+  Expect(long_ok.has_value() && std::filesystem::path(*long_ok).filename() == long_name,
+         "a 230-byte name is taken: " + long_error);
+  const auto [too_long, too_long_why] = upload(std::string(300, 'n'), "x");
+  Expect(!too_long.has_value() && too_long_why.find("255") != std::string::npos,
+         "a name past NAME_MAX is refused for its length: " + too_long_why);
 }
 
 void TestEphemeralPortRangeIsTheHosts() {
