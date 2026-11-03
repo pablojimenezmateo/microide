@@ -918,19 +918,44 @@ void TestConflictsBatchIntoOneRowAndTheConflictsView() {
 
 // A loopback listener on a free port the user would choose (below the ephemeral
 // range, where a bind to port 0 lands): fd and port, or fd -1.
-std::pair<int, std::uint16_t> ListenOnAChosenPort(std::uint16_t from) {
+// Where this process's port scans start: the same test runs at once in the plain
+// and sanitizer lanes on one machine, and a fixed start made them scan, and take,
+// each other's ports -- one test's "restart on the same port" then found it taken.
+std::uint16_t ProcessPortBase(std::uint16_t range_start) {
+  return static_cast<std::uint16_t>(range_start + (static_cast<unsigned>(::getpid()) % 100u) * 20u);
+}
+
+// A loopback socket bound to the first free port at or after `from`, not yet
+// listening: the port is held (no other process can take it) but no listener
+// shows on it until the caller's listen().
+std::pair<int, std::uint16_t> BindOnAChosenPort(std::uint16_t from) {
   for (std::uint32_t port = from; port < 32000; ++port) {
     const int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
     sockaddr_in address{};
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     address.sin_port = htons(static_cast<std::uint16_t>(port));
-    if (fd >= 0 && ::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0 && ::listen(fd, 1) == 0) {
+    if (fd >= 0 && ::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0) {
       return {fd, static_cast<std::uint16_t>(port)};
     }
     if (fd >= 0) {
       ::close(fd);
     }
+  }
+  return {-1, 0};
+}
+
+std::pair<int, std::uint16_t> ListenOnAChosenPort(std::uint16_t from) {
+  for (std::uint32_t port = from; port < 32000; ++port) {
+    auto [fd, bound] = BindOnAChosenPort(static_cast<std::uint16_t>(port));
+    if (fd < 0) {
+      return {-1, 0};
+    }
+    if (::listen(fd, 1) == 0) {
+      return {fd, bound};
+    }
+    ::close(fd);
+    port = bound;
   }
   return {-1, 0};
 }
@@ -978,14 +1003,15 @@ void TestAPortTheProjectsTerminalPrintedIsTheProjects() {
   const auto forwarded = [&](std::uint16_t port) {
     return WorkspaceShellTestAccess::RemoteHosts(shell).CommandText(target, "port:" + std::to_string(port)).has_value();
   };
-  auto [probe, port] = ListenOnAChosenPort(23000);
-  Expect(probe >= 0, "a free port");
-  ::close(probe);
+  // Bound first and listening only after the print: the port is held throughout
+  // (probing it, closing it and binding it again let the same test in a parallel
+  // lane take it in between).
+  auto [server, port] = BindOnAChosenPort(ProcessPortBase(23000));
+  Expect(server >= 0, "a free port");
   // What the terminal shows once the container is up (the host is this machine,
   // and this process -- no process of the project's -- holds the socket).
   TerminalSessionTestAccess::AppendOutput(terminal, "  Local:   http://localhost:" + std::to_string(port) + "/\r\n");
-  auto [server, same] = ListenOnAChosenPort(port);
-  Expect(server >= 0 && same == port, "the server listens");
+  Expect(::listen(server, 1) == 0, "the server listens");
   auto [unprinted, unprinted_port] = ListenOnAChosenPort(static_cast<std::uint16_t>(port + 1));
   Expect(unprinted >= 0, "and a listener nobody printed");
   Expect(pump_until([&] { return forwarded(port); }, std::chrono::seconds(30)),
@@ -1047,7 +1073,7 @@ void TestAPortThatStartsListeningIsForwarded() {
   };
 
   // The host is this machine: a listener here is one on the host.
-  auto [fd, port] = ListenOnAChosenPort(20000);
+  auto [fd, port] = ListenOnAChosenPort(ProcessPortBase(20000));
   Expect(fd >= 0, "a dev server starts listening on the host");
   Expect(pump_until([&] { return announced(port); }), "it is forwarded and announced");
   ::close(fd);
@@ -1074,23 +1100,39 @@ void TestAPortThatStartsListeningIsForwarded() {
          "back to the default");
   auto [stranger, stranger_port] = ListenOnAChosenPort(static_cast<std::uint16_t>(port + 1));
   Expect(stranger >= 0, "a program of no project starts listening");
-  const auto spawn_listener = [&](platform::AsyncSubprocess& process, std::uint16_t on) {
+  // The child binds the first free port at or after `from` itself and prints it
+  // (0: the ephemeral range). A port probed here, closed and handed to the child
+  // left a window another process could bind in -- the same test in a parallel
+  // sanitizer lane scans the same range -- and the child then never listened.
+  const auto spawn_listener = [&](platform::AsyncSubprocess& process, std::uint16_t from) -> std::uint16_t {
     Expect(WorkspaceShellTestAccess::ProjectLauncher(shell).StartAsync(
                process,
                {"python3", "-c",
-                "import socket,sys,time\ns=socket.socket()\ns.bind(('127.0.0.1',int(sys.argv[1])))\ns.listen()\n"
-                "time.sleep(60)",
-                std::to_string(on)},
+                "import socket,sys,time\ns=socket.socket()\np=int(sys.argv[1])\n"
+                "while True:\n"
+                "  try:\n    s.bind(('127.0.0.1',p)); break\n"
+                "  except OSError:\n    p+=1\n"
+                "s.listen()\nprint(s.getsockname()[1],flush=True)\ntime.sleep(60)",
+                std::to_string(from)},
                WorkspaceShellTestAccess::ProjectRoot(shell), {}),
            "the project starts a listener on the host");
+    std::string printed;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (printed.find('\n') == std::string::npos && std::chrono::steady_clock::now() < deadline) {
+      const std::optional<std::string> chunk = process.Read(64, 200);
+      if (!chunk.has_value()) {
+        break;
+      }
+      printed += *chunk;
+    }
+    const auto port = util::ParseInt(util::TrimAsciiWhitespaceView(printed));
+    Expect(port.has_value() && *port > 0 && *port < 65536, "the listener says which port it holds: " + printed);
+    return port.has_value() ? static_cast<std::uint16_t>(*port) : std::uint16_t{0};
   };
   platform::AsyncSubprocess ephemeral;
-  spawn_listener(ephemeral, 0);  // a bind to port 0: the ephemeral range
-  auto [probe, chosen] = ListenOnAChosenPort(static_cast<std::uint16_t>(stranger_port + 1));
-  Expect(probe >= 0, "a free port for the project's dev server");
-  ::close(probe);
+  (void)spawn_listener(ephemeral, 0);  // a bind to port 0: the ephemeral range
   platform::AsyncSubprocess dev_server;
-  spawn_listener(dev_server, chosen);
+  const std::uint16_t chosen = spawn_listener(dev_server, static_cast<std::uint16_t>(stranger_port + 1));
   Expect(pump_until([&] {
            const auto* row = row_for(chosen);
            return row != nullptr && row->message.find(" on " + target + " in ports is available at localhost:") !=
@@ -1131,11 +1173,8 @@ void TestAPortThatStartsListeningIsForwarded() {
   // Announcements off: forwarded all the same, silently.
   Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.auto_forward_ports_notify", "false"),
          "announcements off");
-  auto [quiet_probe, quiet] = ListenOnAChosenPort(static_cast<std::uint16_t>(chosen + 1));
-  Expect(quiet_probe >= 0, "a free port");
-  ::close(quiet_probe);
   platform::AsyncSubprocess quiet_server;
-  spawn_listener(quiet_server, quiet);
+  const std::uint16_t quiet = spawn_listener(quiet_server, static_cast<std::uint16_t>(chosen + 1));
   Expect(pump_until([&] { return forwarded(quiet); }), "the project's dev server is forwarded");
   Expect(row_for(quiet) == nullptr, "with no row");
   quiet_server.Shutdown(1000);
