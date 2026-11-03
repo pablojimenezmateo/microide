@@ -5,6 +5,7 @@
 #include "TestSupport.h"
 #include "TestSupportSdl.h"
 
+#include <cmath>
 #include <filesystem>
 #include <optional>
 #include <set>
@@ -18,6 +19,7 @@
 #include "plugin/PluginHost.h"
 #include "util/JsonValue.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
+#include "workspace/state/WorkspaceProjectState.h"
 
 namespace microide::tests {
 namespace {
@@ -604,6 +606,38 @@ void TestSwitchingBackToATabKeepsItsScroll() {
          "the view is where it was left, got scroll " + std::to_string(back.scroll_line()));
 }
 
+// The quick-open modals' caret sits in their query field. The five modals share one
+// layout (the field at OverlayQueryRowOffset), and the caret's own row for Go to
+// File and project search stayed at the older 44: the caret was drawn 8 px above
+// the field's text (reported 2026-11-03: "the caret was above the input field").
+void TestTheQuickOpenCaretSitsInItsField() {
+  UxFixture fixture("caret.txt", "x\n");
+  const auto check = [&](const std::string& what, workspace::OverlayMode mode) {
+    fixture.Frame();
+    const SDL_FRect overlay = TestAccess::ActiveOverlayRect(fixture.shell);
+    // The field the overlay paints (WorkspaceShellRenderOverlay: overlay_field_rect).
+    const float field_top = overlay.y + workspace::OverlayQueryRowOffset(mode) - 4.0f;
+    const float field_bottom = field_top + 18.0f;
+    const std::optional<SDL_FRect> caret = TestAccess::CaretDirtyRect(fixture.shell);
+    Expect(caret.has_value(), what + ": a caret is drawn");
+    if (!caret.has_value()) {
+      return;
+    }
+    // The field's text row (overlay_field_text_y): the caret is that row, one pixel
+    // up (the caret rect starts at text_y - 1), one line high.
+    const float text_y = field_top + std::floor((18.0f - caret->h) * 0.5f);
+    Expect(std::fabs(caret->y - (text_y - 1.0f)) < 0.5f && caret->y >= field_top - 1.0f &&
+               caret->y + caret->h <= field_bottom + 2.0f,
+           what + ": the caret is on its field's text row (caret y " + std::to_string(caret->y) +
+               ", the row at " + std::to_string(text_y - 1.0f) + ")");
+  };
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "files"), "Go to File opens");
+  check("Go to File", workspace::OverlayMode::FileFinder);
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)});
+  TestAccess::OpenCommandPalette(fixture.shell);
+  check("the command palette", workspace::OverlayMode::CommandPalette);
+}
+
 // TD-2026-10-20-370: `files src` opened `src` as a second project and showed
 // the finder there; its argument is now Go to File's query.
 void TestTheFinderCommandsArgumentIsAQuery() {
@@ -723,6 +757,7 @@ void TestARenderInvalidationKeepsNoCoveredRect() {
 
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/ALineNumberPressSelectsWholeLines", TestALineNumberPressSelectsWholeLines);
+  AddTest(tests, "QaFlowRegressionUx/TheQuickOpenCaretSitsInItsField", TestTheQuickOpenCaretSitsInItsField);
   AddTest(tests, "QaFlowRegressionUx/AltEnterInTheFindWidgetSelectsEveryMatch",
           TestAltEnterInTheFindWidgetSelectsEveryMatch);
   AddTest(tests, "QaFlowRegressionUx/ARightClickInsideASelectionKeepsIt", TestARightClickInsideASelectionKeepsIt);

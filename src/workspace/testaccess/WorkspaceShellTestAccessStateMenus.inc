@@ -973,6 +973,10 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.ComputeOverlayRect(layout.overlay_anchor);
   }
+  // Where the shell draws (and blinks) the focused field's caret.
+  static std::optional<SDL_FRect> CaretDirtyRect(const WorkspaceShell& shell) {
+    return shell.CurrentCaretDirtyRect();
+  }
   static const std::optional<SDL_FRect>& OverlayCaretAnchor(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.caret_anchor;
   }

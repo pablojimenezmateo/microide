@@ -253,7 +253,12 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
             MakeRect(overlay.x + 12.0f, row_y - 4.0f, std::max(0.0f, overlay.w - 24.0f), 18.0f);
         return field.y + std::floor((field.h - line_height) * 0.5f);
       };
-      float text_y = overlay_field_text_y(overlay.y + 44.0f);
+      // The field row the view model laid out and the overlay paints the field at
+      // (RenderViewModelBuilder: overlay.y + OverlayQueryRowOffset(mode)). A row of
+      // its own here (44 for the file finder and project search, from before the five
+      // quick-open modals shared one layout at 52) drew their caret 8 px above the
+      // field's text.
+      const float text_y = overlay_field_text_y(overlay_vm.query_row_y);
       const float available_width = std::max(1.0f, overlay.w - inset * 2.0f);
       SingleLineViewMetrics vm;
       switch (surface) {
@@ -261,21 +266,15 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
           vm = ComputeSingleLineViewMetrics(*text_input_vm.project_search_query, "> ",
                                             available_width);
           break;
-        // The three two-column pickers share the lower query field row. Keep in
-        // sync with the picker query field y in RenderViewModelBuilder /
-        // WorkspaceShellRenderOverlay.cpp.
         case TextInputSurface::CommitPicker:
-          text_y = overlay_field_text_y(overlay.y + 52.0f);
           vm = ComputeSingleLineViewMetrics(*text_input_vm.commit_picker_query, "> ",
                                             available_width);
           break;
         case TextInputSurface::QuickPick:
-          text_y = overlay_field_text_y(overlay.y + 52.0f);
           vm = ComputeSingleLineViewMetrics(*text_input_vm.quick_pick_query, "> ",
                                             available_width);
           break;
         case TextInputSurface::CommandPalette:
-          text_y = overlay_field_text_y(overlay.y + 52.0f);
           vm = ComputeSingleLineViewMetrics(*text_input_vm.command_palette_query, "> ",
                                             available_width);
           break;
