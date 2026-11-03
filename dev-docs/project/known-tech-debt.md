@@ -13,7 +13,7 @@ entries and the guardrails stayed.
 
 ## Open items
 
-### TD-2026-11-03-431 — the 2026-11-03 subsystem bug hunt: what it found and fixed, and what it left. [OPEN — item 5; 2 decided, 1, 3 and 4 resolved 2026-11-03]
+### TD-2026-11-03-431 — the 2026-11-03 subsystem bug hunt: what it found and fixed, and what it left. [RESOLVED 2026-11-03 — 2 decided; 1, 3, 4 and 5 resolved]
 
 Every subsystem was read for defects, the 17 fuzz targets ran 15 minutes each (no
 crash), and the QA monkey ran 30 fresh seeds across its three profiles (default
@@ -90,10 +90,9 @@ Left open:
 4. ~~**A dropped file whose name is over 200 bytes** was refused as "needs a file
    name"~~ **Resolved 2026-11-03**: any name up to NAME_MAX is taken, and a longer
    one is refused for its length (`RemoteServer/UploadPutsAFileOnTheHostPrivately`).
-5. **qa-remote's 60 ms-link pass failed five cells under a fully loaded machine**
-   (Z.resolve.link.0ms/150ms with one conflict left after 120 s, G.host-terminal,
-   O.tui-starts, H.host-created-file-reaches-mirror); see the run on HEAD below for
-   whether they hold on a quiet one.
+5. ~~**qa-remote's 60 ms-link pass failed five cells under a fully loaded machine**~~
+   **Resolved 2026-11-03**: load, not the product. Run alone at 20cad2dbb, qa-remote
+   passed all 262 cells, the slow-link Z, G, O and H cells among them.
 
 ### TD-2026-11-02-430 — remote data safety under fault injection, and the open-TD sweep after it. [OPEN — item 1 below]
 
