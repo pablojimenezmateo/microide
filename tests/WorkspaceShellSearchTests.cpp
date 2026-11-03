@@ -1097,6 +1097,17 @@ void TestBufferFindScopeFollowsEdits() {
   Expect(microide::workspace::FollowFindScope(scope, viewport), "same document");
   expect_range(2, 1, 3, 4, "the end follows the document's tail through a multi-range edit");
 
+  // Two edits before one follow (a snippet's mirrors, a plugin's edits applied one
+  // by one): the last edit alone is not the step from the scope's revision, and
+  // mapping through it moved the end by only the second insertion
+  // (TD-2026-11-03-431). Here both insert two lines above, so the scope moves down
+  // four; mapped through the last edit alone it moved two.
+  Expect(viewport.ReplaceRange({{0, 0}, {0, 0}}, "a\nb\n"), "an insertion above");
+  Expect(viewport.ReplaceRange({{0, 0}, {0, 0}}, "c\nd\n"), "and another, before the follow");
+  Expect(microide::workspace::FollowFindScope(scope, viewport), "same document");
+  Expect(scope.range.end.line == 7, "the end follows both insertions, not the last only (end line " +
+                                        std::to_string(scope.range.end.line) + ")");
+
   editor::TextViewport other;
   other.LoadContent("other\n", "/tmp/find-scope-other.txt");
   Expect(!microide::workspace::FollowFindScope(scope, other), "another document drops the scope");

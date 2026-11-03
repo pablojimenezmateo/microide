@@ -28,6 +28,7 @@
 #include "support/SoftwareCanvas.h"
 #include "editor/FoldingModel.h"
 #include "editor/PluginDecorationStore.h"
+#include "editor/TextViewport.h"
 #include "util/JsonValue.h"
 #include "workspace/HoverTextWrap.h"
 #include "workspace/git/BranchReviewStateBridge.h"
@@ -266,6 +267,29 @@ void TestSaveAsRevealsTheNewFileInTheTree() {
   Expect(TestAccess::SelectedTreePath(fixture.shell) == fixture.root / "notes" / "copy.txt",
          "the tree selects the file the buffer was saved as (" +
              TestAccess::SelectedTreePath(fixture.shell).string() + ")");
+}
+
+// Typing into a snippet placeholder edits each of its mirrors, one ReplaceRange
+// each, and the keystroke's redraw was sized from the viewport's last applied
+// edit: the last mirror's line. A mirror on another line kept its old text on
+// screen (TD-2026-11-03-431).
+void TestTypingIntoAMirroredPlaceholderRepaintsEveryMirrorsLine() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("mirrors.txt", "top\n");
+  editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
+  viewport.MoveCursorTo(1, 0, false);
+  Expect(TestAccess::PerfExpandSnippetAtCaret(fixture.shell, "${1:ab} first\nmiddle\n${1:ab} second"),
+         "the snippet expands");
+  Expect(TestAccess::SnippetSessionActive(fixture.shell), "its session is live");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the expansion, painted in full");
+  const workspace::RenderInvalidation redraw = DispatchEvents(fixture.shell, {TextInputEvent("Q")});
+  Expect(viewport.SerializeText() == "top\nQ first\nmiddle\nQ second", "both mirrors took the keystroke: " +
+                                                                           viewport.SerializeText());
+  fixture.ExpectFresh(redraw, "a keystroke into a placeholder mirrored on two lines");
 }
 
 void TestCtrlQQuits() {
@@ -3808,6 +3832,8 @@ void TestTheRemoteSegmentOpensTheRemoteMenu() {
 }
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "QaFlowRegression/TypingIntoAMirroredPlaceholderRepaintsEveryMirrorsLine",
+          TestTypingIntoAMirroredPlaceholderRepaintsEveryMirrorsLine);
   AddTest(tests, "QaFlowRegression/OutputTabRepaintsWhenItsChannelGetsALabel",
           TestOutputTabRepaintsWhenItsChannelGetsALabel);
   AddTest(tests, "QaFlowRegression/TypingRepaintsOnlyTheLinesWhoseOccurrencesChanged",
