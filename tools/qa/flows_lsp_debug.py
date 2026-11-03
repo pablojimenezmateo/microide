@@ -438,6 +438,39 @@ def flow_lsp_declaration_implementation(app: q.App) -> None:
     app.expect((app.active_tab() or {}).get("title") == "main.cpp", "and stay in the file")
 
 
+def _problems(app: q.App) -> bool:
+    """Whether the status bar counts any problem."""
+    return any(e["name"] == "status:problems" and any(c.isdigit() and c != "0" for c in e.get("label", ""))
+               for e in app.elements("status"))
+
+
+def flow_lsp_snippet_mirrors(app: q.App) -> None:
+    """clangd keeps up with a snippet's mirrors. Typing into a placeholder edits
+    every copy of it, and the incremental sync sent clangd only the last edit, so
+    after `name = name + 1;` became `total = total + 1;` clangd still read
+    `total = name + 1;` and reported `name` undeclared until the next full sync
+    (TD-2026-11-03-431). The problem the defaults raise must clear."""
+    if not _require(app, "clangd") or not _lsp_ready(app):
+        return
+    app.click_text(16, 1)  # "    int total = 0;" inside Scheduler::run
+    app.key("End")
+    app.key("Return")
+    app.type("mirr")
+    if app.ui()["overlay"].get("visible"):
+        app.key("Escape")
+    app.key("Tab")
+    step(app, "Tab expands mirr", 0.3)
+    line = app.buffer().get("text", "").split("\n")[16].strip()
+    app.expect(line == "name = name + 1;", f"mirr expands with its defaults ({line!r})")
+    app.wait_until(lambda: _problems(app), 20.0, "clangd to report the default name undeclared")
+    app.type("total")
+    step(app, "type into the mirrored placeholder", 0.3)
+    line = app.buffer().get("text", "").split("\n")[16].strip()
+    app.expect(line == "total = total + 1;", f"every mirror took the typing ({line!r})")
+    app.wait_until(lambda: not _problems(app), 20.0,
+                   "the problem to clear: clangd's copy has every mirror's edit")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "lsp-hover": flow_lsp_hover,
     "lsp-show-hover": flow_lsp_show_hover,
@@ -449,10 +482,12 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "lsp-format": flow_lsp_format,
     "dbg-session": flow_debug_session,
     "lsp-workspace-edits": flow_lsp_workspace_edits,
+    "lsp-snippet-mirrors": flow_lsp_snippet_mirrors,
 }
 
 PLUGINS: dict[str, tuple[str, ...]] = {
     **{name: ("cpp-lsp",) for name in FLOWS if name.startswith("lsp-")},
     "dbg-session": ("gdb-dap",),
     "lsp-workspace-edits": ("qa-lsp",),
+    "lsp-snippet-mirrors": ("cpp-lsp", "qa-snippets"),
 }
