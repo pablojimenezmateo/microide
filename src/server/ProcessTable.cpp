@@ -66,9 +66,17 @@ using util::SetNonBlocking;
 
 // Resolve argv[0] through PATH in the parent: the child of a multi-threaded process
 // may only call async-signal-safe functions, and execve is one; execvp is not.
+// A relative PATH entry (an empty one is ".") is the CHILD's: it is resolved
+// against `cwd`, the absolute directory the child runs in, as a shell there would
+// -- resolving it here read the server's own directory ("/" for the daemon). A
+// name with a slash is left as given: the child's chdir resolves it.
 std::string ResolveExecutable(
     const std::string& name,
-    const std::vector<std::pair<std::string, std::optional<std::string>>>& env) {
+    const std::vector<std::pair<std::string, std::optional<std::string>>>& env,
+    const std::string& cwd) {
+  const auto in_child_directory = [&cwd](const std::string& path) {
+    return path.starts_with('/') || !cwd.starts_with('/') ? path : cwd + "/" + path;
+  };
   if (name.find('/') != std::string::npos) {
     return name;
   }
@@ -92,7 +100,7 @@ std::string ResolveExecutable(
     if (dir.empty()) {
       dir = ".";
     }
-    const std::string candidate = dir + "/" + name;
+    const std::string candidate = in_child_directory(dir + "/" + name);
     struct stat st{};
     if (::stat(candidate.c_str(), &st) == 0 && S_ISREG(st.st_mode) &&
         ::access(candidate.c_str(), X_OK) == 0) {
@@ -198,7 +206,7 @@ ProcessTable::SpawnResult ProcessTable::Spawn(std::uint64_t connection, SpawnReq
   }
   // Everything the child needs is built before fork: after it, only
   // async-signal-safe calls.
-  const std::string executable = ResolveExecutable(request.argv.front(), request.env);
+  const std::string executable = ResolveExecutable(request.argv.front(), request.env, request.cwd);
   std::vector<char*> argv;
   for (std::string& arg : request.argv) {
     argv.push_back(arg.data());

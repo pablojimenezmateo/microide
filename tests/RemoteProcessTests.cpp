@@ -82,12 +82,14 @@ class ProcClient {
     return answer;
   }
 
-  std::uint64_t Spawn(const std::vector<std::string>& argv, bool keep = false, int* pid = nullptr) {
+  std::uint64_t Spawn(const std::vector<std::string>& argv, bool keep = false, int* pid = nullptr,
+                      const std::string& cwd = "/", util::JsonObject env = {}) {
     util::JsonArray args;
     for (const std::string& arg : argv) args.push_back(util::JsonValue(arg));
     util::JsonObject params;
     params["argv"] = util::JsonValue(std::move(args));
-    params["cwd"] = util::JsonValue("/");
+    params["cwd"] = util::JsonValue(cwd);
+    if (!env.empty()) params["env"] = util::JsonValue(std::move(env));
     params["keep_on_detach"] = util::JsonValue(keep);
     std::string error;
     const auto result = Call("proc/spawn", util::JsonValue(std::move(params)), &error);
@@ -274,6 +276,26 @@ void TestExitWhileDetachedIsDeliveredOnAttach() {
          "a released handle is forgotten");
 }
 
+// A relative PATH entry is the spawned program's: `PATH=bin:...` in a project finds
+// the project's bin/tool, as a shell started there would. The server resolved it
+// against its own directory ("/" for the daemon) and the program was not found.
+void TestARelativePathEntryIsTheChildsDirectory() {
+  ShortDir dir;
+  StartServer(dir);
+  ProcClient client(dir.path());
+  TemporaryDirectory project;
+  const std::filesystem::path tool = project.path() / "bin" / "project-tool-xyz";
+  WriteFile(tool, "#!/bin/sh\necho from-the-project\n");
+  std::filesystem::permissions(tool, std::filesystem::perms::owner_all);
+  util::JsonObject env;
+  env["PATH"] = util::JsonValue(std::string("bin:/usr/bin:/bin"));
+  const auto output =
+      client.Wait(client.Spawn({"project-tool-xyz"}, false, nullptr, project.path().string(), std::move(env)));
+  Expect(output.code == 0 && output.out == "from-the-project\n",
+         "the tool in the project's bin ran (exit " + std::to_string(output.code.value_or(-1)) + ", out [" +
+             output.out + "])");
+}
+
 void TestMalformedSpawnIsRefused() {
   ShortDir dir;
   StartServer(dir);
@@ -303,6 +325,7 @@ void RegisterRemoteProcessTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteProcess/ExitWhileDetachedIsDeliveredOnAttach",
           TestExitWhileDetachedIsDeliveredOnAttach);
   AddTest(tests, "RemoteProcess/MalformedSpawnIsRefused", TestMalformedSpawnIsRefused);
+  AddTest(tests, "RemoteProcess/ARelativePathEntryIsTheChildsDirectory", TestARelativePathEntryIsTheChildsDirectory);
 }
 
 }  // namespace microide::tests
