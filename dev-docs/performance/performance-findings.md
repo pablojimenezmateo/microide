@@ -127,7 +127,7 @@ direction, count the thing directly before theorising about it.
 ## 2026-08-17 compare pass: "does this have to happen?" was the wrong question
 
 A follow-on to the interaction pass below, working the three sites it had
-measured and deliberately left ([TD-2026-08-17-261](../project/known-tech-debt.md#td-2026-08-17-261)).
+measured and deliberately left ([TD-2026-08-17-261](../../guidelines/tech-debt/archive/2026-11-03-resolved-debt-ledger.md#td-2026-08-17-261)).
 The entry framed them as costs of work that had to happen and proposed narrowing
 the invalidation so fewer rows are rebuilt. That framing is what kept them open.
 
