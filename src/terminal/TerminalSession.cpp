@@ -484,13 +484,17 @@ void TerminalSession::SnapshotLineRangeInto(std::size_t start_row,
 bool TerminalSession::SnapshotLineRangeIfChanged(std::size_t start_row,
                                                  std::size_t max_lines,
                                                  std::uint64_t previous_generation,
-                                                 TerminalLineRangeSnapshot* snapshot) const {
+                                                 TerminalLineRangeSnapshot* snapshot,
+                                                 TerminalCursorSnapshot* cursor) const {
   util::AddPerformanceCounter(util::PerfCounterId::TerminalSnapshotLineRangeIfChangedCalls);
   if (snapshot == nullptr) {
     return false;
   }
 
   std::scoped_lock lock(mutex_);
+  if (cursor != nullptr) {
+    *cursor = TerminalCursorSnapshot{.row = cursor_row_, .column = cursor_column_, .visible = cursor_visible_};
+  }
   if (snapshot_generation_.value() == previous_generation &&
       snapshot->generation == snapshot_generation_.value()) {
     return false;

@@ -790,13 +790,13 @@ void WorkspaceShell::PrepareTerminalPanesForFrame(TerminalTabState& tab,
     // blink repainted only the caret over vim's changed rows -- CI QA,
     // terminal-programs). A wake's own repaint covers the usual case; this covers
     // the frame that gets there first.
+    // The caret with the lines it is painted over, under one lock (see the API).
     if (pane->session.SnapshotLineRangeIfChanged(first_row, visible_rows, previous_generation,
-                                                 &pane->visible_lines_snapshot)) {
+                                                 &pane->visible_lines_snapshot, &pane->frame_cursor)) {
       RequestRedrawRect(rects.panes[pane_index]);
     }
     pane->visible_lines_first_row = first_row;
     pane->visible_lines_max_rows = visible_rows;
-    pane->frame_cursor = pane->session.CursorSnapshot();
     pane->frame_line_count = line_count;
     pane->frame_reverse_video = pane->session.screen_reverse_video();
     // The caret this frame paints against the one on screen: a cursor that hid or

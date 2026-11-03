@@ -109,10 +109,11 @@ class TerminalSession {
   void SnapshotLineRangeInto(std::size_t start_row,
                              std::size_t max_lines,
                              std::vector<TerminalLine>& out) const;
-  bool SnapshotLineRangeIfChanged(std::size_t start_row,
-                                  std::size_t max_lines,
-                                  std::uint64_t previous_generation,
-                                  TerminalLineRangeSnapshot* snapshot) const;
+  // `cursor`, when given, is sampled under the SAME lock as the lines, changed or
+  // not: read with a second lock, the PTY reader could move it in between and a
+  // frame painted the caret where the next output put it, over the text before it.
+  bool SnapshotLineRangeIfChanged(std::size_t start_row, std::size_t max_lines, std::uint64_t previous_generation,
+                                  TerminalLineRangeSnapshot* snapshot, TerminalCursorSnapshot* cursor = nullptr) const;
   // Outcome of one FindMatches pass, sampled under the same lock as the scan so
   // the caller never pairs a row count with a trim counter from a different
   // instant.
