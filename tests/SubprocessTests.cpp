@@ -4,6 +4,7 @@
 #include "platform/HostPlatform.h"
 #include "platform/Subprocess.h"
 #include "platform/SubprocessSandbox.h"
+#include "util/PosixFd.h"
 
 #include <algorithm>
 
@@ -19,6 +20,7 @@
 
 #include <cerrno>
 #include <fcntl.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 namespace microide::tests {
@@ -609,9 +611,50 @@ void TestSandboxReadFilesGrantsOnlyThatFile() {
          "its neighbour in the same directory is not: the grant is the file, not the directory");
 }
 
+// A process started with its stdin closed handed descriptor 0 to its first pipe; a
+// child's dup2(pipe, 0) was then a no-op that left the pipe close-on-exec, and the
+// child (a language server) ran with no stdin. main() reopens the closed standard
+// descriptors first. Run in a forked child: the test process's own fd 0 stays put.
+void TestAClosedStdinIsReopenedBeforeTheFirstPipe() {
+  const pid_t child = ::fork();
+  Expect(child >= 0, "fork");
+  if (child == 0) {
+    ::close(STDIN_FILENO);
+    util::EnsureStandardDescriptorsOpen();
+    if (::fcntl(STDIN_FILENO, F_GETFD) != 0) {
+      ::_exit(3);  // closed, or close-on-exec: a spawned program would lose it
+    }
+    platform::AsyncSubprocess cat;
+    if (!cat.Start({"cat"}, "")) {
+      ::_exit(4);
+    }
+    if (!cat.Write("ping\n")) {
+      ::_exit(5);
+    }
+    std::string echoed;
+    for (int i = 0; i < 50 && echoed.find('\n') == std::string::npos; ++i) {
+      const std::optional<std::string> chunk = cat.Read(64, 100);
+      if (!chunk.has_value()) {
+        break;
+      }
+      echoed += *chunk;
+    }
+    ::_exit(echoed == "ping\n" ? 0 : 6);
+  }
+  int status = 0;
+  Expect(::waitpid(child, &status, 0) == child, "the child is reaped");
+  Expect(WIFEXITED(status), "the child exits");
+  const int code = WEXITSTATUS(status);
+  Expect(code != 3, "fd 0 is open and inheritable after the reopen");
+  Expect(code == 0, "a program spawned afterwards reads its stdin (exit " + std::to_string(code) + ")");
+}
+
+
 }  // namespace
 
 void RegisterSubprocessTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Subprocess/AClosedStdinIsReopenedBeforeTheFirstPipe",
+          TestAClosedStdinIsReopenedBeforeTheFirstPipe);
   AddTest(tests, "Subprocess/AllowUserToolchainsGrantsPerUserInstallsOnly",
           TestAllowUserToolchainsGrantsPerUserInstallsOnly);
   AddTest(tests, "Subprocess/SandboxProbeReportsConsistentSupport",

@@ -1,3 +1,4 @@
+#include "util/PosixFd.h"
 #include "app/AppStartupOptions.h"
 #include "app/Application.h"
 #include "workspace/persistence/PersistedRecordDump.h"
@@ -24,6 +25,8 @@ int main(int argc, char** argv) {
   // Perf summaries split self time on this boundary, because a background tree
   // walk that costs more CPU than a render stall still costs zero frames.
   microide::util::MarkTracingMainThread();
+  // Before any descriptor exists: a closed 0/1/2 would be handed to the first pipe.
+  microide::util::EnsureStandardDescriptorsOpen();
 
   // Writing to a subprocess/terminal/LSP pipe whose reader has died must surface as
   // EPIPE, not kill the editor. Install this before any I/O can occur.

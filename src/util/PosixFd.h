@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cerrno>
+
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -55,6 +57,35 @@ inline bool SetNonBlocking(int fd) {
   }
   const int flags = ::fcntl(fd, F_GETFL, 0);
   return flags >= 0 && ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+}
+
+// Opens /dev/null onto whichever of descriptors 0, 1 and 2 is closed. Call it first
+// thing in main, before any descriptor is created: a process started with one of
+// them closed (`microide <&-`, some launchers and service managers) otherwise
+// hands that number to its first pipe or socket. A child's `dup2(pipe_end, 0)`
+// is then a no-op that leaves the pipe close-on-exec, the following close()
+// drops it, and the language server, adapter or tool starts with no stdin.
+inline void EnsureStandardDescriptorsOpen() {
+  int null_fd = ::open("/dev/null", O_RDWR | O_CLOEXEC);
+  if (null_fd < 0) {
+    return;
+  }
+  if (null_fd <= 2) {
+    // It took a standard slot itself: move it above them, so each dup2 below
+    // copies it (and clears close-on-exec) rather than being a no-op on itself.
+    const int high = ::fcntl(null_fd, F_DUPFD_CLOEXEC, 3);
+    ::close(null_fd);
+    if (high < 0) {
+      return;
+    }
+    null_fd = high;
+  }
+  for (int fd = 0; fd <= 2; ++fd) {
+    if (::fcntl(fd, F_GETFD) == -1 && errno == EBADF) {
+      (void)::dup2(null_fd, fd);
+    }
+  }
+  ::close(null_fd);
 }
 
 inline void CloseIfValid(int fd) {
