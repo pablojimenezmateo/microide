@@ -13,7 +13,7 @@ entries and the guardrails stayed.
 
 ## Open items
 
-### TD-2026-11-03-431 — the 2026-11-03 subsystem bug hunt: what it found and fixed, and what it left. [OPEN — items 1, 2 and 5; 3 and 4 resolved 2026-11-03]
+### TD-2026-11-03-431 — the 2026-11-03 subsystem bug hunt: what it found and fixed, and what it left. [OPEN — items 1 and 5; 2 decided, 3 and 4 resolved 2026-11-03]
 
 Every subsystem was read for defects, the 17 fuzz targets ran 15 minutes each (no
 crash), and the QA monkey ran 30 fresh seeds across its three profiles (default
@@ -59,10 +59,12 @@ Left open:
    record and relies on frame prep to repaint a snippet's other mirrors
    (`QaFlowRegression/TypingIntoAMirroredPlaceholderRepaintsEveryMirrorsLine` keeps
    that true).
-2. **A save breaks a hard link.** The atomic write renames a new inode over the
-   path, so a file with a second name keeps the old content under it (vim's
-   `backupcopy=auto` writes in place when `nlink > 1`). Symlinks are resolved and
-   kept; hard links are not detected at all.
+2. ~~**A save breaks a hard link.**~~ **Decided, already**: the atomic write renames
+   a new inode over the path, so a file's other names keep the old content. That is
+   the documented trade-off for crash-atomic saves, pinned by
+   `SaveDataIntegrity/AtomicSaveReplacesInodeAndBreaksHardlink` (an in-place write --
+   vim's `backupcopy=auto` for `nlink > 1` -- can leave a partial file on a crash).
+   Recorded so the next pass does not re-derive it; reversing it is the user's call.
 3. ~~**`ProcessTable::ResolveExecutable`** resolved a relative `PATH` entry against
    the server's directory~~ **Resolved 2026-11-03**: against the spawned program's
    absolute `cwd`, as a shell there would (`RemoteProcess/ARelativePathEntryIsTheChildsDirectory`).
