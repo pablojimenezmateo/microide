@@ -202,24 +202,19 @@ std::optional<ParsedGitConflictOutput> ParseGitConflictOutput(const compare::Mer
   ParsedGitConflictOutput parsed;
   std::vector<ParsedGitConflictSegment> segments;
   std::size_t line_index = 0;
-  // Git's conflict separator is a run of '=' whose length is merge.conflictMarkerSize
-  // (default 7, but configurable). SplitOnByte keeps a trailing '\r', so a CRLF
-  // working-tree file yields "=======\r"; strip it, then match "all '=' and length
-  // >= 7" so a non-default marker size still parses. A content line like
-  // "======= heading" (trailing text) is excluded, matching how the sigil markers
-  // stay length-tolerant via starts_with.
-  const auto is_conflict_separator = [](std::string_view line) {
-    if (!line.empty() && line.back() == '\r') {
-      line.remove_suffix(1);
-    }
-    return line.size() >= 7 && line.find_first_not_of('=') == std::string_view::npos;
-  };
+  // The marker grammar is util's (IsConflict*Line): line-anchored, length-tolerant
+  // sigils, a separator of seven or more '=' (merge.conflictMarkerSize may raise
+  // it), and the trailing '\r' SplitOnByte keeps on a CRLF file ignored.
+  using util::IsConflictBaseLine;
+  using util::IsConflictEndLine;
+  using util::IsConflictSeparatorLine;
+  using util::IsConflictStartLine;
   while (line_index < lines.size()) {
-    if (!lines[line_index].starts_with("<<<<<<<")) {
+    if (!IsConflictStartLine(lines[line_index])) {
       ParsedGitConflictSegment segment;
       segment.plain_lines.emplace_back(lines[line_index]);
       ++line_index;
-      while (line_index < lines.size() && !lines[line_index].starts_with("<<<<<<<")) {
+      while (line_index < lines.size() && !IsConflictStartLine(lines[line_index])) {
         segment.plain_lines.emplace_back(lines[line_index]);
         ++line_index;
       }
@@ -233,28 +228,28 @@ std::optional<ParsedGitConflictOutput> ParseGitConflictOutput(const compare::Mer
 
     ParsedGitConflictBlock block;
     ++line_index;
-    while (line_index < lines.size() && !lines[line_index].starts_with("|||||||") &&
-           !is_conflict_separator(lines[line_index])) {
+    while (line_index < lines.size() && !IsConflictBaseLine(lines[line_index]) &&
+           !IsConflictSeparatorLine(lines[line_index])) {
       block.current_lines.emplace_back(lines[line_index]);
       ++line_index;
     }
-    if (line_index < lines.size() && lines[line_index].starts_with("|||||||")) {
+    if (line_index < lines.size() && IsConflictBaseLine(lines[line_index])) {
       block.has_base = true;
       ++line_index;
-      while (line_index < lines.size() && !is_conflict_separator(lines[line_index])) {
+      while (line_index < lines.size() && !IsConflictSeparatorLine(lines[line_index])) {
         block.base_lines.emplace_back(lines[line_index]);
         ++line_index;
       }
     }
-    if (line_index >= lines.size() || !is_conflict_separator(lines[line_index])) {
+    if (line_index >= lines.size() || !IsConflictSeparatorLine(lines[line_index])) {
       return std::nullopt;
     }
     ++line_index;
-    while (line_index < lines.size() && !lines[line_index].starts_with(">>>>>>>")) {
+    while (line_index < lines.size() && !IsConflictEndLine(lines[line_index])) {
       block.incoming_lines.emplace_back(lines[line_index]);
       ++line_index;
     }
-    if (line_index >= lines.size() || !lines[line_index].starts_with(">>>>>>>")) {
+    if (line_index >= lines.size() || !IsConflictEndLine(lines[line_index])) {
       return std::nullopt;
     }
     ++line_index;

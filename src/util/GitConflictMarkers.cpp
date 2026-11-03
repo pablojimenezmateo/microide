@@ -3,9 +3,23 @@
 namespace microide::util {
 
 bool ContainsCompleteConflictMarkers(std::string_view text) {
-  return text.find("<<<<<<<") != std::string_view::npos &&
-         text.find("=======") != std::string_view::npos &&
-         text.find(">>>>>>>") != std::string_view::npos;
+  bool start = false;
+  bool separator = false;
+  bool end = false;
+  std::size_t pos = 0;
+  while (pos <= text.size() && !(start && separator && end)) {
+    const std::size_t eol = text.find('\n', pos);
+    const std::size_t line_end = eol == std::string_view::npos ? text.size() : eol;
+    const std::string_view line = text.substr(pos, line_end - pos);
+    start = start || IsConflictStartLine(line);
+    separator = separator || IsConflictSeparatorLine(line);
+    end = end || IsConflictEndLine(line);
+    if (eol == std::string_view::npos) {
+      break;
+    }
+    pos = eol + 1;
+  }
+  return start && separator && end;
 }
 
 bool StagedDiffIntroducesConflictMarker(std::string_view diff) {
@@ -27,7 +41,7 @@ bool StagedDiffIntroducesConflictMarker(std::string_view diff) {
     // starts with `+++` and never matches the 7-char sigils below.
     if (!line.empty() && line.front() == '+') {
       const std::string_view content = line.substr(1);
-      if (content.starts_with("<<<<<<<") || content.starts_with(">>>>>>>")) {
+      if (IsConflictStartLine(content) || IsConflictEndLine(content)) {
         return true;
       }
     }
@@ -41,7 +55,7 @@ bool StagedDiffIntroducesConflictMarker(std::string_view diff) {
 
 std::optional<std::size_t> FirstConflictMarkerLine(std::span<const std::string> lines) {
   for (std::size_t i = 0; i < lines.size(); ++i) {
-    if (lines[i].starts_with("<<<<<<<")) {
+    if (IsConflictStartLine(lines[i])) {
       return i;
     }
   }

@@ -409,33 +409,47 @@ void TestValidationBlocksConflictMarkers() {
          "validation should report the first conflict-marker line");
 }
 
-// The single-pass conflict scanner reproduces the old serialize+span behavior:
-// `complete` requires all three sigils anywhere; `first_marker_line` is the first
-// line ANCHORED at `<<<<<<<`. A partial marker set is not complete, and a `<<<<<<<`
-// that is not at line start is not the anchored first line.
+// The single-pass conflict scanner and the text test agree with the merge editor's
+// parser of git's output: a marker is a LINE, anchored at its start. `complete`
+// needs a start, a separator and an end line; `first_marker_line` is the first
+// start line. A banner comment of '=' and markers quoted mid-line -- in a comment,
+// a test fixture, this repository's own sources -- are not a conflict: the
+// substring test made such a resolved file read "Conflict markers remain" forever.
 void TestScanConflictMarkersMatchesLegacyBehavior() {
   using microide::util::ConflictMarkerScan;
+  using microide::util::ContainsCompleteConflictMarkers;
   using microide::util::ScanConflictMarkers;
 
   const std::vector<std::string> full = {"before", "<<<<<<< HEAD", "side",
                                          "=======", "other", ">>>>>>> x"};
   const ConflictMarkerScan complete = ScanConflictMarkers(full);
-  Expect(complete.complete, "all three sigils present should read as complete");
+  Expect(complete.complete, "a start, a separator and an end line read as complete");
   Expect(complete.first_marker_line == std::optional<std::size_t>(1),
          "first anchored `<<<<<<<` is line 1");
 
-  // Only two of the three sigils: not a complete conflict.
+  // Only two of the three: not a complete conflict.
   const std::vector<std::string> partial = {"<<<<<<< HEAD", "side", "======="};
   Expect(!ScanConflictMarkers(partial).complete,
-         "a missing `>>>>>>>` sigil should not read as complete");
+         "a missing `>>>>>>>` line should not read as complete");
 
-  // A `<<<<<<<` mid-line contributes to `complete` (substring semantics) but is not
-  // the anchored first-marker line.
-  const std::vector<std::string> mid_line = {"x <<<<<<< y", "=======", ">>>>>>>"};
-  const ConflictMarkerScan mid = ScanConflictMarkers(mid_line);
-  Expect(mid.complete, "mid-line sigils still count toward completeness");
-  Expect(mid.first_marker_line == std::nullopt,
+  // Mid-line sigils and a banner are text, not markers.
+  const std::vector<std::string> quoted = {"// the merge refuses a '<<<<<<<' left behind",
+                                           "// ===========================================",
+                                           "expect(text.contains(\">>>>>>> branch\"));"};
+  const ConflictMarkerScan text = ScanConflictMarkers(quoted);
+  Expect(!text.complete, "markers quoted mid-line and a banner comment are not a conflict");
+  Expect(text.first_marker_line == std::nullopt,
          "a non-line-anchored `<<<<<<<` is not the first marker line");
+  Expect(!ContainsCompleteConflictMarkers("// <<<<<<< ours\n// =======\n// >>>>>>> theirs\n"),
+         "the text test agrees: commented-out markers are not a conflict");
+
+  // As git writes them in a CRLF file, and with a larger merge.conflictMarkerSize.
+  Expect(ContainsCompleteConflictMarkers("<<<<<<< HEAD\r\na\r\n=======\r\nb\r\n>>>>>>> x\r\n"),
+         "a CRLF conflict is one");
+  Expect(ScanConflictMarkers(std::vector<std::string>{"<<<<<<<<<< HEAD", "a", "==========", "b",
+                                                      ">>>>>>>>>> x"})
+             .complete,
+         "ten-character markers are one too");
 
   Expect(!ScanConflictMarkers(std::vector<std::string>{}).complete,
          "empty input has no conflict markers");
