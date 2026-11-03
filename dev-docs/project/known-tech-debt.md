@@ -44,6 +44,15 @@ Fixed, each with a failing-first test:
   sanitizer lanes ran it at the same time**: each run probed a port, closed it and
   had a child bind it, all scanning from 20000. The ports are held now (the child
   binds and reports its own; bind-before-listen; a pid-derived base).
+- **`RemoteHostService/AOneSidedConflictOffersNoMerge` failed ~1 run in 55**: the
+  "offline" save was made before `remote-disconnect` had taken the link down, so it
+  was pushed and moved with the host's rename (no edit lost; the test never
+  reached its conflict). `DisconnectAndWait` waits for the status bar's
+  "disconnected"; 0 of 80 since.
+- **perf-tests and perf-canary built one tree without its lock** and, side by side,
+  clobbered a configure; both take `locked_build` now.
+- QA: `lsp-snippet-mirrors` (clangd's copy keeps up with a snippet's mirrors; it
+  times out with the old sync check restored).
 - The server build's three GCC warnings; and this file, split back to the open
   queue (290 closed sections to `guidelines/tech-debt/archive/2026-11-03-resolved-debt-ledger.md`).
 
