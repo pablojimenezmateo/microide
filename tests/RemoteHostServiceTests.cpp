@@ -660,11 +660,16 @@ void TestConflictMergesThreeWaysToTheHost() {
              std::chrono::seconds(30), std::chrono::milliseconds(10)),
          "the mirror fills");
   WorkspaceShellTestAccess::OpenFile(shell, file);
-  // The agent edits the first line while the user saves an edit to the last.
-  WriteFile(host_root / "notes.txt", "A\nb\nc\n");
+  // The agent edits the first line while the user saves an edit to the last. With
+  // the link up, the agent's edit could be pulled into the mirror before the save
+  // and the save was then refused as changed on disk (CI's UBSan job, 2026-11-03):
+  // the user saves offline instead, and the agent's edit is there at reconnect.
+  DisconnectAndWait(shell, target);
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(2, 0);
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("X");
   Expect(WorkspaceShellTestAccess::SaveTab(shell, 0), "the save succeeds locally");
+  WriteFile(host_root / "notes.txt", "A\nb\nc\n");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-reconnect " + target), "reconnects");
   const std::string row_key = "remote.conflict." + file.string();
   const auto find_row = [&]() -> const workspace::NotificationService::Notification* {
     for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
