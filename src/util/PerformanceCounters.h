@@ -369,6 +369,9 @@ namespace microide::util {
   X(RenderGlyphAtlasRuns, "render.glyph_atlas_runs")                                            \
   X(RenderGlyphAtlasGlyphs, "render.glyph_atlas_glyphs")                                        \
   X(RenderGlyphAtlasFallbacks, "render.glyph_atlas_fallbacks")                                  \
+  /* fontconfig asked for a face covering a code point no face of the chain has  */           \
+  /* (~0.4 ms each): once per code point per font chain, never per raster.       */           \
+  X(RenderFontFallbackQueries, "render.font_fallback_queries")                                  \
   /* The non-ASCII composite path. A string with any non-ASCII in it is drawn one  */           \
   /* glyph CLUSTER at a time so each lands on its own grid cell, and every cluster */           \
   /* that misses the ASCII atlas is its own TTF_RenderText_Blended. `surfaces` is  */           \

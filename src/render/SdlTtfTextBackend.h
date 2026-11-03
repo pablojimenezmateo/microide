@@ -18,7 +18,6 @@
 #include <string_view>
 #include <tuple>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace microide::render {
@@ -207,8 +206,11 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   // Reset by a primary-font change (SetFontFamily) so the next non-ASCII subject
   // re-resolves fallbacks against the new primary.
   mutable bool fallback_fonts_loaded_ = false;
-  // Code points EnsureCodepointCovered has answered for the current chain.
-  mutable std::unordered_set<char32_t> checked_codepoints_;
+  // Code points EnsureCodepointCovered has answered for the current chain: one bit
+  // per Unicode scalar (139 KB, allocated on the first non-ASCII cell). A set
+  // capped at 4096 entries stopped remembering past that, and every later glyph no
+  // face has asked fontconfig again (~0.4 ms) on each raster of its row.
+  mutable std::vector<std::uint64_t> checked_codepoints_;
   std::filesystem::path font_path_;
   // The requested editor font family (empty = platform default). Retained so a
   // later size / presentation-scale change re-resolves the same family.

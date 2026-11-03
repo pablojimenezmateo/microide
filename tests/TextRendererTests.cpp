@@ -11,6 +11,7 @@
 #include "editor/TextViewport.h"
 #include "platform/RuntimePaths.h"
 #include "util/PerformanceCounters.h"
+#include "util/StringUtil.h"
 #include <cstdint>
 #include <cstring>
 #include <optional>
@@ -591,6 +592,47 @@ void TestAGlyphNoFallbackHasIsFoundWithFontconfig() {
   const std::vector<bool> cross = lit("\xe2\x9d\x8c\xef\xb8\x8f");  // U+274C U+FE0F, as gdb prints it
   Expect(std::count(cross.begin(), cross.end(), true) > 0, "the cross mark draws something");
   Expect(cross != box, "and it is the glyph, not the box a missing one draws");
+}
+
+// A code point no face has is asked of fontconfig once (~0.4 ms), not on every raster
+// of its row. The answers were kept in a set capped at 4096 code points; a document
+// with more distinct ones than that asked again for each further glyph whenever a
+// row holding it was drawn. 4,200 plane-15 private-use code points (which no face
+// has), drawn twice in different strings: the second pass asks nothing.
+void TestAFallbackQueryIsAskedOncePerCodepoint() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(400, 40);
+  auto backend = microide::render::SdlTtfTextBackend::Create(canvas.renderer());
+  Expect(backend != nullptr, "the real SDL_ttf backend builds");
+  microide::render::StringTextureCache texture_cache;
+  constexpr char32_t kFirst = 0xF0000;
+  constexpr int kCount = 4200;
+  constexpr int kPerString = 12;
+  const auto draw_all = [&](bool reversed) {
+    for (int base = 0; base < kCount; base += kPerString) {
+      std::string text;
+      for (int i = 0; i < kPerString && base + i < kCount; ++i) {
+        const int offset = reversed ? std::min(kCount, base + kPerString) - 1 - i : base + i;
+        microide::util::AppendUtf8(text, kFirst + static_cast<char32_t>(offset));
+      }
+      backend->DrawString(canvas.renderer(), texture_cache, 2.0f, 2.0f, SDL_Color{0xff, 0xff, 0xff, 0xff}, text);
+    }
+  };
+  const auto queries = [] {
+    return microide::util::ReadPerformanceCounter(microide::util::PerfCounterId::RenderFontFallbackQueries);
+  };
+  const std::uint64_t before = queries();
+  draw_all(false);
+  const std::uint64_t first_pass = queries() - before;
+  if (first_pass == 0) {
+    std::fprintf(stderr, "skipped: no fontconfig fallback lookup in this build\n");
+    return;
+  }
+  Expect(first_pass <= static_cast<std::uint64_t>(kCount), "at most one query per code point the first time");
+  draw_all(true);
+  const std::uint64_t second_pass = queries() - before - first_pass;
+  Expect(second_pass == 0, "the same code points in new strings ask nothing again (asked " +
+                               std::to_string(second_pass) + " times)");
 }
 
 void TestEphemeralRunsMatchTheCachedCompositePath() {
@@ -3361,6 +3403,7 @@ void TestMeasureWidthDoesNotCacheOversizedStrings() {
 
 void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextRenderer/AGlyphNoFallbackHasIsFoundWithFontconfig", TestAGlyphNoFallbackHasIsFoundWithFontconfig);
+  AddTest(tests, "TextRenderer/AFallbackQueryIsAskedOncePerCodepoint", TestAFallbackQueryIsAskedOncePerCodepoint);
   AddTest(tests, "TextRenderer/FontSizeSetBeforeInitializeIsKept", TestSdlTtfFontSizeSetBeforeInitializeIsKept);
   AddTest(tests, "TextRenderer/NonAsciiMeasuresAndDrawsOnTheCellGrid",
           TestSdlTtfNonAsciiMeasuresAndDrawsOnTheCellGrid);

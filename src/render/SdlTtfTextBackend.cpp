@@ -1155,6 +1155,7 @@ void SdlTtfTextBackend::CloseFallbackFonts() {
   fallback_fonts_.clear();
   fallback_fonts_loaded_ = false;
   checked_codepoints_.clear();  // a new chain answers them afresh
+  checked_codepoints_.shrink_to_fit();
 }
 
 void SdlTtfTextBackend::CloseFonts() {
@@ -1267,13 +1268,19 @@ std::filesystem::path SdlTtfTextBackend::FaceCoveringCodepointForTesting(char32_
 
 void SdlTtfTextBackend::EnsureCodepointCovered(char32_t codepoint) const {
   // Once per code point: a hit is the common case (every later cell of a script).
-  constexpr std::size_t kMaxRemembered = 4096;
-  if (font_ == nullptr || checked_codepoints_.contains(codepoint)) {
+  constexpr std::size_t kScalarCount = 0x110000;
+  if (font_ == nullptr || codepoint >= kScalarCount) {
     return;
   }
-  if (checked_codepoints_.size() < kMaxRemembered) {
-    checked_codepoints_.insert(codepoint);
+  if (checked_codepoints_.empty()) {
+    checked_codepoints_.assign(kScalarCount / 64, 0);
   }
+  std::uint64_t& word = checked_codepoints_[codepoint / 64];
+  const std::uint64_t bit = std::uint64_t{1} << (codepoint % 64);
+  if ((word & bit) != 0) {
+    return;
+  }
+  word |= bit;
   if (TTF_FontHasGlyph(font_, codepoint)) {
     return;
   }
@@ -1286,6 +1293,7 @@ void SdlTtfTextBackend::EnsureCodepointCovered(char32_t codepoint) const {
   // No face the chain knows has it (gdb's error prefix, U+274C, is in none of the
   // fixed fallbacks, and drew as a box: TD-2026-11-01-427 item 5): ask fontconfig
   // for one that does, as terminals do, and put it at the end of the chain.
+  util::AddPerformanceCounter(util::PerfCounterId::RenderFontFallbackQueries);
   const std::filesystem::path face = FaceCoveringCodepoint(codepoint);
   if (face.empty() || face == font_path_) {
     return;
