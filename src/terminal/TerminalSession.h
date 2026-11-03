@@ -529,6 +529,10 @@ class TerminalSession {
   util::Rgba8 default_foreground_ = util::Rgba8{0xf5, 0xf7, 0xfa, 0xff};
   util::Rgba8 default_background_ = util::Rgba8{0x1f, 0x24, 0x2c, 0xff};
   int sync_suppressed_wakes_ = 0;
+  // A synchronized frame closed (`?2026l`) since the last wake decision. A read that
+  // closes frame N and opens N+1 ends with the mode set again; without this the
+  // finished frame N waited for the next output -- the screen one keystroke behind.
+  bool sync_frame_completed_ = false;
   // Kitty keyboard protocol progressive-enhancement flags (0 = legacy mode) and
   // the push/pop stack maintained by `CSI > flags u` / `CSI < n u`.
   std::uint8_t kitty_keyboard_flags_ = 0;

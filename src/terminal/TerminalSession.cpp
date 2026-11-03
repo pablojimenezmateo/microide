@@ -680,8 +680,16 @@ bool TerminalSession::ConsumeWakeDecisionLocked() {
   // between `?2026h` and `?2026l`; repainting mid-frame both tears and burns
   // CPU. Suppress the redraw wake while the frame is open, with a safety cap so
   // an application that never closes the frame cannot freeze the display.
+  //
+  // A frame that CLOSED during this output is shown even when the next one has
+  // already opened: the read boundary falls anywhere, and a read holding the end of
+  // frame N and the start of N+1 used to be suppressed whole -- N appeared only
+  // with the next output, so a TUI that redraws per keystroke (Claude Code, Ink)
+  // showed its input, and its cursor, one keystroke behind.
   constexpr int kMaxSuppressedWakes = 8;
-  if (synchronized_output_ && sync_suppressed_wakes_ < kMaxSuppressedWakes) {
+  const bool frame_completed = sync_frame_completed_;
+  sync_frame_completed_ = false;
+  if (synchronized_output_ && !frame_completed && sync_suppressed_wakes_ < kMaxSuppressedWakes) {
     ++sync_suppressed_wakes_;
     return false;
   }

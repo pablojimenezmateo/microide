@@ -164,6 +164,9 @@ void TerminalSession::HandlePrivateModeLocked(int mode, bool enabled) {
       color_scheme_updates_ = enabled;
       return;
     case 2026:
+      if (!enabled && synchronized_output_) {
+        sync_frame_completed_ = true;  // a whole frame is ready to show
+      }
       synchronized_output_ = enabled;
       if (!enabled) {
         sync_suppressed_wakes_ = 0;

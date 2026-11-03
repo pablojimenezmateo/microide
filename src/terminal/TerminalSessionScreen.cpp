@@ -704,6 +704,7 @@ void TerminalSession::ResetTerminalModesLocked() {
   kitty_keyboard_stack_.clear();
   synchronized_output_ = false;
   sync_suppressed_wakes_ = 0;
+  sync_frame_completed_ = false;
   cursor_shape_ = CursorShape::Block;
   cursor_blinking_ = true;
 }

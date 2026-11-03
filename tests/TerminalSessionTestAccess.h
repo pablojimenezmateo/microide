@@ -52,6 +52,14 @@ struct TerminalSessionTestAccess {
 #endif
   }
 
+  // What the PTY reader does with one read: parse it, then decide whether it wakes
+  // the frame loop (production's on_output). True: a redraw is requested.
+  static bool AppendOutputAndDecideWake(microide::terminal::TerminalSession& session, std::string_view data) {
+    std::scoped_lock lock(session.mutex_);
+    session.AppendOutputLocked(data);
+    return session.ConsumeWakeDecisionLocked();
+  }
+
   static void AppendOutput(microide::terminal::TerminalSession& session, std::string_view data) {
     {
       std::scoped_lock lock(session.mutex_);

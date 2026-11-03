@@ -1270,6 +1270,24 @@ void TestTerminalSessionTracksSynchronizedOutputMode() {
          "DEC mode 2026 reset should close the synchronized-output frame");
 }
 
+// One read of a TUI that redraws per keystroke can hold the end of one
+// synchronized frame and the start of the next. The finished frame must wake the
+// frame loop; deciding on the mode at the read's end suppressed it, and the screen
+// stayed one keystroke behind until more output came (Claude Code's input box).
+void TestTerminalSessionAFrameClosedInAReadWakesEvenWhenTheNextOneOpened() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 20);
+  Expect(!TerminalSessionTestAccess::AppendOutputAndDecideWake(session, "\x1b[?2026hframe one"),
+         "a frame still open does not wake");
+  Expect(TerminalSessionTestAccess::AppendOutputAndDecideWake(session, " done\x1b[?2026l\x1b[?2026h\x1b[2;1Hnext"),
+         "a read that closes a frame and opens the next wakes for the closed one");
+  Expect(!TerminalSessionTestAccess::AppendOutputAndDecideWake(session, " still drawing"),
+         "and the next frame, open, suppresses again");
+  Expect(TerminalSessionTestAccess::AppendOutputAndDecideWake(session, "\x1b[?2026l"),
+         "until it closes");
+  Expect(TerminalSessionTestAccess::AppendOutputAndDecideWake(session, "plain"), "unsynchronized output wakes");
+}
+
 void TestTerminalSessionAnswersDecrqmQueries() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -3522,6 +3540,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionAppliesKittyKeyboardProtocol);
   AddTest(tests, "TerminalSession/TracksSynchronizedOutputMode",
           TestTerminalSessionTracksSynchronizedOutputMode);
+  AddTest(tests, "TerminalSession/AFrameClosedInAReadWakesEvenWhenTheNextOneOpened",
+          TestTerminalSessionAFrameClosedInAReadWakesEvenWhenTheNextOneOpened);
   AddTest(tests, "TerminalSession/AnswersDecrqmQueries",
           TestTerminalSessionAnswersDecrqmQueries);
   AddTest(tests, "TerminalSession/TracksCursorShape", TestTerminalSessionTracksCursorShape);
