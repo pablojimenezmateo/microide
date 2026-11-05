@@ -67,6 +67,12 @@ Left:
    grapheme clusters. Curly underlines are what language-server-aware TUIs
    (helix, neovim's terminal UI) use for diagnostics.
 
+Seen in the pass's validation, not caused by it: qa-wayland's
+`caret-survives-view-changes` (an editor-only flow) failed once with every
+control command timing out from its first file open -- three GUI lanes ran side
+by side -- and passed on its retry alone (flaky, the lane green). Not reproduced;
+the evidence was `microide-qa-wayland-out/caret-survives-view-changes`.
+
 ### TD-2026-11-03-431 — the 2026-11-03 subsystem bug hunt: what it found and fixed, and what it left. [RESOLVED 2026-11-03 — 2 decided; 1, 3, 4 and 5 resolved]
 
 Every subsystem was read for defects, the 17 fuzz targets ran 15 minutes each (no
