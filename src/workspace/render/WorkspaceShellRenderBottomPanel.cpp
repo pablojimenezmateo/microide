@@ -422,16 +422,24 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       // dirty region and the painted caret cannot disagree.
       const std::optional<SDL_FRect> caret_rect = TerminalCaretRectIn(pane_layout, cursor);
       if (caret_rect.has_value()) {
+        // The program's DECSCUSR shape; a steady one does not blink.
+        const SDL_FRect shape_rect = TerminalCursorShapeRect(*caret_rect, cursor.shape);
+        const bool block = cursor.shape == terminal::TerminalCursorShape::Block;
         if (!is_active || !frame_state_.terminal_owns_caret) {
           // A pane that does not own the keyboard -- an inactive pane, or the active
           // one while focus is elsewhere or on its find bar -- shows where its cursor
           // is with a steady outline, as VS Code's unfocused terminal does. The
           // active pane blinked along with the find bar's caret while only the find
-          // bar's caret was repainted (QA monkey, seed 4).
-          DrawRect(renderer, *caret_rect, theme_.cursor);
-        } else if (frame_state_.caret_visible) {
-          DrawFilledRect(renderer, *caret_rect, theme_.cursor);
-          if (cursor.row >= first_row && cursor.row - first_row < terminal_lines.size()) {
+          // bar's caret was repainted (QA monkey, seed 4). A bar or an underline is
+          // too thin to outline, so it is drawn steady as it is.
+          if (block) {
+            DrawRect(renderer, *caret_rect, theme_.cursor);
+          } else {
+            DrawFilledRect(renderer, shape_rect, theme_.cursor);
+          }
+        } else if (frame_state_.caret_visible || !cursor.blinking) {
+          DrawFilledRect(renderer, shape_rect, theme_.cursor);
+          if (block && cursor.row >= first_row && cursor.row - first_row < terminal_lines.size()) {
             const auto& line = terminal_lines[cursor.row - first_row];
             if (cursor.column < line.cells.size()) {
               const auto& cell = line.cells[cursor.column];

@@ -94,7 +94,7 @@ void TestAgentQueriesOverSocket() {
   TerminalSessionTestAccess::Reset(right, 8, 40);
   TerminalSessionTestAccess::SetLaunchLabel(left, "agent");
   TerminalSessionTestAccess::SetLaunchLabel(right, "build");
-  TerminalSessionTestAccess::AppendOutput(left, "first\r\nsecond\r\nthird\r\n");
+  TerminalSessionTestAccess::AppendOutput(left, "first\r\nsecond\r\nthird\r\n\x1b[6 q");
   TerminalSessionTestAccess::AppendOutput(right, "compiling\r\ndone\r\n");
   TerminalSessionTestAccess::SetRunning(left, true);
   TerminalSessionTestAccess::SetRunning(right, false);
@@ -166,6 +166,12 @@ void TestAgentQueriesOverSocket() {
   Expect(left_text.find("first\nsecond\nthird") != std::string::npos,
          "terminal-output returns the scrollback as newline-joined text");
   Expect(left_text.empty() || left_text.back() != '\n', "trailing blank rows are trimmed");
+  // The cursor, with the shape the program asked for (`CSI 6 SP q`: a steady bar).
+  const util::JsonValue& cursor = (*out)["result"]["cursor"];
+  Expect(cursor["row"].AsInt(-1) == 3 && cursor["column"].AsInt(-1) == 0 && cursor["visible"].AsBool(),
+         "terminal-output reports where the cursor is");
+  Expect(cursor["shape"].AsString() == "bar" && !cursor["blinking"].AsBool(),
+         "and its DECSCUSR shape: " + cursor["shape"].AsString());
 
   // An explicit pane and a line cap.
   const auto right_out = util::ParseJson(ExchangeLine(

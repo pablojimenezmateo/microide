@@ -82,6 +82,11 @@ struct TerminalRowEmphasis {
 TerminalRowEmphasis TerminalRowSelectionEmphasis(const std::optional<TerminalSelectionBounds>& selection,
                                                  std::size_t row);
 
+// The part of the caret cell `cell` the cursor covers in `shape`: all of it, a
+// bar at its left edge, or a stroke along its bottom. Strokes scale with the cell
+// so the caret stays visible at HiDPI.
+SDL_FRect TerminalCursorShapeRect(SDL_FRect cell, terminal::TerminalCursorShape shape);
+
 // Minimum contrast an emphasized cell's text keeps against its washed background
 // (WCAG AA; VS Code's terminal.integrated.minimumContrastRatio default).
 inline constexpr float kTerminalEmphasisMinimumContrast = 4.5f;

@@ -493,7 +493,7 @@ bool TerminalSession::SnapshotLineRangeIfChanged(std::size_t start_row,
 
   std::scoped_lock lock(mutex_);
   if (cursor != nullptr) {
-    *cursor = TerminalCursorSnapshot{.row = cursor_row_, .column = cursor_column_, .visible = cursor_visible_};
+    *cursor = {cursor_row_, cursor_column_, cursor_visible_, cursor_shape_, cursor_blinking_};
   }
   if (snapshot_generation_.value() == previous_generation &&
       snapshot->generation == snapshot_generation_.value()) {
@@ -545,11 +545,7 @@ bool TerminalSession::screen_reverse_video() const {
 
 TerminalCursorSnapshot TerminalSession::CursorSnapshot() const {
   std::scoped_lock lock(mutex_);
-  return TerminalCursorSnapshot{
-      .row = cursor_row_,
-      .column = cursor_column_,
-      .visible = cursor_visible_,
-  };
+  return {cursor_row_, cursor_column_, cursor_visible_, cursor_shape_, cursor_blinking_};
 }
 
 bool TerminalSession::using_alternate_screen() const {

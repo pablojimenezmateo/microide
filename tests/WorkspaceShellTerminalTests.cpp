@@ -647,6 +647,65 @@ void TestWorkspaceShellTerminalAlternateScreenDropsTheSelection() {
          "leaving the alternate screen dropped vim's selection");
 }
 
+// The caret takes the program's DECSCUSR shape -- vim's insert mode, zsh and
+// readline vi modes switch to a bar -- and a steady shape does not blink. The
+// panel parsed the sequence and drew a blinking block whatever was asked. A shape
+// change in the same cell is repainted by the next frame, whatever it was for.
+void TestWorkspaceShellTerminalCursorTakesTheProgramsShape() {
+  EnsureDummySdlVideo();
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::SetCursorVisible(session, true);
+  TerminalSessionTestAccess::AppendOutput(session, "$ ");
+  WorkspaceShellTestAccess::SetFocusPanel(shell);
+  const auto visible_phase = [&]() { WorkspaceShellTestAccess::ResetCaretBlink(shell); };
+  const auto hidden_phase = [&]() {
+    WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks() - 530);
+  };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  visible_phase();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const std::optional<SDL_FRect> cell = WorkspaceShellTestAccess::CaretDirtyRect(shell);
+  Expect(cell.has_value() && cell->w >= 6.0f, "the fixture has a terminal caret");
+  const auto pixel = [&](float fx, float fy) {
+    return canvas.PixelAt(static_cast<int>(cell->x + cell->w * fx), static_cast<int>(cell->y + cell->h * fy));
+  };
+  const auto same = [](SDL_Color a, SDL_Color b) { return a.r == b.r && a.g == b.g && a.b == b.b; };
+  const SDL_Color caret = pixel(0.75f, 0.5f);
+  const SDL_Color blank = canvas.PixelAt(static_cast<int>(cell->x + cell->w * 6.5f),
+                                         static_cast<int>(cell->y + cell->h * 0.5f));
+  Expect(!same(caret, blank), "a block caret fills its cell");
+
+  workspace::RenderInvalidation unrelated;
+  unrelated.rects.push_back(SDL_FRect{0.0f, 0.0f, 8.0f, 8.0f});
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[5 q");  // blinking bar
+  auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, unrelated, visible_phase);
+  Expect(diff.count == 0, "the switch to a bar is painted by the next frame: " + DescribePixelDiff(diff));
+  Expect(same(pixel(0.05f, 0.5f), caret), "a bar at the cell's left edge");
+  Expect(same(pixel(0.75f, 0.5f), blank), "and not across the cell");
+  diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, unrelated, hidden_phase);
+  Expect(diff.count == 0, "the blink is repainted: " + DescribePixelDiff(diff));
+  Expect(same(pixel(0.05f, 0.5f), blank), "a blinking bar blinks");
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[4 q");  // steady underline
+  diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, unrelated, hidden_phase);
+  Expect(diff.count == 0, "the switch to an underline is painted: " + DescribePixelDiff(diff));
+  Expect(same(pixel(0.5f, 0.97f), caret), "a steady underline shows in the blink's hidden phase");
+  Expect(same(pixel(0.5f, 0.4f), blank), "an underline only along the bottom");
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[0 q");  // the default again
+  diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, unrelated, visible_phase);
+  Expect(diff.count == 0, "back to the default block: " + DescribePixelDiff(diff));
+  Expect(same(pixel(0.75f, 0.5f), caret), "the default is a block");
+}
+
 void TestWorkspaceShellTypingReenablesTerminalTailFollow() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -3300,6 +3359,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalSelectionWashesCellsAndLineBreaks);
   AddTest(tests, "WorkspaceShell/TerminalAlternateScreenDropsTheSelection",
           TestWorkspaceShellTerminalAlternateScreenDropsTheSelection);
+  AddTest(tests, "WorkspaceShell/TerminalCursorTakesTheProgramsShape",
+          TestWorkspaceShellTerminalCursorTakesTheProgramsShape);
   AddTest(tests, "WorkspaceShell/TerminalMultiClickDragsAndShiftClickExtend",
           TestWorkspaceShellTerminalMultiClickDragsAndShiftClickExtend);
   AddTest(tests, "WorkspaceShell/TerminalWrappedLinkPastTheWindowIsWhole",

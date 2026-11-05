@@ -189,6 +189,11 @@ project (see [README](README.md)); versions track meaningful shipped work.
   shows its selection dimmer. A full-screen program starting or exiting (vim,
   less) drops the selection instead of leaving it over unrelated text, where
   Ctrl+C copied it instead of interrupting the program.
+- **The terminal cursor takes the shape programs ask for.** vim's insert mode,
+  zsh, fish and readline vi modes and other programs that switch to a bar or an
+  underline cursor now get one, steady or blinking as they ask; the terminal used
+  to draw a blinking block regardless. The `terminal-output` control query
+  reports the cursor's position and shape.
 - **The caret is where you type.** Go to File and the project search box drew
   their caret above the input field. In a terminal running a full-screen program
   that redraws per keystroke (Claude Code), the screen — caret included — could

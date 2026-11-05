@@ -1,6 +1,7 @@
 #include "workspace/render/TerminalRowPaint.h"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 #include "render/ColorMath.h"
@@ -72,6 +73,23 @@ SDL_Color LegibleOn(SDL_Color foreground, SDL_Color background, TerminalRowPaint
 SDL_Color InactiveTerminalSelection(SDL_Color selection) {
   selection.a = static_cast<Uint8>(selection.a / 2);
   return selection;
+}
+
+SDL_FRect TerminalCursorShapeRect(SDL_FRect cell, terminal::TerminalCursorShape shape) {
+  switch (shape) {
+    case terminal::TerminalCursorShape::Bar:
+      cell.w = std::min(cell.w, std::max(2.0f, std::round(cell.w / 8.0f)));
+      break;
+    case terminal::TerminalCursorShape::Underline: {
+      const float thickness = std::min(cell.h, std::max(2.0f, std::round(cell.h / 10.0f)));
+      cell.y += cell.h - thickness;
+      cell.h = thickness;
+      break;
+    }
+    case terminal::TerminalCursorShape::Block:
+      break;
+  }
+  return cell;
 }
 
 TerminalCellColors ResolveTerminalCellColors(const terminal::TerminalStyle& style,

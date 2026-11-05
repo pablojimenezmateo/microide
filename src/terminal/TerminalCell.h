@@ -192,10 +192,22 @@ inline bool SameLine(const TerminalLine& a, const TerminalLine& b) {
   return true;
 }
 
+// DECSCUSR (`CSI Ps SP q`): the cursor's shape. Programs switch it per mode --
+// vim's insert mode, zsh/fish vi mode and readline's vi mode show a bar.
+enum class TerminalCursorShape : std::uint8_t {
+  Block,
+  Underline,
+  Bar,
+};
+
 struct TerminalCursorSnapshot {
   std::size_t row = 0;
   std::size_t column = 0;
   bool visible = true;
+  TerminalCursorShape shape = TerminalCursorShape::Block;
+  // False for DECSCUSR's steady shapes (2, 4, 6) and with DEC mode 12 reset.
+  bool blinking = true;
+  friend bool operator==(const TerminalCursorSnapshot&, const TerminalCursorSnapshot&) = default;
 };
 
 struct TerminalLineRangeSnapshot {

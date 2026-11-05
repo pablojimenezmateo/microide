@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 
+#include "terminal/TerminalCell.h"
 #include "terminal/TerminalPointerShape.h"
 #include "util/KeyModifiers.h"
 
@@ -43,12 +44,6 @@ struct TerminalMotionCell {
   std::size_t column = 0;
   TerminalMouseButton button = TerminalMouseButton::None;
   friend bool operator==(const TerminalMotionCell&, const TerminalMotionCell&) = default;
-};
-
-enum class TerminalCursorShape : std::uint8_t {
-  Block,
-  Underline,
-  Bar,
 };
 
 // A physical key press carrying its logical key plus active modifiers. The

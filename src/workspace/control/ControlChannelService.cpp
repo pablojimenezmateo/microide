@@ -1168,6 +1168,18 @@ util::JsonValue ControlChannelService::BuildTerminalOutput(const util::JsonValue
   object["running"] = util::JsonValue(session.running());
   object["lineCount"] = util::JsonValue(static_cast<std::int64_t>(line_count));
   object["text"] = util::JsonValue(std::move(text));
+  // Row is absolute, the same space as the transcript's rows; shape is DECSCUSR's.
+  const terminal::TerminalCursorSnapshot cursor = session.CursorSnapshot();
+  util::JsonObject cursor_object;
+  cursor_object["row"] = util::JsonValue(static_cast<std::int64_t>(cursor.row));
+  cursor_object["column"] = util::JsonValue(static_cast<std::int64_t>(cursor.column));
+  cursor_object["visible"] = util::JsonValue(cursor.visible);
+  cursor_object["shape"] = util::JsonValue(std::string(
+      cursor.shape == terminal::TerminalCursorShape::Bar         ? "bar"
+      : cursor.shape == terminal::TerminalCursorShape::Underline ? "underline"
+                                                                 : "block"));
+  cursor_object["blinking"] = util::JsonValue(cursor.blinking);
+  object["cursor"] = util::JsonValue(std::move(cursor_object));
   return util::JsonValue(std::move(object));
 }
 

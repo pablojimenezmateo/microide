@@ -157,6 +157,16 @@ def flow_terminal_escapes(app: q.App) -> None:
     app.expect("top" in _screen(app), "the line above the scroll region stays")
     _shell(app, "printf '\\033[2J\\033[Hcleared\\n'", "cleared", "erase display")
     app.expect("r4" not in _screen(app), "erase display cleared the earlier lines")
+    # DECSCUSR: the shape a program asks for (vim's insert mode asks for a bar) is
+    # the caret's, steady or blinking as asked; `0 q` restores the default block.
+    for sequence, shape, blinking in (("6", "bar", False), ("3", "underline", True), ("0", "block", True)):
+        app.type(f"printf '\\033[{sequence} q'\n")
+        app.wait_until(lambda: app.query("terminal-output").get("cursor", {}).get("shape") == shape, 3.0,
+                       f"the {shape} cursor")
+        cursor = app.query("terminal-output").get("cursor", {})
+        step(app, f"DECSCUSR {sequence}", 0.2)
+        app.expect(cursor.get("shape") == shape and cursor.get("blinking") is blinking,
+                   f"DECSCUSR {sequence} gives a {'blinking' if blinking else 'steady'} {shape} ({cursor})")
     # Bracketed paste: with ?2004h on, a paste arrives wrapped in ESC[200~ ... ESC[201~.
     if app.wayland:
         return  # the clipboard needs a seat input serial (TD-2026-10-19-366)

@@ -343,8 +343,10 @@ The last four are the agent-facing ones (ported 2026-10-07 from the never-merged
   `unseenBell`: a program rang the bell (BEL) while the tab was not on screen.
 - `terminal-output` snapshots one pane's scrollback: args `{tab, pane, lines}`
   default to the active tab's active pane and the last 1000 lines (capped at
-  20000). It returns `{tab, pane, running, lineCount, text}` with trailing blank
-  rows trimmed. PTY output is asynchronous, so this reads what is already
+  20000). It returns `{tab, pane, running, lineCount, text, cursor}` with trailing blank
+  rows trimmed; `cursor` is `{row, column, visible, shape, blinking}`, `row` in the
+  scrollback's absolute row space and `shape` the program's DECSCUSR choice
+  (`block`, `bar`, `underline`). PTY output is asynchronous, so this reads what is already
   buffered: run a command with `term`, then poll until `running` is false (no exit
   code is exposed).
 - Driving an interactive program in a terminal: `type <text>` PASTES (bracketed
