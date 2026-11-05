@@ -10,6 +10,11 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Added
 
+- **Terminal selections extend by words and lines, and with Shift+click.**
+  Dragging after a double-click extends by whole words and keeps the clicked
+  word (dragging back from it used to drop it); after a triple-click, by whole
+  lines. Shift+click extends the current selection, the same way. While a
+  program owns the mouse, Shift still starts a fresh selection past it.
 - **Drop a file onto a remote terminal.** A file from your machine dropped onto
   a host terminal (a screenshot for an agent running there) is sent to the host
   and its path there is typed, not the local path the host cannot open. Uploads

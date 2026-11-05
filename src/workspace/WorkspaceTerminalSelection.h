@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -71,6 +72,27 @@ std::optional<TerminalSelectionBounds> TerminalWordBoundsAt(const terminal::Term
 // for a blank row.
 std::optional<TerminalSelectionBounds> TerminalLineBoundsAt(const terminal::TerminalLine& line,
                                                             std::size_t row);
+
+// What a selection drag extends by: the cell it started on, or -- after a double
+// or triple click -- whole words or whole rows, as in every terminal and in the
+// editor one pane over.
+enum class TerminalSelectionUnit : std::uint8_t { Cell, Word, Line };
+
+struct TerminalSelectionEnds {
+  TerminalSelectionPoint anchor{};
+  TerminalSelectionPoint head{};
+};
+
+// The selection a drag (or a Shift+click) that started on `origin` -- the cell
+// pressed, or the word or row a multi-click selected -- makes with the pointer at
+// `point` over `line` (the row `point` is on). The origin is always kept whole:
+// dragging back from a double-clicked word keeps the word and extends to the
+// start of the word under the pointer, dragging forward to its end. A pointer on
+// a blank extends to the blank itself. `Cell` is a plain drag from origin.start.
+TerminalSelectionEnds ExtendTerminalSelection(TerminalSelectionUnit unit,
+                                              const TerminalSelectionBounds& origin,
+                                              const terminal::TerminalLine& line,
+                                              TerminalSelectionPoint point);
 
 // Default line/byte budgets for a "Copy Last Command" transcript. A long-running
 // command with large output can retain up to the full scrollback cap (100k lines),

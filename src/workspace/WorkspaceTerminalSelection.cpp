@@ -210,6 +210,39 @@ std::optional<TerminalSelectionBounds> TerminalLineBoundsAt(const terminal::Term
   return TerminalSelectionBounds{.start = {row, 0}, .end = {row, end}};
 }
 
+TerminalSelectionEnds ExtendTerminalSelection(TerminalSelectionUnit unit,
+                                              const TerminalSelectionBounds& origin,
+                                              const terminal::TerminalLine& line,
+                                              TerminalSelectionPoint point) {
+  const auto before = [](TerminalSelectionPoint a, TerminalSelectionPoint b) {
+    return a.row < b.row || (a.row == b.row && a.column < b.column);
+  };
+  // The unit under the pointer: the cell's own position, or the word or row it is in.
+  TerminalSelectionBounds target{.start = point, .end = point};
+  switch (unit) {
+    case TerminalSelectionUnit::Cell:
+      return TerminalSelectionEnds{.anchor = origin.start, .head = point};
+    case TerminalSelectionUnit::Word:
+      // The cell the pointer is over is the one left of the boundary it is
+      // nearest when it sits past the cell's middle, so test both sides.
+      if (auto word = TerminalWordBoundsAt(line, point.row, point.column); word.has_value()) {
+        target = *word;
+      } else if (point.column > 0) {
+        if (auto left = TerminalWordBoundsAt(line, point.row, point.column - 1); left.has_value()) {
+          target = *left;
+        }
+      }
+      break;
+    case TerminalSelectionUnit::Line:
+      target = TerminalSelectionBounds{.start = {point.row, 0}, .end = {point.row, TerminalLineContentEnd(line)}};
+      break;
+  }
+  if (before(target.start, origin.start)) {
+    return TerminalSelectionEnds{.anchor = origin.end, .head = target.start};
+  }
+  return TerminalSelectionEnds{.anchor = origin.start, .head = before(origin.end, target.end) ? target.end : origin.end};
+}
+
 bool TerminalSelectionContainsCell(const TerminalSelectionBounds& selection,
                                    std::size_t row,
                                    std::size_t column) {

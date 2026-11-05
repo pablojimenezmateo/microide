@@ -1478,6 +1478,56 @@ void TestWorkspaceShellTerminalDoubleClickSelectsWordTripleClickSelectsLine() {
          "double-clicking blank space should not select anything");
 }
 
+// Dragging after a double click extends by whole words and keeps the clicked
+// one, after a triple click by whole rows, and Shift+click extends the selection
+// there is. The drag used to move the head cell by cell from the word's start,
+// so dragging back from a double-clicked word dropped the word.
+void TestWorkspaceShellTerminalMultiClickDragsAndShiftClickExtend() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "one two three four\r\nsecond row\r\nthird row");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  const auto at = [&](std::size_t row, std::size_t column) {
+    return WorkspaceShellTestAccess::TerminalCellPoint(shell, row, column);
+  };
+  const auto selected = [&]() { return WorkspaceShellTestAccess::ActiveTerminalSelectedText(shell); };
+
+  // Double-click "three", drag back into "one".
+  Expect(SendMouseDown(shell, at(0, 9).x, at(0, 9).y, SDL_BUTTON_LEFT, 2), "double-click 'three'");
+  Expect(selected() == "three", "the word: [" + selected() + "]");
+  Expect(SendMouseMotion(shell, at(0, 1).x, at(0, 1).y, SDL_BUTTON_LMASK), "drag back");
+  Expect(selected() == "one two three", "back by words, keeping the word: [" + selected() + "]");
+  Expect(SendMouseMotion(shell, at(0, 15).x, at(0, 15).y, SDL_BUTTON_LMASK), "drag forward");
+  Expect(selected() == "three four", "forward by words: [" + selected() + "]");
+  Expect(SendMouseUp(shell, at(0, 15).x, at(0, 15).y, SDL_BUTTON_LEFT), "release");
+
+  // Shift+click on the next row extends that word selection by words.
+  {
+    ScopedHeldModifiers held(shell, SDL_KMOD_SHIFT);
+    Expect(SendMouseDown(shell, at(1, 2).x, at(1, 2).y, SDL_BUTTON_LEFT), "Shift+click");
+    Expect(SendMouseUp(shell, at(1, 2).x, at(1, 2).y, SDL_BUTTON_LEFT), "release");
+  }
+  Expect(selected() == "three four\nsecond", "Shift+click extends by words: [" + selected() + "]");
+
+  // Triple-click row 1, drag down into row 2: both rows whole.
+  Expect(SendMouseDown(shell, at(1, 3).x, at(1, 3).y, SDL_BUTTON_LEFT, 3), "triple-click row 1");
+  Expect(SendMouseMotion(shell, at(2, 1).x, at(2, 1).y, SDL_BUTTON_LMASK), "drag down");
+  Expect(SendMouseUp(shell, at(2, 1).x, at(2, 1).y, SDL_BUTTON_LEFT), "release");
+  Expect(selected() == "second row\nthird row", "a row drag takes rows whole: [" + selected() + "]");
+
+  // A plain click then Shift+click: a cell selection between the two.
+  Expect(SendMouseDown(shell, at(0, 4).x, at(0, 4).y, SDL_BUTTON_LEFT), "click");
+  Expect(SendMouseUp(shell, at(0, 4).x, at(0, 4).y, SDL_BUTTON_LEFT), "release");
+  {
+    ScopedHeldModifiers held(shell, SDL_KMOD_SHIFT);
+    Expect(SendMouseDown(shell, at(0, 7).x, at(0, 7).y, SDL_BUTTON_LEFT), "Shift+click");
+    Expect(SendMouseUp(shell, at(0, 7).x, at(0, 7).y, SDL_BUTTON_LEFT), "release");
+  }
+  Expect(selected() == "two", "click, Shift+click selects between them: [" + selected() + "]");
+}
+
 void TestWorkspaceShellTerminalSelectionWritesPrimaryBufferAndMiddleClickPastes() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -3250,6 +3300,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalSelectionWashesCellsAndLineBreaks);
   AddTest(tests, "WorkspaceShell/TerminalAlternateScreenDropsTheSelection",
           TestWorkspaceShellTerminalAlternateScreenDropsTheSelection);
+  AddTest(tests, "WorkspaceShell/TerminalMultiClickDragsAndShiftClickExtend",
+          TestWorkspaceShellTerminalMultiClickDragsAndShiftClickExtend);
   AddTest(tests, "WorkspaceShell/TerminalWrappedLinkPastTheWindowIsWhole",
           TestWorkspaceShellTerminalWrappedLinkPastTheWindowIsWhole);
   AddTest(tests, "WorkspaceShell/TerminalOsc8LinkClickOpensItsTarget",

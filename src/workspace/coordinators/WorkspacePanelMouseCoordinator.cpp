@@ -250,20 +250,38 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
           position.has_value()) {
         // Double-click selects the word under the pointer and triple-click the whole
         // row, exactly as they do in the editor surface one pane over (and as every
-        // terminal emulator does). Multi-click still arms the drag, so dragging after
-        // a double-click extends from the word, matching the editor.
+        // terminal emulator does). Multi-click still arms the drag, which then
+        // extends by whole words or rows and always keeps the one clicked.
+        const terminal::TerminalLine* line =
+            position->row >= first_row && position->row - first_row < terminal_lines.size()
+                ? &terminal_lines[position->row - first_row]
+                : nullptr;
+        const bool shift = (interaction_state_.key_modifiers & SDL_KMOD_SHIFT) != 0;
         std::optional<TerminalSelectionBounds> expanded;
-        if (event.button.clicks >= 2 && position->row >= first_row &&
-            position->row - first_row < terminal_lines.size()) {
-          const terminal::TerminalLine& line = terminal_lines[position->row - first_row];
+        if (event.button.clicks >= 2 && line != nullptr) {
           expanded = event.button.clicks == 2
-                         ? TerminalWordBoundsAt(line, position->row, position->column)
-                         : TerminalLineBoundsAt(line, position->row);
+                         ? TerminalWordBoundsAt(*line, position->row, position->column)
+                         : TerminalLineBoundsAt(*line, position->row);
         }
-        if (expanded.has_value()) {
+        // Shift+click extends the selection there is, by the unit it was made in,
+        // from what it started on (xterm, VS Code, the editor). Not while a program
+        // owns the mouse: there Shift is what selects at all, and a second
+        // Shift+drag starts a new selection rather than stretching the last one.
+        if (shift && event.button.clicks == 1 && terminal_tab->selection_anchor.has_value() &&
+            line != nullptr && !terminal_tab->session.WantsMouseCapture()) {
+          const TerminalSelectionEnds ends = ExtendTerminalSelection(
+              terminal_tab->selection_unit, terminal_tab->selection_origin, *line, *position);
+          terminal_tab->selection_anchor = ends.anchor;
+          terminal_tab->selection_head = ends.head;
+        } else if (expanded.has_value()) {
+          terminal_tab->selection_unit =
+              event.button.clicks == 2 ? TerminalSelectionUnit::Word : TerminalSelectionUnit::Line;
+          terminal_tab->selection_origin = *expanded;
           terminal_tab->selection_anchor = expanded->start;
           terminal_tab->selection_head = expanded->end;
         } else {
+          terminal_tab->selection_unit = TerminalSelectionUnit::Cell;
+          terminal_tab->selection_origin = TerminalSelectionBounds{.start = *position, .end = *position};
           terminal_tab->selection_anchor = *position;
           terminal_tab->selection_head = *position;
         }
@@ -517,8 +535,13 @@ bool PanelMouseCoordinator::HandleMotion(const SDL_Event& event) {
       if (const auto position = operations_.terminal_selection_position_for_point(
               static_cast<int>(std::lround(pointer.x)),
               static_cast<int>(std::lround(pointer.y)), terminal_lines, first_row);
-          position.has_value()) {
-        terminal_tab->selection_head = *position;
+          position.has_value() && position->row >= first_row &&
+          position->row - first_row < terminal_lines.size()) {
+        const TerminalSelectionEnds ends =
+            ExtendTerminalSelection(terminal_tab->selection_unit, terminal_tab->selection_origin,
+                                    terminal_lines[position->row - first_row], *position);
+        terminal_tab->selection_anchor = ends.anchor;
+        terminal_tab->selection_head = ends.head;
         state_.surface.focus = FocusTarget::Panel;
         return true;
       }

@@ -662,6 +662,17 @@ def flow_terminal_selection(app: q.App) -> None:
     step(app, "double-click beta", 0.2)
     got = copy_and_read("copy the word")
     app.expect(got.strip() == "beta", f"a double-click selects the word under it ({got!r})")
+    # Shift+click extends the word selection by words, to the end of "gamma".
+    app.click(*app.terminal_point(row, 13), modifiers=("shift",))
+    step(app, "Shift+click gamma", 0.2)
+    got = copy_and_read("copy the extended selection")
+    app.expect(got.strip() == "beta gamma", f"Shift+click extends a word selection by words ({got!r})")
+    # A drag after a double-click goes by words and keeps the clicked one: back
+    # from "gamma" into "alpha" takes all three.
+    app.drag(*app.terminal_point(row, 13), *app.terminal_point(row, 1), clicks=2)
+    step(app, "double-click drag back", 0.2)
+    got = copy_and_read("copy the word drag")
+    app.expect(got.strip() == "alpha beta gamma", f"a word drag back keeps the clicked word ({got!r})")
     app.click(*app.terminal_point(row, 7), clicks=3)
     step(app, "triple-click the line", 0.2)
     got = copy_and_read("copy the line")

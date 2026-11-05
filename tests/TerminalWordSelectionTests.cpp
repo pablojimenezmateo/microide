@@ -14,6 +14,7 @@
 
 #include "TestSupport.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -172,6 +173,52 @@ void TestTerminalTripleClickTakesTheRowWithoutTrailingBlanks() {
          "interior blanks stay inside the line selection");
 }
 
+// A drag after a double click extends by whole words and keeps the clicked one;
+// after a triple click, by whole rows; a plain drag is cell by cell from the press.
+void TestTerminalSelectionExtendsByItsUnit() {
+  using microide::workspace::ExtendTerminalSelection;
+  using microide::workspace::TerminalSelectionPoint;
+  using microide::workspace::TerminalSelectionUnit;
+  const std::string_view text = "one two three four";
+  const TerminalLine line = MakeLine(text);
+  const TerminalSelectionBounds two{.start = {0, 4}, .end = {0, 7}};
+  const auto slice = [&](const auto& ends) {
+    const auto lo = std::min(ends.anchor.column, ends.head.column);
+    const auto hi = std::max(ends.anchor.column, ends.head.column);
+    return std::string(text.substr(lo, hi - lo));
+  };
+
+  // Forward into "four" (pointer over its 'u'): to the end of "four".
+  auto ends = ExtendTerminalSelection(TerminalSelectionUnit::Word, two, line, TerminalSelectionPoint{0, 16});
+  Expect(slice(ends) == "two three four", "a word drag forward ends on a word end: [" + slice(ends) + "]");
+  // Back into "one": the clicked word is kept whole (the anchor moves to its end).
+  ends = ExtendTerminalSelection(TerminalSelectionUnit::Word, two, line, TerminalSelectionPoint{0, 1});
+  Expect(slice(ends) == "one two" && ends.anchor.column == 7,
+         "a word drag backward keeps the clicked word: [" + slice(ends) + "]");
+  // Inside the clicked word: just the word.
+  ends = ExtendTerminalSelection(TerminalSelectionUnit::Word, two, line, TerminalSelectionPoint{0, 5});
+  Expect(slice(ends) == "two", "the pointer inside the word selects the word: [" + slice(ends) + "]");
+  // On the boundary just past a word (the hit-test rounds to the nearer edge):
+  // that word, not the blank after it.
+  ends = ExtendTerminalSelection(TerminalSelectionUnit::Word, two, line, TerminalSelectionPoint{0, 13});
+  Expect(slice(ends) == "two three", "the edge after a word takes the word: [" + slice(ends) + "]");
+
+  // Rows: a triple click on row 2, dragged to row 4, takes rows 2..4 whole.
+  const TerminalLine row4 = MakeLine("last row   ");
+  const TerminalSelectionBounds line2{.start = {2, 0}, .end = {2, 9}};
+  ends = ExtendTerminalSelection(TerminalSelectionUnit::Line, line2, row4, TerminalSelectionPoint{4, 2});
+  Expect(ends.anchor.row == 2 && ends.anchor.column == 0 && ends.head.row == 4 && ends.head.column == 8,
+         "a row drag down ends at the pointer row's content end");
+  ends = ExtendTerminalSelection(TerminalSelectionUnit::Line, line2, row4, TerminalSelectionPoint{0, 5});
+  Expect(ends.anchor.row == 2 && ends.anchor.column == 9 && ends.head.row == 0 && ends.head.column == 0,
+         "a row drag up keeps the clicked row and starts at the pointer row's start");
+
+  // Cells: from the press, wherever the pointer goes.
+  const TerminalSelectionBounds press{.start = {0, 6}, .end = {0, 6}};
+  ends = ExtendTerminalSelection(TerminalSelectionUnit::Cell, press, line, TerminalSelectionPoint{0, 2});
+  Expect(ends.anchor.column == 6 && ends.head.column == 2, "a cell drag runs from the press to the pointer");
+}
+
 }  // namespace
 
 void RegisterTerminalWordSelectionTests(std::vector<TestCase>& tests) {
@@ -181,6 +228,7 @@ void RegisterTerminalWordSelectionTests(std::vector<TestCase>& tests) {
           TestTerminalWordBoundsAreAlwaysAMaximalRun);
   AddTest(tests, "TerminalWordSelection/TripleClickTakesTheRowWithoutTrailingBlanks",
           TestTerminalTripleClickTakesTheRowWithoutTrailingBlanks);
+  AddTest(tests, "TerminalWordSelection/SelectionExtendsByItsUnit", TestTerminalSelectionExtendsByItsUnit);
 }
 
 }  // namespace microide::tests

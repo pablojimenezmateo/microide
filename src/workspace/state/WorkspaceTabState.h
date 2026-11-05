@@ -643,6 +643,11 @@ struct TerminalPaneState {
   bool mouse_selecting = false;
   std::optional<TerminalSelectionPoint> selection_anchor;
   std::optional<TerminalSelectionPoint> selection_head;
+  // What the selection extends by and what it started on -- the cell pressed, or
+  // the word or row a double or triple click took -- for its drag and for a later
+  // Shift+click (ExtendTerminalSelection). Meaningful while a selection exists.
+  TerminalSelectionUnit selection_unit = TerminalSelectionUnit::Cell;
+  TerminalSelectionBounds selection_origin{};
   // Host-side capture of bytes typed/pasted since the last Enter, used ONLY to strip
   // the prompt prefix from the copy-last-command transcript (never sent to the PTY).
   // Bounded by kMaxPendingInputBytes: repeated pastes/programmatic input before a

@@ -5,6 +5,7 @@
 #include "platform/HostIntegration.h"
 
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <cctype>
 #include <cmath>
@@ -51,6 +52,17 @@ std::optional<TerminalSelectionPoint> CellInPaneLayout(int x, int y, const Layou
   };
 }
 
+
+// Every absolute-row point a pane's selection holds, for the row-space rebase:
+// the two ends and, while there is a selection, the word or row it started on
+// (a drag or a Shift+click extends from it). Null for an end that is unset.
+std::array<TerminalSelectionPoint*, 4> SelectionPointsOf(TerminalPaneState& pane) {
+  const bool selecting = pane.selection_anchor.has_value();
+  return {pane.selection_anchor ? &*pane.selection_anchor : nullptr,
+          pane.selection_head ? &*pane.selection_head : nullptr,
+          selecting ? &pane.selection_origin.start : nullptr,
+          selecting ? &pane.selection_origin.end : nullptr};
+}
 
 bool IsTerminalUrlTerminator(char character) {
   return util::IsAsciiSpace(static_cast<unsigned char>(character)) != 0 || character == '"' ||
@@ -858,9 +870,9 @@ void WorkspaceShell::RebaseActiveTerminalRowSpace() {
             moved(static_cast<std::uint64_t>(terminal_tab->scroll_row))) {
           terminal_tab->scroll_row += static_cast<int>(shift.added);
         }
-        for (auto* point : {&terminal_tab->selection_anchor, &terminal_tab->selection_head}) {
-          if (point->has_value() && moved((*point)->row)) {
-            (*point)->row += static_cast<std::size_t>(shift.added);
+        for (TerminalSelectionPoint* point : SelectionPointsOf(*terminal_tab)) {
+          if (point != nullptr && moved(point->row)) {
+            point->row += static_cast<std::size_t>(shift.added);
           }
         }
         if (terminal_tab->has_last_command && moved(terminal_tab->last_command_start_row)) {
@@ -883,9 +895,9 @@ void WorkspaceShell::RebaseActiveTerminalRowSpace() {
     const std::uint64_t added = terminal_tab->observed_scrollback_trim_total - total;
     terminal_tab->observed_scrollback_trim_total = total;
     terminal_tab->scroll_row += static_cast<int>(added);
-    for (auto* point : {&terminal_tab->selection_anchor, &terminal_tab->selection_head}) {
-      if (point->has_value()) {
-        (*point)->row += static_cast<std::size_t>(added);
+    for (TerminalSelectionPoint* point : SelectionPointsOf(*terminal_tab)) {
+      if (point != nullptr) {
+        point->row += static_cast<std::size_t>(added);
       }
     }
     if (terminal_tab->has_last_command) {
@@ -907,11 +919,10 @@ void WorkspaceShell::RebaseActiveTerminalRowSpace() {
             ? terminal_tab->scroll_row - static_cast<int>(delta)
             : 0;
   }
-  if (terminal_tab->selection_anchor.has_value()) {
-    terminal_tab->selection_anchor->row = drop_rows(terminal_tab->selection_anchor->row);
-  }
-  if (terminal_tab->selection_head.has_value()) {
-    terminal_tab->selection_head->row = drop_rows(terminal_tab->selection_head->row);
+  for (TerminalSelectionPoint* point : SelectionPointsOf(*terminal_tab)) {
+    if (point != nullptr) {
+      point->row = drop_rows(point->row);
+    }
   }
   if (terminal_tab->has_last_command) {
     terminal_tab->last_command_start_row = drop_rows(terminal_tab->last_command_start_row);
@@ -924,6 +935,7 @@ void WorkspaceShell::ClearTerminalSelection() {
     selection_autoscroll::Disarm(context_.interaction_state);
     terminal_tab->selection_anchor.reset();
     terminal_tab->selection_head.reset();
+    terminal_tab->selection_unit = TerminalSelectionUnit::Cell;
   }
 }
 
