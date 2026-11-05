@@ -681,6 +681,8 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | Click a breadcrumb segment, or `Ctrl+Shift+.` | Browse that folder's entries (the file segment, and the key: the file's own folder) in a pick; subfolders browse on, files open |
 | Click the status bar's `LF`/`CRLF` or `Spaces: 4` | Change End of Line Sequence (an undoable edit that dirties the file) / Indentation (spaces or tabs, tab size) |
 | `Ctrl+c` in terminal (with selection) | Copy terminal selection |
+| `Ctrl+Shift+A` in terminal | Select the whole transcript (also on the terminal's context menu) |
+| Double-click / triple-click in terminal, then drag | Select by words / by lines (the clicked one is kept); `Shift`+click extends the selection (with a program that owns the mouse, `Shift`+drag selects instead) |
 | `Ctrl+Shift+v` or `Shift+Insert` in terminal | Paste into terminal |
 | Click a URL or a `path:line:col` in terminal output | Open the link, or the file at that line in the editor |
 | `Ctrl`+click in editor | Go to definition |
@@ -888,6 +890,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `term-next`
 - `term-prev`
 - `term-relaunch`
+- `term-select-all`
 - `term-toggle`
 - `panel-toggle`
 - `panel-maximize`

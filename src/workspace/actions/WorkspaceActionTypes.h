@@ -251,6 +251,8 @@ enum class ActionId {
   TerminalNext,
   TerminalPrev,
   TerminalRelaunch,
+  // Select the active pane's whole transcript (Ctrl+Shift+A, the context menu).
+  TerminalSelectAll,
   TerminalToggle,
   PanelToggle,
   PanelToggleMaximized,

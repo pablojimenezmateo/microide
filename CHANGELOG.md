@@ -10,6 +10,10 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Added
 
+- **Select All in the terminal.** `Ctrl+Shift+A` (as in gnome-terminal and
+  Konsole), the terminal's context menu, or `term-select-all` selects the whole
+  transcript, ending at the last line with text. Copying a large selection no
+  longer briefly holds a copy of every selected row in memory.
 - **Terminal selections extend by words and lines, and with Shift+click.**
   Dragging after a double-click extends by whole words and keeps the clicked
   word (dragging back from it used to drop it); after a triple-click, by whole

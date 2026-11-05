@@ -22,6 +22,8 @@
 #include <vector>
 
 #include "terminal/TerminalCell.h"
+#include "util/StringUtil.h"
+#include <random>
 #include "workspace/WorkspaceTerminalSelection.h"
 
 namespace microide::tests {
@@ -219,6 +221,108 @@ void TestTerminalSelectionExtendsByItsUnit() {
   Expect(ends.anchor.column == 6 && ends.head.column == 2, "a cell drag runs from the press to the pointer");
 }
 
+// The selection copy as it was written before it streamed (one snapshot of every
+// selected row, one pass): the reference the streaming builder must match.
+std::string ReferenceSelectionText(const std::vector<TerminalLine>& lines,
+                                   const TerminalSelectionBounds& selection, std::size_t max_bytes) {
+  if (lines.empty() || selection.start.row >= lines.size()) {
+    return {};
+  }
+  const auto content_end = [](const TerminalLine& line) {
+    std::size_t end = line.cells.size();
+    while (end > 0) {
+      const std::string_view text = line.cells[end - 1].DisplayText();
+      if (!text.empty() && text != " ") {
+        break;
+      }
+      --end;
+    }
+    return end;
+  };
+  const std::size_t end_row = std::min(selection.end.row, lines.size() - 1);
+  std::string text;
+  for (std::size_t row = selection.start.row; row <= end_row; ++row) {
+    const auto& line = lines[row];
+    const std::size_t size = line.cells.size();
+    const std::size_t start_column = row == selection.start.row ? std::min(selection.start.column, size) : 0;
+    std::size_t end_column = row == end_row ? std::min(selection.end.column, size) : size;
+    const bool continued = row + 1 < lines.size() && lines[row + 1].wrapped_from_previous;
+    if (!continued) {
+      end_column = std::max(start_column, std::min(end_column, content_end(line)));
+    }
+    text.append(workspace::TerminalLineSliceText(line, start_column, end_column, false));
+    if (text.size() >= max_bytes) {
+      text.resize(util::Utf8ByteBudgetPrefixLength(text, max_bytes));
+      text += "\n[selection truncated]";
+      return text;
+    }
+    if (row != end_row && !lines[row + 1].wrapped_from_previous) {
+      text.push_back('\n');
+    }
+  }
+  return text;
+}
+
+// The streaming selection copy (TerminalSelectionTextBuilder, which reads the
+// rows in chunks so a select-all over the whole scrollback does not snapshot
+// every row at once) produces byte for byte what the one-pass copy did, over
+// random rows with soft wraps, padding, wide glyphs and a tight byte budget; and
+// fed in any chunking, the same again.
+void TestTerminalSelectionCopyStreamsIdentically() {
+  using microide::workspace::ExtractTerminalSelectionText;
+  using microide::workspace::TerminalSelectionTextBuilder;
+  std::mt19937 rng(1105);
+  const auto pick = [&](std::size_t lo, std::size_t hi) {
+    return std::uniform_int_distribution<std::size_t>(lo, hi)(rng);
+  };
+  std::size_t compared = 0;
+  for (int trial = 0; trial < 600; ++trial) {
+    std::vector<TerminalLine> lines(pick(1, 9));
+    for (TerminalLine& line : lines) {
+      line.cells.resize(pick(0, 12));
+      line.wrapped_from_previous = pick(0, 3) == 0;
+      for (std::size_t c = 0; c < line.cells.size(); ++c) {
+        const std::size_t kind = pick(0, 9);
+        if (kind < 5) {
+          line.cells[c].SetAscii(static_cast<char>('a' + pick(0, 25)));
+        } else if (kind == 5 && c + 1 < line.cells.size()) {
+          line.cells[c].SetUtf8("\xe4\xb8\xad");
+          line.cells[c + 1].style.set(terminal::cell_attr::kWideTrailing, true);
+          ++c;
+        }
+      }
+    }
+    // Both ends on rows that exist. (Past the last row the one-pass copy cut the
+    // last row it had at the selection's end column -- another row's column; the
+    // builder applies it only to the selection's own end row.)
+    const TerminalSelectionBounds bounds = *workspace::NormalizeTerminalSelection(
+        workspace::TerminalSelectionPoint{pick(0, lines.size() - 1), pick(0, 13)},
+        workspace::TerminalSelectionPoint{pick(0, lines.size() - 1), pick(0, 13)});
+    const std::size_t budget = pick(0, 3) == 0 ? pick(1, 20) : 1u << 20;
+    const std::string expected = ReferenceSelectionText(lines, bounds, budget);
+    const std::string got = ExtractTerminalSelectionText(lines, bounds, budget);
+    if (got != expected) {
+      Expect(false, "the streaming copy differs from the one-pass copy: [" + got + "] vs [" + expected + "]");
+      return;
+    }
+    // Fed by hand, as the chunked reader does: rows in order, the row after the
+    // last deciding whether its padding is text.
+    if (bounds.start.row < lines.size()) {
+      TerminalSelectionTextBuilder builder(bounds, budget);
+      const std::size_t end_row = std::min(bounds.end.row, lines.size() - 1);
+      bool more = true;
+      for (std::size_t row = bounds.start.row; row <= end_row && more; ++row) {
+        more = builder.AddRow(row, lines[row]);
+      }
+      const std::string fed =
+          builder.Finish(more && end_row + 1 < lines.size() && lines[end_row + 1].wrapped_from_previous);
+      Expect(fed == expected, "the builder fed row by row matches: [" + fed + "] vs [" + expected + "]");
+    }
+    ++compared;
+  }
+  Expect(compared == 600, "every trial compared");
+}
+
 }  // namespace
 
 void RegisterTerminalWordSelectionTests(std::vector<TestCase>& tests) {
@@ -229,6 +333,8 @@ void RegisterTerminalWordSelectionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TerminalWordSelection/TripleClickTakesTheRowWithoutTrailingBlanks",
           TestTerminalTripleClickTakesTheRowWithoutTrailingBlanks);
   AddTest(tests, "TerminalWordSelection/SelectionExtendsByItsUnit", TestTerminalSelectionExtendsByItsUnit);
+  AddTest(tests, "TerminalWordSelection/SelectionCopyStreamsIdentically",
+          TestTerminalSelectionCopyStreamsIdentically);
 }
 
 }  // namespace microide::tests

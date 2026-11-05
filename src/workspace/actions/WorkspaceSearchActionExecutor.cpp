@@ -57,6 +57,12 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
         return reject("No other terminal");
       }
       return DispatchResult::Handled;
+    case ActionId::TerminalSelectAll:
+      if (!context_.terminal_panel().SelectAll()) {
+        return reject(context_.HasActiveTerminalPane() ? "The terminal shows nothing to select"
+                                                       : "No terminal");
+      }
+      return DispatchResult::Handled;
     case ActionId::TerminalRelaunch:
       if (!context_.terminal_panel().RelaunchActivePane()) {
         return reject(context_.HasActiveTerminalPane() ? "The terminal is still running"

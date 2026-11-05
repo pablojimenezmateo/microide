@@ -314,6 +314,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   static const auto kTerminalContextItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::CopySelection),
       MenuItem(ActionId::PasteClipboard),
+      MenuItem(ActionId::TerminalSelectAll, "Select All", "Ctrl+Shift+A"),
       MenuSeparator(),
       MenuItem(ActionId::TerminalSplit, {}, "Ctrl+Shift+\\"),
       MenuItem(ActionId::TerminalRelaunch),

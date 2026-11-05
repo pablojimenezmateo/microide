@@ -79,6 +79,9 @@ class TerminalPanelService {
   // One rule for a file dragged in from another application and a tree row.
   std::string DroppedPathText(const TerminalPaneState* pane, const std::filesystem::path& local_path) const;
   void SyncPrimarySelectionWithTerminalSelection();
+  // Selects the active pane's whole transcript, up to its last row with text
+  // (gnome-terminal's and Konsole's Ctrl+Shift+A). False when it shows nothing.
+  bool SelectAll();
 
   // --- strip tabs -----------------------------------------------------------
   // Opens a new tab around one started pane. `focus_terminal` also shows the

@@ -452,6 +452,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return context_.current_project_state.editor_groups.size() > 1 &&
              !context_.current_project_state.focused_group().open_tabs.empty();
     case ActionId::TermClose:
+    case ActionId::TerminalSelectAll:
     case ActionId::TerminalSplit:
     case ActionId::TerminalFocusPaneLeft:
     case ActionId::TerminalFocusPaneRight:

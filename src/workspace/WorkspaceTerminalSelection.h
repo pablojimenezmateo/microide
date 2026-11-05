@@ -54,6 +54,39 @@ inline constexpr std::size_t kDefaultTerminalSelectionCopyMaxBytes = 8u * 1024u 
 std::string ExtractTerminalSelectionText(const std::vector<terminal::TerminalLine>& lines,
                                          const TerminalSelectionBounds& selection,
                                          std::size_t max_bytes = kDefaultTerminalSelectionCopyMaxBytes);
+
+// ExtractTerminalSelectionText fed one row at a time, so a caller can read the
+// rows in reused chunks instead of materializing the whole selection: a select-all
+// over the 100k-line scrollback cap was one row vector per line (~150 MB) on the
+// UI thread before the byte cap cut the text. Rows go in order from
+// selection.start.row, with no gaps; whether a row's line break is a real one is
+// known only from the row after it, so each row is settled when the next arrives
+// (or at Finish).
+class TerminalSelectionTextBuilder {
+ public:
+  explicit TerminalSelectionTextBuilder(const TerminalSelectionBounds& selection,
+                                        std::size_t max_bytes = kDefaultTerminalSelectionCopyMaxBytes)
+      : selection_(selection), max_bytes_(max_bytes) {}
+  // Absolute row `row` of the selection. False once the byte budget is spent:
+  // the text is final, stop feeding.
+  bool AddRow(std::size_t row, const terminal::TerminalLine& line);
+  // The text. `next_row_continues`: the row after the last one fed is a soft-wrap
+  // continuation of it, so its trailing blanks are text.
+  std::string Finish(bool next_row_continues);
+
+ private:
+  // Ends the pending row: drop its padding unless the next row continues it, then
+  // the budget, then the line break. False when the budget ran out.
+  bool SettlePending(bool continued, bool more_rows);
+
+  TerminalSelectionBounds selection_;
+  std::size_t max_bytes_;
+  std::string text_;
+  // Where the pending row's trailing blanks start in text_.
+  std::size_t pending_content_end_ = 0;
+  bool pending_ = false;
+  bool done_ = false;
+};
 bool TerminalSelectionContainsCell(const TerminalSelectionBounds& selection,
                                    std::size_t row,
                                    std::size_t column);

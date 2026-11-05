@@ -1537,6 +1537,18 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
           .skips_terminal = true,
       },
+      // Ctrl+Shift+A, as in gnome-terminal and Konsole: Ctrl+A is the program's
+      // (readline's beginning-of-line, tmux and screen's prefix).
+      KeybindingSpec{
+          .id = "terminal-select-all",
+          .action = ActionId::TerminalSelectAll,
+          .key = SDLK_A,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+          .context = KeybindingContext::Terminal,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
       KeybindingSpec{
           .id = "terminal-split",
           .action = ActionId::TerminalSplit,

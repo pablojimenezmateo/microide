@@ -769,26 +769,68 @@ bool TerminalPanelService::HasSelection(const ProjectWorkspaceState& state) {
 
 std::string TerminalPanelService::SelectedText(const ProjectWorkspaceState& state) {
   const auto selection = ActiveSelectionBounds(state);
-  if (!selection.has_value()) {
-    return {};
-  }
-
   const auto* terminal_tab = state.active_terminal_pane();
-  if (terminal_tab == nullptr) {
+  if (!selection.has_value() || terminal_tab == nullptr) {
     return {};
   }
-
-  const std::size_t first_row = selection->start.row;
-  const auto lines = terminal_tab->session.SnapshotLineRange(
-      first_row, selection->end.row - first_row + 1);
-  if (lines.empty()) {
-    return {};
+  // Read in reused chunks, so a selection over the whole scrollback costs one
+  // chunk of rows, not one vector per selected row. Each chunk carries the row
+  // after it, which says whether its last row's line break is real. The PTY
+  // reader can trim or (host terminal) shift rows between two chunks; a read
+  // that saw either is taken again, and the last attempt stands, as the single
+  // snapshot this replaced stood whatever moved after it.
+  constexpr std::size_t kChunkRows = 256;
+  const terminal::TerminalSession& session = terminal_tab->session;
+  std::vector<terminal::TerminalLine> chunk;
+  for (int attempt = 0;; ++attempt) {
+    const std::uint64_t trims = session.ScrollbackTrimTotal();
+    const std::uint64_t shifts = session.RowShiftSequence();
+    TerminalSelectionTextBuilder builder(*selection);
+    bool next_row_continues = false;
+    for (std::size_t row = selection->start.row; row <= selection->end.row;) {
+      const std::size_t count = std::min(kChunkRows, selection->end.row - row + 1);
+      session.SnapshotLineRangeInto(row, count + 1, chunk);
+      const std::size_t fed = std::min(count, chunk.size());
+      bool more = fed == count;
+      for (std::size_t i = 0; i < fed && more; ++i) {
+        more = builder.AddRow(row + i, chunk[i]);
+      }
+      next_row_continues = more && chunk.size() > count && chunk[count].wrapped_from_previous;
+      if (!more) {
+        break;
+      }
+      row += count;
+    }
+    if (attempt == 2 || (trims == session.ScrollbackTrimTotal() && shifts == session.RowShiftSequence())) {
+      return builder.Finish(next_row_continues);
+    }
   }
+}
 
-  TerminalSelectionBounds rebased = *selection;
-  rebased.start.row -= first_row;
-  rebased.end.row -= first_row;
-  return ExtractTerminalSelectionText(lines, rebased);
+bool TerminalPanelService::SelectAll() {
+  TerminalPaneState* pane = state_.active_terminal_pane();
+  if (pane == nullptr) {
+    return false;
+  }
+  // Everything up to the last row that shows text: the grid below the prompt is
+  // padding, and a copy must not end in a run of empty lines. Only the screen's
+  // worth of rows at the end can be that padding.
+  const std::size_t line_count = pane->session.LineCount();
+  const std::size_t tail = std::min(line_count, std::max<std::size_t>(1, pane->session.rows()));
+  const std::vector<terminal::TerminalLine> last_rows = pane->session.SnapshotLineRange(line_count - tail, tail);
+  for (std::size_t index = last_rows.size(); index > 0; --index) {
+    if (const auto bounds = TerminalLineBoundsAt(last_rows[index - 1], line_count - tail + index - 1);
+        bounds.has_value()) {
+      pane->mouse_selecting = false;
+      pane->selection_unit = TerminalSelectionUnit::Cell;
+      pane->selection_origin = TerminalSelectionBounds{.start = {0, 0}, .end = {0, 0}};
+      pane->selection_anchor = TerminalSelectionPoint{0, 0};
+      pane->selection_head = bounds->end;
+      SyncPrimarySelectionWithTerminalSelection();
+      return true;
+    }
+  }
+  return false;
 }
 
 bool TerminalPanelService::HasLastCommand(const ProjectWorkspaceState& state) {

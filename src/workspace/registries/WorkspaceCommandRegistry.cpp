@@ -354,6 +354,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Ctrl+PageUp"},
       ActionSpec{ActionId::TerminalRelaunch, "term-relaunch", "term-relaunch",
                  "Relaunch Terminal", ""},
+      ActionSpec{ActionId::TerminalSelectAll, "term-select-all", "term-select-all",
+                 "Select All in Terminal", "Ctrl+Shift+A"},
       ActionSpec{ActionId::TerminalToggle, "term-toggle", "term-toggle", "Toggle Terminal",
                  "Ctrl+`"},
       ActionSpec{ActionId::PanelToggle, "panel-toggle", "panel-toggle", "Toggle Panel", "Ctrl+J",

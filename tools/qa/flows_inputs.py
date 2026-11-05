@@ -624,8 +624,8 @@ def flow_tree_file_ops(app: q.App) -> None:
 
 def flow_terminal_selection(app: q.App) -> None:
     """A double-click selects a word of the shell's output, a triple-click its
-    line, Shift+click extends; each copied with Ctrl+Shift+C and pasted into an
-    editor to read it back."""
+    line, Shift+click and a word drag extend by words, Ctrl+Shift+A takes it all;
+    each copied with Ctrl+Shift+C and pasted into an editor to read it back."""
     open_file(app, "notes/sel.txt", "")
     if not app.ui()["panel"]["visible"]:
         app.key("ctrl+grave")
@@ -683,6 +683,13 @@ def flow_terminal_selection(app: q.App) -> None:
     got = copy_and_read("copy the two-line selection")
     app.expect(got.startswith("beta gamma") and "second" in got,
                f"a drag across lines selects across them ({got!r})")
+    # Ctrl+Shift+A selects the whole transcript: both lines and the prompt after
+    # them, ending at the prompt (not in the blank rows below it).
+    app.key("ctrl+shift+a")
+    step(app, "select all", 0.2)
+    got = copy_and_read("copy everything")
+    app.expect("alpha beta gamma\nsecond line here\n" in got and got.rstrip("\n") == got
+               and got.endswith("$"), f"Ctrl+Shift+A selects the whole transcript ({got[-120:]!r})")
     # A click collapses the selection: with nothing selected, Ctrl+Shift+C leaves
     # the clipboard alone (a sentinel put there first says so).
     app.send("focus", "editor")

@@ -1587,6 +1587,48 @@ void TestWorkspaceShellTerminalMultiClickDragsAndShiftClickExtend() {
   Expect(selected() == "two", "click, Shift+click selects between them: [" + selected() + "]");
 }
 
+// Ctrl+Shift+A selects the whole transcript -- every scrollback row, up to the
+// last row with text, not the blank grid below the prompt -- and the copy reads
+// it in chunks: 700 rows is several of them, and the text must come out whole and
+// in order across their seams, with a soft-wrapped line straddling one kept
+// unbroken.
+void TestWorkspaceShellTerminalSelectAllCopiesTheWholeTranscript() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 40);
+  std::string expected;
+  std::string output;
+  for (int line = 0; line < 700; ++line) {
+    std::string text = "line " + std::to_string(line);
+    if (line == 255) {
+      text += std::string(60, 'w');  // wraps across rows 255/256 and the chunk seam
+    }
+    output += text + "\r\n";
+    expected += text + "\n";
+  }
+  output += "$ ";
+  expected += "$";
+  TerminalSessionTestAccess::AppendOutput(session, output);
+  WorkspaceShellTestAccess::SetFocusPanel(shell);
+  std::string primary;
+  WorkspaceShellTestAccess::SetPrimarySelectionTextWriter(shell, [&](std::string_view text) {
+    primary = std::string(text);
+    return true;
+  });
+
+  Expect(SendKeyDown(shell, SDLK_A, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT)),
+         "Ctrl+Shift+A is handled in the terminal");
+  Expect(TerminalSessionTestAccess::SentBytes(session).empty(), "and is not sent to the shell");
+  const std::string selected = WorkspaceShellTestAccess::ActiveTerminalSelectedText(shell);
+  Expect(selected == expected, "Select All takes the whole transcript, in order (" +
+                                   std::to_string(selected.size()) + " of " +
+                                   std::to_string(expected.size()) + " bytes)");
+  Expect(primary == expected, "and offers it as the primary selection, as a drag does");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "term-select-all"),
+         "term-select-all runs as a command too");
+}
+
 void TestWorkspaceShellTerminalSelectionWritesPrimaryBufferAndMiddleClickPastes() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -3363,6 +3405,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalCursorTakesTheProgramsShape);
   AddTest(tests, "WorkspaceShell/TerminalMultiClickDragsAndShiftClickExtend",
           TestWorkspaceShellTerminalMultiClickDragsAndShiftClickExtend);
+  AddTest(tests, "WorkspaceShell/TerminalSelectAllCopiesTheWholeTranscript",
+          TestWorkspaceShellTerminalSelectAllCopiesTheWholeTranscript);
   AddTest(tests, "WorkspaceShell/TerminalWrappedLinkPastTheWindowIsWhole",
           TestWorkspaceShellTerminalWrappedLinkPastTheWindowIsWhole);
   AddTest(tests, "WorkspaceShell/TerminalOsc8LinkClickOpensItsTarget",
