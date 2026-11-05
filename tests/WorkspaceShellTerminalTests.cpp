@@ -5,6 +5,7 @@
 #include "support/TerminalHostMirror.h"
 
 #include "TerminalSessionTestAccess.h"
+#include "util/AnsiPalette.h"
 #include "util/JsonValue.h"
 #include "workspace/ListSelection.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
@@ -1882,6 +1883,60 @@ void TestWorkspaceShellTerminalLinkUnderlinesOnHover() {
   Expect(!WorkspaceShellTestAccess::TerminalHoveredLink(shell).has_value(), "and none off a link");
 }
 
+// The hovered link is underlined in its own colour: a blue `ls --color` path got a
+// white underline (the theme's text colour), whatever the comment over it said.
+void TestWorkspaceShellTerminalLinkUnderlineTakesTheLinksColour() {
+  EnsureDummySdlVideo();
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, temp_dir.path());
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "see \x1b[34mhttps://example.com/x\x1b[0m now");
+  SoftwareCanvas canvas(kWidth, kHeight);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const SDL_FPoint first = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 4);
+  const SDL_FPoint last = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 24);
+  const SDL_FPoint below = WorkspaceShellTestAccess::TerminalCellPoint(shell, 1, 4);
+  const int x0 = static_cast<int>(first.x);
+  const int x1 = static_cast<int>(last.x);
+  const int y0 = static_cast<int>(first.y);
+  const int y1 = static_cast<int>(below.y);
+  std::vector<SDL_Color> before;
+  for (int y = y0; y < y1; ++y) {
+    for (int x = x0; x < x1; ++x) {
+      before.push_back(canvas.PixelAt(x, y));
+    }
+  }
+  (void)SendMouseMotion(shell, first.x + 30.0f, first.y, 0);
+  Expect(WorkspaceShellTestAccess::TerminalHoveredLink(shell).has_value(), "the link is hovered");
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  const util::Rgba8 blue = util::BasicAnsiColor(4, false);
+  std::size_t changed = 0;
+  std::size_t index = 0;
+  for (int y = y0; y < y1; ++y) {
+    for (int x = x0; x < x1; ++x, ++index) {
+      const SDL_Color now = canvas.PixelAt(x, y);
+      const SDL_Color was = before[index];
+      if (now.r == was.r && now.g == was.g && now.b == was.b) {
+        continue;
+      }
+      ++changed;
+      if (now.r != blue.r || now.g != blue.g || now.b != blue.b) {
+        Expect(false, "an underline pixel is not the link's blue at " + std::to_string(x) + "," +
+                          std::to_string(y));
+        return;
+      }
+    }
+  }
+  Expect(changed > 20, "the hover drew an underline (" + std::to_string(changed) + " pixels)");
+}
+
 // A link the terminal soft-wraps is one link on both rows (TD-2026-10-29-422 item
 // 4): the detector reads the logical line, so pointing at the part past the wrap
 // resolves the whole target and the underline spans the wrap. Before, the first
@@ -3386,6 +3441,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/TerminalLeftClickOpensUrls",
           TestWorkspaceShellTerminalLeftClickOpensUrls);
   AddTest(tests, "WorkspaceShell/TerminalLinkUnderlinesOnHover", TestWorkspaceShellTerminalLinkUnderlinesOnHover);
+  AddTest(tests, "WorkspaceShell/TerminalLinkUnderlineTakesTheLinksColour",
+          TestWorkspaceShellTerminalLinkUnderlineTakesTheLinksColour);
   AddTest(tests, "WorkspaceShell/FileDroppedOnTheTerminalTypesItsPath",
           TestWorkspaceShellFileDroppedOnTheTerminalTypesItsPath);
   AddTest(tests, "WorkspaceShell/TerminalNotificationToastsFromABackgroundProject",

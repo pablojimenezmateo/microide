@@ -403,10 +403,11 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
           const float link_w = std::min(
               static_cast<float>(end_column - std::min(begin_column, end_column)) * char_width,
               std::max(0.0f, pane_layout.text_x + pane_layout.text_width - link_x));
-          if (link_w > 0.0f) {
+          const std::vector<terminal::TerminalCell>& cells = terminal_lines[snapshot_index].cells;
+          if (link_w > 0.0f && begin_column < cells.size()) {
             DrawFilledRect(renderer,
                            MakeRect(link_x, line_y + pane_layout.line_height - thickness - 1.0f, link_w, thickness),
-                           theme_.text_primary);
+                           ResolveTerminalCellColors(cells[begin_column].style, terminal_palette).foreground);
           }
         }
       }
