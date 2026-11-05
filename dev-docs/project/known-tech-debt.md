@@ -13,6 +13,60 @@ entries and the guardrails stayed.
 
 ## Open items
 
+### TD-2026-11-05-432 — the 2026-11-05 terminal UI/UX review: what it fixed, and what it left. [OPEN — items 1 and 2]
+
+A review of the terminal as a user meets it -- selecting, copying, the cursor --
+driven through the QA harness's screenshots before and after. Fixed, each with a
+failing-first test:
+
+- **The selection was nearly invisible and erased the output's colours.** It
+  painted `theme.row_highlight` (the hover/cursor-line tint) under
+  `theme.text_primary`, and stopped at each row's last cell. Row paint is now a
+  pure planner (`workspace/render/TerminalRowPaint`): each cell resolved once, the
+  selection and find hits a wash composited over the cell's own background, its
+  foreground kept at WCAG AA contrast, the line break of a row the selection runs
+  past washed to the pane's edge, a wide glyph emphasized with its lead (what the
+  copy keys on), an unfocused terminal's selection at half strength. Paint used to
+  ask `WorkspaceShell::TerminalCellSelected` per cell -- a state walk ~5x per cell
+  per frame from a render TU; the pane now carries `frame_selection`, sampled in
+  frame prep, which repaints the pane when it changes.
+- **A selection survived a program entering or leaving the alternate screen**,
+  highlighting (and, on Ctrl+C, copying instead of interrupting) whatever vim drew
+  over the rows it named. The row-space rebase drops it.
+- **Drags after a double/triple click went cell by cell** (dragging back from a
+  double-clicked word dropped the word) **and Shift+click did nothing.**
+  `ExtendTerminalSelection` extends by the selection's unit from its origin.
+- **The cursor ignored DECSCUSR**: parsed, never drawn -- always a blinking block.
+- **No Select All**; and the copy snapshotted every selected row (~150 MB for the
+  100k-line cap) before its 8 MB text cap applied. It streams in 256-row chunks.
+- **The hovered link's underline was the theme's text colour**, not the link's.
+- **Paint cost**, measured by the new `terminal_paint_colored_selection` scenario
+  (A/B against the pass's base, interleaved, `WorkspaceShell::RenderBottomPanel`
+  under `MICROIDE_PERF_SUMMARY`): a plain coloured screen 8.4 -> 6.3 us per paint;
+  a wholly selected one ~14 us, after `RelativeLuminance` went to a lookup table
+  (the selection's contrast correction was ~25 us of `pow()` per paint before).
+
+Decided, not debt: SGR 5 (blink) is stored and not drawn, as in VS Code's
+terminal by default; `CSI 4:3 m` (curly) draws as a plain underline.
+
+Left:
+
+1. **Bold and italic are not drawn as faces.** SGR 1 brightens a basic-palette
+   foreground (as xterm's `boldColors`) but a truecolor or default-coloured bold
+   cell looks like any other, and SGR 3 changes nothing. A face is a font: the
+   fix is a style in `render::FontRequest` (resolved through fontconfig to the
+   family's Bold/Italic file, synthetic `TTF_STYLE_BOLD` only as the fallback),
+   a backend per style from the shared `TextBackendPool`, and the row planner
+   splitting glyph runs on style as it does on colour. The ASCII atlas and the
+   cluster cache are per backend already, so the cost is one more atlas per style
+   in use, paid only by a terminal that prints that style.
+2. **Underline colour (SGR 58/59) and the styles past double (4:3..4:5) are
+   parsed and dropped.** A colour does not fit the 18-byte `TerminalCell`
+   (`static_assert`); it wants out-of-line extended attributes keyed by cell, the
+   way xterm.js stores them, which the cell comment already names for long
+   grapheme clusters. Curly underlines are what language-server-aware TUIs
+   (helix, neovim's terminal UI) use for diagnostics.
+
 ### TD-2026-11-03-431 — the 2026-11-03 subsystem bug hunt: what it found and fixed, and what it left. [RESOLVED 2026-11-03 — 2 decided; 1, 3, 4 and 5 resolved]
 
 Every subsystem was read for defects, the 17 fuzz targets ran 15 minutes each (no

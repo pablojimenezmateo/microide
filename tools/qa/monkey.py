@@ -55,7 +55,7 @@ next-diagnostic open outdent-lines paste plugins-reload previous-diagnostic proj
 rename-symbol reopen reveal-in-tree review-branch review-commit review-conflicts save search
 select-all settings sidebar-close sidebar-hide sidebar-show sidebar-toggle signature-help
 soft-tabs sort-lines-ascending sort-lines-descending split-down split-right status-bar-toggle
-tab tabmove tab-size tabswitch term term-close terminal-find toggle-block-comment
+tab tabmove tab-size tabswitch term term-close term-select-all terminal-find toggle-block-comment
 toggle-editor-add-cursor-at-match toggle-editor-auto-close toggle-editor-folding
 toggle-editor-indent-guides toggle-editor-line-ops toggle-editor-render-whitespace
 toggle-editor-save-trim toggle-editor-smart-indent toggle-editor-snippets

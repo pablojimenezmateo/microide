@@ -1094,6 +1094,53 @@ void RegisterBuiltInScenarios() {
             context.CloseAllTerminals();
           },
   });
+  // The terminal's paint over output that changes colour every few cells -- what
+  // a compiler, `ls --color` or a TUI prints -- plain, then wholly selected. Every
+  // cell resolves its colours each frame (TerminalRowPaint) and a selected cell
+  // also composites the selection wash and corrects its contrast; the other
+  // terminal scenarios paint one-colour text and no selection, so neither cost
+  // showed anywhere. Full frames, so the panel is repainted each time. The two
+  // paint phases' allocation counts are equal (and equal to the build before the
+  // planner): selecting allocates nothing per frame. The gap between this
+  // scenario's total and its phases is the select-all and its copy to the
+  // primary selection. Introduced at 8.4 -> 6.3 us per plain panel paint
+  // (WorkspaceShell::RenderBottomPanel, MICROIDE_PERF_SUMMARY), ~14 us selected.
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "terminal_paint_colored_selection",
+      .smoke = false,
+      .warmup_iterations = 1,
+      .run =
+          [](ScenarioContext& context) {
+            (void)context.Open("tests/perf/fixtures/small_project");
+            context.PumpFrames(2);
+            context.OpenTerminal("perf-paint");
+            std::string output;
+            output.reserve(160 * 400);
+            for (int line = 0; line < 160; ++line) {
+              for (int word = 0; word < 16; ++word) {
+                output += "\x1b[3";
+                output += static_cast<char>('0' + (line + word) % 8);
+                if (word % 3 == 0) {
+                  output += ";4";
+                  output += static_cast<char>('0' + (word + 1) % 8);
+                } else {
+                  output += ";49";
+                }
+                output += "mword";
+                output += std::to_string(word);
+                output += ' ';
+              }
+              output += "\x1b[0m\r\n";
+            }
+            context.FeedTerminalOutput(output);
+            context.PumpFrames(2);
+            context.Measure("terminal.paint_colored", [&]() { context.PumpFrames(10); });
+            (void)context.ExecuteCommand("term-select-all");
+            context.PumpFrames(1);
+            context.Measure("terminal.paint_selected", [&]() { context.PumpFrames(10); });
+            context.CloseAllTerminals();
+          },
+  });
   PerfHarness::RegisterScenario(Scenario{
       .name = "long_soak_8h",
       .smoke = false,
