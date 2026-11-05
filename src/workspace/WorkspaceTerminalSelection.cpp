@@ -93,9 +93,9 @@ bool TerminalSelectionTextBuilder::AddRow(std::size_t row, const terminal::Termi
   // Reuse the whole-line slice logic so selection copy and line copy produce
   // identical text: wide-trailing spacer cells are skipped and empty cells
   // render as a single space.
-  text_.append(TerminalLineSliceText(line, start_column, content_end, /*trim_trailing=*/false));
+  AppendTerminalLineSlice(text_, line, start_column, content_end);
   pending_content_end_ = text_.size();
-  text_.append(TerminalLineSliceText(line, content_end, end_column, /*trim_trailing=*/false));
+  AppendTerminalLineSlice(text_, line, content_end, end_column);
   pending_ = true;
   return true;
 }
@@ -303,10 +303,18 @@ std::string TerminalLineSliceText(const terminal::TerminalLine& line,
                                   std::size_t start,
                                   std::size_t end,
                                   bool trim_trailing) {
+  std::string text;
+  text.reserve(std::min(end, line.cells.size()) - std::min(start, std::min(end, line.cells.size())));
+  AppendTerminalLineSlice(text, line, start, end);
+  return trim_trailing ? TrimTrailingTerminalBlanks(std::move(text)) : text;
+}
+
+void AppendTerminalLineSlice(std::string& out,
+                             const terminal::TerminalLine& line,
+                             std::size_t start,
+                             std::size_t end) {
   const std::size_t clamped_start = std::min(start, line.cells.size());
   const std::size_t clamped_end = std::min(std::max(clamped_start, end), line.cells.size());
-  std::string text;
-  text.reserve(clamped_end - clamped_start);
   for (std::size_t column = clamped_start; column < clamped_end; ++column) {
     const auto& cell = line.cells[column];
     // The trailing spacer of a double-width glyph holds no text of its own;
@@ -316,12 +324,11 @@ std::string TerminalLineSliceText(const terminal::TerminalLine& line,
     }
     const auto display_text = cell.DisplayText();
     if (!display_text.empty()) {
-      text.append(display_text);
+      out.append(display_text);
       continue;
     }
-    text.push_back(' ');
+    out.push_back(' ');
   }
-  return trim_trailing ? TrimTrailingTerminalBlanks(std::move(text)) : text;
 }
 
 }  // namespace microide::workspace

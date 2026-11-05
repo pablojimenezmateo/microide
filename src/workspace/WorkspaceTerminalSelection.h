@@ -38,6 +38,12 @@ std::string TerminalLineSliceText(const terminal::TerminalLine& line,
                                   std::size_t start,
                                   std::size_t end,
                                   bool trim_trailing);
+// The same slice, untrimmed, appended to `out`: the copy builds one string for
+// the whole selection, not one per row.
+void AppendTerminalLineSlice(std::string& out,
+                             const terminal::TerminalLine& line,
+                             std::size_t start,
+                             std::size_t end);
 // A row's text with its trailing blanks dropped (TerminalLineSliceText over the
 // whole row), and the same trim on text already extracted.
 std::string TerminalLineText(const terminal::TerminalLine& line);

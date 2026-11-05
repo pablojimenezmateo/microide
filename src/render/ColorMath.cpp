@@ -1,23 +1,25 @@
 #include "render/ColorMath.h"
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
 #include <cmath>
 
 namespace microide::render {
 
 float RelativeLuminance(SDL_Color color) {
-  auto srgb_to_linear = [](Uint8 value) -> float {
-    float v = static_cast<float>(value) / 255.0f;
-    if (v <= 0.04045f) {
-      return v / 12.92f;
+  // sRGB -> linear for every channel value, computed once: a contrast check is
+  // six of these, and EnsureContrast runs up to 25 checks, so the pow() per
+  // channel made a terminal's selected cells cost microseconds each.
+  static const std::array<float, 256> kLinear = [] {
+    std::array<float, 256> table{};
+    for (std::size_t value = 0; value < table.size(); ++value) {
+      const float v = static_cast<float>(value) / 255.0f;
+      table[value] = v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f);
     }
-    return std::pow((v + 0.055f) / 1.055f, 2.4f);
-  };
-
-  float r = srgb_to_linear(color.r);
-  float g = srgb_to_linear(color.g);
-  float b = srgb_to_linear(color.b);
-  return 0.2126f * r + 0.7152f * g + 0.0722f * b;
+    return table;
+  }();
+  return 0.2126f * kLinear[color.r] + 0.7152f * kLinear[color.g] + 0.0722f * kLinear[color.b];
 }
 
 float Contrast(SDL_Color c1, SDL_Color c2) {

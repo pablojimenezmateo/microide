@@ -56,16 +56,17 @@ SDL_Color WashFor(Emphasis emphasis, const TerminalPaintPalette& palette) {
 }
 
 SDL_Color LegibleOn(SDL_Color foreground, SDL_Color background, TerminalRowPaintPlan::Scratch& scratch) {
-  if (scratch.memo_valid && SameColor(scratch.memo_foreground, foreground) &&
-      SameColor(scratch.memo_background, background)) {
-    return scratch.memo_result;
+  const auto pack = [](SDL_Color c) {
+    return static_cast<std::uint64_t>(c.r) << 24 | static_cast<std::uint64_t>(c.g) << 16 |
+           static_cast<std::uint64_t>(c.b) << 8 | c.a;
+  };
+  const std::uint64_t key = pack(foreground) << 32 | pack(background);
+  auto& entry = scratch.contrast[(key ^ (key >> 29) ^ (key >> 13)) % scratch.contrast.size()];
+  if (entry.key != key) {
+    entry.key = key;
+    entry.result = render::EnsureContrast(foreground, background, kTerminalEmphasisMinimumContrast);
   }
-  scratch.memo_foreground = foreground;
-  scratch.memo_background = background;
-  scratch.memo_result =
-      render::EnsureContrast(foreground, background, kTerminalEmphasisMinimumContrast);
-  scratch.memo_valid = true;
-  return scratch.memo_result;
+  return entry.result;
 }
 
 }  // namespace

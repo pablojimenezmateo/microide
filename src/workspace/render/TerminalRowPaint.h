@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -124,12 +125,15 @@ struct TerminalRowPaintPlan {
   // Working state of PlanTerminalRow, not part of the plan.
   struct Scratch {
     std::vector<TerminalCellColors> cells;
-    // One-entry memo of the contrast correction: a selected span is mostly one
-    // (foreground, background) pair, and the correction costs a dozen pow() calls.
-    SDL_Color memo_foreground{};
-    SDL_Color memo_background{};
-    SDL_Color memo_result{};
-    bool memo_valid = false;
+    // The contrast correction's answers, direct-mapped on the (foreground,
+    // background) pair and kept across rows and frames: coloured output selected
+    // asks for a few dozen pairs, again every frame, and each answer is up to 25
+    // contrast checks.
+    struct ContrastEntry {
+      std::uint64_t key = 0;  // 0: empty (a real key always has the alpha bytes set)
+      SDL_Color result{};
+    };
+    std::array<ContrastEntry, 64> contrast{};
   } scratch;
 };
 
