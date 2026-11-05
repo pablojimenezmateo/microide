@@ -266,8 +266,11 @@ void TestArchitectureFileSizes() {
              // DebugPaneService.
              // 1614: the terminal's selection and last-command readers are
              // TerminalPanelService's static state readers (TD-2026-10-28-412).
+             // 1583: the slack since then, plus the terminal row paint: its two
+             // scratch members and run struct became one TerminalRowPaintPlan, and
+             // TerminalCellSelected went (paint reads the pane's frame_selection).
              return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShellMembers.inc",
-                                                     1614);
+                                                     1583);
            });
 
   AssertRuleResultsPass(results);

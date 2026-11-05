@@ -670,6 +670,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/render/WorkspaceShellRenderTextInput.cpp
   src/workspace/render/SingleLineViewMetrics.cpp
   src/workspace/render/RenderViewModelBuilder.cpp
+  src/workspace/render/TerminalRowPaint.cpp
   src/workspace/render/WorkspaceShellHoverPopup.cpp
   src/workspace/render/WorkspaceShellHoverTargets.cpp
   src/workspace/persistence/WorkspacePersistenceCoordinator.cpp
@@ -1326,6 +1327,7 @@ add_executable(microide_tests
   tests/MainThreadMailboxTests.cpp
   tests/RenderViewModelBuilderTests.cpp
   tests/TerminalWordSelectionTests.cpp
+  tests/TerminalRowPaintTests.cpp
   tests/ThemeTests.cpp
   tests/TestMain.cpp
   tests/TestRunner.cpp

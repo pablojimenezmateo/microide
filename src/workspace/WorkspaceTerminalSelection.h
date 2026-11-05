@@ -15,11 +15,13 @@ namespace microide::workspace {
 struct TerminalSelectionPoint {
   std::size_t row = 0;
   std::size_t column = 0;
+  friend bool operator==(const TerminalSelectionPoint&, const TerminalSelectionPoint&) = default;
 };
 
 struct TerminalSelectionBounds {
   TerminalSelectionPoint start{};
   TerminalSelectionPoint end{};
+  friend bool operator==(const TerminalSelectionBounds&, const TerminalSelectionBounds&) = default;
 };
 
 std::optional<TerminalSelectionBounds> NormalizeTerminalSelection(

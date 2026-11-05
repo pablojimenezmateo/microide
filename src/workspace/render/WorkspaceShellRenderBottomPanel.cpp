@@ -23,6 +23,7 @@
 #include "util/PerformanceTrace.h"
 #include "workspace/PluginSurfacePreview.h"
 #include "workspace/WorkspaceTextSearch.h"
+#include "workspace/render/TerminalRowPaint.h"
 
 namespace microide::workspace {
 
@@ -92,237 +93,57 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       .inactive_glyph = theme_.text_secondary,
   };
 
-  // Per-cell emphasis, in precedence order. An explicit selection outranks a find
-  // hit: the user made it, and it is the one they are about to copy.
-  enum class CellEmphasis : std::uint8_t { None, FindMatch, FindCurrent, Selection };
-  // Set per pane before its rows paint: DECSCNM (the visual bell's flash).
-  bool pane_reverse_video = false;
-  const auto resolve_terminal_colors = [&](const terminal::TerminalStyle& style,
-                                           CellEmphasis emphasis) {
-    // The terminal model carries util::Rgba8 (it is kernel code and names no SDL
-    // type); this is that boundary.
-    SDL_Color foreground = style.foreground.has_value()
-                               ? render::ToSdlColor(*style.foreground)
-                               : theme_.text_primary;
-    SDL_Color background = style.background.has_value()
-                               ? render::ToSdlColor(*style.background)
-                               : theme_.surface_background;
-    // DECSCNM reverses the whole screen, an explicitly inverse cell included.
-    if (style.inverse() != pane_reverse_video) {
-      std::swap(foreground, background);
-    }
-    if (style.dim()) {
-      foreground = render::BlendColors(foreground, background, 0.40f);
-    }
-    if (style.hidden()) {
-      foreground = background;
-    }
-    switch (emphasis) {
-      case CellEmphasis::Selection:
-        foreground = theme_.text_primary;
-        background = theme_.row_highlight;
-        break;
-      case CellEmphasis::FindMatch:
-        foreground = theme_.text_primary;
-        background = theme_.search_match;
-        break;
-      case CellEmphasis::FindCurrent:
-        foreground = theme_.text_primary;
-        background = theme_.search_match_active;
-        break;
-      case CellEmphasis::None:
-        break;
-    }
-    return std::pair{foreground, background};
-  };
-  // The visible row's slice of the (row, column)-ordered match list, narrowed by
-  // the row loop before each row so the per-cell test scans only this row's hits.
-  const terminal::TerminalSearchMatch* row_matches = nullptr;
-  std::size_t row_match_count = 0;
-  std::size_t row_current_match = std::numeric_limits<std::size_t>::max();
-  // Set per pane before its rows paint: only the active pane carries the
-  // selection and the find highlights; the others paint their cells plainly.
-  bool pane_emphasis_enabled = true;
-  const auto cell_emphasis = [&](std::size_t row_index, std::size_t column) {
-    if (!pane_emphasis_enabled) {
-      return CellEmphasis::None;
-    }
-    if (TerminalCellSelected(row_index, column)) {
-      return CellEmphasis::Selection;
-    }
-    for (std::size_t index = 0; index < row_match_count; ++index) {
-      const terminal::TerminalSearchMatch& match = row_matches[index];
-      if (column >= match.column && column < match.column + match.length) {
-        return index == row_current_match ? CellEmphasis::FindCurrent : CellEmphasis::FindMatch;
-      }
-    }
-    return CellEmphasis::None;
+  // Each pane sets its DECSCNM flag and selection strength before its rows paint;
+  // TerminalRowPaint resolves every cell against this once per row.
+  TerminalPaintPalette terminal_palette{
+      .foreground = theme_.text_primary,
+      .background = theme_.surface_background,
+      .selection = theme_.selection_fill,
+      .find_match = theme_.search_match,
+      .find_current = theme_.search_match_active,
   };
   const auto draw_terminal_line = [&](float x,
                                       float y,
                                       float width,
                                       const terminal::TerminalLine& line,
-                                      std::size_t row_index) {
-    if (width <= 0.0f || line.cells.empty()) {
-      return;
-    }
-
+                                      const TerminalRowEmphasis& emphasis) {
     const float char_width = std::max(1.0f, terminal_text_renderer_.CharWidth());
-    const std::size_t visible_columns =
-        std::min(line.cells.size(), std::max<std::size_t>(
-                                      1, static_cast<std::size_t>(std::floor(width / char_width))));
-    if (visible_columns == 0) {
+    if (width < char_width) {
       return;
     }
-
-    for (std::size_t column = 0; column < visible_columns;) {
-      const auto& cell = line.cells[column];
-      const SDL_Color background =
-          resolve_terminal_colors(cell.style, cell_emphasis(row_index, column)).second;
-
-      std::size_t run_end = column + 1;
-      while (run_end < visible_columns) {
-        const auto& next_cell = line.cells[run_end];
-        const SDL_Color next_background =
-            resolve_terminal_colors(next_cell.style, cell_emphasis(row_index, run_end)).second;
-        if (next_background.r != background.r || next_background.g != background.g ||
-            next_background.b != background.b || next_background.a != background.a) {
-          break;
-        }
-        ++run_end;
-      }
-
-      const float run_x = x + static_cast<float>(column) * char_width;
-      DrawFilledRect(renderer,
-                     MakeRect(run_x, y - 1.0f,
-                              static_cast<float>(run_end - column) * char_width,
-                              terminal_text_renderer_.LineHeight()),
-                     background);
-      column = run_end;
-    }
-
-    terminal_foreground_runs_scratch_.clear();
-    terminal_foreground_runs_blob_.clear();
-
-    const auto is_wide_lead = [&](std::size_t column) {
-      return column + 1 < line.cells.size() && line.cells[column + 1].style.wide_trailing();
-    };
-
-    for (std::size_t column = 0; column < visible_columns;) {
-      const auto& cell = line.cells[column];
-      // Trailing spacer of a double-width glyph: painted by its lead cell, so
-      // never emit a glyph (a blank here would erase the right half).
-      if (cell.style.wide_trailing()) {
-        ++column;
-        continue;
-      }
-      const SDL_Color foreground =
-          resolve_terminal_colors(cell.style, cell_emphasis(row_index, column)).first;
-
-      std::size_t run_end = column + 1;
-      // A wide glyph is positioned on its own grid column, so it terminates the
-      // run; the following spacer column is skipped on the next iteration.
-      if (!is_wide_lead(column)) {
-        while (run_end < visible_columns) {
-          const auto& next_cell = line.cells[run_end];
-          if (next_cell.style.wide_trailing() || is_wide_lead(run_end)) {
-            break;
-          }
-          const SDL_Color next_foreground =
-              resolve_terminal_colors(next_cell.style, cell_emphasis(row_index, run_end)).first;
-          if (next_foreground.r != foreground.r || next_foreground.g != foreground.g ||
-              next_foreground.b != foreground.b || next_foreground.a != foreground.a) {
-            break;
-          }
-          ++run_end;
-        }
-      }
-
-      const std::size_t blob_start = terminal_foreground_runs_blob_.size();
-      bool has_non_space = false;
-      for (std::size_t index = column; index < run_end; ++index) {
-        const std::string_view display_text = line.cells[index].DisplayText();
-        if (display_text.empty()) {
-          terminal_foreground_runs_blob_.push_back(' ');
-          continue;
-        }
-        if (display_text != " ") {
-          has_non_space = true;
-        }
-        terminal_foreground_runs_blob_.append(display_text);
-      }
-      TerminalForegroundRunScratch run{};
-      run.start_column = column;
-      run.end_column_exclusive = run_end;
-      run.foreground = foreground;
-      run.blob_offset = blob_start;
-      run.blob_length = terminal_foreground_runs_blob_.size() - blob_start;
-      run.has_visible_text = has_non_space;
-      terminal_foreground_runs_scratch_.push_back(run);
-      column = run_end;
-    }
-
-    for (const TerminalForegroundRunScratch& run : terminal_foreground_runs_scratch_) {
-      if (!run.has_visible_text) {
-        continue;
-      }
-      const float run_x = x + static_cast<float>(run.start_column) * char_width;
-      const std::string_view run_text(terminal_foreground_runs_blob_.data() + run.blob_offset,
-                                      run.blob_length);
-      terminal_text_renderer_.DrawString(renderer, run_x, y, run.foreground, run_text);
-    }
-
-    // Underline / double-underline / strikethrough decorations. Run-length
-    // coalesced over (foreground color, decoration bits) so a styled span emits
-    // a single filled rect rather than one per cell. Wide trailing spacers carry
-    // the lead cell's style, so the decoration spans both columns of a wide glyph.
-    constexpr std::uint16_t kDecorationMask = terminal::cell_attr::kUnderline |
-                                              terminal::cell_attr::kDoubleUnderline |
-                                              terminal::cell_attr::kStrikethrough;
+    const auto columns = static_cast<std::size_t>(std::floor(width / char_width));
+    PlanTerminalRow(line, columns, emphasis, terminal_palette, terminal_row_plan_);
     const float line_height = terminal_text_renderer_.LineHeight();
+    const auto column_x = [&](std::size_t column) { return x + static_cast<float>(column) * char_width; };
+    const auto span_w = [&](std::size_t begin, std::size_t end) {
+      return static_cast<float>(end - begin) * char_width;
+    };
+    for (const TerminalRowPaintPlan::Fill& fill : terminal_row_plan_.fills) {
+      DrawFilledRect(renderer, MakeRect(column_x(fill.begin), y - 1.0f, span_w(fill.begin, fill.end), line_height),
+                     fill.color);
+    }
+    for (const TerminalRowPaintPlan::TextRun& run : terminal_row_plan_.text_runs) {
+      terminal_text_renderer_.DrawString(renderer, column_x(run.column), y, run.color,
+                                         terminal_row_plan_.RunText(run));
+    }
     const float thickness = std::max(1.0f, std::round(line_height / 14.0f));
-    for (std::size_t column = 0; column < visible_columns;) {
-      const auto& style = line.cells[column].style;
-      const std::uint16_t decoration = static_cast<std::uint16_t>(style.attrs & kDecorationMask);
-      if (decoration == 0) {
-        ++column;
-        continue;
-      }
-      const SDL_Color color =
-          resolve_terminal_colors(style, cell_emphasis(row_index, column)).first;
-      std::size_t run_end = column + 1;
-      while (run_end < visible_columns) {
-        const auto& next_style = line.cells[run_end].style;
-        if (static_cast<std::uint16_t>(next_style.attrs & kDecorationMask) != decoration) {
-          break;
-        }
-        const SDL_Color next_color =
-            resolve_terminal_colors(next_style, cell_emphasis(row_index, run_end)).first;
-        if (next_color.r != color.r || next_color.g != color.g || next_color.b != color.b ||
-            next_color.a != color.a) {
-          break;
-        }
-        ++run_end;
-      }
-
-      const float run_x = x + static_cast<float>(column) * char_width;
-      const float run_w = static_cast<float>(run_end - column) * char_width;
-      if (decoration & terminal::cell_attr::kStrikethrough) {
+    for (const TerminalRowPaintPlan::Decoration& stroke : terminal_row_plan_.decorations) {
+      const float run_x = column_x(stroke.begin);
+      const float run_w = span_w(stroke.begin, stroke.end);
+      if (stroke.bits & terminal::cell_attr::kStrikethrough) {
         DrawFilledRect(renderer, MakeRect(run_x, y + std::round(line_height * 0.45f), run_w, thickness),
-                       color);
+                       stroke.color);
       }
-      if (decoration & terminal::cell_attr::kUnderline) {
+      if (stroke.bits & terminal::cell_attr::kUnderline) {
         DrawFilledRect(renderer, MakeRect(run_x, y + line_height - thickness - 1.0f, run_w, thickness),
-                       color);
+                       stroke.color);
       }
-      if (decoration & terminal::cell_attr::kDoubleUnderline) {
-        DrawFilledRect(renderer, MakeRect(run_x, y + line_height - thickness * 3.0f - 1.0f, run_w,
-                                          thickness),
-                       color);
+      if (stroke.bits & terminal::cell_attr::kDoubleUnderline) {
+        DrawFilledRect(renderer, MakeRect(run_x, y + line_height - thickness * 3.0f - 1.0f, run_w, thickness),
+                       stroke.color);
         DrawFilledRect(renderer, MakeRect(run_x, y + line_height - thickness - 1.0f, run_w, thickness),
-                       color);
+                       stroke.color);
       }
-      column = run_end;
     }
   };
 
@@ -496,10 +317,12 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
         continue;
       }
       const bool is_active = pane_index == tab->active_pane;
-      pane_emphasis_enabled = is_active;
-      pane_reverse_video = pane->frame_reverse_video;
+      terminal_palette.reverse_video = pane->frame_reverse_video;
+      terminal_palette.selection = pane->frame_selection_live
+                                       ? theme_.selection_fill
+                                       : InactiveTerminalSelection(theme_.selection_fill);
       const SDL_FRect& body = rects.panes[pane_index];
-      if (pane_reverse_video) {
+      if (terminal_palette.reverse_video) {
         // The blank the rows do not cover takes the default foreground too.
         FillRect(renderer, body, theme_.text_primary);
       }
@@ -531,10 +354,10 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
           break;
         }
         const float line_y = pane_layout.text_y + static_cast<float>(row) * pane_layout.line_height;
-        // Narrow the shared match slice to this row before painting it.
-        row_matches = nullptr;
-        row_match_count = 0;
-        row_current_match = std::numeric_limits<std::size_t>::max();
+        // The selection (only the active pane has one) and this row's slice of
+        // the find matches, walked forward alongside the rows.
+        TerminalRowEmphasis emphasis =
+            TerminalRowSelectionEmphasis(pane->frame_selection, static_cast<std::size_t>(index));
         if (find_matches != nullptr) {
           const auto absolute_row = static_cast<std::size_t>(index);
           while (find_cursor < find_matches->size() &&
@@ -546,11 +369,11 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
             ++row_end;
           }
           if (row_end > find_cursor) {
-            row_matches = find_matches->data() + find_cursor;
-            row_match_count = row_end - find_cursor;
+            emphasis.matches = find_matches->data() + find_cursor;
+            emphasis.match_count = row_end - find_cursor;
             if (panel_vm.find_selected_index >= find_cursor &&
                 panel_vm.find_selected_index < row_end) {
-              row_current_match = panel_vm.find_selected_index - find_cursor;
+              emphasis.current_match = panel_vm.find_selected_index - find_cursor;
             }
           }
         }
@@ -563,7 +386,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
           break;
         }
         draw_terminal_line(pane_layout.text_x, line_y, pane_layout.text_width, terminal_lines[snapshot_index],
-                  static_cast<std::size_t>(index));
+                           emphasis);
         if (pane->hovered_link.has_value() &&
             pane->hovered_link->row <= static_cast<std::size_t>(index) &&
             static_cast<std::size_t>(index) <= pane->hovered_link->end_row) {
@@ -615,7 +438,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
               const auto display_text = cell.DisplayText();
               if (!display_text.empty()) {
                 const SDL_Color cursor_foreground =
-                    resolve_terminal_colors(cell.style, CellEmphasis::None).second;
+                    ResolveTerminalCellColors(cell.style, terminal_palette).background;
                 // The glyph is drawn at the caret's own origin; the rect carries a
                 // 1px lift, so undo it here to keep the text on the row baseline.
                 terminal_text_renderer_.DrawString(renderer, caret_rect->x, caret_rect->y + 1.0f,
@@ -633,7 +456,6 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                           context_.interaction_state.drag_target == DragTarget::BottomPanelScrollbar);
       }
     }
-    pane_emphasis_enabled = true;
 
     for (const TerminalPaneDividerRect& divider : rects.dividers) {
       const bool divider_active =

@@ -110,6 +110,7 @@
 #include "workspace/WorkspaceProjectSearchRuntime.h"
 #include "workspace/state/WorkspacePromptState.h"
 #include "workspace/render/RenderViewModelBuilder.h"
+#include "workspace/render/TerminalRowPaint.h"
 #include "workspace/registries/WorkspaceStatusRegistry.h"
 #include "workspace/state/WorkspaceSidebarState.h"
 #include "workspace/WorkspaceStartupOptions.h"

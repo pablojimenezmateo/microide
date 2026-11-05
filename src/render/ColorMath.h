@@ -19,4 +19,10 @@ SDL_Color BlendColors(SDL_Color base, SDL_Color tint, float amount);
 // Alpha-over composite of `foreground` onto `background`; result is opaque.
 SDL_Color CompositeOver(SDL_Color foreground, SDL_Color background);
 
+// `foreground`, moved toward black or white (whichever `background` is not) in
+// small steps until its contrast against `background` reaches
+// `minimum_contrast`; unchanged when it already does. The best reachable colour
+// when no step gets there. Alpha is kept.
+SDL_Color EnsureContrast(SDL_Color foreground, SDL_Color background, float minimum_contrast);
+
 }  // namespace microide::render

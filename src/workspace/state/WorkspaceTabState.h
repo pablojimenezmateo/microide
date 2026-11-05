@@ -627,6 +627,14 @@ struct TerminalPaneState {
   std::size_t frame_line_count = 0;
   // DECSCNM as of this frame: paint swaps every cell's colours and the pane's fill.
   bool frame_reverse_video = false;
+  // The selection this frame paints (normalized, after the row-space rebase), and
+  // whether at full strength (the panel has focus) or as the kept-but-not-live
+  // wash. Paint used to ask the shell per cell. Frame prep repaints the pane when
+  // either differs from the previous frame's, so no path that changes the
+  // selection -- a key, a pane switch, a program entering the alternate screen --
+  // needs its own damage request.
+  std::optional<TerminalSelectionBounds> frame_selection;
+  bool frame_selection_live = false;
   std::size_t visible_lines_first_row = 0;
   std::size_t visible_lines_max_rows = 0;
   int scroll_row = 0;
@@ -655,6 +663,11 @@ struct TerminalPaneState {
   // Last-observed session.RowShiftSequence(): rows a host terminal's gap fill
   // inserted mid-buffer move the mirrors below that gap down by what was inserted.
   std::uint64_t observed_row_shift_sequence = 0;
+  // Last-observed session.using_alternate_screen(). The alternate screen is a
+  // different buffer with its own row numbers, so a switch either way drops the
+  // selection: kept, it highlighted (and Ctrl+C copied, instead of interrupting)
+  // whatever vim or less drew over the rows it named.
+  bool observed_alternate_screen = false;
   // How this pane was launched, kept so an exited session (a dropped ssh link,
   // a shell that was killed) can be relaunched in place with the same cwd and
   // command rather than opened as a fresh tab that loses its position.

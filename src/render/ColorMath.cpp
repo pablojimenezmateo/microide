@@ -59,4 +59,31 @@ SDL_Color CompositeOver(SDL_Color foreground, SDL_Color background) {
   };
 }
 
+SDL_Color EnsureContrast(SDL_Color foreground, SDL_Color background, float minimum_contrast) {
+  if (Contrast(foreground, background) >= minimum_contrast) {
+    return foreground;
+  }
+
+  const SDL_Color target =
+      RelativeLuminance(background) >= 0.179f
+          ? SDL_Color{0x00, 0x00, 0x00, foreground.a}
+          : SDL_Color{0xff, 0xff, 0xff, foreground.a};
+  SDL_Color best = foreground;
+  float best_contrast = Contrast(foreground, background);
+  for (int step = 1; step <= 24; ++step) {
+    const float t = static_cast<float>(step) / 24.0f;
+    SDL_Color candidate = BlendColors(foreground, target, t);
+    candidate.a = foreground.a;
+    const float candidate_contrast = Contrast(candidate, background);
+    if (candidate_contrast > best_contrast) {
+      best = candidate;
+      best_contrast = candidate_contrast;
+    }
+    if (candidate_contrast >= minimum_contrast) {
+      return candidate;
+    }
+  }
+  return best;
+}
+
 }  // namespace microide::render

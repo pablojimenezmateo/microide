@@ -85,6 +85,7 @@ void RegisterMainThreadMailboxTests(std::vector<TestCase>& tests);
 void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests);
 void RegisterRowDecorationBuilderTests(std::vector<TestCase>& tests);
 void RegisterTerminalWordSelectionTests(std::vector<TestCase>& tests);
+void RegisterTerminalRowPaintTests(std::vector<TestCase>& tests);
 void RegisterThemeTests(std::vector<TestCase>& tests);
 void RegisterTextRendererTests(std::vector<TestCase>& tests);
 void RegisterLineBlobTests(std::vector<TestCase>& tests);
@@ -274,6 +275,7 @@ void RegisterShellTests(std::vector<TestCase>& tests) {
   RegisterPerfHarnessIsolationTests(tests);
   RegisterScenarioProcessIsolationTests(tests);
   RegisterTerminalWordSelectionTests(tests);
+  RegisterTerminalRowPaintTests(tests);
   RegisterMainThreadMailboxTests(tests);
   RegisterRenderViewModelBuilderTests(tests);
   RegisterRowDecorationBuilderTests(tests);

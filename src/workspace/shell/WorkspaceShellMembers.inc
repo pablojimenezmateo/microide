@@ -1511,8 +1511,9 @@
   // last-command row) by however many scrollback lines the session trimmed since the
   // last call, so a coalesced trim does not shift content out from under a scrolled-up
   // view or a held selection. Cumulative-delta based, so a background tab catches up in
-  // one call when it next becomes active.
-  void RebaseActiveTerminalForScrollbackTrim();
+  // one call when it next becomes active. A switch to or from the alternate screen
+  // changes the row space outright, so it drops the selection.
+  void RebaseActiveTerminalRowSpace();
   void PrepareTerminalPanesForFrame(TerminalTabState& tab, const TerminalPaneRectsLayout& rects, float panel_height);
   void ClearTerminalSelection();
   std::optional<TerminalLinkHit> TerminalLinkAtPoint(float x, float y) const;
@@ -1523,7 +1524,6 @@
       std::size_t first_row = 0) const;
   std::optional<TerminalSelectionPoint> TerminalViewportPositionForPoint(int x, int y) const;
   terminal::TerminalSession::MouseButton TerminalMouseButtonForSdl(Uint8 button) const;
-  bool TerminalCellSelected(std::size_t row, std::size_t column) const;
   bool OpenExternalUrl(std::string_view url);
   void OpenExternalUrlPrompt(std::string url);
   bool RevealPathInFileExplorer(const std::filesystem::path& directory);
@@ -2296,16 +2296,8 @@
   float last_mouse_x_ = 0.0f;
   float last_mouse_y_ = 0.0f;
   bool last_mouse_position_valid_ = false;
-  struct TerminalForegroundRunScratch {
-    std::size_t start_column = 0;
-    std::size_t end_column_exclusive = 0;
-    SDL_Color foreground{};
-    std::size_t blob_offset = 0;
-    std::size_t blob_length = 0;
-    bool has_visible_text = false;
-  };
-  mutable std::vector<TerminalForegroundRunScratch> terminal_foreground_runs_scratch_;
-  mutable std::string terminal_foreground_runs_blob_;
+  // One terminal row's paint plan, reused row to row (TerminalRowPaint).
+  mutable TerminalRowPaintPlan terminal_row_plan_;
   // Reused per-row scratch for compare/merge surface rendering (mirrors
   // EditorViewRenderer::scratch_row_): BuildDecoratedRow clears these before
   // filling, so reuse keeps the per-visible-row path allocation-free.

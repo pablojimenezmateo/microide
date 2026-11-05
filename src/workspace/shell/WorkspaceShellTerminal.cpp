@@ -761,7 +761,7 @@ void WorkspaceShell::PrepareTerminalPanesForFrame(TerminalTabState& tab,
                                                   float panel_height) {
   // Before the layouts read scroll_row, so a scrolled-up view tracks the same
   // content instead of jumping forward by a trimmed batch.
-  RebaseActiveTerminalForScrollbackTrim();
+  RebaseActiveTerminalRowSpace();
   for (std::size_t pane_index = 0; pane_index < tab.panes.size() && pane_index < rects.panes.size();
        ++pane_index) {
     TerminalPaneState* pane = tab.panes[pane_index].get();
@@ -799,6 +799,19 @@ void WorkspaceShell::PrepareTerminalPanesForFrame(TerminalTabState& tab,
     pane->visible_lines_max_rows = visible_rows;
     pane->frame_line_count = line_count;
     pane->frame_reverse_video = pane->session.screen_reverse_video();
+    // The selection, active pane only (the others have none: switching panes
+    // clears it), and how strongly it paints.
+    std::optional<TerminalSelectionBounds> selection;
+    if (pane_index == tab.active_pane) {
+      selection = NormalizeTerminalSelection(pane->selection_anchor, pane->selection_head);
+    }
+    const bool selection_live = context_.current_project_state.surface.focus == FocusTarget::Panel;
+    if (selection != pane->frame_selection ||
+        (selection.has_value() && selection_live != pane->frame_selection_live)) {
+      RequestRedrawRect(rects.panes[pane_index]);
+    }
+    pane->frame_selection = selection;
+    pane->frame_selection_live = selection_live;
     // The caret this frame paints against the one on screen: a cursor that hid or
     // moved without its rows changing (DECTCEM, a bare cursor move) left the old
     // caret painted in a pane nothing else repainted (QA monkey, seed 1).
@@ -818,10 +831,17 @@ void WorkspaceShell::PrepareTerminalPanesForFrame(TerminalTabState& tab,
   }
 }
 
-void WorkspaceShell::RebaseActiveTerminalForScrollbackTrim() {
+void WorkspaceShell::RebaseActiveTerminalRowSpace() {
   auto* terminal_tab = ActiveTerminalPane();
   if (terminal_tab == nullptr) {
     return;
+  }
+  // Into or out of the alternate screen: the rows the selection names are now a
+  // different buffer's (vim's screen, or the shell's transcript again).
+  if (const bool alternate = terminal_tab->session.using_alternate_screen();
+      alternate != terminal_tab->observed_alternate_screen) {
+    terminal_tab->observed_alternate_screen = alternate;
+    ClearTerminalSelection();
   }
   // A gap filled in the middle of a host terminal's scrollback moves every row
   // below it down by the lines it inserted (and nothing above it), so the view and
@@ -1044,15 +1064,5 @@ terminal::TerminalSession::MouseButton WorkspaceShell::TerminalMouseButtonForSdl
 }
 
 
-
-bool WorkspaceShell::TerminalCellSelected(std::size_t row, std::size_t column) const {
-  const std::optional<TerminalSelectionBounds> selection =
-      TerminalPanelService::ActiveSelectionBounds(context_.current_project_state);
-  if (!selection.has_value()) {
-    return false;
-  }
-
-  return TerminalSelectionContainsCell(*selection, row, column);
-}
 
 }  // namespace microide::workspace

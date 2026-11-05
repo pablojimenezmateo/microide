@@ -541,6 +541,112 @@ void TestWorkspaceShellTerminalReverseVideoPaintsThePane() {
   Expect(same(pixel(), normal), "the pane is back to its normal colour");
 }
 
+// The terminal's selection paints as a wash over each cell's own colours and,
+// on a row it continues past, across the row's line break to the pane's edge; at
+// half strength while the terminal does not have the keyboard. It used to paint
+// the hover tint in place of the cells' colours, stopping at each row's last cell.
+void TestWorkspaceShellTerminalSelectionWashesCellsAndLineBreaks() {
+  EnsureDummySdlVideo();
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  // Two green cells, a blank, "ab"; then a second row.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[42m  \x1b[0m ab\r\nsecond row");
+  WorkspaceShellTestAccess::SetFocusPanel(shell);
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const auto pixel = [&](std::size_t row, std::size_t column) {
+    const SDL_FPoint point = WorkspaceShellTestAccess::TerminalCellPoint(shell, row, column);
+    return canvas.PixelAt(static_cast<int>(point.x), static_cast<int>(point.y));
+  };
+  const auto same = [](SDL_Color a, SDL_Color b) { return a.r == b.r && a.g == b.g && a.b == b.b; };
+  const SDL_Color green = pixel(0, 0);
+  const SDL_Color blank = pixel(0, 2);
+  const SDL_Color past_end = pixel(0, 60);
+  Expect(same(blank, past_end) && !same(green, blank), "the fixture: a green cell on a plain row");
+
+  workspace::RenderInvalidation unrelated;
+  unrelated.rects.push_back(SDL_FRect{0.0f, 0.0f, 8.0f, 8.0f});
+  // Row 0 from column 0 to row 1 column 3, set with no damage of its own.
+  WorkspaceShellTestAccess::SetActiveTerminalSelectionForTest(
+      shell, workspace::TerminalSelectionPoint{.row = 0, .column = 0},
+      workspace::TerminalSelectionPoint{.row = 1, .column = 3});
+  const auto selected = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, unrelated);
+  Expect(selected.count == 0, "the selection is painted by the next frame: " + DescribePixelDiff(selected));
+  const SDL_Color washed_blank = pixel(0, 2);
+  const SDL_Color washed_green = pixel(0, 0);
+  Expect(!same(washed_blank, blank), "a selected blank cell is washed");
+  Expect(!same(washed_green, green) && !same(washed_green, washed_blank),
+         "a selected green cell is washed over its green, not replaced by the plain wash");
+  Expect(same(pixel(0, 60), washed_blank),
+         "the row the selection continues past is washed to the pane's edge");
+  Expect(same(pixel(1, 60), past_end), "the selection's last row stops at its end");
+
+  // Focus elsewhere: the kept selection paints weaker, and a frame painted for
+  // something else entirely shows it.
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  const auto unfocused = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, unrelated);
+  Expect(unfocused.count == 0, "the focus change repaints the selection: " + DescribePixelDiff(unfocused));
+  const SDL_Color inactive = pixel(0, 2);
+  Expect(!same(inactive, washed_blank) && !same(inactive, blank),
+         "an unfocused terminal's selection is a weaker wash, still visible");
+}
+
+// A program entering the alternate screen (vim, less) takes the row space the
+// selection named: the selection is dropped, the next frame shows it gone, and
+// Ctrl+C reaches the program as an interrupt again instead of copying text that
+// is no longer on screen.
+void TestWorkspaceShellTerminalAlternateScreenDropsTheSelection() {
+  EnsureDummySdlVideo();
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "shell output\r\n$ ");
+  WorkspaceShellTestAccess::SetFocusPanel(shell);
+  SoftwareCanvas canvas(kWidth, kHeight);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  WorkspaceShellTestAccess::SetActiveTerminalSelectionForTest(
+      shell, workspace::TerminalSelectionPoint{.row = 0, .column = 0},
+      workspace::TerminalSelectionPoint{.row = 0, .column = 5});
+  workspace::RenderInvalidation unrelated;
+  unrelated.rects.push_back(SDL_FRect{0.0f, 0.0f, 8.0f, 8.0f});
+  (void)PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, unrelated);
+  Expect(WorkspaceShellTestAccess::TerminalHasSelection(shell), "the fixture selected 'shell'");
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1049h\x1b[Hvim screen");
+  const auto entered = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, unrelated);
+  Expect(entered.count == 0, "the alternate screen frame is fresh: " + DescribePixelDiff(entered));
+  Expect(!WorkspaceShellTestAccess::TerminalHasSelection(shell),
+         "entering the alternate screen dropped the selection");
+  TerminalSessionTestAccess::ClearSentBytes(session);
+  Expect(WorkspaceShellTestAccess::HandleTerminalKeyDown(shell, SDLK_C, SDL_KMOD_CTRL), "Ctrl+C is handled");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == std::string(1, '\x03'),
+         "Ctrl+C interrupts the program instead of copying the old selection");
+
+  // And leaving it: a selection made in vim does not survive onto the shell's rows.
+  WorkspaceShellTestAccess::SetActiveTerminalSelectionForTest(
+      shell, workspace::TerminalSelectionPoint{.row = 0, .column = 0},
+      workspace::TerminalSelectionPoint{.row = 0, .column = 3});
+  (void)PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, unrelated);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1049l");
+  const auto left = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, unrelated);
+  Expect(left.count == 0, "the frame after leaving is fresh: " + DescribePixelDiff(left));
+  Expect(!WorkspaceShellTestAccess::TerminalHasSelection(shell),
+         "leaving the alternate screen dropped vim's selection");
+}
+
 void TestWorkspaceShellTypingReenablesTerminalTailFollow() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -3140,6 +3246,10 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/TerminalWrappedLinkIsOneLink", TestWorkspaceShellTerminalWrappedLinkIsOneLink);
   AddTest(tests, "WorkspaceShell/TerminalReverseVideoPaintsThePane",
           TestWorkspaceShellTerminalReverseVideoPaintsThePane);
+  AddTest(tests, "WorkspaceShell/TerminalSelectionWashesCellsAndLineBreaks",
+          TestWorkspaceShellTerminalSelectionWashesCellsAndLineBreaks);
+  AddTest(tests, "WorkspaceShell/TerminalAlternateScreenDropsTheSelection",
+          TestWorkspaceShellTerminalAlternateScreenDropsTheSelection);
   AddTest(tests, "WorkspaceShell/TerminalWrappedLinkPastTheWindowIsWhole",
           TestWorkspaceShellTerminalWrappedLinkPastTheWindowIsWhole);
   AddTest(tests, "WorkspaceShell/TerminalOsc8LinkClickOpensItsTarget",

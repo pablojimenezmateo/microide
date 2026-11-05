@@ -174,6 +174,16 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **Terminal selections are easy to see and keep the text's colours.** A
+  selection in the terminal painted the faint hover tint and replaced the output's
+  colours with plain text colour, so red text turned grey and a coloured
+  background vanished inside it. It is now the editor's selection colour laid over
+  each cell's own colours, rows the selection runs past are highlighted to the
+  pane's edge (their line break is part of the copy), a wide character is
+  highlighted whole exactly when it is copied, and a terminal without the keyboard
+  shows its selection dimmer. A full-screen program starting or exiting (vim,
+  less) drops the selection instead of leaving it over unrelated text, where
+  Ctrl+C copied it instead of interrupting the program.
 - **The caret is where you type.** Go to File and the project search box drew
   their caret above the input field. In a terminal running a full-screen program
   that redraws per keystroke (Claude Code), the screen — caret included — could
