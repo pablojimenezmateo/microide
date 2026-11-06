@@ -337,7 +337,7 @@ PersistedProjectSessionState BuildProjectSessionFixture() {
   editor_tab.horizontal_scroll = 2;
   editor_tab.dirty_snapshot = true;
   editor_tab.line_ending = microide::util::LineEnding::CRLF;
-  editor_tab.buffer_lines = {"line1", "line2"};
+  editor_tab.buffer = microide::editor::DocumentSnapshot::FromLines({"line1", "line2"});
 
   PersistedEditorTabState compare_tab;
   compare_tab.kind = "compare";
@@ -823,7 +823,7 @@ void TestPersistedStateProjectSessionRoundTripsRandomContent() {
     return a.kind == b.kind && a.path == b.path && a.cursor_line == b.cursor_line &&
            a.cursor_column == b.cursor_column && a.scroll_line == b.scroll_line &&
            a.horizontal_scroll == b.horizontal_scroll && a.dirty_snapshot == b.dirty_snapshot &&
-           a.line_ending == b.line_ending && a.buffer_lines == b.buffer_lines &&
+           a.line_ending == b.line_ending && a.buffer.ToLines() == b.buffer.ToLines() &&
            a.compare_path == b.compare_path && a.compare_left_path == b.compare_left_path &&
            a.compare_right_path == b.compare_right_path &&
            a.compare_commit_hash == b.compare_commit_hash &&
@@ -888,7 +888,7 @@ void TestPersistedStateProjectSessionRoundTripsRandomContent() {
             tab.line_ending = next(2) == 0 ? microide::util::LineEnding::LF
                                            : microide::util::LineEnding::CRLF;
             if (tab.dirty_snapshot) {
-              tab.buffer_lines = random_lines(6);
+              tab.buffer = microide::editor::DocumentSnapshot::FromLines(random_lines(6));
               if (next(3) != 0) {
                 tab.disk_baseline = microide::workspace::PersistedEditorTabState::DiskBaseline{
                     .exists = next(2) == 0, .mtime_ticks = random_size(), .size = random_size()};

@@ -124,6 +124,12 @@ class TextBuffer {
     tree_.AppendWholeText(out);
   }
 
+  // The document as it is now, sharing the piece tree's buffers: O(pieces), no
+  // text copied, readable on another thread while this buffer is edited. What a
+  // consumer that only reads the whole text -- the crash-safety flush, handing
+  // unsaved buffers to the persistence worker -- should take instead of Snapshot().
+  DocumentSnapshot SnapshotDocument() const { return tree_.Snapshot(); }
+
   // Whole-document bridge for inherently O(n) cold paths (see class comment).
   // Prefer LineView for anything per-line or hot.
   const std::vector<std::string>& Snapshot() const {

@@ -446,10 +446,9 @@ bool PersistenceCoordinator::RestoreSessionState() {
           !view_key.empty() && shared != restored_dirty_views.end()) {
         restored_view = shared->second;  // a second pane on the same dirty buffer
       } else {
-        // Load the already line-split snapshot straight in (dirty=true baked in).
-        // LoadContent would SerializeLines(...) then re-split -- two extra full passes
-        // over the buffer plus a throwaway joined string.
-        restored_view.LoadLines(persisted_tab.buffer_lines, view_path, persisted_tab.line_ending);
+        // Load the snapshot's lines straight in (dirty=true baked in): LoadLines
+        // keeps the persisted line ending, where LoadContent would detect one.
+        restored_view.LoadLines(persisted_tab.buffer.ToLines(), view_path, persisted_tab.line_ending);
         restored_view.SetUtf8Bom(persisted_tab.utf8_bom);
         if (persisted_tab.disk_baseline.has_value() && !view_path.empty()) {
           restored_view.RebindToPath(view_path, RestoredDiskBaseline(*persisted_tab.disk_baseline, view_path));
@@ -858,8 +857,10 @@ PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t /*tab_index*/,
   persisted_tab.dirty_snapshot = persist_dirty;
   persisted_tab.line_ending = persisted_viewport->line_ending();
   persisted_tab.utf8_bom = persist_dirty && persisted_viewport->has_utf8_bom();
-  persisted_tab.buffer_lines =
-      persist_dirty ? persisted_viewport->lines().Snapshot() : std::vector<std::string>{};
+  // Shares the piece tree's buffers: no copy of the text here, on the shell
+  // thread; the encode on the persistence worker reads it (TD-2026-11-02-429.3).
+  persisted_tab.buffer =
+      persist_dirty ? persisted_viewport->lines().SnapshotDocument() : editor::DocumentSnapshot{};
   if (persist_dirty && !normalized_path.empty()) {
     const util::FileSignature& seen = persisted_viewport->disk_signature();
     persisted_tab.disk_baseline = PersistedEditorTabState::DiskBaseline{

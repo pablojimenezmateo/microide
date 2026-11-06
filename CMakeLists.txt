@@ -519,6 +519,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/TextLayout.cpp
   src/editor/SaveNormalization.cpp
   src/editor/TextBuffer.cpp
+  src/editor/DocumentSnapshot.cpp
   src/editor/PieceTree.cpp
   src/editor/TextLayoutCache.cpp
   src/editor/TextViewport.cpp
@@ -1743,6 +1744,7 @@ if(MICROIDE_FUZZ)
   microide_configure_fuzz_target(ProjectSessionRecordFuzz)
 
   add_executable(PieceTreeEquivalenceFuzz
+    src/editor/DocumentSnapshot.cpp
     src/editor/PieceTree.cpp
     tests/fuzz/PieceTreeEquivalenceFuzz.cpp
   )
@@ -2091,6 +2093,7 @@ add_executable(microide_diff_bench
   src/editor/TextLayout.cpp
   src/editor/SaveNormalization.cpp
   src/editor/TextBuffer.cpp
+  src/editor/DocumentSnapshot.cpp
   src/editor/PieceTree.cpp
   src/editor/TextLayoutCache.cpp
   src/editor/WordBoundary.cpp

@@ -477,11 +477,14 @@ bool ReadStringRecord(EnumTag expected_tag,
       return false;
     }
   }
-  for (const std::string& line : tab.buffer_lines) {
-    if (!AppendRecord(EditorTabTag::BufferLine,
-                      [&](PrimitiveWriter& w) { return w.WriteString(line); }, out)) {
-      return false;
-    }
+  bool lines_written = true;
+  tab.buffer.ForEachLine([&](std::string_view line) {
+    lines_written = lines_written &&
+                    AppendRecord(EditorTabTag::BufferLine,
+                                 [&](PrimitiveWriter& w) { return w.WriteString(line); }, out);
+  });
+  if (!lines_written) {
+    return false;
   }
   for (const std::string& choice : tab.merge_hunk_choices) {
     if (!AppendRecord(EditorTabTag::MergeHunkChoice,
@@ -510,7 +513,10 @@ inline constexpr std::size_t kMaxSessionClosedEditors = kMaxPersistedClosedEdito
   }
   *tab = PersistedEditorTabState{};
   std::size_t buffer_bytes = 0;
-  return ParseRecordStream<EditorTabTag>(
+  // The buffer's lines, '\n'-joined as they arrive; wrapped once at the end.
+  std::string buffer_text;
+  std::size_t buffer_line_count = 0;
+  const bool parsed = ParseRecordStream<EditorTabTag>(
       input, [&](EditorTabTag tag, std::span<const std::byte> payload) {
         PrimitiveReader reader(payload);
         switch (tag) {
@@ -575,12 +581,16 @@ inline constexpr std::size_t kMaxSessionClosedEditors = kMaxPersistedClosedEdito
             }
             // Fail closed on a snapshot past the product line-count or aggregate-byte
             // budget rather than materializing millions of tiny strings.
-            if (tab->buffer_lines.size() >= kMaxSessionBufferLines ||
+            if (buffer_line_count >= kMaxSessionBufferLines ||
                 buffer_bytes + line.size() > kMaxSessionBufferBytes) {
               return false;
             }
             buffer_bytes += line.size();
-            tab->buffer_lines.push_back(std::move(line));
+            if (buffer_line_count != 0) {
+              buffer_text.push_back('\n');
+            }
+            buffer_text.append(line);
+            ++buffer_line_count;
             return true;
           }
           case EditorTabTag::ComparePath:
@@ -641,6 +651,10 @@ inline constexpr std::size_t kMaxSessionClosedEditors = kMaxPersistedClosedEdito
         }
         return true;
       });
+  if (parsed) {
+    tab->buffer = editor::DocumentSnapshot::FromText(std::move(buffer_text), buffer_line_count);
+  }
+  return parsed;
 }
 
 [[maybe_unused]] bool EncodeEditorGroup(const PersistedEditorGroupState& group,

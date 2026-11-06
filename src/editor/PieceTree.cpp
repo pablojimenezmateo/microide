@@ -38,7 +38,7 @@ PieceTree::PieceTree(const std::vector<std::string>& lines) {
 }
 
 void PieceTree::Reset(const std::vector<std::string>& lines) {
-  original_ = JoinLines(lines);
+  original_ = std::make_shared<const std::string>(JoinLines(lines));
   RebuildFromOriginal();
   // A vector of N lines joins to N-1 newlines, so the newline-derived count
   // would be N. The one case the join cannot express is the empty document
@@ -47,7 +47,7 @@ void PieceTree::Reset(const std::vector<std::string>& lines) {
 }
 
 void PieceTree::ResetFromText(std::string content) {
-  original_ = std::move(content);
+  original_ = std::make_shared<const std::string>(std::move(content));
   RebuildFromOriginal();
   // Canonical '\n'-joined text: N newlines means N+1 lines (the final line may
   // be empty), and empty content is one empty line -- matching DecodeLines.
@@ -63,23 +63,24 @@ void PieceTree::RebuildFromOriginal() {
   // self-defending: without this, a >=4 GiB buffer (a future cap change or a
   // non-file caller) would wrap the loop counter into an infinite loop and
   // silently truncate the length cast below.
-  if (original_.size() > std::numeric_limits<std::uint32_t>::max()) {
-    original_.clear();
+  if (original_ == nullptr || original_->size() > std::numeric_limits<std::uint32_t>::max()) {
+    original_ = std::make_shared<const std::string>();
   }
+  const std::string& original = *original_;
   // Newline index for the whole original buffer. This is the dominant cost of
   // opening a file (a 5 MB buffer is 5M iterations of a byte-at-a-time loop), so
   // scan with memchr -- the libc implementation is vectorized -- and reserve
   // from a line-length estimate so the index does not grow by reallocation. The
   // estimate is a hint only; a wrong guess costs a normal geometric growth.
-  original_newlines_.reserve(original_.size() / 48 + 16);
-  for (const char* cursor = original_.data(), *const end = cursor + original_.size();
+  original_newlines_.reserve(original.size() / 48 + 16);
+  for (const char* cursor = original.data(), *const end = cursor + original.size();
        cursor != end;) {
     const char* newline = static_cast<const char*>(
         std::memchr(cursor, '\n', static_cast<std::size_t>(end - cursor)));
     if (newline == nullptr) {
       break;
     }
-    original_newlines_.push_back(static_cast<std::uint32_t>(newline - original_.data()));
+    original_newlines_.push_back(static_cast<std::uint32_t>(newline - original.data()));
     cursor = newline + 1;
   }
   nodes_.resize(1);  // keep only the sentinel
@@ -87,8 +88,8 @@ void PieceTree::RebuildFromOriginal() {
   root_ = kNull;
   priority_state_ = 0x9e3779b9u;
   BumpRevision();
-  if (!original_.empty()) {
-    root_ = Allocate(kOriginal, 0, static_cast<std::uint32_t>(original_.size()));
+  if (!original.empty()) {
+    root_ = Allocate(kOriginal, 0, static_cast<std::uint32_t>(original.size()));
   }
 }
 
@@ -108,27 +109,30 @@ void PieceTree::StartAddChunk(std::size_t needed) {
   // allocation per kMaxAddChunkBytes typed.
   std::size_t capacity = kMinAddChunkBytes;
   if (!add_chunks_.empty()) {
-    capacity = std::min(kMaxAddChunkBytes, add_chunks_.back().bytes.capacity() * 2);
+    capacity = std::min<std::size_t>(kMaxAddChunkBytes, std::size_t{add_chunks_.back().capacity} * 2);
   }
   // A single insert larger than the cap (a paste, a formatter rewrite) gets a
   // chunk of its own exact size: a piece must be contiguous in one buffer, so it
   // can never be split across chunks.
   capacity = std::max(capacity, needed);
-  add_chunks_.emplace_back();
-  add_chunks_.back().bytes.reserve(capacity);
+  AddChunk& chunk = add_chunks_.emplace_back();
+  chunk.bytes = std::make_shared_for_overwrite<char[]>(capacity);
+  chunk.capacity = static_cast<std::uint32_t>(capacity);
+  tail_writable_.value = true;
 }
 
 PieceTree::AddLocation PieceTree::AppendToAdd(std::string_view text) {
-  // `capacity()` (not the requested size) is the reallocation threshold, and
-  // std::string guarantees append does not reallocate while size() stays within
-  // it — which is the property that makes an append never copy stored history.
-  if (add_chunks_.empty() ||
-      add_chunks_.back().bytes.size() + text.size() > add_chunks_.back().bytes.capacity()) {
+  // A chunk is allocated at its final capacity and only ever written past its
+  // size, so an append never copies stored history and never touches a byte a
+  // snapshot or a copy of this tree can see.
+  if (add_chunks_.empty() || !tail_writable_.value ||
+      std::size_t{add_chunks_.back().size} + text.size() > add_chunks_.back().capacity) {
     StartAddChunk(text.size());
   }
   AddChunk& chunk = add_chunks_.back();
-  const std::uint32_t start = static_cast<std::uint32_t>(chunk.bytes.size());
-  chunk.bytes.append(text);
+  const std::uint32_t start = chunk.size;
+  std::memcpy(chunk.bytes.get() + start, text.data(), text.size());
+  chunk.size += static_cast<std::uint32_t>(text.size());
   add_total_bytes_ += text.size();
   // Same memchr scan as RebuildFromOriginal: a paste appends its whole payload
   // here, so this is O(pasted bytes) on the edit path.
@@ -267,7 +271,7 @@ void PieceTree::CompactAddBuffer() {
   const std::uint32_t byte_size = static_cast<std::uint32_t>(ByteSize());
   materialized.reserve(byte_size);
   CopyRange(0, byte_size, materialized);
-  original_ = std::move(materialized);
+  original_ = std::make_shared<const std::string>(std::move(materialized));
   RebuildFromOriginal();
   // RebuildFromOriginal clear()s the chunk vector, which keeps its capacity — and
   // the capacity is the entire point here: what is being compacted away is tens of
@@ -671,6 +675,39 @@ void PieceTree::AppendLines(std::size_t begin, std::size_t end,
   ExtractLineRange(begin, std::min(end, line_count_), out);
 }
 
+DocumentSnapshot PieceTree::Snapshot() const {
+  util::PerformanceTrace::Scope perf_scope("editor::PieceTree::Snapshot");
+  std::vector<std::string_view> spans;
+  std::vector<std::shared_ptr<const void>> owners;
+  // Which buffers the pieces read, so each is owned once: 0 the original, k the
+  // add chunk k - 1.
+  std::vector<bool> owned(add_chunks_.size() + 1, false);
+  std::vector<NodeId> stack;
+  for (NodeId id = root_; id != kNull || !stack.empty();) {
+    if (id != kNull) {
+      stack.push_back(id);
+      id = nodes_[id].left;
+      continue;
+    }
+    id = stack.back();
+    stack.pop_back();
+    const Node& node = nodes_[id];
+    if (node.length != 0) {
+      spans.push_back(BufferOf(node.buffer).substr(node.start, node.length));
+      if (!owned[node.buffer]) {
+        owned[node.buffer] = true;
+        if (node.buffer == kOriginal) {
+          owners.push_back(original_);
+        } else {
+          owners.push_back(add_chunks_[node.buffer - 1].bytes);
+        }
+      }
+    }
+    id = node.right;
+  }
+  return DocumentSnapshot::FromSpans(std::move(spans), std::move(owners), line_count_);
+}
+
 std::vector<std::string> PieceTree::ToVector() const {
   // A whole-document materialization: one std::string per line, O(document).
   // The piece tree exists so the hot paths never need this, so a non-trivial
@@ -679,7 +716,7 @@ std::vector<std::string> PieceTree::ToVector() const {
   // LineView would cost more than the counter could ever reveal.)
   util::PerformanceTrace::Scope perf_scope("editor::PieceTree::ToVector");
   util::AddPerformanceCounter(util::PerfCounterId::DocumentFullTextMaterializations);
-  util::AddPerformanceCounter(util::PerfCounterId::DocumentFullTextBytes, original_.size());
+  util::AddPerformanceCounter(util::PerfCounterId::DocumentFullTextBytes, original_->size());
   std::vector<std::string> out;
   if (line_count_ == 0) return out;
   ExtractLineRange(0, line_count_, out);

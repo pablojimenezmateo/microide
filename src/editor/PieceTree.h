@@ -1,10 +1,12 @@
 #pragma once
 
+#include "editor/DocumentSnapshot.h"
 #include "editor/LineBlob.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -106,6 +108,10 @@ class PieceTree {
   void AppendLines(std::size_t begin, std::size_t end, LineBlob& out) const;
   // Full materialized copy of every line.
   std::vector<std::string> ToVector() const;
+  // The document as it is now, sharing this tree's buffers instead of copying
+  // them: O(pieces), no text copied, and readable from any thread while this
+  // tree goes on being edited (see DocumentSnapshot).
+  DocumentSnapshot Snapshot() const;
 
   // --- Mutate ---
   // Universal primitive: erase `removed` lines starting at `start`, then insert
@@ -251,9 +257,30 @@ class PieceTree {
   static constexpr std::size_t kMinAddChunkBytes = 8u * 1024u;
   static constexpr std::size_t kMaxAddChunkBytes = 64u * 1024u;
 
+  // A chunk's bytes never move and are never rewritten: the array is allocated
+  // at its final capacity, and an append writes only past `size`. So a snapshot
+  // (or a copy of the tree) can share the array and read the bytes it saw while
+  // this tree appends after them -- different bytes, no race.
   struct AddChunk {
-    std::string bytes;
+    std::shared_ptr<char[]> bytes;
+    std::uint32_t size = 0;
+    std::uint32_t capacity = 0;
     std::vector<std::uint32_t> newlines;  // chunk-relative offsets of each '\n'
+  };
+
+  // Whether this tree may append into the last chunk. A COPY of a tree shares its
+  // chunks, and two trees appending into one shared array would write the same
+  // bytes: the copy starts a chunk of its own instead. Copying the flag clears it.
+  struct TailWritable {
+    bool value = true;
+    TailWritable() = default;
+    TailWritable(const TailWritable&) noexcept : value(false) {}
+    TailWritable& operator=(const TailWritable&) noexcept {
+      value = false;
+      return *this;
+    }
+    TailWritable(TailWritable&&) noexcept = default;
+    TailWritable& operator=(TailWritable&&) noexcept = default;
   };
 
   struct AddLocation {
@@ -262,8 +289,12 @@ class PieceTree {
   };
 
   // --- buffer access ---
-  const std::string& BufferOf(BufferId buffer) const {
-    return buffer == kOriginal ? original_ : add_chunks_[buffer - 1].bytes;
+  std::string_view BufferOf(BufferId buffer) const {
+    if (buffer == kOriginal) {
+      return *original_;
+    }
+    const AddChunk& chunk = add_chunks_[buffer - 1];
+    return std::string_view(chunk.bytes.get(), chunk.size);
   }
   const std::vector<std::uint32_t>& NewlinesOf(BufferId buffer) const {
     return buffer == kOriginal ? original_newlines_ : add_chunks_[buffer - 1].newlines;
@@ -378,13 +409,16 @@ class PieceTree {
     walk_valid_ = false;
   }
 
-  std::string original_;
-  std::vector<std::uint32_t> original_newlines_;  // offsets of each '\n' in original_
+  // Shared, never mutated: a reset or a compaction installs a new one, and a
+  // snapshot keeps the one it read.
+  std::shared_ptr<const std::string> original_;
+  std::vector<std::uint32_t> original_newlines_;  // offsets of each '\n' in *original_
   // Append-only edit history, chunked (see AddChunk). Never reordered or erased
   // while pieces reference it — only CompactAddBuffer/RebuildFromOriginal drop it,
   // and both rebuild every piece.
   std::vector<AddChunk> add_chunks_;
   std::size_t add_total_bytes_ = 0;  // live bytes across all chunks, not capacity
+  TailWritable tail_writable_;
 
   std::vector<Node> nodes_;        // index 0 is the null sentinel
   std::vector<NodeId> free_list_;

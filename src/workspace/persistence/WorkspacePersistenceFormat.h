@@ -11,6 +11,8 @@
 #include <string_view>
 #include <vector>
 
+#include "editor/DocumentSnapshot.h"
+
 #include "editor/TextViewport.h"
 #include "project/ProjectId.h"
 #include "workspace/WorkspaceLayout.h"
@@ -60,7 +62,10 @@ struct PersistedEditorTabState {
     friend bool operator==(const DiskBaseline&, const DiskBaseline&) = default;
   };
   std::optional<DiskBaseline> disk_baseline;
-  std::vector<std::string> buffer_lines;
+  // The unsaved buffer (a dirty snapshot). Shared with the live piece tree on
+  // the way out -- the crash-safety flush hands it to the persistence worker
+  // without copying the text on the shell thread -- and owned on the way in.
+  editor::DocumentSnapshot buffer;
   std::filesystem::path compare_path;
   std::filesystem::path compare_left_path;
   std::filesystem::path compare_right_path;

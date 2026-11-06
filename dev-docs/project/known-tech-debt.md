@@ -237,7 +237,7 @@ Left open:
    without a FIN (a NAT timeout) is the heartbeat's to detect and is tested there,
    not in the matrix.
 
-### TD-2026-11-02-429 — the error-management and data-safety pass: what it fixed and what it left. [OPEN — item 3; the rest resolved 2026-11-02]
+### TD-2026-11-02-429 — the error-management and data-safety pass: what it fixed and what it left. [RESOLVED 2026-11-06 — item 3; the rest 2026-11-02]
 
 The 2026-11-02 pass probed the shipped binary (control channel, SIGKILL / SIGTERM /
 SIGHUP, chmod, deleted and moved roots, a crash between an edit and the file
@@ -296,7 +296,24 @@ Left open:
    process-local (`std::hash`), so a `touch` while microide was down reads as a
    change and the save asks. Safe, but a stable digest (blake3, already linked)
    recorded at load would let it save.
-3. **The crash-safety flush still snapshots buffers on the UI thread.** Measured
+3. ~~**The crash-safety flush still snapshots buffers on the UI thread.**~~
+   **Resolved 2026-11-06.** The piece tree's storage is shareable: the original
+   is a `shared_ptr<const std::string>` a reset or compaction replaces, and add
+   chunks are fixed-capacity `shared_ptr<char[]>` arrays only ever written past
+   their size (a copy of the tree, which shares them, starts a chunk of its own).
+   `PieceTree::Snapshot()` is an O(pieces) walk returning an
+   `editor::DocumentSnapshot` -- byte spans plus their owners -- readable on
+   another thread while the tree is edited. The session record carries one
+   (`PersistedEditorTabState::buffer`) and the encoder streams its lines on the
+   persistence worker. Measured on a 24 MB, 400k-line buffer with ~4000 pieces:
+   90 ms -> 0.42 ms on the shell thread per flush. Guarded by
+   `CrashSafetyFlushPersistsUnsavedContent` (no whole-document copy during the
+   flush, and typing after it does not reach the record),
+   `PieceTree/SnapshotReadsAsTheDocumentDidWhenTaken`,
+   `PieceTree/SnapshotIsReadableWhileTheTreeIsEdited` (TSan) and the
+   equivalence fuzzer, which now holds every snapshot it took and a copy of the
+   tree edited alongside.
+   Was: **The crash-safety flush still snapshots buffers on the UI thread.** Measured
    (1-32 MiB dirty, 4 lanes loading the disk): the flush held the shell thread
    ~37 ms, ~28 of it ENCODING the session, ~1 ms the disk -- and with the new
    10 s bound it fired mid-typing. Fixed in the same pass: the session is encoded

@@ -42,6 +42,21 @@ std::string MakeLine(Cursor& cursor) {
   return line;
 }
 
+// Every snapshot taken, with what the document read at the time: a snapshot
+// shares the tree's buffers, so a later edit, compaction or copy that rewrote a
+// byte it reads would show here.
+struct TakenSnapshot {
+  microide::editor::DocumentSnapshot snapshot;
+  std::vector<std::string> lines;
+};
+
+void CheckSnapshots(const std::vector<TakenSnapshot>& taken) {
+  for (const TakenSnapshot& entry : taken) {
+    assert(entry.snapshot.LineCount() == entry.lines.size());
+    assert(entry.snapshot.ToLines() == entry.lines);
+  }
+}
+
 void CheckEquivalent(const microide::editor::PieceTree& tree,
                      const std::vector<std::string>& model) {
   assert(tree.LineCount() == model.size());
@@ -69,8 +84,25 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   model = seed;
   CheckEquivalent(tree, model);
 
+  std::vector<TakenSnapshot> taken;
+  // A copy of the tree edited alongside: it shares the original's chunks and must
+  // never append into them.
+  microide::editor::PieceTree copy = tree;
+  std::vector<std::string> copy_model = model;
   int guard = 0;
   while (!cursor.Done() && guard++ < 512) {
+    const std::uint8_t control = cursor.Byte();
+    if (control % 16u == 0u && taken.size() < 8) {
+      taken.push_back(TakenSnapshot{.snapshot = tree.Snapshot(), .lines = model});
+    } else if (control % 16u == 1u) {
+      tree.CompactAddBufferForTesting();
+    } else if (control % 16u == 2u) {
+      const std::string line = MakeLine(cursor);
+      copy.InsertLine(copy.LineCount(), line);
+      copy_model.push_back(line);
+      assert(copy.ToVector() == copy_model);
+    }
+    CheckSnapshots(taken);
     const std::size_t n = model.size();
     if (n != 0 && (cursor.Byte() & 1u) != 0u) {
       // Column-scoped splice. Oracle: replace the byte span in the joined text.
@@ -133,5 +165,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
 
     CheckEquivalent(tree, model);
   }
+  CheckSnapshots(taken);
+  assert(copy.ToVector() == copy_model);
   return 0;
 }

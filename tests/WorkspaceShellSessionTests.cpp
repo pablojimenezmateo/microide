@@ -1,4 +1,7 @@
 #include "TestSupport.h"
+
+#include "editor/TextBuffer.h"
+#include "util/PerformanceCounters.h"
 #include "TerminalSessionTestAccess.h"
 #include "support/SoftwareCanvas.h"
 
@@ -1244,8 +1247,21 @@ void TestWorkspaceShellCrashSafetyFlushPersistsUnsavedContent() {
          "crash-safety flush fixture should accept text input");
   Expect(editor.dirty(), "the buffer should be dirty before the flush");
 
-  // Fire the exact routine the debounced timer runs — NO clean shutdown.
+  // Fire the exact routine the debounced timer runs — NO clean shutdown. It runs
+  // on the shell thread, mid-typing, so it must not copy the buffer there: the
+  // record shares the piece tree's storage and the persistence worker reads it
+  // (TD-2026-11-02-429 item 3). Each of these was one whole-document copy.
+  microide::editor::TextBuffer::reset_snapshot_build_count();
+  const std::uint64_t materialized_before =
+      microide::util::ReadPerformanceCounter(microide::util::PerfCounterId::DocumentFullTextMaterializations);
   WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell);
+  Expect(microide::editor::TextBuffer::snapshot_build_count() == 0 &&
+             microide::util::ReadPerformanceCounter(
+                 microide::util::PerfCounterId::DocumentFullTextMaterializations) == materialized_before,
+         "the flush hands the unsaved buffer over without copying it on the shell thread");
+  editor.MoveCursorTo(0, 0);
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "after "),
+         "typing goes on while the worker encodes");
 
   // A fresh shell (as if relaunched after a crash) must recover the unsaved content.
   WorkspaceShell restored;
@@ -1254,8 +1270,9 @@ void TestWorkspaceShellCrashSafetyFlushPersistsUnsavedContent() {
          "restore after a crash-safety flush should succeed");
   WorkspaceShellTestAccess::ActivateTab(restored, 0);
   const auto& reopened = WorkspaceShellTestAccess::ActiveEditor(restored);
-  Expect(reopened.lines()[1] == "unsaved beta",
-         "the crash-safety flush must persist unsaved buffer content for restore");
+  Expect(reopened.lines()[0] == "alpha" && reopened.lines()[1] == "unsaved beta",
+         "the crash-safety flush must persist the unsaved buffer as it was at the flush, "
+         "not as typing after it changed it");
   Expect(reopened.dirty(), "restored crash-safety content must stay dirty (still unsaved to disk)");
 }
 

@@ -1,6 +1,8 @@
 #include "TestSupport.h"
 
+#include <atomic>
 #include <cstdint>
+#include <thread>
 #include <random>
 #include <string>
 #include <vector>
@@ -1123,10 +1125,90 @@ void TestLineBlobPrependMatchesTheGeneralSplice() {
          "prepending a blob to itself must double it, not read shifted offsets");
 }
 
+// The crash-safety flush hands unsaved buffers to the persistence worker as
+// snapshots that share the piece tree's buffers (TD-2026-11-02-429 item 3). A
+// snapshot must read as the document did when it was taken, whatever happens to
+// the tree afterwards: typing into the chunk it shares, a compaction that drops
+// that chunk, a reset, and a copy of the tree typing into a chunk it shares too.
+void TestPieceTreeSnapshotReadsAsTheDocumentDidWhenTaken() {
+  std::mt19937 rng(20261106);
+  PieceTree tree(std::vector<std::string>{"alpha", "beta", "", "gamma"});
+  VectorModel model;
+  model.Reset({"alpha", "beta", "", "gamma"});
+  std::vector<std::pair<editor::DocumentSnapshot, std::vector<std::string>>> taken;
+  for (int round = 0; round < 400; ++round) {
+    const std::size_t line = rng() % (model.lines.size() + 1);
+    std::vector<std::string> inserted;
+    if (rng() % 3 != 0) {
+      inserted.push_back("t" + std::to_string(round));
+    }
+    const std::size_t removed = rng() % 2;
+    tree.ReplaceLineRange(line, removed, inserted);
+    model.ReplaceLineRange(line, removed, inserted);
+    if (round % 7 == 0) {
+      taken.emplace_back(tree.Snapshot(), model.lines);
+    }
+    if (round == 200) {
+      tree.CompactAddBufferForTesting();
+    }
+  }
+  PieceTree copy = tree;  // shares the chunks
+  copy.InsertLine(0, "from the copy");
+  tree.InsertLine(0, "from the tree");
+  Expect(copy.LineView(0) == "from the copy" && tree.LineView(0) == "from the tree",
+         "a copy and its source never append into the same chunk");
+  tree.Reset({"reset"});
+  for (const auto& [snapshot, lines] : taken) {
+    Expect(snapshot.LineCount() == lines.size() && snapshot.ToLines() == lines,
+           "every snapshot still reads as the document did when it was taken");
+  }
+  Expect(PieceTree().Snapshot().ToLines() == PieceTree().ToVector() && PieceTree().Snapshot().empty(),
+         "the empty tree has no lines, as ToVector says");
+  PieceTree one_empty(std::vector<std::string>{""});
+  Expect(one_empty.Snapshot().ToLines() == std::vector<std::string>{""},
+         "one empty line is one empty line");
+  PieceTree text;
+  text.ResetFromText("a\n\nb\n");
+  std::string joined;
+  text.Snapshot().AppendText(joined);
+  Expect(text.Snapshot().ToLines() == text.ToVector() && joined == "a\n\nb\n",
+         "a trailing newline is a last empty line, and the text round-trips");
+}
+
+// The worker reads a snapshot while the shell thread goes on typing into the
+// chunk it shares: different bytes, so no race (the TSan lane holds this).
+void TestPieceTreeSnapshotIsReadableWhileTheTreeIsEdited() {
+  PieceTree tree(std::vector<std::string>{"start"});
+  for (int i = 0; i < 50; ++i) {
+    tree.InsertTextForTesting(static_cast<std::uint32_t>(tree.ByteSize()), "x");
+  }
+  const editor::DocumentSnapshot snapshot = tree.Snapshot();
+  const std::vector<std::string> expected = tree.ToVector();
+  std::atomic<bool> same{true};
+  std::thread reader([&] {
+    for (int pass = 0; pass < 200; ++pass) {
+      std::string text;
+      snapshot.AppendText(text);
+      if (snapshot.ToLines() != expected) {
+        same = false;
+      }
+    }
+  });
+  for (int i = 0; i < 2000; ++i) {
+    tree.InsertTextForTesting(static_cast<std::uint32_t>(tree.ByteSize()), "y");
+  }
+  reader.join();
+  Expect(same.load(), "the snapshot read the same text on every pass");
+}
+
 void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PieceTree/LineStartMemoInvalidation", TestPieceTreeLineStartMemoInvalidation);
   AddTest(tests, "PieceTree/LiveDocumentByteCeiling", TestPieceTreeLiveDocumentByteCeiling);
   AddTest(tests, "PieceTree/BasicSemantics", TestPieceTreeBasicSemantics);
+  AddTest(tests, "PieceTree/SnapshotReadsAsTheDocumentDidWhenTaken",
+          TestPieceTreeSnapshotReadsAsTheDocumentDidWhenTaken);
+  AddTest(tests, "PieceTree/SnapshotIsReadableWhileTheTreeIsEdited",
+          TestPieceTreeSnapshotIsReadableWhileTheTreeIsEdited);
   AddTest(tests, "PieceTree/AddBufferCompaction", TestPieceTreeAddBufferCompaction);
   AddTest(tests, "PieceTree/AddBufferStaysBoundedUnderRepeatedLargeEdits",
           TestPieceTreeAddBufferStaysBoundedUnderRepeatedLargeEdits);
