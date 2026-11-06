@@ -13,8 +13,11 @@
 namespace microide::terminal::detail {
 
 // Apply an SGR (Select Graphic Rendition) parameter body (`CSI ... m`) to the
-// given style, mutating bold/italic/colour/underline/etc. attributes in place.
-void ApplySgrParameters(TerminalStyle& style, std::string_view body);
+// pen: its style (bold/italic/colour/underline/etc., in place) and its SGR 58
+// underline colour, which does not fit the style (see TerminalCell::extra).
+// True when the underline colour changed: the pen's extra must be re-interned.
+[[nodiscard]] bool ApplySgrParameters(TerminalStyle& style, TerminalColor& underline_color,
+                                      std::string_view body);
 
 // Open `count` blank cells (in `style`) at `at`, shifting the rest of the row
 // right; cells pushed past the right margin `columns` are lost, and a wide pair

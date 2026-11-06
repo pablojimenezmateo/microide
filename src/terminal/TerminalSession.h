@@ -5,7 +5,7 @@
 #include "platform/TerminalBackend.h"
 #include "terminal/TerminalCell.h"
 #include "terminal/TerminalHoverAffordance.h"
-#include "terminal/TerminalLinkTable.h"
+#include "terminal/TerminalCellExtraTable.h"
 #include "terminal/TerminalHostChannel.h"
 #include "terminal/TerminalHostHistory.h"
 #include "terminal/TerminalHostMode.h"
@@ -189,9 +189,9 @@ class TerminalSession {
   // editor on THIS machine, the way VS Code's remote terminals do. Local shells
   // never raise one: their programs reach the desktop's opener themselves.
   std::optional<std::string> ConsumeOpenUrlRequest();
-  // The URI of an OSC 8 hyperlink a cell carries (TerminalCell::link); empty for
-  // 0 or an id the session no longer holds.
-  std::string LinkUri(std::uint16_t link) const;
+  // The URI of the OSC 8 hyperlink a cell carries (TerminalCell::extra); empty
+  // for 0, an id the session no longer holds, or an underline colour alone.
+  std::string LinkUri(std::uint16_t extra) const;
   // True once (then reset) when an OSC 52 clipboard sequence was dropped because it
   // overran the escape-sequence buffer cap. Lets the host surface a status instead
   // of silently swallowing a too-large clipboard write.
@@ -321,8 +321,9 @@ class TerminalSession {
   };
   void CaptureForHost(std::uint64_t from, std::size_t max_lines_before_screen, HostCapture& out);
   // Server side, term/scrollback: up to `count` primary-buffer lines ending just
-  // before absolute line `before` (only what is still held; links dropped — a page
-  // of history carries no link table). Returns the first line's absolute index.
+  // before absolute line `before` (only what is still held; cell extras dropped --
+  // a page of history carries no extras table, so its links do not click and its
+  // coloured underlines take the text's colour). Returns the first line's absolute index.
   std::uint64_t CaptureHostHistory(std::uint64_t before, std::size_t count,
                                    std::vector<TerminalLine>& out) const;
   // Called on the reader thread after each parsed output chunk and on exit, with
@@ -360,8 +361,9 @@ class TerminalSession {
   void AbandonEscapeSequenceLocked();
   void HandleEscapeSequenceLocked(std::string_view sequence);
   void HandleOscSequenceLocked(std::string_view sequence);
-  // Interns `uri`, freeing ids no buffer references when the table is full.
-  std::uint16_t InternLinkLocked(std::string_view uri);
+  // Interns (uri, underline colour), freeing ids no buffer references when the
+  // table is full.
+  std::uint16_t InternExtraLocked(std::string_view uri, TerminalColor underline_color);
   void HandleKittyKeyboardLocked(char prefix, char final, const std::vector<int>& params);
   void HandlePrivateModeLocked(int mode, bool enabled);
   int QueryPrivateModeStateLocked(int mode) const;
@@ -476,9 +478,13 @@ class TerminalSession {
   std::string default_launch_label_;
   std::string launch_label_;
   TerminalStyle current_style_;
-  // The pen's OSC 8 hyperlink (0 = none), stamped onto every glyph written.
-  std::uint16_t current_link_ = 0;
-  TerminalLinkTable links_;
+  // The pen's extended attributes: its OSC 8 link and SGR 58 underline colour,
+  // and the interned id of the pair (0 = neither) stamped onto every glyph
+  // written. The id is re-interned whenever either half changes.
+  std::string pen_link_uri_;
+  TerminalColor pen_underline_color_;
+  std::uint16_t current_extra_ = 0;
+  TerminalCellExtraTable extras_;
   std::string escape_sequence_buffer_;
   util::WakeChannel wake_channel_ = 0;
   int child_pid_ = -1;
@@ -566,6 +572,7 @@ class TerminalSession {
   // save and restore leaks past the restore (e.g. `\0337\033[31mRED\0338X` must
   // print X in the default color, not red).
   TerminalStyle saved_style_{};
+  TerminalColor saved_underline_color_;
   bool saved_origin_mode_ = false;
   std::size_t scroll_region_top_ = 0;
   std::size_t scroll_region_bottom_ = 23;

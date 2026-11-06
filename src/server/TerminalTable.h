@@ -75,6 +75,8 @@ class TerminalTable {
     // session): what server/status lists the terminal under. Not from the body --
     // the server fills it from the connection's hello.
     std::string root;
+    // What the connection's wire version decodes; from its hello, likewise.
+    terminal::TerminalHostWireOptions wire;
   };
   struct OpenResult {
     std::uint64_t handle = 0;
@@ -100,7 +102,8 @@ class TerminalTable {
     std::uint64_t screen_top = 0;
     bool alternate = false;
   };
-  bool Attach(std::uint64_t connection, std::uint64_t handle, std::optional<Resume> resume = {});
+  bool Attach(std::uint64_t connection, std::uint64_t handle, terminal::TerminalHostWireOptions wire,
+              std::optional<Resume> resume = {});
   void Input(std::uint64_t connection, std::uint64_t handle,
              const std::vector<terminal::TerminalInputEvent>& events);
   // `connection`'s pane size; the pty takes the smallest of the attached clients'.
@@ -152,6 +155,7 @@ class TerminalTable {
   struct Client {
     std::uint64_t connection = 0;
     terminal::TerminalHostFrameBuilder builder;
+    terminal::TerminalHostWireOptions wire;  // what its peer's wire version decodes
     std::size_t rows = 0;  // its pane, 0 = not said yet
     std::size_t columns = 0;
     std::chrono::steady_clock::time_point last_sent{};

@@ -42,6 +42,7 @@ void TerminalSession::SaveCursorLocked() {
   ClampPendingWrapColumn(cursor_column_, columns_);
   saved_cursor_column_ = cursor_column_;
   saved_style_ = current_style_;
+  saved_underline_color_ = pen_underline_color_;
   saved_origin_mode_ = origin_mode_;
   saved_charsets_ = charsets_;
 }
@@ -50,6 +51,8 @@ void TerminalSession::RestoreCursorLocked() {
   // DECRC restores the graphic rendition and origin mode saved by DECSC before the
   // cursor move (origin mode affects how MoveCursorLocked clamps the row).
   current_style_ = saved_style_;
+  pen_underline_color_ = saved_underline_color_;
+  current_extra_ = InternExtraLocked(pen_link_uri_, pen_underline_color_);
   origin_mode_ = saved_origin_mode_;
   charsets_ = saved_charsets_;
   MoveCursorLocked(PrimaryScreenTopLocked() + saved_cursor_row_, saved_cursor_column_);
@@ -64,6 +67,7 @@ void TerminalSession::SaveActiveScreenMetadataLocked(TerminalScreenState& screen
   screen.saved_cursor_row = saved_cursor_row_;
   screen.saved_cursor_column = saved_cursor_column_;
   screen.saved_style = saved_style_;
+  screen.saved_underline_color = saved_underline_color_;
   screen.saved_origin_mode = saved_origin_mode_;
   screen.saved_charsets = saved_charsets_;
   screen.scroll_region_top = scroll_region_top_;
@@ -96,6 +100,7 @@ void TerminalSession::RestoreSavedScreenLocked() {
   saved_cursor_row_ = screen.saved_cursor_row;
   saved_cursor_column_ = screen.saved_cursor_column;
   saved_style_ = screen.saved_style;
+  saved_underline_color_ = screen.saved_underline_color;
   saved_origin_mode_ = screen.saved_origin_mode;
   saved_charsets_ = screen.saved_charsets;
   scroll_region_top_ = screen.scroll_region_top;
@@ -373,7 +378,7 @@ void TerminalSession::PutGlyphLocked(std::string_view glyph) {
       ResizeLineLocked(line, cursor_column_ + 1);
       BreakWideGlyphPairForWriteLocked(line, cursor_column_, 1);
       line.cells[cursor_column_] = MakeUtf8TerminalCell(effective_glyph, current_style_);
-      line.cells[cursor_column_].link = current_link_;
+      line.cells[cursor_column_].extra = current_extra_;
       return;
     }
   }
@@ -391,14 +396,14 @@ void TerminalSession::PutGlyphLocked(std::string_view glyph) {
     last_glyph_length_ = static_cast<std::uint8_t>(effective_glyph.size());
   }
   line.cells[cursor_column_] = MakeUtf8TerminalCell(effective_glyph, current_style_);
-  line.cells[cursor_column_].link = current_link_;
+  line.cells[cursor_column_].extra = current_extra_;
   if (advance == 2) {
     // Trailing spacer carries the lead's style (so background fills span both
     // columns) plus the wide-trailing marker so the renderer skips painting it.
     TerminalCell spacer;
     spacer.style = current_style_;
     spacer.style.set(cell_attr::kWideTrailing, true);
-    spacer.link = current_link_;
+    spacer.extra = current_extra_;
     line.cells[cursor_column_ + 1] = spacer;
   }
   cursor_column_ += advance;
@@ -443,7 +448,7 @@ std::size_t TerminalSession::PutAsciiRunLocked(std::string_view run) {
 
   TerminalCell cell;
   cell.style = current_style_;
-  cell.link = current_link_;
+  cell.extra = current_extra_;
   cell.length = 1;
   for (std::size_t i = 0; i < length; ++i) {
     cell.bytes[0] = run[i];
@@ -649,8 +654,10 @@ void TerminalSession::ResetEmulationStateLocked() {
   // Parser state: a half-consumed escape or UTF-8 sequence from the old child
   // would otherwise be completed by the new one's first bytes.
   current_style_ = TerminalStyle{};
-  current_link_ = 0;
-  links_.Clear();
+  pen_link_uri_.clear();
+  pen_underline_color_.reset();
+  current_extra_ = 0;
+  extras_.Clear();
   escape_sequence_buffer_.clear();
   pending_utf8_sequence_.clear();
   escape_mode_ = EscapeMode::None;
@@ -689,12 +696,15 @@ void TerminalSession::ResetTerminalModesLocked() {
   screen_reverse_video_ = false;
   color_scheme_updates_ = false;
   current_style_ = TerminalStyle{};
-  current_link_ = 0;
+  pen_link_uri_.clear();
+  pen_underline_color_.reset();
+  current_extra_ = 0;
 
   // DECSC's saved state.
   saved_cursor_row_ = 0;
   saved_cursor_column_ = 0;
   saved_style_ = TerminalStyle{};
+  saved_underline_color_.reset();
   saved_origin_mode_ = false;
   saved_charsets_ = {};
 

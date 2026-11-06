@@ -502,6 +502,7 @@ bool TerminalSession::SnapshotLineRangeIfChanged(std::size_t start_row,
 
   snapshot->generation = snapshot_generation_.value();
   const std::size_t copied = CopyLineRangeIntoLocked(start_row, max_lines, snapshot->lines);
+  CollectUnderlineColors(extras_, snapshot->lines, snapshot->underline_colors);
   util::AddPerformanceCounter(util::PerfCounterId::TerminalSnapshotLineRangeIfChangedCopiedLines,
                               copied);
   std::uint64_t copied_cells = 0;

@@ -322,24 +322,25 @@ bool TerminalSession::SendToHost(TerminalInputEvent event) {
 
 namespace {
 
-// Client side: rewrites a host frame's link ids into this session's table.
+// Client side: rewrites a host frame's cell-extra ids into this session's table.
 template <typename Intern>
-void RemapHostLinks(TerminalHostFrame& frame, Intern&& intern) {
+void RemapHostExtras(TerminalHostFrame& frame, Intern&& intern) {
   // Host ids name the HOST's table; the lines get this session's ids for the
-  // same URIs. A cell naming an id the frame did not define loses its link.
-  std::vector<std::uint16_t> local(frame.links.size());
-  for (std::size_t i = 0; i < frame.links.size(); ++i) {
-    local[i] = intern(frame.links[i].uri);
+  // same (URI, underline colour) pairs. A cell naming an id the frame did not
+  // define loses its extras.
+  std::vector<std::uint16_t> local(frame.extras.size());
+  for (std::size_t i = 0; i < frame.extras.size(); ++i) {
+    local[i] = intern(frame.extras[i].uri, frame.extras[i].underline_color);
   }
   const auto remap = [&](std::vector<TerminalLine>& lines) {
     for (TerminalLine& line : lines) {
       for (TerminalCell& cell : line.cells) {
-        if (cell.link == 0) {
+        if (cell.extra == 0) {
           continue;
         }
-        const auto found = std::ranges::lower_bound(frame.links, cell.link, {}, &TerminalHostLink::id);
-        cell.link = found != frame.links.end() && found->id == cell.link
-                        ? local[static_cast<std::size_t>(found - frame.links.begin())]
+        const auto found = std::ranges::lower_bound(frame.extras, cell.extra, {}, &TerminalHostCellExtra::id);
+        cell.extra = found != frame.extras.end() && found->id == cell.extra
+                        ? local[static_cast<std::size_t>(found - frame.extras.begin())]
                         : 0;
       }
     }
@@ -359,7 +360,9 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
     }
     // Predictions out first: Keep and Promote name CONFIRMED lines.
     prediction_.Withdraw(PredictionViewLocked());
-    RemapHostLinks(frame, [this](std::string_view uri) { return InternLinkLocked(uri); });
+    RemapHostExtras(frame, [this](std::string_view uri, TerminalColor underline_color) {
+      return InternExtraLocked(uri, underline_color);
+    });
     const bool alternate = frame.has(TerminalHostFrame::kAlternateScreen);
     if (frame.has(TerminalHostFrame::kReset)) {
       prediction_.Clear();
@@ -820,7 +823,7 @@ std::uint64_t TerminalSession::CaptureHostHistory(std::uint64_t before, std::siz
   for (std::uint64_t absolute = first; absolute < end; ++absolute) {
     TerminalLine& line = out.emplace_back(primary[static_cast<std::size_t>(absolute - scrollback_trim_total_)]);
     for (TerminalCell& cell : line.cells) {
-      cell.link = 0;
+      cell.extra = 0;
     }
   }
   return first;
@@ -890,21 +893,22 @@ void TerminalSession::CaptureForHost(std::uint64_t from, std::size_t max_lines_b
   out.generation = snapshot_generation_.value();
   out.output_count = output_count_;
 
-  // The URIs of the links those lines carry; the frame builder sends the ones
-  // its lines use. Most captures have none and pay one pass over the cells.
-  header.links.clear();
-  if (links_.size() != 0) {
-    std::vector<bool> seen(TerminalLinkTable::kMaxLinks + 1, false);
+  // The extras (links, underline colours) those lines carry; the frame builder
+  // sends the ones its lines use. Most captures have none and pay one pass over the cells.
+  header.extras.clear();
+  if (extras_.size() != 0) {
+    std::vector<bool> seen(TerminalCellExtraTable::kMaxEntries + 1, false);
     for (const TerminalLine& line : out.lines) {
       for (const TerminalCell& cell : line.cells) {
-        if (cell.link != 0 && !seen[cell.link]) {
-          seen[cell.link] = true;
-          header.links.push_back(
-              TerminalHostLink{.id = cell.link, .uri = std::string(links_.Uri(cell.link))});
+        if (cell.extra != 0 && !seen[cell.extra]) {
+          seen[cell.extra] = true;
+          header.extras.push_back(TerminalHostCellExtra{.id = cell.extra,
+                                                        .uri = std::string(extras_.Uri(cell.extra)),
+                                                        .underline_color = extras_.UnderlineColor(cell.extra)});
         }
       }
     }
-    std::ranges::sort(header.links, {}, &TerminalHostLink::id);
+    std::ranges::sort(header.extras, {}, &TerminalHostCellExtra::id);
   }
 }
 

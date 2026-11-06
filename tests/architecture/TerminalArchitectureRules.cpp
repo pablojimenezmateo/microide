@@ -151,7 +151,12 @@ RuleResult CheckTerminalSessionHeaderSize(const std::filesystem::path& repo_root
   // shells get their BROWSER forwarder through it) and ConsumeOpenUrlRequest (a
   // host program's URL to open on the client). The pending URL itself lives in
   // TerminalHostMode, not here.
-  constexpr std::size_t kCap = 311;
+  // 314: +3, state not helpers -- the pen's extended attributes
+  // (TD-2026-11-05-432): its OSC 8 URI and SGR 58 underline colour (one id
+  // interns both, replacing the link id) and DECSC's copy of the colour. The
+  // table, its interning and the snapshot's colour walk live in
+  // TerminalCellExtraTable.
+  constexpr std::size_t kCap = 314;
   const std::filesystem::path path = repo_root / "src/terminal/TerminalSession.h";
   const std::size_t lines = CountFileLines(path);
   if (lines > kCap) {

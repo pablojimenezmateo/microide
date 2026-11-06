@@ -242,6 +242,54 @@ void TestFindMatchesWashAndSelectionOutranksThem() {
 // The row slice of a selection, swept: a column is selected on a row exactly when
 // TerminalSelectionContainsCell says so, and the row is washed past its end
 // exactly when the selection continues on the next row.
+// An underline takes its SGR 58 colour and shape, and strokes coalesce only
+// over cells that agree on both; a strikethrough keeps the text's colour, and a
+// cell with no colour of its own underlines in its text's.
+void TestUnderlinesTakeTheirColourAndShape() {
+  using microide::terminal::TerminalUnderlineColor;
+  using microide::terminal::TerminalUnderlineVariant;
+  namespace attr = microide::terminal::cell_attr;
+  TerminalLine line;
+  line.cells.resize(6);
+  for (auto& cell : line.cells) {
+    cell.SetAscii('x');
+  }
+  for (std::size_t i = 0; i < 4; ++i) {
+    line.cells[i].style.attrs = attr::kUnderline;
+    line.cells[i].style.set_underline_variant(TerminalUnderlineVariant::Curly);
+    line.cells[i].extra = 3;
+  }
+  line.cells[2].extra = 4;  // same shape, another colour
+  line.cells[3].style.set_underline_variant(TerminalUnderlineVariant::Dashed);
+  line.cells[3].extra = 4;
+  line.cells[4].style.attrs = attr::kUnderline | attr::kStrikethrough;
+  line.cells[4].style.foreground = microide::util::Rgba8{kRed.r, kRed.g, kRed.b, 255};
+  line.cells[4].extra = 3;
+  line.cells[5].style.attrs = attr::kUnderline;
+  const std::vector<TerminalUnderlineColor> colors = {
+      {.extra = 3, .color = microide::util::Rgba8{10, 200, 10, 255}},
+      {.extra = 4, .color = microide::util::Rgba8{200, 10, 10, 255}},
+  };
+  TerminalRowPaintPlan plan;
+  PlanTerminalRow(line, 10, TerminalRowEmphasis{}, Palette(), plan, colors);
+  Expect(plan.decorations.size() == 5, "five strokes: " + std::to_string(plan.decorations.size()));
+  if (plan.decorations.size() != 5) {
+    return;
+  }
+  const auto& d = plan.decorations;
+  Expect(d[0].begin == 0 && d[0].end == 2 && d[0].variant == TerminalUnderlineVariant::Curly &&
+             Same(d[0].underline_color, SDL_Color{10, 200, 10, 255}),
+         "two curly cells of one colour are one stroke in it");
+  Expect(d[1].begin == 2 && d[1].end == 3 && Same(d[1].underline_color, SDL_Color{200, 10, 10, 255}),
+         "a new colour starts a stroke");
+  Expect(d[2].begin == 3 && d[2].variant == TerminalUnderlineVariant::Dashed, "so does a new shape");
+  Expect(d[3].begin == 4 && Same(d[3].color, kRed) && Same(d[3].underline_color, SDL_Color{10, 200, 10, 255}),
+         "the strikethrough keeps the text's colour while the underline takes its own");
+  Expect(d[4].begin == 5 && Same(d[4].underline_color, kForeground) &&
+             d[4].variant == TerminalUnderlineVariant::Straight,
+         "without SGR 58 the underline is the text's colour");
+}
+
 void TestRowSelectionEmphasisMatchesContainsCell() {
   std::mt19937 rng(20261105);
   std::uniform_int_distribution<std::size_t> pick_row(0, 6);
@@ -273,6 +321,7 @@ void TestRowSelectionEmphasisMatchesContainsCell() {
 
 void RegisterTerminalRowPaintTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TerminalRowPaint/SelectedTextKeepsItsOwnColour", TestSelectedTextKeepsItsOwnColour);
+  AddTest(tests, "TerminalRowPaint/UnderlinesTakeTheirColourAndShape", TestUnderlinesTakeTheirColourAndShape);
   AddTest(tests, "TerminalRowPaint/SelectionWashesAColouredBackground",
           TestSelectionWashesAColouredBackground);
   AddTest(tests, "TerminalRowPaint/PlainRowEmitsNoFills", TestPlainRowEmitsNoFills);

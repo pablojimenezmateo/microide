@@ -451,7 +451,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/terminal/TerminalSessionInputEncoding.cpp
   src/terminal/TerminalSessionModes.cpp
   src/terminal/TerminalSessionOsc.cpp
-  src/terminal/TerminalLinkTable.cpp
+  src/terminal/TerminalCellExtraTable.cpp
   src/terminal/TerminalSessionOutput.cpp
   src/terminal/TerminalSessionScreen.cpp
   src/terminal/TerminalSessionSgr.cpp
@@ -1880,7 +1880,7 @@ if(MICROIDE_FUZZ)
   src/terminal/TerminalSessionHost.cpp
     src/terminal/TerminalSessionSgr.cpp
     src/terminal/TerminalSessionOsc.cpp
-    src/terminal/TerminalLinkTable.cpp
+    src/terminal/TerminalCellExtraTable.cpp
     src/terminal/TerminalSessionModes.cpp
     src/terminal/TerminalSessionInput.cpp
     src/terminal/TerminalSessionInputEncoding.cpp

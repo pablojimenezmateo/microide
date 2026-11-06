@@ -51,7 +51,7 @@ std::size_t TerminalHostFrameBuilder::Build(const TerminalSession::HostCapture& 
   frame.screen_lines.clear();
   frame.clipboard = header.clipboard;
   frame.notification = header.notification;
-  frame.links.clear();
+  frame.extras.clear();
 
   const bool alternate = header.has(TerminalHostFrame::kAlternateScreen);
   // The shadow describes the client's screen only while it is the same screen:
@@ -115,25 +115,25 @@ std::size_t TerminalHostFrameBuilder::Build(const TerminalSession::HostCapture& 
     }
   }
 
-  // The URIs of the links the sent lines carry (the capture's set is a superset).
-  if (!header.links.empty()) {
-    const auto add_links = [&](const std::vector<TerminalLine>& lines) {
+  // The extras the sent lines carry (the capture's set is a superset).
+  if (!header.extras.empty()) {
+    const auto add_extras = [&](const std::vector<TerminalLine>& lines) {
       for (const TerminalLine& line : lines) {
         for (const TerminalCell& cell : line.cells) {
-          if (cell.link == 0) {
+          if (cell.extra == 0) {
             continue;
           }
-          const auto def = std::ranges::lower_bound(header.links, cell.link, {}, &TerminalHostLink::id);
-          const auto have = std::ranges::lower_bound(frame.links, cell.link, {}, &TerminalHostLink::id);
-          if (def != header.links.end() && def->id == cell.link &&
-              (have == frame.links.end() || have->id != cell.link)) {
-            frame.links.insert(have, *def);
+          const auto def = std::ranges::lower_bound(header.extras, cell.extra, {}, &TerminalHostCellExtra::id);
+          const auto have = std::ranges::lower_bound(frame.extras, cell.extra, {}, &TerminalHostCellExtra::id);
+          if (def != header.extras.end() && def->id == cell.extra &&
+              (have == frame.extras.end() || have->id != cell.extra)) {
+            frame.extras.insert(have, *def);
           }
         }
       }
     };
-    add_links(frame.scrollback_lines);
-    add_links(frame.screen_lines);
+    add_extras(frame.scrollback_lines);
+    add_extras(frame.screen_lines);
   }
 
   // What the client now holds.

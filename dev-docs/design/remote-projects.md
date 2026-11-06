@@ -1882,8 +1882,10 @@ a process spawned as a child of ssh does not: it dies with the connection.
   unsubscribed, unasked server reads `/proc` not at all. `proc/end {handle}`
   terminates a process whoever spawned it (SIGTERM to its group, SIGKILL after the
   grace) and forgets it once it has exited with no client holding it: a kept,
-  detached process would otherwise wait for a release nobody sends. The wire stays
-  version 3; every field is additive and decoded as untrusted.
+  detached process would otherwise wait for a release nobody sends. Every field
+  is additive and decoded as untrusted. (Version 4, 2026-11-06: a terminal
+  frame may end with the SGR 58 underline colours of its cell extras -- sent
+  only to a client whose hello said 4, so the floor stays at 3.)
 - **Two clients may attach at once**, which is what "open it from the other
   machine" means. Both get the same events; terminal handles are shared, their
   output fans out to both, and the pty takes the smaller of the two sizes

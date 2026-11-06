@@ -149,7 +149,7 @@ TerminalTable::OpenResult TerminalTable::Open(std::uint64_t connection, OpenRequ
         request.prefetch_lines != 0 ? request.prefetch_lines : limits_.prefetch_lines;
     terminal->root = std::move(request.root);
     terminal->clients.push_back(
-        Client{.connection = connection, .rows = request.rows, .columns = request.columns});
+        Client{.connection = connection, .wire = request.wire, .rows = request.rows, .columns = request.columns});
   }
   Terminal* raw = terminal.get();
   terminal->session.SetOutputObserver([this, raw]() {
@@ -208,7 +208,7 @@ bool TerminalTable::RequestOpenUrl(std::uint64_t handle, std::string url) {
 }
 
 bool TerminalTable::Attach(std::uint64_t connection, std::uint64_t handle,
-                           std::optional<Resume> resume) {
+                           terminal::TerminalHostWireOptions wire, std::optional<Resume> resume) {
   {
     std::lock_guard lock(mutex_);
     const auto it = terminals_.find(handle);
@@ -226,6 +226,7 @@ bool TerminalTable::Attach(std::uint64_t connection, std::uint64_t handle,
       // Input sequence numbers and credit are per client: a new start resets them.
       *client = Client{.connection = connection, .rows = client->rows, .columns = client->columns};
     }
+    client->wire = wire;
     if (resume.has_value()) {
       client->builder.Resume(resume->screen_top, resume->alternate);
     } else {
@@ -575,7 +576,7 @@ void TerminalTable::Run() {
       client->notification.reset();
       client->echo_ack = echo_ack;
       Outgoing out{.connection = client->connection, .handle = terminal.handle};
-      terminal::EncodeTerminalHostFrame(out.wire, frame);
+      terminal::EncodeTerminalHostFrame(out.wire, frame, client->wire);
       client->sent_bytes += out.wire.size();
       client->last_sent = now;
       outgoing.push_back(std::move(out));

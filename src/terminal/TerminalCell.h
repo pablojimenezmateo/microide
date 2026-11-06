@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -36,8 +37,20 @@ enum Bit : std::uint16_t {
   // so SGR 1/22 can re-resolve the RGB. Explicit bright colors (90..97) do NOT
   // set this bit, so `\e[91m…\e[22m` stays bright. Free bits, memory-neutral.
   kFgBasic = 1u << 10,
+  // Bits 14..15: the single underline's shape (TerminalUnderlineVariant), read
+  // only while kUnderline is set. `CSI 4:3 m` and its siblings, the curly line
+  // language-server-aware TUIs (helix, neovim) mark diagnostics with.
 };
 }  // namespace cell_attr
+
+// The shape of a single underline (SGR 4:1, 4:3, 4:4, 4:5). Double (4:2, 21) is
+// its own bit, kDoubleUnderline.
+enum class TerminalUnderlineVariant : std::uint8_t {
+  Straight = 0,
+  Curly = 1,
+  Dotted = 2,
+  Dashed = 3,
+};
 
 // A cell colour, or "the default colour" (the theme's, resolved at paint time).
 // Default is encoded as alpha 0 rather than as `std::optional<Rgba8>`: an
@@ -106,6 +119,16 @@ struct TerminalStyle {
     set(cell_attr::kFgBasic, true);
   }
   void clear_basic_foreground() { set(cell_attr::kFgBasic, false); }
+
+  static constexpr std::uint16_t kUnderlineVariantShift = 14;
+  static constexpr std::uint16_t kUnderlineVariantMask = static_cast<std::uint16_t>(0x3u << 14);
+  constexpr TerminalUnderlineVariant underline_variant() const {
+    return static_cast<TerminalUnderlineVariant>((attrs & kUnderlineVariantMask) >> kUnderlineVariantShift);
+  }
+  void set_underline_variant(TerminalUnderlineVariant variant) {
+    attrs = static_cast<std::uint16_t>((attrs & ~kUnderlineVariantMask) |
+                                       (static_cast<std::uint16_t>(variant) << kUnderlineVariantShift));
+  }
 };
 
 struct TerminalCell {
@@ -126,10 +149,13 @@ struct TerminalCell {
   std::array<char, 5> bytes{};
   std::uint8_t length = 0;
   TerminalStyle style;
-  // OSC 8 hyperlink: an id into the owning session's link table
-  // (TerminalSession::LinkUri), 0 for none. Not part of the style on purpose:
-  // the pen's link is written onto glyphs only, never onto erased blanks.
-  std::uint16_t link = 0;
+  // The cell's extended attributes: an id into the owning session's
+  // TerminalCellExtraTable -- an OSC 8 hyperlink and/or an SGR 58 underline
+  // colour -- 0 for neither. Neither fits the 18 bytes, and both are rare and
+  // repeat along a run, so cells share interned entries (xterm.js's extended
+  // attributes). Not part of the style on purpose: the pen's extras are written
+  // onto glyphs only, never onto erased blanks.
+  std::uint16_t extra = 0;
 
   std::string_view DisplayText() const {
     return length == 0 ? std::string_view{} : std::string_view(bytes.data(), length);
@@ -161,7 +187,7 @@ struct TerminalCell {
 // What a cell SHOWS: the glyph's bytes up to its length (the tail of `bytes` is
 // whatever a reused buffer held before) and the style.
 inline bool SameCell(const TerminalCell& a, const TerminalCell& b) {
-  if (a.length != b.length || a.link != b.link || a.style.attrs != b.style.attrs ||
+  if (a.length != b.length || a.extra != b.extra || a.style.attrs != b.style.attrs ||
       a.style.foreground != b.style.foreground || a.style.background != b.style.background) {
     return false;
   }
@@ -210,9 +236,31 @@ struct TerminalCursorSnapshot {
   friend bool operator==(const TerminalCursorSnapshot&, const TerminalCursorSnapshot&) = default;
 };
 
+// An SGR 58 underline colour a snapshot's cells name by their `extra` id.
+struct TerminalUnderlineColor {
+  std::uint16_t extra = 0;
+  TerminalColor color;
+};
+
+// The underline colour `extra` names in `colors` (sorted by extra), or the
+// default -- draw in the text colour -- when it names none.
+inline TerminalColor FindUnderlineColor(std::span<const TerminalUnderlineColor> colors,
+                                        std::uint16_t extra) {
+  if (extra == 0 || colors.empty()) {
+    return {};
+  }
+  const auto found = std::lower_bound(
+      colors.begin(), colors.end(), extra,
+      [](const TerminalUnderlineColor& entry, std::uint16_t id) { return entry.extra < id; });
+  return found != colors.end() && found->extra == extra ? found->color : TerminalColor{};
+}
+
 struct TerminalLineRangeSnapshot {
   std::uint64_t generation = 0;
   std::vector<TerminalLine> lines;
+  // The underline colours `lines` use, sorted by extra id: the table they live
+  // in belongs to the session and its mutex, and paint reads the snapshot only.
+  std::vector<TerminalUnderlineColor> underline_colors;
 };
 
 }  // namespace microide::terminal

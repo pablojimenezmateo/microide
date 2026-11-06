@@ -39,12 +39,14 @@ struct TerminalHostRun {
   std::uint64_t count = 0;
 };
 
-// An OSC 8 hyperlink a frame's lines reference: the host session's link id and
-// its URI. The client interns the URI in its own table and rewrites the ids, so
-// host and client ids never need to agree.
-struct TerminalHostLink {
+// A cell extra a frame's lines reference (TerminalCell::extra): the host
+// session's id, its OSC 8 URI and its SGR 58 underline colour. The client
+// interns the pair in its own table and rewrites the ids, so host and client ids
+// never need to agree.
+struct TerminalHostCellExtra {
   std::uint16_t id = 0;
   std::string uri;
+  TerminalColor underline_color;
 };
 
 // An OSC 9 / OSC 777 desktop notification the host program asked for.
@@ -112,8 +114,8 @@ struct TerminalHostFrame {
   // the server gives its terminals (TerminalTable::RequestOpenUrl), never through
   // the byte stream, so printed text cannot raise one. Sent to ONE client.
   std::optional<std::string> open_url;
-  // Every non-zero TerminalCell::link the frame's lines carry, sorted by id.
-  std::vector<TerminalHostLink> links;
+  // Every non-zero TerminalCell::extra the frame's lines carry, sorted by id.
+  std::vector<TerminalHostCellExtra> extras;
 
   bool has(std::uint16_t bit) const { return (flags & bit) != 0; }
 };
@@ -125,8 +127,18 @@ inline constexpr std::size_t kMaxHostTerminalTextBytes = 64u << 20;
 // The opener's own cap (platform::IsOpenableExternalUrl).
 inline constexpr std::size_t kMaxHostOpenUrlBytes = 8192;
 
+// What the receiving peer's wire version decodes beyond the floor's frame. The
+// server builds one per connection from its hello; a field a peer cannot read
+// is left out, so an older client keeps working (it draws those underlines in
+// the text's colour).
+struct TerminalHostWireOptions {
+  // Version 4: the extras' SGR 58 underline colours, in their own section.
+  bool underline_colors = true;
+};
+
 void EncodeTerminalLine(std::string& out, const TerminalLine& line);
-void EncodeTerminalHostFrame(std::string& out, const TerminalHostFrame& frame);
+void EncodeTerminalHostFrame(std::string& out, const TerminalHostFrame& frame,
+                             TerminalHostWireOptions options = {});
 // nullopt on any malformed, truncated or out-of-range field.
 std::optional<TerminalHostFrame> DecodeTerminalHostFrame(std::string_view bytes);
 

@@ -602,8 +602,8 @@ std::optional<TerminalLinkHit> WorkspaceShell::TerminalLinkAtPoint(float x, floa
   // An OSC 8 hyperlink is what the program said the text links to; it wins over
   // anything the text looks like. A `file://` link for another machine (the
   // session keeps those verbatim) has no local path to open.
-  if (position->column < hit_line.cells.size() && hit_line.cells[position->column].link != 0) {
-    const auto id = hit_line.cells[position->column].link;
+  if (position->column < hit_line.cells.size() && hit_line.cells[position->column].extra != 0) {
+    const auto id = hit_line.cells[position->column].extra;
     std::string uri = terminal_tab->session.LinkUri(id);
     if (!uri.empty() && (!uri.starts_with("file://") || uri.starts_with("file:///"))) {
       // The span is the run of cells the program marked with this link, across
@@ -612,11 +612,11 @@ std::optional<TerminalLinkHit> WorkspaceShell::TerminalLinkAtPoint(float x, floa
       std::size_t begin = position->column;
       while (true) {
         const auto& cells = link_lines[begin_index].cells;
-        while (begin > 0 && cells[begin - 1].link == id) {
+        while (begin > 0 && cells[begin - 1].extra == id) {
           --begin;
         }
         if (begin != 0 || !link_lines[begin_index].wrapped_from_previous || begin_index == 0 ||
-            link_lines[begin_index - 1].cells.empty() || link_lines[begin_index - 1].cells.back().link != id) {
+            link_lines[begin_index - 1].cells.empty() || link_lines[begin_index - 1].cells.back().extra != id) {
           break;
         }
         --begin_index;
@@ -626,12 +626,12 @@ std::optional<TerminalLinkHit> WorkspaceShell::TerminalLinkAtPoint(float x, floa
       std::size_t end = position->column + 1;
       while (true) {
         const auto& cells = link_lines[end_index].cells;
-        while (end < cells.size() && cells[end].link == id) {
+        while (end < cells.size() && cells[end].extra == id) {
           ++end;
         }
         if (end != cells.size() || end_index + 1 >= link_lines.size() ||
             !link_lines[end_index + 1].wrapped_from_previous || link_lines[end_index + 1].cells.empty() ||
-            link_lines[end_index + 1].cells.front().link != id) {
+            link_lines[end_index + 1].cells.front().extra != id) {
           break;
         }
         ++end_index;

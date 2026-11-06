@@ -380,9 +380,9 @@ void RemoteTerminalChannel::ApplyFrame(std::string_view bytes) {
   // A host program's `file:///abs` link (the host session normalized its own
   // host name away) names a host path: open it where the editor has it.
   if (host_to_local_) {
-    for (terminal::TerminalHostLink& link : frame->links) {
-      if (link.uri.starts_with("file:///")) {
-        link.uri = "file://" + host_to_local_(link.uri.substr(7)).string();
+    for (terminal::TerminalHostCellExtra& extra : frame->extras) {
+      if (extra.uri.starts_with("file:///")) {
+        extra.uri = "file://" + host_to_local_(extra.uri.substr(7)).string();
       }
     }
   }

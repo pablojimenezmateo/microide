@@ -22,6 +22,16 @@
 
 namespace microide::server {
 
+namespace {
+
+// What a connection's terminal frames may carry, from the wire version its
+// hello said it speaks (remote::kProtocolVersion's history).
+terminal::TerminalHostWireOptions TerminalWireOptionsFor(std::int64_t protocol) {
+  return terminal::TerminalHostWireOptions{.underline_colors = protocol >= 4};
+}
+
+}  // namespace
+
 RemoteServer::RemoteServer(Config config)
     : config_(std::move(config)), epoch_(remote::MakeDaemonEpoch()) {
   wake_.Open();
@@ -206,6 +216,7 @@ void RemoteServer::InstallHandlers(Connection& connection) {
                      connection.peer.ReplyError(id, remote::kErrorIncompatible, *incompatible);
                      return;
                    }
+                   connection.protocol = hello->protocol;
                    {
                      std::lock_guard lock(mutex_);
                      if (connection.root.empty() && !hello->root.empty()) {
@@ -411,6 +422,7 @@ void RemoteServer::InstallTerminalHandlers(Connection& connection) {
                      return;
                    }
                    request->root = connection.root;
+                   request->wire = TerminalWireOptionsFor(connection.protocol);
                    const TerminalTable::OpenResult opened =
                        terminals_->Open(connection.id, std::move(*request));
                    if (opened.handle == 0) {
@@ -448,8 +460,9 @@ void RemoteServer::InstallTerminalHandlers(Connection& connection) {
                          .screen_top = static_cast<std::uint64_t>(std::max<std::int64_t>(top.AsInt(0), 0)),
                          .alternate = params["alternate"].AsBool(false)};
                    }
-                   if (handle <= 0 || !terminals_->Attach(connection.id,
-                                                          static_cast<std::uint64_t>(handle), resume)) {
+                   if (handle <= 0 ||
+                       !terminals_->Attach(connection.id, static_cast<std::uint64_t>(handle),
+                                           TerminalWireOptionsFor(connection.protocol), resume)) {
                      connection.peer.ReplyError(id, remote::kErrorInvalidParams,
                                                 "no such terminal");
                      return;

@@ -13,7 +13,7 @@ entries and the guardrails stayed.
 
 ## Open items
 
-### TD-2026-11-05-432 — the 2026-11-05 terminal UI/UX review: what it fixed, and what it left. [OPEN — items 1 and 2]
+### TD-2026-11-05-432 — the 2026-11-05 terminal UI/UX review: what it fixed, and what it left. [OPEN — item 1; 2 resolved 2026-11-06]
 
 A review of the terminal as a user meets it -- selecting, copying, the cursor --
 driven through the QA harness's screenshots before and after. Fixed, each with a
@@ -60,7 +60,20 @@ Left:
    splitting glyph runs on style as it does on colour. The ASCII atlas and the
    cluster cache are per backend already, so the cost is one more atlas per style
    in use, paid only by a terminal that prints that style.
-2. **Underline colour (SGR 58/59) and the styles past double (4:3..4:5) are
+2. ~~**Underline colour (SGR 58/59) and the styles past double (4:3..4:5)**~~
+   **Resolved 2026-11-06.** The shape takes the style's two free attribute bits;
+   the colour shares the cell's 16-bit id with the OSC 8 link
+   (`TerminalCell::extra` -> `TerminalCellExtraTable`, interned `(URI, colour)`
+   pairs, the 18-byte cell unchanged). A line snapshot carries the colours its
+   underlined cells name, so paint never reads the table; the planner coalesces
+   strokes by shape and both colours, and the pane draws curly, dotted and dashed
+   lines. Remote: wire version 4 adds the colours as their own frame section,
+   sent only to a client whose hello said 4 (the floor stays 3, so an upgrade
+   restarts no host server). A host history page (term/scrollback) still drops
+   extras, as it dropped links. Tests: `TerminalSession/KeepsUnderlineShapesAndColours`,
+   `TerminalRowPaint/UnderlinesTakeTheirColourAndShape`,
+   `TerminalHost/UnderlineColourReachesTheClient`, the wire round-trip's v3 peer.
+   Was: **Underline colour (SGR 58/59) and the styles past double (4:3..4:5) are
    parsed and dropped.** A colour does not fit the 18-byte `TerminalCell`
    (`static_assert`); it wants out-of-line extended attributes keyed by cell, the
    way xterm.js stores them, which the cell comment already names for long

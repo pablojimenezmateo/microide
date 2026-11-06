@@ -106,13 +106,14 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                                       float y,
                                       float width,
                                       const terminal::TerminalLine& line,
-                                      const TerminalRowEmphasis& emphasis) {
+                                      const TerminalRowEmphasis& emphasis,
+                                      std::span<const terminal::TerminalUnderlineColor> underline_colors) {
     const float char_width = std::max(1.0f, terminal_text_renderer_.CharWidth());
     if (width < char_width) {
       return;
     }
     const auto columns = static_cast<std::size_t>(std::floor(width / char_width));
-    PlanTerminalRow(line, columns, emphasis, terminal_palette, terminal_row_plan_);
+    PlanTerminalRow(line, columns, emphasis, terminal_palette, terminal_row_plan_, underline_colors);
     const float line_height = terminal_text_renderer_.LineHeight();
     const auto column_x = [&](std::size_t column) { return x + static_cast<float>(column) * char_width; };
     const auto span_w = [&](std::size_t begin, std::size_t end) {
@@ -134,15 +135,47 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
         DrawFilledRect(renderer, MakeRect(run_x, y + std::round(line_height * 0.45f), run_w, thickness),
                        stroke.color);
       }
+      const float underline_y = y + line_height - thickness - 1.0f;
       if (stroke.bits & terminal::cell_attr::kUnderline) {
-        DrawFilledRect(renderer, MakeRect(run_x, y + line_height - thickness - 1.0f, run_w, thickness),
-                       stroke.color);
+        switch (stroke.variant) {
+          case terminal::TerminalUnderlineVariant::Straight:
+            DrawFilledRect(renderer, MakeRect(run_x, underline_y, run_w, thickness), stroke.underline_color);
+            break;
+          case terminal::TerminalUnderlineVariant::Curly: {
+            // A zig-zag two strokes tall, its period a few strokes wide, as the
+            // editor's own squiggles read at this size.
+            const float amplitude = thickness * 1.5f;
+            const float half = std::max(2.0f, thickness * 2.0f);
+            const float top = underline_y - amplitude + thickness;
+            SDL_SetRenderDrawColor(renderer, stroke.underline_color.r, stroke.underline_color.g,
+                                   stroke.underline_color.b, stroke.underline_color.a);
+            bool up = true;
+            for (float px = run_x; px < run_x + run_w; px += half, up = !up) {
+              const float next = std::min(px + half, run_x + run_w);
+              for (float row = 0.0f; row < thickness; row += 1.0f) {
+                SDL_RenderLine(renderer, px, (up ? top + amplitude : top) + row, next,
+                               (up ? top : top + amplitude) + row);
+              }
+            }
+            break;
+          }
+          case terminal::TerminalUnderlineVariant::Dotted:
+          case terminal::TerminalUnderlineVariant::Dashed: {
+            const bool dotted = stroke.variant == terminal::TerminalUnderlineVariant::Dotted;
+            const float mark = dotted ? thickness : std::max(3.0f, char_width * 0.5f);
+            const float pitch = dotted ? thickness * 2.0f : mark + std::max(2.0f, char_width * 0.25f);
+            for (float px = run_x; px < run_x + run_w; px += pitch) {
+              DrawFilledRect(renderer, MakeRect(px, underline_y, std::min(mark, run_x + run_w - px), thickness),
+                             stroke.underline_color);
+            }
+            break;
+          }
+        }
       }
       if (stroke.bits & terminal::cell_attr::kDoubleUnderline) {
         DrawFilledRect(renderer, MakeRect(run_x, y + line_height - thickness * 3.0f - 1.0f, run_w, thickness),
-                       stroke.color);
-        DrawFilledRect(renderer, MakeRect(run_x, y + line_height - thickness - 1.0f, run_w, thickness),
-                       stroke.color);
+                       stroke.underline_color);
+        DrawFilledRect(renderer, MakeRect(run_x, underline_y, run_w, thickness), stroke.underline_color);
       }
     }
   };
@@ -386,7 +419,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
           break;
         }
         draw_terminal_line(pane_layout.text_x, line_y, pane_layout.text_width, terminal_lines[snapshot_index],
-                           emphasis);
+                           emphasis, pane->visible_lines_snapshot.underline_colors);
         if (pane->hovered_link.has_value() &&
             pane->hovered_link->row <= static_cast<std::size_t>(index) &&
             static_cast<std::size_t>(index) <= pane->hovered_link->end_row) {

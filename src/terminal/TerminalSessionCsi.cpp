@@ -92,7 +92,9 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
   // ApplySgrParameters, so the general parameter vector would be built and
   // discarded. Short-circuit the most common colored-output sequence before it.
   if (prefix == '\0' && intermediate == '\0' && final == 'm') {
-    detail::ApplySgrParameters(current_style_, body);
+    if (detail::ApplySgrParameters(current_style_, pen_underline_color_, body)) {
+      current_extra_ = InternExtraLocked(pen_link_uri_, pen_underline_color_);
+    }
     return;
   }
   // Reuse a thread_local buffer so a non-SGR CSI does not heap-allocate a fresh
@@ -194,11 +196,14 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
     auto_wrap_mode_ = true;
     application_cursor_keys_mode_ = false;
     current_style_ = TerminalStyle{};
+    pen_underline_color_.reset();  // DECSTR resets the rendition; an OSC 8 link stays open
+    current_extra_ = InternExtraLocked(pen_link_uri_, pen_underline_color_);
     charsets_ = {};
     ResetScrollRegionLocked();
     saved_cursor_row_ = 0;
     saved_cursor_column_ = 0;
     saved_style_ = TerminalStyle{};
+    saved_underline_color_.reset();
     saved_origin_mode_ = false;
     saved_charsets_ = {};
     return;
@@ -208,7 +213,9 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       SendBytesLocked("\x1b[?1;2c");
       return;
     case 'm':
-      detail::ApplySgrParameters(current_style_, body);
+      if (detail::ApplySgrParameters(current_style_, pen_underline_color_, body)) {
+      current_extra_ = InternExtraLocked(pen_link_uri_, pen_underline_color_);
+    }
       return;
     case 'A': {
       // CUU: cursor up, clamped to the TOP OF THE VISIBLE SCREEN, not the top of

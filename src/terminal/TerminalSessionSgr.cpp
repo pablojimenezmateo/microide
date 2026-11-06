@@ -59,7 +59,9 @@ std::optional<util::Rgba8> ParseExtendedSgrColor(const std::vector<std::vector<i
 
 }  // namespace
 
-void detail::ApplySgrParameters(TerminalStyle& style, std::string_view body) {
+bool detail::ApplySgrParameters(TerminalStyle& style, TerminalColor& underline_color,
+                                std::string_view body) {
+  const TerminalColor underline_before = underline_color;
   // Reused across SGR sequences on the reader thread so a colored-output burst
   // does not churn the allocator with a fresh nested vector per escape.
   thread_local std::vector<std::vector<int>> groups;
@@ -70,6 +72,7 @@ void detail::ApplySgrParameters(TerminalStyle& style, std::string_view body) {
     switch (code) {
       case 0:
         style = TerminalStyle{};
+        underline_color.reset();
         break;
       case 1:
         style.set(cell_attr::kBold, true);
@@ -85,18 +88,20 @@ void detail::ApplySgrParameters(TerminalStyle& style, std::string_view body) {
       case 3:
         style.set(cell_attr::kItalic, true);
         break;
-      case 4:
-        if (group.size() > 1 && group[1] == 0) {
-          style.set(cell_attr::kUnderline, false);
-          style.set(cell_attr::kDoubleUnderline, false);
-        } else if (group.size() > 1 && group[1] == 2) {
-          style.set(cell_attr::kDoubleUnderline, true);
-          style.set(cell_attr::kUnderline, false);
-        } else {
-          style.set(cell_attr::kUnderline, true);
-          style.set(cell_attr::kDoubleUnderline, false);
-        }
+      case 4: {
+        // `4` and `4:1` straight, `4:2` double, `4:3` curly, `4:4` dotted,
+        // `4:5` dashed (kitty's extension, which VTE, WezTerm, foot and
+        // xterm.js read the same way), `4:0` none. An unknown style is a plain
+        // underline, as in those terminals.
+        const int shape = group.size() > 1 ? group[1] : 1;
+        style.set(cell_attr::kUnderline, shape != 0 && shape != 2);
+        style.set(cell_attr::kDoubleUnderline, shape == 2);
+        style.set_underline_variant(shape == 3   ? TerminalUnderlineVariant::Curly
+                                    : shape == 4 ? TerminalUnderlineVariant::Dotted
+                                    : shape == 5 ? TerminalUnderlineVariant::Dashed
+                                                 : TerminalUnderlineVariant::Straight);
         break;
+      }
       case 5:
       case 6:
         style.set(cell_attr::kBlink, true);
@@ -113,6 +118,7 @@ void detail::ApplySgrParameters(TerminalStyle& style, std::string_view body) {
       case 21:
         style.set(cell_attr::kDoubleUnderline, true);
         style.set(cell_attr::kUnderline, false);
+        style.set_underline_variant(TerminalUnderlineVariant::Straight);
         break;
       case 22:
         style.set(cell_attr::kBold, false);
@@ -128,6 +134,7 @@ void detail::ApplySgrParameters(TerminalStyle& style, std::string_view body) {
       case 24:
         style.set(cell_attr::kUnderline, false);
         style.set(cell_attr::kDoubleUnderline, false);
+        style.set_underline_variant(TerminalUnderlineVariant::Straight);
         break;
       case 25:
         style.set(cell_attr::kBlink, false);
@@ -160,9 +167,13 @@ void detail::ApplySgrParameters(TerminalStyle& style, std::string_view body) {
         style.background.reset();
         break;
       case 58:
-        // Underline color: parse to consume parameters, then discard (the
-        // renderer draws underlines in the foreground color).
-        (void)ParseExtendedSgrColor(groups, gi);
+        // The underline colour; without one an underline takes the text's.
+        if (auto color = ParseExtendedSgrColor(groups, gi)) {
+          underline_color = *color;
+        }
+        break;
+      case 59:
+        underline_color.reset();
         break;
       default:
         if (code >= 30 && code <= 37) {
@@ -178,11 +189,12 @@ void detail::ApplySgrParameters(TerminalStyle& style, std::string_view body) {
         } else if (code >= 100 && code <= 107) {
           style.background = util::BasicAnsiColor(code - 100, true);
         }
-        // Codes 53/55 (overline) and 59 (default underline color) are accepted
-        // and ignored; they do not affect any tracked attribute.
+        // Codes 53/55 (overline) are accepted and ignored; they do not affect
+        // any tracked attribute.
         break;
     }
   }
+  return underline_color != underline_before;
 }
 
 }  // namespace microide::terminal

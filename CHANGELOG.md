@@ -10,6 +10,11 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Added
 
+- **Coloured and curly underlines in the terminal.** Programs that underline
+  with a colour (SGR 58) or a shape -- curly, dotted, dashed (`CSI 4:3 m` and
+  its siblings), as helix and neovim mark diagnostics -- now draw that way, on
+  local and remote terminals. An older host server keeps working (its
+  underlines take the text's colour) until the editor updates it as usual.
 - **Select All in the terminal.** `Ctrl+Shift+A` (as in gnome-terminal and
   Konsole), the terminal's context menu, or `term-select-all` selects the whole
   transcript, ending at the last line with text. Copying a large selection no

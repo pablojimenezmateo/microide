@@ -1,5 +1,7 @@
 #include "terminal/TerminalHostWire.h"
 
+#include <algorithm>
+
 #include "util/ByteCodec.h"
 
 namespace microide::terminal {
@@ -11,16 +13,21 @@ using util::PutVarint;
 
 constexpr std::uint8_t kHasForeground = 1u << 0;
 constexpr std::uint8_t kHasBackground = 1u << 1;
-// Not a style bit: the run's OSC 8 link id follows the colours.
-constexpr std::uint8_t kHasLink = 1u << 2;
+// Not a style bit: the run's cell-extra id (TerminalCell::extra) follows the
+// colours.
+constexpr std::uint8_t kHasExtra = 1u << 2;
 
 // Optional-field presence bits.
 constexpr std::uint8_t kHasTitle = 1u << 0;
 constexpr std::uint8_t kHasWorkingDirectory = 1u << 1;
 constexpr std::uint8_t kHasClipboard = 1u << 2;
 constexpr std::uint8_t kHasNotification = 1u << 3;
-constexpr std::uint8_t kHasLinks = 1u << 4;
+constexpr std::uint8_t kHasExtras = 1u << 4;
 constexpr std::uint8_t kHasOpenUrl = 1u << 5;
+// Wire version 4: (extra id, colour) pairs for the extras that carry an SGR 58
+// underline colour. A section of its own, after everything version 3 sends, so
+// the extras list keeps its version-3 shape.
+constexpr std::uint8_t kHasUnderlineColors = 1u << 6;
 
 void PutRgba(std::string& out, const util::Rgba8& color) {
   out.push_back(static_cast<char>(color.r));
@@ -35,22 +42,22 @@ util::Rgba8 GetRgba(ByteReader& in) {
                      static_cast<std::uint8_t>(value >> 16), static_cast<std::uint8_t>(value >> 24)};
 }
 
-// A run is one style AND one link: the link is per cell, not in the style, but
+// A run is one style AND one extra: the extra is per cell, not in the style, but
 // it changes exactly where a run would.
 void PutRunStyle(std::string& out, const TerminalCell& cell) {
   const TerminalStyle& style = cell.style;
   PutVarint(out, style.attrs);
   out.push_back(static_cast<char>((style.foreground ? kHasForeground : 0) |
                                   (style.background ? kHasBackground : 0) |
-                                  (cell.link != 0 ? kHasLink : 0)));
+                                  (cell.extra != 0 ? kHasExtra : 0)));
   if (style.foreground) {
     PutRgba(out, *style.foreground);
   }
   if (style.background) {
     PutRgba(out, *style.background);
   }
-  if (cell.link != 0) {
-    PutVarint(out, cell.link);
+  if (cell.extra != 0) {
+    PutVarint(out, cell.extra);
   }
 }
 
@@ -64,18 +71,18 @@ void GetRunStyle(ByteReader& in, TerminalCell& cell) {
   if ((colors & kHasBackground) != 0) {
     style.background = GetRgba(in);
   }
-  if ((colors & kHasLink) != 0) {
-    const std::uint64_t link = in.Varint();
-    if (link == 0 || link > 0xffffu) {
+  if ((colors & kHasExtra) != 0) {
+    const std::uint64_t extra = in.Varint();
+    if (extra == 0 || extra > 0xffffu) {
       in.Fail();
       return;
     }
-    cell.link = static_cast<std::uint16_t>(link);
+    cell.extra = static_cast<std::uint16_t>(extra);
   }
 }
 
 bool SameRun(const TerminalCell& a, const TerminalCell& b) {
-  return a.link == b.link && a.style.attrs == b.style.attrs &&
+  return a.extra == b.extra && a.style.attrs == b.style.attrs &&
          a.style.foreground == b.style.foreground && a.style.background == b.style.background;
 }
 
@@ -183,7 +190,14 @@ void EncodeTerminalLine(std::string& out, const TerminalLine& line) {
   }
 }
 
-void EncodeTerminalHostFrame(std::string& out, const TerminalHostFrame& frame) {
+void EncodeTerminalHostFrame(std::string& out, const TerminalHostFrame& frame,
+                             TerminalHostWireOptions options) {
+  std::size_t colored = 0;
+  if (options.underline_colors) {
+    for (const TerminalHostCellExtra& extra : frame.extras) {
+      colored += extra.underline_color.has_value() ? 1 : 0;
+    }
+  }
   PutVarint(out, frame.rows);
   PutVarint(out, frame.columns);
   PutVarint(out, frame.flags);
@@ -216,8 +230,9 @@ void EncodeTerminalHostFrame(std::string& out, const TerminalHostFrame& frame) {
                                   (frame.working_directory ? kHasWorkingDirectory : 0) |
                                   (frame.clipboard ? kHasClipboard : 0) |
                                   (frame.notification ? kHasNotification : 0) |
-                                  (frame.links.empty() ? 0 : kHasLinks) |
-                                  (frame.open_url ? kHasOpenUrl : 0)));
+                                  (frame.extras.empty() ? 0 : kHasExtras) |
+                                  (frame.open_url ? kHasOpenUrl : 0) |
+                                  (colored != 0 ? kHasUnderlineColors : 0)));
   for (const auto* field : {&frame.title, &frame.working_directory, &frame.clipboard}) {
     if (*field) {
       PutBytes(out, **field);
@@ -227,15 +242,24 @@ void EncodeTerminalHostFrame(std::string& out, const TerminalHostFrame& frame) {
     PutBytes(out, frame.notification->title);
     PutBytes(out, frame.notification->body);
   }
-  if (!frame.links.empty()) {
-    PutVarint(out, frame.links.size());
-    for (const TerminalHostLink& link : frame.links) {
-      PutVarint(out, link.id);
-      PutBytes(out, link.uri);
+  if (!frame.extras.empty()) {
+    PutVarint(out, frame.extras.size());
+    for (const TerminalHostCellExtra& extra : frame.extras) {
+      PutVarint(out, extra.id);
+      PutBytes(out, extra.uri);
     }
   }
   if (frame.open_url) {
     PutBytes(out, *frame.open_url);
+  }
+  if (colored != 0) {
+    PutVarint(out, colored);
+    for (const TerminalHostCellExtra& extra : frame.extras) {
+      if (extra.underline_color.has_value()) {
+        PutVarint(out, extra.id);
+        PutRgba(out, *extra.underline_color);
+      }
+    }
   }
 }
 
@@ -334,23 +358,40 @@ std::optional<TerminalHostFrame> DecodeTerminalHostFrame(std::string_view bytes)
     notification.body = std::string(in.Bytes(kMaxHostTerminalTextBytes));
     frame.notification = std::move(notification);
   }
-  if ((present & kHasLinks) != 0) {
+  if ((present & kHasExtras) != 0) {
     const std::uint64_t count = in.Varint();
     if (in.failed() || count == 0 || count > 0xffffu || count > in.remaining()) {
       return std::nullopt;
     }
-    frame.links.resize(static_cast<std::size_t>(count));
-    for (TerminalHostLink& link : frame.links) {
+    frame.extras.resize(static_cast<std::size_t>(count));
+    for (TerminalHostCellExtra& extra : frame.extras) {
       const std::uint64_t id = in.Varint();
       if (in.failed() || id == 0 || id > 0xffffu) {
         return std::nullopt;
       }
-      link.id = static_cast<std::uint16_t>(id);
-      link.uri = std::string(in.Bytes(kMaxHostTerminalTextBytes));
+      extra.id = static_cast<std::uint16_t>(id);
+      extra.uri = std::string(in.Bytes(kMaxHostTerminalTextBytes));
     }
   }
   if ((present & kHasOpenUrl) != 0) {
     frame.open_url = std::string(in.Bytes(kMaxHostOpenUrlBytes));
+  }
+  if ((present & kHasUnderlineColors) != 0) {
+    // Each names an extra the list above defined; frame.extras is sorted by id.
+    const std::uint64_t count = in.Varint();
+    if (in.failed() || count == 0 || count > frame.extras.size()) {
+      return std::nullopt;
+    }
+    for (std::uint64_t i = 0; i < count; ++i) {
+      const std::uint64_t id = in.Varint();
+      const auto found = std::ranges::lower_bound(frame.extras, id, {}, [](const TerminalHostCellExtra& extra) {
+        return static_cast<std::uint64_t>(extra.id);
+      });
+      if (in.failed() || found == frame.extras.end() || found->id != id) {
+        return std::nullopt;
+      }
+      found->underline_color = GetRgba(in);
+    }
   }
   if (in.failed() || !in.at_end()) {
     return std::nullopt;

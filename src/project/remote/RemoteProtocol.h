@@ -20,7 +20,10 @@ namespace microide::project::remote {
 // 3 (2026-10-09): host terminal frames carry OSC 8 links and OSC 9/777
 // notifications, and a cell style run may carry a link id; the hello carries the
 // settings the server consumes and echoes them as applied.
-inline constexpr std::int64_t kProtocolVersion = 3;
+// 4 (2026-11-06): a terminal frame may end with the SGR 58 underline colours of
+// its cell extras (TerminalHostWireOptions::underline_colors). Additive: the
+// server sends them only to a client whose hello said 4, so the floor stays.
+inline constexpr std::int64_t kProtocolVersion = 4;
 inline constexpr std::int64_t kMinProtocolVersion = 3;
 
 // Method names. A method not listed here is answered with kErrorUnknownMethod.

@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -104,11 +105,16 @@ struct TerminalRowPaintPlan {
     std::size_t offset = 0;
     std::size_t length = 0;
   };
+  // One stroke run: cells sharing their decoration bits, underline shape and
+  // both colours. `color` is the text's (a strikethrough's); `underline_color`
+  // is SGR 58's when the cells carry one, else the text's too.
   struct Decoration {
     std::size_t begin = 0;
     std::size_t end = 0;
     SDL_Color color{};
+    SDL_Color underline_color{};
     std::uint16_t bits = 0;
+    terminal::TerminalUnderlineVariant variant = terminal::TerminalUnderlineVariant::Straight;
   };
 
   std::vector<Fill> fills;
@@ -139,10 +145,13 @@ struct TerminalRowPaintPlan {
 
 // Plans `line` across a pane `columns` cells wide. Columns past the row's cells
 // paint only the selection wash of a row the selection runs past.
+// `underline_colors` resolves the cells' SGR 58 colours by extra id (the
+// snapshot's TerminalLineRangeSnapshot::underline_colors).
 void PlanTerminalRow(const terminal::TerminalLine& line,
                      std::size_t columns,
                      const TerminalRowEmphasis& emphasis,
                      const TerminalPaintPalette& palette,
-                     TerminalRowPaintPlan& plan);
+                     TerminalRowPaintPlan& plan,
+                     std::span<const terminal::TerminalUnderlineColor> underline_colors = {});
 
 }  // namespace microide::workspace

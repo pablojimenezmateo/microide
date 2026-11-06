@@ -1008,16 +1008,16 @@ void TestTerminalSessionStampsOsc8LinksOnGlyphs() {
     return;
   }
   const auto& cells = lines[0].cells;
-  Expect(cells[0].link == 0 && cells[1].link == 0, "text before the link carries none");
-  Expect(cells[2].link != 0 && cells[2].link == cells[5].link &&
-             session.LinkUri(cells[2].link) == "https://example.com",
+  Expect(cells[0].extra == 0 && cells[1].extra == 0, "text before the link carries none");
+  Expect(cells[2].extra != 0 && cells[2].extra == cells[5].extra &&
+             session.LinkUri(cells[2].extra) == "https://example.com",
          "every glyph inside the link carries its URI");
-  Expect(cells[6].link == 0 && cells[8].link == 0, "the closing OSC 8 ends it");
-  Expect(cells[9].link == cells[2].link && cells[10].link == cells[2].link,
+  Expect(cells[6].extra == 0 && cells[8].extra == 0, "the closing OSC 8 ends it");
+  Expect(cells[9].extra == cells[2].extra && cells[10].extra == cells[2].extra,
          "the same URI shares one id, wide spacer included");
-  Expect(TerminalSessionTestAccess::LinkCount(session) == 1, "one table entry");
+  Expect(TerminalSessionTestAccess::ExtraCount(session) == 1, "one table entry");
   for (const auto& erased : lines[1].cells) {
-    Expect(erased.link == 0 && erased.style.background.has_value(),
+    Expect(erased.extra == 0 && erased.style.background.has_value(),
            "an erased cell takes the background, not the open link");
   }
 
@@ -1031,29 +1031,103 @@ void TestTerminalSessionStampsOsc8LinksOnGlyphs() {
   if (after.size() < 3 || after[2].cells.size() < 2) {
     return;
   }
-  Expect(session.LinkUri(after[2].cells[0].link) == "file:///tmp/a b.txt",
+  Expect(session.LinkUri(after[2].cells[0].extra) == "file:///tmp/a b.txt",
          "a local file link keeps its decoded path");
-  Expect(session.LinkUri(after[2].cells[1].link) == "file://elsewhere.invalid/x",
+  Expect(session.LinkUri(after[2].cells[1].extra) == "file://elsewhere.invalid/x",
          "another machine's file link is kept verbatim");
 }
 
 // Recycling: a full table frees only the ids no buffer still shows.
-void TestTerminalLinkTableRecyclesOnlyDeadIds() {
-  microide::terminal::TerminalLinkTable table;
-  Expect(table.Intern("") == 0 && table.Intern(std::string(3000, 'x')) == 0,
-         "an empty or over-long URI is not a link");
-  const std::uint16_t a = table.Intern("https://a");
-  const std::uint16_t b = table.Intern("https://b");
-  Expect(a == 1 && b == 2 && table.Intern("https://a") == a, "identical URIs share an id");
-  std::vector<bool> live(3, false);
+// SGR 58/59 (the underline colour) and the `4:n` underline shapes used to be
+// parsed and dropped: a language-server-aware TUI's curly red diagnostic
+// underline drew as a plain line in the text's colour. The colour does not fit
+// the cell, so it rides the cell's extra id with the OSC 8 link; the shape fits
+// the style's free bits.
+void TestTerminalSessionKeepsUnderlineShapesAndColours() {
+  using microide::terminal::TerminalColor;
+  using microide::terminal::TerminalUnderlineVariant;
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 40);
+  TerminalSessionTestAccess::AppendOutput(
+      session,
+      "\x1b[4:3m\x1b[58;2;255;0;0mA\x1b[4:4mB\x1b[4:5m\x1b[58:5:2mC\x1b[59mD\x1b[24mE"
+      "\x1b[4m\x1b[58;2;1;2;3mF\x1b[0mG"
+      "\x1b]8;;https://x.example\x07\x1b[4m\x1b[58;2;1;2;3mH\x1b[59mI\x1b]8;;\x07"
+      "\x1b[58;2;9;9;9m\x1b" "7\x1b[0mJ\x1b" "8K\x1b[21mL");
+  const auto lines = session.SnapshotLines();
+  // DECRC also restores the column, so K is written over J.
+  Expect(!lines.empty() && lines[0].cells.size() == 11 && lines[0].cells[9].ascii_character() == 'K',
+         "the line was written, K over J");
+  if (lines.empty() || lines[0].cells.size() != 11) {
+    return;
+  }
+  const auto& c = lines[0].cells;
+  const auto color_of = [&](std::size_t i) { return TerminalSessionTestAccess::UnderlineColorOf(session, c[i].extra); };
+  const TerminalColor red = microide::util::Rgba8{255, 0, 0, 255};
+  const TerminalColor rgb123 = microide::util::Rgba8{1, 2, 3, 255};
+  Expect(c[0].style.underline() && c[0].style.underline_variant() == TerminalUnderlineVariant::Curly &&
+             color_of(0) == red,
+         "4:3 is curly, and 58;2 colours it");
+  Expect(c[1].style.underline_variant() == TerminalUnderlineVariant::Dotted && color_of(1) == red &&
+             c[1].extra == c[0].extra,
+         "4:4 is dotted, the colour stays on the pen and the cells share its entry");
+  Expect(c[2].style.underline_variant() == TerminalUnderlineVariant::Dashed &&
+             color_of(2) == TerminalColor(microide::util::Ansi256Color(2)),
+         "4:5 is dashed; the colon form of 58 takes a palette index");
+  Expect(c[3].style.underline() && c[3].extra == 0, "59 drops the colour");
+  Expect(!c[4].style.underline() && c[4].style.underline_variant() == TerminalUnderlineVariant::Straight,
+         "24 ends the underline and its shape");
+  Expect(c[5].style.underline_variant() == TerminalUnderlineVariant::Straight && color_of(5) == rgb123,
+         "a plain 4 is straight");
+  Expect(!c[6].style.underline() && c[6].extra == 0, "0 resets the colour with the rest");
+  Expect(session.LinkUri(c[7].extra) == "https://x.example" && color_of(7) == rgb123,
+         "a link and a colour share one entry");
+  Expect(session.LinkUri(c[8].extra) == "https://x.example" && !color_of(8).has_value() &&
+             c[8].extra != c[7].extra,
+         "dropping the colour keeps the link");
+  Expect(color_of(9) == TerminalColor(microide::util::Rgba8{9, 9, 9, 255}),
+         "DECRC restores the colour DECSC saved, past the SGR 0 between them");
+  Expect(c[10].style.double_underline() && color_of(10) == color_of(9),
+         "21 is double and keeps the colour");
+
+  // The snapshot paint reads carries the colours its underlined cells name.
+  microide::terminal::TerminalLineRangeSnapshot snapshot;
+  Expect(session.SnapshotLineRangeIfChanged(0, 4, 0, &snapshot), "a snapshot is taken");
+  Expect(microide::terminal::FindUnderlineColor(snapshot.underline_colors, c[0].extra) == red &&
+             microide::terminal::FindUnderlineColor(snapshot.underline_colors, c[7].extra) == rgb123 &&
+             !microide::terminal::FindUnderlineColor(snapshot.underline_colors, c[8].extra).has_value(),
+         "the snapshot resolves each underlined cell's colour by its extra");
+}
+
+void TestTerminalCellExtraTableRecyclesOnlyDeadIds() {
+  using microide::terminal::TerminalCellExtraTable;
+  using microide::terminal::TerminalColor;
+  TerminalCellExtraTable table;
+  Expect(table.Intern("", {}) == 0 && table.Intern(std::string(3000, 'x'), {}) == 0,
+         "an empty or over-long URI with no colour holds nothing");
+  const std::uint16_t a = table.Intern("https://a", {});
+  const std::uint16_t b = table.Intern("https://b", {});
+  Expect(a == 1 && b == 2 && table.Intern("https://a", {}) == a, "identical URIs share an id");
+  const TerminalColor red = microide::util::Rgba8{255, 0, 0, 255};
+  const std::uint16_t colored = table.Intern("https://a", red);
+  Expect(colored != a && table.Uri(colored) == "https://a" && table.UnderlineColor(colored) == red,
+         "the same link with an underline colour is its own entry");
+  const std::uint16_t color_only = table.Intern("", red);
+  Expect(color_only != 0 && table.Uri(color_only).empty() && table.UnderlineColor(color_only) == red &&
+             table.Intern(std::string(3000, 'x'), red) == color_only,
+         "a colour alone is an entry with no link (an over-long URI is dropped, not the colour)");
+  Expect(table.has_underline_colors(), "and the table knows it holds colours");
+  std::vector<bool> live(5, false);
   live[b] = true;
   table.Retain(live);
-  Expect(table.Uri(a).empty() && table.Uri(b) == "https://b", "only the dead id is freed");
-  Expect(table.Intern("https://c") == a, "and its id is reused");
-  for (std::size_t i = table.size(); i < microide::terminal::TerminalLinkTable::kMaxLinks; ++i) {
-    table.Intern("https://n/" + std::to_string(i));
+  Expect(table.Uri(a).empty() && table.Uri(b) == "https://b" && !table.UnderlineColor(colored).has_value(),
+         "only the dead ids are freed");
+  Expect(!table.has_underline_colors(), "freeing the coloured entries forgets the colours");
+  Expect(table.Intern("https://c", {}) != b, "a freed id is reused");
+  for (std::size_t i = table.size(); i < TerminalCellExtraTable::kMaxEntries; ++i) {
+    table.Intern("https://n/" + std::to_string(i), {});
   }
-  Expect(table.full() && table.Intern("https://overflow") == 0, "a full table refuses");
+  Expect(table.full() && table.Intern("https://overflow", {}) == 0, "a full table refuses");
 }
 
 // A real modern TUI's frame, replayed: Claude Code 2.1.294's folder-trust dialog
@@ -3349,8 +3423,10 @@ void TestWideGlyphOnANarrowScreenStaysInsideTheMargin() {
 
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TerminalSession/StampsOsc8LinksOnGlyphs", TestTerminalSessionStampsOsc8LinksOnGlyphs);
-  AddTest(tests, "TerminalSession/LinkTableRecyclesOnlyDeadIds",
-          TestTerminalLinkTableRecyclesOnlyDeadIds);
+  AddTest(tests, "TerminalSession/KeepsUnderlineShapesAndColours",
+          TestTerminalSessionKeepsUnderlineShapesAndColours);
+  AddTest(tests, "TerminalSession/CellExtraTableRecyclesOnlyDeadIds",
+          TestTerminalCellExtraTableRecyclesOnlyDeadIds);
   AddTest(tests, "TerminalSession/WideGlyphOnANarrowScreenStaysInsideTheMargin",
           TestWideGlyphOnANarrowScreenStaysInsideTheMargin);
   AddTest(tests, "TerminalSession/ScreenAgreesWithPyteReference",

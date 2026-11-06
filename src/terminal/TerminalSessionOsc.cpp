@@ -227,7 +227,8 @@ void TerminalSession::HandleOscSequenceLocked(std::string_view sequence) {
     const std::size_t split = payload.find(';');
     const std::string_view uri =
         split == std::string_view::npos ? std::string_view{} : payload.substr(split + 1);
-    current_link_ = uri.empty() ? 0 : InternLinkLocked(NormalizeLinkUri(uri));
+    pen_link_uri_ = uri.empty() ? std::string() : NormalizeLinkUri(uri);
+    current_extra_ = InternExtraLocked(pen_link_uri_, pen_underline_color_);
     return;
   }
 
@@ -235,17 +236,17 @@ void TerminalSession::HandleOscSequenceLocked(std::string_view sequence) {
   // are accepted and intentionally ignored so they never corrupt the screen.
 }
 
-std::uint16_t TerminalSession::InternLinkLocked(std::string_view uri) {
-  if (const std::uint16_t id = links_.Intern(uri); id != 0 || !links_.full()) {
+std::uint16_t TerminalSession::InternExtraLocked(std::string_view uri, TerminalColor underline_color) {
+  if (const std::uint16_t id = extras_.Intern(uri, underline_color); id != 0 || !extras_.full()) {
     return id;
   }
-  // Full: keep only what a buffer still shows. The pen's own link is live too.
-  std::vector<bool> live(TerminalLinkTable::kMaxLinks + 1, false);
-  live[current_link_] = true;
+  // Full: keep only what a buffer still shows. The pen's own entry is live too.
+  std::vector<bool> live(TerminalCellExtraTable::kMaxEntries + 1, false);
+  live[current_extra_] = true;
   const auto mark = [&live](const std::deque<TerminalLine>& lines) {
     for (const TerminalLine& line : lines) {
       for (const TerminalCell& cell : line.cells) {
-        live[cell.link] = true;
+        live[cell.extra] = true;
       }
     }
   };
@@ -253,13 +254,13 @@ std::uint16_t TerminalSession::InternLinkLocked(std::string_view uri) {
   mark(primary_screen_.lines);
   mark(alternate_screen_.lines);
   live[0] = false;
-  links_.Retain(live);
-  return links_.Intern(uri);
+  extras_.Retain(live);
+  return extras_.Intern(uri, underline_color);
 }
 
-std::string TerminalSession::LinkUri(std::uint16_t link) const {
+std::string TerminalSession::LinkUri(std::uint16_t extra) const {
   std::lock_guard<std::mutex> lock(mutex_);
-  return std::string(links_.Uri(link));
+  return std::string(extras_.Uri(extra));
 }
 
 }  // namespace microide::terminal

@@ -38,6 +38,7 @@ struct TerminalScreenState {
   std::size_t saved_cursor_row = 0;
   std::size_t saved_cursor_column = 0;
   TerminalStyle saved_style = {};
+  TerminalColor saved_underline_color;
   bool saved_origin_mode = false;
   TerminalCharsets saved_charsets = {};
   std::size_t scroll_region_top = 0;

@@ -94,12 +94,22 @@ paints across both columns and grid alignment with the application holds.
 
 ### SGR (`CSI … m`)
 
-Reset (0), bold (1), dim (2), italic (3), underline (4 incl. `4:0/4:2` colon
-sub-parameters), blink (5/6), inverse (7), hidden (8), strikethrough (9), double
+Reset (0), bold (1), dim (2), italic (3), underline (4, and the colon shapes
+`4:0` none, `4:1` straight, `4:2` double, `4:3` curly, `4:4` dotted, `4:5`
+dashed), blink (5/6), inverse (7), hidden (8), strikethrough (9), double
 underline (21), and their resets (22–29). 16-color (30–37/40–47/90–97/100–107),
 256-color (`38;5`/`48;5`), and truecolor in both legacy (`38;2;r;g;b`) and ITU
-colon (`38:2:r:g:b`, `38:2::r:g:b`) forms. Underline color (58/59) is parsed and
-ignored; overline (53/55) is accepted and ignored.
+colon (`38:2:r:g:b`, `38:2::r:g:b`) forms. Underline colour (58, in the same
+forms; 59 resets it) is drawn; without one an underline takes the text's colour.
+Overline (53/55) is accepted and ignored.
+
+The underline shape fits the style's two free attribute bits. The colour does
+not fit the 18-byte cell: it shares the cell's 16-bit `extra` id with the OSC 8
+link, an interned `(URI, underline colour)` pair in the session's
+`TerminalCellExtraTable` (xterm.js's extended attributes). DECSC/DECRC save and
+restore the colour with the rest of the rendition; SGR 0 and DECSTR reset it. A
+line snapshot carries the colours its underlined cells name
+(`TerminalLineRangeSnapshot::underline_colors`), so paint never reads the table.
 
 ### Cursor / editing / scrolling
 

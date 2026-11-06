@@ -40,6 +40,31 @@ void TestHostBellReachesTheClientOnce() {
   Expect(!mirror.client.ConsumeBell(), "so the client rang once");
 }
 
+// A host program's coloured, curly underline (a TUI's diagnostic) reaches the
+// client: the shape in the style, the colour under the client's own extra id.
+void TestHostUnderlineColourReachesTheClient() {
+  Mirror mirror(4, 40);
+  TerminalSessionTestAccess::InternLink(mirror.client, "https://unrelated.example");
+  mirror.Write("ok \x1b[4:3;58;2;250;20;30merr\x1b[0m done");
+  Expect(mirror.Sync(), "the frame applies");
+  Expect(mirror.frame.extras.size() == 1 && mirror.frame.extras[0].uri.empty() &&
+             mirror.frame.extras[0].underline_color.has_value(),
+         "the frame carries the one colour its lines use");
+  const std::vector<TerminalLine> lines = mirror.client.SnapshotLines();
+  Expect(!lines.empty() && lines[0].cells.size() > 6, "the line arrived");
+  if (lines.empty() || lines[0].cells.size() <= 6) {
+    return;
+  }
+  const auto& cell = lines[0].cells[3];
+  Expect(cell.style.underline() &&
+             cell.style.underline_variant() == terminal::TerminalUnderlineVariant::Curly &&
+             TerminalSessionTestAccess::UnderlineColorOf(mirror.client, cell.extra) ==
+                 terminal::TerminalColor(util::Rgba8{250, 20, 30, 255}),
+         "the client's cell is curly and resolves to the host's colour");
+  Expect(mirror.client.LinkUri(cell.extra).empty(), "and is not a link");
+  Expect(lines[0].cells[2].extra == 0 && lines[0].cells[7].extra == 0, "nor is anything around it");
+}
+
 // A host program's OSC 9 notification and OSC 8 link reach the client: the
 // notification once, the link under the client's own id for the same URI.
 void TestHostNotificationAndLinksReachTheClient() {
@@ -49,7 +74,7 @@ void TestHostNotificationAndLinksReachTheClient() {
   mirror.Write("\x1b]9;needs your input\x07");
   mirror.Write("see \x1b]8;;https://example.com/a\x1b\\docs\x1b]8;;\x1b\\ now");
   Expect(mirror.Sync(), "the frame applies");
-  Expect(mirror.frame.notification.has_value() && mirror.frame.links.size() == 1,
+  Expect(mirror.frame.notification.has_value() && mirror.frame.extras.size() == 1,
          "the frame carries the notification and the one link its lines use");
   const auto notification = mirror.client.ConsumeNotification();
   Expect(notification.has_value() && notification->body == "needs your input",
@@ -59,10 +84,10 @@ void TestHostNotificationAndLinksReachTheClient() {
   if (lines.empty() || lines[0].cells.size() <= 8) {
     return;
   }
-  Expect(lines[0].cells[3].link == 0 && lines[0].cells[8].link == 0,
+  Expect(lines[0].cells[3].extra == 0 && lines[0].cells[8].extra == 0,
          "the cells outside the link carry none");
-  Expect(mirror.client.LinkUri(lines[0].cells[4].link) == "https://example.com/a" &&
-             lines[0].cells[4].link == lines[0].cells[7].link,
+  Expect(mirror.client.LinkUri(lines[0].cells[4].extra) == "https://example.com/a" &&
+             lines[0].cells[4].extra == lines[0].cells[7].extra,
          "every cell of the link text resolves to the host's URI");
   mirror.Write("x");
   Expect(mirror.Sync(), "the next frame applies");
@@ -101,8 +126,10 @@ void TestHostFrameRoundTripsEveryField() {
   frame.working_directory = "/home/u/project";
   frame.clipboard = std::string("clip\0board", 10);
   frame.notification = terminal::TerminalHostNotification{.title = "agent", .body = "done"};
-  frame.screen_lines[0].cells[1].link = 7;
-  frame.links = {{.id = 7, .uri = "https://example.com/x"}};
+  frame.screen_lines[0].cells[1].extra = 7;
+  frame.screen_lines[0].cells[2].extra = 9;
+  frame.extras = {{.id = 7, .uri = "https://example.com/x"},
+                  {.id = 9, .uri = "", .underline_color = util::Rgba8{200, 10, 20, 255}}};
 
   std::string wire;
   EncodeTerminalHostFrame(wire, frame);
@@ -129,10 +156,22 @@ void TestHostFrameRoundTripsEveryField() {
   Expect(back->notification.has_value() && back->notification->title == "agent" &&
              back->notification->body == "done",
          "the notification round-trips");
-  Expect(back->links.size() == 1 && back->links[0].id == 7 &&
-             back->links[0].uri == "https://example.com/x" &&
+  Expect(back->extras.size() == 2 && back->extras[0].id == 7 &&
+             back->extras[0].uri == "https://example.com/x" &&
+             !back->extras[0].underline_color.has_value() && back->extras[1].id == 9 &&
+             back->extras[1].uri.empty() &&
+             back->extras[1].underline_color == frame.extras[1].underline_color &&
              terminal::SameLine(back->screen_lines[0], frame.screen_lines[0]),
-         "a cell's link id and the link table round-trip");
+         "a cell's extra id and the extras (link, underline colour) round-trip");
+
+  // A version-3 peer gets the frame without the colour section, and that frame
+  // is exactly what version 3 sent: the extras list is unchanged by version 4.
+  std::string v3_wire;
+  EncodeTerminalHostFrame(v3_wire, frame, terminal::TerminalHostWireOptions{.underline_colors = false});
+  const std::optional<TerminalHostFrame> v3 = DecodeTerminalHostFrame(v3_wire);
+  Expect(v3_wire.size() < wire.size() && v3.has_value() && v3->extras.size() == 2 &&
+             v3->extras[0].uri == "https://example.com/x" && !v3->extras[1].underline_color.has_value(),
+         "an older peer's frame leaves the colours out and still decodes");
 
   // Every strict prefix is truncated input and must be refused, never half-applied.
   for (std::size_t length = 0; length < wire.size(); ++length) {
@@ -731,6 +770,7 @@ void RegisterTerminalHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TerminalHost/BellReachesTheClientOnce", TestHostBellReachesTheClientOnce);
   AddTest(tests, "TerminalHost/NotificationAndLinksReachTheClient",
           TestHostNotificationAndLinksReachTheClient);
+  AddTest(tests, "TerminalHost/UnderlineColourReachesTheClient", TestHostUnderlineColourReachesTheClient);
   AddTest(tests, "TerminalHost/ModeChangeDuringABurstLeavesTheConfirmedScreenExact",
           TestModeChangeDuringABurstLeavesTheConfirmedScreenExact);
 }

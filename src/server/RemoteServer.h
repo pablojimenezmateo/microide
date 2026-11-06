@@ -73,6 +73,7 @@ class RemoteServer {
     std::uint64_t id = 0;
     project::remote::RemotePeer peer;
     std::string root;  // the workspace this connection opened, "" before hello
+    std::int64_t protocol = 0;  // the wire version its hello said it speaks
     std::atomic<bool> closed{false};
     // Asked for something beyond what an observer asks (hello, server/status,
     // server/log): only such a connection restarts an on-demand server's idle

@@ -136,7 +136,8 @@ void PlanTerminalRow(const terminal::TerminalLine& line,
                      std::size_t columns,
                      const TerminalRowEmphasis& emphasis,
                      const TerminalPaintPalette& palette,
-                     TerminalRowPaintPlan& plan) {
+                     TerminalRowPaintPlan& plan,
+                     std::span<const terminal::TerminalUnderlineColor> underline_colors) {
   plan.fills.clear();
   plan.text_runs.clear();
   plan.decorations.clear();
@@ -228,26 +229,52 @@ void PlanTerminalRow(const terminal::TerminalLine& line,
     column = end;
   }
 
-  // 4) Underline / double underline / strikethrough, coalesced over (colour,
-  // bits). A wide glyph's trailing half carries its lead's style, so the stroke
-  // spans both columns.
-  constexpr std::uint16_t kDecorationMask = terminal::cell_attr::kUnderline |
-                                            terminal::cell_attr::kDoubleUnderline |
-                                            terminal::cell_attr::kStrikethrough;
-  for (std::size_t column = 0; column < visible;) {
-    const auto bits = static_cast<std::uint16_t>(line.cells[column].style.attrs & kDecorationMask);
+  // 4) Underline / double underline / strikethrough, coalesced over (bits,
+  // underline shape, both colours). A wide glyph's trailing half carries its
+  // lead's style and extra, so the stroke spans both columns. An underline takes
+  // the cell's SGR 58 colour when it has one; hidden text's underline stays
+  // hidden, like its glyphs.
+  constexpr std::uint16_t kUnderlines =
+      terminal::cell_attr::kUnderline | terminal::cell_attr::kDoubleUnderline;
+  constexpr std::uint16_t kDecorationMask = kUnderlines | terminal::cell_attr::kStrikethrough;
+  const auto stroke_at = [&](std::size_t column) {
+    const terminal::TerminalCell& cell = line.cells[column];
+    const auto bits = static_cast<std::uint16_t>(cell.style.attrs & kDecorationMask);
+    TerminalRowPaintPlan::Decoration stroke{.bits = bits};
     if (bits == 0) {
+      return stroke;
+    }
+    stroke.color = cells[column].foreground;
+    stroke.underline_color = stroke.color;
+    if ((bits & kUnderlines) != 0) {
+      if ((bits & terminal::cell_attr::kUnderline) != 0) {
+        stroke.variant = cell.style.underline_variant();
+      }
+      if (const terminal::TerminalColor color = terminal::FindUnderlineColor(underline_colors, cell.extra);
+          color.has_value() && !cell.style.hidden()) {
+        stroke.underline_color = SDL_Color{color->r, color->g, color->b, 0xff};
+      }
+    }
+    return stroke;
+  };
+  for (std::size_t column = 0; column < visible;) {
+    TerminalRowPaintPlan::Decoration stroke = stroke_at(column);
+    if (stroke.bits == 0) {
       ++column;
       continue;
     }
-    const SDL_Color color = cells[column].foreground;
     std::size_t end = column + 1;
-    while (end < visible &&
-           static_cast<std::uint16_t>(line.cells[end].style.attrs & kDecorationMask) == bits &&
-           SameColor(cells[end].foreground, color)) {
+    while (end < visible) {
+      const TerminalRowPaintPlan::Decoration next = stroke_at(end);
+      if (next.bits != stroke.bits || next.variant != stroke.variant ||
+          !SameColor(next.color, stroke.color) || !SameColor(next.underline_color, stroke.underline_color)) {
+        break;
+      }
       ++end;
     }
-    plan.decorations.push_back({.begin = column, .end = end, .color = color, .bits = bits});
+    stroke.begin = column;
+    stroke.end = end;
+    plan.decorations.push_back(stroke);
     column = end;
   }
 }

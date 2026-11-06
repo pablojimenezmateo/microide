@@ -73,12 +73,18 @@ struct TerminalSessionTestAccess {
   static std::uint16_t InternLink(microide::terminal::TerminalSession& session,
                                   std::string_view uri) {
     std::scoped_lock lock(session.mutex_);
-    return session.InternLinkLocked(uri);
+    return session.InternExtraLocked(uri, {});
   }
 
-  static std::size_t LinkCount(const microide::terminal::TerminalSession& session) {
+  static std::size_t ExtraCount(const microide::terminal::TerminalSession& session) {
     std::scoped_lock lock(session.mutex_);
-    return session.links_.size();
+    return session.extras_.size();
+  }
+
+  static microide::terminal::TerminalColor UnderlineColorOf(
+      const microide::terminal::TerminalSession& session, std::uint16_t extra) {
+    std::scoped_lock lock(session.mutex_);
+    return session.extras_.UnderlineColor(extra);
   }
 
   // Live buffers in the trimmed-line recycler (TD-2026-08-14-231). Reading the
