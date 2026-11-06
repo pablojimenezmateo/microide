@@ -641,6 +641,44 @@ void TestWorkspaceShellBufferReplaceMovesToTheNextMatch() {
          "past the last match the selection wraps to the first");
 }
 
+// A replacement that reproduces the match -- a case-insensitive `foo` replaced
+// with `Foo`, over a match that already reads `Foo` -- is a no-op edit, and
+// ReplaceRange reports it as false. Replace returned there, so the current match
+// never moved: every further Replace hit the same `Foo` and the occurrences
+// after it were unreachable from the button.
+void TestWorkspaceShellBufferReplaceStepsPastAMatchItWouldNotChange() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "Foo foo Foo foo\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.MoveCursorTo(0, 0);
+
+  Expect(SendKeyDown(shell, SDLK_H, SDL_KMOD_CTRL), "Ctrl+H should open the replace widget");
+  WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "foo");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 4,
+         "four case-insensitive matches");
+  Expect(WorkspaceShellTestAccess::BufferSearchSelectedIndex(shell) == 0, "the first is current");
+  WorkspaceShellTestAccess::SetBufferReplaceText(shell, "Foo");
+
+  WorkspaceShellTestAccess::ReplaceCurrentBufferSearchMatch(shell);
+  Expect(editor.lines()[0] == "Foo foo Foo foo", "the first already read `Foo`: no edit");
+  Expect(WorkspaceShellTestAccess::BufferSearchSelectedIndex(shell) == 1,
+         "Replace still moves on to the next match");
+
+  WorkspaceShellTestAccess::ReplaceCurrentBufferSearchMatch(shell);
+  Expect(editor.lines()[0] == "Foo Foo Foo foo", "the second is replaced");
+  WorkspaceShellTestAccess::ReplaceCurrentBufferSearchMatch(shell);
+  WorkspaceShellTestAccess::ReplaceCurrentBufferSearchMatch(shell);
+  Expect(editor.lines()[0] == "Foo Foo Foo Foo",
+         "four presses reach the last occurrence: " + std::string(editor.lines()[0]));
+}
+
 // In the replace widget, Enter in the find field steps to the next match (as in
 // the find-only widget and VS Code); only Enter in the replace field replaces.
 void TestWorkspaceShellBufferReplaceEnterInFindFieldStepsMatches() {
@@ -1947,6 +1985,8 @@ void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellBufferSearchStartsFromTheCaret);
   AddTest(tests, "WorkspaceShell/BufferReplaceMovesToTheNextMatch",
           TestWorkspaceShellBufferReplaceMovesToTheNextMatch);
+  AddTest(tests, "WorkspaceShell/BufferReplaceStepsPastAMatchItWouldNotChange",
+          TestWorkspaceShellBufferReplaceStepsPastAMatchItWouldNotChange);
   AddTest(tests, "WorkspaceShell/BufferReplaceEnterInFindFieldStepsMatches",
           TestWorkspaceShellBufferReplaceEnterInFindFieldStepsMatches);
 }

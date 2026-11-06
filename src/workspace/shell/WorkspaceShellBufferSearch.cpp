@@ -428,6 +428,7 @@ void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
     return;
   }
 
+  bool replaced = false;
   if (buffer_search.regex) {
     // Regex mode: expand the replacement for THIS match against the whole '\n'-joined
     // buffer (so capture groups + lookarounds resolve in full context and a multi-
@@ -440,10 +441,21 @@ void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
     const std::string content = BuildWholeBufferContent(*viewport);
     const std::optional<std::string> expanded = pattern.ExpandMatchAt(
         content, WholeBufferOffset(viewport->lines(), match.start), buffer_search.replace_text.text());
-    if (!expanded.has_value() || !viewport->ReplaceRange(match, *expanded)) {
+    if (!expanded.has_value()) {
       return;
     }
-  } else if (!viewport->ReplaceRange(match, buffer_search.replace_text.text())) {
+    replaced = viewport->ReplaceRange(match, *expanded);
+  } else {
+    replaced = viewport->ReplaceRange(match, buffer_search.replace_text.text());
+  }
+  if (!replaced) {
+    if (viewport->read_only()) {
+      return;
+    }
+    // A no-op: the match already reads as its replacement (`foo` -> `Foo` over a
+    // `Foo`). The match set is unchanged, so moving on is a step to the next
+    // index; returning here left every later Replace on this same match.
+    MoveBufferSearchSelection(1);
     return;
   }
 
