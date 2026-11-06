@@ -2,6 +2,9 @@
 
 #include "platform/FileIndexWatcher.h"
 
+#include <fcntl.h>
+#include <unistd.h>
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -179,6 +182,77 @@ void TestFileIndexWatcherBatchesReplayToTheTree() {
     }
   }
   Expect(settled, "the replayed batches equal the tree; differences:" + have);
+  watcher.Unwatch();
+}
+
+// inotify reports a removed directory's IN_DELETE_SELF when its last dentry
+// reference drops, not at the rmdir: while anything holds it open (the
+// watcher's own walk of it, a shell cd'd into it) the event waits, and can
+// arrive after the parent's IN_CREATE for a NEW directory at the same path.
+// Read against the path, it emitted a recursive delete of the new directory --
+// whose files the create's walk had just indexed -- and nothing re-added them
+// (the UBSan lane's `-dir/inner.txt`). The parent's IN_DELETE already removed
+// the old directory, in order; the late self-event must not touch the path.
+void TestFileIndexWatcherLateDeleteSelfSparesTheDirectoryNowAtThePath() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "late_self";
+  std::filesystem::create_directories(root / "dir");
+  WriteFile(root / "dir/old.txt", "v0\n");
+
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::set<std::string> index;
+  bool initial = false;
+  int batches_seen = 0;
+  FileIndexWatcher watcher;
+  watcher.SetCallback([&](IndexUpdateBatch batch) {
+    std::lock_guard lock(mutex);
+    if (batch.is_initial) {
+      index.clear();
+      initial = true;
+    }
+    for (const auto& change : batch.changes) {
+      const std::string path = change.entry.relative_path.generic_string();
+      if (change.kind == IndexUpdateBatch::Kind::CreatedOrModified) {
+        index.insert(path);
+      } else if (change.recursive) {
+        std::erase_if(index, [&](const std::string& p) { return p == path || p.rfind(path + "/", 0) == 0; });
+      } else {
+        index.erase(path);
+      }
+    }
+    ++batches_seen;
+    cv.notify_all();
+  });
+  Expect(watcher.Watch(root), "watches");
+  Expect(WaitFor(mutex, cv, [&] { return initial; }, std::chrono::milliseconds(2000)), "the initial batch");
+  Expect(watcher.IsNative(), "this test is about inotify's ordering");
+
+  // Hold the old directory open across its removal: its IN_DELETE_SELF now
+  // waits for the close.
+  const int held = ::open((root / "dir").c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  Expect(held >= 0, "the old directory opens");
+  std::filesystem::remove(root / "dir/old.txt");
+  std::filesystem::remove(root / "dir");
+  std::filesystem::create_directories(root / "dir");
+  WriteFile(root / "dir/new.txt", "v1\n");
+  Expect(WaitFor(mutex, cv, [&] { return index.contains("dir/new.txt") && !index.contains("dir/old.txt"); },
+                 std::chrono::milliseconds(5000)),
+         "the new directory's file is indexed and the old one's is gone");
+  int seen_before_close = 0;
+  {
+    std::lock_guard lock(mutex);
+    seen_before_close = batches_seen;
+  }
+  ::close(held);  // the old directory's IN_DELETE_SELF arrives now
+  // A marker after it, so the wait below ends once the watcher read past it.
+  WriteFile(root / "marker.txt", "m\n");
+  Expect(WaitFor(mutex, cv, [&] { return index.contains("marker.txt"); }, std::chrono::milliseconds(5000)),
+         "the watcher read past the late self-event");
+  std::lock_guard lock(mutex);
+  Expect(batches_seen > seen_before_close, "batches arrived after the close");
+  Expect(index.contains("dir/new.txt"),
+         "the late IN_DELETE_SELF of the old directory left the new one's file indexed");
   watcher.Unwatch();
 }
 
@@ -856,6 +930,8 @@ void RegisterFileIndexWatcherTests(std::vector<TestCase>& tests) {
   AddTest(tests, "FileIndexWatcher/BoundsPreInitialBatchFlood",
           TestFileIndexWatcherBoundsPreInitialBatchFlood);
   AddTest(tests, "FileIndexWatcher/BatchesReplayToTheTree", TestFileIndexWatcherBatchesReplayToTheTree);
+  AddTest(tests, "FileIndexWatcher/LateDeleteSelfSparesTheDirectoryNowAtThePath",
+          TestFileIndexWatcherLateDeleteSelfSparesTheDirectoryNowAtThePath);
   AddTest(tests, "FileIndexWatcher/InitialBatchContainsExistingFiles",
           TestFileIndexWatcherInitialBatchContainsExistingFiles);
   AddTest(tests, "FileIndexWatcher/DetectsCreatedFile",

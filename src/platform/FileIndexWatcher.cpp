@@ -973,12 +973,21 @@ struct FileIndexWatcher::Impl {
               if ((ev->mask & IN_MOVE_SELF) != 0 && rebound_watches.erase(ev->wd) != 0) {
                 continue;
               }
-              // The watched directory itself was removed/moved. Drop the watch AND
-              // emit a recursive deletion for it, or every file it contained lingers
-              // in the index as a ghost until a full rescan.
+              // The watched directory itself was removed/moved: drop the watch.
+              //
+              // Only the ROOT emits a recursive deletion here. Every other watched
+              // directory has a watched parent, whose IN_DELETE / IN_MOVED_FROM
+              // already emitted it, in order. This self-event is NOT in order:
+              // the kernel sends it when the directory's last dentry reference
+              // drops, so while anything holds the directory open (this watcher's
+              // own walk of it, a shell cd'd into it) it waits -- past the
+              // parent's IN_CREATE for a new directory at the same path, whose
+              // files the create's walk has just indexed. Read against the path,
+              // it deleted those (`rm -rf build && mkdir build` under a terminal
+              // sitting in build/ lost the whole new build/ from the index).
               structure_changed = true;
               std::filesystem::path rel;
-              if (TryBuildTrackedRelativePath(dir, root, rel)) {
+              if (dir == root && TryBuildTrackedRelativePath(dir, root, rel)) {
                 IndexUpdateBatch::Change change;
                 change.kind = IndexUpdateBatch::Kind::Deleted;
                 change.entry.relative_path = rel;
