@@ -994,10 +994,33 @@ struct FileIndexWatcher::Impl {
                 change.recursive = true;
                 changes.push_back(std::move(change));
               }
+              // A directory that moved away (out of the tree, or somewhere the
+              // walk prunes) takes its subdirectories with it, and their
+              // watches still name the OLD paths: a file deleted in the
+              // moved-away copy read as a deletion of whatever lives at the old
+              // path now. Unlike IN_DELETE_SELF, IN_MOVE_SELF is sent at the
+              // rename itself, ahead of any create that could re-occupy the
+              // path, so the watches under it are exactly the moved subtree.
+              // (A rename WITHIN the tree re-bound them all in the MOVED_TO
+              // walk and returned above.) Rare, so the linear scan is fine.
+              if ((ev->mask & IN_MOVE_SELF) != 0 && dir != root) {
+                const std::string prefix = dir.native() + '/';
+                for (auto watch = wd_to_path.begin(); watch != wd_to_path.end();) {
+                  if (watch->second.native().starts_with(prefix)) {
+                    if (inotify_fd >= 0) {
+                      inotify_rm_watch(inotify_fd, watch->first);
+                    }
+                    rebound_watches.erase(watch->first);
+                    watch = wd_to_path.erase(watch);
+                  } else {
+                    ++watch;
+                  }
+                }
+              }
               if (inotify_fd >= 0) {
                 inotify_rm_watch(inotify_fd, ev->wd);
               }
-              wd_to_path.erase(it);
+              wd_to_path.erase(ev->wd);
               rebound_watches.erase(ev->wd);
             }
           }

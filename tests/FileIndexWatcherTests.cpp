@@ -256,6 +256,62 @@ void TestFileIndexWatcherLateDeleteSelfSparesTheDirectoryNowAtThePath() {
   watcher.Unwatch();
 }
 
+// A directory moved OUT of the tree took its descendants' watches with it, still
+// mapped to their old in-tree paths: only the moved directory's own watch was
+// dropped. A file deleted in the moved-away copy then read as a deletion of
+// whatever lives at the old path now -- a new directory of the same name.
+void TestFileIndexWatcherMovedOutSubtreeStopsSpeakingForItsOldPaths() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "moved_out";
+  const std::filesystem::path outside = temp_dir.path() / "outside";
+  WriteFile(root / "lib/sub/f.txt", "v0\n");
+
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::set<std::string> index;
+  bool initial = false;
+  FileIndexWatcher watcher;
+  watcher.SetCallback([&](IndexUpdateBatch batch) {
+    std::lock_guard lock(mutex);
+    if (batch.is_initial) {
+      index.clear();
+      initial = true;
+    }
+    for (const auto& change : batch.changes) {
+      const std::string path = change.entry.relative_path.generic_string();
+      if (change.kind == IndexUpdateBatch::Kind::CreatedOrModified) {
+        index.insert(path);
+      } else if (change.recursive) {
+        std::erase_if(index, [&](const std::string& p) { return p == path || p.rfind(path + "/", 0) == 0; });
+      } else {
+        index.erase(path);
+      }
+    }
+    cv.notify_all();
+  });
+  Expect(watcher.Watch(root), "watches");
+  Expect(WaitFor(mutex, cv, [&] { return initial && index.contains("lib/sub/f.txt"); },
+                 std::chrono::milliseconds(2000)),
+         "the initial batch");
+  Expect(watcher.IsNative(), "this test is about inotify's watch descriptors");
+
+  std::filesystem::rename(root / "lib", outside);
+  Expect(WaitFor(mutex, cv, [&] { return !index.contains("lib/sub/f.txt"); }, std::chrono::milliseconds(5000)),
+         "the moved-out file leaves the index");
+  WriteFile(root / "lib/sub/f.txt", "new\n");
+  Expect(WaitFor(mutex, cv, [&] { return index.contains("lib/sub/f.txt"); }, std::chrono::milliseconds(5000)),
+         "the new file at the old path is indexed");
+
+  std::filesystem::remove(outside / "sub/f.txt");  // outside the project
+  WriteFile(root / "marker.txt", "m\n");
+  Expect(WaitFor(mutex, cv, [&] { return index.contains("marker.txt"); }, std::chrono::milliseconds(5000)),
+         "the watcher read past the outside deletion");
+  std::lock_guard lock(mutex);
+  Expect(index.contains("lib/sub/f.txt"),
+         "a deletion outside the project does not remove the file now at the old path");
+  watcher.Unwatch();
+}
+
 void TestFileIndexWatcherDetectsCreatedFile() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "watch_create";
@@ -932,6 +988,8 @@ void RegisterFileIndexWatcherTests(std::vector<TestCase>& tests) {
   AddTest(tests, "FileIndexWatcher/BatchesReplayToTheTree", TestFileIndexWatcherBatchesReplayToTheTree);
   AddTest(tests, "FileIndexWatcher/LateDeleteSelfSparesTheDirectoryNowAtThePath",
           TestFileIndexWatcherLateDeleteSelfSparesTheDirectoryNowAtThePath);
+  AddTest(tests, "FileIndexWatcher/MovedOutSubtreeStopsSpeakingForItsOldPaths",
+          TestFileIndexWatcherMovedOutSubtreeStopsSpeakingForItsOldPaths);
   AddTest(tests, "FileIndexWatcher/InitialBatchContainsExistingFiles",
           TestFileIndexWatcherInitialBatchContainsExistingFiles);
   AddTest(tests, "FileIndexWatcher/DetectsCreatedFile",
