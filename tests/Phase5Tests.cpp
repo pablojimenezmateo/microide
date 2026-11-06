@@ -1098,9 +1098,57 @@ return ide.plugin({
   Expect(range.end.column == 4 + identifier.size(), "and ends at the caret");
 }
 
+// The word at the caret already reads as the item: accepting is a no-op edit,
+// which `ReplaceRange` reports as false. The accept used to read that as a
+// failure and return without dismissing, so Enter and Tab (which the list
+// swallows) did nothing and the list stayed up over a finished word.
+void TestCompletionAcceptingTheWordAlreadyTypedClosesTheList() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "README.md";
+  WriteFile(source, "WORD\n");
+  WritePluginInit(plugins_root, "same-word",
+                  R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "same-word",
+  setup = function(ctx)
+    ctx.completion.add({
+      id = "markdown",
+      language_id = "markdown",
+      provide = function() return { { label = "WORD", insert_text = "WORD" } } end
+    })
+  end
+})
+)lua");
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false), "open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.MoveCursorTo(0, 4);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "completion"), "completion runs");
+  Expect(WorkspaceShellTestAccess::CompletionSession(shell).VisibleCount() == 1,
+         "the list offers the word already typed");
+  const std::uint64_t revision = editor.content_revision();
+  Expect(WorkspaceShellTestAccess::ApplySelectedCompletion(shell),
+         "accepting the word already in place is an accept, not a failure");
+  Expect(!WorkspaceShellTestAccess::OverlayVisible(shell), "and it closes the list");
+  Expect(editor.lines().front() == "WORD" && editor.content_revision() == revision,
+         "without editing the buffer");
+  Expect(editor.cursor_line() == 0 && editor.cursor_column() == 4, "the caret ends the word");
+}
+
 void RegisterPhase5Tests(std::vector<TestCase>& tests) {
   AddTest(tests, "Completion/WordStartsAtALongIdentifierOnAnEditedLine",
           TestCompletionWordStartsAtALongIdentifierOnAnEditedLine);
+  AddTest(tests, "Completion/AcceptingTheWordAlreadyTypedClosesTheList",
+          TestCompletionAcceptingTheWordAlreadyTypedClosesTheList);
   AddTest(tests, "Phase5.CommandSurfaceDrivesPhase3Runtime",
           TestPhase3CommandSurfaceDrivesCompletionTasksAndTests);
   AddTest(tests, "Phase5.LspCommandsDriveDiagnosticsNavigationAndActions",

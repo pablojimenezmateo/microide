@@ -421,7 +421,7 @@ bool CompletionAssist::ApplySelectedCompletion() {
   }
   const AssistHost::Operations& ops = host_.ops();
   editor::TextViewport* viewport = ops.active_editable_viewport();
-  if (viewport == nullptr) {
+  if (viewport == nullptr || viewport->read_only()) {
     return false;
   }
 
@@ -483,9 +483,12 @@ bool CompletionAssist::ApplySelectedCompletion() {
       }
     }
   }
-  if (!inserted && !viewport->ReplaceRange(replacement_range, item.insert_text)) {
-    finish_group();
-    return has_additional_edits;  // the import line still landed
+  // The buffer is writable (checked above), so a false here is ReplaceRange's
+  // no-op: the word already reads as the item (`return` typed in full, then
+  // Enter). That is an accept like any other -- the list closes and the caret
+  // lands after the word -- not a failure that leaves the list up over it.
+  if (!inserted) {
+    (void)viewport->ReplaceRange(replacement_range, item.insert_text);
   }
   finish_group();
   // A completion edit mutates the buffer; the fold model's content_revision fingerprint
