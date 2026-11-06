@@ -612,8 +612,13 @@ void CompareInteractionCoordinator::ApplyMergeChoice(compare::MergeChoice choice
   // landing, which is within the field's existing contract: it is a monotonic
   // upper bound that nothing recomputes downward.
   operations_.update_merge_max_visual_columns(*merge_tab, replacement_lines);
+  // False is a refusal only on a read-only result; otherwise it is the no-op of
+  // installing the lines already there -- Base over a conflict that opened
+  // showing its base -- and the choice still has to be recorded, or that
+  // conflict could never be resolved to its base.
   if (!merge_tab->result_viewport.ReplaceLines(conflict.start_line, previous_end,
-                                               std::move(replacement_lines))) {
+                                               std::move(replacement_lines)) &&
+      merge_tab->result_viewport.read_only()) {
     return;
   }
 

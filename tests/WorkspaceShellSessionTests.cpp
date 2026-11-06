@@ -2120,6 +2120,42 @@ void TestWorkspaceShellMergeBothOrdersAndBaseToggle() {
   Expect(!merge.base_pane_visible, "base pane toggle should hide the ancestor pane again");
 }
 
+// A conflict starts out holding its base lines, so choosing Base (`b`, Alt+B,
+// the result pane's Base button) installs the lines already there: a no-op
+// edit, which ReplaceLines reports as false. The accept returned on it, so the
+// conflict could never be resolved to its base -- it stayed unresolved, and
+// saving prompted about unresolved conflicts the user had just resolved.
+void TestWorkspaceShellMergeChoosingBaseResolvesAConflictThatShowsIt() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "result.txt";
+  WriteFile(base, "zero\none\ntwo\n");
+  WriteFile(incoming, "zero\none incoming\ntwo\n");
+  WriteFile(current, "zero\none current\ntwo\n");
+  WriteFile(output,
+            "zero\n<<<<<<< ours\none current\n||||||| base\none\n=======\none incoming\n>>>>>>> theirs\ntwo\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge editor should open");
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  Expect(merge.conflicts.size() == 1 && !merge.conflicts[0].resolved,
+         "one unresolved conflict: " + std::to_string(merge.conflicts.size()) + " resolved=" +
+             std::to_string(merge.conflicts.empty() ? -1 : int(merge.conflicts[0].resolved)) + " choice=" + (merge.conflicts.empty() ? "" : microide::compare::MergeChoiceLabel(merge.conflicts[0].last_choice)));
+  Expect(merge.result_viewport.lines()[1] == "one", "the result shows the base line: " + std::string(merge.result_viewport.lines()[1]));
+  merge.selected_hunk = 0;
+  WorkspaceShellTestAccess::ApplyMergeChoice(shell, MergeChoice::Base);
+  Expect(merge.result_viewport.lines()[1] == "one", "the result still reads as the base");
+  Expect(merge.conflicts[0].resolved, "choosing Base resolves the conflict");
+  Expect(merge.conflicts[0].last_choice == MergeChoice::Base &&
+             merge.model.hunks[merge.conflicts[0].hunk_index].choice == MergeChoice::Base,
+         "and records Base as its choice");
+}
+
 // The diff-merge spec's "reset result hunk" had no way in: the reset was
 // reachable only from tests. It is Merge: Reset Conflict in the palette and the
 // Edit menu's merge items, and Alt+R in the merge editor beside Alt+I/C/B/M.
@@ -3558,6 +3594,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellInsertionAtConflictStartKeepsTracking);
   AddTest(tests, "WorkspaceShell/MergeBothOrdersAndBaseToggle",
           TestWorkspaceShellMergeBothOrdersAndBaseToggle);
+  AddTest(tests, "WorkspaceShell/MergeChoosingBaseResolvesAConflictThatShowsIt",
+          TestWorkspaceShellMergeChoosingBaseResolvesAConflictThatShowsIt);
   AddTest(tests, "WorkspaceShell/MergeResetConflictFromTheKeyAndTheCommand",
           TestWorkspaceShellMergeResetConflictFromTheKeyAndTheCommand);
   AddTest(tests, "WorkspaceShell/MarkResolvedAsksAboutUnresolvedConflicts",
