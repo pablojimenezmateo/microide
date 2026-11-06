@@ -946,8 +946,13 @@ bool ExpandSnippetAtSelection(TextViewport& viewport,
   session.saved_secondary_carets = viewport.secondary_carets();
   viewport.ClearSecondaryCarets();
 
-  if (!viewport.ReplaceRange(trigger, parsed.expanded, true)) {
-    // Expansion failed: the buffer is unchanged, so the saved carets are still at
+  // ReplaceRange is false for a refused edit (a read-only buffer) and for a
+  // no-op (the trigger already reads as the expansion: `WORD$0` accepted over a
+  // WORD typed in full). Only the first is a failure. Reading the second as one
+  // sent the completion path to its plain-text fallback, which inserted the raw
+  // body -- `$0` and all.
+  if (!viewport.ReplaceRange(trigger, parsed.expanded, true) && viewport.read_only()) {
+    // Expansion refused: the buffer is unchanged, so the saved carets are still at
     // valid positions and are restored.
     if (!session.saved_secondary_carets.empty()) {
       viewport.SetSecondaryCarets(session.saved_secondary_carets);

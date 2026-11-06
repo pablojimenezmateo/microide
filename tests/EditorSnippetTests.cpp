@@ -142,10 +142,13 @@ void TestSnippetExpansionConsumesTheCaretSetAndRestoresItOnRefusal() {
     Expect(session.active, "the placeholder session is live");
   }
   {
-    // Refused expansion: a zero-width trigger with a body that expands to nothing
-    // is a no-op edit, so ReplaceRange declines and the caret set must come back.
+    // Refused expansion: a read-only buffer declines the edit, so the caret set
+    // must come back. (This used to be reached through a no-op -- an empty body at
+    // a zero-width trigger -- which is not a refusal; see
+    // TestSnippetExpansionThatReproducesTheTriggerIsAnExpansion.)
     TextViewport viewport;
     viewport.LoadContent("aa\nbb\ncc\n", "/tmp/snippet-refused.cpp");
+    viewport.SetReadOnly(true);
     SnippetSessionState session;
     viewport.MoveCursorTo(0, 2);
     viewport.AddSecondaryCaret(1, 2);
@@ -155,8 +158,8 @@ void TestSnippetExpansionConsumesTheCaretSetAndRestoresItOnRefusal() {
 
     viewport.BeginUndoGroup();
     const bool expanded =
-        ExpandSnippetAtSelection(viewport, session, SelectionRange{{0, 2}, {0, 2}}, "");
-    Expect(!expanded, "an empty body at a zero-width trigger changes nothing, so it is refused");
+        ExpandSnippetAtSelection(viewport, session, SelectionRange{{0, 2}, {0, 2}}, "(${1:x})");
+    Expect(!expanded, "a read-only buffer refuses the expansion");
     Expect(viewport.lines()[0] == "aa" && viewport.lines()[1] == "bb" &&
                viewport.lines()[2] == "cc",
            "a refused expansion leaves the buffer alone");
@@ -165,6 +168,48 @@ void TestSnippetExpansionConsumesTheCaretSetAndRestoresItOnRefusal() {
            "a refused expansion puts the caret set back exactly, got " +
                std::to_string(after.size()) + " carets");
     Expect(!session.active, "no session is started by a refused expansion");
+  }
+}
+
+// A body whose expansion is exactly the text it replaces -- a server's `WORD$0`
+// or `${1:WORD}` accepted over a WORD typed in full -- is a no-op edit, which
+// ReplaceRange reports as false. The expansion read that as a refusal, and the
+// completion path then fell back to inserting the raw body: `WORD$0` landed in
+// the buffer as text.
+void TestSnippetExpansionThatReproducesTheTriggerIsAnExpansion() {
+  for (const std::string_view body : {std::string_view("WORD$0"), std::string_view("${1:WORD}")}) {
+    TextViewport viewport;
+    viewport.LoadContent("WORD\n", "/tmp/snippet-noop.cpp");
+    viewport.MoveCursorTo(0, 4);
+    SnippetSessionState session;
+    viewport.BeginUndoGroup();
+    Expect(ExpandSnippetAtSelection(viewport, session, SelectionRange{{0, 0}, {0, 4}}, body),
+           "an expansion that reproduces its trigger succeeds: " + std::string(body));
+    Expect(viewport.lines()[0] == "WORD", "and leaves the buffer reading as the expansion");
+  }
+  {
+    // With a placeholder, the session runs over the text already in place.
+    TextViewport viewport;
+    viewport.LoadContent("WORD\n", "/tmp/snippet-noop-placeholder.cpp");
+    SnippetSessionState session;
+    viewport.BeginUndoGroup();
+    Expect(ExpandSnippetAtSelection(viewport, session, SelectionRange{{0, 0}, {0, 4}},
+                                    "${1:WORD}x$0"),
+           "a real edit with a placeholder expands");
+    Expect(viewport.lines()[0] == "WORDx", "control: the edit landed");
+  }
+  {
+    TextViewport viewport;
+    viewport.LoadContent("WORD\n", "/tmp/snippet-noop-session.cpp");
+    SnippetSessionState session;
+    viewport.BeginUndoGroup();
+    Expect(ExpandSnippetAtSelection(viewport, session, SelectionRange{{0, 0}, {0, 4}},
+                                    "${1:WORD}"),
+           "a placeholder over the text in place expands");
+    Expect(session.active, "and its session is live");
+    const auto selected = viewport.selection_range();
+    Expect(selected.has_value() && selected->start.column == 0 && selected->end.column == 4,
+           "with the placeholder selected");
   }
 }
 
@@ -838,6 +883,8 @@ void RegisterEditorSnippetTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorSnippet/TypingReplacesSelectedDefault",
           TestSnippetTypingReplacesSelectedDefault);
   AddTest(tests, "EditorSnippet/ParseTopLevelEscapes", TestSnippetParseTopLevelEscapes);
+  AddTest(tests, "EditorSnippet/ExpansionThatReproducesTheTriggerIsAnExpansion",
+          TestSnippetExpansionThatReproducesTheTriggerIsAnExpansion);
   AddTest(tests, "EditorSnippet/ParseHoldsItsInvariantsOnRandomBodies",
           TestSnippetParseHoldsItsInvariantsOnRandomBodies);
   AddTest(tests, "EditorSnippet/ParseNestedPlaceholders", TestSnippetParseNestedPlaceholders);
