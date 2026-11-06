@@ -124,8 +124,20 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                      fill.color);
     }
     for (const TerminalRowPaintPlan::TextRun& run : terminal_row_plan_.text_runs) {
-      terminal_text_renderer_.DrawString(renderer, column_x(run.column), y, run.color,
-                                         terminal_row_plan_.RunText(run));
+      // SGR 1 / 3 in the family's bold / italic face (TextRenderer::Face). A face
+      // whose advance is not the grid's -- a synthesized bold is wider -- would
+      // drift across a run, so its glyphs are placed one cell at a time.
+      const render::TextRenderer& face = terminal_text_renderer_.Face(run.face);
+      if (run.face == render::FontStyle::Regular || std::fabs(face.CharWidth() - char_width) < 0.01f) {
+        face.DrawString(renderer, column_x(run.column), y, run.color, terminal_row_plan_.RunText(run));
+        continue;
+      }
+      for (std::size_t column = run.column; column < run.end && column < line.cells.size(); ++column) {
+        const std::string_view glyph = line.cells[column].DisplayText();
+        if (!glyph.empty() && glyph != " ") {
+          face.DrawString(renderer, column_x(column), y, run.color, glyph);
+        }
+      }
     }
     const float thickness = std::max(1.0f, std::round(line_height / 14.0f));
     for (const TerminalRowPaintPlan::Decoration& stroke : terminal_row_plan_.decorations) {

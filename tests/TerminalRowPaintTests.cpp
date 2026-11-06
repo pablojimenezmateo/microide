@@ -290,6 +290,38 @@ void TestUnderlinesTakeTheirColourAndShape() {
          "without SGR 58 the underline is the text's colour");
 }
 
+// SGR 1 / 3 text is drawn in its face, so a glyph run ends where the face
+// changes, and knows the cells it covers (a face whose advance is not the grid's
+// is placed cell by cell).
+void TestTextRunsSplitOnTheFace() {
+  using microide::render::FontStyle;
+  namespace attr = microide::terminal::cell_attr;
+  TerminalLine line;
+  line.cells.resize(7);
+  const char* text = "abcdefg";
+  for (std::size_t i = 0; i < 7; ++i) {
+    line.cells[i].SetAscii(text[i]);
+  }
+  line.cells[2].style.attrs = attr::kBold;
+  line.cells[3].style.attrs = attr::kBold;
+  line.cells[4].style.attrs = attr::kItalic;
+  line.cells[5].style.attrs = attr::kBold | attr::kItalic;
+  TerminalRowPaintPlan plan;
+  PlanTerminalRow(line, 10, TerminalRowEmphasis{}, Palette(), plan);
+  Expect(plan.text_runs.size() == 5, "five runs: " + std::to_string(plan.text_runs.size()));
+  if (plan.text_runs.size() != 5) {
+    return;
+  }
+  const auto& r = plan.text_runs;
+  Expect(r[0].face == FontStyle::Regular && plan.RunText(r[0]) == "ab" && r[0].column == 0 && r[0].end == 2,
+         "the regular run");
+  Expect(r[1].face == FontStyle::Bold && plan.RunText(r[1]) == "cd" && r[1].column == 2 && r[1].end == 4,
+         "bold, with the cells it covers");
+  Expect(r[2].face == FontStyle::Italic && plan.RunText(r[2]) == "e", "italic");
+  Expect(r[3].face == FontStyle::BoldItalic && plan.RunText(r[3]) == "f", "bold italic");
+  Expect(r[4].face == FontStyle::Regular && plan.RunText(r[4]) == "g" && r[4].end == 7, "and regular again");
+}
+
 void TestRowSelectionEmphasisMatchesContainsCell() {
   std::mt19937 rng(20261105);
   std::uniform_int_distribution<std::size_t> pick_row(0, 6);
@@ -322,6 +354,7 @@ void TestRowSelectionEmphasisMatchesContainsCell() {
 void RegisterTerminalRowPaintTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TerminalRowPaint/SelectedTextKeepsItsOwnColour", TestSelectedTextKeepsItsOwnColour);
   AddTest(tests, "TerminalRowPaint/UnderlinesTakeTheirColourAndShape", TestUnderlinesTakeTheirColourAndShape);
+  AddTest(tests, "TerminalRowPaint/TextRunsSplitOnTheFace", TestTextRunsSplitOnTheFace);
   AddTest(tests, "TerminalRowPaint/SelectionWashesAColouredBackground",
           TestSelectionWashesAColouredBackground);
   AddTest(tests, "TerminalRowPaint/PlainRowEmitsNoFills", TestPlainRowEmitsNoFills);

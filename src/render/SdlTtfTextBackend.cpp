@@ -123,6 +123,7 @@ bool SdlTtfTextBackend::Initialize(SDL_Renderer* renderer) {
               SDL_GetError());
       return false;
     }
+    regular_font_path_ = font_path;
   }
 
   // Build glyph composites in the format the renderer will actually store them
@@ -255,16 +256,54 @@ bool SdlTtfTextBackend::SetFontFamily(std::string_view family) {
             static_cast<int>(family.size()), family.data());
     return false;
   }
-  if (resolved == font_path_ && font_ != nullptr) {
+  if (resolved == regular_font_path_ && font_ != nullptr) {
     // Same underlying file (e.g. empty family resolving to the current default):
     // the request is already recorded; nothing visually changed.
     return false;
   }
-  if (!OpenPrimaryFont(resolved)) {
+  const std::filesystem::path previous_regular = regular_font_path_;
+  regular_font_path_ = resolved;
+  if (!OpenFaceForStyle()) {
+    regular_font_path_ = previous_regular;
     SDL_Log("microide text: failed to open font family \"%.*s\" (%s); keeping current font",
             static_cast<int>(family.size()), family.data(), resolved.string().c_str());
     return false;
   }
+  return true;
+}
+
+bool SdlTtfTextBackend::SetFontStyle(FontStyle style) {
+  if (font_style_ == style || font_ == nullptr) {
+    font_style_ = style;
+    return false;
+  }
+  const FontStyle previous = font_style_;
+  font_style_ = style;
+  if (!OpenFaceForStyle()) {
+    font_style_ = previous;
+    return false;
+  }
+  return true;
+}
+
+bool SdlTtfTextBackend::OpenFaceForStyle() {
+  std::filesystem::path path = font_style_ == FontStyle::Regular
+                                   ? regular_font_path_
+                                   : StyledFaceFile(regular_font_path_, font_style_);
+  int synthetic = TTF_STYLE_NORMAL;
+  if (path.empty()) {
+    path = regular_font_path_;
+    synthetic = ((static_cast<int>(font_style_) & 1) != 0 ? TTF_STYLE_BOLD : 0) |
+                ((static_cast<int>(font_style_) & 2) != 0 ? TTF_STYLE_ITALIC : 0);
+  }
+  if (path == font_path_ && synthetic == synthetic_style_ && font_ != nullptr) {
+    return false;
+  }
+  if (!OpenPrimaryFont(path)) {
+    return false;
+  }
+  synthetic_style_ = synthetic;
+  TTF_SetFontStyle(font_, synthetic);
   // Fallbacks are relative to the new primary. Reload them only if they were
   // already open — otherwise stay lazy and let the next shaped subject resolve
   // them against the new primary (a family switch before any non-ASCII text must
@@ -332,7 +371,8 @@ void SdlTtfTextBackend::RefreshMetrics() {
       font_, MetricsKey{.font_path = font_path_.string(),
                         .point_size = font_point_size_,
                         .hdpi = CurrentHorizontalDpi(),
-                        .vdpi = CurrentVerticalDpi()});
+                        .vdpi = CurrentVerticalDpi(),
+                        .synthetic_style = synthetic_style_});
   line_height_ = static_cast<float>(pixels.font_height) / scale_y;
 
   const int max_left_padding_pixels = pixels.max_left_padding;
@@ -960,6 +1000,114 @@ std::vector<std::string> SdlTtfTextBackend::AvailableFontFamilies() const {
 
 std::string SdlTtfTextBackend::FontDisplayNameFromStemForTesting(std::string_view stem) {
   return FontDisplayNameFromStem(stem);
+}
+
+std::filesystem::path SdlTtfTextBackend::StyledFaceFile(const std::filesystem::path& regular,
+                                                     FontStyle style) {
+  if (regular.empty() || style == FontStyle::Regular) {
+    return {};
+  }
+  // Shell-thread-confined like MeasurePixelMetrics' cache: one answer per
+  // (file, style) for the session, misses included, so a family with no bold
+  // face asks the disk and fontconfig once.
+  static std::map<std::pair<std::string, int>, std::filesystem::path> cache;
+  const auto key = std::make_pair(regular.string(), static_cast<int>(style));
+  if (const auto it = cache.find(key); it != cache.end()) {
+    return it->second;
+  }
+  util::PerformanceTrace::Scope perf_scope("SdlTtfTextBackend::StyledFaceFile");
+  const bool bold = (static_cast<int>(style) & 1) != 0;
+  const bool italic = (static_cast<int>(style) & 2) != 0;
+  std::filesystem::path found;
+
+  // 1) Siblings: the naming every packaged family uses (JetBrainsMono-Regular ->
+  // -Bold / -Italic / -BoldItalic, DejaVuSansMono -> -Bold / -Oblique /
+  // -BoldOblique, LiberationMono-Regular -> -Bold / -Italic / -BoldItalic).
+  {
+    std::string base = regular.stem().string();
+    for (const std::string_view tail : {"-Regular", "Regular", "-Book", "-Roman"}) {
+      if (base.size() > tail.size() && base.ends_with(tail)) {
+        base.resize(base.size() - tail.size());
+        break;
+      }
+    }
+    std::vector<std::string> suffixes;
+    if (bold && italic) {
+      suffixes = {"-BoldItalic", "-BoldOblique", "-Bold-Italic"};
+    } else if (bold) {
+      suffixes = {"-Bold"};
+    } else {
+      suffixes = {"-Italic", "-Oblique"};
+    }
+    for (const std::string& suffix : suffixes) {
+      const std::filesystem::path candidate =
+          regular.parent_path() / (base + suffix + regular.extension().string());
+      std::error_code ec;
+      if (candidate != regular && std::filesystem::is_regular_file(candidate, ec) && !ec) {
+        found = candidate;
+        break;
+      }
+    }
+  }
+
+#if MICROIDE_HAS_FONTCONFIG
+  // 2) fontconfig: the family the regular file declares, at the asked weight and
+  // slant. Accepted only when the match really is that family, that weight and
+  // that slant: FcFontMatch always answers, with the regular face itself when the
+  // family has nothing better.
+  if (found.empty()) {
+    if (FcConfig* config = FcInitLoadConfigAndFonts()) {
+      std::string family;
+      if (FcPattern* by_file = FcPatternCreate()) {
+        FcPatternAddString(by_file, FC_FILE, reinterpret_cast<const FcChar8*>(regular.c_str()));
+        if (FcObjectSet* objects = FcObjectSetBuild(FC_FAMILY, nullptr)) {
+          if (FcFontSet* set = FcFontList(config, by_file, objects)) {
+            FcChar8* name = nullptr;
+            if (set->nfont > 0 && FcPatternGetString(set->fonts[0], FC_FAMILY, 0, &name) == FcResultMatch &&
+                name != nullptr) {
+              family = reinterpret_cast<const char*>(name);
+            }
+            FcFontSetDestroy(set);
+          }
+          FcObjectSetDestroy(objects);
+        }
+        FcPatternDestroy(by_file);
+      }
+      if (!family.empty()) {
+        if (FcPattern* wanted = FcPatternCreate()) {
+          FcPatternAddString(wanted, FC_FAMILY, reinterpret_cast<const FcChar8*>(family.c_str()));
+          FcPatternAddInteger(wanted, FC_WEIGHT, bold ? FC_WEIGHT_BOLD : FC_WEIGHT_REGULAR);
+          FcPatternAddInteger(wanted, FC_SLANT, italic ? FC_SLANT_ITALIC : FC_SLANT_ROMAN);
+          FcConfigSubstitute(config, wanted, FcMatchPattern);
+          FcDefaultSubstitute(wanted);
+          FcResult result = FcResultNoMatch;
+          if (FcPattern* matched = FcFontMatch(config, wanted, &result)) {
+            FcChar8* matched_family = nullptr;
+            FcChar8* file = nullptr;
+            int weight = FC_WEIGHT_REGULAR;
+            int slant = FC_SLANT_ROMAN;
+            (void)FcPatternGetInteger(matched, FC_WEIGHT, 0, &weight);
+            (void)FcPatternGetInteger(matched, FC_SLANT, 0, &slant);
+            if (FcPatternGetString(matched, FC_FAMILY, 0, &matched_family) == FcResultMatch &&
+                matched_family != nullptr &&
+                NormalizeFontToken(reinterpret_cast<const char*>(matched_family)) ==
+                    NormalizeFontToken(family) &&
+                (weight >= FC_WEIGHT_DEMIBOLD) == bold && (slant != FC_SLANT_ROMAN) == italic &&
+                FcPatternGetString(matched, FC_FILE, 0, &file) == FcResultMatch && file != nullptr &&
+                std::filesystem::path(reinterpret_cast<const char*>(file)) != regular) {
+              found = std::filesystem::path(reinterpret_cast<const char*>(file));
+            }
+            FcPatternDestroy(matched);
+          }
+          FcPatternDestroy(wanted);
+        }
+      }
+      FcConfigDestroy(config);
+    }
+  }
+#endif
+  cache.emplace(key, found);
+  return found;
 }
 
 std::filesystem::path SdlTtfTextBackend::ResolveFamilyToFile(std::string_view family) {

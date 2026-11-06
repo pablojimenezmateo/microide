@@ -198,10 +198,15 @@ void PlanTerminalRow(const terminal::TerminalLine& line,
       continue;
     }
     const SDL_Color color = cells[column].foreground;
+    const auto face_of = [&](std::size_t index) {
+      const terminal::TerminalStyle& style = line.cells[index].style;
+      return render::FontStyleFor(style.bold(), style.italic());
+    };
+    const render::FontStyle face = face_of(column);
     std::size_t end = column + 1;
     if (!is_wide_lead(column)) {
       while (end < visible && !line.cells[end].style.wide_trailing() && !is_wide_lead(end) &&
-             SameColor(cells[end].foreground, color)) {
+             SameColor(cells[end].foreground, color) && face_of(end) == face) {
         ++end;
       }
     }
@@ -221,8 +226,12 @@ void PlanTerminalRow(const terminal::TerminalLine& line,
       plan.text.pop_back();
     }
     if (visible_text) {
-      plan.text_runs.push_back(
-          {.column = column, .color = color, .offset = offset, .length = plan.text.size() - offset});
+      plan.text_runs.push_back({.column = column,
+                                .end = end,
+                                .color = color,
+                                .face = face,
+                                .offset = offset,
+                                .length = plan.text.size() - offset});
     } else {
       plan.text.resize(offset);
     }

@@ -10,6 +10,9 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Added
 
+- **Bold and italic text in the terminal use real bold and italic faces** of the
+  terminal font (synthesized when the font has none), instead of only brightening
+  bold text's colour.
 - **Coloured and curly underlines in the terminal.** Programs that underline
   with a colour (SGR 58) or a shape -- curly, dotted, dashed (`CSI 4:3 m` and
   its siblings), as helix and neovim mark diagnostics -- now draw that way, on

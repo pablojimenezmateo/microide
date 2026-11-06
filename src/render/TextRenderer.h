@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -118,6 +119,12 @@ class TextRenderer {
   // The pool this renderer's backend comes from, to build a renderer that shares it.
   const std::shared_ptr<TextBackendPool>& backend_pool() const { return pool_; }
 
+  // This renderer's font in `style`: itself for Regular, else a renderer of its
+  // own on the same pool, made on first use and following this one's family and
+  // size from then on. A style nothing draws costs nothing; one that is drawn
+  // costs a backend (an atlas and a glyph cache) of its own.
+  const TextRenderer& Face(FontStyle style) const;
+
   std::size_t MetricsGeneration() const {
     ValidateCaches();
     return metrics_generation_;
@@ -142,6 +149,8 @@ class TextRenderer {
   };
 
   std::shared_ptr<TextBackendPool> pool_;
+  // Face(): Bold, Italic, BoldItalic (index style - 1); null until first asked.
+  mutable std::array<std::unique_ptr<TextRenderer>, kFontStyleCount - 1> faces_;
   // Never null: the pool's stand-in until the first EnsureInitialized.
   std::shared_ptr<TextRendererBackend> backend_;
   // The font last asked for. It is what the pool resolves on the first

@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -36,6 +37,18 @@ struct TextRun {
   std::string_view text;
 };
 
+// A face of a font family. The terminal draws SGR 1 / 3 text in these.
+enum class FontStyle : std::uint8_t {
+  Regular = 0,
+  Bold = 1,
+  Italic = 2,
+  BoldItalic = 3,
+};
+inline constexpr std::size_t kFontStyleCount = 4;
+inline constexpr FontStyle FontStyleFor(bool bold, bool italic) {
+  return static_cast<FontStyle>((bold ? 1 : 0) | (italic ? 2 : 0));
+}
+
 class TextRendererBackend {
  public:
   virtual ~TextRendererBackend() = default;
@@ -53,6 +66,13 @@ class TextRendererBackend {
   // relayout). Default no-op: the debug-text fallback has no real font.
   virtual bool SetFontFamily(std::string_view family) {
     (void) family;
+    return false;
+  }
+  // Draw the family's bold / italic face: its own font file when the family has
+  // one, a synthetic style of the regular face otherwise. Returns true when the
+  // glyphs changed. Default no-op: the debug-text fallback has one face.
+  virtual bool SetFontStyle(FontStyle style) {
+    (void) style;
     return false;
   }
   // Enumerate the font families installed on the system, for the settings font

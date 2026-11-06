@@ -41,7 +41,13 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   void SetPresentationScale(float scale_x, float scale_y) override;
   void SetFontPointSize(float points) override;
   bool SetFontFamily(std::string_view family) override;
+  bool SetFontStyle(FontStyle style) override;
   std::vector<std::string> AvailableFontFamilies() const override;
+  // The file holding `style`'s face of the family whose regular face is
+  // `regular` (empty when the family has none: the backend then synthesizes it).
+  // Sibling files first (`X-Regular.ttf` -> `X-Bold.ttf`, `DejaVuSansMono.ttf` ->
+  // `DejaVuSansMono-Oblique.ttf`), then fontconfig. Cached per (file, style).
+  static std::filesystem::path StyledFaceFile(const std::filesystem::path& regular, FontStyle style);
   // Test seam: derive the picker's display family name from a font file stem the
   // way the no-fontconfig fallback does (strips weight/style tails, splits words).
   static std::string FontDisplayNameFromStemForTesting(std::string_view stem);
@@ -109,10 +115,11 @@ class SdlTtfTextBackend final : public TextRendererBackend {
     float point_size = 0.0f;
     int hdpi = 0;
     int vdpi = 0;
+    int synthetic_style = 0;  // a synthetic bold widens glyphs
 
     bool operator<(const MetricsKey& other) const {
-      return std::tie(font_path, point_size, hdpi, vdpi) <
-             std::tie(other.font_path, other.point_size, other.hdpi, other.vdpi);
+      return std::tie(font_path, point_size, hdpi, vdpi, synthetic_style) <
+             std::tie(other.font_path, other.point_size, other.hdpi, other.vdpi, other.synthetic_style);
     }
   };
   static PixelMetrics MeasurePixelMetrics(TTF_Font* font, const MetricsKey& key);
@@ -132,6 +139,10 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   // (user font dirs first, then the system trees). Shared by ResolveFamilyToFile
   // and AvailableFontFamilies so the scan-root list lives in one place.
   static std::vector<std::filesystem::path> FontSearchRoots();
+  // Opens the face `font_style_` of the family at `regular_font_path_`: its own
+  // file, or the regular one with SDL_ttf's synthetic style. Returns whether the
+  // glyphs changed.
+  bool OpenFaceForStyle();
   static std::vector<std::filesystem::path> LocateFallbackFontFiles(
       const std::filesystem::path& primary_font);
   void CloseFonts();
@@ -212,6 +223,12 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   // face has asked fontconfig again (~0.4 ms) on each raster of its row.
   mutable std::vector<std::uint64_t> checked_codepoints_;
   std::filesystem::path font_path_;
+  // The family's regular face, which `font_path_` is unless a style opened
+  // another file; and the face asked for, with the TTF style synthesizing it
+  // when the family has no file for it (TTF_STYLE_NORMAL otherwise).
+  std::filesystem::path regular_font_path_;
+  FontStyle font_style_ = FontStyle::Regular;
+  int synthetic_style_ = 0;
   // The requested editor font family (empty = platform default). Retained so a
   // later size / presentation-scale change re-resolves the same family.
   std::string requested_font_family_;

@@ -34,6 +34,11 @@ void TextRenderer::EnsureInitialized(SDL_Renderer* renderer,
     initialized_ = true;
     (void) AcquireBackend();
   }
+  for (const std::unique_ptr<TextRenderer>& face : faces_) {
+    if (face != nullptr) {
+      face->EnsureInitialized(renderer, presentation_scale_x, presentation_scale_y);
+    }
+  }
   ValidateCaches();
 }
 
@@ -60,6 +65,13 @@ bool TextRenderer::RequestFont(FontRequest font) {
   if (font == font_) {
     return false;
   }
+  for (const std::unique_ptr<TextRenderer>& face : faces_) {
+    if (face != nullptr) {
+      FontRequest styled = font;
+      styled.style = face->font_.style;
+      (void) face->RequestFont(std::move(styled));
+    }
+  }
   font_ = std::move(font);
   // Before the pool is bound this keeps the stand-in, and the request is
   // resolved by the first EnsureInitialized.
@@ -72,6 +84,22 @@ bool TextRenderer::AcquireBackend() {
     ClearCaches();
   }
   return changed;
+}
+
+const TextRenderer& TextRenderer::Face(FontStyle style) const {
+  if (style == FontStyle::Regular || style == font_.style) {
+    return *this;
+  }
+  std::unique_ptr<TextRenderer>& face = faces_[static_cast<std::size_t>(style) - 1];
+  if (face == nullptr) {
+    face = std::make_unique<TextRenderer>(pool_);
+    FontRequest styled = font_;
+    styled.style = style;
+    face->initialized_ = initialized_;  // a bound pool resolves the face now
+    (void) face->RequestFont(std::move(styled));
+  }
+  face->ValidateCaches();
+  return *face;
 }
 
 std::vector<std::string> TextRenderer::AvailableFontFamilies() const {

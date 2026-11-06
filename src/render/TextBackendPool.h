@@ -19,6 +19,7 @@ namespace microide::render {
 struct FontRequest {
   std::string family;  // empty: the platform default
   float point_size = kDefaultFontPointSize;
+  FontStyle style = FontStyle::Regular;
 
   static float ClampPointSize(float points);
   bool operator==(const FontRequest&) const = default;

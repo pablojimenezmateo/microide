@@ -101,7 +101,9 @@ underline (21), and their resets (22–29). 16-color (30–37/40–47/90–97/10
 256-color (`38;5`/`48;5`), and truecolor in both legacy (`38;2;r;g;b`) and ITU
 colon (`38:2:r:g:b`, `38:2::r:g:b`) forms. Underline colour (58, in the same
 forms; 59 resets it) is drawn; without one an underline takes the text's colour.
-Overline (53/55) is accepted and ignored.
+Overline (53/55) is accepted and ignored. Bold (1) and italic (3) draw in the
+font family's own bold / italic faces (synthesized when the family has none);
+bold also brightens a basic-palette foreground, as xterm's `boldColors`.
 
 The underline shape fits the style's two free attribute bits. The colour does
 not fit the 18-byte cell: it shares the cell's 16-bit `extra` id with the OSC 8

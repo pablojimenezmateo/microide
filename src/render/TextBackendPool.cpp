@@ -33,8 +33,9 @@ std::unique_ptr<TextRendererBackend> CreatePlatformBackend(SDL_Renderer* rendere
 // Returns whether the family changed; the caller knows whether the size did.
 bool ApplyFont(TextRendererBackend& backend, const FontRequest& font) {
   const bool family_changed = backend.SetFontFamily(font.family);
+  const bool style_changed = backend.SetFontStyle(font.style);
   backend.SetFontPointSize(font.point_size);
-  return family_changed;
+  return family_changed || style_changed;
 }
 
 }  // namespace

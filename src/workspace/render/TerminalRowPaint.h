@@ -12,6 +12,7 @@
 #include <string_view>
 #include <vector>
 
+#include "render/TextRendererBackend.h"
 #include "terminal/TerminalCell.h"
 #include "terminal/TerminalSearch.h"
 #include "workspace/WorkspaceTerminalSelection.h"
@@ -99,9 +100,12 @@ struct TerminalRowPaintPlan {
     std::size_t end = 0;
     SDL_Color color{};
   };
+  // Cells [column, end) of one colour and one face (SGR 1 bold, SGR 3 italic).
   struct TextRun {
     std::size_t column = 0;
+    std::size_t end = 0;
     SDL_Color color{};
+    render::FontStyle face = render::FontStyle::Regular;
     std::size_t offset = 0;
     std::size_t length = 0;
   };

@@ -157,6 +157,17 @@ def flow_terminal_escapes(app: q.App) -> None:
     app.expect("top" in _screen(app), "the line above the scroll region stays")
     _shell(app, "printf '\\033[2J\\033[Hcleared\\n'", "cleared", "erase display")
     app.expect("r4" not in _screen(app), "erase display cleared the earlier lines")
+    # SGR 58 colours an underline and `4:3` curls it (a TUI's diagnostic); SGR 1 /
+    # 3 draw in the font's bold and italic faces. The red is the program's own,
+    # so it is on screen only if the underline took the colour it was given.
+    _shell(app, "printf '\\033[4:3;58;2;255;0;0mqa-curly\\033[0m \\033[1mqa-boldface\\033[0m "
+                "\\033[3mqa-italic\\033[0m\\n'", "qa-curly qa-boldface qa-italic",
+           "a curly red underline, bold and italic faces")
+    app.settle(0.3)
+    if not app.wayland:  # no screen grab on a headless weston (see App.grab)
+        shot = app.grab()
+        red = sum(1 for (r, g, b) in shot.getdata() if r >= 230 and g <= 40 and b <= 40)
+        app.expect(red >= 8, f"the curly underline is drawn in its SGR 58 red ({red} red pixels)")
     # DECSCUSR: the shape a program asks for (vim's insert mode asks for a bar) is
     # the caret's, steady or blinking as asked; `0 q` restores the default block.
     for sequence, shape, blinking in (("6", "bar", False), ("3", "underline", True), ("0", "block", True)):

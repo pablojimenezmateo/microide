@@ -13,7 +13,7 @@ entries and the guardrails stayed.
 
 ## Open items
 
-### TD-2026-11-05-432 — the 2026-11-05 terminal UI/UX review: what it fixed, and what it left. [OPEN — item 1; 2 resolved 2026-11-06]
+### TD-2026-11-05-432 — the 2026-11-05 terminal UI/UX review: what it fixed, and what it left. [RESOLVED 2026-11-06 — 1 and 2]
 
 A review of the terminal as a user meets it -- selecting, copying, the cursor --
 driven through the QA harness's screenshots before and after. Fixed, each with a
@@ -51,7 +51,21 @@ terminal by default; `CSI 4:3 m` (curly) draws as a plain underline.
 
 Left:
 
-1. **Bold and italic are not drawn as faces.** SGR 1 brightens a basic-palette
+1. ~~**Bold and italic are not drawn as faces.**~~ **Resolved 2026-11-06.**
+   `FontRequest` carries a `FontStyle`; the SDL_ttf backend opens the family's
+   own Bold / Italic / BoldItalic file -- sibling naming first (`X-Regular` ->
+   `X-Bold`, `DejaVuSansMono` -> `-Oblique`), then fontconfig, accepted only for
+   the same family at the asked weight and slant -- and synthesizes the style
+   (`TTF_SetFontStyle`) when the family has none, as for the bundled JetBrains
+   Mono Regular. `TextRenderer::Face(style)` makes a styled sibling on the same
+   pool on first use and keeps it on the renderer's family and size, so a style
+   nothing prints costs nothing. The row planner splits glyph runs on the face
+   and records each run's cells; a face whose advance is not the grid's (a
+   synthesized bold is wider) is placed cell by cell, so the grid never drifts.
+   Tests: `TerminalRowPaint/TextRunsSplitOnTheFace`,
+   `TextRenderer/FacesAreMadeOnFirstUseAndFollowTheFont`, the SDL_ttf styled-face
+   test (sibling resolution, and bold drawing heavier); QA `terminal-escapes`.
+   Was: **Bold and italic are not drawn as faces.** SGR 1 brightens a basic-palette
    foreground (as xterm's `boldColors`) but a truecolor or default-coloured bold
    cell looks like any other, and SGR 3 changes nothing. A face is a font: the
    fix is a style in `render::FontRequest` (resolved through fontconfig to the

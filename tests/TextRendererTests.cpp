@@ -73,6 +73,9 @@ static_assert(!std::is_copy_constructible_v<microide::render::SurfaceTextureCach
 
 
 struct TextRendererTestAccess {
+  static const microide::render::TextRendererBackend* Backend(const microide::render::TextRenderer& renderer) {
+    return renderer.backend_.get();
+  }
   // Gives `renderer` a pool of its own whose first backend is `backend`, bound
   // (with no SDL renderer, at scale 1) and resolved, as a first frame would.
   static void SetBackend(microide::render::TextRenderer& renderer,
@@ -1279,6 +1282,53 @@ void TestSdlTtfFontSizeSetBeforeInitializeIsKept() {
              std::to_string(early.LineHeight()) + " vs " + std::to_string(reference.LineHeight()));
 }
 
+// A family's styled face is its own file when it has one (TD-2026-11-05-432
+// item 1): the sibling naming every packaged family uses, then fontconfig; a
+// family without one is synthesized, and a bold face then draws heavier than
+// the regular one on any machine.
+void TestSdlTtfStyledFacesResolveToTheFamilysFilesOrSynthesize() {
+  using microide::render::FontStyle;
+  using microide::render::SdlTtfTextBackend;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path regular = temp_dir.path() / "Fam-Regular.ttf";
+  WriteFile(regular, "");
+  WriteFile(temp_dir.path() / "Fam-Bold.ttf", "");
+  WriteFile(temp_dir.path() / "Fam-Oblique.ttf", "");
+  Expect(SdlTtfTextBackend::StyledFaceFile(regular, FontStyle::Bold) == temp_dir.path() / "Fam-Bold.ttf",
+         "-Regular's bold sibling is -Bold");
+  Expect(SdlTtfTextBackend::StyledFaceFile(regular, FontStyle::Italic) == temp_dir.path() / "Fam-Oblique.ttf",
+         "an -Oblique sibling is the italic");
+  Expect(SdlTtfTextBackend::StyledFaceFile(regular, FontStyle::BoldItalic).empty(),
+         "no bold italic file: synthesized");
+  Expect(SdlTtfTextBackend::StyledFaceFile(regular, FontStyle::Regular).empty(), "regular is the file itself");
+
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(320, 60);
+  microide::render::TextRenderer renderer;
+  renderer.EnsureInitialized(canvas.renderer());
+  const auto ink = [&](const microide::render::TextRenderer& face) {
+    Expect(SDL_SetRenderDrawColor(canvas.renderer(), 0, 0, 0, 0xff) && SDL_RenderClear(canvas.renderer()),
+           "the canvas clears");
+    face.DrawString(canvas.renderer(), 4.0f, 4.0f, SDL_Color{0xff, 0xff, 0xff, 0xff}, "WMWMWMWM");
+    SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+    long total = 0;
+    for (int y = 0; pixels != nullptr && y < pixels->h; ++y) {
+      for (int x = 0; x < pixels->w; ++x) {
+        Uint8 r = 0, g = 0, b = 0, a = 0;
+        SDL_ReadSurfacePixel(pixels, x, y, &r, &g, &b, &a);
+        total += g;
+      }
+    }
+    SDL_DestroySurface(pixels);
+    return total;
+  };
+  const long regular_ink = ink(renderer);
+  const long bold_ink = ink(renderer.Face(FontStyle::Bold));
+  Expect(regular_ink > 0 && bold_ink > regular_ink + regular_ink / 20,
+         "the bold face draws heavier: regular " + std::to_string(regular_ink) + ", bold " +
+             std::to_string(bold_ink));
+}
+
 void TestSdlTtfSetFontFamilyResilientToUnresolved() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(320, 160);
@@ -2406,6 +2456,16 @@ class FontTrackingBackend final : public microide::render::TextRendererBackend {
     family_ = std::string(family);
     return true;
   }
+  bool SetFontStyle(microide::render::FontStyle style) override {
+    if (style_ == style) {
+      return false;
+    }
+    style_ = style;
+    return true;
+  }
+  microide::render::FontStyle style() const { return style_; }
+  const std::string& family() const { return family_; }
+  float point_size() const { return point_size_; }
   float CharWidth() const override { return point_size_ * scale_x_; }
   float LineHeight() const override { return 2.0f * point_size_ * scale_x_; }
   float MeasureWidth(std::string_view text) const override {
@@ -2421,6 +2481,7 @@ class FontTrackingBackend final : public microide::render::TextRendererBackend {
   float point_size_ = microide::render::kDefaultFontPointSize;
   float scale_x_ = 1.0f;
   std::string family_;
+  microide::render::FontStyle style_ = microide::render::FontStyle::Regular;
   mutable std::size_t measure_width_calls_ = 0;
 };
 
@@ -2474,6 +2535,39 @@ void TestTextBackendPoolSharesABackendWhileFontsMatch() {
   Expect(editor.SetFontFamily("Mono B"), "the editor follows to the same family");
   Expect(fixture.pool->LiveBackendCount() == 1 && *fixture.created == 3,
          "the same family at the same size is shared again");
+}
+
+// The terminal draws SGR 1 / 3 text in the family's bold and italic faces
+// (TD-2026-11-05-432 item 1). A face is a renderer of its own on the same pool,
+// made only when something draws in it, and it follows its regular renderer's
+// family and size.
+void TestTextRendererFacesAreMadeOnFirstUseAndFollowTheFont() {
+  using microide::render::FontStyle;
+  FontTrackingPool fixture;
+  microide::render::TextRenderer terminal(fixture.pool);
+  terminal.EnsureInitialized(nullptr);
+  Expect(*fixture.created == 1, "the regular face alone at first");
+  Expect(&terminal.Face(FontStyle::Regular) == &terminal, "the regular face is the renderer itself");
+  const auto backend_of = [](const microide::render::TextRenderer& renderer) {
+    return static_cast<const FontTrackingBackend*>(
+        microide::tests::TextRendererTestAccess::Backend(renderer));
+  };
+  const microide::render::TextRenderer& bold = terminal.Face(FontStyle::Bold);
+  Expect(*fixture.created == 2 && backend_of(bold)->style() == FontStyle::Bold,
+         "asking for bold makes one bold backend");
+  Expect(&terminal.Face(FontStyle::Bold) == &bold && *fixture.created == 2, "and keeps it");
+  Expect(terminal.SetFontPointSize(18.0f) && terminal.SetFontFamily("Mono B"), "the font changes");
+  const auto* bold_backend = backend_of(terminal.Face(FontStyle::Bold));
+  Expect(bold_backend->point_size() == 18.0f && bold_backend->family() == "Mono B" &&
+             bold_backend->style() == FontStyle::Bold,
+         "the bold face follows the size and family, and stays bold");
+  Expect(fixture.pool->LiveBackendCount() == 2, "no face nobody asked for was made");
+  microide::render::TextRenderer other(fixture.pool);
+  other.EnsureInitialized(nullptr);
+  (void) other.SetFontPointSize(18.0f);
+  (void) other.SetFontFamily("Mono B");
+  Expect(backend_of(other.Face(FontStyle::Bold)) == bold_backend,
+         "two renderers' bold faces of one font share a backend");
 }
 
 // Sharing a backend shares its glyphs, not its composites. The chrome's labels and
@@ -3512,6 +3606,8 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
           TestMeasureWidthCacheClearsWhenPresentationScaleChanges);
   AddTest(tests, "TextRenderer backend pool shares a backend while fonts match",
           TestTextBackendPoolSharesABackendWhileFontsMatch);
+  AddTest(tests, "TextRenderer/FacesAreMadeOnFirstUseAndFollowTheFont",
+          TestTextRendererFacesAreMadeOnFirstUseAndFollowTheFont);
   AddTest(tests, "TextRenderer backend pool keeps each renderer's composites apart",
           TestTextBackendPoolKeepsEachRenderersCompositesApart);
   AddTest(tests, "TextRenderer backend pool resolves early font requests on bind",
@@ -3549,6 +3645,8 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer SDL_ttf SetFontFamily resilient to unresolved family",
           TestSdlTtfSetFontFamilyResilientToUnresolved);
+  AddTest(tests, "TextRenderer SDL_ttf styled faces resolve to the family's files or synthesize",
+          TestSdlTtfStyledFacesResolveToTheFamilysFilesOrSynthesize);
   AddTest(tests,
           "TextRenderer SDL_ttf repeated font-family swaps stay functional",
           TestSdlTtfRepeatedFontFamilySwapsStayFunctional);
