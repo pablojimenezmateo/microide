@@ -249,11 +249,13 @@ void TestFileIndexWatcherLateDeleteSelfSparesTheDirectoryNowAtThePath() {
   WriteFile(root / "marker.txt", "m\n");
   Expect(WaitFor(mutex, cv, [&] { return index.contains("marker.txt"); }, std::chrono::milliseconds(5000)),
          "the watcher read past the late self-event");
+  // Unwatched first: the callback takes `mutex` under the watcher's dispatch
+  // lock, so holding it across Unwatch is a lock-order inversion (TSan).
+  watcher.Unwatch();
   std::lock_guard lock(mutex);
   Expect(batches_seen > seen_before_close, "batches arrived after the close");
   Expect(index.contains("dir/new.txt"),
          "the late IN_DELETE_SELF of the old directory left the new one's file indexed");
-  watcher.Unwatch();
 }
 
 // A directory moved OUT of the tree took its descendants' watches with it, still
@@ -306,10 +308,10 @@ void TestFileIndexWatcherMovedOutSubtreeStopsSpeakingForItsOldPaths() {
   WriteFile(root / "marker.txt", "m\n");
   Expect(WaitFor(mutex, cv, [&] { return index.contains("marker.txt"); }, std::chrono::milliseconds(5000)),
          "the watcher read past the outside deletion");
+  watcher.Unwatch();  // before taking `mutex`: see LateDeleteSelf
   std::lock_guard lock(mutex);
   Expect(index.contains("lib/sub/f.txt"),
          "a deletion outside the project does not remove the file now at the old path");
-  watcher.Unwatch();
 }
 
 void TestFileIndexWatcherDetectsCreatedFile() {
