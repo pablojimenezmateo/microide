@@ -191,6 +191,32 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **Accepting a completion for a word already typed in full closes the list.**
+  Enter or Tab over `return` with `return` offered did nothing and left the list
+  up; a snippet item for the same word inserted its raw text (`WORD$0`).
+- **Replace moves on past a match it would not change** (a case-insensitive
+  `foo` replaced with `Foo` over a `Foo`) instead of staying on it.
+- **Choosing Base resolves a merge conflict that shows its base.** In a git
+  conflict file, Base could never resolve a conflict, which saving then reported
+  as unresolved.
+- **Format Document keeps tab indentation**, and a formatting result that
+  arrives after you typed is no longer applied to text it was not computed for.
+- **A code action's fix is refused if you edited the file after asking for
+  it**, instead of landing on the wrong lines.
+- **Recreating a directory a terminal sits in no longer drops it from Go to
+  File.** `rm -rf build && mkdir build` with a shell inside `build/` left the new
+  `build/` unindexed until a rescan; a directory moved out of the project also
+  stopped deleting index entries of a new one at its old path.
+- **A save interrupted by a crash leaves no stray file.** Its
+  `.name.microide-staging.*` temporary used to stay in the project for good; it
+  is removed by the next scan (after ten minutes, so a save from another machine
+  on a shared filesystem is never touched).
+- **Remote projects recover from a crash or power cut between two disk
+  writes.** A new file or a rename that reached the mirror just before a crash
+  could never reach the host and was reported as nothing unsent; a crash
+  mid-save left its temporary in the mirror; and a reconnect could keep showing
+  "not connected".
+
 - **Terminal selections are easy to see and keep the text's colours.** A
   selection in the terminal painted the faint hover tint and replaced the output's
   colours with plain text colour, so red text turned grey and a coloured
