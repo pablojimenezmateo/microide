@@ -385,7 +385,17 @@ Left open:
    (`mis.XXXXXX`, `mip.XXXXXX`) because of the 108-byte AF_UNIX limit; measure
    the longest socket path first.
 
-### TD-2026-10-27-408 — the clang lane once read a header full of NUL bytes while six lanes built at once. [OPEN — not reproduced; the evidence is now kept]
+### TD-2026-10-27-408 — the clang lane once read a header full of NUL bytes while six lanes built at once. [CLOSED 2026-11-06 — not reproduced; the capture stays armed]
+
+2026-11-06: closed as not reproducible. Since the evidence capture went in, the
+clang lane has run in every validation wave, and on 2026-11-06 it ran again
+beside six other lanes (tests, ASan, UBSan, TSan, QA, perf-tests at four jobs
+each) -- the exact condition -- and was clean. Nothing in the tree can produce a
+zero-filled read of an unchanged header; the capture in `run-checks.sh` still
+fails the lane and keeps the failing pass's log, the headers' hashes and NUL
+counts, the PCH files, `ccache -s -v` and the machine's memory and kernel log,
+which is where a new entry would start.
+
 
 2026-10-27: `tools/run-checks.sh clang-build` now keeps what this entry asked for
 when a build fails with `null character ignored`: the failing pass's log, each
@@ -408,7 +418,15 @@ pressure), not at the tree. Not reproduced; next time keep the failing object's
 `.d` file and the PCH beside the log, and check `ccache -s` for errors, before
 deciding.
 
-### TD-2026-10-27-406 — `RemoteTerminal/TwoClientsShareAHostTerminalAtTheSmallerSize` once saw a blank screen for 15 s. [OPEN — not reproduced; the evidence is now kept; 2026-11-02: 60 concurrent runs under load, all passed]
+### TD-2026-10-27-406 — `RemoteTerminal/TwoClientsShareAHostTerminalAtTheSmallerSize` once saw a blank screen for 15 s. [CLOSED 2026-11-06 — not reproduced in 252 runs; the evidence is kept]
+
+2026-11-06: closed as not reproducible. 192 more runs under ASan, 24 at a time
+(eight waves), all passed -- 252 with the 60 of 2026-11-02. The "blank screen"
+was never observed (the message was built before the wait, see below), the
+failure's message now shows the screen after the wait with the server's log and
+the channel's frame counters, and a recurrence fails the test with exactly that
+evidence.
+
 
 2026-10-28 correction: the "blank screen" was never observed. The failure
 message was `Expect(WaitForText(a, ...), "..." + ScreenText(a))`, and C++ leaves
