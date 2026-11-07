@@ -22,10 +22,12 @@ times out from the first `open` on, while the app log shows the startup frame
 and nothing after it -- the main loop stopped servicing the channel (or never
 woke for it) rather than one command failing. Both passed on their retry; 8
 parallel drivers of `editor-toggles chrome menus` on weston passed. X11 has
-never shown it. Next time: attach `gdb -p` to the stuck app before the driver
-kills it (the main thread's stack says whether it is blocked in
-SDL_WaitEvent, in a wayland roundtrip, or in our code), which the driver could do
-itself on a control-reply timeout. Evidence: `build/qa-evidence/wayland-editor-toggles-2026-11-07`.
+never shown it. The driver now records, on its first control-reply timeout,
+every thread of the stuck app with its name, state, kernel wait channel and
+current syscall (`stall-threads.txt` beside the finding's screenshots; `/proc`,
+since yama's ptrace scope 1 refuses a sibling gdb). The next occurrence says
+whether the main thread sits in poll/futex (SDL_WaitEvent, a wayland roundtrip)
+or is running our code. Evidence: `build/qa-evidence/wayland-editor-toggles-2026-11-07`.
 
 ### TD-2026-11-05-432 — the 2026-11-05 terminal UI/UX review: what it fixed, and what it left. [RESOLVED 2026-11-06 — 1 and 2]
 

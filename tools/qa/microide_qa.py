@@ -280,6 +280,7 @@ class App:
     _last_click: tuple[float, float, float] = (0.0, -1e9, -1e9)
     _launches: int = 0
     _reported_bad_utf8: bool = False
+    _stall_captured: bool = False
     _extra_args: list[str] = field(default_factory=list)
     # A flow changed the project or ran `git` outside the app (flows_common's
     # write/git_run) since the git view last settled: the watcher may not have
@@ -661,7 +662,37 @@ class App:
                     if isinstance(reply, dict) and reply.get("id") == request_id:
                         return reply
         except (OSError, socket.timeout) as error:
+            self.capture_stall(f"{what} got no reply")
             raise QaFailure(f"{what} got no reply: {error}") from error
+
+    def capture_stall(self, why: str) -> None:
+        """When the app stops answering the control channel, records where each of
+        its threads is: name, state, kernel wait channel and current syscall
+        (`/proc`, readable for our own child without ptrace, which yama's scope 1
+        refuses to a sibling gdb). Once per app; the file sits beside the
+        screenshots, so the finding carries it (TD-2026-11-07-433)."""
+        if self._stall_captured or self.shots is None or self.proc is None or self.proc.poll() is not None:
+            return
+        self._stall_captured = True
+        lines = [f"stall: {why}", f"pid {self.proc.pid}", ""]
+        task_dir = Path(f"/proc/{self.proc.pid}/task")
+        try:
+            tids = sorted(task_dir.iterdir(), key=lambda entry: int(entry.name))
+        except OSError as error:
+            tids = []
+            lines.append(f"cannot list threads: {error}")
+        for tid in tids:
+            fields: list[str] = [tid.name]
+            for name in ("comm", "wchan", "syscall"):
+                with contextlib.suppress(OSError):
+                    fields.append(f"{name}={(tid / name).read_text(errors='replace').strip()}")
+            with contextlib.suppress(OSError):
+                for line in (tid / "status").read_text().splitlines():
+                    if line.startswith("State:"):
+                        fields.append(line.split(None, 1)[1])
+            lines.append("  ".join(fields))
+        self.shots.mkdir(parents=True, exist_ok=True)
+        (self.shots / "stall-threads.txt").write_text("\n".join(lines) + "\n")
 
     def query(self, verb: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
         command = ["control-send", "--query", verb]
@@ -670,6 +701,8 @@ class App:
         result = self._control(command)
         reply = _last_json(result.stdout)
         if not reply or not reply.get("ok"):
+            if "timed out waiting for a reply" in (result.stdout or ""):
+                self.capture_stall(f"query {verb!r} timed out")
             raise QaFailure(f"query {verb!r} failed: {result.stdout or result.stderr}")
         if verb == "ui" and "\ufffd" in result.stdout:
             self._check_chrome_utf8(reply.get("result", {}))
