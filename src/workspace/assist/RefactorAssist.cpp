@@ -51,18 +51,23 @@ bool RefactorAssist::RenameSymbol(const std::string& new_name, std::string* erro
   const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
   const LspClient::Position position =
       ByteColumnToLspPosition(*viewport, viewport->cursor_line(), viewport->cursor_column(), encoding);
+  // The text the edit's positions are in. Versioned edits are checked against
+  // the server's versions below; most servers send unversioned `changes`, which
+  // only this revision can vouch for.
+  const std::uint64_t revision = viewport->content_revision();
   client->RequestRenameAsync(
       FileUriForPath(request_path), position, new_name,
       // `client` cannot dangle: the callback is stored on the client and invoked
       // from its own DrainCallbacks (live or retiring), so the client outlives it.
-      [this, request_path, new_name, client](LspResult<LspClient::WorkspaceEdit> edit) {
-        ApplyRenameResult(request_path, new_name, *client, std::move(edit));
+      [this, request_path, new_name, client, revision](LspResult<LspClient::WorkspaceEdit> edit) {
+        ApplyRenameResult(request_path, new_name, *client, revision, std::move(edit));
       });
   return true;
 }
 
 void RefactorAssist::ApplyRenameResult(const std::filesystem::path& request_path,
                                        const std::string& new_name, const LspClient& client,
+                                       std::uint64_t revision,
                                        LspResult<LspClient::WorkspaceEdit> edit) {
   const AssistHost::Operations& ops = host_.ops();
   ops.finish_tracked_lsp_request();
@@ -80,7 +85,9 @@ void RefactorAssist::ApplyRenameResult(const std::filesystem::path& request_path
   // Version gate: a versioned TextDocumentEdit pinned to a document version
   // we have since advanced past is stale — applying it would corrupt the
   // buffer the user kept typing in. LSP requires failing the whole edit.
-  if (!lsp_workspace_edit::VersionsCurrent(client, *edit)) {
+  if (const editor::TextViewport* viewport = ops.active_editable_viewport();
+      viewport == nullptr || viewport->content_revision() != revision ||
+      !lsp_workspace_edit::VersionsCurrent(client, *edit)) {
     LogLsp(host_, "Rename aborted: the document changed while the server computed the rename");
     return;
   }

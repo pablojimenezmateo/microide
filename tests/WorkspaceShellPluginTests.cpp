@@ -2211,6 +2211,65 @@ return ide.plugin({
          "the named rename applies the server's edit");
 }
 
+// A rename's edit is positions in the text it was asked for. A server that sends
+// unversioned `changes` (most do) gave the version check nothing to compare, so
+// an answer that arrived after the user typed was applied to other text. The
+// requesting buffer's content revision now guards it, as for formatting.
+void TestWorkspaceShellRenameResultForAChangedBufferIsDropped() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path py_file = project / "main.py";
+  WriteFile(py_file, "value = 1\nprint(value)\n");
+  WritePluginInit(
+      plugins_root, "pylsp",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "pylsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "pylsp.server", language_id = "python", command = { "py-lsp-server" } })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false), "open the project");
+  auto stub = std::make_unique<workspace::LspClient>();
+  workspace::LspClient* const stub_raw = stub.get();
+  stub_raw->EnableTestStubMode();
+  workspace::LspClient::RenameCallback held;
+  std::string held_uri;
+  stub_raw->SetTestRenameHandler([&](std::string uri, std::string, workspace::LspClient::RenameCallback cb) {
+    held_uri = std::move(uri);
+    held = std::move(cb);
+  });
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("python", std::move(stub)),
+         "a stub python client");
+  WorkspaceShellTestAccess::OpenFile(shell, py_file);
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.MoveCursorTo(0, 2);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "rename-symbol count"), "rename-symbol runs");
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  Expect(static_cast<bool>(held), "the request reached the server");
+
+  editor.MoveCursorTo(0, 0);
+  editor.InsertText("# note\n");
+  workspace::LspClient::WorkspaceEdit edit;
+  edit.changes[held_uri] = {{workspace::LspClient::Range{{0, 0}, {0, 5}}, "count"},
+                            {workspace::LspClient::Range{{1, 6}, {1, 11}}, "count"}};
+  held(std::move(edit));
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  Expect(editor.lines()[0] == "# note" && editor.lines()[1] == "value = 1",
+         "the stale rename is not applied over the new text: " + std::string(editor.lines()[0]) + " / " +
+             std::string(editor.lines()[1]));
+}
+
 // Regression: a rename that touches files which aren't open confirms first, then
 // opens every affected file, applies the edit, and saves them all to disk.
 void TestWorkspaceShellRenameSymbolOpensAndSavesClosedFiles() {
@@ -7712,6 +7771,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellFormatDocumentFollowsTabsAndDropsAStaleResult);
   AddTest(tests, "WorkspaceShell/CodeActionFixIsRefusedOnAChangedBuffer",
           TestWorkspaceShellCodeActionFixIsRefusedOnAChangedBuffer);
+  AddTest(tests, "WorkspaceShell/RenameResultForAChangedBufferIsDropped",
+          TestWorkspaceShellRenameResultForAChangedBufferIsDropped);
   AddTest(tests, "WorkspaceShell/RenameSymbolAppliesLspEdit",
           TestWorkspaceShellRenameSymbolAppliesLspEdit);
   AddTest(tests, "WorkspaceShell/RenameSymbolOpensAndSavesClosedFiles",

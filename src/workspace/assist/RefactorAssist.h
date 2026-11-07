@@ -38,7 +38,8 @@ class RefactorAssist {
   void ApplyFormattingResult(const std::filesystem::path& request_path, std::uint64_t revision,
                              LspResult<std::vector<LspClient::TextEdit>> edits);
   void ApplyRenameResult(const std::filesystem::path& request_path, const std::string& new_name,
-                         const LspClient& client, LspResult<LspClient::WorkspaceEdit> edit);
+                         const LspClient& client, std::uint64_t revision,
+                         LspResult<LspClient::WorkspaceEdit> edit);
 
   AssistHost& host_;
 };
