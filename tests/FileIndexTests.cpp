@@ -5,11 +5,15 @@
 #include "util/PathMatch.h"
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <map>
 #include <string>
 #include <thread>
 #include <vector>
+
+#include <sys/wait.h>
+#include <unistd.h>
 
 namespace microide::tests {
 namespace {
@@ -684,8 +688,46 @@ void TestFileIndexVisitsPendingPaths() {
   Expect(visited.size() == 2, "cleared");
 }
 
+// A save's temporary whose writer crashed between writing it and renaming it
+// into place was never removed: it sat in the user's project for good (git
+// status lists it). A scan removes one whose writer is gone and that is older
+// than any save takes; a fresh one (maybe another machine's save on a shared
+// filesystem) and one whose writer is alive stay.
+void TestFileIndexScanSweepsAbandonedSaveTemporaries() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "keep.txt", "k\n");
+  const pid_t child = ::fork();
+  if (child == 0) {
+    ::_exit(0);
+  }
+  int status = 0;
+  ::waitpid(child, &status, 0);
+  const std::string dead = std::to_string(child);
+  const std::string alive = std::to_string(::getpid());
+  const auto old_time = std::filesystem::file_time_type::clock::now() - std::chrono::hours(1);
+  const std::filesystem::path abandoned = root / (".a.txt.microide-staging." + dead + ".0");
+  const std::filesystem::path fresh = root / (".b.txt.microide-staging." + dead + ".1");
+  const std::filesystem::path live = root / (".c.txt.microide-staging." + alive + ".2");
+  for (const auto& path : {abandoned, fresh, live}) {
+    WriteFile(path, "partial");
+  }
+  std::filesystem::last_write_time(abandoned, old_time);
+  std::filesystem::last_write_time(live, old_time);
+  Expect(microide::util::TemporaryStagingIsAbandoned(abandoned.filename().string()) &&
+             !microide::util::TemporaryStagingIsAbandoned(live.filename().string()) &&
+             !microide::util::TemporaryStagingIsAbandoned("keep.txt"),
+         "a temporary is abandoned when the pid it names is gone");
+  (void)FileIndex::ScanFiles(root, false, {});
+  Expect(!std::filesystem::exists(abandoned), "the scan removes an old abandoned temporary");
+  Expect(std::filesystem::exists(fresh) && std::filesystem::exists(live) &&
+             std::filesystem::exists(root / "keep.txt"),
+         "and leaves a fresh one, a live writer's, and everything else");
+}
+
 void RegisterFileIndexTests(std::vector<TestCase>& tests) {
   AddTest(tests, "FileIndex/VisitsPendingPaths", TestFileIndexVisitsPendingPaths);
+  AddTest(tests, "FileIndex/ScanSweepsAbandonedSaveTemporaries", TestFileIndexScanSweepsAbandonedSaveTemporaries);
   AddTest(tests, "FileIndex/ConcurrentBatchesFromTwoThreads", TestFileIndexConcurrentBatchesFromTwoThreads);
   AddTest(tests, "FileIndex/IncrementalBatchesMatchApplyingEachChangeInOrder",
           TestFileIndexIncrementalBatchesMatchApplyingEachChangeInOrder);

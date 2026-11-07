@@ -1,5 +1,7 @@
 #include "platform/FileIndexWatcher.h"
 
+#include "util/DurableFile.h"
+
 #include "platform/DescriptorRetire.h"
 #include "platform/DirectoryWalk.h"
 #include "platform/Filesystem.h"
@@ -261,6 +263,10 @@ bool CollectTrackedCreations(const std::filesystem::path& walk_root,
                     if (changes->size() >= max_entries) {
                       truncated = true;
                       return false;
+                    }
+                    // A save's temporary its crashed writer left: removed, not indexed.
+                    if (util::SweepAbandonedTemporaryStaging(absolute.native())) {
+                      return true;
                     }
                     IndexUpdateBatch::Change change;
                     change.kind = IndexUpdateBatch::Kind::CreatedOrModified;

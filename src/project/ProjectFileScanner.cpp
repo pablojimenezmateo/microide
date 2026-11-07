@@ -1,5 +1,7 @@
 #include "project/ProjectFileScanner.h"
 
+#include "util/DurableFile.h"
+
 #include <algorithm>
 #include <memory>
 #include <system_error>
@@ -63,7 +65,9 @@ class ScanVisitor final : public platform::TreeWalkVisitor {
       return platform::WalkAction::Continue;
     }
     if (entry.type == platform::PathType::RegularFile &&
-        filter_.Includes(entry.path, platform::PathType::RegularFile)) {
+        filter_.Includes(entry.path, platform::PathType::RegularFile) &&
+        // A save's temporary its crashed writer left: removed, not listed.
+        !util::SweepAbandonedTemporaryStaging(entry.path)) {
       // The walk spells every entry as the (normalized) root plus its relative
       // part, so the relative path is the prefix removed.
       files_.emplace_back(util::NormalizedRelativeView(entry.path, root_native_));

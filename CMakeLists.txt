@@ -1737,6 +1737,8 @@ if(MICROIDE_FUZZ)
   microide_configure_fuzz_target(DebugStateRecordFuzz)
 
   add_executable(ProjectSessionRecordFuzz
+    # The session record's buffer is an editor::DocumentSnapshot (TD-2026-11-02-429).
+    src/editor/DocumentSnapshot.cpp
     src/persistence/PersistedRecord.cpp
     src/workspace/persistence/WorkspacePersistenceBinaryFormatSessions.cpp
     tests/fuzz/ProjectSessionRecordFuzz.cpp
