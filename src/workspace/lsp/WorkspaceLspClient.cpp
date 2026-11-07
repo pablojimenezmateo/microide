@@ -438,7 +438,7 @@ void LspClient::SetTestHoverHandler(std::function<void(std::string uri, HoverCal
 }
 
 void LspClient::SetTestFormattingHandler(
-    std::function<void(std::string uri, FormattingCallback cb)> handler) {
+    std::function<void(std::string uri, bool insert_spaces, FormattingCallback cb)> handler) {
   std::lock_guard lock(impl_->mutex);
   impl_->test_handlers.formatting = std::move(handler);
 }

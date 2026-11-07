@@ -35,7 +35,7 @@ class RefactorAssist {
  private:
   // Apply a textDocument/formatting or rangeFormatting result to the active buffer.
   // Drops superseded results.
-  void ApplyFormattingResult(const std::filesystem::path& request_path,
+  void ApplyFormattingResult(const std::filesystem::path& request_path, std::uint64_t revision,
                              LspResult<std::vector<LspClient::TextEdit>> edits);
   void ApplyRenameResult(const std::filesystem::path& request_path, const std::string& new_name,
                          const LspClient& client, LspResult<LspClient::WorkspaceEdit> edit);

@@ -1998,7 +1998,7 @@ return ide.plugin({
   stub_raw->EnableTestStubMode();
   // Two edits: reformat both lines. The second edit must survive (the dropped-edits
   // bug would leave line 2 untouched).
-  stub_raw->SetTestFormattingHandler([](std::string uri, workspace::LspClient::FormattingCallback cb) {
+  stub_raw->SetTestFormattingHandler([](std::string uri, bool, workspace::LspClient::FormattingCallback cb) {
     (void)uri;
     cb(std::vector<workspace::LspClient::TextEdit>{
         {workspace::LspClient::Range{{0, 0}, {0, 3}}, "x = 1"},
@@ -2017,6 +2017,64 @@ return ide.plugin({
          "formatting should apply the first edit to line 1");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[1] == "y = 2",
          "formatting should also apply the trailing edit to line 2 (no dropped edits)");
+}
+
+// Formatting asked every server for spaces (`insertSpaces: true` was hard-coded),
+// so formatting a tab-indented file re-indented it with spaces; and its edits
+// were applied whatever the user typed while the server worked, against text
+// they were not computed for. The request follows the buffer's soft tabs, and a
+// result for a buffer that changed since is dropped (as VS Code does).
+void TestWorkspaceShellFormatDocumentFollowsTabsAndDropsAStaleResult() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path py_file = project / "main.py";
+  WriteFile(py_file, "if x:\n\ty=2\n");
+  WritePluginInit(
+      plugins_root, "pylsp",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "pylsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "pylsp.server", language_id = "python", command = { "py-lsp-server" } })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false), "open the project");
+  auto stub = std::make_unique<workspace::LspClient>();
+  workspace::LspClient* const stub_raw = stub.get();
+  stub_raw->EnableTestStubMode();
+  std::optional<bool> asked_spaces;
+  workspace::LspClient::FormattingCallback held;
+  stub_raw->SetTestFormattingHandler(
+      [&](std::string, bool insert_spaces, workspace::LspClient::FormattingCallback cb) {
+        asked_spaces = insert_spaces;
+        held = std::move(cb);  // answered later, as a slow server would
+      });
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("python", std::move(stub)),
+         "a stub python client");
+  WorkspaceShellTestAccess::OpenFile(shell, py_file);
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.SetSoftTabs(false);  // what indent detection makes of a tab-indented file
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "format-document"), "format-document runs");
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  Expect(asked_spaces == std::optional<bool>(false), "a buffer indented with tabs asks for tabs");
+  Expect(static_cast<bool>(held), "the request reached the server");
+
+  editor.MoveCursorTo(0, 0);
+  editor.InsertText("# typed while formatting\n");
+  held(std::vector<workspace::LspClient::TextEdit>{{workspace::LspClient::Range{{0, 0}, {0, 5}}, "if x :"}});
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  Expect(editor.lines()[0] == "# typed while formatting" && editor.lines()[1] == "if x:",
+         "edits computed for the old text are not applied to the new: " + std::string(editor.lines()[0]));
 }
 
 // Regression: the rename-symbol command prefills the symbol under the cursor, and
@@ -7594,6 +7652,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellHoverSupersededCompletionIsDropped);
   AddTest(tests, "WorkspaceShell/FormatDocumentAppliesLspEdits",
           TestWorkspaceShellFormatDocumentAppliesLspEdits);
+  AddTest(tests, "WorkspaceShell/FormatDocumentFollowsTabsAndDropsAStaleResult",
+          TestWorkspaceShellFormatDocumentFollowsTabsAndDropsAStaleResult);
   AddTest(tests, "WorkspaceShell/RenameSymbolAppliesLspEdit",
           TestWorkspaceShellRenameSymbolAppliesLspEdit);
   AddTest(tests, "WorkspaceShell/RenameSymbolOpensAndSavesClosedFiles",

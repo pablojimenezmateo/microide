@@ -678,8 +678,10 @@ class LspClient {
       std::function<void(std::string uri, DocumentSymbolCallback cb)> handler);
   // Unit tests: feed a canned hover response (raw LSP hover result JSON).
   void SetTestHoverHandler(std::function<void(std::string uri, HoverCallback cb)> handler);
-  // Unit tests: feed a canned formatting response (a TextEdit[]).
-  void SetTestFormattingHandler(std::function<void(std::string uri, FormattingCallback cb)> handler);
+  // Unit tests: feed a canned formatting response (a TextEdit[]); the handler
+  // sees the request's FormattingOptions.insertSpaces.
+  void SetTestFormattingHandler(
+      std::function<void(std::string uri, bool insert_spaces, FormattingCallback cb)> handler);
   // Unit tests: feed a canned rename response (a WorkspaceEdit).
   void SetTestRenameHandler(
       std::function<void(std::string uri, std::string new_name, RenameCallback cb)> handler);

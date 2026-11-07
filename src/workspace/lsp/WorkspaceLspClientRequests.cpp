@@ -228,7 +228,7 @@ void LspClient::RequestCodeActionAsync(std::string uri, Range range,
 void LspClient::RequestFormattingAsync(std::string uri, int tab_size, bool insert_spaces,
                                        FormattingCallback callback) {
   if (!callback) return;
-  if (impl_->DispatchTestStub(impl_->test_handlers.formatting, callback, uri)) {
+  if (impl_->DispatchTestStub(impl_->test_handlers.formatting, callback, uri, insert_spaces)) {
     return;
   }
   using namespace util;
@@ -255,7 +255,7 @@ void LspClient::RequestRangeFormattingAsync(std::string uri, Range range, int ta
                                             bool insert_spaces, FormattingCallback callback) {
   if (!callback) return;
   // Range formatting shares the formatting stub handler (same TextEdit[] shape).
-  if (impl_->DispatchTestStub(impl_->test_handlers.formatting, callback, uri)) {
+  if (impl_->DispatchTestStub(impl_->test_handlers.formatting, callback, uri, insert_spaces)) {
     return;
   }
   using namespace util;

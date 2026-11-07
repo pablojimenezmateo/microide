@@ -167,9 +167,15 @@ bool RefactorAssist::FormatActiveDocument(std::string* error_message) {
   }
   const std::filesystem::path request_path = viewport->path();
   const int tab_size = static_cast<int>(viewport->indent_width() > 0 ? viewport->indent_width() : 4);
-  const auto on_result = [this, request_path](
+  // The buffer's own indentation: a file indented with tabs asked to be
+  // formatted with spaces came back re-indented.
+  const bool insert_spaces = viewport->soft_tabs();
+  // The text the edits will be computed for. TextEdit[] carries no document
+  // version, so a result for a buffer that has changed since is dropped.
+  const std::uint64_t revision = viewport->content_revision();
+  const auto on_result = [this, request_path, revision](
                              LspResult<std::vector<LspClient::TextEdit>> edits) {
-    ApplyFormattingResult(request_path, std::move(edits));
+    ApplyFormattingResult(request_path, revision, std::move(edits));
   };
   // Format the SELECTION only when there is one (VSCode "Format Selection"), else the
   // whole document. Both return the same TextEdit[] shape and apply identically.
@@ -184,21 +190,26 @@ bool RefactorAssist::FormatActiveDocument(std::string* error_message) {
                                          encoding),
       };
       client->RequestRangeFormattingAsync(FileUriForPath(request_path), range, tab_size,
-                                          /*insert_spaces=*/true, on_result);
+                                          insert_spaces, on_result);
       return true;
     }
   }
-  client->RequestFormattingAsync(FileUriForPath(request_path), tab_size, /*insert_spaces=*/true,
-                                 on_result);
+  client->RequestFormattingAsync(FileUriForPath(request_path), tab_size, insert_spaces, on_result);
   return true;
 }
 
 void RefactorAssist::ApplyFormattingResult(const std::filesystem::path& request_path,
+                                           std::uint64_t revision,
                                            LspResult<std::vector<LspClient::TextEdit>> edits) {
   const AssistHost::Operations& ops = host_.ops();
   ops.finish_tracked_lsp_request();
   // Drop superseded results (buffer switched/closed) before mutating.
   if (host_.IsStale(request_path)) {
+    return;
+  }
+  if (const editor::TextViewport* viewport = ops.active_editable_viewport();
+      viewport == nullptr || viewport->content_revision() != revision) {
+    LogLsp(host_, "Formatting dropped: the document changed while the server formatted it");
     return;
   }
   if (!edits.answered()) {

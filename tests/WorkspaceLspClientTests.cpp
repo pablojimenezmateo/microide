@@ -1018,7 +1018,7 @@ void TestWorkspaceLspClientCapabilityGatedRequestsShortCircuit() {
 void TestWorkspaceLspClientFormattingReturnsAllEdits() {
   LspClient client;
   client.EnableTestStubMode();
-  client.SetTestFormattingHandler([](std::string uri, LspClient::FormattingCallback cb) {
+  client.SetTestFormattingHandler([](std::string uri, bool, LspClient::FormattingCallback cb) {
     (void)uri;
     cb(std::vector<LspClient::TextEdit>{
         {LspClient::Range{{0, 0}, {0, 3}}, "one"},
