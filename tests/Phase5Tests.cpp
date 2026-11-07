@@ -17,6 +17,7 @@
 #include <thread>
 #include <vector>
 #include "WorkspaceShellEventHelpers.h"
+#include "support/ProjectSearchWait.h"
 
 namespace microide::tests {
 namespace {
@@ -773,18 +774,11 @@ return ide.plugin({
 // keystroke's LSP sync sent the last of them as the ranged delta and the server's
 // copy lost the others (TD-2026-11-03-431). The fake server applies each change
 // the way clangd does (utf-8 positions, incremental sync) and writes its copy out.
-void TestPhase5IncrementalSyncCarriesEverySnippetMirrorEdit() {
-#if !MICROIDE_HAS_LUA_PLUGINS
-  return;
-#endif
-  TemporaryDirectory temp_dir;
-  const std::filesystem::path config_home = temp_dir.path() / "config";
-  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
-  const std::filesystem::path project_root = temp_dir.path() / "project";
-  const std::filesystem::path server_path = temp_dir.path() / "mirror_lsp.py";
-  const std::filesystem::path mirror_path = temp_dir.path() / "mirror.txt";
-  const std::filesystem::path notes = project_root / "notes.md";
-  WriteFile(notes, "head\n");
+// A language server that keeps the document as its didOpen / didChange messages
+// build it and writes it to `mirror_path` after each one: what the server
+// believes the buffer holds, for a test to compare with the buffer.
+void WriteMirrorLspServer(const std::filesystem::path& plugins_root, const std::filesystem::path& server_path,
+                          const std::filesystem::path& mirror_path) {
   WriteFile(server_path, std::string(R"py(#!/usr/bin/env python3
 import json, os, sys
 mirror_path = sys.argv[1]
@@ -858,25 +852,47 @@ return ide.plugin({
   end
 })
 )lua"));
+}
+
+// Waits until the mirror server's copy reads `expected`; empty when it did, else
+// what it last read.
+std::string WaitForMirrorLspText(WorkspaceShell& shell, const std::filesystem::path& mirror_path,
+                                 const std::string& expected) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  std::string seen;
+  while (std::chrono::steady_clock::now() < deadline) {
+    WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+    if (std::filesystem::exists(mirror_path)) {
+      seen = ReadFile(mirror_path);
+      if (seen == expected) {
+        return std::string();
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return seen;
+}
+
+void TestPhase5IncrementalSyncCarriesEverySnippetMirrorEdit() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path server_path = temp_dir.path() / "mirror_lsp.py";
+  const std::filesystem::path mirror_path = temp_dir.path() / "mirror.txt";
+  const std::filesystem::path notes = project_root / "notes.md";
+  WriteFile(notes, "head\n");
+  WriteMirrorLspServer(plugins_root, server_path, mirror_path);
   ScopedPluginConfigHomeEnv config_env(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false), "the project opens");
   WorkspaceShellTestAccess::OpenFile(shell, notes);
   const auto server_has = [&](const std::string& expected) {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    std::string seen;
-    while (std::chrono::steady_clock::now() < deadline) {
-      WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
-      if (std::filesystem::exists(mirror_path)) {
-        seen = ReadFile(mirror_path);
-        if (seen == expected) {
-          return std::string();
-        }
-      }
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    return seen;
+    return WaitForMirrorLspText(shell, mirror_path, expected);
   };
   // A first keystroke opens the document on the server (and is itself synced).
   editor::TextViewport& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
@@ -897,6 +913,44 @@ return ide.plugin({
   Expect(viewport.SerializeText() == "head\nx Q=Q+Q", "every mirror took it: " + viewport.SerializeText());
   const std::string typed = server_has(viewport.SerializeText());
   Expect(typed.empty(), "the server's copy has every mirror's edit (it has '" + typed + "')");
+}
+
+// Replace-in-project into a buffer with unsaved edits rewrote it outside the
+// workspace-edit service, so the language server was never told: its copy, and
+// its diagnostics, stayed on the old text until the next keystroke. The
+// replacement is one workspace edit, synced like any other.
+void TestPhase5ReplaceAllInADirtyBufferReachesTheServer() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path server_path = temp_dir.path() / "mirror_lsp.py";
+  const std::filesystem::path mirror_path = temp_dir.path() / "mirror.txt";
+  const std::filesystem::path notes = project_root / "notes.md";
+  WriteFile(notes, "needle one\nneedle two\n");
+  WriteMirrorLspServer(plugins_root, server_path, mirror_path);
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false), "the project opens");
+  Expect(WaitForFileIndexSize(shell, 1, std::chrono::milliseconds(3000)), "the file is indexed");
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "needle", false);
+  Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(3000)), "the search completes");
+  WorkspaceShellTestAccess::SetProjectSearchReplaceText(shell, "pin");
+  WorkspaceShellTestAccess::OpenFile(shell, notes);
+  editor::TextViewport& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.MoveCursorTo(2, 0, false);
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "x"), "an unsaved keystroke");
+  const std::string opened = WaitForMirrorLspText(shell, mirror_path, viewport.SerializeText());
+  Expect(opened.empty(), "the server has the dirty buffer (it has '" + opened + "')");
+
+  WorkspaceShellTestAccess::ReplaceAllProjectSearchMatches(shell);
+  Expect(viewport.SerializeText() == "pin one\npin two\nx", "the buffer is replaced: " + viewport.SerializeText());
+  const std::string replaced = WaitForMirrorLspText(shell, mirror_path, viewport.SerializeText());
+  Expect(replaced.empty(), "and so is the server's copy (it has '" + replaced + "')");
 }
 
 void TestPhase5DeferredTabHydrationCompletesBeforeDidOpenDiagnostics() {
@@ -1155,6 +1209,8 @@ void RegisterPhase5Tests(std::vector<TestCase>& tests) {
           TestPhase5LspCommandsDriveDiagnosticsNavigationAndActions);
   AddTest(tests, "Phase5.IncrementalSyncCarriesEverySnippetMirrorEdit",
           TestPhase5IncrementalSyncCarriesEverySnippetMirrorEdit);
+  AddTest(tests, "Phase5.ReplaceAllInADirtyBufferReachesTheServer",
+          TestPhase5ReplaceAllInADirtyBufferReachesTheServer);
   AddTest(tests, "Phase5.LspMergeBuffersPublishDiagnosticsAndBufferHooks",
           TestPhase5LspMergeBuffersPublishDiagnosticsAndBufferHooks);
   AddTest(tests, "Phase5.DeferredTabHydrationCompletesBeforeDidOpenDiagnostics",

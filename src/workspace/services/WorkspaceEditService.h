@@ -91,6 +91,16 @@ class WorkspaceEditService {
   // group was dropped without applying (a line beyond EOF, or an overlapping group),
   // so the server-initiated workspace/applyEdit response can report partial failure.
   bool ApplyLspEdit(const std::vector<CodeActionEdit>& edits, bool* out_any_rejected = nullptr);
+  // The same for edits whose columns are already editor byte columns (the host's
+  // own edits, e.g. replace-in-project into an open buffer): every buffer's edit
+  // group as one undo step, with the LSP sync, fold rescan, breakpoint follow and
+  // damage an LSP edit gets.
+  bool ApplyBufferEdits(const std::vector<CodeActionEdit>& edits);
+
+ private:
+  bool ApplyOpenBufferEdits(const std::vector<CodeActionEdit>& edits, bool lsp_columns, bool* out_any_rejected);
+
+ public:
   // Apply an LSP rename result. If every affected file is already open (and no
   // resource ops), applies in place (dirty). If some are closed — or the rename
   // carries file create/rename/delete ops — stashes the edit and confirms before

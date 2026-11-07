@@ -147,6 +147,15 @@ bool WorkspaceEditService::ApplyPluginEdit(const plugin::PluginHost::WorkspaceEd
 
 bool WorkspaceEditService::ApplyLspEdit(const std::vector<CodeActionEdit>& edits,
                                         bool* out_any_rejected) {
+  return ApplyOpenBufferEdits(edits, /*lsp_columns=*/true, out_any_rejected);
+}
+
+bool WorkspaceEditService::ApplyBufferEdits(const std::vector<CodeActionEdit>& edits) {
+  return ApplyOpenBufferEdits(edits, /*lsp_columns=*/false, nullptr);
+}
+
+bool WorkspaceEditService::ApplyOpenBufferEdits(const std::vector<CodeActionEdit>& edits,
+                                                bool lsp_columns, bool* out_any_rejected) {
   const auto mark_rejected = [&]() {
     if (out_any_rejected != nullptr) {
       *out_any_rejected = true;
@@ -224,8 +233,10 @@ bool WorkspaceEditService::ApplyLspEdit(const std::vector<CodeActionEdit>& edits
         group_ok = false;
         return pos;
       }
-      pos.column = lsp_encoding::LspCharacterToByteColumn(viewport.lines().LineView(pos.line),
-                                                          pos.column, encoding);
+      if (lsp_columns) {
+        pos.column = lsp_encoding::LspCharacterToByteColumn(viewport.lines().LineView(pos.line),
+                                                            pos.column, encoding);
+      }
       return pos;
     };
     std::size_t first_changed = std::numeric_limits<std::size_t>::max();

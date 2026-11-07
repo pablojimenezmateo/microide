@@ -651,6 +651,19 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
       candidates.insert((root / relative_path).lexically_normal().string());
     }
     std::unordered_set<std::string> handled;
+    // One edit per buffer: the span between the first and the last byte the
+    // replacement changed, applied through the workspace-edit service like any
+    // workspace edit (LSP sync, fold rescan, breakpoint follow, damage) -- not a
+    // whole-document ReplaceRange beside it. That one never told the language
+    // server, whose copy and diagnostics stayed on the old text until the next
+    // keystroke, and its undo entry held the whole document twice.
+    std::vector<CodeActionEdit> buffer_edits;
+    struct CaretToKeep {
+      editor::TextViewport* viewport = nullptr;  // a tab's: the edit moves no tab
+      std::size_t line = 0;
+      std::size_t column = 0;
+    };
+    std::vector<CaretToKeep> carets;
     for (EditorGroup& group : context_.current_project_state.editor_groups) {
       for (TabEntry& tab : group.open_tabs) {
         if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
@@ -666,8 +679,9 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
           continue;  // another view of the same document: already replaced
         }
         editor::TextViewport& viewport = tab.editor_state->viewport;
-        std::string content;
-        viewport.lines().AppendWholeText(content);
+        std::string original;
+        viewport.lines().AppendWholeText(original);
+        std::string content = original;
         std::size_t count = 0;
         if (regex != nullptr) {
           const std::optional<std::size_t> replaced =
@@ -684,16 +698,42 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
         if (count == 0) {
           continue;
         }
-        const std::size_t caret_line = viewport.cursor_line();
-        const std::size_t caret_column = viewport.cursor_column();
-        const std::size_t last = viewport.lines().LineCount() == 0 ? 0 : viewport.lines().LineCount() - 1;
-        viewport.ReplaceRange(editor::SelectionRange{.start = {0, 0},
-                                                     .end = {last, viewport.lines().LineLength(last)}},
-                              content);
-        const std::size_t line = std::min(caret_line, viewport.lines().LineCount() - 1);
-        viewport.MoveCursorTo(line, std::min(caret_column, viewport.lines().LineLength(line)));
+        // The changed span: common prefix and suffix of the two texts.
+        std::size_t prefix = 0;
+        const std::size_t shorter = std::min(original.size(), content.size());
+        while (prefix < shorter && original[prefix] == content[prefix]) {
+          ++prefix;
+        }
+        std::size_t suffix = 0;
+        while (suffix < shorter - prefix &&
+               original[original.size() - 1 - suffix] == content[content.size() - 1 - suffix]) {
+          ++suffix;
+        }
+        const auto position_of = [&original](std::size_t offset) {
+          const std::string_view before = std::string_view(original).substr(0, offset);
+          const std::size_t newline = before.rfind('\n');
+          return editor::TextPosition{
+              static_cast<std::size_t>(std::count(before.begin(), before.end(), '\n')),
+              newline == std::string_view::npos ? offset : offset - newline - 1};
+        };
+        buffer_edits.push_back(CodeActionEdit{
+            .path = tab.path,
+            .range = {position_of(prefix), position_of(original.size() - suffix)},
+            .new_text = content.substr(prefix, content.size() - suffix - prefix),
+        });
+        carets.push_back(CaretToKeep{&viewport, viewport.cursor_line(), viewport.cursor_column()});
         buffer_replacements += count;
         ++buffers_replaced;
+      }
+    }
+    if (!buffer_edits.empty()) {
+      (void)workspace_edit_service_.ApplyBufferEdits(buffer_edits);
+      for (const CaretToKeep& caret : carets) {
+        editor::TextViewport& viewport = *caret.viewport;
+        if (viewport.lines().LineCount() > 0) {
+          const std::size_t line = std::min(caret.line, viewport.lines().LineCount() - 1);
+          viewport.MoveCursorTo(line, std::min(caret.column, viewport.lines().LineLength(line)));
+        }
       }
     }
     std::erase_if(files, [&](const std::filesystem::path& relative_path) {
