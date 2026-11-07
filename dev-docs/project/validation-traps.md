@@ -1331,6 +1331,31 @@ PID — not a string that is in the watcher's argv.
 
 ## Mechanical Sweeps That Found Real Bugs
 
+**A no-op edit reads as a failure** (2026-11-06). `TextViewport::ReplaceRange`
+and `ReplaceLines` return false for two reasons: a read-only buffer, and an edit
+that reproduces the text already there (they refuse those so formatters and
+identical LSP edits do not dirty the buffer). Grep every caller that branches on
+the result -- `!viewport.ReplaceRange(` / `ReplaceLines(` -- and ask what it does
+when the "failure" is the no-op. Four were wrong: accepting a completion over the
+word already typed left the list up, a snippet that reproduced its trigger
+inserted its raw body, Replace never moved past a match it would not change, and
+choosing Base could never resolve a conflict that showed its base. The fix is to
+refuse on `read_only()` and treat any other false as done.
+
+**Wire frames are not the only steps a crash can fall between** (2026-11-06).
+The mirror fault matrix killed the client at every frame and still missed a
+crash between two disk writes with no frame between them. `util::CrashPoint` at
+every durable-write boundary, a counting pass, and a helper that SIGKILLs itself
+at each point found three recovery bugs in an afternoon (TD-2026-11-02-430);
+journaling each point's pre-images turned the same axis into a power-cut model.
+Any subsystem that writes state in more than one file should get the same axis.
+
+**A watch added after a sample misses what happened in between.** The order is
+watch, then read: a directory that appears is watched first and its contents
+read after (the index watcher's walk does this), or, when the reader already
+ran, read again once the watch exists. The git sampler sampled and then watched
+a new `.git`, so `HEAD` written in between went unseen for an hour.
+
 This tree is heavily reviewed, so reading files hunting for bugs has a poor hit
 rate. These each found real defects, cost about one build, and are worth running
 before any "find bugs everywhere" task.
