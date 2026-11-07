@@ -199,8 +199,13 @@ project (see [README](README.md)); versions track meaningful shipped work.
 - **Choosing Base resolves a merge conflict that shows its base.** In a git
   conflict file, Base could never resolve a conflict, which saving then reported
   as unresolved.
-- **Format Document keeps tab indentation**, and a formatting result that
-  arrives after you typed is no longer applied to text it was not computed for.
+- **Format Document keeps tab indentation**, and a formatting or rename result
+  that arrives after you typed is no longer applied to text it was not computed
+  for (it corrupted the line).
+- **Replace in Files into a file with unsaved edits tells the language server**,
+  so its diagnostics follow the new text at once.
+- **Breakpoints follow edits made to files that are not in front** (a rename
+  touching other open files, a plugin's edit).
 - **A code action's fix is refused if you edited the file after asking for
   it**, instead of landing on the wrong lines.
 - **Recreating a directory a terminal sits in no longer drops it from Go to
