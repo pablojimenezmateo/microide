@@ -34,9 +34,11 @@ struct Watches {
   std::map<int, std::filesystem::path> by_wd;
   int root_wd = -1;
 
-  void Update(const std::vector<std::filesystem::path>& wanted) {
+  // True when it watches a directory it did not before: what happened in it
+  // before the watch existed produced no event, so the caller samples again.
+  bool Update(const std::vector<std::filesystem::path>& wanted) {
     if (inotify < 0) {
-      return;
+      return false;
     }
     for (auto it = by_wd.begin(); it != by_wd.end();) {
       if (std::find(wanted.begin(), wanted.end(), it->second) == wanted.end()) {
@@ -47,6 +49,7 @@ struct Watches {
       }
     }
     root_wd = -1;
+    bool added = false;
     for (std::size_t i = 0; i < wanted.size(); ++i) {
       // The same wd again for a directory already watched. One that does not exist
       // (a ref directory before its first branch) is left to the next sample.
@@ -54,11 +57,12 @@ struct Watches {
       if (wd < 0) {
         continue;
       }
-      by_wd[wd] = wanted[i];
+      added = by_wd.insert_or_assign(wd, wanted[i]).second || added;
       if (i == 0) {
         root_wd = wd;  // WatchedDirectories lists the root first
       }
     }
+    return added;
   }
 
   // Reads every queued event. True when one of them can have changed what a sample
@@ -168,8 +172,14 @@ void GitStatusSampler::Run(std::chrono::milliseconds safety_interval) {
       continue;
     }
     Sample();
-    // A checkout moves the branch ref's directory; `.git` may have appeared.
-    watches.Update(tracker_.WatchedDirectories());
+    // A checkout moves the branch ref's directory; `.git` may have appeared. A
+    // directory watched only now may have changed between the sample and the
+    // watch -- `git init` writes HEAD just after making .git -- and that made no
+    // event: sample again until the watch set holds still (bounded: each round
+    // only adds directories that exist).
+    for (int round = 0; round < 4 && watches.Update(tracker_.WatchedDirectories()); ++round) {
+      Sample();
+    }
   }
 }
 
