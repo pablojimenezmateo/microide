@@ -13,6 +13,20 @@ entries and the guardrails stayed.
 
 ## Open items
 
+### TD-2026-11-07-433 — qa-wayland: the app stops answering the control channel after its first file open. [OPEN — not reproduced alone; evidence kept]
+
+Seen twice now, each time with several GUI lanes running side by side: TD-432's
+`caret-survives-view-changes` (2026-11-05) and `editor-toggles` (2026-11-07,
+wave 3 beside QA). Both are editor-only flows, and in both every control command
+times out from the first `open` on, while the app log shows the startup frame
+and nothing after it -- the main loop stopped servicing the channel (or never
+woke for it) rather than one command failing. Both passed on their retry; 8
+parallel drivers of `editor-toggles chrome menus` on weston passed. X11 has
+never shown it. Next time: attach `gdb -p` to the stuck app before the driver
+kills it (the main thread's stack says whether it is blocked in
+SDL_WaitEvent, in a wayland roundtrip, or in our code), which the driver could do
+itself on a control-reply timeout. Evidence: `build/qa-evidence/wayland-editor-toggles-2026-11-07`.
+
 ### TD-2026-11-05-432 — the 2026-11-05 terminal UI/UX review: what it fixed, and what it left. [RESOLVED 2026-11-06 — 1 and 2]
 
 A review of the terminal as a user meets it -- selecting, copying, the cursor --
