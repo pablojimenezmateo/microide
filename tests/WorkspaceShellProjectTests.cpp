@@ -4507,6 +4507,35 @@ void TestWorkspaceShellTypingInAPlaceholderKeepsTheSnippetSession() {
          "and the mirror still follows it: " + line);
 }
 
+// The slide runs off the ACTIVE editor's announced edit, so an edit applied to
+// another open buffer -- a rename's workspace edit touching other files, a
+// plugin's apply_edits on a named file, replace-in-project into an open tab --
+// never moved that file's breakpoints: the debugger then stopped a line off.
+void TestWorkspaceShellABackgroundBufferEditKeepsItsBreakpointsOnTheirLine() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path a = root / "a.py";
+  const std::filesystem::path b = root / "b.py";
+  WriteFile(a, "alpha\nbeta\ngamma\ndelta\n");
+  WriteFile(b, "other\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, a);
+  WorkspaceShellTestAccess::OpenFileInNewTab(shell, b);  // b is in front; a is in the background
+  WorkspaceShellTestAccess::ToggleBreakpointForTest(shell, a, 2);  // on "gamma"
+  auto& store = WorkspaceShellTestAccess::BreakpointStore(shell);
+  Expect(store.HasBreakpoint(a, 2), "the breakpoint is on gamma");
+  Expect(WorkspaceShellTestAccess::ApplyLspWorkspaceEdit(
+             shell, {microide::workspace::CodeActionEdit{.path = a, .range = {{0, 0}, {0, 0}}, .new_text = "import x\n"}}),
+         "the workspace edit applies to the background buffer");
+  Expect(store.HasBreakpoint(a, 3) && !store.HasBreakpoint(a, 2),
+         "the breakpoint moved with gamma to line 3");
+  // And activating the file does not slide it a second time.
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);  // a comes to the front
+  WorkspaceShellTestAccess::RenderFrame(shell);
+  Expect(store.HasBreakpoint(a, 3), "still on gamma after the file comes to the front");
+}
+
 // A breakpoint is a LINE NUMBER, and every edit that adds or removes lines above
 // one moves the statement it was set on. VS Code slides them; so does this, from
 // the viewport's applied-edit span -- but only where a code path announces the
@@ -9322,6 +9351,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTypingInAPlaceholderKeepsTheSnippetSession);
   AddTest(tests, "WorkspaceShell/EveryActionKeepsBreakpointsOnTheirLine",
           TestWorkspaceShellEveryActionKeepsBreakpointsOnTheirLine);
+  AddTest(tests, "WorkspaceShell/ABackgroundBufferEditKeepsItsBreakpointsOnTheirLine",
+          TestWorkspaceShellABackgroundBufferEditKeepsItsBreakpointsOnTheirLine);
   AddTest(tests, "WorkspaceShell/AddCursorAtNextMatchCountsEveryOccurrence",
           TestWorkspaceShellAddCursorAtNextMatchCountsEveryOccurrence);
   AddTest(tests, "WorkspaceShell/AddCursorAtNextMatchWalksForwardEachPress",

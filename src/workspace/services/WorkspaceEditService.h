@@ -66,6 +66,11 @@ class WorkspaceEditService {
     // headless setups (disk-only apply).
     std::function<void(const std::filesystem::path&, const std::filesystem::path&)>
         reconcile_tabs_after_resource_rename;
+    // After each edit applied to an open buffer -- the active one or not -- so the
+    // state keyed by its line numbers follows the text (breakpoints). The active
+    // editor's own edits are followed by the redraw path too; following is keyed
+    // by content revision, so the second follow is a no-op. Null: nothing follows.
+    std::function<void(const editor::TextViewport&)> follow_applied_edit;
     std::function<void(const std::filesystem::path&)> reconcile_tabs_after_resource_delete;
     // Refresh the file tree / project search once after a resource-op batch.
     std::function<void(const std::filesystem::path&)> refresh_views_after_resource_ops;
@@ -152,8 +157,11 @@ class WorkspaceEditService {
   // inserts at one position keep their order), as one undo step. Overlapping
   // ranges have no single meaning: the batch is refused and nothing is applied.
   // `record_undo` is false for a scratch viewport that is saved and discarded.
+  // `follow`, when given, runs after each edit lands (the shell thread's
+  // Operations::follow_applied_edit; never on a closed-file background apply).
   static bool ApplyBatch(editor::TextViewport& viewport, const EditBatch& batch,
-                         bool record_undo = true);
+                         bool record_undo = true,
+                         const std::function<void(const editor::TextViewport&)>& follow = {});
   void MarkFoldsDirty(const editor::TextViewport& edited);
   bool IsOpen(const std::filesystem::path& normalized) const;
   // Group `edits` by closed-file path (dropping open paths and the active buffer)

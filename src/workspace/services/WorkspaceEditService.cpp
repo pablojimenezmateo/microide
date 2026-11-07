@@ -40,7 +40,8 @@ editor::TextViewport* WorkspaceEditService::ResolveOpenViewport(
 }
 
 bool WorkspaceEditService::ApplyBatch(editor::TextViewport& viewport, const EditBatch& batch,
-                                      bool record_undo) {
+                                      bool record_undo,
+                                      const std::function<void(const editor::TextViewport&)>& follow) {
   std::vector<editor::SelectionRange> ranges;
   ranges.reserve(batch.size());
   for (const auto& [range, text] : batch) {
@@ -58,7 +59,12 @@ bool WorkspaceEditService::ApplyBatch(editor::TextViewport& viewport, const Edit
     viewport.BeginUndoGroup();
   }
   for (const std::size_t index : apply_order) {
-    viewport.ReplaceRange(batch[index].first, batch[index].second, record_undo);
+    // One edit at a time: each ReplaceRange's applied-edit record is exact, so a
+    // breakpoint below slides through every one of them -- in a buffer that is
+    // not in front too, which the active editor's redraw-path follow never sees.
+    if (viewport.ReplaceRange(batch[index].first, batch[index].second, record_undo) && follow) {
+      follow(viewport);
+    }
   }
   if (record_undo) {
     viewport.EndUndoGroup();
@@ -117,7 +123,7 @@ bool WorkspaceEditService::ApplyPluginEdit(const plugin::PluginHost::WorkspaceEd
         edit.end_line >= 1 ? clamp_position(edit.end_line, edit.end_column) : start;
     batch.emplace_back(editor::SelectionRange{start, end}, edit.text);
   }
-  if (!ApplyBatch(*viewport, batch)) {
+  if (!ApplyBatch(*viewport, batch, /*record_undo=*/true, operations_.follow_applied_edit)) {
     return false;
   }
 
@@ -237,7 +243,7 @@ bool WorkspaceEditService::ApplyLspEdit(const std::vector<CodeActionEdit>& edits
     // A beyond-EOF target or an overlapping group invalidates this buffer's whole
     // group; record the rejection so a server-initiated applyEdit reports partial
     // failure.
-    if (!group_ok || !ApplyBatch(viewport, bucket.edits)) {
+    if (!group_ok || !ApplyBatch(viewport, bucket.edits, /*record_undo=*/true, operations_.follow_applied_edit)) {
       mark_rejected();
       continue;
     }

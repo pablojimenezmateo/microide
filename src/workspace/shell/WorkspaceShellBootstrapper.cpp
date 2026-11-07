@@ -916,6 +916,12 @@ void WorkspaceShell::Bootstrapper::WireWorkspaceEdits() const {
                 shell->MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
                     .ReconcileAfterExternalRename(old_path, new_path);
               },
+          .follow_applied_edit =
+              [shell](const editor::TextViewport& viewport) {
+                if (shell->debug_service_.ShiftBreakpointsForViewportEdit(viewport)) {
+                  shell->RequestFocusedEditorRedraw();
+                }
+              },
           .reconcile_tabs_after_resource_delete =
               [shell](const std::filesystem::path& path) {
                 EditorTabService& editor_tabs = shell->MakeEditorTabService();
