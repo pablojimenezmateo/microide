@@ -49,6 +49,8 @@ bool CodeActionAssist::ShowOverlay(std::string* error_message,
   session.selected_index = 0;
   session.source = "lsp";
   session.error = kLoading;
+  session.request_path = request_path;
+  session.request_revision = viewport->content_revision();
   ops.show_overlay(OverlayMode::CodeActions);
 
   auto merge = std::make_shared<Merge>();
@@ -238,6 +240,18 @@ bool CodeActionAssist::ExecuteSelected() {
   }
   const CodeActionSessionItem& action =
       session.items[std::min(session.selected_index, session.items.size() - 1)];
+
+  // A fix's edits are positions in the text the list was asked for. Applied to a
+  // buffer typed into since (the list leaves typing to the editor), they land on
+  // other text. A command-style action asks its owner, which reads the buffer
+  // as it is, so it is not refused.
+  if (!action.edits.empty() || !action.resource_ops.empty()) {
+    const editor::TextViewport* viewport = host_.ops().active_editable_viewport();
+    if (viewport == nullptr || viewport->path() != session.request_path ||
+        viewport->content_revision() != session.request_revision) {
+      return Finish(false, "The document changed since these fixes were computed; ask again");
+    }
+  }
 
   // Inline WorkspaceEdit actions (clangd quickfixes like "remove #include X")
   // apply directly to the open buffers; command-style actions dispatch through

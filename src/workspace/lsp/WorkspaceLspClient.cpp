@@ -443,6 +443,11 @@ void LspClient::SetTestFormattingHandler(
   impl_->test_handlers.formatting = std::move(handler);
 }
 
+void LspClient::SetTestCodeActionHandler(std::function<void(std::string uri, CodeActionCallback cb)> handler) {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_handlers.code_action = std::move(handler);
+}
+
 void LspClient::SetTestRenameHandler(
     std::function<void(std::string uri, std::string new_name, RenameCallback cb)> handler) {
   std::lock_guard lock(impl_->mutex);

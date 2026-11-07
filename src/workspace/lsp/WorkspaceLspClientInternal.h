@@ -147,6 +147,7 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
     std::function<void(std::string, SemanticTokensCallback)> semantic_tokens;
     std::function<void(std::string, HoverCallback)> hover;
     std::function<void(std::string, bool, FormattingCallback)> formatting;
+    std::function<void(std::string, CodeActionCallback)> code_action;
     std::function<void(std::string, std::string, RenameCallback)> rename;
     std::function<void(std::string, Position, CompletionCallback)> completion;
     std::function<void(std::string, Position, SignatureHelpCallback)> signature_help;

@@ -682,6 +682,8 @@ class LspClient {
   // sees the request's FormattingOptions.insertSpaces.
   void SetTestFormattingHandler(
       std::function<void(std::string uri, bool insert_spaces, FormattingCallback cb)> handler);
+  // Unit tests: feed a canned code-action response.
+  void SetTestCodeActionHandler(std::function<void(std::string uri, CodeActionCallback cb)> handler);
   // Unit tests: feed a canned rename response (a WorkspaceEdit).
   void SetTestRenameHandler(
       std::function<void(std::string uri, std::string new_name, RenameCallback cb)> handler);

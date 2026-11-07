@@ -163,6 +163,10 @@ void LspClient::RequestSignatureHelpAsync(std::string uri, Position pos,
 void LspClient::RequestCodeActionAsync(std::string uri, Range range,
                                        std::vector<Diagnostic> context_diagnostics,
                                        CodeActionCallback callback) {
+  if (!callback) return;
+  if (impl_->DispatchTestStub(impl_->test_handlers.code_action, callback, uri)) {
+    return;
+  }
   using namespace util;
   JsonObject params;
   params["textDocument"] = lsp_protocol::MakeTextDocumentIdentifier(uri);

@@ -2077,6 +2077,62 @@ return ide.plugin({
          "edits computed for the old text are not applied to the new: " + std::string(editor.lines()[0]));
 }
 
+// A code action's fix is edits computed for the text when the list was asked
+// for; picking it after the buffer changed (the list leaves typing to the editor)
+// applied them to text they were not computed for. The pick is refused, with a
+// reason in the list, and the buffer is left as the user made it.
+void TestWorkspaceShellCodeActionFixIsRefusedOnAChangedBuffer() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path py_file = project / "main.py";
+  WriteFile(py_file, "import os\nx = 1\n");
+  WritePluginInit(
+      plugins_root, "pylsp",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "pylsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "pylsp.server", language_id = "python", command = { "py-lsp-server" } })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false), "open the project");
+  auto stub = std::make_unique<workspace::LspClient>();
+  workspace::LspClient* const stub_raw = stub.get();
+  stub_raw->EnableTestStubMode();
+  const std::string uri = workspace::FileUriForPath(py_file);
+  stub_raw->SetTestCodeActionHandler([uri](std::string, workspace::LspClient::CodeActionCallback cb) {
+    workspace::LspClient::CodeAction remove_import;
+    remove_import.title = "Remove unused import";
+    remove_import.has_edit = true;
+    remove_import.edit.changes[uri] = {{workspace::LspClient::Range{{0, 0}, {1, 0}}, ""}};
+    cb(std::vector<workspace::LspClient::CodeAction>{remove_import});
+  });
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("python", std::move(stub)),
+         "a stub python client");
+  WorkspaceShellTestAccess::OpenFile(shell, py_file);
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "code-actions"), "code-actions runs");
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  Expect(WorkspaceShellTestAccess::CodeActionSession(shell).items.size() == 1, "the fix is listed");
+
+  editor.MoveCursorTo(0, 0);
+  editor.InsertText("# header\n");  // line 0 is no longer the import
+  Expect(!WorkspaceShellTestAccess::ExecuteSelectedCodeAction(shell), "the stale fix is refused");
+  Expect(editor.lines()[0] == "# header" && editor.lines()[1] == "import os",
+         "and the buffer is as the user made it: " + std::string(editor.lines()[0]));
+  Expect(!WorkspaceShellTestAccess::CodeActionSession(shell).error.empty(), "the list says why");
+}
+
 // Regression: the rename-symbol command prefills the symbol under the cursor, and
 // on confirm applies the language server's workspace edit to the open buffer.
 void TestWorkspaceShellRenameSymbolAppliesLspEdit() {
@@ -7654,6 +7710,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellFormatDocumentAppliesLspEdits);
   AddTest(tests, "WorkspaceShell/FormatDocumentFollowsTabsAndDropsAStaleResult",
           TestWorkspaceShellFormatDocumentFollowsTabsAndDropsAStaleResult);
+  AddTest(tests, "WorkspaceShell/CodeActionFixIsRefusedOnAChangedBuffer",
+          TestWorkspaceShellCodeActionFixIsRefusedOnAChangedBuffer);
   AddTest(tests, "WorkspaceShell/RenameSymbolAppliesLspEdit",
           TestWorkspaceShellRenameSymbolAppliesLspEdit);
   AddTest(tests, "WorkspaceShell/RenameSymbolOpensAndSavesClosedFiles",

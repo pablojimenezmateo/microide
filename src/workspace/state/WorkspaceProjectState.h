@@ -578,6 +578,11 @@ struct CodeActionSessionState {
   std::size_t selected_index = 0;
   std::string source;
   std::string error;
+  // The buffer the list was asked for, and its content revision then: a fix's
+  // edits are positions in that text, so ExecuteSelected refuses one once the
+  // buffer has moved on.
+  std::filesystem::path request_path;
+  std::uint64_t request_revision = 0;
 };
 
 // One selectable row in the command palette. `primary_label` is the human-facing
