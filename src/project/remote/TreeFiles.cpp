@@ -1,5 +1,6 @@
 #include "project/remote/TreeFiles.h"
 
+#include "util/CrashPoint.h"
 #include "util/PerformanceCounters.h"
 #include "util/PosixFd.h"
 
@@ -376,6 +377,11 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
       return Error(why);
     }
   }
+  // The target's absolute path, built only for a test's crash-point hook.
+  const std::string crash_target = util::CrashPointsArmed() ? (root / std::string(path)).native() : std::string();
+  // Deferred: the bytes are durable only at the batch's SyncTreeFilesystem, so a
+  // sync of the directory alone does not make this write survive a power cut.
+  util::CrashPoint(durability == Durability::Synced ? "tree.renaming" : "tree.renaming-deferred", crash_target);
   const int renamed =
       expect.kind == Precondition::Kind::Absent
           ? RenameNoReplace(temp_dir, temp.c_str(), parent->dir.Get(), parent->name.c_str())
@@ -396,8 +402,10 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
   // A synced write's rename durable too (a deferred one is covered by the batch's
   // SyncTreeFilesystem): an acked push must not revert on the host after a power
   // cut, while the client already took it as the new base.
+  util::CrashPoint("tree.renamed", crash_target);
   if (durability == Durability::Synced) {
     (void)::fsync(parent->dir.Get());
+    util::CrashPoint("tree.directory-synced", std::filesystem::path(crash_target).parent_path().native());
   }
   return Ok(*hash);
 }
@@ -407,7 +415,9 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
 bool SyncTreeFilesystem(const std::filesystem::path& root) {
   util::AddPerformanceCounter(util::PerfCounterId::RemoteTreeFlushes);
   const UniqueFd dir(::open(root.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
-  return dir.Get() >= 0 && ::syncfs(dir.Get()) == 0;
+  const bool synced = dir.Get() >= 0 && ::syncfs(dir.Get()) == 0;
+  util::CrashPoint("tree.filesystem-synced", root.native());
+  return synced;
 }
 
 FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view path,

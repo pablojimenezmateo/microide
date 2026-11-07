@@ -17,16 +17,7 @@ class LocalGate final : public FileWriteGate {
                    std::string_view text,
                    Signature signature,
                    util::WriteTarget target) override {
-    Result result;
-    result.ok = util::WriteTextFileAtomically(path, text, &result.error, target);
-    if (result.ok && signature == Signature::Capture) {
-      // Stat only on success: a failed write left the original in place, and its
-      // signature is whatever the caller already had. The bytes are right here, so
-      // the signature carries their hash too — which is what lets a later check
-      // tell a real external edit from a touch or a byte-identical rewrite.
-      result.signature = util::SignatureForKnownContent(path, text);
-    }
-    return result;
+    return WriteTextLocally(path, text, signature, target, {});
   }
 
   TreeResult ApplyTreeOps(std::span<const TreeOp> ops) override {
@@ -42,6 +33,21 @@ class LocalGate final : public FileWriteGate {
 };
 
 }  // namespace
+
+FileWriteGate::Result WriteTextLocally(const std::filesystem::path& path, std::string_view text,
+                                       FileWriteGate::Signature signature, util::WriteTarget target,
+                                       const std::filesystem::path& staging) {
+  FileWriteGate::Result result;
+  result.ok = util::WriteTextFileAtomically(path, text, &result.error, target, staging);
+  if (result.ok && signature == FileWriteGate::Signature::Capture) {
+    // Stat only on success: a failed write left the original in place, and its
+    // signature is whatever the caller already had. The bytes are right here, so
+    // the signature carries their hash too — which is what lets a later check
+    // tell a real external edit from a touch or a byte-identical rewrite.
+    result.signature = util::SignatureForKnownContent(path, text);
+  }
+  return result;
+}
 
 bool FileWriteGate::IsReadOnly(const std::filesystem::path& path) const {
   std::error_code error;

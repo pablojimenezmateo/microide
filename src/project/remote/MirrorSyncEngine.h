@@ -298,8 +298,12 @@ class MirrorSyncEngine {
     std::function<void()> on_drained;
   };
   void LaunchPulls(const std::shared_ptr<PullPipeline>& pipeline);
+  // `issued_epoch`: the full_sync_epoch_ the fetch was issued in. A fetch from
+  // before the latest full sync -- a pull the dropped link failed, its callback
+  // posted after the reconnect's sync -- reports no error: that sync re-planned
+  // whatever it was for, and its own status is the current one.
   void ApplyFetched(std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects,
-                    const std::string& error);
+                    const std::string& error, std::uint64_t issued_epoch);
   // Work in flight outside the queue (a fetch on the wire): Flush waits for it.
   void BeginExternalWork();
   void EndExternalWork();
@@ -322,6 +326,11 @@ class MirrorSyncEngine {
   // Replay the journaled tree operations in order, stopping at the first that
   // cannot reach the host.
   void DrainTreeOps();
+  // The first sync's look at tree/ for files no entry records: what a crash left
+  // between a save or a rename landing in tree/ and the engine journaling it.
+  // Each is journaled as the rename it was (it holds exactly the base of an entry
+  // whose file is gone) or as a new file to push.
+  void AdoptUntrackedLocalFilesLocked();
   void ResolveNow(const std::string& path, Resolution resolution,
                   const std::optional<util::ContentHash>& expect_host);
   // The host's current bytes of `path` (the interactive lane), or nullopt and why.
@@ -376,6 +385,9 @@ class MirrorSyncEngine {
   std::chrono::steady_clock::time_point state_save_deferred_since_{};
   void SaveDeferredIfIdleLocked();
   bool tree_unsynced_ = false;  // pulls written since the last flush (mutex_)
+  // Full syncs started (SyncNow). Worker thread only: SyncNow, the pulls and the
+  // posted fetch results all run on queue_.
+  std::uint64_t full_sync_epoch_ = 0;
   // PendingPaths(): RecountLocked stages a changed list, Changed() builds the
   // snapshot outside the lock (its directory map is O(paths)) and publishes it.
   project::SharedPendingPaths pending_;

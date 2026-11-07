@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
 #include <filesystem>
 #include <system_error>
 #include <optional>
@@ -65,6 +66,23 @@ std::filesystem::path UniqueTemporaryPath(const std::filesystem::path& path);
 // True for a filename produced by UniqueTemporaryPath. Lives next to the generator
 // so the naming and the filtering cannot drift apart.
 bool IsTemporaryStagingFilename(std::string_view filename);
+
+// A UniqueTemporaryPath name whose writer is gone: the pid it names is not a
+// process on this machine (and is not this one). A crash between writing the
+// temporary and renaming it into place leaves one, and nothing else ever removes
+// it. Another machine's in-flight save on a shared filesystem names a pid that is
+// not ours either, so a caller sweeping a directory other machines may write
+// also requires the file to be older than any save takes.
+bool TemporaryStagingIsAbandoned(std::string_view filename);
+
+// A project walk's sweep: removes `absolute_path` when it is an abandoned staging
+// temporary older than any save takes (`min_age`; another machine's in-flight
+// save on a shared filesystem names a pid this one does not have). Returns
+// whether it removed it, so the walk lists it no more. Cheap for every other
+// file: it stops at the name's first byte unless that is a dot.
+inline constexpr std::chrono::minutes kAbandonedStagingMinAge{10};
+bool SweepAbandonedTemporaryStaging(std::string_view absolute_path,
+                                    std::chrono::seconds min_age = kAbandonedStagingMinAge);
 
 // POSIX permission + ownership snapshot of an existing file, used to carry a file's
 // mode/owner across an atomic save (which otherwise creates a fresh 0644 inode and

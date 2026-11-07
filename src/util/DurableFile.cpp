@@ -1,13 +1,18 @@
 #include "util/DurableFile.h"
 
+#include "util/CrashPoint.h"
+
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cerrno>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <system_error>
 
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>  // renameat2
 #include <sys/stat.h>
 #include <unistd.h>
@@ -76,7 +81,11 @@ bool WriteFileBytesDurable(const std::filesystem::path& path, std::span<const st
     }
     return false;
   }
-  return CloseFile(fd) || fail();
+  if (!CloseFile(fd)) {
+    return fail();
+  }
+  CrashPoint("durable.written", path.native());
+  return true;
 }
 
 bool RenameReplacing(const std::filesystem::path& from, const std::filesystem::path& to,
@@ -87,9 +96,14 @@ bool RenameReplacing(const std::filesystem::path& from, const std::filesystem::p
   // those and could silently delete a valid directory or file, so the failure is
   // surfaced instead.
   std::error_code error;
+  CrashPoint("durable.renaming-source", from.native());
+  CrashPoint("durable.renaming", to.native());
   std::filesystem::rename(from, to, error);
   if (error && error_out != nullptr) {
     *error_out = error;
+  }
+  if (!error) {
+    CrashPoint("durable.renamed", to.native());
   }
   return !error;
 }
@@ -102,8 +116,11 @@ bool RenameNoReplace(const std::filesystem::path& from, const std::filesystem::p
     }
     return false;
   };
+  CrashPoint("durable.renaming-source", from.native());
+  CrashPoint("durable.renaming", to.native());
 #if defined(RENAME_NOREPLACE)
   if (::renameat2(AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), RENAME_NOREPLACE) == 0) {
+    CrashPoint("durable.renamed", to.native());
     return true;
   }
   if (errno != EINVAL && errno != ENOSYS) {
@@ -114,6 +131,7 @@ bool RenameNoReplace(const std::filesystem::path& from, const std::filesystem::p
     return fail(errno);
   }
   ::unlink(from.c_str());
+  CrashPoint("durable.renamed", to.native());
   return true;
 }
 
@@ -124,6 +142,7 @@ bool FsyncDirectory(const std::filesystem::path& directory) {
   }
   const bool synced = ::fsync(fd) == 0;
   (void)CloseFile(fd);
+  CrashPoint("durable.directory-synced", directory.native());
   return synced;
 }
 
@@ -143,6 +162,49 @@ std::filesystem::path UniqueTemporaryPath(const std::filesystem::path& path) {
   name += '.';
   name += std::to_string(seq);
   return path.parent_path() / name;
+}
+
+bool TemporaryStagingIsAbandoned(std::string_view filename) {
+  if (!IsTemporaryStagingFilename(filename)) {
+    return false;
+  }
+  // ".<name>.microide-staging.<pid>.<seq>": the pid is between the last marker and
+  // the last dot.
+  const std::size_t marker = filename.rfind(kTemporaryStagingMarker);
+  std::string_view rest = filename.substr(marker + kTemporaryStagingMarker.size());
+  const std::size_t dot = rest.find('.');
+  if (dot == std::string_view::npos || dot == 0 || dot > 18) {
+    return false;
+  }
+  long long pid = 0;
+  for (const char c : rest.substr(0, dot)) {
+    if (c < '0' || c > '9') {
+      return false;
+    }
+    pid = pid * 10 + (c - '0');
+  }
+  if (pid <= 0 || pid > std::numeric_limits<pid_t>::max()) {
+    return true;  // not a pid this machine could have: nobody's
+  }
+  return static_cast<pid_t>(pid) != ::getpid() && ::kill(static_cast<pid_t>(pid), 0) != 0 && errno == ESRCH;
+}
+
+bool SweepAbandonedTemporaryStaging(std::string_view absolute_path, std::chrono::seconds min_age) {
+  const std::size_t slash = absolute_path.rfind('/');
+  const std::string_view name = slash == std::string_view::npos ? absolute_path : absolute_path.substr(slash + 1);
+  if (name.empty() || name.front() != '.' || !TemporaryStagingIsAbandoned(name)) {
+    return false;
+  }
+  const std::string path(absolute_path);
+  struct stat info {};
+  if (::lstat(path.c_str(), &info) != 0 || !S_ISREG(info.st_mode)) {
+    return false;
+  }
+  const auto modified = std::chrono::system_clock::time_point(std::chrono::seconds(info.st_mtim.tv_sec));
+  if (std::chrono::system_clock::now() - modified < min_age) {
+    return false;
+  }
+  return ::unlink(path.c_str()) == 0;
 }
 
 bool IsTemporaryStagingFilename(std::string_view filename) {

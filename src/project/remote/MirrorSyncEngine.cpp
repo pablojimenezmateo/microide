@@ -3,6 +3,8 @@
 #include <unordered_set>
 #include "util/HeapUsage.h"
 #include "util/ContentHash.h"
+#include "util/PerformanceTrace.h"
+#include "util/DurableFile.h"
 #include "util/TextFileIO.h"
 #include "util/Zstd.h"
 
@@ -192,7 +194,8 @@ void MirrorSyncEngine::StreamPriorityPull(std::string path, std::function<void()
   BeginExternalWork();
   workspace_.FetchObjectToFile(
       path, staging, Lane::Bulk,
-      [alive = alive_, done = std::move(done)](RemoteWorkspace::FetchedObject object, std::string error) {
+      [alive = alive_, done = std::move(done), epoch = full_sync_epoch_](RemoteWorkspace::FetchedObject object,
+                                                                            std::string error) {
         std::lock_guard lock(alive->mutex);
         MirrorSyncEngine* engine = alive->engine;
         if (engine == nullptr) {
@@ -201,8 +204,8 @@ void MirrorSyncEngine::StreamPriorityPull(std::string path, std::function<void()
         std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects =
             SingleFetchedBatch(std::move(object), error);
         engine->queue_.PostFront(
-            [engine, done, objects = std::move(objects), error = std::move(error)]() mutable {
-              engine->ApplyFetched(std::move(objects), error);
+            [engine, done, epoch, objects = std::move(objects), error = std::move(error)]() mutable {
+              engine->ApplyFetched(std::move(objects), error, epoch);
               if (done) {
                 done();
               }
@@ -1151,6 +1154,13 @@ std::size_t MirrorSyncEngine::RemoteCountLocked() const {
 }
 
 void MirrorSyncEngine::SyncNow() {
+  ++full_sync_epoch_;
+  {
+    std::lock_guard lock(mutex_);
+    if (!status_.synced_once) {
+      AdoptUntrackedLocalFilesLocked();
+    }
+  }
   // The journal's tree operations first, in order: a rename made offline must land
   // before the manifest is compared, or the old path reads as one to pull back.
   DrainTreeOps();
@@ -1218,6 +1228,79 @@ void MirrorSyncEngine::SyncNow() {
     // content set through it): give its freed buffers back.
     util::ReleaseFreedHeap();
   });
+}
+
+void MirrorSyncEngine::AdoptUntrackedLocalFilesLocked() {
+  // A save writes the file into tree/ and then journals it (NotifyLocalWrite); a
+  // rename moves it and then journals the move. A crash between the two left a
+  // file that no entry records, which no reconcile visits -- the host never got
+  // it and the mirror reported nothing unsent (the fault matrix's disk axis).
+  util::PerformanceTrace::Scope perf_scope("MirrorSyncEngine::AdoptUntrackedLocalFiles");
+  auto& entries = store_.entries();
+  // What the journal already accounts for: a journaled rename's destination (an
+  // offline directory move journals the directory, not each file under it) and
+  // the source of a journaled rename or delete. Adopting those again would
+  // replay the change twice.
+  using Pending = MirrorStore::PendingTreeOp;
+  const auto covered = [&](std::string_view path, bool as_source) {
+    for (const Pending& op : store_.pending_tree_ops()) {
+      const std::string_view root = as_source ? std::string_view(op.path) : std::string_view(op.new_path);
+      if (root.empty() || (!as_source && op.kind != Pending::Kind::Rename)) {
+        continue;
+      }
+      if (path == root || (path.size() > root.size() && path.starts_with(root) && path[root.size()] == '/')) {
+        return true;
+      }
+    }
+    return false;
+  };
+  std::vector<std::pair<std::string, std::filesystem::path>> untracked;
+  std::error_code error;
+  for (auto it = std::filesystem::recursive_directory_iterator(
+           store_.tree(), std::filesystem::directory_options::skip_permission_denied, error);
+       !error && it != std::filesystem::recursive_directory_iterator(); it.increment(error)) {
+    const std::filesystem::file_status status = it->symlink_status(error);
+    if (error || !std::filesystem::is_regular_file(status)) {
+      error.clear();
+      continue;
+    }
+    const std::string name = it->path().filename().string();
+    if (util::IsTemporaryStagingFilename(name) || TreeWriteTemporaryOwner(name).has_value()) {
+      continue;
+    }
+    std::string relative = it->path().lexically_relative(store_.tree()).generic_string();
+    if (!IsSafeRelativePath(relative) || entries.contains(relative) || covered(relative, false)) {
+      continue;
+    }
+    untracked.emplace_back(std::move(relative), it->path());
+  }
+  if (untracked.empty()) {
+    return;
+  }
+  // The entries whose file is gone from tree/ while nothing journaled its
+  // removal: where a rename's file came from.
+  std::map<util::ContentHash, std::vector<std::string>> gone_by_base;
+  for (auto& [path, entry] : entries) {
+    if (entry.base.has_value() && !entry.push_pending && !entry.conflict && !covered(path, true) &&
+        store_.CheckLocal(path, entry) == LocalState::Missing) {
+      gone_by_base[*entry.base].push_back(path);
+    }
+  }
+  for (const auto& [relative, absolute] : untracked) {
+    const std::optional<util::ContentHash> hash = util::HashFileContent(absolute);
+    if (!hash.has_value()) {
+      continue;
+    }
+    if (auto from = gone_by_base.find(*hash); from != gone_by_base.end() && from->second.size() == 1) {
+      // One candidate only: two gone files with these bytes make the source a
+      // guess, and a guessed rename would delete the wrong one on the host.
+      store_.pending_tree_ops().push_back(Pending{Pending::Kind::Rename, from->second.front(), relative});
+      gone_by_base.erase(from);
+      continue;
+    }
+    entries[relative].push_pending = true;  // a new file, pushed as a journaled save is
+  }
+  SaveLocked();
 }
 
 std::function<void(RemoteWorkspace::WatchDelta)> MirrorSyncEngine::WatchSink() {
@@ -1326,7 +1409,7 @@ void MirrorSyncEngine::Execute(Plan plan, std::function<void()> on_done) {
   // Bytes the mirror has held before cost nothing: a branch switched back, a file
   // an agent restored (§ 6.2).
   if (std::vector<RemoteWorkspace::FetchedObject> held = FillFromStore(plan.pulls); !held.empty()) {
-    ApplyFetched(std::move(held), {});
+    ApplyFetched(std::move(held), {}, full_sync_epoch_);
   }
   // Pulls in batches, kMaxPullsInFlight requests on the wire at once (one round
   // trip per batch, overlapped), each batch's disk writes a job of its own so a
@@ -1414,7 +1497,8 @@ void MirrorSyncEngine::LaunchPulls(const std::shared_ptr<PullPipeline>& pipeline
       std::filesystem::create_directories(incoming, ignored);
       workspace_.FetchObjectToFile(
           paths.front(), incoming / "pull.part", Lane::Bulk,
-          [alive = alive_, pipeline](RemoteWorkspace::FetchedObject object, std::string error) {
+          [alive = alive_, pipeline, epoch = full_sync_epoch_](RemoteWorkspace::FetchedObject object,
+                                                              std::string error) {
             std::lock_guard lock(alive->mutex);
             MirrorSyncEngine* engine = alive->engine;
             if (engine == nullptr) {
@@ -1422,9 +1506,9 @@ void MirrorSyncEngine::LaunchPulls(const std::shared_ptr<PullPipeline>& pipeline
             }
             std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects =
                 SingleFetchedBatch(std::move(object), error);
-            engine->queue_.Post([engine, pipeline, objects = std::move(objects),
+            engine->queue_.Post([engine, pipeline, epoch, objects = std::move(objects),
                                  error = std::move(error)]() mutable {
-              engine->ApplyFetched(std::move(objects), error);
+              engine->ApplyFetched(std::move(objects), error, epoch);
               --pipeline->in_flight;
               pipeline->large_in_flight = false;
               engine->LaunchPulls(pipeline);
@@ -1435,8 +1519,8 @@ void MirrorSyncEngine::LaunchPulls(const std::shared_ptr<PullPipeline>& pipeline
     }
     workspace_.FetchObjects(
         std::move(paths), Lane::Bulk,
-        [alive = alive_, pipeline](std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects,
-                                   std::string error) {
+        [alive = alive_, pipeline, epoch = full_sync_epoch_](
+            std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects, std::string error) {
           // The connection's I/O thread, possibly after the engine is gone: hand the
           // disk work to the worker if there still is one.
           std::lock_guard lock(alive->mutex);
@@ -1444,9 +1528,9 @@ void MirrorSyncEngine::LaunchPulls(const std::shared_ptr<PullPipeline>& pipeline
           if (engine == nullptr) {
             return;
           }
-          engine->queue_.Post([engine, pipeline, objects = std::move(objects),
+          engine->queue_.Post([engine, pipeline, epoch, objects = std::move(objects),
                                error = std::move(error)]() mutable {
-            engine->ApplyFetched(std::move(objects), error);
+            engine->ApplyFetched(std::move(objects), error, epoch);
             --pipeline->in_flight;
             pipeline->large_in_flight = false;
             engine->LaunchPulls(pipeline);
@@ -1520,7 +1604,7 @@ void MirrorSyncEngine::SweepObjects() {
 
 void MirrorSyncEngine::PullNow(std::vector<PullItem> items, Lane lane) {
   if (std::vector<RemoteWorkspace::FetchedObject> held = FillFromStore(items); !held.empty()) {
-    ApplyFetched(std::move(held), {});
+    ApplyFetched(std::move(held), {}, full_sync_epoch_);
   }
   if (items.empty()) {
     return;
@@ -1533,12 +1617,15 @@ void MirrorSyncEngine::PullNow(std::vector<PullItem> items, Lane lane) {
   std::string error;
   std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects =
       workspace_.FetchObjectsSync(paths, lane, &error);
-  ApplyFetched(std::move(objects), error);
+  ApplyFetched(std::move(objects), error, full_sync_epoch_);
 }
 
 void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects,
-                                    const std::string& error) {
+                                    const std::string& error, std::uint64_t issued_epoch) {
   if (!objects.has_value()) {
+    if (issued_epoch != full_sync_epoch_) {
+      return;  // superseded: the full sync since re-planned what this was for
+    }
     {
       std::lock_guard lock(mutex_);
       status_.error = error;

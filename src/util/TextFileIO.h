@@ -40,9 +40,13 @@ std::optional<std::string> ReadTextFile(const std::filesystem::path& path);
 // whatever is there; CreateNew only creates, and fails with errc::file_exists when a
 // file appeared there meanwhile (a Save As, a new file's first save).
 enum class WriteTarget { Replace, CreateNew };
+// `staging`, when given, is the directory the temporary is written in instead of
+// beside the target: on the target's filesystem (the rename must stay atomic),
+// outside the tree a crash would otherwise leave it in (the mirror's meta/staging).
 [[nodiscard]] bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text,
                                            std::error_code* error = nullptr,
-                                           WriteTarget target = WriteTarget::Replace);
+                                           WriteTarget target = WriteTarget::Replace,
+                                           const std::filesystem::path& staging = {});
 
 // A write failure in the words a save's error row uses ("permission denied",
 // "no space left on the device"); empty for no error.

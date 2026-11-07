@@ -405,7 +405,8 @@ std::string DescribeWriteError(const std::error_code& error) {
 }
 
 bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text,
-                             std::error_code* error_out, WriteTarget write_target) {
+                             std::error_code* error_out, WriteTarget write_target,
+                             const std::filesystem::path& staging) {
   const auto fail = [error_out](std::error_code why) {
     if (error_out != nullptr) {
       *error_out = why;
@@ -439,7 +440,8 @@ bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view
 
   // Unique per-write temp beside the target (same directory keeps the final rename
   // atomic on one filesystem) so two writers cannot O_TRUNC each other's staging file.
-  const std::filesystem::path temp_path = UniqueTemporaryPath(target);
+  const std::filesystem::path temp_path =
+      staging.empty() ? UniqueTemporaryPath(target) : UniqueTemporaryPath(staging / target.filename());
   std::filesystem::remove(temp_path, error);
   error.clear();
 

@@ -8,6 +8,7 @@
 #include <system_error>
 #include <vector>
 
+#include "util/CrashPoint.h"
 #include "util/TextFileIO.h"
 
 namespace microide::project::remote {
@@ -40,9 +41,12 @@ void WriteUnflushed(const std::filesystem::path& path, std::string_view bytes) {
     written += static_cast<std::size_t>(count);
   }
   ::close(fd);
+  util::CrashPoint("objects.renaming", path.native());
   if (written != bytes.size() || ::rename(temp.c_str(), path.c_str()) != 0) {
     ::unlink(temp.c_str());
+    return;
   }
+  util::CrashPoint("objects.renamed", path.native());
 }
 
 }  // namespace

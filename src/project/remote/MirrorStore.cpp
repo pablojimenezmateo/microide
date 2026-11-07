@@ -13,6 +13,7 @@
 #include "platform/AppDirectories.h"
 #include "platform/RuntimePaths.h"
 #include "project/remote/TreeFiles.h"
+#include "util/CrashPoint.h"
 #include "util/ByteCodec.h"
 #include "util/DurableFile.h"
 #include "util/PosixFd.h"
@@ -175,11 +176,12 @@ bool MirrorStore::Open(std::string* error) {
     }
   }
   {
-    // A write a crash interrupted left its temporary here; a live writer's (another
-    // instance on this mirror) stays.
+    // A write a crash interrupted left its temporary here -- a pull's or a save's;
+    // a live writer's (another instance on this mirror) stays.
     std::error_code ec;
     for (std::filesystem::directory_iterator it(staging(), ec), end; !ec && it != end; it.increment(ec)) {
-      if (TreeWriteTemporaryIsAbandoned(it->path().filename().string())) {
+      const std::string name = it->path().filename().string();
+      if (TreeWriteTemporaryIsAbandoned(name) || util::TemporaryStagingIsAbandoned(name)) {
         std::error_code ignored;
         std::filesystem::remove(it->path(), ignored);
       }
@@ -383,6 +385,7 @@ bool MirrorStore::WritePulledHint() const {
     }
     off += static_cast<std::size_t>(n);
   }
+  util::CrashPoint("mirror.hint-appended", pulled_hint_path().native());
   pulled_unwritten_.clear();
   return true;
 }

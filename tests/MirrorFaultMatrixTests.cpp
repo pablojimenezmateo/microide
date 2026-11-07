@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 #include "RemoteServerTestSupport.h"
 #include "support/FaultRelay.h"
+#include "util/CrashPoint.h"
 
 #include "platform/Subprocess.h"
 #include "platform/UnixSocket.h"
@@ -18,7 +19,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <chrono>
+#include <mutex>
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
@@ -55,6 +58,14 @@ extern char** environ;
 // as a helper (--mirror-fault-client), which raises SIGKILL on itself at the
 // step, so the mirror's disk is exactly what a crash leaves.
 //
+// A second axis steps on DISK writes instead (TD-2026-11-02-430 item 1): every
+// durable-write boundary the client passes -- a temporary written, a rename, a
+// directory or filesystem sync, a journal or state record, a hint appended, an
+// object stored -- is a util::CrashPoint, and the helper SIGKILLs itself at each
+// one in turn. That reaches a crash between two disk writes with no frame
+// between them (a save's tree file and the journal that records it), which the
+// frame axis reached only by its after-delivery timings.
+//
 // Every cell must end -- after reconnecting, syncing, and (for a resolution the
 // crash interrupted) choosing the same side again -- with no error, nothing
 // unsent, no conflict left, and both trees equal to exactly the expected files:
@@ -78,7 +89,125 @@ constexpr std::string_view kHelperFlag = "--mirror-fault-client";
 enum class Scenario {
   PushEdit, PushCreate, PushLarge, PushRename, PushDelete, Replay, Pull, PullLarge, WatchPull, KeepLocal, TakeRemote
 };
-enum class Fault { None, KillClient, KillServer, DropLink };
+enum class Fault { None, KillClient, KillClientAtDiskStep, PowerCutAtDiskStep, KillServer, DropLink };
+
+// The crash-point hook: counts the points the operation passes, and SIGKILLs
+// this process at the armed one. A plain function, because a hook is a pointer.
+std::atomic<std::size_t> g_disk_steps{0};
+std::atomic<std::size_t> g_disk_kill_at{std::numeric_limits<std::size_t>::max()};
+
+// A power cut's helper also journals every point (and, before each rename, the
+// target's bytes as they were) to this directory, for ApplyPowerCut to read.
+std::filesystem::path g_power_log_dir;
+std::mutex g_power_log_mutex;
+
+void JournalForPowerCut(std::size_t index, const char* site, std::string_view what) {
+  const std::lock_guard lock(g_power_log_mutex);
+  const std::string_view name(site);
+  bool had_bytes = false;
+  if (name.ends_with("renaming") || name.ends_with("renaming-deferred") || name.ends_with("renaming-source")) {
+    std::error_code error;
+    const std::filesystem::path target{std::string(what)};
+    if (std::filesystem::is_regular_file(target, error)) {
+      had_bytes = std::filesystem::copy_file(target, g_power_log_dir / std::to_string(index),
+                                             std::filesystem::copy_options::overwrite_existing, error);
+    }
+  }
+  std::ofstream log(g_power_log_dir / "log", std::ios::app | std::ios::binary);
+  log << index << '\t' << site << '\t' << what << '\t' << (had_bytes ? 1 : 0) << '\n';
+}
+
+void DiskStepHook(const char* site, std::string_view what) {
+  const std::size_t index = g_disk_steps.fetch_add(1);
+  if (!g_power_log_dir.empty()) {
+    JournalForPowerCut(index, site, what);
+  }
+  if (index == g_disk_kill_at.load()) {
+    ::raise(SIGKILL);
+  }
+}
+
+// What a power cut at the helper's last point loses, under the POSIX contract the
+// mirror's writes are built on: a rename survives only once a sync of its
+// directory (or of the whole filesystem) follows it -- a deferred pull's only
+// once the batch's syncfs does, since its bytes were never fsynced -- and bytes
+// appended or objects stored since the last syncfs may be torn. A lost rename
+// leaves both of its names as they were before (their journaled pre-images, or
+// nothing): the record writer's `state -> state.bak` rotation undone brings
+// `state` back, not just the old `.bak`.
+// Renamed bytes are not modeled as torn: an fsynced file's are durable, and
+// ext4's default data=ordered writes a renamed file's data before the rename.
+void ApplyPowerCut(const std::filesystem::path& log_dir) {
+  struct Undurable {
+    std::size_t index = 0;
+    bool had_bytes = false;
+    bool deferred = false;
+  };
+  std::map<std::string, Undurable> undurable;  // target -> its first unsynced rename
+  std::vector<std::string> torn;
+  std::ifstream log(log_dir / "log", std::ios::binary);
+  std::string line;
+  while (std::getline(log, line)) {
+    std::vector<std::string> fields;
+    for (std::size_t start = 0;;) {
+      const std::size_t tab = line.find('\t', start);
+      fields.push_back(line.substr(start, tab == std::string::npos ? std::string::npos : tab - start));
+      if (tab == std::string::npos) {
+        break;
+      }
+      start = tab + 1;
+    }
+    if (fields.size() != 4) {
+      continue;
+    }
+    const std::size_t index = util::ParseSize(fields[0]).value_or(0);
+    const std::string_view site = fields[1];
+    const std::string& what = fields[2];
+    if (site.ends_with("renaming") || site.ends_with("renaming-deferred") || site.ends_with("renaming-source")) {
+      undurable.try_emplace(what, Undurable{.index = index,
+                                            .had_bytes = fields[3] == "1",
+                                            .deferred = site.ends_with("deferred")});
+    } else if (site.ends_with("directory-synced")) {
+      std::erase_if(undurable, [&](const auto& entry) {
+        return !entry.second.deferred && std::filesystem::path(entry.first).parent_path() == what;
+      });
+    } else if (site == "tree.filesystem-synced") {
+      undurable.clear();  // syncfs: everything written on the filesystem so far
+      torn.clear();
+    } else if (site == "mirror.hint-appended" || site == "objects.renamed") {
+      torn.push_back(what);
+    }
+  }
+  for (const auto& [target, entry] : undurable) {
+    std::error_code error;
+    if (entry.had_bytes) {
+      std::filesystem::copy_file(log_dir / std::to_string(entry.index), target,
+                                 std::filesystem::copy_options::overwrite_existing, error);
+    } else {
+      std::filesystem::remove(target, error);
+    }
+  }
+  for (const std::string& path : torn) {
+    std::error_code error;
+    const std::uintmax_t size = std::filesystem::file_size(path, error);
+    if (!error && size > 0) {
+      std::filesystem::resize_file(path, size - std::min<std::uintmax_t>(size, 3), error);
+    }
+  }
+}
+
+// Installs the hook for one operation; removes it after.
+struct CountDiskSteps {
+  explicit CountDiskSteps(std::size_t kill_at = std::numeric_limits<std::size_t>::max()) {
+    g_disk_steps = 0;
+    g_disk_kill_at = kill_at;
+    util::SetCrashPointHook(&DiskStepHook);
+  }
+  ~CountDiskSteps() { util::SetCrashPointHook(nullptr); }
+  CountDiskSteps(const CountDiskSteps&) = delete;
+  CountDiskSteps& operator=(const CountDiskSteps&) = delete;
+  std::size_t counted() const { return g_disk_steps.load(); }
+};
 
 // When, relative to the step's frame: before it is delivered (a request the host
 // never got, a reply the client never saw), or this long after it was (the peer
@@ -112,6 +241,8 @@ const char* Name(Fault fault) {
   switch (fault) {
     case Fault::None: return "no fault";
     case Fault::KillClient: return "client killed";
+    case Fault::KillClientAtDiskStep: return "client killed between disk writes";
+    case Fault::PowerCutAtDiskStep: return "power cut between disk writes";
     case Fault::KillServer: return "server killed";
     case Fault::DropLink: return "link dropped";
   }
@@ -120,6 +251,15 @@ const char* Name(Fault fault) {
 
 bool IsResolution(Scenario scenario) {
   return scenario == Scenario::KeepLocal || scenario == Scenario::TakeRemote;
+}
+
+// The operation starts with a local change to the mirror's tree (a save, a
+// rename, a delete): a crash inside that change can leave it undone, which is a
+// correct outcome -- the user's buffer still holds the save -- as long as both
+// sides then hold the state before it, whole.
+bool StartsWithALocalChange(Scenario scenario) {
+  return scenario == Scenario::PushEdit || scenario == Scenario::PushCreate || scenario == Scenario::PushLarge ||
+         scenario == Scenario::PushRename || scenario == Scenario::PushDelete;
 }
 
 // Over the large-file threshold below, and several bulk chunks long: a push of it
@@ -194,6 +334,9 @@ struct Layout {
   std::filesystem::path host;
   std::filesystem::path mirror;
 };
+
+// Beside the mirror: where a power-cut helper journals its points.
+std::filesystem::path PowerLogDir(const Layout& layout) { return layout.mirror.parent_path() / "power-cut"; }
 
 // One client: a link through a FaultRelay to the daemon, and the mirror's store
 // and engine. Declared so that the engine goes first and the relay last.
@@ -401,6 +544,7 @@ void Prepare(Scenario scenario, const Layout& layout) {
 struct Outcome {
   bool fired = false;
   std::size_t counted = 0;
+  std::size_t disk_steps = 0;  // crash points the operation passed (an undisturbed run)
   pid_t killed_server = 0;  // KillServer: the daemon the fault killed
 };
 
@@ -422,18 +566,28 @@ Outcome RunInProcess(Scenario scenario, Fault fault, std::size_t step, const Tim
   }
   client.relay().Arm(fault == Fault::None ? std::numeric_limits<std::size_t>::max() : step, action,
                      fault == Fault::DropLink, timing);
-  ApplyOperation(scenario, client, layout);
+  std::size_t disk_steps = 0;
+  {
+    const CountDiskSteps count;
+    ApplyOperation(scenario, client, layout);
+    disk_steps = count.counted();
+  }
   client.relay().WaitForFault();
   return Outcome{.fired = client.relay().fired(),
                  .counted = client.relay().counted(),
+                 .disk_steps = disk_steps,
                  .killed_server = client.relay().fired() ? daemon : 0};
 }
 
-// The operation in a helper process that SIGKILLs itself at `step`.
+// The operation in a helper process that SIGKILLs itself at `step`: a wire frame,
+// or with `at_disk_step` a crash point.
 Outcome RunCrashingClient(Scenario scenario, std::size_t step, const Timing& timing,
-                          std::chrono::milliseconds one_way, const Layout& layout) {
+                          std::chrono::milliseconds one_way, const Layout& layout, Fault fault) {
   const std::vector<std::string> args = {"/proc/self/exe",
                                          std::string(kHelperFlag),
+                                         fault == Fault::PowerCutAtDiskStep     ? "power"
+                                         : fault == Fault::KillClientAtDiskStep ? "disk"
+                                                                                : "frame",
                                          std::to_string(static_cast<int>(scenario)),
                                          std::to_string(step),
                                          std::to_string(timing.has_value() ? timing->count() : -1),
@@ -474,7 +628,8 @@ void RecoverAndCheck(Scenario scenario, Fault fault, const Outcome& outcome, con
                                 platform::SubprocessOptions{.timeout_ms = 20000});
     Expect(restarted.success(), label + ": the daemon restarts: " + restarted.stderr_text);
   }
-  if (fault == Fault::KillClient || client.engine == nullptr) {
+  if (fault == Fault::KillClient || fault == Fault::KillClientAtDiskStep || fault == Fault::PowerCutAtDiskStep ||
+      client.engine == nullptr) {
     client.Open(layout, std::chrono::milliseconds(0));  // the relaunch, on the mirror the crash left
   } else {
     // The surviving app: the link's end, then the reconnect (RemoteHostSession:
@@ -518,7 +673,12 @@ void RecoverAndCheck(Scenario scenario, Fault fault, const Outcome& outcome, con
                                                     conflicts_seen + state);
   Expect(status.error.empty(), label + ": no error after recovering" + state);
   Expect(status.dirty == 0 && status.conflicts == 0, label + ": nothing unsent or in conflict" + state);
-  const Files expected = Expected(scenario);
+  Files expected = Expected(scenario);
+  const Files before = {{"a.txt", "base\n"}, {"b.txt", "base\n"}};
+  if ((fault == Fault::KillClientAtDiskStep || fault == Fault::PowerCutAtDiskStep) &&
+      StartsWithALocalChange(scenario) && mirror == before) {
+    expected = before;  // the crash undid the local change before it landed
+  }
   Expect(host == expected, label + ": the host holds exactly " + Describe(expected) + state);
   Expect(mirror == expected, label + ": the mirror holds exactly " + Describe(expected) + state);
 }
@@ -528,7 +688,9 @@ Outcome RunCell(Scenario scenario, Fault fault, std::size_t step, const Timing& 
                 std::chrono::milliseconds one_way) {
   const std::string label = std::string(Name(scenario)) + ", " + Name(fault) +
                             (fault == Fault::None ? std::string()
-                                                  : " at step " + std::to_string(step) + ", " + Name(timing)) +
+                             : fault == Fault::KillClientAtDiskStep || fault == Fault::PowerCutAtDiskStep
+                                 ? " at disk step " + std::to_string(step)
+                                 : " at step " + std::to_string(step) + ", " + Name(timing)) +
                             (one_way.count() != 0 ? ", slow link" : "");
   ShortServerDir dir;
   StartServer(dir);
@@ -537,8 +699,11 @@ Outcome RunCell(Scenario scenario, Fault fault, std::size_t step, const Timing& 
   Prepare(scenario, layout);
   Client client;
   Outcome outcome;
-  if (fault == Fault::KillClient) {
-    outcome = RunCrashingClient(scenario, step, timing, one_way, layout);
+  if (fault == Fault::KillClient || fault == Fault::KillClientAtDiskStep || fault == Fault::PowerCutAtDiskStep) {
+    outcome = RunCrashingClient(scenario, step, timing, one_way, layout, fault);
+    if (fault == Fault::PowerCutAtDiskStep && outcome.fired) {
+      ApplyPowerCut(PowerLogDir(layout));
+    }
   } else {
     outcome = RunInProcess(scenario, fault, step, timing, one_way, layout, client);
   }
@@ -572,9 +737,35 @@ void RunMatrix(Scenario scenario, Fault fault, std::chrono::milliseconds one_way
                                      std::to_string(fired) + " of " + std::to_string(cells) + " faults fired");
 }
 
+// The disk axis: a crash at every crash point the operation passes on an
+// undisturbed run. Over the direct link only -- the link's speed moves when a
+// write happens, not which writes there are or their order.
+void RunDiskMatrix(Scenario scenario, Fault fault) {
+  const std::size_t steps = RunCell(scenario, Fault::None, 0, std::nullopt, std::chrono::milliseconds(0)).disk_steps;
+  Expect(steps > 0, std::string(Name(scenario)) + ": the operation writes to disk");
+  if (std::getenv("MICROIDE_FAULT_MATRIX_VERBOSE") != nullptr) {
+    std::fprintf(stderr, "[fault matrix] %s, disk: %zu steps\n", Name(scenario), steps);
+  }
+  std::size_t fired = 0;
+  for (std::size_t step = 0; step < steps; ++step) {
+    fired += RunCell(scenario, fault, step, std::nullopt, std::chrono::milliseconds(0)).fired
+                 ? 1
+                 : 0;
+  }
+  // As on the frame axis, a run can pass fewer points than the undisturbed one
+  // (a pull's batches follow the host's timing); most must land.
+  Expect(fired * 2 >= steps, std::string(Name(scenario)) + ", disk: only " + std::to_string(fired) + " of " +
+                                 std::to_string(steps) + " crashes fired");
+}
+
 template <Scenario kScenario, Fault kFault, int kOneWayMs>
 void TestMatrix() {
   RunMatrix(kScenario, kFault, std::chrono::milliseconds(kOneWayMs));
+}
+
+template <Scenario kScenario, Fault kFault>
+void TestDiskMatrix() {
+  RunDiskMatrix(kScenario, kFault);
 }
 
 constexpr int kSlowOneWayMs = 30;
@@ -588,36 +779,49 @@ void AddScenario(std::vector<TestCase>& tests, const std::string& name) {
   AddTest(tests, base + "Slow/" + name + "/KillClient", TestMatrix<kScenario, Fault::KillClient, kSlowOneWayMs>);
   AddTest(tests, base + "Slow/" + name + "/KillServer", TestMatrix<kScenario, Fault::KillServer, kSlowOneWayMs>);
   AddTest(tests, base + "Slow/" + name + "/DropLink", TestMatrix<kScenario, Fault::DropLink, kSlowOneWayMs>);
+  AddTest(tests, base + "Disk/" + name + "/KillClient", TestDiskMatrix<kScenario, Fault::KillClientAtDiskStep>);
+  AddTest(tests, base + "Disk/" + name + "/PowerCut", TestDiskMatrix<kScenario, Fault::PowerCutAtDiskStep>);
 }
 
 }  // namespace
 
-// The helper: argv = flag scenario step after_us one_way_ms socket_dir host mirror
-// (after_us -1: before the frame arrives). Runs
-// the operation through a relay that SIGKILLs this process at `step`; exits 0
-// when the operation finished first.
+// The helper: argv = flag mode scenario step after_us one_way_ms socket_dir host
+// mirror (mode `frame` or `disk`; after_us -1: before the frame arrives). Runs the
+// operation and SIGKILLs this process at `step` -- the relay's frame, or the
+// crash point; exits 0 when the operation finished first.
 int RunMirrorFaultClient(int argc, char** argv) {
-  if (argc != 9) {
-    std::fprintf(stderr, "%s: expected 7 arguments\n", argv[1]);
+  if (argc != 10) {
+    std::fprintf(stderr, "%s: expected 8 arguments\n", argv[1]);
     return 2;
   }
   try {
-    const auto scenario = util::ParseInt(argv[2]);
-    const auto step = util::ParseSize(argv[3]);
-    const auto after_us = util::ParseInt64(argv[4]);
-    const auto one_way = util::ParseInt(argv[5]);
-    if (!scenario.has_value() || !step.has_value() || !after_us.has_value() || !one_way.has_value()) {
+    const std::string_view mode = argv[2];
+    const auto scenario = util::ParseInt(argv[3]);
+    const auto step = util::ParseSize(argv[4]);
+    const auto after_us = util::ParseInt64(argv[5]);
+    const auto one_way = util::ParseInt(argv[6]);
+    if ((mode != "frame" && mode != "disk" && mode != "power") || !scenario.has_value() || !step.has_value() ||
+        !after_us.has_value() || !one_way.has_value()) {
       return 2;
     }
-    const Layout layout{.socket_dir = argv[6], .host = argv[7], .mirror = argv[8]};
+    const Layout layout{.socket_dir = argv[7], .host = argv[8], .mirror = argv[9]};
     const Timing timing = *after_us < 0 ? Timing{} : Timing{std::chrono::microseconds(*after_us)};
     Client client;
     client.Open(layout, std::chrono::milliseconds(*one_way));
     if (static_cast<Scenario>(*scenario) == Scenario::WatchPull) {
       client.Subscribe();
     }
-    client.relay().Arm(*step, [] { ::raise(SIGKILL); }, false, timing);
-    ApplyOperation(static_cast<Scenario>(*scenario), client, layout);
+    if (mode == "frame") {
+      client.relay().Arm(*step, [] { ::raise(SIGKILL); }, false, timing);
+      ApplyOperation(static_cast<Scenario>(*scenario), client, layout);
+    } else {
+      if (mode == "power") {
+        g_power_log_dir = PowerLogDir(layout);
+        std::filesystem::create_directories(g_power_log_dir);
+      }
+      const CountDiskSteps kill_at(*step);
+      ApplyOperation(static_cast<Scenario>(*scenario), client, layout);
+    }
     return 0;
   } catch (const std::exception& error) {
     std::fprintf(stderr, "mirror fault client: %s\n", error.what());

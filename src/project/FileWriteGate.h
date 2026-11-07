@@ -141,4 +141,12 @@ class FileWriteGate {
 // local project goes through this one.
 FileWriteGate& LocalFileWriteGate();
 
+// The local gate's write, with its temporary in `staging` instead of beside the
+// target (see util::WriteTextFileAtomically): for a writer whose tree a crash
+// must not leave a temporary in -- the mirror, whose meta/staging its next open
+// sweeps.
+FileWriteGate::Result WriteTextLocally(const std::filesystem::path& path, std::string_view text,
+                                       FileWriteGate::Signature signature, util::WriteTarget target,
+                                       const std::filesystem::path& staging);
+
 }  // namespace microide::project

@@ -28,7 +28,11 @@ FileWriteGate::Result MirrorWriteGate::WriteText(const std::filesystem::path& pa
   Result result;
   {
     std::lock_guard path_lock(store_.PathLock(*relative));
-    result = LocalFileWriteGate().WriteText(path, text, signature, target);
+    // The temporary in meta/staging, not beside the file: a crash between writing
+    // it and renaming it into place must not leave it in the tree, where nothing
+    // would ever remove it (the fault matrix's disk axis found one). Open sweeps
+    // staging.
+    result = WriteTextLocally(path, text, signature, target, store_.staging());
   }
   if (result.ok) {
     engine_.NotifyLocalWrite(*relative);

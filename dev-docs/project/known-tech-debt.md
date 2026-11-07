@@ -181,7 +181,7 @@ Left open:
    **Resolved 2026-11-03**: load, not the product. Run alone at 20cad2dbb, qa-remote
    passed all 262 cells, the slow-link Z, G, O and H cells among them.
 
-### TD-2026-11-02-430 — remote data safety under fault injection, and the open-TD sweep after it. [OPEN — item 1 below]
+### TD-2026-11-02-430 — remote data safety under fault injection, and the open-TD sweep after it. [RESOLVED 2026-11-06 — item 1]
 
 The 2026-11-02 pass had only *probed* the remote sync engine. This one stressed it:
 `MirrorFaultMatrix` (tests/MirrorFaultMatrixTests.cpp, 66 tests) runs a push (edit,
@@ -230,7 +230,31 @@ paint QA seed 60 found at HEAD (a language change repaints the pane).
 
 Left open:
 
-1. **The matrix's steps are wire frames.** A client crash between two disk writes
+1. ~~**The matrix's steps are wire frames.**~~ **Resolved 2026-11-06.** Every
+   durable-write boundary of the client is a `util::CrashPoint` (a relaxed atomic
+   load in production): `util/DurableFile`'s write / rename / directory sync, tree
+   writes, `syncfs`, the pulled hint, the object store. A second matrix axis
+   (`MirrorFaultMatrix/Disk/<scenario>/KillClient`) counts the points an
+   undisturbed run passes and SIGKILLs the helper at each one; a third
+   (`.../PowerCut`) also journals every point with the pre-image of each rename's
+   source and target, and after the kill applies a power-cut model -- a rename no
+   later sync of its directory (a deferred pull's: no later `syncfs`) covers is
+   undone, unsynced appends and objects are torn -- before the usual recovery.
+   It found, each now fixed:
+   - **A save's temporary left in the mirror's tree for good** (crash between
+     writing it and renaming it). Mirror saves stage it in `meta/staging`
+     (`project::WriteTextLocally`), which `MirrorStore::Open` sweeps; a local
+     project's scan and the watcher's walk remove one whose writer is gone and
+     that is over 10 minutes old (`util::SweepAbandonedTemporaryStaging`).
+   - **A new file or a rename that landed before its journal never reached the
+     host**, and the mirror reported nothing unsent. The first sync after opening
+     adopts files no entry records: as the rename it was when it holds exactly the
+     base of the one entry whose file is gone, else as a new file to push
+     (`AdoptUntrackedLocalFilesLocked`; paths a journaled op covers are left to it).
+   - **A stale "not connected" after a reconnect** (seen once under load): a
+     fetch the dead link failed posted its error after the new link's full sync
+     cleared it. Fetch results carry the full-sync epoch they were issued in.
+   Was: **The matrix's steps are wire frames.** A client crash between two disk writes
    with no frame between them (the tree file and the journal of one save) is reached
    only through the after-delivery timings (0/300/2000 µs), not exhaustively; a
    power cut (lost unsynced writes) is not simulated at all. A link that dies
