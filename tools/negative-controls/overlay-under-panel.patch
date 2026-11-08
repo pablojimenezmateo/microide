@@ -1,0 +1,20 @@
+diff --git a/src/workspace/render/WorkspaceShellRender.cpp b/src/workspace/render/WorkspaceShellRender.cpp
+index 36f7661e1..686f2e3b1 100644
+--- a/src/workspace/render/WorkspaceShellRender.cpp
++++ b/src/workspace/render/WorkspaceShellRender.cpp
+@@ -188,10 +188,15 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
+     util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::DebugPane");
+     RenderDebugPaneSurface(renderer, layout);
+   }
++  {
++    util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::Overlay");
++    RenderOverlaySurface(renderer, layout, *clip_cached_overlay_vm_);
++  }
+   if (!skip_bottom_panel) {
+     util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::BottomPanel");
+     RenderBottomPanelSurface(renderer, layout);
+   }
++  return;
+   // After the panel: an overlay taller than the editor area (the palette, a quick
+   // pick at a large ui.scale or in a short window) reaches down over the panel,
+   // and painted before it, the panel's tabs and terminal covered its lower rows

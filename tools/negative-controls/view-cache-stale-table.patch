@@ -1,0 +1,13 @@
+diff --git a/src/editor/TextLayoutCache.h b/src/editor/TextLayoutCache.h
+index ca3da5d1f..b3b19d55d 100644
+--- a/src/editor/TextLayoutCache.h
++++ b/src/editor/TextLayoutCache.h
+@@ -411,7 +411,7 @@ class TextLayoutCache {
+   // width (QA monkey seeds 69 and 601; TD-2026-10-30-426).
+   static bool DescribesTheTextJustBefore(std::uint64_t table_revision,
+                                          std::uint64_t content_revision) {
+-    return content_revision != 0 && table_revision == content_revision - 1;
++    return content_revision != 0 && table_revision + 64 >= content_revision;
+   }
+   bool LineWidthsAreCurrent(std::size_t lines_size,
+                             std::size_t tab_size,

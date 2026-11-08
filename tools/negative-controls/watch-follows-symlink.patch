@@ -1,0 +1,14 @@
+diff --git a/src/platform/FileIndexWatcher.cpp b/src/platform/FileIndexWatcher.cpp
+index f1cc2445e..824a1c69c 100644
+--- a/src/platform/FileIndexWatcher.cpp
++++ b/src/platform/FileIndexWatcher.cpp
+@@ -212,9 +212,6 @@ void WalkTrackedTree(const std::filesystem::path& walk_root,
+           // in it was reported under `sub/loop/`, and an open buffer never reloaded
+           // an outside edit (QA monkey, world profile). Its target, when inside the
+           // tree, is walked and watched under its own path.
+-          if (entry.is_symlink) {
+-            return platform::WalkAction::Continue;
+-          }
+           if (ShouldSkipWatchedDirectory(entry.path, filter)) {
+             return platform::WalkAction::Prune;
+           }

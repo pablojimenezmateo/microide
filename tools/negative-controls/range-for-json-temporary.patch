@@ -1,0 +1,15 @@
+diff --git a/src/workspace/control/ControlSurfaceQuery.cpp b/src/workspace/control/ControlSurfaceQuery.cpp
+index 88dc04b50..df2fe405a 100644
+--- a/src/workspace/control/ControlSurfaceQuery.cpp
++++ b/src/workspace/control/ControlSurfaceQuery.cpp
+@@ -79,9 +79,8 @@ util::JsonValue ControlChannelService::BuildSurface() const {
+   // Each answer is a named local: a range-for over `BuildCommands().AsArray()`
+   // iterates a temporary destroyed before the loop body runs (no C++23
+   // lifetime extension under -std=c++20).
+-  const util::JsonValue command_rows = BuildCommands();
+   util::JsonArray commands;
+-  for (const util::JsonValue& command : command_rows.AsArray()) {
++  for (const util::JsonValue& command : BuildCommands().AsArray()) {
+     commands.push_back(command["command"]);
+   }
+   object["commands"] = util::JsonValue(std::move(commands));

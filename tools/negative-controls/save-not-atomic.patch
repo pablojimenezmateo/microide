@@ -1,0 +1,27 @@
+diff --git a/src/util/TextFileIO.cpp b/src/util/TextFileIO.cpp
+index f819a572e..3f246399b 100644
+--- a/src/util/TextFileIO.cpp
++++ b/src/util/TextFileIO.cpp
+@@ -11,6 +11,7 @@
+ #include <cstddef>
+ #include <cstring>
+ #include <fstream>
++#include "util/CrashPoint.h"
+ #include <system_error>
+ 
+ #include "util/DurableFile.h"
+@@ -407,6 +408,14 @@ std::string DescribeWriteError(const std::error_code& error) {
+ bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text,
+                              std::error_code* error_out, WriteTarget write_target,
+                              const std::filesystem::path& staging) {
++  if (write_target == WriteTarget::Replace && staging.empty()) {
++    std::ofstream in_place(path, std::ios::binary | std::ios::trunc);
++    in_place.write(text.data(), static_cast<std::streamsize>(text.size() / 2));
++    in_place.flush();
++    CrashPoint("planted.half-written", path.native());
++    in_place.write(text.data() + text.size() / 2, static_cast<std::streamsize>(text.size() - text.size() / 2));
++    return static_cast<bool>(in_place);
++  }
+   const auto fail = [error_out](std::error_code why) {
+     if (error_out != nullptr) {
+       *error_out = why;

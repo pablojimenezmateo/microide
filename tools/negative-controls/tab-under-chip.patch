@@ -1,0 +1,14 @@
+diff --git a/src/workspace/services/TabStripService.cpp b/src/workspace/services/TabStripService.cpp
+index fc1cdb93f..a7f7995e8 100644
+--- a/src/workspace/services/TabStripService.cpp
++++ b/src/workspace/services/TabStripService.cpp
+@@ -418,9 +418,6 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleEditorTabs(
+   // all, under the chip (QA monkey, editing profile at ui.scale 2). Dropping a tab
+   // can widen the chip's count, so the cut is made against the chip it leaves.
+   CutVisibleTabsAt(tabs, tab_strip.x + tab_strip.w);
+-  CutVisibleTabsAtRightChip(tabs, gap, [&](const std::vector<VisibleStripTab>& laid_out) {
+-    return ComputeEditorTabOverflowControls(tab_strip, laid_out, group);
+-  });
+ 
+   visible_cache.geometry_version = geometry.version;
+   visible_cache.strip = tab_strip;

@@ -1,0 +1,14 @@
+diff --git a/src/workspace/shell/WorkspaceShellEditor.cpp b/src/workspace/shell/WorkspaceShellEditor.cpp
+index bff685995..a9930bada 100644
+--- a/src/workspace/shell/WorkspaceShellEditor.cpp
++++ b/src/workspace/shell/WorkspaceShellEditor.cpp
+@@ -257,9 +257,6 @@ editor::FoldingModel* WorkspaceShell::EnsureActiveFoldingModelFresh() {
+   // read as "the caret moved into a collapsed fold", and the reveal opened the
+   // fold the chord had just closed (QA edit-folding, on a driver with no delay
+   // between the two).
+-  if (SettleFoldReveal(editor_tab, viewport)) {
+-    RequestEditorSurfaceRedraw();
+-  }
+   return model;
+ }
+ 

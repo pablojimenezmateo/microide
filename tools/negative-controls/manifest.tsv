@@ -1,0 +1,13 @@
+# patch	build targets	check that must FAIL with the patch applied (run from the worktree root)
+# One row per recorded negative control (safety-plan W10). tools/check-invariants-bite.sh
+# applies each patch alone in a scratch worktree at HEAD, builds, runs the check, and
+# requires it to fail; it then requires the same check to pass unpatched.
+view-cache-stale-table.patch	microide_tests	build/microide/microide_tests TextViewport/EditsThroughEveryViewKeepEveryViewsCachesTrue
+fold-reveal-unsettled.patch	microide_tests	build/microide/microide_tests QaFlowRegression/AFoldChordRightAfterAClickFoldsTheClickedBlock
+tab-under-chip.patch	microide_tests	build/microide/microide_tests TabStripService/NoEditorTabLiesUnderAnOverflowChip
+overlay-under-panel.patch	microide_tests	build/microide/microide_tests QaFlowRegression/AnOverlayIsPaintedOverTheBottomPanel
+watch-follows-symlink.patch	microide_kernel_tests	build/microide/microide_kernel_tests FileIndexWatcher/ASymlinkLoopDoesNotRelabelTheRoot
+sticky-band-zero.patch	microide_tests	build/microide/microide_tests ArchitectureInvariants/Kernel/CheckEditorMetricsNameTheirStickyBand
+range-for-json-temporary.patch	microide_tests	build/microide/microide_tests ArchitectureInvariants/Kernel/CheckRangeForDoesNotSubscriptATemporary
+save-drops-a-byte.patch	microide	python3 tools/qa/run.py --binary build/microide/microide --out build/bite-qa suite save-round-trip
+save-not-atomic.patch	microide_kernel_tests	build/microide/microide_kernel_tests LocalWriteFaultMatrix/EveryCrashPointOfASaveLeavesTheOldOrTheNewFile

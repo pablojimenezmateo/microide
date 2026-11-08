@@ -83,6 +83,7 @@ void RegisterMirrorStoreTests(std::vector<TestCase>& tests);
 void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests);
 void RegisterMirrorSyncMatrixTests(std::vector<TestCase>& tests);
 void RegisterMirrorFaultMatrixTests(std::vector<TestCase>& tests);
+void RegisterLocalWriteFaultMatrixTests(std::vector<TestCase>& tests);
 void RegisterRemoteProjectTests(std::vector<TestCase>& tests);
 void RegisterProjectIdTests(std::vector<TestCase>& tests);
 void RegisterRemoteWorkspaceTests(std::vector<TestCase>& tests);
@@ -107,6 +108,7 @@ void RegisterKernelTests(std::vector<TestCase>& tests) {
   RegisterMirrorSyncEngineTests(tests);
   RegisterMirrorSyncMatrixTests(tests);
   RegisterMirrorFaultMatrixTests(tests);
+  RegisterLocalWriteFaultMatrixTests(tests);
   RegisterRemoteProjectTests(tests);
   RegisterProjectIdTests(tests);
   RegisterRemoteWorkspaceTests(tests);
@@ -192,11 +194,17 @@ namespace microide::tests {
 // tests/MirrorFaultMatrixTests.cpp re-executes this binary as the client it kills.
 bool IsMirrorFaultClient(int argc, char** argv);
 int RunMirrorFaultClient(int argc, char** argv);
+// tests/LocalWriteFaultMatrixTests.cpp re-executes it as the writer it kills.
+bool IsLocalWriteFaultClient(int argc, char** argv);
+int RunLocalWriteFaultClient(int argc, char** argv);
 }  // namespace microide::tests
 
 int main(int argc, char** argv) {
   if (microide::tests::IsMirrorFaultClient(argc, argv)) {
     return microide::tests::RunMirrorFaultClient(argc, argv);
+  }
+  if (microide::tests::IsLocalWriteFaultClient(argc, argv)) {
+    return microide::tests::RunLocalWriteFaultClient(argc, argv);
   }
   microide::tests::TestSuiteConfig config;
   config.binary_name = "microide_kernel_tests";
