@@ -1621,6 +1621,35 @@ void TestWorkspaceSharedProjectTabStripVisibility() {
          "the editor tab strip height is unaffected by hiding the project strip");
 }
 
+// The find widget stays inside the area it belongs to. It was anchored 12 px
+// below the area's top with a 280 px minimum width and no check of either
+// dimension, so a bottom panel squeezed to its tab strip put the terminal's
+// find bar past the window's bottom edge (soak 23535aaf3151, cce216e505a7), and
+// an area narrower than 280 px pushed it off the area's left.
+void TestFindWidgetStaysInsideAShortOrNarrowArea() {
+  using microide::workspace::ComputeFindWidgetLayout;
+  const auto inside = [](const SDL_FRect& r, const SDL_FRect& area) {
+    return r.x >= area.x && r.x + r.w <= area.x + area.w + 0.5f &&
+           r.y + r.h <= area.y + area.h + 0.5f;
+  };
+  // A terminal body 16 px tall at the bottom of an 800 px window.
+  const SDL_FRect short_area{0.0f, 784.0f, 1067.0f, 16.0f};
+  for (const bool replace : {false, true}) {
+    const auto fw = ComputeFindWidgetLayout(short_area, replace, 2);
+    Expect(inside(fw.widget, short_area) && inside(fw.search_field, short_area),
+           "a find widget must not run past the bottom of a short area");
+  }
+  // A roomy area keeps the widget where it always was: 12 px below the top.
+  const SDL_FRect roomy{100.0f, 50.0f, 900.0f, 600.0f};
+  const auto fw = ComputeFindWidgetLayout(roomy, false, 2);
+  Expect(fw.widget.y == 62.0f, "a roomy area keeps the widget's top margin");
+  // An area narrower than the widget's minimum width.
+  const SDL_FRect narrow{40.0f, 50.0f, 200.0f, 400.0f};
+  const auto narrow_fw = ComputeFindWidgetLayout(narrow, false, 2);
+  Expect(inside(narrow_fw.widget, narrow) && narrow_fw.close_button.x >= narrow.x,
+         "a find widget must not run off the left of a narrow area");
+}
+
 }  // namespace
 
 // The editor banner shows whole or not at all: squeezed to an editor area with
@@ -1643,6 +1672,8 @@ void TestEditorBannerKeepsInsideTheEditorArea() {
 }
 
 void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShared/FindWidgetStaysInsideAShortOrNarrowArea",
+          TestFindWidgetStaysInsideAShortOrNarrowArea);
   AddTest(tests, "WorkspaceShared/EditorBannerKeepsInsideTheEditorArea", TestEditorBannerKeepsInsideTheEditorArea);
   AddTest(tests, "WorkspaceShared/EditorSplitTreeRevision",
           TestWorkspaceSharedEditorSplitTreeRevision);

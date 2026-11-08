@@ -1220,12 +1220,20 @@ constexpr float kDebugToolbarStackGap = 8.0f;
 SDL_FRect ComputeFindWidgetRect(const SDL_FRect& editor_area, bool replace_mode) {
   const float available =
       std::max(kFindWidgetMinWidth, editor_area.w - 2.0f * kFindWidgetMargin);
-  const float width = std::min(kFindWidgetMaxWidth, available);
+  // Never wider than the area itself: the minimum width is a preference, and an
+  // area narrower than it would otherwise push the widget off its left edge.
+  const float width = std::min({kFindWidgetMaxWidth, available, std::max(0.0f, editor_area.w)});
   const float rows = replace_mode ? 2.0f : 1.0f;
   const float height = 2.0f * kFindWidgetPad + rows * kFindWidgetRowHeight +
                        (rows - 1.0f) * kFindWidgetRowGap;
-  const float x = editor_area.x + editor_area.w - width - kFindWidgetMargin;
-  const float y = editor_area.y + kFindWidgetMargin;
+  const float x =
+      std::max(editor_area.x, editor_area.x + editor_area.w - width - kFindWidgetMargin);
+  // Anchored a margin below the area's top, but lifted when the area is too short
+  // to hold it there, so its bottom never runs past the area's: a bottom panel
+  // squeezed to its tab strip put the terminal's find bar off the window (soak
+  // 23535aaf3151). On a roomy area this is the old placement, unchanged.
+  const float y =
+      std::min(editor_area.y + kFindWidgetMargin, editor_area.y + editor_area.h - height);
   return MakeRect(std::floor(x), std::floor(y), std::floor(width), std::floor(height));
 }
 
