@@ -129,6 +129,18 @@ def app_base_env(environ: dict[str, str]) -> dict[str, str]:
 # units) the workbench is laid out for.
 LAYOUT_FLOOR = (640, 400)
 
+# MQA_UI_SCALE runs everything at that ui.scale (the qa-scale lane). Window sizes
+# a flow names are layout units, as the `ui` query reports them: the driver makes
+# the window that many units at the scale, so a flow written for scale 1 lays out
+# the same workbench (a 1280x720 window at 1.75 was 731x411 units, below the
+# layout floor, and every size-sensitive flow failed on that alone).
+UI_SCALE = float(os.environ.get("MQA_UI_SCALE") or 1.0)
+
+
+def device_size(width: int, height: int) -> tuple[int, int]:
+    """The window size, in X pixels, that holds `width` x `height` layout units."""
+    return round(width * UI_SCALE), round(height * UI_SCALE)
+
 # SDL's defaults (SDL_HINT_MOUSE_DOUBLE_CLICK_TIME / _RADIUS), with margin.
 DOUBLE_CLICK_SECONDS = 0.55
 
@@ -327,6 +339,7 @@ class App:
                keep_home: bool = False,
                plugins: tuple[str, ...] = ()) -> Iterator["App"]:
         binary = Path(binary or os.environ.get("MICROIDE_BIN") or REPO / "build/microide/microide")
+        size = device_size(*size)
         if not binary.exists():
             raise FileNotFoundError(f"no microide binary at {binary} (set MICROIDE_BIN)")
         # Short path: the control socket lives under XDG_RUNTIME_DIR and AF_UNIX
@@ -549,6 +562,34 @@ class App:
         self.window = self._find_window()
         if not self.wayland and self.window is None:
             raise QaFailure(f"no X window found for microide (pid {self.proc.pid}); log: {self.log_path}")
+        self.origin = self._window_origin()
+        self._apply_run_size()
+
+    def _apply_run_size(self) -> None:
+        """Makes the window the run's size. The app opens at its own initial size
+        (Application.cpp kInitialWindowWidth x Height, 1440x900) whatever the
+        screen, so a run at any other size -- the monkey's `--size`, a scaled run
+        (device_size) -- drove a 1440x900 window on a larger screen. Waits for the
+        `ui` query to report the size (layout units times the window's scale).
+        The app comes up already at 1440x900 on a 1440x900 screen, the default
+        run, and then this is a no-op."""
+        if self.wayland or self.window is None:
+            return
+        width, height = self.size
+        # At the screen's corner first: the app centres its window on the screen,
+        # and grown in place there it ran off the screen's edge, where a click
+        # lands on nothing.
+        if (xt := self._xt_or_none()) is not None:
+            xt.place(int(self.window), 0, 0)
+        else:
+            self._xdotool("windowmove", self.window, "0", "0")
+        self._resize_window(width, height)
+
+        def applied() -> bool:
+            window = self.ui().get("window") or {}
+            scale = (window.get("scale") or [1.0])[0] or 1.0
+            return abs(window.get("width", 0) * scale - width) <= 2 and abs(window.get("height", 0) * scale - height) <= 2
+        _wait(applied, 5.0, f"the window to take the run's {width}x{height} size")
         self.origin = self._window_origin()
 
     def _first_frame_presented(self) -> bool:
@@ -1215,11 +1256,21 @@ class App:
                 self._xdotool("key", chord)
         self._x_modifier(modifier, False)
 
+    def resize_layout(self, width: int, height: int) -> None:
+        """Resizes the window to hold `width` x `height` layout units at the run's
+        ui.scale (MQA_UI_SCALE; device_size)."""
+        self.resize(*device_size(width, height))
+
     def resize(self, width: int, height: int) -> None:
-        """Resizes the window (X11; the Wayland kiosk owns the size). The size
-        the app settles on is read back from the `ui` query, not assumed: a
-        window manager-less Xvfb grants it, the app may clamp a tiny one."""
+        """Resizes the window to `width` x `height` X pixels (X11; the Wayland
+        kiosk owns the size). The size the app settles on is read back from the
+        `ui` query, not assumed: the driver resizes within the window's declared
+        minimum, as a window manager would."""
         self._record({"resize": [int(width), int(height)]})
+        self._resize_window(width, height)
+
+    def _resize_window(self, width: int, height: int) -> None:
+        """resize(), unrecorded: the startup sizing is not an action to replay."""
         if self.wayland or not self.window:
             return
         if (xt := self._xt_or_none()) and xt.resize(int(self.window), int(width), int(height)):

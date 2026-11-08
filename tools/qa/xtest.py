@@ -99,6 +99,7 @@ def _load() -> bool:
             [ctypes.POINTER(ctypes.c_uint)]
         x11.XRefreshKeyboardMapping.argtypes = [ctypes.c_void_p]
         x11.XResizeWindow.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_uint, ctypes.c_uint]
+        x11.XMoveWindow.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_int]
         x11.XGetWMNormalHints.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(_SizeHints),
                                            ctypes.POINTER(ctypes.c_long)]
         xtst.XTestFakeMotionEvent.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
@@ -265,6 +266,11 @@ class XTest:
         _x11.XResizeWindow(self._dpy, window, max(1, width), max(1, height))
         _x11.XSync(self._dpy, 0)
         return True
+
+    def place(self, window: int, x: int, y: int) -> None:
+        """Moves the window's top-left corner to (x, y) on the screen."""
+        _x11.XMoveWindow(self._dpy, window, int(x), int(y))
+        _x11.XSync(self._dpy, 0)
 
     def focus_root(self) -> None:
         """Gives the input focus to the root window: the app sees a focus loss."""

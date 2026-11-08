@@ -153,10 +153,12 @@ def wait_toasts_clear(app: q.App) -> None:
 # ---- window size ---------------------------------------------------------------
 
 def resize_window(app: q.App, width: int, height: int) -> None:
-    """Resizes the X window (the Wayland backend's kiosk weston owns the size)."""
-    if app.window:
-        app._xdotool("windowsize", app.window, str(width), str(height))
-    app.wait_until(lambda: app.ui()["window"]["width"] == width, 3.0, f"the window to be {width} wide")
+    """Resizes the window to `width` x `height` layout units (q.device_size; the
+    Wayland backend's kiosk weston owns the size). Through the driver's resize,
+    which keeps to the window's declared minimum as a window manager would --
+    a raw `xdotool windowsize` did not, and laid the workbench out below it."""
+    app.resize_layout(width, height)
+    app.wait_until(lambda: abs(app.ui()["window"]["width"] - width) <= 1, 3.0, f"the window to be {width} wide")
     step(app, f"resize to {width}x{height}", 0.4)
 
 

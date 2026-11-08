@@ -50,6 +50,16 @@ session fixed, each with a failing-first test:
   layout below the floor again;
 - QA flows that raced once the driver lost xdotool's delays (plugin-api, the
   fold chord) and a pre-existing clang narrowing error in a test.
+- frame prep's two-step pane sizing clamped the scroll against a band-less view,
+  so typing at the end of a document under a sticky band scrolled the caret out
+  and repainted the wrong row (CI seed 4; minimized 185 -> 69 actions). The sizing
+  is now one helper (`EditorViewRenderer::SizeViewportWithStickyBand`) shared with
+  the mouse coordinator, and a pane whose scroll it moves repaints;
+- the QA driver never sized the window: the app opens at its own 1440x900 whatever
+  the screen, so `monkey --size` and every scaled run drove a 1440x900 window. The
+  driver now places and sizes it at startup, and under `MQA_UI_SCALE` window sizes
+  are layout units (`device_size`), which is what made the qa-scale lane's
+  size-sensitive flows fail at 1.75.
 
 What it left, by workstream:
 
@@ -112,6 +122,15 @@ What it left, by workstream:
     panel and the status segments in order) or an effective scale clamped to what the
     screen can hold; until then the QA driver's geometry oracles skip such layouts
     (`LAYOUT_FLOOR` in `tools/qa/microide_qa.py`) so they do not drown the rest.
+12. **A caret on the last line can stay out of view under a sticky band.** Where
+    the end of a document is reached just past a fold, the scroll that shows the
+    last line has no band, and the taller band-less view clamps it back into the
+    fold, whose band then hides the last row. The frame settles on the consistent
+    scroll (no stale paint: `QaFlowRegression/TypingWhereTheEndLeavesAFold...`), but
+    the caret stays one row below the view while typing there. The fix is a band
+    rule for the end of the document (drop the band when the view reaches the last
+    line, as the band then pins nothing the user scrolled past) applied in
+    `StickyScrollLines` so every consumer agrees.
 10. **The soak runner's acceptance** (24 h unattended, a planted stale-paint and a
     planted lost-save defect each found, minimized under 20 actions, deduplicated and
     verified after the revert) has not been run end to end; its pieces have, one by
