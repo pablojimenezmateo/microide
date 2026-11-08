@@ -835,8 +835,11 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentEditorLineRangeRect(std::size_t 
   if (viewport == nullptr) {
     return std::nullopt;
   }
+  // On the grid the last frame painted, sticky-scroll band included: without the
+  // band every row sat its height too high, and a keystroke under pinned headers
+  // repainted a line above the one it typed on (QA monkey, seed 608).
   const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-      editor_text_renderer_, *viewport, pane_rect, 0, LineNumbersEnabled());
+      editor_text_renderer_, *viewport, pane_rect, viewport->sticky_band_rows(), LineNumbersEnabled());
   const std::size_t visible_start_row = viewport->scroll_line();
   const std::size_t visible_end_row = visible_start_row + metrics.visible_rows;
   const std::size_t start_row = viewport->VisualRowForLine(start_line);

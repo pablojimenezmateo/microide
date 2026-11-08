@@ -10,6 +10,7 @@
 #include "TerminalSessionTestAccess.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -3556,6 +3557,38 @@ void TestHoverUnderAStickyBandResolvesThePointersLine() {
              std::to_string(TestAccess::HoverCacheLineForTesting(fixture.shell)));
 }
 
+// QA monkey (seed 608): typing on a line of a pane scrolled under sticky-scroll
+// headers repainted the row the band's height ABOVE it. The keystroke's damage
+// came from CurrentEditorLineRangeRect, whose grid had no sticky band, so the
+// typed characters appeared only when something else repainted their row.
+void TestTypingUnderAStickyBandRepaintsTheTypedRow() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  std::string body = "namespace outer {\nstruct Inner {\n";
+  for (int i = 0; i < 80; ++i) {
+    body += "  int v" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  body += "};\n}\n";
+  FlowFixture fixture("sticky.cpp", body);
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_PAGEDOWN), KeyDownEvent(SDLK_PAGEDOWN)});
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "scrolling under the headers");
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  const util::JsonValue& pane = ui["editors"][std::size_t{0}];
+  Expect(pane["stickyRows"].AsInt() >= 2, "the fixture should pin two headers");
+  const std::int64_t line = pane["rows"][std::size_t{4}]["line"].AsInt();
+  TestAccess::ActiveEditor(fixture.shell).MoveCursorTo(static_cast<std::size_t>(line - 1), 2);
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the caret on a row under the band");
+  // The IME's candidate window anchors on the caret's row, not the band's height above it.
+  const auto ime = TestAccess::ActiveTextInputArea(fixture.shell);
+  const double row_y = pane["rows"][std::size_t{4}]["y"].AsDouble();
+  Expect(ime.has_value() && std::fabs((ime->y + 1.0) - row_y) < 0.5,
+         "the text-input area should sit on the caret's row (" + std::to_string(row_y) + "), not at " +
+             (ime.has_value() ? std::to_string(ime->y + 1.0) : std::string("nothing")));
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("Q")}),
+                      "typing on line " + std::to_string(line) + " under the sticky band");
+}
+
 // Hovering a merge toolbar button lights it, and the frame shows it: the buttons
 // read the pointer at paint time, but merge hover tracking knew only conflict
 // regions, so moving onto Save requested no repaint of it and the next partial
@@ -4109,6 +4142,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TheRemoteSegmentOpensTheRemoteMenu", TestTheRemoteSegmentOpensTheRemoteMenu);
   AddTest(tests, "QaFlowRegression/AFocusMoveByTheMaximizedPanelRulePaintsTheRingInItsFrame",
           TestAFocusMoveByTheMaximizedPanelRulePaintsTheRingInItsFrame);
+  AddTest(tests, "QaFlowRegression/TypingUnderAStickyBandRepaintsTheTypedRow",
+          TestTypingUnderAStickyBandRepaintsTheTypedRow);
   AddTest(tests, "QaFlowRegression/ClosingAMenuOverAFindToggleRepaintsItsHover",
           TestClosingAMenuOverAFindToggleRepaintsItsHover);
 }

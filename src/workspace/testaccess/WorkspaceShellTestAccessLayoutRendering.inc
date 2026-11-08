@@ -1,3 +1,19 @@
+  // Where the IME is told the caret is (SDL_SetTextInputArea's rect), for the
+  // focused editor pane: BuildActiveTextInputVisual as the frame calls it.
+  static std::optional<SDL_FRect> ActiveTextInputArea(WorkspaceShell& shell) {
+    const auto layout = shell.CurrentWorkspaceLayout();
+    if (!layout.has_value()) {
+      return std::nullopt;
+    }
+    std::optional<SDL_FRect> pane_rect;
+    for (const EditorPaneLayout& pane : shell.ComputeEditorPaneLayouts(*layout)) {
+      if (pane.active) {
+        pane_rect = pane.rect;
+      }
+    }
+    const auto visual = shell.BuildActiveTextInputVisual(*layout, pane_rect);
+    return visual.has_value() ? std::optional<SDL_FRect>(visual->area) : std::nullopt;
+  }
   static bool ProjectTabStripVisible(WorkspaceShell& shell) {
     return shell.ProjectTabStripVisible();
   }

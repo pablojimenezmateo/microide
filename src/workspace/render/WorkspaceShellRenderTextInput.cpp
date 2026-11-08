@@ -130,8 +130,11 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       if (viewport == nullptr) {
         return std::nullopt;
       }
+      // The painted grid, sticky band included, or the IME's candidate window
+      // sits the band's height above the caret.
       const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-          text_renderer_, *viewport, *active_editor_pane_rect, 0, LineNumbersEnabled());
+          text_renderer_, *viewport, *active_editor_pane_rect, viewport->sticky_band_rows(),
+          LineNumbersEnabled());
       // Guard the size_t subtractions: scroll is normally clamped to keep the caret
       // visible, but a transient caret-left-of-scroll (or above scroll_line) would
       // underflow to a huge value and fling the IME candidate anchor off-screen.
