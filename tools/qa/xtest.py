@@ -23,6 +23,15 @@ import os
 import time
 
 _x11 = _xtst = None
+_error_handler = None
+_x_errors = 0
+_XErrorHandler = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)
+
+
+def _ignore_x_error(display, event) -> int:
+    global _x_errors
+    _x_errors += 1
+    return 0
 
 
 class _SizeHints(ctypes.Structure):
@@ -51,6 +60,14 @@ def _load() -> bool:
         _xtst = None
         return False
     _x11.XInitThreads()
+    # Xlib's default error handler prints the error and EXITS the process: an
+    # XSetInputFocus on a window that just went away (an app killed and
+    # relaunched, a window closing) took the whole driver -- and a minimizer
+    # running dozens of candidates -- down with it. Errors are recorded instead;
+    # the caller sees them as a focus that did not land.
+    global _error_handler
+    _error_handler = _XErrorHandler(_ignore_x_error)
+    _x11.XSetErrorHandler(_error_handler)
     _x11.XOpenDisplay.restype = ctypes.c_void_p
     _x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
     _x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
