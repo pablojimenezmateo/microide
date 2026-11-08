@@ -52,6 +52,8 @@ class EditorTabService {
   ExternalChangeVerdict ClassifyExternalChange(const std::filesystem::path& path) const;
   bool ExternalChangeIsOwnEcho(const std::filesystem::path& path,
                                std::uint64_t disk_content_hash) const;
+  std::vector<std::filesystem::path> OpenSymlinkAliasesOf(
+      const std::filesystem::path& normalized_target) const;
   bool OpenUntitled();
   bool OpenFileInNewTab(const std::filesystem::path& path);
   bool OpenNewBufferInNewTab(const std::filesystem::path& path);

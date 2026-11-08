@@ -402,6 +402,11 @@ class TextViewport {
   // Cached normalized key for the per-file presentation stores. Pass this to the
   // hot-path *ByPathKey lookups to avoid re-normalizing the path every frame.
   std::string_view path_key() const { return document_->path_key; }
+  // The file `path()` names through a symlink, resolved when the path was set, or
+  // empty when `path()` is not a symlink. A watcher reports a change under the
+  // name it was written by, so an edit to the target names the target and never
+  // the link this buffer was opened by; the shell routes it here as well.
+  const std::filesystem::path& symlink_target() const { return document_->symlink_target; }
   const TextBuffer& lines() const { return document_->lines; }
 
   // On-disk identity recorded at the last load/save. `disk_signature().exists`
@@ -989,6 +994,8 @@ class TextViewport {
     std::filesystem::path path;
     // A language set by hand (Change Language Mode), or empty to detect one.
     std::string language_override;
+    // See symlink_target(); recomputed with `path_key` when `path` changes.
+    std::filesystem::path symlink_target;
     // Cached NormalizedPathKey(path), recomputed only when `path` changes.
     // Lets per-frame presentation-store lookups pass a precomputed key instead
     // of re-normalizing (and re-allocating) every frame. See SetDocumentPath.

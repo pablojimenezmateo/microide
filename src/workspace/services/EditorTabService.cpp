@@ -123,6 +123,11 @@ bool EditorTabService::ExternalChangeIsOwnEcho(const std::filesystem::path& path
   return coordinator_.ExternalChangeIsOwnEcho(path, disk_content_hash);
 }
 
+std::vector<std::filesystem::path> EditorTabService::OpenSymlinkAliasesOf(
+    const std::filesystem::path& normalized_target) const {
+  return coordinator_.OpenSymlinkAliasesOf(normalized_target);
+}
+
 bool EditorTabService::DiskSignatureMatchesOpenView(const std::filesystem::path& path) const {
   return coordinator_.DiskSignatureMatchesOpenView(path);
 }

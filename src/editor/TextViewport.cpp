@@ -1249,6 +1249,14 @@ void TextViewport::SelectRangeForExpansion(const SelectionRange& range) {
 void TextViewport::SetDocumentPath(const std::filesystem::path& path) {
   document_->path = path;
   document_->path_key = NormalizedPathKey(path);
+  // One lstat, at open, save-as and rename only. A loop or an unreadable link
+  // resolves to `path` itself, which records no target.
+  document_->symlink_target.clear();
+  if (!path.empty()) {
+    if (std::filesystem::path target = util::ResolveSymlinkTarget(path); target != path) {
+      document_->symlink_target = std::move(target);
+    }
+  }
 }
 
 void TextViewport::ResetState(std::vector<std::string> lines,

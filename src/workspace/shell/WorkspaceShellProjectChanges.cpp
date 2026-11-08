@@ -80,26 +80,38 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
       case project::ProjectFileChangeKind::Created:
       case project::ProjectFileChangeKind::Modified: {
         EditorTabService& editor_tabs = MakeEditorTabService();
-        // Suppress the watcher's echo of our own save: if every open view on this
-        // path already records the current on-disk signature, nothing changed
-        // underneath us and the save path already refreshed blame/compare.
-        switch (editor_tabs.ClassifyExternalChange(normalized_path)) {
-          case EditorTabService::ExternalChangeVerdict::OwnEcho:
-            break;
-          case EditorTabService::ExternalChangeVerdict::NeedsContentConfirm:
-            // One digest settles it, and computing it here is a read of up to
-            // 8 MiB on the shell thread — per changed path, per watcher event.
-            // A `git checkout` that moves the mtime of every open file pays that
-            // for each of them with the window frozen. Post it instead and
-            // decide when it lands; nothing is shown to the user in between, so
-            // an undecided path looks like no event at all rather than a wrong
-            // one.
-            BeginExternalChangeConfirm(normalized_path);
-            break;
-          case EditorTabService::ExternalChangeVerdict::Changed:
-            ApplyExternalFileChange(normalized_path, dirty_external_paths,
-                                    refresh_compare_paths);
-            break;
+        const auto route = [&](const std::filesystem::path& path) {
+          // Suppress the watcher's echo of our own save: if every open view on
+          // this path already records the current on-disk signature, nothing
+          // changed underneath us and the save path already refreshed
+          // blame/compare.
+          switch (editor_tabs.ClassifyExternalChange(path)) {
+            case EditorTabService::ExternalChangeVerdict::OwnEcho:
+              break;
+            case EditorTabService::ExternalChangeVerdict::NeedsContentConfirm:
+              // One digest settles it, and computing it here is a read of up to
+              // 8 MiB on the shell thread — per changed path, per watcher event.
+              // A `git checkout` that moves the mtime of every open file pays
+              // that for each of them with the window frozen. Post it instead
+              // and decide when it lands; nothing is shown to the user in
+              // between, so an undecided path looks like no event at all rather
+              // than a wrong one.
+              BeginExternalChangeConfirm(path);
+              break;
+            case EditorTabService::ExternalChangeVerdict::Changed:
+              ApplyExternalFileChange(path, dirty_external_paths, refresh_compare_paths);
+              break;
+          }
+        };
+        route(normalized_path);
+        // A file open through a symlink: the watcher names the file written,
+        // and a write to the target -- from its own tab, or from outside --
+        // left the link's clean buffer stale with nothing to say so (QA monkey,
+        // qa-asan seed 3: link-to-crlf.txt). Each such view is asked as itself;
+        // its stat follows the link, so its own save's echo still classifies as
+        // one.
+        for (const std::filesystem::path& alias : editor_tabs.OpenSymlinkAliasesOf(normalized_path)) {
+          route(alias);
         }
         break;
       }

@@ -681,6 +681,66 @@ void TestWorkspaceShellCleanReloadRaisesNotice() {
          "a silent clean reload should surface a passive reloaded-from-disk notice");
 }
 
+// QA monkey, qa-asan seed 3: a clean tab opened through a symlink kept its old
+// text after the file it links to was saved from that file's own tab. The
+// watcher names the file written -- the target -- and the sweep matched open
+// views by path, so the link's view was never asked. The batch here names only
+// the target, as the watcher does.
+void TestWorkspaceShellChangeToASymlinkTargetReloadsTheLinksCleanBuffer() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path target_path = root / "target.txt";
+  const std::filesystem::path link_path = root / "link.txt";
+  WriteFile(target_path, "before\n");
+  std::filesystem::create_symlink("target.txt", link_path);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "symlink fixture should open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, link_path);
+  DrainProjectChanges(shell);
+
+  WriteFile(target_path, "after the target changed\n");
+  ForceDistinctModificationTime(target_path);
+  DispatchAndApply(shell, BuildModifiedBatch(root, "target.txt"), "the target's batch");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "after the target changed",
+         "a clean buffer opened through a symlink reloads when its target changes, got: " +
+             std::string(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0]));
+  Expect(WorkspaceShellTestAccess::HasReloadedNoticeBanner(shell, link_path),
+         "and says so, on the link's tab");
+}
+
+// The other half: saving through the link writes the target (the link is kept),
+// and the watcher's echo names the target. Routed to the link's view, it must
+// classify as that view's own write, not as an external change.
+void TestWorkspaceShellSaveThroughASymlinkIsItsOwnEcho() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path target_path = root / "target.txt";
+  const std::filesystem::path link_path = root / "link.txt";
+  WriteFile(target_path, "original\n");
+  std::filesystem::create_symlink("target.txt", link_path);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "symlink save fixture should open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, link_path);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("mine ");
+  DrainProjectChanges(shell);
+  Expect(WorkspaceShellTestAccess::SaveTab(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
+         "saving through the link should succeed");
+  Expect(std::filesystem::is_symlink(link_path) && ReadFile(target_path) == "mine original\n",
+         "the save writes the target and keeps the link");
+
+  DispatchAndApply(shell, BuildModifiedBatch(root, "target.txt"), "the save's echo");
+  Expect(WorkspaceShellTestAccess::EditorBannerCount(shell) == 0,
+         "the echo of a save through the link raises no banner");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "mine original",
+         "and leaves the buffer as saved");
+}
+
 // A flood past the coalescer's 1024-change cap keeps the first 1024 itemized and
 // asks for a rescan. The apply re-checked open buffers only for a rescan with NO
 // itemized change, so an open file whose change came after the cap -- a branch
@@ -878,6 +938,10 @@ void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellBannerKeepPreservesBoth);
   AddTest(tests, "ExternalRepoChange/CleanReloadRaisesNotice",
           TestWorkspaceShellCleanReloadRaisesNotice);
+  AddTest(tests, "ExternalRepoChange/ChangeToASymlinkTargetReloadsTheLinksCleanBuffer",
+          TestWorkspaceShellChangeToASymlinkTargetReloadsTheLinksCleanBuffer);
+  AddTest(tests, "ExternalRepoChange/SaveThroughASymlinkIsItsOwnEcho",
+          TestWorkspaceShellSaveThroughASymlinkIsItsOwnEcho);
   AddTest(tests, "ExternalRepoChange/FloodPastTheCapReloadsAnOpenFileItDidNotName",
           TestWorkspaceShellFloodPastTheCapReloadsAnOpenFileItDidNotName);
   AddTest(tests, "ExternalRepoChange/MarksGitSnapshotStaleOnHeadChange",

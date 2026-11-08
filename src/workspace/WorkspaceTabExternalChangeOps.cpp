@@ -4,6 +4,7 @@
 
 #include "workspace/coordinators/WorkspaceTabCoordinator.h"
 
+#include <algorithm>
 #include <filesystem>
 
 #include <cstdint>
@@ -215,6 +216,31 @@ bool TabCoordinator::ExternalChangeIsOwnEcho(const std::filesystem::path& path,
                viewport.ConfirmDiskContentUnchanged(signature, disk_content_hash);
       });
   return sweep.matched_any && !sweep.stopped;
+}
+
+std::vector<std::filesystem::path> TabCoordinator::OpenSymlinkAliasesOf(
+    const std::filesystem::path& normalized_target) const {
+  std::vector<std::filesystem::path> aliases;
+  for (const EditorGroup& group : state_.editor_groups) {
+    for (const auto& tab : group.open_tabs) {
+      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+        continue;
+      }
+      const editor::TextViewport& viewport = tab.editor_state->viewport;
+      // Empty for every view not opened through a link: one size check each.
+      if (viewport.symlink_target().empty() ||
+          !util::SameAsNormalizedPath(viewport.symlink_target(), normalized_target)) {
+        continue;
+      }
+      const bool seen = std::any_of(aliases.begin(), aliases.end(), [&](const auto& alias) {
+        return util::SameAsNormalizedPath(viewport.path(), alias);
+      });
+      if (!seen) {
+        aliases.push_back(viewport.path());
+      }
+    }
+  }
+  return aliases;
 }
 
 }  // namespace microide::workspace

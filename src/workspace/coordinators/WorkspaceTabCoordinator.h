@@ -225,6 +225,11 @@ class TabCoordinator {
   // all. Re-baselines those views, so the next event on this path is one stat.
   [[nodiscard]] bool ExternalChangeIsOwnEcho(const std::filesystem::path& path,
                                              std::uint64_t disk_content_hash) const;
+  // The paths of open editor views that name `normalized_target` through a
+  // symlink (TextViewport::symlink_target), each once. A change the watcher
+  // reports under the target is a change to these views as well.
+  [[nodiscard]] std::vector<std::filesystem::path> OpenSymlinkAliasesOf(
+      const std::filesystem::path& normalized_target) const;
   bool OpenUntitled();
   // The live editor view of `normalized_path` in ANY group, or nullptr. A file is
   // one buffer however many panes show it (VS Code's model per resource, and the
