@@ -76,17 +76,18 @@ What it left, by workstream:
    multi-project switching (`project-open` re-roots the session away from the scratch
    copy), fake language servers and debug adapters, a remote-project soak job, and
    the 50 MB / submodule / large-history / empty-folder fixtures.
-6. **Oracles not built:** input-to-frame latency with the redraw trace attached, the
-   idle wake count after a quiet period, and the app log's error lines (`util::Log`
-   has no levels to filter on).
+6. **Oracle not built:** input-to-frame latency with the redraw trace attached. (The
+   idle-wake oracle and more always-a-finding log markers landed; `util::Log` has no
+   levels, so "any error line" stays the marker list.)
 7. **Measurement not built (W1.6/W1.7):** a periodic gcov job in the rotation,
    plateau detection shifting effort to the least-covered areas, pairwise state x
    action and branch-coverage reports per commit. `surface.py` reports reached items
    per category; a keybinding counts as reached when its command ran, not when its
    chord ran in each context.
 8. **W10 remainder:** mutation testing over the oracle code (the driver's
-   invariants, the redraw verifier, the data oracle), and the audit table of every
-   timing guard and sanitizer branch in `validation-traps.md`.
+   invariants, the redraw verifier, the data oracle). The guard audit landed
+   (`validation-traps.md`), and with it the frame-token assert is armed in every
+   build with assertions rather than under ASan alone.
 9. **Findings of the first hunts not yet fixed:** several redraw-verifier findings
    (one is a panel tab's close-button hover left painted after a burst with Ctrl+wheel
    zoom), a 4 s answer to `type` of a Hebrew string (editing near the 300 KB
