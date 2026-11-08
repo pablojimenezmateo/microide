@@ -127,7 +127,8 @@ def reproduction_rate(record: dict, signature: str, binary: Path, scratch: Path,
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("replay", type=Path)
-    parser.add_argument("--signature", required=True)
+    parser.add_argument("--signature", required=True,
+                        help="the finding's signature, or `auto`: the last one a full replay shows")
     parser.add_argument("--binary", type=Path, default=q.REPO / "build/microide/microide")
     parser.add_argument("--jobs", type=int, default=6)
     parser.add_argument("--out", type=Path, help="directory for minimal.json (default: beside the replay)")
@@ -146,6 +147,15 @@ def main() -> int:
             print(json.dumps({"rate": rate, "runs": args.runs}))
             return 0
         actions = actions_of(record)
+        if args.signature == "auto":
+            # The replay record ends at its finding: the last signature a full
+            # replay shows is the one to keep.
+            app, signatures = qa_run.replay_record(record, args.binary, Path(tempfile.mkdtemp(dir=scratch)))
+            if not signatures:
+                print(json.dumps({"reproduced": False, "actions": len(actions)}))
+                return 2
+            args.signature = max(signatures, key=lambda entry: entry.get("actions", 0))["signature"]
+            print(f"  signature: {args.signature}", flush=True)
         tester = Tester(record, args.signature, args.binary, scratch, args.jobs)
         if not tester.test_many([list(range(len(actions)))], lambda idx: [actions[i] for i in idx])[0]:
             print(json.dumps({"reproduced": False, "actions": len(actions)}))
