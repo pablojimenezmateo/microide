@@ -58,7 +58,19 @@ class Tester:
         for entry in signatures:
             if entry.get("signature") == self.signature:
                 self.kind = entry.get("kind", "")
-        self.check_each = self.kind not in ("log", "crash", "data")
+
+    def try_skipping_checks(self, actions: list[dict]) -> None:
+        """Candidates may skip the per-action checks for a log, crash or data
+        finding -- but only once a full replay without them still reproduces:
+        the checks are also time between actions, and a timing-sensitive finding
+        replayed without them never showed, so ddmin reduced nothing in 323
+        tests (seed 4, 2026-11-08)."""
+        if self.kind not in ("log", "crash", "data"):
+            return
+        self.check_each = False
+        if not self._run(actions):
+            self.check_each = True
+            print("  the finding needs the per-action checks' timing; keeping them", flush=True)
 
     def _run(self, actions: list[dict]) -> bool:
         out = Path(tempfile.mkdtemp(prefix="t-", dir=self.scratch))
@@ -182,6 +194,7 @@ def main() -> int:
         if not tester.test_many([list(range(len(actions)))], lambda idx: [actions[i] for i in idx])[0]:
             print(json.dumps({"reproduced": False, "actions": len(actions)}))
             return 2
+        tester.try_skipping_checks(actions)
         kept = ddmin(tester, actions, args.max_tests, time.monotonic() + args.time_budget)
         minimal = {k: v for k, v in record.items() if k != "actions"}
         minimal["actions"] = [actions[i] for i in kept]
