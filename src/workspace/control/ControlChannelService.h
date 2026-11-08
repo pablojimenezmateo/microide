@@ -212,6 +212,7 @@ class ControlChannelService {
   // Every editor group with its tabs (cursor/scroll/dirty per tab, the visible
   // range of the focused active tab) and the split tree in its pre-order form.
   util::JsonValue BuildEditor() const;
+  util::JsonValue BuildDocuments() const;
   // The runnable command registry: {command, usage, label}.
   util::JsonValue BuildCommands() const;
   // Terminal strip: every tab with its panes ({pane, active, label, running,

@@ -21,6 +21,7 @@
 #include "platform/RuntimePaths.h"
 #include "util/HeapUsage.h"
 #include "util/Parse.h"
+#include "util/Sha256.h"
 #include "util/StringUtil.h"
 #include "workspace/control/ControlProtocol.h"
 #include "workspace/WorkspaceTerminalSelection.h"
@@ -441,6 +442,9 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
   }
   if (verb == "editor") {
     return BuildEditor();
+  }
+  if (verb == "documents") {
+    return BuildDocuments();
   }
   if (verb == "commands") {
     return BuildCommands();
@@ -869,6 +873,51 @@ util::JsonValue ControlChannelService::BuildEditor() const {
   }
   root["groups"] = util::JsonValue(std::move(groups));
   return util::JsonValue(std::move(root));
+}
+
+// `documents`: every editor document open in the current project, once each
+// however many views show it -- its path, whether it is unsaved, and the SHA-256
+// of the bytes a save would write now (the BOM, the lines joined with the
+// document's ending). The QA monkey's data-loss oracle reads it: a clean
+// document's file holds exactly those bytes, and a dirty one comes back with the
+// same digest after a kill -9 and a relaunch (dev-docs/project/safety-plan.md W4).
+// A view whose content has not landed yet has no document to describe.
+util::JsonValue ControlChannelService::BuildDocuments() const {
+  util::JsonArray documents;
+  if (context_ == nullptr) {
+    return util::JsonValue(std::move(documents));
+  }
+  std::vector<const void*> seen;
+  for (const EditorGroup& group : context_->current_project_state.editor_groups) {
+    for (const TabEntry& tab : group.open_tabs) {
+      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
+          tab.editor_state->content_pending()) {
+        continue;
+      }
+      const editor::TextViewport& view = tab.editor_state->viewport;
+      if (std::find(seen.begin(), seen.end(), view.document_identity()) != seen.end()) {
+        continue;
+      }
+      seen.push_back(view.document_identity());
+      const bool opaque = view.encoding() == editor::TextViewport::TextEncoding::Bytes;
+      // What Save writes: an opaque (binary) buffer joins with LF (its CR bytes
+      // are data, kept in the lines).
+      const std::string bytes = view.SerializeDocumentText(
+          opaque ? std::optional<util::LineEnding>(util::LineEnding::LF) : std::nullopt);
+      util::JsonObject object;
+      object["path"] = util::JsonValue(view.path().generic_string());
+      object["title"] = util::JsonValue(tab.title);
+      object["dirty"] = util::JsonValue(view.dirty());
+      object["readOnly"] = util::JsonValue(view.read_only());
+      object["encoding"] = util::JsonValue(std::string(
+          opaque ? "bytes" : view.encoding() == editor::TextViewport::TextEncoding::ASCII ? "ascii" : "utf8"));
+      object["mixedLineEndings"] = util::JsonValue(view.has_mixed_line_endings());
+      object["bytes"] = util::JsonValue(static_cast<std::int64_t>(bytes.size()));
+      object["sha256"] = util::JsonValue(util::Sha256Hex(bytes));
+      documents.push_back(util::JsonValue(std::move(object)));
+    }
+  }
+  return util::JsonValue(std::move(documents));
 }
 
 util::JsonValue ControlChannelService::BuildCommands() const {

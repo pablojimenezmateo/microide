@@ -163,7 +163,7 @@ Newline-delimited JSON, one object per line.
 Query verbs: `debug-state`, `breakpoints`, `function-breakpoints`,
 `exception-filters`, `tabs`, `projects`, `status`, `launch-configs`, `adapters`,
 `editor`, `commands`, `terminals`, `terminal-output`, `notifications`,
-`keybindings`, `settings`, `ui`, `buffer`, `output`, `action-counts`, `hit-test`.
+`keybindings`, `settings`, `ui`, `buffer`, `documents`, `output`, `action-counts`, `hit-test`.
 
 **Where a press lands (`hit-test`).** Args `{x, y}` in layout units; answers
 `{region}`: `normal` (the app gets the press), `draggable` or `resize` (the title
@@ -284,6 +284,15 @@ whether it was rejected. A `menu-item:` row also carries the `command` it runs.
 With `MICROIDE_QA_ACTION_DRY_RUN=1` at startup every key-, menu- and
 pointer-driven action records its receipt and runs nothing (control commands still
 run), which is how `tools/qa`'s `keys` and `context-menus` sweeps press everything.
+
+**What is open, and what a save would write (`documents`).** One row per open
+editor document in the current project, however many panes show it: `{path, title,
+dirty, readOnly, encoding (ascii|utf8|bytes), mixedLineEndings, bytes, sha256}`,
+where `sha256` is the digest of the bytes a save writes now (the BOM, the lines
+joined with the document's ending; LF for a binary buffer). A view whose content
+has not loaded yet is not listed. The QA monkey's data-loss oracle reads it: a
+clean document's file has that digest, and a dirty one comes back with it after
+a kill -9 and a relaunch (`dev-docs/project/safety-plan.md` W4).
 
 **What ran, counted (`action-counts`).** `{dispatched, commands: {<command>: n},
 plugins: {<plugin command>: n}}`: every command that ran since startup with how

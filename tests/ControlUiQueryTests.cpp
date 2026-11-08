@@ -1,3 +1,4 @@
+#include "util/Sha256.h"
 #include "TestSupport.h"
 #include "TestSupportSdl.h"
 
@@ -348,6 +349,40 @@ void TestBufferQueryReportsTextCaretsAndFolds() {
   Expect(!buffer["folded"].AsArray().empty() &&
              buffer["folded"][std::size_t{0}][std::size_t{0}].AsInt() == 1,
          "fold-all should leave the query reporting the fold at line 1");
+}
+
+// The `documents` query: every open editor document once, however many panes show
+// it, with the SHA-256 of the bytes a save writes -- the QA monkey's data-loss
+// oracle compares it with the file (a clean buffer) and across a kill -9 (a dirty
+// one). The digest must follow the document's own line ending and BOM.
+void TestDocumentsQueryHashesWhatASaveWrites() {
+  UiFixture fixture;
+  const std::string crlf = "\xEF\xBB\xBFone\r\ntwo\r\n";
+  WriteFile(fixture.root / "crlf.txt", crlf);
+  TestAccess::OpenFileInNewTab(fixture.shell, fixture.root / "crlf.txt");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "split-right should run");
+  util::JsonValue documents = TestAccess::ControlQuery(fixture.shell, "documents");
+  std::size_t seen = 0;
+  for (const util::JsonValue& doc : documents.AsArray()) {
+    if (doc["path"].AsString().ends_with("crlf.txt")) {
+      ++seen;
+      Expect(!doc["dirty"].AsBool(), "a freshly opened file is clean");
+      Expect(doc["sha256"].AsString() == util::Sha256Hex(crlf),
+             "a clean document's digest is its file's: the BOM and the CRLF endings included");
+      Expect(doc["bytes"].AsInt() == static_cast<std::int64_t>(crlf.size()), "the byte count is the file's");
+    }
+  }
+  Expect(seen == 1, "a document shown in two panes is listed once (" + std::to_string(seen) + ")");
+  TestAccess::SetFocusEditor(fixture.shell);
+  (void)DispatchEvents(fixture.shell, {TextInputEvent("x")});
+  documents = TestAccess::ControlQuery(fixture.shell, "documents");
+  for (const util::JsonValue& doc : documents.AsArray()) {
+    if (doc["path"].AsString().ends_with("crlf.txt")) {
+      Expect(doc["dirty"].AsBool(), "typing makes it dirty");
+      Expect(doc["sha256"].AsString() == util::Sha256Hex("\xEF\xBB\xBFxone\r\ntwo\r\n"),
+             "the digest follows the edit: " + doc["sha256"].AsString());
+    }
+  }
 }
 
 // The list overlays name their rows, and a click at a row's center runs it.
@@ -756,6 +791,7 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
           TestInjectedInputLeavesTheReceiptToWhatItRan);
   AddTest(tests, "ControlUiQuery/KeyCommandTypesPrintableKeys", TestKeyCommandTypesPrintableKeys);
   AddTest(tests, "ControlUiQuery/LargeEditorFontKeepsTheChromeSize", TestLargeEditorFontKeepsTheChromeSize);
+  AddTest(tests, "ControlUiQuery/DocumentsQueryHashesWhatASaveWrites", TestDocumentsQueryHashesWhatASaveWrites);
   AddTest(tests, "ControlUiQuery/InjectedInputRepaintsWhatItChanged", TestInjectedInputRepaintsWhatItChanged);
   AddTest(tests, "ControlUiQuery/PointerCommandClicksWhatTheUiNames",
           TestPointerCommandClicksWhatTheUiNames);
