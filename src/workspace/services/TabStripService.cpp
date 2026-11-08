@@ -28,6 +28,40 @@ float OverflowStripReserveForHiddenCount(std::size_t hidden_count) {
   return hidden_count > 0 ? OverflowButtonWidthForHiddenCount(hidden_count) + 12.0f : 0.0f;
 }
 
+// Cuts a laid-out strip at `end`: a tab past it is shortened to it, its close
+// button moving with its edge (dropped once it no longer fits), and a tab that
+// starts past it is dropped. The paint is clipped to the same rects, so what the
+// `ui` query names and a click hits is what is painted.
+void CutVisibleTabsAt(std::vector<VisibleStripTab>& tabs, float end) {
+  std::erase_if(tabs, [end](const VisibleStripTab& tab) { return tab.rect.x >= end; });
+  for (VisibleStripTab& tab : tabs) {
+    const float overhang = tab.rect.x + tab.rect.w - end;
+    if (overhang <= 0.0f) {
+      continue;
+    }
+    tab.rect.w -= overhang;
+    tab.close_rect.x -= overhang;
+    if (tab.close_rect.x < tab.rect.x) {
+      tab.close_rect = SDL_FRect{};
+    }
+  }
+}
+
+// Ends a strip at its "N>" overflow chip while one is shown (the editor and the
+// panel strips alike): the layout's room can run a tab under it -- the editor's
+// 120 px floor in a narrow group, or a long first tab. Dropping a tab can widen
+// the chip's count, so the cut is made against the chip it leaves.
+template <typename OverflowOf>
+void CutVisibleTabsAtRightChip(std::vector<VisibleStripTab>& tabs, float gap, const OverflowOf& overflow_of) {
+  for (int pass = 0; pass < 2 && !tabs.empty(); ++pass) {
+    const TabStripOverflowControls overflow = overflow_of(tabs);
+    if (overflow.hidden_right == 0) {
+      return;
+    }
+    CutVisibleTabsAt(tabs, overflow.right_button.x - gap);
+  }
+}
+
 // FNV-1a mixers used to fingerprint the bottom-panel tab-model inputs. Content
 // hashing (not a monotonic revision) keeps the cache correct without threading a
 // bump through every terminal/output/plugin mutation site; a same-state repaint
@@ -170,6 +204,13 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleProjectTabs(
                                 tabs.back().index + 1 == catalog.entries.size();
   if (all_tabs_visible) {
     tabs = build_tabs(project_tab_strip.x, 0.0f);
+  } else {
+    // The same cut as the editor and panel strips: the 120 px floor never runs
+    // a project tab past the strip or under its "N>" chip.
+    CutVisibleTabsAt(tabs, project_tab_strip.x + project_tab_strip.w);
+    CutVisibleTabsAtRightChip(tabs, gap, [&](const std::vector<VisibleStripTab>& laid_out) {
+      return ComputeProjectTabOverflowControls(project_tab_strip, laid_out, catalog);
+    });
   }
   for (VisibleStripTab& tab : tabs) {
     if (tab.index < badge_styles.size()) {
@@ -371,20 +412,15 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleEditorTabs(
   // the ui named it and a click meant for the neighbour landed on it (QA monkey,
   // editor profile). The paint was clipped to the strip; the geometry now is too
   // -- a tab past the strip's end is cut to it, its close button moving with its
-  // edge, and one starting past it is dropped.
-  const float strip_end = tab_strip.x + tab_strip.w;
-  std::erase_if(tabs, [strip_end](const VisibleStripTab& tab) { return tab.rect.x >= strip_end; });
-  for (VisibleStripTab& tab : tabs) {
-    const float overhang = tab.rect.x + tab.rect.w - strip_end;
-    if (overhang <= 0.0f) {
-      continue;
-    }
-    tab.rect.w -= overhang;
-    tab.close_rect.x -= overhang;
-    if (tab.close_rect.x < tab.rect.x) {
-      tab.close_rect = SDL_FRect{};
-    }
-  }
+  // edge, and one starting past it is dropped. The end is the "N>" overflow
+  // chip's left edge while it is shown: cut at the strip's end, a strip narrower
+  // than the floor plus the chips' reserve kept its first tab, close button and
+  // all, under the chip (QA monkey, editing profile at ui.scale 2). Dropping a tab
+  // can widen the chip's count, so the cut is made against the chip it leaves.
+  CutVisibleTabsAt(tabs, tab_strip.x + tab_strip.w);
+  CutVisibleTabsAtRightChip(tabs, gap, [&](const std::vector<VisibleStripTab>& laid_out) {
+    return ComputeEditorTabOverflowControls(tab_strip, laid_out, group);
+  });
 
   visible_cache.geometry_version = geometry.version;
   visible_cache.strip = tab_strip;
@@ -740,11 +776,35 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleBottomPanelTa
                               tab_height, model_indices, active_model_index, display_titles,
                               tooltip_labels);
   };
-  build_tabs(panel_header.x + kTabStripOverflowReserve, kTabStripOverflowReserve);
+  // The chips are laid out by BuildOverflowControls over the band left of the
+  // new-tab button; the tabs reserve exactly what a chip for the current hidden
+  // counts takes, settled as the editor strip settles it. A fixed 32 px start
+  // put the first tab 4 px under the 8..36 px "<N" chip (QA monkey).
+  const auto overflow_of = [&](const std::vector<VisibleStripTab>& laid_out) {
+    return ComputeBottomPanelTabOverflowControls(state, panel_header, layout_mode, laid_out, channels);
+  };
+  float start_x = panel_header.x + OverflowStripReserveForHiddenCount(1);
+  float right_overflow_reserve = OverflowStripReserveForHiddenCount(1);
+  for (int pass = 0; pass < 3; ++pass) {
+    build_tabs(start_x, right_overflow_reserve);
+    if (visible.empty()) {
+      break;
+    }
+    const TabStripOverflowControls overflow = overflow_of(visible);
+    const float next_start_x = panel_header.x + OverflowStripReserveForHiddenCount(overflow.hidden_left);
+    const float next_right_overflow_reserve = OverflowStripReserveForHiddenCount(overflow.hidden_right);
+    if (next_start_x == start_x && next_right_overflow_reserve == right_overflow_reserve) {
+      break;
+    }
+    start_x = next_start_x;
+    right_overflow_reserve = next_right_overflow_reserve;
+  }
   const bool all_tabs_visible = !visible.empty() && visible.front().index == 0 &&
                                 visible.back().index + 1 == tabs.size();
   if (all_tabs_visible) {
     build_tabs(panel_header.x, 0.0f);
+  } else {
+    CutVisibleTabsAtRightChip(visible, gap, overflow_of);
   }
   for (VisibleStripTab& tab : visible) {
     tab.activity_dot = tab.index < tabs.size() && tabs[tab.index].activity;

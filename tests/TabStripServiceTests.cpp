@@ -28,6 +28,96 @@ using microide::workspace::WorkspaceOutputChannels;
 
 using ChannelInfo = WorkspaceOutputChannels::ChannelInfo;
 
+// The QA monkey (editing profile, seed 105, at ui.scale 2): in a strip narrower
+// than the layout's 120 px tab floor plus the overflow chips' reserve, the first
+// tab ran under the "N>" chip -- the strip-end cut stopped at the strip, not at
+// the chip -- so the ui named its close button where the chip is painted, under
+// it. Nothing of a visible tab lies under an overflow chip, at any width.
+void TestNoEditorTabLiesUnderAnOverflowChip() {
+  microide::workspace::EditorGroup group;
+  for (const char* name : {"binary-file-with-a-long-name.bin", "b.txt", "c.txt", "d.txt", "e.txt", "f.txt"}) {
+    microide::workspace::TabEntry tab;
+    tab.path = name;
+    tab.title = name;
+    group.open_tabs.push_back(std::move(tab));
+  }
+  const auto measure = [](std::string_view text) { return static_cast<float>(text.size()) * 8.0f; };
+  const auto title = [&group](std::size_t index) { return group.open_tabs[index].title; };
+  std::size_t checked = 0;
+  for (std::size_t active : {std::size_t{0}, std::size_t{3}, std::size_t{5}}) {
+    group.active_tab_index = active;
+    group.tab_scroll_index = static_cast<int>(active);
+    for (float width = 60.0f; width <= 420.0f; width += 4.0f) {
+      TabStripService service;
+      const SDL_FRect strip{300.0f, 25.0f, width, 34.0f};
+      const auto& tabs = service.ComputeVisibleEditorTabs(group, 0, strip, measure, title, title, 0);
+      const auto overflow = service.ComputeEditorTabOverflowControls(strip, tabs, group);
+      for (const auto& tab : tabs) {
+        for (const auto& [chip, hidden] : {std::pair{overflow.left_button, overflow.hidden_left},
+                                          std::pair{overflow.right_button, overflow.hidden_right}}) {
+          if (hidden == 0) {
+            continue;
+          }
+          ++checked;
+          for (const SDL_FRect& part : {tab.rect, tab.close_rect}) {
+            if (part.w <= 0.0f) {
+              continue;
+            }
+            const float overlap = std::min(part.x + part.w, chip.x + chip.w) - std::max(part.x, chip.x);
+            Expect(overlap <= 0.5f, "strip " + std::to_string(static_cast<int>(width)) + " px, active " +
+                                        std::to_string(active) + ": tab " + std::to_string(tab.index) + " lies " +
+                                        std::to_string(static_cast<int>(overlap)) + " px under an overflow chip");
+          }
+        }
+      }
+    }
+  }
+  Expect(checked > 0, "some width overflows the strip (the sweep's precondition)");
+}
+
+// The panel's strip, the same rule: its tabs started at a fixed 32 px while its
+// "<N" chip spans 8..36 px (wider past nine hidden tabs), so the first visible
+// tab always lay 4 px under the chip (QA monkey: button:panel-tabs/more-left over
+// panel-tab:bash), and nothing cut a tab at the right chip.
+void TestNoPanelTabLiesUnderAnOverflowChip() {
+  ProjectWorkspaceState state;
+  state.panel.content = PanelContentKind::Output;
+  std::vector<ChannelInfo> channels;
+  for (int i = 0; i < 14; ++i) {
+    const std::string id = "channel-" + std::to_string(i);
+    state.panel.output.open_channel_ids.push_back(id);
+    channels.push_back({id, "Output channel number " + std::to_string(i)});
+  }
+  state.panel.output.channel_id = channels.front().id;
+  const auto measure = [](std::string_view text) { return static_cast<float>(text.size()) * 8.0f; };
+  std::size_t checked = 0;
+  for (int scroll : {0, 1, 5, 12}) {
+    state.panel.tab_scroll_index = scroll;
+    for (float width = 160.0f; width <= 1200.0f; width += 13.0f) {
+      TabStripService service;
+      const SDL_FRect header{0.0f, 700.0f, width, 26.0f};
+      const auto& tabs = service.ComputeVisibleBottomPanelTabs(
+          state, header, microide::workspace::LayoutMode::Regular, measure, channels);
+      const auto overflow = service.ComputeBottomPanelTabOverflowControls(
+          state, header, microide::workspace::LayoutMode::Regular, tabs, channels);
+      for (const auto& tab : tabs) {
+        for (const auto& [chip, hidden] : {std::pair{overflow.left_button, overflow.hidden_left},
+                                          std::pair{overflow.right_button, overflow.hidden_right}}) {
+          if (hidden == 0) {
+            continue;
+          }
+          ++checked;
+          const float overlap = std::min(tab.rect.x + tab.rect.w, chip.x + chip.w) - std::max(tab.rect.x, chip.x);
+          Expect(overlap <= 0.5f, "panel strip " + std::to_string(static_cast<int>(width)) + " px, scroll " +
+                                      std::to_string(scroll) + ": tab " + std::to_string(tab.index) + " lies " +
+                                      std::to_string(static_cast<int>(overlap)) + " px under an overflow chip");
+        }
+      }
+    }
+  }
+  Expect(checked > 0, "some width overflows the panel strip (the sweep's precondition)");
+}
+
 // TD-2026-07-17A-084: BuildBottomPanelTabs memoizes on a content fingerprint of
 // its inputs. A same-state repeat call reuses the cached model list; any change to
 // the open ids, a channel label, or the panel content must miss and rebuild.
@@ -299,6 +389,8 @@ void TestProjectStripCacheMissesOnGeometryEpochAndLayoutMode() {
 }  // namespace
 
 void RegisterTabStripServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TabStripService/NoEditorTabLiesUnderAnOverflowChip", TestNoEditorTabLiesUnderAnOverflowChip);
+  AddTest(tests, "TabStripService/NoPanelTabLiesUnderAnOverflowChip", TestNoPanelTabLiesUnderAnOverflowChip);
   AddTest(tests, "TabStripService/BottomPanelVisibleTabsAreMemoized",
           TestBottomPanelVisibleTabsAreMemoized);
   AddTest(tests, "TabStripService/BottomPanelVisibleTabsMissOnGeometryEpoch",
