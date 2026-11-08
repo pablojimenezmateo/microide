@@ -412,6 +412,17 @@ void ControlChannelService::ConsumeControlCallbacks() {
 util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
                                                    const util::JsonValue& args, bool* ok,
                                                    std::string* error) const {
+  // ControlQueryVerbs() is the one list of verbs (the help text, the man page and
+  // the `surface` inventory read it): a verb answered below and missing there is
+  // refused here, and ControlUiQuery/EveryListedQueryVerbIsAnswered asks every
+  // listed one, so the two cannot drift apart. (`settings` was answered and
+  // unlisted until this check.)
+  const std::span<const std::string_view> verbs = ControlQueryVerbs();
+  if (std::find(verbs.begin(), verbs.end(), verb) == verbs.end()) {
+    *ok = false;
+    *error = "unknown query \"" + verb + "\"";
+    return util::JsonValue(nullptr);
+  }
   *ok = true;
   if (verb == "debug-state") {
     return BuildDebugState();
@@ -445,6 +456,9 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
   }
   if (verb == "documents") {
     return BuildDocuments();
+  }
+  if (verb == "surface") {
+    return BuildSurface();
   }
   if (verb == "commands") {
     return BuildCommands();

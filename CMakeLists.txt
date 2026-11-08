@@ -603,6 +603,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/control/ControlChannelService.cpp
   src/workspace/control/ControlUiQuery.cpp
   src/workspace/control/ControlBufferQuery.cpp
+  src/workspace/control/ControlSurfaceQuery.cpp
   src/workspace/control/ControlUiShellSources.cpp
   src/workspace/HoverTextWrap.cpp
   src/workspace/control/ControlClient.cpp

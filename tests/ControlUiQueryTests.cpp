@@ -385,6 +385,26 @@ void TestDocumentsQueryHashesWhatASaveWrites() {
   }
 }
 
+// The `surface` query lists every query verb; each must be answered, so the
+// inventory the QA monkey's coverage is measured against cannot name a verb the
+// channel does not have (or miss one it grew). It also lists the menus, the
+// context menus and the sidebar views from their registries.
+void TestEveryListedQueryVerbIsAnswered() {
+  UiFixture fixture;
+  const util::JsonValue surface = TestAccess::ControlQuery(fixture.shell, "surface");
+  const auto& verbs = surface["queries"].AsArray();
+  Expect(verbs.size() == workspace::ControlQueryVerbs().size(), "the surface lists every query verb");
+  for (const util::JsonValue& verb : verbs) {
+    std::string error;
+    (void)TestAccess::ControlQueryWithError(fixture.shell, verb.AsString(), &error);
+    Expect(!error.starts_with("unknown query"), "the listed query verb " + verb.AsString() + " is answered");
+  }
+  Expect(surface["menus"]["Edit"].AsArray().size() > 5, "the surface lists the Edit menu's items");
+  Expect(!surface["contextMenus"]["file"].AsArray().empty(), "the surface lists the tree's file context menu");
+  Expect(surface["sidebarViews"].AsArray().size() >= 3, "the surface lists the sidebar views");
+  Expect(surface["commands"].AsArray().size() > 200, "the surface lists the command catalogue");
+}
+
 // The list overlays name their rows, and a click at a row's center runs it.
 void TestUiQueryNamesOverlayRows() {
   UiFixture fixture;
@@ -791,6 +811,7 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
           TestInjectedInputLeavesTheReceiptToWhatItRan);
   AddTest(tests, "ControlUiQuery/KeyCommandTypesPrintableKeys", TestKeyCommandTypesPrintableKeys);
   AddTest(tests, "ControlUiQuery/LargeEditorFontKeepsTheChromeSize", TestLargeEditorFontKeepsTheChromeSize);
+  AddTest(tests, "ControlUiQuery/EveryListedQueryVerbIsAnswered", TestEveryListedQueryVerbIsAnswered);
   AddTest(tests, "ControlUiQuery/DocumentsQueryHashesWhatASaveWrites", TestDocumentsQueryHashesWhatASaveWrites);
   AddTest(tests, "ControlUiQuery/InjectedInputRepaintsWhatItChanged", TestInjectedInputRepaintsWhatItChanged);
   AddTest(tests, "ControlUiQuery/PointerCommandClicksWhatTheUiNames",

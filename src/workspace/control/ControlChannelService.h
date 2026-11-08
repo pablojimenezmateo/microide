@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -213,6 +214,7 @@ class ControlChannelService {
   // range of the focused active tab) and the split tree in its pre-order form.
   util::JsonValue BuildEditor() const;
   util::JsonValue BuildDocuments() const;
+  util::JsonValue BuildSurface() const;
   // The runnable command registry: {command, usage, label}.
   util::JsonValue BuildCommands() const;
   // Terminal strip: every tab with its panes ({pane, active, label, running,

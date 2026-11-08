@@ -163,7 +163,9 @@ Newline-delimited JSON, one object per line.
 Query verbs: `debug-state`, `breakpoints`, `function-breakpoints`,
 `exception-filters`, `tabs`, `projects`, `status`, `launch-configs`, `adapters`,
 `editor`, `commands`, `terminals`, `terminal-output`, `notifications`,
-`keybindings`, `settings`, `ui`, `buffer`, `documents`, `output`, `action-counts`, `hit-test`.
+`keybindings`, `settings`, `ui`, `buffer`, `documents`, `output`, `action-counts`, `hit-test`,
+`surface`. `ControlQueryVerbs()` is the one list: the dispatcher refuses a verb
+missing from it, and a test asks every listed verb.
 
 **Where a press lands (`hit-test`).** Args `{x, y}` in layout units; answers
 `{region}`: `normal` (the app gets the press), `draggable` or `resize` (the title
@@ -293,6 +295,14 @@ joined with the document's ending; LF for a binary buffer). A view whose content
 has not loaded yet is not listed. The QA monkey's data-loss oracle reads it: a
 clean document's file has that digest, and a dirty one comes back with it after
 a kill -9 and a relaunch (`dev-docs/project/safety-plan.md` W4).
+
+**Everything reachable (`surface`).** The inventory the QA monkey's coverage is
+measured against (`dev-docs/project/safety-plan.md` W1.7), read from the app's own
+registries so it cannot drift: `{commands, keybindings: [{id, chord, context}],
+settings, menus: {<menu>: [{label, command?, submenu?}]}, contextMenus: {<target>:
+[...]}, sidebarViews, overlayModes, panelContents, tabKinds, focusTargets,
+queries}`. `tools/soak/surface.py` diffs it per commit and reports what no monkey
+run or checking flow has reached.
 
 **What ran, counted (`action-counts`).** `{dispatched, commands: {<command>: n},
 plugins: {<plugin command>: n}}`: every command that ran since startup with how

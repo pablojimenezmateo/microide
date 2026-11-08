@@ -1334,6 +1334,11 @@
     std::string error;
     return shell.control_channel_service_.AnswerQuery(verb, &ok, &error);
   }
+  static util::JsonValue ControlQueryWithError(WorkspaceShell& shell, const std::string& verb,
+                                               std::string* error) {
+    bool ok = false;
+    return shell.control_channel_service_.AnswerQuery(verb, &ok, error);
+  }
   // The keybinding reachability matrix (tests/KeybindingReachabilityTests.cpp).
   static KeyInputCoordinator::DispatchProbe& KeyDispatchProbe(WorkspaceShell& shell) {
     return shell.MakeKeyInputCoordinator().dispatch_probe();
