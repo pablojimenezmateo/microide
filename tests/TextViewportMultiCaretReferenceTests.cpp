@@ -402,6 +402,50 @@ void TestNewlineAtASoftWrapBoundaryKeepsTheWrappedRowTableCurrent() {
   }
 }
 
+// Two views of one document (a split README, as the QA monkey had it: seed 69 at
+// 600 steps, then seed 601), each soft-wrapped. An edit through one view leaves
+// the other's per-line width table describing the old text, which is fine while
+// that table reads as stale. An edit through the OTHER view then spliced its own
+// change into that stale table and stamped it current, so the line the first view
+// changed kept its old width under a current stamp -- a release build lays the
+// line's rows out against the wrong width; a debug build aborts on the
+// cross-check (TD-2026-10-30-426).
+void TestAnEditThroughTheOtherViewOfADocumentKeepsItsWidthTableTrue() {
+  const std::string text =
+      "# taskflow\n\nshort line\nJobs run highest-priority first; ties keep insertion order.\n"
+      "running cost total.\n";
+  TextViewport left;
+  left.SetViewportSize(20, 30);
+  left.LoadContent(text, "/tmp/two-views.md");
+  left.SetSoftWrap(true);
+  TextViewport right = left;  // a second view: the document is shared
+  Expect(right.SharesDocumentWith(left), "the copy should be another view of the document");
+  right.SetViewportSize(20, 50);
+  right.SetSoftWrap(true);
+  const auto lay_out = [](TextViewport& view) {
+    for (std::size_t row = 0; row < 40; ++row) {
+      (void)view.VisibleWrappedRowLayoutRef(row);
+    }
+    (void)view.max_visual_columns();
+  };
+  lay_out(left);
+  lay_out(right);
+  // Through the right view: line 2 grows past every other line, line count kept.
+  right.MoveCursorTo(2, 5);
+  right.InsertText("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+  lay_out(right);
+  // Through the left view: an edit on another line, line count kept.
+  left.MoveCursorTo(4, 0);
+  left.InsertText("}");
+  lay_out(left);
+  const std::size_t widest = left.lines().LineLength(2);  // plain ASCII: bytes are columns
+  Expect(widest > 80, "the widened line should be the widest");
+  Expect(left.max_visual_columns() == widest,
+         "the left view's widest line should be the line the right view widened: " +
+             std::to_string(left.max_visual_columns()) + " != " + std::to_string(widest));
+  Expect(right.max_visual_columns() == widest, "and the right view's too");
+}
+
 // Soft-wrapped rows are laid out with the line's width taken from the width table
 // or the wrapped-row table, cross-checked (in debug builds) against the buffer.
 // The QA monkey tripped that check once after a newline over a selection in a
@@ -472,6 +516,8 @@ void RegisterTextViewportMultiCaretReferenceTests(std::vector<TestCase>& tests) 
           TestTypingTheSelectedTextCollapsesTheSelection);
   AddTest(tests, "TextViewport/NewlineAtASoftWrapBoundaryKeepsTheWrappedRowTableCurrent",
           TestNewlineAtASoftWrapBoundaryKeepsTheWrappedRowTableCurrent);
+  AddTest(tests, "TextViewport/AnEditThroughTheOtherViewOfADocumentKeepsItsWidthTableTrue",
+          TestAnEditThroughTheOtherViewOfADocumentKeepsItsWidthTableTrue);
   AddTest(tests, "TextViewport/MultiCaretEditsKeepTheWrappedRowTableCurrent",
           TestMultiCaretEditsKeepTheWrappedRowTableCurrent);
   AddTest(tests, "TextViewport/MultiCaretEditsAgreeWithReference",

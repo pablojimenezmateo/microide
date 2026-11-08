@@ -520,7 +520,10 @@ bool TextLayoutCache::UpdateWrappedRowsAfterEdit(
   // The table must be in sync with the *pre-edit* buffer: one offset entry per
   // pre-edit logical line, contiguous rows per line (pure soft-wrap has no
   // hidden lines). old_line_count is derived from the new buffer + edit deltas.
-  if (lines.size() + removed_count < inserted_count) {
+  // Same line count is not same text: another view of the document may have
+  // edited it since this table was built (see DescribesTheTextJustBefore).
+  if (!DescribesTheTextJustBefore(wrapped_row_layouts_content_revision_, content_revision) ||
+      lines.size() + removed_count < inserted_count) {
     return false;
   }
   const std::size_t old_line_count = lines.size() + removed_count - inserted_count;
@@ -1040,6 +1043,7 @@ void TextLayoutCache::UpdateVisualColumnCacheAfterEdit(
     LineSpan lines,
     std::size_t tab_size, std::uint64_t content_revision, InlineLineSplice splice) {
   if (cached_max_visual_columns_tab_size_ != tab_size ||
+      !DescribesTheTextJustBefore(cached_max_visual_columns_content_revision_, content_revision) ||
       lines.size() + removed_count < inserted_count ||
       cached_visual_line_columns_.size() != lines.size() - inserted_count + removed_count) {
     // Reset only the visual-column + visible-line caches here. The wrapped-row

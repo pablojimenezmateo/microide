@@ -381,6 +381,19 @@ class TextLayoutCache {
   // builder read it, and every content edit either splices it (see
   // UpdateVisualColumnCacheAfterEdit) or drops it, so freshness is exactly
   // "same tab size, same content revision, same line count".
+  // True when a table stamped `table_revision` described the text the edit now
+  // stamped `content_revision` was applied to: every content edit advances the
+  // revision by exactly one and is spliced into these tables right after. A table
+  // any older describes some EARLIER text -- another view of the same document (a
+  // split, a second tab) edited it, and that view's splices went to its own
+  // tables. Line counts can agree across that gap, so splicing this edit in and
+  // stamping the table current kept the other view's change out of it under a
+  // current stamp: a split, soft-wrapped README laid a line out against its old
+  // width (QA monkey seeds 69 and 601; TD-2026-10-30-426).
+  static bool DescribesTheTextJustBefore(std::uint64_t table_revision,
+                                         std::uint64_t content_revision) {
+    return content_revision != 0 && table_revision == content_revision - 1;
+  }
   bool LineWidthsAreCurrent(std::size_t lines_size,
                             std::size_t tab_size,
                             std::uint64_t content_revision) const {
