@@ -934,8 +934,10 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Text;
   }
 
+  // With the band the frame recorded: whether the pane has a scrollbar depends on
+  // its visible rows, which the pinned band takes (the frame's own layout).
   const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-      editor_text_renderer_, *viewport, pane_it->rect, 0, LineNumbersEnabled());
+      editor_text_renderer_, *viewport, pane_it->rect, viewport->sticky_band_rows(), LineNumbersEnabled());
   const auto scroll_layout = ComputeEditorScrollLayout(pane_it->rect, *viewport, metrics);
   if (scroll_layout.vertical_scrollbar.has_value() &&
       Contains(scroll_layout.vertical_scrollbar->track, x, y)) {

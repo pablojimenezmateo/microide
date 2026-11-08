@@ -8,6 +8,7 @@
 #include "architecture/WorkspaceShellArchitectureRules.h"
 #include "architecture/KernelArchitectureRules.h"
 #include "architecture/LanguageHazardArchitectureRules.h"
+#include "architecture/InputGeometryArchitectureRules.h"
 #include "architecture/WorkspaceViewModelArchitectureRules.h"
 
 #include <filesystem>
@@ -1362,6 +1363,7 @@ void RunAllRuleFixtures() {
   RunWriteGateRuleFixtures();
   RunTextViewportDefaultedSpecialMembersRuleFixtures();
   RunRangeForTemporaryRuleFixtures();
+  RunEditorMetricsStickyBandRuleFixtures();
   RunRelativeClimbOutRuleFixtures();
   RunWaitFailureMessageRuleFixtures();
 }

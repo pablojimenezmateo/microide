@@ -747,6 +747,8 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       if (viewport == nullptr) {
         continue;
       }
+      // Step one of the two-step sizing: no band yet, since which lines pin
+      // depends on the rows this sizes; step two below re-sizes with the band.
       editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
           editor_text_renderer_, *viewport, pane.rect, 0, line_numbers);
       viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);

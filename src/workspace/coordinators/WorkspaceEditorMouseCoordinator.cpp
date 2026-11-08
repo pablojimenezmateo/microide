@@ -51,6 +51,8 @@ std::pair<editor::EditorViewMetrics, std::vector<std::size_t>> EditorPointerLayo
                                    sticky_lines);
 
   const bool line_numbers = setting_enabled("editor.line_numbers", true);
+  // The two-step sizing the frame does: without the band first, then with the
+  // sticky lines it pins, just below.
   editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
       text_renderer, viewport, editor_rect, 0, line_numbers);
   viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);

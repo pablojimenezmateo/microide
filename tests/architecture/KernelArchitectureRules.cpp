@@ -1,4 +1,5 @@
 #include "architecture/KernelArchitectureRules.h"
+#include "architecture/InputGeometryArchitectureRules.h"
 
 #include "architecture/LanguageHazardArchitectureRules.h"
 
@@ -816,6 +817,7 @@ const std::vector<NamedRule>& KernelArchitectureRuleList() {
       {"CheckRangeForDoesNotSubscriptATemporary", CheckRangeForDoesNotSubscriptATemporary},
       {"CheckRelativeClimbOutTestsTheFirstComponent", CheckRelativeClimbOutTestsTheFirstComponent},
       {"CheckWaitFailureMessagesAreLazy", CheckWaitFailureMessagesAreLazy},
+      {"CheckEditorMetricsNameTheirStickyBand", CheckEditorMetricsNameTheirStickyBand},
   };
   return rules;
 }
