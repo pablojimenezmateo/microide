@@ -282,6 +282,13 @@ def flow_window_minimum(app: q.App) -> None:
                    "the window to stop at its 640x400 minimum")
     step(app, "resize below the minimum", 0.3)
     layout_sane(app, "at the minimum window size")
+    # The floor is in layout units: raising ui.scale grows a window that would
+    # otherwise hold a smaller layout (as far as the screen allows).
+    app.send("set-setting", "ui.scale", "1.5")
+    app.wait_until(lambda: app.ui()["window"]["width"] >= 640 and app.ui()["window"]["height"] >= 400, 3.0,
+                   "ui.scale 1.5 to keep a layout of at least 640x400 units")
+    layout_sane(app, "at the minimum window size at ui.scale 1.5")
+    app.send("set-setting", "ui.scale", "1")
     app.resize(1440, 900)
     app.wait_until(lambda: app.ui()["window"]["width"] == 1440, 3.0, "the window to grow back")
 

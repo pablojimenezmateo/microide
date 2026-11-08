@@ -94,6 +94,14 @@ What it left, by workstream:
    single-line file under load), and a focus left on a hidden panel (first seen on a
    tiny window; may be gone with the minimum size). They are in the soak ledger
    (`tools/soak/soak.py report`) with their bundles.
+11. **Layouts below the 640x400-unit floor.** The window's minimum size now follows
+    ui.scale (`util::MinimumWindowSize`), but it is capped to the screen: ui.scale 3
+    on a 1440x900 screen, or 2 on a 1366x768 laptop, still lays the workbench out in
+    fewer units than the floor, where the chrome runs off the window and over itself.
+    The fix is a layout that degrades below the floor (collapse the sidebar, the
+    panel and the status segments in order) or an effective scale clamped to what the
+    screen can hold; until then the QA driver's geometry oracles skip such layouts
+    (`LAYOUT_FLOOR` in `tools/qa/microide_qa.py`) so they do not drown the rest.
 10. **The soak runner's acceptance** (24 h unattended, a planted stale-paint and a
     planted lost-save defect each found, minimized under 20 actions, deduplicated and
     verified after the revert) has not been run end to end; its pieces have, one by

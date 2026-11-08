@@ -39,4 +39,19 @@ WindowPresentation ComputeWindowPresentation(int pixel_width,
   return presentation;
 }
 
+WindowSize MinimumWindowSize(float window_per_unit_x, float window_per_unit_y, WindowSize usable) {
+  const auto per_unit = [](float value) { return std::isfinite(value) && value > 0.0f ? value : 1.0f; };
+  WindowSize size{
+      .width = static_cast<int>(std::ceil(static_cast<float>(kMinimumLayoutWidth) * per_unit(window_per_unit_x))),
+      .height = static_cast<int>(std::ceil(static_cast<float>(kMinimumLayoutHeight) * per_unit(window_per_unit_y))),
+  };
+  if (usable.width > 0) {
+    size.width = std::min(size.width, usable.width);
+  }
+  if (usable.height > 0) {
+    size.height = std::min(size.height, usable.height);
+  }
+  return size;
+}
+
 }  // namespace microide::util

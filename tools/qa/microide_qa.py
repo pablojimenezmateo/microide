@@ -125,6 +125,10 @@ def app_base_env(environ: dict[str, str]) -> dict[str, str]:
     return {key: value for key, value in environ.items() if key not in DESKTOP_INPUT_METHOD_ENV}
 
 
+# util::kMinimumLayoutWidth / kMinimumLayoutHeight: the smallest layout (in layout
+# units) the workbench is laid out for.
+LAYOUT_FLOOR = (640, 400)
+
 # SDL's defaults (SDL_HINT_MOUSE_DOUBLE_CLICK_TIME / _RADIUS), with margin.
 DOUBLE_CLICK_SECONDS = 0.55
 
@@ -1636,13 +1640,19 @@ class App:
             out.append(("focus", "keyboard focus is on the panel, which is hidden"))
         window = ui.get("window") or {}
         width, height = window.get("width", 0), window.get("height", 0)
-        if width and height:
+        # Below the layout floor (util::kMinimumLayoutWidth x Height, in layout
+        # units) the chrome is known not to fit -- a large ui.scale on a screen
+        # too small to grow the window to the floor (TD-2026-11-08-435 item 11) --
+        # so the geometry oracles would only repeat that; focus and state still run.
+        below_floor = bool(width and height) and (width < LAYOUT_FLOOR[0] or height < LAYOUT_FLOOR[1])
+        if width and height and not below_floor:
             for element in ui.get("elements", []):
                 x, y, w, h = element["rect"]
                 if x < -1 or y < -1 or x + w > width + 1 or y + h > height + 1:
                     out.append(("bounds", f"{element['name']} {element['rect']} leaves the {width}x{height} window"))
                     break
-        out += _surface_and_overlap_findings(ui)
+        if not below_floor:
+            out += _surface_and_overlap_findings(ui)
         out += self._state_oracles(ui)
         return out
 

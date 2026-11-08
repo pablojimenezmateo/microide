@@ -40,6 +40,24 @@ void TestWindowPresentationSanitizesInvalidScales() {
          "invalid scales should fall back to 1x vertical presentation scale");
 }
 
+// The window's minimum keeps the layout's floor at any ui.scale: at scale 3 a
+// 640x400 window is a 213x133 layout, where the QA monkey found the chrome laid
+// out off the window and over itself. Capped to the usable display area.
+void TestMinimumWindowSizeKeepsTheLayoutFloorAtAnyScale() {
+  using microide::util::MinimumWindowSize;
+  using microide::util::WindowSize;
+  const WindowSize one = MinimumWindowSize(1.0f, 1.0f, {});
+  Expect(one.width == 640 && one.height == 400, "at scale 1 the floor is 640x400 window units");
+  const WindowSize three = MinimumWindowSize(3.0f, 3.0f, {});
+  Expect(three.width == 1920 && three.height == 1200, "at scale 3 the window must be three times as large");
+  const WindowSize fractional = MinimumWindowSize(1.25f, 1.25f, {});
+  Expect(fractional.width == 800 && fractional.height == 500, "a fractional scale rounds up");
+  const WindowSize capped = MinimumWindowSize(3.0f, 3.0f, WindowSize{.width = 1440, .height = 900});
+  Expect(capped.width == 1440 && capped.height == 900, "never more than the usable display area");
+  const WindowSize sane = MinimumWindowSize(0.0f, NAN, {});
+  Expect(sane.width == 640 && sane.height == 400, "an invalid factor falls back to 1");
+}
+
 }  // namespace
 
 void RegisterWindowPresentationTests(std::vector<TestCase>& tests) {
@@ -49,6 +67,8 @@ void RegisterWindowPresentationTests(std::vector<TestCase>& tests) {
           TestWindowPresentationAppliesUiScaleMultiplier);
   AddTest(tests, "WindowPresentation/SanitizesInvalidScales",
           TestWindowPresentationSanitizesInvalidScales);
+  AddTest(tests, "WindowPresentation/MinimumWindowSizeKeepsTheLayoutFloorAtAnyScale",
+          TestMinimumWindowSizeKeepsTheLayoutFloorAtAnyScale);
 }
 
 }  // namespace microide::tests

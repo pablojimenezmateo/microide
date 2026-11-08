@@ -45,6 +45,7 @@ class Application {
   // render target must be the window and the scene texture valid.
   void PresentRetainedScene();
   bool UpdateRendererPresentation(int* logical_width = nullptr, int* logical_height = nullptr);
+  void ApplyMinimumWindowSize(SDL_FPoint window_per_unit);
   // Re-seed the shell's cached pointer position from a live query, then force the
   // cursor to re-apply. Used on window resize/move/restore/maximize, where the
   // window manager can suppress the motion events that keep the position fresh and
@@ -71,6 +72,10 @@ class Application {
   bool first_render_complete_ = false;
   bool presentation_state_dirty_ = true;
   float last_presented_ui_scale_ = 1.0f;
+  // The window minimum last applied (window units): the layout floor at the
+  // current ui.scale (util::MinimumWindowSize).
+  int applied_minimum_window_width_ = 0;
+  int applied_minimum_window_height_ = 0;
   // Owns the retained scene render-target texture and its resize-coalescing.
   SceneTexturePresenter scene_texture_;
   // Owns the MICROIDE_TRACE_REDRAW timing/coverage bookkeeping.

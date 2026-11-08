@@ -51,13 +51,13 @@ workspace::WorkspaceShell::EventResult HandledWithFullRedraw() {
 
 constexpr int kInitialWindowWidth = 1440;
 constexpr int kInitialWindowHeight = 900;
-// The smallest window the workbench is laid out for (VS Code's floor is 400x270;
-// ours holds the menu bar, a tab strip, an editor, a panel and the status bar
-// without overflow). The window manager enforces it through the size hints SDL
-// sets; below it the chrome was laid out off the window -- the overflow menu at a
-// negative x, status segments past the edge (QA monkey, tiny resizes).
-constexpr int kMinimumWindowWidth = 640;
-constexpr int kMinimumWindowHeight = 400;
+// The smallest window the workbench is laid out for is util::kMinimumLayoutWidth
+// x kMinimumLayoutHeight LAYOUT units (VS Code's floor is 400x270; ours holds the
+// menu bar, a tab strip, an editor, a panel and the status bar without overflow).
+// The window manager enforces it through the size hints SDL sets, re-set when
+// ui.scale changes how many window units a layout unit is; below it the chrome
+// was laid out off the window -- the overflow menu at a negative x, status
+// segments past the edge (QA monkey: tiny resizes, then ui.scale 3).
 constexpr std::size_t kRenderPerfPartialClipWarnThreshold = 8;
 
 bool EventUsesRenderCoordinates(Uint32 event_type) {
@@ -447,7 +447,7 @@ bool Application::Initialize() {
     SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
     return false;
   }
-  if (!SDL_SetWindowMinimumSize(window_, kMinimumWindowWidth, kMinimumWindowHeight)) {
+  if (!SDL_SetWindowMinimumSize(window_, util::kMinimumLayoutWidth, util::kMinimumLayoutHeight)) {
     SDL_Log("SDL_SetWindowMinimumSize failed: %s", SDL_GetError());
   }
 
@@ -1001,6 +1001,33 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
   workspace_shell_.OnFramePresented();
 }
 
+
+void Application::ApplyMinimumWindowSize(SDL_FPoint window_per_unit) {
+  util::WindowSize usable{};
+  SDL_Rect bounds{};
+  if (const SDL_DisplayID display = SDL_GetDisplayForWindow(window_);
+      display != 0 && SDL_GetDisplayUsableBounds(display, &bounds)) {
+    usable = util::WindowSize{.width = bounds.w, .height = bounds.h};
+  }
+  const util::WindowSize minimum = util::MinimumWindowSize(window_per_unit.x, window_per_unit.y, usable);
+  if (minimum.width == applied_minimum_window_width_ && minimum.height == applied_minimum_window_height_) {
+    return;
+  }
+  applied_minimum_window_width_ = minimum.width;
+  applied_minimum_window_height_ = minimum.height;
+  if (!SDL_SetWindowMinimumSize(window_, minimum.width, minimum.height)) {
+    SDL_Log("SDL_SetWindowMinimumSize failed: %s", SDL_GetError());
+  }
+  // A window already smaller than the new floor (ui.scale raised) grows to it: a
+  // window manager applies a size hint only to the next resize.
+  int width = 0;
+  int height = 0;
+  SDL_GetWindowSize(window_, &width, &height);
+  if (width < minimum.width || height < minimum.height) {
+    SDL_SetWindowSize(window_, std::max(width, minimum.width), std::max(height, minimum.height));
+  }
+}
+
 bool Application::UpdateRendererPresentation(int* logical_width, int* logical_height) {
   if (window_ == nullptr || renderer_ == nullptr) {
     return false;
@@ -1030,6 +1057,7 @@ bool Application::UpdateRendererPresentation(int* logical_width, int* logical_he
   }
 
   workspace_shell_.SetWindowPresentationState(*presentation);
+  ApplyMinimumWindowSize(presentation->window_per_unit);
   if (!SDL_SetRenderLogicalPresentation(renderer_, presentation->logical_width,
                                         presentation->logical_height,
                                         SDL_LOGICAL_PRESENTATION_STRETCH)) {
