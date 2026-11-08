@@ -407,8 +407,9 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
     const float y = (below_y + tooltip.rect.h <= vm.rect.y + vm.rect.h - 6.0f || above_y < vm.rect.y)
                         ? below_y
                         : above_y;
-    const float x = std::clamp(hovered_scope_rect.x, vm.rect.x + 6.0f,
-                               vm.rect.x + vm.rect.w - tooltip.rect.w - 6.0f);
+    const float min_x = vm.rect.x + 6.0f;
+    const float x = std::clamp(hovered_scope_rect.x, min_x,
+                               std::max(min_x, vm.rect.x + vm.rect.w - tooltip.rect.w - 6.0f));
     DrawWrappedTooltip(text_renderer_, renderer, theme_,
                        MakeRect(x, y, tooltip.rect.w, tooltip.rect.h), tooltip.lines);
   }

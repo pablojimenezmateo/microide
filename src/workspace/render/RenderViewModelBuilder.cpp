@@ -2259,7 +2259,10 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     for (const HelpAboutRow& row : vm.help_rows) {
       label_column = std::max(label_column, text_renderer.MeasureWidth(row.label));
     }
-    vm.help_label_column = std::clamp(label_column, 100.0f, inner_width * 0.40f);
+    // The 40% cap wins over the 100 px floor: on a card narrower than 250 px the
+    // floor would exceed the cap, and std::clamp with lo > hi is undefined (an
+    // assertion abort with libstdc++ assertions on; soak 56b6f01f2cf7).
+    vm.help_label_column = std::min(std::max(label_column, 100.0f), inner_width * 0.40f);
     vm.help_detail_x = content_x + vm.help_label_column + kSettingsHelpColumnGap;
     vm.help_detail_width = std::max(40.0f, content_right - vm.help_detail_x);
     vm.help_entry_gap = kSettingsHelpEntryGap;
@@ -2657,8 +2660,11 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     const float card_y =
         (below_y + card_h <= vm.rect.y + vm.rect.h - 4.0f || above_y < vm.rect.y) ? below_y
                                                                                   : above_y;
-    const float card_x = std::clamp(editing_value_rect.x, vm.rect.x + 4.0f,
-                                    vm.rect.x + vm.rect.w - card_w - 4.0f);
+    // A card wider than the overlay pins to its left edge rather than handing
+    // std::clamp an inverted range.
+    const float card_min_x = vm.rect.x + 4.0f;
+    const float card_x = std::clamp(editing_value_rect.x, card_min_x,
+                                    std::max(card_min_x, vm.rect.x + vm.rect.w - card_w - 4.0f));
 
     SettingsPickerViewModel& picker = vm.value_picker;
     picker.visible = true;

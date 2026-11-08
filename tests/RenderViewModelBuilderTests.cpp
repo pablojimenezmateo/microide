@@ -1268,6 +1268,34 @@ void TestFilteredCountSummaryWording() {
 // Both overlay modes carry the quick-open footer: how many rows survived the filter
 // (and out of how many), plus the keys that drive the surface. Help/About is
 // read-only, so its hint says "scroll", not "choose".
+// A window narrow enough that the Help/About card's 40% label cap falls below
+// the column's 100 px floor (640x480 at ui.scale 3 is 213 logical px wide) used to
+// hand std::clamp an inverted range -- undefined behaviour, and an assertion abort
+// in any build with libstdc++ assertions on (soak 56b6f01f2cf7). The cap must win:
+// the label column may not crowd out the detail column on a narrow card.
+void TestHelpAboutLabelColumnOnANarrowCardStaysWithinItsCap() {
+  WorkspaceContext context;
+  RenderViewModelBuilder builder(context);
+  TextRenderer text_renderer;
+  const auto layout = ComputeLayout(213.0f, 160.0f, false, false, 280.0f, 160.0f,
+                                    LayoutModeInputs{}, true);
+
+  SettingsOverlayService service;
+  service.OpenHelpAbout();
+  const std::vector<microide::workspace::HelpAboutRow> help_rows = {
+      {"Command Palette…", "Ctrl+Shift+P"},
+      {"Toggle Terminal", "Ctrl+`"},
+  };
+  service.RebuildHelpRows(help_rows);
+
+  const auto vm = builder.BuildSettingsOverlay(layout, service, text_renderer);
+  Expect(vm.rect.w < 250.0f, "the fixture must produce a card narrower than 250 px");
+  Expect(vm.help_label_column > 0.0f && vm.help_label_column <= vm.rect.w * 0.40f,
+         "a narrow card's label column must stay within its 40% cap");
+  Expect(vm.help_detail_x + vm.help_detail_width <= vm.rect.x + vm.rect.w + 40.0f,
+         "the detail column must start inside the card");
+}
+
 void TestSettingsOverlayFooterReportsCountsAndKeys() {
   WorkspaceContext context;
   RenderViewModelBuilder builder(context);
@@ -1719,6 +1747,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestSettingsOverlayFontPickerBuildsScrollbarOnOverflow);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayFooterReportsCountsAndKeys",
           TestSettingsOverlayFooterReportsCountsAndKeys);
+  AddTest(tests, "RenderViewModelBuilder/HelpAboutLabelColumnOnANarrowCardStaysWithinItsCap",
+          TestHelpAboutLabelColumnOnANarrowCardStaysWithinItsCap);
   AddTest(tests, "RenderViewModelBuilder/FilteredCountSummaryWording",
           TestFilteredCountSummaryWording);
   AddTest(tests, "RenderViewModelBuilder/EmptyPickerStatesAreNotStatedTwice",
