@@ -156,6 +156,13 @@ def main() -> int:
     out = args.out or args.replay.parent
     out.mkdir(parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix="minimize-", dir=out))
+    # A private copy of the binary: a rebuild of the tree it came from replaces
+    # it mid-run, and every candidate after that "did not reproduce" for want of
+    # a binary to run (2026-11-08).
+    import shutil
+    pinned = scratch / "microide"
+    shutil.copy2(args.binary, pinned)
+    args.binary = pinned
     try:
         if args.check_only:
             rate = reproduction_rate(record, args.signature, args.binary, scratch, args.runs, args.jobs)
