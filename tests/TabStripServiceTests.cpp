@@ -423,9 +423,51 @@ void TestProjectStripCacheMissesOnGeometryEpochAndLayoutMode() {
   Expect(!compact.empty() && !compact.front().show_badge, "compact mode drops the project badge");
 }
 
+// Nothing a tab strip lays out runs past the strip's bottom. A lower editor pane
+// squeezed shorter than a strip still got 22 px tabs (a floor), 14 px close
+// buttons and 16 px overflow chips (two more), so they hung below its strip
+// into the bottom panel's tab row (soak 9c685a037963, d468aa9e4552, 351bb9c5ae38:
+// a panel tab "overlaps" tabs/2/more-left or a close-tab button).
+void TestEditorStripContentsStayInsideAShortStrip() {
+  microide::workspace::EditorGroup group;
+  for (const char* name : {"a-rather-long-file-name.txt", "b.txt", "c.txt", "d.txt", "e.txt", "f.txt"}) {
+    microide::workspace::TabEntry tab;
+    tab.path = name;
+    tab.title = name;
+    group.open_tabs.push_back(std::move(tab));
+  }
+  group.active_tab_index = 3;
+  group.tab_scroll_index = 3;
+  const auto measure = [](std::string_view text) { return static_cast<float>(text.size()) * 8.0f; };
+  const auto title = [&group](std::size_t index) { return group.open_tabs[index].title; };
+  const auto below = [](const SDL_FRect& r, const SDL_FRect& strip) {
+    return r.h > 0.0f && r.y + r.h > strip.y + strip.h + 0.01f;
+  };
+  for (float height : {34.0f, 23.0f, 18.0f, 11.0f, 5.0f}) {
+    TabStripService service;
+    const SDL_FRect strip{300.0f, 183.0f, 260.0f, height};
+    const auto& tabs = service.ComputeVisibleEditorTabs(group, 0, strip, measure, title, title, 0);
+    Expect(!tabs.empty(), "the fixture lays out at least one tab");
+    for (const auto& tab : tabs) {
+      Expect(!below(tab.rect, strip) && !below(tab.close_rect, strip),
+             "a tab and its close button stay inside a " + std::to_string(height) + " px strip");
+    }
+    const auto overflow = service.ComputeEditorTabOverflowControls(strip, tabs, group);
+    Expect(overflow.hidden_left > 0, "the fixture scrolls tabs off the left");
+    Expect(!below(overflow.left_button, strip) && !below(overflow.right_button, strip),
+           "the overflow chips stay inside a " + std::to_string(height) + " px strip");
+    if (height >= 34.0f) {
+      Expect(overflow.left_button.y == strip.y + 4.0f && overflow.left_button.h == strip.h - 8.0f,
+             "a full-height strip keeps the chips' old geometry");
+    }
+  }
+}
+
 }  // namespace
 
 void RegisterTabStripServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TabStripService/EditorStripContentsStayInsideAShortStrip",
+          TestEditorStripContentsStayInsideAShortStrip);
   AddTest(tests, "TabStripService/NoEditorTabLiesUnderAnOverflowChip", TestNoEditorTabLiesUnderAnOverflowChip);
   AddTest(tests, "TabStripService/NoPanelTabLiesUnderAnOverflowChip", TestNoPanelTabLiesUnderAnOverflowChip);
   AddTest(tests, "TabStripService/ScrollingATabStripRequestsItsRepaint", TestScrollingATabStripRequestsItsRepaint);

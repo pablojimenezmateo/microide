@@ -1,6 +1,7 @@
 #include "workspace/services/TabStripService.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cctype>
 #include <limits>
 #include <utility>
@@ -185,7 +186,7 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleProjectTabs(
   }
 
   const float tab_y = project_tab_strip.y + 2.0f;
-  const float tab_height = std::max(18.0f, project_tab_strip.h - 2.0f);
+  const float tab_height = std::max(0.0f, project_tab_strip.h - 2.0f);
   const float gap = 1.0f;
   const auto build_tabs = [&](float start_x, float right_overflow_reserve) {
     const float max_tab_x = std::max(start_x + 120.0f,
@@ -368,7 +369,9 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleEditorTabs(
   }
 
   const float tab_y = tab_strip.y + 2.0f;
-  const float tab_height = std::max(22.0f, tab_strip.h - 2.0f);
+  // Never taller than the strip: a 22 px floor here hung the tabs of a pane
+  // squeezed shorter than a strip into whatever lies below it (soak 9c685a037963).
+  const float tab_height = std::max(0.0f, tab_strip.h - 2.0f);
   const float gap = 1.0f;
   // Built straight into the memo's own vector: this runs only on a miss, where
   // the previous contents are being replaced anyway, and the settle loop below
@@ -455,8 +458,11 @@ TabStripOverflowControls TabStripService::BuildOverflowControls(
 
   const float left_button_w = OverflowButtonWidthForHiddenCount(controls.hidden_left);
   const float right_button_w = OverflowButtonWidthForHiddenCount(controls.hidden_right);
-  const float button_y = strip.y + 4.0f;
-  const float button_h = std::max(16.0f, strip.h - 8.0f);
+  // A 4 px inset on a full strip; on a short one the chip keeps its 16 px
+  // minimum only while the strip can hold it, centred, and is never taller than
+  // the strip -- the floor alone hung it below a squeezed pane's strip.
+  const float button_h = std::min(std::max(0.0f, strip.h), std::max(16.0f, strip.h - 8.0f));
+  const float button_y = strip.y + std::floor((strip.h - button_h) * 0.5f);
   if (controls.hidden_left > 0) {
     controls.left_button = MakeRect(strip.x + 8.0f, button_y, left_button_w, button_h);
   }
@@ -762,7 +768,7 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleBottomPanelTa
   }
 
   const float tab_y = panel_header.y + 2.0f;
-  const float tab_height = std::max(18.0f, panel_header.h - 2.0f);
+  const float tab_height = std::max(0.0f, panel_header.h - 2.0f);
   const float gap = 1.0f;
   const SDL_FRect new_tab_rect = BottomPanelTerminalNewTabRect(layout_mode, panel_header);
   const float strip_right = std::max(panel_header.x, new_tab_rect.x - 8.0f);
@@ -861,7 +867,7 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleTerminalTabs(
   }
 
   const float tab_y = panel_header.y + 2.0f;
-  const float tab_height = std::max(18.0f, panel_header.h - 2.0f);
+  const float tab_height = std::max(0.0f, panel_header.h - 2.0f);
   const float gap = 1.0f;
   const float start_x = panel_header.x;
   const SDL_FRect new_tab_rect = BottomPanelTerminalNewTabRect(layout_mode, panel_header);

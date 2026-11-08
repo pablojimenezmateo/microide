@@ -130,10 +130,12 @@ void BuildChromeTabRenderItemsInto(std::vector<ChromeTabRenderItem>& out,
     ChromeTabRenderItem& item = out[i];
     item.index = model_index;
     item.rect = rect;
-    item.close_rect = MakeRect(
-        rect.x + rect.w - close_button_right_inset - close_button_size,
-        rect.y + std::floor(std::max(0.0f, rect.h - close_button_size) * 0.5f), close_button_size,
-        close_button_size);
+    // Never larger than the tab: a tab on a squeezed strip is shorter than the
+    // button, which then hung below the strip.
+    const float close_size = std::min(close_button_size, std::max(0.0f, rect.h));
+    item.close_rect = MakeRect(rect.x + rect.w - close_button_right_inset - close_size,
+                               rect.y + std::floor((rect.h - close_size) * 0.5f), close_size,
+                               close_size);
     item.active = model_index == active_index;
     if (slot.index < display_titles.size()) {
       item.display_title.assign(display_titles[slot.index]);
