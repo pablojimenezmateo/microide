@@ -102,10 +102,18 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
       strip_hit(layout.project_tab_strip, [&]() -> const std::vector<VisibleStripTab>& {
         return tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
       });
+  // Each group's tabs in that group's strip. The focused group's tabs laid over
+  // the whole band (`layout.tab_strip`) named the wrong tab, or none, over any
+  // other pane of a split, and re-laid the strip at a second width every hover
+  // frame, defeating its memo.
   if (!found && !context_.current_project_state.root.empty()) {
-    found = strip_hit(layout.tab_strip, [&]() -> const std::vector<VisibleStripTab>& {
-      return tab_strip_chrome_.ComputeVisibleTabs(layout.tab_strip);
-    });
+    const EditorGroupRectsLayout rects = ComputeEditorGroupRectsForState(layout);
+    for (std::size_t group = 0; group < rects.groups.size() && !found; ++group) {
+      const SDL_FRect& strip = rects.groups[group].tab_strip;
+      found = strip_hit(strip, [&]() -> const std::vector<VisibleStripTab>& {
+        return tab_strip_chrome_.ComputeVisibleTabsForGroup(group, strip);
+      });
+    }
   }
 
   // 3) Breadcrumb status items (plugin-contributed and built-in).

@@ -2095,6 +2095,40 @@ void TestClickingAnUnfocusedGroupsOverflowChipRepaintsItsStrip() {
   fixture.ExpectFresh(fixture.Click(*chip), "a click on the unfocused group's <N chip");
 }
 
+// Found reading the QA monkey's seed-1 trace: the tab tooltip laid the FOCUSED
+// group's tabs out over the whole tab band (`layout.tab_strip`) whatever group
+// the pointer was over. In a split the right group's tab was hit-tested against
+// the left group's tabs at the left group's positions -- the wrong name, or none
+// -- and every hover frame re-laid the strip at two widths, defeating its memo.
+// Each group's tabs are hit-tested in that group's strip.
+void TestATabTooltipNamesTheTabUnderThePointerInASplit() {
+  FlowFixture fixture("left-file.txt", "left\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "split-right should run");
+  WriteFile(fixture.root / "right-file.txt", "right\n");
+  TestAccess::OpenFile(fixture.shell, fixture.root / "right-file.txt");  // into the focused right group
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "focus-other-group"), "focus-other-group should run");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "two groups, the left one focused");
+  std::optional<SDL_FRect> right_tab;
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    if (entry["name"].AsString() == "tab:1/right-file.txt") {
+      const auto& r = entry["rect"].AsArray();
+      right_tab = SDL_FRect{static_cast<float>(r[0].AsInt()), static_cast<float>(r[1].AsInt()),
+                            static_cast<float>(r[2].AsInt()), static_cast<float>(r[3].AsInt())};
+    }
+  }
+  Expect(right_tab.has_value(), "the right group shows right-file.txt's tab");
+  if (!right_tab) {
+    return;
+  }
+  (void)DispatchEvents(fixture.shell, {MouseMotionEvent(right_tab->x + 12.0f, right_tab->y + right_tab->h / 2.0f)});
+  const std::string label = TestAccess::HoveredTooltipLabel(fixture.shell);
+  Expect(label.find("right-file.txt") != std::string::npos,
+         "hovering the right group's tab names right-file.txt, not \"" + label + "\"");
+}
+
 // The QA monkey (editor profile, seed 3): `tabmove` repainted the tab strip but
 // not the pane under it, though the pane can change with it.
 // With the moved tab's file rewritten on disk since it was painted (the monkey's
@@ -4551,6 +4585,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TypingOnAFoldedOpenerRepaintsItsRow",
           TestTypingOnAFoldedOpenerRepaintsItsRow);
   AddTest(tests, "QaFlowRegression/AnOverlayIsPaintedOverTheBottomPanel", TestAnOverlayIsPaintedOverTheBottomPanel);
+  AddTest(tests, "QaFlowRegression/ATabTooltipNamesTheTabUnderThePointerInASplit",
+          TestATabTooltipNamesTheTabUnderThePointerInASplit);
   AddTest(tests, "QaFlowRegression/ClickingAnUnfocusedGroupsOverflowChipRepaintsItsStrip",
           TestClickingAnUnfocusedGroupsOverflowChipRepaintsItsStrip);
   AddTest(tests, "QaFlowRegression/AFoldChordRightAfterAClickFoldsTheClickedBlock",
