@@ -20,6 +20,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import os
+import threading
 import time
 
 _x11 = _xtst = None
@@ -48,54 +49,64 @@ P_MIN_SIZE = 1 << 4
 P_MAX_SIZE = 1 << 5
 
 
+_load_lock = threading.Lock()
+
+
 def _load() -> bool:
-    global _x11, _xtst
-    if _x11 is not None:
-        return _xtst is not None
-    try:
-        _x11 = ctypes.CDLL(ctypes.util.find_library("X11") or "libX11.so.6")
-        _xtst = ctypes.CDLL(ctypes.util.find_library("Xtst") or "libXtst.so.6")
-    except OSError:
-        _x11 = False  # type: ignore[assignment]
-        _xtst = None
-        return False
-    _x11.XInitThreads()
-    # Xlib's default error handler prints the error and EXITS the process: an
-    # XSetInputFocus on a window that just went away (an app killed and
-    # relaunched, a window closing) took the whole driver -- and a minimizer
-    # running dozens of candidates -- down with it. Errors are recorded instead;
-    # the caller sees them as a focus that did not land.
-    global _error_handler
-    _error_handler = _XErrorHandler(_ignore_x_error)
-    _x11.XSetErrorHandler(_error_handler)
-    _x11.XOpenDisplay.restype = ctypes.c_void_p
-    _x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
-    _x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
-    _x11.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
-    _x11.XFlush.argtypes = [ctypes.c_void_p]
-    _x11.XStringToKeysym.restype = ctypes.c_ulong
-    _x11.XStringToKeysym.argtypes = [ctypes.c_char_p]
-    _x11.XKeysymToKeycode.restype = ctypes.c_ubyte
-    _x11.XKeysymToKeycode.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
-    _x11.XkbKeycodeToKeysym.restype = ctypes.c_ulong
-    _x11.XkbKeycodeToKeysym.argtypes = [ctypes.c_void_p, ctypes.c_ubyte, ctypes.c_int, ctypes.c_int]
-    _x11.XSetInputFocus.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
-    _x11.XGetInputFocus.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong),
-                                    ctypes.POINTER(ctypes.c_int)]
-    _x11.XDefaultRootWindow.restype = ctypes.c_ulong
-    _x11.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
-    _x11.XQueryPointer.argtypes = [ctypes.c_void_p, ctypes.c_ulong] + \
-        [ctypes.POINTER(ctypes.c_ulong)] * 2 + [ctypes.POINTER(ctypes.c_int)] * 4 + \
-        [ctypes.POINTER(ctypes.c_uint)]
-    _x11.XRefreshKeyboardMapping.argtypes = [ctypes.c_void_p]
-    _x11.XResizeWindow.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_uint, ctypes.c_uint]
-    _x11.XGetWMNormalHints.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(_SizeHints),
-                                       ctypes.POINTER(ctypes.c_long)]
-    _xtst.XTestFakeMotionEvent.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
-                                           ctypes.c_int, ctypes.c_ulong]
-    _xtst.XTestFakeButtonEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_ulong]
-    _xtst.XTestFakeKeyEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_ulong]
-    return True
+    """Loads and declares libX11/libXtst once, under a lock, and publishes them
+    only when every prototype is set. Lazily and unlocked, a second scenario
+    thread saw `_x11` before XOpenDisplay's restype was declared, called it with
+    ctypes' default int return -- a 64-bit Display* cut to 32 bits -- and the
+    driver segfaulted in XQueryExtension (qa lane, 2026-11-08)."""
+    global _x11, _xtst, _error_handler
+    with _load_lock:
+        if _x11 is not None:
+            return _xtst is not None
+        try:
+            x11 = ctypes.CDLL(ctypes.util.find_library("X11") or "libX11.so.6")
+            xtst = ctypes.CDLL(ctypes.util.find_library("Xtst") or "libXtst.so.6")
+        except OSError:
+            _x11 = False  # type: ignore[assignment]
+            _xtst = None
+            return False
+        x11.XInitThreads()
+        # Xlib's default error handler prints the error and EXITS the process: an
+        # XSetInputFocus on a window that just went away (an app killed and
+        # relaunched, a window closing) took the whole driver -- and a minimizer
+        # running dozens of candidates -- down with it. Errors are recorded instead;
+        # the caller sees them as a focus that did not land.
+        _error_handler = _XErrorHandler(_ignore_x_error)
+        x11.XSetErrorHandler(_error_handler)
+
+        x11.XOpenDisplay.restype = ctypes.c_void_p
+        x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+        x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+        x11.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        x11.XFlush.argtypes = [ctypes.c_void_p]
+        x11.XStringToKeysym.restype = ctypes.c_ulong
+        x11.XStringToKeysym.argtypes = [ctypes.c_char_p]
+        x11.XKeysymToKeycode.restype = ctypes.c_ubyte
+        x11.XKeysymToKeycode.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+        x11.XkbKeycodeToKeysym.restype = ctypes.c_ulong
+        x11.XkbKeycodeToKeysym.argtypes = [ctypes.c_void_p, ctypes.c_ubyte, ctypes.c_int, ctypes.c_int]
+        x11.XSetInputFocus.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+        x11.XGetInputFocus.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong),
+                                        ctypes.POINTER(ctypes.c_int)]
+        x11.XDefaultRootWindow.restype = ctypes.c_ulong
+        x11.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+        x11.XQueryPointer.argtypes = [ctypes.c_void_p, ctypes.c_ulong] + \
+            [ctypes.POINTER(ctypes.c_ulong)] * 2 + [ctypes.POINTER(ctypes.c_int)] * 4 + \
+            [ctypes.POINTER(ctypes.c_uint)]
+        x11.XRefreshKeyboardMapping.argtypes = [ctypes.c_void_p]
+        x11.XResizeWindow.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_uint, ctypes.c_uint]
+        x11.XGetWMNormalHints.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(_SizeHints),
+                                           ctypes.POINTER(ctypes.c_long)]
+        xtst.XTestFakeMotionEvent.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
+                                               ctypes.c_int, ctypes.c_ulong]
+        xtst.XTestFakeButtonEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_ulong]
+        xtst.XTestFakeKeyEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_ulong]
+        _x11, _xtst = x11, xtst
+        return True
 
 
 # xdotool's modifier spellings, as keysyms.
