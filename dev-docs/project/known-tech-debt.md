@@ -60,6 +60,21 @@ session fixed, each with a failing-first test:
   driver now places and sizes it at startup, and under `MQA_UI_SCALE` window sizes
   are layout units (`device_size`), which is what made the qa-scale lane's
   size-sensitive flows fail at 1.75.
+- the presentation scale was pixels / a whole number of units (1.2503 for a
+  1024-pixel window at 1.25), at which no clip aligns to device pixels, so a
+  partial frame let a device column of the sidebar's text into the editor (qa
+  seed 1). Every target now draws at the exact requested scale
+  (`app/RenderPresentation.h`), which also closes the residual of
+  TD-2026-10-22-376 for windows that are not a multiple of the scale;
+- the compact layout's menu-overflow chevron was missing from the shared hover
+  probe, so a move off it that another surface consumed left it lit (qa seed 1);
+- the external-change banner squeezed into an editor area with no height (panel
+  maximized) put its buttons over the window controls (qa-asan seed 4);
+- Tab over a selection ending at a line's start reselected whole lines and moved
+  the caret up a line per press, and the line it left kept its highlight (qa-asan
+  seed 4): indent/outdent keep the selection's ends and direction, and an edit
+  that moves the caret's line repaints the focused pane;
+- `minimize.py --check-only` compared replays against the literal `auto`.
 
 What it left, by workstream:
 
