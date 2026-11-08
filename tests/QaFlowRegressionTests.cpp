@@ -810,6 +810,64 @@ void TestTypingOnAFoldedOpenerRepaintsItsRow() {
          "the space should land on the opener line");
 }
 
+// edit-folding, on the in-process XTEST driver: a click on a line and Ctrl+Shift+[
+// arriving in ONE event batch -- no frame between them, as fast input or a slow
+// frame gives -- folded nothing. xdotool's per-call delays had always let a frame
+// run between the two.
+void TestAFoldChordRightAfterAClickFoldsTheClickedBlock() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("scheduler.cpp",
+                      "#include \"scheduler.hpp\"\n\n#include <algorithm>\n#include <cstdio>\n\n"
+                      "namespace taskflow {\n\n"
+                      "void Scheduler::add(std::string name, int priority, int cost) {\n"
+                      "    queue_.push_back(Task{std::move(name), priority, cost});\n}\n\n"
+                      "int Scheduler::run() {\n    int total = 0;\n    return total;\n}\n\n"
+                      "}  // namespace taskflow\n");
+  editor::FoldingModel* folds = TestAccess::EnsureActiveFoldingModelFresh(fixture.shell);
+  Expect(folds != nullptr && folds->FoldStartingAt(7).has_value(), "add's body should be foldable");
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  const util::JsonValue& pane = ui["editors"].AsArray()[0];
+  const auto row_y = [&pane](std::int64_t line) {
+    for (const util::JsonValue& row : pane["rows"].AsArray()) {
+      if (row["line"].AsInt() == line) {
+        return static_cast<float>(row["y"].AsDouble() + pane["lineHeight"].AsDouble() / 2.0);
+      }
+    }
+    return -1.0f;
+  };
+  const float line9_y = row_y(9);
+  const float line12_y = row_y(12);
+  Expect(line9_y >= 0.0f && line12_y >= 0.0f, "lines 9 and 12 should be on screen");
+  // As the flow did: fold run() from its gutter marker and unfold it again, a
+  // frame after each.
+  const float fold_x = static_cast<float>(
+      (pane["foldHitX"].AsDouble() + pane["gutterX"].AsDouble() + pane["gutterWidth"].AsDouble()) / 2.0);
+  workspace::RenderInvalidation full;
+  full.full = true;
+  for (int toggle = 0; toggle < 2; ++toggle) {
+    (void)DispatchEvents(fixture.shell, {MouseMotionEvent(fold_x, line12_y),
+                                         MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, fold_x, line12_y),
+                                         MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, fold_x, line12_y)});
+    fixture.ExpectFresh(full, "a frame after the gutter click");
+    SDL_Delay(600);  // past the double-click time: two separate clicks
+  }
+  folds = TestAccess::EnsureActiveFoldingModelFresh(fixture.shell);
+  Expect(folds != nullptr && !folds->has_any_collapsed_fold(), "the two gutter clicks should leave nothing folded");
+  const float x = static_cast<float>(pane["textX"].AsDouble() + 4.2 * pane["charWidth"].AsDouble());
+  fixture.ExpectFresh(
+      DispatchEvents(fixture.shell, {MouseMotionEvent(x, line9_y),
+                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, line9_y),
+                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, line9_y),
+                                     KeyDownEvent(SDLK_LEFTBRACKET, SDL_KMOD_CTRL | SDL_KMOD_SHIFT)}),
+      "the click and the fold chord in one batch");
+  Expect(TestAccess::ActiveEditor(fixture.shell).cursor_line() == 8, "the click should put the caret on line 9");
+  folds = TestAccess::EnsureActiveFoldingModelFresh(fixture.shell);
+  Expect(folds != nullptr && folds->IsCollapsedAtOpener(7),
+         "Ctrl+Shift+[ right after the click should fold the clicked block (lines 8-10)");
+}
+
 // indentation: Tab over two lines indented them under a closing brace, which made
 // that brace's line the opener of an indentation fold. The edit repainted the two
 // lines it changed, not the gutter of the line above that gained a fold marker.
@@ -4409,6 +4467,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestClosingTheLastTerminalUnderAnOutputChannelRepaintsTheTabStrip);
   AddTest(tests, "QaFlowRegression/TypingOnAFoldedOpenerRepaintsItsRow",
           TestTypingOnAFoldedOpenerRepaintsItsRow);
+  AddTest(tests, "QaFlowRegression/AFoldChordRightAfterAClickFoldsTheClickedBlock",
+          TestAFoldChordRightAfterAClickFoldsTheClickedBlock);
   AddTest(tests, "QaFlowRegression/CommandRefusalsSayWhatIsWrong", TestCommandRefusalsSayWhatIsWrong);
   AddTest(tests, "QaFlowRegression/TheDiffsOwnVerbsAreCommands", TestTheDiffsOwnVerbsAreCommands);
   AddTest(tests, "QaFlowRegression/TheMergeEditorCopiesAConflictSide", TestTheMergeEditorCopiesAConflictSide);

@@ -232,8 +232,35 @@ const editor::TextViewport* WorkspaceShell::GroupActiveViewport(const EditorGrou
   return &editor_tab->viewport;
 }
 
+namespace {
+
+// The frame-prep reveal: a caret that moved into a collapsed fold since it last
+// looked opens that fold. True when it opened one; the caret's row moved with
+// the rows above it, so it is scrolled into view again.
+bool SettleFoldReveal(TabEntry::EditorTabState* editor_tab, editor::TextViewport* viewport) {
+  if (editor_tab == nullptr || viewport == nullptr || !RevealCaretsInsideCollapsedFolds(*editor_tab, *viewport)) {
+    return false;
+  }
+  viewport->RevealCaret();
+  return true;
+}
+
+}  // namespace
+
 editor::FoldingModel* WorkspaceShell::EnsureActiveFoldingModelFresh() {
-  return EnsureFoldingModelFreshForTab(ActiveEditorTab(), ActiveEditorViewport());
+  TabEntry::EditorTabState* editor_tab = ActiveEditorTab();
+  editor::TextViewport* viewport = ActiveEditorViewport();
+  editor::FoldingModel* model = EnsureFoldingModelFreshForTab(editor_tab, viewport);
+  // A fold command or a gutter click about to change the folds acts on the state a
+  // frame would have reached: the caret moves before it are settled first. Left to
+  // the next frame, a click on a line and Ctrl+Shift+[ arriving in one event batch
+  // read as "the caret moved into a collapsed fold", and the reveal opened the
+  // fold the chord had just closed (QA edit-folding, on a driver with no delay
+  // between the two).
+  if (SettleFoldReveal(editor_tab, viewport)) {
+    RequestEditorSurfaceRedraw();
+  }
+  return model;
 }
 
 editor::FoldingModel* WorkspaceShell::EnsureFoldingModelFreshForTab(
@@ -284,11 +311,9 @@ void WorkspaceShell::RefreshEditorFoldingModels() {
     TabEntry::EditorTabState* editor_tab = GroupActiveEditorTab(group);
     editor::TextViewport* viewport = GroupActiveViewport(group);
     EnsureFoldingModelFreshForTab(editor_tab, viewport);
-    if (editor_tab != nullptr && viewport != nullptr &&
-        RevealCaretsInsideCollapsedFolds(*editor_tab, *viewport)) {
-      // The caret's row changed with the rows above it; this runs before the
-      // frame's layout, so the scroll and the repaint both land in this frame.
-      viewport->RevealCaret();
+    // This runs before the frame's layout, so the scroll and the repaint both
+    // land in this frame.
+    if (SettleFoldReveal(editor_tab, viewport)) {
       RequestEditorSurfaceRedraw();
     }
   }
