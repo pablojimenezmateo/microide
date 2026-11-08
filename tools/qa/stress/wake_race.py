@@ -77,13 +77,21 @@ def start_wayland(work: Path) -> tuple[subprocess.Popen, dict[str, str]] | None:
 def run_copies(binary: Path, env: dict[str, str], relay: bool, copies: int, rounds: int) -> list[tuple[int, str]]:
     """(stalls, output) per copy; stalls -1 when the copy did not report."""
     def one(_: int) -> tuple[int, str]:
+        # Generous: a round is microseconds unloaded, but a dozen copies beside a
+        # build (load 40) took one instance past a rounds/100 s budget. A stall
+        # cannot hang an instance -- the probe nudges itself after 2 s and says
+        # so -- so a timeout is slowness; what it printed before it is still read.
         try:
             result = subprocess.run([str(binary), "1" if relay else "0", str(rounds)], env=env,
-                                    capture_output=True, text=True, timeout=max(120, rounds // 100))
-        except subprocess.TimeoutExpired:
-            return -1, "timed out"
-        match = RESULT.search(result.stdout)
-        return (int(match.group(3)) if match else -1), (result.stdout + result.stderr)[-400:]
+                                    capture_output=True, text=True, timeout=max(600, rounds // 10))
+            output = result.stdout + result.stderr
+        except subprocess.TimeoutExpired as expired:
+            partial = (expired.stdout or b"")
+            partial = partial.decode(errors="replace") if isinstance(partial, bytes) else partial
+            stalls = partial.count("stall at round")
+            return (stalls if stalls else -1), f"timed out after {stalls} stall(s): {partial[-300:]}"
+        match = RESULT.search(output)
+        return (int(match.group(3)) if match else -1), output[-400:]
     with concurrent.futures.ThreadPoolExecutor(max_workers=copies) as pool:
         return list(pool.map(one, range(copies)))
 
