@@ -13,6 +13,57 @@ entries and the guardrails stayed.
 
 ## Open items
 
+### TD-2026-11-08-434 — the 2026-11-08 QA-monkey bug hunt: what it fixed, and the one seam it left. [OPEN — item 1]
+
+Baseline at 78a043e81: asan, ubsan, tsan and qa (228/228) clean. Then the QA monkey
+on fresh seeds (default 601-620 at 400-500 steps, editor 71-74, commands 71-76) and
+the editing invariants (plain and soft-wrapped, clean). Every deterministic finding
+replayed, pinned by a failing-first test, and fixed, one commit each:
+
+- **A menu closing over a floating widget left its hover unpainted** (seed 605). The
+  frame-prep hover catch-all repaints what `HoveredInteractiveRect` names when it
+  changes without motion; the find widgets and the debug toolbar were the last
+  PointerOver buttons it did not know. They are elements of it now, and the motion
+  handler's separate floating-widget collector (~50 lines) is gone
+  (`QaFlowRegression/ClosingAMenuOverAFindToggleRepaintsItsHover`).
+- **A focus move by the maximized-panel rule painted no focus ring** (seed 601).
+  `SyncPanelMaximizedWithFocus` ran in frame prep after the text-input sync and the
+  surface view models had read focus; it runs first now, and an assert at the
+  focus-ring tracking pins the order
+  (`QaFlowRegression/AFocusMoveByTheMaximizedPanelRulePaintsTheRingInItsFrame`).
+- **TD-2026-10-30-426's open abort, root-caused** (seed 601, deterministic). Each
+  view of a document keeps its own width and wrapped-row tables, and their
+  incremental splices checked line counts but not the revision the table was built
+  for: an edit through one pane of a split, then one through the other, spliced
+  into a stale table and stamped it current. A release build laid a line out
+  against its old width. Both splices now require the table to describe the text
+  just before the edit (`TextLayoutCache::DescribesTheTextJustBefore`;
+  `TextViewport/AnEditThroughTheOtherViewOfADocumentKeepsItsWidthTableTrue`; QA flow
+  `split-wrap-edits`, which crashes the pre-fix build).
+- **Typing under sticky-scroll headers repainted the wrong row** (seed 608):
+  `CurrentEditorLineRangeRect` and the IME's text-input area laid rows out with no
+  sticky band (`QaFlowRegression/TypingUnderAStickyBandRepaintsTheTypedRow`).
+- **The commit body took clicks through a modal prompt, and kept a caret** (seed
+  607): its hit-test ran ahead of the modal checks (`OverlayIsModal` is new), and
+  the commit fields blinked by the global phase without owning the keyboard
+  (`QaFlowRegression/ACommitFieldUnderAModalPromptTakesNoClickAndPaintsNoCaret`).
+
+Left open:
+
+1. **A 1-px seam at the split divider at a 1.75x UI scale** (seed 602, default
+   profile, step 361; not reproduced on replay). In a partial frame the left pane's
+   rightmost device column (x=924) kept the editor background where a full frame
+   draws a 1-px line of colour (231,234,240) -- the pane's edge element, one device
+   column left of the divider. A model of the clip narrowing (one and two nested
+   levels, every aligned surface and damage rect up to 40 logical px at 1.25x and
+   1.75x) finds no divergence, so the narrowing math is not it. Suspects: the pane
+   clip in `RenderClip` is built as `{floor(x), floor(y), ceil(w), ceil(h)}` from a
+   fractional pane rect (its right edge can fall up to a logical pixel short of
+   `x + w`), and the timing (the replay passes). Evidence:
+   `build/qa-evidence/seed-602-fractional-seam-2026-11-08`. Next step: a unit test
+   at a 1.75x logical presentation with a split whose divider sits at a fractional
+   logical x, painting a partial frame whose damage ends inside the left pane.
+
 ### TD-2026-11-07-433 — qa-wayland: the app stops answering the control channel after its first file open. [OPEN — not reproduced alone; evidence kept]
 
 Seen twice now, each time with several GUI lanes running side by side: TD-432's

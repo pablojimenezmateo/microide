@@ -191,6 +191,18 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **Editing one file in two split panes with word wrap on lays its lines out
+  right.** An edit made in one pane, then one in the other, could leave a line
+  wrapped (and measured) as it read before the first edit until the file was
+  reopened; a debug build stopped.
+- **Typing under sticky-scroll headers shows the typed text at once.** The
+  keystroke repainted the row the headers' height above the edited line, and an
+  input method's candidate window opened there too.
+- **A click on the commit message's Body behind an open dialog no longer focuses
+  it,** and a commit field no longer leaves a blinking caret behind while another
+  input has the keyboard.
+- **The maximized panel shows its focus outline when it takes the keyboard,** and
+  a find-widget button under the pointer lights up when a menu over it closes.
 - **Accepting a completion for a word already typed in full closes the list.**
   Enter or Tab over `return` with `return` offered did nothing and left the list
   up; a snippet item for the same word inserted its raw text (`WORD$0`).
