@@ -318,6 +318,12 @@
     }
     return std::nullopt;
   }
+  // The hover probe frame prep and pointer motion share: which control lights at
+  // (x, y) whatever surface took the motion.
+  static std::optional<SDL_FRect> HoveredInteractiveRect(WorkspaceShell& shell, float x, float y) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return shell.HoveredInteractiveRect(layout, x, y);
+  }
   static std::optional<SDL_FRect> MenuOverflowChevronRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.MenuOverflowChevronRect(layout.menu_bar);

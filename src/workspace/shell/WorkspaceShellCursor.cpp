@@ -1159,6 +1159,13 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
         return button.rect;
       }
     }
+    // And the compact layout's overflow chevron, which paints its fill from the
+    // pointer. Its own damage rode the chrome coordinator's motion path alone, so
+    // a move off it that another surface consumed (the terminal under a panel
+    // drag) left it lit (QA monkey, qa lane seed 1).
+    if (const auto chevron = MenuOverflowChevronRect(layout.menu_bar); chevron.has_value() && Contains(*chevron, x, y)) {
+      return *chevron;
+    }
     return std::nullopt;
   }
 

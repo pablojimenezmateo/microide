@@ -1216,6 +1216,25 @@ void TestTheCompactLayoutReturnsWhenTheWindowGrows() {
   Expect(menus() > 0, "grown back, the menu bar shows its titles again");
 }
 
+// QA monkey (qa lane seed 1): the compact layout's overflow chevron paints its
+// fill from the pointer, but only the chrome coordinator's motion path damaged
+// it, so a move off it that another surface consumed left it lit. It is in the
+// hover probe every surface's motion shares.
+void TestTheMenuOverflowChevronIsAHoverTarget() {
+  FlowFixture fixture("main.txt", "alpha\n");
+  TestAccess::SetWindowSize(fixture.shell, 640, 480);
+  fixture.shell.Render(fixture.canvas.renderer(), 640, 480);
+  const std::optional<SDL_FRect> chevron = TestAccess::MenuOverflowChevronRect(fixture.shell);
+  Expect(chevron.has_value(), "a 640-px window folds the menus into the chevron");
+  if (!chevron.has_value()) {
+    return;
+  }
+  const std::optional<SDL_FRect> hovered = TestAccess::HoveredInteractiveRect(
+      fixture.shell, chevron->x + chevron->w / 2.0f, chevron->y + chevron->h / 2.0f);
+  Expect(hovered.has_value() && hovered->x == chevron->x && hovered->w == chevron->w,
+         "the pointer on the chevron hovers the chevron");
+}
+
 // QA diff-commands: pasting a line longer than the editor is wide made the
 // horizontal scrollbar appear, and the paste damaged only the edited line -- the
 // scrollbar's strip along the editor's bottom kept the old pixels. An edit that
@@ -4687,6 +4706,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestTypingAtTheEndUnderAStickyBandRepaintsTheTypedRow);
   AddTest(tests, "QaFlowRegression/TypingWhereTheEndLeavesAFoldRepaintsTheTypedRow",
           TestTypingWhereTheEndLeavesAFoldRepaintsTheTypedRow);
+  AddTest(tests, "QaFlowRegression/TheMenuOverflowChevronIsAHoverTarget", TestTheMenuOverflowChevronIsAHoverTarget);
   AddTest(tests, "QaFlowRegression/ATabTooltipNamesTheTabUnderThePointerInASplit",
           TestATabTooltipNamesTheTabUnderThePointerInASplit);
   AddTest(tests, "QaFlowRegression/ClickingAnUnfocusedGroupsOverflowChipRepaintsItsStrip",
