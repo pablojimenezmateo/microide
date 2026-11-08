@@ -201,9 +201,75 @@ def flow_previous_navigation(app: q.App) -> None:
                f"({(app.active_tab() or {}).get('title')})")
 
 
+def _row_lines(app: q.App, group: int) -> list[int]:
+    """Which line each visible row of a pane shows: its soft-wrapped row map."""
+    return [row["line"] for row in app.pane(group)["rows"]]
+
+
+def flow_split_wrap_edits(app: q.App) -> None:
+    """One file soft-wrapped in two split panes of different widths, edited from
+    each pane in turn. Each view keeps its own line-width and wrapped-row tables,
+    spliced by the edits made through it, so an edit through one pane leaves the
+    other's describing the old text. An edit through that other pane once spliced
+    its change into the stale tables and stamped them current -- a line kept its
+    old width (QA monkey seeds 69 and 601; a debug build aborted on the
+    cross-check, which makes a recurrence a crash here). For any build, each
+    pane's rows must be what a fresh wrap of the same text gives: wrap off and on
+    again rebuilds the tables from the buffer."""
+    long = "Jobs run highest-priority first; ties keep insertion order. The trace prints a"
+    open_file(app, "wrap/split.md",
+              "# taskflow\n\nshort line\n" + long + "\nrunning cost total.\n\n## End\n")
+    if not app.buffer().get("softWrap"):
+        app.key("alt+z")
+    step(app, "soft wrap in the first pane", 0.3)
+    app.key("ctrl+backslash")
+    step(app, "split right", 0.4)
+    if not app.buffer().get("softWrap"):
+        app.key("alt+z")
+    step(app, "soft wrap in the second pane", 0.3)
+    app.expect(len(app.ui().get("editors", [])) == 2, "two panes show the file")
+
+    def fresh_rows(group: int, label: str) -> None:
+        app.send("focus-group", str(group + 1))
+        step(app, f"{label}: pane {group + 1} focused", 0.2)
+        before = _row_lines(app, group)
+        app.key("alt+z")
+        step(app, f"{label}: wrap off", 0.2)
+        app.key("alt+z")
+        step(app, f"{label}: wrap on again", 0.3)
+        after = _row_lines(app, group)
+        app.expect(before == after,
+                   f"{label}: pane {group + 1} wraps the text as a fresh wrap does ({before} != {after})")
+
+    # Through the second pane: line 3 grows past every other line.
+    app.send("goto", "3:6")
+    app.type("x" * 70)
+    step(app, "the second pane widens line 3", 0.3)
+    # Through the first pane: another line, the line count unchanged.
+    app.send("focus-group", "1")
+    step(app, "the first pane focused", 0.2)
+    app.send("goto", "5:1")
+    app.type("}")
+    step(app, "the first pane types on line 5", 0.3)
+    # And back through the second: a line removed and one added.
+    app.send("focus-group", "2")
+    app.send("goto", "4:10")
+    app.key("Return")
+    app.key("ctrl+z")
+    app.key("ctrl+shift+z")
+    step(app, "the second pane splits line 4, undoes and redoes it", 0.3)
+    app.send("focus-group", "1")
+    app.send("goto", "3:2")
+    app.type("yy")
+    step(app, "the first pane types on the widened line", 0.3)
+    fresh_rows(0, "after the edits")
+    fresh_rows(1, "after the edits")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "view-toggles": flow_view_toggles,
     "column-select": flow_column_select,
     "previous-navigation": flow_previous_navigation,
+    "split-wrap-edits": flow_split_wrap_edits,
 }
 PLUGINS: dict[str, tuple[str, ...]] = {"previous-navigation": ("qa-api",)}
