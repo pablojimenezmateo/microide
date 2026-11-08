@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdlib>
 #include <optional>
 #include <random>
 #include <string>
@@ -446,6 +447,118 @@ void TestAnEditThroughTheOtherViewOfADocumentKeepsItsWidthTableTrue() {
   Expect(right.max_visual_columns() == widest, "and the right view's too");
 }
 
+// Every view's derived tables stay true whichever view edits (safety-plan W3).
+// Two to four views of one document at different widths, soft wrap on or off,
+// random edits through random views -- typing, newlines, deletions, selections
+// replaced, undo and redo, wrap and tab-size flips -- laying out only some views
+// after each step (so some lag, as a background pane does), and after every step
+// every view's tables that claim current are checked against a fresh build
+// (TextViewport::VerifyDerivedCachesForTesting). TD-2026-10-30-426 was one view's
+// table stamped current over the other view's edit; this is the stateful sweep of
+// that class. MICROIDE_VIEW_FUZZ_ROUNDS raises the round count (the plan's
+// acceptance run is 10000).
+void TestEditsThroughEveryViewKeepEveryViewsCachesTrue() {
+  std::size_t rounds = 120;
+  if (const char* env = std::getenv("MICROIDE_VIEW_FUZZ_ROUNDS"); env != nullptr && *env != '\0') {
+    rounds = static_cast<std::size_t>(std::strtoull(env, nullptr, 10));
+  }
+  std::uint64_t seed = 0x9E3779B97F4A7C15ull;
+  const auto pick = [&seed](std::size_t bound) {
+    seed ^= seed << 13;
+    seed ^= seed >> 7;
+    seed ^= seed << 17;
+    return static_cast<std::size_t>(seed % std::max<std::size_t>(1, bound));
+  };
+  static constexpr std::string_view kPieces[] = {
+      "a", "word word word word", "\t", "\n", "\n\n", "x\ny", "\xc3\xa9", "\xe4\xbd\xa0\xe5\xa5\xbd",
+      "{", "}", "        ", "a very long run of text that wraps at any narrow width at all", ""};
+  for (std::size_t round = 0; round < rounds; ++round) {
+    std::string content;
+    const std::size_t lines = 1 + pick(10);
+    for (std::size_t line = 0; line < lines; ++line) {
+      if (line > 0) {
+        content.push_back('\n');
+      }
+      for (std::size_t piece = pick(4); piece > 0; --piece) {
+        content += kPieces[pick(std::size(kPieces))];
+      }
+    }
+    std::vector<TextViewport> views(1);
+    views[0].SetViewportSize(12, 10 + pick(60));
+    views[0].LoadContent(content, "/tmp/views.txt");
+    const std::size_t view_count = 2 + pick(3);
+    for (std::size_t i = 1; i < view_count; ++i) {
+      views.push_back(views[0]);  // another view: the document is shared
+    }
+    for (TextViewport& view : views) {
+      view.SetViewportSize(12, 8 + pick(70));
+      view.SetSoftWrap(pick(3) != 0);
+    }
+    const auto lay_out = [](TextViewport& view) {
+      for (std::size_t row = 0; row < 24; ++row) {
+        (void)view.VisibleWrappedRowLayoutRef(row);
+      }
+      (void)view.max_visual_columns();
+    };
+    for (std::size_t step = 0; step < 40; ++step) {
+      TextViewport& view = views[pick(views.size())];
+      const std::size_t line = pick(view.line_count());
+      const std::size_t column = pick(view.lines().LineLength(line) + 1);
+      std::string op;
+      switch (pick(12)) {
+        case 0: case 1: case 2:
+          view.MoveCursorTo(line, column);
+          view.InsertText(kPieces[pick(std::size(kPieces))]);
+          op = "insert";
+          break;
+        case 3:
+          view.MoveCursorTo(line, column);
+          view.InsertNewline();
+          op = "newline";
+          break;
+        case 4:
+          view.MoveCursorTo(line, column);
+          view.Backspace();
+          op = "backspace";
+          break;
+        case 5:
+          view.MoveCursorTo(line, column);
+          view.DeleteForward();
+          op = "delete";
+          break;
+        case 6: {
+          view.MoveCursorTo(line, column);
+          const std::size_t to_line = pick(view.line_count());
+          view.MoveCursorTo(to_line, pick(view.lines().LineLength(to_line) + 1), /*extend_selection=*/true);
+          view.InsertText(kPieces[pick(std::size(kPieces))]);
+          op = "replace selection";
+          break;
+        }
+        case 7: (void)view.Undo(); op = "undo"; break;
+        case 8: (void)view.Redo(); op = "redo"; break;
+        case 9: view.SetSoftWrap(!view.soft_wrap()); op = "toggle wrap"; break;
+        case 10: view.SetViewportSize(12, 8 + pick(70)); op = "resize"; break;
+        default: view.SetTabSize(1 + pick(8)); op = "tab size"; break;
+      }
+      // Some views draw a frame, some do not (a background pane).
+      for (TextViewport& other : views) {
+        if (pick(2) == 0) {
+          lay_out(other);
+        }
+      }
+      for (std::size_t i = 0; i < views.size(); ++i) {
+        const std::string problem = views[i].VerifyDerivedCachesForTesting();
+        if (!problem.empty()) {
+          Expect(false, "round " + std::to_string(round) + " step " + std::to_string(step) + " (" + op +
+                            "): view " + std::to_string(i) + " of " + std::to_string(views.size()) + ": " +
+                            problem);
+          return;
+        }
+      }
+    }
+  }
+}
+
 // Soft-wrapped rows are laid out with the line's width taken from the width table
 // or the wrapped-row table, cross-checked (in debug builds) against the buffer.
 // The QA monkey tripped that check once after a newline over a selection in a
@@ -516,6 +629,8 @@ void RegisterTextViewportMultiCaretReferenceTests(std::vector<TestCase>& tests) 
           TestTypingTheSelectedTextCollapsesTheSelection);
   AddTest(tests, "TextViewport/NewlineAtASoftWrapBoundaryKeepsTheWrappedRowTableCurrent",
           TestNewlineAtASoftWrapBoundaryKeepsTheWrappedRowTableCurrent);
+  AddTest(tests, "TextViewport/EditsThroughEveryViewKeepEveryViewsCachesTrue",
+          TestEditsThroughEveryViewKeepEveryViewsCachesTrue);
   AddTest(tests, "TextViewport/AnEditThroughTheOtherViewOfADocumentKeepsItsWidthTableTrue",
           TestAnEditThroughTheOtherViewOfADocumentKeepsItsWidthTableTrue);
   AddTest(tests, "TextViewport/MultiCaretEditsKeepTheWrappedRowTableCurrent",

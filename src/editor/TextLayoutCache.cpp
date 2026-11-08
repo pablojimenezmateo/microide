@@ -869,6 +869,85 @@ void TextLayoutCache::VerifyLineWidthTableIfRequested(LineSpan lines,
 }
 #endif
 
+std::string TextLayoutCache::VerifyAgainstFreshBuildForTesting(LineSpan lines,
+                                                               std::size_t tab_size,
+                                                               std::size_t visible_columns,
+                                                               bool soft_wrap,
+                                                               const FoldingModel* folding_model,
+                                                               std::uint64_t layout_shape_revision,
+                                                               std::uint64_t content_revision) const {
+  const auto at = [](std::string_view what, std::size_t index) {
+    return std::string(what) + " " + std::to_string(index);
+  };
+  if (LineWidthsAreCurrent(lines.size(), tab_size, content_revision)) {
+    std::size_t widest = 0;
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+      const LineLayoutFacts fresh = TextLayout::MeasureLineFacts(lines[index], tab_size);
+      const LineLayoutFacts cached = cached_visual_line_columns_[index].facts();
+      if (cached.visual_columns != fresh.visual_columns || cached.plain_ascii != fresh.plain_ascii) {
+        return at("the width table claims current and disagrees with line", index) + ": " +
+               std::to_string(cached.visual_columns) + " columns cached, " +
+               std::to_string(fresh.visual_columns) + " measured";
+      }
+      widest = std::max(widest, fresh.visual_columns);
+    }
+    if (cached_max_visual_columns_.has_value() && *cached_max_visual_columns_ != widest) {
+      return "the memoized widest line (" + std::to_string(*cached_max_visual_columns_) +
+             ") disagrees with the lines (" + std::to_string(widest) + ")";
+    }
+    if (visual_column_block_max_.size() == VisualColumnBlockCount()) {
+      for (std::size_t block = 0; block < visual_column_block_max_.size(); ++block) {
+        std::size_t block_widest = 0;
+        const std::size_t end = std::min((block + 1) * kVisualColumnBlockLines, lines.size());
+        for (std::size_t index = block * kVisualColumnBlockLines; index < end; ++index) {
+          block_widest = std::max(block_widest, cached_visual_line_columns_[index].visual_columns());
+        }
+        if (visual_column_block_max_[block].columns != block_widest) {
+          return at("the width table's block maximum disagrees for block", block);
+        }
+      }
+    }
+  }
+  const bool trivial_now = !soft_wrap && !(folding_model != nullptr && folding_model->has_any_collapsed_fold());
+  const bool claims_current =
+      !trivial_now && !wrapped_row_layouts_trivial_ &&
+      wrapped_row_layouts_layout_shape_revision_ == layout_shape_revision &&
+      wrapped_row_layouts_content_revision_ == content_revision && wrapped_row_layouts_tab_size_ == tab_size &&
+      wrapped_row_layouts_visible_columns_ == visible_columns && wrapped_row_layouts_soft_wrap_ == soft_wrap &&
+      wrapped_row_layouts_folding_model_ == folding_model &&
+      wrapped_row_layouts_fold_revision_ == (folding_model != nullptr ? folding_model->layout_revision() : 0);
+  if (claims_current) {
+    TextLayoutCache fresh;
+    fresh.EnsureWrappedRowLayouts(lines, tab_size, visible_columns, soft_wrap, folding_model,
+                                  layout_shape_revision, content_revision);
+    if (fresh.wrapped_row_layouts_fold_no_wrap_ != wrapped_row_layouts_fold_no_wrap_) {
+      return "the wrapped-row table claims current and disagrees about fold-but-no-wrap";
+    }
+    if (fresh.wrapped_row_layouts_.size() != wrapped_row_layouts_.size()) {
+      return "the wrapped-row table claims current with " + std::to_string(wrapped_row_layouts_.size()) +
+             " rows; a fresh wrap has " + std::to_string(fresh.wrapped_row_layouts_.size());
+    }
+    for (std::size_t row = 0; row < wrapped_row_layouts_.size(); ++row) {
+      const WrappedRow& a = wrapped_row_layouts_[row];
+      const WrappedRow& b = fresh.wrapped_row_layouts_[row];
+      if (a.line_index != b.line_index || a.visual_start != b.visual_start || a.visual_end != b.visual_end ||
+          a.indent != b.indent) {
+        return at("the wrapped-row table claims current and disagrees at row", row) + " (line " +
+               std::to_string(a.line_index) + " " + std::to_string(a.visual_start) + ".." +
+               std::to_string(a.visual_end) + " cached, line " + std::to_string(b.line_index) + " " +
+               std::to_string(b.visual_start) + ".." + std::to_string(b.visual_end) + " fresh)";
+      }
+    }
+    if (fresh.wrapped_line_row_offsets_ != wrapped_line_row_offsets_) {
+      return "the wrapped-row table's line offsets claim current and disagree with a fresh wrap";
+    }
+  }
+  if (!VisibleLineLruIsConsistentForTesting()) {
+    return "the visible-line LRU is inconsistent with its map";
+  }
+  return {};
+}
+
 void TextLayoutCache::RebuildVisualColumnBlockMaxima() const {
   const std::size_t lines = cached_visual_line_columns_.size();
   visual_column_block_max_.assign(VisualColumnBlockCount(), VisualColumnBlockMax{});

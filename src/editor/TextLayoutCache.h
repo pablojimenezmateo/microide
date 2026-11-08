@@ -286,6 +286,25 @@ class TextLayoutCache {
   // bounded by kVisibleLineCacheLimit; no product path calls it.
   bool VisibleLineLruIsConsistentForTesting() const;
 
+  // Every derived table that claims to describe the document, checked against a
+  // fresh build from the same inputs: the per-line width table (and the widest
+  // line and block maxima derived from it) entry by entry, and the wrapped-row
+  // table and its line offsets row by row, rebuilt in a throwaway cache. Returns
+  // "" when everything that claims current is, else what disagrees. A table that
+  // does not claim current is not checked: it will be rebuilt before it is read.
+  //
+  // Each view of a document keeps its own tables, spliced only by its own edits;
+  // the class this guards (TD-2026-10-30-426) left one view's table stamped
+  // current over another view's edit, silently. Compiled unconditionally like the
+  // other `*ForTesting` seams; O(document), so no product path calls it.
+  std::string VerifyAgainstFreshBuildForTesting(LineSpan lines,
+                                                std::size_t tab_size,
+                                                std::size_t visible_columns,
+                                                bool soft_wrap,
+                                                const FoldingModel* folding_model,
+                                                std::uint64_t layout_shape_revision,
+                                                std::uint64_t content_revision) const;
+
 #ifndef NDEBUG
   std::size_t wrapped_row_layout_build_count_for_debug() const {
     return wrapped_row_layout_build_count_;

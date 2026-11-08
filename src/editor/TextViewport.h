@@ -604,6 +604,10 @@ class TextViewport {
   bool VisibleLineLruIsConsistentForTesting() const {
     return layout_cache_.VisibleLineLruIsConsistentForTesting();
   }
+  // Every derived table of THIS view that claims current, against a fresh build
+  // (TextLayoutCache::VerifyAgainstFreshBuildForTesting); "" when all agree. Call
+  // it on every view of a document, not only the one that edited it.
+  std::string VerifyDerivedCachesForTesting() const;
 
   // Full visual width of a logical line. Under soft wrap this is read off the
   // wrapped-row table (a line's last row ends at its width) rather than built as

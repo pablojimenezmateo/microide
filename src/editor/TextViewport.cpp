@@ -1546,6 +1546,15 @@ std::size_t TextViewport::MaxVisualColumns() const {
   return layout_cache_.MaxVisualColumns(document_->lines, tab_size_, document_->content_revision);
 }
 
+std::string TextViewport::VerifyDerivedCachesForTesting() const {
+  if (!document_) {
+    return {};
+  }
+  return layout_cache_.VerifyAgainstFreshBuildForTesting(document_->lines, tab_size_, visible_columns_, soft_wrap_,
+                                                         folding_model_, document_->layout_shape_revision,
+                                                         document_->content_revision);
+}
+
 void TextViewport::EnsureWrappedRowLayouts() const {
   if (!document_) {
     return;
