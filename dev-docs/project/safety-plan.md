@@ -1,6 +1,6 @@
 # Safety Plan: no crash, no lost data
 
-Status: **adopted 2026-11-08**, all ten workstreams to be done. Owner of current direction is
+Status: **adopted 2026-11-08**, all ten workstreams to be done. Its centre is W1: the monkey, run continuously on this PC, with findings handed to a fixing agent. Owner of current direction is
 still `active-work.md` (§ 8 links here); this file is the program's detail and its tracker.
 
 ## Why now
@@ -37,71 +37,164 @@ today: the lanes check pixels, crashes and sanitizer reports, but never the byte
 
 | Phase | Workstreams | Why this order |
 |---|---|---|
-| 1 | W1 continuous soak runner, W4 data-loss oracle, W5 save fault injection | The runner is where every later check keeps running; the monkey has the highest yield per hour, and data loss has no oracle yet |
-| 2 | W2 assert-armed QA, W3 per-view cache invariants, W9 pattern lints | Turn silent corruption into crashes the Phase 1 tools then find |
-| 3 | W6 wake-race lane, W7 fractional-scale QA, W8 new fuzzers | Close the environment- and input-shaped blind spots |
-| 4 | W10 check the checks | Audit everything above, and what came before it |
+| 1 | W1.1 runner, W1.5 agent-ready findings, W1.2 coverage steering and corpus | The monkey is the bug finder and an agent is the fixer: first make it run forever and hand over fixable findings, then make it reach further |
+| 2 | W4 data-loss oracle, W5 fault injection, W1.3 oracles | Data loss has no oracle yet; every new oracle multiplies what the monkey's reach finds |
+| 3 | W2 assert-armed build, W3 cache invariants, W1.4 matrix, W7 scale, W8 sequence fuzzers | More environments and internal checks for the runner to rotate through |
+| 4 | W6 wake-race lane, W9 pattern lints, W10 check the checks | Lock in the classes already found, and prove every check still bites |
 
 ## Workstreams
 
-### W1. Continuous soak runner on this PC
+### W1. The monkey, as extensive as possible, on a continuous soak runner
 
-**Evidence.** About 30 fresh seeds found 6 bugs today. CI's fixed seeds (`seed 1`, asan
-`1-4`) had gone dry. Fresh ground needs open-ended running, which is this machine's job, not
-CI's.
+**Why.** About 30 fresh seeds found 6 bugs today, and CI's fixed seeds had gone dry. Findings
+will go to an agent that reviews and fixes them, so the monkey's job is to reach as much
+behaviour as possible, check it with as many oracles as possible, and hand over every finding
+ready to fix.
 
-**Deliverables**
-- **`tools/soak/soak.py`**, a long-running runner that loops forever:
-  1. **Follow `main`.** When `main` moves, check out the new head in its own pinned worktree
-     (`build/wt-soak`, never the live tree), rebuild the debug-with-asserts, release and ASan
-     binaries, and run a quick smoke. A build that does not compile is a finding against that
-     commit, and the runner keeps soaking the last good build.
-  2. **Pick the next job** from a weighted rotation of job types (below). Each job runs with
-     its own seed, its own output directory and a hard timeout.
-  3. **Triage every finding.** Replay it three times on the same build and label it
-     deterministic or flaky. Dedupe by signature (assert text, stack top, QA-STALE region and
-     reason) against the open findings, then file it.
-  4. **Record.** Append to a findings ledger (`build/soak/ledger.jsonl`) holding the commit,
-     job, seed, signature, label, evidence path and a replay command. Write a seed ledger so no
-     seed is re-spent on the same commit.
-- **Job types** (other workstreams add theirs as they land):
-  - monkey default, editor and commands profiles on X11 and Wayland (W1);
-  - monkey on the assert build (W2);
-  - the multi-view edit fuzz (W3);
-  - kill -9 and restart with the data-loss oracle (W4);
-  - the fault sweep (W5);
-  - wake-race (W6);
-  - fractional scale (W7);
-  - libFuzzer targets in long rounds with corpus growth (W8).
-- **A good neighbour on a machine you also work on.**
-  - Everything runs under `nice -n 19` and `ionice -c3`, with a job-count cap (default: half
-    the cores) and a pause file (`build/soak/PAUSE`).
-  - It backs off while the load average from your own work exceeds a threshold, and while a
-    `run-checks` lane holds its lock.
-  - All output stays under `build/soak/`, never on the `/tmp` tmpfs. Evidence is rotated:
-    deterministic findings are kept until fixed, clean runs are deleted, with a disk budget.
-- **Runs as a `systemd --user` service** (`tools/soak/microide-soak.service`): restarts on
-  failure and survives logout. `soak.py status` prints uptime, jobs per hour, findings by
-  label, and the current commit and job.
-- **Reports.**
-  - `soak.py report` writes `build/soak/report.md`: new deterministic findings first, each
-    with its replay command, then flaky ones with their rates, then per-job yield (findings
-    per CPU-hour), so the weighting can follow the yield.
-  - A desktop notification (`notify-send`) when a new deterministic finding appears.
-- **The session loop.** Each work session starts from `soak.py report`. A finding becomes a
-  failing-first test plus its fix, and the ledger entry is marked fixed with the commit. The
-  runner re-checks a fixed signature on later commits and reopens it if it comes back.
+**Where it starts (2026-11-08).** `tools/qa/monkey.py`:
+- picks uniformly from 7 action sources (element 50, chord 15, command 10, type 10, drag 5,
+  wheel 5, point 5);
+- types from a 7-string alphabet;
+- drives one fixture project (`taskflow`) at one window size (1440x900, scale 1);
+- checks crash, stale paint (redraw verifier), sanitizer, expectations and the state oracle;
+- stops at its first finding.
+
+#### W1.1 The soak runner (`tools/soak/soak.py`, a `systemd --user` service)
+
+- **Follow `main`.** In its own pinned worktree (`build/wt-soak`, never the live tree), rebuild
+  the release, debug-with-asserts, ASan, UBSan and TSan binaries when `main` moves. A broken
+  build is a finding against that commit, and the runner keeps soaking the last good build.
+- **Rotate jobs.** A weighted rotation over the matrix in W1.4. Each job has its own seed,
+  output directory and hard timeout. The weights follow measured yield (W1.6).
+- **A good neighbour.**
+  - Everything runs under `nice -n 19` and `ionice -c3`, with a job cap (default: half the
+    cores) and a pause file (`build/soak/PAUSE`).
+  - It backs off on your own load and while a `run-checks` lane holds its lock.
+  - Output stays in `build/soak/` (not the `/tmp` tmpfs) within a disk budget.
+- **Status.** `soak.py status` prints uptime, jobs per hour, open findings by label, and the
+  current commit and job.
+
+#### W1.2 Reach more behaviour
+
+- **Steer by coverage, not uniform choice.** A state signature per step, read from the `ui` and
+  `buffer` queries: focus, overlay mode, sidebar mode, active tab kind, menu open, panel
+  content, split count, modal up, soft wrap, selection kind. The monkey keeps a novelty score
+  and biases toward actions that reached unseen states and transitions. Command coverage
+  (which of the ~270 commands have run, and in which states) steers command choice.
+- **A corpus of interesting prefixes**, as a fuzzer keeps one. A run that reaches a new state
+  saves its action prefix (`build/soak/corpus/`); later runs replay a saved prefix and explore
+  from there, so deep states (a merge mid-conflict, a debug session paused, a split of a soft
+  wrapped file with the find widget open) are reached again and widened instead of found once
+  by luck.
+- **Keep going after a finding.** A non-fatal finding (stale paint, an expectation) is
+  recorded and exploration continues. A crash records its evidence, then the app relaunches
+  with the same profile directory, which also exercises session restore.
+- **A wider action vocabulary.**
+  - *Text:* Unicode (CJK, emoji, combining marks, RTL), tabs, CRLF, very long lines, huge
+    pastes, and IME composition events.
+  - *Mouse and keyboard:* every modifier on clicks and drags, triple and right clicks, text
+    drag and drop, file drops, key-repeat bursts, and bursts with no settle between actions
+    (timing stress).
+  - *Window:* resize from tiny to huge, maximize and fullscreen, focus loss and regain.
+  - *Settings:* `ui.scale`, theme, fonts, tab size, wrap, sticky scroll, code lens placement,
+    each reachable as an action, not only by clicking through Settings.
+  - *Workspace:* project switching and multiple projects; terminal work (run, interrupt,
+    resize, a full-screen TUI); git operations from the UI and from outside (commit, checkout,
+    rebase with conflicts, stash).
+- **External worlds.** Extend the churn agent to create, delete and rename files and whole
+  directories, change permissions, add symlinks and loops, and fill the disk to near-full
+  (W5). Fake LSP and DAP servers answer at random latencies, out of order, late and duplicated
+  (W8). A loopback-sshd remote project runs with a slow link (`qa-remote`'s setup).
+
+#### W1.3 Check more on every step
+
+The existing oracles (crash, stale paint, sanitizer reports, state oracle, expectations), plus:
+
+- **Data integrity** (W4): a shadow model of every save and dirty buffer, checked byte for byte
+  at the end and after every kill -9 and relaunch.
+- **Internal invariants** (W2, W3): an assert-armed build in the rotation, and a debug control
+  command that verifies every view's caches and the frame-prep invariants, called every N
+  steps.
+- **Undo algebra**, sampled: snapshot the buffer, undo k steps, redo k steps, compare (the
+  invariants tool's rules, mid-run instead of on a fixture).
+- **Liveness:** every control command answers within a budget (the TD-433 class). After a quiet
+  period, the idle wake count is zero.
+- **Latency:** the time from input to the frame that shows it, over a budget, is a finding,
+  with the redraw trace attached.
+- **Leaks:** RSS slope, open file descriptors, threads and child processes from `/proc`,
+  sampled. Growth over a run beyond a budget is a finding.
+- **The app's own log:** any assertion, `error`, sanitizer line, or "should not happen" notice
+  is a finding.
+
+#### W1.4 The matrix the runner rotates through
+
+- **Builds:** release, debug-with-asserts, ASan, UBSan, TSan. On a sanitizer build the slow
+  factor applies.
+- **Display:** X11 and Wayland; window sizes from 640x400 to 2560x1440; `ui.scale` 1, 1.25,
+  1.5, 1.75 and 2 (W7); light and dark themes.
+- **Fixtures:**
+  - this repository, `taskflow`, and a generated set: a 50 MB file and a 1 MB single-line file;
+  - binary and invalid UTF-8; CRLF, mixed endings and Latin-1;
+  - deep trees and Unicode file names;
+  - a repo with conflicts, detached HEAD, submodules and a large history;
+  - an empty folder;
+  - a remote project.
+- **Profiles:** default, editor and commands, plus new focused profiles (merge and compare,
+  terminal, git workflows, settings, multi-project, debugger), each with its own weights.
+
+#### W1.5 Findings an agent can fix without re-deriving them
+
+- **Minimise every deterministic finding.** Delta debugging (ddmin) over its replay finds the
+  shortest action sequence that still reproduces it, on the same build. The minimal replay
+  goes into the bundle beside the full one.
+- **One directory per finding** (`build/soak/findings/<id>/`), with a `FINDING.md` holding:
+  - the symptom and the oracle that fired, and the signature;
+  - deterministic or flaky, with the rate;
+  - the commit and the environment cell from W1.4;
+  - the minimal and full replay commands;
+  - for a crash, the symbolized stack (core dump or gdb), and for a stall, the thread dump;
+  - the app log tail and before/after screenshots or the stale-frame pair;
+  - suspected files (from the stack, or the redraw trace's surfaces);
+  - similar past findings from the ledger, with their fix commits and tests.
+- **A ledger with a lifecycle** (`build/soak/ledger.jsonl`):
+  - states: new, claimed, fixed with its commit, then verified, or reopened;
+  - deduplication by signature, so a recurring defect raises its count instead of opening a
+    new entry;
+  - the runner re-checks a fixed signature on every later commit and reopens it if it
+    returns.
+- **`tools/soak/AGENT.md`**, the brief the fixing agent follows:
+  - claim a finding;
+  - reproduce it from the minimal replay;
+  - write the failing-first unit test (`tests/support/RetainedRedraw.h` for paint;
+    QaFlowRegression for flows) and the fix, one commit each, following `CLAUDE.md`;
+  - mark it fixed with the commit;
+  - file a TD for anything deferred.
+- **Notifications.** `soak.py report` writes `build/soak/report.md` (new deterministic first,
+  then flaky, then yield), and `notify-send` fires on each new deterministic finding.
+
+#### W1.6 Measure the monkey itself
+
+- **Coverage:** states and transitions seen, commands run per state, and source coverage from
+  a periodic gcov build in the rotation (which files and branches no job reaches).
+- **Yield:** findings per CPU-hour per job type and per matrix cell. The rotation weights
+  follow it, and a plateau (no new state or finding in N hours) shifts effort to the least
+  covered areas.
+- **Gaps:** the weekly report lists the least-reached code and commands, as input for new
+  profiles and actions.
 
 **Acceptance**
-- The runner survives 24 h unattended with no crash, no disk growth past its budget, and no
-  noticeable latency in an interactive session alongside it.
-- A planted stale-paint defect on `main` is found, labelled deterministic, deduplicated and
-  reported within a few hours of the commit.
-- Its signature is reported fixed after the revert lands, and reopened if the defect is
-  planted again.
-- `soak.py status` and `report` answer from the ledger alone.
+- The runner survives 24 h unattended, with no crash, no disk growth past its budget, and no
+  noticeable latency alongside interactive work.
+- A planted stale-paint defect and a planted lost-save defect on `main` are each found,
+  minimised to fewer than 20 actions, deduplicated, and handed over with a `FINDING.md`
+  within a few hours.
+- After the revert lands they are marked verified, and they reopen if planted again.
+- State and command coverage rise over a week and are reported; command coverage reaches all
+  registered commands in at least one state each.
 
-**Size:** M–L (the runner); each job type is owned by its workstream.
+**Size:** L, the largest workstream and the first. It is built incrementally: the runner and
+findings ledger first, then minimisation and `FINDING.md`, then coverage steering, then
+vocabulary, matrix and oracles in order of measured yield.
 
 ### W2. QA on an assert-armed build, with more frame-prep invariants
 
@@ -303,7 +396,12 @@ showed a probe passing for the wrong reason until it was strengthened.
 
 | WS | Title | Phase | Status | Commits / evidence |
 |---|---|---|---|---|
-| W1 | Continuous soak runner on this PC | 1 | not started | |
+| W1.1 | Soak runner | 1 | not started | |
+| W1.5 | Agent-ready findings (minimise, FINDING.md, ledger, AGENT.md) | 1 | not started | |
+| W1.2 | Coverage steering, prefix corpus, wider vocabulary | 1 | not started | |
+| W1.3 | Per-step oracles (liveness, latency, leaks, log, undo algebra) | 2 | not started | |
+| W1.4 | Builds, display, fixtures and profiles matrix | 3 | not started | |
+| W1.6 | Monkey coverage and yield measurement | 3 | not started | |
 | W4 | Data-loss oracle | 1 | not started | |
 | W5 | Save and persistence fault injection | 1 | not started | |
 | W2 | Assert-armed QA plus prep invariants | 2 | not started | focus-ring assert landed (640f0894c) |
