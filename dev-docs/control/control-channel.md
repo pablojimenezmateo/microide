@@ -249,7 +249,9 @@ debug-value, text, rect, action?: {label, rect}} | null, signatureHelp: <label> 
 card's button, Copy SHA or Quick Fix). `editors` lists every
 editor pane's text geometry -- `{group, focused, rect, textX, firstLineY, lineHeight,
 charWidth, gutterX, gutterWidth, foldHitX, stickyRows, scrollColumn, rows:[{line, y}]}`,
-`rows` naming the buffer line each visible row shows (a collapsed fold skips lines) --
+`rows` naming the buffer line each visible row shows (a collapsed fold skips lines) and
+the `y` it is drawn at, below any inset gap above it (a code lens drawn above its line,
+an inline surface, a multi-line suggestion) and below the sticky-scroll band --
 so a driver clicks a line and column at `textX + (column - 1 - scrollColumn + 0.2) *
 charWidth` and a row's `y + lineHeight / 2`, and a fold marker between `foldHitX` and
 `gutterX + gutterWidth`, without knowing the font. `terminal`, while a terminal pane shows, is the active

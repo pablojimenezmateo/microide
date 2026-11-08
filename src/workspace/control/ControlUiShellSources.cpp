@@ -21,6 +21,7 @@
 #include "workspace/git/GitSidebarHeaderLayout.h"
 #include "workspace/git/WorkspaceGitSidebarPresentation.h"
 #include "workspace/WorkspaceUiText.h"
+#include "workspace/coordinators/EditorPointerHit.h"
 #include "workspace/control/ControlUiQuery.h"
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/render/CodeLensLayout.h"
@@ -1318,7 +1319,14 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                   util::JsonValue(static_cast<std::int64_t>(viewport->horizontal_scroll()));
               util::JsonArray rows;
               const std::size_t visual_count = viewport->visual_line_count();
-              for (std::size_t i = 0; i < metrics.visible_rows; ++i) {
+              // Where each row is drawn, inset gaps (a code lens above its line, an
+              // inline surface, a multi-line suggestion) included: a driver clicks
+              // by these, and `first_line_y + i * line_height` put every row past a
+              // gap on the row above it.
+              std::vector<float> row_tops;
+              VisibleRowTops(context_.current_project_state, *viewport, metrics,
+                             [this](std::string_view id) { return GetSettingValue(id); }, row_tops);
+              for (std::size_t i = 0; i < metrics.visible_rows && i < row_tops.size(); ++i) {
                 const std::size_t visual = viewport->scroll_line() + i;
                 if (visual >= visual_count) {
                   break;
@@ -1326,7 +1334,7 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                 util::JsonObject row;
                 row["line"] = util::JsonValue(
                     static_cast<std::int64_t>(viewport->VisualRowLineIndex(visual) + 1));
-                row["y"] = num(metrics.first_line_y + static_cast<float>(i) * metrics.line_height);
+                row["y"] = num(row_tops[i]);
                 rows.push_back(util::JsonValue(std::move(row)));
               }
               entry["rows"] = util::JsonValue(std::move(rows));

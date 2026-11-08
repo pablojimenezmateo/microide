@@ -23,17 +23,14 @@ bool SettingOn(const SettingValueGetter& get_setting_value, std::string_view id)
 
 }  // namespace
 
-editor::EditorRowYLayout::HitResult ResolveGapAwareRow(
-    const ProjectWorkspaceState& state, const editor::TextViewport& viewport,
-    const editor::EditorViewMetrics& metrics, float y, const SettingValueGetter& get_setting_value) {
-  // No plugin/LSP contribution: no insets can exist, so the gap list is empty and
-  // the mapping collapses to the legacy formula. Skip the store probing entirely.
-  const auto* pres = state.plugin_presentation_if_present();
-  if (pres == nullptr) {
-    return editor::EditorRowYLayout(metrics.first_line_y, metrics.line_height,
-                                    static_cast<std::uint32_t>(viewport.scroll_line()))
-        .HitTest(y, metrics.visible_rows);
-  }
+namespace {
+
+// The inset gaps the renderer draws for `viewport`, as options: the one producer
+// both the pointer hit-test and the row report read.
+editor::InsetGapOptions PointerInsetGapOptions(const ProjectWorkspaceState& state,
+                                               const editor::TextViewport& viewport,
+                                               const editor::EditorViewMetrics& metrics,
+                                               const SettingValueGetter& get_setting_value) {
   editor::InsetGapOptions options{
       .inline_surfaces = SettingOn(get_setting_value, "plugins.inline_surfaces"),
       .code_lens_above = SettingOn(get_setting_value, "plugins.code_lens_above"),
@@ -47,9 +44,44 @@ editor::EditorRowYLayout::HitResult ResolveGapAwareRow(
     options.ghost_anchor_line = ghost->anchor_line;
     options.ghost_height = static_cast<float>(ghost->lines.size() - 1) * metrics.line_height;
   }
+  return options;
+}
+
+}  // namespace
+
+void VisibleRowTops(const ProjectWorkspaceState& state, const editor::TextViewport& viewport,
+                    const editor::EditorViewMetrics& metrics,
+                    const SettingValueGetter& get_setting_value, std::vector<float>& out_tops) {
+  out_tops.clear();
+  std::vector<editor::RowGap> gaps;
+  if (const auto* pres = state.plugin_presentation_if_present(); pres != nullptr) {
+    std::vector<editor::RowGapContent> contents;
+    editor::BuildRowGapsForWindow(pres->surfaces, pres->decorations, viewport, metrics.visible_rows,
+                                  PointerInsetGapOptions(state, viewport, metrics, get_setting_value),
+                                  gaps, contents);
+  }
+  const editor::EditorRowYLayout rows(metrics.first_line_y, metrics.line_height,
+                                      static_cast<std::uint32_t>(viewport.scroll_line()), gaps);
+  out_tops.reserve(metrics.visible_rows);
+  for (std::size_t i = 0; i < metrics.visible_rows; ++i) {
+    out_tops.push_back(rows.RowTop(i));
+  }
+}
+
+editor::EditorRowYLayout::HitResult ResolveGapAwareRow(
+    const ProjectWorkspaceState& state, const editor::TextViewport& viewport,
+    const editor::EditorViewMetrics& metrics, float y, const SettingValueGetter& get_setting_value) {
+  // No plugin/LSP contribution: no insets can exist, so the gap list is empty and
+  // the mapping collapses to the legacy formula. Skip the store probing entirely.
+  const auto* pres = state.plugin_presentation_if_present();
+  if (pres == nullptr) {
+    return editor::EditorRowYLayout(metrics.first_line_y, metrics.line_height,
+                                    static_cast<std::uint32_t>(viewport.scroll_line()))
+        .HitTest(y, metrics.visible_rows);
+  }
   return editor::ResolveInsetClick(pres->surfaces, pres->decorations, viewport,
                                    metrics.first_line_y, metrics.line_height, metrics.visible_rows,
-                                   y, options)
+                                   y, PointerInsetGapOptions(state, viewport, metrics, get_setting_value))
       .hit;
 }
 

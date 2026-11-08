@@ -3718,19 +3718,24 @@ void TestRightClicksUnderAStickyBandActOnTheClickedLine() {
   const util::JsonValue lens_ui = TestAccess::ControlUi(fixture.shell);
   const util::JsonValue& lens_pane = lens_ui["editors"][std::size_t{0}];
   std::optional<double> lens_row_y;
+  std::optional<double> previous_row_y;
   for (const util::JsonValue& r : lens_pane["rows"].AsArray()) {
     if (r["line"].AsInt() == line) {
       lens_row_y = r["y"].AsDouble();
+      break;
     }
+    previous_row_y = r["y"].AsDouble();
   }
-  Expect(lens_row_y.has_value(), "the lensed line should still be on screen");
-  if (lens_row_y.has_value()) {
+  Expect(lens_row_y.has_value() && previous_row_y.has_value(), "the lensed line should still be on screen");
+  if (lens_row_y.has_value() && previous_row_y.has_value()) {
     const double lh = lens_pane["lineHeight"].AsDouble();
+    // The control channel reports where the row is drawn: below the lens strip,
+    // which it used to leave out (a driver clicking the row hit the strip).
+    Expect(std::fabs(*lens_row_y - *previous_row_y - 2.0 * lh) < 0.5,
+           "the ui should report the lensed line a lens strip below the line above it");
     const auto lens = TestAccess::AboveLensAtPosition(
         fixture.shell, static_cast<float>(lens_pane["textX"].AsDouble() + 8.0),
-        // The ui's row y counts no inset gaps, so the strip above the line sits
-        // where the line's own row is reported.
-        static_cast<float>(*lens_row_y + 0.5 * lh));
+        static_cast<float>(*lens_row_y - 0.5 * lh));
     Expect(lens.has_value() && lens->line == static_cast<std::size_t>(line - 1),
            "a click on the lens above line " + std::to_string(line) + " should resolve that lens");
   }

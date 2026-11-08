@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "editor/EditTypes.h"
 #include "editor/EditorRowYLayout.h"
@@ -36,6 +37,14 @@ using SettingValueGetter = std::function<std::optional<std::string>(std::string_
 // so a click below a gap lands on the correct logical line. With nothing visible
 // the gap list is empty and this collapses to the legacy
 // `(y - first_line_y) / line_height` result.
+// The top y of each visible row of `viewport` (index 0 == the first visible row),
+// counting the same inset gaps ResolveGapAwareRow resolves a pointer against: the
+// report a driver clicks by (the control channel's `ui.editors[].rows[].y`) and the
+// hit-test agree by construction. Without gaps, `first_line_y + i * line_height`.
+void VisibleRowTops(const ProjectWorkspaceState& state, const editor::TextViewport& viewport,
+                    const editor::EditorViewMetrics& metrics,
+                    const SettingValueGetter& get_setting_value, std::vector<float>& out_tops);
+
 editor::EditorRowYLayout::HitResult ResolveGapAwareRow(
     const ProjectWorkspaceState& state, const editor::TextViewport& viewport,
     const editor::EditorViewMetrics& metrics, float y, const SettingValueGetter& get_setting_value);
