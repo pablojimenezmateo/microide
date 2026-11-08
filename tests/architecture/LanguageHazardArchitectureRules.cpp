@@ -35,9 +35,29 @@ std::size_t RangeForColon(std::string_view head) {
   return std::string_view::npos;
 }
 
-// Whether `range` subscripts the result of a call: a `)` followed by `[`, whose
-// matching `(` follows a name or a template's `>` -- `F(x)[k]`, `F<T>()[0]`. A
-// parenthesized expression (`(*json)["rows"]`) is not a call.
+// Whether, at `next`, the range goes on into the temporary: a subscript, or one
+// of util::JsonValue's accessors, which return references into the value
+// (`BuildCommands().AsArray()` walked a destroyed array: the control `surface`
+// query, 2026-11-08).
+bool ReachesIntoTheResult(std::string_view range, std::size_t next) {
+  if (next >= range.size()) {
+    return false;
+  }
+  if (range[next] == '[') {
+    return true;
+  }
+  for (const std::string_view accessor : {".AsArray(", ".AsObject(", ".AsString("}) {
+    if (range.substr(next).starts_with(accessor)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Whether `range` reaches into the result of a call: a `)` followed by `[` or a
+// JSON accessor, whose matching `(` follows a name or a template's `>` --
+// `F(x)[k]`, `F<T>()[0]`, `F().AsArray()`. A parenthesized expression
+// (`(*json)["rows"]`) is not a call.
 bool SubscriptsACallResult(std::string_view range) {
   for (std::size_t close = 0; close < range.size(); ++close) {
     if (range[close] != ')') {
@@ -47,7 +67,7 @@ bool SubscriptsACallResult(std::string_view range) {
     while (next < range.size() && std::isspace(static_cast<unsigned char>(range[next])) != 0) {
       ++next;
     }
-    if (next >= range.size() || range[next] != '[') {
+    if (!ReachesIntoTheResult(range, next)) {
       continue;
     }
     int depth = 0;
@@ -165,11 +185,12 @@ void RunRangeForTemporaryRuleFixtures() {
   WriteFile(root / "tests/Bad.cpp",
             "void A(){ for (const auto& e : TestAccess::ControlUi(shell)[\"elements\"].AsArray()) {} }\n"
             "void B(){ for (int x : Make<int>()[0]) {} }\n"
-            "void C(){ for (auto& x : Rows(a, f(b))\n    [2]) {} }\n");
+            "void C(){ for (auto& x : Rows(a, f(b))\n    [2]) {} }\n"
+            "void D(){ for (const auto& c : BuildCommands().AsArray()) {} }\n");
   WriteFile(root / "src/Good.cpp", "void G(){ for (int i = 0; i < 3; ++i) {} }\n");
-  Expect(CheckRangeForDoesNotSubscriptATemporary(root).violations.size() == 3,
-         "the range-for rule must flag a subscript of a call's result, a template call's, and one "
-         "wrapped across lines");
+  Expect(CheckRangeForDoesNotSubscriptATemporary(root).violations.size() == 4,
+         "the range-for rule must flag a subscript of a call's result, a template call's, one "
+         "wrapped across lines, and a JSON accessor on a call's result");
 
   // Positive control: the safe spellings next to it.
   WriteFile(root / "tests/Bad.cpp",
@@ -177,6 +198,7 @@ void RunRangeForTemporaryRuleFixtures() {
             "void B(){ for (auto& g : ComputeEditorGroupRects(layout).groups) {} }\n"
             "void C(){ for (auto& t : MakeEditorTabService().DirtyGroupTabs()) {} }\n"
             "void D(){ for (auto& r : (*json)[\"rows\"].AsArray()) {} }\n"
+            "void I(){ for (auto& r : rows.AsArray()) {} }\n"
             "void E(){ for (std::size_t i = 0; i < F()[1]; ++i) {} }\n"
             "void F(){ for (auto& x : std::vector<int>{1, 2}) {} }\n"
             "void H(){ for (auto& x : ns::Table::Rows()) {} }\n"
@@ -184,7 +206,8 @@ void RunRangeForTemporaryRuleFixtures() {
             "// for (auto& e : F()[0]) is documented here, not written\n");
   Expect(CheckRangeForDoesNotSubscriptATemporary(root).violations.empty(),
          "the range-for rule must accept a named local, a data member, a member call, a "
-         "parenthesized subscript, a classic for, and string or comment text");
+         "parenthesized subscript, an accessor on a named value, a classic for, and string or "
+         "comment text");
 
   // Loud-missing-target guard: no range-for at all is a hollowed-out rule.
   WriteFile(root / "tests/Bad.cpp", "int H(){ return 0; }\n");

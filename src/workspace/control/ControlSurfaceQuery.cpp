@@ -76,13 +76,18 @@ util::JsonValue Strings(auto&& values) {
 
 util::JsonValue ControlChannelService::BuildSurface() const {
   util::JsonObject object;
+  // Each answer is a named local: a range-for over `BuildCommands().AsArray()`
+  // iterates a temporary destroyed before the loop body runs (no C++23
+  // lifetime extension under -std=c++20).
+  const util::JsonValue command_rows = BuildCommands();
   util::JsonArray commands;
-  for (const util::JsonValue& command : BuildCommands().AsArray()) {
+  for (const util::JsonValue& command : command_rows.AsArray()) {
     commands.push_back(command["command"]);
   }
   object["commands"] = util::JsonValue(std::move(commands));
+  const util::JsonValue binding_rows = BuildKeybindings();
   util::JsonArray keybindings;
-  for (const util::JsonValue& binding : BuildKeybindings().AsArray()) {
+  for (const util::JsonValue& binding : binding_rows.AsArray()) {
     util::JsonObject row;
     row["id"] = binding["id"];
     row["chord"] = binding["chord"];
@@ -90,8 +95,9 @@ util::JsonValue ControlChannelService::BuildSurface() const {
     keybindings.push_back(util::JsonValue(std::move(row)));
   }
   object["keybindings"] = util::JsonValue(std::move(keybindings));
+  const util::JsonValue setting_rows = BuildSettings();
   util::JsonArray settings;
-  for (const util::JsonValue& setting : BuildSettings().AsArray()) {
+  for (const util::JsonValue& setting : setting_rows.AsArray()) {
     settings.push_back(setting["id"]);
   }
   object["settings"] = util::JsonValue(std::move(settings));

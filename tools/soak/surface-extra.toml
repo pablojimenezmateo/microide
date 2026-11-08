@@ -1,0 +1,64 @@
+# The surface the `surface` query cannot enumerate (safety-plan W1.7), kept by hand.
+# Each item says what reaches it (`covered_by`: a monkey source or QA scenario) or
+# why the monkey cannot (`excluded`: the reason and the test that covers it instead).
+# An item with neither is reported as UNCOVERED by tools/soak/surface.py.
+
+[item."external file changes"]
+kind = "outside world"
+covered_by = "monkey `external` source (rewrite, append, truncate, CRLF, binary, create/delete trees, renames, chmod, symlinks and loops) and the churn thread"
+
+[item."git from outside"]
+kind = "outside world"
+covered_by = "monkey `external` source (commit, switch, stash, stash pop, a conflicting merge and its abort, checkout of a file)"
+
+[item."kill -9 and relaunch"]
+kind = "process"
+covered_by = "monkey `kill9` source with the data-loss oracle; crashes relaunch on the same profile"
+
+[item."window resize and focus loss"]
+kind = "window system"
+covered_by = "monkey `window` source (within the window's size hints); qa scenario window-minimum"
+
+[item."file drops from other applications"]
+kind = "window system"
+covered_by = "monkey `file` source through the control channel's `pointer drop` (X cannot synthesize a drop)"
+
+[item."terminal programs"]
+kind = "process"
+covered_by = "monkey `terminal` source (floods, alternate screen, titles, a pager, Ctrl+C/Ctrl+D/Ctrl+Z)"
+
+[item."plugin APIs"]
+kind = "plugins"
+covered_by = "qa scenarios plugin-* (flows_plugin_api.py); the monkey runs with the bundled plugins only"
+
+[item."language servers answering out of order"]
+kind = "outside world"
+excluded = "needs the scripted fake server of safety-plan W8 (LspSessionFuzz), not yet built; real clangd is driven by the lsp-* scenarios"
+
+[item."debug adapters"]
+kind = "outside world"
+covered_by = "qa scenarios dbg-* (gdb through plugins/gdb-dap); the monkey excludes debug-* commands (no adapter in its fixture)"
+
+[item."remote projects"]
+kind = "remote"
+covered_by = "tools/qa/remote.py against a loopback sshd (run-checks qa-remote), not yet a soak job"
+
+[item."native file dialogs"]
+kind = "window system"
+excluded = "a portal nobody answers under Xvfb blocks the loop; the monkey never presses Open/Save As. Covered by qa scenario native-dialogs (a stand-in zenity)"
+
+[item."IME composition"]
+kind = "window system"
+excluded = "Xvfb has no input method; needs a control-channel composition hook (TD-2026-11-08-435 item 4). Text past Latin-1 goes through the paste path"
+
+[item."clipboard set by other applications"]
+kind = "window system"
+excluded = "needs an X clipboard owner in the driver (TD-2026-11-08-435 item 4); copy/paste inside the app is reached"
+
+[item."suspend/resume and display hotplug"]
+kind = "window system"
+excluded = "not reachable on Xvfb; TD-2026-11-08-435 item 4"
+
+[item."disk full"]
+kind = "outside world"
+excluded = "needs a size-limited filesystem for the fixture (safety-plan W5); TD-2026-11-08-435 item 3"
