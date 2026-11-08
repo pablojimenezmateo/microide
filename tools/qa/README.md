@@ -43,7 +43,9 @@ tools/qa/run.py suite menus chrome          # some of them
 tools/qa/run.py suite 'edit-*' 'lsp-*'      # by glob
 tools/qa/run.py suite --list                # the catalog, one line each
 tools/qa/run.py suite menu-clicks           # click every menu row in each layout (dry run)
-tools/qa/run.py monkey --seed 1 --steps 300 # the seeded monkey
+tools/qa/run.py monkey --seed 1 --steps 300 # the seeded monkey (see "The monkey" below)
+tools/qa/run.py monkey --profile layout --seeds 1-4 --size 1280x720 --set ui.scale=1.75
+tools/qa/run.py monkey --coverage build/soak/coverage.json --corpus build/soak/corpus --steps 2000
 tools/qa/run.py monkey --profile commands --seeds 1-8 --binary build/microide-asan/microide/microide
                                             # the control-command fuzzer (formerly tools/fuzz-control-commands.py)
 tools/qa/run.py replay /tmp/mqa-out-.../seed-1/finding-01-.../replay.json
@@ -59,6 +61,9 @@ tools/run-checks.sh qa                      # the lane: build, suite, 300-step m
 MQA_BACKEND=wayland tools/qa/run.py suite -j 4   # the same scenarios on a headless weston
 MQA_BACKEND=wayland MQA_WAYLAND_SCALE=2 tools/qa/run.py suite   # ... on a HiDPI output
 tools/run-checks.sh qa-wayland              # the suite on weston at scale 2, as a lane
+tools/run-checks.sh qa-scale                # scale-sensitive scenarios + a layout monkey at ui.scale 1.25/1.75
+tools/run-checks.sh wake-race               # SDL's lost wake, contended (tools/qa/stress/wake_race.py)
+tools/soak/soak.py run                      # the monkey forever, on this PC (tools/soak/AGENT.md)
 ```
 
 Startup, fixture and driver exceptions fail their scenario without aborting the
@@ -314,6 +319,57 @@ A new popup surface (a context menu, a picker) gets the same treatment: a receip
 in `ui` for what a click ran, and a scenario that clicks every row in more than one
 layout. Hovering alone does not find a press routed elsewhere.
 
+## The monkey
+
+`monkey.py` (safety-plan W1). Each step draws an action from a weighted **source**
+-- `element` (every click kind on a named element), `text` (clicks and drags in the
+editor's text: column select, word/line select, text drag and drop), `chord` (the
+app's keybindings and navigation keys), `command` (the live catalogue with hostile
+arguments), `type` (words, Unicode, tabs; long text through the paste path),
+`burst` (key repeat, or several actions with no settle: input faster than frames),
+`drag`, `wheel` (with Ctrl and Shift), `point`, `setting` (`set-setting` over the
+live catalogue: ui.scale, theme, wrap...), `window` (resize within the window's size
+hints, focus loss), `terminal` (floods, alternate screen, titles, a pager, Ctrl+C),
+`file` (open or drop the odd files seeded under `qa-weird/`: CRLF, mixed endings,
+Latin-1, a BOM, binary, a 300 KB line, Unicode names, symlink loops), `external`
+(rewrites, renames, deletes, chmods, symlinks, git commit/switch/stash/a
+conflicting merge -- recorded, so a replay redoes them) and `kill9`. A **profile**
+sets the weights: `default`, `editing`, `layout`, `world`, `terminal`, `settings`,
+and the former command fuzzer's `commands` and `editor`.
+
+**Steering.** A coarse state signature per step (focus, overlay, sidebar, panel,
+menu, modal, split count, tab kind, wrap, selection: `monkey_model.py`) feeds a
+coverage model. Within a source, an action already tried in the current state is
+drawn less often; a source whose actions keep reaching unseen states or transitions
+is drawn more; with a menu open, its rows are pressed. `--coverage FILE` loads and
+merges the model across runs (locked: several jobs finish at once); `--corpus DIR`
+keeps the action prefix that first reached each state, and a run may start by
+replaying one (rarest states first, `--corpus-probability`).
+
+**Oracles** on top of the App's: `monkey_oracles.py` -- every clean document's file
+holds exactly the bytes a save would write (the `documents` query's SHA-256),
+every 20 steps and at the end; around a kill -9, every dirty buffer comes back
+with its content (after the crash-safety flush's quiet period) and no clean file
+changed; sampled undo^k redo^k is the identity; fd, thread, child and RSS growth
+within budgets; every control answer within 2.5 s (x the slow factor); no save
+temporary of the live process left behind.
+
+**Findings** are recorded and the run goes on (`--stop-at-first` for the old
+behaviour); a crash relaunches on the same profile, which exercises session
+restore. They are deduplicated per run by signature (`findings.py`: the kind, the
+message with numbers, rects, paths and digests masked, the surface under a stale
+box, a crash's top frames) and listed in `seed-N/findings.json` with the run's
+coverage numbers. `--max-findings`, `--time-budget`, `--size`, `--set ID=VALUE`
+and `--no-weird` shape a run; `MQA_UI_SCALE` sets ui.scale for every app.
+
+The soak runner (`tools/soak/soak.py`) runs this continuously on the dev PC over a
+matrix of builds, profiles, sizes and scales, keeps a ledger of findings by
+signature, measures each new one's reproduction rate, minimizes the deterministic
+ones (`tools/soak/minimize.py`, parallel ddmin over the replay) and writes a
+`FINDING.md` per finding for the fixing agent (`tools/soak/AGENT.md`).
+`tools/soak/surface.py` reports which of the app's own inventory (the `surface`
+query) nothing has reached.
+
 ## Reading a finding directory
 
 ```
@@ -327,6 +383,8 @@ finding-03-sidebar--click-status-indent/
   frame-N-reference.png        showed, and what a full render of the same frame paints
   after-action-NNNN.png        the window after each of the last three actions
   now.png                      the window when the finding was recorded
+  log-tail.txt                 the app log's last 64 KB (a crash's sanitizer report)
+  stall-threads.txt            every thread's state, when the app stopped answering
   replay.json                  the actions up to here; `run.py replay` re-runs them on a
                                fresh fixture, file churn included (`churn` rows)
 ```
@@ -369,7 +427,11 @@ assumptions (a column off by one, a key a focused terminal owns).
 | `flows_*.py` | the flows, one module per group (`scenarios.FLOW_MODULES`) |
 | `plugins/` | QA-only plugins a scenario seeds (`qa-snippets`) |
 | `fakebin/` | stand-in programs a scenario puts first on the app's PATH (`zenity`, for the native dialogs; `xdg-open`, which records what the desktop opener was handed) |
-| `monkey.py` | the seeded monkey and the command fuzzer's generators, profiles and churn |
+| `monkey.py` | the monkey: sources, profiles, steering, the outside world, the run loop |
+| `monkey_model.py` | state signatures, the coverage model and the prefix corpus |
+| `monkey_oracles.py` | the data-loss, undo, leak and liveness oracles |
+| `findings.py` | finding signatures (shared with tools/soak) |
+| `stress/` | the SDL lost-wake probe and its lane driver (`wake_race.py`) |
 | `invariants.py` | the editor-invariants sweep (formerly `tools/sweep-editor-invariants.py`) |
 | `run.py` | the CLI |
 | `remote.py`, `agents.py` | the remote-project scenarios against a real ssh host (on demand) |

@@ -152,6 +152,30 @@ that passed vacuously after a file move, and the mechanical sweeps
 that found real bugs a manual read did not. Read it before trusting a green run
 on anything load-bearing, and before adding a lint rule.
 
+## Silent Bugs Get Loud Checks
+
+The defects the QA monkey finds live where no oracle looks. When a bug was silent
+-- a release build laid a line out against a stale width, a buffer stayed stale
+after an outside edit, a fold reopened itself -- the fix lands with the check that
+would have made it loud, not only the regression test:
+
+- an `assert` at the boundary that went wrong (the focus-ring assert in frame prep,
+  the wrapped-row cross-check in `TextLayoutCache`). The default build has no
+  `NDEBUG`, so the unit suite, the `qa` lane and the soak runner's default job all
+  run with assertions on;
+- a `*ForTesting` verifier a stateful sweep can call after every step
+  (`TextViewport::VerifyDerivedCachesForTesting`);
+- an oracle the monkey runs (`tools/qa/monkey_oracles.py`);
+- an architecture rule when the mistake is a pattern (`tests/architecture/`).
+
+Each new check gets a negative control that shows it can fail, recorded under
+`tools/negative-controls/` and replayed by `tools/check-invariants-bite.sh`
+(`dev-docs/project/safety-plan.md` W10).
+
+The soak runner (`tools/soak/soak.py`, a `systemd --user` service) runs the
+monkey continuously on the dev PC and hands each finding over as a bundle with a
+`FINDING.md`; `tools/soak/AGENT.md` is the fixing loop.
+
 ## Validation Loop
 
 For meaningful work:

@@ -148,6 +148,9 @@ tools/run-checks.sh qa          # -> /tmp/microide-qa.log (GUI QA on Xvfb: scena
 tools/run-checks.sh qa-asan     # -> /tmp/microide-qa-asan.log (the GUI QA suite on the ASan build: a slow binary under a memory checker)
 tools/run-checks.sh qa-remote   # -> /tmp/microide-qa-remote.log (remote-project scenarios against a loopback-only sshd run as you, then over a 60 ms each-way link; tools/qa/local-sshd.sh)
 tools/run-checks.sh qa-wayland  # -> /tmp/microide-qa-wayland.log (the GUI QA suite on headless weston at scale 2; input over the control channel's pointer/key)
+tools/run-checks.sh qa-scale    # -> /tmp/microide-qa-scale.log (scale-sensitive scenarios + a layout monkey at ui.scale 1.25 and 1.75)
+tools/run-checks.sh wake-race   # -> /tmp/microide-wake-race.log (SDL's lost wake under contention, with and without LostWakeRelay)
+tools/check-invariants-bite.sh  # every recorded negative control (tools/negative-controls/) must make its check fail
 tools/run-checks.sh all     # all four in sequence
 ```
 
@@ -170,6 +173,13 @@ compiles to nothing there. Run `perf-tests` after touching a render, view-model,
 presentation hot path, or those "must not allocate" contracts go unchecked.
 
 After a run, READ `/tmp/microide-<target>.log` instead of rebuilding and rerunning.
+
+The QA monkey also runs continuously on the dev PC: `tools/soak/soak.py run` (a
+`systemd --user` unit, `tools/soak/microide-soak.service`) follows `main` in
+`build/wt-soak`, rotates jobs over builds, profiles, sizes and scales, and keeps a
+findings ledger with a `FINDING.md` per finding. `tools/soak/soak.py status` /
+`report` read it; `tools/soak/AGENT.md` is the brief for fixing what it finds
+(`dev-docs/project/safety-plan.md`).
 
 Run focused tests with one or more substring filters:
 

@@ -16,7 +16,87 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 
 ## Open items
 
-None. (2026-11-08: the last open entries were resolved and moved to the ledger.)
+### TD-2026-11-08-435 — the safety program's first pass: what landed, what it found, and what it left. [OPEN]
+
+The 2026-11-08 implementation of `dev-docs/project/safety-plan.md` (its tracker has
+the per-workstream state and commits). It made the monkey ~5x faster (in-process
+XTEST input, socket queries, a quiet-log settle), gave it fifteen action sources,
+coverage steering, a prefix corpus and data-loss/undo/leak/latency oracles, and put
+it on a continuous soak runner with a findings ledger, minimizer and FINDING.md
+bundles. The first hunts (12 seeds x 600 steps, then the runner) found and this
+session fixed, each with a failing-first test:
+
+- a fold chord in the same event batch as a click reopened itself (frame-prep
+  reveal read the click as a caret move into the fold);
+- the window had no minimum size, so below a few hundred pixels the chrome was laid
+  out off the window (~70 bounds/overlap findings);
+- tabs and close buttons lay under the tab strips' overflow chips (editor strip at
+  ui.scale 2; the panel strip always, by 4 px);
+- an overlay taller than the editor area was painted under the bottom panel, in full
+  frames too;
+- a symlink to a directory inside the project re-labelled the watched tree, so every
+  later outside edit was reported under the link and open buffers went stale (the
+  data-loss oracle; minimized 410 -> 50 actions);
+- the `surface` query iterated destroyed JSON temporaries (and the range-for lint now
+  knows that shape); the canonical query-verb list had drifted (`settings`);
+- the pointer-cursor test sized the scrollbar without the sticky band.
+
+What it left, by workstream:
+
+1. **W9 rules 2 and 3.** `CheckHitTestsHonourModals` needs the hit-test call graph
+   (which entry points move focus, in what order relative to the modal checks), and
+   `CheckPointerOverElementsAreHoverTargets` cannot tie `PointerOver(rect)` to the
+   hover catch-all by name (16 of the 35 sites pass a variable called `rect`). Both
+   want runtime data instead: a QA/unit sweep that, for every element the `ui` query
+   names with a hover visual, moves the pointer onto it and requires
+   `HoveredInteractiveRect` to name it, and a sweep that clicks every element with a
+   modal up and requires focus not to move.
+2. **W2 frame-prep invariants.** The default build has no `NDEBUG` (CMake build type
+   empty), so the `qa` lane and the soak's default job are already the assert-armed
+   QA the plan asks for; `guidelines/testing.md` now says so. Not added: asserts that
+   every surface view model is built after the frame's last state mutation, that the
+   painted tooltip/hover/caret owner agrees with the input owner, and that no prep
+   step requests damage outside the window. Each needs its negative control (a past
+   bug reverted) before it can be trusted not to abort a healthy run.
+3. **W5 remainder.** The local fault matrix covers SIGKILL at every crash point of
+   `WriteTextFileAtomically`. Not yet: errno injection (ENOSPC, EIO, EACCES, EXDEV on
+   rename, a 5 s fsync stall), which needs a syscall seam in `DurableFile`; crash
+   points in the session/user-config writers, replace-in-files, merge writes and
+   rename/move; the check that every failed save shows the user an error; and the
+   write-path inventory table for `editor-essentials.md`. The monkey cannot fill the
+   disk either (needs a size-limited filesystem for its fixture).
+4. **W8 sequence fuzzers** are not built: `ControlCommandFuzz`, `LspSessionFuzz` and
+   `DapSessionFuzz` (scripted fake servers answering late, out of order and for old
+   versions), and the libFuzzer form of `ViewportEditSequenceFuzz`. The stateful
+   multi-view unit sweep (`TextViewport/EditsThroughEveryViewKeepEveryViewsCachesTrue`)
+   covers the viewport half with a fixed generator.
+5. **Monkey reach not built** (`tools/soak/surface-extra.toml` lists each with what
+   covers it instead): IME composition and clipboard-from-another-app events (both
+   need a control-channel hook), maximize/fullscreen (Xvfb has no window manager),
+   multi-project switching (`project-open` re-roots the session away from the scratch
+   copy), fake language servers and debug adapters, a remote-project soak job, and
+   the 50 MB / submodule / large-history / empty-folder fixtures.
+6. **Oracles not built:** input-to-frame latency with the redraw trace attached, the
+   idle wake count after a quiet period, and the app log's error lines (`util::Log`
+   has no levels to filter on).
+7. **Measurement not built (W1.6/W1.7):** a periodic gcov job in the rotation,
+   plateau detection shifting effort to the least-covered areas, pairwise state x
+   action and branch-coverage reports per commit. `surface.py` reports reached items
+   per category; a keybinding counts as reached when its command ran, not when its
+   chord ran in each context.
+8. **W10 remainder:** mutation testing over the oracle code (the driver's
+   invariants, the redraw verifier, the data oracle), and the audit table of every
+   timing guard and sanitizer branch in `validation-traps.md`.
+9. **Findings of the first hunts not yet fixed:** several redraw-verifier findings
+   (one is a panel tab's close-button hover left painted after a burst with Ctrl+wheel
+   zoom), a 4 s answer to `type` of a Hebrew string (editing near the 300 KB
+   single-line file under load), and a focus left on a hidden panel (first seen on a
+   tiny window; may be gone with the minimum size). They are in the soak ledger
+   (`tools/soak/soak.py report`) with their bundles.
+10. **The soak runner's acceptance** (24 h unattended, a planted stale-paint and a
+    planted lost-save defect each found, minimized under 20 actions, deduplicated and
+    verified after the revert) has not been run end to end; its pieces have, one by
+    one, in this session.
 
 ## Guardrails — rejected experiments, do not retry
 

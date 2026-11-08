@@ -1,6 +1,6 @@
 # Safety Plan: no crash, no lost data
 
-Status: **adopted 2026-11-08**, all ten workstreams to be done. Its centre is W1: the monkey, run continuously on this PC, with findings handed to a fixing agent. Owner of current direction is
+Status: **adopted 2026-11-08**; first implementation pass the same day (see the tracker and TD-2026-11-08-435). Its centre is W1: the monkey, run continuously on this PC, with findings handed to a fixing agent. Owner of current direction is
 still `active-work.md` (§ 8 links here); this file is the program's detail and its tracker.
 
 ## Why now
@@ -433,22 +433,22 @@ showed a probe passing for the wrong reason until it was strengthened.
 
 | WS | Title | Phase | Status | Commits / evidence |
 |---|---|---|---|---|
-| W1.1 | Soak runner | 1 | not started | |
-| W1.5 | Agent-ready findings (minimise, FINDING.md, ledger, AGENT.md) | 1 | not started | |
-| W1.2 | Coverage steering, prefix corpus, wider vocabulary | 1 | not started | |
-| W1.3 | Per-step oracles (liveness, latency, leaks, log, undo algebra) | 2 | not started | |
-| W1.4 | Builds, display, fixtures and profiles matrix | 3 | not started | |
-| W1.6 | Monkey coverage and yield measurement | 3 | not started | |
-| W1.7 | Surface inventory, 100% reached, pairwise and gcov depth, exclusions | 1–3 | not started | |
-| W4 | Data-loss oracle | 1 | not started | |
-| W5 | Save and persistence fault injection | 1 | not started | |
-| W2 | Assert-armed QA plus prep invariants | 2 | not started | focus-ring assert landed (640f0894c) |
-| W3 | Per-view cache invariants | 2 | not started | `split-wrap-edits` flow landed (fa542a981) |
-| W9 | Pattern lints | 2 | not started | |
-| W6 | Wake-race lane | 3 | partly done | relay and stress probe landed (38b167725) |
-| W7 | Fractional-scale QA | 3 | partly done | in-process probe landed (f92a0a4ff) |
-| W8 | Sequence fuzzers | 3 | not started | |
-| W10 | Check the checks | 4 | not started | ubsan guard fixed (43fcca3ed) |
+| W1.1 | Soak runner | 1 | built, not yet soaked 24 h | `tools/soak/soak.py` (e0ebfd31c), build spacing (708124f44), systemd unit |
+| W1.5 | Agent-ready findings (minimise, FINDING.md, ledger, AGENT.md) | 1 | built | ledger, `minimize.py` (README stale buffer: 410 -> 50 actions), `AGENT.md` (e0ebfd31c) |
+| W1.2 | Coverage steering, prefix corpus, wider vocabulary | 1 | mostly done | 15 sources, 8 profiles, steering, corpus (e0ebfd31c); menu follow-through (708124f44); driver 5x faster (e5add2866); gaps in TD-435 item 5 |
+| W1.3 | Per-step oracles (liveness, latency, leaks, log, undo algebra) | 2 | partly done | data, undo, leaks, liveness, staging leftovers (e0ebfd31c); frame latency, idle wakes, log levels: TD-435 item 6 |
+| W1.4 | Builds, display, fixtures and profiles matrix | 3 | partly done | default/release/ASan/UBSan/TSan x 8 profiles x sizes x ui.scale in the soak; Wayland and big fixtures: TD-435 item 5 |
+| W1.6 | Monkey coverage and yield measurement | 3 | partly done | coverage file, yield-weighted rotation, `soak.py report`; gcov and plateau: TD-435 item 7 |
+| W1.7 | Surface inventory, 100% reached, pairwise and gcov depth, exclusions | 1-3 | partly done | `surface` query (667c0d529), `surface.py` + `surface-extra.toml` (3436d07a7); pairwise/gcov: TD-435 item 7 |
+| W4 | Data-loss oracle | 1 | done | `documents` query (52319aeb4), oracle (e0ebfd31c), `save-round-trip` (fa28dfc6a); both planted defects caught (a dropped byte on save; a dirty buffer restored empty after kill -9); found the watcher symlink bug (99d4a63a0) |
+| W5 | Save and persistence fault injection | 1 | partly done | `LocalWriteFaultMatrix` + planted non-atomic control (e73173c0a); errno faults, more crash points, inventory: TD-435 item 3 |
+| W2 | Assert-armed QA plus prep invariants | 2 | partly done | the default build is assert-armed (no NDEBUG): `qa` already is the lane; prep invariants: TD-435 item 2 |
+| W3 | Per-view cache invariants | 2 | done | `VerifyDerivedCachesForTesting` + multi-view sweep, 10 000 rounds clean, bites with the TD-426 fix loosened (fbb80ddff) |
+| W9 | Pattern lints | 2 | partly done | `CheckEditorMetricsNameTheirStickyBand` (47689624b); range-for lint widened (3436d07a7); rules 2-3: TD-435 item 1 |
+| W6 | Wake-race lane | 3 | done | `run-checks.sh wake-race` (0aac53ca1): 0 stalls with the relay, 8 (X11) and 3 (Wayland) without, per 240k rounds |
+| W7 | Fractional-scale QA | 3 | done (lane) | `run-checks.sh qa-scale`, `MQA_UI_SCALE` (0aac53ca1); the soak rotates ui.scale |
+| W8 | Sequence fuzzers | 3 | not started | TD-435 item 4 (the multi-view unit sweep covers the viewport half) |
+| W10 | Check the checks | 4 | partly done | `tools/check-invariants-bite.sh` + 10 recorded controls (e73173c0a); mutation testing, guard audit: TD-435 item 8 |
 
 Update a row's status and commits as each lands. A workstream is **done** when its acceptance
 criteria hold, its lane or test is green in CI (`checks` + `qa-deep`) on a push to main, and
