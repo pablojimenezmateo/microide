@@ -1763,7 +1763,7 @@ with the GCC macro alone is reached only in its GCC form.
 | | | trusted: the timing assertion runs | `tests` on an idle machine only -- a lane run beside six others skips it |
 | `if (!IsSanitizerBuild())` around the 20 ms sleep budget | `tests/RemoteLauncherTests.cpp` | assert / skip | `tests` / the sanitizer lanes |
 | `#if defined(__SANITIZE_THREAD__)` skip of the tooltip-dismiss pixel test | `tests/WorkspaceShellChromeTests.cpp` | skip | `tsan` (GCC); never a clang TSan build, which no lane makes |
-| `#if defined(__SANITIZE_ADDRESS__)` frame-token `SDL_assert` | `src/app/Application.cpp` | armed | `qa-asan` only: the unit `asan` lane never runs the app loop, and the default build (assertions on) does not arm it -- a candidate to arm wherever `NDEBUG` is unset (TD-2026-11-08-435 item 2) |
+| frame-token `SDL_assert` (was `#if defined(__SANITIZE_ADDRESS__)`) | `src/app/Application.cpp` | armed | was `qa-asan` only -- the unit `asan` lane never runs the app loop; now `#if !defined(NDEBUG)`, so `qa`, `qa-scale`, `qa-wayland` and the soak's default jobs arm it too |
 | `MQA_SLOW_FACTOR` (every driver timeout x factor) | `tools/qa/microide_qa.py` | stretched | `qa-asan` (3), the soak's sanitizer jobs (2-5) |
 | | | 1x | `qa`, `qa-scale`, `qa-wayland`, the soak's default and release jobs |
 | monkey liveness budget, 2.5 s x `MQA_SLOW_FACTOR` | `tools/qa/monkey_oracles.py` | finding (`latency`) | every monkey run; the soak re-checks a `latency` finding before calling it deterministic |

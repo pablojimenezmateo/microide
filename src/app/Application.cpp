@@ -880,7 +880,10 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
       scene_texture_.valid() && ShouldPromotePartialFrameToFull(dirty_region_analysis);
   const bool full_redraw = dirty_rects.empty() || !scene_texture_.valid() || promote_partial_to_full;
   std::size_t rendered_clip_count = 0;
-#if defined(__SANITIZE_ADDRESS__)
+#if !defined(NDEBUG)
+  // Armed in every build with assertions (the default build, the QA lanes, the
+  // soak), not only ASan, which was the one lane that ran it (validation-traps:
+  // every timing guard and sanitizer branch).
   SDL_assert(frame_token.valid() &&
              "Application::WorkspaceRenderClip requires PrepareFrameOnce() in current frame");
 #endif
