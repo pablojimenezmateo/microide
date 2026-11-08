@@ -446,7 +446,7 @@ showed a probe passing for the wrong reason until it was strengthened.
 | W3 | Per-view cache invariants | 2 | done | `VerifyDerivedCachesForTesting` + multi-view sweep, 10 000 rounds clean, bites with the TD-426 fix loosened (fbb80ddff) |
 | W9 | Pattern lints | 2 | partly done | `CheckEditorMetricsNameTheirStickyBand` (47689624b); range-for lint widened (3436d07a7); rules 2-3: TD-435 item 1 |
 | W6 | Wake-race lane | 3 | done | `run-checks.sh wake-race` (0aac53ca1): 0 stalls with the relay, 8 (X11) and 3 (Wayland) without, per 240k rounds |
-| W7 | Fractional-scale QA | 3 | done (lane) | `run-checks.sh qa-scale`, `MQA_UI_SCALE` (0aac53ca1); the soak rotates ui.scale |
+| W7 | Fractional-scale QA | 3 | done (lane) | `run-checks.sh qa-scale`, `MQA_UI_SCALE` (0aac53ca1); window sizes in layout units and the run's size applied at startup (ef59309d3); the soak rotates ui.scale |
 | W8 | Sequence fuzzers | 3 | not started | TD-435 item 4 (the multi-view unit sweep covers the viewport half) |
 | W10 | Check the checks | 4 | partly done | `tools/check-invariants-bite.sh` + 10 recorded controls (e73173c0a); mutation testing, guard audit: TD-435 item 8 |
 
