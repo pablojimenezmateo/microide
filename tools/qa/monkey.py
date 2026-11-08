@@ -1,38 +1,71 @@
-"""The seeded monkey: weighted random actions over the running window.
+"""The seeded monkey: coverage-steered random actions over the running window.
 
-Each step draws one action from a weighted source and runs it through the App,
-which records it (the replay file) and then checks every oracle (the redraw
-verifier's QA-STALE, sanitizer and allocator reports, the process staying up).
-Seeded `random.Random` only, so a seed means the same actions on the same fixture.
+Each step draws an action, runs it through the App (which records it for the
+replay file), settles until the app's log is quiet, and checks every oracle: the
+App's always-on ones (crash, the redraw verifier's QA-STALE, sanitizer and
+allocator reports, focus/bounds/overlap, the chrome-vs-buffer state oracle) and
+the monkey's own (monkey_oracles: bytes on disk around saves and kill -9s, undo
+algebra, leaks, control latency). See dev-docs/project/safety-plan.md W1.
 
-Profiles:
+**Reach.** Actions come from weighted sources (a profile sets the weights):
 
-  default   ui elements (click/hover) 50%, key chords from the app's own
-            `keybindings` 15%, control commands 10%, typed text 10%, drags from
-            dividers and tabs 5%, wheel 5%, free pointer clicks 5%
-  commands  the former tools/fuzz-control-commands.py, kept seed-for-seed: every
-            command verb with hostile arguments (`mixed` generators), on-disk
-            churn under the open buffers, a frame between commands
-  editor    the fuzzer's `editor` profile: splits, tabs, reopen and typing, with
-            the split-and-close burst emitted as a unit (the viewport COPY paths;
-            it reproduced the layout-cache use-after-free, TD-2026-09-07-291)
+  element   a named on-screen element: click, hover, double/triple, right,
+            middle and modifier clicks
+  text      clicks and drags inside the editor's text: shift/alt/ctrl clicks,
+            word/line selection, drag-select, column select, text drag and drop
+  chord     the app's own keybindings (`keybindings` query) and navigation keys
+  command   control commands from the live catalogue with hostile arguments
+  type      typing: words, code, Unicode (CJK, emoji, combining marks, RTL),
+            tabs; long lines and pastes go through the paste path
+  burst     key repeat (the same key 5-40 times) or several actions with no
+            settle and no check between (timing stress)
+  drag      dividers, tabs and panel tabs
+  wheel     scrolling, with Ctrl (zoom) and Shift (horizontal)
+  point     a free click anywhere safe
+  setting   `set-setting` over the live catalogue (ui.scale, theme, wrap, ...)
+  window    resize from tiny to the screen, focus loss
+  terminal  shell commands in the panel's terminal (output floods, alternate
+            screen, titles, a pager, Ctrl+C)
+  file      open or drop the odd files seeded under qa-weird/ (CRLF, mixed,
+            Latin-1, binary, a long line, Unicode names)
+  external  the outside world: rewrites, creates, renames, deletes, chmods,
+            symlinks (loops, dangling) and git (commit, branch switch, stash,
+            a conflicting merge), recorded so a replay redoes them
+  kill9     SIGKILL and relaunch on the same profile (the data-loss oracle)
 
-The command generators and the churn are the fuzzer's, moved here verbatim in
-behaviour: the fuzzer found TD-2026-09-07-291 and its seeds are referenced from
-the TD ledger.
+**Steering.** A state signature per step (monkey_model.state_signature) feeds a
+coverage model: within a source, an action already tried in this state is drawn
+less often; a source whose actions keep reaching unseen states or transitions is
+drawn more. With `--coverage` the model is the soak runner's, merged across
+runs; with `--corpus` a run may start by replaying a saved prefix that reached a
+rare state, and saves the prefixes of the states it reaches first.
+
+**Findings.** A finding is recorded and exploration continues; a crash is
+recorded and the app relaunched on the same profile (which exercises session
+restore). Findings are deduplicated per run by signature (findings.py) and
+listed in `findings.json` beside the evidence directories.
+
+The `commands` and `editor` profiles are the former command fuzzer's, kept as
+they were: TD-2026-09-07-291 and its seeds are referenced from the TD ledger.
 """
 
 from __future__ import annotations
 
+import json
+import os
 import random
 import shutil
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable
 
+import findings as fnd
 import microide_qa as q
+import monkey_model as mm
+import monkey_oracles as mo
 
 # Every command name the palette registers, so the sweep cannot silently stop
 # covering a verb that was added after it was written. Regenerate with:
@@ -40,7 +73,8 @@ import microide_qa as q
 #       src/workspace/registries/WorkspaceCommandRegistry.cpp | sed 's/.*, "//;s/"//'
 # Deliberately excluded: `quit` (ends the run), `project-open`/`project-close`
 # (re-roots the session away from the scratch copy), and the `debug-`/`tests-`
-# verbs that launch external processes.
+# verbs that launch external processes. The default profile reads the live
+# catalogue instead (the `commands` query) and excludes FORBIDDEN_COMMANDS.
 MIXED_VERBS = """
 about add-cursor-all-matches add-cursor-next-match branch-review-note breakpoint-clear
 close-group code-actions colorscheme command-palette compare compare-clipboard compare-files
@@ -72,6 +106,29 @@ MIXED_ARGS = ["", "0", "-1", "1", "999999", "abc", "on", "off", "HEAD", "HEAD~2"
 # Text that has broken layout before: wide glyphs, combining marks, a long line.
 EDITOR_TEXT = ["alpha", "b", "  ", "é", "你好", "\U0001F600", "x" * 200, "\t", "}", "//"]
 
+# What the monkey types, by class (the class is part of the action key, so the
+# steering spreads over classes per state).
+TEXT_CLASSES: dict[str, list[str]] = {
+    "word": ["alpha", "b", "foo bar", "  ", "x" * 40, "}", "{", "//", "\n", "(", "\"", "'", "<", ">",
+             "#include", "int main() {\n", "return 0;", "\n\n", "    ", ";", "[]", "TODO"],
+    "unicode": ["é", "ñandú", "Grüße", "你好世界", "日本語のテキスト", "\U0001F600", "👍🏽", "👨‍👩‍👧",
+                "e\u0301", "a\u0308\u0304", "مرحبا بالعالم", "שלום", "\u200b", "Ω≈ç√∫", "ﬁ", "𝔘𝔫𝔦"],
+    "control": ["\t", "\t\t", "\n", "\n\n\n"],
+}
+# Pasted through the control channel's `type` (the paste path): too long to type
+# a key at a time, or carrying characters no key does (a CR).
+PASTE_TEXTS = [
+    "x" * 3000,
+    "word " * 800,
+    "".join(f"line {i}\n" for i in range(400)),
+    "one\r\ntwo\r\nthree\r\n",
+    "mixed\r\nends\nhere\r",
+    "\t".join(["col"] * 60),
+    "你好" * 500,
+    "a\u0300" * 300,
+    "\U0001F600" * 200,
+]
+
 # What the pointer must never press: it ends the run or opens a native dialog that
 # blocks the event loop on a portal nobody answers under Xvfb.
 FORBIDDEN_ELEMENTS = ("button:window/close", "button:window/minimize")
@@ -82,6 +139,34 @@ FORBIDDEN_BINDINGS = ("quit", "open-file", "open-folder", "project-open", "save-
 # `control.enabled` off in the Settings overlay stops the very channel the monkey
 # drives the app through, and every later query fails (seed 1, 2026-10-25).
 FORBIDDEN_SETTINGS = ("control.enabled",)
+# Commands the default profile's command source never sends: they end the run,
+# re-root the session away from the scratch copy, open a native dialog, or start
+# an external debugger/test process the fixture has no adapter for.
+FORBIDDEN_COMMANDS = {"quit", "project-open", "project-close", "open-file", "open-folder", "save-as",
+                      "set-setting", "key", "pointer", "restart"}
+FORBIDDEN_COMMAND_PREFIXES = ("debug-", "tests-", "remote-", "breakpoint-")
+# `set-setting` never touches these: the control channel, the session restore the
+# kill -9 oracle relies on, and the remote settings (no host here).
+FORBIDDEN_SETTING_PREFIXES = ("control.", "session.restore_on_launch", "remote.")
+# Settings drawn more often: the ones whose changes reshape layout and painting.
+INTERESTING_SETTINGS = ("ui.scale", "editor.wrap", "editor.font_size", "editor.colorscheme",
+                        "editor.fold.sticky_scroll.enabled", "editor.tab_size", "ui.layout_mode",
+                        "editor.line_numbers", "editor.view.render_whitespace", "plugins.code_lens_above",
+                        "ui.show_status_bar", "terminal.font_size", "editor.inlay_hints.enabled",
+                        "editor.autosave", "editor.save.trim_trailing_whitespace",
+                        "editor.save.ensure_final_newline", "editor.line_endings")
+STRING_VALUES = ["", "x", "  ", "/nonexistent", "monospace", "DejaVu Sans Mono", "*.md", "src", "%s", "a,b"]
+SCALE_VALUES = ["1", "1.25", "1.5", "1.75", "2", "0.5", "3", "1.1"]
+
+# Shell lines for the terminal source.
+TERMINAL_LINES = [
+    "ls -la\n", "echo héllo wörld 你好\n", "printf '\\033[31mred\\033[0m \\033[1mbold\\033[0m\\n'\n",
+    "seq 1 400\n", "cat README.md\n", "yes | head -n 3000\n", "clear\n", "tput cols; tput lines\n",
+    "printf '\\033]0;title-%s\\007' $RANDOM\n", "printf '\\033[?1049h\\033[2J alt screen'; sleep 0.4; "
+    "printf '\\033[?1049l'\n", "less README.md\n", "q", "printf '%0.s-' $(seq 1 500); echo\n",
+    "printf 'no newline at the end'\n", "for i in $(seq 1 30); do echo $i; sleep 0.01; done\n",
+    "git status\n", "git log --oneline | head\n", "printf '\\t|\\ttabs\\n'\n", "echo $COLUMNS\n",
+]
 
 
 def project_files(root: Path) -> list[str]:
@@ -99,8 +184,8 @@ def project_files(root: Path) -> list[str]:
     return present + ["src", "does/not/exist.txt", ""]
 
 
-def mixed_command(rng: random.Random, files: list[str]) -> str:
-    parts = [rng.choice(MIXED_VERBS)]
+def mixed_command(rng: random.Random, files: list[str], verbs: list[str] | None = None) -> str:
+    parts = [rng.choice(verbs or MIXED_VERBS)]
     for _ in range(rng.choice([0, 0, 1, 1, 2])):
         parts.append(rng.choice(MIXED_ARGS + files) if rng.random() < 0.6 else rng.choice(files))
     return " ".join(part for part in parts if part)
@@ -149,6 +234,17 @@ def make_editor_generator() -> Callable[[random.Random, list[str]], str]:
     return next_command
 
 
+def git_env() -> dict[str, str]:
+    """The environment for git run against a scratch project: never one a hook or
+    bisect exported (GIT_DIR and friends would point every call at the source
+    repository)."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update({"GIT_AUTHOR_NAME": "QA Monkey", "GIT_AUTHOR_EMAIL": "qa@example.com",
+                "GIT_COMMITTER_NAME": "QA Monkey", "GIT_COMMITTER_EMAIL": "qa@example.com",
+                "GIT_TERMINAL_PROMPT": "0"})
+    return env
+
+
 def copy_project(source: Path, destination: Path) -> None:
     """A throwaway copy of a project to drive.
 
@@ -162,13 +258,70 @@ def copy_project(source: Path, destination: Path) -> None:
     if (source / ".git").exists():
         result = subprocess.run(
             ["git", "clone", "--local", "--no-hardlinks", "--quiet", str(source),
-             str(destination)], capture_output=True, text=True)
+             str(destination)], capture_output=True, text=True, env=git_env())
         if result.returncode == 0:
             return
         print(f"git clone of {source} failed, falling back to a full copy: "
               f"{result.stderr.strip()}", file=sys.stderr)
     shutil.copytree(source, destination, symlinks=True, ignore_dangling_symlinks=True)
 
+
+# ---- the odd files under qa-weird/ ---------------------------------------------
+
+WEIRD_DIR = "qa-weird"
+WEIRD_OPENABLE = ["crlf.txt", "mixed.txt", "latin1.txt", "bom.txt", "binary.bin", "nul-in-text.txt",
+                  "long-line.txt", "no-final-newline.txt", "empty.txt", "many-lines.txt", "wide-chars.txt",
+                  "rtl.txt", "tabs.txt", "trailing-ws.txt", "ünï cødé/文件夹/名前 with spaces.txt",
+                  "code.py", "data.json", "link-to-crlf.txt", "unreadable.txt", "dangling", "loop"]
+
+
+def seed_weird_files(project: Path) -> list[str]:
+    """Files no fixture has: line-ending and encoding cases, a binary, a long
+    line, Unicode names, a deep tree, symlinks (one a loop, one dangling) and an
+    unreadable file. Deterministic, so a corpus prefix means the same thing on
+    every fixture. Returns the openable paths, relative to the project."""
+    root = project / WEIRD_DIR
+    if not root.exists():
+        root.mkdir()
+        (root / "crlf.txt").write_bytes(b"first line\r\nsecond line\r\n\tindented\r\n")
+        (root / "mixed.txt").write_bytes(b"unix\nwindows\r\nold mac\rend\n")
+        (root / "latin1.txt").write_bytes("caf\xe9 na\xefve r\xe9sum\xe9\n".encode("latin-1"))
+        (root / "bom.txt").write_bytes(b"\xef\xbb\xbfwith a byte order mark\n")
+        (root / "binary.bin").write_bytes(bytes(range(256)) * 8)
+        (root / "nul-in-text.txt").write_bytes(b"text\x00with a nul\nsecond\n")
+        (root / "long-line.txt").write_text("y" * 300_000 + "\n")
+        (root / "no-final-newline.txt").write_text("no newline at the end")
+        (root / "empty.txt").write_text("")
+        (root / "many-lines.txt").write_text("".join(f"{i:06d} the quick brown fox\n" for i in range(60_000)))
+        (root / "wide-chars.txt").write_text("你好世界 " * 40 + "\n" + "\U0001F600" * 80 + "\n" + "e\u0301" * 50 + "\n")
+        (root / "rtl.txt").write_text("مرحبا بالعالم\nשלום עולם\nmixed English عربي text\n")
+        (root / "tabs.txt").write_text("\tone\n\t\ttwo\n  \t mixed\n")
+        (root / "trailing-ws.txt").write_text("trailing   \nspaces \t\n")
+        unicode_dir = root / "ünï cødé" / "文件夹"
+        unicode_dir.mkdir(parents=True)
+        (unicode_dir / "名前 with spaces.txt").write_text("unicode path\n")
+        deep = root
+        for depth in range(14):
+            deep = deep / f"d{depth}"
+        deep.mkdir(parents=True)
+        (deep / "deep.txt").write_text("deep\n")
+        (root / "code.py").write_text("def f(x):\n    if x:\n        return [i for i in range(x)]\n    return None\n")
+        (root / "data.json").write_text('{"a": [1, 2, {"b": null}], "c": "\\u00e9"}\n')
+        for target, link in (("crlf.txt", "link-to-crlf.txt"), (".", "loop"), ("does-not-exist", "dangling")):
+            try:
+                os.symlink(target, root / link)
+            except OSError:
+                pass
+        unreadable = root / "unreadable.txt"
+        unreadable.write_text("secret\n")
+        try:
+            os.chmod(unreadable, 0)
+        except OSError:
+            pass
+    return [f"{WEIRD_DIR}/{name}" for name in WEIRD_OPENABLE]
+
+
+# ---- the outside world ----------------------------------------------------------
 
 class ExternalChurn:
     """Rewrites files under the project while the run goes on.
@@ -236,6 +389,94 @@ def apply_churn(project: Path, relative: str, counter: int) -> None:
         pass
 
 
+EXTERNAL_OPS = ("rewrite", "append", "truncate", "crlf", "create-tree", "delete-tree", "rename-file",
+                "rename-back", "chmod-ro", "chmod-none", "chmod-restore", "symlink", "symlink-loop",
+                "binary", "git-commit", "git-switch", "git-switch-back", "git-stash", "git-stash-pop",
+                "git-merge-conflict", "git-merge-abort", "git-checkout-file", "delete-file", "restore-file")
+
+
+def apply_external(project: Path, op: str, target: str, counter: int) -> None:
+    """One outside-world change, deterministic in (op, target, counter) so a
+    replay redoes it. `target` is a project-relative file path."""
+    path = project / target
+    env = git_env()
+    stash = project / ".git" / "qa-deleted"
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", "-C", str(project), *args], capture_output=True, env=env, timeout=30)
+
+    try:
+        if op == "rewrite" and path.is_file():
+            path.write_text(f"rewritten {counter}\n" + path.read_text(errors="replace"))
+        elif op == "append" and path.is_file():
+            with open(path, "a") as out:
+                out.write(f"appended {counter}\n")
+        elif op == "truncate" and path.is_file():
+            path.write_text("")
+        elif op == "crlf" and path.is_file():
+            path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+        elif op == "binary" and path.parent.is_dir():
+            path.write_bytes(bytes((counter * 7 + i) % 256 for i in range(4096)))
+        elif op == "create-tree":
+            tree = project / "qa-ext" / f"t{counter % 8}"
+            for depth in range(counter % 5 + 1):
+                tree = tree / f"n{depth}"
+            tree.mkdir(parents=True, exist_ok=True)
+            (tree / f"file{counter}.txt").write_text(f"{counter}\n")
+        elif op == "delete-tree":
+            shutil.rmtree(project / "qa-ext" / f"t{counter % 8}", ignore_errors=True)
+        elif op == "rename-file" and path.is_file():
+            path.rename(path.with_name(path.name + ".renamed"))
+        elif op == "rename-back":
+            renamed = path.with_name(path.name + ".renamed")
+            if renamed.is_file() and not path.exists():
+                renamed.rename(path)
+        elif op == "delete-file" and path.is_file():
+            stash.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, stash / path.name)
+            path.unlink()
+        elif op == "restore-file":
+            if (stash / path.name).is_file() and not path.exists():
+                shutil.copy2(stash / path.name, path)
+        elif op == "chmod-ro" and path.is_file():
+            os.chmod(path, 0o444)
+        elif op == "chmod-none" and path.is_file():
+            os.chmod(path, 0)
+        elif op == "chmod-restore" and path.exists():
+            os.chmod(path, 0o644)
+        elif op == "symlink":
+            link = project / "qa-ext" / f"link{counter % 4}"
+            link.parent.mkdir(parents=True, exist_ok=True)
+            if not link.is_symlink():
+                os.symlink(path, link)
+        elif op == "symlink-loop":
+            loop = project / "qa-ext" / f"loop{counter % 3}"
+            loop.parent.mkdir(parents=True, exist_ok=True)
+            if not loop.is_symlink():
+                os.symlink("..", loop)
+        elif op == "git-commit":
+            git("add", "-A")
+            git("commit", "-q", "-m", f"qa commit {counter}", "--no-verify")
+        elif op == "git-switch":
+            git("switch", "-q", "-c", f"qa-branch-{counter % 4}")
+            git("switch", "-q", f"qa-branch-{counter % 4}")
+        elif op == "git-switch-back":
+            git("switch", "-q", "main")
+        elif op == "git-stash":
+            git("stash", "-q", "-u")
+        elif op == "git-stash-pop":
+            git("stash", "pop", "-q")
+        elif op == "git-merge-conflict":
+            # The taskflow fixture's branch rewrites the same lines as main.
+            git("merge", "-q", "--no-edit", "feature/stable-sort")
+        elif op == "git-merge-abort":
+            git("merge", "--abort")
+        elif op == "git-checkout-file" and path.is_file():
+            git("checkout", "-q", "--", target)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+
+
 # xdotool key names for the characters and keys SDL names differently.
 _XDOTOOL_KEYS = {
     "`": "grave", "=": "equal", "-": "minus", "[": "bracketleft", "]": "bracketright",
@@ -266,25 +507,101 @@ def xdotool_chord(chord: str) -> str | None:
     return "+".join(out + [key])
 
 
+# ---- profiles --------------------------------------------------------------------
+
+# Base weights per source. A profile is a focus, not a filter: a focused run
+# still wanders through every source it lists.
+PROFILES: dict[str, dict[str, float]] = {
+    "default": {"element": 28, "text": 8, "chord": 12, "command": 7, "type": 10, "burst": 5, "drag": 4,
+                "wheel": 4, "point": 3, "setting": 3, "window": 2, "terminal": 2, "file": 3,
+                "external": 2, "kill9": 0.4},
+    # Editing: text, keys, typing and saves; the data-loss oracles get the most to check.
+    "editing": {"element": 8, "text": 20, "chord": 20, "type": 22, "burst": 10, "command": 6, "file": 4,
+                "wheel": 3, "external": 3, "kill9": 0.6, "setting": 2},
+    # Layout and painting: splits, drags, resizes, zoom and fractional scales (W7).
+    "layout": {"element": 20, "drag": 12, "window": 8, "setting": 10, "wheel": 8, "command": 8,
+               "chord": 8, "text": 6, "type": 4, "point": 4, "burst": 4},
+    # The outside world: git, renames, permissions, churn under open buffers.
+    "world": {"element": 16, "external": 18, "file": 8, "command": 8, "chord": 8, "type": 8, "text": 6,
+              "kill9": 1.0, "terminal": 3},
+    "terminal": {"terminal": 30, "element": 14, "chord": 12, "type": 10, "burst": 6, "window": 4,
+                 "command": 6, "wheel": 6, "setting": 2},
+    "settings": {"setting": 25, "element": 25, "chord": 10, "type": 8, "text": 6, "window": 4, "command": 6},
+}
+COMMAND_PROFILES = ("commands", "editor")
+ALL_PROFILES = tuple(PROFILES) + COMMAND_PROFILES
+
+
 class Monkey:
-    def __init__(self, app: q.App, seed: int, profile: str = "default", project: Path | None = None):
+    def __init__(self, app: q.App, seed: int, profile: str = "default", project: Path | None = None,
+                 coverage: mm.Coverage | None = None, corpus: mm.Corpus | None = None,
+                 weird: bool = True, max_findings: int = 25, keep_going: bool = True):
         self.app = app
         self.rng = random.Random(seed)
+        self.seed = seed
         self.profile = profile
+        self.project = project
         self.files = project_files(project) if project is not None else []
+        self.weird = seed_weird_files(project) if (weird and project is not None
+                                                   and profile not in COMMAND_PROFILES) else []
         self.editor_generator = make_editor_generator()
+        self.coverage = coverage or mm.Coverage()
+        self.corpus = corpus or mm.Corpus(None)
+        self.max_findings = max_findings
+        self.keep_going = keep_going
         self._chords: list[str] | None = None
-        self.sources: list[tuple[float, Callable[[], None]]] = [
-            (50, self.element_action),
-            (15, self.chord_action),
-            (10, self.command_action),
-            (10, self.type_action),
-            (5, self.drag_action),
-            (5, self.wheel_action),
-            (5, self.point_action),
-        ]
+        self._commands: list[str] | None = None
+        self._settings: list[dict[str, Any]] | None = None
+        self.counter = 0
+        self.state = "start"
+        self.signatures: dict[str, dict[str, Any]] = {}
+        self.relaunches = 0
+        self.step_index = 0
+        self.weights = dict(PROFILES.get(profile, PROFILES["default"]))
+        self.reward: dict[str, float] = {name: 0.5 for name in self.weights}
+        self.sources: dict[str, Callable[[], str]] = {
+            "element": self.element_action, "text": self.text_action, "chord": self.chord_action,
+            "command": self.command_action, "type": self.type_action, "burst": self.burst_action,
+            "drag": self.drag_action, "wheel": self.wheel_action, "point": self.point_action,
+            "setting": self.setting_action, "window": self.window_action,
+            "terminal": self.terminal_action, "file": self.file_action,
+            "external": self.external_action, "kill9": self.kill9_action,
+        }
+        self.data = mo.DataOracle(app)
+        self.undo = mo.UndoAlgebra(app, random.Random(seed ^ 0x0DD))
+        self.resources = mo.ResourceOracle(app)
+        self.liveness = mo.Liveness(app)
+        self.new_states = 0
+        self.new_transitions = 0
 
-    # ---- action sources --------------------------------------------------
+    # ---- choosing -----------------------------------------------------------
+
+    def _pick(self, candidates: list[tuple[str, Any]]) -> tuple[str, Any]:
+        """One of (key, payload), an action less tried in this state more likely:
+        weight 1 / (1 + times (state, key) was tried)."""
+        weights = [1.0 / (1 + self.coverage.pair_count(self.state, key)) for key, _ in candidates]
+        total = sum(weights)
+        pick = self.rng.uniform(0, total)
+        for weight, candidate in zip(weights, candidates):
+            pick -= weight
+            if pick <= 0:
+                return candidate
+        return candidates[-1]
+
+    def _choose_source(self) -> str:
+        """A source by its profile weight times how well it has paid lately
+        (0.5 + 2 x its reward average: never zero, so nothing starves)."""
+        names = list(self.weights)
+        weights = [self.weights[name] * (0.5 + 2 * self.reward.get(name, 0.5)) for name in names]
+        total = sum(weights)
+        pick = self.rng.uniform(0, total)
+        for weight, name in zip(weights, names):
+            pick -= weight
+            if pick <= 0:
+                return name
+        return names[-1]
+
+    # ---- action sources -----------------------------------------------------
 
     @staticmethod
     def _forbidden(element: dict[str, Any]) -> bool:
@@ -293,24 +610,95 @@ class Monkey:
         return (name in FORBIDDEN_ELEMENTS or any(label.startswith(bad) for bad in FORBIDDEN_LABELS)
                 or any(setting in name for setting in FORBIDDEN_SETTINGS))
 
+    def _ui(self) -> dict[str, Any]:
+        ui = self.app.ui()
+        self.app.last_ui = ui
+        return ui
+
     def _safe_elements(self) -> list[dict[str, Any]]:
         out = []
-        for element in self.app.ui().get("elements", []):
+        for element in self._ui().get("elements", []):
             if self._forbidden(element) or element.get("enabled") is False:
+                continue
+            if element["rect"][2] <= 0 or element["rect"][3] <= 0:
                 continue
             out.append(element)
         return out
 
-    def element_action(self) -> None:
+    def element_action(self) -> str:
         elements = self._safe_elements()
         if not elements:
             return self.point_action()
-        element = self.rng.choice(elements)
+        key, element = self._pick([(mm.action_key({"how": "el"}, e), e) for e in elements])
         x, y = self.app.center(element)
-        if self.rng.random() < 0.3:
+        how = self.rng.random()
+        self.coverage.elements[element.get("name", "")] += 1
+        if how < 0.2:
             self.app.move(x, y)
+            return f"hover:{key}"
+        if how < 0.27:
+            self.app.click(x, y, button=3)
+            return f"right:{key}"
+        if how < 0.32:
+            self.app.click(x, y, clicks=2)
+            return f"double:{key}"
+        if how < 0.34:
+            self.app.click(x, y, clicks=3)
+            return f"triple:{key}"
+        if how < 0.35:
+            self.app.click(x, y, button=2)
+            return f"middle:{key}"
+        if how < 0.40:
+            modifier = self.rng.choice(["shift", "ctrl", "alt"])
+            self.app.click(x, y, modifiers=(modifier,))
+            return f"{modifier}:{key}"
+        self.app.click(x, y)
+        return f"click:{key}"
+
+    def _text_point(self) -> tuple[float, float] | None:
+        """A point on a visible text row of a random editor pane."""
+        ui = self.app.last_ui or self._ui()
+        panes = ui.get("editors") or []
+        if not panes:
+            return None
+        pane = self.rng.choice(panes)
+        rows = pane.get("rows") or []
+        if not rows:
+            return None
+        row = self.rng.choice(rows)
+        x = pane["textX"] + self.rng.uniform(0, 60) * pane.get("charWidth", 8)
+        rect = pane.get("rect") or [0, 0, 1e9, 1e9]
+        x = min(x, rect[0] + rect[2] - 4)
+        return x, row["y"] + pane.get("lineHeight", 18) / 2
+
+    def text_action(self) -> str:
+        start = self._text_point()
+        if start is None:
+            return self.chord_action()
+        x, y = start
+        how = self.rng.choice(["click", "shift", "alt", "ctrl", "double", "triple", "drag", "drag",
+                               "alt-drag", "double-drag", "drop-text", "right"])
+        if how == "click":
+            self.app.click(x, y)
+        elif how in ("shift", "alt", "ctrl"):
+            self.app.click(x, y, modifiers=(how,))
+        elif how == "double":
+            self.app.click(x, y, clicks=2)
+        elif how == "triple":
+            self.app.click(x, y, clicks=3)
+        elif how == "right":
+            self.app.click(x, y, button=3)
         else:
-            self.app.click(x, y, clicks=2 if self.rng.random() < 0.1 else 1)
+            end = self._text_point() or (x + 80, y + 40)
+            if how == "drop-text":
+                # Select a word, then drag the selection elsewhere (text drag and drop).
+                self.app.click(x, y, clicks=2)
+                self.app.settle_quiet(0.2)
+                self.app.drag(x, y, *end)
+            else:
+                self.app.drag(x, y, *end, modifiers=("alt",) if how == "alt-drag" else (),
+                              clicks=2 if how == "double-drag" else 1)
+        return f"text:{how}"
 
     def _step_off_a_forbidden_setting(self) -> None:
         """Before a key or typed text: with a forbidden setting's row selected in the
@@ -318,11 +706,10 @@ class Monkey:
         `control.enabled` off that way, after a click that selected the row from
         empty space beside it. Down first, so the keys land on the next row."""
         if any(element.get("selected") and any(setting in element.get("name", "") for setting in FORBIDDEN_SETTINGS)
-               for element in self.app.ui().get("elements", [])):
+               for element in self._ui().get("elements", [])):
             self.app.key("Down")
 
-    def chord_action(self) -> None:
-        self._step_off_a_forbidden_setting()
+    def _chord_list(self) -> list[str]:
         if self._chords is None:
             self._chords = []
             for binding in self.app.keybindings():
@@ -331,74 +718,358 @@ class Monkey:
                 chord = xdotool_chord(binding.get("chord", ""))
                 if chord:
                     self._chords.append(chord)
-            self._chords += ["Escape", "Return", "Tab", "Up", "Down", "Left", "Right"]
-        self.app.key(self.rng.choice(self._chords))
+            self._chords += ["Escape", "Return", "Tab", "shift+Tab", "Up", "Down", "Left", "Right",
+                             "Home", "End", "Prior", "Next", "BackSpace", "Delete", "shift+Up", "shift+Down",
+                             "shift+Left", "shift+Right", "ctrl+Left", "ctrl+Right", "shift+End", "shift+Home",
+                             "ctrl+shift+Left", "ctrl+shift+Right", "ctrl+Home", "ctrl+End", "F2", "F3",
+                             "shift+F10", "Menu", "alt+Left", "alt+Right"]
+        return self._chords
 
-    def command_action(self) -> None:
+    def chord_action(self) -> str:
+        self._step_off_a_forbidden_setting()
+        key, chord = self._pick([(f"key:{c}", c) for c in self._chord_list()])
+        self.app.key(chord)
+        return key
+
+    def _command_list(self) -> list[str]:
+        if self._commands is None:
+            try:
+                catalogue = [c["command"] for c in self.app.query("commands")
+                             if c.get("command") and not c.get("plugin")]
+            except (q.QaFailure, TypeError):
+                catalogue = []
+            self._commands = [c for c in catalogue if c not in FORBIDDEN_COMMANDS
+                              and not c.startswith(FORBIDDEN_COMMAND_PREFIXES)] or list(MIXED_VERBS)
+        return self._commands
+
+    def command_action(self) -> str:
         if self.profile == "editor":
             command = self.editor_generator(self.rng, self.files)
-        else:
+        elif self.profile == "commands":
             command = mixed_command(self.rng, self.files)
+        else:
+            _, verb = self._pick([(f"cmd:{v}", v) for v in self._command_list()])
+            command = mixed_command(self.rng, self.files + self.weird, [verb])
         self.app.send_line(command)
+        return f"cmd:{command.split(' ', 1)[0]}"
 
-    def type_action(self) -> None:
+    def type_action(self) -> str:
         self._step_off_a_forbidden_setting()
-        self.app.type(self.rng.choice(["alpha", "b", "  ", "x" * 40, "}", "//", "\n"]))
+        if self.rng.random() < 0.12:
+            self.app.send_line("type " + json.dumps(self.rng.choice(PASTE_TEXTS)))
+            return "type:paste"
+        _, (name, texts) = self._pick([(f"type:{name}", (name, texts)) for name, texts in TEXT_CLASSES.items()])
+        self.app.type(self.rng.choice(texts))
+        return f"type:{name}"
 
-    def drag_action(self) -> None:
+    def burst_action(self) -> str:
+        """Key repeat or several actions back to back, with no settle and no
+        check between: input faster than frames."""
+        self.app.in_burst = True
+        try:
+            if self.rng.random() < 0.6:
+                chord = self.rng.choice(["Down", "Up", "BackSpace", "Delete", "Return", "Tab", "Next", "Prior",
+                                         "ctrl+z", "ctrl+y", "ctrl+shift+z", "ctrl+d", "alt+Up", "alt+Down",
+                                         "shift+Down", "ctrl+Right", "Right", "Left", "ctrl+slash",
+                                         "ctrl+shift+bracketleft", "ctrl+shift+bracketright", "ctrl+equal",
+                                         "ctrl+minus", "Escape", "ctrl+Tab"])
+                for _ in range(self.rng.randint(5, 40)):
+                    self.app.key(chord)
+                return f"burst:{chord}"
+            names = ("element", "text", "chord", "type", "wheel", "command")
+            for _ in range(self.rng.randint(3, 8)):
+                self.sources[self.rng.choice(names)]()
+            return "burst:mixed"
+        finally:
+            self.app.in_burst = False
+
+    def drag_action(self) -> str:
         handles = [e for e in self._safe_elements() if e["kind"] in ("divider", "tab", "panel-tab")]
         if not handles:
             return self.wheel_action()
-        element = self.rng.choice(handles)
+        _, element = self._pick([(f"drag:{e['kind']}", e) for e in handles])
         x0, y0 = self.app.center(element)
-        dx = self.rng.randint(-120, 120)
-        dy = self.rng.randint(-80, 80) if element["kind"] == "divider" else 0
-        self.app.drag(x0, y0, x0 + dx, y0 + dy)
+        w, h = self.app.current_size()
+        dx = self.rng.choice([self.rng.randint(-120, 120), self.rng.randint(-w, w)])
+        dy = self.rng.choice([self.rng.randint(-80, 80), self.rng.randint(-h, h)]) if element["kind"] == "divider" \
+            else self.rng.choice([0, 0, self.rng.randint(-200, 300)])
+        self.app.drag(x0, y0, max(1, min(w - 2, x0 + dx)), max(1, min(h - 2, y0 + dy)))
+        return f"drag:{element['kind']}"
 
-    def wheel_action(self) -> None:
-        w, h = self.app.size
-        self.app.wheel(self.rng.randrange(40, w - 40), self.rng.randrange(60, h - 40),
-                       self.rng.choice([-5, -2, -1, 1, 2, 5]))
+    def wheel_action(self) -> str:
+        w, h = self.app.current_size()
+        modifiers = self.rng.choice([(), (), (), ("shift",), ("ctrl",)])
+        self.app.wheel(self.rng.randrange(40, max(41, w - 40)), self.rng.randrange(60, max(61, h - 40)),
+                       self.rng.choice([-10, -5, -2, -1, 1, 2, 5, 10]), modifiers)
+        return f"wheel:{'+'.join(modifiers)}"
 
-    def point_action(self) -> None:
-        w, h = self.app.size
+    def point_action(self) -> str:
+        w, h = self.app.current_size()
         # Below the menu bar's window controls: a random click there could close
         # the window. And never on a forbidden element (a menu's Quit row, the
         # control channel's setting) -- a random point used to land on them.
-        forbidden = [element.get("rect") for element in self.app.ui().get("elements", [])
+        forbidden = [element.get("rect") for element in self._ui().get("elements", [])
                      if self._forbidden(element) and element.get("rect")]
 
         def blocked(x: int, y: int) -> bool:
             return any(rx <= x < rx + rw and ry <= y < ry + rh for rx, ry, rw, rh in forbidden)
         for _ in range(20):
-            x, y = self.rng.randrange(0, w - 160), self.rng.randrange(30, h)
+            x, y = self.rng.randrange(0, max(1, w - 160)), self.rng.randrange(30, max(31, h))
             if not blocked(x, y):
-                self.app.click(x, y)
-                return
+                self.app.click(x, y, button=3 if self.rng.random() < 0.15 else 1)
+                return "point"
+        return "point"
 
-    # ---- driving ---------------------------------------------------------
-
-    def step(self) -> None:
-        if self.profile in ("commands", "editor"):
-            self.command_action()
-            return
-        total = sum(weight for weight, _ in self.sources)
-        pick = self.rng.uniform(0, total)
-        for weight, source in self.sources:
-            pick -= weight
-            if pick <= 0:
-                source()
-                return
-        self.sources[-1][1]()
-
-    def run(self, steps: int, settle: float = 0.12) -> bool:
-        """Runs `steps` actions; stops at the first finding. True when clean."""
-        for index in range(steps):
+    def _setting_list(self) -> list[dict[str, Any]]:
+        if self._settings is None:
             try:
-                self.step()
+                rows = self.app.query("settings")
+            except q.QaFailure:
+                rows = []
+            self._settings = [row for row in (rows if isinstance(rows, list) else [])
+                              if not str(row.get("id", "")).startswith(FORBIDDEN_SETTING_PREFIXES)]
+        return self._settings
+
+    def _setting_value(self, row: dict[str, Any]) -> str:
+        kind = row.get("type")
+        if row.get("id") == "ui.scale":
+            return self.rng.choice(SCALE_VALUES)
+        if kind == "bool":
+            return self.rng.choice(["true", "false"])
+        if kind == "enum" and row.get("enumValues"):
+            return self.rng.choice(row["enumValues"])
+        if kind == "int":
+            low, high = int(row.get("min", 0)), int(row.get("max", 100))
+            default = row.get("default")
+            return str(self.rng.choice([low, high, self.rng.randint(low, high),
+                                        int(default) if str(default).lstrip("-").isdigit() else low]))
+        if kind == "float":
+            return self.rng.choice(["0", "0.5", "1", "1.5", "2", "-1", "100"])
+        return self.rng.choice(STRING_VALUES + [str(row.get("default", ""))])
+
+    def setting_action(self) -> str:
+        rows = self._setting_list()
+        if not rows:
+            return self.chord_action()
+        interesting = [row for row in rows if row.get("id") in INTERESTING_SETTINGS]
+        pool = interesting if interesting and self.rng.random() < 0.6 else rows
+        key, row = self._pick([(f"set:{row['id']}", row) for row in pool])
+        value = self._setting_value(row)
+        self.coverage.settings[f"{row['id']}={value}"] += 1
+        spelled = json.dumps(value) if (not value or " " in value) else value
+        self.app.send_line(f"set-setting {row['id']} {spelled}")
+        return key
+
+    def window_action(self) -> str:
+        if self.app.wayland:
+            return self.chord_action()
+        if self.rng.random() < 0.3:
+            self.app.focus_out()
+            return "window:focus-out"
+        screen_w, screen_h = self.app.size
+        w = self.rng.choice([320, 640, 800, 1024, self.rng.randint(320, screen_w), screen_w])
+        h = self.rng.choice([240, 400, 600, self.rng.randint(240, screen_h), screen_h])
+        self.app.resize(min(w, screen_w), min(h, screen_h))
+        return "window:resize"
+
+    def terminal_action(self) -> str:
+        ui = self.app.last_ui or {}
+        if ui.get("focus") != "terminal" or self.rng.random() < 0.15:
+            self.app.send_line("term")
+            self.app.settle_quiet(0.3)
+        if self.rng.random() < 0.15:
+            self.app.key(self.rng.choice(["ctrl+c", "ctrl+d", "ctrl+l", "ctrl+z", "q", "Up", "Prior"]))
+            return "terminal:key"
+        _, line = self._pick([(f"terminal:{line[:12]}", line) for line in TERMINAL_LINES])
+        self.app.type(line)
+        return "terminal:line"
+
+    def file_action(self) -> str:
+        files = self.weird or self.files
+        if not files:
+            return self.command_action()
+        target = self.rng.choice([name for name in files if name] or ["README.md"])
+        if self.rng.random() < 0.25 and self.project is not None:
+            w, h = self.app.current_size()
+            self.app.drop(self.rng.randrange(300, max(301, w - 100)), self.rng.randrange(100, max(101, h - 100)),
+                          str(self.project / target))
+            return "file:drop"
+        self.app.send_line(f"open {json.dumps(target) if ' ' in target else target}")
+        return "file:open"
+
+    def external_action(self) -> str:
+        if self.project is None:
+            return self.chord_action()
+        self.counter += 1
+        op = self.rng.choice(EXTERNAL_OPS)
+        candidates = [name for name in self.files + self.weird
+                      if name and not name.endswith(("loop", "dangling")) and "." in Path(name).name]
+        target = self.rng.choice(candidates) if candidates else "README.md"
+        self.app.record_external({"external": op, "target": target, "counter": self.counter})
+        apply_external(self.project, op, target, self.counter)
+        if op.startswith("git-"):
+            self.app.outside_change_pending = True
+        return f"ext:{op}"
+
+    def kill9_action(self) -> str:
+        if self.relaunches >= 3:
+            return self.chord_action()
+        self.relaunches += 1
+        self._report(f"kill -9 at step {self.step_index}", self.data.kill9_and_check(self.rng))
+        return "kill9"
+
+    # ---- replaying the outside world -------------------------------------------
+
+    def replay_external(self, row: dict[str, Any]) -> None:
+        """What q.replay calls for an `external` or `kill9` row."""
+        if "kill9" in row:
+            if row.get("waited"):
+                time.sleep(mo.CRASH_SAFETY_QUIET_S * q.SLOW_FACTOR)
+            self.app.crash_and_relaunch()
+        elif self.project is not None:
+            apply_external(self.project, row["external"], row.get("target", ""), int(row.get("counter", 0)))
+
+    # ---- findings ----------------------------------------------------------------
+
+    def _report(self, label: str, found: list[tuple[str, str]]) -> None:
+        if found:
+            before = len(self.app.findings)
+            self.app.report(label, found)
+            self._dedupe(before)
+
+    def _dedupe(self, since: int) -> None:
+        """Drops findings since index `since` whose signature this run has seen,
+        counting them; the first of each keeps its evidence directory."""
+        kept = self.app.findings[:since]
+        for finding in self.app.findings[since:]:
+            signature = fnd.signature(finding.kind, finding.detail,
+                                      self.app.log_tail() if finding.kind in ("crash", "log") else "")
+            entry = self.signatures.get(signature)
+            evidence = Path(finding.screenshot).parent if finding.screenshot else None
+            if entry is not None:
+                entry["count"] += 1
+                if evidence is not None and evidence.name.startswith("finding-") and \
+                        str(evidence) != entry.get("evidence"):
+                    shutil.rmtree(evidence, ignore_errors=True)
+                continue
+            self.signatures[signature] = {
+                "signature": signature, "kind": finding.kind, "detail": finding.detail[:2000],
+                "label": fnd.describe(finding.kind, finding.detail), "count": 1,
+                "step": self.step_index, "evidence": str(evidence or ""), "state": self.state,
+                "actions": len(self.app.actions),
+            }
+            kept.append(finding)
+        self.app.findings[:] = kept
+
+    # ---- driving -------------------------------------------------------------------
+
+    def step(self) -> tuple[str, str]:
+        """One action; returns (source, action key)."""
+        if self.profile in COMMAND_PROFILES:
+            return "command", self.command_action()
+        source = self._choose_source()
+        return source, self.sources[source]()
+
+    def _observe(self, source: str, key: str) -> None:
+        """The state now, its coverage, the corpus, and the source's reward."""
+        after = mm.state_signature(self.app.last_ui, self.app.last_buffer, self.app.last_editor)
+        new_state, new_transition = self.coverage.record(self.state, key, after)
+        self.new_states += new_state
+        self.new_transitions += new_transition
+        if new_state:
+            self.corpus.save(after, self.app.replay_header, self.app.actions)
+        reward = 1.0 if new_state else (0.5 if new_transition else 0.0)
+        self.reward[source] = 0.9 * self.reward.get(source, 0.5) + 0.1 * reward
+        self.state = after
+
+    def _start_from_corpus(self, probability: float) -> None:
+        if self.corpus.directory is None or self.rng.random() >= probability:
+            return
+        record = self.corpus.pick(self.rng, self.coverage, self.app.replay_header)
+        if record is None:
+            return
+        self.app.record_external({"corpus": record.get("state", "")})
+        actions = [a for a in record.get("actions", []) if "corpus" not in a]
+        project = self.project
+        q.replay(self.app, actions, pause=0.12,
+                 churn=(lambda row: apply_churn(project, row["churn"], row["counter"])) if project else None,
+                 external=self.replay_external)
+        # The counter continues past the prefix's, so new external rows differ.
+        self.counter = max([int(a.get("counter", 0)) for a in actions if "external" in a] + [self.counter])
+
+    def _periodic_oracles(self, index: int) -> None:
+        label = f"monkey step {index}"
+        self._report(label, self.liveness.check())
+        if index % 20 == 19:
+            self._report(label, self.data.check_clean())
+        if index % 40 == 39:
+            self._report(label, self.undo.check())
+        if index % 50 == 0:
+            self._report(label, self.resources.check())
+
+    def _final_oracles(self) -> None:
+        if not self.app.alive():
+            return
+        label = "end of run"
+        self._report(label, self.data.check_clean())
+        self._report(label, self.resources.check())
+        pid = self.app.proc.pid if self.app.proc else None
+        left = self.data.staging_leftovers(pid)
+        if left:
+            self._report(label, [("data", f"the app left {len(left)} save temporaries of its own "
+                                          f"(pid {pid}) behind while idle: {left[0].name}")])
+
+    def run(self, steps: int, settle: float = 0.12, corpus_probability: float = 0.5,
+            time_budget: float | None = None) -> bool:
+        """Runs `steps` actions (or until `time_budget` seconds, or max_findings
+        distinct findings). Returns True when clean."""
+        started = time.monotonic()
+        self.resources.sample()
+        self._start_from_corpus(corpus_probability)
+        for index in range(steps):
+            self.step_index = index
+            before = len(self.app.findings)
+            source, key = "chord", "other"
+            try:
+                source, key = self.step()
             except q.QaFailure as failure:
                 self.app.expect(False, f"step {index}: {failure}")
             self.app.settle_quiet(most=settle)
-            if self.app.check(f"monkey step {index}") or not self.app.alive():
-                return False
+            self.app.check(f"monkey step {index}")
+            self._dedupe(before)
+            if self.app.alive():
+                self._observe(source, key)
+                self._periodic_oracles(index)
+            if not self.app.alive():
+                if not self.keep_going or self.relaunches >= 3:
+                    break
+                self.relaunches += 1
+                try:
+                    self.app.crash_and_relaunch()
+                    self.state = "relaunched"
+                except Exception as error:  # noqa: BLE001 - a relaunch that fails ends the run
+                    self.app.expect(False, f"relaunch after the crash failed: {error}")
+                    break
+            elif self.app.findings and not self.keep_going:
+                break
+            if len(self.signatures) >= self.max_findings:
+                break
+            if time_budget is not None and time.monotonic() - started > time_budget:
+                break
+        self._final_oracles()
         return not self.app.findings
+
+    def summary(self) -> dict[str, Any]:
+        """What the run did and found: the soak runner reads it (findings.json)."""
+        commands: dict[str, int] = {}
+        try:
+            commands = dict(self.app.action_counts().get("commands", {}))
+        except Exception:  # noqa: BLE001 - a dead app has no counts to give
+            pass
+        self.coverage.commands.update(commands)
+        return {"seed": self.seed, "profile": self.profile, "steps": self.step_index + 1,
+                "states": len(self.coverage.states), "new_states": self.new_states,
+                "new_transitions": self.new_transitions, "relaunches": self.relaunches,
+                "commands": commands, "header": self.app.replay_header,
+                "findings": list(self.signatures.values()),
+                "resources": self.resources.samples[-1] if self.resources.samples else {}}

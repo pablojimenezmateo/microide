@@ -1,0 +1,31 @@
+# The microide soak runner as a systemd --user service (safety-plan W1.1).
+#
+#   mkdir -p ~/.config/systemd/user
+#   ln -s "$PWD/tools/soak/microide-soak.service" ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now microide-soak
+#   journalctl --user -u microide-soak -f        # or: tools/soak/soak.py status
+#
+# Pause without stopping: touch build/soak/PAUSE. The unit assumes the checkout
+# lives at %h/Documents/projects/microide; edit WorkingDirectory otherwise.
+
+[Unit]
+Description=microide QA soak runner (continuous monkey)
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Documents/projects/microide
+ExecStart=/usr/bin/python3 tools/soak/soak.py run
+Restart=on-failure
+RestartSec=60
+Nice=19
+IOSchedulingClass=idle
+CPUWeight=10
+# The runner keeps everything under build/soak, within MICROIDE_SOAK_DISK_GB.
+Environment=MICROIDE_SOAK_DISK_GB=25
+KillMode=control-group
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

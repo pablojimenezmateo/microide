@@ -38,6 +38,7 @@ import microide_qa as q  # noqa: E402
 import monkey as m  # noqa: E402
 import scenarios as s  # noqa: E402
 import invariants as inv  # noqa: E402
+import monkey_model as mm  # noqa: E402
 
 REQUIRED_TOOLS = ("Xvfb", "xdotool", "xwd", "xdpyinfo", "xmodmap")
 
@@ -262,52 +263,103 @@ def cmd_suite(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+def parse_size(text: str) -> tuple[int, int]:
+    width, _, height = text.lower().partition("x")
+    return int(width), int(height)
+
+
+def launch_args(sets: list[str] | None) -> list[str]:
+    """`--set id=value` pairs as the app's own `--set id value` arguments."""
+    out: list[str] = []
+    for item in sets or []:
+        key, _, value = item.partition("=")
+        out += ["--set", key, value]
+    return out
+
+
 def cmd_monkey(args: argparse.Namespace) -> int:
     start, _, end = args.seeds.partition("-") if args.seeds else (str(args.seed), "", "")
     seeds = range(int(start), int(end or start) + 1)
-    command_profile = args.profile in ("commands", "editor")
+    command_profile = args.profile in m.COMMAND_PROFILES
     kind = str(args.project) if args.project else ("taskflow" if not command_profile else str(q.REPO))
     steps = args.rounds if command_profile and args.rounds else args.steps
+    size = parse_size(args.size)
+    extra = launch_args(args.set)
     failures = 0
     print(f"monkey: profile {args.profile}, seeds {seeds.start}-{seeds.stop - 1}, "
-          f"{steps} steps -> {args.out}")
+          f"{steps} steps, {size[0]}x{size[1]} {' '.join(extra)} -> {args.out}")
+    summaries = []
     for seed in seeds:
         project = fixture(kind, args.out / "fixtures")
-        with q.App.launch(project=project, binary=args.binary,
+        coverage = mm.Coverage.load(args.coverage)
+        loaded = mm.Coverage.load(args.coverage)
+        with q.App.launch(project=project, binary=args.binary, size=size, extra_args=extra,
                           shots=args.out / f"seed-{seed}") as app:
-            app.replay_header = {"fixture": kind, "profile": args.profile, "seed": seed}
+            app.replay_header = {"fixture": kind, "profile": args.profile, "seed": seed,
+                                 "size": list(size), "args": extra, "weird": not args.no_weird}
             app.check("start")
-            monkey = m.Monkey(app, seed, args.profile, project)
+            monkey = m.Monkey(app, seed, args.profile, project, coverage=coverage,
+                              corpus=mm.Corpus(args.corpus), weird=not args.no_weird,
+                              max_findings=args.max_findings, keep_going=not args.stop_at_first)
+            settle = args.delay if command_profile else 0.12
             if command_profile and not args.no_churn:
                 with m.ExternalChurn(project, m.random.Random(seed ^ 0x5F5F), app.record_external):
-                    monkey.run(steps, settle=args.delay)
+                    monkey.run(steps, settle=settle, time_budget=args.time_budget)
             else:
-                monkey.run(steps, settle=args.delay if command_profile else 0.12)
+                monkey.run(steps, settle=settle, corpus_probability=args.corpus_probability,
+                           time_budget=args.time_budget)
             if app.alive() and command_profile:
                 # The fuzzer's last word: the shell still answers.
                 app.wait_until(lambda: bool(app.query("status")), 45.0, "a status answer")
             failures += report(f"seed {seed}", app)
-            if app.findings:
-                app.save_actions(args.out / f"seed-{seed}" / "replay.json", **app.replay_header)
+            summary = monkey.summary()
+            summaries.append(summary)
+            seed_dir = args.out / f"seed-{seed}"
+            seed_dir.mkdir(parents=True, exist_ok=True)
+            app.save_actions(seed_dir / "replay.json", **app.replay_header)
+            (seed_dir / "findings.json").write_text(json.dumps(summary, indent=1))
+            print(f"        {summary['steps']} steps, {summary['new_states']} new states, "
+                  f"{summary['new_transitions']} new transitions, {len(summary['findings'])} distinct finding(s)")
+        if args.coverage is not None:
+            coverage.merge_into(args.coverage, loaded)
     print(f"monkey: {len(seeds) - failures}/{len(seeds)} seeds clean")
     return 1 if failures else 0
 
 
+def replay_record(record: dict, binary: Path, out: Path, actions: list | None = None,
+                  check: bool = True):
+    """Re-runs a replay record (the monkey's replay.json) on a fresh fixture and
+    returns the App's findings, its findings' signatures and whether it ran to the
+    end. The minimiser (tools/soak/minimize.py) calls this per candidate."""
+    actions = record.get("actions", []) if actions is None else actions
+    kind = record.get("fixture", "taskflow")
+    project = fixture(kind, out / "fixtures")
+    size = tuple(record.get("size", (1440, 900)))
+    with q.App.launch(project=project, binary=binary, shots=out / "replay", size=size,
+                      extra_env=record.get("env", {}), extra_args=list(record.get("args", [])),
+                      plugins=tuple(record.get("plugins", ()))) as app:
+        app.replay_header = {**{k: v for k, v in record.items() if k != "actions"}}
+        app.check("start")
+        monkey = m.Monkey(app, int(record.get("seed", 0) or 0), record.get("profile", "default"), project,
+                          weird=bool(record.get("weird", False)))
+        q.replay(app, actions,
+                 churn=lambda row: m.apply_churn(project, row["churn"], row["counter"]),
+                 external=monkey.replay_external, check=check)
+        if not check:
+            app.check("end of replay")
+        monkey._dedupe(0)
+        monkey._final_oracles()
+        return app, list(monkey.signatures.values())
+
+
 def cmd_replay(args: argparse.Namespace) -> int:
     record = json.loads(Path(args.file).read_text())
-    actions = record["actions"] if isinstance(record, dict) else record
-    kind = record.get("fixture", "taskflow") if isinstance(record, dict) else "taskflow"
-    project = fixture(kind, args.out / "fixtures")
-    size = tuple(record.get("size", (1440, 900))) if isinstance(record, dict) else (1440, 900)
-    env = record.get("env", {}) if isinstance(record, dict) else {}
-    plugins = tuple(record.get("plugins", ())) if isinstance(record, dict) else ()
-    with q.App.launch(project=project, binary=args.binary, shots=args.out / "replay",
-                      size=size, extra_env=env, plugins=plugins) as app:
-        app.replay_header = {"fixture": kind, "replay_of": str(args.file)}
-        app.check("start")
-        q.replay(app, actions,
-                 churn=lambda row: m.apply_churn(project, row["churn"], row["counter"]))
-        return report(f"replay of {args.file}", app)
+    if not isinstance(record, dict):
+        record = {"actions": record}
+    app, signatures = replay_record(record, args.binary, args.out)
+    for entry in signatures:
+        print(f"        {entry['signature']}  {entry['label']}")
+    return report(f"replay of {args.file}", app)
 
 
 def cmd_remote(args: argparse.Namespace) -> int:
@@ -352,7 +404,22 @@ def main() -> int:
     monkey.add_argument("--seeds", help="a range like 1-8 (overrides --seed)")
     monkey.add_argument("--steps", type=int, default=300)
     monkey.add_argument("--rounds", type=int, help="commands per seed (commands/editor profiles)")
-    monkey.add_argument("--profile", choices=("default", "commands", "editor"), default="default")
+    monkey.add_argument("--profile", choices=m.ALL_PROFILES, default="default")
+    monkey.add_argument("--size", default="1440x900", help="window (and screen) size, WxH")
+    monkey.add_argument("--set", action="append", metavar="ID=VALUE",
+                        help="a setting at launch (--set ui.scale=1.75); repeatable")
+    monkey.add_argument("--coverage", type=Path,
+                        help="coverage file to steer by and merge into (the soak runner's)")
+    monkey.add_argument("--corpus", type=Path, help="prefix corpus directory to start from and add to")
+    monkey.add_argument("--corpus-probability", type=float, default=0.5,
+                        help="chance a run starts from a corpus prefix (default 0.5)")
+    monkey.add_argument("--max-findings", type=int, default=25,
+                        help="stop after this many distinct findings (default 25)")
+    monkey.add_argument("--stop-at-first", action="store_true",
+                        help="stop at the first finding instead of exploring on")
+    monkey.add_argument("--time-budget", type=float, help="stop after this many seconds")
+    monkey.add_argument("--no-weird", action="store_true",
+                        help="do not seed the qa-weird/ files into the fixture")
     monkey.add_argument("--project", type=Path,
                         help="project to copy and drive (default: the taskflow fixture; "
                              "this repository for the commands/editor profiles)")

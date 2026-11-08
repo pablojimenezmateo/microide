@@ -292,6 +292,14 @@ class App:
     outside_change_pending: bool = False
     # The slowest control answer since the monkey last looked: (what, seconds).
     slowest_answer: tuple[str, float] = ("", 0.0)
+    # The answers the last check read (ui, buffer, editor): the monkey's state
+    # signature is built from them, so steering costs no extra query.
+    last_ui: dict[str, Any] | None = None
+    last_buffer: dict[str, Any] | None = None
+    last_editor: dict[str, Any] | None = None
+    # Set while the monkey runs a burst: actions recorded then carry "b": 1, and a
+    # replay sends them with no settle or check between (the timing they had).
+    in_burst: bool = False
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -655,6 +663,8 @@ class App:
         request_id = self._next_id
         self._next_id += 1
         self._socket.settimeout(timeout)
+        # From here on the time is the app's: the wait for typed input is not.
+        started = time.monotonic()
         try:
             self._socket.sendall(json.dumps({"id": request_id, **payload}).encode() + b"\n")
             while True:
@@ -675,6 +685,7 @@ class App:
                     if isinstance(reply, dict) and reply.get("id") == request_id:
                         if "\ufffd" in text:
                             reply["_replaced"] = True
+                        self.note_latency(what, time.monotonic() - started)
                         return reply
         except (OSError, socket.timeout) as error:
             self.capture_stall(f"{what} got no reply")
@@ -715,9 +726,7 @@ class App:
         payload: dict[str, Any] = {"query": verb}
         if args is not None:
             payload["args"] = args
-        started = time.monotonic()
         reply = self._socket_request(payload, 10.0, f"query {verb!r}")
-        self.note_latency(f"query {verb}", time.monotonic() - started)
         if not reply.get("ok"):
             raise QaFailure(f"query {verb!r} failed: {json.dumps(reply)[:600]}")
         result = reply.get("result", {})
@@ -948,17 +957,28 @@ class App:
             return
         self._xdotool("keydown" if down else "keyup", name)
 
+    def _key_gap(self) -> None:
+        """Keeps two key presses at least xtest.KEY_GAP apart, across calls: SDL
+        reads a release and a press of one key closer than 2 ms as auto-repeat
+        (a burst of one key, or "\n\n" typed as two Returns)."""
+        last = getattr(self, "_last_key_at", 0.0)
+        wait = xtest.KEY_GAP - (time.monotonic() - last)
+        if wait > 0:
+            time.sleep(wait)
+
     def _x_keys(self, *chords: str) -> None:
         xt = self._xt_or_none()
-        for index, chord in enumerate(chords):
-            if index:
-                time.sleep(xtest.KEY_GAP)
+        for chord in chords:
+            self._key_gap()
             if not (xt and xt.chord(chord)):
                 self._xdotool("key", "--clearmodifiers", chord)
+            self._last_key_at = time.monotonic()
 
     def _x_type_ascii(self, text: str) -> None:
         xt = self._xt_or_none()
+        self._key_gap()
         missed = xt.type_ascii(text) if xt else text
+        self._last_key_at = time.monotonic()
         if missed:
             self._xdotool("type", "--clearmodifiers", "--delay", "25", "--", missed)
 
@@ -1183,6 +1203,31 @@ class App:
                 self._xdotool("key", chord)
         self._x_modifier(modifier, False)
 
+    def resize(self, width: int, height: int) -> None:
+        """Resizes the window (X11; the Wayland kiosk owns the size). The size
+        the app settles on is read back from the `ui` query, not assumed: a
+        window manager-less Xvfb grants it, the app may clamp a tiny one."""
+        self._record({"resize": [int(width), int(height)]})
+        if self.wayland or not self.window:
+            return
+        if (xt := self._xt_or_none()) and xt.resize(int(self.window), int(width), int(height)):
+            return
+        self._xdotool("windowsize", self.window, str(int(width)), str(int(height)))
+
+    def focus_out(self) -> None:
+        """Takes the X input focus away from the window (another application
+        took it); the next key gives it back (_focus)."""
+        self._record({"focus-out": True})
+        if (xt := self._xt_or_none()) is not None:
+            xt.focus_root()
+
+    def current_size(self) -> tuple[int, int]:
+        """The window's size as the last `ui` answer has it (the monkey resizes)."""
+        window = (self.last_ui or {}).get("window") or {}
+        if window.get("width") and window.get("height"):
+            return int(window["width"]), int(window["height"])
+        return self.size
+
     def _expect_typed_input(self, chars: str, presses: int, keys: str = "") -> None:
         """Notes input about to go through X -- `chars` of text and `presses`
         non-modifier key presses -- for the next _await_typed_input to wait on.
@@ -1374,7 +1419,7 @@ class App:
             else:
                 flush()
                 self._record({"type-via-control": char})
-                self._control(["control-send", "type", char])
+                self._input("type", char)
         flush()
 
     def _map_latin1(self, char: str) -> None:
@@ -1568,7 +1613,9 @@ class App:
         try:
             ui = self.ui()
         except Exception:  # noqa: BLE001 - a dead or busy app is another oracle's
+            self.last_ui = None
             return []
+        self.last_ui = ui
         out: list[tuple[str, str]] = []
         focus = ui.get("focus")
         menu = ui.get("menu") or {}
@@ -1624,6 +1671,7 @@ class App:
             time.sleep(0.2 * SLOW_FACTOR)
             try:
                 ui = self.ui()
+                self.last_ui = ui
                 found = findings(ui)
             except Exception:  # noqa: BLE001 - a dead or busy app is another oracle's
                 return []
@@ -1699,7 +1747,8 @@ class App:
         strip is repainted by nothing the focused group does, so a stale label
         there has nothing to correct it."""
         try:
-            groups = self.editor_state().get("groups", [])
+            self.last_editor = self.editor_state()
+            groups = self.last_editor.get("groups", [])
         except Exception:  # noqa: BLE001 - a dead or busy app is another oracle's
             return []
         out: list[tuple[str, str]] = []
@@ -1742,6 +1791,7 @@ class App:
     def _state_findings(self, ui: dict[str, Any]) -> list[tuple[str, str]]:
         try:
             buffer = self.query("buffer")
+            self.last_buffer = buffer
         except Exception:  # noqa: BLE001 - a dead or busy app is another oracle's
             return []
         if not buffer.get("available") or buffer.get("kind") != "editor":
@@ -1813,6 +1863,18 @@ class App:
                                  f"{buffer['language']!r}"))
         return out
 
+    def report(self, label: str, found: list[tuple[str, str]]) -> list[Finding]:
+        """Records findings an oracle outside check() made (the monkey's data,
+        undo, leak and latency oracles), with the same evidence directory."""
+        if not found:
+            return []
+        findings = [Finding(kind, f"after {label}: {message}") for kind, message in found]
+        shot = self._write_finding(label, findings)
+        for finding in findings:
+            finding.screenshot = shot
+        self.findings.extend(findings)
+        return findings
+
     def _write_finding(self, label: str, found: list[Finding]) -> str | None:
         """A finding is a directory: the actions up to it, the frame lines since
         the previous action, the last screenshots and the window now."""
@@ -1823,6 +1885,11 @@ class App:
         self.save_actions(folder / "replay.json", **self.replay_header)
         (folder / "findings.txt").write_text("\n".join(f"{f.kind}: {f.detail}" for f in found) + "\n")
         (folder / "trace.txt").write_text("\n".join(self.recent_log) + "\n")
+        # The log's tail too: a crash's sanitizer report and stack, the frames
+        # before the trace window (the soak runner's FINDING.md reads both).
+        (folder / "log-tail.txt").write_text(self.log_tail(64 * 1024))
+        if self.shots is not None and (self.shots / "stall-threads.txt").exists():
+            shutil.copy2(self.shots / "stall-threads.txt", folder / "stall-threads.txt")
         for index, raw in self.recent_shots:
             self.image_of(raw).save(folder / f"after-action-{index:04d}.png")
         # The verifier's own images of the stale frames this finding names.
@@ -1876,6 +1943,8 @@ class App:
 
     def _record(self, action: dict[str, Any]) -> None:
         action["t"] = round(time.monotonic(), 3)
+        if self.in_burst:
+            action["b"] = 1
         self.actions.append(action)
 
     def record_external(self, action: dict[str, Any]) -> None:
@@ -1945,19 +2014,36 @@ def _surface_and_overlap_findings(ui: dict[str, Any]) -> list[tuple[str, str]]:
 
 
 def replay(app: App, actions: list[dict[str, Any]], pause: float = 0.12,
-           churn: Callable[[dict[str, Any]], None] | None = None) -> None:
+           churn: Callable[[dict[str, Any]], None] | None = None,
+           external: Callable[[dict[str, Any]], None] | None = None,
+           check: bool = True) -> None:
     """Re-runs a recorded action list (what the monkey saves on a finding).
 
     `churn` re-applies a row the monkey's ExternalChurn recorded: a file rewrite
-    that landed between two commands, with no settle or check of its own."""
-    for action in actions:
-        if "check" in action:
+    that landed between two commands, with no settle or check of its own.
+    `external` re-applies the monkey's outside-world rows (git, renames,
+    permissions) and its kill -9s. Rows recorded inside a burst ("b") are sent
+    back to back, as they were."""
+    for index, action in enumerate(actions):
+        if "check" in action or "note" in action or "type-via-control" in action:
             continue
         if "churn" in action:
             if churn is not None:
                 churn(action)
             continue
-        if "send" in action:
+        if "external" in action or "kill9" in action:
+            if external is not None:
+                external(action)
+            continue
+        if "resize" in action:
+            app.resize(*action["resize"])
+        elif "focus-out" in action:
+            app.focus_out()
+        elif "drop" in action:
+            app.drop(*action["drop"], action["path"])
+        elif "hold" in action:
+            app.hold(action["hold"], action.get("keys", []))
+        elif "send" in action:
             app.send(*action["send"])
         elif "line" in action:
             app.send_line(action["line"])
@@ -1975,8 +2061,12 @@ def replay(app: App, actions: list[dict[str, Any]], pause: float = 0.12,
             app.key(action["key"])
         elif "type" in action:
             app.type(action["type"])
-        app.settle(pause)
-        app.check(json.dumps(action))
+        following = actions[index + 1] if index + 1 < len(actions) else {}
+        if action.get("b") and following.get("b"):
+            continue  # the rest of the burst follows with no settle
+        app.settle_quiet(most=pause)
+        if check:
+            app.check(json.dumps(action)[:200])
 
 
 def make_fixture(dest: Path) -> Path:
