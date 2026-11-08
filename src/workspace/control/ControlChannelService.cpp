@@ -455,7 +455,7 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
     return BuildEditor();
   }
   if (verb == "documents") {
-    return BuildDocuments();
+    return BuildDocuments(args);
   }
   if (verb == "surface") {
     return BuildSurface();
@@ -896,7 +896,15 @@ util::JsonValue ControlChannelService::BuildEditor() const {
 // document's file holds exactly those bytes, and a dirty one comes back with the
 // same digest after a kill -9 and a relaunch (dev-docs/project/safety-plan.md W4).
 // A view whose content has not landed yet has no document to describe.
-util::JsonValue ControlChannelService::BuildDocuments() const {
+//
+// `{"content": "<path>"}` adds that one document's bytes as `contentHex`, the
+// evidence the oracle saves when a clean buffer and its file disagree: the
+// digests say THAT they differ, the bytes say how (a stale load, a dropped BOM,
+// a save transform that never reached the buffer). Hex, because the fixture's
+// files carry NULs, Latin-1 and raw binary that a JSON string cannot.
+util::JsonValue ControlChannelService::BuildDocuments(const util::JsonValue& args) const {
+  const std::string content_path =
+      args.IsObject() && args.HasKey("content") ? args["content"].AsString() : std::string{};
   util::JsonArray documents;
   if (context_ == nullptr) {
     return util::JsonValue(std::move(documents));
@@ -928,6 +936,16 @@ util::JsonValue ControlChannelService::BuildDocuments() const {
       object["mixedLineEndings"] = util::JsonValue(view.has_mixed_line_endings());
       object["bytes"] = util::JsonValue(static_cast<std::int64_t>(bytes.size()));
       object["sha256"] = util::JsonValue(util::Sha256Hex(bytes));
+      if (!content_path.empty() && view.path().generic_string() == content_path) {
+        static constexpr char kHex[] = "0123456789abcdef";
+        std::string hex;
+        hex.reserve(bytes.size() * 2);
+        for (const unsigned char byte : bytes) {
+          hex.push_back(kHex[byte >> 4]);
+          hex.push_back(kHex[byte & 0x0f]);
+        }
+        object["contentHex"] = util::JsonValue(std::move(hex));
+      }
       documents.push_back(util::JsonValue(std::move(object)));
     }
   }

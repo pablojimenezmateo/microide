@@ -51,6 +51,7 @@ they were: TD-2026-09-07-291 and its seeds are referenced from the TD ledger.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import random
 import shutil
@@ -1009,11 +1010,26 @@ class Monkey:
         # The counter continues past the prefix's, so new external rows differ.
         self.counter = max([int(a.get("counter", 0)) for a in actions if "external" in a] + [self.counter])
 
+    def _report_data(self, label: str, found: list[tuple[str, str]]) -> None:
+        """A data finding, with the oracle's byte evidence beside it."""
+        before = len(self.app.findings)
+        self.app.report(label, found)
+        if len(self.app.findings) > before and self.data.evidence:
+            shot = self.app.findings[-1].screenshot
+            if shot:
+                folder = Path(shot).parent
+                for name, data in self.data.evidence.items():
+                    with contextlib.suppress(OSError):
+                        (folder / name).write_bytes(data)
+        self.data.evidence = {}
+        if found:
+            self._dedupe(before)
+
     def _periodic_oracles(self, index: int) -> None:
         label = f"monkey step {index}"
         self._report(label, self.liveness.check())
         if index % 20 == 19:
-            self._report(label, self.data.check_clean())
+            self._report_data(label, self.data.check_clean())
         if index % 40 == 39:
             self._report(label, self.undo.check())
         if index % 50 == 0:
@@ -1025,7 +1041,7 @@ class Monkey:
         if not self.app.alive():
             return
         label = "end of run"
-        self._report(label, self.data.check_clean())
+        self._report_data(label, self.data.check_clean())
         self._report(label, self.resources.check())
         pid = self.app.proc.pid if self.app.proc else None
         left = self.data.staging_leftovers(pid)

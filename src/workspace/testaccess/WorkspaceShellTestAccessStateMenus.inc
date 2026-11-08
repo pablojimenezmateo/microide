@@ -1340,6 +1340,12 @@
     std::string error;
     return shell.control_channel_service_.AnswerQuery(verb, &ok, &error);
   }
+  static util::JsonValue ControlQueryWithArgs(WorkspaceShell& shell, const std::string& verb,
+                                              const util::JsonValue& args) {
+    bool ok = false;
+    std::string error;
+    return shell.control_channel_service_.AnswerQuery(verb, args, &ok, &error);
+  }
   static util::JsonValue ControlQueryWithError(WorkspaceShell& shell, const std::string& verb,
                                                std::string* error) {
     bool ok = false;

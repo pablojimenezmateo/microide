@@ -45,6 +45,10 @@ class DataOracle:
 
     def __init__(self, app: q.App):
         self.app = app
+        # Files for the evidence directory of the finding the last check made:
+        # {file name: bytes}. The monkey writes them next to FINDING.md, so a
+        # mismatch that does not replay still says how the two sides differ.
+        self.evidence: dict[str, bytes] = {}
 
     def documents(self) -> list[dict[str, Any]]:
         try:
@@ -83,9 +87,46 @@ class DataOracle:
             # Only what still differs from the SAME disk bytes.
             mismatched = {path: pair for path, pair in again.items()
                           if path in mismatched and mismatched[path][1] == pair[1]}
+        self.evidence = {}
+        for path, pair in mismatched.items():
+            self.evidence.update(self._mismatch_evidence(path, pair))
         return [("data", f"the clean buffer of {Path(path).name} differs from its file on disk "
                          f"(buffer {pair[0][:12]}, disk {pair[1][:12]}) and the file is not changing")
                 for path, pair in mismatched.items()]
+
+    def _mismatch_evidence(self, path: str, pair: tuple[str, str]) -> dict[str, bytes]:
+        """Both sides' bytes and where they first part, for one mismatched path."""
+        name = Path(path).name
+        out: dict[str, bytes] = {}
+        try:
+            disk = Path(path).read_bytes()
+        except OSError:
+            disk = None
+        buffer = None
+        try:
+            for doc in self.app.query("documents", {"content": path}) or []:
+                if doc.get("path") == path and "contentHex" in doc:
+                    buffer = bytes.fromhex(doc["contentHex"])
+        except Exception:  # noqa: BLE001 - evidence is best effort
+            pass
+        if disk is not None:
+            out[f"mismatch-{name}.disk"] = disk
+        if buffer is not None:
+            out[f"mismatch-{name}.buffer"] = buffer
+        lines = [f"path: {path}", f"buffer sha256: {pair[0]}", f"disk sha256:   {pair[1]}"]
+        if disk is not None and buffer is not None:
+            first = next((i for i, (a, b) in enumerate(zip(buffer, disk)) if a != b),
+                         min(len(buffer), len(disk)))
+            lines += [f"buffer {len(buffer)} bytes, disk {len(disk)} bytes; first difference at byte {first}",
+                      f"buffer[{first}:+48]: {buffer[first:first + 48]!r}",
+                      f"disk[{first}:+48]:   {disk[first:first + 48]!r}"]
+            try:
+                st = Path(path).stat()
+                lines.append(f"disk mtime_ns {st.st_mtime_ns} size {st.st_size} mode {oct(st.st_mode)}")
+            except OSError:
+                pass
+        out[f"mismatch-{name}.txt"] = ("\n".join(lines) + "\n").encode()
+        return out
 
     def staging_leftovers(self, pid: int | None) -> list[Path]:
         """Save temporaries of process `pid` under the project (its own saves

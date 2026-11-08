@@ -385,6 +385,11 @@ def write_finding_md(bundle: Path) -> None:
         lines += ["## Stack (ours)", "", "```", stack.replace(" > ", "\n"), "```", ""]
     if (evidence / "stall-threads.txt").exists():
         lines += ["## Threads at the stall", "", "```", (evidence / "stall-threads.txt").read_text()[:4000], "```", ""]
+    # The data oracle's byte evidence: where a clean buffer and its file part, with
+    # both sides saved beside it as mismatch-<name>.buffer / .disk.
+    for summary in sorted(evidence.glob("mismatch-*.txt")) if evidence.exists() else []:
+        lines += [f"## Byte mismatch ({summary.name})", "", "```",
+                  summary.read_text(errors="replace")[:4000], "```", ""]
     files = suspected_files(log_text)
     if files:
         lines += ["## Suspected files", ""] + [f"- `{f}`" for f in files] + [""]

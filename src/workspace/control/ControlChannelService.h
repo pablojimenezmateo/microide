@@ -195,6 +195,10 @@ class ControlChannelService {
   util::JsonValue AnswerQuery(const std::string& verb, bool* ok, std::string* error) const {
     return HandleQuery(verb, util::JsonValue(util::JsonObject{}), ok, error);
   }
+  util::JsonValue AnswerQuery(const std::string& verb, const util::JsonValue& args, bool* ok,
+                              std::string* error) const {
+    return HandleQuery(verb, args, ok, error);
+  }
 
  private:
   util::JsonValue HandleQuery(const std::string& verb, const util::JsonValue& args, bool* ok,
@@ -213,7 +217,7 @@ class ControlChannelService {
   // Every editor group with its tabs (cursor/scroll/dirty per tab, the visible
   // range of the focused active tab) and the split tree in its pre-order form.
   util::JsonValue BuildEditor() const;
-  util::JsonValue BuildDocuments() const;
+  util::JsonValue BuildDocuments(const util::JsonValue& args) const;
   util::JsonValue BuildSurface() const;
   // The runnable command registry: {command, usage, label}.
   util::JsonValue BuildCommands() const;

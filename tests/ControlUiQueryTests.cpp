@@ -373,6 +373,33 @@ void TestDocumentsQueryHashesWhatASaveWrites() {
     }
   }
   Expect(seen == 1, "a document shown in two panes is listed once (" + std::to_string(seen) + ")");
+  // On request, one document's bytes as hex: the evidence the oracle saves when a
+  // clean buffer and its file disagree. Only for the document asked about.
+  {
+    const std::string path = (fixture.root / "crlf.txt").generic_string();
+    util::JsonObject args;
+    args["content"] = util::JsonValue(path);
+    const util::JsonValue with_content =
+        TestAccess::ControlQueryWithArgs(fixture.shell, "documents", util::JsonValue(std::move(args)));
+    std::string expected_hex;
+    for (const unsigned char byte : crlf) {
+      static constexpr char kHex[] = "0123456789abcdef";
+      expected_hex.push_back(kHex[byte >> 4]);
+      expected_hex.push_back(kHex[byte & 0x0f]);
+    }
+    bool found = false;
+    for (const util::JsonValue& doc : with_content.AsArray()) {
+      if (doc["path"].AsString() == path) {
+        found = doc.HasKey("contentHex") && doc["contentHex"].AsString() == expected_hex;
+      } else {
+        Expect(!doc.HasKey("contentHex"), "only the asked-for document carries its bytes");
+      }
+    }
+    Expect(found, "the asked-for document carries its save bytes as hex, BOM and CRLF included");
+    for (const util::JsonValue& doc : documents.AsArray()) {
+      Expect(!doc.HasKey("contentHex"), "a plain documents query carries no bytes");
+    }
+  }
   TestAccess::SetFocusEditor(fixture.shell);
   (void)DispatchEvents(fixture.shell, {TextInputEvent("x")});
   documents = TestAccess::ControlQuery(fixture.shell, "documents");
