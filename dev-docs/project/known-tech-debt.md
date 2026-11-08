@@ -86,6 +86,22 @@ since yama's ptrace scope 1 refuses a sibling gdb). The next occurrence says
 whether the main thread sits in poll/futex (SDL_WaitEvent, a wayland roundtrip)
 or is running our code. Evidence: `build/qa-evidence/wayland-editor-toggles-2026-11-07`.
 
+*2026-11-08, third occurrence, now with the thread dump* (`plugin-editor-api` in a
+qa-wayland lane beside qa-asan and six monkey drivers; passed on retry): the main
+thread sat in `poll(1 fd, timeout -1)` -- SDL's `Wayland_WaitEventTimeout` blocked
+on the display fd for READ -- while `control-io` was alive in its 1 s poll. The
+command arrived; `SDL_PushEvent`'s cross-thread wake never woke the main loop. In
+SDL 3.4.2 that wake is `Wayland_SendWakeupEvent`: `wl_display_sync` plus one
+`wl_display_flush`, with no `EAGAIN` handling (the waiter's own flush retries on
+writability; this one does not). Leading hypothesis: under load that flush hits
+`EAGAIN`, the sync stays in the client buffer, and nothing flushes it while the main
+thread polls for READ only -- lost until unrelated input, which a kiosk QA session
+never sends. That would explain "Wayland only, only under parallel load".
+Unconfirmed. Next step: an `LD_PRELOAD` shim logging off-main-thread
+`wl_display_flush` `EAGAIN` returns during a stressed qa-wayland run; if confirmed,
+report upstream and stop depending on a foreign-thread flush for the wake.
+Evidence: `build/qa-evidence/wayland-plugin-editor-api-2026-11-08`.
+
 ### TD-2026-11-05-432 — the 2026-11-05 terminal UI/UX review: what it fixed, and what it left. [RESOLVED 2026-11-06 — 1 and 2]
 
 A review of the terminal as a user meets it -- selecting, copying, the cursor --
