@@ -19,6 +19,9 @@
 #include <thread>
 
 #include <cerrno>
+#include <csignal>
+#include <cstdlib>
+#include <string_view>
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -421,6 +424,89 @@ void TestAsyncSubprocessChildGetsDefaultSigpipe() {
          "an async child must see SIGPIPE at its default disposition, got: " + output);
 }
 
+// The editor may START with signals ignored: a background job of a
+// non-interactive shell begins with SIGINT and SIGQUIT ignored, and an ignored
+// disposition survives exec. The coverage lane runs the suite that way, and the
+// debugger's Pause -- a SIGINT to the program gdb is still starting -- stopped
+// nothing there; Ctrl+C in the integrated terminal reached no program either.
+// Every child starts with every signal at its default. The probe is `grep`
+// itself, not a shell, so nothing between the spawn and /proc/self/status can
+// change the mask. SigIgn is hex, bit (signo - 1).
+class ScopedIgnoredInterrupts {
+ public:
+  ScopedIgnoredInterrupts() {
+    struct sigaction ignore{};
+    ignore.sa_handler = SIG_IGN;
+    sigemptyset(&ignore.sa_mask);
+    sigaction(SIGINT, &ignore, &saved_int_);
+    sigaction(SIGQUIT, &ignore, &saved_quit_);
+  }
+  ~ScopedIgnoredInterrupts() {
+    sigaction(SIGINT, &saved_int_, nullptr);
+    sigaction(SIGQUIT, &saved_quit_, nullptr);
+  }
+  ScopedIgnoredInterrupts(const ScopedIgnoredInterrupts&) = delete;
+  ScopedIgnoredInterrupts& operator=(const ScopedIgnoredInterrupts&) = delete;
+
+ private:
+  struct sigaction saved_int_{};
+  struct sigaction saved_quit_{};
+};
+
+// The SigIgn mask in a /proc/<pid>/status excerpt, or nullopt.
+std::optional<unsigned long long> IgnoredSignalMask(std::string_view status_output) {
+  const auto at = status_output.find("SigIgn:");
+  if (at == std::string_view::npos) {
+    return std::nullopt;
+  }
+  const std::string hex(status_output.substr(at + 7));
+  return std::strtoull(hex.c_str(), nullptr, 16);
+}
+
+bool IgnoresAnInterrupt(unsigned long long mask) {
+  return (mask & (1ULL << (SIGINT - 1))) != 0 || (mask & (1ULL << (SIGQUIT - 1))) != 0;
+}
+
+void TestSubprocessChildDoesNotInheritIgnoredInterrupts() {
+  const ScopedIgnoredInterrupts ignored;
+  const auto result = RunSubprocess({"grep", "SigIgn", "/proc/self/status"},
+                                    SubprocessOptions{
+                                        .cwd = {},
+                                        .stdin_text = {},
+                                        .environment_overrides = {},
+                                        .capture_stdout = true,
+                                        .capture_stderr = false,
+                                        .silence_stderr = true,
+                                    });
+  const auto mask = IgnoredSignalMask(result.stdout_text);
+  Expect(mask.has_value(), "the probe should print its SigIgn mask, got: " + result.stdout_text);
+  Expect(mask.has_value() && !IgnoresAnInterrupt(*mask),
+         "a synchronous child must not inherit an ignored SIGINT/SIGQUIT, got: " +
+             result.stdout_text);
+}
+
+void TestAsyncSubprocessChildDoesNotInheritIgnoredInterrupts() {
+  const ScopedIgnoredInterrupts ignored;
+  microide::platform::AsyncSubprocess process;
+  Expect(process.Start({"grep", "SigIgn", "/proc/self/status"}),
+         "async subprocess signal probe should start");
+  std::string output;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (std::chrono::steady_clock::now() < deadline &&
+         output.find('\n') == std::string::npos) {
+    const auto chunk = process.Read(4096, 50);
+    if (!chunk.has_value()) {
+      break;
+    }
+    output += *chunk;
+  }
+  process.Shutdown(500);
+  const auto mask = IgnoredSignalMask(output);
+  Expect(mask.has_value(), "the async probe should print its SigIgn mask, got: " + output);
+  Expect(mask.has_value() && !IgnoresAnInterrupt(*mask),
+         "an async child must not inherit an ignored SIGINT/SIGQUIT, got: " + output);
+}
+
 // Regression: a child that echoes a payload larger than the kernel pipe buffer
 // would deadlock if the parent wrote all of stdin before draining stdout — the
 // child blocks on write(stdout) while the parent blocks on write(stdin). The
@@ -678,6 +764,10 @@ void RegisterSubprocessTests(std::vector<TestCase>& tests) {
           TestAsyncSubprocessFinishLetsTheChildReadWhatWasWrittenLast);
   AddTest(tests, "AsyncSubprocess/ChildGetsDefaultSigpipe",
           TestAsyncSubprocessChildGetsDefaultSigpipe);
+  AddTest(tests, "Subprocess/ChildDoesNotInheritIgnoredInterrupts",
+          TestSubprocessChildDoesNotInheritIgnoredInterrupts);
+  AddTest(tests, "AsyncSubprocess/ChildDoesNotInheritIgnoredInterrupts",
+          TestAsyncSubprocessChildDoesNotInheritIgnoredInterrupts);
   AddTest(tests, "Subprocess/LargeStdinDoesNotDeadlock",
           TestSubprocessLargeStdinDoesNotDeadlock);
   AddTest(tests, "Subprocess/TimeoutKillsHungChild", TestSubprocessTimeoutKillsHungChild);

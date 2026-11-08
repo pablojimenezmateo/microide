@@ -7,6 +7,7 @@
 #include <cstring>
 #include <utility>
 
+#include "platform/ChildSignals.h"
 #include "project/remote/RemoteProtocol.h"
 #include "util/Log.h"
 #include "util/PosixFd.h"
@@ -252,12 +253,7 @@ ProcessTable::SpawnResult ProcessTable::Spawn(std::uint64_t connection, SpawnReq
     ::dup2(in_pipe[0], 0);
     ::dup2(out_pipe[1], 1);
     ::dup2(err_pipe[1], 2);
-    struct sigaction dfl{};
-    dfl.sa_handler = SIG_DFL;
-    ::sigaction(SIGPIPE, &dfl, nullptr);
-    sigset_t none;
-    ::sigemptyset(&none);
-    ::sigprocmask(SIG_SETMASK, &none, nullptr);
+    platform::RestoreDefaultSignalsInChild();
     if (cwd != nullptr && ::chdir(cwd) != 0) {
       ::_exit(127);
     }
