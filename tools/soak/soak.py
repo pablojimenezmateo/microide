@@ -554,13 +554,18 @@ def cmd_run(args: argparse.Namespace) -> int:
         now = time.time()
         if deadline and now > deadline:
             break
+        # A build runs between jobs, at most once per interval counted from the
+        # END of the last one (stamped at its start, a 20-minute build on a moving
+        # main left the interval spent and the runner rebuilt forever, starting no
+        # job). Jobs keep running on the last good binaries meanwhile.
         if now - last_build > args.build_interval and not jobs:
             try:
                 build_all(state, log)
             except Exception as error:  # noqa: BLE001 - a broken build never stops the runner
                 log(f"build step failed: {error}")
-            last_build = now
             verify_fixed(state, log)
+            last_build = time.time()
+            continue
         for job in list(jobs):
             if job.proc.poll() is not None or now - job.started > job.type.timeout:
                 if job.proc.poll() is None:
@@ -581,6 +586,9 @@ def cmd_run(args: argparse.Namespace) -> int:
             log(f"check {sig}")
             save_state(state)
         reason = busy_reason(len(jobs))
+        if reason is None and state.get("good") and time.time() - last_build > args.build_interval:
+            # A build is due: let the running jobs drain instead of starting more.
+            reason = "draining for a build"
         if reason is None:
             while len(jobs) < cap:
                 job_type = choose_job(rng, state)

@@ -587,11 +587,20 @@ class Monkey:
                 return candidate
         return candidates[-1]
 
+    def _menu_open(self) -> bool:
+        menu = (self.app.last_ui or {}).get("menu") or {}
+        return bool(menu.get("open") or menu.get("contextMenu") or menu.get("overflow"))
+
     def _choose_source(self) -> str:
         """A source by its profile weight times how well it has paid lately
-        (0.5 + 2 x its reward average: never zero, so nothing starves)."""
+        (0.5 + 2 x its reward average: never zero, so nothing starves). With a
+        menu open the element source is drawn four times as often: a menu the
+        next action closes is a menu whose rows are never pressed (a 12-run hunt
+        pressed 23 of 167 menu rows)."""
         names = list(self.weights)
-        weights = [self.weights[name] * (0.5 + 2 * self.reward.get(name, 0.5)) for name in names]
+        menu_open = self._menu_open()
+        weights = [self.weights[name] * (0.5 + 2 * self.reward.get(name, 0.5))
+                   * (4.0 if menu_open and name == "element" else 1.0) for name in names]
         total = sum(weights)
         pick = self.rng.uniform(0, total)
         for weight, name in zip(weights, names):
@@ -628,6 +637,9 @@ class Monkey:
         elements = self._safe_elements()
         if not elements:
             return self.point_action()
+        if self._menu_open() and self.rng.random() < 0.75:
+            rows = [e for e in elements if e.get("kind") == "menu-item"]
+            elements = rows or elements
         key, element = self._pick([(mm.action_key({"how": "el"}, e), e) for e in elements])
         x, y = self.app.center(element)
         how = self.rng.random()
