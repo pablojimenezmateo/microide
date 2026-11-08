@@ -39,7 +39,17 @@ session fixed, each with a failing-first test:
   data-loss oracle; minimized 410 -> 50 actions);
 - the `surface` query iterated destroyed JSON temporaries (and the range-for lint now
   knows that shape); the canonical query-verb list had drifted (`settings`);
-- the pointer-cursor test sized the scrollbar without the sticky band.
+- the pointer-cursor test sized the scrollbar without the sticky band;
+- a click on an overflow chip scrolled a tab strip and requested no repaint of it
+  (the CI seed; minimized 271 -> 25 actions), and the strip scroll now requests its
+  own repaint;
+- the tab tooltip hit-tested the focused group's tabs over the whole tab band, the
+  wrong tab in a split (and a memo miss every hover frame);
+- a picker's title, empty line and key hint ran past a narrow overlay's box;
+- the window's minimum size was in window units, so a raised ui.scale shrank the
+  layout below the floor again;
+- QA flows that raced once the driver lost xdotool's delays (plugin-api, the
+  fold chord) and a pre-existing clang narrowing error in a test.
 
 What it left, by workstream:
 
