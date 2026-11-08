@@ -1258,6 +1258,17 @@ endif()
 
 include(CPack)
 
+# The test helpers stretch their deadlines and skip absolute timing bounds in a
+# sanitizer build (tests/TestSupport.cpp, IsSanitizerBuild). The compilers name
+# ASan and TSan with a macro but not UBSan, so the ubsan preset ran every timing
+# bound as an uninstrumented build would (a loaded ubsan lane failed
+# RemoteFrameTransport/BulkWindowSettlesAtTheBandwidthDelayProduct at 97.8 % of
+# the bound). The build knows; it says so for every sanitizer.
+if(CMAKE_CXX_FLAGS MATCHES "-fsanitize=")
+  set_source_files_properties(tests/TestSupport.cpp PROPERTIES
+                              COMPILE_DEFINITIONS MICROIDE_TEST_SANITIZER_BUILD=1)
+endif()
+
 add_executable(microide_tests
   src/app/Application.cpp
   src/app/TerminationSignals.cpp

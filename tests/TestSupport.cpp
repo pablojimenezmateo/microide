@@ -35,7 +35,11 @@ void Expect(bool condition, std::string_view message) {
 
 namespace {
 
-#if defined(__SANITIZE_THREAD__) || defined(__SANITIZE_ADDRESS__)
+// The build defines MICROIDE_TEST_SANITIZER_BUILD for any -fsanitize= flags
+// (CMakeLists.txt: no compiler names UBSan with a macro); the macros below cover a
+// build that sets the flags some other way.
+#if defined(MICROIDE_TEST_SANITIZER_BUILD)
+#elif defined(__SANITIZE_THREAD__) || defined(__SANITIZE_ADDRESS__)
 #define MICROIDE_TEST_SANITIZER_BUILD 1
 #elif defined(__has_feature)
 #if __has_feature(thread_sanitizer) || __has_feature(address_sanitizer)
