@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <algorithm>
 #include <condition_variable>
 #include <filesystem>
 #include <mutex>
@@ -358,6 +359,63 @@ void TestFileIndexWatcherDetectsCreatedFile() {
            "FileIndexWatcher should report correct relative path for created file");
   }
 
+  watcher.Unwatch();
+}
+
+// A symlink to a directory inside the tree -- here a loop, `sub/loop -> ..`, the
+// QA monkey's -- was handed to inotify_add_watch, which follows links: it
+// returned the descriptor of the directory already watched, and the walk
+// re-labelled that descriptor with the link's path. Every later change in the
+// project root was then reported under `sub/loop/`, and an open, clean buffer
+// never reloaded an outside edit (QA monkey, world profile: README.md stayed
+// stale through a git stash). A symlinked directory is neither descended nor
+// watched, and the real directory's changes keep their own path.
+void TestFileIndexWatcherASymlinkLoopDoesNotRelabelTheRoot() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "watch_loop";
+  std::filesystem::create_directories(root);
+  WriteFile(root / "README.md", "readme\n");
+
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::vector<std::filesystem::path> changed;
+  FileIndexWatcher watcher;
+  watcher.SetCallback([&](IndexUpdateBatch batch) {
+    if (batch.is_initial) {
+      return;
+    }
+    std::lock_guard lock(mutex);
+    for (const auto& change : batch.changes) {
+      changed.push_back(change.entry.relative_path);
+    }
+    cv.notify_all();
+  });
+  Expect(watcher.Watch(root), "Watch should succeed");
+  // A new directory holding a link back to the root: its creation walks it.
+  std::filesystem::create_directories(root / "sub");
+  std::filesystem::create_directory_symlink("..", root / "sub" / "loop");
+  // ...and a directory created with the link already inside it (the moved-in walk).
+  std::filesystem::create_directories(temp_dir.path() / "staged");
+  std::filesystem::create_directory_symlink("..", temp_dir.path() / "staged" / "loop");
+  std::filesystem::rename(temp_dir.path() / "staged", root / "moved");
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  {
+    std::lock_guard lock(mutex);
+    changed.clear();
+  }
+  WriteFile(root / "README.md", "readme, edited outside\n");
+  const bool notified = WaitFor(mutex, cv, [&] {
+    return std::find(changed.begin(), changed.end(), std::filesystem::path("README.md")) != changed.end();
+  }, std::chrono::milliseconds(1500));
+  std::string seen;
+  {
+    std::lock_guard lock(mutex);
+    for (const auto& path : changed) {
+      seen += path.generic_string() + " ";
+    }
+  }
+  Expect(notified, "an edit to README.md after a symlink loop appeared is reported as README.md, not under the "
+                   "link (saw: " + seen + ")");
   watcher.Unwatch();
 }
 
@@ -1016,6 +1074,8 @@ void RegisterFileIndexWatcherTests(std::vector<TestCase>& tests) {
           TestFileIndexWatcherPollDiffSingleTickEmitsUniqueCreateModifyDelete);
   AddTest(tests, "FileIndexWatcher/ExcludesDefaultsAndFileLevelIgnore",
           TestFileIndexWatcherExcludesDefaultsAndFileLevelIgnore);
+  AddTest(tests, "FileIndexWatcher/ASymlinkLoopDoesNotRelabelTheRoot",
+          TestFileIndexWatcherASymlinkLoopDoesNotRelabelTheRoot);
   AddTest(tests, "FileIndexWatcher/HonorsUserExcludeGlobs",
           TestFileIndexWatcherHonorsUserExcludeGlobs);
   AddTest(tests, "FileIndexWatcher/InitialBatchRespectsEntryBudget",

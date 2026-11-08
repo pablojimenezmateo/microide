@@ -204,6 +204,17 @@ void WalkTrackedTree(const std::filesystem::path& walk_root,
           return platform::WalkAction::Stop;
         }
         if (entry.type == platform::PathType::Directory) {
+          // A symlink to a directory is not descended (WalkOptions keeps links
+          // unfollowed), so it is not watched either. inotify_add_watch follows a
+          // link: on one pointing back into the tree (`sub/loop -> ..`) it returned
+          // the descriptor of the directory already watched, and the watch table
+          // re-labelled that directory with the link's path -- every later change
+          // in it was reported under `sub/loop/`, and an open buffer never reloaded
+          // an outside edit (QA monkey, world profile). Its target, when inside the
+          // tree, is walked and watched under its own path.
+          if (entry.is_symlink) {
+            return platform::WalkAction::Continue;
+          }
           if (ShouldSkipWatchedDirectory(entry.path, filter)) {
             return platform::WalkAction::Prune;
           }
