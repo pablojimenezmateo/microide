@@ -266,12 +266,21 @@ int Application::Run() {
       case IdleWaitMode::Poll:
         has_event = SDL_PollEvent(&event);
         break;
-      case IdleWaitMode::WaitTimeout:
+      case IdleWaitMode::WaitTimeout: {
+        const SdlBlockingWaitScope blocking;
         has_event = SDL_WaitEventTimeout(&event, idle_wait.timeout_ms);
         break;
-      case IdleWaitMode::Wait:
+      }
+      case IdleWaitMode::Wait: {
+        const SdlBlockingWaitScope blocking;
         has_event = SDL_WaitEvent(&event);
         break;
+      }
+    }
+    // A lost-wake relay nudge only woke the loop; the event it re-delivered is
+    // next in the queue.
+    if (has_event && IsSdlWakeNudge(event.type)) {
+      continue;
     }
     if (!has_event) {
       if (idle_wait.mode == IdleWaitMode::Wait) {

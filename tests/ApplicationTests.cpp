@@ -1,7 +1,10 @@
 #include "TestSupport.h"
 #include "TestSupportSdl.h"
 
+#include <atomic>
+#include <chrono>
 #include <filesystem>
+#include <thread>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -13,6 +16,7 @@
 #include "app/ApplicationPresentationCache.h"
 #include "app/EventDrainBudget.h"
 #include "app/IdleWaitStrategy.h"
+#include "app/LostWakeRelay.h"
 #include "app/RedrawTraceAccumulator.h"
 #include "app/RedrawVerifier.h"
 #include "app/SceneTexturePresenter.h"
@@ -566,7 +570,50 @@ void TestHeadlessDestructorShutsDownInitializedApp() {
 
 }  // namespace
 
+
+// TD-2026-11-07-433: SDL 3.4 can lose a cross-thread push's wake (it checks the
+// queue, then publishes the window to wake, then blocks, with no re-check). The
+// relay re-delivers a wake pushed during a blocking wait that is still blocked a
+// moment later, and costs nothing otherwise.
+void TestLostWakeRelayNudgesAWaitStillBlockedAfterAPush() {
+  std::atomic<int> nudged{0};
+  app::LostWakeRelay relay(std::chrono::milliseconds(5), [&] { nudged.fetch_add(1); });
+  relay.EnterBlockingWait();
+  relay.NotePush();  // its wake lost: the wait never ends on its own
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (nudged.load() == 0 && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  relay.LeaveBlockingWait();
+  Expect(nudged.load() == 1, "a push into a wait that stays blocked should be re-delivered once");
+}
+
+void TestLostWakeRelayStaysQuietWhenTheWakeArrives() {
+  std::atomic<int> nudged{0};
+  app::LostWakeRelay relay(std::chrono::milliseconds(20), [&] { nudged.fetch_add(1); });
+  // Pushed before the wait: the wait's own queue check finds the event.
+  relay.NotePush();
+  relay.EnterBlockingWait();
+  std::this_thread::sleep_for(std::chrono::milliseconds(60));
+  relay.LeaveBlockingWait();
+  // Pushed during the wait, which its wake ends in time.
+  relay.EnterBlockingWait();
+  relay.NotePush();
+  relay.LeaveBlockingWait();
+  std::this_thread::sleep_for(std::chrono::milliseconds(60));
+  // Idle: a wait with nothing pushed.
+  relay.EnterBlockingWait();
+  std::this_thread::sleep_for(std::chrono::milliseconds(60));
+  relay.LeaveBlockingWait();
+  Expect(nudged.load() == 0 && relay.nudges() == 0,
+         "a delivered wake, an early push and an idle wait should send no nudge");
+}
+
 void RegisterApplicationTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Application/LostWakeRelayNudgesAWaitStillBlockedAfterAPush",
+          TestLostWakeRelayNudgesAWaitStillBlockedAfterAPush);
+  AddTest(tests, "Application/LostWakeRelayStaysQuietWhenTheWakeArrives",
+          TestLostWakeRelayStaysQuietWhenTheWakeArrives);
   AddTest(tests, "Application/RedrawVerifierReportsOnlyStaleFrames",
           TestRedrawVerifierReportsOnlyStaleFrames);
   AddTest(tests, "Application/StaleFrameReportFormat", TestStaleFrameReportFormat);
