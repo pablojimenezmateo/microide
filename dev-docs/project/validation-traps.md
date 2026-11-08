@@ -1746,6 +1746,28 @@ emitted identical bytes for an unmodified press.
   that a lane being clean says nothing about the class of defect it does not look
   for.
 
+### Every timing guard and sanitizer branch, and the lane that reaches each
+
+Audited 2026-11-08 (safety-plan W10), after the UBSan timing guard turned out to
+have been wrong for its whole life: UBSan builds were not counted as sanitizer
+builds (43fcca3ed). A branch no lane reaches is a branch nothing checks. GCC
+defines `__SANITIZE_ADDRESS__` / `__SANITIZE_THREAD__`; clang does not (it answers
+`__has_feature`), and no lane builds a clang sanitizer binary -- so a guard spelled
+with the GCC macro alone is reached only in its GCC form.
+
+| guard | where | branch | reached by |
+|---|---|---|---|
+| `kWaitTimeoutScale` / `IsSanitizerBuild()` (x4 deadlines) | `tests/TestSupport.cpp` | sanitizer | `asan`, `ubsan`, `tsan` (CMake defines `MICROIDE_TEST_SANITIZER_BUILD` for any `-fsanitize=`) |
+| | | plain | `tests`, `hardened`, `clang-build`, coverage |
+| `TimingWindow::Trustworthy()` | `tests/TestSupport.cpp`, used by `RemoteFrameTransportTests` | untrusted (sanitizer, oversubscribed or starved) | every sanitizer lane; any loaded run |
+| | | trusted: the timing assertion runs | `tests` on an idle machine only -- a lane run beside six others skips it |
+| `if (!IsSanitizerBuild())` around the 20 ms sleep budget | `tests/RemoteLauncherTests.cpp` | assert / skip | `tests` / the sanitizer lanes |
+| `#if defined(__SANITIZE_THREAD__)` skip of the tooltip-dismiss pixel test | `tests/WorkspaceShellChromeTests.cpp` | skip | `tsan` (GCC); never a clang TSan build, which no lane makes |
+| `#if defined(__SANITIZE_ADDRESS__)` frame-token `SDL_assert` | `src/app/Application.cpp` | armed | `qa-asan` only: the unit `asan` lane never runs the app loop, and the default build (assertions on) does not arm it -- a candidate to arm wherever `NDEBUG` is unset (TD-2026-11-08-435 item 2) |
+| `MQA_SLOW_FACTOR` (every driver timeout x factor) | `tools/qa/microide_qa.py` | stretched | `qa-asan` (3), the soak's sanitizer jobs (2-5) |
+| | | 1x | `qa`, `qa-scale`, `qa-wayland`, the soak's default and release jobs |
+| monkey liveness budget, 2.5 s x `MQA_SLOW_FACTOR` | `tools/qa/monkey_oracles.py` | finding (`latency`) | every monkey run; the soak re-checks a `latency` finding before calling it deterministic |
+
 ## The Test Environment's Default Configuration
 
 A bug that only exists off the configuration the tests run in is not caught by
