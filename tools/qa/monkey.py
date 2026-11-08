@@ -51,7 +51,6 @@ they were: TD-2026-09-07-291 and its seeds are referenced from the TD ledger.
 
 from __future__ import annotations
 
-import json
 import os
 import random
 import shutil
@@ -756,7 +755,7 @@ class Monkey:
     def type_action(self) -> str:
         self._step_off_a_forbidden_setting()
         if self.rng.random() < 0.12:
-            self.app.send_line("type " + json.dumps(self.rng.choice(PASTE_TEXTS)))
+            self.app.send_line("type " + q.quote_arg(self.rng.choice(PASTE_TEXTS)))
             return "type:paste"
         _, (name, texts) = self._pick([(f"type:{name}", (name, texts)) for name, texts in TEXT_CLASSES.items()])
         self.app.type(self.rng.choice(texts))
@@ -856,8 +855,7 @@ class Monkey:
         key, row = self._pick([(f"set:{row['id']}", row) for row in pool])
         value = self._setting_value(row)
         self.coverage.settings[f"{row['id']}={value}"] += 1
-        spelled = json.dumps(value) if (not value or " " in value) else value
-        self.app.send_line(f"set-setting {row['id']} {spelled}")
+        self.app.send_line(f"set-setting {row['id']} {q.quote_arg(value) if value else chr(34) * 2}")
         return key
 
     def window_action(self) -> str:
@@ -894,7 +892,7 @@ class Monkey:
             self.app.drop(self.rng.randrange(300, max(301, w - 100)), self.rng.randrange(100, max(101, h - 100)),
                           str(self.project / target))
             return "file:drop"
-        self.app.send_line(f"open {json.dumps(target) if ' ' in target else target}")
+        self.app.send_line(f"open {q.quote_arg(target)}")
         return "file:open"
 
     def external_action(self) -> str:
@@ -943,7 +941,8 @@ class Monkey:
         kept = self.app.findings[:since]
         for finding in self.app.findings[since:]:
             signature = fnd.signature(finding.kind, finding.detail,
-                                      self.app.log_tail() if finding.kind in ("crash", "log") else "")
+                                      self.app.log_tail() if finding.kind in ("crash", "log") else "",
+                                      fnd.stale_surface(finding.detail, (self.app.last_ui or {}).get("surfaces")))
             entry = self.signatures.get(signature)
             evidence = Path(finding.screenshot).parent if finding.screenshot else None
             if entry is not None:

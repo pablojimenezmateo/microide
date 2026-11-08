@@ -20,6 +20,8 @@ _MASKS = (
     (re.compile(r"'[^']{0,200}'|\"[^\"]{0,200}\""), "<q>"),
     (re.compile(r"\[[-\d., ]+\]"), "<rect>"),
     (re.compile(r"0x[0-9a-fA-F]+"), "<hex>"),
+    # Digests and ids (a buffer's and a file's SHA-256 prefix differ every run).
+    (re.compile(r"\b(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{8,}\b"), "<hash>"),
     (re.compile(r"\d+(\.\d+)?"), "<n>"),
     (re.compile(r"\s+"), " "),
 )
@@ -47,10 +49,30 @@ def stack_key(log_text: str, frames: int = 3) -> str:
     return " > ".join(found)
 
 
-def signature(kind: str, detail: str, log_text: str = "") -> str:
-    """A stable id for a finding: kind, normalized message, and for a crash or
-    a sanitizer report the top frames of ours."""
-    key = f"{kind}|{normalize(detail)}"
+_STALE_BBOX = re.compile(r"QA-STALE .*?bbox=(-?\d+),(-?\d+),(\d+),(\d+)")
+
+
+def stale_surface(detail: str, surfaces: dict | None) -> str:
+    """For a redraw-verifier finding, the surface its stale box sits on (by the
+    box's centre, from the `ui` answer's surface rects): two stale-paint defects
+    differ by where they are, which the normalized message no longer says."""
+    match = _STALE_BBOX.search(detail)
+    if not match or not surfaces:
+        return ""
+    x, y, w, h = (int(v) for v in match.groups())
+    cx, cy = x + w / 2, y + h / 2
+    for name, rect in surfaces.items():
+        if isinstance(rect, list) and len(rect) == 4 and rect[0] <= cx < rect[0] + rect[2] \
+                and rect[1] <= cy < rect[1] + rect[3]:
+            return name
+    return "elsewhere"
+
+
+def signature(kind: str, detail: str, log_text: str = "", context: str = "") -> str:
+    """A stable id for a finding: kind, normalized message (plus `context`, such
+    as the surface a stale box sits on), and for a crash or a sanitizer report
+    the top frames of ours."""
+    key = f"{kind}|{normalize(detail)}|{context}"
     if kind in ("crash", "log") and log_text:
         stack = stack_key(log_text)
         if stack:

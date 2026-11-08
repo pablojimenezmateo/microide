@@ -1035,12 +1035,8 @@ class App:
         """One input command (`key`, `pointer`, `type`) over the persistent control
         connection: a process per keystroke made typing slow enough on the Wayland
         backend for a toast to expire between two words of a palette query."""
-        def quote(word: str) -> str:
-            if word and not any(c.isspace() or c in "\"'\\" for c in word):
-                return word
-            return '"' + word.replace("\\", "\\\\").replace('"', '\\"') + '"'
         try:
-            return self.send_line(" ".join(quote(w) for w in words), record=False)
+            return self.send_line(" ".join(quote_arg(w) for w in words), record=False)
         except QaFailure as failure:
             return {"ok": False, "error": str(failure)}
 
@@ -2074,6 +2070,17 @@ def make_fixture(dest: Path) -> Path:
     subprocess.run(["bash", str(CAPTURE / "make-fixture.sh"), str(dest)], check=True,
                    capture_output=True)
     return dest
+
+
+def quote_arg(word: str) -> str:
+    """One argument of a control command line, as the app's tokenizer reads it
+    (ParseCommandLine: shell-like, a backslash takes the next character literally,
+    anything else -- newlines, non-ASCII -- passes through quotes as is). Not
+    json.dumps: the tokenizer has no \\uXXXX, so an escaped name opened a file
+    called "u540du524d" and typed text arrived mangled."""
+    if word and not any(c.isspace() or c in "\"'\\" for c in word):
+        return word
+    return '"' + word.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def _wait(predicate, timeout: float, message: str) -> None:
