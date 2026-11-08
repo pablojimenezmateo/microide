@@ -64,6 +64,12 @@ Left open:
    at a 1.75x logical presentation with a split whose divider sits at a fractional
    logical x, painting a partial frame whose damage ends inside the left pane.
 
+Also fixed after the first five, from writing their tests: three more pointer paths
+without the sticky band (right-click caret, gutter breakpoint menu, above-line lens
+click; `RightClicksUnderAStickyBandActOnTheClickedLine`), and the control channel's
+`ui` rows, which left out inset gaps (`VisibleRowTops`). TD-433's stall recurred in
+this session's qa-wayland lane with its first thread dump; see there.
+
 ### TD-2026-11-07-433 — qa-wayland: the app stops answering the control channel after its first file open. [OPEN — not reproduced alone; evidence kept]
 
 Seen twice now, each time with several GUI lanes running side by side: TD-432's
