@@ -75,6 +75,15 @@ session fixed, each with a failing-first test:
   seed 4): indent/outdent keep the selection's ends and direction, and an edit
   that moves the caret's line repaints the focused pane;
 - `minimize.py --check-only` compared replays against the literal `auto`.
+- a clean tab opened through a symlink kept its old text when the target was saved
+  from its own tab (the watcher names the file written; the sweep matched views by
+  path). Views record their symlink target and the change is routed to them too
+  (qa-asan seed 3, link-to-crlf.txt).
+- children inherited an ignored SIGINT/SIGQUIT from an editor started as a
+  background job, so Ctrl+C in the terminal and the debugger's Pause of a program
+  gdb was still starting did nothing (the coverage lane's DebugService failure; the
+  ctest shards passed only because libuv resets signals). Every signal is now reset
+  to its default in the child.
 
 What it left, by workstream:
 
