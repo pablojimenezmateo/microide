@@ -388,23 +388,56 @@ struct StatusBarViewModel {
 // edge, right segments from the right edge, and the padding/gap constants have to
 // agree across paint, the pointer hit test and the tooltip resolver — they used to
 // be three hand-copied loops. `visit(segment, rect)` is called in paint order.
+//
+// A segment that does not fit is not visited, so no two segments are ever laid
+// over each other: the right cluster (Ln/Col, Problems, LSP -- the ones compact
+// mode keeps) is placed first, and the left segments fill what room remains, in
+// order. Without the collision check a zoomed-in bar drew its segments on top of
+// one another, and every caller that walks this list -- paint, hit test, cursor,
+// control-channel ui query -- agreed on a layout nobody could read (soak
+// 49a23ffecdf7).
 template <typename TextRendererT, typename Visit>
 void ForEachStatusBarSegmentRect(const StatusBarViewModel& vm,
                                  const TextRendererT& text_renderer,
                                  Visit&& visit) {
   constexpr float kStatusPadding = 12.0f;
   constexpr float kStatusGap = 14.0f;
-  float left_x = vm.rect.x + kStatusPadding;
+  const float left_edge = vm.rect.x + kStatusPadding;
+  const float right_edge = vm.rect.x + vm.rect.w - kStatusPadding;
+
+  // How many right segments fit, packing from the right edge (last-first), and
+  // where the leftmost of them starts.
+  std::size_t right_fit = 0;
+  float right_start = right_edge;
+  {
+    float right_x = right_edge;
+    // Indexed rather than reverse-iterated: `StatusBarSegmentList` is a
+    // `util::SmallVector`, which deliberately carries no reverse iterators.
+    for (std::size_t i = vm.right_segments.size(); i > 0; --i) {
+      const float width = text_renderer.MeasureWidth(vm.right_segments[i - 1].text);
+      if (right_x - width < left_edge) {
+        break;
+      }
+      right_x -= width;
+      right_start = right_x;
+      ++right_fit;
+      right_x -= kStatusGap;
+    }
+  }
+  const float left_limit = right_fit > 0 ? right_start - kStatusGap : right_edge;
+
+  float left_x = left_edge;
   for (const StatusBarSegmentViewModel& segment : vm.left_segments) {
     const float width = text_renderer.MeasureWidth(segment.text);
+    if (left_x + width > left_limit) {
+      break;
+    }
     visit(segment, SDL_FRect{left_x, vm.rect.y, width, vm.rect.h});
     left_x += width + kStatusGap;
   }
-  float right_x = vm.rect.x + vm.rect.w - kStatusPadding;
-  // Right segments pack from the right edge, so they are visited last-first.
-  // Indexed rather than reverse-iterated: `StatusBarSegmentList` is a
-  // `util::SmallVector`, which deliberately carries no reverse iterators.
-  for (std::size_t i = vm.right_segments.size(); i > 0; --i) {
+  float right_x = right_edge;
+  const std::size_t right_count = vm.right_segments.size();
+  for (std::size_t i = right_count; i > right_count - right_fit; --i) {
     const StatusBarSegmentViewModel& segment = vm.right_segments[i - 1];
     const float width = text_renderer.MeasureWidth(segment.text);
     right_x -= width;

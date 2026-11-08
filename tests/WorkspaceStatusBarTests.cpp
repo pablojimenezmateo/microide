@@ -10,6 +10,8 @@
 
 #include <algorithm>
 #include <optional>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace microide::tests {
@@ -95,6 +97,73 @@ void TestStatusBarNoOpsWhenNotReserved() {
   Expect(!vm.visible, "status bar should be hidden when the layout does not reserve it");
   Expect(vm.left_segments.empty() && vm.right_segments.empty(),
          "hidden status bar view model should not carry stale segments");
+}
+
+// A fixed-advance stand-in for the text renderer: geometry only needs widths.
+struct FixedAdvanceMeasure {
+  float MeasureWidth(std::string_view text) const { return 8.0f * static_cast<float>(text.size()); }
+};
+
+// The segment geometry never lays two segments over each other. Left segments
+// packed from the left and right ones from the right with no collision check, so
+// a status bar narrower than its content (a zoomed-in window) drew "main",
+// "[dirty]" and "Ln 1, Col 1" on top of each other -- unreadable, and the
+// renderer then painted a hover box on every clickable segment under the pointer
+// while the motion path damaged only the first, leaving a stale box behind
+// (soak 49a23ffecdf7). The right cluster keeps priority, as in compact mode; left
+// segments fill what room remains, in order.
+void TestStatusBarSegmentsNeverOverlapOnANarrowBar() {
+  microide::workspace::StatusBarViewModel vm;
+  vm.visible = true;
+  vm.rect = SDL_FRect{0.0f, 140.0f, 213.0f, 20.0f};
+  const auto seg = [](StatusBarSegmentId id, std::string_view text) {
+    microide::workspace::StatusBarSegmentViewModel s;
+    s.id = id;
+    s.text = text;
+    s.clickable = true;
+    return s;
+  };
+  vm.left_segments.push_back(seg(StatusBarSegmentId::Project, "taskflow"));
+  vm.left_segments.push_back(seg(StatusBarSegmentId::Branch, "main"));
+  vm.left_segments.push_back(seg(StatusBarSegmentId::Language, "Markdown"));
+  vm.right_segments.push_back(seg(StatusBarSegmentId::LineColumn, "Ln 1, Col 1"));
+  vm.right_segments.push_back(seg(StatusBarSegmentId::Lsp, "LSP: Idle"));
+
+  std::vector<std::pair<StatusBarSegmentId, SDL_FRect>> visited;
+  microide::workspace::ForEachStatusBarSegmentRect(
+      vm, FixedAdvanceMeasure{},
+      [&](const microide::workspace::StatusBarSegmentViewModel& segment, const SDL_FRect& rect) {
+        visited.emplace_back(segment.id, rect);
+      });
+
+  for (std::size_t i = 0; i < visited.size(); ++i) {
+    const SDL_FRect& a = visited[i].second;
+    Expect(a.x >= vm.rect.x && a.x + a.w <= vm.rect.x + vm.rect.w,
+           "every visited status segment must lie inside the bar");
+    for (std::size_t j = i + 1; j < visited.size(); ++j) {
+      const SDL_FRect& b = visited[j].second;
+      Expect(a.x + a.w <= b.x || b.x + b.w <= a.x,
+             "two status segments must never be laid over each other");
+    }
+  }
+  const auto has = [&](StatusBarSegmentId id) {
+    return std::any_of(visited.begin(), visited.end(),
+                       [&](const auto& entry) { return entry.first == id; });
+  };
+  Expect(has(StatusBarSegmentId::LineColumn) && has(StatusBarSegmentId::Lsp),
+         "the right cluster keeps priority when the bar is too narrow for everything");
+  Expect(!has(StatusBarSegmentId::Language),
+         "a left segment with no room left is dropped, not drawn under the right cluster");
+
+  // A bar wide enough for everything keeps everything.
+  vm.rect.w = 1000.0f;
+  visited.clear();
+  microide::workspace::ForEachStatusBarSegmentRect(
+      vm, FixedAdvanceMeasure{},
+      [&](const microide::workspace::StatusBarSegmentViewModel& segment, const SDL_FRect& rect) {
+        visited.emplace_back(segment.id, rect);
+      });
+  Expect(visited.size() == 5, "a wide bar must lay out every segment");
 }
 
 void TestStatusBarCompactDropOrder() {
@@ -430,6 +499,8 @@ void RegisterWorkspaceStatusBarTests(std::vector<TestCase>& tests) {
           TestStatusBarNoOpsWhenNotReserved);
   AddTest(tests, "WorkspaceStatusBar/CompactDropOrder",
           TestStatusBarCompactDropOrder);
+  AddTest(tests, "WorkspaceStatusBar/SegmentsNeverOverlapOnANarrowBar",
+          TestStatusBarSegmentsNeverOverlapOnANarrowBar);
   AddTest(tests, "WorkspaceStatusBar/PropagatesSemanticTone",
           TestStatusBarPropagatesSemanticTone);
 }
