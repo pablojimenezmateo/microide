@@ -25,6 +25,20 @@ import time
 _x11 = _xtst = None
 
 
+class _SizeHints(ctypes.Structure):
+    """Xlib's XSizeHints: what a window asks of the window manager."""
+    _fields_ = [("flags", ctypes.c_long), ("x", ctypes.c_int), ("y", ctypes.c_int), ("width", ctypes.c_int),
+                ("height", ctypes.c_int), ("min_width", ctypes.c_int), ("min_height", ctypes.c_int),
+                ("max_width", ctypes.c_int), ("max_height", ctypes.c_int), ("width_inc", ctypes.c_int),
+                ("height_inc", ctypes.c_int), ("min_aspect_x", ctypes.c_int), ("min_aspect_y", ctypes.c_int),
+                ("max_aspect_x", ctypes.c_int), ("max_aspect_y", ctypes.c_int), ("base_width", ctypes.c_int),
+                ("base_height", ctypes.c_int), ("win_gravity", ctypes.c_int)]
+
+
+P_MIN_SIZE = 1 << 4
+P_MAX_SIZE = 1 << 5
+
+
 def _load() -> bool:
     global _x11, _xtst
     if _x11 is not None:
@@ -57,6 +71,9 @@ def _load() -> bool:
         [ctypes.POINTER(ctypes.c_ulong)] * 2 + [ctypes.POINTER(ctypes.c_int)] * 4 + \
         [ctypes.POINTER(ctypes.c_uint)]
     _x11.XRefreshKeyboardMapping.argtypes = [ctypes.c_void_p]
+    _x11.XResizeWindow.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_uint, ctypes.c_uint]
+    _x11.XGetWMNormalHints.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(_SizeHints),
+                                       ctypes.POINTER(ctypes.c_long)]
     _xtst.XTestFakeMotionEvent.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
                                            ctypes.c_int, ctypes.c_ulong]
     _xtst.XTestFakeButtonEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_ulong]
@@ -203,6 +220,28 @@ class XTest:
             if delay:
                 time.sleep(delay)
         return missed
+
+    # ---- window ------------------------------------------------------------
+
+    def resize(self, window: int, width: int, height: int) -> bool:
+        """Resizes as a window manager would: within the minimum and maximum the
+        window's WM_NORMAL_HINTS ask for. Xvfb runs no window manager, so a raw
+        XResizeWindow granted any size -- far below the app's declared minimum."""
+        hints = _SizeHints()
+        supplied = ctypes.c_long()
+        if _x11.XGetWMNormalHints(self._dpy, window, ctypes.byref(hints), ctypes.byref(supplied)):
+            if hints.flags & P_MIN_SIZE:
+                width, height = max(width, hints.min_width), max(height, hints.min_height)
+            if hints.flags & P_MAX_SIZE and hints.max_width > 0 and hints.max_height > 0:
+                width, height = min(width, hints.max_width), min(height, hints.max_height)
+        _x11.XResizeWindow(self._dpy, window, max(1, width), max(1, height))
+        _x11.XSync(self._dpy, 0)
+        return True
+
+    def focus_root(self) -> None:
+        """Gives the input focus to the root window: the app sees a focus loss."""
+        _x11.XSetInputFocus(self._dpy, 1, REVERT_TO_PARENT, 0)  # PointerRoot
+        _x11.XSync(self._dpy, 0)
 
     # ---- focus -------------------------------------------------------------
 

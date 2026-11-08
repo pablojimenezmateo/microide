@@ -268,9 +268,28 @@ def flow_sidebar_wide(app: q.App) -> None:
     app.check("the sidebar dragged back")
 
 
+def flow_window_minimum(app: q.App) -> None:
+    """The window declares its minimum size (640x400) to the window manager: a
+    resize below it -- which the driver makes as a window manager would, within
+    WM_NORMAL_HINTS -- lands on the minimum, and the chrome fits it. Without the
+    hint a window manager allowed any size, and the workbench laid its overflow
+    menu and status segments out off the window (QA monkey)."""
+    if app.wayland:
+        return
+    open_file(app, "src/main.cpp")
+    app.resize(200, 150)
+    app.wait_until(lambda: app.ui()["window"]["width"] == 640 and app.ui()["window"]["height"] == 400, 3.0,
+                   "the window to stop at its 640x400 minimum")
+    step(app, "resize below the minimum", 0.3)
+    layout_sane(app, "at the minimum window size")
+    app.resize(1440, 900)
+    app.wait_until(lambda: app.ui()["window"]["width"] == 1440, 3.0, "the window to grow back")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "groups-move": flow_groups_move,
     "resize-overlays": flow_resize_overlays,
     "chrome-commands": flow_chrome_commands,
     "sidebar-wide": flow_sidebar_wide,
+    "window-minimum": flow_window_minimum,
 }

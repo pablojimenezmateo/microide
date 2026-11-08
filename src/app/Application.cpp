@@ -51,6 +51,13 @@ workspace::WorkspaceShell::EventResult HandledWithFullRedraw() {
 
 constexpr int kInitialWindowWidth = 1440;
 constexpr int kInitialWindowHeight = 900;
+// The smallest window the workbench is laid out for (VS Code's floor is 400x270;
+// ours holds the menu bar, a tab strip, an editor, a panel and the status bar
+// without overflow). The window manager enforces it through the size hints SDL
+// sets; below it the chrome was laid out off the window -- the overflow menu at a
+// negative x, status segments past the edge (QA monkey, tiny resizes).
+constexpr int kMinimumWindowWidth = 640;
+constexpr int kMinimumWindowHeight = 400;
 constexpr std::size_t kRenderPerfPartialClipWarnThreshold = 8;
 
 bool EventUsesRenderCoordinates(Uint32 event_type) {
@@ -439,6 +446,9 @@ bool Application::Initialize() {
   if (window_ == nullptr) {
     SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
     return false;
+  }
+  if (!SDL_SetWindowMinimumSize(window_, kMinimumWindowWidth, kMinimumWindowHeight)) {
+    SDL_Log("SDL_SetWindowMinimumSize failed: %s", SDL_GetError());
   }
 
   {
