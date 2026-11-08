@@ -83,6 +83,13 @@ FINDING_MARKERS = (
     "free():",
     "double free",
     "corrupted size",
+    # A signal a sanitizer caught (a segfault under ASan prints this, then its
+    # report), and the C++ runtime's own last words.
+    "DEADLYSIGNAL",
+    "pure virtual method called",
+    "std::bad_alloc",
+    # The app's notices for states its code says cannot happen.
+    "should not happen",
 )
 
 
