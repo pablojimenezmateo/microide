@@ -628,6 +628,16 @@ Nothing here is remote code, and nothing here depends on remote projects shippin
 A change that only prepares for remote must not cost anything locally, so each
 carries its own gates and coverage.
 
+### 8. Safety program: no crash, no lost data
+
+Adopted 2026-11-08, all ten workstreams to be done; detail and tracker in
+[`safety-plan.md`](safety-plan.md). Phase 1 first: the fresh-seed monkey on every
+push to main (W1), a data-loss oracle with kill -9 restarts (W4), and fault
+injection across every save and persistence write (W5). Then the assert-armed QA
+build, per-view cache invariants and pattern lints (W2, W3, W9); wake-race,
+fractional-scale and sequence-fuzzing coverage (W6-W8); and an audit that every
+check can still fail (W10).
+
 ## Deferred Or Out Of Scope
 
 Not current work unless deliberately promoted into its own phase.
