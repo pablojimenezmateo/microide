@@ -992,7 +992,14 @@ class ListOverlayBuilder {
                         const editor::SingleLineEditor& query, TextInputSurface surface,
                         std::string_view summary_line, bool summary_stable,
                         std::string_view empty_label, bool empty_label_stable) {
-    title_ref_ = OverlayLabelRef::Direct(title);
+    // Every line of the chrome fits the box. A narrow editor area (a split, a
+    // small window, a large ui.scale) made a picker narrower than its title, its
+    // "No matching ..." line and its key hint, which then painted past its edges
+    // -- in full frames, so a partial frame clipped to the box disagreed with
+    // them (QA monkey seed 1). Lines are truncated; the hint, a convenience, is
+    // dropped rather than cut mid-word.
+    const float inner_width = std::max(1.0f, overlay_rect_.w - kOverlayInset * 2.0f);
+    title_ref_ = AddTruncatedLabel(tr_, blob_, title, inner_width, /*stable=*/true);
     if (!context_label.empty()) {
       context_ref_ = AddTruncatedLabel(tr_, blob_, context_label,
                                        overlay_rect_.w - kOverlayInset * 2.0f, /*stable=*/true);
@@ -1010,11 +1017,12 @@ class ListOverlayBuilder {
                                     : OverlayLabelRef::Owned(blob_, summary_line);
     }
     out_.summary_y = overlay_rect_.y + OverlaySummaryRowOffset(overlay_.mode);
-    out_.hint = kPickerHint;
-    out_.hint_x = RightAlignedX(kPickerHint);
+    if (tr_.MeasureWidth(kPickerHint) <= inner_width) {
+      out_.hint = kPickerHint;
+      out_.hint_x = RightAlignedX(kPickerHint);
+    }
     if (total_rows_ == 0) {
-      empty_ref_ = empty_label_stable ? OverlayLabelRef::Direct(empty_label)
-                                      : OverlayLabelRef::Owned(blob_, empty_label);
+      empty_ref_ = AddTruncatedLabel(tr_, blob_, empty_label, inner_width, empty_label_stable);
     }
   }
 

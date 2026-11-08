@@ -91,6 +91,35 @@ void TestBuilderConstructsAllSurfaceViewModels() {
          "BuildSettingsOverlay should report invisible when the service is closed");
 }
 
+// The QA monkey (seed 1, at an 800x600 window): a quick pick in a narrow editor
+// area drew its key hint starting left of its own box and its "No matching ..."
+// line out past its right edge -- in full frames, so partial frames clipped to
+// the box disagreed with them. Every line of the picker's chrome fits its box: a
+// line that does not fit is truncated, and the hint is dropped rather than cut.
+void TestPickerChromeFitsANarrowOverlay() {
+  WorkspaceContext context;
+  auto& pick = context.current_project_state.overlay.workflow.quick_pick;
+  pick.title = "Select a launch configuration for the debugger";
+  context.current_project_state.overlay.visible = true;
+  context.current_project_state.overlay.mode = microide::workspace::OverlayMode::QuickPick;
+  RenderViewModelBuilder builder(context);
+  TextRenderer text_renderer;  // no-backend: deterministic 8px/char
+  const auto layout = ComputeLayout(800.0f, 600.0f, true, true, 280.0f, 160.0f, LayoutModeInputs{}, true);
+  const SDL_FRect narrow_anchor{450.0f, 60.0f, 340.0f, 320.0f};
+  microide::workspace::OverlaySurfaceViewModel vm;
+  builder.BuildOverlaySurfaceInto(vm, layout, narrow_anchor, text_renderer);
+  Expect(vm.visible, "the quick pick is up");
+  const float left = vm.overlay_rect.x;
+  const float right = vm.overlay_rect.x + vm.overlay_rect.w;
+  const auto width = [&](std::string_view text) { return text_renderer.MeasureWidth(text); };
+  Expect(vm.hint.empty() || vm.hint_x >= left, "the key hint starts inside the box (or is dropped): x " +
+                                                   std::to_string(vm.hint_x) + ", box from " + std::to_string(left));
+  Expect(!vm.empty_label.empty(), "the empty state still says something");
+  Expect(left + 18.0f + width(vm.empty_label) <= right + 0.5f,
+         "the empty-state line fits the box: \"" + std::string(vm.empty_label) + "\"");
+  Expect(left + 18.0f + width(vm.title) <= right + 0.5f, "the title fits the box: \"" + std::string(vm.title) + "\"");
+}
+
 // TD-2026-07-17-084: the overlay view model is fully owned/precomputed — labels
 // composed and truncated in the builder, geometry included, no live
 // OverlayState/ProjectWorkspaceState pointers for the render TU to chase.
@@ -1674,6 +1703,7 @@ void TestSingleLineViewMetricsCaretWindow() {
 }
 
 void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RenderViewModelBuilder/PickerChromeFitsANarrowOverlay", TestPickerChromeFitsANarrowOverlay);
   AddTest(tests, "RenderViewModelBuilder/SidebarSurfaceResolvesPluginViews", TestSidebarSurfaceResolvesPluginViews);
   AddTest(tests, "RenderViewModelBuilder/SingleLineViewMetricsCaretWindow",
           TestSingleLineViewMetricsCaretWindow);
