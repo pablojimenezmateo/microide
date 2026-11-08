@@ -47,11 +47,26 @@ class Tester:
         self.jobs = max(1, jobs)
         self.tests = 0
         self.cache: dict[tuple[int, ...], bool] = {}
+        # Whether every candidate runs the App's per-action checks. A log, crash
+        # or data finding does not need them -- the redraw verifier and the
+        # sanitizers write the log, which one check at the end reads, and the data
+        # oracle runs at the end -- and they are most of a replay's time.
+        self.check_each = True
+        self.kind = ""
+
+    def learn_kind(self, signatures: list[dict]) -> None:
+        for entry in signatures:
+            if entry.get("signature") == self.signature:
+                self.kind = entry.get("kind", "")
+        self.check_each = self.kind not in ("log", "crash", "data")
 
     def _run(self, actions: list[dict]) -> bool:
         out = Path(tempfile.mkdtemp(prefix="t-", dir=self.scratch))
         try:
-            app, signatures = qa_run.replay_record(self.record, self.binary, out, actions=actions)
+            app, signatures = qa_run.replay_record(self.record, self.binary, out, actions=actions,
+                                                   check=self.check_each)
+            if not self.kind:
+                self.learn_kind(signatures)
             return any(entry.get("signature") == self.signature for entry in signatures)
         except Exception as error:  # noqa: BLE001 - a candidate that breaks the driver does not reproduce
             print(f"    candidate failed to run: {type(error).__name__}: {error}", flush=True)
