@@ -12,9 +12,11 @@ rebuilds when `main` moves: the default build (assertions on), an optimized
 release, ASan, UBSan and TSan. A broken build is a finding against that commit;
 the runner keeps soaking the last good binaries. Jobs rotate by weight over the
 matrix (profile x build x window size x ui.scale), each with its own seed,
-output directory and hard timeout, under `nice -n 19` and `ionice -c3`, capped
-at half the cores, paused by `build/soak/PAUSE`, backing off while the machine
-is busy or a `run-checks.sh` lane runs.
+output directory and hard timeout, under `nice -n 19` and `ionice -c3`. How
+many run at once follows the machine's load (allowed_jobs): up to about 90% of
+the cores when nobody else uses them -- an idle night runs flat out -- and down
+to none while the machine is busy; paused by `build/soak/PAUSE` and while a
+`run-checks.sh` lane runs.
 
 Every finding goes into the ledger (ledger.py), deduplicated by signature. A
 new one gets a bundle under `build/soak/findings/<sig>/` with FINDING.md; it is
@@ -489,10 +491,57 @@ def busy_reason(our_jobs: int) -> str | None:
         return "a run-checks lane is running"
     cores = os.cpu_count() or 4
     load = os.getloadavg()[0]
-    # Our own jobs each keep about one and a half cores busy.
-    if load - 1.5 * our_jobs > cores * 0.6:
+    if external_load(load, our_jobs) > cores * BUSY_FRACTION:
         return f"the machine is busy (load {load:.1f})"
     return None
+
+
+# Our own jobs each keep about one and a half cores busy (the app, Xvfb, the
+# driver), which is what both the load accounting and the job budget count.
+CORES_PER_JOB = 1.5
+# Someone else's load above this share of the cores: start nothing.
+BUSY_FRACTION = 0.6
+# The share of the cores the soak may fill when nothing else runs: the rest is
+# headroom for the desktop and for the load average's minute of lag.
+FILL_FRACTION = 0.9
+# The least time between two job starts: an idle night reaches the ceiling in a
+# few minutes, and a job's cost is in the load average before the next starts.
+RAMP_SECONDS = 20.0
+
+
+def external_load(load: float, our_jobs: int) -> float:
+    """The 1-minute load that is not ours."""
+    return max(0.0, load - CORES_PER_JOB * our_jobs)
+
+
+def max_jobs(cores: int) -> int:
+    return max(1, int(cores * FILL_FRACTION / CORES_PER_JOB))
+
+
+def allowed_jobs(load: float, our_jobs: int, cores: int, ceiling: int) -> int:
+    """How many jobs may run at once now: the cores others leave free, in jobs.
+
+    Running jobs are never killed when this falls; they finish (each has a hard
+    timeout) and are not replaced. The load average lags by about a minute, so
+    the runner starts at most one job per RAMP_SECONDS and the ramp shows in
+    the load before it goes further.
+
+    >>> allowed_jobs(0.0, 0, 16, 9)    # idle: the ceiling
+    9
+    >>> allowed_jobs(9.0, 6, 16, 9)    # all of it ours: still the ceiling
+    9
+    >>> allowed_jobs(7.0, 0, 16, 9)    # someone compiling on 7 cores
+    4
+    >>> allowed_jobs(12.0, 2, 16, 9)   # 9 cores not ours: what they leave
+    3
+    >>> allowed_jobs(14.0, 0, 16, 9)   # busy: nothing new
+    0
+    """
+    other = external_load(load, our_jobs)
+    if other > cores * BUSY_FRACTION:
+        return 0
+    free = cores * FILL_FRACTION - other
+    return max(1, min(ceiling, int(free / CORES_PER_JOB)))
 
 
 def disk_usage(path: Path) -> int:
@@ -551,7 +600,13 @@ def cmd_run(args: argparse.Namespace) -> int:
         log_file.write(line + "\n")
         log_file.flush()
 
-    cap = args.jobs or max(1, (os.cpu_count() or 4) // 4)
+    cores = os.cpu_count() or 4
+    ceiling = args.jobs or max_jobs(cores)
+
+    def current_cap(our_jobs: int) -> int:
+        if args.fixed:
+            return ceiling
+        return allowed_jobs(os.getloadavg()[0], our_jobs, cores, ceiling)
     jobs: list[Job] = []
     stopping = False
 
@@ -563,7 +618,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     last_build = 0.0
     last_housekeeping = 0.0
     deadline = time.time() + args.max_hours * 3600 if args.max_hours else None
-    log(f"soak runner up: {cap} job(s) at once -> {SOAK}")
+    mode = "fixed" if args.fixed else "following the load"
+    log(f"soak runner up: up to {ceiling} job(s) at once, {mode} -> {SOAK}")
+    last_cap = -1
+    last_start = 0.0
     while not stopping:
         now = time.time()
         if deadline and now > deadline:
@@ -591,6 +649,10 @@ def cmd_run(args: argparse.Namespace) -> int:
                 state["current"] = [j.cell for j in jobs]
                 save_state(state)
         pending = state.get("pending_checks", [])
+        cap = current_cap(len(jobs))
+        if cap != last_cap:
+            log(f"job budget {cap} (load {os.getloadavg()[0]:.1f}, {len(jobs)} running)")
+            last_cap = cap
         if pending and len(jobs) < cap and busy_reason(len(jobs)) is None:
             # Checks first: a new finding's rate and minimal replay are worth more
             # than another fresh run. A check holds three displays, so it counts
@@ -604,13 +666,15 @@ def cmd_run(args: argparse.Namespace) -> int:
             # A build is due: let the running jobs drain instead of starting more.
             reason = "draining for a build"
         if reason is None:
-            while len(jobs) < cap:
+            # One per RAMP_SECONDS: the load average needs time to show what the
+            # last one costs before the budget is trusted for the next.
+            if len(jobs) < cap and (args.fixed or now - last_start >= RAMP_SECONDS):
                 job_type = choose_job(rng, state)
-                if job_type is None:
-                    break
-                job = start_job(job_type, state, rng)
-                jobs.append(job)
-                log(f"start {job.cell} seed {job.seed}")
+                if job_type is not None:
+                    job = start_job(job_type, state, rng)
+                    jobs.append(job)
+                    last_start = now
+                    log(f"start {job.cell} seed {job.seed}")
         elif not jobs:
             state["waiting"] = reason
         state["current"] = [j.cell for j in jobs]
@@ -761,7 +825,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="mode", required=True)
     run = sub.add_parser("run")
-    run.add_argument("--jobs", type=int, default=0, help="jobs at once (default: a quarter of the cores)")
+    run.add_argument("--jobs", type=int, default=0,
+                     help="the most jobs at once (default: 90%% of the cores, at 1.5 cores a job)")
+    run.add_argument("--fixed", action="store_true",
+                     help="always run --jobs jobs instead of following the machine's load")
     run.add_argument("--once", action="store_true", help="exit when the started jobs and checks are done")
     run.add_argument("--max-hours", type=float, default=0)
     run.add_argument("--build-interval", type=float, default=900, help="seconds between main checks")
