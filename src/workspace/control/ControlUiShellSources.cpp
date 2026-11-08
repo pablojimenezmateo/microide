@@ -620,7 +620,7 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               }
             }
             if (const EditorBannerState* banner = ActiveEditorBannerForTab(context_.current_project_state);
-                banner != nullptr) {
+                banner != nullptr && ComputeEditorBannerStripRect(layout.editor_surface).h > 0.0f) {
               const SDL_FRect strip = ComputeEditorBannerStripRect(layout.editor_surface);
               const EditorBannerButtonLayout buttons =
                   ComputeEditorBannerButtonRects(strip, EditorBannerButtonsFor(banner->kind));

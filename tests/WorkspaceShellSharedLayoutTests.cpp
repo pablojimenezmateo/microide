@@ -1623,7 +1623,27 @@ void TestWorkspaceSharedProjectTabStripVisibility() {
 
 }  // namespace
 
+// The editor banner shows whole or not at all: squeezed to an editor area with
+// no height (the panel maximized), its buttons were centred on a strip of none
+// and landed over the menu bar's window controls (QA monkey, qa-asan seed 4).
+void TestEditorBannerKeepsInsideTheEditorArea() {
+  static constexpr workspace::EditorBannerButton kButtons[] = {{workspace::EditorBannerAction::Keep, "Keep", 54.0f, false}};
+  const SDL_FRect roomy{100.0f, 60.0f, 800.0f, 400.0f};
+  const SDL_FRect strip = workspace::ComputeEditorBannerStripRect(roomy);
+  const workspace::EditorBannerButtonLayout fits = workspace::ComputeEditorBannerButtonRects(strip, kButtons);
+  Expect(fits.buttons.size() == 1 && fits.rects[0].y >= strip.y && fits.rects[0].y + fits.rects[0].h <= strip.y + strip.h,
+         "a banner with room keeps its buttons inside its strip");
+  for (const float height : {0.0f, 10.0f}) {
+    const SDL_FRect squeezed{100.0f, 60.0f, 800.0f, height};
+    const SDL_FRect none = workspace::ComputeEditorBannerStripRect(squeezed);
+    const workspace::EditorBannerButtonLayout gone = workspace::ComputeEditorBannerButtonRects(none, kButtons);
+    Expect(none.h == 0.0f && gone.buttons.empty() && gone.dismiss.w == 0.0f,
+           "an editor area " + std::to_string(height) + " high shows no banner and no buttons");
+  }
+}
+
 void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShared/EditorBannerKeepsInsideTheEditorArea", TestEditorBannerKeepsInsideTheEditorArea);
   AddTest(tests, "WorkspaceShared/EditorSplitTreeRevision",
           TestWorkspaceSharedEditorSplitTreeRevision);
   AddTest(tests, "WorkspaceShared/LayoutInputsStructMatchesPositionalForm",

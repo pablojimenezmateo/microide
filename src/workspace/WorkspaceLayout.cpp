@@ -691,8 +691,15 @@ std::array<SDL_FRect, 3> ComputeDirtyPromptButtonRects(const SDL_FRect& dialog) 
 }
 
 SDL_FRect ComputeEditorBannerStripRect(const SDL_FRect& editor_surface) {
-  const float height = std::min(kWorkspaceEditorBannerHeight, editor_surface.h);
-  return MakeRect(editor_surface.x, editor_surface.y, editor_surface.w, height);
+  // Whole or not at all. Squeezed to an editor area shorter than itself (the
+  // panel maximized leaves it none), the strip kept its buttons, centred on a
+  // strip of no height -- above the editor area, over the menu bar's window
+  // controls, where they painted and were named and clicked (QA monkey,
+  // qa-asan seed 4).
+  if (editor_surface.h < kWorkspaceEditorBannerHeight) {
+    return MakeRect(editor_surface.x, editor_surface.y, 0.0f, 0.0f);
+  }
+  return MakeRect(editor_surface.x, editor_surface.y, editor_surface.w, kWorkspaceEditorBannerHeight);
 }
 
 EditorBannerButtonLayout ComputeEditorBannerButtonRects(const SDL_FRect& strip,
@@ -704,6 +711,10 @@ EditorBannerButtonLayout ComputeEditorBannerButtonRects(const SDL_FRect& strip,
   const float y = strip.y + (strip.h - kButtonHeight) * 0.5f;
 
   EditorBannerButtonLayout layout;
+  if (strip.w <= 0.0f || strip.h <= 0.0f) {
+    layout.dismiss = MakeRect(strip.x, strip.y, 0.0f, 0.0f);
+    return layout;
+  }
   layout.buttons = buttons.first(std::min(buttons.size(), kMaxEditorBannerButtons));
   layout.dismiss = MakeRect(strip.x + strip.w - kEdgePad - kDismissSize,
                             strip.y + (strip.h - kDismissSize) * 0.5f, kDismissSize, kDismissSize);
