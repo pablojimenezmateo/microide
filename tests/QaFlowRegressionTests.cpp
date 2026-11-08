@@ -565,6 +565,36 @@ void TestClosingAMenuOverAFindToggleRepaintsItsHover() {
   }
 }
 
+// QA monkey (seed 601, replayed): Git > Push failed and showed its output in a
+// panel left maximized, with the keyboard on the editor the panel hides. Frame
+// prep's maximized-panel rule moves the keyboard to the panel -- AFTER the frame's
+// surface view models had been built with the old focus. That (full) frame
+// painted the panel with no focus ring while prep recorded the ring as painted,
+// so no later frame asked for it: it appeared only inside whatever clip the next
+// partial frame happened to repaint (a menu's band).
+void TestAFocusMoveByTheMaximizedPanelRulePaintsTheRingInItsFrame() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("main.cpp", "alpha\n");
+  TestAccess::EnsureTerminalTab(fixture.shell);
+  TestAccess::TogglePanelMaximizedForTest(fixture.shell);
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "maximizing the panel");
+  // The panel hidden while maximized and shown again with the keyboard on the
+  // editor: the first frame that sees it takes the keyboard to the panel.
+  auto& state = TestAccess::CurrentProjectState(fixture.shell);
+  state.panel.maximized_seen_focus.reset();
+  TestAccess::SetFocusEditor(fixture.shell);
+  fixture.PinCaret();
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  Expect(state.surface.focus == workspace::FocusTarget::Panel,
+         "the maximized panel should take the keyboard from the editor it hides");
+  const SDL_FRect menu_bar = TestAccess::CurrentLayout(fixture.shell).menu_bar;
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = false, .rects = {menu_bar}},
+                      "a later frame repainting only the menu bar");
+}
+
 // QA monkey (seed 2, step 62): typing on a diff's working side can regroup the
 // whole diff while the keystroke's damage names only the edited line. The left
 // side's first line was deleted and its empty second line paired with the
@@ -4077,6 +4107,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/NothingBeneathAnOpenMenuHovers", TestNothingBeneathAnOpenMenuHovers);
   AddTest(tests, "QaFlowRegression/TypingThatReshapesADiffRepaintsIt", TestTypingThatReshapesADiffRepaintsIt);
   AddTest(tests, "QaFlowRegression/TheRemoteSegmentOpensTheRemoteMenu", TestTheRemoteSegmentOpensTheRemoteMenu);
+  AddTest(tests, "QaFlowRegression/AFocusMoveByTheMaximizedPanelRulePaintsTheRingInItsFrame",
+          TestAFocusMoveByTheMaximizedPanelRulePaintsTheRingInItsFrame);
   AddTest(tests, "QaFlowRegression/ClosingAMenuOverAFindToggleRepaintsItsHover",
           TestClosingAMenuOverAFindToggleRepaintsItsHover);
 }

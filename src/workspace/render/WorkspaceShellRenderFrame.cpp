@@ -2,6 +2,7 @@
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
 #include <algorithm>
+#include <cassert>
 #include <functional>
 #include <cmath>
 #include <cstdint>
@@ -379,6 +380,19 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   }
   window_presentation_.logical_width = width;
   window_presentation_.logical_height = height;
+  // Two terminal-panel rules that read focus and can MOVE it: a maximized panel
+  // restores itself the moment another surface takes the keyboard, or takes the
+  // keyboard from a surface it hides; and the tab on screen has no unseen output.
+  // First of all, before the layout is resolved, the text-input surface synced
+  // and the view models built -- each reads focus. Run after the view models (as
+  // they were), a focus move painted the frame with the old focus while the
+  // focus-ring tracking below recorded the new one, so the panel's ring was never
+  // repainted (QA monkey, seed 601).
+  {
+    TerminalPanelService& terminal_panel = MakeTerminalPanelService();
+    terminal_panel.SyncPanelMaximizedWithFocus();
+    terminal_panel.NoteActiveTabShown();
+  }
   // Before any view model is built: they read the active text-input surface, and
   // a frame that synced it AFTER building them painted the surface focus had
   // just left -- the first frame of a freshly opened palette had no caret.
@@ -465,14 +479,6 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   // with. The window size was written into `window_presentation_` above, so the
   // key sees this frame's size. A miss here is the only place the resolved
   // layout mode is committed back to the service (its hysteresis input).
-  // Two terminal-panel rules that read focus and must land before the layout is
-  // resolved: a maximized panel restores itself the moment another surface takes
-  // the keyboard, and the tab on screen has no unseen output.
-  {
-    TerminalPanelService& terminal_panel = MakeTerminalPanelService();
-    terminal_panel.SyncPanelMaximizedWithFocus();
-    terminal_panel.NoteActiveTabShown();
-  }
   const std::uint64_t layout_generation_before = layout_memo_generation_;
   WorkspaceLayout layout;
   {
@@ -1283,6 +1289,11 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   }
   // The focus ring: the surface that lost it and the one that took it repaint
   // (see PreparedFrameState::painted_focus).
+  // The ring this frame paints is the one its view models were built with, so a
+  // focus move between building them and here is a ring painted nowhere.
+  assert((!prepare_cached_bottom_panel_vm_.has_value() ||
+          prepare_cached_bottom_panel_vm_->focus == project_state.surface.focus) &&
+         "frame prep moved the keyboard after the surface view models were built");
   if (const FocusTarget focus = project_state.surface.focus; frame_state_.painted_focus != focus) {
     for (const FocusTarget target : {frame_state_.painted_focus.value_or(focus), focus}) {
       if (const auto rect = FocusSurfaceRect(layout, target); rect.has_value()) {
