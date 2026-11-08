@@ -368,11 +368,16 @@ class App:
             if not source.is_dir():
                 raise FileNotFoundError(f"no plugin {plugin!r} under plugins/ or tools/qa/plugins/")
             shutil.copytree(source, work / "config" / "microide" / "plugins" / plugin)
+        extra_args = list(extra_args or [])
+        # MQA_UI_SCALE runs everything at that ui.scale (the qa-scale lane: the
+        # fractional scales whose device grid is not the layout's, safety-plan W7).
+        if os.environ.get("MQA_UI_SCALE") and "ui.scale" not in extra_args:
+            extra_args += ["--set", "ui.scale", os.environ["MQA_UI_SCALE"]]
         app = cls(binary=binary, work=work, display=display or "", size=size, env=env, shots=shots,
                   project=project)
         try:
             try:
-                app._start(project, extra_args or [])
+                app._start(project, extra_args)
             except Exception:
                 # stop() removes the private work tree: keep startup evidence
                 # before cleanup, including compositor and sanitizer output.

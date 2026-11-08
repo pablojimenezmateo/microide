@@ -792,12 +792,59 @@ check_qa_wayland() {
   return $rc
 }
 
+# The GUI suite's scale-sensitive scenarios and a monkey wave at the fractional
+# ui.scale values whose device grid is not the layout's (1.25, 1.75), redraw
+# verifier on (safety-plan W7). Seeds 602 and 605 of the 2026-11-08 hunt both
+# came after a monkey zoom; every other lane runs at 1x or 2x.
+check_qa_scale() {
+  local log="${LOG_DIR}/microide-qa-scale.log"
+  local out="${MICROIDE_QA_OUT:-${LOG_DIR}/microide-qa-scale-out}"
+  local qa_jobs="${MICROIDE_QA_JOBS:-$(( JOBS < 8 ? JOBS : 8 ))}"
+  local steps="${MICROIDE_QA_MONKEY_STEPS:-300}"
+  run_logged "$log" bash -c '
+    set -e
+    rm -rf '"$out"'
+    locked_build build bash -c "cmake -S . -B build >/dev/null && cmake --build build --target microide -j'"$JOBS"'"
+    status=0
+    for scale in 1.25 1.75; do
+      MQA_UI_SCALE=$scale python3 tools/qa/run.py --out '"$out"'/suite-$scale suite --jobs '"$qa_jobs"' \
+        "menu*" "split*" "scroll*" "sticky-scroll" "tab-*" "wb-*" "resize-overlays" "panel-mouse" \
+        "chrome*" "sidebar-*" "context-menus" "edit-wrap-scroll" "window-minimum" || status=1
+      MQA_UI_SCALE=$scale python3 tools/qa/run.py --out '"$out"'/monkey-$scale monkey --profile layout \
+        --seeds 1-2 --steps '"$steps"' || status=1
+    done
+    exit $status
+  '
+  local rc=$?
+  echo "run-checks: qa-scale finished (exit $rc); log at $log, findings under $out"
+  return $rc
+}
+
+# SDL's lost cross-thread wake under contention (safety-plan W6): a dozen copies of
+# the stress probe on Xvfb and on headless weston, with the app's LostWakeRelay
+# (zero stalls, or the lane fails) and without it (SDL alone, informational).
+check_wake_race() {
+  local log="${LOG_DIR}/microide-wake-race.log"
+  run_logged "$log" bash -c '
+    set -e
+    command -v weston >/dev/null || tools/qa/weston.sh >/dev/null || true
+    locked_build build bash -c "cmake -S . -B build >/dev/null && cmake --build build --target microide_sdl_wake_race -j'"$JOBS"'"
+    python3 tools/qa/stress/wake_race.py --binary build/microide/microide_sdl_wake_race \
+      --copies "${MICROIDE_WAKE_RACE_COPIES:-12}" --rounds "${MICROIDE_WAKE_RACE_ROUNDS:-40000}"
+  '
+  local rc=$?
+  echo "run-checks: wake-race finished (exit $rc); log at $log"
+  return $rc
+}
+
 usage() {
-  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|perf-canary|perf-gate|clang-build|coverage|hardened|tidy|ci-driver|qa|qa-driver|qa-asan|qa-remote|qa-wayland|all}" >&2
+  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|perf-canary|perf-gate|clang-build|coverage|hardened|tidy|ci-driver|qa|qa-driver|qa-asan|qa-remote|qa-wayland|qa-scale|wake-race|all}" >&2
   echo "       tools/run-checks.sh qa            # GUI QA: scenario suite + 300-step monkey on Xvfb" >&2
   echo "       tools/run-checks.sh qa-asan       # the GUI QA suite + the monkey over seeds on the ASan build" >&2
   echo "       tools/run-checks.sh qa-remote     # remote-project scenarios against a loopback sshd, fast and slow link" >&2
   echo "       tools/run-checks.sh qa-wayland    # the GUI QA suite on headless weston at scale 2" >&2
+  echo "       tools/run-checks.sh qa-scale      # scale-sensitive QA scenarios + a layout monkey at ui.scale 1.25/1.75" >&2
+  echo "       tools/run-checks.sh wake-race     # SDL lost-wake stress probe, with and without the relay" >&2
   echo "       tools/run-checks.sh hardened      # whole suite with _GLIBCXX_ASSERTIONS armed" >&2
   echo "       tools/run-checks.sh clang-build   # whole tree, clang, warnings-as-errors" >&2
   echo "       tools/run-checks.sh perf-canary   # prove the perf gate can still fail" >&2
@@ -852,6 +899,8 @@ main() {
     qa-asan) check_qa_asan ;;
     qa-remote) check_qa_remote ;;
     qa-wayland) check_qa_wayland ;;
+    qa-scale) check_qa_scale ;;
+    wake-race) check_wake_race ;;
     all)
       local overall=0
       check_tests            || overall=1

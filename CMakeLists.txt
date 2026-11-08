@@ -2178,6 +2178,17 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   endif()
 endif()
 
+# The SDL lost-wake stress probe (TD-2026-11-07-433, safety-plan W6): a producer
+# pushes an event at a random moment while the main thread waits in SDL_WaitEvent
+# with a real window. tools/run-checks.sh wake-race runs a dozen copies with the
+# app's LostWakeRelay (must see no stall) and without it (SDL's own behaviour,
+# informational). Not part of `all`: only that lane builds it.
+add_executable(microide_sdl_wake_race EXCLUDE_FROM_ALL
+  tools/qa/stress/sdl_wake_race.cpp
+  src/app/LostWakeRelay.cpp)
+target_include_directories(microide_sdl_wake_race PRIVATE src)
+target_link_libraries(microide_sdl_wake_race PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_KERNEL_LIBS})
+
 add_executable(microide_search_bench
   src/util/BackgroundTaskCounter.cpp
   src/util/Log.cpp
