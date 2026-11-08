@@ -14,7 +14,18 @@
 # bite (or did not pass clean).
 set -uo pipefail
 
-repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Bash reads a script as it runs it: an edit to this file mid-run made the loop
+# below a syntax error halfway through (tools/run-checks.sh has the same hazard).
+# Run from a private copy instead.
+if [[ -z "${MICROIDE_BITE_COPY:-}" ]]; then
+  copy="$(mktemp "${TMPDIR:-/tmp}/check-invariants-bite.XXXXXX")"
+  cp "${BASH_SOURCE[0]}" "$copy"
+  MICROIDE_BITE_COPY="$copy" MICROIDE_BITE_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" \
+    exec bash "$copy" "$@"
+fi
+trap 'rm -f "$MICROIDE_BITE_COPY"' EXIT
+
+repo="${MICROIDE_BITE_REPO}"
 sha="HEAD"
 only=""
 jobs="${MICROIDE_BUILD_JOBS:-8}"
@@ -28,7 +39,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 wt="$repo/build/wt-bite"
-manifest="$repo/tools/negative-controls/manifest.tsv"
+# The controls of the commit under test, not of the live tree: a control and the
+# check it targets land together, so an older commit is checked with its own.
+manifest="$wt/tools/negative-controls/manifest.tsv"
 log="$repo/build/bite-logs"
 mkdir -p "$log"
 if [[ ! -e "$wt/.git" ]]; then
@@ -48,7 +61,7 @@ run_row() {  # patch targets check -> 0 when it bit
   if ! (cd "$wt" && eval "$check") >"$log/$name-clean.txt" 2>&1; then
     echo "  BROKEN  $name: the check fails WITHOUT the control ($log/$name-clean.txt)"; return 1
   fi
-  if ! git -C "$wt" apply "$repo/tools/negative-controls/$patch" 2>"$log/$name-apply.txt"; then
+  if ! git -C "$wt" apply "$wt/tools/negative-controls/$patch" 2>"$log/$name-apply.txt"; then
     echo "  STALE   $name: the control no longer applies -- re-record it ($log/$name-apply.txt)"; return 1
   fi
   local bit=1
