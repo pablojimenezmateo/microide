@@ -2012,6 +2012,51 @@ void TestATabStaysInsideItsNarrowStrip() {
   }
 }
 
+// The QA monkey (editing profile, seed 105, ui.scale 2): an overlay taller than
+// the editor area -- the quick pick, the palette -- reaches down over the bottom
+// panel, and the panel was painted after it: its tab strip covered the overlay's
+// lower rows in every frame, full renders included, so the redraw verifier could
+// not see it. An overlay is painted over the panel.
+void TestAnOverlayIsPaintedOverTheBottomPanel() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("a.txt", "alpha\n");
+  TestAccess::EnsureTerminalTab(fixture.shell);
+  for (int i = 0; i < 7; ++i) {
+    TestAccess::AddTerminalTab(fixture.shell);  // panel tabs across the whole header
+  }
+  constexpr int kWidth = 900;
+  constexpr int kHeight = 330;
+  TestAccess::SetWindowSize(fixture.shell, kWidth, kHeight);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  TestAccess::OpenCommandPalette(fixture.shell);
+  SoftwareCanvas canvas{kWidth, kHeight};
+  fixture.shell.Render(canvas.renderer(), kWidth, kHeight);
+  const SDL_FRect overlay = TestAccess::ActiveOverlayRect(fixture.shell);
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  const util::JsonValue& panel_json = ui["surfaces"]["bottomPanel"];
+  Expect(panel_json.IsArray(), "the bottom panel is shown");
+  if (!panel_json.IsArray()) {
+    return;
+  }
+  const float panel_y = static_cast<float>(panel_json.AsArray()[1].AsInt());
+  Expect(overlay.y < panel_y && overlay.y + overlay.h > panel_y + 12.0f,
+         "the palette reaches down over the panel (the fixture's precondition): overlay " +
+             std::to_string(static_cast<int>(overlay.y)) + ".." +
+             std::to_string(static_cast<int>(overlay.y + overlay.h)) + ", panel from " +
+             std::to_string(static_cast<int>(panel_y)));
+  // The overlay's own margin, just inside its left edge: above the panel and in
+  // the panel's tab row (a tab lies there), the same overlay pixel.
+  const int x = static_cast<int>(overlay.x) + 3;
+  SDL_FlushRenderer(canvas.renderer());
+  const SDL_Color above = canvas.PixelAt(x, static_cast<int>(panel_y) - 4);
+  const SDL_Color inside = canvas.PixelAt(x, static_cast<int>(panel_y) + 6);
+  Expect(above.r == inside.r && above.g == inside.g && above.b == inside.b,
+         "the overlay is painted over the panel: its margin reads the same above the panel's top edge and "
+         "below it");
+}
+
 // The QA monkey (editor profile, seed 3): `tabmove` repainted the tab strip but
 // not the pane under it, though the pane can change with it.
 // With the moved tab's file rewritten on disk since it was painted (the monkey's
@@ -4467,6 +4512,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestClosingTheLastTerminalUnderAnOutputChannelRepaintsTheTabStrip);
   AddTest(tests, "QaFlowRegression/TypingOnAFoldedOpenerRepaintsItsRow",
           TestTypingOnAFoldedOpenerRepaintsItsRow);
+  AddTest(tests, "QaFlowRegression/AnOverlayIsPaintedOverTheBottomPanel", TestAnOverlayIsPaintedOverTheBottomPanel);
   AddTest(tests, "QaFlowRegression/AFoldChordRightAfterAClickFoldsTheClickedBlock",
           TestAFoldChordRightAfterAClickFoldsTheClickedBlock);
   AddTest(tests, "QaFlowRegression/CommandRefusalsSayWhatIsWrong", TestCommandRefusalsSayWhatIsWrong);
