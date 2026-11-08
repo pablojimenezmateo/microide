@@ -5,7 +5,9 @@
 #include "workspace/git/GitSidebarHeaderLayout.h"
 
 #include <algorithm>
+#include <array>
 #include <initializer_list>
+#include <span>
 #include <cctype>
 #include <string_view>
 
@@ -1082,6 +1084,62 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
         }
         return std::nullopt;
       }
+    }
+  }
+
+  // The floating widgets -- the find widget over the editor, the terminal's find
+  // widget and the debug toolbar -- lift each button under the pointer
+  // (PointerOver), and they float over the editor banner and the panel tabs. They
+  // were the last buttons missing here, so a hover that changed with no motion
+  // was never repainted: a click that closed a menu over a find toggle drew the
+  // toggle hovered on full frames only (QA monkey, seed 605). Over a card, the
+  // button under the pointer or nothing: nothing beneath it hovers.
+  {
+    std::optional<std::optional<SDL_FRect>> floating;
+    const auto probe = [&](const SDL_FRect& card, std::span<const SDL_FRect> buttons) {
+      if (floating.has_value() || card.w <= 0.0f || card.h <= 0.0f || !Contains(card, x, y)) {
+        return;
+      }
+      floating.emplace();
+      for (const SDL_FRect& button : buttons) {
+        if (Contains(button, x, y)) {
+          *floating = button;
+          return;
+        }
+      }
+    };
+    const auto probe_find_widget = [&](const FindWidgetLayout& fw) {
+      std::array<SDL_FRect, kFindWidgetMaxToggles + 5> buttons{};
+      std::size_t count = 0;
+      for (std::size_t i = 0; i < fw.toggle_count; ++i) {
+        buttons[count++] = fw.toggle_buttons[i];
+      }
+      buttons[count++] = fw.prev_button;
+      buttons[count++] = fw.next_button;
+      buttons[count++] = fw.close_button;
+      if (fw.replace_mode) {
+        buttons[count++] = fw.replace_button;
+        buttons[count++] = fw.replace_all_button;
+      }
+      probe(fw.widget, std::span<const SDL_FRect>(buttons.data(), count));
+    };
+    const OverlayState& overlay = context_.current_project_state.overlay;
+    if (overlay.visible &&
+        (overlay.mode == OverlayMode::BufferSearch || overlay.mode == OverlayMode::BufferReplace)) {
+      probe_find_widget(ComputeBufferFindWidgetLayout(
+          layout.editor_surface, overlay.mode == OverlayMode::BufferReplace));
+    }
+    if (BottomPanelVisible() && terminal_find_service_.visible()) {
+      probe_find_widget(ComputeFindWidgetLayout(ActiveTerminalBodyRect(layout),
+                                                /*replace_mode=*/false, kTerminalFindToggleCount));
+    }
+    if (DebugToolbarVisible()) {
+      const DebugToolbarLayout tb = ComputeDebugToolbarLayout(
+          layout.editor_surface, DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
+      probe(tb.widget, std::span<const SDL_FRect>(tb.buttons.data(), tb.button_count));
+    }
+    if (floating.has_value()) {
+      return *floating;
     }
   }
 

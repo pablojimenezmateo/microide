@@ -532,6 +532,39 @@ void TestNothingBeneathAnOpenMenuHovers() {
                       "the pointer moving over the sidebar beneath an open menu");
 }
 
+// QA monkey (seed 605): a click that closed the Help menu over the find widget
+// left the toggle under the pointer lit on full frames only. The menu owned the
+// pointer, so moving onto the toggle damaged nothing (rightly: nothing beneath an
+// open menu hovers); the click closed the menu and the toggle became hovered with
+// no motion -- and the frame-prep hover catch-all did not know the find widget's
+// buttons, so only the menu's band and the new tooltip were repainted.
+void TestClosingAMenuOverAFindToggleRepaintsItsHover() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("main.cpp", "alpha\nbeta\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "search zzz"),
+         "the fixture should open the find widget");
+  // Keyboard focus elsewhere: a focused find field repaints the widget whenever a
+  // menu takes and gives back text input, which hid the missing damage.
+  TestAccess::SetFocusSidebar(fixture.shell);
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "opening the find widget");
+  const workspace::FindWidgetLayout fw = TestAccess::FindWidgetControls(fixture.shell, false);
+  const auto help = fixture.ElementRect("menu:Help");
+  Expect(help.has_value(), "the Help menu should be on screen");
+  if (!help) {
+    return;
+  }
+  for (std::size_t index = 0; index < fw.toggle_count; ++index) {
+    fixture.ExpectFresh(fixture.Click(*help), "opening the Help menu");
+    Expect(TestAccess::MenuBarOpen(fixture.shell), "the Help menu should be open");
+    const SDL_FRect& toggle = fw.toggle_buttons[index];
+    fixture.ExpectFresh(fixture.Click(toggle),
+                        "a click that closes the menu over find toggle " + std::to_string(index));
+    Expect(!TestAccess::MenuBarOpen(fixture.shell), "the click should close the menu");
+  }
+}
+
 // QA monkey (seed 2, step 62): typing on a diff's working side can regroup the
 // whole diff while the keystroke's damage names only the edited line. The left
 // side's first line was deleted and its empty second line paired with the
@@ -4044,6 +4077,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/NothingBeneathAnOpenMenuHovers", TestNothingBeneathAnOpenMenuHovers);
   AddTest(tests, "QaFlowRegression/TypingThatReshapesADiffRepaintsIt", TestTypingThatReshapesADiffRepaintsIt);
   AddTest(tests, "QaFlowRegression/TheRemoteSegmentOpensTheRemoteMenu", TestTheRemoteSegmentOpensTheRemoteMenu);
+  AddTest(tests, "QaFlowRegression/ClosingAMenuOverAFindToggleRepaintsItsHover",
+          TestClosingAMenuOverAFindToggleRepaintsItsHover);
 }
 
 }  // namespace microide::tests
