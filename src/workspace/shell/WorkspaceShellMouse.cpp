@@ -500,8 +500,12 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         return false;
       }
 
+      // On the grid the last frame painted, sticky band included: without it a
+      // right-click under pinned headers moved the caret the band's height below
+      // the line clicked.
       const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-          editor_text_renderer_, *viewport, pane_it->rect, 0, LineNumbersEnabled());
+          editor_text_renderer_, *viewport, pane_it->rect, viewport->sticky_band_rows(),
+          LineNumbersEnabled());
       viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
 
       // The same pointer-to-caret mapping as the left click (screen-relative
@@ -812,8 +816,9 @@ std::optional<editor::CodeLensDecoration> WorkspaceShell::AboveLensAtPosition(fl
     if (viewport.is_placeholder() || viewport.path().empty() || viewport.dirty()) {
       return std::nullopt;
     }
+    // The painted grid, sticky band included (a lens under pinned headers).
     const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-        editor_text_renderer_, viewport, rect, 0, LineNumbersEnabled());
+        editor_text_renderer_, viewport, rect, viewport.sticky_band_rows(), LineNumbersEnabled());
     const editor::InsetGapOptions options{.inline_surfaces = inline_surfaces,
                                           .code_lens_above = true,
                                           .code_lens_height = metrics.line_height};

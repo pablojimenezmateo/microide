@@ -191,6 +191,10 @@
       const WorkspaceShell& shell, float x, float y) {
     return shell.EditorHoverTargetAtPosition(x, y);
   }
+  static std::optional<editor::CodeLensDecoration> AboveLensAtPosition(const WorkspaceShell& shell,
+                                                                       float x, float y) {
+    return shell.AboveLensAtPosition(x, y);
+  }
   static std::optional<editor::CodeLensDecoration> CodeLensAtPosition(const WorkspaceShell& shell,
                                                                       float x, float y) {
     return shell.CodeLensAtPosition(x, y);
@@ -261,6 +265,9 @@
     return shell.context_.menu_state.tree_context_menu.open &&
            shell.context_.menu_state.tree_context_menu.target ==
                TreeContextTargetKind::BreakpointLine;
+  }
+  static std::size_t TreeContextMenuLine(const WorkspaceShell& shell) {
+    return shell.context_.menu_state.tree_context_menu.line;
   }
   static bool BreakpointContextMenuEnabledFlag(const WorkspaceShell& shell) {
     return shell.context_.menu_state.tree_context_menu.breakpoint_enabled;

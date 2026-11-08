@@ -3658,6 +3658,84 @@ void TestACommitFieldUnderAModalPromptTakesNoClickAndPaintsNoCaret() {
                                DescribePixelDiff(diff));
 }
 
+// The sticky-band family of TypingUnderAStickyBandRepaintsTheTypedRow: a right-click
+// in the text and a right-click in the gutter mapped the pointer on a grid with no
+// sticky band, so under pinned headers the caret moved -- and the breakpoint menu
+// opened for -- the line the band's height below the one clicked.
+void TestRightClicksUnderAStickyBandActOnTheClickedLine() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  std::string body = "namespace outer {\nstruct Inner {\n";
+  for (int i = 0; i < 80; ++i) {
+    body += "  int v" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  body += "};\n}\n";
+  FlowFixture fixture("sticky.cpp", body);
+  Expect(TestAccess::SetSettingValueTransient(fixture.shell, "debug.enabled", "true"),
+         "the gutter's breakpoint menu needs the debugger on");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_PAGEDOWN), KeyDownEvent(SDLK_PAGEDOWN)});
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "scrolling under the headers");
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  const util::JsonValue& pane = ui["editors"][std::size_t{0}];
+  Expect(pane["stickyRows"].AsInt() >= 2, "the fixture should pin two headers");
+  const util::JsonValue& row = pane["rows"][std::size_t{4}];
+  const std::int64_t line = row["line"].AsInt();
+  const float y = static_cast<float>(row["y"].AsDouble() + pane["lineHeight"].AsDouble() * 0.5);
+  const auto right_click = [&](float x) {
+    SDL_Event down = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y);
+    down.button.button = SDL_BUTTON_RIGHT;
+    SDL_Event up = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y);
+    up.button.button = SDL_BUTTON_RIGHT;
+    (void)DispatchEvents(fixture.shell, {MouseMotionEvent(x, y), down, up});
+  };
+  right_click(static_cast<float>(pane["textX"].AsDouble() + 3.5 * pane["charWidth"].AsDouble()));
+  Expect(static_cast<std::int64_t>(TestAccess::ActiveEditor(fixture.shell).cursor_line()) + 1 == line,
+         "a right-click on line " + std::to_string(line) + " should put the caret there, not on line " +
+             std::to_string(TestAccess::ActiveEditor(fixture.shell).cursor_line() + 1));
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)});
+  // The gutter's menu acts on an existing breakpoint: one on the clicked line only.
+  TestAccess::BreakpointStore(fixture.shell).Set(TestAccess::ActiveEditor(fixture.shell).path(),
+                                                 static_cast<std::size_t>(line - 1));
+  right_click(static_cast<float>(pane["gutterX"].AsDouble() + 6.0));
+  Expect(TestAccess::BreakpointContextMenuOpen(fixture.shell), "a gutter right-click should open the breakpoint menu");
+  Expect(static_cast<std::int64_t>(TestAccess::TreeContextMenuLine(fixture.shell)) + 1 == line,
+         "the gutter's menu should be for line " + std::to_string(line) + ", not " +
+             std::to_string(TestAccess::TreeContextMenuLine(fixture.shell) + 1));
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)});
+
+  // A code lens drawn above the clicked line (plugins.code_lens_above): a click on
+  // its strip resolves it.
+  Expect(TestAccess::SetSettingValueTransient(fixture.shell, "plugins.code_lens_above", "true"),
+         "lenses should draw above their lines");
+  editor::PluginDecorationData lenses;
+  lenses.code_lenses.push_back(editor::CodeLensDecoration{
+      .line = static_cast<std::size_t>(line - 1), .text = "2 refs", .command = "refs.show"});
+  Expect(TestAccess::CurrentProjectState(fixture.shell).EnsurePluginPresentation().decorations.ReplaceForOwnerFile(
+             "lens-test", fixture.file, std::move(lenses)),
+         "publishing the lens should change the store");
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the lens painted");
+  const util::JsonValue lens_ui = TestAccess::ControlUi(fixture.shell);
+  const util::JsonValue& lens_pane = lens_ui["editors"][std::size_t{0}];
+  std::optional<double> lens_row_y;
+  for (const util::JsonValue& r : lens_pane["rows"].AsArray()) {
+    if (r["line"].AsInt() == line) {
+      lens_row_y = r["y"].AsDouble();
+    }
+  }
+  Expect(lens_row_y.has_value(), "the lensed line should still be on screen");
+  if (lens_row_y.has_value()) {
+    const double lh = lens_pane["lineHeight"].AsDouble();
+    const auto lens = TestAccess::AboveLensAtPosition(
+        fixture.shell, static_cast<float>(lens_pane["textX"].AsDouble() + 8.0),
+        // The ui's row y counts no inset gaps, so the strip above the line sits
+        // where the line's own row is reported.
+        static_cast<float>(*lens_row_y + 0.5 * lh));
+    Expect(lens.has_value() && lens->line == static_cast<std::size_t>(line - 1),
+           "a click on the lens above line " + std::to_string(line) + " should resolve that lens");
+  }
+}
+
 // Hovering a merge toolbar button lights it, and the frame shows it: the buttons
 // read the pointer at paint time, but merge hover tracking knew only conflict
 // regions, so moving onto Save requested no repaint of it and the next partial
@@ -4215,6 +4293,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestTypingUnderAStickyBandRepaintsTheTypedRow);
   AddTest(tests, "QaFlowRegression/ACommitFieldUnderAModalPromptTakesNoClickAndPaintsNoCaret",
           TestACommitFieldUnderAModalPromptTakesNoClickAndPaintsNoCaret);
+  AddTest(tests, "QaFlowRegression/RightClicksUnderAStickyBandActOnTheClickedLine",
+          TestRightClicksUnderAStickyBandActOnTheClickedLine);
   AddTest(tests, "QaFlowRegression/ClosingAMenuOverAFindToggleRepaintsItsHover",
           TestClosingAMenuOverAFindToggleRepaintsItsHover);
 }

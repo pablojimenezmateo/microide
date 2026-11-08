@@ -175,8 +175,10 @@ bool EditorMouseCoordinator::HandleGutterContextMenu(const SDL_Event& event,
   if (viewport == nullptr || viewport->path().empty()) {
     return false;
   }
+  // The painted grid, sticky band included: without it the gutter's menu opened for
+  // the line the band's height below the one right-clicked.
   const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-      text_renderer_, *viewport, pane_it->rect, 0,
+      text_renderer_, *viewport, pane_it->rect, viewport->sticky_band_rows(),
       SettingFlagEnabled(operations_.get_setting_value
                              ? operations_.get_setting_value("editor.line_numbers")
                              : std::nullopt,
