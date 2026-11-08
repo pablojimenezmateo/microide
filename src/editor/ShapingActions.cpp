@@ -1060,11 +1060,14 @@ void RestoreCaretsAfterIndentEdit(TextViewport& viewport,
 
   viewport.ClearSecondaryCarets();
   if (snapshot.selection.has_value()) {
-    viewport.MoveCursorTo(snapshot.selection->start.line,
-                          shift_col(snapshot.selection->start.line, snapshot.selection->start.column));
-    viewport.MoveCursorTo(snapshot.selection->end.line,
-                          shift_col(snapshot.selection->end.line, snapshot.selection->end.column),
-                          /*extend_selection=*/true);
+    // The direction survives: the caret stays at whichever end it was on.
+    const SelectionRange& selection = *snapshot.selection;
+    const bool caret_at_start =
+        snapshot.primary_line == selection.start.line && snapshot.primary_column == selection.start.column;
+    const TextPosition& anchor = caret_at_start ? selection.end : selection.start;
+    const TextPosition& caret = caret_at_start ? selection.start : selection.end;
+    viewport.MoveCursorTo(anchor.line, shift_col(anchor.line, anchor.column));
+    viewport.MoveCursorTo(caret.line, shift_col(caret.line, caret.column), /*extend_selection=*/true);
   } else {
     viewport.MoveCursorTo(snapshot.primary_line,
                           shift_col(snapshot.primary_line, snapshot.primary_column));
@@ -1093,8 +1096,6 @@ bool ReindentRegions(TextViewport& viewport, Transform&& transform) {
   if (regions.empty()) return false;
   const TextBuffer& lines = viewport.lines();
 
-  const bool had_selection = viewport.has_selection();
-  const bool multi = viewport.has_multiple_carets();
   const LineMoveCaretSnapshot snapshot = SnapshotCaretsForLineMove(viewport);
 
   RegionColumnDeltas deltas;
@@ -1137,14 +1138,12 @@ bool ReindentRegions(TextViewport& viewport, Transform&& transform) {
   // Grouping the replaces WITH the caret restore is what makes the aggregate undo
   // entry's after_state capture the restored carets; without it redo snaps to
   // (first, 0) and drops every secondary caret.
-  if (multi || !had_selection) {
-    RestoreCaretsAfterIndentEdit(viewport, snapshot, regions, deltas);
-  } else {
-    // A plain single selection is exactly one region, and this path is only
-    // reachable with no secondary carets.
-    RestoreSelectionAcrossLines(viewport, regions.front().first, regions.front().last,
-                                had_selection);
-  }
+  // Every caret and selection keeps its ends, columns shifted by what its line
+  // gained or lost (VS Code). A single selection used to be reselected as whole
+  // lines first..last, which -- for a selection ending at a line's start, whose
+  // line the indent leaves out -- moved the caret up a line on every Tab (QA
+  // monkey, qa-asan seed 4).
+  RestoreCaretsAfterIndentEdit(viewport, snapshot, regions, deltas);
   viewport.EndUndoGroup();
   return true;
 }

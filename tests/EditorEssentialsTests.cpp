@@ -902,6 +902,41 @@ void TestShapingIndentSelection() {
          "second line should now start with two-space indent");
 }
 
+// QA monkey (qa-asan seed 4): Tab over a selection keeps the selection's ends,
+// columns shifted by the indent, in its direction (VS Code). It used to reselect
+// whole lines first..last, and for a selection ending at a line's start -- whose
+// line the indent leaves out -- that moved the caret up a line on every Tab.
+void TestShapingIndentSelectionKeepsTheSelectionsEnds() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha\nbeta\ngamma\n", "/tmp/sample.txt");
+  viewport.SetIndentWidth(2);
+  viewport.SetSoftTabs(true);
+  viewport.MoveCursorTo(0, 3);
+  viewport.MoveCursorTo(2, 0, /*extend_selection=*/true);
+  for (int press = 1; press <= 2; ++press) {
+    Expect(microide::editor::IndentSelection(viewport), "IndentSelection changes the buffer");
+    const auto selection = viewport.selection_range();
+    const std::size_t shift = 2u * static_cast<std::size_t>(press);
+    Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 0,
+           "the caret stays at the selection's end, the start of the line left out (press " +
+               std::to_string(press) + ": " + std::to_string(viewport.cursor_line()) + ":" +
+               std::to_string(viewport.cursor_column()) + ")");
+    Expect(selection.has_value() && selection->start.line == 0 && selection->start.column == 3 + shift,
+           "the anchor moves with the text it was in");
+  }
+  Expect(viewport.lines()[2] == "gamma", "the line the selection ends at the start of is not indented");
+  // Reversed: the caret at the top stays at the top.
+  TextViewport reversed;
+  reversed.LoadContent("alpha\nbeta\n", "/tmp/sample.txt");
+  reversed.SetIndentWidth(2);
+  reversed.SetSoftTabs(true);
+  reversed.MoveCursorTo(1, 4);
+  reversed.MoveCursorTo(0, 1, /*extend_selection=*/true);
+  Expect(microide::editor::IndentSelection(reversed), "IndentSelection changes the reversed buffer");
+  Expect(reversed.cursor_line() == 0 && reversed.cursor_column() == 3,
+         "a caret at the selection's start stays there, shifted");
+}
+
 void TestShapingToggleLineComment() {
   TextViewport viewport;
   viewport.LoadContent("foo\nbar\n", "/tmp/sample.cpp");
@@ -2573,6 +2608,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestShapingInsertLineBelowAndAbove);
   AddTest(tests, "EditorEssentials/Shaping/IndentSelection",
           TestShapingIndentSelection);
+  AddTest(tests, "EditorEssentials/ShapingIndentSelectionKeepsTheSelectionsEnds",
+          TestShapingIndentSelectionKeepsTheSelectionsEnds);
   AddTest(tests, "EditorEssentials/Shaping/ToggleLineComment",
           TestShapingToggleLineComment);
   AddTest(tests, "EditorEssentials/Shaping/ToggleBlockCommentRoundTrips",

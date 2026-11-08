@@ -1235,6 +1235,29 @@ void TestTheMenuOverflowChevronIsAHoverTarget() {
          "the pointer on the chevron hovers the chevron");
 }
 
+// QA monkey (qa-asan seed 4): Tab over a selection that ended on the last line
+// indented the lines above it and moved the caret up a line, and the damage named
+// the edited lines only -- the line the caret left kept its caret and highlight.
+void TestTabOverASelectionEndingOnTheLastLineRepaintsTheLineTheCaretLeft() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("data.json", "{\"a\": [1, 2, {\"b\": null}], \"c\": 1}\n\n");
+  editor::TextViewport& view = TestAccess::ActiveEditor(fixture.shell);
+  view.MoveCursorTo(0, view.lines()[0].size());
+  view.MoveCursorTo(view.line_count() - 1, 0, /*extend_selection=*/true);
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "a selection from the first line's end to the last line");
+  for (int press = 1; press <= 2; ++press) {
+    const std::size_t caret_before = view.cursor_line();
+    const auto redraw = DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_TAB, SDL_KMOD_NONE)});
+    fixture.ExpectFresh(redraw, "Tab " + std::to_string(press) + " over the selection (caret line " +
+                                    std::to_string(caret_before) + " -> " + std::to_string(view.cursor_line()) +
+                                    ")");
+  }
+}
+
 // QA diff-commands: pasting a line longer than the editor is wide made the
 // horizontal scrollbar appear, and the paste damaged only the edited line -- the
 // scrollbar's strip along the editor's bottom kept the old pixels. An edit that
@@ -4707,6 +4730,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TypingWhereTheEndLeavesAFoldRepaintsTheTypedRow",
           TestTypingWhereTheEndLeavesAFoldRepaintsTheTypedRow);
   AddTest(tests, "QaFlowRegression/TheMenuOverflowChevronIsAHoverTarget", TestTheMenuOverflowChevronIsAHoverTarget);
+  AddTest(tests, "QaFlowRegression/TabOverASelectionEndingOnTheLastLineRepaintsTheLineTheCaretLeft",
+          TestTabOverASelectionEndingOnTheLastLineRepaintsTheLineTheCaretLeft);
   AddTest(tests, "QaFlowRegression/ATabTooltipNamesTheTabUnderThePointerInASplit",
           TestATabTooltipNamesTheTabUnderThePointerInASplit);
   AddTest(tests, "QaFlowRegression/ClickingAnUnfocusedGroupsOverflowChipRepaintsItsStrip",

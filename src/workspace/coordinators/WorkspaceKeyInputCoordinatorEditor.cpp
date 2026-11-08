@@ -189,6 +189,15 @@ bool ApplyDefaultEditorEdit(KeyInputCoordinator::Operations& operations,
         "KeyInputCoordinator::HandleDefaultEditorKeyDown::RequestLastChangeRedraw");
     operations.request_active_editable_last_change_redraw();
   }
+  // The edit's damage names the lines it changed; the caret's current-line
+  // highlight is on the line the caret was on. An edit that leaves the caret on
+  // another line without changing that one (Tab over a selection ending at a
+  // line's start reselected the lines above it) left the highlight behind (QA
+  // monkey, qa-asan seed 4). Edits that change the line count -- Enter, the
+  // common case -- repaint the pane already.
+  if (viewport.cursor_line() != cursor_before_line) {
+    operations.request_focused_editor_redraw();
+  }
   if (viewport.dirty() != was_dirty) {
     util::PerformanceTrace::Scope scope(
         "KeyInputCoordinator::HandleDefaultEditorKeyDown::DirtyStateSideEffects");
