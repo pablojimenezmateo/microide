@@ -1916,10 +1916,11 @@ class App:
                     if source.exists():
                         with contextlib.suppress(Exception):
                             Image.open(source).save(folder / f"frame-{frame}-{kind}.png")
-        if not self.alive():
-            return None
         path = folder / "now.png"
-        self.grab().save(path)
+        # The folder is the evidence: a dead app has no window to grab, and its
+        # finding still names where the log tail and the last screenshots are.
+        if self.alive():
+            self.grab().save(path)
         return str(path)
 
     def log_tail(self, max_bytes: int = 96 * 1024) -> str:

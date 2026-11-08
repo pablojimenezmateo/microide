@@ -291,8 +291,16 @@ def make_bundle(job: Job, summary: dict[str, Any], finding: dict[str, Any]) -> P
     FINDING.md. Everything an agent needs, nothing it must re-derive."""
     bundle = FINDINGS / finding["signature"]
     bundle.mkdir(parents=True, exist_ok=True)
-    evidence = Path(finding.get("evidence") or "")
-    if evidence.is_dir():
+    # Only a finding's own evidence directory, inside this job's output. An empty
+    # path is Path("") == "." -- the runner's working directory, the whole
+    # checkout with its build trees -- and copying it once filled the disk with a
+    # 254 GB findings tree (2026-11-08).
+    evidence_text = finding.get("evidence") or ""
+    evidence = Path(evidence_text)
+    if evidence_text and evidence.is_absolute() is False:
+        evidence = (WORKTREE / evidence).resolve()
+    if evidence_text and evidence.is_dir() and evidence.name.startswith("finding-") and \
+            job.out.resolve() in evidence.resolve().parents:
         shutil.copytree(evidence, bundle / "evidence", dirs_exist_ok=True)
     replay_source = bundle / "evidence" / "replay.json"
     if replay_source.exists():
@@ -468,9 +476,15 @@ def verify_fixed(state: dict[str, Any], log) -> None:
 
 # ---- housekeeping ----------------------------------------------------------------
 
+MIN_FREE_BYTES = int(float(os.environ.get("MICROIDE_SOAK_MIN_FREE_GB", "30")) * 1e9)
+
+
 def busy_reason(our_jobs: int) -> str | None:
     if PAUSE.exists():
         return "paused (build/soak/PAUSE)"
+    free = shutil.disk_usage(SOAK).free
+    if free < MIN_FREE_BYTES:
+        return f"only {free / 1e9:.0f} GB free on the disk (MICROIDE_SOAK_MIN_FREE_GB)"
     if subprocess.run(["pgrep", "-f", "tools/run-checks.sh"], capture_output=True).returncode == 0:
         return "a run-checks lane is running"
     cores = os.cpu_count() or 4
