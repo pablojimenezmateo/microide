@@ -52,6 +52,8 @@ from typing import Any, Callable, Iterator
 
 from PIL import Image
 
+import xtest
+
 REPO = Path(__file__).resolve().parents[2]
 CAPTURE = REPO / "tools" / "capture-media"
 
@@ -282,10 +284,14 @@ class App:
     _reported_bad_utf8: bool = False
     _stall_captured: bool = False
     _extra_args: list[str] = field(default_factory=list)
+    # In-process XTEST input on the run's Xvfb (None on Wayland or without libXtst).
+    _xt: Any = None
     # A flow changed the project or ran `git` outside the app (flows_common's
     # write/git_run) since the git view last settled: the watcher may not have
     # seen it yet, so wait_git_settled asks for the refresh itself.
     outside_change_pending: bool = False
+    # The slowest control answer since the monkey last looked: (what, seconds).
+    slowest_answer: tuple[str, float] = ("", 0.0)
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -385,6 +391,7 @@ class App:
         else:
             self._start_xvfb(w, h)
             self.env["DISPLAY"] = self.display
+            self._xt = xtest.XTest(self.display)
         self._extra_args = list(extra_args)
         self._spawn(project, extra_args)
 
@@ -583,6 +590,9 @@ class App:
         self.display = "wayland:mqa-wl"
 
     def stop(self) -> None:
+        if (xt := getattr(self, "_xt", None)) is not None:
+            xt.close()
+            self._xt = None
         if self._socket is not None:
             with contextlib.suppress(OSError):
                 self._socket.close()
@@ -657,9 +667,14 @@ class App:
                     continue
                 raw, self._socket_buffer = (self._socket_buffer[:newline],
                                             self._socket_buffer[newline + 1:])
+                # errors="replace": a malformed byte in an answer is the app's bug
+                # to report (the ui query's chrome check), not a dead run.
+                text = raw.decode("utf-8", "replace")
                 with contextlib.suppress(json.JSONDecodeError):
-                    reply = json.loads(raw)
+                    reply = json.loads(text)
                     if isinstance(reply, dict) and reply.get("id") == request_id:
+                        if "\ufffd" in text:
+                            reply["_replaced"] = True
                         return reply
         except (OSError, socket.timeout) as error:
             self.capture_stall(f"{what} got no reply")
@@ -695,18 +710,26 @@ class App:
         (self.shots / "stall-threads.txt").write_text("\n".join(lines) + "\n")
 
     def query(self, verb: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
-        command = ["control-send", "--query", verb]
+        """A query over the persistent control connection (a spawned control
+        client per query was ~6 ms, and the oracles ask several per step)."""
+        payload: dict[str, Any] = {"query": verb}
         if args is not None:
-            command += ["--args", json.dumps(args)]
-        result = self._control(command)
-        reply = _last_json(result.stdout)
-        if not reply or not reply.get("ok"):
-            if "timed out waiting for a reply" in (result.stdout or ""):
-                self.capture_stall(f"query {verb!r} timed out")
-            raise QaFailure(f"query {verb!r} failed: {result.stdout or result.stderr}")
-        if verb == "ui" and "\ufffd" in result.stdout:
-            self._check_chrome_utf8(reply.get("result", {}))
-        return reply.get("result", {})
+            payload["args"] = args
+        started = time.monotonic()
+        reply = self._socket_request(payload, 10.0, f"query {verb!r}")
+        self.note_latency(f"query {verb}", time.monotonic() - started)
+        if not reply.get("ok"):
+            raise QaFailure(f"query {verb!r} failed: {json.dumps(reply)[:600]}")
+        result = reply.get("result", {})
+        if verb == "ui" and reply.get("_replaced"):
+            self._check_chrome_utf8(result)
+        return result
+
+    def note_latency(self, what: str, seconds: float) -> None:
+        """The liveness oracle's input: the slowest control answer per step
+        (the monkey reads and resets `slowest_answer`)."""
+        if seconds > self.slowest_answer[1]:
+            self.slowest_answer = (what, seconds)
 
     # Element kinds whose labels are chrome the app composes itself (menus, the
     # status bar, buttons, settings), not text copied from a file or typed into a
@@ -894,6 +917,51 @@ class App:
     def _xdotool(self, *args: str) -> None:
         subprocess.run(["timeout", "5", "xdotool", *args], env=self.tool_env, capture_output=True)
 
+    # X input: in-process XTEST (tools/qa/xtest.py) when libXtst is there, else
+    # xdotool. The events are the same; a spawned `timeout 5 xdotool` cost ~130 ms.
+
+    def _xt_or_none(self) -> "xtest.XTest | None":
+        xt = getattr(self, "_xt", None)
+        return xt if xt is not None and xt.available() else None
+
+    def _x_move(self, x: float, y: float) -> None:
+        rx, ry = self._root(x, y)
+        if xt := self._xt_or_none():
+            xt.move(int(rx), int(ry))
+        else:
+            self._xdotool("mousemove", rx, ry)
+
+    def _x_click(self, button: int, repeat: int = 1) -> None:
+        if xt := self._xt_or_none():
+            xt.click(button, repeat)
+        else:
+            self._xdotool("click", "--repeat", str(repeat), "--delay", "60", str(button))
+
+    def _x_button(self, button: int, down: bool) -> None:
+        if xt := self._xt_or_none():
+            xt.button(button, down)
+        else:
+            self._xdotool("mousedown" if down else "mouseup", str(button))
+
+    def _x_modifier(self, name: str, down: bool) -> None:
+        if (xt := self._xt_or_none()) and xt.modifier(name, down):
+            return
+        self._xdotool("keydown" if down else "keyup", name)
+
+    def _x_keys(self, *chords: str) -> None:
+        xt = self._xt_or_none()
+        for index, chord in enumerate(chords):
+            if index:
+                time.sleep(xtest.KEY_GAP)
+            if not (xt and xt.chord(chord)):
+                self._xdotool("key", "--clearmodifiers", chord)
+
+    def _x_type_ascii(self, text: str) -> None:
+        xt = self._xt_or_none()
+        missed = xt.type_ascii(text) if xt else text
+        if missed:
+            self._xdotool("type", "--clearmodifiers", "--delay", "25", "--", missed)
+
     def _find_window(self) -> str | None:
         if self.wayland:
             return None
@@ -937,8 +1005,11 @@ class App:
         window -- synthetic core events SDL3, reading the keyboard through XInput2,
         never sees: a loaded run once lost every key of a flow with no trace in the
         app's input log (TD-2026-10-20-368)."""
-        if self.window:
-            self._xdotool("windowfocus", "--sync", self.window)
+        if not self.window:
+            return
+        if (xt := self._xt_or_none()) and xt.focus(int(self.window)):
+            return
+        self._xdotool("windowfocus", "--sync", self.window)
 
     def _input(self, *words: str) -> dict[str, Any]:
         """One input command (`key`, `pointer`, `type`) over the persistent control
@@ -967,7 +1038,7 @@ class App:
             self._pointer("move", x, y)
             return
         self._expect_pointer_input(motion=(x, y), motion_lands=self._hit_region(x, y) != "outside")
-        self._xdotool("mousemove", *self._root(x, y))
+        self._x_move(x, y)
 
     def click(self, x: float, y: float, button: int = 1, clicks: int = 1,
               modifiers: tuple[str, ...] = ()) -> None:
@@ -982,12 +1053,12 @@ class App:
             return
         reaches_app = self._hit_region(x, y) == "normal"
         for key in modifiers:
-            self._xdotool("keydown", key)
+            self._x_modifier(key, True)
         self._expect_pointer_input(buttons=2 * clicks if reaches_app else 0, at=(x, y))
-        self._xdotool("mousemove", *self._root(x, y), "click", "--repeat", str(clicks),
-                      "--delay", "60", str(button))
+        self._x_move(x, y)
+        self._x_click(button, clicks)
         for key in reversed(modifiers):
-            self._xdotool("keyup", key)
+            self._x_modifier(key, False)
         self._last_click = (time.monotonic(), x, y)
 
     def _await_click_gap(self, x: float, y: float) -> None:
@@ -1032,27 +1103,28 @@ class App:
         reaches_app = self._hit_region(x0, y0) == "normal"
         end_lands = reaches_app and self._hit_region(x1, y1) != "outside"
         for key in modifiers:
-            self._xdotool("keydown", key)
+            self._x_modifier(key, True)
         # Every press and release but the last, then the move onto (x1, y1), then
         # the release: `before_release` may query the app with the button held.
         self._expect_pointer_input(buttons=2 * clicks - 1 if reaches_app else 0, at=(x0, y0))
+        self._x_move(x0, y0)
         if clicks > 1:
-            self._xdotool("mousemove", *self._root(x0, y0), "click", "--repeat", str(clicks - 1),
-                          "--delay", "60", "1")
-        self._xdotool("mousemove", *self._root(x0, y0), "mousedown", "1")
+            self._x_click(1, clicks - 1)
+            time.sleep(0.03)
+        self._x_button(1, True)
         for i in range(1, steps + 1):
             x = x0 + (x1 - x0) * i / steps
             y = y0 + (y1 - y0) * i / steps
             if i == steps:
                 self._expect_pointer_input(motion=(x, y), motion_lands=end_lands)
-            self._xdotool("mousemove", *self._root(x, y))
+            self._x_move(x, y)
             time.sleep(0.02)
         if before_release is not None:
             before_release()
         self._expect_pointer_input(buttons=1 if reaches_app else 0)
-        self._xdotool("mouseup", "1")
+        self._x_button(1, False)
         for key in reversed(modifiers):
-            self._xdotool("keyup", key)
+            self._x_modifier(key, False)
         self._last_click = (time.monotonic(), x0, y0)
 
     def drop(self, x: float, y: float, path: Path | str) -> None:
@@ -1070,12 +1142,12 @@ class App:
         button = "5" if notches > 0 else "4"
         lands = self._hit_region(x, y) != "outside"
         self._expect_pointer_input(wheels=abs(notches) if lands else 0, at=(x, y))
-        self._xdotool("mousemove", *self._root(x, y))
+        self._x_move(x, y)
         for key in modifiers:
-            self._xdotool("keydown", key)
-        self._xdotool("click", "--repeat", str(abs(notches)), "--delay", "20", button)
+            self._x_modifier(key, True)
+        self._x_click(int(button), abs(notches))
         for key in reversed(modifiers):
-            self._xdotool("keyup", key)
+            self._x_modifier(key, False)
 
     def key(self, chord: str) -> None:
         """An xdotool chord: "ctrl+shift+f", "Escape", "alt+Up"; a two-step chord
@@ -1091,7 +1163,7 @@ class App:
             return
         self._focus()
         self._expect_typed_input("", len(steps), chord)
-        self._xdotool("key", "--clearmodifiers", *steps)
+        self._x_keys(*steps)
 
     def hold(self, modifier: str, chords: list[str]) -> None:
         """Presses `chords` while `modifier` (an xdotool key name: "ctrl") stays
@@ -1105,10 +1177,11 @@ class App:
             return
         self._focus()
         self._expect_typed_input("", len(chords), " ".join(chords))
-        self._xdotool("keydown", "--clearmodifiers", modifier)
+        self._x_modifier(modifier, True)
         for chord in chords:
-            self._xdotool("key", chord)
-        self._xdotool("keyup", modifier)
+            if not ((xt := self._xt_or_none()) and xt.chord(chord)):
+                self._xdotool("key", chord)
+        self._x_modifier(modifier, False)
 
     def _expect_typed_input(self, chars: str, presses: int, keys: str = "") -> None:
         """Notes input about to go through X -- `chars` of text and `presses`
@@ -1170,9 +1243,12 @@ class App:
 
     def _x_pointer_location(self) -> tuple[int, int] | None:
         """Where X has the pointer now, in window coordinates."""
-        result = subprocess.run(["timeout", "5", "xdotool", "getmouselocation", "--shell"],
-                                env=self.tool_env, capture_output=True, text=True)
-        values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+        if (xt := self._xt_or_none()) and (at := xt.pointer()) is not None:
+            values = {"X": str(at[0]), "Y": str(at[1])}
+        else:
+            result = subprocess.run(["timeout", "5", "xdotool", "getmouselocation", "--shell"],
+                                    env=self.tool_env, capture_output=True, text=True)
+            values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
         try:
             sx, sy = getattr(self, "window_scale", (1.0, 1.0))
             return (round((int(values["X"]) - self.origin[0]) / sx),
@@ -1267,7 +1343,6 @@ class App:
                     self._input("type", char)
             return
         self._focus()
-        args = ["type", "--clearmodifiers", "--delay", "25"]
         # Beyond ASCII, xdotool remaps a scratch keycode per character and restores
         # it right after the press, and SDL races that: a slow app looked the key up
         # under the restored map and typed nothing (unicode-editing lost the `é` on
@@ -1276,27 +1351,26 @@ class App:
         # input method, and without one X delivers no text for such a keysym (a real
         # desktop's IME does) -- those characters are inserted through the control
         # channel's `type` (the paste path), and the action log says so.
-        key_args = ["key", "--clearmodifiers"]
         chunk = ""
 
         def flush() -> None:
             nonlocal chunk
             if chunk:
                 self._expect_typed_input(chunk, len(chunk))
-                self._xdotool(*args, "--", chunk)
+                self._x_type_ascii(chunk)
                 chunk = ""
         for char in text:
             if char in "\n\t":
                 flush()
                 self._expect_typed_input("", 1)
-                self._xdotool(*key_args, "Return" if char == "\n" else "Tab")
+                self._x_keys("Return" if char == "\n" else "Tab")
             elif ord(char) < 0x80:
                 chunk += char
             elif ord(char) <= 0xFF:
                 flush()
                 self._map_latin1(char)
                 self._expect_typed_input(char, 1)
-                self._xdotool(*key_args, "0x%x" % ord(char))
+                self._x_keys("0x%x" % ord(char))
             else:
                 flush()
                 self._record({"type-via-control": char})
@@ -1327,6 +1401,8 @@ class App:
         keysym = "0x%x" % ord(char)
         subprocess.run(["xmodmap", "-e", f"keycode {keycode} = {keysym} {keysym}"], env=self.tool_env,
                        capture_output=True)
+        if xt := self._xt_or_none():
+            xt.refresh_keymap()
         self._latin1_keycodes[char] = keycode
 
     def center(self, element: dict[str, Any]) -> tuple[float, float]:
@@ -1363,6 +1439,56 @@ class App:
 
     def settle(self, seconds: float = 0.25) -> None:
         time.sleep(seconds)
+
+    def settle_quiet(self, most: float = 0.25, quiet: float = 0.03, least: float = 0.005) -> float:
+        """Waits until the app's log has been still for `quiet` seconds -- the
+        frame trace logs every frame and the input trace every event, so a still
+        log is an app that has painted what the last input asked for -- or `most`
+        seconds have passed. Returns the time waited. The monkey's fixed 0.12 s
+        settle was 80% of a step; most actions are painted in a few ms."""
+        started = time.monotonic()
+        deadline = started + most * SLOW_FACTOR
+        time.sleep(least)
+        last_size = -1
+        still_since = time.monotonic()
+        while True:
+            now = time.monotonic()
+            try:
+                size = self.log_path.stat().st_size if self.log_path is not None else 0
+            except OSError:
+                size = last_size
+            if size != last_size:
+                last_size, still_since = size, now
+            elif now - still_since >= quiet:
+                break
+            if now >= deadline:
+                break
+            time.sleep(0.004)
+        return time.monotonic() - started
+
+    def grab_raw(self) -> bytes | None:
+        """The screen as xwd bytes (converted only if a finding needs it: the
+        evidence ring keeps one per action, and converting each was most of a
+        check's cost)."""
+        if self.wayland:
+            return None
+        try:
+            return subprocess.run(["xwd", "-display", self.display, "-root", "-silent"],
+                                  capture_output=True, env=self.tool_env, timeout=10).stdout
+        except Exception:  # noqa: BLE001 - evidence must never abort the suite
+            return None
+
+    def image_of(self, raw: "bytes | Image.Image | None"):
+        if raw is None:
+            return Image.new("RGB", self.size, (0, 0, 0))
+        if isinstance(raw, Image.Image):
+            return raw
+        import io
+        try:
+            return _XWD.convert(io.BytesIO(raw))
+        except Exception as error:  # noqa: BLE001 - evidence must never abort the suite
+            print(f"grab failed: {error}", flush=True)
+            return Image.new("RGB", self.size, (0, 0, 0))
 
     def grab(self):
         if self.wayland:
@@ -1418,7 +1544,7 @@ class App:
             self.findings.extend(found)
         if self.alive():
             with contextlib.suppress(Exception):
-                self.recent_shots.append((len(self.actions), self.grab()))
+                self.recent_shots.append((len(self.actions), self.grab_raw()))
         return found
 
     def _ui_oracles(self) -> list[tuple[str, str]]:
@@ -1697,8 +1823,8 @@ class App:
         self.save_actions(folder / "replay.json", **self.replay_header)
         (folder / "findings.txt").write_text("\n".join(f"{f.kind}: {f.detail}" for f in found) + "\n")
         (folder / "trace.txt").write_text("\n".join(self.recent_log) + "\n")
-        for index, image in self.recent_shots:
-            image.save(folder / f"after-action-{index:04d}.png")
+        for index, raw in self.recent_shots:
+            self.image_of(raw).save(folder / f"after-action-{index:04d}.png")
         # The verifier's own images of the stale frames this finding names.
         stale_dir = self.work / "stale"
         for finding in found:

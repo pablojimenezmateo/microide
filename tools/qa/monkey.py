@@ -398,7 +398,7 @@ class Monkey:
                 self.step()
             except q.QaFailure as failure:
                 self.app.expect(False, f"step {index}: {failure}")
-            self.app.settle(settle)
+            self.app.settle_quiet(most=settle)
             if self.app.check(f"monkey step {index}") or not self.app.alive():
                 return False
         return not self.app.findings

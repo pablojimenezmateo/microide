@@ -27,6 +27,14 @@ control timeout and polling expectation stretches with it. The `qa`, `qa-asan`
 and `qa-wayland` lanes first run the driver regression tests (`qa-driver`),
 including simulated slow responses and bounded timeout failures.
 
+X input goes through the XTEST extension from the driver's own process
+(`xtest.py`, ctypes over libXtst): the events xdotool sends, without a process per
+move, click and key -- `timeout 5 xdotool` cost ~130 ms a call, over half of a
+monkey step. Queries go over the same persistent control connection as commands.
+`MQA_XTEST=0` falls back to xdotool, for comparing a flow that behaves differently.
+Two keys sent back to back are 4 ms apart (`xtest.KEY_GAP`): SDL reads a release
+and a press of the same key within 2 ms as auto-repeat.
+
 ## Running
 
 ```bash
@@ -355,6 +363,7 @@ assumptions (a column off by one, a key a focused terminal owns).
 | file | what |
 |------|------|
 | `microide_qa.py` | `App`: lifecycle, input, control channel, `ui` locators, oracles, evidence, replay |
+| `xtest.py` | in-process XTEST input (pointer, keys, focus) on the run's Xvfb |
 | `scenarios.py` | the chrome scenarios and the registry (`FLOW_MODULES` merged into `SCENARIOS`, `SCENARIO_ENV`, `SCENARIO_PLUGINS`) |
 | `flows_common.py` | open/write/read helpers, `expect_text`, `step`, `dismiss`, `indent_unit`, the shared readers (`git`, `titles`, `tree_rows`, `terminal_tabs`, `active_root`, `messages`) |
 | `flows_*.py` | the flows, one module per group (`scenarios.FLOW_MODULES`) |
