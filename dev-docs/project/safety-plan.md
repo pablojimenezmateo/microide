@@ -24,9 +24,11 @@ today: the lanes check pixels, crashes and sanitizer reports, but never the byte
   reverted fix, an injected fault, or a fixture that must trip it
   (`validation-traps.md` § vacuous fixtures).
 - **Every finding becomes a failing-first test plus its fix**, one commit each, as today.
-- **CI stays event-driven.** `openspec/specs/ci-workflow-reliability` forbids cron, so a push to
-  `main` is the nightly (as `qa-deep` already is). Longer soaks run locally through
-  `tools/run-checks.sh`.
+- **The nightly is this PC, running continuously** (W1's soak runner). CI stays as it is:
+  event-driven (`openspec/specs/ci-workflow-reliability` forbids cron), with fixed seeds as a
+  fast regression gate. Everything open-ended runs on the soak runner, as one of its job
+  types: fresh monkey seeds, kill -9 restarts, fault sweeps, wake races, fractional scales and
+  long fuzzing.
 - **No idle cost, no perf regression.** Debug-only invariants compile out of release.
   `idle_soak_30s` and the perf gate keep passing.
 - **Lanes run from a pinned worktree** (`build/wt-lanes`), never the live tree.
@@ -35,34 +37,71 @@ today: the lanes check pixels, crashes and sanitizer reports, but never the byte
 
 | Phase | Workstreams | Why this order |
 |---|---|---|
-| 1 | W1 fresh-seed monkey, W4 data-loss oracle, W5 save fault injection | Highest yield per hour, and data loss has no oracle yet |
+| 1 | W1 continuous soak runner, W4 data-loss oracle, W5 save fault injection | The runner is where every later check keeps running; the monkey has the highest yield per hour, and data loss has no oracle yet |
 | 2 | W2 assert-armed QA, W3 per-view cache invariants, W9 pattern lints | Turn silent corruption into crashes the Phase 1 tools then find |
 | 3 | W6 wake-race lane, W7 fractional-scale QA, W8 new fuzzers | Close the environment- and input-shaped blind spots |
 | 4 | W10 check the checks | Audit everything above, and what came before it |
 
 ## Workstreams
 
-### W1. Fresh-seed monkey on every push to main
+### W1. Continuous soak runner on this PC
 
 **Evidence.** About 30 fresh seeds found 6 bugs today. CI's fixed seeds (`seed 1`, asan
-`1-4`) had gone dry.
+`1-4`) had gone dry. Fresh ground needs open-ended running, which is this machine's job, not
+CI's.
 
 **Deliverables**
-- `qa-deep` derives N seeds from the commit SHA, so each push explores new ground. The profiles
-  split as default 500 steps, editor and commands, on both X11 and Wayland (the `seeds` input
-  already exists for dispatch).
-- `tools/qa/run.py triage <out>` replays every finding three times and labels it deterministic or
-  flaky; the replay command goes into the job summary.
-- `tools/run-checks.sh qa-soak [N]` as the local equivalent (default 40 seeds), sized for this
-  16-core machine.
-- A seed ledger (`build/qa-seeds.log`, plus the CI artifact) so a seed is never re-spent
-  unknowingly.
+- **`tools/soak/soak.py`**, a long-running runner that loops forever:
+  1. **Follow `main`.** When `main` moves, check out the new head in its own pinned worktree
+     (`build/wt-soak`, never the live tree), rebuild the debug-with-asserts, release and ASan
+     binaries, and run a quick smoke. A build that does not compile is a finding against that
+     commit, and the runner keeps soaking the last good build.
+  2. **Pick the next job** from a weighted rotation of job types (below). Each job runs with
+     its own seed, its own output directory and a hard timeout.
+  3. **Triage every finding.** Replay it three times on the same build and label it
+     deterministic or flaky. Dedupe by signature (assert text, stack top, QA-STALE region and
+     reason) against the open findings, then file it.
+  4. **Record.** Append to a findings ledger (`build/soak/ledger.jsonl`) holding the commit,
+     job, seed, signature, label, evidence path and a replay command. Write a seed ledger so no
+     seed is re-spent on the same commit.
+- **Job types** (other workstreams add theirs as they land):
+  - monkey default, editor and commands profiles on X11 and Wayland (W1);
+  - monkey on the assert build (W2);
+  - the multi-view edit fuzz (W3);
+  - kill -9 and restart with the data-loss oracle (W4);
+  - the fault sweep (W5);
+  - wake-race (W6);
+  - fractional scale (W7);
+  - libFuzzer targets in long rounds with corpus growth (W8).
+- **A good neighbour on a machine you also work on.**
+  - Everything runs under `nice -n 19` and `ionice -c3`, with a job-count cap (default: half
+    the cores) and a pause file (`build/soak/PAUSE`).
+  - It backs off while the load average from your own work exceeds a threshold, and while a
+    `run-checks` lane holds its lock.
+  - All output stays under `build/soak/`, never on the `/tmp` tmpfs. Evidence is rotated:
+    deterministic findings are kept until fixed, clean runs are deleted, with a disk budget.
+- **Runs as a `systemd --user` service** (`tools/soak/microide-soak.service`): restarts on
+  failure and survives logout. `soak.py status` prints uptime, jobs per hour, findings by
+  label, and the current commit and job.
+- **Reports.**
+  - `soak.py report` writes `build/soak/report.md`: new deterministic findings first, each
+    with its replay command, then flaky ones with their rates, then per-job yield (findings
+    per CPU-hour), so the weighting can follow the yield.
+  - A desktop notification (`notify-send`) when a new deterministic finding appears.
+- **The session loop.** Each work session starts from `soak.py report`. A finding becomes a
+  failing-first test plus its fix, and the ledger entry is marked fixed with the commit. The
+  runner re-checks a fixed signature on later commits and reopens it if it comes back.
 
 **Acceptance**
-- A push runs a disjoint seed set from the previous push.
-- A planted stale-paint defect is found and labelled deterministic by triage.
+- The runner survives 24 h unattended with no crash, no disk growth past its budget, and no
+  noticeable latency in an interactive session alongside it.
+- A planted stale-paint defect on `main` is found, labelled deterministic, deduplicated and
+  reported within a few hours of the commit.
+- Its signature is reported fixed after the revert lands, and reopened if the defect is
+  planted again.
+- `soak.py status` and `report` answer from the ledger alone.
 
-**Size:** S–M.
+**Size:** M–L (the runner); each job type is owned by its workstream.
 
 ### W2. QA on an assert-armed build, with more frame-prep invariants
 
@@ -117,7 +156,7 @@ their own edits. That bug class went unseen for weeks.
   - the dirty buffers' contents.
 - End-of-run oracle: each saved file on disk equals its last saved content, byte for byte,
   including line endings, encoding and final newline.
-- A `kill -9` step at random monkey steps, then relaunch:
+- A `kill -9` step at random monkey steps (a soak job type), then relaunch:
   - every dirty buffer comes back with its content (hot exit and the crash-safety mirror);
   - every saved file is intact;
   - no temp file is left behind.
@@ -184,6 +223,7 @@ to be a GUI one.
   menus) and a monkey wave at `ui.scale` 1.25 and 1.75 on X11, redraw verifier on.
 - The monkey's zoom actions weighted up in one profile so fractional states are reached more
   often.
+- Both run as soak job types (W1); a short version also runs in the lane.
 - Keep `QaFlowRegression/PartialFramesAtAFractionalScaleMatchFullOnesAcrossASplit` as the
   in-process guard and extend its sweep to the bottom panel's top edge and the right pane.
 
@@ -209,7 +249,8 @@ fuzzer generates.
 - `ViewportEditSequenceFuzz`: multi-view TextViewport edits, undo, redo and reload against a
   plain-string reference model (extends `PieceTreeEquivalenceFuzz` up a layer; shares W3's
   verifier).
-- Corpora committed under `tests/fuzz/corpora/`; each runs 60 s in the `fuzz` lane.
+- Corpora committed under `tests/fuzz/corpora/`; each runs 60 s in the `fuzz` lane, and in
+  long rounds on the soak runner (W1), whose new corpus entries are merged back on each session.
 
 **Acceptance**
 - Each target finds a planted bug of its class (a dropped version check, an undo that skips a
@@ -262,7 +303,7 @@ showed a probe passing for the wrong reason until it was strengthened.
 
 | WS | Title | Phase | Status | Commits / evidence |
 |---|---|---|---|---|
-| W1 | Fresh-seed monkey on every push | 1 | not started | |
+| W1 | Continuous soak runner on this PC | 1 | not started | |
 | W4 | Data-loss oracle | 1 | not started | |
 | W5 | Save and persistence fault injection | 1 | not started | |
 | W2 | Assert-armed QA plus prep invariants | 2 | not started | focus-ring assert landed (640f0894c) |
@@ -274,4 +315,5 @@ showed a probe passing for the wrong reason until it was strengthened.
 | W10 | Check the checks | 4 | not started | ubsan guard fixed (43fcca3ed) |
 
 Update a row's status and commits as each lands. A workstream is **done** when its acceptance
-criteria hold and its lane or test is green in CI (`checks` + `qa-deep`) on a push to main.
+criteria hold, its lane or test is green in CI (`checks` + `qa-deep`) on a push to main, and
+its long-running form is a job on the soak runner.

@@ -631,8 +631,9 @@ carries its own gates and coverage.
 ### 8. Safety program: no crash, no lost data
 
 Adopted 2026-11-08, all ten workstreams to be done; detail and tracker in
-[`safety-plan.md`](safety-plan.md). Phase 1 first: the fresh-seed monkey on every
-push to main (W1), a data-loss oracle with kill -9 restarts (W4), and fault
+[`safety-plan.md`](safety-plan.md). Phase 1 first: a continuous soak runner on this
+PC that follows main and runs fresh seeds and every open-ended check forever
+(W1; CI stays the fast, fixed-seed gate), a data-loss oracle with kill -9 restarts (W4), and fault
 injection across every save and persistence write (W5). Then the assert-armed QA
 build, per-view cache invariants and pattern lints (W2, W3, W9); wake-race,
 fractional-scale and sequence-fuzzing coverage (W6-W8); and an audit that every
