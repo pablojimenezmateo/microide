@@ -3815,7 +3815,7 @@ void TestRightClicksUnderAStickyBandActOnTheClickedLine() {
          "lenses should draw above their lines");
   editor::PluginDecorationData lenses;
   lenses.code_lenses.push_back(editor::CodeLensDecoration{
-      .line = static_cast<std::size_t>(line - 1), .text = "2 refs", .command = "refs.show"});
+      .line = static_cast<std::uint32_t>(line - 1), .text = "2 refs", .command = "refs.show"});
   Expect(TestAccess::CurrentProjectState(fixture.shell).EnsurePluginPresentation().decorations.ReplaceForOwnerFile(
              "lens-test", fixture.file, std::move(lenses)),
          "publishing the lens should change the store");
