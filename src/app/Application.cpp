@@ -76,6 +76,13 @@ bool CustomWindowChromeEnabled(SDL_Window* window) {
   return window != nullptr && (SDL_GetWindowFlags(window) & SDL_WINDOW_BORDERLESS) != 0;
 }
 
+RenderPresentation RenderPresentationOf(const workspace::WorkspaceShell::WindowPresentationState& state) {
+  return RenderPresentation{.logical_width = state.logical_width,
+                            .logical_height = state.logical_height,
+                            .scale_x = state.scale_x,
+                            .scale_y = state.scale_y};
+}
+
 std::optional<workspace::WorkspaceShell::WindowPresentationState> CaptureWindowPresentationState(
     SDL_Window* window,
     SDL_Renderer* renderer,
@@ -98,24 +105,26 @@ std::optional<workspace::WorkspaceShell::WindowPresentationState> CaptureWindowP
       util::ComputeWindowPresentation(pixel_width, pixel_height,
                                       SDL_GetWindowDisplayScale(window), ui_scale);
   const SDL_WindowFlags flags = SDL_GetWindowFlags(window);
-  // SDL_LOGICAL_PRESENTATION_STRETCH: window coordinates are layout units times a
-  // factor, with no letterbox offset. ui.scale and the display's pixel density
-  // both live in it; the control channel's `ui` query reports it.
+  // The render scale is exact (app/RenderPresentation.h): window coordinates are
+  // layout units times the scale over the window's pixel density, with no
+  // letterbox offset. ui.scale and the display's density both live in it; the
+  // control channel's `ui` query reports it.
   int window_width = 0;
   int window_height = 0;
   SDL_GetWindowSize(window, &window_width, &window_height);
+  const auto window_per_unit = [](float scale, int window_size, int pixel_size) {
+    return window_size > 0 && pixel_size > 0
+               ? scale * static_cast<float>(window_size) / static_cast<float>(pixel_size)
+               : 1.0f;
+  };
   return workspace::WorkspaceShell::WindowPresentationState{
       .logical_width = presentation.logical_width,
       .logical_height = presentation.logical_height,
       .scale_x = presentation.presentation_scale_x,
       .scale_y = presentation.presentation_scale_y,
       .window_per_unit =
-          SDL_FPoint{presentation.logical_width > 0 && window_width > 0
-                         ? static_cast<float>(window_width) / static_cast<float>(presentation.logical_width)
-                         : 1.0f,
-                     presentation.logical_height > 0 && window_height > 0
-                         ? static_cast<float>(window_height) / static_cast<float>(presentation.logical_height)
-                         : 1.0f},
+          SDL_FPoint{window_per_unit(presentation.presentation_scale_x, window_width, pixel_width),
+                     window_per_unit(presentation.presentation_scale_y, window_height, pixel_height)},
       .chrome =
           workspace::WorkspaceShell::WindowChromeState{
               .custom_enabled = CustomWindowChromeEnabled(window),
@@ -841,7 +850,9 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
   bool scene_texture_ready = false;
   {
     util::PerformanceTrace::Scope scene_texture_scope("Application::EnsureSceneTexture");
-    scene_texture_ready = scene_texture_.Ensure(renderer_, width, height);
+    const auto presentation = workspace_shell_.CurrentWindowPresentationState();
+    scene_texture_ready =
+        presentation.has_value() && scene_texture_.Ensure(renderer_, RenderPresentationOf(*presentation));
   }
 
   workspace::WorkspaceShell::FrameToken frame_token;
@@ -965,9 +976,9 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
     }
 
     SDL_SetRenderClipRect(renderer_, nullptr);
-    if (redraw_verifier_.enabled() && !full_redraw && !dirty_rects.empty()) {
+    if (redraw_verifier_.enabled() && presentation.has_value() && !full_redraw && !dirty_rects.empty()) {
       redraw_verifier_.Verify(
-          renderer_, scene_texture_.texture(), width, height,
+          renderer_, scene_texture_.texture(), RenderPresentationOf(*presentation),
           VerifiedFrameInfo{.clips = dirty_region_analysis.merged_clip_rects,
                             .reason = reason,
                             .frame_index = frame_index_},
@@ -1058,10 +1069,8 @@ bool Application::UpdateRendererPresentation(int* logical_width, int* logical_he
 
   workspace_shell_.SetWindowPresentationState(*presentation);
   ApplyMinimumWindowSize(presentation->window_per_unit);
-  if (!SDL_SetRenderLogicalPresentation(renderer_, presentation->logical_width,
-                                        presentation->logical_height,
-                                        SDL_LOGICAL_PRESENTATION_STRETCH)) {
-    SDL_Log("SDL_SetRenderLogicalPresentation failed: %s", SDL_GetError());
+  if (!ApplyRenderPresentation(renderer_, RenderPresentationOf(*presentation))) {
+    SDL_Log("ApplyRenderPresentation failed: %s", SDL_GetError());
     return false;
   }
 

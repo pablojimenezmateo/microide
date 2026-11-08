@@ -322,43 +322,37 @@ void TestSceneTextureSurvivesScaledLogicalPresentation() {
          "the renderer should report a pixel output size");
 
   // Half-size logical grid: the shape a 2.0 display scale produces.
-  const int logical_width = output_width / 2;
-  const int logical_height = output_height / 2;
-  Expect(SDL_SetRenderLogicalPresentation(renderer, logical_width, logical_height,
-                                          SDL_LOGICAL_PRESENTATION_STRETCH),
-         "the window view should accept a scaled logical presentation");
+  const app::RenderPresentation half{.logical_width = output_width / 2,
+                                     .logical_height = output_height / 2,
+                                     .scale_x = 2.0f,
+                                     .scale_y = 2.0f};
+  Expect(app::ApplyRenderPresentation(renderer, half), "the window view should accept a scaled presentation");
 
   app::SceneTexturePresenter presenter;
-  Expect(presenter.Ensure(renderer, logical_width, logical_height),
+  Expect(presenter.Ensure(renderer, half),
          "the scene texture must be created when the logical size is not the pixel size");
   Expect(presenter.pixel_width() == output_width && presenter.pixel_height() == output_height,
          "the scene texture must be sized in device pixels, not logical units");
 
-  // The target's own view starts with no logical presentation and keeps whatever
-  // it is given across unbind/rebind, so the shell's logical-coordinate drawing
-  // only lands correctly once that view has been mapped.
+  // The target's own view starts unscaled and keeps whatever it is given across
+  // unbind/rebind, so the shell's layout-unit drawing only lands correctly once
+  // that view has been mapped.
   Expect(SDL_SetRenderTarget(renderer, presenter.texture()), "binding the scene target");
   presenter.ApplyRenderTargetPresentation(renderer);
-  int target_logical_width = 0;
-  int target_logical_height = 0;
-  SDL_RendererLogicalPresentation mode = SDL_LOGICAL_PRESENTATION_DISABLED;
-  Expect(SDL_GetRenderLogicalPresentation(renderer, &target_logical_width, &target_logical_height,
-                                          &mode),
-         "the scene target should report its logical presentation");
-  Expect(target_logical_width == logical_width && target_logical_height == logical_height &&
-             mode == SDL_LOGICAL_PRESENTATION_STRETCH,
-         "the scene target must carry the window's logical presentation");
+  float target_scale_x = 0.0f;
+  float target_scale_y = 0.0f;
+  Expect(SDL_GetRenderScale(renderer, &target_scale_x, &target_scale_y), "the scene target reports its scale");
+  Expect(target_scale_x == 2.0f && target_scale_y == 2.0f, "the scene target must carry the window's exact scale");
   Expect(SDL_SetRenderTarget(renderer, nullptr), "unbinding the scene target");
 
   // A UI-scale change moves the logical grid without moving the drawable, so the
   // texture is remapped rather than reallocated — and what it holds is stale.
   presenter.MarkValid();
   SDL_Texture* before = presenter.texture();
-  Expect(presenter.Ensure(renderer, output_width, output_height),
-         "a logical-size change should keep the scene texture usable");
-  Expect(presenter.texture() == before,
-         "a logical-size change must not reallocate a correctly sized drawable");
-  Expect(!presenter.valid(), "a logical-size change must invalidate the retained content");
+  const app::RenderPresentation unscaled{.logical_width = output_width, .logical_height = output_height};
+  Expect(presenter.Ensure(renderer, unscaled), "a scale change should keep the scene texture usable");
+  Expect(presenter.texture() == before, "a scale change must not reallocate a correctly sized drawable");
+  Expect(!presenter.valid(), "a scale change must invalidate the retained content");
 
   presenter.Destroy();
   SDL_DestroyRenderer(renderer);

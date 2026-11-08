@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include <cmath>
+#include <string>
 #include <vector>
 
 #include "util/WindowPresentation.h"
@@ -40,6 +41,25 @@ void TestWindowPresentationSanitizesInvalidScales() {
          "invalid scales should fall back to 1x vertical presentation scale");
 }
 
+// A window that is not a whole number of units at the scale keeps the exact
+// scale, its units rounded up to cover it. Stretched to 819 units, a 1024-pixel
+// window at 1.25 drew at 1.2503, where no whole number of units is a whole number
+// of device pixels and a surface's clip could not be aligned to a partial frame's
+// (QA monkey, qa lane seed 1: the sidebar's text one device column into the
+// editor in partial frames only).
+void TestWindowPresentationKeepsTheExactScaleAtAnyWindowSize() {
+  const auto presentation = ComputeWindowPresentation(1024, 899, 1.0f, 1.25f);
+  Expect(presentation.presentation_scale_x == 1.25f && presentation.presentation_scale_y == 1.25f,
+         "the presentation scale is exactly the requested one (" +
+             std::to_string(presentation.presentation_scale_x) + ")");
+  Expect(presentation.logical_width == 820 && presentation.logical_height == 720,
+         "the units round up to cover the drawable (" + std::to_string(presentation.logical_width) + "x" +
+             std::to_string(presentation.logical_height) + ")");
+  const auto exact = ComputeWindowPresentation(1440, 900, 1.0f, 1.25f);
+  Expect(exact.logical_width == 1152 && exact.logical_height == 720,
+         "a window that is a whole number of units is that many");
+}
+
 // The window's minimum keeps the layout's floor at any ui.scale: at scale 3 a
 // 640x400 window is a 213x133 layout, where the QA monkey found the chrome laid
 // out off the window and over itself. Capped to the usable display area.
@@ -65,6 +85,8 @@ void RegisterWindowPresentationTests(std::vector<TestCase>& tests) {
           TestWindowPresentationUsesDisplayScaleForLogicalSize);
   AddTest(tests, "WindowPresentation/AppliesUiScaleMultiplier",
           TestWindowPresentationAppliesUiScaleMultiplier);
+  AddTest(tests, "WindowPresentation/KeepsTheExactScaleAtAnyWindowSize",
+          TestWindowPresentationKeepsTheExactScaleAtAnyWindowSize);
   AddTest(tests, "WindowPresentation/SanitizesInvalidScales",
           TestWindowPresentationSanitizesInvalidScales);
   AddTest(tests, "WindowPresentation/MinimumWindowSizeKeepsTheLayoutFloorAtAnyScale",

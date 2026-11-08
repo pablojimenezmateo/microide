@@ -56,8 +56,8 @@ void RedrawVerifier::Configure(bool enabled) {
   }
 }
 
-bool RedrawVerifier::BindReference(SDL_Renderer* renderer, int logical_width, int logical_height) {
-  if (!reference_.Ensure(renderer, logical_width, logical_height) ||
+bool RedrawVerifier::BindReference(SDL_Renderer* renderer, const RenderPresentation& presentation) {
+  if (!reference_.Ensure(renderer, presentation) ||
       !SDL_SetRenderTarget(renderer, reference_.texture())) {
     return false;
   }

@@ -2,8 +2,8 @@
 
 namespace microide::app {
 
-bool SceneTexturePresenter::Ensure(SDL_Renderer* renderer, int logical_width, int logical_height) {
-  if (renderer == nullptr || logical_width <= 0 || logical_height <= 0) {
+bool SceneTexturePresenter::Ensure(SDL_Renderer* renderer, const RenderPresentation& presentation) {
+  if (renderer == nullptr || presentation.logical_width <= 0 || presentation.logical_height <= 0) {
     return false;
   }
 
@@ -21,12 +21,11 @@ bool SceneTexturePresenter::Ensure(SDL_Renderer* renderer, int logical_width, in
   }
 
   if (texture_ != nullptr && pixel_width_ == output_width && pixel_height_ == output_height) {
-    if (logical_width_ != logical_width || logical_height_ != logical_height) {
+    if (presentation_ != presentation) {
       // Same drawable, different logical grid (a UI-scale change). The texture is
       // still the right size in pixels, so re-map rather than reallocate -- but
       // what it holds was laid out for the old grid and cannot be re-presented.
-      logical_width_ = logical_width;
-      logical_height_ = logical_height;
+      presentation_ = presentation;
       presentation_applied_ = false;
       valid_ = false;
     }
@@ -64,8 +63,7 @@ bool SceneTexturePresenter::Ensure(SDL_Renderer* renderer, int logical_width, in
   SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_NONE);
   pixel_width_ = output_width;
   pixel_height_ = output_height;
-  logical_width_ = logical_width;
-  logical_height_ = logical_height;
+  presentation_ = presentation;
   presentation_applied_ = false;
   valid_ = false;
   return true;
@@ -82,9 +80,8 @@ void SceneTexturePresenter::ApplyRenderTargetPresentation(SDL_Renderer* renderer
   // device pixels exactly as it would have landed on the window's -- and what
   // makes re-presenting the texture over the full logical rect a 1:1 texel blit
   // rather than a resample.
-  if (!SDL_SetRenderLogicalPresentation(renderer, logical_width_, logical_height_,
-                                        SDL_LOGICAL_PRESENTATION_STRETCH)) {
-    SDL_Log("SDL_SetRenderLogicalPresentation(scene texture) failed: %s", SDL_GetError());
+  if (!ApplyRenderPresentation(renderer, presentation_)) {
+    SDL_Log("ApplyRenderPresentation(scene texture) failed: %s", SDL_GetError());
     return;
   }
   presentation_applied_ = true;
@@ -97,8 +94,7 @@ void SceneTexturePresenter::Destroy() {
   }
   pixel_width_ = 0;
   pixel_height_ = 0;
-  logical_width_ = 0;
-  logical_height_ = 0;
+  presentation_ = RenderPresentation{};
   presentation_applied_ = false;
   valid_ = false;
 }

@@ -27,15 +27,18 @@ WindowPresentation ComputeWindowPresentation(int pixel_width,
 
   const float requested_scale =
       std::max(kMinScale, presentation.display_scale * presentation.ui_scale);
-  presentation.logical_width = std::max(
-      1, static_cast<int>(std::lround(static_cast<float>(presentation.pixel_width) / requested_scale)));
-  presentation.logical_height =
-      std::max(1, static_cast<int>(std::lround(static_cast<float>(presentation.pixel_height) /
-                                               requested_scale)));
-  presentation.presentation_scale_x =
-      static_cast<float>(presentation.pixel_width) / static_cast<float>(presentation.logical_width);
-  presentation.presentation_scale_y = static_cast<float>(presentation.pixel_height) /
-                                      static_cast<float>(presentation.logical_height);
+  // The units rounded up, and the scale exactly the requested one: the layout
+  // then overhangs the drawable by under one unit, which its edge clips, instead
+  // of being stretched to fit -- a stretch to a whole number of units made the
+  // scale pixels / units (1024 / 819 = 1.2503 for 1.25), at which no whole number
+  // of units is a whole number of device pixels (app/RenderPresentation.h).
+  const auto units = [requested_scale](int pixels) {
+    return std::max(1, static_cast<int>(std::ceil(static_cast<float>(pixels) / requested_scale - 1e-3f)));
+  };
+  presentation.logical_width = units(presentation.pixel_width);
+  presentation.logical_height = units(presentation.pixel_height);
+  presentation.presentation_scale_x = requested_scale;
+  presentation.presentation_scale_y = requested_scale;
   return presentation;
 }
 

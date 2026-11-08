@@ -2,6 +2,8 @@
 
 #include <SDL3/SDL.h>
 
+#include "app/RenderPresentation.h"
+
 namespace microide::app {
 
 // Owns the retained full-window "scene" render-target texture that the editor
@@ -27,12 +29,12 @@ class SceneTexturePresenter {
   SceneTexturePresenter& operator=(const SceneTexturePresenter&) = delete;
 
   // Ensure a texture sized to the renderer's pixel output exists and is mapped
-  // for the current (logical_width, logical_height) presentation. Returns false
+  // for the current presentation. Returns false
   // (and renders should fall back to direct-to-window) when the output size
   // cannot be read, allocation fails, or a resize is still settling. A freshly
   // (re)allocated texture starts invalid; so does one whose logical grid changed
   // under it, since what it holds was laid out for the old one.
-  bool Ensure(SDL_Renderer* renderer, int logical_width, int logical_height);
+  bool Ensure(SDL_Renderer* renderer, const RenderPresentation& presentation);
 
   // Call immediately after binding texture() as the render target. Copies the
   // window's logical presentation onto the target's own view so the shell's
@@ -69,8 +71,7 @@ class SceneTexturePresenter {
   SDL_Texture* texture_ = nullptr;
   int pixel_width_ = 0;
   int pixel_height_ = 0;
-  int logical_width_ = 0;
-  int logical_height_ = 0;
+  RenderPresentation presentation_{};
   bool presentation_applied_ = false;
   bool valid_ = false;
   // Zero means "no recent resize"; the texture may (re)allocate immediately.

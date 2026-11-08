@@ -76,15 +76,14 @@ class RedrawVerifier {
   template <typename RenderFull>
   std::optional<render::PixelDiffResult> Verify(SDL_Renderer* renderer,
                                                 SDL_Texture* scene,
-                                                int logical_width,
-                                                int logical_height,
+                                                const RenderPresentation& presentation,
                                                 const VerifiedFrameInfo& frame,
                                                 RenderFull&& render_full) {
     if (!enabled_ || renderer == nullptr || scene == nullptr) {
       return std::nullopt;
     }
     SDL_Surface* retained = SDL_RenderReadPixels(renderer, nullptr);
-    if (retained == nullptr || !BindReference(renderer, logical_width, logical_height)) {
+    if (retained == nullptr || !BindReference(renderer, presentation)) {
       SDL_DestroySurface(retained);
       SDL_SetRenderTarget(renderer, scene);
       return std::nullopt;
@@ -101,7 +100,7 @@ class RedrawVerifier {
   const std::string& last_report() const { return last_report_; }
 
  private:
-  bool BindReference(SDL_Renderer* renderer, int logical_width, int logical_height);
+  bool BindReference(SDL_Renderer* renderer, const RenderPresentation& presentation);
   // Reads the reference back, diffs it against `retained` (consumed), rebinds
   // `scene`, and logs a stale frame.
   std::optional<render::PixelDiffResult> CompareWithReference(SDL_Renderer* renderer,
