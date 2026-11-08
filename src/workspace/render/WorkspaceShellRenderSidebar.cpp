@@ -520,7 +520,9 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
           panel_focused && workflow.focus_field == CommitWorkflowFocusField::Subject;
       const bool body_focused =
           panel_focused && workflow.focus_field == CommitWorkflowFocusField::Body;
-      const bool caret_on = frame_state_.caret_visible;
+      // The blink phase applies only while a commit field owns the caret (QA
+      // monkey, seed 607: under the Go to Line prompt the body kept a caret).
+      const bool caret_on = frame_state_.caret_visible && sidebar_vm.commit_field_owns_caret;
       workflow.caret_rect = SDL_FRect{};
       const int body_rows = kCommitWorkflowBodyRows;
       // Single source of truth for the panel geometry; GitSidebarCommitWorkflowHeight reserves

@@ -1294,6 +1294,7 @@
         .scroll.visible_rows;
   }
   static void ResetCaretBlink(WorkspaceShell& shell) { shell.ResetCaretBlink(); }
+  static Uint64 CaretBlinkIntervalMs(const WorkspaceShell& shell) { return shell.CaretBlinkIntervalMs(); }
   static void SetCaretBlinkEpochMs(WorkspaceShell& shell, Uint64 epoch_ms) {
     shell.caret_blink_epoch_ms_ = epoch_ms;
   }

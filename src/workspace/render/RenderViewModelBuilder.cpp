@@ -1358,6 +1358,9 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
       .project_search_empty_is_error = !project_search.error.empty(),
       .git_sidebar = git_sidebar,
       .git_sidebar_lines = git_sidebar_lines,
+      .commit_field_owns_caret =
+          context_.text_input.active_surface == TextInputSurface::CommitSubject ||
+          context_.text_input.active_surface == TextInputSurface::CommitBody,
       .project_state = const_cast<ProjectWorkspaceState*>(&context_.current_project_state),
   };
 }

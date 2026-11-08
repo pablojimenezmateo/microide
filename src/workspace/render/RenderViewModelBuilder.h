@@ -243,6 +243,11 @@ struct SidebarSurfaceViewModel {
   // render TU, hit-testing, and selection all consume one list. Points into the same
   // cached presentation as `git_sidebar`; null unless `git_sidebar` is set.
   const std::vector<GitSidebarLine>* git_sidebar_lines = nullptr;
+  // The commit message fields hold the keyboard (the text-input surface is the
+  // subject or the body). A field draws its blinking caret only then: the blink
+  // repaints the caret of whichever input owns it, so a field merely marked
+  // focused under a modal prompt painted its caret in one phase and kept it.
+  bool commit_field_owns_caret = false;
   ProjectWorkspaceState* project_state = nullptr;
 };
 

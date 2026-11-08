@@ -3589,6 +3589,75 @@ void TestTypingUnderAStickyBandRepaintsTheTypedRow() {
                       "typing on line " + std::to_string(line) + " under the sticky band");
 }
 
+// QA monkey (seed 607): a click on the commit draft's Body field reached it through
+// the Go to Line prompt -- the body's hit-test ran before any modal check -- and
+// focused it while the prompt kept the keyboard. The field then drew its caret by
+// the global blink phase, but each blink repaints only the caret of the input that
+// owns the keyboard (the prompt's), so the body's caret stayed on screen through
+// every later phase. Two fixes, two checks: the click is refused, and a field that
+// does not own the keyboard draws no caret.
+void TestACommitFieldUnderAModalPromptTakesNoClickAndPaintsNoCaret() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  constexpr int kWidth = 1280;
+  constexpr int kHeight = 720;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  WriteFile(root / "main.cpp", "int main() { return 0; }\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "seed commit", "seed body");
+  WriteFile(root / "main.cpp", "int main() { return 1; }\n");
+  WorkspaceShell shell;
+  SoftwareCanvas canvas{kWidth, kHeight};
+  Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the repo should open");
+  TestAccess::SetWindowSize(shell, kWidth, kHeight);
+  TestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1), "the repo should show its modified file");
+  Expect(TestAccess::OpenCommitWorkflow(shell), "the commit draft should open");
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  Expect(TestAccess::CurrentTextInputSurface(shell) == workspace::TextInputSurface::CommitSubject,
+         "the subject should hold the keyboard");
+  const SDL_FRect body = TestAccess::CommitWorkflow(shell).body_field_rect;
+  Expect(body.w > 0.0f, "the body field should be laid out");
+
+  // A modal prompt over the draft: a click on the body is the prompt's to refuse.
+  TestAccess::OpenPromptSurfaceForTest(shell, workspace::PromptSurfaceState::Action::CreateFile,
+                                       workspace::PromptSurfaceState::Kind::TextInput, root, "name");
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  Expect(TestAccess::CurrentTextInputSurface(shell) == workspace::TextInputSurface::PromptInput,
+         "the prompt should hold the keyboard");
+  const float x = body.x + 20.0f;
+  const float y = body.y + body.h * 0.5f;
+  (void)DispatchEvents(shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
+                               MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)});
+  Expect(TestAccess::CommitWorkflow(shell).focus_field == workspace::CommitWorkflowFocusField::Subject,
+         "a click on the body behind the modal prompt should not focus the body");
+
+  // A focused field that does not own the keyboard (the draft's body, focused,
+  // under the prompt) draws no caret in any blink phase.
+  TestAccess::CommitWorkflow(shell).focus_field = workspace::CommitWorkflowFocusField::Body;
+  TestAccess::SetFocusSidebar(shell);
+  const Uint64 now = SDL_GetTicks();
+  TestAccess::SetCaretBlinkEpochMs(shell, now);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  Expect(TestAccess::CurrentTextInputSurface(shell) == workspace::TextInputSurface::PromptInput,
+         "the prompt should still hold the keyboard");
+  TestAccess::SetCaretBlinkEpochMs(shell, now - TestAccess::CaretBlinkIntervalMs(shell) - 50);
+  const std::optional<SDL_FRect> blink = TestAccess::CaretDirtyRect(shell);
+  Expect(blink.has_value(), "the prompt's caret should blink");
+  if (!blink.has_value()) {
+    return;
+  }
+  const auto diff = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight, workspace::RenderInvalidation{.full = false, .rects = {*blink}});
+  Expect(diff.identical(), "a blink under the prompt should leave no caret in the commit body; " +
+                               DescribePixelDiff(diff));
+}
+
 // Hovering a merge toolbar button lights it, and the frame shows it: the buttons
 // read the pointer at paint time, but merge hover tracking knew only conflict
 // regions, so moving onto Save requested no repaint of it and the next partial
@@ -4144,6 +4213,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestAFocusMoveByTheMaximizedPanelRulePaintsTheRingInItsFrame);
   AddTest(tests, "QaFlowRegression/TypingUnderAStickyBandRepaintsTheTypedRow",
           TestTypingUnderAStickyBandRepaintsTheTypedRow);
+  AddTest(tests, "QaFlowRegression/ACommitFieldUnderAModalPromptTakesNoClickAndPaintsNoCaret",
+          TestACommitFieldUnderAModalPromptTakesNoClickAndPaintsNoCaret);
   AddTest(tests, "QaFlowRegression/ClosingAMenuOverAFindToggleRepaintsItsHover",
           TestClosingAMenuOverAFindToggleRepaintsItsHover);
 }

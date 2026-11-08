@@ -293,9 +293,14 @@ bool WorkspaceShell::HandleSingleLineInputMouseDown(const SDL_Event& event,
 
   // The multi-line commit body is not a single-line surface, so hit-test it against its
   // render-cached rect here (click positions the caret; double/triple-click select the
-  // word/line, matching the editor).
+  // word/line, matching the editor). Under the same modals FindSingleLineInputHit
+  // honours: behind a modal prompt or picker the body took the click, focus and a
+  // caret while the modal kept the keyboard (QA monkey, seed 607).
+  const OverlayState& overlay = context_.current_project_state.overlay;
+  const bool modal_up = context_.prompts.surface_visible ||
+                        (overlay.visible && OverlayIsModal(overlay.mode));
   if (auto& workflow = context_.current_project_state.sidebar.git.commit_workflow;
-      context_.current_project_state.sidebar.visible &&
+      !modal_up && context_.current_project_state.sidebar.visible &&
       ActiveSidebarMode() == SidebarMode::Git && workflow.open &&
       workflow.body_field_rect.w > 0.0f &&
       Contains(workflow.body_field_rect, static_cast<float>(event.button.x),

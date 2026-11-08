@@ -91,6 +91,16 @@ inline bool OverlayIsQuickOpen(OverlayMode mode) {
   }
 }
 
+// True for an overlay that owns the pointer: a click outside it only dismisses it
+// (WorkspaceChromeMouseCoordinator::HandleOverlayButtonDown), so nothing beneath
+// may take that click. Everything but the non-modal pieces of the editor -- the
+// find/replace widget (a click outside goes to the editor) and the completion list
+// (a click elsewhere closes it and still lands).
+inline bool OverlayIsModal(OverlayMode mode) {
+  return mode != OverlayMode::BufferSearch && mode != OverlayMode::BufferReplace &&
+         mode != OverlayMode::Completion;
+}
+
 // Vertical offset (from the overlay card top) of the query field row. Shared by
 // RenderViewModelBuilder and the click hit-test so a field can never be painted
 // somewhere the click does not land.
