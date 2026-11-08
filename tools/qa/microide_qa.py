@@ -1697,7 +1697,12 @@ class App:
             shown_label = element.get("label", "")
             return shown_label == label or (shown_label.endswith("…") and label.startswith(shown_label[:-1]))
         out: list[tuple[str, str]] = []
-        for tab in tabs:
+        # A strip that overflows shows some of its tabs and an "<N"/"N>" chip for
+        # the rest: a terminal scrolled out of it is named by no shown tab, by
+        # design (the monkey's fifteen terminals). Only an unscrolled strip owes a
+        # tab to every terminal; the highlight check below holds either way.
+        scrolled = any(e.get("name", "").startswith("button:panel-tabs/more-") for e in ui.get("elements", []))
+        for tab in [] if scrolled else tabs:
             label = label_of(tab)
             if label and not any(names(e, label) for e in shown):
                 out.append(("state", f"terminal {tab.get('tab')} is {label!r}, and no panel tab names it "
