@@ -22,6 +22,8 @@
 #include <vector>
 
 #include "WorkspaceShellEventHelpers.h"
+#include "app/DirtyRegionPolicy.h"
+#include "render/ScopedRenderClip.h"
 #include "support/GitSidebarWait.h"
 #include "support/MockDapAdapter.h"
 #include "support/ProjectSearchWait.h"
@@ -3741,6 +3743,136 @@ void TestRightClicksUnderAStickyBandActOnTheClickedLine() {
   }
 }
 
+// TD-2026-11-08-434 item 1 (QA monkey, seed 602): at a 1.75x UI scale a partial
+// frame left the device column at a split divider's edge unlike a full frame. The
+// unit harness never painted at a fractional scale, so nothing could see that
+// class. This paints the way Application::Render does -- a logical presentation
+// at 1.75x, each damage rect padded for the scale, aligned to device pixels and
+// painted with its device hint -- and sweeps damage rects across the divider of a
+// split, at window widths that put the divider on different fractions.
+void TestPartialFramesAtAFractionalScaleMatchFullOnesAcrossASplit() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  constexpr int kHeight = 400;
+  std::string body;
+  for (int i = 0; i < 30; ++i) {
+    body += "line " + std::to_string(i) + " with enough text to reach the divider of a split pane\n";
+  }
+  // The two scales whose device grid is 4 logical px (AlignClipToDevicePixels'
+  // coarsest), at widths that put the divider on different fractions.
+  for (const float kScale : {1.25f, 1.75f}) {
+  for (const int width : {960, 963}) {
+    TemporaryDirectory temp_dir;
+    const std::filesystem::path root = temp_dir.path() / "project";
+    WriteFile(root / "split.txt", body);
+    WorkspaceShell shell;
+    Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the project should open");
+    TestAccess::SetWindowSize(shell, width, kHeight);
+    TestAccess::OpenSingleEditorTab(shell, root / "split.txt");
+    TestAccess::SetFocusEditor(shell);
+    (void)DispatchEvents(shell, {KeyDownEvent(SDLK_BACKSLASH, SDL_KMOD_CTRL)});
+    // Seed 602's state: the light theme, and a find widget whose card straddles
+    // the divider, the pointer on its Close button.
+    Expect(TestAccess::ExecuteCommandLine(shell, "toggle-theme"), "the theme should toggle");
+    Expect(TestAccess::ExecuteCommandLine(shell, "search line"), "the find widget should open");
+    const int device_w = static_cast<int>(std::lround(width * kScale));
+    const int device_h = static_cast<int>(std::lround(kHeight * kScale));
+    SoftwareCanvas canvas{device_w, device_h};
+    Expect(SDL_SetRenderLogicalPresentation(canvas.renderer(), width, kHeight,
+                                            SDL_LOGICAL_PRESENTATION_STRETCH),
+           "the canvas should take a 1.75x presentation");
+    // As Application tells it: glyphs rasterize at the device scale.
+    shell.SetWindowPresentationState(WorkspaceShell::WindowPresentationState{
+        .logical_width = width, .logical_height = kHeight, .scale_x = kScale, .scale_y = kScale});
+    const auto pin = [&] { TestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+    pin();
+    shell.Render(canvas.renderer(), width, kHeight);
+    (void)shell.ConsumePendingRenderInvalidation();
+    const util::JsonValue ui = TestAccess::ControlUi(shell);
+    const auto& editors = ui["editors"].AsArray();
+    Expect(editors.size() == 2, "the split should show two panes");
+    if (editors.size() != 2) {
+      continue;
+    }
+    const auto& left = editors[0]["rect"].AsArray();
+    const float divider_x = static_cast<float>(left[0].AsInt() + left[2].AsInt());
+    const workspace::FindWidgetLayout fw = TestAccess::FindWidgetControls(shell, false);
+    (void)DispatchEvents(shell, {MouseMotionEvent(fw.close_button.x + fw.close_button.w / 2.0f,
+                                                  fw.close_button.y + fw.close_button.h / 2.0f)});
+    pin();
+    shell.Render(canvas.renderer(), width, kHeight);
+    (void)shell.ConsumePendingRenderInvalidation();
+    const render::TextClipPadding padding =
+        app::PadClipForPresentationScale(shell.PartialRedrawClipPadding(), kScale, kScale);
+    // Across the divider, and across the sidebar's edge (a surface boundary, where
+    // the dirty hint decides what paints at all).
+    const float sidebar_edge_x = static_cast<float>(left[0].AsInt());
+    for (const float edge_x : {divider_x, sidebar_edge_x}) {
+    for (float dx = -12.0f; dx <= 12.0f; dx += 1.5f) {
+      for (const float w : {3.0f, 40.0f, 300.0f}) {
+        const SDL_FRect damage{edge_x + dx - w, 60.0f, w, 250.0f};
+        pin();
+        const workspace::WorkspaceShell::FrameToken token =
+            shell.PrepareFrameOnce(canvas.renderer(), width, kHeight);
+        (void)shell.ConsumePendingRenderInvalidation();
+        const SDL_Rect clip = render::AlignClipToDevicePixels(
+            canvas.renderer(), InflateClipRect(damage, padding, width, kHeight));
+        SDL_SetRenderClipRect(canvas.renderer(), &clip);
+        shell.RenderClip(token, canvas.renderer(), width, kHeight, app::DeviceClipHint(clip, kScale, kScale));
+        SDL_SetRenderClipRect(canvas.renderer(), nullptr);
+        SDL_FlushRenderer(canvas.renderer());
+        SDL_Surface* retained = SDL_DuplicateSurface(canvas.surface());
+        pin();
+        shell.Render(canvas.renderer(), width, kHeight);
+        (void)shell.ConsumePendingRenderInvalidation();
+        SDL_FlushRenderer(canvas.renderer());
+        // Solid differences only. SDL's SOFTWARE renderer re-samples a scaled glyph
+        // copy that a clip cuts (it shifts the source rect), so a glyph straddling a
+        // clip edge differs by a unit or two at a fractional scale -- noise this
+        // canvas adds and the app's GPU renderer (a scissor) does not. Seed 602's
+        // seam was a colour off by 20.
+        SDL_Surface* reference = SDL_ConvertSurface(canvas.surface(), retained->format);
+        int solid = 0;
+        int first_x = -1;
+        int first_y = -1;
+        for (int y = 0; y < retained->h && reference != nullptr; ++y) {
+          const auto* a = static_cast<const std::uint8_t*>(retained->pixels) + y * retained->pitch;
+          const auto* b = static_cast<const std::uint8_t*>(reference->pixels) + y * reference->pitch;
+          for (int x = 0; x < retained->w * 4; ++x) {
+            if (std::abs(static_cast<int>(a[x]) - static_cast<int>(b[x])) > 8) {
+              if (solid++ == 0) {
+                first_x = x / 4;
+                first_y = y;
+              }
+              x += 3 - (x % 4);
+            }
+          }
+        }
+        SDL_DestroySurface(reference);
+        const render::PixelDiffResult diff = DiffSurfaces(retained, canvas.surface());
+        if (const char* dump = std::getenv("MICROIDE_TEST_DUMP_DIFF"); dump != nullptr && solid != 0) {
+          SDL_SaveBMP(retained, (std::string(dump) + "/frac-retained.bmp").c_str());
+          SDL_SaveBMP(canvas.surface(), (std::string(dump) + "/frac-reference.bmp").c_str());
+        }
+        SDL_DestroySurface(retained);
+        Expect(solid == 0, "width " + std::to_string(width) + ", damage x " +
+                               std::to_string(damage.x) + " w " + std::to_string(w) +
+                               " (divider at " + std::to_string(divider_x) +
+                               "): a partial frame should paint what a full one does; " +
+                               std::to_string(solid) + " pixels differ by colour, first at " +
+                               std::to_string(first_x) + "," + std::to_string(first_y) +
+                               " (" + DescribePixelDiff(diff) + " in all)");
+        if (solid != 0) {
+          return;
+        }
+      }
+    }
+  }
+  }
+  }
+}
+
 // Hovering a merge toolbar button lights it, and the frame shows it: the buttons
 // read the pointer at paint time, but merge hover tracking knew only conflict
 // regions, so moving onto Save requested no repaint of it and the next partial
@@ -4300,6 +4432,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestACommitFieldUnderAModalPromptTakesNoClickAndPaintsNoCaret);
   AddTest(tests, "QaFlowRegression/RightClicksUnderAStickyBandActOnTheClickedLine",
           TestRightClicksUnderAStickyBandActOnTheClickedLine);
+  AddTest(tests, "QaFlowRegression/PartialFramesAtAFractionalScaleMatchFullOnesAcrossASplit",
+          TestPartialFramesAtAFractionalScaleMatchFullOnesAcrossASplit);
   AddTest(tests, "QaFlowRegression/ClosingAMenuOverAFindToggleRepaintsItsHover",
           TestClosingAMenuOverAFindToggleRepaintsItsHover);
 }
