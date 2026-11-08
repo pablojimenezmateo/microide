@@ -182,6 +182,40 @@ The existing oracles (crash, stale paint, sanitizer reports, state oracle, expec
 - **Gaps:** the weekly report lists the least-reached code and commands, as input for new
   profiles and actions.
 
+#### W1.7 The whole surface, inventoried and covered
+
+"As much surface as possible" has to be measurable, so the target is an inventory, not a
+feeling.
+
+- **An inventory generated from the app** wherever possible, so it cannot drift:
+  - every registered command;
+  - every keybinding, every menu and context-menu item, and every Settings key;
+  - every element kind and name the `ui` query reports;
+  - every overlay mode, sidebar view, panel content and tab kind;
+  - every control-channel command;
+  - the language and file-type registry.
+
+  Exported by a `surface` control query; `tools/soak/surface.py` diffs it per commit, so a new
+  feature appears as uncovered the day it lands. A hand-kept list (`tools/soak/surface-extra.toml`)
+  covers what cannot be enumerated, each item with an owner: external events, plugin APIs and
+  remote operations.
+- **Coverage at three depths.**
+  - *Reached:* every item exercised at least once, by the monkey or a checking QA flow. The
+    target is 100%, and an item nothing reaches is a finding against the monkey.
+  - *Reached in context:* each action in each state it applies to, pairwise over the W1.2 state
+    signature × action. For example, `cut` with and without a selection, in an editor, a
+    compare pane, a merge result and a read-only buffer.
+  - *Code:* gcov line and branch coverage from a periodic instrumented job. Every unreached
+    branch is either targeted next or explained.
+- **A weekly gap report:** items never reached, items reached only in their default state, and
+  the least-covered files. Each gap becomes a new action, profile, fixture or external-world
+  event.
+- **Nothing uncovered by accident.** Surface the monkey cannot drive from inside (native OS
+  dialogs, IME candidate windows, suspend and resume, display hotplug, drags from other apps,
+  clipboard set by other apps) gets either a control-channel hook that injects the event the OS
+  would deliver (as `pointer` and `key` do for Wayland) or an entry in an exclusion list with
+  its reason and the test that covers it instead.
+
 **Acceptance**
 - The runner survives 24 h unattended, with no crash, no disk growth past its budget, and no
   noticeable latency alongside interactive work.
@@ -189,8 +223,11 @@ The existing oracles (crash, stale paint, sanitizer reports, state oracle, expec
   minimised to fewer than 20 actions, deduplicated, and handed over with a `FINDING.md`
   within a few hours.
 - After the revert lands they are marked verified, and they reopen if planted again.
-- State and command coverage rise over a week and are reported; command coverage reaches all
-  registered commands in at least one state each.
+- State and command coverage rise over a week and are reported.
+- Every inventoried item is reached, or is on the exclusion list with its reason and covering
+  test.
+- Pairwise state × action coverage and gcov branch coverage are reported per commit and do not
+  regress.
 
 **Size:** L, the largest workstream and the first. It is built incrementally: the runner and
 findings ledger first, then minimisation and `FINDING.md`, then coverage steering, then
@@ -402,6 +439,7 @@ showed a probe passing for the wrong reason until it was strengthened.
 | W1.3 | Per-step oracles (liveness, latency, leaks, log, undo algebra) | 2 | not started | |
 | W1.4 | Builds, display, fixtures and profiles matrix | 3 | not started | |
 | W1.6 | Monkey coverage and yield measurement | 3 | not started | |
+| W1.7 | Surface inventory, 100% reached, pairwise and gcov depth, exclusions | 1–3 | not started | |
 | W4 | Data-loss oracle | 1 | not started | |
 | W5 | Save and persistence fault injection | 1 | not started | |
 | W2 | Assert-armed QA plus prep invariants | 2 | not started | focus-ring assert landed (640f0894c) |
