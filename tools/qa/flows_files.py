@@ -400,6 +400,33 @@ def flow_revert_file(app: q.App) -> None:
     app.expect(read(app, "revert/notes.txt") == "theirs\n", "the disk is untouched")
 
 
+def flow_save_round_trip(app: q.App) -> None:
+    """The bytes on disk are the buffer's (the data-loss oracle, safety-plan W4):
+    after typing and Ctrl+S, and after Save All over a CRLF file and a file with
+    a byte order mark, every clean document's file holds exactly what the
+    `documents` query says a save writes -- line endings and the mark included.
+    tools/negative-controls/save-drops-a-byte.patch must fail this."""
+    import monkey_oracles as mo
+    write(app, "qa-crlf.txt", "first\r\nsecond\r\n")
+    (app.project / "qa-bom.txt").write_bytes(b"\xef\xbb\xbfmarked\n")
+    open_file(app, "src/main.cpp")
+    app.type("int saved_here = 1;")
+    app.key("ctrl+s")
+    step(app, "Ctrl+S")
+    for name in ("qa-crlf.txt", "qa-bom.txt"):
+        open_file(app, name)
+        app.key("End")
+        app.type(" more")
+    app.send("save-all")
+    step(app, "Save All")
+    oracle = mo.DataOracle(app)
+    docs = oracle.documents()
+    app.expect(len([d for d in docs if not d.get("dirty")]) >= 3,
+               f"the three saved files are clean ({[(d.get('title'), d.get('dirty')) for d in docs]})")
+    for kind, message in oracle.check_clean():
+        app.expect(False, message)
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "file-formats": flow_file_formats,
     "file-vanish": flow_file_vanish,
@@ -408,4 +435,5 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "untitled-numbering": flow_untitled_numbering,
     "save-all": flow_save_all,
     "revert-file": flow_revert_file,
+    "save-round-trip": flow_save_round_trip,
 }
