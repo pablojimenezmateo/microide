@@ -180,6 +180,11 @@ def flow_plugin_api(app: q.App) -> None:
     step(app, "confirm a sidebar row", 0.3)
     before = _seen(app)
     app.send("sidebar-show", "qa-api")
+    # Shown again, the view asks its provider for the rows anew and lists none
+    # until the answer lands: wait for them, as on the first show. The xdotool
+    # driver's delays had always covered the gap.
+    app.wait_until(lambda: any(e["name"] == "row:qa-api/Root" for e in app.elements("row")), 5.0,
+                   "the plugin sidebar's rows, shown again")
     app.click_named("row:qa-api/Root")
     app.key("Left")
     _bumped(app, "toggle", before, "Left on the root to collapse it")
