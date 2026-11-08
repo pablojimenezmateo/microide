@@ -570,6 +570,7 @@ class Monkey:
         self.undo = mo.UndoAlgebra(app, random.Random(seed ^ 0x0DD))
         self.resources = mo.ResourceOracle(app)
         self.liveness = mo.Liveness(app)
+        self.idle = mo.IdleOracle(app)
         self.new_states = 0
         self.new_transitions = 0
 
@@ -1017,6 +1018,8 @@ class Monkey:
             self._report(label, self.undo.check())
         if index % 50 == 0:
             self._report(label, self.resources.check())
+        if index % 150 == 149:
+            self._report(label, self.idle.check())
 
     def _final_oracles(self) -> None:
         if not self.app.alive():

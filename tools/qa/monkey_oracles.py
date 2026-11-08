@@ -269,3 +269,48 @@ class Liveness:
             self.reported.add(what)
             return [("latency", f"{what} took {seconds:.2f}s to answer (budget {self.budget:.1f}s)")]
         return []
+
+
+class IdleOracle:
+    """After a quiet second, the app's main thread sleeps: voluntary wakes per
+    second of the thread named `microide` (its main thread) within a budget.
+    Measured idle under Xvfb with the caret blinking: 40-60/s (2026-11-08); a
+    busy loop or a timer firing per millisecond is thousands. Involuntary
+    switches are left out: they count the machine's load, not the app."""
+
+    BUDGET_PER_SECOND = 250.0
+
+    def __init__(self, app: q.App):
+        self.app = app
+        self.reported = False
+
+    def _main_thread_wakes(self) -> int | None:
+        proc = self.app.proc
+        if proc is None or proc.poll() is not None:
+            return None
+        try:
+            status = Path(f"/proc/{proc.pid}/task/{proc.pid}/status").read_text()
+        except OSError:
+            return None
+        for line in status.splitlines():
+            if line.startswith("voluntary_ctxt_switches:"):
+                return int(line.split()[1])
+        return None
+
+    def check(self) -> list[tuple[str, str]]:
+        if self.reported:
+            return []
+        time.sleep(1.0 * q.SLOW_FACTOR)
+        before = self._main_thread_wakes()
+        window = 1.0 * q.SLOW_FACTOR
+        time.sleep(window)
+        after = self._main_thread_wakes()
+        if before is None or after is None:
+            return []
+        rate = (after - before) / window
+        if rate > self.BUDGET_PER_SECOND * max(1.0, q.SLOW_FACTOR):
+            self.reported = True
+            return [("idle", f"the main thread woke {rate:.0f} times a second while the app was idle "
+                             f"(budget {self.BUDGET_PER_SECOND:.0f})")]
+        return []
+
