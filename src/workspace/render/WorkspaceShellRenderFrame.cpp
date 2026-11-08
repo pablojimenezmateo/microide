@@ -747,24 +747,23 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       if (viewport == nullptr) {
         continue;
       }
-      // Step one of the two-step sizing: no band yet, since which lines pin
-      // depends on the rows this sizes; step two below re-sizes with the band.
-      editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-          editor_text_renderer_, *viewport, pane.rect, 0, line_numbers);
-      viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
       const editor::FoldingModel* folds = fold_enabled ? GroupFoldingModelPtr(group) : nullptr;
-      // The band's height is resolvable on its own (StickyScrollLines), so the
-      // metrics are sized against it once.
-      const std::size_t sticky_rows =
-          RenderViewModelBuilder::StickyScrollLines(*viewport, folds, sticky_enabled && folds != nullptr,
-                                                    sticky_depth)
-              .size();
-      if (sticky_rows != 0) {
-        metrics = editor::EditorViewRenderer::ComputeMetrics(editor_text_renderer_, *viewport, pane.rect,
-                                                             sticky_rows, line_numbers);
-        viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+      const std::size_t scroll_before_sizing = viewport->scroll_line();
+      const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::SizeViewportWithStickyBand(
+          editor_text_renderer_, *viewport, pane.rect, line_numbers, [&](const editor::TextViewport& view) {
+            return RenderViewModelBuilder::StickyScrollLines(view, folds, sticky_enabled && folds != nullptr,
+                                                             sticky_depth)
+                .size();
+          });
+      const std::size_t sticky_rows = metrics.sticky_scroll_rows;
+      // A scroll the input left that has no consistent sizing (see
+      // SizeViewportWithStickyBand) settled elsewhere, and the input's damage
+      // named rows at the old one: at the end of a short document under a band,
+      // every keystroke repainted the row above the typed one (QA monkey, CI
+      // seed 4). The content moved under that damage, so the pane repaints.
+      if (viewport->scroll_line() != scroll_before_sizing) {
+        RequestRedrawRect(pane.rect);
       }
-      viewport->SetStickyBandRows(metrics.sticky_scroll_rows);
       frame_state_.pane_metrics[pane.group_index] = metrics;
       frame_state_.pane_metrics_valid[pane.group_index] = true;
       // The overlay the active pane paints, its hover card resolves against and a

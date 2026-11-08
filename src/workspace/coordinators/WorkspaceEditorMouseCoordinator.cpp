@@ -46,21 +46,15 @@ std::pair<editor::EditorViewMetrics, std::vector<std::size_t>> EditorPointerLayo
   editor::FoldingModel* folding_model =
       fold_enabled ? ensure_active_folding_model_fresh() : nullptr;
   const bool sticky_active = fold_enabled && sticky_setting && folding_model != nullptr;
-  std::vector<std::size_t> sticky_lines;
-  ComputeStickyScrollLinesUncached(viewport, folding_model, sticky_active, sticky_max_depth,
-                                   sticky_lines);
-
   const bool line_numbers = setting_enabled("editor.line_numbers", true);
-  // The two-step sizing the frame does: without the band first, then with the
-  // sticky lines it pins, just below.
-  editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-      text_renderer, viewport, editor_rect, 0, line_numbers);
-  viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
-  if (!sticky_lines.empty()) {
-    metrics = editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, editor_rect,
-                                                         sticky_lines.size(), line_numbers);
-    viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
-  }
+  // The frame's sizing (EditorViewRenderer::SizeViewportWithStickyBand), so a
+  // pointer resolves against the geometry the frame paints.
+  std::vector<std::size_t> sticky_lines;
+  const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::SizeViewportWithStickyBand(
+      text_renderer, viewport, editor_rect, line_numbers, [&](const editor::TextViewport& view) {
+        ComputeStickyScrollLinesUncached(view, folding_model, sticky_active, sticky_max_depth, sticky_lines);
+        return sticky_lines.size();
+      });
   return {metrics, sticky_lines};
 }
 

@@ -2129,6 +2129,104 @@ void TestATabTooltipNamesTheTabUnderThePointerInASplit() {
          "hovering the right group's tab names right-file.txt, not \"" + label + "\"");
 }
 
+// The QA monkey (CI seed 4; minimized 185 -> 69 actions): frame prep sizes each
+// pane twice -- without the sticky band, then with it -- and the first sizing,
+// one row taller, clamped the scroll to the end of the document as if there were
+// no band. Typing on the last line then scrolled the one row back (keeping the
+// caret visible in the band-sized view) and computed its damage there, and every
+// frame clamped it away again: the caret left the view and each keystroke's
+// damage named the wrong row. The sizing keeps the scroll the input left,
+// clamped only against the size the pane has with its band.
+void TestTypingAtTheEndUnderAStickyBandRepaintsTheTypedRow() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  std::string body = "int main() {\n";
+  for (int i = 0; i < 60; ++i) {
+    body += "    int value_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  FlowFixture fixture("end.cpp", body);
+  editor::TextViewport& view = TestAccess::ActiveEditor(fixture.shell);
+  view.MoveCursorTo(view.line_count() - 1, 0);
+  view.RevealCaret();
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the caret on the last line");
+  fixture.ExpectFresh(full, "a second frame");
+  Expect(view.sticky_band_rows() > 0, "the function's opener pins above the scrolled body (the precondition): scroll " +
+                                          std::to_string(view.scroll_line()) + ", rows " +
+                                          std::to_string(view.visible_lines()) + ", lines " +
+                                          std::to_string(view.line_count()));
+  for (const char* text : {"x", "y", "z"}) {
+    const auto redraw = DispatchEvents(fixture.shell, {TextInputEvent(text)});
+    const std::size_t typed_scroll = view.scroll_line();
+    fixture.ExpectFresh(redraw, std::string("typing ") + text + " on the last line, scroll " +
+                                    std::to_string(typed_scroll) + ", band " + std::to_string(view.sticky_band_rows()));
+    Expect(view.scroll_line() == typed_scroll,
+           "the frame's sizing kept the scroll typing set (" + std::to_string(typed_scroll) + "), not " +
+               std::to_string(view.scroll_line()));
+    Expect(view.cursor_line() < view.scroll_line() + view.visible_lines(),
+           "the caret on the last line stays in view after the frame");
+  }
+}
+
+// The same, where the scroll the keystroke wants has no consistent sizing: its
+// top line has left a fold, so it has no band, and the taller band-less view
+// clamps the scroll back into the fold. The frame settles on the scroll above,
+// whose band allows it -- and the keystroke's damage, computed at the scroll it
+// wanted, named the row above the typed one (CI seed 4's minimized replay).
+void TestTypingWhereTheEndLeavesAFoldRepaintsTheTypedRow() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  std::size_t rows = 0;
+  {
+    std::string probe;
+    for (int i = 0; i < 200; ++i) {
+      probe += "probe " + std::to_string(i) + "\n";
+    }
+    FlowFixture fixture("probe.txt", probe);
+    workspace::RenderInvalidation full;
+    full.full = true;
+    fixture.ExpectFresh(full, "the probe");
+    rows = TestAccess::ActiveEditor(fixture.shell).visible_lines();
+  }
+  Expect(rows > 4, "the pane shows a few rows (the precondition)");
+  if (rows <= 4) {
+    return;
+  }
+  // N lines; the fold is the one indented line at N-rows, opened just above it,
+  // and rows-1 plain lines follow it to the end.
+  const std::size_t total = rows + 10;
+  std::string body;
+  for (std::size_t i = 0; i + 1 < total - rows; ++i) {
+    body += "head " + std::to_string(i) + "\n";
+  }
+  body += "block:\n    inner\n";
+  for (std::size_t i = 0; i + 1 < rows; ++i) {
+    // No newline after the last: it would add an empty line past the fold's arithmetic.
+    body += "tail " + std::to_string(i) + (i + 2 < rows ? "\n" : "");
+  }
+  FlowFixture fixture("fold-end.py", body);
+  editor::TextViewport& view = TestAccess::ActiveEditor(fixture.shell);
+  // The line above the last: the settled view's last row, where the reveal's
+  // margin asks for one more row of scroll -- the scroll with no sizing.
+  view.MoveCursorTo(view.line_count() - 2, 0);
+  view.RevealCaret();
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the caret at the end");
+  fixture.ExpectFresh(full, "a second frame");
+  for (const char* text : {"a", "b", "c"}) {
+    const auto redraw = DispatchEvents(fixture.shell, {TextInputEvent(text)});
+    fixture.ExpectFresh(redraw, std::string("typing ") + text + " at the end, scroll " +
+                                    std::to_string(view.scroll_line()) + ", band " +
+                                    std::to_string(view.sticky_band_rows()) + ", rows " +
+                                    std::to_string(view.visible_lines()) + ", lines " +
+                                    std::to_string(view.line_count()));
+  }
+}
+
 // The QA monkey (editor profile, seed 3): `tabmove` repainted the tab strip but
 // not the pane under it, though the pane can change with it.
 // With the moved tab's file rewritten on disk since it was painted (the monkey's
@@ -4585,6 +4683,10 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TypingOnAFoldedOpenerRepaintsItsRow",
           TestTypingOnAFoldedOpenerRepaintsItsRow);
   AddTest(tests, "QaFlowRegression/AnOverlayIsPaintedOverTheBottomPanel", TestAnOverlayIsPaintedOverTheBottomPanel);
+  AddTest(tests, "QaFlowRegression/TypingAtTheEndUnderAStickyBandRepaintsTheTypedRow",
+          TestTypingAtTheEndUnderAStickyBandRepaintsTheTypedRow);
+  AddTest(tests, "QaFlowRegression/TypingWhereTheEndLeavesAFoldRepaintsTheTypedRow",
+          TestTypingWhereTheEndLeavesAFoldRepaintsTheTypedRow);
   AddTest(tests, "QaFlowRegression/ATabTooltipNamesTheTabUnderThePointerInASplit",
           TestATabTooltipNamesTheTabUnderThePointerInASplit);
   AddTest(tests, "QaFlowRegression/ClickingAnUnfocusedGroupsOverflowChipRepaintsItsStrip",

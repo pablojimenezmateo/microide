@@ -71,6 +71,24 @@ class EditorViewRenderer {
                                           std::size_t sticky_scroll_rows = 0,
                                           bool show_line_numbers = true);
 
+  // Sizes `viewport` to `rect` with its sticky band, and returns the metrics.
+  // `band_rows_at_scroll(viewport)` names the band at the viewport's current
+  // scroll; which lines pin depends on the scroll, and the scroll's clamp on
+  // the band, so this settles the two: the band at the scroll, the size with
+  // it, the scroll the caller left re-clamped to that size, until the band no
+  // longer changes. The scroll is never clamped against a band-less size the
+  // pane does not have: at the end of a document that clamp is one row short,
+  // and a caret on the last line was scrolled out of view by every frame after
+  // the keystroke that revealed it (QA monkey, CI seed 4). The scroll can still
+  // move, where the caller's has no consistent sizing; a caller that painted
+  // damage computed at the old scroll repaints the pane then.
+  template <typename BandRowsAtScroll>
+  static EditorViewMetrics SizeViewportWithStickyBand(const render::TextRenderer& text_renderer,
+                                                      TextViewport& viewport,
+                                                      const SDL_FRect& rect,
+                                                      bool show_line_numbers,
+                                                      BandRowsAtScroll&& band_rows_at_scroll);
+
   void Render(SDL_Renderer* renderer,
               const render::TextRenderer& text_renderer,
               const render::Theme& theme,
@@ -268,5 +286,43 @@ class EditorViewRenderer {
   mutable std::vector<GutterNumber> gutter_number_scratch_;
   mutable std::vector<render::TextRun> gutter_number_run_scratch_;
 };
+
+template <typename BandRowsAtScroll>
+EditorViewMetrics EditorViewRenderer::SizeViewportWithStickyBand(const render::TextRenderer& text_renderer,
+                                                                 TextViewport& viewport,
+                                                                 const SDL_FRect& rect,
+                                                                 bool show_line_numbers,
+                                                                 BandRowsAtScroll&& band_rows_at_scroll) {
+  const std::size_t columns_before = viewport.visible_columns();
+  const std::size_t scroll_before = viewport.scroll_line();
+  // The band-less size first: it sets the wrap width, which the visual rows --
+  // and so the line at the top -- depend on.
+  EditorViewMetrics metrics = ComputeMetrics(text_renderer, viewport, rect, 0, show_line_numbers);
+  viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+  // A wrap-width change re-anchored the scroll to the same logical line; the
+  // caller's visual row means another line now.
+  const std::size_t wanted_scroll =
+      viewport.soft_wrap() && viewport.visible_columns() != columns_before ? viewport.scroll_line() : scroll_before;
+  std::size_t wanted = wanted_scroll;
+  std::size_t band = band_rows_at_scroll(static_cast<const TextViewport&>(viewport));
+  // Settles on a scroll whose own band's clamp allows it. Not every scroll has
+  // one: at the end of a document, a scroll whose top line leaves a fold has no
+  // band, and the taller view that gives clamps the scroll back into the fold.
+  // The wanted scroll only falls, so this ends: once a clamp no longer moves it,
+  // the band at it is the band sized for, within two passes.
+  for (int pass = 0; pass < 8; ++pass) {
+    metrics = ComputeMetrics(text_renderer, viewport, rect, band, show_line_numbers);
+    viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+    viewport.SetScrollLine(wanted);
+    wanted = viewport.scroll_line();
+    const std::size_t settled = band_rows_at_scroll(static_cast<const TextViewport&>(viewport));
+    if (settled == band) {
+      break;
+    }
+    band = settled;
+  }
+  viewport.SetStickyBandRows(metrics.sticky_scroll_rows);
+  return metrics;
+}
 
 }  // namespace microide::editor
