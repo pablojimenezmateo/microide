@@ -315,13 +315,21 @@ bool WorkspaceTabStripChrome::ScrollEditorTabStripForGroup(std::size_t group_ind
   if (group_index >= state.editor_groups.size()) {
     return false;
   }
-  return tab_strip_service_->ScrollEditorTabStrip(state.editor_groups[group_index], group_index,
-                                                  direction);
+  const bool scrolled =
+      tab_strip_service_->ScrollEditorTabStrip(state.editor_groups[group_index], group_index, direction);
+  if (scrolled && operations_.request_tab_strip_redraw) {
+    operations_.request_tab_strip_redraw();
+  }
+  return scrolled;
 }
 
 bool WorkspaceTabStripChrome::ScrollBottomPanelTabStrip(int direction) {
-  return tab_strip_service_->ScrollBottomPanelTabStrip(context_->current_project_state, direction,
-                                                       output_channels_->Channels());
+  const bool scrolled = tab_strip_service_->ScrollBottomPanelTabStrip(context_->current_project_state, direction,
+                                                                      output_channels_->Channels());
+  if (scrolled && operations_.request_bottom_panel_redraw) {
+    operations_.request_bottom_panel_redraw();
+  }
+  return scrolled;
 }
 
 bool WorkspaceTabStripChrome::ActivateBottomPanelTab(std::size_t model_index) {

@@ -2057,6 +2057,44 @@ void TestAnOverlayIsPaintedOverTheBottomPanel() {
          "below it");
 }
 
+// The QA monkey (seed 1, the CI seed; minimized 271 -> 25 actions): a click on
+// the "<N" overflow chip of an UNFOCUSED group's strip focuses that group -- which
+// requests damage of its own -- and scrolls the strip, which requested none. The
+// shell's fallback repaints the window only when a handler damaged nothing, so
+// the strip kept its old tabs on screen. Scrolling a strip repaints it.
+void TestClickingAnUnfocusedGroupsOverflowChipRepaintsItsStrip() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("a-file-with-a-long-name.txt", "alpha\n");
+  for (const char* name : {"b-file-with-a-long-name.txt", "c-file-with-a-long-name.txt",
+                           "d-file-with-a-long-name.txt", "e-file-with-a-long-name.txt"}) {
+    WriteFile(fixture.root / name, std::string(name) + "\n");
+    TestAccess::OpenFile(fixture.shell, fixture.root / name);
+  }
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "split-right should run");
+  // As in the run: the find widget open over the focused (right) group.
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "search alpha"), "search should open the find widget");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "two groups, the left one's strip overflowing");
+  // Focus is on the new right group; the left group's strip shows "<N".
+  std::optional<SDL_FRect> chip;
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    if (entry["name"].AsString() == "button:tabs/0/more-left") {
+      const auto& r = entry["rect"].AsArray();
+      chip = SDL_FRect{static_cast<float>(r[0].AsInt()), static_cast<float>(r[1].AsInt()),
+                       static_cast<float>(r[2].AsInt()), static_cast<float>(r[3].AsInt())};
+    }
+  }
+  Expect(chip.has_value(), "the left group's strip shows a <N chip (the fixture's precondition)");
+  if (!chip) {
+    return;
+  }
+  fixture.ExpectFresh(fixture.Click(*chip), "a click on the unfocused group's <N chip");
+}
+
 // The QA monkey (editor profile, seed 3): `tabmove` repainted the tab strip but
 // not the pane under it, though the pane can change with it.
 // With the moved tab's file rewritten on disk since it was painted (the monkey's
@@ -4513,6 +4551,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TypingOnAFoldedOpenerRepaintsItsRow",
           TestTypingOnAFoldedOpenerRepaintsItsRow);
   AddTest(tests, "QaFlowRegression/AnOverlayIsPaintedOverTheBottomPanel", TestAnOverlayIsPaintedOverTheBottomPanel);
+  AddTest(tests, "QaFlowRegression/ClickingAnUnfocusedGroupsOverflowChipRepaintsItsStrip",
+          TestClickingAnUnfocusedGroupsOverflowChipRepaintsItsStrip);
   AddTest(tests, "QaFlowRegression/AFoldChordRightAfterAClickFoldsTheClickedBlock",
           TestAFoldChordRightAfterAClickFoldsTheClickedBlock);
   AddTest(tests, "QaFlowRegression/CommandRefusalsSayWhatIsWrong", TestCommandRefusalsSayWhatIsWrong);

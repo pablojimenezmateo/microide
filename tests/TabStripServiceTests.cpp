@@ -118,6 +118,43 @@ void TestNoPanelTabLiesUnderAnOverflowChip() {
   Expect(checked > 0, "some width overflows the panel strip (the sweep's precondition)");
 }
 
+// The QA monkey (seed 1, the CI seed; minimized 271 -> 25 actions): a click on
+// the "<N" chip of an unfocused group's strip scrolled the strip and requested no
+// repaint of it -- the shell's fallback repaints the window only when the click
+// damaged nothing else, and focusing the group had. The scroll is the state
+// change, so it requests its own repaint; so does a panel strip's.
+void TestScrollingATabStripRequestsItsRepaint() {
+  WorkspaceContext context;
+  TabStripService tab_strip_service;
+  LayoutModeService layout_mode_service;
+  WorkspaceOutputChannels output_channels;
+  WorkspaceTabStripChrome chrome;
+  int strip_repaints = 0;
+  int panel_repaints = 0;
+  chrome.Configure(context, tab_strip_service, layout_mode_service, output_channels,
+                   WorkspaceTabStripChrome::Operations{
+                       .request_bottom_panel_redraw = [&]() { ++panel_repaints; },
+                       .request_tab_strip_redraw = [&]() { ++strip_repaints; },
+                   });
+  microide::workspace::EditorGroup& group = context.current_project_state.focused_group();
+  for (const char* name : {"a.txt", "b.txt", "c.txt"}) {
+    microide::workspace::TabEntry tab;
+    tab.path = name;
+    tab.title = name;
+    group.open_tabs.push_back(std::move(tab));
+  }
+  Expect(chrome.ScrollEditorTabStripForGroup(0, +1), "the strip scrolls one tab right");
+  Expect(strip_repaints == 1, "scrolling the strip requests its repaint");
+  group.tab_scroll_index = 0;
+  Expect(!chrome.ScrollEditorTabStripForGroup(0, -1), "a strip at its start does not scroll left");
+  Expect(strip_repaints == 1, "a scroll that changed nothing requests nothing");
+  context.current_project_state.panel.content = PanelContentKind::Output;
+  context.current_project_state.panel.output.open_channel_ids = {"build", "test"};
+  if (chrome.ScrollBottomPanelTabStrip(+1)) {
+    Expect(panel_repaints == 1, "scrolling the panel strip requests the panel's repaint");
+  }
+}
+
 // TD-2026-07-17A-084: BuildBottomPanelTabs memoizes on a content fingerprint of
 // its inputs. A same-state repeat call reuses the cached model list; any change to
 // the open ids, a channel label, or the panel content must miss and rebuild.
@@ -391,6 +428,7 @@ void TestProjectStripCacheMissesOnGeometryEpochAndLayoutMode() {
 void RegisterTabStripServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TabStripService/NoEditorTabLiesUnderAnOverflowChip", TestNoEditorTabLiesUnderAnOverflowChip);
   AddTest(tests, "TabStripService/NoPanelTabLiesUnderAnOverflowChip", TestNoPanelTabLiesUnderAnOverflowChip);
+  AddTest(tests, "TabStripService/ScrollingATabStripRequestsItsRepaint", TestScrollingATabStripRequestsItsRepaint);
   AddTest(tests, "TabStripService/BottomPanelVisibleTabsAreMemoized",
           TestBottomPanelVisibleTabsAreMemoized);
   AddTest(tests, "TabStripService/BottomPanelVisibleTabsMissOnGeometryEpoch",

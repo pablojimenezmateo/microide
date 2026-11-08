@@ -672,6 +672,7 @@ void WorkspaceShell::Bootstrapper::WireTabStrip() const {
           .close_terminal_tab =
               [shell](std::size_t index) { shell->MakeTerminalPanelService().CloseTerminalTab(index); },
           .request_bottom_panel_redraw = [shell]() { shell->RequestBottomPanelRedraw(); },
+          .request_tab_strip_redraw = [shell]() { shell->RequestTabStripRedraw(); },
       });
 }
 

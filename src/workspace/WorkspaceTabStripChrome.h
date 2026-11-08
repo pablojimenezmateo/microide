@@ -49,6 +49,11 @@ class WorkspaceTabStripChrome {
     std::function<void(std::string_view)> close_output_channel_tab;
     std::function<void(std::size_t)> close_terminal_tab;
     std::function<void()> request_bottom_panel_redraw;
+    // A strip scrolled to show other tabs repaints itself: the overflow chip's
+    // click and the wheel change what a strip shows, and the shell's "nothing was
+    // damaged, repaint the window" fallback does not fire when the same click
+    // damaged anything else (focus moving into the group did).
+    std::function<void()> request_tab_strip_redraw;
   };
 
   WorkspaceTabStripChrome() = default;
