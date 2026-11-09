@@ -4674,7 +4674,31 @@ void TestClosingTheLastTabWhenZoomedInRepaintsTheStrip() {
                       "Ctrl+W on the only tab, zoomed in");
 }
 
+// Soak 538a455016ef (1024x700 at a scale of 3.25: 316x216 units): the dirty
+// prompt in a window that narrow kept its three full-width buttons, and Save
+// hung past the dialog's left edge. Tab moved the choice off it and repainted
+// the dialog -- Save's focus ring, outside it, stayed on screen.
+void TestTabInANarrowDirtyPromptRepaintsEveryButton() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("many-lines.txt", "one\ntwo\n", 316, 216);
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "one tab in a 316x216-unit window");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("x")}), "an edit (the tab goes dirty)");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_W, SDL_KMOD_CTRL)}),
+                      "Ctrl+W on the dirty tab opens the prompt");
+  Expect(!TestAccess::ControlUi(fixture.shell)["modal"].IsNull(), "the dirty prompt should be open");
+  for (int step = 1; step <= 3; ++step) {
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_TAB, SDL_KMOD_NONE)}),
+                        "Tab in the dirty prompt, " + std::to_string(step));
+  }
+}
+
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "QaFlowRegression/TabInANarrowDirtyPromptRepaintsEveryButton",
+          TestTabInANarrowDirtyPromptRepaintsEveryButton);
   AddTest(tests, "QaFlowRegression/ClosingTheLastTabWhenZoomedInRepaintsTheStrip",
           TestClosingTheLastTabWhenZoomedInRepaintsTheStrip);
   AddTest(tests, "QaFlowRegression/TypingIntoAMirroredPlaceholderRepaintsEveryMirrorsLine",

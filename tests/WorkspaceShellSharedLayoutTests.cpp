@@ -1775,7 +1775,38 @@ void TestEditorBannerButtonsStayInsideANarrowStrip() {
          "a wide strip keeps every button");
 }
 
+// Soak 538a455016ef (1024x700 at a scale of 3.25: 316x216 units): the dirty
+// prompt narrowed to the window and its three fixed-width buttons did not --
+// Save hung past the dialog's left edge, outside the dialog's repaint, so Tab
+// moving the choice off it left its focus ring on screen. The prompt surface's
+// footer had the same arithmetic. Every footer button stays inside its dialog's
+// padding at any window width.
+void TestDialogFooterButtonsStayInsideANarrowDialog() {
+  const auto inside = [](const SDL_FRect& button, const SDL_FRect& dialog) {
+    return button.w >= 0.0f && button.x >= dialog.x + 16.0f - 0.01f &&
+           button.x + button.w <= dialog.x + dialog.w - 16.0f + 0.01f;
+  };
+  for (float width = 120.0f; width <= 800.0f; width += 7.0f) {
+    const SDL_FRect full = MakeRect(0.0f, 0.0f, width, 216.0f);
+    const SDL_FRect dirty = ComputeDirtyPromptRect(full);
+    for (const SDL_FRect& button : ComputeDirtyPromptButtonRects(dirty)) {
+      Expect(inside(button, dirty), "a dirty prompt button should stay inside its dialog at width " +
+                                        std::to_string(static_cast<int>(width)));
+    }
+    const SDL_FRect surface = ComputePromptSurfaceRect(full);
+    for (int count = 1; count <= 3; ++count) {
+      for (const SDL_FRect& button : ComputePromptSurfaceButtonRects(surface, count)) {
+        Expect(inside(button, surface), "a prompt button should stay inside its surface at width " +
+                                            std::to_string(static_cast<int>(width)) + " with " +
+                                            std::to_string(count) + " buttons");
+      }
+    }
+  }
+}
+
 void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShared/DialogFooterButtonsStayInsideANarrowDialog",
+          TestDialogFooterButtonsStayInsideANarrowDialog);
   AddTest(tests, "WorkspaceShared/EditorBannerButtonsStayInsideANarrowStrip",
           TestEditorBannerButtonsStayInsideANarrowStrip);
   AddTest(tests, "WorkspaceShared/MergeConflictButtonsStayInsideTheirPane",

@@ -677,17 +677,40 @@ SDL_FRect ComputeDirtyPromptRect(const SDL_FRect& full) {
                   full.y + std::floor((full.h - height) * 0.5f), width, height);
 }
 
+namespace {
+
+constexpr float kDialogFooterPadding = 16.0f;
+
+// A dialog's footer row of `count` buttons, right-aligned inside its padding.
+// Each button is `width` wide while the row fits, and the row shrinks to the
+// dialog's inner width when it does not (DrawButtonCentered clips the label):
+// fixed widths in a dialog narrowed to its window hung the first button past
+// the dialog's left edge, outside the dialog's own repaint (soak 538a455016ef).
+template <typename Emit>
+void LayOutDialogFooter(const SDL_FRect& dialog, int count, float width, float height, float gap,
+                        Emit emit) {
+  const float n = static_cast<float>(count);
+  const float inner = std::max(0.0f, dialog.w - kDialogFooterPadding * 2.0f);
+  const float button_gap = std::min(gap, inner / std::max(1.0f, n * 4.0f));
+  const float button_width =
+      std::min(width, std::floor(std::max(0.0f, inner - button_gap * (n - 1.0f)) / n));
+  const float total_width = button_width * n + button_gap * (n - 1.0f);
+  const float start_x = dialog.x + dialog.w - kDialogFooterPadding - total_width;
+  const float y = dialog.y + dialog.h - height - kDialogFooterPadding;
+  for (int i = 0; i < count; ++i) {
+    emit(MakeRect(start_x + static_cast<float>(i) * (button_width + button_gap), y, button_width, height));
+  }
+}
+
+}  // namespace
+
 std::array<SDL_FRect, 3> ComputeDirtyPromptButtonRects(const SDL_FRect& dialog) {
-  const float total_width = kDirtyPromptButtonWidth * 3.0f + kDirtyPromptButtonGap * 2.0f;
-  const float start_x = dialog.x + dialog.w - total_width - 16.0f;
-  const float y = dialog.y + dialog.h - kDirtyPromptButtonHeight - 16.0f;
-  return {
-      MakeRect(start_x, y, kDirtyPromptButtonWidth, kDirtyPromptButtonHeight),
-      MakeRect(start_x + kDirtyPromptButtonWidth + kDirtyPromptButtonGap, y,
-               kDirtyPromptButtonWidth, kDirtyPromptButtonHeight),
-      MakeRect(start_x + (kDirtyPromptButtonWidth + kDirtyPromptButtonGap) * 2.0f, y,
-               kDirtyPromptButtonWidth, kDirtyPromptButtonHeight),
-  };
+  std::array<SDL_FRect, 3> rects{};
+  std::size_t next = 0;
+  LayOutDialogFooter(dialog, static_cast<int>(rects.size()), kDirtyPromptButtonWidth,
+                     kDirtyPromptButtonHeight, kDirtyPromptButtonGap,
+                     [&](const SDL_FRect& rect) { rects[next++] = rect; });
+  return rects;
 }
 
 SDL_FRect ComputeEditorBannerStripRect(const SDL_FRect& editor_surface) {
@@ -750,17 +773,10 @@ SDL_FRect ComputePromptSurfaceRect(const SDL_FRect& full) {
 
 std::vector<SDL_FRect> ComputePromptSurfaceButtonRects(const SDL_FRect& dialog, int button_count) {
   const int resolved_count = std::max(1, button_count);
-  const float total_width = kPromptSurfaceButtonWidth * static_cast<float>(resolved_count) +
-                            kPromptSurfaceButtonGap * static_cast<float>(resolved_count - 1);
-  const float start_x = dialog.x + dialog.w - total_width - 16.0f;
-  const float y = dialog.y + dialog.h - kPromptSurfaceButtonHeight - 16.0f;
   std::vector<SDL_FRect> rects;
   rects.reserve(static_cast<std::size_t>(resolved_count));
-  for (int i = 0; i < resolved_count; ++i) {
-    rects.push_back(MakeRect(start_x + static_cast<float>(i) *
-                                           (kPromptSurfaceButtonWidth + kPromptSurfaceButtonGap),
-                             y, kPromptSurfaceButtonWidth, kPromptSurfaceButtonHeight));
-  }
+  LayOutDialogFooter(dialog, resolved_count, kPromptSurfaceButtonWidth, kPromptSurfaceButtonHeight,
+                     kPromptSurfaceButtonGap, [&](const SDL_FRect& rect) { rects.push_back(rect); });
   return rects;
 }
 
