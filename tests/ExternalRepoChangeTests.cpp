@@ -77,6 +77,14 @@ void DispatchAndApply(WorkspaceShell& shell,
   Expect(WorkspaceShellTestAccess::DispatchFileIndexWatcherBatchForTesting(shell,
                                                                            std::move(batch)),
          std::string("the fixture must actually deliver a watcher batch (") + what + ")");
+  // Wait for the APPLY itself, pumping the reload, rather than for a fixed 20 x
+  // 10 ms drain: under a loaded lane the sweep had not run inside 200 ms and this
+  // failed with nothing wrong (tests lane, 2026-11-09). Fast machines leave on the
+  // first poll.
+  (void)WaitUntil(
+      [&]() { return WorkspaceShellTestAccess::LastAppliedProjectChangeGeneration(shell) > before; },
+      std::chrono::seconds(10), std::chrono::milliseconds(10),
+      [&]() { (void)WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false); });
   DrainProjectChanges(shell);
   Expect(WorkspaceShellTestAccess::LastAppliedProjectChangeGeneration(shell) > before,
          std::string("the dispatched batch must actually be APPLIED, or every assertion "
