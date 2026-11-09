@@ -105,6 +105,11 @@ the crash-safety flush missing edits to a non-active buffer) and left these:
   defects after its first fix: the merge panes' shared scroll (`8fc1d580f`), and
   two sightings at `6da237807` not yet chased. Naming more rects in the `ui`
   answer, or keying `elsewhere` on the nearest surface, would split them.
+  Most of the merging was a units bug, fixed in `498eea75b`: the line's bbox and
+  first pixel are device pixels, the clips and surfaces logical units, so at
+  density 2 (most soak cells) nearly every box landed `elsewhere|outside`. The
+  line now carries `scale=` and the bucketing scales by it; what is left of this
+  entry is the genuinely unnamed rects.
 - **`ExternalRepoChange/IdenticalRewriteConfirmsOffTheShellThread` and
   `IdenticalRewriteWithSplitViewsReadsOnce` flaked under load (fixed).** About 1
   in 48 and 1 in 64 with 48 copies in parallel. Instrumented, the failing runs
