@@ -273,6 +273,7 @@ def reap_job(job: Job, state: dict[str, Any], log) -> None:
                 new += 1
                 log(f"  NEW {sig} {finding['label']}")
             else:
+                keep_sighting(job, finding, known[sig])
                 book.append(sig, "seen", **fields)
     stats["new_findings"] = stats.get("new_findings", 0) + new
     with open(RUN_LOG, "a") as out:
@@ -297,12 +298,8 @@ def make_bundle(job: Job, summary: dict[str, Any], finding: dict[str, Any]) -> P
     # path is Path("") == "." -- the runner's working directory, the whole
     # checkout with its build trees -- and copying it once filled the disk with a
     # 254 GB findings tree (2026-11-08).
-    evidence_text = finding.get("evidence") or ""
-    evidence = Path(evidence_text)
-    if evidence_text and evidence.is_absolute() is False:
-        evidence = (WORKTREE / evidence).resolve()
-    if evidence_text and evidence.is_dir() and evidence.name.startswith("finding-") and \
-            job.out.resolve() in evidence.resolve().parents:
+    evidence = finding_evidence(job, finding)
+    if evidence is not None:
         shutil.copytree(evidence, bundle / "evidence", dirs_exist_ok=True)
     replay_source = bundle / "evidence" / "replay.json"
     if replay_source.exists():
@@ -315,6 +312,56 @@ def make_bundle(job: Job, summary: dict[str, Any], finding: dict[str, Any]) -> P
     (bundle / "meta.json").write_text(json.dumps(meta, indent=1))
     write_finding_md(bundle)
     return bundle
+
+
+def finding_evidence(job: Job, finding: dict[str, Any]) -> Path | None:
+    """The finding's own evidence directory inside this job's output, or None.
+    Only that: an empty path is Path("") == "." -- the runner's working
+    directory, the whole checkout with its build trees -- and copying it once
+    filled the disk with a 254 GB findings tree (2026-11-08)."""
+    evidence_text = finding.get("evidence") or ""
+    if not evidence_text:
+        return None
+    evidence = Path(evidence_text)
+    if not evidence.is_absolute():
+        evidence = (WORKTREE / evidence).resolve()
+    if evidence.is_dir() and evidence.name.startswith("finding-") and \
+            job.out.resolve() in evidence.resolve().parents:
+        return evidence
+    return None
+
+
+MAX_SIGHTINGS = 3
+
+
+def keep_sighting(job: Job, finding: dict[str, Any], entry: ld.Entry) -> None:
+    """A later sighting of a known signature is evidence too, and the run
+    directory holding it is deleted when the job is reaped. Keep it under the
+    bundle's `sightings/` when it says something the first one cannot: it came
+    after a fix (the sighting that reopens a finding is the only evidence of
+    what the fix missed), or it carries the data oracle's byte evidence and the
+    bundle has none (that evidence postdates most data findings, which never
+    replay). The newest MAX_SIGHTINGS stay; FINDING.md lists them."""
+    bundle = FINDINGS / entry.sig
+    evidence = finding_evidence(job, finding)
+    if evidence is None or not bundle.is_dir():
+        return
+    after_fix = entry.status in ("fixed", "verified", "reopened")
+    bytes_missing = any(evidence.glob("mismatch-*.txt")) and \
+        not any(bundle.glob("evidence/mismatch-*.txt")) and not any(bundle.glob("sightings/*/mismatch-*.txt"))
+    if not (after_fix or bytes_missing):
+        return
+    sightings = bundle / "sightings"
+    name = f"{time.strftime('%Y%m%d-%H%M%S')}-{job.sha[:12]}-{job.cell.replace('/', '_')}"
+    target = sightings / name
+    shutil.copytree(evidence, target, dirs_exist_ok=True)
+    (target / "sighting.json").write_text(json.dumps(
+        {"cell": job.cell, "sha": job.sha, "binary": job.binary, "build": job.type.build, "seed": job.seed,
+         "detail": finding.get("detail", ""), "step": finding.get("step"), "state": finding.get("state"),
+         "status_before": entry.status}, indent=1))
+    for old in sorted(p for p in sightings.iterdir() if p.is_dir())[:-MAX_SIGHTINGS]:
+        shutil.rmtree(old, ignore_errors=True)
+    write_finding_md(bundle)
 
 
 def suspected_files(text: str) -> list[str]:
@@ -390,6 +437,23 @@ def write_finding_md(bundle: Path) -> None:
     for summary in sorted(evidence.glob("mismatch-*.txt")) if evidence.exists() else []:
         lines += [f"## Byte mismatch ({summary.name})", "", "```",
                   summary.read_text(errors="replace")[:4000], "```", ""]
+    sightings = sorted((p for p in (bundle / "sightings").iterdir() if p.is_dir()), reverse=True) \
+        if (bundle / "sightings").is_dir() else []
+    if sightings:
+        lines += ["## Later sightings", "",
+                  "Kept because they came after a fix, or carry byte evidence the first one lacks; "
+                  "newest first. Each directory holds that run's evidence and its `replay.json`.", ""]
+        for path in sightings:
+            try:
+                info = json.loads((path / "sighting.json").read_text())
+            except (OSError, ValueError):
+                info = {}
+            lines += [f"- `sightings/{path.name}`: commit `{str(info.get('sha', ''))[:12]}`, cell "
+                      f"`{info.get('cell', '')}`, status before `{info.get('status_before', '')}`",
+                      "", "  ```", "  " + str(info.get("detail", ""))[:600], "  ```", ""]
+            for summary in sorted(path.glob("mismatch-*.txt")):
+                lines += ["  ```", *("  " + l for l in summary.read_text(errors="replace")[:2000].splitlines()),
+                          "  ```", ""]
     files = suspected_files(log_text)
     if files:
         lines += ["## Suspected files", ""] + [f"- `{f}`" for f in files] + [""]
@@ -570,6 +634,7 @@ def enforce_disk_budget(log) -> None:
                       key=lambda p: p.stat().st_mtime if p.exists() else 0)
     for path in verified:
         shutil.rmtree(path / "evidence", ignore_errors=True)
+        shutil.rmtree(path / "sightings", ignore_errors=True)
         if disk_usage(SOAK) <= budget * 0.9:
             return
     corpus = sorted(CORPUS.glob("*.json"), key=lambda p: p.stat().st_size, reverse=True)

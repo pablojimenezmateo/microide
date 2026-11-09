@@ -45,6 +45,14 @@ only, a failing-first test for every fix, one commit per fix, and a TD entry in
    `tools/soak/soak.py ledger fixed <sig> <commit>`. The runner replays it once
    the commit is in its build and marks it `verified`, or `reopened` if it is
    still there. A later sighting reopens it as well.
+
+   A reopened finding's `FINDING.md` still opens with the FIRST sighting. What
+   the fix missed is under `sightings/` (listed in § Later sightings): the
+   runner keeps the newest three sightings that came after a fix, or that carry
+   the data oracle's byte evidence the bundle lacked. Read those first. Note the
+   signature of a stale-paint (`log: QA-STALE ...`) finding keys only on its
+   shape (the reason and how many clip rects), so one signature holds unrelated
+   defects -- a sighting after the fix may be a different bug, not the old one.
 9. **Defer honestly.** Anything you cannot finish -- a second defect the fix
    exposed, a lint the class deserves -- goes into
    `dev-docs/project/known-tech-debt.md` as a TD entry, and a `ledger note`.
