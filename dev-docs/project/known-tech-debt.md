@@ -83,6 +83,28 @@ the crash-safety flush missing edits to a non-active buffer) and left these:
   pixel comes from the strip rect or the paint. The sighting's replay is not
   deterministic. Its signature now carries `clip-edge|line` (`8ff6e03f7`), so its
   next sighting is filed on its own.
+- **An editable Welcome placeholder, and a breadcrumb that changed undamaged**
+  (soak `538a455016ef`, its 640x480 ui.scale 1.25 replay, 936 actions after
+  ddmin; the replay's step `type alpha` after `focus-other-group 999999`). The
+  top pane's strip showed `*empty.txt` while the pane drew the Welcome text with
+  the typed `a` in it ("amicroide"), and the pane's breadcrumb went from
+  "Welcome" to "Untitled" with no rect requested for it -- the partial frame kept
+  "Welcome". Two defects: (1) a keystroke reached the welcome surface's viewport
+  (and its `placeholder` flag cleared) while a file tab was active in that
+  group; (2) the breadcrumb label is drawn from state that more than one path
+  changes, and no prep-time check repaints it when it changes -- the
+  `PreparedFrameState::painted_*` per-group pattern fits (`painted_breadcrumb`,
+  damaging `EditorGroupRect::breadcrumb`). Neither reproduced in a short fixture
+  (closing a pane's last tab and typing, or with a split and
+  `focus-other-group`), so both wait for a shorter replay or a fixture that
+  reaches an editable placeholder.
+- **The stale-paint signature's `elsewhere` surface is a catch-all.** A box whose
+  centre is on no surface the `ui` query names (`ControlUiQuery.cpp` lists nine:
+  no splitter, no merge/compare pane, no gap beside a scrollbar) gets
+  `elsewhere`, so `ee7ad7b12a7e` (`elsewhere|outside|area`) held three unrelated
+  defects after its first fix: the merge panes' shared scroll (`8fc1d580f`), and
+  two sightings at `6da237807` not yet chased. Naming more rects in the `ui`
+  answer, or keying `elsewhere` on the nearest surface, would split them.
 - **`ExternalRepoChange/IdenticalRewriteConfirmsOffTheShellThread` and
   `IdenticalRewriteWithSplitViewsReadsOnce` flaked under load (fixed).** About 1
   in 48 and 1 in 64 with 48 copies in parallel. Instrumented, the failing runs
