@@ -149,9 +149,12 @@ void FileReadService::Cancel(std::uint64_t id) {
 }
 
 void FileReadService::FlushPendingReads() {
-  if (PendingCount() == 0 && mailbox_.PendingCount() == 0) {
-    return;
-  }
+  // No shortcut on the counts. A worker drops `pending_` BEFORE it posts the
+  // completion (see Begin), so "nothing pending, nothing in the mailbox" is also
+  // what a flush sees between those two steps -- and returning then handed the
+  // caller a read it believed answered while its completion was still on the way
+  // (FileReadService/AFlushNeverReturnsBeforeTheCompletionLands). WaitForIdle on
+  // an idle executor is one uncontended lock, and nothing calls this per frame.
   util::PerformanceTrace::Scope perf_scope("FileReadService::FlushPendingReads");
   // WaitForIdle covers both the queued and the running task; the mailbox then
   // holds every completion those tasks posted, so draining after the wait is
@@ -167,9 +170,9 @@ void FileReadService::CancelAllAndFlush() {
       read.cancelled->store(true, std::memory_order_release);
     }
   }
-  if (PendingCount() == 0 && mailbox_.PendingCount() == 0) {
-    return;
-  }
+  // The same no-shortcut rule as FlushPendingReads: a completion between the
+  // count's drop and its post would otherwise arrive after the project it was
+  // read for has been switched or closed.
   util::PerformanceTrace::Scope perf_scope("FileReadService::CancelAllAndFlush");
   executor_.WaitForIdle();
   mailbox_.Drain();

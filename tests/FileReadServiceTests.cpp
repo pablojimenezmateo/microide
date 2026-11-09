@@ -188,10 +188,42 @@ void TestANoReadRequestRunsItsHookWithoutTouchingThePath() {
   Expect(hook_ran && hook_saw_empty, "the hook ran, with no bytes");
 }
 
+// A flush returns with every read's completion delivered. Its shortcut -- "no
+// read pending and no completion waiting, nothing to do" -- read the two counts
+// a worker updates in turn: the pending count drops BEFORE the completion is
+// posted, so a flush between the two saw neither and returned while the
+// completion was still on its way. A caller then acted on a read it believed
+// answered (ExternalRepoChange/IdenticalRewriteWithSplitViewsReadsOnce, about one
+// run in sixty under load: the real change's confirm landed after the test's
+// assertions). Polling for the drop puts the flush inside that window as often
+// as the scheduler allows.
+void TestAFlushNeverReturnsBeforeTheCompletionLands() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path missing = temp_dir.path() / "not-there.txt";
+  FileReadService service;
+  int misses = 0;
+  for (int attempt = 0; attempt < 2000; ++attempt) {
+    Collector collector;
+    service.Begin({.path = missing, .on_complete = collector.Sink(), .read_path = false});
+    while (service.PendingCount() != 0) {
+    }
+    service.FlushPendingReads();
+    if (collector.completions.size() != 1) {
+      ++misses;
+      service.FlushPendingReads();  // let the late one land before the collector goes
+      (void)service.DrainCompletions();
+    }
+  }
+  Expect(misses == 0, "every flush should deliver its read's completion; " + std::to_string(misses) +
+                          " of 2000 returned first");
+}
+
 }  // namespace
 
 void RegisterFileReadServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "FileReadService/AReadReturnsTheBytes", TestAReadReturnsTheBytes);
+  AddTest(tests, "FileReadService/AFlushNeverReturnsBeforeTheCompletionLands",
+          TestAFlushNeverReturnsBeforeTheCompletionLands);
   AddTest(tests, "FileReadService/AnEmptyFileReadsAsEmptyAndSucceeds",
           TestAnEmptyFileReadsAsEmptyAndSucceeds);
   AddTest(tests, "FileReadService/UnreadableAndOversizedAreDistinctFromOk",

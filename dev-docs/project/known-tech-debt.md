@@ -83,14 +83,17 @@ the crash-safety flush missing edits to a non-active buffer) and left these:
   pixel comes from the strip rect or the paint. The sighting's replay is not
   deterministic. Its signature now carries `clip-edge|line` (`8ff6e03f7`), so its
   next sighting is filed on its own.
-- **`ExternalRepoChange/IdenticalRewriteConfirmsOffTheShellThread` flakes under
-  load** (about 1 in 48 with 48 copies in parallel, at `f7c63adec` and at its
-  parent alike; once in a tests lane). `DispatchAndApply` waits for the batch's
-  generation and the read service, but not for the confirm's completion to be
-  pumped on the shell thread, so the next phase can start with it pending. At
-  the parent the failing assertion was the stale-digest bug `f7c63adec` fixes;
-  at `f7c63adec` it is "a size change ... with no read posted". The helper should
-  wait for `pending_external_change_confirms_` to drain.
+- **`ExternalRepoChange/IdenticalRewriteConfirmsOffTheShellThread` and
+  `IdenticalRewriteWithSplitViewsReadsOnce` flaked under load (fixed).** About 1
+  in 48 and 1 in 64 with 48 copies in parallel. Instrumented, the failing runs
+  posted the second phase's confirm and never applied it before the assertions:
+  `FileReadService::FlushPendingReads` (and `CancelAllAndFlush`) returned early on
+  "nothing pending, nothing in the mailbox", which is also what a flush sees
+  between a worker dropping its pending count and posting its completion. The
+  shortcut is gone (`FileReadService/AFlushNeverReturnsBeforeTheCompletionLands`,
+  failing 2000 of 2000 before); 0 in 384 and 0 in 192 after. The production
+  callers are project switch and teardown, where the late completion arrived
+  after the project it was read for.
 
 ### TD-2026-11-08-435 — the safety program's first pass: what landed, what it found, and what it left. [OPEN]
 
