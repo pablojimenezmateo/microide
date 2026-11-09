@@ -325,16 +325,18 @@ void WorkspaceShell::RequestTabStripRedraw() {
   // in the menu bar, which is on screen: activating a tab or saving one left the
   // title naming the old tab or still marked unsaved, in the taskbar too (QA
   // monkey, seeds 61 and 83 at 600 steps). Then the title is the damage.
-  if (layout->editor_surface.w <= 0.0f || layout->editor_surface.h <= 0.0f) {
-    RequestRedrawRect(layout->menu_bar);
-    return;
-  }
+  //
+  // The test is the strip's own area, not the editor surface's: a window only a
+  // few rows tall at a large scale (640x480 at 3x, 160 units) leaves the strip
+  // and breadcrumb on screen above an editor surface of no height, and closing
+  // its last tab repainted the title and not the strip (soak ee7ad7b12a7e).
+  const auto has_area = [](const SDL_FRect& rect) { return rect.w > 0.0f && rect.h > 0.0f; };
   // `layout.tab_strip` is the TOP row's strip only. A pane below the top row
   // synthesizes its own strip inside the editor area, so dirtying the top band
   // alone left a lower pane's titles painting stale -- a tab going dirty down
   // there repainted nothing. Only the split case pays for the tree walk.
   if (!context_.current_project_state.editor_split.is_split()) {
-    RequestRedrawRect(layout->tab_strip);
+    RequestRedrawRect(has_area(layout->tab_strip) ? layout->tab_strip : layout->menu_bar);
     return;
   }
   // One rect per ROW of strips, spanning the gaps between them: the strips of
@@ -345,7 +347,7 @@ void WorkspaceShell::RequestTabStripRedraw() {
   util::InlineVector<SDL_FRect, kMaxEditorGroups> rows;
   for (const EditorGroupRects& group : ComputeEditorGroupRectsForState(*layout).groups) {
     const SDL_FRect& strip = group.tab_strip;
-    if (strip.w <= 0.0f || strip.h <= 0.0f) {
+    if (!has_area(strip)) {
       continue;
     }
     auto row = std::find_if(rows.begin(), rows.end(), [&](const SDL_FRect& r) {
@@ -359,6 +361,9 @@ void WorkspaceShell::RequestTabStripRedraw() {
     const float right = std::max(row->x + row->w, strip.x + strip.w);
     row->x = left;
     row->w = right - left;
+  }
+  if (rows.empty()) {
+    RequestRedrawRect(layout->menu_bar);
   }
   for (const SDL_FRect& row : rows) {
     RequestRedrawRect(row);

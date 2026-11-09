@@ -55,7 +55,12 @@ struct FlowFixture {
   static constexpr int kWidth = 1280;
   static constexpr int kHeight = 720;
 
-  explicit FlowFixture(std::string_view file_name, std::string_view content) {
+  explicit FlowFixture(std::string_view file_name, std::string_view content)
+      : FlowFixture(file_name, content, kWidth, kHeight) {}
+
+  // A window of another size, as a monkey cell had it.
+  FlowFixture(std::string_view file_name, std::string_view content, int window_width, int window_height)
+      : width(window_width), height(window_height), canvas{window_width, window_height} {
     EnsureDummySdlVideoInitialized();
     root = temp_dir.path() / "project";
     file = root / std::string(file_name);
@@ -67,13 +72,13 @@ struct FlowFixture {
     // a loaded machine). Start every flow from an indexed project.
     Expect(WaitForFileIndexSize(shell, 1, std::chrono::seconds(10)),
            "the flow fixture's project should be indexed");
-    TestAccess::SetWindowSize(shell, kWidth, kHeight);
+    TestAccess::SetWindowSize(shell, width, height);
     TestAccess::OpenSingleEditorTab(shell, file);
     TestAccess::ShowTreeSidebar(shell);
     TestAccess::SetFocusEditor(shell);
     TestAccess::NoteLayoutInputsChanged(shell);
     PinCaret();
-    shell.Render(canvas.renderer(), kWidth, kHeight);
+    shell.Render(canvas.renderer(), width, height);
     (void)shell.ConsumePendingRenderInvalidation();
   }
 
@@ -107,17 +112,19 @@ struct FlowFixture {
         std::fprintf(stderr, "%s: rect %.0f,%.0f %.0fx%.0f\n", what.c_str(), r.x, r.y, r.w, r.h);
       }
     }
-    const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, redraw,
+    const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, width, height, redraw,
                                                   [this]() { PinCaret(); });
     Expect(diff.identical(), what + " should paint what a full repaint paints; " +
                                  DescribePixelDiff(diff));
   }
 
+  int width = kWidth;
+  int height = kHeight;
   TemporaryDirectory temp_dir;
   std::filesystem::path root;
   std::filesystem::path file;
   WorkspaceShell shell;
-  SoftwareCanvas canvas{kWidth, kHeight};
+  SoftwareCanvas canvas;
 };
 
 // branch review: a file marked reviewed from the diff an Outgoing row opens showed
@@ -4648,7 +4655,28 @@ void TestTheRemoteSegmentOpensTheRemoteMenu() {
   }
 }
 
+// Soak ee7ad7b12a7e (640x480 at ui.scale 1.75): zoomed in five times, then
+// Ctrl+W on the only tab. The strip went from a closable README.md tab to the
+// Welcome placeholder, and the partial frame repainted the breadcrumb under it
+// and not the strip -- the closed tab's label and close glyph stayed on screen.
+void TestClosingTheLastTabWhenZoomedInRepaintsTheStrip() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  // 640x480 pixels at a scale of 3 (1.75 and five steps of 0.25): 214x160 units.
+  FlowFixture fixture("README.md", "# taskflow\n\nA tiny, dependency-free showcase.\n", 214, 160);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "term"), "a terminal panel opens");
+  TestAccess::SetFocusEditor(fixture.shell);
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "one tab in a 214x160-unit window");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_W, SDL_KMOD_CTRL)}),
+                      "Ctrl+W on the only tab, zoomed in");
+}
+
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "QaFlowRegression/ClosingTheLastTabWhenZoomedInRepaintsTheStrip",
+          TestClosingTheLastTabWhenZoomedInRepaintsTheStrip);
   AddTest(tests, "QaFlowRegression/TypingIntoAMirroredPlaceholderRepaintsEveryMirrorsLine",
           TestTypingIntoAMirroredPlaceholderRepaintsEveryMirrorsLine);
   AddTest(tests, "QaFlowRegression/ABreakpointFollowsAnEditOnceNotOnEveryRedraw",
