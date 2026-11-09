@@ -1065,6 +1065,53 @@ void TestAHeldTabDragPaintsItsLastSnap() {
   }
 }
 
+// A tab dragged out of the rightmost of three side-by-side panes into the
+// leftmost one's strip: a partial frame of the drag left a stale column at the
+// first pane's left edge (soak 9e662fe598fe, ui.scale 1.6). Every frame of the
+// gesture must match a full repaint.
+void TestATabDraggedAcrossThreePanesPaintsFresh() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  for (const std::string scale : {"1", "1.6"}) {
+    FlowFixture fixture("a.txt", "a\n");
+    WriteFile(fixture.root / "b.txt", "b\n");
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting ui.scale " + scale),
+           "set-setting ui.scale should run");
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "split-right should run");
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "a second split-right should run");
+    TestAccess::OpenFileInNewTab(fixture.shell, fixture.root / "b.txt");
+    workspace::RenderInvalidation full;
+    full.full = true;
+    fixture.ExpectFresh(full, "three panes at scale " + scale);
+    const auto dragged = fixture.ElementRect("tab:2/b.txt");
+    const auto target = fixture.ElementRect("tab:0/a.txt");
+    Expect(dragged.has_value() && target.has_value(), "the strips should name tab:2/b.txt and tab:0/a.txt");
+    if (!dragged || !target) {
+      return;
+    }
+    const float y = dragged->y + dragged->h / 2.0f;
+    const float x0 = dragged->x + dragged->w / 2.0f;
+    const float x1 = target->x + 4.0f;
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x0, y),
+                                                       MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x0, y)}),
+                        "pressing on b.txt's tab at scale " + scale);
+    for (int step = 1; step <= 24; ++step) {
+      SDL_Event motion = MouseMotionEvent(x0 + (x1 - x0) * static_cast<float>(step) / 24.0f, y);
+      motion.motion.state = SDL_BUTTON_LMASK;
+      fixture.ExpectFresh(DispatchEvents(fixture.shell, {motion}),
+                          "dragging across the panes at scale " + scale + ", step " + std::to_string(step));
+    }
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x1, y)}),
+                        "dropping the tab at scale " + scale);
+    for (int wake = 0; wake < 30; ++wake) {
+      SDL_Delay(10);
+      fixture.ExpectFresh(TestAccess::HandleScheduledWake(fixture.shell).redraw,
+                          "the settle glide at scale " + scale + ", wake " + std::to_string(wake));
+    }
+  }
+}
+
 // A dirty buffer whose file was deleted outside the app: Ctrl+S refused it as
 // "changed on disk -- Compare, Reload or Overwrite in the banner", for a file
 // with nothing left to compare, reload or overwrite, and nothing reached the disk.
@@ -4618,6 +4665,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestHoverUnderAStickyBandResolvesThePointersLine);
   AddTest(tests, "QaFlowRegression/MergeToolbarHoverRepaintsTheButton",
           TestMergeToolbarHoverRepaintsTheButton);
+  AddTest(tests, "QaFlowRegression/ATabDraggedAcrossThreePanesPaintsFresh",
+          TestATabDraggedAcrossThreePanesPaintsFresh);
   AddTest(tests, "QaFlowRegression/MergeToolbarStaysInsideANarrowPane",
           TestMergeToolbarStaysInsideANarrowPane);
   AddTest(tests, "QaFlowRegression/ADragAcrossPanelTabsLeavesNoHoveredCloseButton",

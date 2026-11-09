@@ -16,6 +16,40 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 
 ## Open items
 
+### TD-2026-11-09-436 — soak triage, 2026-11-09: what the first four hours left open. [OPEN]
+
+The soak runner's first four hours on `6d7e96e07` produced 113 signatures. The
+2026-11-09 pass fixed the classes it could reproduce or prove with a failing-first
+test (inverted std::clamp at ui.scale 3; overlapping status-bar segments; the find
+widget, tab-strip contents, banner and merge-toolbar buttons leaving their area;
+the crash-safety flush missing edits to a non-active buffer) and left these:
+
+- **A tab drag abandoned with Escape, then released, paints stale.** Three panes
+  side by side (`split-right` twice), press `tab:2/b.txt`, drag it into the first
+  pane's strip, Escape, release: the release requests no damage, yet a full repaint
+  then differs over every strip (13k px; the hover tooltip moves to the tab under
+  the pointer and the third pane's breadcrumb changes from a.txt back to b.txt). The
+  Escape frame is a full repaint, so it already painted stale state -- a cache or
+  ordering defect in `CancelDrag`, not a missing rect. Reproduces at ui.scale 1 in
+  a `QaFlowRegression` fixture (the drag-and-drop half is covered by
+  `ATabDraggedAcrossThreePanesPaintsFresh`).
+- **Deterministic stale frames whose minimal replay still fails at `193dda043`:**
+  `9e662fe598fe` (tab drag across three panes: the bare gesture is fresh, so a
+  precondition of the 198-action minimal matters), `7f858b8312bb`, `b5c3ab96f87c`,
+  `5faca6fc43a7`, `8043295890fd`, `ee495f65b1b5`; `2de80b070bd6`'s replay now stops
+  at a different stale frame (450) before its own (3060).
+- **Nineteen "clean buffer differs from its file on disk" signatures**, all flaky at
+  a 0% replay rate. `0a81fa8b3` makes the oracle save both sides' bytes beside the
+  next sighting (`mismatch-*.buffer` / `.disk`, summary inlined in FINDING.md);
+  chase them from that evidence.
+- **Banner over another pane's strip** (`95c502fb591f`, `62b9153820d6`): the
+  control source lays the banner on `layout.editor_surface`, the whole editor area,
+  not the active pane -- check which rect paint uses with a split open.
+- Not yet looked at: the undo-algebra findings (5), the leak findings (fds,
+  threads, children), the idle-wake and latency findings, the two crashes
+  (`707c77a79c1d`, `7ab9a5476905`, flaky), focus-on-a-hidden-overlay
+  (`1dd177bb2104`) and the status-bar Ln/Col disagreement (`5a2cb8ba7f6b`).
+
 ### TD-2026-11-08-435 — the safety program's first pass: what landed, what it found, and what it left. [OPEN]
 
 The 2026-11-08 implementation of `dev-docs/project/safety-plan.md` (its tracker has
