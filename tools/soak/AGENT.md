@@ -48,7 +48,9 @@ only, a failing-first test for every fix, one commit per fix, and a TD entry in
 8. **Commit** the test and the fix (one commit, or test then fix), then mark it:
    `tools/soak/soak.py ledger fixed <sig> <commit>`. The runner replays it once
    the commit is in its build and marks it `verified`, or `reopened` if it is
-   still there. A later sighting reopens it as well.
+   still there. A later sighting reopens it as well. Verifying deletes the
+   bundle's `evidence/`, `sightings/` and `verify/`; `FINDING.md`, `meta.json`
+   and the replays stay. So copy any frame you want to keep before then.
 
    A reopened finding's `FINDING.md` still opens with the FIRST sighting. What
    the fix missed is under `sightings/` (listed in § Later sightings): the

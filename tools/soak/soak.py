@@ -47,6 +47,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(REPO / "tools" / "qa"))
 import ledger as ld  # noqa: E402
 import findings as fnd  # noqa: E402
+import monkey_model as mm  # noqa: E402
 
 SOAK = Path(os.environ.get("MICROIDE_SOAK_DIR", REPO / "build" / "soak"))
 WORKTREE = Path(os.environ.get("MICROIDE_SOAK_WORKTREE", REPO / "build" / "wt-soak"))
@@ -534,6 +535,7 @@ def verify_fixed(state: dict[str, Any], log) -> None:
         replay = bundle / "minimal.json" if (bundle / "minimal.json").exists() else bundle / "replay.json"
         if not replay.exists():
             ledger().append(entry.sig, "verified", note="no replay to re-check; trusted the fix")
+            prune_verified_bundle(bundle)
             continue
         result = subprocess.run(["nice", "-n", "19", sys.executable, str(WORKTREE / "tools/soak/minimize.py"),
                                  str(replay), "--signature", entry.sig, "--binary", good["binary"],
@@ -542,7 +544,7 @@ def verify_fixed(state: dict[str, Any], log) -> None:
         rate = next((json.loads(l)["rate"] for l in result.stdout.splitlines() if l.startswith("{")), 1.0)
         if rate == 0:
             ledger().append(entry.sig, "verified", commit=good["sha"])
-            log(f"  verified {entry.sig}")
+            log(f"  verified {entry.sig}; pruned {prune_verified_bundle(bundle) / 1e6:.1f} MB of its evidence")
         else:
             ledger().append(entry.sig, "reopened", commit=good["sha"], rate=rate)
             log(f"  REOPENED {entry.sig} (rate {rate:.0%} on {good['sha'][:10]})")
@@ -677,6 +679,37 @@ def disk_usage(path: Path) -> int:
     return total
 
 
+# What a verified finding's bundle stops needing: the fix is in and its replay
+# no longer reproduces, so the frames, logs and repeat sightings are moot.
+# FINDING.md, meta.json and the replays stay -- a few KB that let a later
+# sighting reopen it against the original record.
+VERIFIED_PRUNED = ("evidence", "sightings", "verify")
+
+
+def prune_verified_bundle(bundle: Path) -> int:
+    """Deletes a verified bundle's evidence; returns the bytes freed."""
+    freed = 0
+    for name in VERIFIED_PRUNED:
+        path = bundle / name
+        if path.is_dir():
+            freed += disk_usage(path)
+            shutil.rmtree(path, ignore_errors=True)
+    return freed
+
+
+def collect_garbage(log) -> None:
+    """Drops what nothing reads any more: verified bundles' evidence and the
+    corpus prefixes too long for a run to start from."""
+    freed = 0
+    for sig, entry in ledger().entries().items():
+        if entry.status == "verified":
+            freed += prune_verified_bundle(FINDINGS / sig)
+    removed, corpus_freed = mm.Corpus(CORPUS).prune()
+    if freed or removed:
+        log(f"gc: {freed / 1e6:.0f} MB of verified evidence, {removed} unusable corpus prefixes "
+            f"({corpus_freed / 1e6:.0f} MB)")
+
+
 def enforce_disk_budget(log) -> None:
     budget = DISK_BUDGET_GB * 1e9
     if disk_usage(SOAK) <= budget:
@@ -686,8 +719,7 @@ def enforce_disk_budget(log) -> None:
     verified = sorted((FINDINGS / sig for sig, e in entries.items() if e.status == "verified"),
                       key=lambda p: p.stat().st_mtime if p.exists() else 0)
     for path in verified:
-        shutil.rmtree(path / "evidence", ignore_errors=True)
-        shutil.rmtree(path / "sightings", ignore_errors=True)
+        prune_verified_bundle(path)
         if disk_usage(SOAK) <= budget * 0.9:
             return
     corpus = sorted(CORPUS.glob("*.json"), key=lambda p: p.stat().st_size, reverse=True)
@@ -817,6 +849,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         if args.once and not jobs and not state.get("pending_checks"):
             break
         if now - last_housekeeping > 600:
+            collect_garbage(log)
             enforce_disk_budget(log)
             last_housekeeping = now
         time.sleep(3)
@@ -907,6 +940,10 @@ def cmd_report(args: argparse.Namespace) -> int:
                   f"- elements pressed: {len(coverage.get('elements', {}))}",
                   f"- setting values set: {len(coverage.get('settings', {}))}",
                   f"- corpus prefixes: {len(list(CORPUS.glob('*.json')))}", ""])
+    parts = {name: disk_usage(SOAK / name) / 1e9 for name in ("bin", "corpus", "findings", "runs")}
+    lines.extend(["## Disk", "", f"- {sum(parts.values()):.1f} GB of the {DISK_BUDGET_GB:.0f} GB budget: "
+                  + ", ".join(f"{name} {size:.1f}" for name, size in parts.items()),
+                  "- verified findings keep FINDING.md and their replays; `soak.py gc` drops the rest", ""])
     surface = SOAK / "surface-gaps.md"
     if surface.exists():
         lines.extend(["## Surface gaps", "", f"See [{surface.name}]({surface}).", ""])
@@ -956,6 +993,10 @@ def cmd_build(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_gc(_args) -> int:
+    collect_garbage(print)
+    return 0
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="mode", required=True)
@@ -970,6 +1011,7 @@ def main() -> int:
     sub.add_parser("status")
     sub.add_parser("report")
     sub.add_parser("build")
+    sub.add_parser("gc", help="delete verified findings' evidence and unusable corpus prefixes")
     check = sub.add_parser("check", help="measure a finding's reproduction rate and minimize it")
     check.add_argument("sig")
     led = sub.add_parser("ledger")
@@ -978,7 +1020,8 @@ def main() -> int:
     led.add_argument("extra", nargs="?")
     args = parser.parse_args()
     return {"run": cmd_run, "status": cmd_status, "report": cmd_report, "ledger": cmd_ledger,
-            "build": cmd_build, "check": cmd_check}[args.mode](args)
+            "build": cmd_build, "check": cmd_check, "gc": cmd_gc}[args.mode](args)
+
 
 
 if __name__ == "__main__":

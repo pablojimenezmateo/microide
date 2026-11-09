@@ -70,7 +70,10 @@ ready to fix.
   - Everything runs under `nice -n 19` and `ionice -c3`, with a job cap (default: half the
     cores) and a pause file (`build/soak/PAUSE`).
   - It backs off on your own load and while a `run-checks` lane holds its lock.
-  - Output stays in `build/soak/` (not the `/tmp` tmpfs) within a disk budget.
+  - Output stays in `build/soak/` (not the `/tmp` tmpfs) within a disk budget
+    (`MICROIDE_SOAK_DISK_GB`, 25). A verified finding drops its evidence and keeps its
+    record and replays. The corpus holds only prefixes a run can start from
+    (`MAX_PREFIX_ACTIONS`). `soak.py report` § Disk shows where the bytes are.
 - **Status.** `soak.py status` prints uptime, jobs per hour, open findings by label, and the
   current commit and job.
 

@@ -175,6 +175,12 @@ class Coverage:
             os.replace(temp, path)
 
 
+# The longest prefix a run starts from. `pick` skips longer ones, so `save`
+# refuses them: before it did, 92% of the soak's corpus (4.2 GB, 29.7k files)
+# was prefixes no run could use, each read and parsed by every run's pick.
+MAX_PREFIX_ACTIONS = 400
+
+
 class Corpus:
     """Action prefixes that reached a state first, one file per state signature
     (`<sha1>.json`: the replay header, the state, and the actions)."""
@@ -190,22 +196,41 @@ class Corpus:
 
     def save(self, state: str, header: dict[str, Any], actions: list[dict[str, Any]]) -> bool:
         """Keeps the shortest prefix per state. True when written."""
-        if self.directory is None or not actions:
+        kept = [a for a in actions if "check" not in a]
+        if self.directory is None or not kept or len(kept) > MAX_PREFIX_ACTIONS:
             return False
         path = self.directory / self._name(state)
         if path.exists():
             with contextlib.suppress(OSError, ValueError):
-                if len(json.loads(path.read_text()).get("actions", [])) <= len(actions):
+                if len(json.loads(path.read_text()).get("actions", [])) <= len(kept):
                     return False
-        record = {**header, "state": state, "actions": [a for a in actions if "check" not in a]}
+        record = {**header, "state": state, "actions": kept}
         fd, temp = tempfile.mkstemp(dir=self.directory, prefix=".corpus-")
         with os.fdopen(fd, "w") as out:
             json.dump(record, out)
         os.replace(temp, path)
         return True
 
+    def prune(self) -> tuple[int, int]:
+        """Deletes the prefixes no run can start from: longer than
+        MAX_PREFIX_ACTIONS, or unreadable. Returns (files removed, bytes freed)."""
+        removed = freed = 0
+        if self.directory is None:
+            return removed, freed
+        for path in self.directory.glob("*.json"):
+            try:
+                usable = len(json.loads(path.read_text()).get("actions", [])) <= MAX_PREFIX_ACTIONS
+            except (OSError, ValueError, AttributeError):
+                usable = False
+            if not usable:
+                with contextlib.suppress(OSError):
+                    size = path.stat().st_size
+                    path.unlink()
+                    removed, freed = removed + 1, freed + size
+        return removed, freed
+
     def pick(self, rng: random.Random, coverage: Coverage, header: dict[str, Any],
-             max_actions: int = 400) -> dict[str, Any] | None:
+             max_actions: int = MAX_PREFIX_ACTIONS) -> dict[str, Any] | None:
         """A prefix for this run's fixture and window size, the rarest states
         most likely (weight 1 / (1 + times the state was seen))."""
         if self.directory is None:
