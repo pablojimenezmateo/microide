@@ -767,6 +767,15 @@ class App:
                         return reply
         except (OSError, socket.timeout) as error:
             self.capture_stall(f"{what} got no reply")
+            # The next request connects afresh. The app may have shed this
+            # connection (it logs why), and keeping the dead socket made every
+            # later step of the run fail the same way: 155 broken pipes in one
+            # soak run, each a finding, with no sign of whether the channel
+            # itself still worked.
+            with contextlib.suppress(OSError):
+                self._socket.close()
+            self._socket = None
+            self._socket_buffer = b""
             raise QaFailure(f"{what} got no reply: {error}") from error
 
     def capture_stall(self, why: str) -> None:
@@ -2023,16 +2032,21 @@ class App:
         and every key and text event with the focus that took it): an expectation
         that fails only on a CI runner had nothing else to read."""
         if not condition:
-            shot = self.screenshot("expect-" + message[:40])
+            finding = Finding("expect", message)
+            # A finding directory like the oracles' (replay.json, log tail, the
+            # last frames): with only a screenshot, the soak's bundle of an
+            # expect finding had no replay to reproduce or minimize it from.
+            shot = self._write_finding("expect-" + message[:40], [finding])
             if shot is not None:
                 with contextlib.suppress(Exception):
                     recent = json.dumps(self.actions[-40:], indent=1)
                     dap = self.work / "dap.log"
                     dap_tail = dap.read_bytes()[-24 * 1024:].decode("utf-8", "replace") if dap.exists() else ""
-                    Path(shot).with_suffix(".txt").write_text(
+                    (Path(shot).parent / "expect.txt").write_text(
                         f"{message}\n\n--- the last actions\n{recent}\n\n--- the app log's tail\n{self.log_tail()}"
                         + (f"\n\n--- the debug adapter's traffic (tail)\n{dap_tail}" if dap_tail else ""))
-            self.findings.append(Finding("expect", message, shot))
+            finding.screenshot = shot
+            self.findings.append(finding)
         return bool(condition)
 
     # ---- replay ----------------------------------------------------------

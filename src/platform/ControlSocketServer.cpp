@@ -332,8 +332,12 @@ struct ControlSocketServer::Impl {
       for (std::size_t i = 0; i < snapshot.size(); ++i) {
         const short revents = fds[i + 2].revents;
         const std::shared_ptr<Connection>& conn = snapshot[i];
-        bool hard_drop = (revents & (POLLERR | POLLNVAL)) != 0;
-        if (!hard_drop && (revents & POLLIN) != 0) {
+        // Why the connection is shed, or null to keep it. Every shed is logged:
+        // a client only sees EPIPE, and a QA run whose channel went dead with the
+        // app still alive had nothing to say which of these it was.
+        const char* drop_reason =
+            (revents & (POLLERR | POLLNVAL)) != 0 ? "socket error" : nullptr;
+        if (drop_reason == nullptr && (revents & POLLIN) != 0) {
           char buffer[4096];
           while (true) {
             const ssize_t count = ::recv(conn->fd, buffer, sizeof(buffer), 0);
@@ -344,36 +348,38 @@ struct ControlSocketServer::Impl {
             if (count == 0) {
               conn->read_closed = true;  // peer closed its write side
             } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
-              hard_drop = true;
+              drop_reason = "read error";
             }
             break;
           }
           if (!IngestReadBuffer(*conn)) {
             // Inbound queue saturated: the peer is flooding requests faster than
             // the host can drain them. Shed it rather than grow the queue.
-            hard_drop = true;
+            drop_reason = "request over the size cap or inbound queue full";
           }
           // The residual buffer holds only the incomplete trailing line (every
           // complete line was consumed above). If that single unterminated line
           // has grown past the per-request ceiling, the peer is streaming bytes
           // with no newline to exhaust memory — drop it.
           if (conn->read_buf.size() > kMaxRequestLineBytes) {
-            hard_drop = true;
+            drop_reason = "unterminated request over the size cap";
           }
         }
         if ((revents & POLLHUP) != 0 && conn->read_buf.empty()) {
           conn->read_closed = true;
         }
         // A stalled reader that overflowed its write buffer is shed here.
-        if (!hard_drop && conn->write_overflow.load(std::memory_order_acquire)) {
-          hard_drop = true;
+        if (drop_reason == nullptr && conn->write_overflow.load(std::memory_order_acquire)) {
+          drop_reason = "client not reading: replies and events over the write buffer cap";
         }
         // Always attempt to flush; send() on a non-writable socket is a cheap
         // EAGAIN. A hard write error means the peer is gone for good.
-        if (!hard_drop) {
-          hard_drop = !FlushConnection(*conn);
+        if (drop_reason == nullptr && !FlushConnection(*conn)) {
+          drop_reason = "write error";
         }
-        if (hard_drop) {
+        if (drop_reason != nullptr) {
+          util::Log("control channel: dropped client " + std::to_string(conn->id) + ": " +
+                    drop_reason);
           RemoveConnection(conn->id);
           continue;
         }

@@ -10,6 +10,9 @@
 #include <vector>
 
 #include "platform/ControlSocketServer.h"
+#include "util/Log.h"
+
+#include <mutex>
 
 #include <poll.h>
 #include <sys/socket.h>
@@ -487,6 +490,47 @@ void TestControlRequestCeilingIsOneValue() {
   // the single definition in ControlSocketLimits.h now makes structural.
 }
 
+// Diagnosis: a shed client sees only EPIPE on its next send. The QA monkey's
+// channel went dead mid-run with the app still alive (soak 1d64e3925f2b, 618
+// failed queries), and nothing said which of the shed paths had fired. Every
+// shed is logged with its reason; the stalled reader is the one a long-lived
+// client that sleeps between requests can hit.
+void TestShedClientIsLoggedWithItsReason() {
+  std::mutex mutex;
+  std::vector<std::string> lines;
+  microide::util::SetLogSink([&](std::string_view line) {
+    std::lock_guard<std::mutex> lock(mutex);
+    lines.emplace_back(line);
+  });
+  struct RestoreSink {
+    ~RestoreSink() { microide::util::SetLogSink(nullptr); }
+  } restore;
+
+  TemporaryDirectory temp_dir;
+  ControlSocketServer server;
+  Expect(server.Start(temp_dir.path() / "control.sock"), "server should start");
+  const int client = ConnectUnix(temp_dir.path() / "control.sock");
+  Expect(client >= 0, "client should connect");
+  Expect(WaitForConnectionCount(server, 1, 2s), "server should accept the connection");
+
+  // The client never reads: events pile up past the write buffer's cap.
+  const std::string event(64u * 1024, 'e');
+  for (int i = 0; i < 400 && server.ConnectionCount() == 1; ++i) {
+    server.Broadcast(event);
+  }
+  Expect(WaitForConnectionCount(server, 0, 3s), "a client that never reads should be shed");
+  server.Stop();
+  ::close(client);
+
+  std::lock_guard<std::mutex> lock(mutex);
+  bool logged = false;
+  for (const std::string& line : lines) {
+    logged = logged || (line.find("dropped client") != std::string::npos &&
+                        line.find("not reading") != std::string::npos);
+  }
+  Expect(logged, "the shed should be logged with its reason");
+}
+
 }  // namespace
 
 void RegisterControlSocketServerTests(std::vector<TestCase>& tests) {
@@ -512,6 +556,8 @@ void RegisterControlSocketServerTests(std::vector<TestCase>& tests) {
           TestInboundQueueFloodIsShed);
   AddTest(tests, "ControlSocketServer/IdleConnectionFloodIsCapped",
           TestIdleConnectionFloodIsCapped);
+  AddTest(tests, "ControlSocketServer/ShedClientIsLoggedWithItsReason",
+          TestShedClientIsLoggedWithItsReason);
   AddTest(tests, "ControlSocketServer/LargeMultiLineBroadcastDeliveredInOrder",
           TestLargeMultiLineBroadcastDeliveredInOrder);
 }
