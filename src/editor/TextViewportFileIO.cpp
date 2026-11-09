@@ -450,20 +450,16 @@ bool TextViewport::RevertToDiskContent(const TextViewport& disk) {
     return false;
   }
   if (!HoldsSameFileContentAs(disk)) {
-    std::string text;
+    // The file's lines as they are, as one undoable line edit. Not as a
+    // '\n'-joined text through ReplaceRange: inserted text breaks a line at a
+    // lone '\r' as well, and an opaque document's lines keep their CR bytes, so
+    // a reverted binary file held a line break where the file holds byte 13 --
+    // marked clean (soak fea34952ad53).
     const TextBuffer& source = disk.lines();
-    for (std::size_t i = 0; i < source.LineCount(); ++i) {
-      if (i > 0) {
-        text += '\n';
-      }
-      text += source.LineView(i);
-    }
     const TextPosition caret{cursor_line_, cursor_column_};
     ClearSecondaryCarets();
-    const std::size_t last = document_->lines.size() - 1;
-    if (!ReplaceRange(SelectionRange{TextPosition{0, 0},
-                                     TextPosition{last, document_->lines.LineLength(last)}},
-                      text)) {
+    if (!ReplaceLines(0, document_->lines.size(), source.SliceLinesBlob(0, source.size()),
+                      /*record_undo=*/true)) {
       return false;
     }
     // The caret stays where it was as far as the reverted text allows, rather

@@ -6018,6 +6018,32 @@ void TestTextViewportAdoptedDiskBaselineMovesTheCleanPoint() {
   Expect(!viewport.dirty(), "redoing back to the file's text returns to clean");
 }
 
+// Revert File installs the file's lines as they are. It inserted them as one
+// '\n'-joined text instead, and inserted text breaks a line at a lone '\r' too --
+// right for typed text, wrong for an opaque (binary) document, whose lines split
+// on '\n' only and keep their CR bytes. The reverted buffer then held a line
+// break where the file holds byte 13, and was marked clean: a save would have
+// rewritten the file (soak fea34952ad53, binary.bin, first difference at byte 13).
+void TestTextViewportRevertToDiskKeepsTheCarriageReturnsOfABinaryFile() {
+  const std::string bytes("\x00\x01\n\x0b\x0c\r\x0e\x0f\n\x10", 10);
+  TextViewport viewport;
+  viewport.LoadContent(bytes, "/tmp/microide-revert-binary/binary.bin");
+  Expect(viewport.encoding() == TextViewport::TextEncoding::Bytes, "NUL bytes load as an opaque document");
+  Expect(viewport.SerializeDocumentText() == bytes, "an opaque document serializes back byte for byte");
+  viewport.ReplaceRange(SelectionRange{{0, 0}, {0, 0}}, "x", /*record_undo=*/true);
+  Expect(viewport.dirty(), "the edit marks the buffer dirty");
+
+  TextViewport disk;
+  disk.LoadContent(bytes, "/tmp/microide-revert-binary/binary.bin");
+  Expect(viewport.RevertToDiskContent(disk), "revert should apply");
+  Expect(viewport.lines().size() == disk.lines().size(),
+         "the reverted buffer has the file's lines; a CR byte is not a line break");
+  Expect(viewport.SerializeDocumentText() == bytes, "the reverted buffer holds the file's bytes");
+  Expect(!viewport.dirty(), "a reverted buffer is clean");
+  Expect(viewport.Undo(), "the revert is one undoable edit");
+  Expect(viewport.dirty(), "undoing the revert brings the discarded edit back, dirty");
+}
+
 // Data-integrity (dirty-baseline family): saving while parked ABOVE undone edits must
 // make the saved position the sole clean point — redoing forward off it re-dirties, and
 // undoing past it dirties, because both differ from what is on disk.
@@ -6553,6 +6579,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportSoftWrapTabSizeChangePreservesWrappedColumn);
   AddTest(tests, "TextViewport/AdoptedDiskBaselineMovesTheCleanPoint",
           TestTextViewportAdoptedDiskBaselineMovesTheCleanPoint);
+  AddTest(tests, "TextViewport/RevertToDiskKeepsTheCarriageReturnsOfABinaryFile",
+          TestTextViewportRevertToDiskKeepsTheCarriageReturnsOfABinaryFile);
   AddTest(tests, "TextViewport/UndoPastSaveMarksDirty",
           TestTextViewportUndoPastSaveMarksDirty);
   AddTest(tests, "TextViewport/SaveAboveUndoneEditsDirtiesRedo",
