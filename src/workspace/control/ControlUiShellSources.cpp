@@ -12,6 +12,7 @@
 #include <functional>
 #include <limits>
 #include <string>
+#include <tuple>
 #include <variant>
 
 #include "workspace/PluginSurfacePreview.h"
@@ -633,15 +634,24 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
             // The merge editor's buttons, from the geometry its mouse path tests:
             // the toolbar, and each visible conflict's accept buttons (shown while
             // the pointer is over that conflict, which hovering the button does).
+            // Not while the editor column is collapsed (the panel maximized): the
+            // surface has no height and nothing of it is drawn, so naming its
+            // buttons put them over the panel's tabs (soak 8864c9127fb2).
             if (MergeTabState* merge_tab = ActiveTabIsMerge() ? ActiveMergeTab() : nullptr;
-                merge_tab != nullptr) {
+                merge_tab != nullptr && layout.editor_surface.w > 0.0f &&
+                layout.editor_surface.h > 0.0f) {
               const SDL_FRect surface_rect = layout.editor_surface;
               const MergeSurfaceLayout surface = ComputeMergeSurfaceLayout(surface_rect, *merge_tab);
               const MergeToolbarLayout toolbar = ComputeMergeToolbarLayout(surface_rect, surface);
-              AddControlUiElement(out, kButton, "merge/prev", toolbar.prev_rect, "Previous");
-              AddControlUiElement(out, kButton, "merge/next", toolbar.next_rect, "Next");
-              AddControlUiElement(out, kButton, "merge/open", toolbar.open_rect, "Open Result");
-              AddControlUiElement(out, kButton, "merge/save", toolbar.save_rect, "Save");
+              for (const auto& [name, rect, label] :
+                   {std::tuple{"merge/prev", toolbar.prev_rect, "Previous"},
+                    std::tuple{"merge/next", toolbar.next_rect, "Next"},
+                    std::tuple{"merge/open", toolbar.open_rect, "Open Result"},
+                    std::tuple{"merge/save", toolbar.save_rect, "Save"}}) {
+                if (UiRectHasArea(rect)) {  // a narrow pane lays out only what fits
+                  AddControlUiElement(out, kButton, name, rect, label);
+                }
+              }
               for (const std::string_view label : {"Unresolved", "Toggle Base", "Mark Resolved"}) {
                 if (const auto rect = ComputeMergeSecondaryToolbarButtonRect(surface_rect, surface, label);
                     rect.has_value() && UiRectHasArea(*rect)) {

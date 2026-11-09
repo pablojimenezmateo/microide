@@ -4192,6 +4192,43 @@ void TestPartialFramesAtAFractionalScaleMatchFullOnesAcrossASplit() {
 // read the pointer at paint time, but merge hover tracking knew only conflict
 // regions, so moving onto Save requested no repaint of it and the next partial
 // frame (a caret blink) kept the unlit button (QA merge-mouse, both lanes).
+// The merge toolbar's buttons, laid right to left from the pane's right edge,
+// had no left bound: in a pane narrower than the toolbar, Prev / Next and the
+// second row's Unresolved / Toggle Base landed over the sidebar, where the ui
+// query named them on top of git/branch and git/sync (soak 780af9fe3d1d,
+// a67e96e83bf3, 094c788d6d03). A button with no room is not laid out at all.
+void TestMergeToolbarStaysInsideANarrowPane() {
+  FlowFixture fixture("notes.txt", "notes\n");
+  const std::filesystem::path base = fixture.root / "base.txt";
+  const std::filesystem::path incoming = fixture.root / "incoming.txt";
+  const std::filesystem::path current = fixture.root / "current.txt";
+  const std::filesystem::path output = fixture.root / "result.txt";
+  WriteFile(base, "alpha\none\ntwo\n");
+  WriteFile(incoming, "incoming\none\ntwo\n");
+  WriteFile(current, "current\none\ntwo\n");
+  WriteFile(output, "alpha\none\ntwo\n");
+  Expect(TestAccess::OpenMergeEditor(fixture.shell, base, incoming, current, output),
+         "the merge editor should open");
+  constexpr int kNarrowWidth = 520;
+  TestAccess::SetWindowSize(fixture.shell, kNarrowWidth, FlowFixture::kHeight);
+  fixture.shell.Render(fixture.canvas.renderer(), kNarrowWidth, FlowFixture::kHeight);
+  const workspace::WorkspaceLayout layout = TestAccess::CurrentLayout(fixture.shell);
+  Expect(layout.editor_surface.w < 400.0f, "the fixture must squeeze the editor pane");
+  std::size_t seen = 0;
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    const std::string& name = entry["name"].AsString();
+    if (!name.starts_with("button:merge/") || name.find('/', 13) != std::string::npos) {
+      continue;  // the toolbar's own buttons, not a conflict's accept buttons
+    }
+    ++seen;
+    const auto& r = entry["rect"].AsArray();
+    Expect(static_cast<float>(r[0].AsInt()) >= layout.editor_surface.x,
+           name + " must not start left of the editor pane");
+  }
+  Expect(seen > 0, "the narrow pane still shows the toolbar buttons that fit");
+}
+
 void TestMergeToolbarHoverRepaintsTheButton() {
   FlowFixture fixture("notes.txt", "notes\n");
   const std::filesystem::path base = fixture.root / "base.txt";
@@ -4581,6 +4618,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestHoverUnderAStickyBandResolvesThePointersLine);
   AddTest(tests, "QaFlowRegression/MergeToolbarHoverRepaintsTheButton",
           TestMergeToolbarHoverRepaintsTheButton);
+  AddTest(tests, "QaFlowRegression/MergeToolbarStaysInsideANarrowPane",
+          TestMergeToolbarStaysInsideANarrowPane);
   AddTest(tests, "QaFlowRegression/ADragAcrossPanelTabsLeavesNoHoveredCloseButton",
           TestADragAcrossPanelTabsLeavesNoHoveredCloseButton);
   AddTest(tests, "QaFlowRegression/SearchResultsCaughtUpAtFramePrepRepaintTheirCount",

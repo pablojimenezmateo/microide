@@ -1671,7 +1671,30 @@ void TestEditorBannerKeepsInsideTheEditorArea() {
   }
 }
 
+// The banner's buttons, laid right to left from its dismiss button, had no left
+// bound: in a pane narrower than the row, the leading ones landed over the
+// sidebar (soak 6b622ef8a9ea, a1673d0162dc, 4eda8acffd2f: banner/Overwrite on
+// git/sync). The trailing buttons that fit are kept; the rest are not laid out.
+void TestEditorBannerButtonsStayInsideANarrowStrip() {
+  static constexpr workspace::EditorBannerButton kButtons[] = {
+      {workspace::EditorBannerAction::Keep, "Reload", 64.0f, false},
+      {workspace::EditorBannerAction::Keep, "Compare", 72.0f, false},
+      {workspace::EditorBannerAction::Keep, "Overwrite", 78.0f, false}};
+  const SDL_FRect strip{280.0f, 88.0f, 150.0f, 26.0f};
+  const workspace::EditorBannerButtonLayout layout = workspace::ComputeEditorBannerButtonRects(strip, kButtons);
+  Expect(!layout.buttons.empty() && layout.buttons.size() < 3, "a narrow strip keeps only the buttons that fit");
+  for (std::size_t i = 0; i < layout.buttons.size(); ++i) {
+    Expect(layout.rects[i].x >= strip.x, "a banner button must not start left of its strip");
+  }
+  Expect(layout.buttons.back().label == "Overwrite", "the trailing buttons are the ones kept");
+  const SDL_FRect wide{280.0f, 88.0f, 900.0f, 26.0f};
+  Expect(workspace::ComputeEditorBannerButtonRects(wide, kButtons).buttons.size() == 3,
+         "a wide strip keeps every button");
+}
+
 void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShared/EditorBannerButtonsStayInsideANarrowStrip",
+          TestEditorBannerButtonsStayInsideANarrowStrip);
   AddTest(tests, "WorkspaceShared/FindWidgetStaysInsideAShortOrNarrowArea",
           TestFindWidgetStaysInsideAShortOrNarrowArea);
   AddTest(tests, "WorkspaceShared/EditorBannerKeepsInsideTheEditorArea", TestEditorBannerKeepsInsideTheEditorArea);

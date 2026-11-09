@@ -208,6 +208,9 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                                std::string_view label,
                                bool selected,
                                bool primary = false) {
+    if (button_rect.w <= 0.0f || button_rect.h <= 0.0f) {
+      return;  // not laid out: no room in a narrow pane
+    }
     const std::string_view display = TruncateLabelView(label, button_rect.w - 18.0f);
     detail::DrawButtonCentered(editor_text_renderer_, renderer, theme_, button_rect, display,
                                detail::ButtonTone::Neutral,
@@ -282,8 +285,16 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   const std::string_view status_text = merge_tab->status_message.empty()
                                            ? resolver_status.progress_label
                                            : std::string_view(merge_tab->status_message);
+  // The status runs up to the leftmost second-row button that is laid out (a
+  // narrow pane drops the leading ones), or to the row's right inset.
+  float status_right = rect.x + rect.w - kMergeToolbarEdgeInset + kMergeToolbarButtonGap;
+  for (const SDL_FRect& button : {mark_resolved_rect, toggle_base_rect, unresolved_rect}) {
+    if (button.w > 0.0f) {
+      status_right = button.x;
+    }
+  }
   const float status_max_width =
-      std::max(0.0f, unresolved_rect.x - kMergeToolbarButtonGap - surface.left_x);
+      std::max(0.0f, status_right - kMergeToolbarButtonGap - surface.left_x);
   editor_text_renderer_.DrawString(renderer, surface.left_x, surface.secondary_button_y,
                             theme_.text_secondary,
                             TruncateLabelView(status_text, status_max_width));

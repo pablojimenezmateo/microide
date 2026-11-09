@@ -48,7 +48,7 @@ WorkspaceShell::MergeToolbarLayout WorkspaceShell::ComputeMergeToolbarLayout(
   };
 
   const SDL_FRect save_rect = make_button_rect(0.0f, "Save");
-  const float save_x = rect.x + rect.w - 8.0f - save_rect.w;
+  const float save_x = rect.x + rect.w - kMergeToolbarEdgeInset - save_rect.w;
   const SDL_FRect aligned_save_rect = make_button_rect(save_x, "Save");
   const SDL_FRect open_rect = make_button_rect(
       aligned_save_rect.x - kMergeToolbarButtonGap - make_button_rect(0.0f, "Open Result").w,
@@ -57,11 +57,18 @@ WorkspaceShell::MergeToolbarLayout WorkspaceShell::ComputeMergeToolbarLayout(
       open_rect.x - kMergeToolbarButtonGap - make_button_rect(0.0f, "Next").w, "Next");
   const SDL_FRect prev_rect = make_button_rect(
       next_rect.x - kMergeToolbarButtonGap - make_button_rect(0.0f, "Prev").w, "Prev");
+  // Laid right to left, so a pane narrower than the row pushed the leading
+  // buttons left of it, over the sidebar (soak 780af9fe3d1d). A button with no
+  // room is not laid out: an empty rect is neither drawn nor hit.
+  const float min_x = rect.x + kMergeToolbarEdgeInset;
+  const auto fitted = [min_x](const SDL_FRect& button) {
+    return button.x >= min_x ? button : SDL_FRect{};
+  };
   return {
-      .prev_rect = prev_rect,
-      .next_rect = next_rect,
-      .open_rect = open_rect,
-      .save_rect = aligned_save_rect,
+      .prev_rect = fitted(prev_rect),
+      .next_rect = fitted(next_rect),
+      .open_rect = fitted(open_rect),
+      .save_rect = fitted(aligned_save_rect),
   };
 }
 
@@ -70,25 +77,31 @@ std::optional<SDL_FRect> WorkspaceShell::ComputeMergeSecondaryToolbarButtonRect(
     const MergeSurfaceLayout& surface,
     std::string_view label) const {
   const float width = ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth(label));
-  if (label == "Mark Resolved") {
-    const float x = rect.x + rect.w - 8.0f - width;
+  // The same left bound as the first row: a button with no room is not laid
+  // out, and neither is any button left of it.
+  const float min_x = rect.x + kMergeToolbarEdgeInset;
+  const auto fitted = [&](float x) -> std::optional<SDL_FRect> {
+    if (x < min_x) {
+      return std::nullopt;
+    }
     return MakeRect(x, surface.secondary_button_y, width, kMergeToolbarButtonHeight);
+  };
+  if (label == "Mark Resolved") {
+    return fitted(rect.x + rect.w - kMergeToolbarEdgeInset - width);
   }
   if (label == "Toggle Base") {
     const auto mark = ComputeMergeSecondaryToolbarButtonRect(rect, surface, "Mark Resolved");
     if (!mark.has_value()) {
       return std::nullopt;
     }
-    return MakeRect(mark->x - kMergeToolbarButtonGap - width, surface.secondary_button_y, width,
-                    kMergeToolbarButtonHeight);
+    return fitted(mark->x - kMergeToolbarButtonGap - width);
   }
   if (label == "Unresolved") {
     const auto toggle = ComputeMergeSecondaryToolbarButtonRect(rect, surface, "Toggle Base");
     if (!toggle.has_value()) {
       return std::nullopt;
     }
-    return MakeRect(toggle->x - kMergeToolbarButtonGap - width, surface.secondary_button_y, width,
-                    kMergeToolbarButtonHeight);
+    return fitted(toggle->x - kMergeToolbarButtonGap - width);
   }
   return std::nullopt;
 }
