@@ -5,8 +5,13 @@
 
 set -euo pipefail
 
-SDL_TAG="${SDL_TAG:-release-3.2.16}"
-SDL_TTF_TAG="${SDL_TTF_TAG:-release-3.2.0}"
+# The versions the release is built and shipped with (the .deb bundles them).
+# CI on older ones tested a different SDL: 3.2's software renderer shifts the
+# whole remainder of a scaled copy a clip cuts by a device pixel, which failed
+# QaFlowRegression/PartialFramesAtAFractionalScaleMatchFullOnesAcrossASplit on
+# every CI run from 2026-11-08 while it passed on the dev PC.
+SDL_TAG="${SDL_TAG:-release-3.4.2}"
+SDL_TTF_TAG="${SDL_TTF_TAG:-release-3.2.2}"
 WORK_DIR="${WORK_DIR:-/tmp/microide-sdl3}"
 JOBS="${JOBS:-$(nproc)}"
 

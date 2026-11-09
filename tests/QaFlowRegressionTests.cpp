@@ -4200,7 +4200,10 @@ void TestPartialFramesAtAFractionalScaleMatchFullOnesAcrossASplit() {
         // copy that a clip cuts (it shifts the source rect), so a glyph straddling a
         // clip edge differs by a unit or two at a fractional scale -- noise this
         // canvas adds and the app's GPU renderer (a scissor) does not. Seed 602's
-        // seam was a colour off by 20.
+        // seam was a colour off by 20. SDL before 3.4 shifted the WHOLE rest of a
+        // cut copy by a device pixel (a tab label cut at its start differed by a
+        // full step 50 px further on), so this needs the SDL the release ships:
+        // scripts/ci/install-sdl3-linux.sh.
         SDL_Surface* reference = SDL_ConvertSurface(canvas.surface(), retained->format);
         int solid = 0;
         int first_x = -1;
