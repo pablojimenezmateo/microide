@@ -1119,6 +1119,58 @@ void TestATabDraggedAcrossThreePanesPaintsFresh() {
   }
 }
 
+// Soak 0c1b56e84217 (ui.scale 2): a tab nudged six pixels and dropped left a
+// dark line under the tab strip. The ghost's drop shadow sat two pixels below
+// the ghost, past the strip -- the only thing a tab drag damages -- so where the
+// clip padding did not reach, the line it drew there was never painted over.
+// What a drag paints stays inside the strip: the rows under it do not change.
+void TestADraggedTabPaintsNothingUnderTheStrip() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("a.txt", "a\n");
+  WriteFile(fixture.root / "b.txt", "b\n");
+  TestAccess::OpenFileInNewTab(fixture.shell, fixture.root / "b.txt");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "two tabs");
+  const auto dragged = fixture.ElementRect("tab:0/b.txt");
+  Expect(dragged.has_value(), "the strip names tab:0/b.txt");
+  if (!dragged) {
+    return;
+  }
+  const SDL_FRect strip = TestAccess::CurrentLayout(fixture.shell).tab_strip;
+  const int below = static_cast<int>(std::ceil(strip.y + strip.h));
+  const auto rows_under_strip = [&]() {
+    SDL_FlushRenderer(fixture.canvas.renderer());
+    std::vector<Uint32> pixels;
+    SDL_Surface* surface = fixture.canvas.surface();
+    for (int y = below; y < below + 4; ++y) {
+      for (int x = static_cast<int>(strip.x); x < static_cast<int>(strip.x + strip.w); ++x) {
+        Uint8 r = 0, g = 0, b = 0, a = 0;
+        (void)SDL_ReadSurfacePixel(surface, x, y, &r, &g, &b, &a);
+        pixels.push_back((Uint32{r} << 24) | (Uint32{g} << 16) | (Uint32{b} << 8) | a);
+      }
+    }
+    return pixels;
+  };
+  const std::vector<Uint32> before = rows_under_strip();
+  const float y = dragged->y + dragged->h / 2.0f;
+  const float x0 = dragged->x + dragged->w / 2.0f;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x0, y),
+                                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x0, y)}),
+                      "pressing on b.txt's tab");
+  for (int step = 1; step <= 6; ++step) {
+    SDL_Event motion = MouseMotionEvent(x0 - static_cast<float>(step), y);
+    motion.motion.state = SDL_BUTTON_LMASK;
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {motion}), "nudging the tab, step " + std::to_string(step));
+  }
+  Expect(TestAccess::TabDrag(fixture.shell).dragging, "the nudge is a drag");
+  Expect(rows_under_strip() == before, "the dragged tab paints nothing under the strip");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x0 - 6.0f, y)}),
+                      "dropping the tab");
+}
+
 // A dirty buffer whose file was deleted outside the app: Ctrl+S refused it as
 // "changed on disk -- Compare, Reload or Overwrite in the banner", for a file
 // with nothing left to compare, reload or overwrite, and nothing reached the disk.
@@ -4834,6 +4886,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TogglingTheMergeBasePaneKeepsTheToolbarAndEveryFrameFresh",
           TestTogglingTheMergeBasePaneKeepsTheToolbarAndEveryFrameFresh);
   AddTest(tests, "QaFlowRegression/AConflictOutOfSightHasNoButtons", TestAConflictOutOfSightHasNoButtons);
+  AddTest(tests, "QaFlowRegression/ADraggedTabPaintsNothingUnderTheStrip",
+          TestADraggedTabPaintsNothingUnderTheStrip);
   AddTest(tests, "QaFlowRegression/ADeeplyIndentedTreeRowKeepsItsLabelInsideTheRow",
           TestADeeplyIndentedTreeRowKeepsItsLabelInsideTheRow);
   AddTest(tests, "QaFlowRegression/ACaretMoveThatScrollsTheMergePanesRepaintsThemAll",

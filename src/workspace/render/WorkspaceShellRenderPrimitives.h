@@ -1122,8 +1122,14 @@ inline void DrawTabDragFeedback(const render::TextRenderer& text_renderer,
   const float ghost_x =
       ClampedGhostX(strip.x, strip.w, ghost->rect.w, pointer_x, grab_offset_x);
   const SDL_FRect ghost_rect = MakeRect(ghost_x, ghost->rect.y, ghost->rect.w, ghost->rect.h);
-  FillRect(renderer, MakeRect(ghost_rect.x + 1.0f, ghost_rect.y + 2.0f, ghost_rect.w, ghost_rect.h),
-           render::BlendColors(theme.surface_background, SDL_Color{0, 0, 0, 255}, 0.5f));
+  // The drop shadow stays inside the strip: a drag damages the strip and no more,
+  // so shadow drawn below it was never painted over (soak 0c1b56e84217).
+  const SDL_FRect shadow = MakeRect(ghost_rect.x + 1.0f, ghost_rect.y + 2.0f, ghost_rect.w, ghost_rect.h);
+  SDL_FRect shadow_in_strip{};
+  if (SDL_GetRectIntersectionFloat(&shadow, &strip, &shadow_in_strip)) {
+    FillRect(renderer, shadow_in_strip,
+             render::BlendColors(theme.surface_background, SDL_Color{0, 0, 0, 255}, 0.5f));
+  }
   DrawStripTab(text_renderer, renderer, theme, ghost_rect, ghost->display_title, ghost->badge_text,
                ghost->badge_color, ghost->show_badge, /*active=*/true, style, palette,
                /*hovered=*/false, RemoteMarkOf(*ghost));
