@@ -982,7 +982,7 @@ class Monkey:
         for finding in self.app.findings[since:]:
             signature = fnd.signature(finding.kind, finding.detail,
                                       self.app.log_tail() if finding.kind in ("crash", "log") else "",
-                                      fnd.stale_surface(finding.detail, (self.app.last_ui or {}).get("surfaces")))
+                                      fnd.stale_context(finding.detail, (self.app.last_ui or {}).get("surfaces")))
             entry = self.signatures.get(signature)
             evidence = Path(finding.screenshot).parent if finding.screenshot else None
             if entry is not None:

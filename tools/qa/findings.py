@@ -68,6 +68,52 @@ def stale_surface(detail: str, surfaces: dict | None) -> str:
     return "elsewhere"
 
 
+_STALE_FIRST = re.compile(r"QA-STALE .*?first=(-?\d+),(-?\d+)")
+_STALE_CLIPS = re.compile(r"QA-STALE .*?clips=(\S+)")
+
+
+def stale_clip_relation(detail: str) -> str:
+    """Where a redraw-verifier finding's first stale pixel sits against the
+    frame's clip rects: `in-clip` (the partial frame repainted it, wrongly),
+    `clip-edge` (the pixel just past a clip's edge: paint that bleeds a pixel
+    beyond its damage, or damage rounded a pixel short) or `outside` (nothing
+    repainted it: damage that was never requested). Three different defects,
+    which a signature keyed on the reason and the clip count merged."""
+    first = _STALE_FIRST.search(detail)
+    clips = _STALE_CLIPS.search(detail)
+    if not first or not clips:
+        return ""
+    px, py = int(first.group(1)), int(first.group(2))
+    rects = []
+    for part in clips.group(1).split(";"):
+        try:
+            x, y, w, h = (int(v) for v in part.split(","))
+        except ValueError:
+            continue
+        rects.append((x, y, w, h))
+    if any(x <= px < x + w and y <= py < y + h for x, y, w, h in rects):
+        return "in-clip"
+    for x, y, w, h in rects:
+        on_column = px in (x - 1, x + w) and y - 1 <= py <= y + h
+        on_row = py in (y - 1, y + h) and x - 1 <= px <= x + w
+        if on_column or on_row:
+            return "clip-edge"
+    return "outside"
+
+
+def stale_context(detail: str, surfaces: dict | None) -> str:
+    """The signature context of a redraw-verifier finding: the surface its box
+    sits on, how its first pixel relates to the frame's clips, and whether the
+    box is a one-pixel line (a caret, a border, a rounding seam) or an area.
+    Empty for any other finding."""
+    match = _STALE_BBOX.search(detail)
+    if not match:
+        return ""
+    w, h = int(match.group(3)), int(match.group(4))
+    shape = "line" if min(w, h) <= 1 else "area"
+    return f"{stale_surface(detail, surfaces)}|{stale_clip_relation(detail)}|{shape}"
+
+
 def signature(kind: str, detail: str, log_text: str = "", context: str = "") -> str:
     """A stable id for a finding: kind, normalized message (plus `context`, such
     as the surface a stale box sits on), and for a crash or a sanitizer report
