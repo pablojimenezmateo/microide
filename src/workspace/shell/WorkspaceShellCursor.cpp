@@ -1132,8 +1132,7 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
           layout.editor_surface, overlay.mode == OverlayMode::BufferReplace));
     }
     if (BottomPanelVisible() && terminal_find_service_.visible()) {
-      probe_find_widget(ComputeFindWidgetLayout(ActiveTerminalBodyRect(layout),
-                                                /*replace_mode=*/false, kTerminalFindToggleCount));
+      probe_find_widget(ComputeTerminalFindWidgetLayout(ActiveTerminalBodyRect(layout), layout.bottom_panel));
     }
     if (DebugToolbarVisible()) {
       const DebugToolbarLayout tb = ComputeDebugToolbarLayout(

@@ -1232,7 +1232,9 @@ constexpr float kDebugToolbarButtonGap = 4.0f;
 constexpr float kDebugToolbarStackGap = 8.0f;
 }  // namespace
 
-SDL_FRect ComputeFindWidgetRect(const SDL_FRect& editor_area, bool replace_mode) {
+SDL_FRect ComputeFindWidgetRect(const SDL_FRect& editor_area,
+                                bool replace_mode,
+                                std::optional<SDL_FRect> bounds) {
   const float available =
       std::max(kFindWidgetMinWidth, editor_area.w - 2.0f * kFindWidgetMargin);
   // Never wider than the area itself: the minimum width is a preference, and an
@@ -1244,21 +1246,26 @@ SDL_FRect ComputeFindWidgetRect(const SDL_FRect& editor_area, bool replace_mode)
   const float x =
       std::max(editor_area.x, editor_area.x + editor_area.w - width - kFindWidgetMargin);
   // Anchored a margin below the area's top, but lifted when the area is too short
-  // to hold it there, so its bottom never runs past the area's: a bottom panel
+  // to hold it there, so its bottom does not run past the area's: a bottom panel
   // squeezed to its tab strip put the terminal's find bar off the window (soak
-  // 23535aaf3151). On a roomy area this is the old placement, unchanged.
-  const float y =
-      std::min(editor_area.y + kFindWidgetMargin, editor_area.y + editor_area.h - height);
+  // 23535aaf3151). Never lifted above `bounds` (the area itself by default): an
+  // editor column collapsed under a maximized panel has a surface of no height at
+  // the window's top, and lifting over it put the widget past the window's top.
+  // On a roomy area this is the old placement, unchanged.
+  const SDL_FRect limit = bounds.value_or(editor_area);
+  const float y = std::max(
+      limit.y, std::min(editor_area.y + kFindWidgetMargin, editor_area.y + editor_area.h - height));
   return MakeRect(std::floor(x), std::floor(y), std::floor(width), std::floor(height));
 }
 
 FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area,
                                          bool replace_mode,
-                                         std::size_t toggle_count) {
+                                         std::size_t toggle_count,
+                                         std::optional<SDL_FRect> bounds) {
   FindWidgetLayout layout;
   layout.replace_mode = replace_mode;
   layout.toggle_count = std::min(toggle_count, kFindWidgetMaxToggles);
-  const SDL_FRect r = ComputeFindWidgetRect(editor_area, replace_mode);
+  const SDL_FRect r = ComputeFindWidgetRect(editor_area, replace_mode, bounds);
   layout.widget = r;
 
   const float field_x = r.x + kFindWidgetPad;

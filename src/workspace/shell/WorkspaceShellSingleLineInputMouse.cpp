@@ -262,8 +262,7 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
   // renderer, so click-to-caret lands exactly where the text is drawn.
   if (terminal_find_service_.visible() && BottomPanelShowsTerminal()) {
     const FindWidgetLayout fw =
-        ComputeFindWidgetLayout(ActiveTerminalBodyRect(layout), /*replace_mode=*/false,
-                                kTerminalFindToggleCount);
+        ComputeTerminalFindWidgetLayout(ActiveTerminalBodyRect(layout), layout.bottom_panel);
     if (Contains(fw.search_field, x, y)) {
       return FilledHit(TextInputSurface::TerminalFind, fw.search_field, "",
                        &terminal_find_service_.query());

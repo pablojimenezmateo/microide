@@ -739,10 +739,16 @@ struct FindWidgetLayout {
   bool replace_mode = false;
 };
 
-SDL_FRect ComputeFindWidgetRect(const SDL_FRect& editor_area, bool replace_mode);
+// The widget floats a margin below `editor_area`'s top-right corner. When the
+// area is too short to hold it there, it is lifted -- but never above `bounds`,
+// the region it may float over (the area itself unless the caller says more).
+SDL_FRect ComputeFindWidgetRect(const SDL_FRect& editor_area,
+                                bool replace_mode,
+                                std::optional<SDL_FRect> bounds = std::nullopt);
 FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area,
                                          bool replace_mode,
-                                         std::size_t toggle_count);
+                                         std::size_t toggle_count,
+                                         std::optional<SDL_FRect> bounds = std::nullopt);
 
 // The in-file find widget's layout. Resolve it through this rather than calling
 // ComputeFindWidgetLayout directly: paint, hit-test and the tooltip resolver all
@@ -750,6 +756,16 @@ FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area,
 inline FindWidgetLayout ComputeBufferFindWidgetLayout(const SDL_FRect& editor_area,
                                                       bool replace_mode) {
   return ComputeFindWidgetLayout(editor_area, replace_mode, kBufferFindToggleCount);
+}
+// The terminal's find bar floats over the active pane's body, and may be lifted
+// over the rest of the bottom panel (its tab row) when the body is too short to
+// hold it -- a panel squeezed to its tab strip put it past the window's bottom
+// (soak 23535aaf3151). One helper, because paint, hit test, cursor and tooltip
+// must agree on it.
+inline FindWidgetLayout ComputeTerminalFindWidgetLayout(const SDL_FRect& terminal_body,
+                                                        const SDL_FRect& bottom_panel) {
+  return ComputeFindWidgetLayout(terminal_body, /*replace_mode=*/false, kTerminalFindToggleCount,
+                                 bottom_panel);
 }
 
 // Floating, icon-only debug control bar anchored top-right of the editor area

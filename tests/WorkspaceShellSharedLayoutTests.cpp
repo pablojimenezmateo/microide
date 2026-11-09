@@ -1632,12 +1632,21 @@ void TestFindWidgetStaysInsideAShortOrNarrowArea() {
     return r.x >= area.x && r.x + r.w <= area.x + area.w + 0.5f &&
            r.y + r.h <= area.y + area.h + 0.5f;
   };
-  // A terminal body 16 px tall at the bottom of an 800 px window.
+  // A terminal body 16 px tall at the bottom of an 800 px window, under a
+  // 52 px panel: the bar is lifted over the panel's tab row, not past the window.
   const SDL_FRect short_area{0.0f, 784.0f, 1067.0f, 16.0f};
+  const SDL_FRect panel{0.0f, 748.0f, 1067.0f, 52.0f};
+  const auto terminal_fw = microide::workspace::ComputeTerminalFindWidgetLayout(short_area, panel);
+  Expect(inside(terminal_fw.widget, short_area) && inside(terminal_fw.search_field, short_area),
+         "a find widget must not run past the bottom of a short area");
+  Expect(terminal_fw.widget.y >= panel.y, "the terminal's find bar is lifted no higher than its panel");
+  // An editor column collapsed under a maximized panel: a surface of no height at
+  // the window's top. The widget may not be lifted above it, out of the window.
+  const SDL_FRect collapsed{240.0f, 24.0f, 700.0f, 0.0f};
   for (const bool replace : {false, true}) {
-    const auto fw = ComputeFindWidgetLayout(short_area, replace, 2);
-    Expect(inside(fw.widget, short_area) && inside(fw.search_field, short_area),
-           "a find widget must not run past the bottom of a short area");
+    const auto fw = ComputeFindWidgetLayout(collapsed, replace, 2);
+    Expect(fw.widget.y >= collapsed.y && fw.search_field.y >= collapsed.y,
+           "a find widget is never lifted above the region it floats over");
   }
   // A roomy area keeps the widget where it always was: 12 px below the top.
   const SDL_FRect roomy{100.0f, 50.0f, 900.0f, 600.0f};
