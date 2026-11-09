@@ -463,11 +463,51 @@ void TestEditorStripContentsStayInsideAShortStrip() {
   }
 }
 
+// The horizontal twin of the test above. A narrow pane truncates its last tab
+// at the strip's right edge, and the soak caught that tab's background one device
+// pixel past the pane, over the divider, at ui.scale 2 (49a23ffecdf7): the full
+// frame painted it, a partial frame clipped to the pane did not. Nothing a strip
+// lays out may extend past its right edge, at whole or fractional widths.
+void TestEditorStripContentsStayInsideANarrowStrip() {
+  microide::workspace::EditorGroup group;
+  for (const char* name : {"Welcome", "main.cpp", "a-rather-long-file-name.txt"}) {
+    microide::workspace::TabEntry tab;
+    tab.path = name;
+    tab.title = name;
+    group.open_tabs.push_back(std::move(tab));
+  }
+  const auto measure = [](std::string_view text) { return static_cast<float>(text.size()) * 8.0f; };
+  const auto title = [&group](std::size_t index) { return group.open_tabs[index].title; };
+  const auto past = [](const SDL_FRect& r, const SDL_FRect& strip) {
+    return r.w > 0.0f && r.x + r.w > strip.x + strip.w + 0.001f;
+  };
+  for (float width : {260.0f, 120.0f, 75.5f, 61.25f, 40.0f, 36.5f, 18.0f}) {
+    for (std::size_t active = 0; active < group.open_tabs.size(); ++active) {
+      group.active_tab_index = active;
+      group.tab_scroll_index = 0;
+      TabStripService service;
+      const SDL_FRect strip{500.25f, 183.0f, width, 34.0f};
+      const auto& tabs = service.ComputeVisibleEditorTabs(group, 0, strip, measure, title, title, 0);
+      for (const auto& tab : tabs) {
+        Expect(!past(tab.rect, strip) && !past(tab.close_rect, strip),
+               "a tab and its close button stay inside a " + std::to_string(width) +
+                   " px wide strip (tab ends at " + std::to_string(tab.rect.x + tab.rect.w) +
+                   ", strip at " + std::to_string(strip.x + strip.w) + ")");
+      }
+      const auto overflow = service.ComputeEditorTabOverflowControls(strip, tabs, group);
+      Expect(!past(overflow.left_button, strip) && !past(overflow.right_button, strip),
+             "the overflow chips stay inside a " + std::to_string(width) + " px wide strip");
+    }
+  }
+}
+
 }  // namespace
 
 void RegisterTabStripServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TabStripService/EditorStripContentsStayInsideAShortStrip",
           TestEditorStripContentsStayInsideAShortStrip);
+  AddTest(tests, "TabStripService/EditorStripContentsStayInsideANarrowStrip",
+          TestEditorStripContentsStayInsideANarrowStrip);
   AddTest(tests, "TabStripService/NoEditorTabLiesUnderAnOverflowChip", TestNoEditorTabLiesUnderAnOverflowChip);
   AddTest(tests, "TabStripService/NoPanelTabLiesUnderAnOverflowChip", TestNoPanelTabLiesUnderAnOverflowChip);
   AddTest(tests, "TabStripService/ScrollingATabStripRequestsItsRepaint", TestScrollingATabStripRequestsItsRepaint);

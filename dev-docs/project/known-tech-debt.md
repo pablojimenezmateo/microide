@@ -74,6 +74,15 @@ the crash-safety flush missing edits to a non-active buffer) and left these:
   the harness fences (`tools/qa/test_containment.py`) and the runner's alarm
   (`AGENT.md` § A containment breach). Open: what removed the project's `.git` in
   the first place (the app's tree delete, or a monkey op) is not identified.
+- **A truncated tab's background one device pixel past its pane** (soak
+  `49a23ffecdf7` sighting at `9e17f0048`, release, 1440x900 at ui.scale 2): a
+  narrow pane's last tab ("Welc…") painted its background over the divider at
+  x=1151 in the full frame; a partial frame clipped to the pane did not. The
+  strip layout keeps tabs inside fractional-width strips
+  (`TabStripService/EditorStripContentsStayInsideANarrowStrip`), so the extra
+  pixel comes from the strip rect or the paint. The sighting's replay is not
+  deterministic. Its signature now carries `clip-edge|line` (`8ff6e03f7`), so its
+  next sighting is filed on its own.
 
 ### TD-2026-11-08-435 — the safety program's first pass: what landed, what it found, and what it left. [OPEN]
 
