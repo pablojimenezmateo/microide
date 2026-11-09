@@ -15,6 +15,15 @@ SDL_TTF_TAG="${SDL_TTF_TAG:-release-3.2.2}"
 WORK_DIR="${WORK_DIR:-/tmp/microide-sdl3}"
 JOBS="${JOBS:-$(nproc)}"
 
+# SDL 3.4 refuses to configure an X11 backend without these extensions (3.2
+# quietly built without them). XDBE, XSHAPE and XSYNC come with libxext-dev.
+# Everything else SDL can use (audio, ibus, ...) stays optional and absent.
+if command -v apt-get >/dev/null 2>&1; then
+  sudo apt-get install -y --no-install-recommends \
+    libx11-dev libxext-dev libxcursor-dev libxi-dev libxfixes-dev libxrandr-dev \
+    libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev libegl-dev
+fi
+
 mkdir -p "${WORK_DIR}"
 cd "${WORK_DIR}"
 
