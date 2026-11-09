@@ -5990,6 +5990,34 @@ void TestTextViewportUndoPastSaveMarksDirty() {
   std::filesystem::remove(path);
 }
 
+// Data-integrity (dirty-baseline family): a dirty buffer whose file comes to hold
+// exactly its text -- another view of the file saved it, the watcher's echo of a
+// save landed late -- is taken clean by adopting the disk baseline. That adoption
+// moves the clean point exactly as a save does: undoing back to the loaded text must
+// read dirty, because the file no longer holds it. It read clean, and a clean buffer
+// that differs from its file is an edit nothing will ever save (soak: "the clean
+// buffer of code.py differs from its file on disk").
+void TestTextViewportAdoptedDiskBaselineMovesTheCleanPoint() {
+  TextViewport viewport;
+  viewport.LoadContent("def f(x):\n", "/tmp/microide-adopt-baseline/code.py");
+  const auto original = viewport.lines().Snapshot();
+  viewport.ReplaceRange(SelectionRange{{0, 0}, {0, 0}}, "        ", /*record_undo=*/true);
+  Expect(viewport.dirty(), "the indent marks the buffer dirty");
+
+  TextViewport disk;
+  disk.LoadContent("        def f(x):\n", "/tmp/microide-adopt-baseline/code.py");
+  Expect(viewport.HoldsSameFileContentAs(disk), "the file now holds the buffer's text");
+  viewport.AdoptDiskBaselineOf(disk);
+  Expect(!viewport.dirty(), "a buffer equal to its file is clean");
+
+  Expect(viewport.Undo(), "undo should succeed");
+  Expect(viewport.lines().Snapshot() == original, "undo restores the loaded text");
+  Expect(viewport.dirty(),
+         "undoing past an adopted disk baseline must read dirty; the file holds the indent");
+  Expect(viewport.Redo(), "redo should succeed");
+  Expect(!viewport.dirty(), "redoing back to the file's text returns to clean");
+}
+
 // Data-integrity (dirty-baseline family): saving while parked ABOVE undone edits must
 // make the saved position the sole clean point — redoing forward off it re-dirties, and
 // undoing past it dirties, because both differ from what is on disk.
@@ -6523,6 +6551,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportReloadPreservingViewStateKeepsScrollUnderSelection);
   AddTest(tests, "TextViewport/SoftWrapTabSizeChangePreservesWrappedColumn",
           TestTextViewportSoftWrapTabSizeChangePreservesWrappedColumn);
+  AddTest(tests, "TextViewport/AdoptedDiskBaselineMovesTheCleanPoint",
+          TestTextViewportAdoptedDiskBaselineMovesTheCleanPoint);
   AddTest(tests, "TextViewport/UndoPastSaveMarksDirty",
           TestTextViewportUndoPastSaveMarksDirty);
   AddTest(tests, "TextViewport/SaveAboveUndoneEditsDirtiesRedo",

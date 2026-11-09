@@ -479,7 +479,8 @@ class TextViewport {
   // takes `other`'s on-disk identity through AdoptDiskBaselineOf.
   bool HoldsSameFileContentAs(const TextViewport& other) const;
   // Take `other`'s disk signature as this buffer's baseline, and mark it clean:
-  // it now holds what the file holds.
+  // it now holds what the file holds. That makes the current undo position the
+  // clean point exactly as a save does, so undoing away from it reads dirty.
   void AdoptDiskBaselineOf(const TextViewport& other);
   // Revert File: make this buffer hold what `disk` (the file just read) holds, as
   // ONE undoable edit, and make that the clean point -- Ctrl+Z gets the discarded

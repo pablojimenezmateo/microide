@@ -435,6 +435,11 @@ void TextViewport::AdoptDiskBaselineOf(const TextViewport& other) {
     document_->disk_signature = other.document_->disk_signature;
   }
   document_->dirty = false;
+  // The file now holds this position's text, so this position is the one clean
+  // point -- the same re-baseline a save does. Without it the history kept the
+  // LOAD as the clean point: undoing back to the loaded text read clean while
+  // the file held the edit, and nothing would ever save it back.
+  document_->undo_history.MarkSaved();
 }
 
 bool TextViewport::RevertToDiskContent(const TextViewport& disk) {
@@ -467,7 +472,6 @@ bool TextViewport::RevertToDiskContent(const TextViewport& disk) {
     MoveCursorTo(line, std::min(caret.column, document_->lines.LineLength(line)));
   }
   AdoptDiskBaselineOf(disk);
-  document_->undo_history.MarkSaved();
   return true;
 }
 
