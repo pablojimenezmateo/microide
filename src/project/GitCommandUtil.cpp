@@ -327,6 +327,24 @@ CommandResult ReadGitCommandOutputWithStdin(const platform::ProcessLauncher& lau
   // terminal prompt is disabled.
   options.environment_overrides.push_back({"GIT_TERMINAL_PROMPT", "0"});
   options.environment_overrides.push_back({"GCM_INTERACTIVE", "never"});
+  // The repository is the one AT the root, never one above it. The app decides a
+  // folder is a repository by its own `<root>/.git` marker, but git searches
+  // upward from its working directory: with a `.git` at the root that is not a
+  // valid repository (an empty or half-deleted one) git walks on to the nearest
+  // enclosing repository, and a commit, a branch switch or a push made "in this
+  // project" lands there. A ceiling at the root's parent stops the search at the
+  // root, so such a root fails instead. A `.git` FILE (a linked worktree, a
+  // submodule) is still followed: that is resolution, not search.
+  {
+    std::filesystem::path normal = options.cwd;
+    if (!normal.has_filename()) {
+      normal = normal.parent_path();  // "/repo/" names the same folder as "/repo"
+    }
+    if (normal.is_absolute() && normal.has_relative_path()) {
+      options.environment_overrides.push_back(
+          {"GIT_CEILING_DIRECTORIES", normal.parent_path().string()});
+    }
+  }
   options.capture_stdout = true;
   options.capture_stderr = !silence_stderr;
   options.silence_stderr = silence_stderr;

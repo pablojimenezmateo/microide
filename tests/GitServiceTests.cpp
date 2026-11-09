@@ -1062,6 +1062,42 @@ void TestGitCommandTimeoutReportsTimedOut() {
   Expect(!result.success(), "a timed-out git command must not report success");
 }
 
+// The app decides a folder is a repository by its own `<root>/.git` marker
+// (HasGitMarker), but the git CLI it then runs searches upward: with a `.git` at
+// the root that is not a valid repository -- an empty directory, a half-deleted
+// one -- git walks on to the nearest ENCLOSING repository and every command lands
+// there. The soak monkey's scratch project sat inside the microide checkout, and
+// that walk put a commit on the checkout's main, switched its branch and pushed
+// from it. A git call for a root must act on that root's repository or fail.
+void TestGitCommandNeverReachesAnEnclosingRepository() {
+  TemporaryDirectory temp_dir;
+  const auto outer = temp_dir.path() / "outer";
+  WriteFile(outer / "tracked.txt", "outer\n");
+  InitializeGitRepo(outer);
+  CommitAll(outer, "outer commit", "the enclosing repository");
+
+  const auto inner = outer / "project";
+  WriteFile(inner / "work.txt", "inner\n");
+  std::filesystem::create_directories(inner / ".git" / "qa-deleted");  // a marker, not a repo
+  Expect(microide::project::internal::HasGitMarker(inner),
+         "precondition: the app reads the inner folder as a repository");
+
+  const microide::platform::ProcessLauncher& launcher = microide::platform::LocalProcessLauncher();
+  const auto toplevel = microide::project::internal::ReadGitCommandOutput(
+      launcher, inner, {"rev-parse", "--show-toplevel"});
+  Expect(!toplevel.success(),
+         "git for a root whose .git is broken must fail, not resolve to the enclosing "
+         "repository (got: " + toplevel.output + ")");
+
+  const auto commit = microide::project::internal::ReadGitCommandOutput(
+      launcher, inner, {"commit", "--allow-empty", "-m", "escaped"});
+  Expect(!commit.success(), "a commit for the inner root must not succeed anywhere");
+  const auto outer_log = microide::project::internal::ReadGitCommandOutput(
+      launcher, outer, {"log", "--format=%s"});
+  Expect(outer_log.success() && outer_log.output.find("escaped") == std::string::npos,
+         "the enclosing repository must not gain the inner root's commit");
+}
+
 }  // namespace
 
 // J1: `git show <rev>:<path>` can be killed for hitting the subprocess capture
@@ -1453,6 +1489,8 @@ void RegisterGitServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Git/PorcelainParserLog", TestGitPorcelainParserLog);
   AddTest(tests, "Git/StatusCodePrecedenceUnified", TestGitStatusCodePrecedenceIsUnified);
   AddTest(tests, "Git/CommandTimeoutReportsTimedOut", TestGitCommandTimeoutReportsTimedOut);
+  AddTest(tests, "Git/CommandNeverReachesAnEnclosingRepository",
+          TestGitCommandNeverReachesAnEnclosingRepository);
 }
 
 }  // namespace microide::tests
