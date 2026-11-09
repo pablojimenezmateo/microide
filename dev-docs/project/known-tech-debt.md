@@ -41,7 +41,19 @@ the crash-safety flush missing edits to a non-active buffer) and left these:
 - **Nineteen "clean buffer differs from its file on disk" signatures**, all flaky at
   a 0% replay rate. `0a81fa8b3` makes the oracle save both sides' bytes beside the
   next sighting (`mismatch-*.buffer` / `.disk`, summary inlined in FINDING.md);
-  chase them from that evidence.
+  chase them from that evidence. Second pass (same day): the runner threw a known
+  signature's later sightings away, so that evidence never reached a bundle --
+  `8381257b6` keeps them under `sightings/`. The first bytes in hand fixed two
+  causes: adopting the disk baseline left the undo clean point behind
+  (`994643047`; code.py, trailing-ws.txt -- which writer made the file equal the
+  dirty buffer is still not identified) and Revert File split a binary file's lone
+  CRs into lines (`571042f73`; binary.bin, deterministic). The other signatures
+  (bom, crlf, link-to-crlf, mixed, tabs, data.json, ...) wait for their sightings.
+- **Reopened after this pass's fixes, waiting for a post-fix sighting:**
+  `d36a78ef295c` (an Untitled buffer missing after kill -9 although `193dda043`
+  arms the flush for every buffer -- seen at `8c740eb00` in two cells). Note that a
+  `QA-STALE` signature keys on its shape only, so `49a23ffecdf7`/`2eef96d45d54`
+  reopening means "some one-/two-clip stale frame", not the status-bar defect.
 - **Banner over another pane's strip** (`95c502fb591f`, `62b9153820d6`): the
   control source lays the banner on `layout.editor_surface`, the whole editor area,
   not the active pane -- check which rect paint uses with a split open.
