@@ -260,7 +260,9 @@ Checked after every action:
 - **The redraw verifier.** The app runs with `MICROIDE_QA_VERIFY_REDRAW=1`: after
   every partial frame it renders the same prepared frame in full into a second
   target, diffs the two, and logs `QA-STALE frame=N reason=R pixels=P bbox=x,y,w,h
-  first=x,y clips=...` when they differ. That is stale paint — a missed damage rect,
+  first=x,y clips=... scale=S` when they differ (bbox and first are device pixels,
+  as in the frame PNGs; clips are logical units, like the `ui` answer's rects; S is
+  device pixels per unit). That is stale paint — a missed damage rect,
   a wrong surface skip, a frame whose renders read different state — with no
   reference image.
 - **Stranded focus.** Keyboard focus on a surface that is not shown -- the overlay

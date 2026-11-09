@@ -41,6 +41,12 @@ struct VerifiedFrameInfo {
   std::span<const SDL_Rect> clips;
   const char* reason = nullptr;
   std::uint64_t frame_index = 0;
+  // Device pixels per logical unit. The diff's bbox and first pixel are device
+  // pixels (it compares readbacks); the clips are the logical rects the frame
+  // damaged. A reader that sets one against the other, or against the `ui`
+  // answer's logical surfaces, needs it: the soak bucketed every stale finding
+  // at density 2 as "elsewhere|outside" and merged unrelated defects.
+  float scale = 1.0f;
 };
 
 // The `QA-STALE` line for one stale frame. Pure, so its shape is pinned by a test:

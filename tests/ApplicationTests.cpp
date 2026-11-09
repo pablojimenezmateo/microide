@@ -521,10 +521,12 @@ void TestStaleFrameReportFormat() {
                                                                   .reason = "caret",
                                                                   .frame_index = 42}) ==
              "QA-STALE frame=42 reason=caret pixels=7 bbox=3,4,5,2 first=6,4 "
-             "clips=0,0,10,10;20,30,4,5",
+             "clips=0,0,10,10;20,30,4,5 scale=1",
          "the QA-STALE line is a parsed format; its fields must not drift");
-  Expect(app::FormatStaleFrameReport(diff, app::VerifiedFrameInfo{}).ends_with("clips=none"),
+  Expect(app::FormatStaleFrameReport(diff, app::VerifiedFrameInfo{}).ends_with("clips=none scale=1"),
          "a report with no clips should say so");
+  Expect(app::FormatStaleFrameReport(diff, app::VerifiedFrameInfo{.scale = 1.25f}).ends_with(" scale=1.25"),
+         "the report names the pixel density its bbox and first pixel are in");
 }
 
 void TestHeadlessReinitializeAfterShutdown() {

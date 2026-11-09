@@ -981,7 +981,8 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
           renderer_, scene_texture_.texture(), RenderPresentationOf(*presentation),
           VerifiedFrameInfo{.clips = dirty_region_analysis.merged_clip_rects,
                             .reason = reason,
-                            .frame_index = frame_index_},
+                            .frame_index = frame_index_,
+                            .scale = RenderPresentationOf(*presentation).scale_x},
           [&] { workspace_shell_.RenderClip(frame_token, renderer_, width, height); });
     }
     SDL_SetRenderTarget(renderer_, nullptr);

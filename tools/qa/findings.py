@@ -50,6 +50,19 @@ def stack_key(log_text: str, frames: int = 3) -> str:
 
 
 _STALE_BBOX = re.compile(r"QA-STALE .*?bbox=(-?\d+),(-?\d+),(\d+),(\d+)")
+_STALE_SCALE = re.compile(r"QA-STALE .*?\bscale=([0-9.]+)")
+
+
+def stale_scale(detail: str) -> float:
+    """Device pixels per logical unit of a QA-STALE line. Its bbox and first pixel
+    are device pixels, its clips (and the `ui` answer's surfaces) logical units;
+    a line from before the field existed is taken as 1."""
+    match = _STALE_SCALE.search(detail)
+    try:
+        scale = float(match.group(1)) if match else 1.0
+    except ValueError:
+        scale = 1.0
+    return scale if scale > 0 else 1.0
 
 
 def stale_surface(detail: str, surfaces: dict | None) -> str:
@@ -59,8 +72,9 @@ def stale_surface(detail: str, surfaces: dict | None) -> str:
     match = _STALE_BBOX.search(detail)
     if not match or not surfaces:
         return ""
+    scale = stale_scale(detail)
     x, y, w, h = (int(v) for v in match.groups())
-    cx, cy = x + w / 2, y + h / 2
+    cx, cy = (x + w / 2) / scale, (y + h / 2) / scale
     for name, rect in surfaces.items():
         if isinstance(rect, list) and len(rect) == 4 and rect[0] <= cx < rect[0] + rect[2] \
                 and rect[1] <= cy < rect[1] + rect[3]:
@@ -83,7 +97,9 @@ def stale_clip_relation(detail: str) -> str:
     clips = _STALE_CLIPS.search(detail)
     if not first or not clips:
         return ""
-    px, py = int(first.group(1)), int(first.group(2))
+    # In logical units, like the clips: a device pixel's unit is floor(p / scale).
+    scale = stale_scale(detail)
+    px, py = int(int(first.group(1)) // scale), int(int(first.group(2)) // scale)
     rects = []
     for part in clips.group(1).split(";"):
         try:

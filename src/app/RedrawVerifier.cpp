@@ -42,6 +42,9 @@ std::string FormatStaleFrameReport(const render::PixelDiffResult& diff,
   if (first) {
     report += "none";
   }
+  char scale[32];
+  std::snprintf(scale, sizeof(scale), " scale=%g", static_cast<double>(frame.scale));
+  report += scale;
   return report;
 }
 
