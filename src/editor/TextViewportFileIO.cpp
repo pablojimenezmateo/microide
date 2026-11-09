@@ -8,6 +8,8 @@
 #include "project/FileWriteGate.h"
 
 #include <algorithm>
+#include <format>
+#include <string>
 #include <vector>
 
 #include "editor/SaveNormalization.h"
@@ -16,6 +18,8 @@
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
+#include "util/Log.h"
+#include "util/Sha256.h"
 
 namespace microide::editor {
 namespace {
@@ -155,7 +159,11 @@ bool TextViewport::OpenFile(const std::filesystem::path& path) {
   if (!content.has_value()) {
     return false;
   }
-  return AdoptFileContent(path, std::move(*content));
+  if (!AdoptFileContent(path, std::move(*content))) {
+    return false;
+  }
+  TraceBufferIo("read");
+  return true;
 }
 
 TextViewport::ClassifiedContent TextViewport::ClassifyContent(std::string bytes) {
@@ -224,6 +232,25 @@ void TextViewport::RecordOpenedContentHash(std::size_t raw_content_hash) {
   }
   document_->disk_signature.has_content_hash = true;
   document_->disk_signature.content_hash = raw_content_hash;
+}
+
+void TextViewport::TraceBufferIo(std::string_view event) const {
+  static const bool enabled = util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_BUFFER_IO");
+  if (!enabled || document_ == nullptr) {
+    return;
+  }
+  const std::string bytes = SerializeDocumentText();
+  util::Sha256 sha;
+  sha.Update(bytes);
+  const util::FileSignature& disk = document_->disk_signature;
+  // The sha256 prefix is the data oracle's: its message names the buffer and
+  // disk hashes the same way, so a line here can be matched against it.
+  util::Log(std::format(
+      "microide buffer-io: {} path={} doc={} rev={} dirty={} bytes={} sha={} "
+      "disk_exists={} disk_size={} disk_mtime={} disk_racy={}",
+      event, document_->path.string(), static_cast<const void*>(document_.get()),
+      content_revision(), document_->dirty ? 1 : 0, bytes.size(), sha.FinishHex().substr(0, 12),
+      disk.exists ? 1 : 0, disk.size, disk.mtime_ticks, disk.racy ? 1 : 0));
 }
 
 bool TextViewport::Save(project::FileWriteGate& gate, std::error_code* error) {
@@ -332,6 +359,7 @@ bool TextViewport::Save(project::FileWriteGate& gate, std::error_code* error) {
   // The gate captured it as part of the write, so this is no longer a second stat
   // of a path we just touched.
   document_->disk_signature = written.signature;
+  TraceBufferIo("write");
   return true;
 }
 
@@ -440,6 +468,7 @@ void TextViewport::AdoptDiskBaselineOf(const TextViewport& other) {
   // LOAD as the clean point: undoing back to the loaded text read clean while
   // the file held the edit, and nothing would ever save it back.
   document_->undo_history.MarkSaved();
+  TraceBufferIo("adopt-baseline");
 }
 
 bool TextViewport::RevertToDiskContent(const TextViewport& disk) {
@@ -599,7 +628,11 @@ void TextViewport::RebindToPath(const std::filesystem::path& path,
 
 void TextViewport::SetDirty(bool dirty) {
   EnsureDocument();
+  const bool cleaned = document_->dirty && !dirty;
   document_->dirty = dirty;
+  if (cleaned) {
+    TraceBufferIo("set-clean");
+  }
   if (dirty) {
     document_->placeholder = false;
   }

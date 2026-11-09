@@ -351,9 +351,23 @@ bool TextViewport::TopUndoEntryIsColumnScopedForTesting() const {
   return top != nullptr && top->is_inline;
 }
 
-bool TextViewport::Undo() { return ApplyHistoryStep(/*redo=*/false); }
+bool TextViewport::Undo() {
+  const bool was_dirty = document_ != nullptr && document_->dirty;
+  const bool applied = ApplyHistoryStep(/*redo=*/false);
+  if (applied && was_dirty && !document_->dirty) {
+    TraceBufferIo("undo-to-clean");
+  }
+  return applied;
+}
 
-bool TextViewport::Redo() { return ApplyHistoryStep(/*redo=*/true); }
+bool TextViewport::Redo() {
+  const bool was_dirty = document_ != nullptr && document_->dirty;
+  const bool applied = ApplyHistoryStep(/*redo=*/true);
+  if (applied && was_dirty && !document_->dirty) {
+    TraceBufferIo("redo-to-clean");
+  }
+  return applied;
+}
 
 bool TextViewport::ReplaceRange(const SelectionRange& range,
                                 std::string_view replacement,

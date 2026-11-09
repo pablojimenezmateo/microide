@@ -126,7 +126,29 @@ class DataOracle:
             except OSError:
                 pass
         out[f"mismatch-{name}.txt"] = ("\n".join(lines) + "\n").encode()
+        history = self._buffer_io_history(path)
+        if history:
+            out[f"mismatch-{name}.io.txt"] = ("\n".join(history) + "\n").encode()
         return out
+
+    def _buffer_io_history(self, path: str, keep: int = 200) -> list[str]:
+        """Every read, write, adopted baseline, revert and undo-to-clean of `path`
+        the app logged (MICROIDE_TRACE_BUFFER_IO), across its launches, newest
+        last. The bytes say THAT the buffer and the file disagree; this says which
+        moment put them apart, and it is gone from the log tail by the time a
+        long run's oracle fires."""
+        marker = f" path={path} "
+        work = getattr(self.app, "work", None)
+        logs = sorted(Path(work).glob("microide*.log"), key=lambda p: p.stat().st_mtime) if work else []
+        found: list[str] = []
+        for log in logs:
+            try:
+                text = log.read_text(errors="replace")
+            except OSError:
+                continue
+            found += [f"{log.name}: {line}" for line in text.splitlines()
+                      if "microide buffer-io:" in line and marker in line]
+        return found[-keep:]
 
     def staging_leftovers(self, pid: int | None) -> list[Path]:
         """Save temporaries of process `pid` under the project (its own saves

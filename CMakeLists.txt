@@ -2165,6 +2165,8 @@ add_executable(microide_diff_bench
   src/util/StringUtil.cpp
   src/util/DurableFile.cpp
   src/util/TextFileIO.cpp
+  src/util/Log.cpp
+  src/util/Sha256.cpp
   tools/CompareBench.cpp
 )
 

@@ -371,6 +371,9 @@ class App:
             # One line per key and text event with the focus that took it: where a
             # keystroke that never reached the buffer went (TD-2026-10-20-368).
             "MICROIDE_TRACE_INPUT": "1",
+            # One line per read, write, adopted baseline and undo-to-clean of a
+            # buffer: the history a data finding's evidence quotes for its file.
+            "MICROIDE_TRACE_BUFFER_IO": "1",
             # The debug adapter's traffic, for a debugger flow's evidence.
             "MICROIDE_DAP_LOG": str(work / "dap.log"),
             "XDG_CONFIG_HOME": str(work / "config"),

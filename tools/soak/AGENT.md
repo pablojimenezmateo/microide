@@ -27,7 +27,11 @@ only, a failing-first test for every fix, one commit per fix, and a TD entry in
    `frame-*-reference.png` pair and the frame trace (which surfaces the partial
    frame repainted); for a crash or sanitizer report, the stack; for a `state`
    finding, which label disagrees with which buffer fact; for `data`, which file
-   and which bytes; for `undo`, the action list before the sampled undo.
+   and which bytes (`mismatch-<file>.buffer/.disk/.txt`) and the file's history --
+   every read, write, adopted baseline and undo-to-clean the app logged for it
+   (`mismatch-<file>.io.txt`, from `MICROIDE_TRACE_BUFFER_IO`). A `data`
+   signature keys on the file's NAME only, so one signature holds every way that
+   file has gone wrong: read the history before assuming the old mechanism; for `undo`, the action list before the sampled undo.
 5. **Test first.** Write the failing test at the lowest level that shows the
    defect:
    - paint: `tests/support/RetainedRedraw.h` (`DispatchEvents`,
