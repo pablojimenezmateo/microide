@@ -204,16 +204,21 @@ TabCoordinator::ExternalChangeVerdict TabCoordinator::ClassifyExternalChange(
 }
 
 bool TabCoordinator::ExternalChangeIsOwnEcho(const std::filesystem::path& path,
-                                             std::uint64_t disk_content_hash) const {
+                                             std::uint64_t disk_content_hash,
+                                             const util::FileSignature& read_signature) const {
   // The sweep re-stats: the digest was computed off-thread and the file may have
   // moved again since. Confirming against a stale stat would re-baseline a view to
-  // a state that no longer exists.
+  // a state that no longer exists -- and so would confirming a stale DIGEST against
+  // a fresh stat: a digest of the old bytes matches a buffer that holds them, and
+  // re-baselining that buffer to the new file's stat files a real change as our
+  // own echo, for good. The digest only answers for the stat it was read under.
   const OpenViewSweep sweep = SweepOpenViewsOf(
       state_.editor_groups, path,
       [&](const editor::TextViewport& viewport, const util::FileSignature& signature,
           const std::filesystem::path&) {
         return signature.SameContentAs(viewport.disk_signature()) ||
-               viewport.ConfirmDiskContentUnchanged(signature, disk_content_hash);
+               (signature.SameStatAs(read_signature) &&
+                viewport.ConfirmDiskContentUnchanged(signature, disk_content_hash));
       });
   return sweep.matched_any && !sweep.stopped;
 }

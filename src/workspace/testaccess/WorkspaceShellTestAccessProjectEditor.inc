@@ -1059,6 +1059,14 @@
   // a real external change was twice reported as our own echo under load.
   // `Unwatch()` also JOINS those threads, so any in-flight batch has landed by the
   // time this returns rather than racing the assertions.
+  // The off-thread echo confirm's verdict for a digest the worker computed:
+  // `read_signature` is the file's stat when that digest was read.
+  static bool ExternalChangeIsOwnEchoForTesting(WorkspaceShell& shell,
+                                                const std::filesystem::path& path,
+                                                std::uint64_t digest,
+                                                const util::FileSignature& read_signature) {
+    return shell.MakeEditorTabService().ExternalChangeIsOwnEcho(path, digest, read_signature);
+  }
   static bool QuiesceFileIndexWatcherForTesting(WorkspaceShell& shell) {
     if (shell.file_index_watcher_ == nullptr) {
       return false;

@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "util/TextFileIO.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/SavePreparation.h"
 #include "workspace/state/WorkspaceProjectState.h"
@@ -223,8 +224,12 @@ class TabCoordinator {
   // Resolve a `NeedsContentConfirm` verdict against a digest computed elsewhere.
   // True when every view that disagreed is satisfied by it — our own write after
   // all. Re-baselines those views, so the next event on this path is one stat.
+  // `read_signature` is the file's stat when the digest was read: a digest says
+  // nothing about a file that has moved since, so only a view whose fresh stat is
+  // still that one can be excused by it.
   [[nodiscard]] bool ExternalChangeIsOwnEcho(const std::filesystem::path& path,
-                                             std::uint64_t disk_content_hash) const;
+                                             std::uint64_t disk_content_hash,
+                                             const util::FileSignature& read_signature) const;
   // The paths of open editor views that name `normalized_target` through a
   // symlink (TextViewport::symlink_target), each once. A change the watcher
   // reports under the target is a change to these views as well.

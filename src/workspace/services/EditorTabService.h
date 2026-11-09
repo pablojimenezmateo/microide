@@ -1,5 +1,6 @@
 #pragma once
 
+#include "util/TextFileIO.h"
 #include "workspace/SavePreparation.h"
 
 #include <cstddef>
@@ -51,7 +52,8 @@ class EditorTabService {
   using ExternalChangeVerdict = TabCoordinator::ExternalChangeVerdict;
   ExternalChangeVerdict ClassifyExternalChange(const std::filesystem::path& path) const;
   bool ExternalChangeIsOwnEcho(const std::filesystem::path& path,
-                               std::uint64_t disk_content_hash) const;
+                               std::uint64_t disk_content_hash,
+                               const util::FileSignature& read_signature) const;
   std::vector<std::filesystem::path> OpenSymlinkAliasesOf(
       const std::filesystem::path& normalized_target) const;
   bool OpenUntitled();

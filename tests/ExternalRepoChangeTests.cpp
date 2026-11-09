@@ -3,6 +3,7 @@
 #include "editor/LineSpan.h"
 #include "util/PerformanceCounters.h"
 #include "util/StringUtil.h"
+#include "util/TextFileIO.h"
 
 #include "workspace/shell/WorkspaceShell.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
@@ -325,6 +326,52 @@ void TestWorkspaceShellIdenticalRewriteWithSplitViewsReadsOnce() {
              ? std::string()
              : "a real external change still reaches a split view" +
                    ExternalChangeDiagnostics(shell, file_path));
+}
+
+// The echo confirm reads the file off the shell thread and answers later. If the
+// file changes again in between -- the confirm for an identical rewrite still in
+// flight when a real rewrite lands, whose own event is folded into it -- the
+// digest is of the OLD bytes. Paired with a fresh stat it matched the buffer
+// (which also holds the old bytes), so the view was re-baselined to the NEW
+// file's stat: the real change was filed as our own echo, the clean buffer never
+// reloaded, and every later check agreed nothing had changed. The flaky
+// IdenticalRewriteWithSplitViewsReadsOnce, and the soak's "clean buffer differs
+// from its file and the file is not changing" findings, were this.
+void TestWorkspaceShellStaleEchoDigestDoesNotSwallowALaterChange() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_path = root / "notes.txt";
+  WriteFile(file_path, "same bytes\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "stale-digest fixture should open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+  Expect(WorkspaceShellTestAccess::QuiesceFileIndexWatcherForTesting(shell),
+         "the fixture must have a live watcher to quiesce");
+  DrainProjectChanges(shell);
+
+  // The identical rewrite the confirm was posted for, and what its worker read.
+  WriteFile(file_path, "same bytes\n");
+  ForceDistinctModificationTime(file_path);
+  const util::FileSignature read_signature = util::StatFileSignature(file_path);
+  const std::uint64_t old_digest = util::QuickContentHash("same bytes\n");
+
+  // A real change lands before the digest is answered.
+  WriteFile(file_path, "SAME BYTES\n");
+  ForceDistinctModificationTime(file_path);
+  Expect(!WorkspaceShellTestAccess::ExternalChangeIsOwnEchoForTesting(shell, file_path, old_digest,
+                                                                      read_signature),
+         "a digest read before the file changed again must not excuse the change");
+
+  // Positive control: a digest read under the file's current stat still settles
+  // an identical rewrite as an echo.
+  WriteFile(file_path, "same bytes\n");
+  ForceDistinctModificationTime(file_path);
+  Expect(WorkspaceShellTestAccess::ExternalChangeIsOwnEchoForTesting(
+             shell, file_path, old_digest, util::StatFileSignature(file_path)),
+         "a digest read under the current stat confirms an identical rewrite");
 }
 
 // The echo check's answer is a content digest, and computing it is a read of up to
@@ -928,6 +975,8 @@ void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellAutosaveFlushRespectsDiskConflict);
   AddTest(tests, "ExternalRepoChange/IdenticalRewriteRaisesNoReloadNotice",
           TestWorkspaceShellIdenticalRewriteRaisesNoReloadNotice);
+  AddTest(tests, "ExternalRepoChange/StaleEchoDigestDoesNotSwallowALaterChange",
+          TestWorkspaceShellStaleEchoDigestDoesNotSwallowALaterChange);
   AddTest(tests, "ExternalRepoChange/IdenticalRewriteWithSplitViewsReadsOnce",
           TestWorkspaceShellIdenticalRewriteWithSplitViewsReadsOnce);
   AddTest(tests, "ExternalRepoChange/IdenticalRewriteConfirmsOffTheShellThread",

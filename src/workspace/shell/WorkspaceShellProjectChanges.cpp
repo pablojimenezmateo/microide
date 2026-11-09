@@ -336,18 +336,25 @@ void WorkspaceShell::BeginExternalChangeConfirm(const std::filesystem::path& nor
   }
   util::AddPerformanceCounter(util::PerfCounterId::ExternalChangeConfirmPostedReads);
   auto digest = std::make_shared<std::optional<std::uint64_t>>();
+  // The stat the digest answers for, taken before the read; the worker re-stats
+  // after it and drops a digest whose file moved meanwhile. A digest paired with
+  // a later stat filed a real change as our own echo (ExternalChangeIsOwnEcho).
+  const util::FileSignature read_signature = util::StatFileSignature(normalized_path);
   (void)file_read_service_.Begin({
       .path = normalized_path,
       .on_worker =
-          [digest](std::string& bytes) {
-            *digest = util::QuickContentHash(bytes);
+          [digest, normalized_path, read_signature](std::string& bytes) {
+            if (util::StatFileSignature(normalized_path).SameStatAs(read_signature)) {
+              *digest = util::QuickContentHash(bytes);
+            }
             // The bytes stop here. Only the digest crosses to the shell thread —
             // handing an 8 MiB buffer across to be hashed there would be the
             // stall this exists to remove, one hop later.
             std::string().swap(bytes);
           },
       .on_complete =
-          [this, normalized_path, digest](project::FileReadService::Completion completion) {
+          [this, normalized_path, digest,
+           read_signature](project::FileReadService::Completion completion) {
             if (completion.status == project::FileReadService::Status::Cancelled) {
               // Teardown, or the project changed under it. Whoever cancelled owns
               // what happens next, and acting here would raise a banner on a
@@ -355,7 +362,7 @@ void WorkspaceShell::BeginExternalChangeConfirm(const std::filesystem::path& nor
               pending_external_change_confirms_.erase(normalized_path.generic_string());
               return;
             }
-            ApplyExternalChangeConfirm(normalized_path, completion.ok(), *digest);
+            ApplyExternalChangeConfirm(normalized_path, completion.ok(), *digest, read_signature);
           },
       .max_bytes = editor::TextViewport::kMaxConfirmBytes,
   });
@@ -363,7 +370,8 @@ void WorkspaceShell::BeginExternalChangeConfirm(const std::filesystem::path& nor
 
 void WorkspaceShell::ApplyExternalChangeConfirm(const std::filesystem::path& normalized_path,
                                                 bool read_ok,
-                                                const std::optional<std::uint64_t>& digest) {
+                                                const std::optional<std::uint64_t>& digest,
+                                                const util::FileSignature& read_signature) {
   // Gone from the set means the project was switched, closed or reset while the
   // digest was in flight: the tabs this would act on are not the tabs it was
   // posted about. The erase is the claim, so two completions for one path cannot
@@ -375,7 +383,7 @@ void WorkspaceShell::ApplyExternalChangeConfirm(const std::filesystem::path& nor
   // Announcing a change that turns out to be an echo costs the user a dismissable
   // banner; suppressing a real one costs them their edits.
   if (read_ok && digest.has_value() &&
-      MakeEditorTabService().ExternalChangeIsOwnEcho(normalized_path, *digest)) {
+      MakeEditorTabService().ExternalChangeIsOwnEcho(normalized_path, *digest, read_signature)) {
     return;
   }
   std::set<std::filesystem::path> dirty_external_paths;

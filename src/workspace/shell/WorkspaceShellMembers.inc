@@ -644,9 +644,9 @@
   // coming back, and act on it when it lands. The read is bounded by
   // TextViewport::kMaxConfirmBytes and never reaches the shell thread.
   void BeginExternalChangeConfirm(const std::filesystem::path& normalized_path);
-  void ApplyExternalChangeConfirm(const std::filesystem::path& normalized_path,
-                                  bool read_ok,
-                                  const std::optional<std::uint64_t>& digest);
+  void ApplyExternalChangeConfirm(const std::filesystem::path& normalized_path, bool read_ok,
+                                  const std::optional<std::uint64_t>& digest,
+                                  const util::FileSignature& read_signature);
   // Paths whose digest is in flight, so a repeat event does not read the same
   // file twice for the same question. Keyed by generic string, as every other
   // path-keyed store here is.

@@ -119,8 +119,9 @@ EditorTabService::ExternalChangeVerdict EditorTabService::ClassifyExternalChange
 }
 
 bool EditorTabService::ExternalChangeIsOwnEcho(const std::filesystem::path& path,
-                                               std::uint64_t disk_content_hash) const {
-  return coordinator_.ExternalChangeIsOwnEcho(path, disk_content_hash);
+                                               std::uint64_t disk_content_hash,
+                                               const util::FileSignature& read_signature) const {
+  return coordinator_.ExternalChangeIsOwnEcho(path, disk_content_hash, read_signature);
 }
 
 std::vector<std::filesystem::path> EditorTabService::OpenSymlinkAliasesOf(
