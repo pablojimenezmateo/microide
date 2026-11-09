@@ -289,7 +289,7 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
   if (!found && BottomPanelVisible() && terminal_find_service_.visible()) {
     static constexpr std::array<std::string_view, kTerminalFindToggleCount> kTerminalToggles = {
         "Match Case (Alt+C)", "Match Whole Word (Alt+W)"};
-    found = find_widget_hit(ComputeTerminalFindWidgetLayout(ActiveTerminalBodyRect(layout), layout.bottom_panel),
+    found = find_widget_hit(ComputeTerminalFindWidgetLayout(ActiveTerminalBodyRect(layout), layout),
                             kTerminalToggles);
   }
 

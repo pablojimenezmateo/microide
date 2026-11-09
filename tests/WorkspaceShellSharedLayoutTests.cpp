@@ -1632,14 +1632,30 @@ void TestFindWidgetStaysInsideAShortOrNarrowArea() {
     return r.x >= area.x && r.x + r.w <= area.x + area.w + 0.5f &&
            r.y + r.h <= area.y + area.h + 0.5f;
   };
-  // A terminal body 16 px tall at the bottom of an 800 px window, under a
-  // 52 px panel: the bar is lifted over the panel's tab row, not past the window.
-  const SDL_FRect short_area{0.0f, 784.0f, 1067.0f, 16.0f};
-  const SDL_FRect panel{0.0f, 748.0f, 1067.0f, 52.0f};
-  const auto terminal_fw = microide::workspace::ComputeTerminalFindWidgetLayout(short_area, panel);
-  Expect(inside(terminal_fw.widget, short_area) && inside(terminal_fw.search_field, short_area),
-         "a find widget must not run past the bottom of a short area");
-  Expect(terminal_fw.widget.y >= panel.y, "the terminal's find bar is lifted no higher than its panel");
+  // The terminal's find bar floats over the panel's body, never over its tab row:
+  // lifted onto the row it covered the panel tabs and the new-terminal button
+  // (soak 0ead4679e247, e04d9f4e8b95). A body that cannot hold it -- the panel
+  // squeezed to little more than its tab row -- lays out no bar at all rather
+  // than one past the window's bottom (soak 23535aaf3151).
+  microide::workspace::WorkspaceLayout squeezed_panel;
+  squeezed_panel.bottom_panel = SDL_FRect{0.0f, 748.0f, 1067.0f, 52.0f};
+  const SDL_FRect short_body = microide::workspace::BottomPanelContentRect(squeezed_panel);
+  const auto hidden_fw = microide::workspace::ComputeTerminalFindWidgetLayout(short_body, squeezed_panel);
+  bool any_area = false;
+  for (const SDL_FRect& r : {hidden_fw.widget, hidden_fw.search_field, hidden_fw.prev_button,
+                             hidden_fw.next_button, hidden_fw.close_button, hidden_fw.count_rect,
+                             hidden_fw.toggle_buttons[0], hidden_fw.toggle_buttons[1]}) {
+    any_area = any_area || (r.w > 0.0f && r.h > 0.0f);
+  }
+  Expect(!any_area, "a panel body too short for the terminal's find bar lays out none of it");
+  // A body a little taller than the bar: lifted inside the body, below the tab row.
+  microide::workspace::WorkspaceLayout low_panel;
+  low_panel.bottom_panel = SDL_FRect{0.0f, 700.0f, 1067.0f, 100.0f};
+  const SDL_FRect low_body = microide::workspace::BottomPanelContentRect(low_panel);
+  const auto terminal_fw = microide::workspace::ComputeTerminalFindWidgetLayout(low_body, low_panel);
+  Expect(terminal_fw.widget.h > 0.0f && inside(terminal_fw.widget, low_body) &&
+             terminal_fw.widget.y >= low_body.y && terminal_fw.next_button.y >= low_body.y,
+         "the terminal's find bar stays inside the panel's body, below its tab row");
   // An editor column collapsed under a maximized panel: a surface of no height at
   // the window's top. The widget may not be lifted above it, out of the window.
   const SDL_FRect collapsed{240.0f, 24.0f, 700.0f, 0.0f};

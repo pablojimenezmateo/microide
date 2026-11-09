@@ -1258,6 +1258,19 @@ SDL_FRect ComputeFindWidgetRect(const SDL_FRect& editor_area,
   return MakeRect(std::floor(x), std::floor(y), std::floor(width), std::floor(height));
 }
 
+FindWidgetLayout ComputeTerminalFindWidgetLayout(const SDL_FRect& terminal_body,
+                                                 const WorkspaceLayout& layout) {
+  const SDL_FRect panel_body = BottomPanelContentRect(layout);
+  FindWidgetLayout fw =
+      ComputeFindWidgetLayout(terminal_body, /*replace_mode=*/false, kTerminalFindToggleCount, panel_body);
+  if (fw.widget.y + fw.widget.h > panel_body.y + panel_body.h) {
+    FindWidgetLayout none;
+    none.toggle_count = fw.toggle_count;
+    return none;
+  }
+  return fw;
+}
+
 FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area,
                                          bool replace_mode,
                                          std::size_t toggle_count,

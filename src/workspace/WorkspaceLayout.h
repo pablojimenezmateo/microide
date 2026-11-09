@@ -757,16 +757,16 @@ inline FindWidgetLayout ComputeBufferFindWidgetLayout(const SDL_FRect& editor_ar
                                                       bool replace_mode) {
   return ComputeFindWidgetLayout(editor_area, replace_mode, kBufferFindToggleCount);
 }
-// The terminal's find bar floats over the active pane's body, and may be lifted
-// over the rest of the bottom panel (its tab row) when the body is too short to
-// hold it -- a panel squeezed to its tab strip put it past the window's bottom
-// (soak 23535aaf3151). One helper, because paint, hit test, cursor and tooltip
-// must agree on it.
-inline FindWidgetLayout ComputeTerminalFindWidgetLayout(const SDL_FRect& terminal_body,
-                                                        const SDL_FRect& bottom_panel) {
-  return ComputeFindWidgetLayout(terminal_body, /*replace_mode=*/false, kTerminalFindToggleCount,
-                                 bottom_panel);
-}
+// The terminal's find bar floats over the active pane's body, lifted within the
+// panel's body (never over its tab row) when the pane is too short to hold it.
+// A panel body that cannot hold it at all lays out no bar: hanging below the
+// body put it past the window's bottom (soak 23535aaf3151), and lifting it over
+// the tab row covered the panel tabs and the new-terminal button (soak
+// 0ead4679e247, e04d9f4e8b95). Every rect is then empty, so nothing paints,
+// hit-tests or reports it. One helper, because paint, hit test, cursor and
+// tooltip must agree on it.
+FindWidgetLayout ComputeTerminalFindWidgetLayout(const SDL_FRect& terminal_body,
+                                                 const WorkspaceLayout& layout);
 
 // Floating, icon-only debug control bar anchored top-right of the editor area
 // while a session is active. Like FindWidgetLayout, a single shared layout drives
