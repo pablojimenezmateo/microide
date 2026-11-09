@@ -109,6 +109,26 @@ struct CompareVisibleLayoutCache {
   std::vector<std::uint32_t> table;
 };
 
+// The shared scroll of a compare or merge surface as the last prepared frame
+// saw it. Its panes all draw from the one scroll, but most of what moves it
+// damages only the pane it acted on (a caret move in the result, an edit, an
+// autoscroll tick), so the frame compares it here and repaints the whole
+// surface when it moved (soak ee7ad7b12a7e).
+struct SharedPaneScrollMark {
+  int row = 0;
+  std::size_t column = 0;
+  bool valid = false;
+
+  // Records (row, column); true when it differs from the last one recorded.
+  bool Note(int new_row, std::size_t new_column) {
+    const bool moved = valid && (row != new_row || column != new_column);
+    row = new_row;
+    column = new_column;
+    valid = true;
+    return moved;
+  }
+};
+
 struct CompareTabState {
   // A save of the editable right side whose formatter is running off the shell
   // thread (as an editor tab's, TD-2026-09-28-304): the completion finds this tab
@@ -239,6 +259,7 @@ struct CompareTabState {
   int scroll_row = 0;
   std::size_t horizontal_scroll = 0;
   std::size_t max_visual_columns = 0;
+  SharedPaneScrollMark prepared_scroll;
   bool scrollbar_marker_cache_valid = false;
   std::uint64_t scrollbar_marker_cache_revision = 0;
   // On-screen row count the cached markers were scaled against. Soft wrap makes
@@ -342,6 +363,7 @@ struct MergeTabState {
   int scroll_row = 0;
   std::size_t horizontal_scroll = 0;
   std::size_t max_visual_columns = 0;
+  SharedPaneScrollMark prepared_scroll;
   std::uint64_t model_revision = 0;
   bool scrollbar_marker_cache_valid = false;
   std::uint64_t scrollbar_marker_cache_revision = 0;

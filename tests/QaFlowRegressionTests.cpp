@@ -1964,6 +1964,39 @@ void TestTogglingTheMergeBasePaneKeepsTheToolbarAndEveryFrameFresh() {
   fixture.ExpectFresh(fixture.Click(*toggle_after), "Toggle Base (hidden)");
 }
 
+// Soak ee7ad7b12a7e: the three merge panes scroll together from one shared row,
+// but a caret move in the result pane damaged the result pane alone. With the
+// panes wheeled away from the caret, Down scrolled the caret back into view --
+// all three panes -- and the partial frame left the Remote and Local panes
+// showing their old rows.
+void TestACaretMoveThatScrollsTheMergePanesRepaintsThemAll() {
+  FlowFixture fixture("notes.txt", "notes\n");
+  std::string side;
+  for (int i = 1; i <= 80; ++i) {
+    side += "line " + std::to_string(i) + "\n";
+  }
+  WriteFile(fixture.root / "base.txt", side);
+  WriteFile(fixture.root / "incoming.txt", "line 0 incoming\n" + side);
+  WriteFile(fixture.root / "current.txt", "line 0 current\n" + side);
+  WriteFile(fixture.root / "result.txt",
+            "<<<<<<< HEAD\nline 0 current\n=======\nline 0 incoming\n>>>>>>> in\n" + side);
+  Expect(TestAccess::OpenMergeEditor(fixture.shell, fixture.root / "base.txt", fixture.root / "incoming.txt",
+                                     fixture.root / "current.txt", fixture.root / "result.txt"),
+         "the merge editor opens");
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  Expect(TestAccess::ActiveMerge(fixture.shell).result_viewport.cursor_line() == 0, "the caret starts on line 1");
+  const auto surface = TestAccess::CurrentLayout(fixture.shell).editor_surface;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseWheelEvent(surface.x + 20.0f,
+                                                                     surface.y + surface.h / 2.0f, -10.0f)}),
+                      "wheeling the merge panes down");
+  const int wheeled = TestAccess::ActiveMerge(fixture.shell).scroll_row;
+  Expect(wheeled > 0, "the wheel scrolls the panes (row " + std::to_string(wheeled) + ")");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN)}), "Down in the result pane");
+  Expect(TestAccess::ActiveMerge(fixture.shell).scroll_row != wheeled,
+         "Down moves the shared row (the case under test)");
+}
+
 // QA merge-panes: a conflict scrolled out of sight still had buttons -- its
 // accept buttons clamped to the bottom of the source panes and its result
 // buttons fell back to the top of the result pane, where hovering line 1 showed
@@ -4754,6 +4787,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TogglingTheMergeBasePaneKeepsTheToolbarAndEveryFrameFresh",
           TestTogglingTheMergeBasePaneKeepsTheToolbarAndEveryFrameFresh);
   AddTest(tests, "QaFlowRegression/AConflictOutOfSightHasNoButtons", TestAConflictOutOfSightHasNoButtons);
+  AddTest(tests, "QaFlowRegression/ACaretMoveThatScrollsTheMergePanesRepaintsThemAll",
+          TestACaretMoveThatScrollsTheMergePanesRepaintsThemAll);
   AddTest(tests, "QaFlowRegression/MovingOntoATabsCloseButtonLightsIt", TestMovingOntoATabsCloseButtonLightsIt);
   AddTest(tests, "QaFlowRegression/ATabStaysInsideItsNarrowStrip", TestATabStaysInsideItsNarrowStrip);
   AddTest(tests, "QaFlowRegression/MovingATabKeepsEveryFrameFresh", TestMovingATabKeepsEveryFrameFresh);
