@@ -579,31 +579,39 @@ void WorkspaceShell::MaybeArmAutosaveTimer() {
 }
 
 void WorkspaceShell::MaybeArmSessionFlushTimer() {
-  // Always-on crash-safety debounce (no editor.autosave gate). Detect a real buffer
-  // mutation via the active editable viewport's content revision, mirroring the autosave
-  // arm, but WITHOUT the path-backed gate so untitled dirty buffers are covered too.
-  const editor::TextViewport* viewport = ActiveEditableViewport();
-  if (viewport == nullptr) {
-    return;
+  // Always-on crash-safety debounce (no editor.autosave gate), covering untitled dirty
+  // buffers too. A real buffer mutation is detected from a fingerprint of EVERY open
+  // editor document's (identity, content revision), not the active viewport's: that
+  // sample re-baselined on a tab switch, so an edit followed by a switch in the same
+  // input batch -- or an edit to a buffer that was never active (a command, a replace
+  // across files) -- never armed the flush, and a kill -9 after it lost the buffer
+  // (soak 4fb82d32fe19). A switch, a focus change or navigation leaves the
+  // fingerprint as it was. A walk over the open tabs, no allocation.
+  std::uint64_t fingerprint = 1469598103934665603ull;  // FNV-1a offset basis
+  bool any_dirty = false;
+  const auto mix = [&fingerprint](std::uint64_t value) {
+    fingerprint = (fingerprint ^ value) * 1099511628211ull;
+  };
+  for (const EditorGroup& group : context_.current_project_state.editor_groups) {
+    for (const TabEntry& tab : group.open_tabs) {
+      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
+          tab.editor_state->content_pending()) {
+        continue;
+      }
+      const editor::TextViewport& viewport = tab.editor_state->viewport;
+      mix(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(viewport.document_identity())));
+      mix(viewport.content_revision());
+      any_dirty = any_dirty || viewport.dirty();
+    }
   }
-  // content_revision() is per-viewport; a tab switch changes the sampled value with no
-  // edit. Re-baseline against the newly-active viewport WITHOUT resetting the debounce
-  // or disarming, so a flush armed by an edit on another tab still fires (SaveSessionState
-  // persists every dirty tab, not just the active one).
-  if (viewport != session_flush_last_viewport_) {
-    session_flush_last_viewport_ = viewport;
-    session_flush_last_content_revision_ = viewport->content_revision();
-    return;
-  }
-  const std::uint64_t revision = viewport->content_revision();
-  if (revision == session_flush_last_content_revision_) {
+  if (fingerprint == session_flush_content_fingerprint_) {
     return;  // Navigation/focus only: keep any pending debounce.
   }
-  session_flush_last_content_revision_ = revision;
+  session_flush_content_fingerprint_ = fingerprint;
   // Arm only when there is unsaved content somewhere to persist (across all groups),
   // and never disarm one already armed: a host terminal that just got its handle
   // (ConsumeTerminalSessionUpdates) is owed the same flush, dirty buffers or not.
-  if (!MakeEditorTabService().DirtyGroupTabs().empty()) {
+  if (any_dirty) {
     session_flush_.Note(SDL_GetTicks());
   } else {
     session_flush_.Touch(SDL_GetTicks());

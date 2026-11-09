@@ -2241,8 +2241,8 @@
   // the autosave debounce above so it stays always-on regardless of the autosave setting
   // and covers untitled/path-less dirty buffers too.
   CrashSafetyFlushSchedule session_flush_;
-  std::uint64_t session_flush_last_content_revision_ = 0;
-  const editor::TextViewport* session_flush_last_viewport_ = nullptr;
+  // What MaybeArmSessionFlushTimer last saw of every open editor document.
+  std::uint64_t session_flush_content_fingerprint_ = 0;
   // Set only while MaybeAutosaveDirtyTabs is writing dirty buffers, so the shared save
   // path skips the synchronous format-on-save subprocess. Autosave (focus change /
   // after delay) must never block the UI thread on an external formatter — explicit

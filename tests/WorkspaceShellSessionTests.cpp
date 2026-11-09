@@ -1371,6 +1371,37 @@ void TestWorkspaceShellCrashSafetyFlushTimerArmsOnEdit() {
          "an edit on a dirty buffer should arm the crash-safety flush debounce");
 }
 
+// The flush must arm for an edit to ANY buffer, not only to the one active when
+// the sampler runs. It sampled the active viewport's content revision and
+// re-baselined on a tab switch, so an edit followed by a switch in the same
+// input batch -- or an edit to a buffer that was never active (a command, a
+// replace across files) -- never armed it, and a kill -9 after it lost the
+// buffer (soak 4fb82d32fe19, 9e7e15dd237c, d36a78ef295c and more: "the unsaved
+// buffer did not come back after a kill -9").
+void TestWorkspaceShellCrashSafetyFlushArmsForAnEditBeforeATabSwitch() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path first = root / "first.txt";
+  const std::filesystem::path second = root / "second.txt";
+  WriteFile(first, "alpha\n");
+  WriteFile(second, "beta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, second);
+  WorkspaceShellTestAccess::OpenFile(shell, first);
+  WorkspaceShellTestAccess::ArmSessionFlushTimer(shell);
+  Expect(!WorkspaceShellTestAccess::SessionFlushArmed(shell),
+         "the flush timer should not arm before any edit");
+
+  // One batch: an edit to the active buffer, then a switch to the other tab.
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("x");
+  WorkspaceShellTestAccess::OpenFile(shell, second);
+  WorkspaceShellTestAccess::ArmSessionFlushTimer(shell);
+  Expect(WorkspaceShellTestAccess::SessionFlushArmed(shell),
+         "an edit followed by a tab switch in the same batch must still arm the flush");
+}
+
 void TestWorkspaceShellRestoreSessionPreservesDirtyEditorBufferContent() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3579,6 +3610,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown);
   AddTest(tests, "WorkspaceShell/CrashSafetyFlushTimerArmsOnEdit",
           TestWorkspaceShellCrashSafetyFlushTimerArmsOnEdit);
+  AddTest(tests, "WorkspaceShell/CrashSafetyFlushArmsForAnEditBeforeATabSwitch",
+          TestWorkspaceShellCrashSafetyFlushArmsForAnEditBeforeATabSwitch);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesDirtyEditorBufferContent",
           TestWorkspaceShellRestoreSessionPreservesDirtyEditorBufferContent);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesIndependentScrollPosition",
