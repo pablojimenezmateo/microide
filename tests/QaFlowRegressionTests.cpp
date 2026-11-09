@@ -790,6 +790,57 @@ void TestThePointerOnABannerButtonRepaintsItsHover() {
                       "the pointer moving off it, into the editor");
 }
 
+// Soak 0c1b56e84217 (a later sighting, editing/default/1920x1080@1): the external-
+// change banner belongs to the focused group -- that group's content is laid out
+// below it -- but it was painted, hit-tested and named at the top of the WHOLE
+// editor area, which with splits is the first group's pane. So it covered another
+// file's text, and when the focus moved between two other groups the repaint of
+// those two never reached it and it stayed on screen.
+void TestTheBannerSitsInTheFocusedGroupAndLeavesWithIt() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("top.txt", "top\n");
+  WriteFile(fixture.root / "disk.txt", "one\n");
+  WriteFile(fixture.root / "other.txt", "other\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-down disk.txt"), "split-down should run");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right other.txt"), "split-right should run");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "three groups: top.txt over disk.txt | other.txt");
+  const SDL_FRect disk_pane = TestAccess::GroupEditorSurfaceRect(fixture.shell, 1);
+  const SDL_FRect other_pane = TestAccess::GroupEditorSurfaceRect(fixture.shell, 2);
+  const float px = disk_pane.x + disk_pane.w / 2.0f;
+  const float py = disk_pane.y + disk_pane.h - 20.0f;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, px, py),
+                                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, px, py),
+                                                     TextInputEvent("x")}),
+                      "a click into disk.txt's group and typing (the tab goes dirty)");
+  WriteFile(fixture.root / "disk.txt", "two\n");
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!TestAccess::HasExternalChangeBanner(fixture.shell, fixture.root / "disk.txt") &&
+         std::chrono::steady_clock::now() < deadline) {
+    TestAccess::ReloadProjectIfFilesChanged(fixture.shell, true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  Expect(TestAccess::HasExternalChangeBanner(fixture.shell, fixture.root / "disk.txt"),
+         "the external change should raise the banner on the dirty buffer");
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the banner appearing");
+  const auto reload = fixture.ElementRect("button:banner/Reload");
+  Expect(reload.has_value(), "the banner should name its Reload button");
+  if (!reload) {
+    return;
+  }
+  Expect(reload->x >= disk_pane.x && reload->x + reload->w <= disk_pane.x + disk_pane.w &&
+             reload->y >= disk_pane.y && reload->y + reload->h <= disk_pane.y + disk_pane.h,
+         "the banner's Reload button should sit in disk.txt's group, the focused one");
+  const float ox = other_pane.x + other_pane.w / 2.0f;
+  const float oy = other_pane.y + other_pane.h - 20.0f;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, ox, oy),
+                                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, ox, oy)}),
+                      "a click into other.txt's group (the banner leaves with the focus)");
+}
+
 // edit-folding: typing at the end of a collapsed fold's opener line left that row
 // stale (the typed text and the inline blame the edit hides).
 void TestTypingOnAFoldedOpenerRepaintsItsRow() {
@@ -4873,6 +4924,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestThePointerLeavingATabOverflowChipRepaintsIt);
   AddTest(tests, "QaFlowRegression/ThePointerOnABannerButtonRepaintsItsHover",
           TestThePointerOnABannerButtonRepaintsItsHover);
+  AddTest(tests, "QaFlowRegression/TheBannerSitsInTheFocusedGroupAndLeavesWithIt",
+          TestTheBannerSitsInTheFocusedGroupAndLeavesWithIt);
   AddTest(tests, "QaFlowRegression/TabDragDropPreviewPaints", TestTabDragDropPreviewPaints);
   AddTest(tests, "QaFlowRegression/ClosingAPromptOverTheFinderGivesTheFinderTheKeyboard",
           TestClosingAPromptOverTheFinderGivesTheFinderTheKeyboard);

@@ -64,6 +64,15 @@ const EditorBannerState* ActiveEditorBannerForTab(const ProjectWorkspaceState& s
   return nullptr;
 }
 
+SDL_FRect ActiveEditorBannerStripRect(const ProjectWorkspaceState& state,
+                                      const EditorGroupRectsLayout& group_rects) {
+  const std::size_t focused = state.clamped_focused_group_index();
+  if (focused >= group_rects.groups.size() || ActiveEditorBannerForTab(state) == nullptr) {
+    return SDL_FRect{};
+  }
+  return ComputeEditorBannerStripRect(group_rects.groups[focused].editor_surface);
+}
+
 void SetEditorBanner(ProjectWorkspaceState& state, EditorBannerState::Kind kind,
                      const std::filesystem::path& path, std::string reason) {
   if (path.empty()) {

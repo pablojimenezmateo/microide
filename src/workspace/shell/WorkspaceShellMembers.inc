@@ -826,7 +826,6 @@
   // into view). Falls back to the window width before the first layout exists.
   float EditorGroupTabStripWidth(std::size_t group_index) const;
   std::size_t FocusedEditorGroupIndex() const;
-  SDL_FRect EditorSurfaceBelowBanner(const SDL_FRect& editor_surface) const;
   ScrollSurfaceLayout ComputeEditorScrollLayout(const SDL_FRect& rect,
                                                 const editor::TextViewport& viewport,
                                                 const editor::EditorViewMetrics& metrics) const;

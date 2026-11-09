@@ -15,17 +15,6 @@ namespace microide::workspace {
 // below are just that walk's surface rects, with the focused group's external-
 // change banner trimmed off.
 
-SDL_FRect WorkspaceShell::EditorSurfaceBelowBanner(const SDL_FRect& editor_surface) const {
-  if (ActiveEditorBannerForTab(context_.current_project_state) == nullptr) {
-    return editor_surface;
-  }
-  const SDL_FRect strip = ComputeEditorBannerStripRect(editor_surface);
-  SDL_FRect content = editor_surface;
-  content.y += strip.h;
-  content.h = std::max(0.0f, content.h - strip.h);
-  return content;
-}
-
 std::size_t WorkspaceShell::FocusedEditorGroupIndex() const {
   // Clamped: the stored index outlives a group collapse by one call, and every
   // caller here indexes groups or compares against a pane ordinal with it.
@@ -75,15 +64,17 @@ WorkspaceShell::EditorPaneLayouts WorkspaceShell::EditorPaneLayoutsFromGroupRect
   if (state.editor_groups.empty()) {
     return panes;
   }
-  const std::size_t focused = state.focused_group_index < group_rects.groups.size()
-                                  ? state.focused_group_index
-                                  : 0;
+  const std::size_t focused = state.clamped_focused_group_index();
+  // The external-change banner belongs to the focused group; trim it from that
+  // group's surface so the editor content lays out below the strip.
+  const float banner_height = ActiveEditorBannerStripRect(state, group_rects).h;
   for (std::size_t i = 0; i < group_rects.groups.size(); ++i) {
     const bool active = i == focused;
-    // The external-change banner belongs to the focused group; trim it from that
-    // group's surface so the editor content lays out below the strip.
-    const SDL_FRect surface = active ? EditorSurfaceBelowBanner(group_rects.groups[i].editor_surface)
-                                     : group_rects.groups[i].editor_surface;
+    SDL_FRect surface = group_rects.groups[i].editor_surface;
+    if (active) {
+      surface.y += banner_height;
+      surface.h = std::max(0.0f, surface.h - banner_height);
+    }
     panes.push_back(EditorPaneLayout{.group_index = i, .rect = surface, .active = active});
   }
   return panes;

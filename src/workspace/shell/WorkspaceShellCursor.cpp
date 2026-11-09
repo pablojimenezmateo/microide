@@ -1214,7 +1214,8 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
   // next unrelated partial frame left it unlit (QA monkey, qa-asan seed 4).
   if (const EditorBannerState* banner = ActiveEditorBannerForTab(context_.current_project_state);
       banner != nullptr) {
-    const SDL_FRect strip = ComputeEditorBannerStripRect(layout.editor_surface);
+    const SDL_FRect strip = ActiveEditorBannerStripRect(context_.current_project_state,
+                                                        ComputeEditorGroupRectsForState(layout));
     if (Contains(strip, x, y)) {
       const EditorBannerButtonLayout buttons =
           ComputeEditorBannerButtonRects(strip, EditorBannerButtonsFor(banner->kind));

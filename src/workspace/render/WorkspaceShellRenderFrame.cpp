@@ -2013,7 +2013,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     RenderMergeScrollbars(renderer, layout.editor_surface);
   }
 
-  if (const SDL_FRect strip = ComputeEditorBannerStripRect(layout.editor_surface);
+  if (const SDL_FRect strip = ActiveEditorBannerStripRect(project_state, editor_surface_group_rects);
       frame_vm.editor_banner.has_value() && strip.h > 0.0f) {
     const EditorBannerViewModel& banner_vm = *frame_vm.editor_banner;
     DrawFilledRect(renderer, strip, theme_.chrome_background);

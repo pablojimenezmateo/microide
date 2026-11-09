@@ -208,7 +208,8 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   // Non-blocking external-change banner occupies the top strip of the editor
   // surface, above the panes. Intercept its clicks before pane dispatch.
   if (const EditorBannerState* banner = ActiveEditorBannerForTab(state_); banner != nullptr) {
-    const SDL_FRect strip = ComputeEditorBannerStripRect(layout.editor_surface);
+    const SDL_FRect strip =
+        ActiveEditorBannerStripRect(state_, ComputeEditorGroupRects(layout, state_.editor_split));
     if (Contains(strip, event.button.x, event.button.y)) {
       const EditorBannerButtonLayout buttons =
           ComputeEditorBannerButtonRects(strip, EditorBannerButtonsFor(banner->kind));

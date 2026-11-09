@@ -1360,6 +1360,12 @@ struct ProjectWorkspaceState {
 // Banner state helpers (free functions; keep WorkspaceShell thin). Defined in
 // WorkspaceShellEditorBanner.cpp.
 const EditorBannerState* ActiveEditorBannerForTab(const ProjectWorkspaceState& state);
+// The strip that banner occupies: the top of the FOCUSED group's surface, the
+// group whose content lays out below it -- not the top of the whole editor area,
+// which with splits is another group's pane. Empty with no banner (or no room).
+// Paint, hit-testing, the hover probe and the control-ui query all read this one.
+SDL_FRect ActiveEditorBannerStripRect(const ProjectWorkspaceState& state,
+                                      const EditorGroupRectsLayout& group_rects);
 void SetEditorBanner(ProjectWorkspaceState& state, EditorBannerState::Kind kind,
                      const std::filesystem::path& path, std::string reason = {});
 bool DismissEditorBannerForPath(ProjectWorkspaceState& state, const std::filesystem::path& path);

@@ -621,15 +621,18 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               }
             }
             if (const EditorBannerState* banner = ActiveEditorBannerForTab(context_.current_project_state);
-                banner != nullptr && ComputeEditorBannerStripRect(layout.editor_surface).h > 0.0f) {
-              const SDL_FRect strip = ComputeEditorBannerStripRect(layout.editor_surface);
-              const EditorBannerButtonLayout buttons =
-                  ComputeEditorBannerButtonRects(strip, EditorBannerButtonsFor(banner->kind));
-              for (std::size_t i = 0; i < buttons.buttons.size(); ++i) {
-                const std::string label(buttons.buttons[i].label);
-                AddControlUiElement(out, kButton, "banner/" + label, buttons.rects[i], label);
+                banner != nullptr) {
+              if (const SDL_FRect strip = ActiveEditorBannerStripRect(
+                      context_.current_project_state, ComputeEditorGroupRectsForState(layout));
+                  strip.h > 0.0f) {
+                const EditorBannerButtonLayout buttons =
+                    ComputeEditorBannerButtonRects(strip, EditorBannerButtonsFor(banner->kind));
+                for (std::size_t i = 0; i < buttons.buttons.size(); ++i) {
+                  const std::string label(buttons.buttons[i].label);
+                  AddControlUiElement(out, kButton, "banner/" + label, buttons.rects[i], label);
+                }
+                AddControlUiElement(out, kButton, "banner/dismiss", buttons.dismiss);
               }
-              AddControlUiElement(out, kButton, "banner/dismiss", buttons.dismiss);
             }
             // The merge editor's buttons, from the geometry its mouse path tests:
             // the toolbar, and each visible conflict's accept buttons (shown while
