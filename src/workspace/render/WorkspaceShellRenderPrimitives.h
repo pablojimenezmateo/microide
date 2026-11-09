@@ -920,7 +920,10 @@ inline void DrawPrimarySecondaryRowText(const render::TextRenderer& text_rendere
                                         float gap = 8.0f) {
   const float text_y =
       rect.y + std::floor(std::max(0.0f, rect.h - text_renderer.LineHeight()) * 0.5f);
-  const float max_width = std::max(20.0f, right_edge - text_x);
+  // No floor: text that starts at or past `right_edge` draws nothing. A 20 px
+  // minimum drew a deeply indented tree label out of its row, onto pixels the
+  // row's repaint does not cover (soak 538a455016ef).
+  const float max_width = std::max(0.0f, right_edge - text_x);
   // Ephemeral views, not owned strings: this runs once per visible row per frame in
   // the secondary sidebars and the debug pane, and the common case (a label that
   // fits) then costs no allocation at all instead of a std::string copy. The two

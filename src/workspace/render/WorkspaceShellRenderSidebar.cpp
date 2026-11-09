@@ -188,6 +188,9 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     if (marker == ' ') {
       return label_x;
     }
+    if (label_x + kGitBadgeSlot > row_rect.x + row_rect.w) {
+      return label_x + kGitBadgeSlot;  // indented past the row: nothing of it fits
+    }
     const std::string_view marker_text(&marker, 1);
     DrawCenteredTextOn(text_renderer_, renderer,
                        MakeRect(label_x, row_rect.y, kGitBadgeSlot, row_rect.h),
@@ -686,7 +689,9 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
         const float tree_x = row_rect.x + 6.0f + depth_offset;
         const float chevron_x = tree_x;
         const float label_x = tree_x + kTreeChevronSlotWidth + 4.0f;
-        const float label_width = std::max(20.0f, row_rect.x + row_rect.w - label_x - 8.0f);
+        // No floor: a label indented past the row draws nothing rather than
+        // spill past it, where the row's own repaint never reaches (soak 538a455016ef).
+        const float label_width = std::max(0.0f, row_rect.x + row_rect.w - label_x - 8.0f);
         DrawChevron(renderer, chevron_x, row_rect.y + row_rect.h * 0.5f, line.expanded,
                     theme_.text_muted);
         DrawVCenteredTextOn(
@@ -951,8 +956,8 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       // Source Control (a flat per-file list) uses the leading badge instead.
       const float marker_x = row_rect.x + row_rect.w - marker_width - 8.0f;
       const float label_width =
-          has_git_marker ? std::max(20.0f, marker_x - label_x - 8.0f)
-                         : std::max(20.0f, row_rect.x + row_rect.w - label_x - 8.0f);
+          has_git_marker ? std::max(0.0f, marker_x - label_x - 8.0f)
+                         : std::max(0.0f, row_rect.x + row_rect.w - label_x - 8.0f);
 
       if (entry.is_directory) {
         DrawChevron(renderer, chevron_x, chevron_center_y, entry.expanded,

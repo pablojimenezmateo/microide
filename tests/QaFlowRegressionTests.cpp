@@ -1997,6 +1997,53 @@ void TestACaretMoveThatScrollsTheMergePanesRepaintsThemAll() {
          "Down moves the shared row (the case under test)");
 }
 
+// Soak 538a455016ef (1.75 replay): a tree row indented past the sidebar's width
+// still drew its label at least 20 px wide -- out of the row, over the scrollbar
+// beside it. Hovering the row repaints the row, not what its label spilled onto,
+// so the spill kept the glyphs blended over the old background.
+void TestADeeplyIndentedTreeRowKeepsItsLabelInsideTheRow() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  WriteFile(root / "base.txt", "base\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  // A file at each depth from six down: at this width the deepest names start
+  // past the row's end, the shallower ones just short of it.
+  std::filesystem::path deep = root;
+  for (int i = 0; i < 13; ++i) {
+    deep /= "d" + std::to_string(i);
+    if (i >= 5) {
+      WriteFile(deep / "file.txt", "deep\n");
+    }
+  }
+  for (int i = 0; i < 30; ++i) {  // below them, enough rows for a scrollbar
+    WriteFile(root / ("z" + std::to_string(i) + ".txt"), "z\n");
+  }
+  constexpr int kWidth = 1280;
+  constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the fixture opens its project");
+  TestAccess::SetWindowSize(shell, kWidth, kHeight);
+  TestAccess::SetSidebarWidth(shell, 200.0f);
+  TestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 38), "the git view lists the untracked files");
+  TestAccess::NoteLayoutInputsChanged(shell);
+  SoftwareCanvas canvas(kWidth, kHeight);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const SDL_FRect sidebar = TestAccess::CurrentLayout(shell).sidebar;
+  for (float y = sidebar.y + 4.0f; y < sidebar.y + sidebar.h; y += 9.0f) {
+    const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight,
+                                                  DispatchEvents(shell, {MouseMotionEvent(sidebar.x + 10.0f, y)}));
+    Expect(diff.identical(), "hovering the git view at y " + std::to_string(static_cast<int>(y)) +
+                                 " paints what a full repaint paints; " + DescribePixelDiff(diff));
+  }
+}
+
 // QA merge-panes: a conflict scrolled out of sight still had buttons -- its
 // accept buttons clamped to the bottom of the source panes and its result
 // buttons fell back to the top of the result pane, where hovering line 1 showed
@@ -4787,6 +4834,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TogglingTheMergeBasePaneKeepsTheToolbarAndEveryFrameFresh",
           TestTogglingTheMergeBasePaneKeepsTheToolbarAndEveryFrameFresh);
   AddTest(tests, "QaFlowRegression/AConflictOutOfSightHasNoButtons", TestAConflictOutOfSightHasNoButtons);
+  AddTest(tests, "QaFlowRegression/ADeeplyIndentedTreeRowKeepsItsLabelInsideTheRow",
+          TestADeeplyIndentedTreeRowKeepsItsLabelInsideTheRow);
   AddTest(tests, "QaFlowRegression/ACaretMoveThatScrollsTheMergePanesRepaintsThemAll",
           TestACaretMoveThatScrollsTheMergePanesRepaintsThemAll);
   AddTest(tests, "QaFlowRegression/MovingOntoATabsCloseButtonLightsIt", TestMovingOntoATabsCloseButtonLightsIt);
