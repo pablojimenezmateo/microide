@@ -213,11 +213,19 @@ SDL_FRect ComputeMergeSourceActionButtonRect(float pane_x,
                                              std::size_t end_line,
                                              float content_bottom,
                                              float button_width,
-                                             float button_height) {
+                                             float button_height,
+                                             float pane_right) {
   float y = rows_y +
             static_cast<float>(static_cast<long long>(end_line) - scroll_row) * line_height + 2.0f;
   y = std::min(y, content_bottom - button_height - 4.0f);
-  return MakeRect(pane_x + gutter_width, y, button_width, button_height);
+  const float x = pane_x + gutter_width;
+  // No room in a narrow pane: not laid out, rather than run over the next pane
+  // or past the window (soak a67e96e83bf3). Paint, hover and the QA source all
+  // skip an empty rect.
+  if (x + button_width > pane_right) {
+    return MakeRect(x, y, 0.0f, 0.0f);
+  }
+  return MakeRect(x, y, button_width, button_height);
 }
 
 std::array<SDL_FRect, 4> ComputeMergeResultActionButtonRects(
@@ -227,17 +235,41 @@ std::array<SDL_FRect, 4> ComputeMergeResultActionButtonRects(
     const std::optional<SDL_FRect>& conflict_rect,
     const std::array<float, 4>& widths,
     float button_height,
-    float button_gap) {
-  float y = conflict_rect.has_value() ? conflict_rect->y + conflict_rect->h + 2.0f : rows_y + 2.0f;
-  if (y + button_height > content_bottom - 4.0f && conflict_rect.has_value()) {
-    y = std::max(rows_y + 2.0f, conflict_rect->y - button_height - 2.0f);
-  }
-
-  float x = start_x;
+    float button_gap,
+    float pane_right) {
+  // Flow the buttons left to right inside the Result pane, wrapping onto a new
+  // row where the next one does not fit: one row ran into the Local pane, and
+  // at 1280x900 the pane is already narrower than the row (soak 4e21043cd592).
+  // A button wider than the pane itself is not laid out (an empty rect, which
+  // paint, hover and the QA source skip). Offsets first, relative to the block.
   std::array<SDL_FRect, 4> rects{};
+  float x = start_x;
+  float row = 0.0f;
+  bool row_empty = true;
   for (std::size_t i = 0; i < rects.size(); ++i) {
-    rects[i] = MakeRect(x, y, widths[i], button_height);
+    if (start_x + widths[i] > pane_right) {
+      continue;  // wider than the pane: left out
+    }
+    if (!row_empty && x + widths[i] > pane_right) {
+      x = start_x;
+      row += 1.0f;
+    }
+    rects[i] = MakeRect(x, row * (button_height + button_gap), widths[i], button_height);
     x += widths[i] + button_gap;
+    row_empty = false;
+  }
+  const float block_height = row_empty ? 0.0f : row * (button_height + button_gap) + button_height;
+
+  float y = conflict_rect.has_value() ? conflict_rect->y + conflict_rect->h + 2.0f : rows_y + 2.0f;
+  if (y + block_height > content_bottom - 4.0f && conflict_rect.has_value()) {
+    y = std::max(rows_y + 2.0f, conflict_rect->y - block_height - 2.0f);
+  }
+  for (SDL_FRect& rect : rects) {
+    if (rect.w > 0.0f) {
+      rect.y += y;
+    } else {
+      rect = MakeRect(start_x, y, 0.0f, 0.0f);
+    }
   }
   return rects;
 }
@@ -298,7 +330,8 @@ std::optional<MergeHoverState> ClassifyMergeHoverState(
                                                     conflict.incoming_end_line,
                                                     interaction.content_bottom,
                                                     interaction.incoming_accept_button_width,
-                                                    interaction.button_height),
+                                                    interaction.button_height,
+                                                    surface.left_x + surface.left_width),
                  x, y)) {
       return MergeHoverState{
           .kind = MergeHoverState::Kind::IncomingAccept,
@@ -314,7 +347,8 @@ std::optional<MergeHoverState> ClassifyMergeHoverState(
                                                     conflict.current_end_line,
                                                     interaction.content_bottom,
                                                     interaction.current_accept_button_width,
-                                                    interaction.button_height),
+                                                    interaction.button_height,
+                                                    surface.right_x + surface.right_width),
                  x, y)) {
       return MergeHoverState{
           .kind = MergeHoverState::Kind::CurrentAccept,
@@ -332,7 +366,7 @@ std::optional<MergeHoverState> ClassifyMergeHoverState(
     const auto action_rects = ComputeMergeResultActionButtonRects(
         surface.center_x + surface.gutter_width, surface.rows_y, interaction.content_bottom,
         conflict_rect, interaction.result_action_widths, interaction.button_height,
-        interaction.button_gap);
+        interaction.button_gap, surface.center_x + surface.center_width);
     if (Contains(action_rects[0], x, y)) {
       return MergeHoverState{
           .kind = MergeHoverState::Kind::ResultAction,

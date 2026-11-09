@@ -1038,13 +1038,13 @@ void TestWorkspaceSharedMergeInteractionGeometry() {
          "visible line range rect should be absent for off-screen spans");
 
   const SDL_FRect accept_rect = ComputeMergeSourceActionButtonRect(
-      120.0f, 30.0f, 260.0f, 18.0f, 5, 8, 508.0f, 90.0f, 22.0f);
+      120.0f, 30.0f, 260.0f, 18.0f, 5, 8, 508.0f, 90.0f, 22.0f, 320.0f);
   Expect(accept_rect.x == 150.0f && accept_rect.y == 316.0f,
          "merge source action rect should anchor to the pane gutter and source line");
 
   const std::array<float, 4> action_widths = {64.0f, 82.0f, 84.0f, 70.0f};
   const auto action_rects = ComputeMergeResultActionButtonRects(
-      320.0f, 260.0f, 508.0f, visible_rect, action_widths, 22.0f, 8.0f);
+      320.0f, 260.0f, 508.0f, visible_rect, action_widths, 22.0f, 8.0f, 700.0f);
   Expect(action_rects[0].x == 320.0f && action_rects[0].y == 355.0f,
          "merge result action rects should start below the visible conflict span");
   Expect(action_rects[1].x == 392.0f && action_rects[2].x == 482.0f &&
@@ -1053,9 +1053,57 @@ void TestWorkspaceSharedMergeInteractionGeometry() {
 
   const auto clamped_action_rects = ComputeMergeResultActionButtonRects(
       320.0f, 260.0f, 380.0f, std::optional<SDL_FRect>{MakeRect(320.0f, 360.0f, 212.0f, 30.0f)},
-      action_widths, 22.0f, 8.0f);
+      action_widths, 22.0f, 8.0f, 700.0f);
   Expect(clamped_action_rects[0].y == 336.0f,
          "merge result action rects should move above the conflict when they would overflow");
+}
+
+// A conflict's buttons stay inside their pane. In a narrow merge pane the
+// "Accept Local" button (114 px) ran past the right pane into the window's edge,
+// and the result row's buttons into the Local pane (soak a67e96e83bf3,
+// 4e21043cd592, 1b97fc7b724e). A source button with no room is not laid out;
+// the result row wraps onto further rows inside the Result pane, so all four
+// stay reachable in an ordinary window (its pane is narrower than the row at
+// 1280x900), and only a button wider than the pane itself is left out. Empty
+// rects are skipped by paint, the hover classifier and the QA element source.
+void TestWorkspaceSharedMergeConflictButtonsStayInsideTheirPane() {
+  const SDL_FRect roomy = ComputeMergeSourceActionButtonRect(
+      120.0f, 30.0f, 260.0f, 18.0f, 0, 2, 508.0f, 114.0f, 22.0f, 320.0f);
+  Expect(roomy.w == 114.0f, "a source button with room keeps its width");
+  const SDL_FRect squeezed = ComputeMergeSourceActionButtonRect(
+      541.0f, 30.0f, 260.0f, 18.0f, 0, 2, 508.0f, 114.0f, 22.0f, 660.0f);
+  Expect(squeezed.w == 0.0f || squeezed.x + squeezed.w <= 660.0f,
+         "a source button never runs past its pane's right edge");
+  Expect(squeezed.w == 0.0f, "a source button with no room in its pane is not laid out");
+
+  const std::array<float, 4> widths = {64.0f, 82.0f, 84.0f, 70.0f};
+  const SDL_FRect conflict = MakeRect(422.0f, 330.0f, 200.0f, 36.0f);
+  const auto rects = ComputeMergeResultActionButtonRects(450.0f, 260.0f, 508.0f, conflict, widths,
+                                                         22.0f, 8.0f, 622.0f);
+  for (std::size_t i = 0; i < rects.size(); ++i) {
+    Expect(rects[i].w == widths[i], "every result button is laid out in a pane as wide as one of them");
+    Expect(rects[i].x >= 450.0f && rects[i].x + rects[i].w <= 622.0f,
+           "a result button stays inside the Result pane");
+    Expect(rects[i].y >= conflict.y + conflict.h && rects[i].y + rects[i].h <= 508.0f - 4.0f,
+           "the wrapped rows sit below the conflict, above the content's bottom");
+    for (std::size_t j = 0; j < i; ++j) {
+      const bool apart = rects[i].x >= rects[j].x + rects[j].w || rects[j].x >= rects[i].x + rects[i].w ||
+                         rects[i].y >= rects[j].y + rects[j].h || rects[j].y >= rects[i].y + rects[i].h;
+      Expect(apart, "wrapped result buttons do not overlap one another");
+    }
+  }
+  Expect(rects[1].y == rects[0].y && rects[2].y > rects[0].y, "the row wraps where the next button does not fit");
+  // Near the content's bottom the whole block moves above the conflict.
+  const auto lifted = ComputeMergeResultActionButtonRects(450.0f, 260.0f, 380.0f, conflict, widths, 22.0f,
+                                                          8.0f, 622.0f);
+  Expect(lifted[3].y + lifted[3].h <= conflict.y && lifted[0].y >= 260.0f,
+         "a wrapped block that would overflow the content moves above the conflict");
+  // A pane narrower than a button leaves that button out.
+  const auto narrow = ComputeMergeResultActionButtonRects(450.0f, 260.0f, 508.0f, conflict, widths, 22.0f,
+                                                          8.0f, 520.0f);
+  Expect(narrow[0].w == 64.0f && narrow[1].w == 0.0f && narrow[2].w == 0.0f && narrow[3].w == 70.0f &&
+             narrow[3].x + narrow[3].w <= 520.0f && narrow[3].y > narrow[0].y,
+         "a result button wider than the Result pane is not laid out; the rest still wrap inside it");
 }
 
 void TestWorkspaceSharedMergeHoverClassifier() {
@@ -1066,6 +1114,9 @@ void TestWorkspaceSharedMergeHoverClassifier() {
       .right_x = 560.0f,
       .rows_y = 260.0f,
       .line_height = 18.0f,
+      .left_width = 200.0f,
+      .center_width = 240.0f,
+      .right_width = 180.0f,
   };
   const SDL_FRect editor_surface = MakeRect(100.0f, 200.0f, 640.0f, 320.0f);
   const SDL_FRect result_rect = ComputeMergeResultViewportRect(editor_surface, surface.center_x,
@@ -1096,7 +1147,7 @@ void TestWorkspaceSharedMergeHoverClassifier() {
           },
       .incoming_accept_button_width = 90.0f,
       .current_accept_button_width = 92.0f,
-      .result_action_widths = {64.0f, 82.0f, 84.0f, 70.0f},
+      .result_action_widths = {40.0f, 44.0f, 44.0f, 40.0f},  // all four fit the Result pane
       .button_height = 22.0f,
       .button_gap = 8.0f,
   };
@@ -1117,12 +1168,14 @@ void TestWorkspaceSharedMergeHoverClassifier() {
   const SDL_FRect incoming_accept_rect = ComputeMergeSourceActionButtonRect(
       surface.left_x, surface.gutter_width, surface.rows_y, surface.line_height,
       static_cast<int>(interaction.result.text.scroll_line), conflicts[0].incoming_end_line,
-      interaction.content_bottom, interaction.incoming_accept_button_width, interaction.button_height);
+      interaction.content_bottom, interaction.incoming_accept_button_width, interaction.button_height,
+      surface.left_x + surface.left_width);
   const auto result_action_rects = ComputeMergeResultActionButtonRects(
       surface.center_x + surface.gutter_width, surface.rows_y, interaction.content_bottom,
       ComputeVisibleLineRangeRect(result_rect, interaction.result.lines, conflicts[0].start_line,
                                   conflicts[0].end_line),
-      interaction.result_action_widths, interaction.button_height, interaction.button_gap);
+      interaction.result_action_widths, interaction.button_height, interaction.button_gap,
+      surface.center_x + surface.center_width);
 
   const auto incoming_accept_hover =
       ClassifyMergeHoverState(surface, interaction, conflicts,
@@ -1226,6 +1279,9 @@ void TestWorkspaceSharedMergeSourceButtonUsesSourceScroll() {
       .right_x = 560.0f,
       .rows_y = 260.0f,
       .line_height = 18.0f,
+      .left_width = 200.0f,
+      .center_width = 240.0f,
+      .right_width = 180.0f,
   };
   const SDL_FRect editor_surface = MakeRect(100.0f, 200.0f, 640.0f, 320.0f);
   const SDL_FRect result_rect = ComputeMergeResultViewportRect(editor_surface, surface.center_x,
@@ -1283,13 +1339,15 @@ void TestWorkspaceSharedMergeSourceButtonUsesSourceScroll() {
   const SDL_FRect source_anchored = ComputeMergeSourceActionButtonRect(
       surface.left_x, surface.gutter_width, surface.rows_y, surface.line_height,
       static_cast<int>(source_scroll), conflicts[0].incoming_end_line, interaction.content_bottom,
-      interaction.incoming_accept_button_width, interaction.button_height);
+      interaction.incoming_accept_button_width, interaction.button_height,
+      surface.left_x + surface.left_width);
   // The old buggy geometry would have used the result scroll and landed on a
   // different row; make sure the two actually differ so this test is meaningful.
   const SDL_FRect result_anchored = ComputeMergeSourceActionButtonRect(
       surface.left_x, surface.gutter_width, surface.rows_y, surface.line_height,
       static_cast<int>(result_scroll), conflicts[0].incoming_end_line, interaction.content_bottom,
-      interaction.incoming_accept_button_width, interaction.button_height);
+      interaction.incoming_accept_button_width, interaction.button_height,
+      surface.left_x + surface.left_width);
   Expect(source_anchored.y != result_anchored.y,
          "source and result scroll must produce different button rows for this fixture");
 
@@ -1720,6 +1778,8 @@ void TestEditorBannerButtonsStayInsideANarrowStrip() {
 void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/EditorBannerButtonsStayInsideANarrowStrip",
           TestEditorBannerButtonsStayInsideANarrowStrip);
+  AddTest(tests, "WorkspaceShared/MergeConflictButtonsStayInsideTheirPane",
+          TestWorkspaceSharedMergeConflictButtonsStayInsideTheirPane);
   AddTest(tests, "WorkspaceShared/FindWidgetStaysInsideAShortOrNarrowArea",
           TestFindWidgetStaysInsideAShortOrNarrowArea);
   AddTest(tests, "WorkspaceShared/EditorBannerKeepsInsideTheEditorArea", TestEditorBannerKeepsInsideTheEditorArea);

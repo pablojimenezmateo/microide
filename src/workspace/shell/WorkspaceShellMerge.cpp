@@ -452,7 +452,8 @@ SDL_FRect WorkspaceShell::BuildMergeSourceActionButtonRect(
       // TU and the hover classifier both project it), so this end is a row.
       incoming ? conflict.incoming_end_line : conflict.current_end_line, interaction.content_bottom,
       incoming ? interaction.incoming_accept_button_width : interaction.current_accept_button_width,
-      kMergeToolbarButtonHeight);
+      kMergeToolbarButtonHeight,
+      incoming ? surface.left_x + surface.left_width : surface.right_x + surface.right_width);
 }
 
 std::array<SDL_FRect, 4> WorkspaceShell::BuildMergeResultActionButtonRects(
@@ -463,7 +464,8 @@ std::array<SDL_FRect, 4> WorkspaceShell::BuildMergeResultActionButtonRects(
       surface.center_x + surface.gutter_width, surface.rows_y, interaction.content_bottom,
       ComputeVisibleLineRangeRect(interaction.result.rect, interaction.result.lines, conflict.start_line,
                                   std::max(conflict.end_line, conflict.start_line + std::size_t{1})),
-      interaction.result_action_widths, kMergeToolbarButtonHeight, kMergeToolbarButtonGap);
+      interaction.result_action_widths, kMergeToolbarButtonHeight, kMergeToolbarButtonGap,
+      surface.center_x + surface.center_width);
 }
 
 std::optional<WorkspaceShell::MergeHoverState> WorkspaceShell::ClassifyMergeHoverState(
@@ -480,6 +482,9 @@ std::optional<WorkspaceShell::MergeHoverState> WorkspaceShell::ClassifyMergeHove
           .right_x = surface.right_x,
           .rows_y = surface.rows_y,
           .line_height = surface.line_height,
+          .left_width = surface.left_width,
+          .center_width = surface.center_width,
+          .right_width = surface.right_width,
       },
       MergeHoverInteractionLayout{
           .content_bottom = interaction.content_bottom,

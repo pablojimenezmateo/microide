@@ -180,6 +180,10 @@ struct MergeHoverSurfaceLayout {
   float right_x = 0.0f;
   float rows_y = 0.0f;
   float line_height = 14.0f;
+  // Each pane's width: a conflict's buttons stay inside their pane.
+  float left_width = 0.0f;
+  float center_width = 0.0f;
+  float right_width = 0.0f;
 };
 
 struct MergeHoverResultLayout {
@@ -667,7 +671,8 @@ SDL_FRect ComputeMergeSourceActionButtonRect(float pane_x,
                                              std::size_t end_line,
                                              float content_bottom,
                                              float button_width,
-                                             float button_height);
+                                             float button_height,
+                                             float pane_right);
 std::array<SDL_FRect, 4> ComputeMergeResultActionButtonRects(
     float start_x,
     float rows_y,
@@ -675,7 +680,8 @@ std::array<SDL_FRect, 4> ComputeMergeResultActionButtonRects(
     const std::optional<SDL_FRect>& conflict_rect,
     const std::array<float, 4>& widths,
     float button_height,
-    float button_gap);
+    float button_gap,
+    float pane_right);
 std::optional<std::size_t> FindMergeTrackedConflictAtSourceLine(
     std::span<const MergeTrackedConflict> conflicts,
     std::size_t line,
