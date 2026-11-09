@@ -234,14 +234,24 @@ def make_editor_generator() -> Callable[[random.Random, list[str]], str]:
     return next_command
 
 
-def git_env() -> dict[str, str]:
+def git_env(project: Path | None = None) -> dict[str, str]:
     """The environment for git run against a scratch project: never one a hook or
     bisect exported (GIT_DIR and friends would point every call at the source
-    repository)."""
+    repository).
+
+    With `project`, git is also fenced to it: a ceiling at its parent stops git's
+    upward search at the project, and only local transports are allowed. Scratch
+    projects live under build/, inside the microide checkout, so a project whose
+    `.git` the run broke (the app deletes it, a stash directory is created in its
+    place) otherwise resolves to the CHECKOUT -- which is how a soak run once
+    committed "qa commit 29" to main, switched the checkout's branch and pushed a
+    qa-branch to GitHub."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env.update({"GIT_AUTHOR_NAME": "QA Monkey", "GIT_AUTHOR_EMAIL": "qa@example.com",
                 "GIT_COMMITTER_NAME": "QA Monkey", "GIT_COMMITTER_EMAIL": "qa@example.com",
                 "GIT_TERMINAL_PROMPT": "0"})
+    if project is not None:
+        env.update(q.git_fence_env(project))
     return env
 
 
@@ -260,10 +270,26 @@ def copy_project(source: Path, destination: Path) -> None:
             ["git", "clone", "--local", "--no-hardlinks", "--quiet", str(source),
              str(destination)], capture_output=True, text=True, env=git_env())
         if result.returncode == 0:
+            detach_from_source(destination)
             return
         print(f"git clone of {source} failed, falling back to a full copy: "
               f"{result.stderr.strip()}", file=sys.stderr)
     shutil.copytree(source, destination, symlinks=True, ignore_dangling_symlinks=True)
+
+
+def detach_from_source(clone: Path) -> None:
+    """Point the clone's `origin` at an empty bare repository beside it.
+
+    A clone's origin is the repository it came from, and for the commands profile
+    that is the microide checkout: the app's Push from the scratch project would
+    write refs straight into it (and a worktree's refs are the main checkout's).
+    The bare stand-in keeps push, fetch and upstream tracking exercisable."""
+    remote = clone.parent / (clone.name + "-origin.git")
+    env = git_env(clone)
+    subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True,
+                   capture_output=True, env=env)
+    subprocess.run(["git", "-C", str(clone), "remote", "set-url", "origin", str(remote)],
+                   check=True, capture_output=True, env=env)
 
 
 # ---- the odd files under qa-weird/ ---------------------------------------------
@@ -399,7 +425,7 @@ def apply_external(project: Path, op: str, target: str, counter: int) -> None:
     """One outside-world change, deterministic in (op, target, counter) so a
     replay redoes it. `target` is a project-relative file path."""
     path = project / target
-    env = git_env()
+    env = git_env(project)
     stash = project / ".git" / "qa-deleted"
 
     def git(*args: str) -> None:

@@ -61,6 +61,19 @@ the crash-safety flush missing edits to a non-active buffer) and left these:
   threads, children), the idle-wake and latency findings, the two crashes
   (`707c77a79c1d`, `7ab9a5476905`, flaky), focus-on-a-hidden-overlay
   (`1dd177bb2104`) and the status-bar Ln/Col disagreement (`5a2cb8ba7f6b`).
+- **Containment breach, 2026-11-09 06:23 (fixed; one question open).** A soak
+  run's git escaped its scratch project into the checkout: "qa commit 29" on
+  main, `qa-branch-0..3`, two stash/pop pairs, the checkout switched to another
+  branch, and `qa-branch-3` pushed to GitHub. Mechanism: the project sat under
+  `build/soak/runs/`, its `.git` was no longer a repository (the monkey's
+  `delete-file` creates `.git/qa-deleted`, so a removed `.git` comes back as a
+  plain directory), the app's `HasGitMarker` still read it as one, and git's
+  upward search found the checkout -- for the monkey's `git -C` and the app's own
+  git (which is how the switch and the push happened). Fixed by a ceiling in the
+  app's single git choke point (`Git/CommandNeverReachesAnEnclosingRepository`),
+  the harness fences (`tools/qa/test_containment.py`) and the runner's alarm
+  (`AGENT.md` § A containment breach). Open: what removed the project's `.git` in
+  the first place (the app's tree delete, or a monkey op) is not identified.
 
 ### TD-2026-11-08-435 — the safety program's first pass: what landed, what it found, and what it left. [OPEN]
 

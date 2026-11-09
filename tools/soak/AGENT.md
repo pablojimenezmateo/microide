@@ -64,3 +64,16 @@ strict for a legitimate state, a driver timing assumption. Fix the monkey or the
 oracle (`tools/qa/`), with a negative control that shows the oracle still fires
 on the real defect it exists for (`validation-traps.md` § vacuous fixtures), and
 mark the finding fixed with that commit.
+
+## A containment breach
+
+Every scratch project lives under `build/`, inside the checkout. A run's git is
+fenced to its project (`GIT_CEILING_DIRECTORIES` and file-only transports for the
+monkey's git and the app's, a bare stand-in `origin` for a cloned project, and
+the app's own ceiling in `GitCommandUtil`), and every 30 s the runner checks the
+checkout's ref tips for the monkey's identity (`qa@example.com`) and `qa-branch-*`
+names. On a hit it kills every running job, writes `build/soak/PAUSE` with what it
+found, and records a `containment` finding. It stays paused until a person has
+undone the damage (main, the `qa-branch-*` refs, the stash, anything pushed to
+`origin`) and deleted `PAUSE`. Treat that finding as the most urgent there is: find
+the path that got past the fences before the runner is unpaused.

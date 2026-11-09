@@ -119,6 +119,18 @@ SANITIZER_ENV = {
 DESKTOP_INPUT_METHOD_ENV = ("XMODIFIERS", "GTK_IM_MODULE", "QT_IM_MODULE", "SDL_IM_MODULE")
 
 
+def git_fence_env(project: Path) -> dict[str, str]:
+    """What keeps every git a run starts -- the driver's and the app's -- inside
+    `project`: no upward repository search past it, no network transport.
+
+    Scratch projects live under build/, inside the microide checkout. A project
+    whose `.git` a run broke otherwise resolves to the CHECKOUT, which is how a
+    soak run once committed to main, switched the checkout's branch and pushed a
+    branch to GitHub (TD-2026-11-09-436)."""
+    return {"GIT_CEILING_DIRECTORIES": str(Path(project).resolve().parent),
+            "GIT_ALLOW_PROTOCOL": "file"}
+
+
 def app_base_env(environ: dict[str, str]) -> dict[str, str]:
     """The environment an app under test starts from: the caller's, less what
     ties the run to the desktop it was started on."""
@@ -377,6 +389,8 @@ class App:
             # A remote run needs the real HOME for ssh keys and config; anything
             # else gets a throwaway one so the embedded shell is predictable.
             env["HOME"] = str(work)
+            if project is not None:
+                env.update(git_fence_env(project))
         env.update(extra_env or {})
         for sub in ("config", "state", "data", "run", "stale"):
             (work / sub).mkdir(parents=True, exist_ok=True)
@@ -534,13 +548,17 @@ class App:
         self._free_keycodes: list[int] | None = None
         self._keys_sent: list[str] = []  # what the presses were, for a timeout's note
         self._typed_log_offset = 0
-        args = [str(self.binary)]
+        # Absolute: the app starts in its work tree, not the caller's directory.
+        args = [str(Path(self.binary).absolute())]
         if project is not None:
-            args.append(str(project))
+            args.append(str(Path(project).absolute()))
         args += ["--set", "control.enabled", "true", *extra_args]
         with open(self.log_path, "wb") as log:
+            # Started in its private work tree, not the driver's directory (the
+            # checkout, for the soak): a relative path the app resolves -- a file
+            # saved as "1" -- must not land in a repository anyone cares about.
             self.proc = subprocess.Popen(args, env=self.env, stdout=log, stderr=subprocess.STDOUT,
-                                         start_new_session=True)
+                                         start_new_session=True, cwd=self.work)
         _wait(lambda: self._control_ready() or not self.alive(), 20.0,
               "the control channel never came up")
         if not self.alive():

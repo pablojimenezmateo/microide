@@ -28,6 +28,7 @@ reopened if it comes back. See tools/soak/AGENT.md for the fixing agent's side.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import random
@@ -102,6 +103,8 @@ def build_all(state: dict[str, Any], log) -> None:
     that fails is recorded (and a ledger finding); its last good binary stays."""
     ensure_worktree()
     head = git("rev-parse", "main")
+    if git("log", "-1", "--format=%ae", head) == QA_GIT_EMAIL:
+        raise RuntimeError(f"main is at {head[:10]}, a QA monkey commit: not building it")
     if state.get("built_sha") == head and all(BUILDS[name].binary().exists() for name in state.get("good", {})):
         return
     log(f"building {head[:10]}")
@@ -550,6 +553,56 @@ def verify_fixed(state: dict[str, Any], log) -> None:
 MIN_FREE_BYTES = int(float(os.environ.get("MICROIDE_SOAK_MIN_FREE_GB", "30")) * 1e9)
 
 
+# ---- containment ------------------------------------------------------------------
+
+# Who the monkey's git is (tools/qa/monkey.py git_env) and the branches it makes.
+QA_GIT_EMAIL = "qa@example.com"
+QA_BRANCH_PREFIX = "qa-branch-"
+CONTAINMENT_INTERVAL = 30.0
+
+
+def containment_breach() -> str | None:
+    """What a run did to the CHECKOUT, if anything.
+
+    Every scratch project lives under build/, inside the checkout, and once a
+    run's git escaped into it: a commit on main, a branch switch, a stash, and a
+    qa-branch pushed to GitHub, all while the runner kept going. The fences
+    (GIT_CEILING_DIRECTORIES, a bare stand-in origin, the app's own ceiling) are
+    what prevents it; this is the alarm for whatever gets past them. It reads
+    every ref's tip: a monkey commit, stash or branch is at a tip the moment it
+    is made, and the check runs every CONTAINMENT_INTERVAL seconds."""
+    rows = git("for-each-ref", "--format=%(refname)\t%(authoremail)\t%(committeremail)")
+    hits = []
+    for row in rows.splitlines():
+        refname, _, emails = row.partition("\t")
+        if (refname.rsplit("/", 1)[-1].startswith(QA_BRANCH_PREFIX)
+                or f"<{QA_GIT_EMAIL}>" in emails.split("\t")):
+            hits.append(refname)
+    head = git("log", "-1", "--format=%ae", "HEAD")
+    if head == QA_GIT_EMAIL:
+        hits.append("HEAD")
+    return ", ".join(hits) if hits else None
+
+
+def contain_breach(breach: str, jobs: list["Job"], log) -> None:
+    """Stop everything and say so: kill the running jobs (one of them did it),
+    pause the runner until a person has looked, and record a finding."""
+    cells = [f"{job.cell} seed {job.seed}" for job in jobs]
+    for job in jobs:
+        if job.proc.poll() is None:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(job.proc.pid, signal.SIGKILL)
+    message = (f"CONTAINMENT BREACH: QA git activity reached the checkout ({breach}). "
+               f"Running when found: {'; '.join(cells) or 'none'}. Runner paused: undo the "
+               f"damage (main, qa-branch-* refs, the stash, origin), then delete {PAUSE}.")
+    log(message)
+    PAUSE.write_text(message + "\n")
+    signature = fnd.signature("containment", "QA git activity reached the checkout")
+    ledger().append(signature, "new" if signature not in ledger().entries() else "seen",
+                    kind="containment", label="containment: QA git activity reached the checkout",
+                    commit=git("rev-parse", "main"), cell="runner", detail=message)
+
+
 def busy_reason(our_jobs: int) -> str | None:
     if PAUSE.exists():
         return "paused (build/soak/PAUSE)"
@@ -692,10 +745,22 @@ def cmd_run(args: argparse.Namespace) -> int:
     log(f"soak runner up: up to {ceiling} job(s) at once, {mode} -> {SOAK}")
     last_cap = -1
     last_start = 0.0
+    last_containment = 0.0
     while not stopping:
         now = time.time()
         if deadline and now > deadline:
             break
+        if now - last_containment > CONTAINMENT_INTERVAL and not PAUSE.exists():
+            last_containment = now
+            breach = containment_breach()
+            if breach is not None:
+                contain_breach(breach, jobs, log)
+                for job in jobs:
+                    job.proc.wait()
+                jobs.clear()
+                state["current"] = []
+                save_state(state)
+                continue
         # A build runs between jobs, at most once per interval counted from the
         # END of the last one (stamped at its start, a 20-minute build on a moving
         # main left the interval spent and the runner rebuilt forever, starting no
