@@ -58,6 +58,17 @@ struct PreparedFrameState {
   // The element painted hovered and the tooltip card painted, under the pointer.
   std::optional<SDL_FRect> painted_hover_rect;
   std::optional<SDL_FRect> painted_tooltip_rect;
+  // The open menu-bar popup and submenu as painted: which menus, and each row's
+  // enabled and checked flags, folded into one value (0: no menu open). A row's
+  // flags follow app state -- a terminal started, a language server ready -- and
+  // that state changes under an open menu with nothing repainting it.
+  std::uint64_t painted_menu_rows_signature = 0;
+  // The same flags per item index (bit 0 enabled, bit 1 checked), for the open
+  // popup and its submenu: paint draws them from here, not from live state. A
+  // flag read twice in one frame could differ -- a terminal's exit lands on its
+  // reader thread -- and the partial frame and a full render of it disagreed.
+  std::vector<std::uint8_t> menu_popup_row_flags;
+  std::vector<std::uint8_t> menu_submenu_row_flags;
   std::size_t painted_tooltip_text_hash = 0;  // the same card can name another tab
   // The editor hover card (hover docs, diagnostics, the blame card), laid out at
   // prep: what this frame paints -- every render of it, partial clips and the

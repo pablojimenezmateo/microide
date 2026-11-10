@@ -1290,6 +1290,34 @@ void TestHoveringARowAfterAltRightToTheNextMenuRepaints() {
                       "the pointer on to Remote's last row");
 }
 
+// Soak 8bafbfa78cae: the Terminal menu open over a terminal whose shell then
+// exited. Relaunch Terminal became enabled, and nothing repainted the open popup:
+// the row stayed greyed until something else did.
+void TestAnOpenMenuRepaintsARowWhoseEnablementChanges() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("a.txt", "a\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "term"), "term should run");
+  auto& session = TestAccess::ActiveTerminalSession(fixture.shell);
+  TerminalSessionTestAccess::SetRunning(session, true);
+  TestAccess::SetFocusEditor(fixture.shell);
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the window with a terminal");
+  const auto terminal = fixture.ElementRect("menu:Terminal");
+  Expect(terminal.has_value(), "the menu bar should name menu:Terminal");
+  if (!terminal) {
+    return;
+  }
+  fixture.ExpectFresh(fixture.Click(*terminal), "opening the Terminal menu");
+  TerminalSessionTestAccess::EmitProcessExitMarker(session);
+  TerminalSessionTestAccess::SetRunning(session, false);
+  TestAccess::ConsumeTerminalSessionUpdates(fixture.shell);
+  Expect(TestAccess::MenuBarOpen(fixture.shell), "the menu should stay open while the shell exits");
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the shell exiting under the open menu");
+}
+
 // A tab dragged out of the rightmost of three side-by-side panes into the
 // leftmost one's strip: a partial frame of the drag left a stale column at the
 // first pane's left edge (soak 9e662fe598fe, ui.scale 1.6). Every frame of the
@@ -5272,6 +5300,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestTabIndentingASecondarySelectionRepaintsEachOfItsLines);
   AddTest(tests, "QaFlowRegression/HoveringARowAfterAltRightToTheNextMenuRepaints",
           TestHoveringARowAfterAltRightToTheNextMenuRepaints);
+  AddTest(tests, "QaFlowRegression/AnOpenMenuRepaintsARowWhoseEnablementChanges",
+          TestAnOpenMenuRepaintsARowWhoseEnablementChanges);
   AddTest(tests, "QaFlowRegression/APaletteCardOverTheMenuBarKeepsItsItemUnlit",
           TestAPaletteCardOverTheMenuBarKeepsItsItemUnlit);
   AddTest(tests, "QaFlowRegression/LeavingAFindToggleOverTheSidebarRepaintsIt",

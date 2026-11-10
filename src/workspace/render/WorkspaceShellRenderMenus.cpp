@@ -10,11 +10,21 @@ void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer,
   // menu -- the three used to carry byte-similar copies of this loop. Rows land in
   // a reused scratch vector: popups paint one at a time, so the buffer is free
   // between them, and the value-returning overload allocated one per popup per frame.
+  // `prepared_flags`: the rows' enabled/checked flags as frame prep read them
+  // (PreparedFrameState::menu_popup_row_flags), for the menu-bar popups -- the
+  // state behind them can change between two paints of one frame.
   const auto draw_popup_body = [&](std::span<const MenuItemSpec> items, int active_item_index,
-                                   const SDL_FRect& popup_rect) {
+                                   const SDL_FRect& popup_rect,
+                                   std::span<const std::uint8_t> prepared_flags = {}) {
     DrawCardFrame(renderer, theme_, popup_rect, CardStyle::Overlay);
     ComputeVisiblePopupMenuItemsInto(items, active_item_index, popup_rect,
                                      menu_popup_rows_scratch_);
+    if (prepared_flags.size() == items.size()) {
+      for (VisiblePopupMenuItem& row : menu_popup_rows_scratch_) {
+        row.enabled = (prepared_flags[row.index] & 1u) != 0;
+        row.checked = (prepared_flags[row.index] & 2u) != 0;
+      }
+    }
     for (const VisiblePopupMenuItem& item : menu_popup_rows_scratch_) {
       if (item.separator) {
         DrawFilledRect(renderer,
@@ -45,7 +55,10 @@ void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer,
           if (!popup_rect.has_value()) {
             return;
           }
-          draw_popup_body(items, active_item_index, *popup_rect);
+          draw_popup_body(items, active_item_index, *popup_rect,
+                          menu_id == context_.menu_state.active_menu_id
+                              ? frame_state_.menu_popup_row_flags
+                              : frame_state_.menu_submenu_row_flags);
         };
     draw_popup_menu(context_.menu_state.active_menu_id, context_.menu_state.active_menu_item_index, std::nullopt);
     if (context_.menu_state.active_submenu_id != MenuId::None) {

@@ -1158,6 +1158,57 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       frame_state_.painted_overlay_rect = overlay_rect;
     }
   }
+  // The open menu's rows (see PreparedFrameState::painted_menu_rows_signature):
+  // greyed rows stayed greyed after the state that enables them changed under the
+  // open menu (soak 8bafbfa78cae: Relaunch Terminal, a terminal's shell exited).
+  {
+    std::uint64_t signature = 0;
+    std::optional<SDL_FRect> popup_rect;
+    std::optional<SDL_FRect> submenu_rect;
+    if (context_.menu_state.menu_bar_open) {
+      signature = 1469598103934665603ULL;  // FNV-1a
+      const auto fold = [&signature](std::uint64_t value) {
+        signature ^= value;
+        signature *= 1099511628211ULL;
+      };
+      const auto fold_popup = [&](MenuId id, const std::optional<SDL_FRect>& rect,
+                                  std::vector<std::uint8_t>& flags) {
+        fold(static_cast<std::uint64_t>(id) + 1);
+        const auto items = MenuItems(id);
+        flags.assign(items.size(), 0);
+        if (!rect.has_value()) {
+          return;
+        }
+        ComputeVisiblePopupMenuItemsInto(items, -1, *rect, menu_popup_rows_scratch_);
+        for (const VisiblePopupMenuItem& row : menu_popup_rows_scratch_) {
+          const std::uint8_t row_flags = (row.enabled ? 1u : 0u) | (row.checked ? 2u : 0u);
+          flags[row.index] = row_flags;
+          fold(row_flags);
+        }
+      };
+      popup_rect = ComputePopupMenuRect(layout.menu_bar, context_.menu_state.active_menu_id);
+      fold_popup(context_.menu_state.active_menu_id, popup_rect, frame_state_.menu_popup_row_flags);
+      frame_state_.menu_submenu_row_flags.clear();
+      if (context_.menu_state.active_submenu_id != MenuId::None) {
+        submenu_rect = ActiveSubmenuRect(layout.menu_bar);
+        fold_popup(context_.menu_state.active_submenu_id, submenu_rect, frame_state_.menu_submenu_row_flags);
+      }
+      signature |= 1;  // never 0 while a menu is open
+    }
+    if (signature != frame_state_.painted_menu_rows_signature) {
+      // Opening, switching and closing menus repaint the popups themselves; this
+      // is for the rows changing under one that stays open.
+      if (signature != 0 && frame_state_.painted_menu_rows_signature != 0) {
+        if (popup_rect.has_value()) {
+          RequestRedrawRect(*popup_rect);
+        }
+        if (submenu_rect.has_value()) {
+          RequestRedrawRect(*submenu_rect);
+        }
+      }
+      frame_state_.painted_menu_rows_signature = signature;
+    }
+  }
   // The merge header's status (see PreparedFrameState::painted_merge_status).
   {
     std::uint64_t status = 0;
