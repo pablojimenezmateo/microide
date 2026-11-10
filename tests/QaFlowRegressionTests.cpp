@@ -1123,6 +1123,30 @@ void TestAHeldTabDragPaintsItsLastSnap() {
   }
 }
 
+// Soak ab1ec3eb174a (settings/default/640x480, ui.scale 3): the Code Actions
+// menu is narrower than its title there, and the title -- set directly, not cut
+// to the box like every other picker's -- painted past the card's right edge.
+// The next partial frame, clipped to the card, left that overhang on screen.
+void TestACodeActionsTitleStaysInsideItsMenu() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  // 640x480 at ui.scale 3 is a 213x160 logical window.
+  FlowFixture fixture("a.txt", "a\n", 213, 160);
+  TestAccess::SetSidebarVisible(fixture.shell, true);  // the editor area, and so the menu, narrows
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "a 213x160 window with the sidebar");
+  // Another picker first, as in the soak: the menu then opens over a frame that
+  // painted something else where its title overhangs.
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "indentation"), "indentation should run");
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the indentation picker opening");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "code-actions"), "code-actions should run");
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the Code Actions menu opening");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN)}),
+                      "a key in the open menu (a partial frame clipped to the card)");
+}
+
 // A tab dragged out of the rightmost of three side-by-side panes into the
 // leftmost one's strip: a partial frame of the drag left a stale column at the
 // first pane's left edge (soak 9e662fe598fe, ui.scale 1.6). Every frame of the
@@ -4926,6 +4950,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestThePointerOnABannerButtonRepaintsItsHover);
   AddTest(tests, "QaFlowRegression/TheBannerSitsInTheFocusedGroupAndLeavesWithIt",
           TestTheBannerSitsInTheFocusedGroupAndLeavesWithIt);
+  AddTest(tests, "QaFlowRegression/ACodeActionsTitleStaysInsideItsMenu",
+          TestACodeActionsTitleStaysInsideItsMenu);
   AddTest(tests, "QaFlowRegression/TabDragDropPreviewPaints", TestTabDragDropPreviewPaints);
   AddTest(tests, "QaFlowRegression/ClosingAPromptOverTheFinderGivesTheFinderTheKeyboard",
           TestClosingAPromptOverTheFinderGivesTheFinderTheKeyboard);

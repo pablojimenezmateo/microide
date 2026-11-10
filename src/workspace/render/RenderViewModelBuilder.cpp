@@ -937,6 +937,16 @@ class ListOverlayBuilder {
     return overlay_rect_.x + overlay_rect_.w - kOverlayInset - tr_.MeasureWidth(text);
   }
 
+  // The title row's right-aligned note, cut to the box: wider than a narrow
+  // picker, its left edge landed outside the card, where a partial frame clipped
+  // to the card never repainted it.
+  void SetRightAlignedNote(std::string_view note) {
+    const float inner_width = std::max(1.0f, overlay_rect_.w - kOverlayInset * 2.0f);
+    const std::string_view shown = tr_.TruncateToWidthEphemeralView(note, inner_width);
+    out_.note_x = RightAlignedX(shown);
+    note_ref_ = AddTruncatedLabel(tr_, blob_, note, inner_width, /*stable=*/true);
+  }
+
   template <typename EmitRow>
   void ForVisible(EmitRow&& emit_row) {
     const int visible_rows = out_.list_layout.visible_rows;
@@ -1032,8 +1042,7 @@ class ListOverlayBuilder {
     // of the tree, some files were never searched — flag it (TD-2026-07-17-008/033).
     if (search.index_incomplete) {
       constexpr std::string_view kNote = "index incomplete — results may be partial";
-      note_ref_ = OverlayLabelRef::Direct(kNote);
-      out_.note_x = RightAlignedX(kNote);
+      SetRightAlignedNote(kNote);
     }
     std::string& scratch = ComposeScratch();
     scratch = search.results.empty()
@@ -1129,7 +1138,12 @@ class ListOverlayBuilder {
 
   void CodeActions() {
     const CodeActionSessionState& actions = overlay_.workflow.code_actions;
-    title_ref_ = OverlayLabelRef::Direct("Code Actions");
+    // Cut to the box like every picker's title (FillPickerChrome): at ui.scale 3
+    // in a 640x480 window the menu is narrower than "Code Actions", which then
+    // painted past its right edge and stayed there (soak ab1ec3eb174a).
+    title_ref_ = AddTruncatedLabel(tr_, blob_, "Code Actions",
+                                   std::max(1.0f, overlay_rect_.w - kOverlayInset * 2.0f),
+                                   /*stable=*/true);
     // "Loading..." / "No code actions available" render in the list area, below
     // the title, so they read as the menu's status rather than colliding with it.
     if (!actions.error.empty()) {
@@ -1148,8 +1162,7 @@ class ListOverlayBuilder {
     // ranked list is never read as authoritative (TD-2026-07-17-008/033).
     if (const std::string_view note = ScanIncompleteNote(finder.index_scan_status());
         !note.empty()) {
-      note_ref_ = OverlayLabelRef::Direct(note);
-      out_.note_x = RightAlignedX(note);
+      SetRightAlignedNote(note);
     }
     const auto& results = finder.results();
     // Shared with the command palette, the git pickers and the overlay footers,
