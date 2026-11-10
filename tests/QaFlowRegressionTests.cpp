@@ -1183,6 +1183,39 @@ void TestACodeActionsTitleStaysInsideItsMenu() {
                       "a key in the open menu (a partial frame clipped to the card)");
 }
 
+// Soak fe815f6e2f46 (640x480 at ui.scale 3): the command palette's card reaches up
+// over the lower half of the File menu item. With the pointer there -- on the card
+// -- a full frame lit File (frame prep took the menu bar as what the pointer was
+// over), the partial frame rightly did not, and the strip of File above the card
+// differed between them.
+void TestAPaletteCardOverTheMenuBarKeepsItsItemUnlit() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  // 640x480 at ui.scale 3 is a 213x160 logical window: the palette card reaches
+  // up over the menu bar's lower edge.
+  // Out of the compact layout the window would take there, as in the soak: the
+  // menu bar then shows File rather than a single menu button.
+  FlowFixture fixture("a.txt", "a\n", 213, 160);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "layout-mode-toggle"), "layout-mode-toggle should run");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "a 213x160 window");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_F1)}), "the command palette opening");
+  const auto file = fixture.ElementRect("menu:File");
+  Expect(file.has_value(), "the menu bar should name menu:File");
+  if (!file) {
+    return;
+  }
+  const SDL_FRect card = TestAccess::ActiveOverlayRect(fixture.shell);
+  Expect(card.y > file->y && card.y < file->y + file->h, "the palette card should cover the lower part of File");
+  // From the list onto the part of File the card covers: the pointer is on the
+  // card, so File stays unlit in every frame.
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(36.0f, 25.0f)}), "the pointer on the list");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(file->x + 30.0f, card.y + 4.0f)}),
+                      "the pointer onto the card where it covers File");
+}
+
 // A tab dragged out of the rightmost of three side-by-side panes into the
 // leftmost one's strip: a partial frame of the drag left a stale column at the
 // first pane's left edge (soak 9e662fe598fe, ui.scale 1.6). Every frame of the
@@ -5161,6 +5194,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestPartialFramesAtAFractionalScaleMatchFullOnesAcrossASplit);
   AddTest(tests, "QaFlowRegression/ClosingAMenuOverAFindToggleRepaintsItsHover",
           TestClosingAMenuOverAFindToggleRepaintsItsHover);
+  AddTest(tests, "QaFlowRegression/APaletteCardOverTheMenuBarKeepsItsItemUnlit",
+          TestAPaletteCardOverTheMenuBarKeepsItsItemUnlit);
   AddTest(tests, "QaFlowRegression/LeavingAFindToggleOverTheSidebarRepaintsIt",
           TestLeavingAFindToggleOverTheSidebarRepaintsIt);
 }

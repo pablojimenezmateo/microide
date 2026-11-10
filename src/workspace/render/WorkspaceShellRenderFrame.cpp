@@ -1426,6 +1426,18 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         frame_state_.pointer_occluder = piece;
       }
     }
+    // An overlay card paints over the menu bar (under its popups): where a card
+    // that reaches up into a short window covers the bar, the pointer is on the
+    // card. Taking the bar there lit the File item behind the command palette on
+    // a full frame, and the motion probe -- which knew the pointer was on the card
+    // -- never repainted it (soak fe815f6e2f46, 640x480 at ui.scale 3).
+    if (frame_state_.pointer_occluder.has_value() && project_state.overlay.visible &&
+        RectsEqual(*frame_state_.pointer_occluder, layout.menu_bar)) {
+      const SDL_FRect card = ComputeOverlayRect(layout.overlay_anchor);
+      if (Contains(card, last_mouse_x_, last_mouse_y_)) {
+        frame_state_.pointer_occluder = card;
+      }
+    }
     // An open menu owns the pointer too: a press outside its pieces only closes
     // it, so nothing beneath hovers. A sidebar button lit up under an open menu
     // with no repaint asked for it, and a clip that covered part of it left the
