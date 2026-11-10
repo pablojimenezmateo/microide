@@ -67,6 +67,10 @@ def flow_notification_banner_commands(app: q.App) -> None:
         app.expect(not app.buffer().get("dirty"), "a reloaded buffer is clean")
     app.key("End")
     app.type(" again")
+    # The edit must land before the disk changes: on the ASan build the keys were
+    # still in flight when the write did, so the buffer was clean, was rightly
+    # reloaded with no banner, and the late " again" typed into the new text.
+    app.wait_until(lambda: app.buffer().get("dirty") and " again" in app.text(), 3.0, "the edit to land")
     if clash("theirs four\n"):
         app.send("banner-action", "Overwrite")
         app.wait_until(lambda: read(app, "banner/note.txt").endswith(" again\n"), 3.0, "Overwrite to write the buffer")
