@@ -154,6 +154,9 @@ void WorkspaceShell::RenderFindWidget(SDL_Renderer* renderer,
 
   enum class Icon { Prev, Next, Close };
   const auto icon_button = [&](const SDL_FRect& rect, Icon icon, bool enabled) {
+    if (rect.w <= 0.0f) {
+      return;  // not laid out: the card had no room for it (ComputeFindWidgetLayout)
+    }
     const ButtonTone tone = icon == Icon::Close ? ButtonTone::Destructive : ButtonTone::Neutral;
     // Lift under the pointer like every other button in the shell; the find
     // widget's five buttons were the last that stayed flat while the cursor over
@@ -181,6 +184,9 @@ void WorkspaceShell::RenderFindWidget(SDL_Renderer* renderer,
   // Mode toggles: highlighted (Accent tone) when active, neutral when off.
   // Mirrors the project-search "Rx" affordance.
   for (std::size_t index = 0; index < fw.toggle_count; ++index) {
+    if (fw.toggle_buttons[index].w <= 0.0f) {
+      continue;  // no room for it in this card
+    }
     DrawButtonCentered(text_renderer_, renderer, theme_, fw.toggle_buttons[index],
                        fw_vm.toggles[index].label,
                        fw_vm.toggles[index].active ? ButtonTone::Accent : ButtonTone::Neutral,
@@ -189,7 +195,7 @@ void WorkspaceShell::RenderFindWidget(SDL_Renderer* renderer,
                                          .active = fw_vm.toggles[index].active});
   }
 
-  if (!fw_vm.count_text.empty()) {
+  if (!fw_vm.count_text.empty() && fw.count_rect.w > 0.0f) {
     DrawCenteredTextOn(text_renderer_, renderer, fw.count_rect,
                        fw_vm.has_matches ? theme_.text_secondary : theme_.text_muted,
                        theme_.overlay_background, fw_vm.count_text);

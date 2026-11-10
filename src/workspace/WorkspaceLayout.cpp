@@ -1318,8 +1318,29 @@ FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area,
     layout.toggle_buttons[index] =
         MakeRect(toggles_x, row1_y, kFindWidgetButton, kFindWidgetRowHeight);
   }
+  // A card narrower than its first row -- the widget is never wider than the area
+  // it floats in -- had the leftmost controls laid out past its left edge: over
+  // the sidebar, drawn outside the card, and missing from the hover probe, which
+  // looks for a button only inside the card (soak 250931ec505a, the most frequent
+  // stale frame). What does not fit is not laid out: its rect stays empty, as
+  // every consumer reads it, the toggles going first and the close button last.
+  float row_start = r.x + r.w - kFindWidgetPad;
+  const auto keep = [&](SDL_FRect& control) {
+    if (control.w > 0.0f && control.x < field_x) {
+      control = SDL_FRect{};
+    } else if (control.w > 0.0f) {
+      row_start = std::min(row_start, control.x);
+    }
+  };
+  keep(layout.close_button);
+  keep(layout.next_button);
+  keep(layout.prev_button);
+  keep(layout.count_rect);
+  for (std::size_t index = layout.toggle_count; index-- > 0;) {
+    keep(layout.toggle_buttons[index]);
+  }
   layout.search_field = MakeRect(field_x, row1_y,
-                                 std::max(0.0f, toggles_x - kFindWidgetButtonGap - field_x),
+                                 std::max(0.0f, row_start - kFindWidgetButtonGap - field_x),
                                  kFindWidgetRowHeight);
 
   if (replace_mode) {

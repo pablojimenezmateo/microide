@@ -575,6 +575,42 @@ void TestClosingAMenuOverAFindToggleRepaintsItsHover() {
   }
 }
 
+// Soak 250931ec505a (the most frequent stale frame on the current builds): in a
+// small window the find widget's card reaches over the sidebar; the pointer moved
+// onto a find toggle there, then on within the card, and the toggle stayed lit on
+// partial frames. Every toggle, in windows small enough for the card to overlap
+// the sidebar, must repaint when the pointer leaves it.
+void TestLeavingAFindToggleOverTheSidebarRepaintsIt() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  for (const auto& [w, h] : {std::pair{290, 218}, std::pair{360, 260}, std::pair{640, 480}}) {
+    FlowFixture fixture("main.cpp", "alpha\nbeta\n", w, h);
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, "search zzz"), "the fixture opens the find widget");
+    fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "opening the find widget");
+    const workspace::FindWidgetLayout fw = TestAccess::FindWidgetControls(fixture.shell, false);
+    const std::string size = std::to_string(w) + "x" + std::to_string(h);
+    for (std::size_t index = 0; index < fw.toggle_count; ++index) {
+      const SDL_FRect& toggle = fw.toggle_buttons[index];
+      Expect(toggle.w <= 0.0f || (toggle.x >= fw.widget.x && toggle.x + toggle.w <= fw.widget.x + fw.widget.w),
+             size + ": find toggle " + std::to_string(index) + " is inside the card or not laid out");
+    }
+    for (std::size_t index = 0; index < fw.toggle_count; ++index) {
+      const SDL_FRect& toggle = fw.toggle_buttons[index];
+      if (toggle.w <= 0.0f) {
+        continue;
+      }
+      const float y = toggle.y + toggle.h / 2.0f;
+      fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(toggle.x + toggle.w / 2.0f, y)}),
+                          size + ": onto find toggle " + std::to_string(index));
+      // On through the card, past the buttons' row end: inside the widget, on no button.
+      const float away = fw.widget.x + fw.widget.w - 2.0f;
+      fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(away, fw.widget.y + fw.widget.h - 2.0f)}),
+                          size + ": off find toggle " + std::to_string(index) + " within the card");
+    }
+  }
+}
+
 // QA monkey (seed 601, replayed): Git > Push failed and showed its output in a
 // panel left maximized, with the keyboard on the editor the panel hides. Frame
 // prep's maximized-panel rule moves the keyboard to the panel -- AFTER the frame's
@@ -5125,6 +5161,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestPartialFramesAtAFractionalScaleMatchFullOnesAcrossASplit);
   AddTest(tests, "QaFlowRegression/ClosingAMenuOverAFindToggleRepaintsItsHover",
           TestClosingAMenuOverAFindToggleRepaintsItsHover);
+  AddTest(tests, "QaFlowRegression/LeavingAFindToggleOverTheSidebarRepaintsIt",
+          TestLeavingAFindToggleOverTheSidebarRepaintsIt);
 }
 
 }  // namespace microide::tests
