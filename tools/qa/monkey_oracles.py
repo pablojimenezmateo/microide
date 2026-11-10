@@ -56,9 +56,11 @@ class DataOracle:
         # mismatch that does not replay still says how the two sides differ.
         self.evidence: dict[str, bytes] = {}
 
-    def documents(self) -> list[dict[str, Any]]:
+    def documents(self, all_projects: bool = False) -> list[dict[str, Any]]:
+        """The open documents: the active project's, or with `all_projects` every
+        open project's, each then naming its `project` and whether it is `active`."""
         try:
-            answer = self.app.query("documents")
+            answer = self.app.query("documents", {"all": True} if all_projects else None)
         except Exception:  # noqa: BLE001 - a dead or busy app is another oracle's
             return []
         return answer if isinstance(answer, list) else []
@@ -189,7 +191,12 @@ class DataOracle:
                 out.append(("data", f"the crash-safety flush did not stage the unsaved buffers within "
                                     f"{CRASH_SAFETY_STAGED_LIMIT_S:.0f}s of quiet (the `persistence` query never "
                                     f"answered staged)"))
-        before = self.documents()
+        # Every project's: the relaunch names the run's project on its command
+        # line, which makes that one active, so the dirty buffers of a second
+        # project the monkey had opened came back in an inactive project -- and
+        # were reported lost, since the active project's list does not hold them
+        # (soak e946ec9333d7).
+        before = self.documents(all_projects=True)
         disk_before = {doc["path"]: _sha256_file(Path(doc["path"])) for doc in before
                        if doc.get("path") and not doc.get("dirty")}
         app.record_external({"kill9": True, "waited": waited})
@@ -212,13 +219,13 @@ class DataOracle:
         # Restore lands over a few frames: wait until every dirty path is back.
         dirty = [doc for doc in before if doc.get("dirty")]
         deadline = time.monotonic() + 10 * q.SLOW_FACTOR
-        after = self.documents()
+        after = self.documents(all_projects=True)
         while time.monotonic() < deadline:
             keys = {(d.get("path") or d.get("title")) for d in after}
             if all((d.get("path") or d.get("title")) in keys for d in dirty):
                 break
             time.sleep(0.2)
-            after = self.documents()
+            after = self.documents(all_projects=True)
         self.last_kill = {"before": before, "after": after}
         if waited:
             by_key = {(d.get("path") or d.get("title")): d for d in after}

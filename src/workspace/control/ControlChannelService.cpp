@@ -920,44 +920,65 @@ util::JsonValue ControlChannelService::BuildDocuments(const util::JsonValue& arg
   if (context_ == nullptr) {
     return util::JsonValue(std::move(documents));
   }
+  // `{"all": true}`: every open project's documents, not only the active one's,
+  // each naming its project and whether that project is the active one. The
+  // kill -9 oracle compares across a relaunch, and a buffer of a project that
+  // came back inactive -- or did not come back -- was indistinguishable from a
+  // lost one (soak e946ec9333d7: the dirty buffers were in a second project).
+  const bool all_projects = args.IsObject() && args.HasKey("all") && args["all"].AsBool();
+  std::vector<std::pair<const ProjectWorkspaceState*, bool>> projects{{&context_->current_project_state, true}};
+  if (all_projects) {
+    const ProjectCatalogState& catalog = context_->project_catalog;
+    for (std::size_t i = 0; i < catalog.entries.size(); ++i) {
+      if (i != catalog.active_index && catalog.entries[i] != nullptr) {
+        projects.emplace_back(catalog.entries[i].get(), false);
+      }
+    }
+  }
   std::vector<const void*> seen;
-  for (const EditorGroup& group : context_->current_project_state.editor_groups) {
-    for (const TabEntry& tab : group.open_tabs) {
-      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
-          tab.editor_state->content_pending()) {
-        continue;
-      }
-      const editor::TextViewport& view = tab.editor_state->viewport;
-      if (std::find(seen.begin(), seen.end(), view.document_identity()) != seen.end()) {
-        continue;
-      }
-      seen.push_back(view.document_identity());
-      const bool opaque = view.encoding() == editor::TextViewport::TextEncoding::Bytes;
-      // What Save writes: an opaque (binary) buffer joins with LF (its CR bytes
-      // are data, kept in the lines).
-      const std::string bytes = view.SerializeDocumentText(
-          opaque ? std::optional<util::LineEnding>(util::LineEnding::LF) : std::nullopt);
-      util::JsonObject object;
-      object["path"] = util::JsonValue(view.path().generic_string());
-      object["title"] = util::JsonValue(tab.title);
-      object["dirty"] = util::JsonValue(view.dirty());
-      object["readOnly"] = util::JsonValue(view.read_only());
-      object["encoding"] = util::JsonValue(std::string(
-          opaque ? "bytes" : view.encoding() == editor::TextViewport::TextEncoding::ASCII ? "ascii" : "utf8"));
-      object["mixedLineEndings"] = util::JsonValue(view.has_mixed_line_endings());
-      object["bytes"] = util::JsonValue(static_cast<std::int64_t>(bytes.size()));
-      object["sha256"] = util::JsonValue(util::Sha256Hex(bytes));
-      if (!content_path.empty() && view.path().generic_string() == content_path) {
-        static constexpr char kHex[] = "0123456789abcdef";
-        std::string hex;
-        hex.reserve(bytes.size() * 2);
-        for (const unsigned char byte : bytes) {
-          hex.push_back(kHex[byte >> 4]);
-          hex.push_back(kHex[byte & 0x0f]);
+  for (const auto& [project, active] : projects) {
+    for (const EditorGroup& group : project->editor_groups) {
+      for (const TabEntry& tab : group.open_tabs) {
+        if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
+            tab.editor_state->content_pending()) {
+          continue;
         }
-        object["contentHex"] = util::JsonValue(std::move(hex));
+        const editor::TextViewport& view = tab.editor_state->viewport;
+        if (std::find(seen.begin(), seen.end(), view.document_identity()) != seen.end()) {
+          continue;
+        }
+        seen.push_back(view.document_identity());
+        const bool opaque = view.encoding() == editor::TextViewport::TextEncoding::Bytes;
+        // What Save writes: an opaque (binary) buffer joins with LF (its CR bytes
+        // are data, kept in the lines).
+        const std::string bytes = view.SerializeDocumentText(
+            opaque ? std::optional<util::LineEnding>(util::LineEnding::LF) : std::nullopt);
+        util::JsonObject object;
+        object["path"] = util::JsonValue(view.path().generic_string());
+        object["title"] = util::JsonValue(tab.title);
+        object["dirty"] = util::JsonValue(view.dirty());
+        object["readOnly"] = util::JsonValue(view.read_only());
+        object["encoding"] = util::JsonValue(std::string(
+            opaque ? "bytes" : view.encoding() == editor::TextViewport::TextEncoding::ASCII ? "ascii" : "utf8"));
+        object["mixedLineEndings"] = util::JsonValue(view.has_mixed_line_endings());
+        object["bytes"] = util::JsonValue(static_cast<std::int64_t>(bytes.size()));
+        object["sha256"] = util::JsonValue(util::Sha256Hex(bytes));
+        if (all_projects) {
+          object["project"] = util::JsonValue(project->root.generic_string());
+          object["active"] = util::JsonValue(active);
+        }
+        if (!content_path.empty() && view.path().generic_string() == content_path) {
+          static constexpr char kHex[] = "0123456789abcdef";
+          std::string hex;
+          hex.reserve(bytes.size() * 2);
+          for (const unsigned char byte : bytes) {
+            hex.push_back(kHex[byte >> 4]);
+            hex.push_back(kHex[byte & 0x0f]);
+          }
+          object["contentHex"] = util::JsonValue(std::move(hex));
+        }
+        documents.push_back(util::JsonValue(std::move(object)));
       }
-      documents.push_back(util::JsonValue(std::move(object)));
     }
   }
   return util::JsonValue(std::move(documents));

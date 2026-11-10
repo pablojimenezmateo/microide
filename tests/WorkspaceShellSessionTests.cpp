@@ -466,6 +466,56 @@ void TestWorkspaceShellRestoreRemapsActiveIndexAfterMissingProjectCulled() {
          "beta's remapped active index is 0 after the missing predecessor is culled");
 }
 
+// Soak e946ec9333d7's shape, the app's half: a second project open -- through a
+// symlink, `weird/loop` with `loop -> .` -- active and edited when the app dies
+// after the crash-safety flush. The relaunch brings both projects back, the
+// second active, with its unsaved buffer. (The finding itself was the oracle's:
+// the QA relaunch names the first project, which then rightly activates, and the
+// oracle read only the active project's documents.)
+void TestWorkspaceShellCrashSafetyKeepsASecondProjectAndItsActiveIndex() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path first_root = temp_dir.path() / "alpha";
+  WriteFile(first_root / "README.md", "alpha\n");
+  WriteFile(first_root / "weird" / "notes.txt", "beta\n");
+  std::filesystem::create_directory_symlink(".", first_root / "weird" / "loop");
+  const std::filesystem::path second_root = first_root / "weird" / "loop";
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+  {
+    WorkspaceShell shell;
+    Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, first_root, false, false), "open alpha");
+    WorkspaceShellTestAccess::SaveSessionState(shell);
+    WorkspaceShellTestAccess::SaveWorkspaceSession(shell);
+    Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, second_root, false, false), "open loop");
+    Expect(WorkspaceShellTestAccess::ActiveProjectIndex(shell) == 1, "loop is active");
+    // Back to alpha and saved there, then to loop again: the switch is what
+    // changes the workspace record after its last write.
+    Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0, false), "activate alpha");
+    WorkspaceShellTestAccess::SaveSessionState(shell);
+    WorkspaceShellTestAccess::SaveWorkspaceSession(shell);
+    Expect(WorkspaceShellTestAccess::SwitchProject(shell, 1, false), "activate loop again");
+    WorkspaceShellTestAccess::OpenFile(shell, second_root / "notes.txt");
+    auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+    editor.MoveCursorTo(0, 0);
+    Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "unsaved "), "the fixture takes text input");
+    WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell);
+  }
+  WorkspaceShell restored;
+  Expect(WorkspaceShellTestAccess::RestoreWorkspaceSession(restored), "restore succeeds");
+  Expect(WorkspaceShellTestAccess::ProjectCount(restored) == 2,
+         "both projects come back (" + std::to_string(WorkspaceShellTestAccess::ProjectCount(restored)) + ")");
+  Expect(WorkspaceShellTestAccess::ProjectRoot(restored) == second_root.lexically_normal(),
+         "the project active at the crash comes back active (" +
+             WorkspaceShellTestAccess::ProjectRoot(restored).string() + ")");
+  const auto& view = WorkspaceShellTestAccess::ActiveEditor(restored);
+  Expect(view.dirty() && !view.lines().empty() && view.lines()[0] == "unsaved beta",
+         "its unsaved buffer comes back (" + view.path().string() + ")");
+}
+
 void TestWorkspaceShellRestoredProjectTabBadgeColorsHydrateOnStartup() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path first_root = temp_dir.path() / "alpha-project";
@@ -3843,6 +3893,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoreWorkspaceSessionAcrossProjects);
   AddTest(tests, "WorkspaceShell/RestoreRemapsActiveIndexAfterMissingProjectCulled",
           TestWorkspaceShellRestoreRemapsActiveIndexAfterMissingProjectCulled);
+  AddTest(tests, "WorkspaceShell/CrashSafetyKeepsASecondProjectAndItsActiveIndex",
+          TestWorkspaceShellCrashSafetyKeepsASecondProjectAndItsActiveIndex);
   AddTest(tests, "WorkspaceShell/RestoredProjectTabBadgeColorsHydrateOnStartup",
           TestWorkspaceShellRestoredProjectTabBadgeColorsHydrateOnStartup);
   AddTest(tests, "WorkspaceShell/TerminalLayoutRevivesAcrossSessions",
