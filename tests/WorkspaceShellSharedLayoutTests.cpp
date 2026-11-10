@@ -638,6 +638,22 @@ void TestWorkspaceSharedScrollableListLayout() {
          "fractional scrollable list layout should clamp against the fractional max scroll");
   Expect(fractional.list_rect.h == 103.0f,
          "scrollable list layout should honor separate scrollbar bottom padding");
+
+  // Soak 0156becd453c, 2c8a5f0188c1 and seven more git-row signatures: a list
+  // whose top sits at or below its container's bottom -- the git file list under
+  // a commit draft that fills a short sidebar -- still got one row, laid out
+  // below the container and the window, where the control channel reported it
+  // and a click there could select it. No room, no row; and none partly out.
+  for (const bool fractional_units : {false, true}) {
+    for (const float list_y : {120.0f, 100.0f, 90.0f}) {  // below, at, 10px above the bottom
+      const auto none = ComputeScrollableListLayout(MakeRect(0.0f, 0.0f, 200.0f, 100.0f), list_y, 10, 0, 10.0f,
+                                                    20.0f, 18.0f, 0.0f, 0.0f, fractional_units);
+      Expect(none.visible_rows == 0,
+             "a list with no room for a row has none (top " + std::to_string(list_y) +
+                 (fractional_units ? ", fractional" : "") + "): " + std::to_string(none.visible_rows));
+      Expect(!ScrollableListIndexAtY(none, list_y + 1.0f).has_value(), "and nothing there is a row");
+    }
+  }
 }
 
 void TestWorkspaceSharedStripLayoutHelpers() {

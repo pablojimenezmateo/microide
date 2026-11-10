@@ -929,13 +929,13 @@ ScrollableListLayout ComputeScrollableListLayout(const SDL_FRect& container,
   const float available_height =
       std::max(0.0f, container.y + container.h - list_y - list_bottom_padding);
   const float raw_visible_units = row_step > 0.0f ? available_height / row_step : 0.0f;
-  layout.visible_units =
-      fractional_visible_units
-          ? std::max(1.0f, raw_visible_units)
-          : static_cast<float>(
-                std::max(1, static_cast<int>(std::floor(std::max(0.0f, raw_visible_units)))));
-  layout.visible_rows =
-      std::max(1, static_cast<int>(std::floor(std::max(1.0f, layout.visible_units))));
+  // Only the rows there is room for, which can be none. A floor of one laid a row
+  // out below a list whose top had reached its container's bottom -- the git list
+  // under a commit draft that fills a short sidebar -- outside the window, where
+  // the control channel reported it and a click could land on it (soak
+  // 0156becd453c and eight more git-row signatures).
+  layout.visible_units = fractional_visible_units ? raw_visible_units : std::floor(raw_visible_units);
+  layout.visible_rows = static_cast<int>(std::floor(layout.visible_units));
   layout.max_scroll = std::max(
       0, static_cast<int>(std::ceil(static_cast<float>(item_count) - layout.visible_units)));
   layout.scroll_row = std::clamp(requested_scroll_row, 0, layout.max_scroll);
