@@ -444,6 +444,11 @@ float ClampSidebarWidth(float width, float window_width);
 // editor below kWorkspaceMinEditorAreaWidth. `sidebar_width` is the currently
 // resolved sidebar width (0 when hidden).
 float ClampRightPaneWidth(float width, float window_width, float sidebar_width);
+// Whether the debug pane fits at its minimum width beside the sidebar and an editor
+// column of kWorkspaceMinEditorAreaWidth. Where it does not, the layout leaves it
+// out, as the compact layout does: ClampRightPaneWidth cannot go under the pane's
+// minimum, and a pane kept there ran past the window's edge.
+bool RightPaneFits(float window_width, float sidebar_width);
 float ClampBottomPanelHeight(float height, float window_height);
 int BottomPanelVisibleRowsForHeight(float panel_height, float line_height);
 // Resolve the vertical coordinate `y` to an absolute bottom-panel log line index, or

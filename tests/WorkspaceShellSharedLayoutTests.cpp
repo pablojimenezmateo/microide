@@ -843,6 +843,43 @@ void TestWorkspaceSharedEditorSplitTreeRevision() {
 // positional form must be exactly the same function, and the key's `==` must
 // notice every field -- a field the comparison skipped would be an input the memo
 // ignores, which is the stale-hit-test failure the memo exists to rule out.
+// Soak 560df81462d8 (640x480 at ui.scale 3, the layout forced out of compact): a
+// 214-wide window with the sidebar and the debug pane. Each kept its minimum width,
+// so the pane ran 28 px past the window's edge with no editor column between them,
+// and its divider overlapped the sidebar's.
+void TestWorkspaceLayoutDropsADebugPaneThatCannotFitBesideTheSidebar() {
+  using microide::workspace::ComputeLayout;
+  using microide::workspace::LayoutMode;
+  using microide::workspace::LayoutModeInputs;
+  using microide::workspace::WorkspaceLayoutInputs;
+  const LayoutModeInputs regular{.user_override = LayoutModeInputs::Override::Regular,
+                                 .compact_breakpoint_px = 720.0f,
+                                 .previous_mode = LayoutMode::Regular};
+  for (const float width : {214.0f, 300.0f, 400.0f, 520.0f, 900.0f}) {
+    const WorkspaceLayoutInputs inputs{
+        .window_width = width,
+        .window_height = 160.0f,
+        .sidebar_visible = true,
+        .bottom_panel_visible = false,
+        .sidebar_width = 120.0f,
+        .bottom_panel_height = 0.0f,
+        .layout_mode = regular,
+        .reserve_status_bar = true,
+        .right_pane_visible = true,
+        .right_pane_width = 120.0f,
+        .project_tab_strip_visible = false,
+    };
+    const auto layout = ComputeLayout(inputs);
+    const std::string at = std::to_string(static_cast<int>(width)) + " wide";
+    const SDL_FRect& pane = layout.right_pane;
+    Expect(pane.w <= 0.0f || pane.x + pane.w <= width, at + ": the debug pane should end inside the window");
+    Expect(pane.w <= 0.0f || pane.x >= layout.sidebar.x + layout.sidebar.w,
+           at + ": the debug pane should not reach over the sidebar");
+    Expect(pane.w <= 0.0f || layout.editor_area.w > 0.0f,
+           at + ": a debug pane shown should leave the editor a column");
+  }
+}
+
 void TestWorkspaceLayoutInputsStructMatchesPositionalForm() {
   using microide::workspace::ComputeLayout;
   using microide::workspace::LayoutMode;
@@ -1834,6 +1871,8 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
           TestWorkspaceSharedEditorSplitTreeRevision);
   AddTest(tests, "WorkspaceShared/LayoutInputsStructMatchesPositionalForm",
           TestWorkspaceLayoutInputsStructMatchesPositionalForm);
+  AddTest(tests, "WorkspaceShared/LayoutDropsADebugPaneThatCannotFitBesideTheSidebar",
+          TestWorkspaceLayoutDropsADebugPaneThatCannotFitBesideTheSidebar);
   AddTest(tests, "WorkspaceShared/LayoutHelpers", TestWorkspaceSharedLayoutHelpers);
   AddTest(tests, "WorkspaceShared/SidebarFillsTheTabStripBand", TestWorkspaceSharedSidebarFillsTheTabStripBand);
   AddTest(tests, "WorkspaceShared/DebugPaneFillsTheTabStripBand", TestWorkspaceSharedDebugPaneFillsTheTabStripBand);

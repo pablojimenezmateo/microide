@@ -77,10 +77,11 @@ WorkspaceLayout ComputeLayout(const WorkspaceLayoutInputs& inputs) {
                               : 0.0f;
   const float resolved_sidebar_width =
       sidebar_visible ? ClampSidebarWidth(sidebar_width, window_width) : 0.0f;
-  // The right debug pane is suppressed in compact layouts so the sidebar + pane
-  // can't starve the editor below its minimum width.
-  const bool right_pane_effective_visible =
-      right_pane_visible && layout_mode != LayoutMode::Compact;
+  // The right debug pane is suppressed in compact layouts, and wherever it cannot
+  // fit at its minimum width, so the sidebar + pane can't starve the editor below
+  // its minimum width or run past the window (soak 560df81462d8).
+  const bool right_pane_effective_visible = right_pane_visible && layout_mode != LayoutMode::Compact &&
+                                            RightPaneFits(window_width, resolved_sidebar_width);
   const float resolved_right_pane_width =
       right_pane_effective_visible
           ? ClampRightPaneWidth(right_pane_width, window_width, resolved_sidebar_width)
@@ -375,10 +376,22 @@ float ClampSidebarWidth(float width, float window_width) {
   return std::clamp(width, viable_min_width, max_width);
 }
 
+namespace {
+
+float RightPaneAvailableWidth(float window_width, float sidebar_width) {
+  const float sidebar_reserve = sidebar_width > 0.0f ? sidebar_width + kDivider : 0.0f;
+  return window_width - sidebar_reserve - kMinEditorAreaWidth - kDivider;
+}
+
+}  // namespace
+
+bool RightPaneFits(float window_width, float sidebar_width) {
+  return RightPaneAvailableWidth(window_width, sidebar_width) >= kSideSurfaceMinWidth;
+}
+
 float ClampRightPaneWidth(float width, float window_width, float sidebar_width) {
   const float viable_min_width = kSideSurfaceMinWidth;
-  const float sidebar_reserve = sidebar_width > 0.0f ? sidebar_width + kDivider : 0.0f;
-  const float available = window_width - sidebar_reserve - kMinEditorAreaWidth - kDivider;
+  const float available = RightPaneAvailableWidth(window_width, sidebar_width);
   const float max_width =
       std::min(kWorkspaceMaxRightPaneWidth, std::max(viable_min_width, available));
   return std::clamp(width, viable_min_width, max_width);
