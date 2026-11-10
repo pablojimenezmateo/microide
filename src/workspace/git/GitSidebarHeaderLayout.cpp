@@ -17,10 +17,16 @@ SDL_FRect ActionRowRect(const SDL_FRect& sidebar_rect, const std::size_t row_ind
   if (sidebar_rect.w <= 0.0f || sidebar_rect.h <= 0.0f) {
     return kEmpty;
   }
-  return MakeRect(sidebar_rect.x + kInset,
-                  sidebar_rect.y + kActionRowTop +
-                      static_cast<float>(row_index) * kActionRowStride,
-                  std::max(0.0f, sidebar_rect.w - kInset * 2.0f), kActionButtonHeight);
+  const float top = sidebar_rect.y + kActionRowTop + static_cast<float>(row_index) * kActionRowStride;
+  // A row that does not end inside the sidebar is not laid out: its buttons
+  // reached into the panel below a short sidebar, painted over by it, and a
+  // hover on them repainted only what the panel's repaint covered (soak
+  // 186050c5eb72). An empty rect is what every consumer reads as "absent".
+  if (top + kActionButtonHeight > sidebar_rect.y + sidebar_rect.h) {
+    return kEmpty;
+  }
+  return MakeRect(sidebar_rect.x + kInset, top, std::max(0.0f, sidebar_rect.w - kInset * 2.0f),
+                  kActionButtonHeight);
 }
 
 SDL_FRect ActionSlotRect(const SDL_FRect& row_rect,

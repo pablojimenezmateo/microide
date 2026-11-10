@@ -15,6 +15,7 @@
 #include "support/GitSidebarWait.h"
 #include "support/RetainedRedraw.h"
 #include "support/SoftwareCanvas.h"
+#include "workspace/git/GitSidebarHeaderLayout.h"
 
 namespace microide::tests {
 namespace {
@@ -977,6 +978,28 @@ void TestWorkspaceShellGitStageFailureSurfacesFeedback() {
 // bottom, under the panel's tab row, where nothing drew it and a click on it was
 // a click on a terminal tab. The body gives up rows, down to one, to keep the
 // button inside the sidebar; at every height that leaves room for that panel.
+// Soak 186050c5eb72 and e8bd4c6176d9 (640x480 at ui.scale 3): a sidebar 61 high
+// beside a bottom panel. The branch/Sync row was laid out at y 83 in a sidebar
+// ending at 86, its buttons reaching into the panel, and a hover on them
+// repainted only the part the panel's repaint happened to cover.
+void TestGitSidebarHeaderRowsThatDoNotFitAreLeftOut() {
+  namespace header = microide::workspace::git_sidebar_header;
+  const SDL_FRect short_sidebar{0.0f, 25.0f, 120.0f, 61.0f};
+  const auto inside = [&](const SDL_FRect& rect) {
+    return rect.w <= 0.0f || rect.y + rect.h <= short_sidebar.y + short_sidebar.h;
+  };
+  for (const auto& [name, rect] : {std::pair{"Stage All", header::StageAllButtonRect(short_sidebar)},
+                                   std::pair{"Refresh", header::RefreshButtonRect(short_sidebar)},
+                                   std::pair{"branch", header::BranchButtonRect(short_sidebar)},
+                                   std::pair{"Sync", header::SyncButtonRect(short_sidebar)},
+                                   std::pair{"Commit", header::CommitButtonRect(short_sidebar)}}) {
+    Expect(inside(rect), std::string(name) + " should end inside the sidebar or not be laid out");
+  }
+  Expect(header::StageAllButtonRect(short_sidebar).w > 0.0f, "the first row fits and is laid out");
+  const SDL_FRect tall_sidebar{0.0f, 25.0f, 120.0f, 400.0f};
+  Expect(header::SyncButtonRect(tall_sidebar).w > 0.0f, "a sidebar with room lays the second row out");
+}
+
 void TestWorkspaceShellCommitButtonStaysInsideAShortSidebar() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1861,6 +1884,8 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitStageFailureSurfacesFeedback);
   AddTest(tests, "WorkspaceShell/CommitWorkflowFieldsAreKeyboardEditable",
           TestWorkspaceShellCommitWorkflowFieldsAreKeyboardEditable);
+  AddTest(tests, "WorkspaceShell/GitSidebarHeaderRowsThatDoNotFitAreLeftOut",
+          TestGitSidebarHeaderRowsThatDoNotFitAreLeftOut);
   AddTest(tests, "WorkspaceShell/CommitButtonStaysInsideAShortSidebar",
           TestWorkspaceShellCommitButtonStaysInsideAShortSidebar);
 }

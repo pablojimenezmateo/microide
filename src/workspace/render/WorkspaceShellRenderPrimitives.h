@@ -150,6 +150,11 @@ inline void DrawButtonCentered(const render::TextRenderer& text_renderer,
                                std::string_view label,
                                ButtonTone tone,
                                const ButtonVisualState& state) {
+  // An empty rect is a button the layout left out for want of room: nothing to
+  // draw (its outline and label would land at the origin).
+  if (rect.w <= 0.0f || rect.h <= 0.0f) {
+    return;
+  }
   const ButtonColors colors = ResolveButtonColors(theme, tone, state);
   FillRect(renderer, rect, colors.fill);
   OutlineRect(renderer, rect, colors.border);
