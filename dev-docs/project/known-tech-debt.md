@@ -16,19 +16,33 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 
 ## Open items
 
-### TD-2026-11-10-438 — one ASan shard aborted inside glibc at thread exit. [OPEN]
+### TD-2026-11-10-438 — one ASan shard aborted inside glibc at thread exit. [FIXED]
 
-CI's `asan` job on `7d983b374` lost `microide_tests_shard_20` 2.8 s in, in the
-headless `Application/*` tests (sandbox on, software renderer), to
-`Fatal glibc error: arena.c:907 (__malloc_arena_thread_freeres): assertion
-failed: a->attached_threads > 0` -- glibc's own per-arena thread count went
-negative as a thread exited. No ASan report preceded it. It has not been seen in
-any earlier CI or soak log, and the same shard at the same commit under the local
-ASan build passed 30 of 30 (glibc 2.43 here, 2.39 on the runner). Under ASan,
-glibc's arenas are only touched by allocations ASan does not intercept, so the
-count it guards belongs to glibc, not to our heap. Watch for a second sighting
-before digging: if it returns, note the shard's test order and whether a thread
-in it was started by a forked-but-not-exec'd child or around a sandbox install.
+CI's `asan` job lost `microide_tests_shard_20` on `7d983b374` and again on
+`b2c6c6694`, 2.7 s in, to `Fatal glibc error: arena.c:907
+(__malloc_arena_thread_freeres): assertion failed: a->attached_threads > 0`,
+with no ASan report before it. It never reproduced on the dev PC (glibc 2.43);
+an Ubuntu 24.04 container (glibc 2.39, the runner's) reproduced it once in 40
+runs of the shard.
+
+Cause, from a gdb trace in that container: `util::ReleaseFreedHeap` --
+`malloc_trim(0)`, called by `MirrorSyncEngine::SyncNow` on its `mirror-sync`
+workers -- was the process's first call into glibc's own allocator, because
+under ASan every `malloc` goes to the sanitizer's allocator instead. glibc 2.39
+initializes its allocator lazily and without a lock (`ptmalloc_init`), binding
+the calling thread to the main arena; two workers trimming at once were both
+bound while the arena counted one, and the second to exit aborted. In a plain
+build the main thread's first `malloc`, before any thread starts, has already
+initialized it, so this needs a sanitizer's allocator to happen.
+
+Fixed: `util/HeapUsage.h` decides `MICROIDE_GLIBC_MALLOC_IS_THE_ALLOCATOR` (off
+under ASan/TSan/MSan), and `ReleaseFreedHeap` / `CurrentHeapUsage` do nothing
+there -- glibc's heap holds none of ours in such a build, so trimming or
+measuring it answered nothing anyway. The control channel's and the server's
+`status` leave out `heap` in a sanitizer build. Validated in the same container:
+the gdb trace shows no call into glibc's allocator, and the shard loop no abort.
+No unit test fails first: the race is the first call into glibc's allocator,
+once per process, on CI's glibc only.
 
 ### TD-2026-11-10-437 — CI's qa monkey at scale 1.75: one-step anti-aliasing diffs under the software renderer. [FIXED]
 
