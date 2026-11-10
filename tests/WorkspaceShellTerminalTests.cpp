@@ -2725,6 +2725,27 @@ struct SplitTerminalFixture {
   void PaintFrame() { WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer()); }
 };
 
+// Soak c0c5719bdbce: term-pane-left with the bottom panel hidden moved the
+// keyboard to the panel and left it hidden -- focus on nothing on screen, so
+// every key went to a terminal no one could see. Moving to a pane shows it, as
+// switching terminal tabs does.
+void TestWorkspaceShellTerminalPaneFocusShowsAHiddenPanel() {
+  SplitTerminalFixture fixture;
+  WorkspaceShell& shell = fixture.shell;
+  fixture.PaintFrame();
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TerminalSplit, {}),
+         "the fixture splits its terminal");
+  WorkspaceShellTestAccess::HideBottomPanel(shell);
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  Expect(!WorkspaceShellTestAccess::BottomPanelVisible(shell), "the panel is hidden");
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TerminalFocusPaneLeft, {}),
+         "there is a pane to the left");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 0, "the left pane is active");
+  Expect(WorkspaceShellTestAccess::FocusIsPanel(shell) && WorkspaceShellTestAccess::BottomPanelVisible(shell) &&
+             WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::Terminal,
+         "and the panel that now has the keyboard shows it");
+}
+
 void TestWorkspaceShellTerminalSplitAddsPaneRightOfTheActiveOne() {
   SplitTerminalFixture fixture;
   WorkspaceShell& shell = fixture.shell;
@@ -3316,6 +3337,8 @@ void TestWorkspaceShellProjectOpensWithTheKeyboardInTheEditor() {
 void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/TerminalSplitAddsPaneRightOfTheActiveOne",
           TestWorkspaceShellTerminalSplitAddsPaneRightOfTheActiveOne);
+  AddTest(tests, "WorkspaceShell/TerminalPaneFocusShowsAHiddenPanel",
+          TestWorkspaceShellTerminalPaneFocusShowsAHiddenPanel);
   AddTest(tests, "WorkspaceShell/TerminalPaneClickActivatesAndWheelScrollsUnderThePointer",
           TestWorkspaceShellTerminalPaneClickActivatesAndWheelScrollsUnderThePointer);
   AddTest(tests, "WorkspaceShell/TerminalPaneDividerDragResizesAndDoubleClickResets",

@@ -497,8 +497,12 @@ bool TerminalPanelService::FocusPaneInDirection(int delta) {
   }
   operations_.clear_terminal_selection();
   tab->active_pane = static_cast<std::size_t>(target);
-  state_.surface.focus = FocusTarget::Panel;
-  operations_.request_bottom_panel_redraw();
+  // Shown, as switching terminal tabs shows it: setting the focus alone left the
+  // keyboard on a hidden panel when it was asked for by name (soak c0c5719bdbce).
+  const bool was_visible = PanelVisible();
+  ShowTerminalContent(true);
+  operations_.note_layout_inputs_changed();
+  NotePanelVisibilityChanged(was_visible);
   return true;
 }
 
