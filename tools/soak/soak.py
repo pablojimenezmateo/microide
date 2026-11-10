@@ -336,6 +336,12 @@ def finding_evidence(job: Job, finding: dict[str, Any]) -> Path | None:
 
 
 MAX_SIGHTINGS = 3
+# Evidence an oracle writes beside some findings and not others, newer than most
+# bundles: the data oracle's bytes (with the buffer-io history), the kill -9
+# oracle's documents and on-disk state, the idle oracle's wake sampling. A
+# sighting carrying one the bundle has nowhere is kept even before any fix --
+# without it, a flaky finding that never replays never gets that evidence.
+DIAGNOSTIC_EVIDENCE = ("mismatch-*.txt", "kill-state.tar.gz", "kill-documents.json", "idle-wakes.txt")
 
 
 def keep_sighting(job: Job, finding: dict[str, Any], entry: ld.Entry) -> None:
@@ -343,17 +349,19 @@ def keep_sighting(job: Job, finding: dict[str, Any], entry: ld.Entry) -> None:
     directory holding it is deleted when the job is reaped. Keep it under the
     bundle's `sightings/` when it says something the first one cannot: it came
     after a fix (the sighting that reopens a finding is the only evidence of
-    what the fix missed), or it carries the data oracle's byte evidence and the
-    bundle has none (that evidence postdates most data findings, which never
-    replay). The newest MAX_SIGHTINGS stay; FINDING.md lists them."""
+    what the fix missed), or it carries diagnostic evidence (DIAGNOSTIC_EVIDENCE)
+    the bundle has none of (that evidence postdates most such findings, which
+    never replay). The newest MAX_SIGHTINGS stay; FINDING.md lists them."""
     bundle = FINDINGS / entry.sig
     evidence = finding_evidence(job, finding)
     if evidence is None or not bundle.is_dir():
         return
     after_fix = entry.status in ("fixed", "verified", "reopened")
-    bytes_missing = any(evidence.glob("mismatch-*.txt")) and \
-        not any(bundle.glob("evidence/mismatch-*.txt")) and not any(bundle.glob("sightings/*/mismatch-*.txt"))
-    if not (after_fix or bytes_missing):
+    diagnostics_missing = any(
+        any(evidence.glob(pattern)) and not any(bundle.glob(f"evidence/{pattern}"))
+        and not any(bundle.glob(f"sightings/*/{pattern}"))
+        for pattern in DIAGNOSTIC_EVIDENCE)
+    if not (after_fix or diagnostics_missing):
         return
     sightings = bundle / "sightings"
     name = f"{time.strftime('%Y%m%d-%H%M%S')}-{job.sha[:12]}-{job.cell.replace('/', '_')}"
@@ -445,7 +453,7 @@ def write_finding_md(bundle: Path) -> None:
         if (bundle / "sightings").is_dir() else []
     if sightings:
         lines += ["## Later sightings", "",
-                  "Kept because they came after a fix, or carry byte evidence the first one lacks; "
+                  "Kept because they came after a fix, or carry diagnostic evidence the first one lacks; "
                   "newest first. Each directory holds that run's evidence and its `replay.json`.", ""]
         for path in sightings:
             try:

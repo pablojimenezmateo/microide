@@ -64,5 +64,52 @@ class VerifiedBundleTests(unittest.TestCase):
                          ["FINDING.md", "meta.json", "minimal.json", "replay.json"])
 
 
+class SightingTests(unittest.TestCase):
+    def setUp(self):
+        os.environ["MICROIDE_SOAK_DIR"] = tempfile.mkdtemp(dir=os.environ.get("TMPDIR"))
+        sys.path.insert(0, str(HERE))
+        import importlib
+        import ledger as ld
+        import soak
+        importlib.reload(soak)
+        self.soak, self.ld = soak, ld
+        self.bundle = soak.FINDINGS / "abc123abc123"
+        (self.bundle / "evidence").mkdir(parents=True)
+        (self.bundle / "FINDING.md").write_text("")
+        (self.bundle / "meta.json").write_text(json.dumps({
+            "finding": {"signature": "abc123abc123", "kind": "data", "detail": "d", "label": "data: d",
+                        "step": 5, "state": "", "actions": 9},
+            "cell": "c/d/1x1@1", "sha": "0" * 40, "binary": "", "build": "default", "job": "default",
+            "seed": 1, "header": {}}))
+        self.out = Path(tempfile.mkdtemp(dir=os.environ.get("TMPDIR")))
+
+    def sighting(self, *files: str) -> None:
+        evidence = self.out / "seed-1" / "finding-01-monkey-step-5"
+        evidence.mkdir(parents=True, exist_ok=True)
+        for name in files:
+            (evidence / name).write_bytes(b"x")
+        job = self.soak.Job(type=self.soak.JOB_TYPES[0], seed=1, out=self.out, command=[], cell="c/d/1x1@1",
+                            started=0.0, proc=None, sha="0" * 40, binary="")
+        entry = self.ld.Entry(sig="abc123abc123", status="new")
+        self.soak.keep_sighting(job, {"evidence": str(evidence), "detail": "d"}, entry)
+
+    def kept(self) -> list[str]:
+        sightings = self.bundle / "sightings"
+        return sorted(p.name for s in sightings.iterdir() for p in s.iterdir()) if sightings.is_dir() else []
+
+    def test_a_new_findings_sighting_with_nothing_new_is_not_kept(self):
+        self.sighting("now.png")
+        self.assertEqual(self.kept(), [])
+
+    def test_a_new_findings_sighting_carrying_kill_state_the_bundle_lacks_is_kept(self):
+        self.sighting("now.png", "kill-state.tar.gz")
+        self.assertIn("kill-state.tar.gz", self.kept())
+
+    def test_kill_state_the_bundle_already_has_is_not_kept_again(self):
+        (self.bundle / "evidence" / "kill-state.tar.gz").write_bytes(b"x")
+        self.sighting("now.png", "kill-state.tar.gz")
+        self.assertEqual(self.kept(), [])
+
+
 if __name__ == "__main__":
     unittest.main()
