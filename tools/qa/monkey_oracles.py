@@ -285,10 +285,28 @@ class UndoAlgebra:
             return []
         if before.get("kind") != "editor" or before.get("readOnly") or "text" not in before:
             return []
-        k = self.rng.randint(1, 4)
-        for verb in ["undo"] * k + ["redo"] * k:
+        # Only the undos that undid something are owed a redo: at the bottom of the
+        # history an undo does nothing, and the k redos then replayed edits the run
+        # had undone earlier -- a changed text from a correct editor (soak
+        # 1aa1784d1685, after twenty Ctrl+Z). An undo that applied moves the
+        # buffer's content revision.
+        asked = self.rng.randint(1, 4)
+        k = 0
+        revision = before.get("revision")
+        for _ in range(asked):
             try:
-                app.send_line(verb)
+                app.send_line("undo")
+                now = app.query("buffer")
+            except q.QaFailure:
+                return []
+            if now.get("path") != before.get("path") or now.get("kind") != "editor":
+                return []
+            if revision is None or now.get("revision") != revision:
+                k += 1
+                revision = now.get("revision")
+        for _ in range(k):
+            try:
+                app.send_line("redo")
             except q.QaFailure:
                 return []
         try:
