@@ -350,6 +350,51 @@ void TestAttachStartsOnDemandAndTheServerIdlesOut() {
          "the on-demand server idles out and removes its socket");
 }
 
+// An on-demand server is started for a client that connects a moment later (attach
+// forks `start --on-demand`, waits for it, then connects). With a short idle
+// timeout it used to idle out in that moment on a loaded machine, and attach died
+// with "started, but cannot connect" (CI at 7bcdda4be). Until its first client has
+// come it waits; once one has come and gone it idles out on the timeout as before.
+void TestAnOnDemandServerWaitsForItsFirstClient() {
+  ShortTempDir temp;
+  const std::filesystem::path dir = temp.path() / "s";
+  const auto started =
+      RunServer({"start", "--on-demand", "--socket-dir", dir.string(), "--idle-timeout-ms", "50"});
+  Expect(started.success(), "start --on-demand: exit " + std::to_string(started.exit_code) + " " +
+                                started.stderr_text);
+  std::this_thread::sleep_for(std::chrono::milliseconds(1000));  // twenty timeouts, no client yet
+  Expect(::access(remote::ServerSocketPath(dir).c_str(), F_OK) == 0,
+         "with no client yet, the on-demand server is still there for it");
+  {
+    platform::AsyncSubprocess attach;
+    Expect(attach.Start({Server(), "attach", "--socket-dir", dir.string(), "--idle-timeout-ms", "50"}),
+           "the client attaches");
+    std::string request;
+    remote::AppendFrame(request, remote::FrameType::Request, remote::Lane::Interactive, 1,
+                        util::SerializeJson(util::JsonValue(util::JsonObject{
+                            {"method", util::JsonValue(std::string(remote::method::kServerHello))},
+                            {"params", Hello("/srv/first")}})));
+    Expect(attach.Write(request), "it says hello");
+    remote::FrameDecoder decoder;
+    std::optional<remote::Frame> reply;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (!reply.has_value() && std::chrono::steady_clock::now() < deadline) {
+      const auto bytes = attach.Read(65536, 200);
+      if (!bytes.has_value()) {
+        break;
+      }
+      decoder.Feed(*bytes);
+      reply = decoder.Next();
+    }
+    Expect(reply.has_value(), "and is answered");
+    attach.CloseStdin();
+    Expect(WaitUntil([&]() { return !attach.IsRunning(); }, std::chrono::seconds(10)), "and goes");
+  }
+  Expect(WaitUntil([&]() { return ::access(remote::ServerSocketPath(dir).c_str(), F_OK) != 0; },
+                   std::chrono::seconds(10)),
+         "once its client has come and gone, it idles out on its timeout");
+}
+
 // A script polling `microide-server status` is an observer, not a client
 // (TD-2026-10-27-407): it used to restart an on-demand server's idle countdown at
 // every poll, keeping it alive for good. Polled every 100 ms against a 400 ms
@@ -867,6 +912,7 @@ void RegisterRemoteServerTests(std::vector<TestCase>& tests) {
           TestStartedServerServesWorkspacesAndDoesNotHoldStdio);
   AddTest(tests, "RemoteServer/PollingStatusDoesNotKeepAnOnDemandServerAlive",
           TestPollingStatusDoesNotKeepAnOnDemandServerAlive);
+  AddTest(tests, "RemoteServer/AnOnDemandServerWaitsForItsFirstClient", TestAnOnDemandServerWaitsForItsFirstClient);
   AddTest(tests, "RemoteServer/AttachStartsOnDemandAndTheServerIdlesOut",
           TestAttachStartsOnDemandAndTheServerIdlesOut);
   AddTest(tests, "RemoteServer/EphemeralPortRangeIsTheHosts", TestEphemeralPortRangeIsTheHosts);

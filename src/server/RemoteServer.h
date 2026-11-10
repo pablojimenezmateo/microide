@@ -220,6 +220,16 @@ class RemoteServer {
   std::vector<std::unique_ptr<Connection>> connections_;
   std::map<std::string, Workspace> workspaces_;
   std::chrono::steady_clock::time_point idle_since_ = std::chrono::steady_clock::now();
+  // Whether any connection has asked anything yet. An on-demand server is started
+  // FOR a client (`attach` forks `start --on-demand`, waits for it, then connects),
+  // so until that client has arrived its idle countdown is at least
+  // kFirstClientWait: with a short timeout, a client still being scheduled found
+  // the socket already gone ("started, but cannot connect", CI at 7bcdda4be). A
+  // request, not a connection: `start`'s own readiness probe connects and hangs up,
+  // and counting it handed the short countdown straight back. Set on the
+  // connections' I/O threads, hence atomic.
+  std::atomic<bool> served_any_{false};
+  static constexpr std::chrono::milliseconds kFirstClientWait{30'000};
 
   // Last: their threads send through connections_, so they must stop first.
   std::unique_ptr<ProcessTable> processes_;

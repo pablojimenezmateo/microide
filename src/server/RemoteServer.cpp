@@ -186,7 +186,8 @@ RemoteServer::Connection& RemoteServer::Accept(int read_fd, int write_fd) {
   InstallSearchHandlers(ref);
   InstallPortHandlers(ref);
   InstallActivityHandlers(ref);
-  ref.peer.OnDispatch([&ref](std::string_view method) {
+  ref.peer.OnDispatch([this, &ref](std::string_view method) {
+    served_any_.store(true, std::memory_order_relaxed);
     if (method != remote::method::kServerHello && method != remote::method::kServerStatus &&
         method != remote::method::kServerLog && method != remote::method::kTermOpenUrl) {
       ref.active.store(true, std::memory_order_relaxed);
@@ -876,9 +877,12 @@ bool RemoteServer::ReapClosed() {
 
 bool RemoteServer::Idle() {
   std::lock_guard lock(mutex_);
+  const std::chrono::milliseconds timeout =
+      served_any_.load(std::memory_order_relaxed) ? config_.idle_timeout
+                                                  : std::max(config_.idle_timeout, kFirstClientWait);
   return config_.on_demand && connections_.empty() && workspaces_.empty() &&
          processes_->LiveCount() == 0 && terminals_->LiveCount() == 0 &&
-         std::chrono::steady_clock::now() - idle_since_ >= config_.idle_timeout;
+         std::chrono::steady_clock::now() - idle_since_ >= timeout;
 }
 
 int RemoteServer::RunListener(int listen_fd) {
