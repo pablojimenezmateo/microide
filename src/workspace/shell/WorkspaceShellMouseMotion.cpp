@@ -420,6 +420,31 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     const std::size_t rects_before =
         menu_hover_trace ? pending_render_invalidation_.rects.size() : 0;
     const auto blocked_hover_visuals = capture_blocked_hover_visuals();
+    // A popup row paints lit while the pointer is on it (RenderMenuPopups), not
+    // only while the menu state names it: a menu opened by Alt+Right under a still
+    // pointer has no hovered row in its state, yet paints the row beneath it lit.
+    // The coordinator repaints the rows its state names, so the row the pointer
+    // leaves is repainted here (soak 2f484d8f3963).
+    std::optional<SDL_FRect> row_left_behind;
+    if (last_mouse_position_valid_ && context_.menu_state.menu_bar_open) {
+      const auto row_at = [&](const std::optional<SDL_FRect>& popup, MenuId id) -> std::optional<SDL_FRect> {
+        if (!popup.has_value() || !Contains(*popup, last_mouse_x_, last_mouse_y_)) {
+          return std::nullopt;
+        }
+        const auto hit = HitTestPopupRow(MenuItems(id), *popup, last_mouse_x_, last_mouse_y_);
+        return hit.has_value() ? std::optional<SDL_FRect>(hit->rect) : std::nullopt;
+      };
+      row_left_behind = row_at(ActiveSubmenuRect(layout.menu_bar), context_.menu_state.active_submenu_id);
+      if (!row_left_behind.has_value()) {
+        row_left_behind = row_at(ComputePopupMenuRect(layout.menu_bar, context_.menu_state.active_menu_id),
+                                 context_.menu_state.active_menu_id);
+      }
+    }
+    if (row_left_behind.has_value() &&
+        !Contains(*row_left_behind, static_cast<float>(event.motion.x), static_cast<float>(event.motion.y))) {
+      RequestRedrawRect(MakeRect(row_left_behind->x - 1.0f, row_left_behind->y - 1.0f, row_left_behind->w + 2.0f,
+                                 row_left_behind->h + 2.0f));
+    }
     const Uint64 t1 = menu_hover_trace ? SDL_GetTicksNS() : 0;
     UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y), false);
     const Uint64 t2 = menu_hover_trace ? SDL_GetTicksNS() : 0;

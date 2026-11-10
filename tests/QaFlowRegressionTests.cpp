@@ -1238,6 +1238,58 @@ void TestTabIndentingASecondarySelectionRepaintsEachOfItsLines() {
          "the selection's second line should be indented");
 }
 
+// Soak 2f484d8f3963 (2560x1440 at ui.scale 2.25): Git open, the pointer at rest
+// over its popup, Alt+Right opening Remote with one of its rows under the still
+// pointer, then the pointer on to another row. The partial frame of that motion
+// left the row first under the pointer lit.
+void TestHoveringARowAfterAltRightToTheNextMenuRepaints() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("a.txt", "a\n");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the window");
+  const auto rows_of = [&](std::string_view menu) {
+    std::vector<SDL_FRect> rows;
+    const std::string prefix = "menu-item:" + std::string(menu) + "/";
+    const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+    for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+      if (entry["name"].AsString().starts_with(prefix)) {
+        const auto& r = entry["rect"].AsArray();
+        rows.push_back(SDL_FRect{static_cast<float>(r[0].AsInt()), static_cast<float>(r[1].AsInt()),
+                                 static_cast<float>(r[2].AsInt()), static_cast<float>(r[3].AsInt())});
+      }
+    }
+    return rows;
+  };
+  const auto git = fixture.ElementRect("menu:Git");
+  const auto remote = fixture.ElementRect("menu:Remote");
+  Expect(git.has_value() && remote.has_value(), "the menu bar should name menu:Git and menu:Remote");
+  if (!git || !remote) {
+    return;
+  }
+  // Where Remote's rows will be: open it once to read them.
+  fixture.ExpectFresh(fixture.Click(*remote), "opening Remote");
+  const std::vector<SDL_FRect> remote_rows = rows_of("Remote");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)}), "closing it");
+  Expect(remote_rows.size() >= 6, "the Remote menu should list rows");
+  if (remote_rows.size() < 6) {
+    return;
+  }
+  const SDL_FRect resting = remote_rows[4];
+  const SDL_FRect target = remote_rows.back();
+  fixture.ExpectFresh(fixture.Click(*git), "opening Git");
+  // The pointer comes to rest where Remote's fifth row will open under it.
+  fixture.ExpectFresh(
+      DispatchEvents(fixture.shell, {MouseMotionEvent(resting.x + 120.0f, resting.y + resting.h / 2.0f)}),
+      "the pointer at rest over Git's popup");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RIGHT, SDL_KMOD_ALT)}),
+                      "Alt+Right opening Remote under the pointer");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(target.x + 120.0f, target.y + target.h / 2.0f)}),
+                      "the pointer on to Remote's last row");
+}
+
 // A tab dragged out of the rightmost of three side-by-side panes into the
 // leftmost one's strip: a partial frame of the drag left a stale column at the
 // first pane's left edge (soak 9e662fe598fe, ui.scale 1.6). Every frame of the
@@ -5218,6 +5270,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestClosingAMenuOverAFindToggleRepaintsItsHover);
   AddTest(tests, "QaFlowRegression/TabIndentingASecondarySelectionRepaintsEachOfItsLines",
           TestTabIndentingASecondarySelectionRepaintsEachOfItsLines);
+  AddTest(tests, "QaFlowRegression/HoveringARowAfterAltRightToTheNextMenuRepaints",
+          TestHoveringARowAfterAltRightToTheNextMenuRepaints);
   AddTest(tests, "QaFlowRegression/APaletteCardOverTheMenuBarKeepsItsItemUnlit",
           TestAPaletteCardOverTheMenuBarKeepsItsItemUnlit);
   AddTest(tests, "QaFlowRegression/LeavingAFindToggleOverTheSidebarRepaintsIt",
