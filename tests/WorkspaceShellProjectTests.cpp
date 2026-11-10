@@ -5435,6 +5435,41 @@ void TestWorkspaceShellDebugCallStackKeyboardNavigates() {
          "Home should scroll the pane back to the top");
 }
 
+// Soak 5a2cb8ba7f6b: with the debug pane focused, a key none of its surfaces
+// takes (Ctrl+Left there) fell through to the editor's key handler and moved
+// the caret of an editor that did not have focus -- the status bar, repainted
+// for the pane, then disagreed with it. Keys the focused pane does not handle
+// stay out of the editor, in every mode.
+void TestWorkspaceShellDebugPaneKeysDoNotReachTheEditor() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "alpha beta gamma\nsecond line\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.MoveCursorTo(0, 16);
+  for (const microide::workspace::DebugPaneMode mode : {microide::workspace::DebugPaneMode::CallStack, microide::workspace::DebugPaneMode::Variables, microide::workspace::DebugPaneMode::Watch,
+                                   microide::workspace::DebugPaneMode::Breakpoints}) {
+    WorkspaceShellTestAccess::SetDebugPaneMode(shell, mode);
+    WorkspaceShellTestAccess::SetFocusDebugPane(shell);
+    for (const auto& [key, mod] : {std::pair{SDLK_LEFT, SDL_KMOD_CTRL}, std::pair{SDLK_RIGHT, SDL_KMOD_SHIFT},
+                                   std::pair{SDLK_BACKSPACE, SDL_KMOD_NONE}, std::pair{SDLK_DELETE, SDL_KMOD_NONE},
+                                   std::pair{SDLK_RETURN, SDL_KMOD_SHIFT}}) {
+      (void)SendKeyDown(shell, key, mod);  // whether the pane takes it is its business
+      Expect(WorkspaceShellTestAccess::FocusIsDebugPane(shell), "the key leaves focus in the pane");
+      Expect(editor.cursor_line() == 0 && editor.cursor_column() == 16 && !editor.has_selection() &&
+                 !editor.dirty(),
+             "mode " + std::to_string(static_cast<int>(mode)) + ", key " + std::to_string(key) +
+                 ": the unfocused editor is untouched (caret " + std::to_string(editor.cursor_line()) + ":" +
+                 std::to_string(editor.cursor_column()) + (editor.dirty() ? ", dirty" : "") + ")");
+    }
+  }
+}
+
 // Breakpoints was the last of the debug pane's four modes with no keyboard. Unlike
 // the other three it had no selection concept at all, so it needed one — and a
 // highlight, or navigation would be invisible. Enter is the mouse's single click
@@ -9383,6 +9418,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSettingsClickOnTheHeaderMissesTheRowScrolledBeneathIt);
   AddTest(tests, "WorkspaceShell/DebugBreakpointsKeyboardNavigates",
           TestWorkspaceShellDebugBreakpointsKeyboardNavigates);
+  AddTest(tests, "WorkspaceShell/DebugPaneKeysDoNotReachTheEditor",
+          TestWorkspaceShellDebugPaneKeysDoNotReachTheEditor);
   AddTest(tests, "WorkspaceShell/DebugCallStackKeyboardNavigates",
           TestWorkspaceShellDebugCallStackKeyboardNavigates);
   AddTest(tests, "WorkspaceShell/DebugPaneKeyboardRevealsAndPages",

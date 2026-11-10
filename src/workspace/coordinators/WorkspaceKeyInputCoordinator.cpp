@@ -166,6 +166,13 @@ bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
     EnsureRedraw([this]() { operations_.request_window_redraw(); });
     return true;
   }
+  // A key the focused debug pane did not take (its surfaces ran above) is no
+  // one's: it used to fall through to the editor's handler below and move the
+  // caret, or edit the text, of an editor that did not have focus -- Ctrl+Left
+  // there moved it a word, out from under the status bar (soak 5a2cb8ba7f6b).
+  if (state_.surface.focus == FocusTarget::DebugPane && state_.debug_pane.visible) {
+    return false;
+  }
   if (state_.surface.focus == FocusTarget::Overlay) {
     const bool handled = HandleOverlayKeyDown(event, modifiers);
     if (handled) {
