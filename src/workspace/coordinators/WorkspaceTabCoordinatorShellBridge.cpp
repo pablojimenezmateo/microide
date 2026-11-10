@@ -796,9 +796,15 @@ namespace {
 // The file a tab's labels should name. A compare or merge tab's own `path` is not
 // it — those carry the surface's identity, not the document's. Returned by
 // reference so the label builders do not copy a path just to read it.
+//
+// A plain comparison's is its right (editable) side's file. Its `path` falls back
+// to the left side's for syntax when the right has none, and naming the tab by it
+// labelled "README.md  ↔  Untitled" plain "README.md", like the file's own tab
+// beside it (soak ba76514b00b9). With no file on the right the tab takes the
+// comparison's name (TabLabelFallback).
 const std::filesystem::path& TabLabelPath(const TabEntry& tab) {
   if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
-    return tab.compare->path;
+    return tab.compare->plain_compare ? tab.compare->right_path : tab.compare->path;
   }
   if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
     return tab.merge->output_path;

@@ -2120,6 +2120,31 @@ void TestWorkspaceShellPathlessComparisonTabIsNamedLikeVsCode() {
          "the tab is named by its two sides, without the control title's prefix: " + title);
 }
 
+// Soak ba76514b00b9 / 9c030031f234 / a0ca81415037: a file compared with an
+// untitled buffer ("README.md  ↔  Untitled") was labelled "README.md" in the
+// strip -- the left side's name, which the tab only keeps for its syntax --
+// and read as the file's own tab beside it. The right side is the comparison's
+// editable side; with no file there it is named by both sides.
+void TestWorkspaceShellAFileComparedWithAnUntitledBufferIsNamedByBothSides() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path readme = root / "README.md";
+  WriteFile(readme, "# readme\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, readme);
+  Expect(WorkspaceShellTestAccess::OpenPlainComparison(
+             shell,
+             microide::workspace::CompareInput{.content = "# readme\n", .label = "README.md", .path = readme},
+             microide::workspace::CompareInput{.content = "typed\n", .label = "Untitled", .path = {}, .editable = true}),
+         "the comparison opens");
+  const std::size_t active = WorkspaceShellTestAccess::ActiveTabIndex(shell);
+  const std::string title = WorkspaceShellTestAccess::TabDisplayTitle(shell, active);
+  Expect(title.find("README.md") != std::string::npos && title.find("Untitled") != std::string::npos &&
+             title.find("compare:") == std::string::npos,
+         "the comparison is named by both sides, not as README.md's own tab: " + title);
+}
+
 void TestWorkspaceShellCompareTabUsesFilenameOnlyLabelAndTooltip() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -3764,6 +3789,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMergeBlameLoadsForResultPane);
   AddTest(tests, "WorkspaceShell/PathlessComparisonTabIsNamedLikeVsCode",
           TestWorkspaceShellPathlessComparisonTabIsNamedLikeVsCode);
+  AddTest(tests, "WorkspaceShell/AFileComparedWithAnUntitledBufferIsNamedByBothSides",
+          TestWorkspaceShellAFileComparedWithAnUntitledBufferIsNamedByBothSides);
   AddTest(tests, "WorkspaceShell/CompareTabUsesFilenameOnlyLabelAndTooltip",
           TestWorkspaceShellCompareTabUsesFilenameOnlyLabelAndTooltip);
   AddTest(tests, "WorkspaceShell/MergeTabUsesFilenameOnlyLabelAndTooltip",
