@@ -16,6 +16,39 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 
 ## Open items
 
+### TD-2026-11-10-437 — CI's qa monkey at scale 1.75: one-step anti-aliasing diffs under the software renderer. [OPEN]
+
+From `c20e96b4e` on, CI's `qa` and `qa-asan` monkey (seed 1; Xvfb, SDL 3.4.2
+software renderer, the monkey zoomed to scale 1.75) failed on QA-STALE findings
+whose every differing pixel is an anti-aliased glyph pixel off by exactly one
+step in one channel: editor text against the find widget's left edge, a tab
+label, a tab tooltip (`build/ci-c20`, `build/ci-21f`). `acec16bdd` was green;
+the monkey's action list diverges from that run at action 235 (a random
+right-click target), so seed 1 is not a fixed path and the runs did not exercise
+the same states. Replaying the failing runs locally under `SDL_RENDER_DRIVER=
+software` fails rarely (2 of 12 on `c20e96b4e`, 0 of 11 on `acec16bdd` and
+`21fbe6554`), so it is timing-dependent, and it does not look caused by
+`c20e96b4e` (Code Actions title truncation).
+
+Ruled out, with standalone SDL 3.4.2 programs (scratch, not in the tree): a
+clip edge through a blended texture changes no pixel it leaves visible, at scale
+1 or 1.75; a texture's first draw and its later ones are identical (no lazy RLE
+rounding). Found but NOT the cause: SDL's software blend of white coverage with
+a colour mod differs by one step from the same coverage pre-coloured, on almost
+every AA pixel, so `DrawEphemeralRuns` (the gutter's line numbers, atlas + colour
+mod) and the cached composite disagree -- which `TextRenderer ephemeral runs match
+the cached composite path` tolerates as "within SDL's blend rounding". Harmless
+today (line numbers always take the atlas path), but a trap: tinting composites
+the same way costs ~4.5x per blit on the software renderer (50 vs 11 us per
+600x20 run). A per-colour pre-tinted atlas would make the two paths identical at
+no blit cost.
+
+Lead for next time: in the local failure the stale frame (993) follows a burst of
+`fallback-full` frames and a `present-without-scene` around a window resize --
+full frames the verifier does not check. Something painted under a transient
+presentation that the later partial frames only partly cover would look exactly
+like this.
+
 ### TD-2026-11-09-436 — soak triage, 2026-11-09: what the first four hours left open. [OPEN]
 
 The soak runner's first four hours on `6d7e96e07` produced 113 signatures. The
