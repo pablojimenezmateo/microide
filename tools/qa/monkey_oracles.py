@@ -45,6 +45,13 @@ def _sha256_file(path: Path) -> str | None:
         return None
 
 
+
+
+def _doc_key(doc: dict[str, Any]) -> tuple[str, str]:
+    """A document across a relaunch: its path, or an untitled buffer's title --
+    within its project, since each project numbers its own Untitled-N."""
+    return (str(doc.get("project") or ""), str(doc.get("path") or doc.get("title")))
+
 class DataOracle:
     """The data-loss oracle. Stateless between checks except for the snapshot a
     kill -9 compares against."""
@@ -221,17 +228,17 @@ class DataOracle:
         deadline = time.monotonic() + 10 * q.SLOW_FACTOR
         after = self.documents(all_projects=True)
         while time.monotonic() < deadline:
-            keys = {(d.get("path") or d.get("title")) for d in after}
-            if all((d.get("path") or d.get("title")) in keys for d in dirty):
+            keys = {_doc_key(d) for d in after}
+            if all(_doc_key(d) in keys for d in dirty):
                 break
             time.sleep(0.2)
             after = self.documents(all_projects=True)
         self.last_kill = {"before": before, "after": after}
         if waited:
-            by_key = {(d.get("path") or d.get("title")): d for d in after}
+            by_key = {_doc_key(d): d for d in after}
             for doc in dirty:
                 key = doc.get("path") or doc.get("title")
-                back = by_key.get(key)
+                back = by_key.get(_doc_key(doc))
                 if back is None:
                     out.append(("data", f"the unsaved buffer {Path(str(key)).name} did not come back after a kill -9 "
                                         f"(the crash-safety flush had {CRASH_SAFETY_QUIET_S:.1f}s of quiet)"))
