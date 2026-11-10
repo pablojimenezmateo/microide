@@ -1884,9 +1884,13 @@ class App:
                 shown = label.lstrip("*")
                 if "↔" in title:
                     # ... or, with no file behind it (the clipboard against an
-                    # untitled buffer), the comparison's own name.
+                    # untitled buffer), the comparison's own name. The file's name
+                    # may carry its folder (" — qa-weird") when another tab in the
+                    # group has the same name, and the right side's label a note
+                    # ("long-line.txt (unsaved)"): soak cf41bb666445.
                     right = title.rsplit("↔", 1)[-1].strip()
-                    named = right.startswith(shown) or shown.startswith(right) or shown == title
+                    name = shown.split(" \u2014 ", 1)[0]
+                    named = right.startswith(name) or shown.startswith(right) or shown == title
                 else:
                     named = shown.startswith(title)
                 return label.startswith("*") == bool(tab.get("dirty")) and named
