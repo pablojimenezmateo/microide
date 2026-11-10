@@ -16,6 +16,20 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 
 ## Open items
 
+### TD-2026-11-10-438 — one ASan shard aborted inside glibc at thread exit. [OPEN]
+
+CI's `asan` job on `7d983b374` lost `microide_tests_shard_20` 2.8 s in, in the
+headless `Application/*` tests (sandbox on, software renderer), to
+`Fatal glibc error: arena.c:907 (__malloc_arena_thread_freeres): assertion
+failed: a->attached_threads > 0` -- glibc's own per-arena thread count went
+negative as a thread exited. No ASan report preceded it. It has not been seen in
+any earlier CI or soak log, and the same shard at the same commit under the local
+ASan build passed 30 of 30 (glibc 2.43 here, 2.39 on the runner). Under ASan,
+glibc's arenas are only touched by allocations ASan does not intercept, so the
+count it guards belongs to glibc, not to our heap. Watch for a second sighting
+before digging: if it returns, note the shard's test order and whether a thread
+in it was started by a forked-but-not-exec'd child or around a sandbox install.
+
 ### TD-2026-11-10-437 — CI's qa monkey at scale 1.75: one-step anti-aliasing diffs under the software renderer. [FIXED]
 
 From `c20e96b4e` on, CI's `qa` and `qa-asan` monkey (seed 1; Xvfb, SDL 3.4.2
