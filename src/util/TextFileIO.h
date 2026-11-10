@@ -59,6 +59,13 @@ std::string DescribeWriteError(const std::error_code& error);
 // an unreadable link, or a cycle. Shared by the text-save and persisted-record writers.
 std::filesystem::path ResolveSymlinkTarget(const std::filesystem::path& path);
 
+// The file `path` names with every link resolved -- the file's own (as
+// ResolveSymlinkTarget, so a dangling link names its intended target) and every
+// folder's on the way (`dir/loop/a.txt` with `loop -> .` is `dir/a.txt`). Two
+// paths name the same file exactly when these agree. Falls back to `path` on any
+// resolution error.
+std::filesystem::path ResolveRealPath(const std::filesystem::path& path);
+
 // Reads the 1-based inclusive line range [first_line, last_line] from a text file
 // WITHOUT materializing the whole file. Streams bytes in bounded chunks, counting
 // newlines, retaining only the bytes of in-range lines, and stops as soon as

@@ -226,15 +226,23 @@ bool TabCoordinator::ExternalChangeIsOwnEcho(const std::filesystem::path& path,
 std::vector<std::filesystem::path> TabCoordinator::OpenSymlinkAliasesOf(
     const std::filesystem::path& normalized_target) const {
   std::vector<std::filesystem::path> aliases;
+  // Resolved once, and only when some view was opened by another name: a project
+  // with no link anywhere pays one size check per view and no syscall.
+  std::optional<std::filesystem::path> real_target;
   for (const EditorGroup& group : state_.editor_groups) {
     for (const auto& tab : group.open_tabs) {
       if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
         continue;
       }
       const editor::TextViewport& viewport = tab.editor_state->viewport;
-      // Empty for every view not opened through a link: one size check each.
-      if (viewport.symlink_target().empty() ||
-          !util::SameAsNormalizedPath(viewport.symlink_target(), normalized_target)) {
+      if (viewport.real_path().empty() ||
+          util::SameAsNormalizedPath(viewport.path(), normalized_target)) {
+        continue;  // not opened through a link, or already routed by its own name
+      }
+      if (!real_target.has_value()) {
+        real_target = util::ResolveRealPath(normalized_target);
+      }
+      if (!util::SameAsNormalizedPath(viewport.real_path(), *real_target)) {
         continue;
       }
       const bool seen = std::any_of(aliases.begin(), aliases.end(), [&](const auto& alias) {

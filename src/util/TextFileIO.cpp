@@ -364,6 +364,12 @@ std::filesystem::path ResolveSymlinkTarget(const std::filesystem::path& path) {
   return path;  // loop guard tripped: keep the link node rather than chase a cycle
 }
 
+std::filesystem::path ResolveRealPath(const std::filesystem::path& path) {
+  std::error_code error;
+  std::filesystem::path real = std::filesystem::weakly_canonical(ResolveSymlinkTarget(path), error);
+  return error || real.empty() ? path : real;
+}
+
 std::string DescribeWriteError(const std::error_code& error) {
   if (!error) {
     return {};

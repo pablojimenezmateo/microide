@@ -230,9 +230,10 @@ class TabCoordinator {
   [[nodiscard]] bool ExternalChangeIsOwnEcho(const std::filesystem::path& path,
                                              std::uint64_t disk_content_hash,
                                              const util::FileSignature& read_signature) const;
-  // The paths of open editor views that name `normalized_target` through a
-  // symlink (TextViewport::symlink_target), each once. A change the watcher
-  // reports under the target is a change to these views as well.
+  // The paths of open editor views that name the file `normalized_target` names
+  // by another path -- through a symlinked file or folder (TextViewport::
+  // real_path) -- each once. A change the watcher reports under the file's real
+  // path is a change to these views as well.
   [[nodiscard]] std::vector<std::filesystem::path> OpenSymlinkAliasesOf(
       const std::filesystem::path& normalized_target) const;
   bool OpenUntitled();

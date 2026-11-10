@@ -10,6 +10,7 @@ here is checked against the bytes on disk, not only against the buffer.
 
 from __future__ import annotations
 
+import os
 from typing import Callable
 
 import microide_qa as q
@@ -427,6 +428,32 @@ def flow_save_round_trip(app: q.App) -> None:
         app.expect(False, message)
 
 
+def flow_file_alias(app: q.App) -> None:
+    """One file open under two paths -- its own and one through a symlinked
+    folder -- is one file: an edit saved through either path reaches the clean
+    tab of the other, which reloads, rather than being left holding the bytes the
+    file had before (soak `88696b6b00ac`, the `data` oracle's clean-buffer
+    mismatches under `qa-weird/loop/`)."""
+    import monkey_oracles as mo
+    assert app.project is not None
+    (app.project / "alias").mkdir(exist_ok=True)
+    (app.project / "alias/a.txt").write_text("one\ntwo\n")
+    link = app.project / "alias/loop"
+    if not link.exists():
+        os.symlink(".", link)
+    open_file(app, "alias/loop/a.txt")
+    open_file(app, "alias/a.txt")
+    app.key("ctrl+End")
+    app.type("three\n")
+    _save(app, "save through the real path")
+    app.expect(_bytes(app, "alias/a.txt") == b"one\ntwo\nthree\n",
+               f"the save reached the disk ({_bytes(app, 'alias/a.txt')!r})")
+    app.settle(1.5)
+    oracle = mo.DataOracle(app)
+    for kind, message in oracle.check_clean():
+        app.expect(False, message)
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "file-formats": flow_file_formats,
     "file-vanish": flow_file_vanish,
@@ -436,4 +463,5 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "save-all": flow_save_all,
     "revert-file": flow_revert_file,
     "save-round-trip": flow_save_round_trip,
+    "file-alias": flow_file_alias,
 }

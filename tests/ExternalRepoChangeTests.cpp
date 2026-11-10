@@ -766,6 +766,38 @@ void TestWorkspaceShellChangeToASymlinkTargetReloadsTheLinksCleanBuffer() {
          "and says so, on the link's tab");
 }
 
+// Soak `88696b6b00ac` and its family (`data` oracle: "the clean buffer of
+// bom.txt differs from its file on disk", under qa-weird/loop/): the same file
+// open twice, once through a symlinked FOLDER (`loop -> .`). The file itself is no
+// link, so the view recorded no symlink target, and a save from the other tab --
+// whose echo the watcher names by the file's real path, as it names every change
+// (FileIndexWatcher does not report through links) -- never reached it. The
+// folder-link view's clean buffer kept the old bytes for good.
+void TestWorkspaceShellChangeReachesAViewOpenedThroughASymlinkedFolder() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path real_path = root / "dir" / "a.txt";
+  const std::filesystem::path via_link = root / "dir" / "loop" / "a.txt";
+  WriteFile(real_path, "before\n");
+  std::filesystem::create_directory_symlink(".", root / "dir" / "loop");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "folder-link fixture should open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, via_link);
+  DrainProjectChanges(shell);
+
+  WriteFile(real_path, "after\n");
+  ForceDistinctModificationTime(real_path);
+  DispatchAndApply(shell, BuildModifiedBatch(root, "dir/a.txt"), "the change's batch");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "after",
+         "a clean view opened through a symlinked folder reloads when its file changes, got: " +
+             std::string(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0]));
+  Expect(WorkspaceShellTestAccess::HasReloadedNoticeBanner(shell, via_link),
+         "and says so, on that view's tab");
+}
+
 // The other half: saving through the link writes the target (the link is kept),
 // and the watcher's echo names the target. Routed to the link's view, it must
 // classify as that view's own write, not as an external change.
@@ -999,6 +1031,8 @@ void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellChangeToASymlinkTargetReloadsTheLinksCleanBuffer);
   AddTest(tests, "ExternalRepoChange/SaveThroughASymlinkIsItsOwnEcho",
           TestWorkspaceShellSaveThroughASymlinkIsItsOwnEcho);
+  AddTest(tests, "ExternalRepoChange/ChangeReachesAViewOpenedThroughASymlinkedFolder",
+          TestWorkspaceShellChangeReachesAViewOpenedThroughASymlinkedFolder);
   AddTest(tests, "ExternalRepoChange/FloodPastTheCapReloadsAnOpenFileItDidNotName",
           TestWorkspaceShellFloodPastTheCapReloadsAnOpenFileItDidNotName);
   AddTest(tests, "ExternalRepoChange/MarksGitSnapshotStaleOnHeadChange",
