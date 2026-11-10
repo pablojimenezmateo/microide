@@ -38,8 +38,11 @@ struct MenuSurfaceState {
   // a narrow row redraw on every hover transition, including disabled rows.
   int hovered_popup_row_index = -1;
   int hovered_submenu_row_index = -1;
+  // The overflow popup hangs from the menu bar's overflow chevron, read from the
+  // live layout wherever the popup is placed (MenuOverflowChevronRect). It used to
+  // keep the chevron's rect from when it opened, so after the window shrank it
+  // drew and took clicks at the old window's right edge (soak 0d4c9788e454).
   bool overflow_popup_open = false;
-  std::optional<SDL_FRect> overflow_popup_anchor_rect;
   // The pointer is over the menu bar's overflow chevron. The chevron paints its
   // hover fill from the pointer, so the motion path has to issue damage when
   // the pointer enters or leaves it; without this the fill stayed stale (found
@@ -59,18 +62,16 @@ struct MenuSurfaceState {
   std::uint64_t rows_run = 0;
 };
 
-// The overflow popup's three fields move together. Four call sites used to reset
+// The overflow popup's two fields move together. Four call sites used to reset
 // two of them by hand and leave the third, which is how the active index ended up
 // written-once and read-nowhere (TD-2026-09-19-296).
-inline void OpenMenuOverflowPopup(MenuSurfaceState& menu_state, const SDL_FRect& anchor_rect) {
+inline void OpenMenuOverflowPopup(MenuSurfaceState& menu_state) {
   menu_state.overflow_popup_open = true;
-  menu_state.overflow_popup_anchor_rect = anchor_rect;
   menu_state.overflow_popup_active_index = -1;
 }
 
 inline void CloseMenuOverflowPopup(MenuSurfaceState& menu_state) {
   menu_state.overflow_popup_open = false;
-  menu_state.overflow_popup_anchor_rect.reset();
   menu_state.overflow_popup_active_index = -1;
 }
 

@@ -745,11 +745,10 @@ util::InlineVector<SDL_FRect, 5> WorkspaceShell::CurrentChromeRects() const {
       rects.push_back(*submenu_rect);
     }
   }
-  if (context_.menu_state.overflow_popup_open &&
-      context_.menu_state.overflow_popup_anchor_rect.has_value()) {
+  if (const auto chevron = MenuOverflowChevronRect(layout->menu_bar);
+      context_.menu_state.overflow_popup_open && chevron.has_value()) {
     const auto overflow = ComputeOverflowMenuBarItems(layout->menu_bar);
-    rects.push_back(ComputeMenuOverflowPopupRect(*context_.menu_state.overflow_popup_anchor_rect,
-                                                 overflow.size()));
+    rects.push_back(ComputeMenuOverflowPopupRect(*chevron, overflow.size()));
   }
   if (context_.menu_state.tree_context_menu.open) {
     if (const auto tree_menu_rect = ComputeTreeContextMenuRect(); tree_menu_rect.has_value()) {

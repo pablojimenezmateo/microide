@@ -172,6 +172,37 @@ void TestWorkspaceShellMenuBarShowsChevronWhenTruncated() {
   }
 }
 
+// Soak 0d4c9788e454 (and babc9f534d1c): the overflow popup kept the chevron's
+// rect from when it opened, so after the window shrank it still drew -- and took
+// clicks -- at the old window's right edge, outside the new one. It follows the
+// chevron, and closes with it once nothing overflows.
+void TestWorkspaceShellMenuOverflowPopupFollowsTheWindow() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 420, 720);
+  const auto chevron = WorkspaceShellTestAccess::MenuOverflowChevronRect(shell);
+  Expect(chevron.has_value(), "a narrow window overflows the menu bar");
+  SDL_Event click{};
+  click.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+  click.button.button = SDL_BUTTON_LEFT;
+  click.button.x = chevron->x + chevron->w * 0.5f;
+  click.button.y = chevron->y + chevron->h * 0.5f;
+  Expect(shell.HandleEvent(click).handled && WorkspaceShellTestAccess::MenuOverflowPopupOpen(shell),
+         "the chevron opens the overflow popup");
+
+  WorkspaceShellTestAccess::SetWindowSize(shell, 300, 720);
+  const auto popup = WorkspaceShellTestAccess::MenuOverflowPopupRect(shell);
+  const auto moved = WorkspaceShellTestAccess::MenuOverflowChevronRect(shell);
+  Expect(popup.has_value() && moved.has_value() && popup->x >= 0.0f && popup->x + popup->w <= 300.0f,
+         "after the window shrinks the popup is inside it: x " + std::to_string(popup ? popup->x : -1.0f) +
+             ", w " + std::to_string(popup ? popup->w : -1.0f));
+
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1600, 720);
+  Expect(!WorkspaceShellTestAccess::MenuOverflowChevronRect(shell).has_value() &&
+             !WorkspaceShellTestAccess::MenuOverflowPopupRect(shell).has_value(),
+         "once nothing overflows there is no overflow popup");
+}
+
 void TestWorkspaceShellCompactMenuOverflowButtonIsInteractive() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 280, 720);
@@ -6707,6 +6738,7 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMenuBarShowsChevronWhenTruncated);
   AddTest(tests, "WorkspaceShell/CompactMenuOverflowButtonIsInteractive",
           TestWorkspaceShellCompactMenuOverflowButtonIsInteractive);
+  AddTest(tests, "WorkspaceShell/MenuOverflowPopupFollowsTheWindow", TestWorkspaceShellMenuOverflowPopupFollowsTheWindow);
   AddTest(tests, "WorkspaceShell/CompactMenuOverflowPaintsWhatAFullRepaintPaints",
           TestWorkspaceShellCompactMenuOverflowPaintsWhatAFullRepaintPaints);
   AddTest(tests, "WorkspaceShell/CompactMenuOverflowRowsOpenAnchoredMenus",

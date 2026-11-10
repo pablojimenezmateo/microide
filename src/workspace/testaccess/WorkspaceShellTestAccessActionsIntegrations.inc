@@ -226,8 +226,8 @@
   static void SetTreeContextMenuActiveItemIndexForTest(WorkspaceShell& shell, int index) {
     shell.context_.menu_state.tree_context_menu.active_item_index = index;
   }
-  static void OpenMenuOverflowPopupForTest(WorkspaceShell& shell, const SDL_FRect& anchor_rect) {
-    OpenMenuOverflowPopup(shell.context_.menu_state, anchor_rect);
+  static void OpenMenuOverflowPopupForTest(WorkspaceShell& shell) {
+    OpenMenuOverflowPopup(shell.context_.menu_state);
   }
   // True when the last painted frame had at least one menu popup on screen.
   // RenderMenuPopups is a chain of early returns; without this a paint test that

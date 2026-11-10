@@ -143,8 +143,7 @@ void TestOverflowPopupPaints() {
   Expect(WorkspaceShellTestAccess::MenuBarOverflowItemCount(shell) > 0,
          "a narrow window must actually overflow the menu bar, or this paints nothing");
 
-  WorkspaceShellTestAccess::OpenMenuOverflowPopupForTest(
-      shell, SDL_FRect{static_cast<float>(kWidth) - 40.0f, 2.0f, 28.0f, 24.0f});
+  WorkspaceShellTestAccess::OpenMenuOverflowPopupForTest(shell);
   PaintWithAPopup(shell, canvas, "the overflow popup should be open");
 
   // With a row highlighted. The overflow rows' hovered fill reads the active
@@ -204,8 +203,7 @@ void TestMenuPopupsPaintAtDegenerateWindowSizes() {
       WorkspaceShellTestAccess::OpenMenuBarMenuForTest(shell, MenuId::File);
       WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
 
-      WorkspaceShellTestAccess::OpenMenuOverflowPopupForTest(
-          shell, SDL_FRect{static_cast<float>(width) - 10.0f, 2.0f, 28.0f, 24.0f});
+      WorkspaceShellTestAccess::OpenMenuOverflowPopupForTest(shell);
       WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
 
       WorkspaceShellTestAccess::OpenTreeContextMenuForPath(shell, TreeContextTargetKind::File,

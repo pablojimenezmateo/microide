@@ -229,10 +229,10 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                          menus.tree_context_menu.active_item_index, *popup, "context");
               }
             }
-            if (menus.overflow_popup_open && menus.overflow_popup_anchor_rect.has_value()) {
+            if (const auto chevron = MenuOverflowChevronRect(layout.menu_bar);
+                menus.overflow_popup_open && chevron.has_value()) {
               const auto overflow = ComputeOverflowMenuBarItems(layout.menu_bar);
-              const SDL_FRect popup =
-                  ComputeMenuOverflowPopupRect(*menus.overflow_popup_anchor_rect, overflow.size());
+              const SDL_FRect popup = ComputeMenuOverflowPopupRect(*chevron, overflow.size());
               for (std::size_t i = 0; i < overflow.size(); ++i) {
                 const std::string label = menu_name(overflow[i]);
                 AddControlUiElement(out, kMenuItem, "more/" + label,

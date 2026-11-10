@@ -355,11 +355,11 @@
   }
   static std::optional<SDL_FRect> MenuOverflowPopupRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    if (!shell.context_.menu_state.overflow_popup_anchor_rect.has_value()) {
+    const auto chevron = shell.MenuOverflowChevronRect(layout.menu_bar);
+    if (!shell.context_.menu_state.overflow_popup_open || !chevron.has_value()) {
       return std::nullopt;
     }
-    return ComputeMenuOverflowPopupRect(*shell.context_.menu_state.overflow_popup_anchor_rect,
-                                        shell.ComputeOverflowMenuBarItems(layout.menu_bar).size());
+    return ComputeMenuOverflowPopupRect(*chevron, shell.ComputeOverflowMenuBarItems(layout.menu_bar).size());
   }
   static std::optional<SDL_FRect> MenuBarItemRect(WorkspaceShell& shell, std::string_view label) {
     const WorkspaceLayout layout = CurrentLayout(shell);

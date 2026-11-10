@@ -87,12 +87,11 @@ std::size_t MenuCoordinator::MenuOverflowItemCount() const {
 
 bool MenuCoordinator::OpenMenuOverflowItem(std::size_t index) {
   const MenuBarOverflowIds overflow = operations_.overflow_menu_bar_items();
-  if (index >= overflow.size() || !menu_state_.overflow_popup_anchor_rect.has_value()) {
+  const std::optional<SDL_FRect> chevron = operations_.menu_overflow_chevron_rect();
+  if (index >= overflow.size() || !chevron.has_value()) {
     return false;
   }
-  const SDL_FRect row = MenuOverflowPopupRowRect(
-      ComputeMenuOverflowPopupRect(*menu_state_.overflow_popup_anchor_rect, overflow.size()),
-      index);
+  const SDL_FRect row = MenuOverflowPopupRowRect(ComputeMenuOverflowPopupRect(*chevron, overflow.size()), index);
   const MenuId picked = overflow[index];
   CloseMenuOverflowPopup();
   OpenAnchoredMenu(picked, row);
@@ -100,10 +99,11 @@ bool MenuCoordinator::OpenMenuOverflowItem(std::size_t index) {
 }
 
 void MenuCoordinator::CloseMenuOverflowPopup() {
-  if (menu_state_.overflow_popup_open && menu_state_.overflow_popup_anchor_rect.has_value() &&
-      operations_.request_redraw_rect) {
-    operations_.request_redraw_rect(ComputeMenuOverflowPopupRect(
-        *menu_state_.overflow_popup_anchor_rect, operations_.overflow_menu_bar_items().size()));
+  if (menu_state_.overflow_popup_open && operations_.request_redraw_rect) {
+    if (const std::optional<SDL_FRect> chevron = operations_.menu_overflow_chevron_rect(); chevron.has_value()) {
+      operations_.request_redraw_rect(
+          ComputeMenuOverflowPopupRect(*chevron, operations_.overflow_menu_bar_items().size()));
+    }
   }
   workspace::CloseMenuOverflowPopup(menu_state_);
 }
@@ -297,6 +297,11 @@ MenuCoordinator& WorkspaceShell::MakeMenuCoordinator() {
                 const auto layout = CurrentWorkspaceLayout();
                 return layout.has_value() ? ComputeOverflowMenuBarItems(layout->menu_bar)
                                           : MenuBarOverflowIds{};
+              },
+          .menu_overflow_chevron_rect =
+              [this]() -> std::optional<SDL_FRect> {
+                const auto layout = CurrentWorkspaceLayout();
+                return layout.has_value() ? MenuOverflowChevronRect(layout->menu_bar) : std::nullopt;
               },
           .menu_popup_item_rect =
               [this](MenuId id, std::size_t item_index) -> std::optional<SDL_FRect> {

@@ -124,10 +124,10 @@ bool ChromeMouseCoordinator::HandleMotion(const SDL_Event& event, const Workspac
 // longer chrome, so a close that relied on it left the popup's pixels behind
 // (found by the QA menu-clicks sweep in the compact layout).
 void ChromeMouseCoordinator::CloseOverflowPopupWithRedraw(const WorkspaceLayout& layout) {
-  if (menu_state_.overflow_popup_open && menu_state_.overflow_popup_anchor_rect.has_value()) {
+  if (const auto chevron = operations_.menu_overflow_chevron_rect(layout.menu_bar);
+      menu_state_.overflow_popup_open && chevron.has_value()) {
     const auto overflow_specs = operations_.compute_overflow_menu_bar_items(layout.menu_bar);
-    operations_.request_redraw_rect(
-        ComputeMenuOverflowPopupRect(*menu_state_.overflow_popup_anchor_rect, overflow_specs.size()));
+    operations_.request_redraw_rect(ComputeMenuOverflowPopupRect(*chevron, overflow_specs.size()));
   }
   CloseMenuOverflowPopup(menu_state_);
 }
@@ -204,16 +204,16 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
       CloseOverflowPopupWithRedraw(layout);
     } else {
       operations_.close_menu_bar();
-      OpenMenuOverflowPopup(menu_state_, *chevron_rect);
+      OpenMenuOverflowPopup(menu_state_);
     }
     operations_.request_chrome_redraw();
     return true;
   }
 
-  if (menu_state_.overflow_popup_open && menu_state_.overflow_popup_anchor_rect.has_value()) {
+  if (const auto chevron = operations_.menu_overflow_chevron_rect(layout.menu_bar);
+      menu_state_.overflow_popup_open && chevron.has_value()) {
     const auto overflow_specs = operations_.compute_overflow_menu_bar_items(layout.menu_bar);
-    const SDL_FRect popup = ComputeMenuOverflowPopupRect(*menu_state_.overflow_popup_anchor_rect,
-                                                          overflow_specs.size());
+    const SDL_FRect popup = ComputeMenuOverflowPopupRect(*chevron, overflow_specs.size());
     if (Contains(popup, event.button.x, event.button.y)) {
       if (const auto row = MenuOverflowPopupRowAt(popup, overflow_specs.size(), event.button.x,
                                                   event.button.y);
@@ -313,12 +313,12 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
 
 bool ChromeMouseCoordinator::HandleMenuOverflowPopupMotion(const SDL_Event& event,
                                                           const WorkspaceLayout& layout) {
-  if (!menu_state_.overflow_popup_open || !menu_state_.overflow_popup_anchor_rect.has_value()) {
+  const auto chevron = operations_.menu_overflow_chevron_rect(layout.menu_bar);
+  if (!menu_state_.overflow_popup_open || !chevron.has_value()) {
     return false;
   }
   const auto overflow_specs = operations_.compute_overflow_menu_bar_items(layout.menu_bar);
-  const SDL_FRect popup =
-      ComputeMenuOverflowPopupRect(*menu_state_.overflow_popup_anchor_rect, overflow_specs.size());
+  const SDL_FRect popup = ComputeMenuOverflowPopupRect(*chevron, overflow_specs.size());
   const auto row =
       MenuOverflowPopupRowAt(popup, overflow_specs.size(), event.motion.x, event.motion.y);
   const int hovered = row.has_value() ? static_cast<int>(*row) : -1;

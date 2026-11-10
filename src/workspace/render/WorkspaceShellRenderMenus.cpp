@@ -54,12 +54,11 @@ void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer,
     }
   }
 
-  if (context_.menu_state.overflow_popup_open &&
-      context_.menu_state.overflow_popup_anchor_rect.has_value()) {
+  const auto overflow_chevron = MenuOverflowChevronRect(layout.menu_bar);
+  if (context_.menu_state.overflow_popup_open && overflow_chevron.has_value()) {
     const auto overflow = ComputeOverflowMenuBarItems(layout.menu_bar);
     if (!overflow.empty()) {
-      const SDL_FRect popup = ComputeMenuOverflowPopupRect(
-          *context_.menu_state.overflow_popup_anchor_rect, overflow.size());
+      const SDL_FRect popup = ComputeMenuOverflowPopupRect(*overflow_chevron, overflow.size());
       DrawCardFrame(renderer, theme_, popup, CardStyle::Overlay);
       // Hover comes from the active index, which the motion path and the keyboard
       // both write, rather than from the live pointer: this popup used to be the

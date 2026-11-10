@@ -318,11 +318,10 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     }
   }
 
-  if (context_.menu_state.overflow_popup_open &&
-      context_.menu_state.overflow_popup_anchor_rect.has_value()) {
+  if (const auto chevron = MenuOverflowChevronRect(layout.menu_bar);
+      context_.menu_state.overflow_popup_open && chevron.has_value()) {
     const auto overflow = ComputeOverflowMenuBarItems(layout.menu_bar);
-    const SDL_FRect popup = ComputeMenuOverflowPopupRect(
-        *context_.menu_state.overflow_popup_anchor_rect, overflow.size());
+    const SDL_FRect popup = ComputeMenuOverflowPopupRect(*chevron, overflow.size());
     if (Contains(popup, x, y)) {
       return CursorKind::Pointer;
     }

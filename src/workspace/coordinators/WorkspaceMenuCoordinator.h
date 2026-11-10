@@ -25,6 +25,9 @@ class MenuCoordinator {
     // The menu-bar items that did not fit, in order. Depends on the live
     // menu-bar rect, which this coordinator does not see.
     std::function<MenuBarOverflowIds()> overflow_menu_bar_items;
+    // The live overflow chevron the overflow popup hangs from, or nullopt when
+    // nothing overflows.
+    std::function<std::optional<SDL_FRect>()> menu_overflow_chevron_rect;
     std::function<std::optional<SDL_FRect>(MenuId, std::size_t)> menu_popup_item_rect;
     std::function<bool(MenuId, std::size_t)> execute_custom_menu_item;
     std::function<bool(ActionId, const std::vector<std::string>&, ActionSource)> execute_action;
