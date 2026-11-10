@@ -44,6 +44,11 @@ struct PersistedEditorTabState {
   // A dirty snapshot of a file that opened with a UTF-8 BOM: the buffer lines
   // hold the text after the mark, and the restored viewport writes it back.
   bool utf8_bom = false;
+  // An untitled buffer's number (its "Untitled-N"), so a restore gives it back the
+  // name it had: numbered afresh, an Untitled-3 after an empty, unpersisted
+  // Untitled-2 came back as Untitled-2 (soak d36a78ef295c). 0: a file, or an
+  // older session (the restore numbers those).
+  std::uint32_t untitled_number = 0;
   // A dirty snapshot's baseline: the file on disk as the buffer last saw it (its
   // viewport's disk signature). Restored with the snapshot so a save after a crash
   // still refuses to overwrite a file someone changed while microide was down --

@@ -1909,6 +1909,45 @@ void TestWorkspaceShellRestoreSessionPreservesDirtyUntitledBufferContent() {
          "untitled session restore should preserve the dirty state");
 }
 
+// Soak d36a78ef295c: an unsaved Untitled-3 came back after a kill -9 as
+// Untitled-2, because the empty Untitled-2 before it is not persisted and the
+// restore numbered from one. A restored untitled buffer keeps its name.
+void TestWorkspaceShellRestoreSessionKeepsAnUntitledBuffersNumber() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "root\n");
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(temp_dir.path() / "home");
+  ScopedEnvVar scoped_home("HOME", (temp_dir.path() / "home").string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+  {
+    WorkspaceShell shell;
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    for (const char* text : {"one", "", "three"}) {
+      Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tab"), "a new untitled tab");
+      if (*text != '\0') {
+        Expect(WorkspaceShellTestAccess::HandleTextInput(shell, text), "typing into it");
+      }
+    }
+    WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell);
+  }
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored), "restore succeeds");
+  std::string seen;
+  bool three_kept_its_name = false;
+  for (std::size_t tab = 0; tab < WorkspaceShellTestAccess::FocusedGroupOpenTabCount(restored); ++tab) {
+    WorkspaceShellTestAccess::ActivateTab(restored, tab);
+    const auto& view = WorkspaceShellTestAccess::ActiveEditor(restored);
+    const std::string title = WorkspaceShellTestAccess::TabDisplayTitle(restored, tab);
+    const std::string text = view.lines().empty() ? std::string() : std::string(view.lines()[0]);
+    seen += title + "=" + text + "; ";
+    three_kept_its_name = three_kept_its_name || (text == "three" && title.ends_with("Untitled-3"));
+  }
+  Expect(three_kept_its_name, "the unsaved Untitled-3 comes back as Untitled-3 (" + seen + ")");
+}
+
 void TestWorkspaceShellQuitShutdownPersistsDirtyEditorBuffers() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3708,6 +3747,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCrashSafetyRestoresABufferOpenedThroughASymlinkedFolder);
   AddTest(tests, "WorkspaceShell/CrashSafetyRestoresABufferWhoseFolderDoesNotExist",
           TestWorkspaceShellCrashSafetyRestoresABufferWhoseFolderDoesNotExist);
+  AddTest(tests, "WorkspaceShell/RestoreSessionKeepsAnUntitledBuffersNumber",
+          TestWorkspaceShellRestoreSessionKeepsAnUntitledBuffersNumber);
   AddTest(tests, "WorkspaceShell/ACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown",
           TestWorkspaceShellACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown);
   AddTest(tests, "WorkspaceShell/CrashSafetyFlushTimerArmsOnEdit",

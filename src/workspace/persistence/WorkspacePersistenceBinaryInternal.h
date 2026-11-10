@@ -189,6 +189,7 @@ enum class EditorTabTag : std::uint16_t {
   CollapsedFold = 34,  // repeated; one opener line per record
   DiskBaseline = 35,   // bool exists, u64 mtime ticks, u64 size: a dirty snapshot's baseline
   DiskBaselineContent = 36,  // u64 content hash, u64 hash probe: after DiskBaseline, when known
+  UntitledNumber = 37,       // u32: an untitled buffer's "Untitled-N"
 };
 
 enum class WorkspaceSessionTag : std::uint16_t {
@@ -471,6 +472,11 @@ bool ReadStringRecord(EnumTag expected_tag,
                     out)) {
     return false;
   }
+  if (tab.untitled_number != 0 &&
+      !AppendRecord(EditorTabTag::UntitledNumber,
+                    [&](PrimitiveWriter& w) { return w.WriteU32(tab.untitled_number); }, out)) {
+    return false;
+  }
   for (const std::size_t opener : tab.collapsed_fold_openers) {
     if (!AppendRecord(EditorTabTag::CollapsedFold,
                       [&](PrimitiveWriter& w) { return WriteSize(w, opener); }, out)) {
@@ -504,6 +510,7 @@ inline constexpr std::size_t kMaxSessionBufferLines = 4'000'000;
 inline constexpr std::size_t kMaxSessionBufferBytes = 64u * 1024 * 1024;  // 64 MiB snapshot
 inline constexpr std::size_t kMaxSessionMergeHunkChoices = 200'000;
 inline constexpr std::size_t kMaxSessionTabsPerGroup = 4096;
+inline constexpr std::uint32_t kMaxSessionUntitledNumber = 1'000'000;
 inline constexpr std::size_t kMaxSessionCollapsedFolds = kMaxPersistedCollapsedFolds;
 inline constexpr std::size_t kMaxSessionClosedEditors = kMaxPersistedClosedEditors;
 
@@ -534,6 +541,16 @@ inline constexpr std::size_t kMaxSessionClosedEditors = kMaxPersistedClosedEdito
             return reader.ReadBool(&tab->dirty_snapshot) && reader.remaining() == 0;
           case EditorTabTag::Utf8Bom:
             return reader.ReadBool(&tab->utf8_bom) && reader.remaining() == 0;
+          case EditorTabTag::UntitledNumber: {
+            std::uint32_t number = 0;
+            if (!reader.ReadU32(&number) || reader.remaining() != 0) {
+              return false;
+            }
+            // A number no session of real tabs reaches is dropped (the restore
+            // numbers the tab afresh), not trusted into a title.
+            tab->untitled_number = number <= kMaxSessionUntitledNumber ? number : 0;
+            return true;
+          }
           case EditorTabTag::DiskBaseline: {
             PersistedEditorTabState::DiskBaseline baseline;
             if (!reader.ReadBool(&baseline.exists) || !reader.ReadU64(&baseline.mtime_ticks) ||

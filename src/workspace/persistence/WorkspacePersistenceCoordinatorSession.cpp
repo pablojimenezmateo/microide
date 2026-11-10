@@ -474,15 +474,19 @@ bool PersistenceCoordinator::RestoreSessionState() {
 
     const std::filesystem::path tab_path = operations_.editor_view_path(editor_state);
 
+    // An untitled buffer keeps the number it had; one from an older session gets
+    // the next free one (NumberUntitledTabs, below).
+    const std::uint32_t untitled_number = tab_path.empty() ? persisted_tab.untitled_number : 0;
     TabEntry restored_tab{
         .kind = TabEntry::Kind::Editor,
         .path = tab_path,
-        .title = TabTitleForPath(tab_path, 0),
+        .title = TabTitleForPath(tab_path, untitled_number),
         .editor_state = std::nullopt,
         .deferred_handle = std::nullopt,
         .compare = std::nullopt,
         .merge = std::nullopt,
     };
+    restored_tab.untitled_number = untitled_number;
     if (should_eager_hydrate) {
       restored_tab.editor_state = std::move(editor_state);
     } else {
@@ -855,6 +859,7 @@ PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t /*tab_index*/,
     WriteViewState(*view, persisted_tab);
   }
   persisted_tab.dirty_snapshot = persist_dirty;
+  persisted_tab.untitled_number = normalized_path.empty() ? tab.untitled_number : 0;
   persisted_tab.line_ending = persisted_viewport->line_ending();
   persisted_tab.utf8_bom = persist_dirty && persisted_viewport->has_utf8_bom();
   // Shares the piece tree's buffers: no copy of the text here, on the shell
