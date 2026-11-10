@@ -302,3 +302,29 @@ class OrphanedWorkTreeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PressGuardTests(unittest.TestCase):
+    """A monkey press is refused where it would end the run: on a window control,
+    whatever layout the source that chose it had read (soak 7ab9a5476905)."""
+
+    UI = {"elements": [{"name": "button:window/maximize", "rect": [770, 3, 19, 19]},
+                       {"name": "button:window/close", "rect": [793, 3, 19, 19]},
+                       {"name": "tab:0/a.txt", "rect": [300, 27, 60, 32]}]}
+
+    def test_a_guarded_click_or_drag_sends_and_records_nothing(self):
+        app = SimpleNamespace(press_guard=lambda x, y: True, _await_click_gap=Mock(), _record=Mock())
+        q.App.click(app, 796, 18)
+        q.App.drag(app, 796, 18, 400, 300)
+        app._record.assert_not_called()
+        app._await_click_gap.assert_not_called()
+
+    def test_the_monkey_refuses_a_press_on_close_or_maximize_from_a_fresh_layout(self):
+        import monkey as m
+        monkey = SimpleNamespace(app=SimpleNamespace(ui=Mock(return_value=self.UI)),
+                                 _forbidden_rects=m.Monkey._forbidden_rects, _inside=m.Monkey._inside)
+        guard = m.Monkey._press_lands_on_forbidden
+        self.assertTrue(guard(monkey, 796, 18))
+        self.assertTrue(guard(monkey, 779, 12))
+        self.assertFalse(guard(monkey, 330, 40))
+        self.assertEqual(monkey.app.ui.call_count, 3)

@@ -340,6 +340,10 @@ class App:
     # Set while the monkey runs a burst: actions recorded then carry "b": 1, and a
     # replay sends them with no settle or check between (the timing they had).
     in_burst: bool = False
+    # Set by the monkey while it generates actions: given a press point, True when
+    # the press must not happen (it would land on a window control and end the
+    # run). click() and drag() then send and record nothing.
+    press_guard: Callable[[float, float], bool] | None = None
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -1157,6 +1161,8 @@ class App:
               modifiers: tuple[str, ...] = ()) -> None:
         """A press at window (x, y); `modifiers` are xdotool key names held for it
         ("alt", "shift", "ctrl")."""
+        if self.press_guard is not None and self.press_guard(x, y):
+            return
         self._await_click_gap(x, y)
         self._record({"click": [round(x), round(y)], "button": button, "clicks": clicks,
                       "modifiers": list(modifiers)})
@@ -1195,6 +1201,8 @@ class App:
         past an edge waiting for its autoscroll, say -- on either backend. With
         `clicks` > 1 the held press is the last of that many (a double-click drag
         extends by words, a triple-click drag by lines)."""
+        if self.press_guard is not None and self.press_guard(x0, y0):
+            return
         self._await_click_gap(x0, y0)
         self._record({"drag": [round(x0), round(y0), round(x1), round(y1)],
                       "modifiers": list(modifiers), "clicks": clicks})

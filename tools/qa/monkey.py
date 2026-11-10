@@ -132,7 +132,10 @@ PASTE_TEXTS = [
 
 # What the pointer must never press: it ends the run or opens a native dialog that
 # blocks the event loop on a portal nobody answers under Xvfb.
-FORBIDDEN_ELEMENTS = ("button:window/close", "button:window/minimize")
+# Maximize too: the harness, not a window manager, owns the window's size, and
+# Maximize sits beside Close -- a press aimed at it from a layout read before a
+# resize or a scale change settled landed on Close and ended the run.
+FORBIDDEN_ELEMENTS = ("button:window/close", "button:window/minimize", "button:window/maximize")
 FORBIDDEN_LABELS = ("Quit", "Exit", "Open File", "Open Folder", "Save As", "Close Window",
                     "Open Font", "Choose Font")
 FORBIDDEN_BINDINGS = ("quit", "open-file", "open-folder", "project-open", "save-as")
@@ -647,6 +650,27 @@ class Monkey:
         return (name in FORBIDDEN_ELEMENTS or any(label.startswith(bad) for bad in FORBIDDEN_LABELS)
                 or any(setting in name for setting in FORBIDDEN_SETTINGS))
 
+    @classmethod
+    def _forbidden_rects(cls, ui: dict[str, Any]) -> list[list[float]]:
+        return [element["rect"] for element in ui.get("elements", [])
+                if element.get("rect") and cls._forbidden(element)]
+
+    @staticmethod
+    def _inside(rects: list[list[float]], x: float, y: float) -> bool:
+        return any(rx <= x < rx + rw and ry <= y < ry + rh for rx, ry, rw, rh in rects)
+
+    def _press_lands_on_forbidden(self, x: float, y: float) -> bool:
+        """App.press_guard while the monkey runs. Every source aims from SOME read
+        of the layout -- the text source from the last check's, the element source
+        from one taken before it chose -- and the layout can move in between (a
+        resize or ui.scale still settling). Read it again at the press, so no
+        source can land on Close, whatever it aimed at."""
+        try:
+            ui = self.app.ui()
+        except q.QaFailure:
+            return False
+        return self._inside(self._forbidden_rects(ui), x, y)
+
     def _ui(self) -> dict[str, Any]:
         ui = self.app.ui()
         self.app.last_ui = ui
@@ -848,14 +872,10 @@ class Monkey:
         # Below the menu bar's window controls: a random click there could close
         # the window. And never on a forbidden element (a menu's Quit row, the
         # control channel's setting) -- a random point used to land on them.
-        forbidden = [element.get("rect") for element in self._ui().get("elements", [])
-                     if self._forbidden(element) and element.get("rect")]
-
-        def blocked(x: int, y: int) -> bool:
-            return any(rx <= x < rx + rw and ry <= y < ry + rh for rx, ry, rw, rh in forbidden)
+        forbidden = self._forbidden_rects(self._ui())
         for _ in range(20):
             x, y = self.rng.randrange(0, max(1, w - 160)), self.rng.randrange(30, max(31, h))
-            if not blocked(x, y):
+            if not self._inside(forbidden, x, y):
                 self.app.click(x, y, button=3 if self.rng.random() < 0.15 else 1)
                 return "point"
         return "point"
@@ -1101,6 +1121,7 @@ class Monkey:
         """Runs `steps` actions (or until `time_budget` seconds, or max_findings
         distinct findings). Returns True when clean."""
         started = time.monotonic()
+        self.app.press_guard = self._press_lands_on_forbidden
         self.resources.sample()
         self._start_from_corpus(corpus_probability)
         for index in range(steps):
