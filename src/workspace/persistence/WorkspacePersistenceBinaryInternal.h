@@ -4,12 +4,14 @@
 
 #include "compare/BranchReviewStateService.h"
 #include "persistence/PersistedRecord.h"
+#include "util/Log.h"
 
 #include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <limits>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -277,6 +279,10 @@ bool AppendRecord(EnumTag tag, WritePayload write_payload, std::vector<std::byte
   std::vector<std::byte> payload;
   PrimitiveWriter writer(&payload);
   if (!write_payload(writer)) {
+    // One line per enclosing record as the failure unwinds, innermost first: a
+    // value the format cannot hold (a size past 32 bits) drops the whole record,
+    // and for a session that is every crash-safety flush until it changes.
+    util::Log("persistence: could not encode record tag " + std::to_string(static_cast<unsigned>(tag)));
     return false;
   }
   return AppendTaggedRecord(static_cast<std::uint16_t>(tag), payload, out);

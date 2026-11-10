@@ -93,6 +93,7 @@ FINDING_MARKERS = (
     # A persisted record (the session a kill -9 restores from) that did not land,
     # or that landed and its own reader rejects: a restore that goes back in time.
     "persistence: could not write",
+    "persistence: could not encode",
     "read but did not decode",
 )
 

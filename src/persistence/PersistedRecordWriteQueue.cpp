@@ -50,6 +50,9 @@ void PersistedRecordWriteQueue::QueueEncoded(const std::filesystem::path& path,
     std::vector<std::byte> body;
     if (encode && encode(&body)) {
       ApplyWrite(path, key, std::move(body), capability_flags);
+    } else if (encode) {
+      // Dropped like a failed write -- the caller was told "accepted" -- so said.
+      util::Log("persistence: could not encode " + path.string());
     }
     Finish(sequence);
   });
