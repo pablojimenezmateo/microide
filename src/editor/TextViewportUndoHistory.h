@@ -202,6 +202,10 @@ class TextViewportUndoHistory {
   // successful save so that undoing PAST the save (or redoing forward) correctly
   // reports the buffer as differing from disk.
   void MarkSaved();
+  // No reachable position matches the file any more: it changed on disk under
+  // unsaved edits. Every position then reads dirty, so undoing back to where the
+  // buffer was last read or saved no longer calls it clean.
+  void MarkNoPositionSaved();
 
   // Heap bytes both stacks are holding, including the group scratch. Part of
   // the per-tab retention accounting TD-2026-08-06-142 asked for, and the one

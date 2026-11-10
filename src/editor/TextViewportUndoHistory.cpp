@@ -404,6 +404,17 @@ void TextViewportUndoHistory::PushRedo(Entry entry) {
   redo_stack_.push_back(std::move(entry));
 }
 
+void TextViewportUndoHistory::MarkNoPositionSaved() {
+  for (Entry& entry : undo_stack_) {
+    entry.before_state.dirty = true;
+    entry.after_state.dirty = true;
+  }
+  for (Entry& entry : redo_stack_) {
+    entry.before_state.dirty = true;
+    entry.after_state.dirty = true;
+  }
+}
+
 void TextViewportUndoHistory::MarkSaved() {
   // Dirty is tracked per undo/redo position via the captured ViewState flags. The
   // freshly-saved buffer is the one clean position; every OTHER reachable position

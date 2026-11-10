@@ -490,6 +490,11 @@ class TextViewport {
   // changing nothing, when the two differ in line ending, encoding or BOM: an
   // edit cannot carry that, and the caller reloads instead.
   bool RevertToDiskContent(const TextViewport& disk);
+  // The file changed on disk while this buffer had unsaved edits, and the user
+  // has not yet chosen to reload or overwrite: the content it was read or saved
+  // with is no longer the file's, so no undo position is clean (the soak's
+  // 3b57c171523f: an undo back to it read clean and differed from disk).
+  void NoteDiskChangedUnderEdits();
   std::size_t cursor_line() const { return cursor_line_; }
   std::size_t cursor_column() const { return cursor_column_; }
   std::size_t cursor_visual_column() const;

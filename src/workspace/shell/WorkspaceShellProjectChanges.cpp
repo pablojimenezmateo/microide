@@ -309,6 +309,7 @@ void WorkspaceShell::ApplyExternalFileChange(const std::filesystem::path& normal
   PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
   if (MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
           .HasDirtyEditorTabsForPath(normalized_path, nullptr)) {
+    editor_tabs.NoteDiskChangedUnderEditsForPath(normalized_path);
     dirty_external_paths.insert(normalized_path);
     return;
   }

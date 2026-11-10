@@ -45,6 +45,7 @@ class EditorTabService {
   bool ReloadCleanEditorTabsForPath(const std::filesystem::path& path,
                                     EchoGuard echo_guard = EchoGuard::Check);
   void ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path);
+  void NoteDiskChangedUnderEditsForPath(const std::filesystem::path& path);
   bool RevertEditorTabsForPath(const std::filesystem::path& path);
   bool ReopenEditor(DeferredTabHandle view);
   bool OverwriteEditorTabsForPath(const std::filesystem::path& path);

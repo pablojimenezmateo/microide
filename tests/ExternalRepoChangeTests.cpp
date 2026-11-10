@@ -135,6 +135,33 @@ void TestWorkspaceShellExternalChangeBannerForDirtyBuffer() {
          "dirty buffers should keep in-memory edits until the user acts");
 }
 
+// The soak's 3b57c171523f: type, the file changes on disk, undo. The undo lands on
+// the content the buffer was read with, which used to read clean -- a clean buffer
+// that differs from its file, with nothing left to reload it.
+void TestWorkspaceShellUndoAfterADiskChangeDoesNotReadClean() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_path = root / "notes.txt";
+  WriteFile(file_path, "original\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "undo-after-disk-change fixture should open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("//");
+  DrainProjectChanges(shell);
+
+  WriteFile(file_path, "changed on disk\noriginal\n");
+  Expect(WaitForExternalChangeBanner(shell, file_path, std::chrono::seconds(1)),
+         "the change on disk should be noticed under the unsaved edit");
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(editor.Undo(), "the typed edit should undo");
+  Expect(editor.lines()[0] == "original", "the undo should restore the content as read");
+  Expect(editor.dirty(),
+         "a buffer undone to content the file no longer holds must not read clean");
+}
+
 void TestWorkspaceShellSelfWriteDoesNotRaiseBanner() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1001,6 +1028,8 @@ void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellExternalChangeReloadsBothSplitGroups);
   AddTest(tests, "ExternalRepoChange/BannerForDirtyBuffer",
           TestWorkspaceShellExternalChangeBannerForDirtyBuffer);
+  AddTest(tests, "ExternalRepoChange/UndoAfterADiskChangeDoesNotReadClean",
+          TestWorkspaceShellUndoAfterADiskChangeDoesNotReadClean);
   AddTest(tests, "ExternalRepoChange/SelfWriteDoesNotRaiseBanner",
           TestWorkspaceShellSelfWriteDoesNotRaiseBanner);
   AddTest(tests, "ExternalRepoChange/AutosaveFlushRespectsDiskConflict",

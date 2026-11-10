@@ -171,6 +171,9 @@ class TabCoordinator {
   bool ReloadCleanEditorTabsForPath(const std::filesystem::path& path,
                                     EchoGuard echo_guard = EchoGuard::Check);
   void ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path);
+  // The file changed on disk under unsaved edits: see
+  // TextViewport::NoteDiskChangedUnderEdits. Every dirty view of `path`.
+  void NoteDiskChangedUnderEditsForPath(const std::filesystem::path& path);
   // Revert File: every view of `path` takes the file's content as one undoable
   // edit (one shared document, so one edit), clean afterwards; a reload when the
   // file's line ending or encoding changed. False when the file cannot be read.

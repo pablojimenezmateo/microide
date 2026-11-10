@@ -49,6 +49,18 @@ bool TabCoordinator::RevertEditorTabsForPath(const std::filesystem::path& path) 
   return false;
 }
 
+void TabCoordinator::NoteDiskChangedUnderEditsForPath(const std::filesystem::path& path) {
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  for (EditorGroup& group : state_.editor_groups) {
+    for (TabEntry& tab : group.open_tabs) {
+      if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
+          util::SameAsNormalizedPath(tab.editor_state->viewport.path(), normalized_path)) {
+        tab.editor_state->viewport.NoteDiskChangedUnderEdits();
+      }
+    }
+  }
+}
+
 bool TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, bool clean_only,
                                              EchoGuard echo_guard) {
   const std::filesystem::path normalized_path = path.lexically_normal();

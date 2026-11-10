@@ -471,6 +471,12 @@ void TextViewport::AdoptDiskBaselineOf(const TextViewport& other) {
   TraceBufferIo("adopt-baseline");
 }
 
+void TextViewport::NoteDiskChangedUnderEdits() {
+  if (document_ != nullptr && document_->dirty) {
+    document_->undo_history.MarkNoPositionSaved();
+  }
+}
+
 bool TextViewport::RevertToDiskContent(const TextViewport& disk) {
   EnsureDocument();
   if (disk.document_ == nullptr || line_ending() != disk.line_ending() ||

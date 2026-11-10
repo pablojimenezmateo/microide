@@ -97,6 +97,10 @@ bool EditorTabService::ReloadCleanEditorTabsForPath(const std::filesystem::path&
   return coordinator_.ReloadCleanEditorTabsForPath(path, echo_guard);
 }
 
+void EditorTabService::NoteDiskChangedUnderEditsForPath(const std::filesystem::path& path) {
+  coordinator_.NoteDiskChangedUnderEditsForPath(path);
+}
+
 void EditorTabService::ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path) {
   coordinator_.ReloadEditorTabsForPathFromDisk(path);
 }
