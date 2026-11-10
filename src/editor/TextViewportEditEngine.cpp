@@ -732,7 +732,12 @@ void TextViewport::PushHistoryEntry(HistoryEntry entry, CoalesceHint hint) {
 }
 
 
-void TextViewport::BeginUndoGroup() { document_->undo_history.BeginGroup(CaptureViewState()); }
+void TextViewport::BeginUndoGroup() {
+  if (!UndoGroupActive()) {
+    undo_group_base_revision_ = document_->content_revision;
+  }
+  document_->undo_history.BeginGroup(CaptureViewState());
+}
 
 void TextViewport::EndUndoGroup() { FlushActiveUndoGroup(); }
 
@@ -752,6 +757,12 @@ void TextViewport::FlushActiveUndoGroup() {
   if (UndoGroupActive()) {
     return;
   }
+  // The group's edits each published themselves as the last applied edit, so the
+  // last of them was all a consumer saw: a Tab that indented two selected lines
+  // and padded a caret further down repainted only the line it touched last
+  // (soak cf8d47de7a1f). The aggregate is what changed -- one span, or, over
+  // several regions, none, which the consumers take as "re-read it all".
+  SetLastAppliedEditFromEntry(*aggregate, /*forward=*/true, undo_group_base_revision_);
   PushHistoryEntry(std::move(*aggregate));
 }
 

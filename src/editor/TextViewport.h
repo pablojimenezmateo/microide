@@ -364,6 +364,8 @@ class TextViewport {
   bool TopUndoEntryIsColumnScopedForTesting() const;
   // Merge subsequent edits into one undo stack entry until `EndUndoGroup()`.
   // While a group is active, individual `PushHistoryEntry` calls are suppressed.
+  // The outermost group's end also publishes the aggregate as the
+  // last_applied_edit(): what the group changed, not the last edit inside it.
   void BeginUndoGroup();
   void EndUndoGroup();
   bool UndoGroupActive() const { return document_->undo_history.IsGroupActive(); }
@@ -1607,6 +1609,9 @@ class TextViewport {
   std::uint64_t last_applied_edit_base_revision_ = 0;
   std::uint64_t last_applied_edit_revision_ = 0;
   std::optional<AppliedEditLineSpan> last_applied_edit_line_span_;
+  // The content revision the outermost active undo group began at: the base of
+  // the aggregate edit its end publishes.
+  std::uint64_t undo_group_base_revision_ = 0;
   // Set only by SuppressEntryCaretCapture, above; see its comment. Transient, so
   // a copy or move starts it false rather than carrying it — a viewport cannot be
   // copied or moved while a guard holding it is alive.

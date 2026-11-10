@@ -1216,6 +1216,28 @@ void TestAPaletteCardOverTheMenuBarKeepsItsItemUnlit() {
                       "the pointer onto the card where it covers File");
 }
 
+// Soak cf8d47de7a1f: Tab with the primary caret alone on one line and a secondary
+// caret whose selection spans two lines above it. The selection's lines indent;
+// the partial frame repainted the first of them and the primary's line, and left
+// the second unindented.
+void TestTabIndentingASecondarySelectionRepaintsEachOfItsLines() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("a.txt", "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n");
+  auto& editor = TestAccess::ActiveEditor(fixture.shell);
+  editor.MoveCursorTo(9, 2);
+  const editor::SelectionRange spanning{.start = {.line = 0, .column = 3}, .end = {.line = 1, .column = 2}};
+  editor.SetSecondaryCaretsWithRanges(std::span<const editor::SelectionRange>(&spanning, 1));
+  fixture.PinCaret();
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "a primary caret on line 10 and a selection over lines 1-2");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_TAB)}), "Tab");
+  Expect(editor.lines()[1].starts_with("\t") || editor.lines()[1].starts_with(" "),
+         "the selection's second line should be indented");
+}
+
 // A tab dragged out of the rightmost of three side-by-side panes into the
 // leftmost one's strip: a partial frame of the drag left a stale column at the
 // first pane's left edge (soak 9e662fe598fe, ui.scale 1.6). Every frame of the
@@ -5194,6 +5216,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestPartialFramesAtAFractionalScaleMatchFullOnesAcrossASplit);
   AddTest(tests, "QaFlowRegression/ClosingAMenuOverAFindToggleRepaintsItsHover",
           TestClosingAMenuOverAFindToggleRepaintsItsHover);
+  AddTest(tests, "QaFlowRegression/TabIndentingASecondarySelectionRepaintsEachOfItsLines",
+          TestTabIndentingASecondarySelectionRepaintsEachOfItsLines);
   AddTest(tests, "QaFlowRegression/APaletteCardOverTheMenuBarKeepsItsItemUnlit",
           TestAPaletteCardOverTheMenuBarKeepsItsItemUnlit);
   AddTest(tests, "QaFlowRegression/LeavingAFindToggleOverTheSidebarRepaintsIt",
