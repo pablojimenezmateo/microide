@@ -558,6 +558,9 @@ void TestWorkspaceShellTerminalSelectionWashesCellsAndLineBreaks() {
   // Two green cells, a blank, "ab"; then a second row.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[42m  \x1b[0m ab\r\nsecond row");
   WorkspaceShellTestAccess::SetFocusPanel(shell);
+  // A solid caret: see TerminalAlternateScreenDropsTheSelection.
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "editor.caret_blink.enabled", "false"),
+         "the fixture turns caret blink off");
 
   SoftwareCanvas canvas(kWidth, kHeight);
   shell.Render(canvas.renderer(), kWidth, kHeight);
@@ -614,6 +617,11 @@ void TestWorkspaceShellTerminalAlternateScreenDropsTheSelection() {
   TerminalSessionTestAccess::Reset(session, 24, 80);
   TerminalSessionTestAccess::AppendOutput(session, "shell output\r\n$ ");
   WorkspaceShellTestAccess::SetFocusPanel(shell);
+  // A solid caret. The diffs below hand the shell an unrelated rect, not the blink
+  // timer's damage, so a 530 ms phase flip between two paints -- one slow frame
+  // under UBSan on CI -- showed up as a stale caret cell, not a selection.
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "editor.caret_blink.enabled", "false"),
+         "the fixture turns caret blink off");
   SoftwareCanvas canvas(kWidth, kHeight);
   shell.Render(canvas.renderer(), kWidth, kHeight);
   (void)shell.ConsumePendingRenderInvalidation();
