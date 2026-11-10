@@ -1078,7 +1078,11 @@ class Monkey:
         if index % 50 == 0:
             self._report(label, self.resources.check())
         if index % 150 == 149:
+            before = len(self.app.findings)
             self._report(label, self.idle.check())
+            shot = next((f.screenshot for f in self.app.findings[before:] if f.screenshot), None)
+            if shot and self.idle.evidence:
+                (Path(shot).parent / "idle-wakes.txt").write_text(self.idle.evidence)
 
     def _final_oracles(self) -> None:
         if not self.app.alive():

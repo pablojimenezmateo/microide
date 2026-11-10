@@ -15,6 +15,7 @@ records them through App.report so they carry the same evidence directory.
 
 from __future__ import annotations
 
+import collections
 import hashlib
 import os
 import random
@@ -411,6 +412,7 @@ class IdleOracle:
     def __init__(self, app: q.App):
         self.app = app
         self.reported = False
+        self.evidence: str | None = None  # what the main thread did, when it fired
 
     def _main_thread_wakes(self) -> int | None:
         proc = self.app.proc
@@ -425,18 +427,62 @@ class IdleOracle:
                 return int(line.split()[1])
         return None
 
+    def _sample_main_thread(self) -> str:
+        """Where the main thread is right now: its kernel wait channel and syscall."""
+        proc = self.app.proc
+        if proc is None:
+            return ""
+        base = Path(f"/proc/{proc.pid}/task/{proc.pid}")
+        parts = []
+        for name in ("wchan", "syscall"):
+            try:
+                parts.append((base / name).read_text().strip().split(" ")[0])
+            except OSError:
+                parts.append("?")
+        return " ".join(parts)
+
     def check(self) -> list[tuple[str, str]]:
         if self.reported:
             return []
         time.sleep(1.0 * q.SLOW_FACTOR)
+        log_path = getattr(self.app, "log_path", None)
+        log_start = log_path.stat().st_size if log_path is not None and log_path.exists() else None
         before = self._main_thread_wakes()
         window = 1.0 * q.SLOW_FACTOR
-        time.sleep(window)
+        # What the wakes were: the main thread's wait channel and syscall sampled
+        # through the window. The count alone said "too many" and nothing about
+        # whom to blame -- a terminal streaming output, a timer, a lock (soak
+        # a64655101a5a, every build since the oracle landed).
+        samples: list[str] = []
+        deadline = time.monotonic() + window
+        while time.monotonic() < deadline:
+            samples.append(self._sample_main_thread())
+            time.sleep(window / 40)
         after = self._main_thread_wakes()
         if before is None or after is None:
             return []
         rate = (after - before) / window
         if rate > self.BUDGET_PER_SECOND * max(1.0, q.SLOW_FACTOR):
+            logged: list[str] = []
+            if log_start is not None:
+                try:
+                    with open(log_path, "rb") as log:
+                        log.seek(log_start)
+                        logged = log.read().decode(errors="replace").splitlines()
+                except OSError:
+                    pass
+            frames = [line for line in logged if "redraw frame" in line]
+            reasons = collections.Counter(
+                line.split("reason=", 1)[1].split(" ", 1)[0] for line in frames if "reason=" in line)
+            self.evidence = "\n".join([
+                f"voluntary wakes/s: {rate:.0f} (budget {self.BUDGET_PER_SECOND:.0f})",
+                f"frames in the window: {len(frames)} {dict(reasons)}",
+                f"log lines in the window: {len(logged)}",
+                "main thread wchan + syscall, sampled:",
+                *(f"  {count:3d}  {sample}" for sample, count in collections.Counter(samples).most_common()),
+                "last log lines:",
+                *(f"  {line}" for line in logged[-40:]),
+            ]) + "\n"
             self.reported = True
             return [("idle", f"the main thread woke {rate:.0f} times a second while the app was idle "
                              f"(budget {self.BUDGET_PER_SECOND:.0f})")]
