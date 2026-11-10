@@ -963,6 +963,15 @@ class TextViewport {
   /// Normalizes selection endpoints so callers can reuse the same invariant as `ReplaceRange`.
   static SelectionRange NormalizeRange(const SelectionRange& range);
 
+  // MICROIDE_TRACE_BUFFER_IO=1: one log line per moment the buffer and its file
+  // meet -- a read, a write, an adopted baseline, a revert -- with the buffer's
+  // bytes as they would be written (size, sha256) and the disk identity it now
+  // records. The soak's data oracle finds a clean buffer that differs from its
+  // file long after the fact; these lines are the history that says which of
+  // those moments put the two apart -- staging into the crash-recovery snapshot
+  // among them (the session coordinator calls it). Free when the variable is unset.
+  void TraceBufferIo(std::string_view event) const;
+
  private:
   // SecondaryCaret, ViewState, HistoryEntry now live on TextViewportUndoHistory.
   // Type-alias them here so the historical call sites compile unchanged.
@@ -1443,13 +1452,6 @@ class TextViewport {
   // OpenFile knows the raw bytes it read; ResetState, which records the signature,
   // does not. This attaches their hash to the signature ResetState just wrote.
   void RecordOpenedContentHash(std::size_t raw_content_hash);
-  // MICROIDE_TRACE_BUFFER_IO=1: one log line per moment the buffer and its file
-  // meet -- a read, a write, an adopted baseline, a revert -- with the buffer's
-  // bytes as they would be written (size, sha256) and the disk identity it now
-  // records. The soak's data oracle finds a clean buffer that differs from its
-  // file long after the fact; these lines are the history that says which of
-  // those moments put the two apart. Free when the variable is unset.
-  void TraceBufferIo(std::string_view event) const;
 
   detail::SharedOnMove<DocumentState> document_;
   std::size_t cursor_line_ = 0;

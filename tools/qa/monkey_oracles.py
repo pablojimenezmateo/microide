@@ -28,6 +28,10 @@ STAGING_MARKER = ".microide-staging."  # util::kTemporaryStagingMarker
 # How long the crash-safety flush may take to stage unsaved buffers once edits
 # are quiet: CrashSafetyFlushSchedule::kQuietMs (2.5 s) plus a margin for the write.
 CRASH_SAFETY_QUIET_S = 3.5
+# The longest a quiet app may take to report its unsaved buffers staged (the
+# `persistence` query) before the kill oracle calls the flush missing. Generous:
+# under a loaded soak the wake, the encode and the fsync all queue behind others.
+CRASH_SAFETY_STAGED_LIMIT_S = 20.0
 
 
 def _sha256_file(path: Path) -> str | None:
@@ -164,21 +168,30 @@ class DataOracle:
                     found.append(Path(root) / name)
         return found
 
-    def kill9_and_check(self, rng: random.Random) -> list[tuple[str, str]]:
+    def kill9_and_check(self, rng: random.Random, waited: bool | None = None) -> list[tuple[str, str]]:
         """SIGKILL, relaunch on the same profile, and compare. Waits for the
         crash-safety flush first (most kills), so every dirty buffer is owed back;
         a kill with no wait checks integrity only (an unstaged edit may be lost
         by design: CrashSafetyFlushSchedule)."""
         app = self.app
-        waited = rng.random() < 0.7
+        if waited is None:
+            waited = rng.random() < 0.7
+        out: list[tuple[str, str]] = []
         if waited:
             time.sleep(CRASH_SAFETY_QUIET_S * q.SLOW_FACTOR)
+            # Then ask, rather than trust the sleep: on a loaded machine the write
+            # can land after a fixed wait, and a buffer "lost" to that was a slow
+            # flush, not a missing one -- the two had one finding between them.
+            staged = self.wait_staged(CRASH_SAFETY_STAGED_LIMIT_S * q.SLOW_FACTOR)
+            if staged is False:
+                out.append(("data", f"the crash-safety flush did not stage the unsaved buffers within "
+                                    f"{CRASH_SAFETY_STAGED_LIMIT_S:.0f}s of quiet (the `persistence` query never "
+                                    f"answered staged)"))
         before = self.documents()
         disk_before = {doc["path"]: _sha256_file(Path(doc["path"])) for doc in before
                        if doc.get("path") and not doc.get("dirty")}
         app.record_external({"kill9": True, "waited": waited})
         app.crash_and_relaunch()
-        out: list[tuple[str, str]] = []
         # Restore lands over a few frames: wait until every dirty path is back.
         dirty = [doc for doc in before if doc.get("dirty")]
         deadline = time.monotonic() + 10 * q.SLOW_FACTOR
@@ -189,6 +202,7 @@ class DataOracle:
                 break
             time.sleep(0.2)
             after = self.documents()
+        self.last_kill = {"before": before, "after": after}
         if waited:
             by_key = {(d.get("path") or d.get("title")): d for d in after}
             for doc in dirty:
@@ -209,6 +223,23 @@ class DataOracle:
                 out.append(("data", f"{Path(path).name} changed on disk across a kill -9 and relaunch, "
                                     f"and nothing saved it"))
         return out
+
+    def wait_staged(self, limit_s: float) -> bool | None:
+        """Polls the `persistence` query until it answers staged: True when it did,
+        False when it never did within `limit_s`, None from a binary that predates
+        the query (a replay against an older build), which keeps the plain sleep."""
+        deadline = time.monotonic() + limit_s
+        while True:
+            try:
+                if self.app.query("persistence").get("staged"):
+                    return True
+            except q.QaFailure as failure:
+                if "unknown query" in str(failure):
+                    return None
+                raise
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.1)
 
     def _churned(self, path: str) -> bool:
         """The file churn (or an external git step) rewrote it during the kill."""

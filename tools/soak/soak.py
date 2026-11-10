@@ -465,7 +465,9 @@ def write_finding_md(bundle: Path) -> None:
     if pictures:
         lines += ["## Evidence", ""] + [f"- `evidence/{p}`" for p in pictures] + [
             "- `evidence/trace.txt`: the app's frame and input trace since the previous action",
-            "- `evidence/log-tail.txt`: the app log's tail", ""]
+            "- `evidence/log-tail.txt`: the app log's tail"] + (
+            ["- `evidence/log-tail-before-relaunch.txt`: the killed process's log tail (its last flushes and saves)"]
+            if (evidence / "log-tail-before-relaunch.txt").exists() else []) + [""]
     similar = similar_entries(finding["kind"], finding["label"], finding["signature"])
     if similar:
         lines += ["## Similar findings in the ledger", ""]

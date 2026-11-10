@@ -78,6 +78,12 @@ std::string ControlListInstancesText();
 //
 // Mirrors DebugService: a narrow Operations seam, a SetWakeChannel hook, and a
 // ConsumeControlCallbacks() drain pumped from the control SDL wake event.
+// The `persistence` query's answer (see Operations::persistence).
+struct ControlPersistenceState {
+  bool crash_flush_armed = false;
+  bool writes_settled = true;
+};
+
 class ControlChannelService {
  public:
   struct CommandOutcome {
@@ -136,6 +142,10 @@ class ControlChannelService {
     // not exercise it (the query then answers an empty list).
     std::function<std::vector<SettingInfo>()> settings;
     std::function<std::optional<std::string>(std::string_view id)> setting_value;
+    // Where the crash-safety flush stands, for the `persistence` query: armed (an
+    // unsaved change not staged yet) and whether every queued record write has
+    // finished on the persistence worker. Null in tests that do not exercise it.
+    std::function<ControlPersistenceState()> persistence;
   };
 
   // A single accepted control query (`debug-state`, `breakpoints`, `tabs`,

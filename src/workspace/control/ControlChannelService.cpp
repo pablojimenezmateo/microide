@@ -504,6 +504,17 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
     return context_ == nullptr ? util::JsonValue(util::JsonObject{})
                                : ControlUiQuery::Build(*context_, operations_.ui);
   }
+  if (verb == "persistence") {
+    // `staged` is the one a driver waits for before a kill -9: nothing unsaved is
+    // waiting on the debounce, and every write handed to the worker has finished.
+    const ControlPersistenceState state =
+        operations_.persistence ? operations_.persistence() : ControlPersistenceState{};
+    util::JsonObject result;
+    result["crashFlushArmed"] = util::JsonValue(state.crash_flush_armed);
+    result["writesSettled"] = util::JsonValue(state.writes_settled);
+    result["staged"] = util::JsonValue(!state.crash_flush_armed && state.writes_settled);
+    return util::JsonValue(std::move(result));
+  }
   if (verb == "action-counts") {
     return operations_.ui.action_counts ? operations_.ui.action_counts()
                                         : util::JsonValue(util::JsonObject{});

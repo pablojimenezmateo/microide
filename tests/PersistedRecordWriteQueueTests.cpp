@@ -1,6 +1,9 @@
 #include "TestSupport.h"
 
+#include <atomic>
 #include <cstddef>
+#include <mutex>
+#include <thread>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -69,6 +72,39 @@ void TestEncodedWriteLandsCoalescesAndDropsAFailedEncode() {
   queue.QueueEncoded(path, [](std::vector<std::byte>*) { return false; }, 1u);
   queue.Flush();
   Expect(ReadRecordText(path) == "latest", "a failed encode leaves the record as it was");
+}
+
+// settled() is what the control channel's `persistence` query answers, and what
+// the QA monkey waits on before a kill -9: true only once every queued job has
+// finished. A job held mid-encode keeps it false, and so do the two coalesced
+// behind it -- the replacement of a superseded job must not strand it either.
+void TestSettledWaitsForEveryQueuedJobIncludingCoalescedOnes() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path path = temp_dir.path() / "session.record";
+  PersistedRecordWriteQueue queue;
+  Expect(queue.settled(), "an idle queue is settled");
+  std::mutex gate;
+  gate.lock();
+  std::atomic<bool> encoding{false};
+  queue.QueueEncoded(path, [&](std::vector<std::byte>* body) {
+    encoding = true;
+    const std::lock_guard hold(gate);  // held until the test releases it
+    *body = Body("first");
+    return true;
+  }, 1u);
+  while (!encoding) {
+    std::this_thread::yield();
+  }
+  queue.Queue(path, Body("second"), 1u);
+  queue.Queue(path, Body("third"), 1u);  // supersedes "second" while it waits
+  Expect(!queue.settled(), "a job mid-encode, and two queued behind it, are not settled");
+  gate.unlock();
+  queue.Flush();
+  Expect(queue.settled(), "after the flush every job, the coalesced one too, has finished");
+  Expect(ReadRecordText(path) == "third", "and the newest body is what landed: " + ReadRecordText(path));
+  queue.QueueEncoded(path, [](std::vector<std::byte>*) { return false; }, 1u);
+  queue.Flush();
+  Expect(queue.settled(), "a dropped encode still finishes its job");
 }
 
 // The core promise: an accepted save reaches disk.
@@ -296,6 +332,8 @@ void TestServiceLoadSeesAnUnflushedSave() {
 void RegisterPersistedRecordWriteQueueTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PersistedRecordWriteQueue/EncodedWriteLandsCoalescesAndDropsAFailedEncode",
           TestEncodedWriteLandsCoalescesAndDropsAFailedEncode);
+  AddTest(tests, "PersistedRecordWriteQueue/SettledWaitsForEveryQueuedJobIncludingCoalescedOnes",
+          TestSettledWaitsForEveryQueuedJobIncludingCoalescedOnes);
   AddTest(tests, "PersistedRecordWriteQueue/QueuedWriteLandsAfterFlush",
           TestQueuedWriteLandsAfterFlush);
   AddTest(tests, "PersistedRecordWriteQueue/CoalescedWritesKeepTheLatestBody",

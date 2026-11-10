@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -76,6 +77,15 @@ class PersistedRecordWriteQueue {
   // saves coalesced instead of trusting that they did.
   std::size_t applied_write_count() const;
 
+  // Whether every write, encode or delete queued so far has finished on the
+  // worker (landed, been skipped as already on disk, or failed). Coalescing does
+  // not strand it: a superseded job's replacement carries the later sequence
+  // number, and that one runs. Lets the control channel say when a crash-safety
+  // flush is actually on disk instead of a driver guessing with a sleep.
+  bool settled() const {
+    return completed_sequence_.load(std::memory_order_acquire) == submitted_sequence_.load(std::memory_order_acquire);
+  }
+
  private:
   // The worker's own record of what it last successfully wrote per path.
   //
@@ -95,6 +105,19 @@ class PersistedRecordWriteQueue {
   mutable std::mutex memo_mutex_;
   std::unordered_map<std::string, std::vector<std::byte>> written_body_;
   std::size_t applied_writes_ = 0;
+
+  // Sequence numbers for settled(): one per Post, taken on the caller's thread;
+  // the worker publishes the highest it has finished. Jobs run in order, so the
+  // finished number only rises.
+  std::uint64_t NextSequence() { return submitted_sequence_.fetch_add(1, std::memory_order_acq_rel) + 1; }
+  void Finish(std::uint64_t sequence) {
+    std::uint64_t seen = completed_sequence_.load(std::memory_order_acquire);
+    while (seen < sequence &&
+           !completed_sequence_.compare_exchange_weak(seen, sequence, std::memory_order_acq_rel)) {
+    }
+  }
+  std::atomic<std::uint64_t> submitted_sequence_{0};
+  std::atomic<std::uint64_t> completed_sequence_{0};
 
   util::SerialWorkQueue queue_;
 };

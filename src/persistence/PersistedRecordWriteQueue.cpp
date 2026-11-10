@@ -33,8 +33,10 @@ void PersistedRecordWriteQueue::Queue(const std::filesystem::path& path, std::ve
   std::string key = MemoKey(path);
   // Coalesce on the path: a burst of saves for the same record collapses to the
   // last one, which is the only one whose bytes matter.
-  queue_.PostLatest(key, [this, path, key, body = std::move(body), capability_flags]() mutable {
+  queue_.PostLatest(key, [this, path, key, body = std::move(body), capability_flags,
+                          sequence = NextSequence()]() mutable {
     ApplyWrite(path, key, std::move(body), capability_flags);
+    Finish(sequence);
   });
 }
 
@@ -42,11 +44,13 @@ void PersistedRecordWriteQueue::QueueEncoded(const std::filesystem::path& path,
                                              std::function<bool(std::vector<std::byte>*)> encode,
                                              std::uint32_t capability_flags) {
   std::string key = MemoKey(path);
-  queue_.PostLatest(key, [this, path, key, encode = std::move(encode), capability_flags]() {
+  queue_.PostLatest(key, [this, path, key, encode = std::move(encode), capability_flags,
+                          sequence = NextSequence()]() {
     std::vector<std::byte> body;
     if (encode && encode(&body)) {
       ApplyWrite(path, key, std::move(body), capability_flags);
     }
+    Finish(sequence);
   });
 }
 
@@ -97,7 +101,7 @@ void PersistedRecordWriteQueue::NoteOnDiskBody(const std::filesystem::path& path
 
 void PersistedRecordWriteQueue::QueueDelete(const std::filesystem::path& path) {
   std::string key = MemoKey(path);
-  queue_.PostLatest(key, [this, path, key]() {
+  queue_.PostLatest(key, [this, path, key, sequence = NextSequence()]() {
     {
       // The record is going away, so the memo of what it held must go with it, or
       // a later save of that same body would be skipped against a file that no
@@ -111,6 +115,7 @@ void PersistedRecordWriteQueue::QueueDelete(const std::filesystem::path& path) {
     // the state this call is meant to clear.
     error.clear();
     std::filesystem::remove(PersistedRecordWriter::BackupPathFor(path), error);
+    Finish(sequence);
   });
 }
 

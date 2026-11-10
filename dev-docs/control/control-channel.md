@@ -164,7 +164,7 @@ Query verbs: `debug-state`, `breakpoints`, `function-breakpoints`,
 `exception-filters`, `tabs`, `projects`, `status`, `launch-configs`, `adapters`,
 `editor`, `commands`, `terminals`, `terminal-output`, `notifications`,
 `keybindings`, `settings`, `ui`, `buffer`, `documents`, `output`, `action-counts`, `hit-test`,
-`surface`. `ControlQueryVerbs()` is the one list: the dispatcher refuses a verb
+`surface`, `persistence`. `ControlQueryVerbs()` is the one list: the dispatcher refuses a verb
 missing from it, and a test asks every listed verb.
 
 **Where a press lands (`hit-test`).** Args `{x, y}` in layout units; answers
@@ -295,6 +295,14 @@ joined with the document's ending; LF for a binary buffer). A view whose content
 has not loaded yet is not listed. The QA monkey's data-loss oracle reads it: a
 clean document's file has that digest, and a dirty one comes back with it after
 a kill -9 and a relaunch (`dev-docs/project/safety-plan.md` W4).
+
+**Whether unsaved work is staged (`persistence`).** `{crashFlushArmed,
+writesSettled, staged}`: the crash-safety flush is armed while an unsaved change
+waits out its debounce (`CrashSafetyFlushSchedule`), and writes are settled once
+every record write handed to the persistence worker has finished. `staged` is
+both: a kill -9 now loses nothing that was unsaved. The QA monkey's kill oracle
+waits for it instead of sleeping a fixed time, so a flush that never lands is a
+finding of its own rather than a lost buffer that might have been slow.
 
 **Everything reachable (`surface`).** The inventory the QA monkey's coverage is
 measured against (`dev-docs/project/safety-plan.md` W1.7), read from the app's own

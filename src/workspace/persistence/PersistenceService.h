@@ -61,6 +61,10 @@ class PersistenceService {
   // Load/Delete paths already flush internally.
   void FlushPendingWrites() const { write_queue_.Flush(); }
 
+  // Every accepted Save has finished on the worker (see
+  // PersistedRecordWriteQueue::settled); the non-blocking half of the above.
+  bool WritesSettled() const { return write_queue_.settled(); }
+
  private:
   // Paths whose in-memory state was recovered from a `.bak` because the primary
   // was present but unreadable/corrupt (not merely absent). Maps the normalized

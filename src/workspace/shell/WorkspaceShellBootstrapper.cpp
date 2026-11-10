@@ -859,6 +859,13 @@ void WorkspaceShell::Bootstrapper::WireControlChannel() const {
           .settings =
               [shell]() { return AllSettingInfos(shell->plugin_runtime_.Host(), shell->available_colorscheme_names_); },
           .setting_value = [shell](std::string_view id) { return shell->GetSettingValue(id); },
+          .persistence =
+              [shell]() {
+                return ControlPersistenceState{
+                    .crash_flush_armed = shell->session_flush_.armed(),
+                    .writes_settled = shell->persistence_service_.WritesSettled(),
+                };
+              },
       });
 }
 

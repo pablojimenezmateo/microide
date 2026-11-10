@@ -1276,6 +1276,64 @@ void TestWorkspaceShellCrashSafetyFlushPersistsUnsavedContent() {
   Expect(reopened.dirty(), "restored crash-safety content must stay dirty (still unsaved to disk)");
 }
 
+// Soak 48a294e57a19 (and its kill -9 kin): a buffer opened through a symlinked
+// folder -- the fixture's `loop -> .` -- was reported staged by the app, and did
+// not come back after a kill -9. Opened by that path, edited, flushed: a fresh
+// shell must restore it, dirty, with the edit.
+void TestWorkspaceShellCrashSafetyRestoresABufferOpenedThroughASymlinkedFolder() {
+  // Either path opened first, either one the dirty buffer.
+  for (const bool link_first : {true, false}) {
+    for (const bool dirty_via_link : {true, false}) {
+      TemporaryDirectory temp_dir;
+      const std::filesystem::path root = temp_dir.path() / "project";
+      WriteFile(root / "weird" / "rtl.txt", "alpha\nbeta\n");
+      std::filesystem::create_directory_symlink(".", root / "weird" / "loop");
+      const std::filesystem::path through_link = root / "weird" / "loop" / "rtl.txt";
+      const std::filesystem::path direct = root / "weird" / "rtl.txt";
+      const std::filesystem::path first = link_first ? through_link : direct;
+      const std::filesystem::path second = link_first ? direct : through_link;
+      const std::filesystem::path dirty_path = dirty_via_link ? through_link : direct;
+      const std::string what = std::string(link_first ? "link opened first" : "direct opened first") +
+                               (dirty_via_link ? ", edited through the link" : ", edited directly");
+      const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+      const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+      std::filesystem::create_directories(temp_dir.path() / "home");
+      std::filesystem::create_directories(xdg_state_home);
+      std::filesystem::create_directories(xdg_config_home);
+      ScopedEnvVar scoped_home("HOME", (temp_dir.path() / "home").string());
+      ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+      {
+        WorkspaceShell shell;
+        WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+        WorkspaceShellTestAccess::OpenFile(shell, first);
+        WorkspaceShellTestAccess::OpenFileInNewTab(shell, second);
+        WorkspaceShellTestAccess::ActivateTab(shell, dirty_path == first ? 0 : 1);
+        auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+        editor.MoveCursorTo(1, 0);
+        Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "unsaved "), "the fixture takes text input");
+        Expect(editor.dirty(), what + ": the buffer is dirty before the flush");
+        WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell);
+      }
+      WorkspaceShell restored;
+      WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+      Expect(WorkspaceShellTestAccess::RestoreSessionState(restored), what + ": restore succeeds");
+      bool found_dirty = false;
+      std::string seen;
+      for (std::size_t tab = 0; tab < 2; ++tab) {
+        WorkspaceShellTestAccess::ActivateTab(restored, tab);
+        const auto& view = WorkspaceShellTestAccess::ActiveEditor(restored);
+        seen += view.path().filename().string() + (view.path() == through_link ? "(link)" : "") +
+                (view.dirty() ? " dirty " : " clean ") +
+                (view.lines().size() >= 2 ? std::string(view.lines()[1]) : std::string("-")) + "; ";
+        found_dirty = found_dirty || (view.dirty() && view.path() == dirty_path && view.lines().size() >= 2 &&
+                                      view.lines()[1] == "unsaved beta");
+      }
+      Expect(found_dirty, what + ": the unsaved edit comes back, dirty, under the path it was made in (" +
+                              seen + ")");
+    }
+  }
+}
+
 // The crash-recovery half of "never overwrite what you have not seen": a dirty
 // buffer restored after a crash, whose file someone changed while microide was
 // down, must not be saved over that change. The restored snapshot used to carry
@@ -3606,6 +3664,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellFoldAllUnfoldAllCtrlKChord);
   AddTest(tests, "WorkspaceShell/CrashSafetyFlushPersistsUnsavedContent",
           TestWorkspaceShellCrashSafetyFlushPersistsUnsavedContent);
+  AddTest(tests, "WorkspaceShell/CrashSafetyRestoresABufferOpenedThroughASymlinkedFolder",
+          TestWorkspaceShellCrashSafetyRestoresABufferOpenedThroughASymlinkedFolder);
   AddTest(tests, "WorkspaceShell/ACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown",
           TestWorkspaceShellACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown);
   AddTest(tests, "WorkspaceShell/CrashSafetyFlushTimerArmsOnEdit",

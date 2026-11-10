@@ -861,6 +861,13 @@ PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t /*tab_index*/,
   // thread; the encode on the persistence worker reads it (TD-2026-11-02-429.3).
   persisted_tab.buffer =
       persist_dirty ? persisted_viewport->lines().SnapshotDocument() : editor::DocumentSnapshot{};
+  if (persist_dirty) {
+    // The restore snapshot is one of the moments a buffer's bytes are written
+    // somewhere: a kill -9 finding then says whether the lost buffer was staged.
+    persisted_viewport->TraceBufferIo("session-stage");
+  } else if (dirty_snapshot) {
+    persisted_viewport->TraceBufferIo("session-stage-skipped-over-budget");
+  }
   if (persist_dirty && !normalized_path.empty()) {
     const util::FileSignature& seen = persisted_viewport->disk_signature();
     persisted_tab.disk_baseline = PersistedEditorTabState::DiskBaseline{

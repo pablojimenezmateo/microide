@@ -1992,6 +1992,14 @@ class App:
         # The log's tail too: a crash's sanitizer report and stack, the frames
         # before the trace window (the soak runner's FINDING.md reads both).
         (folder / "log-tail.txt").write_text(self.log_tail(64 * 1024))
+        # After a kill -9 the log above is the relaunched process's; what the killed
+        # one did last (its flushes, its saves) is in the launch before it.
+        previous = self._previous_log_path()
+        if previous is not None:
+            with open(previous, "rb") as log:
+                log.seek(0, os.SEEK_END)
+                log.seek(max(0, log.tell() - 64 * 1024))
+                (folder / "log-tail-before-relaunch.txt").write_text(log.read().decode("utf-8", "replace"))
         if self.shots is not None and (self.shots / "stall-threads.txt").exists():
             shutil.copy2(self.shots / "stall-threads.txt", folder / "stall-threads.txt")
         for index, raw in self.recent_shots:
@@ -2013,6 +2021,14 @@ class App:
         if self.alive():
             self.grab().save(path)
         return str(path)
+
+    def _previous_log_path(self) -> Path | None:
+        """The log of the launch before the current one (a crash_and_relaunch or a
+        restart), if there was one."""
+        if self._launches < 2:
+            return None
+        path = self.work / (f"microide-{self._launches - 2}.log" if self._launches > 2 else "microide.log")
+        return path if path.exists() else None
 
     def log_tail(self, max_bytes: int = 96 * 1024) -> str:
         """The end of the app's log, without consuming it (the oracles read the log

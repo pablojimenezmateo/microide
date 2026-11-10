@@ -52,6 +52,7 @@ they were: TD-2026-09-07-291 and its seeds are referenced from the TD ledger.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import random
 import shutil
@@ -953,7 +954,7 @@ class Monkey:
         if self.relaunches >= 3:
             return self.chord_action()
         self.relaunches += 1
-        self._report(f"kill -9 at step {self.step_index}", self.data.kill9_and_check(self.rng))
+        self._report_kill(f"kill -9 at step {self.step_index}", self.data.kill9_and_check(self.rng))
         return "kill9"
 
     # ---- replaying the outside world -------------------------------------------
@@ -961,13 +962,25 @@ class Monkey:
     def replay_external(self, row: dict[str, Any]) -> None:
         """What q.replay calls for an `external` or `kill9` row."""
         if "kill9" in row:
-            if row.get("waited"):
-                time.sleep(mo.CRASH_SAFETY_QUIET_S * q.SLOW_FACTOR)
-            self.app.crash_and_relaunch()
+            # The same kill and the same comparison the run made: a replay that only
+            # killed and relaunched could never reproduce a lost buffer, which is why
+            # every kill -9 finding measured 0% (soak 48a294e57a19).
+            self._report_kill("kill -9 (replayed)",
+                              self.data.kill9_and_check(self.rng, waited=bool(row.get("waited"))))
         elif self.project is not None:
             apply_external(self.project, row["external"], row.get("target", ""), int(row.get("counter", 0)))
 
     # ---- findings ----------------------------------------------------------------
+
+    def _report_kill(self, label: str, found: list[tuple[str, str]]) -> None:
+        """A kill -9 finding, plus what the oracle compared: the documents query
+        before the kill and after the relaunch, beside the finding's evidence."""
+        before = len(self.app.findings)
+        self._report(label, found)
+        recorded = self.app.findings[before:]
+        shot = next((f.screenshot for f in recorded if f.screenshot), None)
+        if shot and getattr(self.data, "last_kill", None) is not None:
+            (Path(shot).parent / "kill-documents.json").write_text(json.dumps(self.data.last_kill, indent=1))
 
     def _report(self, label: str, found: list[tuple[str, str]]) -> None:
         if found:
