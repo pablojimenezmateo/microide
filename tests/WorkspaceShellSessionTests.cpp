@@ -1334,6 +1334,46 @@ void TestWorkspaceShellCrashSafetyRestoresABufferOpenedThroughASymlinkedFolder()
   }
 }
 
+// Soak 55673209c35c (and 4fb82d32fe19, 653e2be91fab, c01e0e90f93c, e946ec9333d7):
+// the lost buffers had paths that do not exist -- `weird/loop/weird/x.txt` with
+// `loop -> .` -- staged with disk_exists=0. A dirty buffer whose file, or whole
+// folder, is not there must still come back after a crash.
+void TestWorkspaceShellCrashSafetyRestoresABufferWhoseFolderDoesNotExist() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "weird" / "bom.txt", "alpha\n");
+  std::filesystem::create_directory_symlink(".", root / "weird" / "loop");
+  // Through the link, `weird/loop/weird` is `weird/weird`: there while the file is
+  // opened, gone (a `git stash -u` of the untracked folder) before the flush.
+  const std::filesystem::path missing = root / "weird" / "loop" / "weird" / "bom.txt";
+  WriteFile(root / "weird" / "weird" / "bom.txt", "beta\n");
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(temp_dir.path() / "home");
+  ScopedEnvVar scoped_home("HOME", (temp_dir.path() / "home").string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+  {
+    WorkspaceShell shell;
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::OpenFile(shell, missing);
+    auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+    Expect(editor.path() == missing, "the fixture opens the path: " + editor.path().string());
+    std::filesystem::remove_all(root / "weird" / "weird");
+    editor.MoveCursorTo(0, 0);
+    Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "unsaved "), "the fixture takes text input");
+    Expect(editor.dirty(), "the buffer is dirty before the flush");
+    WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell);
+  }
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored), "restore succeeds");
+  WorkspaceShellTestAccess::ActivateTab(restored, 0);
+  const auto& view = WorkspaceShellTestAccess::ActiveEditor(restored);
+  Expect(view.path() == missing && view.dirty() && !view.lines().empty() && view.lines()[0] == "unsaved beta",
+         "the unsaved buffer comes back under its path, dirty, with its text (" + view.path().string() +
+             (view.dirty() ? " dirty" : " clean") + ")");
+}
+
 // The crash-recovery half of "never overwrite what you have not seen": a dirty
 // buffer restored after a crash, whose file someone changed while microide was
 // down, must not be saved over that change. The restored snapshot used to carry
@@ -3666,6 +3706,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCrashSafetyFlushPersistsUnsavedContent);
   AddTest(tests, "WorkspaceShell/CrashSafetyRestoresABufferOpenedThroughASymlinkedFolder",
           TestWorkspaceShellCrashSafetyRestoresABufferOpenedThroughASymlinkedFolder);
+  AddTest(tests, "WorkspaceShell/CrashSafetyRestoresABufferWhoseFolderDoesNotExist",
+          TestWorkspaceShellCrashSafetyRestoresABufferWhoseFolderDoesNotExist);
   AddTest(tests, "WorkspaceShell/ACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown",
           TestWorkspaceShellACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown);
   AddTest(tests, "WorkspaceShell/CrashSafetyFlushTimerArmsOnEdit",

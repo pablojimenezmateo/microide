@@ -1,6 +1,7 @@
 #include "persistence/PersistedRecordWriteQueue.h"
 
 #include "persistence/PersistedRecordWriter.h"
+#include "util/Log.h"
 
 #include <system_error>
 #include <utility>
@@ -71,6 +72,10 @@ void PersistedRecordWriteQueue::ApplyWrite(const std::filesystem::path& path, co
     }
   }
   if (!PersistedRecordWriter::WriteFile(path, body, capability_flags)) {
+    // Said, because nothing else does: the caller was told "accepted" long ago,
+    // and a session that silently stops landing is a kill -9 that restores an
+    // older one (soak 55673209c35c and kin had no other trace to go on).
+    util::Log("persistence: could not write " + path.string());
     // Leave the memo without an entry for this path so the next save retries
     // rather than treating the failed write as persisted.
     std::lock_guard lock(memo_mutex_);

@@ -14,6 +14,7 @@
 
 #include "persistence/PersistedRecordReader.h"
 #include "persistence/PersistedRecordWriter.h"
+#include "util/Log.h"
 #include "util/PerformanceTrace.h"
 
 namespace microide::workspace {
@@ -59,7 +60,14 @@ bool LoadStructuredRecord(const std::filesystem::path& path,
   if (!record.has_value()) {
     return false;
   }
+  if (record->used_backup) {
+    // Rare, and the one moment a restore silently goes back in time: worth a line.
+    util::Log("persistence: " + path.string() + " unreadable (error " +
+              std::to_string(static_cast<int>(record->primary_error)) + "), read its backup");
+  }
   if (!decode_binary(record->body, out)) {
+    util::Log("persistence: " + path.string() + (record->used_backup ? " (backup)" : "") +
+              " read but did not decode");
     return false;
   }
   // What the file holds right now. A later save of unchanged state encodes to

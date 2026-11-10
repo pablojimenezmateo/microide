@@ -981,6 +981,10 @@ class Monkey:
         shot = next((f.screenshot for f in recorded if f.screenshot), None)
         if shot and getattr(self.data, "last_kill", None) is not None:
             (Path(shot).parent / "kill-documents.json").write_text(json.dumps(self.data.last_kill, indent=1))
+        state = getattr(self.data, "last_kill_state", None)
+        if shot and state is not None and state.is_dir():
+            # The session records the relaunch read, as the killed process left them.
+            shutil.make_archive(str(Path(shot).parent / "kill-state"), "gztar", root_dir=state)
 
     def _report(self, label: str, found: list[tuple[str, str]]) -> None:
         if found:

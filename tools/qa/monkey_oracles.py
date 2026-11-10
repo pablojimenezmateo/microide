@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import os
 import random
+import shutil
 import time
 from pathlib import Path
 from typing import Any
@@ -191,7 +192,22 @@ class DataOracle:
         disk_before = {doc["path"]: _sha256_file(Path(doc["path"])) for doc in before
                        if doc.get("path") and not doc.get("dirty")}
         app.record_external({"kill9": True, "waited": waited})
-        app.crash_and_relaunch()
+        # The killed process's state tree (its session records, primary and .bak):
+        # what the relaunch restored from. Lost buffers whose staging the log shows
+        # left no other trace of which record was read or why it lacked them.
+        work = getattr(app, "work", None)
+        self.last_kill_state = Path(work) / "kill-state" if work else None
+
+        def keep_state() -> None:
+            if self.last_kill_state is None:
+                return
+            shutil.rmtree(self.last_kill_state, ignore_errors=True)
+            state = Path(work) / "state"
+            if state.is_dir():
+                shutil.copytree(state, self.last_kill_state, symlinks=True,
+                                ignore_dangling_symlinks=True, dirs_exist_ok=True)
+
+        app.crash_and_relaunch(between=keep_state)
         # Restore lands over a few frames: wait until every dirty path is back.
         dirty = [doc for doc in before if doc.get("dirty")]
         deadline = time.monotonic() + 10 * q.SLOW_FACTOR

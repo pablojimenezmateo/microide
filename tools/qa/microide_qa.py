@@ -90,6 +90,10 @@ FINDING_MARKERS = (
     "std::bad_alloc",
     # The app's notices for states its code says cannot happen.
     "should not happen",
+    # A persisted record (the session a kill -9 restores from) that did not land,
+    # or that landed and its own reader rejects: a restore that goes back in time.
+    "persistence: could not write",
+    "read but did not decode",
 )
 
 
@@ -513,9 +517,12 @@ class App:
             between()
         self._spawn(project if project is not None else self.project, self._extra_args)
 
-    def crash_and_relaunch(self, project: Path | None = None) -> None:
+    def crash_and_relaunch(self, project: Path | None = None,
+                           between: Callable[[], None] | None = None) -> None:
         """Kills the app with SIGKILL -- no quit, no session save, the crash path --
-        and starts it again on the same display, XDG tree and project."""
+        and starts it again on the same display, XDG tree and project. `between`
+        runs while it is down: what the killed process left on disk, before the
+        next one reads (and rewrites) it."""
         self._bank_action_counts()
         if self.alive():
             with contextlib.suppress(ProcessLookupError):
@@ -529,6 +536,8 @@ class App:
                 self._socket.close()
             self._socket = None
         self.log_offset = 0
+        if between is not None:
+            between()
         self._spawn(project if project is not None else self.project, self._extra_args)
 
     def _spawn(self, project: Path | None, extra_args: list[str]) -> None:
