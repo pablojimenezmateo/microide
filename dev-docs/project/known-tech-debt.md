@@ -16,7 +16,7 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 
 ## Open items
 
-### TD-2026-11-10-437 — CI's qa monkey at scale 1.75: one-step anti-aliasing diffs under the software renderer. [OPEN]
+### TD-2026-11-10-437 — CI's qa monkey at scale 1.75: one-step anti-aliasing diffs under the software renderer. [FIXED]
 
 From `c20e96b4e` on, CI's `qa` and `qa-asan` monkey (seed 1; Xvfb, SDL 3.4.2
 software renderer, the monkey zoomed to scale 1.75) failed on QA-STALE findings
@@ -48,6 +48,26 @@ Lead for next time: in the local failure the stale frame (993) follows a burst o
 full frames the verifier does not check. Something painted under a transient
 presentation that the later partial frames only partly cover would look exactly
 like this.
+
+**Root cause (fixed the same day).** Not the resize: the diffs straddle the
+partial frame's clip edges, which at 1.75 sit on fractional device columns
+(292.25, 330.75, 822.5). SDL's software renderer turns a copy's destination into
+device pixels as `(int)(x * scale)` and `(int)(w * scale)` in float, and the text
+backend drew a `w`-pixel glyph run at logical width `w / scale` -- which for many
+`w` multiplies back to `w - 0.00001` and truncates to `w - 1`. That made the copy
+a NEAREST-*scaled* blit (one glyph column dropped, at every scale that is not a
+power of two), and SDL's scaled blit samples and blends differently when a clip
+cuts it (`SDL_BlitSurfaceClippedScaled`). So the same line of text painted one
+shade off in a partial frame whose damage clip crossed it, and the full reference
+render disagreed. The first standalone experiment missed it because it skipped
+the two device columns next to the clip edge -- exactly where the diffs are.
+`render::DeviceExactLogical` now steps the quotient by ulps until the product
+truncates back to the intended pixel, for the origin and the extent of every
+glyph blit (`DrawString`, `DrawAsciiRunFromAtlas`); `TextRenderer text blits are
+clip-invariant at a fractional scale` failed on the first run it tried ("W" at
+x=6, clipped at 7) and an exhaustive standalone sweep (79,032 clip cases) went
+from 1,246 differing to 0. The one-step colour-mod remark above still stands as a
+separate, harmless difference.
 
 ### TD-2026-11-09-436 — soak triage, 2026-11-09: what the first four hours left open. [OPEN]
 

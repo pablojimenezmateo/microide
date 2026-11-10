@@ -3013,8 +3013,112 @@ void TestEditorEssentialsDisablingLayersClearsRendererCaches() {
          "indent guides off should clear cached guide runs");
 }
 
+// Regression (QA-STALE at ui.scale 1.75, TD-2026-11-10-437): under the software
+// renderer a texture blit's device rect is (int)(x * scale), (int)(w * scale) in
+// float. A run `w` device pixels wide drawn at logical width w / scale often comes
+// back as w - 0.00001 after the multiply and truncates to w - 1, which turns a 1:1
+// copy into a NEAREST-scaled one -- a glyph column dropped -- and a scaled blit
+// samples differently when a clip edge cuts it. So a partial frame whose damage
+// clip crossed a line of text painted that text one shade off from the full frame,
+// and the redraw verifier reported it as stale paint. Every run, clipped at every
+// logical column it spans, must paint exactly the pixels the unclipped draw does.
+void TestTextBlitsAreClipInvariantAtFractionalScale() {
+  EnsureDummySdlVideo();
+  constexpr float kScale = 1.75f;
+  constexpr int kWidth = 420;
+  constexpr int kHeight = 48;
+  SoftwareCanvas canvas(kWidth, kHeight);
+  Expect(SDL_SetRenderScale(canvas.renderer(), kScale, kScale), "clip test should set the scale");
+  auto backend = microide::render::SdlTtfTextBackend::Create(canvas.renderer());
+  Expect(backend != nullptr, "clip test should build the real SDL_ttf backend");
+  backend->SetPresentationScale(kScale, kScale);
+  microide::render::StringTextureCache texture_cache;
+  const SDL_Color color{0xd4, 0xd4, 0xd4, 0xff};
+  constexpr std::uint32_t kOutside = 0xff00ffff;  // magenta: a pixel the clip kept out
+
+  auto paint = [&](std::string_view text, float x, bool ephemeral, const SDL_Rect* clip) {
+    SDL_SetRenderClipRect(canvas.renderer(), nullptr);
+    SDL_SetRenderDrawColor(canvas.renderer(), 0xff, 0x00, 0xff, 0xff);
+    SDL_RenderClear(canvas.renderer());
+    SDL_SetRenderClipRect(canvas.renderer(), clip);
+    SDL_SetRenderDrawColor(canvas.renderer(), 0x1e, 0x1e, 0x1e, 0xff);
+    SDL_RenderFillRect(canvas.renderer(), nullptr);
+    if (ephemeral) {
+      const microide::render::TextRun run{.x = x, .y = 5.0f, .color = color, .text = text};
+      backend->DrawEphemeralRuns(canvas.renderer(), texture_cache, &run, 1);
+    } else {
+      backend->DrawString(canvas.renderer(), texture_cache, x, 5.0f, color, text);
+    }
+    SDL_SetRenderClipRect(canvas.renderer(), nullptr);
+    SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+    Expect(pixels != nullptr, "clip test should read back software pixels");
+    SDL_Surface* rgba = SDL_ConvertSurface(pixels, SDL_PIXELFORMAT_RGBA8888);
+    SDL_DestroySurface(pixels);
+    return rgba;
+  };
+  auto at = [](SDL_Surface* s, int x, int y) {
+    return static_cast<const std::uint32_t*>(
+        static_cast<const void*>(static_cast<const std::uint8_t*>(s->pixels) + y * s->pitch))[x];
+  };
+
+  const std::string alphabet = "Wm{fold}=0x1e; // Ag|_j ";
+  int compared = 0;
+  for (const bool ephemeral : {false, true}) {
+    for (const std::size_t length : {1u, 2u, 3u, 5u, 8u, 13u, 24u}) {
+      const std::string text = alphabet.substr(0, length);
+      for (const float x : {6.0f, 9.5f}) {
+        SDL_Surface* full = paint(text, x, ephemeral, nullptr);
+        const int right = static_cast<int>(x + backend->MeasureWidth(text)) + 1;
+        for (int edge = static_cast<int>(x); edge <= right; ++edge) {
+          for (const bool keep_right : {true, false}) {
+            const SDL_Rect clip = keep_right ? SDL_Rect{edge, 0, kWidth, kHeight}
+                                             : SDL_Rect{0, 0, edge, kHeight};
+            SDL_Surface* part = paint(text, x, ephemeral, &clip);
+            for (int py = 0; py < full->h; ++py) {
+              for (int px = 0; px < full->w; ++px) {
+                const std::uint32_t kept = at(part, px, py);
+                if (kept == kOutside) {
+                  continue;
+                }
+                ++compared;
+                if (kept != at(full, px, py)) {
+                  Expect(false, std::string(ephemeral ? "atlas" : "composite") + " run \"" + text +
+                                    "\" at x=" + std::to_string(x) + " clipped at " +
+                                    std::to_string(edge) + (keep_right ? " (left edge)" : " (right edge)") +
+                                    " painted device pixel " + std::to_string(px) + "," +
+                                    std::to_string(py) + " differently from the unclipped draw");
+                  SDL_DestroySurface(part);
+                  SDL_DestroySurface(full);
+                  return;
+                }
+              }
+            }
+            SDL_DestroySurface(part);
+          }
+        }
+        SDL_DestroySurface(full);
+      }
+    }
+  }
+  Expect(compared > 0, "clip test must compare some pixels");
+}
+
 void TestDeviceAlignedOriginSnapsToPhysicalPixelGrid() {
   using microide::render::DeviceAlignedOrigin;
+
+  // The renderer truncates (int)(value * scale): every whole device pixel count,
+  // either sign, must survive that round trip, or a glyph run is copied one pixel
+  // short (TD-2026-11-10-437).
+  for (const float scale : {1.25f, 1.5f, 1.75f, 2.5f, 1.1f, 3.0f}) {
+    for (int px = -600; px <= 4000; ++px) {
+      const float logical = microide::render::DeviceExactLogical(static_cast<float>(px), scale);
+      if (static_cast<int>(logical * scale) != px) {
+        Expect(false, "DeviceExactLogical(" + std::to_string(px) + ", " + std::to_string(scale) +
+                          ") must truncate back to the same device pixel");
+        return;
+      }
+    }
+  }
 
   // Integer scales are an exact no-op: glyph origins are already grid-aligned.
   Expect(DeviceAlignedOrigin(18.0f, 1.0f) == 18.0f,
@@ -3668,6 +3772,9 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer ephemeral runs match the cached composite path",
           TestEphemeralRunsMatchTheCachedCompositePath);
+  AddTest(tests,
+          "TextRenderer text blits are clip-invariant at a fractional scale",
+          TestTextBlitsAreClipInvariantAtFractionalScale);
   AddTest(tests,
           "AsciiGlyphAtlas covers the printable ASCII range",
           TestAsciiGlyphAtlasCoversPrintableRange);

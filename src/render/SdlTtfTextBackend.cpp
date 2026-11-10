@@ -432,15 +432,17 @@ void SdlTtfTextBackend::DrawString(SDL_Renderer* renderer,
   const float scale_x = std::max(kMinPresentationScale, presentation_scale_x_);
   const float scale_y = std::max(kMinPresentationScale, presentation_scale_y_);
   // Snap only the origin onto the device-pixel grid: snapped*scale is integral,
-  // and entry->width/height are whole physical pixels, so both edges land on the
-  // grid and the NEAREST-sampled glyph texture maps 1:1. Origins within a line
+  // and entry->width/height are whole physical pixels -- expressed through
+  // DeviceExactLogical, since width / scale * scale can truncate one pixel short
+  // -- so both edges land on the grid and the NEAREST-sampled glyph texture maps
+  // 1:1. Origins within a line
   // share a fractional base plus integer cell multiples, so all runs snap by the
   // same delta and intra-line spacing is preserved.
   const SDL_FRect destination = SDL_FRect{
       DeviceAlignedOrigin(x, scale_x),
       DeviceAlignedOrigin(y, scale_y),
-      static_cast<float>(entry->width) / scale_x,
-      static_cast<float>(entry->height) / scale_y,
+      DeviceExactLogical(static_cast<float>(entry->width), scale_x),
+      DeviceExactLogical(static_cast<float>(entry->height), scale_y),
   };
   SDL_RenderTexture(renderer_, entry->texture, nullptr, &destination);
 }
@@ -1579,7 +1581,7 @@ bool SdlTtfTextBackend::DrawAsciiRunFromAtlas(float x, float y, SDL_Color color,
   // Same origin snap and same integer cell offsets as DrawString + the composite
   // surface (lround(index * cell_width_px)), so a glyph lands on the pixel it
   // would have landed on inside a composite drawn at this origin.
-  const float origin_x_dev = DeviceAlignedOrigin(x, scale_x) * scale_x;
+  const float origin_x_dev = std::round(x * scale_x);
   const float top = DeviceAlignedOrigin(y, scale_y);
   const int run_width_px = AsciiRunSurfaceWidthPx(text.size());
 
@@ -1595,10 +1597,10 @@ bool SdlTtfTextBackend::DrawAsciiRunFromAtlas(float x, float y, SDL_Color color,
     const SDL_FRect source{static_cast<float>(sx), 0.0f, static_cast<float>(sw),
                            static_cast<float>(sh)};
     const SDL_FRect destination{
-        (origin_x_dev + static_cast<float>(cell_left_px)) / scale_x,
+        DeviceExactLogical(origin_x_dev + static_cast<float>(cell_left_px), scale_x),
         top,
-        static_cast<float>(sw) / scale_x,
-        static_cast<float>(sh) / scale_y,
+        DeviceExactLogical(static_cast<float>(sw), scale_x),
+        DeviceExactLogical(static_cast<float>(sh), scale_y),
     };
     if (!SDL_RenderTexture(renderer_, atlas_texture_, &source, &destination)) {
       util::AddPerformanceCounter(util::PerfCounterId::RenderGlyphAtlasFallbacks);
