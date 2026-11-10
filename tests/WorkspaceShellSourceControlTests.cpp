@@ -971,6 +971,51 @@ void TestWorkspaceShellGitStageFailureSurfacesFeedback() {
          "stage-failure feedback should name the affected file");
 }
 
+// Soak `c8c7389e178d` (overlap oracle, 640x480 at ui.scale 2 with the terminal
+// panel open): the commit draft is a fixed-height panel -- a four-row body among
+// it -- so on a short sidebar its Commit button was laid out below the sidebar's
+// bottom, under the panel's tab row, where nothing drew it and a click on it was
+// a click on a terminal tab. The body gives up rows, down to one, to keep the
+// button inside the sidebar; at every height that leaves room for that panel.
+void TestWorkspaceShellCommitButtonStaysInsideAShortSidebar() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "int main() { return 0; }\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "seed commit", "seed body");
+  WriteFile(source, "int main() { return 1; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1), "fixture should expose a single modified entry");
+  Expect(WorkspaceShellTestAccess::OpenCommitWorkflow(shell), "commit workflow should open");
+
+  bool compared = false;
+  for (const int height : {720, 400, 340, 320, 300}) {
+    // The commit panel's rects are cached by its paint, so paint for real.
+    SoftwareCanvas canvas(640, height);
+    WorkspaceShellTestAccess::SetWindowSize(shell, 640, height);
+    WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
+    const SDL_FRect sidebar = WorkspaceShellTestAccess::CurrentLayout(shell).sidebar;
+    const auto& workflow = WorkspaceShellTestAccess::CommitWorkflow(shell);
+    const SDL_FRect button = workflow.commit_button_rect;
+    Expect(workflow.body_visible_rows >= 1, "the body keeps at least one row");
+    // Only where one body row leaves room: below that the panel cannot fit at all.
+    if (workflow.body_visible_rows > 1 || button.y + button.h <= sidebar.y + sidebar.h) {
+      compared = true;
+      Expect(button.y + button.h <= sidebar.y + sidebar.h,
+             "at 640x" + std::to_string(height) + " the Commit button [y " + std::to_string(button.y) +
+                 ", h " + std::to_string(button.h) + "] ends inside the sidebar (bottom " +
+                 std::to_string(sidebar.y + sidebar.h) + "), body rows " +
+                 std::to_string(workflow.body_visible_rows));
+    }
+  }
+  Expect(compared, "some height must leave room for the panel");
+}
+
 void TestWorkspaceShellCommitWorkflowFieldsAreKeyboardEditable() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1805,6 +1850,8 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitStageFailureSurfacesFeedback);
   AddTest(tests, "WorkspaceShell/CommitWorkflowFieldsAreKeyboardEditable",
           TestWorkspaceShellCommitWorkflowFieldsAreKeyboardEditable);
+  AddTest(tests, "WorkspaceShell/CommitButtonStaysInsideAShortSidebar",
+          TestWorkspaceShellCommitButtonStaysInsideAShortSidebar);
 }
 
 }  // namespace microide::tests

@@ -527,7 +527,11 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       // monkey, seed 607: under the Go to Line prompt the body kept a caret).
       const bool caret_on = frame_state_.caret_visible && sidebar_vm.commit_field_owns_caret;
       workflow.caret_rect = SDL_FRect{};
-      const int body_rows = kCommitWorkflowBodyRows;
+      // As many rows as keep the Commit button inside the sidebar (the same fit
+      // GitSidebarCommitWorkflowHeight and PrepareCommitBodyViewportForFrame make).
+      const int body_rows = FitCommitWorkflowBodyRows(
+          summary_y + 4.0f, layout.sidebar.y + layout.sidebar.h, line_height,
+          workflow.checks.size(), !workflow.status_message.empty());
       // Single source of truth for the panel geometry; GitSidebarCommitWorkflowHeight reserves
       // exactly CommitWorkflowLayout::total_height so the file list starts flush below.
       const CommitWorkflowLayout panel = ComputeCommitWorkflowLayout(

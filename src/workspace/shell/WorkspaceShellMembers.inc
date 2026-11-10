@@ -1114,7 +1114,7 @@
   bool OpenCommitWorkflow();
   void CloseCommitWorkflow();
   bool RequestCommitWorkflowCommit();
-  float GitSidebarCommitWorkflowHeight() const;
+  float GitSidebarCommitWorkflowHeight(const SDL_FRect& sidebar_rect) const;
   void PrepareCommitBodyViewportForFrame(const SDL_FRect& sidebar_rect);
   bool DiscardAllGitSidebarEntries();
   bool StageGitSidebarEntry(std::size_t entry_index);

@@ -4,6 +4,7 @@
 
 #include "workspace/git/CommitWorkflowLayout.h"
 #include "workspace/git/CommitWorkflowService.h"
+#include "workspace/git/GitSidebarHeaderLayout.h"
 #include "workspace/services/CompareMergeService.h"
 #include "workspace/services/EditorTabService.h"
 #include "workspace/git/GitOperationService.h"
@@ -109,18 +110,34 @@ void WorkspaceShell::CloseCommitWorkflow() {
   RequestSidebarRedraw();
 }
 
-float WorkspaceShell::GitSidebarCommitWorkflowHeight() const {
+namespace {
+
+// Where the commit panel starts: the render path's `summary_y + 4` -- below the
+// header's second action row (+10) and the summary block GitSidebarSummaryHeight
+// measures with the render's own constants.
+float CommitWorkflowTop(const SDL_FRect& sidebar_rect, float summary_height) {
+  const SDL_FRect branch_row = git_sidebar_header::ActionRowRect(sidebar_rect, 1);
+  return branch_row.y + branch_row.h + 10.0f + summary_height + 4.0f;
+}
+
+}  // namespace
+
+float WorkspaceShell::GitSidebarCommitWorkflowHeight(const SDL_FRect& sidebar_rect) const {
   const auto& workflow = context_.current_project_state.sidebar.git.commit_workflow;
   if (!workflow.open) {
     return 0.0f;
   }
   // Reserve exactly what the sidebar render path draws (subject/body fields, pre-check and
-  // status lines, confirm button). Field heights track the live line height, and the check
-  // count varies, so this is computed rather than a fixed constant. The field_x/field_w args
-  // don't affect total_height, so passing 0/0 is fine here.
-  return ComputeCommitWorkflowLayout(0.0f, 0.0f, 0.0f, text_renderer_.LineHeight(),
-                                     kCommitWorkflowBodyRows, workflow.checks.size(),
-                                     !workflow.status_message.empty())
+  // status lines, confirm button), with the body rows it fits into this sidebar. Field
+  // heights track the live line height, and the check count varies, so this is computed
+  // rather than a fixed constant. The field_x/field_w args don't affect total_height.
+  const float line_height = text_renderer_.LineHeight();
+  const bool has_status = !workflow.status_message.empty();
+  const int rows = FitCommitWorkflowBodyRows(CommitWorkflowTop(sidebar_rect, GitSidebarSummaryHeight()),
+                                             sidebar_rect.y + sidebar_rect.h, line_height,
+                                             workflow.checks.size(), has_status);
+  return ComputeCommitWorkflowLayout(0.0f, 0.0f, 0.0f, line_height, rows, workflow.checks.size(),
+                                     has_status)
       .total_height;
 }
 
@@ -138,7 +155,9 @@ void WorkspaceShell::PrepareCommitBodyViewportForFrame(const SDL_FRect& sidebar_
   const float field_w = std::max(0.0f, sidebar_rect.w - kCommitWorkflowFieldInset * 2.0f);
   const float avail_w = std::max(1.0f, field_w - 12.0f);
   const float char_width = std::max(1.0f, text_renderer_.CharWidth());
-  const std::size_t rows = static_cast<std::size_t>(std::max(1, kCommitWorkflowBodyRows));
+  const std::size_t rows = static_cast<std::size_t>(FitCommitWorkflowBodyRows(
+      CommitWorkflowTop(sidebar_rect, GitSidebarSummaryHeight()), sidebar_rect.y + sidebar_rect.h,
+      text_renderer_.LineHeight(), workflow.checks.size(), !workflow.status_message.empty()));
   workflow.body.SetViewportSize(rows,
                                 static_cast<std::size_t>(std::max(1.0f, avail_w / char_width)));
   std::size_t scroll = workflow.body.scroll_line();

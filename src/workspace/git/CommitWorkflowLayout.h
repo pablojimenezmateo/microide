@@ -6,9 +6,10 @@
 
 namespace microide::workspace {
 
-// Visible body-field rows of the inline commit draft. Shared by the sidebar
-// render path, GitSidebarCommitWorkflowHeight, and the frame-prep viewport
-// sizing (PrepareCommitBodyViewportForFrame) so they can never drift apart.
+// Visible body-field rows of the inline commit draft when the sidebar has room
+// for them; a short sidebar gets fewer (FitCommitWorkflowBodyRows). Shared by the
+// sidebar render path, GitSidebarCommitWorkflowHeight, and the frame-prep
+// viewport sizing (PrepareCommitBodyViewportForFrame) so they can never drift apart.
 inline constexpr int kCommitWorkflowBodyRows = 4;
 
 // Horizontal inset of the commit draft fields inside the sidebar (matches the
@@ -78,6 +79,24 @@ inline CommitWorkflowLayout ComputeCommitWorkflowLayout(float top, float field_x
 
   layout.total_height = y - top;
   return layout;
+}
+
+// The body rows the panel gets when it starts at `top` in a sidebar ending at
+// `bottom`: kCommitWorkflowBodyRows when they fit, otherwise the most that keep
+// the Commit button inside the sidebar, and never fewer than one. A fixed four
+// rows laid the button out below a short sidebar (640x480 at scale 2 with the
+// bottom panel open), under the panel's tab row, where nothing drew it and a
+// click on it landed on a terminal tab (soak c8c7389e178d).
+inline int FitCommitWorkflowBodyRows(float top, float bottom, float line_height,
+                                     std::size_t check_count, bool has_status) {
+  for (int rows = kCommitWorkflowBodyRows; rows > 1; --rows) {
+    if (top + ComputeCommitWorkflowLayout(top, 0.0f, 0.0f, line_height, rows, check_count, has_status)
+                  .total_height <=
+        bottom) {
+      return rows;
+    }
+  }
+  return 1;
 }
 
 }  // namespace microide::workspace

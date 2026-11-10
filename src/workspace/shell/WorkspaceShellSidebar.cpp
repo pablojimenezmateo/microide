@@ -129,10 +129,11 @@ float WorkspaceShell::GitSidebarSummaryHeight() const {
 
 float WorkspaceShell::GitSidebarListTop(const SDL_FRect& sidebar_rect) const {
   const float summary_height = GitSidebarSummaryHeight();
+  const float commit_height = GitSidebarCommitWorkflowHeight(sidebar_rect);
   return sidebar_rect.y + git_sidebar_header::kActionRowTop +
          git_sidebar_header::kActionRowsHeight + kGitSidebarListGap + summary_height +
-         (summary_height > 0.0f ? kGitSidebarListGap * 0.5f : 0.0f) + GitSidebarCommitWorkflowHeight() +
-         (GitSidebarCommitWorkflowHeight() > 0.0f ? kGitSidebarListGap : 0.0f);
+         (summary_height > 0.0f ? kGitSidebarListGap * 0.5f : 0.0f) + commit_height +
+         (commit_height > 0.0f ? kGitSidebarListGap : 0.0f);
 }
 
 ScrollableListLayout WorkspaceShell::ComputeProjectSearchSidebarListLayout(
