@@ -993,7 +993,17 @@ void TestWorkspaceShellCommitButtonStaysInsideAShortSidebar() {
   Expect(WaitForGitSidebarEntryCount(shell, 1), "fixture should expose a single modified entry");
   Expect(WorkspaceShellTestAccess::OpenCommitWorkflow(shell), "commit workflow should open");
 
-  bool compared = false;
+  // Every pre-check and the status line take a row of the panel too. A draft with
+  // several of them still at 640x400 put the button below the sidebar after its body
+  // had already given up every row it could (soak c8c7389e178d, second sighting).
+  auto& draft = WorkspaceShellTestAccess::CommitWorkflow(shell);
+  for (const char* message : {"Commit subject is required", "Untracked files are not included",
+                              "Staged changes touch a file open with unsaved edits"}) {
+    draft.checks.push_back(microide::project::CommitPreCheck{
+        .severity = microide::project::CommitPreCheckSeverity::Blocking, .message = message});
+  }
+  draft.status_message = "Untracked files are not included in this commit";
+
   for (const int height : {720, 400, 340, 320, 300}) {
     // The commit panel's rects are cached by its paint, so paint for real.
     SoftwareCanvas canvas(640, height);
@@ -1003,17 +1013,18 @@ void TestWorkspaceShellCommitButtonStaysInsideAShortSidebar() {
     const auto& workflow = WorkspaceShellTestAccess::CommitWorkflow(shell);
     const SDL_FRect button = workflow.commit_button_rect;
     Expect(workflow.body_visible_rows >= 1, "the body keeps at least one row");
-    // Only where one body row leaves room: below that the panel cannot fit at all.
-    if (workflow.body_visible_rows > 1 || button.y + button.h <= sidebar.y + sidebar.h) {
-      compared = true;
-      Expect(button.y + button.h <= sidebar.y + sidebar.h,
-             "at 640x" + std::to_string(height) + " the Commit button [y " + std::to_string(button.y) +
-                 ", h " + std::to_string(button.h) + "] ends inside the sidebar (bottom " +
-                 std::to_string(sidebar.y + sidebar.h) + "), body rows " +
-                 std::to_string(workflow.body_visible_rows));
+    // Where even one body row and the button cannot fit, the button is left out
+    // (an empty rect no click or query finds) rather than laid out below the sidebar.
+    if (height <= 340 && button.w <= 0.0f) {
+      continue;
     }
+    Expect(button.w > 0.0f, "at 640x" + std::to_string(height) + " the Commit button is laid out");
+    Expect(button.y + button.h <= sidebar.y + sidebar.h,
+           "at 640x" + std::to_string(height) + " the Commit button [y " + std::to_string(button.y) +
+               ", h " + std::to_string(button.h) + "] ends inside the sidebar (bottom " +
+               std::to_string(sidebar.y + sidebar.h) + "), body rows " +
+               std::to_string(workflow.body_visible_rows));
   }
-  Expect(compared, "some height must leave room for the panel");
 }
 
 void TestWorkspaceShellCommitWorkflowFieldsAreKeyboardEditable() {

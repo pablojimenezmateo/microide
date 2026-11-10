@@ -538,78 +538,105 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
           summary_y + 4.0f, field_x, field_w, line_height, body_rows, workflow.checks.size(),
           !workflow.status_message.empty());
 
-      DrawTextOn(text_renderer_, renderer, field_x, panel.staged_summary_y, theme_.text_primary,
-                 theme_.surface_background,
-                 TruncateLabelView(workflow.staged_summary_line, field_w));
+      // A control the sidebar has no room for is not drawn, and its rect stays
+      // empty so no click, cursor or control-channel query finds it: below the
+      // sidebar it sat under the bottom panel's tab row, where a click on it
+      // landed on a terminal tab (soak c8c7389e178d). The body gives up rows first
+      // (FitCommitWorkflowBodyRows), so this only happens when even one row and
+      // the button cannot fit, e.g. zoomed far in or in a very short window.
+      const float sidebar_bottom = layout.sidebar.y + layout.sidebar.h;
+      const auto fits = [sidebar_bottom](const SDL_FRect& rect) {
+        return rect.y + rect.h <= sidebar_bottom;
+      };
+      workflow.subject_field_rect = SDL_FRect{};
+      workflow.body_field_rect = SDL_FRect{};
+      workflow.commit_button_rect = SDL_FRect{};
+
+      if (panel.staged_summary_y + line_height <= sidebar_bottom) {
+        DrawTextOn(text_renderer_, renderer, field_x, panel.staged_summary_y, theme_.text_primary,
+                   theme_.surface_background,
+                   TruncateLabelView(workflow.staged_summary_line, field_w));
+      }
 
       // --- Subject: a framed single-line input. ComputeSingleLineViewMetrics gives the
       //     in-field horizontal scroll, caret x, and visible selection slice. ---
-      DrawTextOn(text_renderer_, renderer, field_x, panel.subject_label_y, theme_.text_muted,
-                 theme_.surface_background, "Subject:");
       const SDL_FRect subject_field = panel.subject_field;
-      workflow.subject_field_rect = subject_field;
-      DrawTextFieldFrame(renderer, theme_, subject_field, subject_focused);
-      const float subject_text_x = subject_field.x + 6.0f;
-      const float subject_text_y = subject_field.y + std::floor((subject_field.h - line_height) * 0.5f);
-      const float subject_avail = std::max(1.0f, subject_field.w - 12.0f);
-      if (workflow.subject.text().empty() && !subject_focused) {
-        DrawTextOn(text_renderer_, renderer, subject_text_x, subject_text_y, theme_.text_muted,
-                   theme_.surface_background, "<required>");
-      } else {
-        const auto subject_vm = ComputeSingleLineViewMetrics(workflow.subject, "", subject_avail);
-        if (subject_vm.selection_bytes.has_value()) {
-          const auto [sb, se] = *subject_vm.selection_bytes;
-          const std::string_view shown = subject_vm.displayed_text;
-          if (se <= shown.size() && sb < se) {
-            const float sx = subject_text_x + text_renderer_.MeasureWidth(shown.substr(0, sb));
-            const float sw = text_renderer_.MeasureWidth(shown.substr(sb, se - sb));
-            DrawFilledRect(renderer, MakeRect(sx, subject_field.y + 2.0f, sw, subject_field.h - 4.0f),
-                           theme_.selection_fill);
+      if (fits(subject_field)) {
+        DrawTextOn(text_renderer_, renderer, field_x, panel.subject_label_y, theme_.text_muted,
+                   theme_.surface_background, "Subject:");
+        workflow.subject_field_rect = subject_field;
+        DrawTextFieldFrame(renderer, theme_, subject_field, subject_focused);
+        const float subject_text_x = subject_field.x + 6.0f;
+        const float subject_text_y = subject_field.y + std::floor((subject_field.h - line_height) * 0.5f);
+        const float subject_avail = std::max(1.0f, subject_field.w - 12.0f);
+        if (workflow.subject.text().empty() && !subject_focused) {
+          DrawTextOn(text_renderer_, renderer, subject_text_x, subject_text_y, theme_.text_muted,
+                     theme_.surface_background, "<required>");
+        } else {
+          const auto subject_vm = ComputeSingleLineViewMetrics(workflow.subject, "", subject_avail);
+          if (subject_vm.selection_bytes.has_value()) {
+            const auto [sb, se] = *subject_vm.selection_bytes;
+            const std::string_view shown = subject_vm.displayed_text;
+            if (se <= shown.size() && sb < se) {
+              const float sx = subject_text_x + text_renderer_.MeasureWidth(shown.substr(0, sb));
+              const float sw = text_renderer_.MeasureWidth(shown.substr(sb, se - sb));
+              DrawFilledRect(renderer, MakeRect(sx, subject_field.y + 2.0f, sw, subject_field.h - 4.0f),
+                             theme_.selection_fill);
+            }
           }
-        }
-        DrawTextOn(text_renderer_, renderer, subject_text_x, subject_text_y, theme_.text_primary,
-                   theme_.surface_background, subject_vm.displayed_text);
-        if (subject_focused) {
-          const SDL_FRect caret = MakeRect(subject_text_x + subject_vm.cursor_x,
-                                           subject_field.y + 2.0f, 1.0f, subject_field.h - 4.0f);
-          workflow.caret_rect = caret;
-          if (caret_on) {
-            DrawFilledRect(renderer, caret, theme_.text_primary);
+          DrawTextOn(text_renderer_, renderer, subject_text_x, subject_text_y, theme_.text_primary,
+                     theme_.surface_background, subject_vm.displayed_text);
+          if (subject_focused) {
+            const SDL_FRect caret = MakeRect(subject_text_x + subject_vm.cursor_x,
+                                             subject_field.y + 2.0f, 1.0f, subject_field.h - 4.0f);
+            workflow.caret_rect = caret;
+            if (caret_on) {
+              DrawFilledRect(renderer, caret, theme_.text_primary);
+            }
           }
         }
       }
 
       // --- Body: a framed multi-line edit area with its own caret/selection + scroll. ---
-      DrawTextOn(text_renderer_, renderer, field_x, panel.body_label_y, theme_.text_muted,
-                 theme_.surface_background, "Body:");
       const SDL_FRect body_field = panel.body_field;
-      workflow.body_field_rect = body_field;
       workflow.body_visible_rows = body_rows;
-      DrawTextFieldFrame(renderer, theme_, body_field, body_focused);
-      RenderCommitBodyField(text_renderer_, theme_, renderer, workflow.body, body_field, body_rows,
-                            body_focused, caret_on, &workflow.caret_rect);
+      if (fits(body_field)) {
+        DrawTextOn(text_renderer_, renderer, field_x, panel.body_label_y, theme_.text_muted,
+                   theme_.surface_background, "Body:");
+        workflow.body_field_rect = body_field;
+        DrawTextFieldFrame(renderer, theme_, body_field, body_focused);
+        RenderCommitBodyField(text_renderer_, theme_, renderer, workflow.body, body_field, body_rows,
+                              body_focused, caret_on, &workflow.caret_rect);
+      }
 
+      // Confirm button: the discoverable way to commit the staged changes (mirrors the
+      // Ctrl+Enter shortcut). Enabled only when the draft can actually be committed.
+      if (fits(panel.commit_button)) {
+        workflow.commit_button_rect = panel.commit_button;
+        draw_action_button(panel.commit_button, "Commit",
+                           commit_workflow_service_.CanExecuteCommit(workflow), ButtonTone::Accent);
+      }
+
+      // The pre-check and status lines sit below the button, and only those the
+      // sidebar has room for are drawn.
       float check_y = panel.checks_y;
       for (const project::CommitPreCheck& check : workflow.checks) {
+        if (check_y + kCommitWorkflowCheckLineHeight > sidebar_bottom) {
+          break;
+        }
         const SDL_Color color = check.severity == project::CommitPreCheckSeverity::Blocking
                                     ? theme_.text_primary
                                     : theme_.text_muted;
         DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, check_y, color,
                    theme_.surface_background,
                    TruncateLabelView(check.message, layout.sidebar.w - kSidebarInset * 2.0f));
-        check_y += 14.0f;
+        check_y += kCommitWorkflowCheckLineHeight;
       }
-      if (!workflow.status_message.empty()) {
+      if (!workflow.status_message.empty() && panel.status_y + kCommitWorkflowCheckLineHeight <= sidebar_bottom) {
         DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, panel.status_y,
                    theme_.text_muted, theme_.surface_background,
                    TruncateLabelView(workflow.status_message, layout.sidebar.w - kSidebarInset * 2.0f));
       }
-
-      // Confirm button: the discoverable way to commit the staged changes (mirrors the
-      // Ctrl+Enter shortcut). Enabled only when the draft can actually be committed.
-      workflow.commit_button_rect = panel.commit_button;
-      draw_action_button(panel.commit_button, "Commit",
-                         commit_workflow_service_.CanExecuteCommit(workflow), ButtonTone::Accent);
     }
 
     // Reuse the rows already flattened during PrepareFrameOnce instead of

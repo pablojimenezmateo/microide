@@ -17,6 +17,9 @@ inline constexpr int kCommitWorkflowBodyRows = 4;
 // without the full panel layout.
 inline constexpr float kCommitWorkflowFieldInset = 10.0f;
 
+// Height of one pre-check or status line under the confirm button.
+inline constexpr float kCommitWorkflowCheckLineHeight = 14.0f;
+
 // Pure geometry of the inline commit draft panel: the staged-summary header, the framed
 // subject/body fields, the pre-check/status lines, and the confirm button. Shared by the
 // sidebar render path (which draws and caches the rects) and GitSidebarCommitWorkflowHeight
@@ -29,9 +32,9 @@ struct CommitWorkflowLayout {
   SDL_FRect subject_field{};
   float body_label_y = 0.0f;
   SDL_FRect body_field{};
-  float checks_y = 0.0f;  // baseline of the first pre-check line
-  float status_y = 0.0f;  // baseline of the status line (valid when has_status)
   SDL_FRect commit_button{};
+  float checks_y = 0.0f;  // top of the first pre-check line, below the button
+  float status_y = 0.0f;  // top of the status line (valid when has_status)
   float total_height = 0.0f;  // top..bottom extent of the panel content
 };
 
@@ -45,8 +48,7 @@ inline CommitWorkflowLayout ComputeCommitWorkflowLayout(float top, float field_x
   constexpr float kLabelToFieldGap = 5.0f;      // label -> framed field top
   constexpr float kFieldToLabelGap = 12.0f;     // framed field bottom -> next label
   constexpr float kFieldVerticalPadding = 8.0f; // extra height inside framed fields
-  constexpr float kCheckLineHeight = 14.0f;
-  constexpr float kButtonGap = 12.0f;  // last content line -> confirm button
+  constexpr float kButtonGap = 12.0f;  // body field -> confirm button -> first check line
   constexpr float kButtonHeight = 26.0f;
 
   CommitWorkflowLayout layout;
@@ -66,16 +68,21 @@ inline CommitWorkflowLayout ComputeCommitWorkflowLayout(float top, float field_x
                                 line_height * static_cast<float>(body_rows) + kFieldVerticalPadding};
   y += layout.body_field.h + kFieldToLabelGap;
 
-  layout.checks_y = y;
-  y += static_cast<float>(check_count) * kCheckLineHeight;
-  layout.status_y = y;
-  if (has_status) {
-    y += kCheckLineHeight;
-  }
-
+  // The button comes straight after the fields, so where it lands does not depend
+  // on how many pre-check and status lines the draft has: those are variable, and
+  // above the button they pushed it out of a short sidebar after the body had
+  // already given up every row it could (soak c8c7389e178d). They follow it
+  // instead, and the render drops the ones the sidebar has no room for.
   y += kButtonGap;
   layout.commit_button = SDL_FRect{field_x, y, field_w, kButtonHeight};
-  y += kButtonHeight;
+  y += kButtonHeight + kButtonGap;
+
+  layout.checks_y = y;
+  y += static_cast<float>(check_count) * kCommitWorkflowCheckLineHeight;
+  layout.status_y = y;
+  if (has_status) {
+    y += kCommitWorkflowCheckLineHeight;
+  }
 
   layout.total_height = y - top;
   return layout;
@@ -83,16 +90,18 @@ inline CommitWorkflowLayout ComputeCommitWorkflowLayout(float top, float field_x
 
 // The body rows the panel gets when it starts at `top` in a sidebar ending at
 // `bottom`: kCommitWorkflowBodyRows when they fit, otherwise the most that keep
-// the Commit button inside the sidebar, and never fewer than one. A fixed four
+// the Commit button inside the sidebar, and never fewer than one. Only the button
+// has to fit; the pre-check and status lines below it are clipped by the render. A fixed four
 // rows laid the button out below a short sidebar (640x480 at scale 2 with the
 // bottom panel open), under the panel's tab row, where nothing drew it and a
 // click on it landed on a terminal tab (soak c8c7389e178d).
 inline int FitCommitWorkflowBodyRows(float top, float bottom, float line_height,
                                      std::size_t check_count, bool has_status) {
   for (int rows = kCommitWorkflowBodyRows; rows > 1; --rows) {
-    if (top + ComputeCommitWorkflowLayout(top, 0.0f, 0.0f, line_height, rows, check_count, has_status)
-                  .total_height <=
-        bottom) {
+    const SDL_FRect button =
+        ComputeCommitWorkflowLayout(top, 0.0f, 0.0f, line_height, rows, check_count, has_status)
+            .commit_button;
+    if (button.y + button.h <= bottom) {
       return rows;
     }
   }
