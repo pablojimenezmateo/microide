@@ -1747,6 +1747,9 @@ if(MICROIDE_FUZZ)
 
   add_executable(DebugStateRecordFuzz
     src/persistence/PersistedRecord.cpp
+    # WorkspacePersistenceBinaryInternal.h's AppendRecord logs a record it could
+    # not encode (util::Log).
+    src/util/Log.cpp
     src/workspace/persistence/WorkspacePersistenceBinaryFormatDebug.cpp
     tests/fuzz/DebugStateRecordFuzz.cpp
   )
@@ -1756,6 +1759,7 @@ if(MICROIDE_FUZZ)
     # The session record's buffer is an editor::DocumentSnapshot (TD-2026-11-02-429).
     src/editor/DocumentSnapshot.cpp
     src/persistence/PersistedRecord.cpp
+    src/util/Log.cpp  # AppendRecord's encode-failure line
     src/workspace/persistence/WorkspacePersistenceBinaryFormatSessions.cpp
     tests/fuzz/ProjectSessionRecordFuzz.cpp
   )

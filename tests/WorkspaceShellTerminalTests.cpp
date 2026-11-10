@@ -509,6 +509,11 @@ void TestWorkspaceShellTerminalReverseVideoPaintsThePane() {
   static constexpr int kWidth = 1280;
   static constexpr int kHeight = 720;
   WorkspaceShell shell;
+  // A solid caret: the retained paint and the full repaint must not straddle a
+  // blink, or the cursor cell differs between them (CI hardened run, 8x16 at the
+  // cursor after "$ "), as in the selection tests below.
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "editor.caret_blink.enabled", "false"),
+         "the caret blink can be turned off");
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
   WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
   auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
