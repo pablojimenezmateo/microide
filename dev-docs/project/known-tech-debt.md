@@ -16,6 +16,30 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 
 ## Open items
 
+### TD-2026-11-11-439 — a compare or merge tab in a split draws over the whole editor column. [OPEN]
+
+Soak `ae1203cffa96`, `ea6f9461e041`, `d211729515a9` (oracle `overlap`, flaky
+because a monkey run rarely builds the state): with the editor split into groups,
+a compare or merge tab active in one group renders across the whole editor
+column -- `RenderCompareSurface` / `RenderMergeSurface` take
+`layout.editor_surface`, which is the column, not that group's pane -- while every
+group's tab strip and breadcrumb are still laid out and drawn. The other groups'
+tab strips then sit on top of the diff, and its buttons (`merge/<n>/accept-incoming`,
+`compare/context-<n>/all`) share pixels with their close and scroll buttons; a
+click there reaches whichever the hit test meets first. Seen at 1024x700 with a
+merge in the bottom of three groups: its toolbar and panes covered the two top
+groups.
+
+Not a local fix: about 120 sites in the compare/merge render, mouse, hover,
+cursor, scroll and control-ui paths read `layout.editor_surface` as "the view's
+surface" (the editor proper already lays out per pane). Two coherent shapes:
+render compare/merge inside the owning group's pane surface (VS Code's diff and
+merge editors live in their group), routed through one "active tab surface"
+accessor so the 120 sites stop naming the column; or have an active compare/merge
+tab take the column and leave the other groups' strips out of the layout while it
+is shown. The first is the product's direction (splits are first-class); it wants
+its own change with the merge/compare QA suites as the gate.
+
 ### TD-2026-11-10-438 — one ASan shard aborted inside glibc at thread exit. [FIXED]
 
 CI's `asan` job lost `microide_tests_shard_20` on `7d983b374` and again on
