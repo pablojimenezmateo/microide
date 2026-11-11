@@ -1061,6 +1061,15 @@ std::optional<ScrollbarGeometry> MakeVerticalScrollbarGeometry(const SDL_FRect& 
                                                               float visible_units,
                                                               float scroll_units,
                                                               bool reserve_horizontal) {
+  // A track that does not fit across the area is not laid out. It is placed from
+  // the area's far edge, so an area narrower than the track put it past the near
+  // one: a split pane dragged to its minimum width drew its scrollbar over the
+  // sidebar beside it, where a full frame showed it and the pane's partial frames
+  // did not (soak 250931ec505a; 640x480 at ui.scale 3). Every scroll surface
+  // shares this geometry, so the paint and the drag hit-test agree it is absent.
+  if (area.w < kScrollbarThickness + kScrollbarInset) {
+    return std::nullopt;
+  }
   const SDL_FRect track = MakeRect(
       area.x + area.w - kScrollbarThickness - kScrollbarInset, area.y + kScrollbarInset,
       kScrollbarThickness,
@@ -1085,6 +1094,11 @@ std::optional<ScrollbarGeometry> MakeHorizontalScrollbarGeometry(const SDL_FRect
                                                                 float visible_units,
                                                                 float scroll_units,
                                                                 bool reserve_vertical) {
+  // As for the vertical track: one that does not fit the area's height is not
+  // laid out, rather than placed above the area's top edge.
+  if (area.h < kScrollbarThickness + kScrollbarInset) {
+    return std::nullopt;
+  }
   const SDL_FRect track = MakeRect(
       area.x + kScrollbarInset, area.y + area.h - kScrollbarThickness - kScrollbarInset,
       std::max(0.0f, area.w - kScrollbarInset * 2.0f -

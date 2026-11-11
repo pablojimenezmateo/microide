@@ -4982,6 +4982,51 @@ void TestASearchRowThatDoesNotFitTheSidebarIsLeftOut() {
                       "the pointer just below the sidebar, where Replace All was");
   fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(150.0f, 60.0f)}), "the pointer away");
 }
+
+// Soak 250931ec505a (640x480 at ui.scale 3, a second defect under the same
+// signature): the divider between two side-by-side panes dragged as far left as
+// it goes. The narrowed left pane drew its vertical scrollbar left of its own
+// edge, into the sidebar: a full frame showed it there, the partial frames of the
+// drag -- clipped to the editor -- did not. What a pane paints stays inside it.
+void TestAPaneNarrowedToItsMinimumPaintsNothingOutsideIt() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  std::string content;
+  for (int line = 1; line <= 60; ++line) {
+    content += "line " + std::to_string(line) + " of a file taller than the pane\n";
+  }
+  FlowFixture fixture("a.txt", content, 213, 160);
+  // As in the soak, no bottom panel: in a 160-unit window it leaves the editor no
+  // body to scroll.
+  if (TestAccess::CurrentLayout(fixture.shell).bottom_panel.h > 0.0f) {
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, "panel-toggle"), "panel-toggle should run");
+  }
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "split-right should run");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "two panes beside the sidebar");
+  const auto divider = fixture.ElementRect("divider:editor/0");
+  Expect(divider.has_value(), "the ui query should name divider:editor/0");
+  if (!divider) {
+    return;
+  }
+  const float y = divider->y + divider->h / 2.0f;
+  const float x0 = divider->x + divider->w / 2.0f;
+  const float x1 = 20.0f;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x0, y),
+                                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x0, y)}),
+                      "pressing on the divider");
+  for (int step = 1; step <= 12; ++step) {
+    SDL_Event motion = MouseMotionEvent(x0 + (x1 - x0) * static_cast<float>(step) / 12.0f, y);
+    motion.motion.state = SDL_BUTTON_LMASK;
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {motion}),
+                        "dragging the divider left, step " + std::to_string(step));
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x1, y)}),
+                      "releasing it");
+}
+
 }  // namespace
 
 // remote-menu: the remote segment names the host and, clicked, opens the Remote
@@ -5171,6 +5216,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TabDragDropPreviewPaints", TestTabDragDropPreviewPaints);
   AddTest(tests, "QaFlowRegression/ASearchRowThatDoesNotFitTheSidebarIsLeftOut",
           TestASearchRowThatDoesNotFitTheSidebarIsLeftOut);
+  AddTest(tests, "QaFlowRegression/APaneNarrowedToItsMinimumPaintsNothingOutsideIt",
+          TestAPaneNarrowedToItsMinimumPaintsNothingOutsideIt);
   AddTest(tests, "QaFlowRegression/ClosingAPromptOverTheFinderGivesTheFinderTheKeyboard",
           TestClosingAPromptOverTheFinderGivesTheFinderTheKeyboard);
   AddTest(tests, "QaFlowRegression/ToastsShowWithTheStatusBarHidden", TestToastsShowWithTheStatusBarHidden);
