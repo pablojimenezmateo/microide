@@ -2,8 +2,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 
-#include "util/Fnv1a.h"
 
 namespace microide::compare {
 
@@ -308,17 +308,29 @@ TreeBuildScratch& BuildScratch() {
   return scratch;
 }
 
+// Word-at-a-time (the standard library's string hash), not a byte loop: every
+// token of both sides of every hunk is hashed once per refinement.
 std::uint64_t AtomHash(const DiffToken& token) {
-  return util::Fnv1aBytes(util::Fnv1aValue(util::kFnv1aOffsetBasis,
-                                           static_cast<std::uint64_t>(token.kind)),
-                          token.text);
+  return std::hash<std::string_view>{}(token.text) * 0x9E3779B97F4A7C15ULL +
+         static_cast<std::uint64_t>(token.kind);
+}
+
+std::uint64_t Combine(std::uint64_t hash, std::uint64_t value) {
+  hash ^= value + 0x9E3779B97F4A7C15ULL + (hash << 6) + (hash >> 2);
+  return hash;
 }
 
 }  // namespace
 
 void DiffContentInterner::Reset() {
+  // Clear only the buckets this comparison used: the table keeps the size the
+  // largest comparison grew it to, and one refinement resets it per hunk, so
+  // refilling all of it made every small hunk pay for the largest.
+  const std::size_t mask = buckets_.size() - 1;
+  for (const Entry& entry : entries_) {
+    buckets_[entry.hash & mask] = kNoDiffNode;
+  }
   entries_.clear();
-  std::fill(buckets_.begin(), buckets_.end(), kNoDiffNode);
 }
 
 void DiffContentInterner::Grow() {
@@ -367,10 +379,10 @@ std::uint32_t DiffContentInterner::Intern(const DiffSyntaxTree& tree, std::uint3
   const DiffSyntaxNode& node = tree.nodes[node_index];
   std::uint64_t hash = AtomHash(tree.OpenToken(node));
   if (node.is_list) {
-    hash = util::Fnv1aBytes(hash, tree.CloseToken(node).text);
+    hash = Combine(hash, std::hash<std::string_view>{}(tree.CloseToken(node).text));
     for (std::uint32_t child = node.first_child; child != kNoDiffNode;
          child = tree.nodes[child].next_sibling) {
-      hash = util::Fnv1aValue(hash, tree.nodes[child].content_id);
+      hash = Combine(hash, tree.nodes[child].content_id);
     }
   }
   if (entries_.size() * 2 >= buckets_.size()) {
