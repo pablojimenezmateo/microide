@@ -1,4 +1,5 @@
 #include "workspace/services/SidebarService.h"
+#include "workspace/OpenDocumentWatch.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
 #include <algorithm>
@@ -442,6 +443,9 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::ApplyLiveSettings");
     ApplyLiveSettings();
   }
+  // Every open document is watched, wherever it is: a fingerprint per frame, the
+  // watch set rebuilt only when the open set moved.
+  SyncOpenDocumentWatch(project_state, file_index_watcher_.get());
   // Resolve editor folding freshness once here, before any RenderClip runs, so the
   // state-mutating fold scan executes a single time per prepared frame instead of
   // per pane on every partial-redraw RenderClip. Render then consumes the already-

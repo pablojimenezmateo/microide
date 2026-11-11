@@ -572,9 +572,36 @@ void TestReadHeadBranchNameResolvesLayouts() {
          "an escaping symbolic ref must be refused");
 }
 
+// The open-document watcher reports paths; the batch it makes names a vanished
+// file Deleted (a Modified one would reload the buffer from nothing), keys a file
+// in the tree by its relative path so the tree watcher's report of the same change
+// coalesces with it, and keys one outside the root by its absolute path.
+void TestOpenFileChangesNameDeletesAndKeyByRelativePathInsideTheRoot() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path head = root / ".git" / "HEAD";
+  const std::filesystem::path gone = root / "gone.txt";
+  const std::filesystem::path outside = temp_dir.path() / "outside.txt";
+  WriteFile(head, "ref: refs/heads/main\n");
+  WriteFile(outside, "x\n");
+  const project::ProjectChangeBatch batch =
+      project::NormalizeOpenFileChanges(root, {head, gone, outside});
+  Expect(batch.file_changes.size() == 3, "one change per reported path");
+  Expect(batch.file_changes[0].kind == project::ProjectFileChangeKind::Modified &&
+             batch.file_changes[0].relative_path == std::filesystem::path(".git") / "HEAD" &&
+             batch.file_changes[0].absolute_path == head,
+         "a file in the tree is a modification keyed by its relative path");
+  Expect(batch.file_changes[1].kind == project::ProjectFileChangeKind::Deleted,
+         "a file that is not there is a deletion");
+  Expect(batch.file_changes[2].relative_path == outside,
+         "a file outside the root is keyed by its absolute path");
+}
+
 }  // namespace
 
 void RegisterProjectChangeTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ProjectChange/OpenFileChangesNameDeletesAndKeyByRelativePathInsideTheRoot",
+          TestOpenFileChangesNameDeletesAndKeyByRelativePathInsideTheRoot);
   AddTest(tests, "ProjectChange/ReadHeadBranchNameResolvesLayouts",
           TestReadHeadBranchNameResolvesLayouts);
   AddTest(tests, "ProjectChange/GitMetadataRejectsUnsafeSymbolicRef",

@@ -359,6 +359,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/platform/ControlSocketServer.cpp
   src/platform/DescriptorRetire.cpp
   src/platform/FileIndexWatcher.cpp
+  src/platform/OpenFileWatcher.cpp
   src/platform/FileWatcher.cpp
   src/platform/DirectoryWalk.cpp
   src/platform/Filesystem.cpp
@@ -833,6 +834,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/BufferFindScope.cpp
   src/workspace/EditorBodyDrop.cpp
   src/workspace/ProjectSearchLiveHits.cpp
+  src/workspace/OpenDocumentWatch.cpp
   src/workspace/WorkspaceTextSearch.cpp
   src/workspace/shell/WorkspaceShell.cpp
 )
@@ -1621,6 +1623,7 @@ add_executable(microide_kernel_tests
   tests/FileIndexTests.cpp
   tests/FileIndexWatcherContractTests.cpp
   tests/FileIndexWatcherTests.cpp
+  tests/OpenFileWatcherTests.cpp
   tests/FileReadServiceTests.cpp
   tests/FileTreeOpsTests.cpp
   tests/DirectoryWalkTests.cpp

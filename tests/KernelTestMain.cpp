@@ -70,6 +70,7 @@ void RegisterControlSocketServerTests(std::vector<TestCase>& tests);
 void RegisterPersistedRecordIoTests(std::vector<TestCase>& tests);
 void RegisterCommandLineTests(std::vector<TestCase>& tests);
 void RegisterFileIndexWatcherTests(std::vector<TestCase>& tests);
+void RegisterOpenFileWatcherTests(std::vector<TestCase>& tests);
 void RegisterFileIndexWatcherContractTests(std::vector<TestCase>& tests);
 void RegisterTerminalLifecycleStressTests(std::vector<TestCase>& tests);
 void RegisterPatternCacheTests(std::vector<TestCase>& tests);
@@ -180,6 +181,7 @@ void RegisterKernelTests(std::vector<TestCase>& tests) {
   RegisterPhase3Tests(tests);
   RegisterCommandLineTests(tests);
   RegisterFileIndexWatcherTests(tests);
+  RegisterOpenFileWatcherTests(tests);
   RegisterFileIndexWatcherContractTests(tests);
   RegisterProjectChangeTests(tests);
   RegisterPatternCacheTests(tests);

@@ -55,4 +55,28 @@ ProjectChangeBatch NormalizeIndexUpdateBatch(const std::filesystem::path& projec
   return normalized;
 }
 
+ProjectChangeBatch NormalizeOpenFileChanges(const std::filesystem::path& project_root,
+                                            const std::vector<std::filesystem::path>& paths) {
+  ProjectChangeBatch normalized;
+  normalized.file_changes.reserve(paths.size());
+  const std::filesystem::path root = project_root.lexically_normal();
+  for (const std::filesystem::path& path : paths) {
+    ProjectFileChange change;
+    change.absolute_path = path.lexically_normal();
+    std::error_code error;
+    change.kind = std::filesystem::exists(change.absolute_path, error) && !error
+                      ? ProjectFileChangeKind::Modified
+                      : ProjectFileChangeKind::Deleted;
+    std::filesystem::path relative;
+    if (!root.empty()) {
+      relative = change.absolute_path.lexically_relative(root);
+    }
+    const bool inside = !relative.empty() && relative.native() != "." &&
+                        *relative.begin() != std::filesystem::path("..");
+    change.relative_path = inside ? std::move(relative) : change.absolute_path;
+    normalized.file_changes.push_back(std::move(change));
+  }
+  return normalized;
+}
+
 }  // namespace microide::project

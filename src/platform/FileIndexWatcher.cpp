@@ -1239,11 +1239,17 @@ bool FileIndexWatcher::Watch(const std::filesystem::path& root_path) {
   return true;
 }
 
+OpenFileWatcher& FileIndexWatcher::WatchOpenFiles(OpenFileWatcher::Callback callback) {
+  open_files_ = std::make_unique<OpenFileWatcher>(std::move(callback));
+  return *open_files_;
+}
+
 void FileIndexWatcher::Unwatch() {
   // Every branch below joins background threads, and this runs on the shell
   // thread from StopFileIndexWatcher (project switch / close). Scope the halves
   // so a switch stall can be attributed to the backend that actually blocked.
   util::PerformanceTrace::Scope perf_scope("watch::Unwatch");
+  open_files_.reset();
   {
     util::PerformanceTrace::Scope scope("watch::Unwatch::StopNative");
     impl_->StopNative();

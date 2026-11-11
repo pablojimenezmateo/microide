@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "support/SoftwareCanvas.h"
 
 #include "editor/LineSpan.h"
 #include "util/PerformanceCounters.h"
@@ -52,6 +53,57 @@ void TestWorkspaceShellExternalChangeReloadsCleanBuffer() {
          "external file change should trigger a project reload");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "clean updated",
          "clean buffers should reload from disk after an external change");
+}
+
+// The project watcher covers the tracked tree only: it never looks inside
+// `.git`, nor outside the root. A clean buffer open in either place kept its old
+// text through a change on disk (soak 0cc74c09cb0a: `.git/HEAD` after a branch
+// switch still named the old branch), and a save would have written it back.
+void TestWorkspaceShellExternalChangeReloadsAnOpenFileTheProjectDoesNotTrack() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path head = root / ".git" / "HEAD";
+  const std::filesystem::path outside = temp_dir.path() / "outside.txt";
+  WriteFile(root / "notes.txt", "notes\n");
+  WriteFile(head, "ref: refs/heads/main\n");
+  WriteFile(outside, "before\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, outside);
+  WorkspaceShellTestAccess::OpenFile(shell, head);
+  // Frame prep is what hands the open documents to the watcher.
+  SoftwareCanvas canvas(1280, 720);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
+  for (int attempt = 0; attempt < 20; ++attempt) {
+    if (!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false)) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
+  // git's own write: a lock file renamed over HEAD.
+  WriteFile(head.parent_path() / "HEAD.lock", "ref: refs/heads/topic\n");
+  std::filesystem::rename(head.parent_path() / "HEAD.lock", head);
+  WriteFile(outside, "after\n");
+  const auto line_of = [&shell](const std::filesystem::path& path) -> std::string {
+    const editor::TextViewport* view = WorkspaceShellTestAccess::EditorViewportForPath(shell, path);
+    return view != nullptr && !view->lines().empty() ? view->lines()[0] : std::string("<none>");
+  };
+  (void)WaitUntil(
+      [&]() {
+        return line_of(head) == "ref: refs/heads/topic" && line_of(outside) == "after";
+      },
+      std::chrono::seconds(10), std::chrono::milliseconds(10), [&]() {
+        (void)WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false);
+        WorkspaceShellTestAccess::FlushPendingFileReads(shell);
+      });
+  Expect(line_of(head) == "ref: refs/heads/topic",
+         "the open .git/HEAD reloads after a branch switch (" + line_of(head) + ")");
+  Expect(line_of(outside) == "after",
+         "an open file outside the root reloads after a write (" + line_of(outside) + ")");
 }
 
 // Drains any pending project-change events so the watcher baseline is settled.
@@ -1022,6 +1074,8 @@ void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellAutosaveFlushesNonFocusedGroupDirtyTab);
   AddTest(tests, "ExternalRepoChange/ReloadsCleanBuffer",
           TestWorkspaceShellExternalChangeReloadsCleanBuffer);
+  AddTest(tests, "ExternalRepoChange/ReloadsAnOpenFileTheProjectDoesNotTrack",
+          TestWorkspaceShellExternalChangeReloadsAnOpenFileTheProjectDoesNotTrack);
   AddTest(tests, "ExternalRepoChange/CleanReloadDoesNotSnapshotBuffers",
           TestWorkspaceShellCleanReloadDoesNotSnapshotBuffers);
   AddTest(tests, "ExternalRepoChange/ReloadsBothSplitGroups",

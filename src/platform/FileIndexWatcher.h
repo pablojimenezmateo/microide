@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include "platform/OpenFileWatcher.h"
+
 namespace microide::platform {
 
 struct IndexFileEntry {
@@ -86,6 +88,16 @@ class FileIndexWatcher {
   // Returns false if using poll-fallback mode (native events unavailable).
   bool IsNative() const;
 
+  // The project's open documents, watched wherever they are. The tracked tree's
+  // watch above does not reach them all: it prunes `.git`, ignored and excluded
+  // directories, does not follow a symlink back into the tree, and stops at the
+  // root -- and a clean buffer of a file in any of those places kept its old text
+  // through a change on disk. `callback` fires on that watcher's own thread with
+  // the paths that changed; the set itself is OpenFileWatcher::SetFiles. Ends with
+  // Unwatch().
+  OpenFileWatcher& WatchOpenFiles(OpenFileWatcher::Callback callback);
+  OpenFileWatcher* open_files() { return open_files_.get(); }
+
   // Test seam: drive the dispatch wrapper directly, as a background worker would,
   // so the initial-vs-incremental ordering guard can be exercised deterministically
   // without racing two real threads.
@@ -102,6 +114,7 @@ class FileIndexWatcher {
   // then replays them in order; Watch resets it (workers are joined by Unwatch first).
   struct DispatchState;
   std::shared_ptr<DispatchState> dispatch_state_;
+  std::unique_ptr<OpenFileWatcher> open_files_;
 };
 
 namespace detail {

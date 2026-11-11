@@ -147,6 +147,25 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
     }
     return false;
   }
+  // The open documents the tracked tree's watch does not reach -- `.git/HEAD`, a
+  // file outside the root, one open through a symlinked directory -- are watched
+  // on their own (FileIndexWatcher::WatchOpenFiles), and a change to one goes down
+  // the same road as any other: the coalescer, then ApplyProjectChangeBatch. Frame
+  // prep hands the watcher the set (SyncOpenDocumentWatch). After Watch(), which
+  // starts over from Unwatch().
+  file_index_watcher_->WatchOpenFiles(
+      [this, watcher_generation, root = context_.current_project_state.root](
+          std::vector<std::filesystem::path> paths) {
+        if (file_index_watcher_generation_.load(std::memory_order_acquire) != watcher_generation) {
+          return;
+        }
+        project_change_coalescer_.Ingest(project::NormalizeOpenFileChanges(root, paths));
+        if (project_file_event_type_ != 0 &&
+            !project_file_event_pending_.exchange(true, std::memory_order_acq_rel) &&
+            !util::PushWake(project_file_event_type_)) {
+          project_file_event_pending_.store(false, std::memory_order_release);
+        }
+      });
   return true;
 }
 
