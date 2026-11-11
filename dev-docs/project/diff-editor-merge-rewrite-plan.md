@@ -29,7 +29,9 @@ One decorated text-grid pipeline across **editor**, **compare**, and **merge**:
 
 **Models (host-agnostic, keep):**
 
-- `src/compare/CompareModel.*` — line alignment, hunks, intraline spans
+- `src/compare/CompareModel.*` — line alignment and hunks; each hunk refined by
+  the structural diff (`DiffSyntax`, `StructuralDiff`, `HunkRefinement`; openspec
+  change `structural-diff`) into novel-token spans and a token-anchored row layout
 - `src/compare/MergeModel.*` — three-way hunks, choices, display rows
 
 **Rendering (converge here):**
@@ -47,7 +49,7 @@ One decorated text-grid pipeline across **editor**, **compare**, and **merge**:
 
 ## Gaps vs Spec
 
-1. **Decoration build fork** — *Closed (2026-06-14).* `editor::BuildDecoratedRow(DecoratedTextRow&, const RowDecorationInput&)` (`src/editor/RowDecorationBuilder.{h,cpp}`) owns background fill, source-column fill resolution (search/occurrence/selection/bracket), pre-positioned fills (guides/whitespace), syntax-run dispatch (nullable `LayoutLine*` selects the cached cell-grid path vs. the visible-window re-walk), intra-line changed-span underlines, and diagnostic underlines. Editor (`EditorViewRenderer`), compare (`WorkspaceShellCompareRender`), and merge (`WorkspaceShellMergeRender`) all marshal POD inputs and call it. Byte-identity proven by `tests/RowDecorationBuilderTests.cpp` against the legacy assembly via the per-row pixel oracle (`tests/support/RowPixelOracle.h`, `SDL_RenderReadPixels`).
+1. **Decoration build fork** — *Closed (2026-06-14).* `editor::BuildDecoratedRow(DecoratedTextRow&, const RowDecorationInput&)` (`src/editor/RowDecorationBuilder.{h,cpp}`) owns background fill, source-column fill resolution (search/occurrence/selection/bracket), pre-positioned fills (guides/whitespace), syntax-run dispatch (nullable `LayoutLine*` selects the cached cell-grid path vs. the visible-window re-walk), novel-token emphasis fills (intra-line changed-span underlines until the 2026-11-11 structural diff), and diagnostic underlines. Editor (`EditorViewRenderer`), compare (`WorkspaceShellCompareRender`), and merge (`WorkspaceShellMergeRender`) all marshal POD inputs and call it. Byte-identity proven by `tests/RowDecorationBuilderTests.cpp` against the legacy assembly via the per-row pixel oracle (`tests/support/RowPixelOracle.h`, `SDL_RenderReadPixels`).
    *Deferred follow-up (speed):* compare/merge still pass `layout == nullptr` (visible-window re-walk), preserving the pre-existing raw-tab measurement. Switching them to a cached `LayoutLine` would remove the per-query re-walk and the on-demand `LineVisualColumnMap` rebuild, **but** changes tab rendering onto the editor's cell grid (a deliberate behavior change) and only banks a measurable win with a cross-frame layout cache. The project's 2026-06-14 speed pass found row-decoration assembly is *not* the render hotspot (syntax tokenization dominates), and no render micro-benchmark exists to measure it — so this is gated on adding a render-path benchmark first, not done speculatively.
 2. **Render TU duplication** — *Merge project-state reads closed (2026-06-14):* `RenderMergeSurface` now takes injected `project_root` / `draw_caret` / `diagnostics_store` POD parameters (mirroring `RenderCompareSurface`) and `CheckCompareRenderStructuralGate` covers `WorkspaceShellMergeRender*` too. Remaining editor-adjacent layout math in the compare/merge render TUs is now thin marshaling around `BuildDecoratedRow`.
 3. **Large-file correctness audit** — *Closed 2026-06-14.* See Large-file audit findings below.
@@ -95,12 +97,14 @@ Closes Gap #3. Conclusion: **no size threshold disables diff controls, hunk
 visibility, or merge resolution.** The only size-driven behavior is diff
 *algorithm* selection, a CPU-for-memory tradeoff the spec explicitly permits.
 
-- Three guards in `src/compare/CompareModel.cpp` switch algorithm only:
-  `kMaxLineLcsMatrixCells` (250k) → patience-anchored recursive fallback
-  (`AppendAnchoredFallbackOps`); `kMaxHunkAlignmentMatrixCells` (65k) →
-  positional 1:1 pairing in `AlignHunkLines`; `kMaxIntralineLcsMatrixCells`
-  (65k) → token→codepoint fallback, then mark-all-changed. Every branch emits
-  all lines by construction — none truncates or drops hunks.
+- Two guards switch algorithm only: `kMaxLineLcsMatrixCells` (250k, in
+  `src/compare/CompareModel.cpp`) → patience-anchored recursive fallback
+  (`AppendAnchoredFallbackOps`); `kStructuralDiffVertexBudget` (250k vertices,
+  `src/compare/StructuralDiff.h`, keyed on the size of a hunk's search graph, not
+  the file) → flat token LCS for that hunk. Every branch emits all lines by
+  construction — none truncates or drops hunks. (Until 2026-11-11 a hunk-alignment
+  and an intraline budget stood where the structural budget is; the structural
+  diff replaced both.)
 - `text_hunks_available` (the only flag that disables merge text resolution) is
   derived from conflict *kind* (binary/submodule/both-deleted) in
   `MergeConflictKind.cpp`, never from size.
@@ -108,7 +112,7 @@ visibility, or merge resolution.** The only size-driven behavior is diff
   visual-column / row-height geometry, not control availability.
 - Regression coverage added in `tests/CompareModelTests.cpp`:
   `Compare/ModelPreservesBothSidesRoundTrip` (both sides reproduce line-for-line
-  across exact, anchored, and hunk-alignment fallbacks) and
+  across the exact and anchored line paths and the structural fallback) and
   `Compare/IntralineFallbackCoversChangedRegion` (oversized line still yields
   in-bounds, codepoint-aligned changed spans).
 

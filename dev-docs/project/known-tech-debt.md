@@ -16,6 +16,80 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 
 ## Open items
 
+### TD-2026-11-11-444 — a cold structural refinement of a heavily churned file costs several times the old intraline pass. [OPEN]
+
+`microide_diff_bench`, min of runs, interleaved with `main` on the same machine,
+four files diffed across ~4 months of history (table in
+`openspec/changes/archive/2026-11-11-structural-diff/bench.md`): code files
+2-4x the line-era cost (`CompareModel.cpp`, 110 hunks: 1.5 ms -> 5.8 ms), and a
+Markdown file rewritten end to end ~9x (1.5 ms -> 13.8 ms). The compare perf
+scenarios are at parity, allocations included, and a rebuild of an open compare
+refines only the hunks that changed (`HunkRefinementCache`), so this is the cost
+of the FIRST build of an extreme diff, not of typing.
+
+What is left, measured: an A* step costs ~100 ns (hash probe, stack-group
+reads, heuristic, bucket push for ~3-5 edges), and prose gaps keep the search
+because Markdown's backtick spans are string literals on both sides, which the
+atom-only shortcut must not skip (a replaced literal is a graph edge). Leads, in
+order of expected value: (1) a `Replaced`-aware flat matcher so literal-bearing
+atom gaps skip the graph too; (2) packing a vertex's identity into one 64-bit
+key and dropping `Vertex::stack` group reads from the hot path; (3) a lower
+search cap for gaps that contain no list at all. Gate each on the bench table.
+
+### TD-2026-11-11-440 — the structural diff reads a lexer's tree, not a grammar's. [OPEN]
+
+The compare view's structural refinement (`src/compare/DiffSyntax.*`,
+`StructuralDiff.*`, openspec `structural-diff`) builds each hunk side's syntax
+forest from a language-aware lexer plus bracket matching, with the rules
+(`DiffSyntax`) derived from the language contract: comment tokens and bracket
+pairs. difftastic parses with tree-sitter, so its lists are real syntax nodes --
+an `if` owns its condition and its block, a call owns its callee. Here those are
+siblings inside the enclosing brackets, which makes some matches coarser than
+difftastic's: a novel `if (x) {` head is three atoms and a list rather than one
+node, and the graph search cannot prefer "the same statement, edited" over "a
+different statement" beyond what bracket nesting says.
+
+Deliberately not taken now: a grammar per language is a C dependency plus one
+generated parser per language (several MB each), and the lexer covers every
+language the editor knows. The seam is ready for it: `BuildDiffSyntaxTree` is the
+only producer of a `DiffSyntaxTree`, and the search reads nothing but nodes,
+tokens and content ids. A grammar-backed builder for the top languages, with the
+lexer kept as the fallback, is the follow-up; gate it on `microide_diff_bench`.
+
+### TD-2026-11-11-441 — hunk-local lexing starts in code state; raw strings are not lexed. [OPEN]
+
+Each hunk side is lexed on its own, starting as code. A hunk that begins inside
+a multi-line block comment or string (its opener is on an unchanged line above
+the hunk) lexes that text as code tokens. Raw/heredoc strings (Rust `r#"…"#`,
+C++ `R"(…)"`, shell heredocs) are not recognised either. Both only change the
+granularity of the highlighting -- the tokens are still matched or marked novel,
+and the line diff, hunks and staging are unaffected -- and the replaced-literal
+word diff absorbs most of it. The proper fix is to carry the lexer state at each
+hunk's first line, which needs a state scan of the unchanged text above it (or
+the grammar of TD-440); measure the cost against the per-keystroke rebuild of an
+editable compare pane before doing it.
+
+### TD-2026-11-11-442 — no slider correction in the structural diff. [OPEN]
+
+difftastic post-processes its match (`fix_all_sliders`) so that, when a novel run
+could equally sit at two positions (inserting an item into a list whose
+neighbours are equal, or a block whose closing brace equals the next block's),
+it lands where a reader expects -- the inner position for nested novelty, the
+later delimiter for a list item. Here the Dijkstra tie-break decides, which is
+deterministic but occasionally highlights `}` of the existing block instead of
+the new one. Add the pass over `StructuralMatch` (it only moves novelty between
+equal tokens, so the line diff and the row alignment's inputs are unchanged).
+
+### TD-2026-11-11-443 — the structural refinement is per hunk; moved code is not matched across hunks. [OPEN]
+
+Each hunk is matched alone, so code moved between two hunks shows as novel in
+both. That is also difftastic's behaviour (it has no move detection), and it keeps
+the refinement proportional to the change, which the editable compare pane needs
+-- it rebuilds on every keystroke. A move pass would match novel subtrees of one
+hunk against novel subtrees of others by content id (cheap: the ids are already
+interned per hunk; the interner would need to span the build) and mark them as
+moved rather than novel, with a presentation of its own.
+
 ### TD-2026-11-11-439 — a compare or merge tab in a split draws over the whole editor column. [OPEN]
 
 Soak `ae1203cffa96`, `ea6f9461e041`, `d211729515a9` (oracle `overlap`, flaky

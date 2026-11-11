@@ -10,6 +10,18 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Added
 
+- **Structural diffs, after difftastic.** Compare tabs now read each changed
+  hunk as syntax -- identifiers, operators, whole strings and comments, and
+  bracketed groups, by the file's language -- and highlight only the tokens that
+  are genuinely new. Wrapping code in a new block highlights the block's head and
+  closing brace, not every re-indented line; re-wrapping a call highlights
+  nothing; changing one argument highlights that argument; editing a comment
+  highlights the words that changed. Lines that changed only in indentation or
+  line breaks are shown without emphasis (a muted stripe, a muted mark in the
+  overview lane) and are still staged and discarded as before. Lines within a
+  hunk are paired by the tokens they share, the left side reads as removed and
+  the right as added, and new tokens get a stronger fill than their line.
+
 - **Bold and italic text in the terminal use real bold and italic faces** of the
   terminal font (synthesized when the font has none), instead of only brightening
   bold text's colour.

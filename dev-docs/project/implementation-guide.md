@@ -139,7 +139,13 @@ The codebase is organized by responsibility:
   and UI routing
 - `src/project`: file indexing, ignore handling, project search, git services, and file operations
 - `src/editor`: text viewport, layout, syntax state, and editor rendering support
-- `src/compare`: side-by-side diff and merge models
+- `src/compare`: side-by-side diff and merge models. Compare is two layers: the line
+  diff decides the hunks (what git sees, stages and applies), and a difftastic-style
+  structural diff refines each hunk -- a lexer + bracket syntax forest per side
+  (`DiffSyntax`, rules from the language contract), a Dijkstra match over the two
+  forests (`StructuralDiff`), and novel-token spans plus a token-anchored row
+  layout (`HunkRefinement`). A changed line with no novel token changed only in
+  layout and is shown without emphasis
 - `src/terminal`: PTY session and terminal screen state; also the host-terminal wire model
   (`TerminalHostWire`, `TerminalHostFrameBuilder`), the session's *host mode* and the echo
   `TerminalPredictionOverlay`
