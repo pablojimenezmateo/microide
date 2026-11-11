@@ -74,11 +74,17 @@ void PersistedRecordWriteQueue::ApplyWrite(const std::filesystem::path& path, co
       written_body_.erase(it);
     }
   }
-  if (!PersistedRecordWriter::WriteFile(path, body, capability_flags)) {
+  PersistedRecordWriterError stage = PersistedRecordWriterError::None;
+  std::error_code cause;
+  if (!PersistedRecordWriter::WriteFile(path, body, capability_flags, &stage, &cause)) {
     // Said, because nothing else does: the caller was told "accepted" long ago,
     // and a session that silently stops landing is a kill -9 that restores an
-    // older one (soak 55673209c35c and kin had no other trace to go on).
-    util::Log("persistence: could not write " + path.string());
+    // older one (soak 55673209c35c and kin had no other trace to go on). With the
+    // stage and the OS's reason: "could not write" alone left soak c47c6a1f54cf
+    // nothing to tell a full disk from a vanished directory.
+    util::Log("persistence: could not write " + path.string() + " (" +
+              PersistedRecordWriterErrorName(stage) +
+              (cause ? ": " + cause.message() : std::string()) + ")");
     // Leave the memo without an entry for this path so the next save retries
     // rather than treating the failed write as persisted.
     std::lock_guard lock(memo_mutex_);

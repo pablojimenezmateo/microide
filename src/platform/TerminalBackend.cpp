@@ -1,6 +1,7 @@
 #include "platform/TerminalBackend.h"
 
 #include "platform/ChildSignals.h"
+#include "platform/OpenFileLimit.h"
 #include "platform/ShellProcess.h"
 
 #include <atomic>
@@ -218,6 +219,7 @@ class PosixTerminalBackend final : public TerminalBackend {
       // the parent above.
       environ = env_pointers.data();
       RestoreDefaultSignalsInChild();
+      RestoreInheritedOpenFileLimitInChild();
       // execvp, not execl: a PATH search is what makes `terminal.shell = "bash"`
       // (or `"ssh"`) work at all, and the argv already carries whatever the user
       // wrote. Both the program and the argv strings were built in the parent.

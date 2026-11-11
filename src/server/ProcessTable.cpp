@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "platform/ChildSignals.h"
+#include "platform/OpenFileLimit.h"
 #include "project/remote/RemoteProtocol.h"
 #include "util/Log.h"
 #include "util/PosixFd.h"
@@ -254,6 +255,7 @@ ProcessTable::SpawnResult ProcessTable::Spawn(std::uint64_t connection, SpawnReq
     ::dup2(out_pipe[1], 1);
     ::dup2(err_pipe[1], 2);
     platform::RestoreDefaultSignalsInChild();
+    platform::RestoreInheritedOpenFileLimitInChild();
     if (cwd != nullptr && ::chdir(cwd) != 0) {
       ::_exit(127);
     }

@@ -3,6 +3,7 @@
 #include "app/Application.h"
 #include "workspace/persistence/PersistedRecordDump.h"
 #include "platform/HostPlatform.h"
+#include "platform/OpenFileLimit.h"
 #include "util/DebugTrace.h"
 #include "util/TraceChannel.h"
 #include "workspace/control/ControlChannelService.h"
@@ -27,6 +28,9 @@ int main(int argc, char** argv) {
   microide::util::MarkTracingMainThread();
   // Before any descriptor exists: a closed 0/1/2 would be handed to the first pipe.
   microide::util::EnsureStandardDescriptorsOpen();
+  // Before any thread: every terminal, server and watched directory spends
+  // descriptors, and the inherited 1024 ran out (platform/OpenFileLimit.h).
+  microide::platform::RaiseOpenFileLimit();
 
   // Writing to a subprocess/terminal/LSP pipe whose reader has died must surface as
   // EPIPE, not kill the editor. Install this before any I/O can occur.

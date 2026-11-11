@@ -318,6 +318,32 @@ void TestPersistedRecordReaderFallsBackToBackupOnCorruption() {
          "recovery should return the last valid backup body");
 }
 
+// A failed write says at which stage and why. The write queue logs both, and
+// "could not write <path>" alone gave soak c47c6a1f54cf nothing to tell a full
+// disk from a directory that was not there.
+void TestPersistedRecordWriterReportsTheStageAndTheCauseOfAFailure() {
+  TemporaryDirectory temp_dir;
+  // A regular file where the state directory should be: create_directories fails.
+  WriteFile(temp_dir.path() / "state", "not a directory");
+  const std::filesystem::path path = temp_dir.path() / "state" / "session";
+
+  PersistedRecordWriterError stage = PersistedRecordWriterError::None;
+  std::error_code cause;
+  Expect(!PersistedRecordWriter::WriteFile(path, BytesFromText("body"), 1u, &stage, &cause),
+         "a write under a regular file should fail");
+  Expect(stage == PersistedRecordWriterError::CreateDirectoryFailed,
+         "the failure is reported at the create-directory stage");
+  Expect(static_cast<bool>(cause), "the OS's reason comes with it");
+  Expect(std::string(PersistedRecordWriterErrorName(stage)) == "create-directory",
+         "the stage has a log name");
+
+  Expect(PersistedRecordWriter::WriteFile(temp_dir.path() / "ok", BytesFromText("body"), 1u,
+                                          &stage, &cause),
+         "a write that lands should succeed");
+  Expect(stage == PersistedRecordWriterError::None && !cause,
+         "a successful write clears both the stage and the cause");
+}
+
 void TestPersistedRecordReaderReportsParseFailureWithoutBackup() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path path = temp_dir.path() / "state" / "session.workspace.bin";
@@ -680,6 +706,8 @@ void RegisterPersistedRecordIoTests(std::vector<TestCase>& tests) {
           TestPersistedRecordWriterRoundTripsWithAtomicBackupFlow);
   AddTest(tests, "PersistedRecordIo/ReaderFallsBackToBackupOnCorruption",
           TestPersistedRecordReaderFallsBackToBackupOnCorruption);
+  AddTest(tests, "PersistedRecordIo/WriterReportsTheStageAndTheCauseOfAFailure",
+          TestPersistedRecordWriterReportsTheStageAndTheCauseOfAFailure);
   AddTest(tests, "PersistedRecordIo/ReaderReportsParseFailureWithoutBackup",
           TestPersistedRecordReaderReportsParseFailureWithoutBackup);
   AddTest(tests, "PersistedRecordIo/ReaderIgnoresTruncatedTempSibling",

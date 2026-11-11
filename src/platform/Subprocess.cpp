@@ -1,6 +1,7 @@
 #include "platform/Subprocess.h"
 
 #include "platform/ChildSignals.h"
+#include "platform/OpenFileLimit.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -398,6 +399,7 @@ SubprocessResult RunSubprocessUninstrumented(const std::vector<std::string>& arg
       environ = child_envp.data();
     }
     RestoreDefaultSignalsInChild();
+    RestoreInheritedOpenFileLimitInChild();
     ApplyChildSandbox(options.sandbox);
     execvp(raw_argv[0], raw_argv.data());
     _exit(errno == ENOENT ? 127 : 126);

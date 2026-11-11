@@ -2,6 +2,7 @@
 
 #include "platform/AsyncSubprocess.h"
 #include "platform/HostPlatform.h"
+#include "platform/OpenFileLimit.h"
 #include "platform/Subprocess.h"
 #include "platform/SubprocessSandbox.h"
 #include "util/PosixFd.h"
@@ -424,6 +425,76 @@ void TestAsyncSubprocessChildGetsDefaultSigpipe() {
          "an async child must see SIGPIPE at its default disposition, got: " + output);
 }
 
+// The editor raises its own soft RLIMIT_NOFILE to the hard limit: the inherited
+// 1024 ran out under a session of terminals and the session save was the first
+// write to fail (soak c47c6a1f54cf). Its children start with the limit it
+// inherited, so a program that still uses select() is not handed descriptors its
+// fd_set cannot hold. Scoped: the test process's limit and the remembered value
+// are put back however the test ends.
+class ScopedOpenFileLimit {
+ public:
+  explicit ScopedOpenFileLimit(rlim_t soft) {
+    getrlimit(RLIMIT_NOFILE, &saved_);
+    saved_inherited_ = microide::platform::open_file_limit_detail::inherited_soft;
+    microide::platform::open_file_limit_detail::inherited_soft = RLIM_INFINITY;
+    rlimit lowered = saved_;
+    lowered.rlim_cur = soft;
+    setrlimit(RLIMIT_NOFILE, &lowered);
+  }
+  ~ScopedOpenFileLimit() {
+    setrlimit(RLIMIT_NOFILE, &saved_);
+    microide::platform::open_file_limit_detail::inherited_soft = saved_inherited_;
+  }
+  ScopedOpenFileLimit(const ScopedOpenFileLimit&) = delete;
+  ScopedOpenFileLimit& operator=(const ScopedOpenFileLimit&) = delete;
+
+ private:
+  rlimit saved_{};
+  rlim_t saved_inherited_ = RLIM_INFINITY;
+};
+
+void TestOpenFileLimitIsRaisedForTheEditorAndRestoredForItsChildren() {
+  rlimit hard{};
+  getrlimit(RLIMIT_NOFILE, &hard);
+  if (hard.rlim_max <= 300) {
+    return;  // nothing to raise on this host
+  }
+  ScopedOpenFileLimit scoped(300);
+  microide::platform::RaiseOpenFileLimit();
+  rlimit raised{};
+  getrlimit(RLIMIT_NOFILE, &raised);
+  Expect(raised.rlim_cur > 300, "the editor's own soft limit is raised past the inherited one");
+  Expect(hard.rlim_max == RLIM_INFINITY || raised.rlim_cur == hard.rlim_max,
+         "the soft limit is raised to the hard one");
+
+  const auto sync = RunSubprocess({"sh", "-c", "ulimit -Sn"},
+                                  SubprocessOptions{
+                                      .cwd = {},
+                                      .stdin_text = {},
+                                      .environment_overrides = {},
+                                      .capture_stdout = true,
+                                      .capture_stderr = false,
+                                      .silence_stderr = true,
+                                  });
+  Expect(sync.stdout_text == "300\n",
+         "a synchronous child starts with the inherited soft limit, got: " + sync.stdout_text);
+
+  microide::platform::AsyncSubprocess process;
+  Expect(process.Start({"sh", "-c", "ulimit -Sn; echo done"}), "async limit probe should start");
+  std::string output;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (std::chrono::steady_clock::now() < deadline && output.find("done") == std::string::npos) {
+    const auto chunk = process.Read(4096, 50);
+    if (!chunk.has_value()) {
+      break;
+    }
+    output += *chunk;
+  }
+  process.Shutdown(500);
+  Expect(output.rfind("300\n", 0) == 0,
+         "an async child starts with the inherited soft limit, got: " + output);
+}
+
 // The editor may START with signals ignored: a background job of a
 // non-interactive shell begins with SIGINT and SIGQUIT ignored, and an ignored
 // disposition survives exec. The coverage lane runs the suite that way, and the
@@ -764,6 +835,8 @@ void RegisterSubprocessTests(std::vector<TestCase>& tests) {
           TestAsyncSubprocessFinishLetsTheChildReadWhatWasWrittenLast);
   AddTest(tests, "AsyncSubprocess/ChildGetsDefaultSigpipe",
           TestAsyncSubprocessChildGetsDefaultSigpipe);
+  AddTest(tests, "Subprocess/OpenFileLimitIsRaisedForTheEditorAndRestoredForItsChildren",
+          TestOpenFileLimitIsRaisedForTheEditorAndRestoredForItsChildren);
   AddTest(tests, "Subprocess/ChildDoesNotInheritIgnoredInterrupts",
           TestSubprocessChildDoesNotInheritIgnoredInterrupts);
   AddTest(tests, "AsyncSubprocess/ChildDoesNotInheritIgnoredInterrupts",

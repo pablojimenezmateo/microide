@@ -31,6 +31,7 @@
 #include <thread>
 #include <vector>
 
+#include "platform/OpenFileLimit.h"
 #include "platform/UnixSocket.h"
 #include "project/remote/RemotePeer.h"
 #include "project/remote/RemoteProtocol.h"
@@ -484,6 +485,9 @@ int main(int argc, char** argv) {
   // Before any descriptor exists: a closed 0/1/2 would be handed to the first pipe
   // or socket (and the daemon's own stdio detach below assumes they are open).
   microide::util::EnsureStandardDescriptorsOpen();
+  // Before any thread: every remote terminal and job spends descriptors
+  // (platform/OpenFileLimit.h).
+  microide::platform::RaiseOpenFileLimit();
   ::signal(SIGPIPE, SIG_IGN);
   if (argc >= 1 && std::filesystem::path(argv[0]).filename() == remote::kBrowserHelperName) {
     return argc == 2 ? OpenUrl(argv[1]) : (std::cerr << "usage: microide-browser URL\n", 2);

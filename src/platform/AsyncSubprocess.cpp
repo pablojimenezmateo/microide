@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include "platform/ChildSignals.h"
+#include "platform/OpenFileLimit.h"
 #include "util/PosixFd.h"
 #include "util/PosixPipe.h"
 
@@ -165,6 +166,7 @@ bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::str
       }
     }
     RestoreDefaultSignalsInChild();
+    RestoreInheritedOpenFileLimitInChild();
     ApplyChildSandbox(sandbox);
     execvp(raw_argv[0], raw_argv.data());
     _exit(errno == ENOENT ? 127 : 126);
