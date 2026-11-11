@@ -236,7 +236,7 @@ void TestWorkspaceSharedCompareScrollbarMarkers() {
               .old_path = {},
           }),
       microide::compare::ComparePresentationOptions{},
-      microide::compare::ComparePresentationCollapseState{}, 1);
+      microide::compare::ComparePresentationCollapseState{});
   const auto runs = BuildCompareScrollbarRuns(presentation, model);
   Expect(runs.size() == 3, "compare scrollbar runs should group contiguous changed rows");
   Expect(runs[0].kind == microide::compare::CompareRowKind::Added && runs[0].start_row == 1 &&
@@ -289,7 +289,7 @@ void TestWorkspaceSharedCompareScrollbarMarkersFollowPresentationRows() {
               .old_path = {},
           }),
       microide::compare::ComparePresentationOptions{},
-      microide::compare::ComparePresentationCollapseState{}, 1);
+      microide::compare::ComparePresentationCollapseState{});
 
   const auto runs = BuildCompareScrollbarRuns(presentation, model);
   Expect(runs.size() == 2,

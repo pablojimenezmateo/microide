@@ -131,19 +131,17 @@ ComparePresentationModel BuildComparePresentationModel(
     const CompareModel& model,
     const CompareSemanticFileMetadata& semantic,
     const ComparePresentationOptions& options,
-    ComparePresentationCollapseState collapse_state,
-    std::uint64_t model_generation) {
+    ComparePresentationCollapseState collapse_state) {
   ComparePresentationModel presentation;
   presentation.collapse_state = std::move(collapse_state);
-  BuildComparePresentationModelInto(presentation, model, semantic, options, model_generation);
+  BuildComparePresentationModelInto(presentation, model, semantic, options);
   return presentation;
 }
 
 void BuildComparePresentationModelInto(ComparePresentationModel& presentation,
                                        const CompareModel& model,
                                        const CompareSemanticFileMetadata& semantic,
-                                       const ComparePresentationOptions& options,
-                                       std::uint64_t model_generation) {
+                                       const ComparePresentationOptions& options) {
   // Double-buffer the collapsed-run list: the previous build's entries have to
   // stay readable (they carry the per-run expand state) while the new ones are
   // written. A swap recycles both buffers; the old spelling COPIED the vector to
@@ -165,7 +163,6 @@ void BuildComparePresentationModelInto(ComparePresentationModel& presentation,
   }
 
   if (semantic.file_kind == CompareSemanticFileKind::Binary) {
-    RebuildCompareInlineDiffCache(&presentation, model, model_generation, true);
     FinishPresentationRows(presentation, cursor);
     return;
   }
@@ -244,7 +241,6 @@ void BuildComparePresentationModelInto(ComparePresentationModel& presentation,
     ++row_index;
   }
 
-  RebuildCompareInlineDiffCache(&presentation, model, model_generation, false);
   FinishPresentationRows(presentation, cursor);
 }
 
@@ -335,83 +331,6 @@ std::size_t ComparePresentationToModelRow(const ComparePresentationModel& presen
     }
   }
   return 0;
-}
-
-void RebuildCompareInlineDiffCache(ComparePresentationModel* presentation,
-                                   const CompareModel& model,
-                                   std::uint64_t model_generation,
-                                   bool defer_intraline) {
-  if (presentation == nullptr) {
-    return;
-  }
-  presentation->inline_cache.model_generation = model_generation;
-  // `resize` + per-row `clear`, never `assign(n, {})`: growing an `assign` past
-  // capacity destroys every inner vector, where `resize` MOVES them, and a
-  // cleared inner vector keeps the buffer the copy below writes into. This runs
-  // on every keystroke in an editable diff, once per model row (TD-2026-08-17-261).
-  const auto reset_side = [&](std::vector<std::vector<CompareTextSpan>>& side) {
-    side.resize(model.rows.size());
-    for (std::vector<CompareTextSpan>& spans : side) {
-      spans.clear();
-    }
-  };
-  reset_side(presentation->inline_cache.left_spans_by_row);
-  reset_side(presentation->inline_cache.right_spans_by_row);
-  if (defer_intraline) {
-    return;
-  }
-  for (std::size_t i = 0; i < model.rows.size(); ++i) {
-    presentation->inline_cache.left_spans_by_row[i] = model.rows[i].left_changed_spans;
-    presentation->inline_cache.right_spans_by_row[i] = model.rows[i].right_changed_spans;
-  }
-}
-
-namespace {
-
-// Resolve one side's intra-line change spans: prefer the presentation cache when
-// it has been built and holds a non-empty entry for the row, otherwise fall back
-// to the spans the diff model carried.
-//
-// Both sides need exactly this, and the empty-entry test is the subtle part — a
-// cached row with no spans means "not computed for this row", not "no changes",
-// so it has to fall through to the model rather than report none.
-const std::vector<CompareTextSpan>& InlineSpansForSide(
-    const ComparePresentationModel& presentation,
-    const CompareModel& model,
-    std::size_t model_row_index,
-    const std::vector<std::vector<CompareTextSpan>>& cached_by_row,
-    const std::vector<CompareTextSpan> CompareRow::*model_spans) {
-  // Defensive bound: callers pass in-range indices today, but the model.rows
-  // fallback below would be UB for an out-of-range index; return no spans instead.
-  static const std::vector<CompareTextSpan> kEmptySpans;
-  if (model_row_index >= model.rows.size()) {
-    return kEmptySpans;
-  }
-  if (presentation.inline_cache.model_generation != 0 &&
-      model_row_index < cached_by_row.size() && !cached_by_row[model_row_index].empty()) {
-    return cached_by_row[model_row_index];
-  }
-  return model.rows[model_row_index].*model_spans;
-}
-
-}  // namespace
-
-const std::vector<CompareTextSpan>& CompareInlineLeftSpans(
-    const ComparePresentationModel& presentation,
-    const CompareModel& model,
-    std::size_t model_row_index) {
-  return InlineSpansForSide(presentation, model, model_row_index,
-                            presentation.inline_cache.left_spans_by_row,
-                            &CompareRow::left_changed_spans);
-}
-
-const std::vector<CompareTextSpan>& CompareInlineRightSpans(
-    const ComparePresentationModel& presentation,
-    const CompareModel& model,
-    std::size_t model_row_index) {
-  return InlineSpansForSide(presentation, model, model_row_index,
-                            presentation.inline_cache.right_spans_by_row,
-                            &CompareRow::right_changed_spans);
 }
 
 }  // namespace microide::compare

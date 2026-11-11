@@ -220,7 +220,7 @@ void RefreshCompareTabPresentation(CompareTabState& compare_tab) {
   // and re-allocated on every keystroke (TD-2026-08-17-261).
   compare::BuildComparePresentationModelInto(
       compare_tab.presentation, compare_tab.model, compare_tab.semantic_file,
-      PresentationOptionsFromTab(compare_tab), compare_tab.model_revision);
+      PresentationOptionsFromTab(compare_tab));
   ++compare_tab.presentation_revision;
   // Record what this build consumed, so the derived-state refresh can tell whether
   // a later event moved any of it. Collapse-state edits call straight in here, and

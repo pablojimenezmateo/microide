@@ -66,16 +66,9 @@ struct ComparePresentationOptions {
   std::size_t collapse_threshold = 8;
 };
 
-struct CompareInlineDiffCache {
-  std::uint64_t model_generation = 0;
-  std::vector<std::vector<CompareTextSpan>> left_spans_by_row;
-  std::vector<std::vector<CompareTextSpan>> right_spans_by_row;
-};
-
 struct ComparePresentationModel {
   std::vector<ComparePresentationRow> rows;
   ComparePresentationCollapseState collapse_state;
-  CompareInlineDiffCache inline_cache;
   // Back buffer for `collapse_state.collapsed_runs`. A rebuild has to read the
   // previous build's per-run expand state while writing the new list, and the
   // two are swapped rather than copied. Not part of the model's value — nothing
@@ -84,7 +77,7 @@ struct ComparePresentationModel {
 };
 
 // Rebuild `presentation` IN PLACE from `model`, recycling its row slab, its
-// summary strings, its inline-span vectors and its collapsed-run buffer. The
+// summary strings and its collapsed-run buffer. The
 // incoming `presentation.collapse_state` is read as the previous state.
 //
 // This is the form the product uses, because the rebuild fires on every
@@ -94,15 +87,13 @@ struct ComparePresentationModel {
 void BuildComparePresentationModelInto(ComparePresentationModel& presentation,
                                        const CompareModel& model,
                                        const CompareSemanticFileMetadata& semantic,
-                                       const ComparePresentationOptions& options,
-                                       std::uint64_t model_generation);
+                                       const ComparePresentationOptions& options);
 
 ComparePresentationModel BuildComparePresentationModel(
     const CompareModel& model,
     const CompareSemanticFileMetadata& semantic,
     const ComparePresentationOptions& options,
-    ComparePresentationCollapseState collapse_state,
-    std::uint64_t model_generation);
+    ComparePresentationCollapseState collapse_state);
 
 // Recompute `row.display_summary_text` from `summary_text`,
 // `review_marker_label`, and `has_review_note`. Call after mutating any of
@@ -126,20 +117,5 @@ std::size_t ComparePresentationRowForModelRow(
 
 std::size_t ComparePresentationToModelRow(const ComparePresentationModel& presentation,
                                           std::size_t presentation_row_index);
-
-void RebuildCompareInlineDiffCache(ComparePresentationModel* presentation,
-                                   const CompareModel& model,
-                                   std::uint64_t model_generation,
-                                   bool defer_intraline);
-
-const std::vector<CompareTextSpan>& CompareInlineLeftSpans(
-    const ComparePresentationModel& presentation,
-    const CompareModel& model,
-    std::size_t model_row_index);
-
-const std::vector<CompareTextSpan>& CompareInlineRightSpans(
-    const ComparePresentationModel& presentation,
-    const CompareModel& model,
-    std::size_t model_row_index);
 
 }  // namespace microide::compare
