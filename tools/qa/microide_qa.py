@@ -336,6 +336,12 @@ class App:
     # signature is built from them, so steering costs no extra query.
     last_ui: dict[str, Any] | None = None
     last_buffer: dict[str, Any] | None = None
+    # What the state oracles saw when one disagreed, written beside a state
+    # finding as state-evidence.txt: the caret line's text, the buffer's tab size
+    # and carets, and per re-read whether a frame was prepared in between. The
+    # Ln/Col finding (soak 5a2cb8ba7f6b) never replayed, and its evidence could not
+    # tell a frame that never came from a label that stayed stale across frames.
+    state_evidence: list[str] = field(default_factory=list)
     last_editor: dict[str, Any] | None = None
     # Set while the monkey runs a burst: actions recorded then carry "b": 1, and a
     # replay sends them with no settle or check between (the timing they had).
@@ -643,6 +649,13 @@ class App:
             return abs(window.get("width", 0) * scale - width) <= 2 and abs(window.get("height", 0) * scale - height) <= 2
         _wait(applied, 5.0, f"the window to take the run's {width}x{height} size")
         self.origin = self._window_origin()
+
+    def _frames_logged(self) -> int:
+        """How many frames this launch has logged (MICROIDE_TRACE_REDRAW_VERBOSE):
+        read twice, it says whether the app prepared a frame in between."""
+        with contextlib.suppress(OSError):
+            return self.log_path.read_bytes().count(b"microide redraw frame:")
+        return -1
 
     def _first_frame_presented(self) -> bool:
         with contextlib.suppress(OSError):
@@ -1798,10 +1811,13 @@ class App:
         def findings(ui: dict[str, Any]) -> list[tuple[str, str]]:
             return (self._state_findings(ui) + self._tab_strip_findings(ui) + self._terminal_tab_findings(ui)
                     + self._window_title_findings(ui))
+        self.state_evidence = []
         found = findings(ui)
-        for _ in range(3):
+        for attempt in range(3):
             if not found:
                 return []
+            self.state_evidence.append(f"read {attempt}: {self._frames_logged()} frame(s) logged; "
+                                       f"{[message for _, message in found]}")
             time.sleep(0.2 * SLOW_FACTOR)
             try:
                 ui = self.ui()
@@ -1960,6 +1976,11 @@ class App:
                     if got != want:
                         out.append(("state", f"the status bar says Ln {got[0]}, Col {got[1]}; the caret is at "
                                              f"Ln {want[0]}, Col {want[1]}"))
+                        self.state_evidence.append(
+                            f"status {status.get('label')!r}; caret line {caret['line']} byte column "
+                            f"{caret['column']} of {len(cursors)} caret(s); tabSize {buffer.get('tabSize')}; "
+                            f"revision {buffer.get('revision')}; line text "
+                            f"{lines[caret['line'] - 1][:512]!r}")
         overlay = ui.get("overlay") or {}
         query = overlay.get("query") or ""
         if (overlay.get("visible") and overlay.get("mode") in ("buffer-search", "buffer-replace")
@@ -2041,6 +2062,9 @@ class App:
                 (folder / "log-tail-before-relaunch.txt").write_text(log.read().decode("utf-8", "replace"))
         if self.shots is not None and (self.shots / "stall-threads.txt").exists():
             shutil.copy2(self.shots / "stall-threads.txt", folder / "stall-threads.txt")
+        if self.state_evidence and any(f.kind == "state" for f in found):
+            (folder / "state-evidence.txt").write_text(
+                "\n".join(self.state_evidence + [f"reported: {self._frames_logged()} frame(s) logged"]) + "\n")
         for index, raw in self.recent_shots:
             self.image_of(raw).save(folder / f"after-action-{index:04d}.png")
         # The verifier's own images of the stale frames this finding names.
