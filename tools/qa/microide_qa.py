@@ -524,14 +524,24 @@ class App:
         self.log_offset = 0
         if between is not None:
             between()
-        self._spawn(project if project is not None else self.project, self._extra_args)
+        if restore_workspace:
+            self._spawn(None, self._extra_args)
+        else:
+            self._spawn(project if project is not None else self.project, self._extra_args)
 
     def crash_and_relaunch(self, project: Path | None = None,
-                           between: Callable[[], None] | None = None) -> None:
+                           between: Callable[[], None] | None = None,
+                           restore_workspace: bool = False) -> None:
         """Kills the app with SIGKILL -- no quit, no session save, the crash path --
         and starts it again on the same display, XDG tree and project. `between`
         runs while it is down: what the killed process left on disk, before the
-        next one reads (and rewrites) it."""
+        next one reads (and rewrites) it.
+
+        `restore_workspace` starts it with no project on its command line, as a
+        user reopening the app after a crash does: the saved workspace comes back,
+        every project of it. Naming a project opens THAT project instead of the
+        workspace (`code <folder>`), so a second project's unsaved buffers were not
+        in the relaunched app at all (soak e946ec9333d7)."""
         self._bank_action_counts()
         if self.alive():
             with contextlib.suppress(ProcessLookupError):
@@ -547,7 +557,10 @@ class App:
         self.log_offset = 0
         if between is not None:
             between()
-        self._spawn(project if project is not None else self.project, self._extra_args)
+        if restore_workspace:
+            self._spawn(None, self._extra_args)
+        else:
+            self._spawn(project if project is not None else self.project, self._extra_args)
 
     def _spawn(self, project: Path | None, extra_args: list[str]) -> None:
         self.log_path = self.work / f"microide-{self._launches}.log" if self._launches else self.work / "microide.log"

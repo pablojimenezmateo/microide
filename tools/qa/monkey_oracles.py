@@ -198,11 +198,8 @@ class DataOracle:
                 out.append(("data", f"the crash-safety flush did not stage the unsaved buffers within "
                                     f"{CRASH_SAFETY_STAGED_LIMIT_S:.0f}s of quiet (the `persistence` query never "
                                     f"answered staged)"))
-        # Every project's: the relaunch names the run's project on its command
-        # line, which makes that one active, so the dirty buffers of a second
-        # project the monkey had opened came back in an inactive project -- and
-        # were reported lost, since the active project's list does not hold them
-        # (soak e946ec9333d7).
+        # Every project's: the dirty buffers of a second project the monkey had
+        # opened come back in that project, which need not be the active one.
         before = self.documents(all_projects=True)
         disk_before = {doc["path"]: _sha256_file(Path(doc["path"])) for doc in before
                        if doc.get("path") and not doc.get("dirty")}
@@ -222,7 +219,11 @@ class DataOracle:
                 shutil.copytree(state, self.last_kill_state, symlinks=True,
                                 ignore_dangling_symlinks=True, dirs_exist_ok=True)
 
-        app.crash_and_relaunch(between=keep_state)
+        # With no project on the command line: the app restores its saved
+        # workspace, as after a real crash. Naming the run's project opened that
+        # project alone, and a second project's buffers, kept in its session
+        # record, were reported lost (soak e946ec9333d7).
+        app.crash_and_relaunch(between=keep_state, restore_workspace=True)
         dirty = [doc for doc in before if doc.get("dirty")]
         self._load_restored_projects(dirty)
         # Restore lands over a few frames: wait until every dirty path is back.

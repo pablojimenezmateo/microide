@@ -15,9 +15,13 @@ import monkey_oracles  # noqa: E402
 
 
 class _RelaunchingApp:
-    """Two projects; the second holds an unsaved buffer. After the relaunch the
-    first is active and the second is a restored catalog entry that loads its
-    tabs when first activated -- as the real catalog does."""
+    """Two projects; the second, the active one, holds an unsaved buffer. The
+    relaunch behaves as the app's startup does: `microide <project>` opens THAT
+    project instead of the saved workspace (WorkspaceLifecycleCoordinator), and a
+    launch with no project restores every project of the workspace, the saved
+    active one active and the others loading their tabs on first activation."""
+
+    ROOTS = ("/p/a", "/p/b")
 
     def __init__(self) -> None:
         self.work = None
@@ -25,8 +29,9 @@ class _RelaunchingApp:
         self.actions: list[dict] = []
         self.lines: list[str] = []
         self.relaunched = False
+        self.catalog = [0, 1]  # indices into ROOTS, in catalog order
         self.active = 1
-        self.loaded = [True, True]
+        self.loaded = {0: True, 1: True}
         self.docs = {
             0: [{"path": "/p/a/x.txt", "dirty": False, "sha256": "aa", "project": "/p/a"}],
             1: [{"path": "/p/b/y.txt", "dirty": True, "sha256": "bb", "project": "/p/b"}],
@@ -36,39 +41,60 @@ class _RelaunchingApp:
         if verb == "persistence":
             return {"staged": True}
         if verb == "projects":
-            return [{"root": root, "index": i, "active": i == self.active, "loaded": self.loaded[i]}
-                    for i, root in enumerate(("/p/a", "/p/b"))]
+            return [{"root": self.ROOTS[p], "index": i, "active": p == self.active, "loaded": self.loaded[p]}
+                    for i, p in enumerate(self.catalog)]
         if verb == "documents":
-            return [doc for i in (0, 1) if self.loaded[i] for doc in self.docs[i]]
+            return [doc for p in self.catalog if self.loaded[p] for doc in self.docs[p]]
         raise AssertionError(verb)
 
     def send_line(self, line, timeout=15.0, record=True):
         self.lines.append(line)
         if line == "project-next":
-            self.active = (self.active + 1) % 2
+            at = self.catalog.index(self.active)
+            self.active = self.catalog[(at + 1) % len(self.catalog)]
             self.loaded[self.active] = True
         return {}
 
     def record_external(self, row) -> None:
         self.actions.append({"external": row})
 
-    def crash_and_relaunch(self, between=None) -> None:
+    def crash_and_relaunch(self, project=None, between=None, restore_workspace=False) -> None:
         if between is not None:
             between()
         self.relaunched = True
-        self.active = 0
-        self.loaded = [True, False]
+        if restore_workspace:
+            # The saved workspace: every project, the one active at the kill active.
+            self.loaded = {p: p == self.active for p in self.catalog}
+        else:
+            # The command line's project alone; the other is not in the catalog.
+            self.catalog = [self.ROOTS.index(project or self.project)]
+            self.active = self.catalog[0]
+            self.loaded = {p: p == self.active for p in (0, 1)}
 
 
 class Kill9OracleTests(unittest.TestCase):
     def test_a_restored_project_that_has_not_loaded_is_loaded_before_the_compare(self) -> None:
         app = _RelaunchingApp()
+        app.active = 0  # the buffer's project is a background one at the kill
         oracle = monkey_oracles.DataOracle(app)
         with mock.patch.object(monkey_oracles, "CRASH_SAFETY_QUIET_S", 0.0), \
                 mock.patch.object(monkey_oracles.time, "sleep", lambda _s: None):
             found = oracle.kill9_and_check(random.Random(1), waited=True)
         self.assertEqual(found, [], found)
         self.assertEqual(app.active, 0, "the lap ends on the project the relaunch made active")
+
+    def test_the_relaunch_restores_the_workspace_not_only_the_run_project(self) -> None:
+        # Soak e946ec9333d7: the relaunch named the run's project on its command
+        # line, which opens that project INSTEAD of the saved workspace, so every
+        # unsaved buffer of a second project read as lost -- though its session
+        # record held them and reopening the project brought them back.
+        app = _RelaunchingApp()
+        oracle = monkey_oracles.DataOracle(app)
+        with mock.patch.object(monkey_oracles, "CRASH_SAFETY_QUIET_S", 0.0), \
+                mock.patch.object(monkey_oracles.time, "sleep", lambda _s: None):
+            found = oracle.kill9_and_check(random.Random(1), waited=True)
+        self.assertEqual(found, [], found)
+        self.assertEqual([app.ROOTS[p] for p in app.catalog], ["/p/a", "/p/b"])
 
 
 if __name__ == "__main__":
