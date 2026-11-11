@@ -428,6 +428,42 @@ void TestPersistedStateProjectSessionSkipsOverCapGroupsBeforeDecoding() {
          "only as many editor groups as the editor area can hold are kept");
 }
 
+// A session stream that carries the split-tree record twice describes one tree:
+// the later record replaces the earlier, as every other single-valued field here
+// does. ReadSplitTree appended instead, so two in-bounds trees (each node count
+// checked against the cap on its own) overran the fixed-capacity node list --
+// an assert in debug builds, a silently truncated, mismatched tree otherwise
+// (fuzz-smoke, ProjectSessionRecordFuzz crash-2320f7e60a8b, CI run 43086794492).
+void TestPersistedStateProjectSessionRepeatedSplitTreeReplaces() {
+  const auto session_with_leaves = [](std::size_t leaves) {
+    PersistedProjectSessionState session;
+    microide::workspace::EditorSplitTree tree;
+    for (std::size_t i = 1; i < leaves; ++i) {
+      // Alternating directions nests every split: 2N-1 nodes for N panes.
+      tree.InsertLeaf(i - 1,
+                      i % 2 == 0 ? microide::workspace::EditorSplitOrientation::Vertical
+                                 : microide::workspace::EditorSplitOrientation::Horizontal,
+                      false);
+    }
+    session.split_tree = tree.Flatten();
+    return session;
+  };
+  const PersistedProjectSessionState full = session_with_leaves(microide::workspace::kMaxEditorGroups);
+  const PersistedProjectSessionState pair = session_with_leaves(2);
+  Expect(full.split_tree.size() + pair.split_tree.size() > microide::workspace::kMaxEditorSplitNodes,
+         "the two trees together should hold more nodes than one session can carry (got " +
+             std::to_string(full.split_tree.size()) + " + " + std::to_string(pair.split_tree.size()) + ")");
+  std::vector<std::byte> first;
+  std::vector<std::byte> second;
+  Expect(EncodeProjectSessionRecord(full, &first) && EncodeProjectSessionRecord(pair, &second),
+         "both sessions should encode");
+  first.insert(first.end(), second.begin(), second.end());
+  PersistedProjectSessionState decoded;
+  Expect(DecodeProjectSessionRecord(first, &decoded), "a repeated split tree should decode");
+  Expect(decoded.split_tree.size() == pair.split_tree.size(),
+         "the later split-tree record replaces the earlier one, not appends to it");
+}
+
 // The terminal layout round-trips: tabs, panes (cwd + command, and a host pane's
 // terminal), shares, the active tab and pane, the maximized panel. A forged
 // session cannot revive more tabs or panes than the caps, nor half a host
@@ -1698,6 +1734,8 @@ void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
           TestPersistedStateProjectSessionDecodeHonorsTabCap);
   AddTest(tests, "PersistedStateRecord/ProjectSessionSkipsOverCapGroupsBeforeDecoding",
           TestPersistedStateProjectSessionSkipsOverCapGroupsBeforeDecoding);
+  AddTest(tests, "PersistedStateRecord/ProjectSessionRepeatedSplitTreeReplaces",
+          TestPersistedStateProjectSessionRepeatedSplitTreeReplaces);
   AddTest(tests, "PersistedStateRecord/ProjectSessionRoundTripOmitsChatRegistry",
           TestPersistedStateProjectSessionRoundTripOmitsChatRegistry);
   AddTest(tests, "PersistedStateRecord/ProjectSessionAcceptsLegacyChatRegistryTag",

@@ -56,6 +56,11 @@ bool WriteSplitTree(PrimitiveWriter& w, const EditorSplitTreeRecord& record) {
 }
 
 bool ReadSplitTree(PrimitiveReader& reader, EditorSplitTreeRecord* out) {
+  // A stream that repeats this record describes one tree, the later one, as a
+  // repeated scalar field does. Appending let two in-bounds trees (each count
+  // checked against the cap only on its own) overrun the fixed node list
+  // (fuzz-smoke, ProjectSessionRecordFuzz).
+  out->clear();
   std::uint8_t node_count = 0;
   if (!reader.ReadU8(&node_count) || node_count > kMaxEditorSplitNodes) {
     return false;
