@@ -102,11 +102,23 @@ bool ProjectCatalogService::ActivateProjectState(ProjectWorkspaceState& state,
         "ProjectCatalogService::ActivateProjectState::ActivateCurrentTabAfterStateLoad");
     operations_.activate_current_tab_after_state_load();
   }
+  // A project's watcher is stopped while another is in front, and the restarted
+  // one's first batch is a baseline, not a change list: a file rewritten
+  // meanwhile -- by the other project's save of the same file, an outside tool,
+  // a checkout -- reports nothing. A background git completion arms the full
+  // catch-up below (git state, tree, compares); any other change is caught
+  // only by re-checking the open buffers on every activation, or the clean
+  // buffer keeps the old text and its next save writes it over the file (soak
+  // 88696b6b00ac and its cluster).
   if (std::exchange(context_.current_project_state.catch_up_on_activate, false) &&
       operations_.catch_up_background_changes) {
     util::PerformanceTrace::Scope scope(
         "ProjectCatalogService::ActivateProjectState::CatchUpBackgroundChanges");
     operations_.catch_up_background_changes();
+  } else if (operations_.reload_clean_open_buffers) {
+    util::PerformanceTrace::Scope scope(
+        "ProjectCatalogService::ActivateProjectState::ReloadCleanOpenBuffers");
+    operations_.reload_clean_open_buffers();
   }
   {
     util::PerformanceTrace::Scope scope(

@@ -116,6 +116,7 @@ ProjectCatalogService& WorkspaceShell::MakeProjectCatalogService() {
                   RefreshOpenCompareTabsForPath(path);
                 }
               },
+          .reload_clean_open_buffers = [this]() { ReloadCleanOpenBuffersFromDisk(); },
           .save_config_state = [this]() { MakePersistenceCoordinator().SaveConfigState(); },
           .save_session_state = [this]() { MakePersistenceCoordinator().SaveSessionState(); },
           .save_workspace_session =

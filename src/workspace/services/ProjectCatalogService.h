@@ -32,6 +32,9 @@ class ProjectCatalogService {
     // ProjectWorkspaceState::catch_up_on_activate: what the project missed while
     // it was in the background.
     std::function<void()> catch_up_background_changes;
+    // Every re-activation: re-reads the clean buffers whose files changed while
+    // the project's watcher was stopped (one stat per open file when none did).
+    std::function<void()> reload_clean_open_buffers;
     std::function<void()> save_config_state;
     std::function<void()> save_session_state;
     std::function<void()> save_workspace_session;

@@ -1173,6 +1173,44 @@ void TestWorkspaceShellProjectSwitchPreservesProjectScopedCommandState() {
          "switching forward should restore the second project's editor preferences");
 }
 
+// Regression (soak 88696b6b00ac and its cluster: "the clean buffer of bom.txt
+// differs from its file on disk", ~1500 sightings over a dozen fixture files): a
+// project's file watcher is stopped while another project is in front, and the
+// restarted watcher's first batch is a baseline, not a change list. So a file
+// rewritten while its project was in the background -- by another project's
+// save of the same file, an external tool, a checkout -- was never re-read: the
+// clean buffer kept the old text after the switch back, and its next save wrote
+// that old text over the file. Only a background GIT completion armed the
+// catch-up; every activation must re-check the clean buffers.
+void TestWorkspaceShellProjectSwitchReloadsCleanBuffersChangedInTheBackground() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
+  const std::filesystem::path root_b = temp_dir.path() / "beta-project";
+  const std::filesystem::path notes = root_a / "notes.txt";
+  WriteFile(notes, "alpha\n");
+  WriteFile(root_b / "README.md", "beta\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_a, false, false),
+         "first project should open");
+  WorkspaceShellTestAccess::OpenFile(shell, notes);
+  Expect(WorkspaceShellTestAccess::FocusedGroupTabEditor(shell, 0).SerializeDocumentText() ==
+             "alpha\n",
+         "the first project should show the file");
+
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_b, false, false),
+         "second project should open");
+  WriteFile(notes, "alpha, rewritten while its project was in the background\n");
+
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0, false),
+         "switching back to the first project should succeed");
+  const editor::TextViewport& view = WorkspaceShellTestAccess::FocusedGroupTabEditor(shell, 0);
+  Expect(!view.dirty(), "the buffer should still be clean");
+  Expect(view.SerializeDocumentText() ==
+             "alpha, rewritten while its project was in the background\n",
+         "a clean buffer must show what its file holds after its project comes back to front");
+}
+
 void TestWorkspaceShellProjectSwitchPreservesSearchSidebarSurfaceState() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
@@ -9239,6 +9277,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectNextAndPrevCommandsCycleProjects);
   AddTest(tests, "WorkspaceShell/ProjectSwitchPreservesProjectScopedCommandState",
           TestWorkspaceShellProjectSwitchPreservesProjectScopedCommandState);
+  AddTest(tests, "WorkspaceShell/ProjectSwitchReloadsCleanBuffersChangedInTheBackground",
+          TestWorkspaceShellProjectSwitchReloadsCleanBuffersChangedInTheBackground);
   AddTest(tests, "WorkspaceShell/ProjectSwitchPreservesSearchSidebarSurfaceState",
           TestWorkspaceShellProjectSwitchPreservesSearchSidebarSurfaceState);
   AddTest(tests, "WorkspaceShell/ProjectSwitchClearsTransientInteractionState",
