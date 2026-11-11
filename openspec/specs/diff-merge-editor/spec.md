@@ -1,7 +1,9 @@
 ## Purpose
 
 Define the durable behavior and performance contract for compare and three-way merge editor surfaces.
+
 ## Requirements
+
 ### Requirement: Unified Decorated Text-Grid Pipeline
 
 Editor, compare, and three-way merge surfaces SHALL render through one shared decorated text-grid pipeline that owns row fills, syntax runs, selection, diagnostic underlines, blame shadow text, and hunk decorations. Compare and merge surfaces SHALL NOT fork the editor's render path to add their own row-decoration layers.
@@ -16,7 +18,7 @@ Editor, compare, and three-way merge surfaces SHALL render through one shared de
 
 ### Requirement: Diff Semantics Do Not Degrade By File Size
 
-Diff and merge semantics SHALL NOT silently degrade, truncate, or fall back to coarser algorithms based on file-size thresholds. Performance optimizations MAY trade CPU for memory but SHALL NOT reduce the correctness of the displayed hunks.
+Diff and merge semantics SHALL NOT silently degrade, truncate, or fall back to coarser algorithms based on file-size thresholds. Performance optimizations MAY trade CPU for memory but SHALL NOT reduce the correctness of the displayed hunks. The structural refinement of a hunk is bounded by the size of its search graph, not by the size of the file: a hunk whose search exceeds the budget falls back to the flat token diff, which changes how finely the hunk is matched but never which lines are shown as changed.
 
 #### Scenario: Large file opened in compare
 - **WHEN** a compare tab is opened for a file that exceeds any large-file heuristic threshold
@@ -25,6 +27,10 @@ Diff and merge semantics SHALL NOT silently degrade, truncate, or fall back to c
 #### Scenario: Merge conflict in a large file
 - **WHEN** a three-way merge tab is opened against a file exceeding the large-file heuristic
 - **THEN** every conflict hunk SHALL be resolvable through the normal per-hunk and whole-side apply actions, without the large-file path disabling merge controls
+
+#### Scenario: A small hunk in a huge file
+- **WHEN** a compare tab is opened for a very large file with a small change
+- **THEN** that change SHALL be refined structurally exactly as in a small file
 
 ### Requirement: Compare Tab Behavior
 
@@ -72,7 +78,7 @@ Diff and merge code paths SHALL be covered by the `microide_diff_bench` utility 
 
 ### Requirement: Low-Contrast Diff Decorations Preserve Text Legibility
 
-Compare and merge surfaces SHALL use low-contrast fill colors for added, removed, and conflicted rows. Foreground text color SHALL remain neutral and SHALL NOT inherit a red, green, or orange tint from the row decoration.
+Compare and merge surfaces SHALL use low-contrast fill colors for added, removed, and conflicted rows. Foreground text color SHALL remain neutral and SHALL NOT inherit a red, green, or orange tint from the row decoration. In a compare tab the left side reads as removed and the right side as added: a side whose line carries novel tokens gets the low-contrast wash of its color and a stronger fill behind each novel token, and a side whose line changed only in layout gets neither, keeping a muted edge stripe.
 
 #### Scenario: Added row keeps neutral text
 - **WHEN** a compare or merge row is rendered with an added-line decoration
@@ -81,6 +87,10 @@ Compare and merge surfaces SHALL use low-contrast fill colors for added, removed
 #### Scenario: Conflict row stays distinguishable without overpowering the text
 - **WHEN** a merge conflict row is rendered
 - **THEN** the conflict state SHALL remain visible through the low-contrast palette without overwhelming the foreground glyphs
+
+#### Scenario: Novel tokens are emphasised, layout changes are not
+- **WHEN** a compare row pairs a line whose only novel token is one identifier with a re-indented line that has none
+- **THEN** the identifier SHALL carry the emphasis fill on its side, that side SHALL carry the row wash, and the layout-only side SHALL carry no wash and a muted edge stripe
 
 ### Requirement: Compare Review Modes Are Explicit
 Compare tabs SHALL declare one of four review modes: working-tree review, commit review, branch review, or conflict review. Each mode SHALL expose mode-appropriate metadata, file lists, navigation, and actions without relying on label text to infer behavior.
@@ -116,7 +126,7 @@ Compare behavior SHALL separate semantic diff data from visible presentation sta
 - **THEN** MicroIDE SHALL rebuild presentation decorations as needed without recomputing the semantic hunk model
 
 ### Requirement: Diff Review Presentation Details
-Compare tabs SHALL support inline word diff inside changed lines, context expansion above and below hunks, collapsed unchanged regions with line counts, sticky hunk headers where layout permits, syntax highlighting on both sides, whitespace visualization, ignore-whitespace mode, and metadata rows for binary, rename, mode, line-ending, and submodule changes.
+Compare tabs SHALL support structural highlighting of novel tokens inside changed lines, context expansion above and below hunks, collapsed unchanged regions with line counts, sticky hunk headers where layout permits, syntax highlighting on both sides, whitespace visualization, ignore-whitespace mode, and metadata rows for binary, rename, mode, line-ending, and submodule changes.
 
 #### Scenario: Collapsed context is expanded
 - **WHEN** the user expands context above a collapsed hunk
@@ -125,6 +135,10 @@ Compare tabs SHALL support inline word diff inside changed lines, context expans
 #### Scenario: Change-overview lane follows collapsed presentation
 - **WHEN** unchanged compare context is collapsed or later expanded
 - **THEN** the compare tab's change-overview lane SHALL position changed-run markers against the current visible presentation rows so collapsed gaps shrink in the lane until that context is expanded again
+
+#### Scenario: Change-overview lane mutes layout-only runs
+- **WHEN** a run of changed rows carries no novel token on either side
+- **THEN** the change-overview lane SHALL draw that run in a muted color, distinct from the runs that carry novel tokens
 
 #### Scenario: Binary file is compared
 - **WHEN** the selected file is binary
@@ -210,3 +224,44 @@ Before a merge file is marked resolved, MicroIDE SHALL verify that the result is
 #### Scenario: Index changed under resolver
 - **WHEN** the Git index conflict state changes after the merge tab opens
 - **THEN** mark-resolved SHALL fail with a stale conflict state and SHALL offer to refresh the resolver
+
+### Requirement: Compare Hunks Are Refined Structurally
+Compare tabs SHALL refine every hunk structurally, in the manner of difftastic: each side is read as a syntax forest of atoms (identifiers, numbers, operators, whole strings, whole comments) and delimited lists, using the file language's comment and bracket rules, the two forests are matched as a shortest path in which equal subtrees are cheap and one-sided nodes expensive, and only the tokens left without a match SHALL be shown as changed (novel).
+
+#### Scenario: Code wrapped in a new block
+- **WHEN** a compare shows lines that were indented into a new `if (…) { … }` block
+- **THEN** only the new block's head and its closing brace SHALL be marked novel, and the re-indented body lines SHALL be shown paired with their old lines as a layout-only change
+
+#### Scenario: A call re-wrapped across lines
+- **WHEN** a call written on one line is re-wrapped over several lines with no token changed
+- **THEN** the hunk SHALL still be shown and stageable, and no token on either side SHALL be marked novel
+
+#### Scenario: One argument changes
+- **WHEN** one argument of a call is replaced
+- **THEN** only the replaced argument SHALL be marked novel on each side
+
+#### Scenario: A comment is edited
+- **WHEN** one word of a comment changes
+- **THEN** only that word SHALL be marked novel on each side
+
+### Requirement: Structural Refinement Does Not Change Hunks
+The line diff SHALL remain the authority on which lines changed: hunk membership, staging, discarding and generated patches SHALL NOT depend on the structural refinement. Within a hunk, rows SHALL pair the left and right lines that share the most matched tokens, in order on both sides.
+
+#### Scenario: Layout-only lines stay stageable
+- **WHEN** a hunk contains lines that changed only in indentation
+- **THEN** those lines SHALL be part of the hunk, stageable and discardable, and SHALL carry no novel token
+
+#### Scenario: A signature gains a parameter
+- **WHEN** a function signature gains a parameter
+- **THEN** the old and new signature lines SHALL share a row and only the added parameter SHALL be novel
+
+### Requirement: Structural Refinement Is Bounded
+The structural search SHALL be bounded per gap, never by file size: a gap too large to search, or whose search exceeds its vertex budget, SHALL be matched by a flat token longest-common-subsequence, which still marks exactly the tokens it cannot match. An in-place rebuild of a compare model SHALL refine only the hunks whose text changed.
+
+#### Scenario: A large rewritten hunk
+- **WHEN** a hunk is too large for the structural search
+- **THEN** its tokens SHALL be matched by the flat token diff, every line SHALL still be covered by exactly one row, and the build SHALL stay bounded
+
+#### Scenario: Typing in an editable compare
+- **WHEN** the user edits one hunk of an editable compare pane
+- **THEN** the rebuild SHALL reuse the refinement of every other hunk
