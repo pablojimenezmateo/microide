@@ -9,6 +9,7 @@
 #include <string_view>
 #include <vector>
 
+#include "compare/HunkRefinement.h"
 #include "util/FlatDedupSet.h"
 #include "util/Fnv1a.h"
 #include "util/PerformanceCounters.h"
@@ -23,53 +24,6 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 constexpr std::size_t kMaxLineLcsMatrixCells = 250'000;
-constexpr std::size_t kMaxHunkAlignmentMatrixCells = 65'536;
-constexpr std::size_t kMaxIntralineLcsMatrixCells = 65'536;
-
-// Cumulative cap on intra-line DP cells spent refining the Modified rows of a
-// SINGLE hunk. The oversized-hunk positional fallback (see AlignHunkLines) emits
-// min(left,right) Modified pairs with NO bound on that count, and each pair can
-// otherwise cost up to kMaxIntralineLcsMatrixCells — so a huge hunk of long
-// modified lines multiplies out to billions of comparisons on the UI thread. Once
-// this per-hunk budget is spent, the remaining Modified rows fall back to
-// whole-line-changed (no character-level refinement). Sized so every realistic
-// hunk keeps full refinement (~128 worst-case-long modified pairs) while a
-// pathological hunk stays bounded.
-constexpr std::size_t kMaxHunkIntralineTotalCells = 8'388'608;
-
-// Above this per-side byte length we skip intra-line span refinement for a
-// modified row and mark the whole line changed. The intra-line helpers allocate
-// O(n) codepoint-offset and token vectors per line; on a single very long line (a
-// minified bundle or a binary blob from `git show`) that is a hundreds-of-MB
-// spike on the UI thread. Character-level highlighting on such a line is not
-// meaningful anyway, so the whole-line fallback loses nothing a user would see.
-constexpr std::size_t kMaxIntralineTextBytes = 64 * 1024;
-
-enum class LineTokenKind {
-  Word,
-  Whitespace,
-  Symbol,
-};
-
-struct LineToken {
-  std::size_t start = 0;
-  std::size_t end = 0;
-  LineTokenKind kind = LineTokenKind::Word;
-};
-
-struct TokenizedLine {
-  std::string_view text;
-  std::vector<LineToken> tokens;
-  std::vector<std::size_t> significant_token_indices;
-  std::size_t significant_token_bytes = 0;
-};
-
-enum class HunkAlignmentKind {
-  Pair,
-  Delete,
-  Insert,
-};
-
 bool ProductExceeds(std::size_t left, std::size_t right, std::size_t limit) {
   if (left == 0 || right == 0) {
     return false;
@@ -82,817 +36,42 @@ std::uint64_t DurationNs(Clock::time_point start, Clock::time_point end) {
       std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count());
 }
 
-LineTokenKind ClassifyCodepoint(std::string_view text, std::size_t offset) {
-  if (offset >= text.size()) {
-    return LineTokenKind::Symbol;
-  }
-
-  const unsigned char byte = static_cast<unsigned char>(text[offset]);
-  if (byte > 0x7F) {
-    return LineTokenKind::Word;
-  }
-  if (util::IsAsciiSpace(static_cast<unsigned char>(byte)) != 0) {
-    return LineTokenKind::Whitespace;
-  }
-  if (util::IsAsciiAlnum(static_cast<unsigned char>(byte)) != 0 || byte == '_') {
-    return LineTokenKind::Word;
-  }
-  return LineTokenKind::Symbol;
-}
-
-void BuildUtf8OffsetsInto(std::string_view text, std::vector<std::size_t>& offsets) {
-  offsets.clear();
-  offsets.reserve(text.size() + 1);
-  for (std::size_t offset = 0; offset < text.size();) {
-    offsets.push_back(offset);
-    offset += util::Utf8SequenceLength(text, offset);
-  }
-  offsets.push_back(text.size());
-}
-
-void TokenizeLineInto(std::string_view text, TokenizedLine& tokenized) {
-  tokenized.tokens.clear();
-  tokenized.significant_token_indices.clear();
-  tokenized.significant_token_bytes = 0;
-  tokenized.text = text;
-  // Tokens are grouped runs (only symbols are per-codepoint), so the count is
-  // well below the byte length. Reserving one token per byte over-allocates
-  // badly on long/multibyte lines; a half-length heuristic fits the common case
-  // without repeated growth on symbol-dense lines.
-  tokenized.tokens.reserve(text.size() / 2 + 8);
-  for (std::size_t offset = 0; offset < text.size();) {
-    const LineTokenKind kind = ClassifyCodepoint(text, offset);
-    const std::size_t start = offset;
-    offset += util::Utf8SequenceLength(text, offset);
-    if (kind != LineTokenKind::Symbol) {
-      while (offset < text.size() && ClassifyCodepoint(text, offset) == kind) {
-        offset += util::Utf8SequenceLength(text, offset);
-      }
-    }
-
-    tokenized.tokens.push_back(LineToken{
-        .start = start,
-        .end = offset,
-        .kind = kind,
-    });
-    if (kind != LineTokenKind::Whitespace) {
-      tokenized.significant_token_indices.push_back(tokenized.tokens.size() - 1);
-      tokenized.significant_token_bytes += offset - start;
-    }
-  }
-}
-
-// Per-thread scratch for the intraline (per-Modified-row) refinement. Each of
-// these buffers used to be a fresh heap vector per row — token vectors, changed
-// flags, the LCS DP matrix (up to kMaxIntralineLcsMatrixCells entries), and the
-// codepoint offset tables — roughly a dozen allocations for every modified line
-// of every diff. Refinement is strictly per-row and never re-entrant, so one
-// arena per thread reuses the capacity across the whole file.
-//
-// The changed-flag vectors are `char`, not `vector<bool>`: the bit-packed
-// specialization cannot be memset-filled and costs a shift/mask on every access
-// in the DP backtrack.
-struct IntralineScratch {
-  TokenizedLine left_tokens;
-  TokenizedLine right_tokens;
-  std::vector<std::size_t> left_offsets;
-  std::vector<std::size_t> right_offsets;
-  std::vector<char> left_changed;
-  std::vector<char> right_changed;
-  std::vector<std::size_t> token_dp;
-  std::vector<int> codepoint_dp;
-};
-
-IntralineScratch& Scratch() {
-  thread_local IntralineScratch scratch;
-  return scratch;
-}
-
-// Per-thread scratch for hunk alignment, the other per-hunk allocation cluster:
-// two TokenizedLine-per-line vectors (two heap blocks *each*), the lazily-filled
-// similarity matrix, and the DP cost/choice matrices. Disjoint from
-// IntralineScratch above — alignment finishes before row refinement starts, but
-// keeping them separate means neither can ever clobber the other.
-//
-// The tokenized vectors are only ever GROWN (never resized down), so each
-// element keeps the token-vector capacity it reached on an earlier hunk; only
-// the first `count` entries of each are live in any one call.
-struct HunkAlignScratch {
-  std::vector<std::string_view> deleted_lines;
-  std::vector<std::string_view> inserted_lines;
-  std::vector<HunkAlignmentKind> alignment;
-  std::vector<TokenizedLine> left_tokenized;
-  std::vector<TokenizedLine> right_tokenized;
-  std::vector<double> similarity;
-  std::vector<double> dp;
-  std::vector<HunkAlignmentKind> choice;
-  std::vector<std::size_t> common_tokens;
-};
-
-HunkAlignScratch& HunkScratch() {
-  thread_local HunkAlignScratch scratch;
-  return scratch;
-}
-
-// Grow-only tokenization into a reused vector: entries past `count` keep their
-// (now stale) contents and, crucially, their heap capacity for the next hunk.
-void TokenizeLinesInto(const std::vector<std::string_view>& lines,
-                       std::vector<TokenizedLine>& out) {
-  if (out.size() < lines.size()) {
-    out.resize(lines.size());
-  }
-  for (std::size_t i = 0; i < lines.size(); ++i) {
-    TokenizeLineInto(lines[i], out[i]);
-  }
-}
-
-// Sum of significant (non-whitespace) token bytes for `text`, matching
-// TokenizedLine::significant_token_bytes without allocating the token vectors.
-// Used by the line-match weight where only this scalar is needed.
-std::size_t SignificantTokenBytes(std::string_view text) {
+// The non-whitespace bytes of a line: how much a line match "says". A blank or
+// brace-only line is weak evidence that two regions correspond.
+std::size_t SignificantBytes(std::string_view text) {
   std::size_t total = 0;
-  for (std::size_t offset = 0; offset < text.size();) {
-    const LineTokenKind kind = ClassifyCodepoint(text, offset);
-    const std::size_t start = offset;
-    offset += util::Utf8SequenceLength(text, offset);
-    if (kind != LineTokenKind::Symbol) {
-      while (offset < text.size() && ClassifyCodepoint(text, offset) == kind) {
-        offset += util::Utf8SequenceLength(text, offset);
-      }
-    }
-    if (kind != LineTokenKind::Whitespace) {
-      total += offset - start;
-    }
+  for (const char byte : text) {
+    total += util::IsAsciiSpace(static_cast<unsigned char>(byte)) != 0 ? 0 : 1;
   }
   return total;
 }
 
-bool TokenEquals(std::string_view left,
-                 const LineToken& left_token,
-                 std::string_view right,
-                 const LineToken& right_token) {
-  return left_token.kind == right_token.kind &&
-         left.substr(left_token.start, left_token.end - left_token.start) ==
-             right.substr(right_token.start, right_token.end - right_token.start);
-}
-
-std::size_t TokenMatchWeight(const LineToken& token) {
-  const std::size_t token_bytes = token.end - token.start;
-  switch (token.kind) {
-    case LineTokenKind::Word:
-      return token_bytes + 4;
-    case LineTokenKind::Whitespace:
-    case LineTokenKind::Symbol:
-    default:
-      return token_bytes > 0 ? 1 : 0;
-  }
-}
-
-std::size_t CommonSignificantTokenBytes(const TokenizedLine& left, const TokenizedLine& right,
-                                        std::vector<std::size_t>& dp) {
-  const std::size_t left_count = left.significant_token_indices.size();
-  const std::size_t right_count = right.significant_token_indices.size();
-  if (left_count == 0 || right_count == 0) {
-    return 0;
-  }
-
-  // Cap the token-LCS DP exactly as the intraline-span path (PopulateTokenChangedSpans)
-  // does. AlignHunkLines only gates on the number of LINES, so a 1x1 hunk of a single
-  // enormous line (a minified bundle: one ~MB line, one byte changed) sails past that
-  // gate and reaches here, where an ungated `(left_count+1)*(right_count+1)` DP is
-  // O(tokens^2) — hundreds of GB / an OOM crash on the synchronous UI-thread compare
-  // build. Over budget, report no common tokens: LineSimilarity maps that to 0.0, so
-  // the pair falls back to the same correct Delete+Insert alignment the coarse path
-  // already produces for oversized hunks.
-  if (ProductExceeds(left_count + 1, right_count + 1, kMaxIntralineLcsMatrixCells)) {
-    return 0;
-  }
-
-  // Only at(0, 0) is ever read — there is no backtrack — and every cell depends
-  // solely on the row below it, so ONE rolling row suffices. That turns the
-  // working set from O(left * right) into O(right) and, more importantly, shrinks
-  // the per-pair re-zero from up to kMaxIntralineLcsMatrixCells words to
-  // right_count + 1. This runs up to left_lines * right_lines times per hunk, so
-  // the full matrix was memsetting tens of MB across a dense diff.
-  //
-  // dp[j] holds at(i + 1, j) on entry to row i and at(i, j) on exit. Walking j
-  // downward means dp[j + 1] has already been overwritten with at(i, j + 1), so
-  // the diagonal at(i + 1, j + 1) is carried in `diagonal` instead of read back.
-  dp.assign(right_count + 1, 0);
-
-  for (std::size_t i = left_count; i-- > 0;) {
-    const LineToken& left_token = left.tokens[left.significant_token_indices[i]];
-    const std::size_t left_length = left_token.end - left_token.start;
-    const std::string_view left_text = left.text.substr(left_token.start, left_length);
-    std::size_t diagonal = 0;  // at(i + 1, right_count) is always 0
-    for (std::size_t j = right_count; j-- > 0;) {
-      const LineToken& right_token = right.tokens[right.significant_token_indices[j]];
-      const std::size_t below = dp[j];  // at(i + 1, j), not yet overwritten
-      const std::size_t length = right_token.end - right_token.start;
-      const std::size_t value =
-          (length == left_length &&
-           right.text.compare(right_token.start, length, left_text) == 0)
-              ? left_length + diagonal
-              : std::max(below, dp[j + 1]);  // dp[j + 1] is already at(i, j + 1)
-      diagonal = below;
-      dp[j] = value;
-    }
-  }
-
-  return dp[0];
-}
-
+// How much matching this line is worth to the line aligner: informative lines
+// weigh more, and a line that occurs many times weighs less, so the alignment
+// anchors on distinctive lines rather than on runs of `}` or blank lines.
 std::size_t LineMatchWeight(std::string_view text,
-                            std::size_t significant_token_bytes,
+                            std::size_t significant_bytes,
                             std::size_t occurrences) {
   const std::size_t informative_bytes =
-      significant_token_bytes > 0 ? significant_token_bytes : (text.empty() ? 1 : std::size_t{2});
+      significant_bytes > 0 ? significant_bytes : (text.empty() ? 1 : std::size_t{2});
   const std::size_t rarity = std::max<std::size_t>(1, occurrences);
   return std::max<std::size_t>(1, (informative_bytes + 8) / rarity);
 }
 
-double LineSimilarity(const TokenizedLine& left, const TokenizedLine& right,
-                      std::vector<std::size_t>& token_scratch) {
-  if (left.text == right.text) {
-    return 1.0;
-  }
-  if (left.significant_token_indices.empty() && right.significant_token_indices.empty()) {
-    return 1.0;
-  }
-  if (left.significant_token_bytes == 0 || right.significant_token_bytes == 0) {
-    return 0.0;
-  }
+// Per-thread scratch for assembling one hunk: its two line runs and the
+// refinement the rows are laid out from. Grown once and reused for every hunk
+// of every build on the thread.
+struct HunkScratch {
+  std::vector<std::string_view> deleted_lines;
+  std::vector<std::string_view> inserted_lines;
+  HunkRefinement refinement;
+};
 
-  const std::size_t common_bytes = CommonSignificantTokenBytes(left, right, token_scratch);
-  if (common_bytes == 0) {
-    return 0.0;
-  }
-  return std::clamp(
-      (2.0 * static_cast<double>(common_bytes)) /
-          static_cast<double>(left.significant_token_bytes + right.significant_token_bytes),
-      0.0, 1.0);
+HunkScratch& HunkScratchForThread() {
+  thread_local HunkScratch scratch;
+  return scratch;
 }
 
-double AlignmentPairCost(double similarity) {
-  const double clamped_similarity = std::clamp(similarity, 0.0, 1.0);
-  return 1.15 - (0.85 * clamped_similarity);
-}
-
-bool CanPairAlignedLines(double similarity,
-                         std::size_t left_count,
-                         std::size_t right_count) {
-  if (left_count == 1 && right_count == 1) {
-    // A 1-del/1-add hunk always pairs as a single Modified row, even at ~0
-    // similarity: a single-line change is by-design shown in place with an
-    // intra-line diff (pinned by TestCompareManyTokenLineBoundsAlignmentDp). Do not
-    // gate this on similarity.
-    return true;
-  }
-  if ((left_count == 1 && right_count > 1) || (right_count == 1 && left_count > 1)) {
-    return false;
-  }
-  return similarity >= 0.35;
-}
-
-void AlignHunkLinesInto(const std::vector<std::string_view>& deleted_lines,
-                        const std::vector<std::string_view>& inserted_lines,
-                        CompareBuildProfile* profile,
-                        std::vector<HunkAlignmentKind>& alignment) {
-  const std::size_t left_count = deleted_lines.size();
-  const std::size_t right_count = inserted_lines.size();
-  HunkAlignScratch& scratch = HunkScratch();
-  alignment.clear();
-  if (left_count == 0) {
-    alignment.assign(right_count, HunkAlignmentKind::Insert);
-    return;
-  }
-  if (right_count == 0) {
-    alignment.assign(left_count, HunkAlignmentKind::Delete);
-    return;
-  }
-  if (ProductExceeds(left_count + 1, right_count + 1, kMaxHunkAlignmentMatrixCells)) {
-    if (profile != nullptr) {
-      ++profile->fallback_hunk_alignment_calls;
-    }
-    // Positional fallback for a hunk too large for the DP: pair the first
-    // min(left,right) rows as Modified. A similarity gate here (rendering
-    // low-token-similarity positional pairs as delete+insert) was evaluated and
-    // rejected — it changes the pinned fallback contract and degrades the common
-    // systematic-rename case (e.g. `left-N` -> `right-N`) from a readable
-    // side-by-side Modified row into split delete/insert rows. Kept as positional
-    // pairing by design; see the won't-do note in known-tech-debt.md.
-    const std::size_t paired = std::min(left_count, right_count);
-    alignment.reserve(left_count + right_count - paired);
-    alignment.insert(alignment.end(), paired, HunkAlignmentKind::Pair);
-    alignment.insert(alignment.end(), left_count - paired, HunkAlignmentKind::Delete);
-    alignment.insert(alignment.end(), right_count - paired, HunkAlignmentKind::Insert);
-    return;
-  }
-  if (profile != nullptr) {
-    ++profile->exact_hunk_alignment_calls;
-  }
-
-  std::vector<TokenizedLine>& left_tokenized = scratch.left_tokenized;
-  std::vector<TokenizedLine>& right_tokenized = scratch.right_tokenized;
-  TokenizeLinesInto(deleted_lines, left_tokenized);
-  TokenizeLinesInto(inserted_lines, right_tokenized);
-
-  // Whether a Pair is reachable at all for this hunk shape. CanPairAlignedLines
-  // rejects 1-vs-many and many-vs-1 purely on the counts, so for those hunks the
-  // similarity of every cell is computed and then discarded — an entire hunk of
-  // O(tokens^2) token-LCS runs for nothing. Hoist that decision out of the loop.
-  const bool pairing_possible = !((left_count == 1 && right_count > 1) ||
-                                  (right_count == 1 && left_count > 1));
-  // The 1x1 hunk always pairs and feeds the exact similarity into
-  // AlignmentPairCost, so the cheap-bound skip below must not apply to it.
-  const bool similarity_gates_pairing = !(left_count == 1 && right_count == 1);
-
-  // Compute similarities lazily: -1 means "not yet computed".
-  std::vector<double>& similarity = scratch.similarity;
-  similarity.assign(left_count * right_count, -1.0);
-  std::vector<std::size_t>& common_token_scratch = scratch.common_tokens;
-  auto similarity_at = [&](std::size_t i, std::size_t j) -> double {
-    double& val = similarity[i * right_count + j];
-    if (val < 0.0) {
-      const TokenizedLine& left_line = left_tokenized[i];
-      const TokenizedLine& right_line = right_tokenized[j];
-      // common_bytes can never exceed min(left_bytes, right_bytes), so
-      //   similarity <= 2 * min / (left + right).
-      // When that ceiling cannot reach the 0.35 pairing gate the exact value is
-      // never read (the Pair branch is skipped), so the O(tokens^2) LCS below is
-      // pure waste. Lines of very different length — the common shape in a real
-      // hunk — are rejected here in a few instructions.
-      const std::size_t left_bytes = left_line.significant_token_bytes;
-      const std::size_t right_bytes = right_line.significant_token_bytes;
-      const std::size_t total_bytes = left_bytes + right_bytes;
-      if (similarity_gates_pairing && total_bytes > 0) {
-        const double ceiling = (2.0 * static_cast<double>(std::min(left_bytes, right_bytes))) /
-                               static_cast<double>(total_bytes);
-        if (ceiling < 0.35) {
-          val = ceiling;
-          return val;
-        }
-      }
-      val = LineSimilarity(left_line, right_line, common_token_scratch);
-    }
-    return val;
-  };
-
-  std::vector<double>& dp = scratch.dp;
-  std::vector<HunkAlignmentKind>& choice = scratch.choice;
-  dp.assign((left_count + 1) * (right_count + 1), 0.0);
-  choice.assign((left_count + 1) * (right_count + 1), HunkAlignmentKind::Pair);
-  auto at = [&](std::size_t i, std::size_t j) -> double& {
-    return dp[i * (right_count + 1) + j];
-  };
-  auto choice_at = [&](std::size_t i, std::size_t j) -> HunkAlignmentKind& {
-    return choice[i * (right_count + 1) + j];
-  };
-
-  for (std::size_t i = left_count + 1; i-- > 0;) {
-    if (i < left_count) {
-      at(i, right_count) = static_cast<double>(left_count - i);
-      choice_at(i, right_count) = HunkAlignmentKind::Delete;
-    }
-  }
-  for (std::size_t j = right_count + 1; j-- > 0;) {
-    if (j < right_count) {
-      at(left_count, j) = static_cast<double>(right_count - j);
-      choice_at(left_count, j) = HunkAlignmentKind::Insert;
-    }
-  }
-
-  for (std::size_t i = left_count; i-- > 0;) {
-    for (std::size_t j = right_count; j-- > 0;) {
-      double best_cost = std::numeric_limits<double>::infinity();
-      HunkAlignmentKind best_kind = HunkAlignmentKind::Delete;
-      double best_similarity = -1.0;
-      const auto consider = [&](double candidate_cost,
-                                HunkAlignmentKind candidate_kind,
-                                double candidate_similarity = -1.0) {
-        constexpr double kEpsilon = 1e-6;
-        if (candidate_cost + kEpsilon < best_cost) {
-          best_cost = candidate_cost;
-          best_kind = candidate_kind;
-          best_similarity = candidate_similarity;
-          return;
-        }
-        if (std::fabs(candidate_cost - best_cost) > kEpsilon) {
-          return;
-        }
-        if (candidate_kind == HunkAlignmentKind::Pair &&
-            (best_kind != HunkAlignmentKind::Pair ||
-             candidate_similarity > best_similarity + kEpsilon)) {
-          best_kind = candidate_kind;
-          best_similarity = candidate_similarity;
-        }
-      };
-
-      const double pair_similarity = pairing_possible ? similarity_at(i, j) : 0.0;
-      if (pairing_possible && CanPairAlignedLines(pair_similarity, left_count, right_count)) {
-        consider(AlignmentPairCost(pair_similarity) + at(i + 1, j + 1), HunkAlignmentKind::Pair,
-                 pair_similarity);
-      }
-      consider(1.0 + at(i + 1, j), HunkAlignmentKind::Delete);
-      consider(1.0 + at(i, j + 1), HunkAlignmentKind::Insert);
-
-      at(i, j) = best_cost;
-      choice_at(i, j) = best_kind;
-    }
-  }
-
-  alignment.reserve(left_count + right_count);
-  std::size_t i = 0;
-  std::size_t j = 0;
-  while (i < left_count || j < right_count) {
-    if (i >= left_count) {
-      alignment.push_back(HunkAlignmentKind::Insert);
-      ++j;
-      continue;
-    }
-    if (j >= right_count) {
-      alignment.push_back(HunkAlignmentKind::Delete);
-      ++i;
-      continue;
-    }
-
-    const HunkAlignmentKind kind = choice_at(i, j);
-    alignment.push_back(kind);
-    switch (kind) {
-      case HunkAlignmentKind::Pair:
-        ++i;
-        ++j;
-        break;
-      case HunkAlignmentKind::Delete:
-        ++i;
-        break;
-      case HunkAlignmentKind::Insert:
-        ++j;
-        break;
-    }
-  }
-}
-
-bool Utf8CodepointEquals(std::string_view left,
-                         const std::vector<std::size_t>& left_offsets,
-                         std::size_t left_index,
-                         std::string_view right,
-                         const std::vector<std::size_t>& right_offsets,
-                         std::size_t right_index) {
-  const std::size_t left_start = left_offsets[left_index];
-  const std::size_t left_end = left_offsets[left_index + 1];
-  const std::size_t right_start = right_offsets[right_index];
-  const std::size_t right_end = right_offsets[right_index + 1];
-  const std::size_t left_length = left_end - left_start;
-  return left_length == (right_end - right_start) &&
-         left.substr(left_start, left_length) == right.substr(right_start, left_length);
-}
-
-// Calls `visit(first, last)` for each maximal run [first, last) of set flags.
-template <typename Visit>
-void ForEachChangedRun(const std::vector<char>& changed, Visit&& visit) {
-  std::size_t index = 0;
-  while (index < changed.size()) {
-    if (!changed[index]) {
-      ++index;
-      continue;
-    }
-    const std::size_t first = index;
-    while (index < changed.size() && changed[index]) {
-      ++index;
-    }
-    visit(first, index);
-  }
-}
-
-void BuildSpansFromChangedCodepointsInto(const std::vector<std::size_t>& offsets,
-                                         const std::vector<char>& changed,
-                                         std::vector<CompareTextSpan>& spans) {
-  spans.clear();
-  if (offsets.size() < 2 || changed.empty()) {
-    return;
-  }
-
-  ForEachChangedRun(changed, [&](std::size_t first, std::size_t last) {
-    spans.push_back(CompareTextSpan{.start = offsets[first], .end = offsets[last]});
-  });
-}
-
-void BuildSpansFromChangedTokensInto(const TokenizedLine& line,
-                                     const std::vector<char>& changed,
-                                     std::vector<CompareTextSpan>& spans) {
-  spans.clear();
-  if (line.tokens.empty() || changed.empty()) {
-    return;
-  }
-
-  ForEachChangedRun(changed, [&](std::size_t first, std::size_t last) {
-    spans.push_back(
-        CompareTextSpan{.start = line.tokens[first].start, .end = line.tokens[last - 1].end});
-  });
-}
-
-// Clips in place: the trimmed set is a subsequence of the input (each surviving
-// span keeps or shrinks its bounds, never splits), so a single forward compaction
-// pass replaces the allocate-a-new-vector-per-row shape.
-void TrimSpansToByteWindowInPlace(std::vector<CompareTextSpan>& spans, std::size_t start,
-                                  std::size_t end) {
-  std::size_t out = 0;
-  for (const CompareTextSpan& span : spans) {
-    if (span.end <= start || span.start >= end) {
-      continue;
-    }
-    const std::size_t clipped_start = std::max(span.start, start);
-    const std::size_t clipped_end = std::min(span.end, end);
-    if (clipped_end > clipped_start) {
-      spans[out++] = CompareTextSpan{clipped_start, clipped_end};
-    }
-  }
-  spans.resize(out);
-}
-
-void TrimChangedSpansToSharedEdges(CompareRow& row) {
-  if (row.kind != CompareRowKind::Modified) {
-    return;
-  }
-
-  IntralineScratch& scratch = Scratch();
-  std::vector<std::size_t>& left_offsets = scratch.left_offsets;
-  std::vector<std::size_t>& right_offsets = scratch.right_offsets;
-  BuildUtf8OffsetsInto(row.left_text, left_offsets);
-  BuildUtf8OffsetsInto(row.right_text, right_offsets);
-  const std::size_t left_count = left_offsets.size() - 1;
-  const std::size_t right_count = right_offsets.size() - 1;
-
-  std::size_t prefix = 0;
-  while (prefix < left_count && prefix < right_count &&
-         Utf8CodepointEquals(row.left_text, left_offsets, prefix, row.right_text, right_offsets,
-                             prefix)) {
-    ++prefix;
-  }
-
-  std::size_t left_suffix = left_count;
-  std::size_t right_suffix = right_count;
-  while (left_suffix > prefix && right_suffix > prefix &&
-         Utf8CodepointEquals(row.left_text, left_offsets, left_suffix - 1, row.right_text,
-                             right_offsets, right_suffix - 1)) {
-    --left_suffix;
-    --right_suffix;
-  }
-
-  TrimSpansToByteWindowInPlace(row.left_changed_spans, left_offsets[prefix],
-                               left_offsets[left_suffix]);
-  TrimSpansToByteWindowInPlace(row.right_changed_spans, right_offsets[prefix],
-                               right_offsets[right_suffix]);
-}
-
-bool PopulateTokenChangedSpans(CompareRow& row) {
-  IntralineScratch& scratch = Scratch();
-  TokenizedLine& left = scratch.left_tokens;
-  TokenizedLine& right = scratch.right_tokens;
-  TokenizeLineInto(row.left_text, left);
-  TokenizeLineInto(row.right_text, right);
-  if (left.tokens.size() < 2 || right.tokens.size() < 2 ||
-      ProductExceeds(left.tokens.size() + 1, right.tokens.size() + 1, kMaxIntralineLcsMatrixCells)) {
-    return false;
-  }
-
-  std::vector<char>& left_changed = scratch.left_changed;
-  std::vector<char>& right_changed = scratch.right_changed;
-  left_changed.assign(left.tokens.size(), 1);
-  right_changed.assign(right.tokens.size(), 1);
-
-  std::size_t prefix = 0;
-  while (prefix < left.tokens.size() && prefix < right.tokens.size() &&
-         TokenEquals(left.text, left.tokens[prefix], right.text, right.tokens[prefix])) {
-    left_changed[prefix] = 0;
-    right_changed[prefix] = 0;
-    ++prefix;
-  }
-
-  std::size_t left_suffix = left.tokens.size();
-  std::size_t right_suffix = right.tokens.size();
-  while (left_suffix > prefix && right_suffix > prefix &&
-         TokenEquals(left.text, left.tokens[left_suffix - 1], right.text,
-                     right.tokens[right_suffix - 1])) {
-    --left_suffix;
-    --right_suffix;
-    left_changed[left_suffix] = 0;
-    right_changed[right_suffix] = 0;
-  }
-
-  const std::size_t left_middle_count = left_suffix - prefix;
-  const std::size_t right_middle_count = right_suffix - prefix;
-  if (left_middle_count == 0 && right_middle_count == 0) {
-    row.left_changed_spans.clear();
-    row.right_changed_spans.clear();
-    return true;
-  }
-  if (left_middle_count == 0 || right_middle_count == 0) {
-    BuildSpansFromChangedTokensInto(left, left_changed, row.left_changed_spans);
-    BuildSpansFromChangedTokensInto(right, right_changed, row.right_changed_spans);
-    return true;
-  }
-
-  std::vector<std::size_t>& dp = scratch.token_dp;
-  dp.assign((left_middle_count + 1) * (right_middle_count + 1), 0);
-  auto at = [&](std::size_t i, std::size_t j) -> std::size_t& {
-    return dp[i * (right_middle_count + 1) + j];
-  };
-
-  for (std::size_t i = left_middle_count; i-- > 0;) {
-    for (std::size_t j = right_middle_count; j-- > 0;) {
-      std::size_t best = std::max(at(i + 1, j), at(i, j + 1));
-      if (TokenEquals(left.text, left.tokens[prefix + i], right.text, right.tokens[prefix + j])) {
-        best =
-            std::max(best, TokenMatchWeight(left.tokens[prefix + i]) + at(i + 1, j + 1));
-      }
-      at(i, j) = best;
-    }
-  }
-
-  std::size_t i = 0;
-  std::size_t j = 0;
-  while (i < left_middle_count && j < right_middle_count) {
-    const std::size_t left_index = prefix + i;
-    const std::size_t right_index = prefix + j;
-    const std::size_t skip_left = at(i + 1, j);
-    const std::size_t skip_right = at(i, j + 1);
-    if (TokenEquals(left.text, left.tokens[left_index], right.text, right.tokens[right_index])) {
-      const std::size_t diagonal =
-          TokenMatchWeight(left.tokens[left_index]) + at(i + 1, j + 1);
-      if (diagonal >= skip_left && diagonal >= skip_right && at(i, j) == diagonal) {
-        left_changed[left_index] = 0;
-        right_changed[right_index] = 0;
-        ++i;
-        ++j;
-        continue;
-      }
-    }
-
-    if (skip_left >= skip_right) {
-      ++i;
-    } else {
-      ++j;
-    }
-  }
-
-  BuildSpansFromChangedTokensInto(left, left_changed, row.left_changed_spans);
-  BuildSpansFromChangedTokensInto(right, right_changed, row.right_changed_spans);
-  return !(row.left_changed_spans.empty() && row.right_changed_spans.empty());
-}
-
-void PopulateCodepointChangedSpans(CompareRow& row) {
-  row.left_changed_spans.clear();
-  row.right_changed_spans.clear();
-
-  IntralineScratch& scratch = Scratch();
-  std::vector<std::size_t>& left_offsets = scratch.left_offsets;
-  std::vector<std::size_t>& right_offsets = scratch.right_offsets;
-  BuildUtf8OffsetsInto(row.left_text, left_offsets);
-  BuildUtf8OffsetsInto(row.right_text, right_offsets);
-  const std::size_t left_count = left_offsets.size() - 1;
-  const std::size_t right_count = right_offsets.size() - 1;
-  std::vector<char>& left_changed = scratch.left_changed;
-  std::vector<char>& right_changed = scratch.right_changed;
-  left_changed.assign(left_count, 1);
-  right_changed.assign(right_count, 1);
-
-  std::size_t prefix = 0;
-  while (prefix < left_count && prefix < right_count &&
-         Utf8CodepointEquals(row.left_text, left_offsets, prefix, row.right_text, right_offsets,
-                             prefix)) {
-    left_changed[prefix] = 0;
-    right_changed[prefix] = 0;
-    ++prefix;
-  }
-
-  std::size_t left_suffix = left_count;
-  std::size_t right_suffix = right_count;
-  while (left_suffix > prefix && right_suffix > prefix &&
-         Utf8CodepointEquals(row.left_text, left_offsets, left_suffix - 1, row.right_text,
-                             right_offsets, right_suffix - 1)) {
-    --left_suffix;
-    --right_suffix;
-    left_changed[left_suffix] = 0;
-    right_changed[right_suffix] = 0;
-  }
-
-  const std::size_t left_middle_count = left_suffix - prefix;
-  const std::size_t right_middle_count = right_suffix - prefix;
-  if (left_middle_count > 0 && right_middle_count > 0 &&
-      !ProductExceeds(left_middle_count + 1, right_middle_count + 1,
-                      kMaxIntralineLcsMatrixCells)) {
-    std::vector<int>& dp = scratch.codepoint_dp;
-    dp.assign((left_middle_count + 1) * (right_middle_count + 1), 0);
-    auto at = [&](std::size_t i, std::size_t j) -> int& {
-      return dp[i * (right_middle_count + 1) + j];
-    };
-
-    for (std::size_t i = left_middle_count; i-- > 0;) {
-      for (std::size_t j = right_middle_count; j-- > 0;) {
-        if (Utf8CodepointEquals(row.left_text, left_offsets, prefix + i, row.right_text,
-                                right_offsets, prefix + j)) {
-          at(i, j) = at(i + 1, j + 1) + 1;
-        } else {
-          at(i, j) = std::max(at(i + 1, j), at(i, j + 1));
-        }
-      }
-    }
-
-    std::size_t i = 0;
-    std::size_t j = 0;
-    while (i < left_middle_count && j < right_middle_count) {
-      if (Utf8CodepointEquals(row.left_text, left_offsets, prefix + i, row.right_text,
-                              right_offsets, prefix + j)) {
-        left_changed[prefix + i] = 0;
-        right_changed[prefix + j] = 0;
-        ++i;
-        ++j;
-      } else if (at(i + 1, j) >= at(i, j + 1)) {
-        ++i;
-      } else {
-        ++j;
-      }
-    }
-  }
-
-  BuildSpansFromChangedCodepointsInto(left_offsets, left_changed, row.left_changed_spans);
-  BuildSpansFromChangedCodepointsInto(right_offsets, right_changed, row.right_changed_spans);
-}
-
-void PopulateChangedSpans(CompareRow& row, CompareBuildProfile* profile,
-                          std::size_t* intraline_cells_budget) {
-  row.left_changed_spans.clear();
-  row.right_changed_spans.clear();
-
-  if (row.kind == CompareRowKind::Unchanged) {
-    return;
-  }
-
-  if (row.kind == CompareRowKind::Deleted) {
-    if (!row.left_text.empty()) {
-      row.left_changed_spans.push_back(CompareTextSpan{0, row.left_text.size()});
-    }
-    return;
-  }
-
-  if (row.kind == CompareRowKind::Added) {
-    if (!row.right_text.empty()) {
-      row.right_changed_spans.push_back(CompareTextSpan{0, row.right_text.size()});
-    }
-    return;
-  }
-
-  // Guard: a very long line on either side would make the per-codepoint/token
-  // intra-line diff allocate proportional scratch and stall the UI thread. Fall
-  // back to marking the entire line changed on both sides.
-  if (row.left_text.size() > kMaxIntralineTextBytes ||
-      row.right_text.size() > kMaxIntralineTextBytes) {
-    if (!row.left_text.empty()) {
-      row.left_changed_spans.push_back(CompareTextSpan{0, row.left_text.size()});
-    }
-    if (!row.right_text.empty()) {
-      row.right_changed_spans.push_back(CompareTextSpan{0, row.right_text.size()});
-    }
-    return;
-  }
-
-  // Cumulative per-hunk intra-line budget: once spent, stop character-level
-  // refinement and mark the whole (modified) line changed on both sides, bounding
-  // total DP work for a pathological many-Modified-row hunk.
-  if (intraline_cells_budget != nullptr) {
-    if (*intraline_cells_budget == 0) {
-      if (!row.left_text.empty()) {
-        row.left_changed_spans.push_back(CompareTextSpan{0, row.left_text.size()});
-      }
-      if (!row.right_text.empty()) {
-        row.right_changed_spans.push_back(CompareTextSpan{0, row.right_text.size()});
-      }
-      return;
-    }
-    // Charge this pair its worst-case DP size (capped at the per-pair limit). The
-    // line-byte guard above bounds the operands, so the product cannot overflow.
-    const std::size_t left_dim = row.left_text.size() + 1;
-    const std::size_t right_dim = row.right_text.size() + 1;
-    const std::size_t pair_cost =
-        ProductExceeds(left_dim, right_dim, kMaxIntralineLcsMatrixCells)
-            ? kMaxIntralineLcsMatrixCells
-            : left_dim * right_dim;
-    *intraline_cells_budget =
-        *intraline_cells_budget > pair_cost ? *intraline_cells_budget - pair_cost : 0;
-  }
-
-  if (!PopulateTokenChangedSpans(row)) {
-    if (profile != nullptr) {
-      ++profile->codepoint_intraline_calls;
-    }
-    PopulateCodepointChangedSpans(row);
-  } else if (profile != nullptr) {
-    ++profile->token_intraline_calls;
-  }
-  TrimChangedSpansToSharedEdges(row);
-}
 
 void AppendDeleteOps(std::span<const std::string_view> lines,
                      std::size_t begin,
@@ -1004,6 +183,9 @@ struct CompareBuildScratch {
   std::vector<std::string_view> right_lines;
   std::vector<DiffOp> ops;
   DiffScratch diff;
+  // Refinements of the previous build's hunks, so a rebuild refines only the
+  // hunks that changed (one per keystroke in an editable pane).
+  HunkRefinementCache hunk_refinements;
 };
 
 }  // namespace detail
@@ -1093,7 +275,7 @@ void AppendExactLineOps(std::span<const std::string_view> left_lines,
   std::vector<std::size_t>& left_match_weight = scratch.left_match_weight;
   left_match_weight.assign(left_count, 1);
   for (std::size_t i = 0; i < left_count; ++i) {
-    left_match_weight[i] = LineMatchWeight(left_lines[i], SignificantTokenBytes(left_lines[i]),
+    left_match_weight[i] = LineMatchWeight(left_lines[i], SignificantBytes(left_lines[i]),
                                            class_occurrences[left_ids[i]]);
   }
 
@@ -1418,6 +600,31 @@ EqualEnds FindEqualEnds(std::span<const std::string_view> left_lines,
 
 }  // namespace
 
+namespace {
+
+CompareSideChange SideChange(const CompareRow& row, int line,
+                             const std::vector<CompareTextSpan>& spans) {
+  if (line == 0 || row.kind == CompareRowKind::Unchanged) {
+    return CompareSideChange::None;
+  }
+  return spans.empty() ? CompareSideChange::LayoutOnly : CompareSideChange::Novel;
+}
+
+}  // namespace
+
+CompareSideChange LeftSideChange(const CompareRow& row) {
+  return SideChange(row, row.left_line, row.left_changed_spans);
+}
+
+CompareSideChange RightSideChange(const CompareRow& row) {
+  return SideChange(row, row.right_line, row.right_changed_spans);
+}
+
+bool CompareRowIsLayoutOnly(const CompareRow& row) {
+  return row.kind != CompareRowKind::Unchanged && row.left_changed_spans.empty() &&
+         row.right_changed_spans.empty();
+}
+
 const CompareTextBuffer& EmptyCompareText() {
   // One object process-wide, so "no text" costs a refcount bump rather than an
   // allocation — a default-constructed CompareModel or compare tab hits this.
@@ -1675,6 +882,10 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
   profile.anchored_line_alignment_calls += line_diff_stats.anchored_alignment_calls;
   profile.line_alignment_ns = DurationNs(line_alignment_start, Clock::now());
 
+  const std::shared_ptr<const DiffSyntax>& syntax =
+      options.syntax != nullptr ? options.syntax : GenericDiffSyntax();
+  HunkRefinementStats refinement_stats;
+  scratch.hunk_refinements.BeginBuild();
   model.rows.reserve(left_lines.size() + right_lines.size());
   RowSink sink(model);
   int left_line = 1;
@@ -1701,7 +912,7 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
     }
 
     const int hunk_start = static_cast<int>(sink.size());
-    HunkAlignScratch& hunk_scratch = HunkScratch();
+    HunkScratch& hunk_scratch = HunkScratchForThread();
     std::vector<std::string_view>& deleted_lines = hunk_scratch.deleted_lines;
     std::vector<std::string_view>& inserted_lines = hunk_scratch.inserted_lines;
     deleted_lines.clear();
@@ -1717,26 +928,38 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
     --op_index;
 
     const int hunk_index = static_cast<int>(model.hunks.size());
-    const Clock::time_point hunk_alignment_start = Clock::now();
-    std::vector<HunkAlignmentKind>& alignment = hunk_scratch.alignment;
-    AlignHunkLinesInto(deleted_lines, inserted_lines, &profile, alignment);
-    profile.hunk_alignment_ns += DurationNs(hunk_alignment_start, Clock::now());
+    const Clock::time_point refine_start = Clock::now();
+    const HunkRefinement* refinement_source = &hunk_scratch.refinement;
+    if (options.refine_hunks) {
+      refinement_source = &scratch.hunk_refinements.Refine(deleted_lines, inserted_lines, syntax,
+                                                           &refinement_stats);
+    } else {
+      hunk_scratch.refinement.left_spans.clear();
+      hunk_scratch.refinement.right_spans.clear();
+      ZipHunk(deleted_lines.size(), inserted_lines.size(), hunk_scratch.refinement.rows);
+    }
+    const HunkRefinement& refinement = *refinement_source;
+    profile.hunk_refinement_ns += DurationNs(refine_start, Clock::now());
 
-    std::size_t deleted_index = 0;
-    std::size_t inserted_index = 0;
-    std::size_t intraline_cells_remaining = kMaxHunkIntralineTotalCells;
-    for (const HunkAlignmentKind alignment_kind : alignment) {
+    const int left_base = left_line;
+    const int right_base = right_line;
+    for (const HunkRow& hunk_row : refinement.rows) {
       CompareRow& compare_row = sink.Next();
       compare_row.hunk = hunk_index;
-      if (alignment_kind != HunkAlignmentKind::Insert) {
-        compare_row.left_text = deleted_lines[deleted_index++];
-        compare_row.left_line = left_line++;
+      if (hunk_row.left != kNoHunkLine) {
+        compare_row.left_text = deleted_lines[hunk_row.left];
+        compare_row.left_line = left_base + static_cast<int>(hunk_row.left);
+        if (hunk_row.left < refinement.left_spans.size()) {
+          compare_row.left_changed_spans = refinement.left_spans[hunk_row.left];
+        }
       }
-      if (alignment_kind != HunkAlignmentKind::Delete) {
-        compare_row.right_text = inserted_lines[inserted_index++];
-        compare_row.right_line = right_line++;
+      if (hunk_row.right != kNoHunkLine) {
+        compare_row.right_text = inserted_lines[hunk_row.right];
+        compare_row.right_line = right_base + static_cast<int>(hunk_row.right);
+        if (hunk_row.right < refinement.right_spans.size()) {
+          compare_row.right_changed_spans = refinement.right_spans[hunk_row.right];
+        }
       }
-
       if (compare_row.left_line != 0 && compare_row.right_line != 0) {
         compare_row.kind = CompareRowKind::Modified;
       } else if (compare_row.left_line != 0) {
@@ -1744,10 +967,9 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
       } else {
         compare_row.kind = CompareRowKind::Added;
       }
-      const Clock::time_point intraline_start = Clock::now();
-      PopulateChangedSpans(compare_row, &profile, &intraline_cells_remaining);
-      profile.intraline_ns += DurationNs(intraline_start, Clock::now());
     }
+    left_line += static_cast<int>(deleted_lines.size());
+    right_line += static_cast<int>(inserted_lines.size());
 
     model.hunks.push_back(CompareHunk{
         .index = hunk_index,
@@ -1807,8 +1029,13 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
   // measured sub-steps, but clock jitter / nested measurement overhead can make
   // the sub-steps sum to slightly more than total. On unsigned fields that would
   // wrap to an enormous value and pollute the perf profile, so floor at zero.
-  const std::uint64_t measured_substeps = profile.split_lines_ns + profile.line_alignment_ns +
-                                          profile.hunk_alignment_ns + profile.intraline_ns;
+  scratch.hunk_refinements.EndBuild();
+  profile.structural_hunks = refinement_stats.structural_hunks;
+  profile.cached_hunks = refinement_stats.cached_hunks;
+  profile.flat_fallback_hunks = refinement_stats.flat_fallback_hunks;
+  profile.graph_vertices = refinement_stats.graph_vertices;
+  const std::uint64_t measured_substeps =
+      profile.split_lines_ns + profile.line_alignment_ns + profile.hunk_refinement_ns;
   profile.row_assembly_ns = util::SaturatingSub(profile.total_ns, measured_substeps);
 
   // The stage profile above has always existed, but only microide_diff_bench
@@ -1819,17 +1046,18 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
   util::PerformanceTrace::RecordSampleNs("compare::Build::SplitLines", profile.split_lines_ns);
   util::PerformanceTrace::RecordSampleNs("compare::Build::LineAlignment",
                                          profile.line_alignment_ns);
-  util::PerformanceTrace::RecordSampleNs("compare::Build::HunkAlignment",
-                                         profile.hunk_alignment_ns);
-  util::PerformanceTrace::RecordSampleNs("compare::Build::Intraline", profile.intraline_ns);
+  util::PerformanceTrace::RecordSampleNs("compare::Build::HunkRefinement",
+                                         profile.hunk_refinement_ns);
   util::PerformanceTrace::RecordSampleNs("compare::Build::RowAssembly", profile.row_assembly_ns);
 
   util::AddPerformanceCounter(util::PerfCounterId::CompareModelBuilds);
   util::AddPerformanceCounter(util::PerfCounterId::CompareModelInputLines,
                               left_lines.size() + right_lines.size());
   util::AddPerformanceCounter(util::PerfCounterId::CompareModelRowsProduced, model.rows.size());
-  util::AddPerformanceCounter(util::PerfCounterId::CompareIntralineDiffLines,
-                              profile.token_intraline_calls + profile.codepoint_intraline_calls);
+  util::AddPerformanceCounter(util::PerfCounterId::CompareStructuralHunks,
+                              profile.structural_hunks + profile.flat_fallback_hunks);
+  util::AddPerformanceCounter(util::PerfCounterId::CompareStructuralGraphVertices,
+                              profile.graph_vertices);
   return profile;
 }
 
@@ -1846,19 +1074,19 @@ CompareModel BuildCompareModel(const std::string& left, const std::string& right
   return BuildCompareModelProfiled(left, right).model;
 }
 
-void BuildCompareModelInto(CompareModel& model,
-                           CompareTextBuffer left,
-                           CompareTextBuffer right,
-                           const CompareBuildOptions& options) {
-  (void)BuildCompareModelProfiledInto(model, std::move(left), std::move(right), options);
+CompareBuildProfile BuildCompareModelInto(CompareModel& model,
+                                          CompareTextBuffer left,
+                                          CompareTextBuffer right,
+                                          const CompareBuildOptions& options) {
+  return BuildCompareModelProfiledInto(model, std::move(left), std::move(right), options);
 }
 
-void BuildCompareModelInto(CompareModel& model,
-                           const std::string& left,
-                           const std::string& right,
-                           const CompareBuildOptions& options) {
-  (void)BuildCompareModelProfiledInto(model, MakeCompareText(left), MakeCompareText(right),
-                                      options);
+CompareBuildProfile BuildCompareModelInto(CompareModel& model,
+                                          const std::string& left,
+                                          const std::string& right,
+                                          const CompareBuildOptions& options) {
+  return BuildCompareModelProfiledInto(model, MakeCompareText(left), MakeCompareText(right),
+                                       options);
 }
 
 CompareModel BuildCompareModel(const std::string& left,

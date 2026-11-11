@@ -355,6 +355,10 @@ set(MICROIDE_KERNEL_SOURCES
   src/compare/BranchReviewStateService.cpp
   src/compare/BranchReviewStateTypes.cpp
   src/compare/CompareModel.cpp
+  src/compare/DiffSyntax.cpp
+  src/compare/HunkRefinement.cpp
+  src/compare/StructuralDiff.cpp
+  src/compare/StructuralSearch.cpp
   src/compare/ComparePresentationModel.cpp
   src/compare/CompareReviewTypes.cpp
   src/compare/CompareSemanticMetadata.cpp
@@ -1625,6 +1629,7 @@ add_executable(microide_kernel_tests
   tests/CommandLineTests.cpp
   tests/CompareModelPropertyTests.cpp
   tests/CompareModelTests.cpp
+  tests/StructuralDiffTests.cpp
   tests/CompileCommandsLocatorTests.cpp
   tests/ControlSocketServerTests.cpp
   tests/DirectoryTreeTests.cpp
@@ -2148,6 +2153,10 @@ add_executable(microide_diff_bench
   src/editor/TextViewportUndoHistory.cpp
   src/editor/TextViewportViewState.cpp
   src/compare/CompareModel.cpp
+  src/compare/DiffSyntax.cpp
+  src/compare/HunkRefinement.cpp
+  src/compare/StructuralDiff.cpp
+  src/compare/StructuralSearch.cpp
   src/platform/RuntimePaths.cpp
   src/platform/Subprocess.cpp
   src/platform/SubprocessSandbox.cpp

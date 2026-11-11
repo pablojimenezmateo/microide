@@ -92,8 +92,7 @@ struct RunMetrics {
   double diff_total_ms = 0.0;
   double split_lines_ms = 0.0;
   double line_alignment_ms = 0.0;
-  double hunk_alignment_ms = 0.0;
-  double intraline_ms = 0.0;
+  double hunk_refinement_ms = 0.0;
   double row_assembly_ms = 0.0;
   double syntax_ms = 0.0;
   double row_decoration_build_ms = 0.0;
@@ -110,10 +109,9 @@ struct RunMetrics {
   std::size_t syntax_token_count = 0;
   std::size_t exact_line_alignment_calls = 0;
   std::size_t anchored_line_alignment_calls = 0;
-  std::size_t exact_hunk_alignment_calls = 0;
-  std::size_t fallback_hunk_alignment_calls = 0;
-  std::size_t token_intraline_calls = 0;
-  std::size_t codepoint_intraline_calls = 0;
+  std::size_t structural_hunks = 0;
+  std::size_t flat_fallback_hunks = 0;
+  std::size_t graph_vertices = 0;
 };
 
 std::optional<std::string> ReadFileText(const std::filesystem::path& path) {
@@ -488,17 +486,15 @@ RunMetrics RunBenchmark(const std::filesystem::path& repo_root,
   metrics.split_lines_ms = static_cast<double>(compare_build.profile.split_lines_ns) / 1'000'000.0;
   metrics.line_alignment_ms =
       static_cast<double>(compare_build.profile.line_alignment_ns) / 1'000'000.0;
-  metrics.hunk_alignment_ms =
-      static_cast<double>(compare_build.profile.hunk_alignment_ns) / 1'000'000.0;
-  metrics.intraline_ms = static_cast<double>(compare_build.profile.intraline_ns) / 1'000'000.0;
+  metrics.hunk_refinement_ms =
+      static_cast<double>(compare_build.profile.hunk_refinement_ns) / 1'000'000.0;
   metrics.row_assembly_ms =
       static_cast<double>(compare_build.profile.row_assembly_ns) / 1'000'000.0;
   metrics.exact_line_alignment_calls = compare_build.profile.exact_line_alignment_calls;
   metrics.anchored_line_alignment_calls = compare_build.profile.anchored_line_alignment_calls;
-  metrics.exact_hunk_alignment_calls = compare_build.profile.exact_hunk_alignment_calls;
-  metrics.fallback_hunk_alignment_calls = compare_build.profile.fallback_hunk_alignment_calls;
-  metrics.token_intraline_calls = compare_build.profile.token_intraline_calls;
-  metrics.codepoint_intraline_calls = compare_build.profile.codepoint_intraline_calls;
+  metrics.structural_hunks = compare_build.profile.structural_hunks;
+  metrics.flat_fallback_hunks = compare_build.profile.flat_fallback_hunks;
+  metrics.graph_vertices = compare_build.profile.graph_vertices;
 
   const Clock::time_point syntax_start = Clock::now();
   const CompareSyntaxBenchData syntax =
@@ -606,10 +602,9 @@ int main(int argc, char** argv) {
   std::cout << "syntax-token-count: " << sample.syntax_token_count << '\n';
   std::cout << "exact-line-alignment-calls: " << sample.exact_line_alignment_calls << '\n';
   std::cout << "anchored-line-alignment-calls: " << sample.anchored_line_alignment_calls << '\n';
-  std::cout << "exact-hunk-alignment-calls: " << sample.exact_hunk_alignment_calls << '\n';
-  std::cout << "fallback-hunk-alignment-calls: " << sample.fallback_hunk_alignment_calls << '\n';
-  std::cout << "token-intraline-calls: " << sample.token_intraline_calls << '\n';
-  std::cout << "codepoint-intraline-calls: " << sample.codepoint_intraline_calls << '\n';
+  std::cout << "structural-hunks: " << sample.structural_hunks << '\n';
+  std::cout << "flat-fallback-hunks: " << sample.flat_fallback_hunks << '\n';
+  std::cout << "graph-vertices: " << sample.graph_vertices << '\n';
 
   const auto collect_metric = [&](auto accessor) {
     std::vector<double> values;
@@ -627,10 +622,8 @@ int main(int argc, char** argv) {
       collect_metric([](const RunMetrics& run) { return run.split_lines_ms; });
   const auto line_alignment_values =
       collect_metric([](const RunMetrics& run) { return run.line_alignment_ms; });
-  const auto hunk_alignment_values =
-      collect_metric([](const RunMetrics& run) { return run.hunk_alignment_ms; });
-  const auto intraline_values =
-      collect_metric([](const RunMetrics& run) { return run.intraline_ms; });
+  const auto hunk_refinement_values =
+      collect_metric([](const RunMetrics& run) { return run.hunk_refinement_ms; });
   const auto row_assembly_values =
       collect_metric([](const RunMetrics& run) { return run.row_assembly_ms; });
   const auto syntax_values =
@@ -659,8 +652,7 @@ int main(int argc, char** argv) {
     PrintMetric("diff-total-ms", diff_values.front());
     PrintMetric("split-lines-ms", split_values.front());
     PrintMetric("line-alignment-ms", line_alignment_values.front());
-    PrintMetric("hunk-alignment-ms", hunk_alignment_values.front());
-    PrintMetric("intraline-ms", intraline_values.front());
+    PrintMetric("hunk-refinement-ms", hunk_refinement_values.front());
     PrintMetric("row-assembly-ms", row_assembly_values.front());
     PrintMetric("syntax-ms", syntax_values.front());
     PrintMetric("row-decoration-build-ms", row_build_values.front());
@@ -675,8 +667,7 @@ int main(int argc, char** argv) {
     PrintMetricSummary("diff-total-ms", diff_values);
     PrintMetricSummary("split-lines-ms", split_values);
     PrintMetricSummary("line-alignment-ms", line_alignment_values);
-    PrintMetricSummary("hunk-alignment-ms", hunk_alignment_values);
-    PrintMetricSummary("intraline-ms", intraline_values);
+    PrintMetricSummary("hunk-refinement-ms", hunk_refinement_values);
     PrintMetricSummary("row-assembly-ms", row_assembly_values);
     PrintMetricSummary("syntax-ms", syntax_values);
     PrintMetricSummary("row-decoration-build-ms", row_build_values);

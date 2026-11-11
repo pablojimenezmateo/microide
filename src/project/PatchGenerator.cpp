@@ -663,7 +663,12 @@ StagingPatchOutcome BuildStagingPatch(std::string_view head_text,
   // Where the `from` lines sit in the index now.
   const std::string from_joined = JoinLineText(from.lines, from.final_newline);
   const std::string index_joined = JoinLineText(index.lines, index.final_newline);
-  const compare::CompareModel from_to_index = compare::BuildCompareModel(from_joined, index_joined);
+  // Only line correspondence is read here, so the structural refinement of each
+  // hunk would be pure cost.
+  compare::CompareBuildOptions lines_only;
+  lines_only.refine_hunks = false;
+  const compare::CompareModel from_to_index =
+      compare::BuildCompareModel(from_joined, index_joined, lines_only);
   std::size_t index_first = 0;
   std::size_t index_last = 0;
   if (!MapRangeThroughDiff(from_to_index, from_first, from_last, index_first, index_last)) {
@@ -695,6 +700,7 @@ StagingPatchOutcome BuildStagingPatch(std::string_view head_text,
   // when the side it comes from does (staging a deletion removes the entry;
   // staging an emptied file keeps it).
   compare::CompareBuildOptions existence;
+  existence.refine_hunks = false;
   existence.left_exists = index_exists;
   existence.right_exists =
       !desired_joined.empty() || (stage ? worktree_exists : head_exists);

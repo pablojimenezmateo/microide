@@ -425,7 +425,8 @@ namespace microide::util {
   X(CompareModelBuilds, "compare.model_builds")                                                 \
   X(CompareModelInputLines, "compare.model_input_lines")                                        \
   X(CompareModelRowsProduced, "compare.model_rows_produced")                                    \
-  X(CompareIntralineDiffLines, "compare.intraline_diff_lines")                                  \
+  X(CompareStructuralHunks, "compare.structural_hunks")                                        \
+  X(CompareStructuralGraphVertices, "compare.structural_graph_vertices")                        \
   X(MergeModelBuilds, "merge.model_builds")                                                     \
   X(MergeModelConflictsFound, "merge.model_conflicts_found")                                    \
   /* --- persisted state -------------------------------------------------- */                 \

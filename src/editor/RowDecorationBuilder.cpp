@@ -9,58 +9,6 @@
 
 namespace microide::editor {
 
-void AppendChangedSpanUnderlines(DecoratedTextRow& row,
-                                 const render::TextRenderer& text_renderer,
-                                 float text_x,
-                                 float y,
-                                 float line_height,
-                                 std::string_view text,
-                                 std::size_t horizontal_scroll,
-                                 std::size_t visible_columns,
-                                 std::span<const compare::CompareTextSpan> changed_spans,
-                                 SDL_Color underline_color) {
-  if (text.empty() || changed_spans.empty()) {
-    return;
-  }
-
-  const VisibleTextWindow window = SliceVisibleColumns(text, horizontal_scroll, visible_columns);
-  if (window.text.empty()) {
-    return;
-  }
-  const std::size_t window_end = window.byte_offset + window.text.size();
-
-  for (const auto& span : changed_spans) {
-    if (span.end <= window.byte_offset) {
-      continue;
-    }
-    if (span.start >= window_end) {
-      break;
-    }
-
-    const std::size_t clipped_start = std::max(span.start, window.byte_offset);
-    const std::size_t clipped_end = std::min(span.end, window_end);
-    if (clipped_end <= clipped_start) {
-      continue;
-    }
-
-    const std::size_t local_start = clipped_start - window.byte_offset;
-    const std::size_t local_end = clipped_end - window.byte_offset;
-    const std::string_view prefix_text(window.text.data(), local_start);
-    const std::string_view changed_text(window.text.data() + local_start, local_end - local_start);
-    const float start_x = text_x + text_renderer.MeasureWidth(prefix_text);
-    const float span_width = text_renderer.MeasureWidth(changed_text);
-    if (span_width <= 0.0f) {
-      continue;
-    }
-    // Full-intensity source color: RenderRow applies the single 0.55 dim at draw time
-    // (see AppendChangedSpanUnderlinesGrid) — pre-dimming here would fade it twice.
-    row.underlines.push_back(DecoratedUnderline{
-        .rect = SDL_FRect{start_x, y + line_height - 2.0f, span_width, 1.0f},
-        .color = underline_color,
-    });
-  }
-}
-
 namespace {
 
 std::size_t ResolveVisualColumn(const RowDecorationInput& in, std::size_t column) {
@@ -111,39 +59,6 @@ void AppendColumnFill(DecoratedTextRow& row, const RowDecorationInput& in, const
       },
       .color = span.color,
   });
-}
-
-// Changed-span underlines positioned on the fixed cell grid (source->visual via
-// ResolveVisualColumn, then visual * char_width), matching the grid text runs,
-// caret, selection and diagnostics. Used when the row renders on the grid
-// (`layout` set); the sibling AppendChangedSpanUnderlines keeps the MeasureWidth
-// geometry for the proportional (layout == null) path so each row stays internally
-// consistent with however its text was drawn.
-void AppendChangedSpanUnderlinesGrid(DecoratedTextRow& row, const RowDecorationInput& in) {
-  // Push the source color at full intensity: DecoratedTextGridRenderer::RenderRow dims
-  // EVERY underline's alpha by 0.55 at draw time, so pre-dimming here would apply the
-  // fade twice (~0.30 alpha) and make diff underlines fainter than diagnostic squiggles
-  // and plugin underlines on the same row (both of which push full alpha).
-  const SDL_Color color = in.changed_span_color;
-  for (const compare::CompareTextSpan& span : in.changed_spans) {
-    const std::size_t start_visual = ResolveVisualColumn(in, span.start);
-    const std::size_t end_visual = ResolveVisualColumn(in, span.end);
-    const std::size_t visible_start = std::max(start_visual, in.row_visual_start);
-    const std::size_t visible_end = std::min(end_visual, in.row_visual_end);
-    if (visible_end <= visible_start) {
-      continue;
-    }
-    // Inlay displacement is applied uniformly to every underline in a single
-    // post-pass in BuildDecoratedRow, so this stays grid-plain.
-    row.underlines.push_back(DecoratedUnderline{
-        .rect = SDL_FRect{
-            in.text_x + static_cast<float>(visible_start - in.row_visual_start) * in.char_width,
-            in.y + in.line_height - 2.0f,
-            static_cast<float>(visible_end - visible_start) * in.char_width,
-            1.0f},
-        .color = color,
-    });
-  }
 }
 
 // Append underline / strikethrough lines for plugin text-style decorations,
@@ -401,6 +316,13 @@ void BuildDecoratedRow(DecoratedTextRow& row, const RowDecorationInput& in) {
   if (in.has_edge_stripe) {
     row.fills.push_back(in.edge_stripe_fill);
   }
+  for (const compare::CompareTextSpan& span : in.changed_spans) {
+    AppendColumnFill(row, in,
+                     RowFillSpan{.start_column = span.start,
+                                 .end_column = span.end,
+                                 .color = in.changed_span_fill,
+                                 .geometry = RowFillSpan::Geometry::kRange});
+  }
   for (const RowFillSpan& span : in.column_fills) {
     AppendColumnFill(row, in, span);
   }
@@ -444,19 +366,6 @@ void BuildDecoratedRow(DecoratedTextRow& row, const RowDecorationInput& in) {
       AppendVisibleSyntaxTextRuns(row, *in.text_renderer, *in.theme, in.text_x, in.y, text_view,
                                   in.row_visual_start, visible_columns, in.plain_color, tokens,
                                   in.text_styles);
-    }
-
-    if (!in.changed_spans.empty()) {
-      if (in.layout != nullptr) {
-        // Grid text -> grid-aligned underlines (see AppendChangedSpanUnderlinesGrid).
-        AppendChangedSpanUnderlinesGrid(row, in);
-      } else {
-        const std::size_t visible_columns =
-            in.row_visual_end > in.row_visual_start ? in.row_visual_end - in.row_visual_start : 0;
-        AppendChangedSpanUnderlines(row, *in.text_renderer, in.text_x, in.y, in.line_height,
-                                    text_view, in.row_visual_start, visible_columns, in.changed_spans,
-                                    in.changed_span_color);
-      }
     }
 
     if (!in.diagnostics.empty() && !in.text.empty()) {  // `text` is set only when needed

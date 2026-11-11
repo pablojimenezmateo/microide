@@ -308,6 +308,32 @@ void TestWorkspaceSharedCompareScrollbarMarkersFollowPresentationRows() {
          "collapsed context should shrink the marker gap instead of preserving raw model spacing");
 }
 
+// A run whose rows changed only in layout (a re-indented body) is its own run,
+// flagged so the lane draws it muted; the rows carrying novel tokens around it
+// stay ordinary runs.
+void TestWorkspaceSharedCompareScrollbarRunsFlagLayoutOnlyRows() {
+  const std::string left = "head\nf(a);\ng(b);\ntail\n";
+  const std::string right = "head\nif (x) {\n  f(a);\n  g(b);\n}\ntail\n";
+  const auto model = microide::compare::BuildCompareModel(left, right);
+  const auto presentation = microide::compare::BuildComparePresentationModel(
+      model,
+      microide::compare::InferCompareSemanticFileMetadata(
+          microide::compare::CompareSemanticMetadataInput{
+              .path = "f.txt",
+              .left_content = left,
+              .right_content = right,
+              .git_entry = std::nullopt,
+              .old_path = {},
+          }),
+      microide::compare::ComparePresentationOptions{},
+      microide::compare::ComparePresentationCollapseState{});
+  const auto runs = BuildCompareScrollbarRuns(presentation, model);
+  Expect(runs.size() == 3, "novel head, layout-only body and novel tail should be three runs");
+  Expect(!runs[0].layout_only && runs[1].layout_only && !runs[2].layout_only,
+         "only the re-indented body should be flagged layout-only");
+  Expect(runs[1].end_row - runs[1].start_row == 2, "the layout-only run should span the body");
+}
+
 void TestWorkspaceSharedMergeScrollbarMarkers() {
   const SDL_Color color{100, 150, 200, 255};
   const std::vector<microide::workspace::overview::MarkerInput> inputs = {
@@ -1885,6 +1911,8 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
           TestWorkspaceSharedCompareScrollbarMarkersFollowPresentationRows);
   AddTest(tests, "WorkspaceShared/MergeScrollbarMarkers",
           TestWorkspaceSharedMergeScrollbarMarkers);
+  AddTest(tests, "WorkspaceShared/CompareScrollbarRunsFlagLayoutOnlyRows",
+          TestWorkspaceSharedCompareScrollbarRunsFlagLayoutOnlyRows);
   AddTest(tests, "WorkspaceShared/OverviewLaneGeometry",
           TestWorkspaceSharedOverviewLaneGeometry);
   AddTest(tests, "WorkspaceShared/OverviewReducerBoundsAndPriority",

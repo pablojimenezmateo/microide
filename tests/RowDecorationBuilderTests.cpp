@@ -198,7 +198,7 @@ void ExpectVisibleRowMatches(const render::TextRenderer& text_renderer, const Li
   const TextLayout::LineVisualColumnMap visual_map(line_case.text, kTabSize);
   const std::vector<SyntaxTokenKind> tokens;
   const SDL_Color plain_color = theme.text_secondary;
-  const SDL_Color changed_color = theme.diff_modified;
+  const SDL_Color changed_fill = theme.diff_modified;
   const DecoratedTextFill background_fill{
       .rect = SDL_FRect{0.0f, kRowY - 1.0f, static_cast<float>(kCanvasWidth), kLineHeight},
       .color = theme.editor_background,
@@ -207,20 +207,27 @@ void ExpectVisibleRowMatches(const render::TextRenderer& text_renderer, const Li
   DecoratedTextRow expected;
   std::vector<RowFillSpan> column_fills;
   expected.fills.push_back(background_fill);
-  if (selection.has_value()) {
-    const std::size_t start_visual = visual_map.VisualColumnFor(selection->first);
-    const std::size_t end_visual = visual_map.VisualColumnFor(selection->second);
-    const std::size_t visible_start = std::max(start_visual, row_start);
-    const std::size_t visible_end = std::min(end_visual, row_end);
+  // One fill per visible byte range, on the visual-map columns: the geometry
+  // both the novel-token emphasis and the selection share.
+  const auto push_range_fill = [&](std::size_t start_byte, std::size_t end_byte, SDL_Color color) {
+    const std::size_t visible_start = std::max(visual_map.VisualColumnFor(start_byte), row_start);
+    const std::size_t visible_end = std::min(visual_map.VisualColumnFor(end_byte), row_end);
     if (visible_end > visible_start) {
       expected.fills.push_back(DecoratedTextFill{
           .rect = SDL_FRect{kTextX + static_cast<float>(visible_start - row_start) * char_width,
                             kRowY - 1.0f,
                             static_cast<float>(visible_end - visible_start) * char_width,
                             kLineHeight},
-          .color = theme.selection_fill,
+          .color = color,
       });
     }
+  };
+  // Novel-token emphasis sits under the selection, so it is pushed first.
+  for (const compare::CompareTextSpan& span : changed_spans) {
+    push_range_fill(span.start, span.end, changed_fill);
+  }
+  if (selection.has_value()) {
+    push_range_fill(selection->first, selection->second, theme.selection_fill);
     column_fills.push_back(RowFillSpan{.start_column = selection->first,
                                        .end_column = selection->second,
                                        .color = theme.selection_fill,
@@ -229,11 +236,6 @@ void ExpectVisibleRowMatches(const render::TextRenderer& text_renderer, const Li
   editor::AppendVisibleSyntaxTextRuns(expected, text_renderer, theme, kTextX, kRowY, line_case.text,
                                       line_case.horizontal_scroll, line_case.visible_columns,
                                       plain_color, tokens);
-  editor::AppendChangedSpanUnderlines(expected, text_renderer, kTextX, kRowY, kLineHeight,
-                                      line_case.text, line_case.horizontal_scroll,
-                                      line_case.visible_columns,
-                                      std::span<const compare::CompareTextSpan>(changed_spans),
-                                      changed_color);
 
   RowDecorationInput input;
   input.text_x = kTextX;
@@ -251,7 +253,7 @@ void ExpectVisibleRowMatches(const render::TextRenderer& text_renderer, const Li
   input.background_fill = background_fill;
   input.column_fills = column_fills;
   input.changed_spans = std::span<const compare::CompareTextSpan>(changed_spans);
-  input.changed_span_color = changed_color;
+  input.changed_span_fill = changed_fill;
   input.text_renderer = &text_renderer;
   input.theme = &theme;
 
@@ -312,11 +314,11 @@ void TestBuilderVisiblePathMatchesLegacyCompareAssembly() {
   }
 }
 
-// When the row renders on the cell grid (layout set), changed-span underlines must
+// When the row renders on the cell grid (layout set), the novel-token emphasis must
 // land on tab-expanded grid columns (visual * char_width), aligned with the grid
 // text/caret/selection — not on the proportional MeasureWidth positions. A leading
 // tab makes the two models produce different x, so this pins the grid geometry.
-void TestChangedSpanUnderlinesUseGridWhenLayoutSet() {
+void TestChangedSpanFillsUseGridWhenLayoutSet() {
   oracle::EnsureDummyVideo();
   oracle::OracleCanvas init_canvas(kCanvasWidth, kCanvasHeight);
   render::TextRenderer text_renderer;
@@ -342,29 +344,28 @@ void TestChangedSpanUnderlinesUseGridWhenLayoutSet() {
   input.plain_color = theme.text_secondary;
   input.layout = &layout;  // grid path
   input.changed_spans = std::span<const compare::CompareTextSpan>(spans);
-  input.changed_span_color = SDL_Color{200, 40, 40, 255};
+  input.changed_span_fill = SDL_Color{200, 40, 40, 255};
   input.text_renderer = &text_renderer;
   input.theme = &theme;
 
   DecoratedTextRow row;
   editor::BuildDecoratedRow(row, input);
 
-  Expect(row.underlines.size() == 1, "one changed-span underline should be emitted");
-  const SDL_FRect& rect = row.underlines.front().rect;
+  Expect(row.underlines.empty(), "novel-token emphasis is a fill, not an underline");
+  Expect(row.fills.size() == 1, "one novel-token fill should be emitted");
+  const SDL_FRect& rect = row.fills.front().rect;
   // Grid: start at visual col 4 -> x = 10 + 4*8 = 42; width = 6 cells -> 48.
-  Expect(rect.x == 10.0f + 4.0f * 8.0f, "underline must start at the tab-expanded grid column");
-  Expect(rect.w == 6.0f * 8.0f, "underline width must span the changed cells on the grid");
-  // The appender must push the source color at FULL intensity: RenderRow applies the
-  // single 0.55 dim at draw time, so a pre-dim here would fade diff underlines twice.
-  Expect(row.underlines.front().color.a == 255,
-         "changed-span underline must carry full source alpha (RenderRow dims once)");
+  Expect(rect.x == 10.0f + 4.0f * 8.0f, "fill must start at the tab-expanded grid column");
+  Expect(rect.w == 6.0f * 8.0f, "fill width must span the changed cells on the grid");
+  Expect(row.fills.front().color.r == 200 && row.fills.front().color.a == 255,
+         "fill must carry the caller's emphasis color unchanged");
 }
 
 // When the row renders on the cell grid (layout set), plugin text-style under/strike
 // lines must land on tab-expanded grid columns (visual * char_width), matching the
 // grid text — not on the proportional MeasureWidth positions. A leading tab makes the
 // two models diverge, so this pins the grid geometry for the text-style path (the
-// changed-span sibling above pins the same for compare's changed spans).
+// changed-span sibling above pins the same for compare's novel-token fills).
 void TestTextStyleUnderlinesUseGridWhenLayoutSet() {
   oracle::EnsureDummyVideo();
   oracle::OracleCanvas init_canvas(kCanvasWidth, kCanvasHeight);
@@ -689,8 +690,8 @@ void RegisterRowDecorationBuilderTests(std::vector<TestCase>& tests) {
           TestInlayHintsShiftRunsAndDrawGlyph);
   AddTest(tests, "RowDecorationBuilder text-style underlines use the grid under a layout",
           TestTextStyleUnderlinesUseGridWhenLayoutSet);
-  AddTest(tests, "RowDecorationBuilder changed-span underlines use the grid under a layout",
-          TestChangedSpanUnderlinesUseGridWhenLayoutSet);
+  AddTest(tests, "RowDecorationBuilder novel-token fills use the grid under a layout",
+          TestChangedSpanFillsUseGridWhenLayoutSet);
   AddTest(tests, "RowDecorationBuilder layout path matches legacy editor row assembly",
           TestBuilderLayoutPathMatchesLegacyEditorAssembly);
   AddTest(tests, "RowDecorationBuilder visible path matches legacy compare row assembly",

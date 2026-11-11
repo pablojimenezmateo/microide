@@ -63,6 +63,23 @@ struct CompareRow {
   std::vector<CompareTextSpan> right_changed_spans;
 };
 
+// How one side of a row changed, as the compare view presents it.
+//
+// The line diff decides that a line changed (that is what git stages); the
+// structural refinement decides whether any of its TOKENS did. A changed line
+// with no novel token changed only in layout — indentation, spacing, where the
+// line breaks fall — and is shown without change emphasis.
+enum class CompareSideChange {
+  None,        // the side is absent, or the row is unchanged
+  Novel,       // the line carries novel tokens (its changed spans)
+  LayoutOnly,  // the line changed, but only in whitespace and line breaks
+};
+
+CompareSideChange LeftSideChange(const CompareRow& row);
+CompareSideChange RightSideChange(const CompareRow& row);
+// A changed row neither side of which carries a novel token.
+bool CompareRowIsLayoutOnly(const CompareRow& row);
+
 struct CompareHunk {
   int index = 0;
   int start_row = 0;
@@ -167,16 +184,20 @@ struct CompareModel {
 struct CompareBuildProfile {
   std::uint64_t split_lines_ns = 0;
   std::uint64_t line_alignment_ns = 0;
-  std::uint64_t hunk_alignment_ns = 0;
-  std::uint64_t intraline_ns = 0;
+  // Structural refinement of every hunk: syntax trees, structural match, novel
+  // spans and row alignment (see HunkRefinement.h).
+  std::uint64_t hunk_refinement_ns = 0;
   std::uint64_t row_assembly_ns = 0;
   std::uint64_t total_ns = 0;
   std::size_t exact_line_alignment_calls = 0;
   std::size_t anchored_line_alignment_calls = 0;
-  std::size_t exact_hunk_alignment_calls = 0;
-  std::size_t fallback_hunk_alignment_calls = 0;
-  std::size_t token_intraline_calls = 0;
-  std::size_t codepoint_intraline_calls = 0;
+  // Hunks matched structurally, and hunks whose structural search ran out of
+  // budget and were matched by the flat token diff instead.
+  std::size_t structural_hunks = 0;
+  std::size_t flat_fallback_hunks = 0;
+  std::size_t graph_vertices = 0;
+  // Hunks whose refinement an earlier build of the same model already had.
+  std::size_t cached_hunks = 0;
 };
 
 struct CompareBuildResult {
@@ -222,17 +243,18 @@ CompareModel BuildCompareModel(const std::string& left,
 // `model.left_source`/`right_source` rather than two owned strings, so a build no
 // longer allocates per row at all.
 //
-// A null buffer is read as an empty document.
-void BuildCompareModelInto(CompareModel& model,
-                           CompareTextBuffer left,
-                           CompareTextBuffer right,
-                           const CompareBuildOptions& options);
+// A null buffer is read as an empty document. Returns the build's stage
+// profile; most callers ignore it.
+CompareBuildProfile BuildCompareModelInto(CompareModel& model,
+                                          CompareTextBuffer left,
+                                          CompareTextBuffer right,
+                                          const CompareBuildOptions& options);
 // Copying form, for callers holding plain strings (tests, one-shot builds). Each
 // input is copied into a fresh shared buffer the model then owns.
-void BuildCompareModelInto(CompareModel& model,
-                           const std::string& left,
-                           const std::string& right,
-                           const CompareBuildOptions& options);
+CompareBuildProfile BuildCompareModelInto(CompareModel& model,
+                                          const std::string& left,
+                                          const std::string& right,
+                                          const CompareBuildOptions& options);
 
 CompareBuildResult BuildCompareModelProfiled(const std::string& left, const std::string& right);
 CompareBuildResult BuildCompareModelProfiled(const std::string& left,

@@ -11,6 +11,10 @@
 
 #include "editor/LanguageContractView.h"
 
+namespace microide::compare {
+struct DiffSyntax;
+}  // namespace microide::compare
+
 namespace microide::plugin {
 class PluginHost;
 }  // namespace microide::plugin
@@ -114,6 +118,14 @@ class WorkspaceLanguageContract {
       bool auto_close_enabled,
       bool surround_enabled,
       bool smart_indent_enabled) const;
+
+  // The lexical rules the structural diff reads a file of this language with:
+  // the contract's comment tokens and bracket pairs. Shared and memoized per
+  // language id, dropped whole when `revision()` changes — so a compare tab can
+  // tell "the rules changed" by pointer identity. A language with no contract
+  // gets `compare::GenericDiffSyntax()`, one with no brackets the generic
+  // brackets. Never null.
+  std::shared_ptr<const compare::DiffSyntax> ResolveDiffSyntax(std::string_view language_id) const;
 
   // Every setting the editor-facing views depend on -- the five overrides
   // Refresh layers on, and the three toggles ResolveEditorView bakes in --

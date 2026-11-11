@@ -52,7 +52,7 @@ void RunCompareTabLoad(const CompareTabLoadRequest& request, std::string right_b
       result.built_options);
 }
 
-void MarkCompareModelBuilt(CompareTabState& compare_tab, const bool built_ignore_whitespace,
+void MarkCompareModelBuilt(CompareTabState& compare_tab, const compare::CompareBuildOptions& built,
                            const std::size_t left_line_count) {
   ++compare_tab.model_revision;
   compare_tab.visible_layouts.model_revision = compare_tab.model_revision;
@@ -61,7 +61,8 @@ void MarkCompareModelBuilt(CompareTabState& compare_tab, const bool built_ignore
   compare_tab.derived_right_line_ending = compare_tab.right_viewport.line_ending();
   compare_tab.derived_left_content = compare_tab.left_content;
   compare_tab.derived_left_line_count = left_line_count;
-  compare_tab.derived_ignore_whitespace = built_ignore_whitespace;
+  compare_tab.derived_ignore_whitespace = built.ignore_whitespace;
+  compare_tab.derived_syntax = built.syntax;
   compare_tab.derived_fingerprint_valid = true;
 }
 
