@@ -514,6 +514,24 @@ void TestWorkspaceShellCrashSafetyKeepsASecondProjectAndItsActiveIndex() {
   const auto& view = WorkspaceShellTestAccess::ActiveEditor(restored);
   Expect(view.dirty() && !view.lines().empty() && view.lines()[0] == "unsaved beta",
          "its unsaved buffer comes back (" + view.path().string() + ")");
+  // The other project comes back as a catalog entry whose tabs load when it is
+  // activated, so a `documents` query lists nothing of it yet. The `projects`
+  // query says so; without it the kill -9 oracle read that project's unsaved
+  // buffers as lost (soak 55673209c35c).
+  const util::JsonValue projects = WorkspaceShellTestAccess::ExecuteControlQuery(restored, "projects");
+  std::string loaded;
+  for (const util::JsonValue& project : projects.AsArray()) {
+    loaded += project["loaded"].IsBool() && project["loaded"].AsBool() ? '1' : '0';
+  }
+  Expect(loaded == "01", "only the active project reads loaded before any switch (" + loaded + ")");
+  Expect(WorkspaceShellTestAccess::SwitchProject(restored, 0, false), "activate alpha");
+  Expect(WorkspaceShellTestAccess::SwitchProject(restored, 1, false), "back to loop");
+  loaded.clear();
+  const util::JsonValue switched = WorkspaceShellTestAccess::ExecuteControlQuery(restored, "projects");
+  for (const util::JsonValue& project : switched.AsArray()) {
+    loaded += project["loaded"].IsBool() && project["loaded"].AsBool() ? '1' : '0';
+  }
+  Expect(loaded == "11", "a project once activated stays loaded (" + loaded + ")");
 }
 
 void TestWorkspaceShellRestoredProjectTabBadgeColorsHydrateOnStartup() {

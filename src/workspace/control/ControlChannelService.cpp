@@ -1309,6 +1309,11 @@ util::JsonValue ControlChannelService::BuildProjects() const {
     project_object["root"] =
         util::JsonValue(entry != nullptr ? entry->root.generic_string() : std::string());
     project_object["active"] = util::JsonValue(i == catalog.active_index);
+    // A project restored from the workspace session loads its tabs when it is
+    // first activated; until then `documents` lists nothing of it, and a reader
+    // comparing across a relaunch must not take that for lost buffers.
+    project_object["loaded"] =
+        util::JsonValue(i == catalog.active_index || (entry != nullptr && entry->initialized));
     // From the id, so a restored remote project is marked before it is activated.
     if (const project::ProjectId::Remote* remote = context_->ProjectCatalogId(i).remote()) {
       project_object["host"] = util::JsonValue(remote->host);

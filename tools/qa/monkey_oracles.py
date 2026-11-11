@@ -223,8 +223,9 @@ class DataOracle:
                                 ignore_dangling_symlinks=True, dirs_exist_ok=True)
 
         app.crash_and_relaunch(between=keep_state)
-        # Restore lands over a few frames: wait until every dirty path is back.
         dirty = [doc for doc in before if doc.get("dirty")]
+        self._load_restored_projects(dirty)
+        # Restore lands over a few frames: wait until every dirty path is back.
         deadline = time.monotonic() + 10 * q.SLOW_FACTOR
         after = self.documents(all_projects=True)
         while time.monotonic() < deadline:
@@ -254,6 +255,30 @@ class DataOracle:
                 out.append(("data", f"{Path(path).name} changed on disk across a kill -9 and relaunch, "
                                     f"and nothing saved it"))
         return out
+
+    def _load_restored_projects(self, dirty: list[dict[str, Any]]) -> None:
+        """A relaunch restores every project of the workspace, but only the active
+        one loads its tabs; the others load on their first activation, and until
+        then `documents` lists nothing of them -- their unsaved buffers read as
+        lost (soak 55673209c35c). When a project owing one has not loaded, one lap
+        of project-next activates each project once and ends where it began."""
+        owed = {doc.get("project") for doc in dirty if doc.get("project")}
+        if not owed:
+            return
+        try:
+            projects = self.app.query("projects")
+        except Exception:  # noqa: BLE001 - a dead or busy app is another oracle's
+            return
+        if not isinstance(projects, list):
+            return
+        # `loaded` is absent from a binary that predates it: nothing to wait for.
+        if not any(p.get("loaded") is False and p.get("root") in owed for p in projects):
+            return
+        try:
+            for _ in projects:
+                self.app.send_line("project-next")
+        except Exception:  # noqa: BLE001 - as above
+            return
 
     def wait_staged(self, limit_s: float) -> bool | None:
         """Polls the `persistence` query until it answers staged: True when it did,
