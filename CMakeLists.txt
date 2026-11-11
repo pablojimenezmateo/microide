@@ -64,6 +64,17 @@ if(CMAKE_INTERPROCEDURAL_OPTIMIZATION)
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
   else()
     message(STATUS "Interprocedural optimization (LTO) enabled.")
+    # An LTO link writes hundreds of MB of temporaries to $TMPDIR. On the dev
+    # machine that is a tmpfs under a per-user quota shared with every other
+    # tool, and a link that hits it dies with "lto-wrapper: write: Disk quota
+    # exceeded" while `df` still reports free space (seen 2026-11-11 building
+    # microide_perf). Link rules take their temporaries from the build tree
+    # instead; compiles and test runs keep $TMPDIR (tmpfs measured faster for
+    # the suites, see run-checks.sh check_temp_space).
+    set(MICROIDE_LINK_TMPDIR "${CMAKE_BINARY_DIR}/link-tmp")
+    file(MAKE_DIRECTORY "${MICROIDE_LINK_TMPDIR}")
+    set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK
+                 "${CMAKE_COMMAND} -E env TMPDIR=${MICROIDE_LINK_TMPDIR}")
   endif()
 endif()
 
