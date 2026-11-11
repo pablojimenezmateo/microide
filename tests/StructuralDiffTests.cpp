@@ -406,21 +406,25 @@ void TestCacheIsKeyedOnTextAndSyntax() {
   const std::vector<std::string_view> c_lines = Lines(c);
   compare::HunkRefinementCache cache;
   compare::HunkRefinementStats stats;
-  cache.BeginBuild();
-  (void)cache.Refine(a_lines, b_lines, CSyntax(), &stats);
-  (void)cache.Refine(a_lines, b_lines, CSyntax(), &stats);
+  cache.BeginBuild(CSyntax());
+  (void)cache.Refine(a_lines, b_lines, &stats);
+  (void)cache.Refine(a_lines, c_lines, &stats);
+  cache.EndBuild();
+  Expect(stats.cached_hunks == 0 && cache.size() == 2, "a first build refines every hunk");
+
+  cache.BeginBuild(CSyntax());
+  const compare::HunkRefinementView view = cache.Refine(a_lines, b_lines, &stats);
   Expect(stats.cached_hunks == 1, "the same hunk with the same rules should hit");
-  (void)cache.Refine(a_lines, b_lines, PythonSyntax(), &stats);
+  Expect(view.rows().size() == 1 && view.LeftSpans(0).size() == 1 &&
+             Novel(a_lines[0], {view.LeftSpans(0).begin(), view.LeftSpans(0).end()}) == "b",
+         "a hit should reproduce the refinement");
+  cache.EndBuild();
+  Expect(cache.size() == 1, "a build keeps only the entries it used");
+
+  cache.BeginBuild(PythonSyntax());
+  (void)cache.Refine(a_lines, b_lines, &stats);
+  cache.EndBuild();
   Expect(stats.cached_hunks == 1, "the same hunk read with other rules must miss");
-  (void)cache.Refine(a_lines, c_lines, CSyntax(), &stats);
-  Expect(stats.cached_hunks == 1, "a different hunk must miss");
-  cache.EndBuild();
-  Expect(cache.size() == 3, "a build keeps the entries it used");
-  cache.BeginBuild();
-  (void)cache.Refine(a_lines, b_lines, CSyntax(), &stats);
-  cache.EndBuild();
-  Expect(stats.cached_hunks == 2 && cache.size() == 1,
-         "a build drops the entries it did not use");
 }
 
 void TestRefinementCanBeTurnedOff() {

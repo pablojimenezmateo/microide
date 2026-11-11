@@ -287,7 +287,7 @@ std::uint64_t HashSide(std::uint64_t hash, std::span<const std::string_view> lin
   return hash;
 }
 
-bool SideEquals(const std::string& stored, std::span<const std::string_view> lines) {
+bool SideEquals(std::string_view stored, std::span<const std::string_view> lines) {
   std::size_t at = 0;
   for (const std::string_view line : lines) {
     if (stored.size() - at < line.size() + 1 || stored.compare(at, line.size(), line) != 0 ||
@@ -299,58 +299,213 @@ bool SideEquals(const std::string& stored, std::span<const std::string_view> lin
   return at == stored.size();
 }
 
-void StoreSide(std::string& stored, std::span<const std::string_view> lines) {
-  stored.clear();
-  for (const std::string_view line : lines) {
-    stored.append(line);
-    stored.push_back('\n');
+}  // namespace
+
+HunkRefinementView::HunkRefinementView(const HunkRefinement& refinement)
+    : refinement_(&refinement), rows_(refinement.rows) {}
+
+HunkRefinementView::HunkRefinementView(std::span<const HunkRow> rows,
+                                       std::span<const CompareTextSpan> spans,
+                                       std::span<const std::uint32_t> line_starts,
+                                       std::uint32_t left_lines)
+    : rows_(rows), spans_(spans), line_starts_(line_starts), left_lines_(left_lines) {}
+
+std::span<const CompareTextSpan> HunkRefinementView::LeftSpans(std::uint32_t line) const {
+  if (refinement_ != nullptr) {
+    return line < refinement_->left_spans.size()
+               ? std::span<const CompareTextSpan>(refinement_->left_spans[line])
+               : std::span<const CompareTextSpan>();
   }
+  return line < left_lines_ ? LineSpans(line) : std::span<const CompareTextSpan>();
+}
+
+std::span<const CompareTextSpan> HunkRefinementView::RightSpans(std::uint32_t line) const {
+  if (refinement_ != nullptr) {
+    return line < refinement_->right_spans.size()
+               ? std::span<const CompareTextSpan>(refinement_->right_spans[line])
+               : std::span<const CompareTextSpan>();
+  }
+  const std::size_t slot = std::size_t{left_lines_} + line;
+  return slot + 1 < line_starts_.size() ? LineSpans(static_cast<std::uint32_t>(slot))
+                                        : std::span<const CompareTextSpan>();
+}
+
+std::span<const CompareTextSpan> HunkRefinementView::LineSpans(std::uint32_t slot) const {
+  return spans_.subspan(line_starts_[slot], line_starts_[slot + 1] - line_starts_[slot]);
+}
+
+namespace {
+
+std::uint64_t MixHash(std::uint64_t value) {
+  value ^= value >> 33;
+  value *= 0xff51afd7ed558ccdULL;
+  value ^= value >> 33;
+  return value;
 }
 
 }  // namespace
 
-void HunkRefinementCache::BeginBuild() { ++build_; }
+void HunkRefinementCache::Arena::Clear() {
+  syntax.reset();
+  text.clear();
+  rows.clear();
+  spans.clear();
+  line_starts.clear();
+  entries.clear();
+  std::fill(index.begin(), index.end(), 0u);
+}
 
-const HunkRefinement& HunkRefinementCache::Refine(std::span<const std::string_view> left_lines,
-                                                  std::span<const std::string_view> right_lines,
-                                                  const std::shared_ptr<const DiffSyntax>& syntax,
-                                                  HunkRefinementStats* stats) {
-  const std::uint64_t hash =
-      HashSide(HashSide(util::kFnv1aOffsetBasis, left_lines), right_lines);
-  for (auto [it, end] = by_hash_.equal_range(hash); it != end; ++it) {
-    Entry* entry = it->second;
-    if (entry->syntax == syntax && SideEquals(entry->left, left_lines) &&
-        SideEquals(entry->right, right_lines)) {
-      entry->used_in_build = build_;
-      if (stats != nullptr) {
-        ++stats->cached_hunks;
+std::uint32_t HunkRefinementCache::Arena::Find(std::uint64_t hash,
+                                               std::span<const std::string_view> left,
+                                               std::span<const std::string_view> right) const {
+  if (index.empty()) {
+    return kNoHunkLine;
+  }
+  const std::size_t mask = index.size() - 1;
+  for (std::size_t slot = MixHash(hash) & mask; index[slot] != 0; slot = (slot + 1) & mask) {
+    const Entry& entry = entries[index[slot] - 1];
+    if (entry.hash == hash) {
+      const std::string_view stored(text.data() + entry.text_begin,
+                                    std::size_t{entry.left_bytes} + entry.right_bytes);
+      if (SideEquals(stored.substr(0, entry.left_bytes), left) &&
+          SideEquals(stored.substr(entry.left_bytes), right)) {
+        return index[slot] - 1;
       }
-      return entry->refinement;
     }
   }
-  auto entry = std::make_unique<Entry>();
-  entry->hash = hash;
-  entry->syntax = syntax;
-  StoreSide(entry->left, left_lines);
-  StoreSide(entry->right, right_lines);
-  RefineHunk(left_lines, right_lines, *syntax, entry->refinement, stats);
-  entry->used_in_build = build_;
-  by_hash_.emplace(hash, entry.get());
-  entries_.push_back(std::move(entry));
-  return entries_.back()->refinement;
+  return kNoHunkLine;
+}
+
+void HunkRefinementCache::Arena::Index(std::uint32_t entry) {
+  if ((entries.size() + 1) * 2 > index.size()) {
+    // Grow and reinsert every entry; only while a cache is first filling.
+    index.assign(std::max<std::size_t>(64, index.size() * 2), 0u);
+    const std::size_t mask = index.size() - 1;
+    for (std::uint32_t existing = 0; existing < entries.size(); ++existing) {
+      std::size_t slot = MixHash(entries[existing].hash) & mask;
+      while (index[slot] != 0) {
+        slot = (slot + 1) & mask;
+      }
+      index[slot] = existing + 1;
+    }
+    return;
+  }
+  const std::size_t mask = index.size() - 1;
+  std::size_t slot = MixHash(entries[entry].hash) & mask;
+  while (index[slot] != 0) {
+    slot = (slot + 1) & mask;
+  }
+  index[slot] = entry + 1;
+}
+
+HunkRefinementView HunkRefinementCache::Arena::View(std::uint32_t entry_index) const {
+  const Entry& entry = entries[entry_index];
+  return HunkRefinementView(
+      std::span<const HunkRow>(rows).subspan(entry.rows_begin, entry.rows_count),
+      std::span<const CompareTextSpan>(spans),
+      std::span<const std::uint32_t>(line_starts)
+          .subspan(entry.lines_begin, std::size_t{entry.left_lines} + entry.right_lines + 1),
+      entry.left_lines);
+}
+
+void HunkRefinementCache::BeginBuild(std::shared_ptr<const DiffSyntax> syntax) {
+  current_.Clear();
+  current_.syntax = std::move(syntax);
+}
+
+std::uint32_t HunkRefinementCache::CopyFrom(const Arena& source, std::uint32_t entry_index) {
+  const Entry& from = source.entries[entry_index];
+  Entry entry = from;
+  entry.text_begin = static_cast<std::uint32_t>(current_.text.size());
+  current_.text.append(source.text, from.text_begin, std::size_t{from.left_bytes} + from.right_bytes);
+  entry.rows_begin = static_cast<std::uint32_t>(current_.rows.size());
+  current_.rows.insert(current_.rows.end(), source.rows.begin() + from.rows_begin,
+                       source.rows.begin() + from.rows_begin + from.rows_count);
+  // Line starts are offsets into the arena's span list, so rebase them.
+  const std::uint32_t lines = from.left_lines + from.right_lines;
+  const std::uint32_t old_base = source.line_starts[from.lines_begin];
+  const std::uint32_t old_end = source.line_starts[from.lines_begin + lines];
+  const auto new_base = static_cast<std::uint32_t>(current_.spans.size());
+  current_.spans.insert(current_.spans.end(), source.spans.begin() + old_base,
+                        source.spans.begin() + old_end);
+  entry.lines_begin = static_cast<std::uint32_t>(current_.line_starts.size());
+  for (std::uint32_t line = 0; line <= lines; ++line) {
+    current_.line_starts.push_back(source.line_starts[from.lines_begin + line] - old_base +
+                                   new_base);
+  }
+  current_.entries.push_back(entry);
+  const auto index = static_cast<std::uint32_t>(current_.entries.size() - 1);
+  current_.Index(index);
+  return index;
+}
+
+std::uint32_t HunkRefinementCache::Append(std::uint64_t hash,
+                                          std::span<const std::string_view> left,
+                                          std::span<const std::string_view> right,
+                                          const HunkRefinement& refinement) {
+  Entry entry;
+  entry.hash = hash;
+  entry.text_begin = static_cast<std::uint32_t>(current_.text.size());
+  for (const std::string_view line : left) {
+    current_.text.append(line);
+    current_.text.push_back('\n');
+  }
+  entry.left_bytes = static_cast<std::uint32_t>(current_.text.size() - entry.text_begin);
+  for (const std::string_view line : right) {
+    current_.text.append(line);
+    current_.text.push_back('\n');
+  }
+  entry.right_bytes =
+      static_cast<std::uint32_t>(current_.text.size() - entry.text_begin - entry.left_bytes);
+  entry.rows_begin = static_cast<std::uint32_t>(current_.rows.size());
+  entry.rows_count = static_cast<std::uint32_t>(refinement.rows.size());
+  current_.rows.insert(current_.rows.end(), refinement.rows.begin(), refinement.rows.end());
+  entry.left_lines = static_cast<std::uint32_t>(left.size());
+  entry.right_lines = static_cast<std::uint32_t>(right.size());
+  entry.lines_begin = static_cast<std::uint32_t>(current_.line_starts.size());
+  const auto append_side = [&](const std::vector<std::vector<CompareTextSpan>>& side,
+                               std::size_t lines) {
+    for (std::size_t line = 0; line < lines; ++line) {
+      current_.line_starts.push_back(static_cast<std::uint32_t>(current_.spans.size()));
+      if (line < side.size()) {
+        current_.spans.insert(current_.spans.end(), side[line].begin(), side[line].end());
+      }
+    }
+  };
+  append_side(refinement.left_spans, left.size());
+  append_side(refinement.right_spans, right.size());
+  current_.line_starts.push_back(static_cast<std::uint32_t>(current_.spans.size()));
+  current_.entries.push_back(entry);
+  const auto index = static_cast<std::uint32_t>(current_.entries.size() - 1);
+  current_.Index(index);
+  return index;
+}
+
+HunkRefinementView HunkRefinementCache::Refine(std::span<const std::string_view> left_lines,
+                                               std::span<const std::string_view> right_lines,
+                                               HunkRefinementStats* stats) {
+  const std::uint64_t hash =
+      HashSide(HashSide(util::kFnv1aOffsetBasis, left_lines), right_lines);
+  std::uint32_t entry = current_.Find(hash, left_lines, right_lines);
+  if (entry == kNoHunkLine && previous_.syntax == current_.syntax) {
+    if (const std::uint32_t old = previous_.Find(hash, left_lines, right_lines);
+        old != kNoHunkLine) {
+      entry = CopyFrom(previous_, old);
+    }
+  }
+  if (entry != kNoHunkLine) {
+    if (stats != nullptr) {
+      ++stats->cached_hunks;
+    }
+    return current_.View(entry);
+  }
+  RefineHunk(left_lines, right_lines, *current_.syntax, scratch_, stats);
+  return current_.View(Append(hash, left_lines, right_lines, scratch_));
 }
 
 void HunkRefinementCache::EndBuild() {
-  const std::size_t before = entries_.size();
-  std::erase_if(entries_, [&](const std::unique_ptr<Entry>& entry) {
-    return entry->used_in_build != build_;
-  });
-  if (entries_.size() != before) {
-    by_hash_.clear();
-    for (const std::unique_ptr<Entry>& entry : entries_) {
-      by_hash_.emplace(entry->hash, entry.get());
-    }
-  }
+  std::swap(current_, previous_);
+  current_.Clear();
 }
 
 void ZipHunk(std::size_t left_count, std::size_t right_count, std::vector<HunkRow>& rows) {
