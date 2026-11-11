@@ -70,10 +70,57 @@ void CollectRun(const DiffSyntaxTree& tree, std::uint32_t first, std::uint32_t e
 }
 
 // Flat LCS over the token texts of [lhs_begin, lhs_end) and [rhs_begin, rhs_end).
+//
+// Most calls are small gaps, many per hunk, so a range that fits
+// kMaxSiblingLcsCells takes an in-place DP over retained scratch (matched
+// bytes maximized, so a word outweighs a separator); only a larger range goes
+// to the line differ, whose bounded anchored fallback it needs but whose
+// per-call hashing and allocation a small gap does not.
 void MatchTokenRangeFlat(const DiffSyntaxTree& lhs, std::uint32_t lhs_begin, std::uint32_t lhs_end,
                          const DiffSyntaxTree& rhs, std::uint32_t rhs_begin, std::uint32_t rhs_end,
                          StructuralMatch& match) {
   MatcherScratch& scratch = Scratch();
+  const auto pair = [&](std::uint32_t left, std::uint32_t right) {
+    match.lhs_partner[left] = right;
+    match.rhs_partner[right] = left;
+  };
+  const std::size_t rows = lhs_end - lhs_begin;
+  const std::size_t columns = rhs_end - rhs_begin;
+  if ((rows + 1) * (columns + 1) <= kMaxSiblingLcsCells) {
+    const std::size_t stride = columns + 1;
+    std::vector<std::uint32_t>& table = scratch.lcs_table;
+    table.assign((rows + 1) * stride, 0);
+    const auto weight = [&](std::size_t i, std::size_t j) -> std::uint32_t {
+      const std::string_view a = lhs.tokens[lhs_begin + i].text;
+      return a == rhs.tokens[rhs_begin + j].text ? static_cast<std::uint32_t>(a.size()) : 0;
+    };
+    for (std::size_t i = rows; i-- > 0;) {
+      std::uint32_t* row = table.data() + i * stride;
+      const std::uint32_t* below = row + stride;
+      for (std::size_t j = columns; j-- > 0;) {
+        std::uint32_t best = std::max(below[j], row[j + 1]);
+        if (const std::uint32_t w = weight(i, j); w > 0) {
+          best = std::max(best, w + below[j + 1]);
+        }
+        row[j] = best;
+      }
+    }
+    std::size_t i = 0;
+    std::size_t j = 0;
+    while (i < rows && j < columns) {
+      const std::uint32_t w = weight(i, j);
+      if (w > 0 && table[i * stride + j] == w + table[(i + 1) * stride + j + 1]) {
+        pair(static_cast<std::uint32_t>(lhs_begin + i), static_cast<std::uint32_t>(rhs_begin + j));
+        ++i;
+        ++j;
+      } else if (table[(i + 1) * stride + j] >= table[i * stride + j + 1]) {
+        ++i;
+      } else {
+        ++j;
+      }
+    }
+    return;
+  }
   scratch.flat_lhs.clear();
   scratch.flat_rhs.clear();
   for (std::uint32_t index = lhs_begin; index < lhs_end; ++index) {
@@ -88,10 +135,7 @@ void MatchTokenRangeFlat(const DiffSyntaxTree& lhs, std::uint32_t lhs_begin, std
   for (const DiffOp& op : ops) {
     switch (op.kind) {
       case DiffOpKind::Equal:
-        match.lhs_partner[left] = right;
-        match.rhs_partner[right] = left;
-        ++left;
-        ++right;
+        pair(left++, right++);
         break;
       case DiffOpKind::Delete:
         ++left;
