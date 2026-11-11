@@ -13,9 +13,17 @@ only, a failing-first test for every fix, one commit per fix, and a TD entry in
 
 ## The loop
 
-1. **Pick.** `tools/soak/soak.py report` (or `status`) lists open findings,
-   deterministic ones first. Prefer a deterministic finding with a minimal
-   replay; a flaky one needs its rate read before it is chased.
+1. **Pick.** `tools/soak/soak.py report` (or `status`) lists open findings in
+   fix order, each tagged with its impact tier (`soak.py` `priority_key`):
+   `severe` (crash, sanitizer report, `data`, `undo`, `leak`), `behaviour`
+   (`state`, `focus`, `expect`, timing), `layout` (`overlap`, `bounds`), then
+   `paint` (stale frames). Within a tier a finding any real-size window shows
+   comes before one tagged `/tiny` -- seen only where the LOGICAL window
+   (pixels / ui.scale) is under 800x500, which the runner now rarely runs and
+   keeps real-size runs out of (`--min-logical`). Work top down; a `paint/tiny`
+   finding is worth fixing only as part of a class a bigger window also shows.
+   Prefer a deterministic finding with a minimal replay; a flaky one needs its
+   rate read before it is chased.
 2. **Claim.** `tools/soak/soak.py ledger claim <sig> <your-name>`, so two agents
    never chase one defect.
 3. **Reproduce.** Build the tree at HEAD (`cmake --build build --target microide`)
@@ -59,9 +67,12 @@ only, a failing-first test for every fix, one commit per fix, and a TD entry in
    stale-paint (`log: QA-STALE ...`) signature keys on the reason, the clip
    count, the surface under the box, where its first pixel sits against the
    clips (`in-clip`: repainted wrongly; `clip-edge`: one pixel past a clip;
-   `outside`: never damaged) and whether it is a one-pixel line. Signatures from
-   before 2026-11-09 lack the last three and hold unrelated defects; they stop
-   being seen once the runner builds that change.
+   `outside`: never damaged), whether it is a one-pixel line, and (since
+   2026-11-11) the smallest `ui` element under the box (`button:search/replace-all`,
+   `scrollbar:editor/vertical`, `-` for none), which the label shows in brackets.
+   Older signatures lack some of these and can hold unrelated defects (250931ec505a
+   held a lit button and a stray scrollbar); they stop being seen once the
+   runner builds the change.
 9. **Defer honestly.** Anything you cannot finish -- a second defect the fix
    exposed, a lint the class deserves -- goes into
    `dev-docs/project/known-tech-debt.md` as a TD entry, and a `ledger note`.

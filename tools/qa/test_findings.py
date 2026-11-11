@@ -42,6 +42,39 @@ class StaleSignatureTests(unittest.TestCase):
         self.assertEqual(fnd.stale_scale(stale("1,1,1,1", "1,1", "none")), 1.0)
         self.assertEqual(fnd.stale_scale(stale("1,1,1,1", "1,1", "none", "1.25")), 1.25)
 
+    def test_two_controls_on_one_surface_are_two_defects(self):
+        # Soak 250931ec505a (640x480 at ui.scale 3) held both of these: Replace
+        # All left lit under a toast, and a split pane's scrollbar drawn over the
+        # sidebar's edge. Same surface, same clip relation, same shape.
+        surfaces = {"sidebar": [0, 25, 120, 83], "editorSurface": [121, 86, 92, 50]}
+        elements = [
+            {"name": "button:search/replace-all", "rect": [76, 107, 34, 20]},
+            {"name": "field:search/query", "rect": [10, 83, 100, 20]},
+            {"name": "sidebar-view:search", "rect": [36, 29, 22, 19]},
+        ]
+        lit = stale("228,321,102,3", "228,321", "121,24,93,85", "3")
+        spill = stale("351,264,12,108", "351,264", "121,24,93,115", "3")
+        sig = lambda d: fnd.signature("log", d, "", fnd.stale_context(d, surfaces, elements))  # noqa: E731
+        self.assertEqual(fnd.stale_element(lit, elements), "button:search/replace-all")
+        self.assertEqual(fnd.stale_element(spill, elements), "-")
+        self.assertNotEqual(sig(lit), sig(spill))
+        # Without the elements (an older `ui` answer) the context is what it was.
+        self.assertEqual(fnd.stale_context(lit, surfaces), "sidebar|outside|area")
+
+    def test_element_keys_drop_what_differs_between_runs(self):
+        self.assertEqual(fnd.element_key("button:search/replace-all"), "button:search/replace-all")
+        self.assertEqual(fnd.element_key("scrollbar:editor/vertical#2"), "scrollbar:editor/vertical")
+        self.assertEqual(fnd.element_key("tab:0/a.txt"), "tab")
+        self.assertEqual(fnd.element_key("close-tab/3/notes.md".replace("/", ":", 1)), "close-tab")
+        self.assertEqual(fnd.element_key("row:tree/src/main.cpp"), "row:tree")
+        self.assertEqual(fnd.element_key("menu-item:File/Open Recent"), "menu-item:File")
+        self.assertEqual(fnd.element_key("divider:editor/0"), "divider:editor")
+
+    def test_the_label_names_the_context(self):
+        self.assertTrue(fnd.describe("log", "QA-STALE frame=1", "sidebar|outside|area|-")
+                        .startswith("log: [sidebar|outside|area|-] QA-STALE"))
+        self.assertEqual(fnd.describe("undo", "3 undo(s)"), "undo: <n> undo(s)")
+
     def test_other_findings_have_no_context(self):
         self.assertEqual(fnd.stale_context("undo: 3 undo(s) changed the text", SURFACES), "")
 

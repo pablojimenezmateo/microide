@@ -117,17 +117,66 @@ def stale_clip_relation(detail: str) -> str:
     return "outside"
 
 
-def stale_context(detail: str, surfaces: dict | None) -> str:
+# Element kinds whose locator's first two parts name a fixed control
+# ("button:search/replace-all", "scrollbar:editor/vertical"); for the rest (tabs,
+# rows, menu items) the parts after the first name the document or the label.
+_FIXED_CONTROL_KINDS = frozenset({"button", "field", "scrollbar", "divider", "setting"})
+_STABLE_PART = re.compile(r"^[A-Za-z][A-Za-z-]*$")
+
+
+def element_key(name: str) -> str:
+    """An element name with its run-specific parts dropped: the kind, and the
+    leading locator parts that are words (no index, file name, label with spaces
+    or `#2` suffix) -- two for a fixed control, one for anything else."""
+    kind, _, locator = name.partition(":")
+    keep = 2 if kind in _FIXED_CONTROL_KINDS else 1
+    parts = []
+    for part in locator.split("#", 1)[0].split("/")[:keep]:
+        if not _STABLE_PART.match(part):
+            break
+        parts.append(part)
+    return f"{kind}:{'/'.join(parts)}" if parts else kind
+
+
+def stale_element(detail: str, elements: list | None) -> str:
+    """For a redraw-verifier finding, the smallest `ui` element under its stale
+    box's centre, by element_key; `-` when none is. A surface holds many
+    controls, and two stale controls on one surface are two defects: the soak's
+    250931ec505a held a search-view button left lit and a split pane's scrollbar
+    drawn over the sidebar, both "sidebar, outside the clips, an area"."""
+    match = _STALE_BBOX.search(detail)
+    if not match or elements is None:
+        return ""
+    scale = stale_scale(detail)
+    x, y, w, h = (int(v) for v in match.groups())
+    cx, cy = (x + w / 2) / scale, (y + h / 2) / scale
+    best: tuple[float, str] | None = None
+    for element in elements:
+        rect = element.get("rect") if isinstance(element, dict) else None
+        name = element.get("name", "") if isinstance(element, dict) else ""
+        if not name or not isinstance(rect, list) or len(rect) != 4 or rect[2] <= 0 or rect[3] <= 0:
+            continue
+        if rect[0] <= cx < rect[0] + rect[2] and rect[1] <= cy < rect[1] + rect[3]:
+            area = rect[2] * rect[3]
+            if best is None or area < best[0]:
+                best = (area, name)
+    return element_key(best[1]) if best else "-"
+
+
+def stale_context(detail: str, surfaces: dict | None, elements: list | None = None) -> str:
     """The signature context of a redraw-verifier finding: the surface its box
-    sits on, how its first pixel relates to the frame's clips, and whether the
-    box is a one-pixel line (a caret, a border, a rounding seam) or an area.
-    Empty for any other finding."""
+    sits on, the element under it (when the `ui` answer listed them), how its
+    first pixel relates to the frame's clips, and whether the box is a one-pixel
+    line (a caret, a border, a rounding seam) or an area. Empty for any other
+    finding."""
     match = _STALE_BBOX.search(detail)
     if not match:
         return ""
     w, h = int(match.group(3)), int(match.group(4))
     shape = "line" if min(w, h) <= 1 else "area"
-    return f"{stale_surface(detail, surfaces)}|{stale_clip_relation(detail)}|{shape}"
+    context = f"{stale_surface(detail, surfaces)}|{stale_clip_relation(detail)}|{shape}"
+    element = stale_element(detail, elements)
+    return f"{context}|{element}" if element else context
 
 
 def signature(kind: str, detail: str, log_text: str = "", context: str = "") -> str:
@@ -142,8 +191,12 @@ def signature(kind: str, detail: str, log_text: str = "", context: str = "") -> 
     return hashlib.sha1(key.encode()).hexdigest()[:12]
 
 
-def describe(kind: str, detail: str) -> str:
-    """The one-line human label stored beside a signature."""
+def describe(kind: str, detail: str, context: str = "") -> str:
+    """The one-line human label stored beside a signature. A stale-paint
+    finding's context leads it: every such message reads the same once its
+    numbers are masked, so the context is what tells two apart in a listing."""
+    if context:
+        return f"{kind}: [{context}] {normalize(detail)}"[:200]
     return f"{kind}: {normalize(detail)}"[:200]
 
 

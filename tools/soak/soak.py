@@ -176,6 +176,77 @@ JOB_TYPES = [
 ]
 SIZES = [(1440, 900), (1440, 900), (1280, 720), (1920, 1080), (1024, 700), (800, 600), (2560, 1440), (640, 480)]
 SCALES = ["1", "1", "1", "1.25", "1.5", "1.75", "2"]
+# A cell whose LOGICAL window (pixels / ui.scale) is smaller than this is "tiny":
+# 640x480 at 2, 1024x700 at 2. Every panel there sits at its minimum size, so most
+# of what a run finds is a control squeezed past its container -- real, but a
+# window almost nobody uses, and it crowded the ledger out (two days: most of the
+# open stale-paint findings came from those cells). They still run, rarely.
+TINY_LOGICAL = (800, 500)
+TINY_CELL_WEIGHT = 0.05
+
+
+def is_tiny(size: tuple[int, int], scale: str) -> bool:
+    factor = float(scale)
+    return size[0] / factor < TINY_LOGICAL[0] or size[1] / factor < TINY_LOGICAL[1]
+
+
+def cell_is_tiny(cell: str) -> bool:
+    """For a ledger cell "<job>/<build>/<W>x<H>@<scale>"."""
+    try:
+        dims, scale = cell.rsplit("/", 1)[-1].split("@")
+        width, height = (int(v) for v in dims.split("x"))
+        return is_tiny((width, height), scale)
+    except ValueError:
+        return False
+
+
+def choose_cell(rng: random.Random) -> tuple[tuple[int, int], str]:
+    """A window size and ui.scale, drawn from SIZES x SCALES with tiny cells
+    weighted down to TINY_CELL_WEIGHT."""
+    cells = [(size, scale) for size in SIZES for scale in SCALES]
+    weights = [TINY_CELL_WEIGHT if is_tiny(size, scale) else 1.0 for size, scale in cells]
+    return rng.choices(cells, weights=weights)[0]
+
+
+# ---- what to fix first ---------------------------------------------------------
+
+# Impact tiers, most severe first. A stale frame or a squeezed layout is a defect,
+# but a crash, a lost or corrupted buffer, a broken undo or a leak costs a user
+# their work or their session; the sanitizers' log lines are memory and thread
+# bugs whatever they look like on screen.
+TIER_NAMES = ("severe", "behaviour", "layout", "paint")
+_SEVERE_KINDS = frozenset({"crash", "data", "undo", "leak", "build", "containment"})
+_BEHAVIOUR_KINDS = frozenset({"state", "focus", "expect", "idle", "latency", "liveness"})
+_LAYOUT_KINDS = frozenset({"overlap", "bounds"})
+
+
+def impact_tier(entry: ld.Entry) -> int:
+    if entry.kind == "log":
+        return 3 if "QA-STALE" in entry.label else 0
+    if entry.kind in _SEVERE_KINDS:
+        return 0
+    if entry.kind in _BEHAVIOUR_KINDS:
+        return 1
+    if entry.kind in _LAYOUT_KINDS:
+        return 2
+    return 1
+
+
+def tiny_only(entry: ld.Entry) -> bool:
+    """Seen only in tiny cells (see TINY_LOGICAL)."""
+    return bool(entry.cells) and all(cell_is_tiny(cell) for cell in entry.cells)
+
+
+def priority_key(entry: ld.Entry) -> tuple:
+    """Sort key, best first: impact tier; within a tier, a finding a real-size
+    window shows before one only a tiny window does, then deterministic before
+    unchecked before flaky, then the most sightings."""
+    det = 0 if entry.deterministic else (2 if entry.deterministic is False else 1)
+    return (impact_tier(entry), tiny_only(entry), det, -entry.count, entry.sig)
+
+
+def priority_tag(entry: ld.Entry) -> str:
+    return TIER_NAMES[impact_tier(entry)] + ("/tiny" if tiny_only(entry) else "")
 
 
 @dataclass
@@ -218,8 +289,7 @@ def start_job(job_type: JobType, state: dict[str, Any], rng: random.Random) -> J
     entry = state["good"][job_type.build]
     out = RUNS / f"{time.strftime('%Y%m%d-%H%M%S')}-{job_type.name}-{seed}"
     out.mkdir(parents=True, exist_ok=True)
-    size = rng.choice(SIZES) if job_type.matrix else (1440, 900)
-    scale = rng.choice(SCALES) if job_type.matrix else "1"
+    size, scale = choose_cell(rng) if job_type.matrix else ((1440, 900), "1")
     qa = WORKTREE / "tools" / "qa" / "run.py"
     command = ["nice", "-n", "19", "ionice", "-c3", *build.prefix, sys.executable, str(qa),
                "--binary", entry["binary"], "--out", str(out), "monkey", "--profile", job_type.profile,
@@ -230,6 +300,10 @@ def start_job(job_type: JobType, state: dict[str, Any], rng: random.Random) -> J
         command += ["--size", f"{size[0]}x{size[1]}", "--coverage", str(COVERAGE), "--corpus", str(CORPUS)]
         if scale != "1":
             command += ["--set", f"ui.scale={scale}"]
+        if not is_tiny(size, scale):
+            # A real-size cell stays one: without this a run's own resizes and
+            # `ui-scale 999999` took most cells tiny within minutes.
+            command += ["--min-logical", f"{TINY_LOGICAL[0]}x{TINY_LOGICAL[1]}"]
     env = {**os.environ, "MQA_SLOW_FACTOR": str(build.slow), **build.env}
     cell = f"{job_type.name}/{job_type.build}/{size[0]}x{size[1]}@{scale}"
     with open(out / "driver.log", "wb") as log:
@@ -834,7 +908,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             # Checks first: a new finding's rate and minimal replay are worth more
             # than another fresh run. A check holds three displays, so it counts
             # as a job of its own.
-            sig = pending.pop(0)
+            # The most severe first: a paint finding from a tiny window waits
+            # behind everything a user could lose work to.
+            known = ledger().entries()
+            sig = min(pending, key=lambda p: priority_key(known.get(p, ld.Entry(sig=p))))
+            pending.remove(sig)
             jobs.append(start_check(sig, state))
             log(f"check {sig}")
             save_state(state)
@@ -903,9 +981,9 @@ def cmd_status(args: argparse.Namespace) -> int:
     for status in ld.STATES:
         items = by_status.get(status, [])
         print(f"{status:9} {len(items)}")
-        for entry in sorted(items, key=lambda e: -e.count)[:8] if status in ("new", "reopened", "claimed") else []:
+        for entry in sorted(items, key=priority_key)[:8] if status in ("new", "reopened", "claimed") else []:
             det = "det" if entry.deterministic else ("flaky" if entry.deterministic is False else "?")
-            print(f"    {entry.sig} x{entry.count:<4} {det:5} {entry.label[:90]}")
+            print(f"    {entry.sig} x{entry.count:<4} {det:5} {priority_tag(entry):15} {entry.label[:90]}")
     print(f"current: {', '.join(state.get('current', [])) or state.get('waiting', 'idle')}")
     if PAUSE.exists():
         print("PAUSED (remove build/soak/PAUSE)")
@@ -919,8 +997,8 @@ def cmd_report(args: argparse.Namespace) -> int:
 
     def section(title: str, items: list[ld.Entry]) -> None:
         lines.extend([f"## {title} ({len(items)})", ""])
-        for entry in sorted(items, key=lambda e: (-e.count, e.sig)):
-            lines.append(f"- `{entry.sig}` x{entry.count} {entry.label} -- "
+        for entry in sorted(items, key=priority_key):
+            lines.append(f"- `{entry.sig}` **{priority_tag(entry)}** x{entry.count} {entry.label} -- "
                          f"[FINDING.md]({FINDINGS / entry.sig / 'FINDING.md'})"
                          + (f", minimal {entry.minimal_actions} actions" if entry.minimal_actions else ""))
         lines.append("")

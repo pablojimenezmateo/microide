@@ -300,7 +300,8 @@ def cmd_monkey(args: argparse.Namespace) -> int:
             app.check("start")
             monkey = m.Monkey(app, seed, args.profile, project, coverage=coverage,
                               corpus=mm.Corpus(args.corpus), weird=not args.no_weird,
-                              max_findings=args.max_findings, keep_going=not args.stop_at_first)
+                              max_findings=args.max_findings, keep_going=not args.stop_at_first,
+                              min_logical=parse_size(args.min_logical) if args.min_logical else None)
             settle = args.delay if command_profile else 0.12
             if command_profile and not args.no_churn:
                 with m.ExternalChurn(project, m.random.Random(seed ^ 0x5F5F), app.record_external):
@@ -406,6 +407,9 @@ def main() -> int:
     monkey.add_argument("--rounds", type=int, help="commands per seed (commands/editor profiles)")
     monkey.add_argument("--profile", choices=m.ALL_PROFILES, default="default")
     monkey.add_argument("--size", default="1440x900", help="window (and screen) size, WxH")
+    monkey.add_argument("--min-logical", metavar="WxH",
+                        help="keep the window at least this many layout units (pixels / ui.scale): a "
+                             "resize or scale change that goes under it is undone after the step")
     monkey.add_argument("--set", action="append", metavar="ID=VALUE",
                         help="a setting at launch (--set ui.scale=1.75); repeatable")
     monkey.add_argument("--coverage", type=Path,

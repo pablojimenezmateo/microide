@@ -565,8 +565,13 @@ ALL_PROFILES = tuple(PROFILES) + COMMAND_PROFILES
 class Monkey:
     def __init__(self, app: q.App, seed: int, profile: str = "default", project: Path | None = None,
                  coverage: mm.Coverage | None = None, corpus: mm.Corpus | None = None,
-                 weird: bool = True, max_findings: int = 25, keep_going: bool = True):
+                 weird: bool = True, max_findings: int = 25, keep_going: bool = True,
+                 min_logical: tuple[int, int] | None = None):
         self.app = app
+        # The smallest window, in layout units (pixels / ui.scale), the run may
+        # leave the app at; None: any. A resize, a ui.scale or a `ui-scale 999999`
+        # that went under it is undone after the step (_keep_window_usable).
+        self.min_logical = min_logical
         self.rng = random.Random(seed)
         self.seed = seed
         self.profile = profile
@@ -893,7 +898,7 @@ class Monkey:
     def _setting_value(self, row: dict[str, Any]) -> str:
         kind = row.get("type")
         if row.get("id") == "ui.scale":
-            return self.rng.choice(SCALE_VALUES)
+            return self.rng.choice(self._scales_that_fit() or ["1"])
         if kind == "bool":
             return self.rng.choice(["true", "false"])
         if kind == "enum" and row.get("enumValues"):
@@ -926,10 +931,54 @@ class Monkey:
             self.app.focus_out()
             return "window:focus-out"
         screen_w, screen_h = self.app.size
-        w = self.rng.choice([320, 640, 800, 1024, self.rng.randint(320, screen_w), screen_w])
-        h = self.rng.choice([240, 400, 600, self.rng.randint(240, screen_h), screen_h])
+        widths = [320, 640, 800, 1024, self.rng.randint(320, screen_w), screen_w]
+        heights = [240, 400, 600, self.rng.randint(240, screen_h), screen_h]
+        if self.min_logical is not None:
+            scale = self._window_scale()
+            widths = [w for w in widths if w >= self.min_logical[0] * scale] or [screen_w]
+            heights = [h for h in heights if h >= self.min_logical[1] * scale] or [screen_h]
+        w = self.rng.choice(widths)
+        h = self.rng.choice(heights)
         self.app.resize(min(w, screen_w), min(h, screen_h))
         return "window:resize"
+
+    def _window_scale(self) -> float:
+        """Window pixels per layout unit, as the last `ui` answer has it."""
+        scale = ((self.app.last_ui or {}).get("window") or {}).get("scale") or [1.0]
+        try:
+            return max(0.1, float(scale[0]))
+        except (TypeError, ValueError, IndexError):
+            return 1.0
+
+    def _scales_that_fit(self, whole_screen: bool = False) -> list[str]:
+        """The SCALE_VALUES at which the window as it is now (or, with
+        `whole_screen`, the window resized to the screen) is at least min_logical."""
+        if self.min_logical is None:
+            return list(SCALE_VALUES)
+        width, height = self.app.size
+        window = (self.app.last_ui or {}).get("window") or {}
+        if not whole_screen and window.get("width") and window.get("height"):
+            scale = self._window_scale()
+            width, height = window["width"] * scale, window["height"] * scale
+        return [v for v in SCALE_VALUES
+                if width / float(v) >= self.min_logical[0] and height / float(v) >= self.min_logical[1]]
+
+    def _keep_window_usable(self) -> None:
+        """Undoes a step that left the window under min_logical: back to a scale
+        that fits, at the screen's size. Recorded like any action, so a replay
+        does the same."""
+        if self.min_logical is None or self.app.wayland or not self.app.alive():
+            return
+        window = (self.app.last_ui or {}).get("window") or {}
+        width, height = window.get("width"), window.get("height")
+        if not width or not height or (width >= self.min_logical[0] and height >= self.min_logical[1]):
+            return
+        scale = self.rng.choice(self._scales_that_fit(whole_screen=True) or ["1"])
+        self.app.send_line(f"set-setting ui.scale {scale}")
+        self.app.resize(*self.app.size)
+        self.app.settle_quiet(most=0.3)
+        with contextlib.suppress(q.QaFailure):
+            self._ui()
 
     def terminal_action(self) -> str:
         ui = self.app.last_ui or {}
@@ -1016,10 +1065,12 @@ class Monkey:
         """Drops findings since index `since` whose signature this run has seen,
         counting them; the first of each keeps its evidence directory."""
         kept = self.app.findings[:since]
+        ui = self.app.last_ui or {}
         for finding in self.app.findings[since:]:
+            context = fnd.stale_context(finding.detail, ui.get("surfaces"), ui.get("elements"))
             signature = fnd.signature(finding.kind, finding.detail,
                                       self.app.log_tail() if finding.kind in ("crash", "log") else "",
-                                      fnd.stale_context(finding.detail, (self.app.last_ui or {}).get("surfaces")))
+                                      context)
             entry = self.signatures.get(signature)
             evidence = Path(finding.screenshot).parent if finding.screenshot else None
             if entry is not None:
@@ -1030,7 +1081,7 @@ class Monkey:
                 continue
             self.signatures[signature] = {
                 "signature": signature, "kind": finding.kind, "detail": finding.detail[:2000],
-                "label": fnd.describe(finding.kind, finding.detail), "count": 1,
+                "label": fnd.describe(finding.kind, finding.detail, context), "count": 1,
                 "step": self.step_index, "evidence": str(evidence or ""), "state": self.state,
                 "actions": len(self.app.actions),
             }
@@ -1124,6 +1175,7 @@ class Monkey:
         self.app.press_guard = self._press_lands_on_forbidden
         self.resources.sample()
         self._start_from_corpus(corpus_probability)
+        self._keep_window_usable()
         for index in range(steps):
             self.step_index = index
             before = len(self.app.findings)
@@ -1138,6 +1190,7 @@ class Monkey:
             if self.app.alive():
                 self._observe(source, key)
                 self._periodic_oracles(index)
+                self._keep_window_usable()
             if not self.app.alive():
                 if not self.keep_going or self.relaunches >= 3:
                     break
