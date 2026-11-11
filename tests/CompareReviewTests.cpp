@@ -455,8 +455,7 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                          .old_path = "g.txt",
                      });
                      const auto presentation = BuildComparePresentationModel(
-                         model, semantic, ComparePresentationOptions{}, ComparePresentationCollapseState{},
-                         1);
+                         model, semantic, ComparePresentationOptions{}, ComparePresentationCollapseState{});
                      Expect(!presentation.rows.empty(), "presentation should include rows");
                      Expect(presentation.rows.front().kind == ComparePresentationRowKind::Metadata,
                             "rename metadata should add a metadata row");
@@ -472,24 +471,6 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                      Expect(strict.hunks.size() >= 1, "strict diff should keep whitespace hunks");
                      Expect(ignored.hunks.empty(),
                             "ignore-whitespace diff should treat trailing whitespace as equal");
-                   }});
-
-  tests.push_back({"CompareReview/InlineCacheTracksGeneration",
-                   [] {
-                     const auto model = BuildCompareModel("old\n", "new\n");
-                     auto presentation = BuildComparePresentationModel(
-                         model, InferCompareSemanticFileMetadata(CompareSemanticMetadataInput{
-                                      .path = "f.txt",
-                                      .left_content = "old\n",
-                                      .right_content = "new\n",
-                                      .git_entry = std::nullopt,
-                                      .old_path = {},
-                                  }),
-                         ComparePresentationOptions{}, ComparePresentationCollapseState{}, 7);
-                     Expect(presentation.inline_cache.model_generation == 7,
-                            "inline cache should record model generation");
-                     Expect(!presentation.inline_cache.left_spans_by_row.empty(),
-                            "inline cache should retain left spans");
                    }});
 
   // The three tests below used to assert on `review_header.action_hint_line`,
@@ -603,8 +584,7 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                          .old_path = {},
                      });
                      auto presentation = BuildComparePresentationModel(
-                         model, semantic, ComparePresentationOptions{}, ComparePresentationCollapseState{},
-                         1);
+                         model, semantic, ComparePresentationOptions{}, ComparePresentationCollapseState{});
                      std::optional<std::size_t> changed_presentation;
                      for (std::size_t i = 0; i < presentation.rows.size(); ++i) {
                        if (presentation.rows[i].kind == ComparePresentationRowKind::Model &&
@@ -652,7 +632,7 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                              .git_entry = std::nullopt,
                              .old_path = {},
                          }),
-                         ComparePresentationOptions{}, ComparePresentationCollapseState{}, 1);
+                         ComparePresentationOptions{}, ComparePresentationCollapseState{});
 
                      std::optional<std::size_t> collapsed_row;
                      std::size_t collapsed_run_start = 0;
@@ -734,7 +714,7 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                              .git_entry = std::nullopt,
                              .old_path = {},
                          }),
-                         ComparePresentationOptions{}, ComparePresentationCollapseState{}, 1);
+                         ComparePresentationOptions{}, ComparePresentationCollapseState{});
 
                      std::optional<std::size_t> collapsed_row;
                      std::size_t collapsed_run_start = 0;
@@ -812,7 +792,7 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                              .git_entry = std::nullopt,
                              .old_path = {},
                          }),
-                         ComparePresentationOptions{}, ComparePresentationCollapseState{}, 1);
+                         ComparePresentationOptions{}, ComparePresentationCollapseState{});
 
                      std::vector<std::pair<std::size_t, std::size_t>> middle_run_identities;
                      for (const auto& row : compare_tab.presentation.rows) {
@@ -890,7 +870,7 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                              .git_entry = std::nullopt,
                              .old_path = {},
                          }),
-                         ComparePresentationOptions{}, ComparePresentationCollapseState{}, 1);
+                         ComparePresentationOptions{}, ComparePresentationCollapseState{});
 
                      // Locate the middle collapsed run and a model row hidden inside it.
                      std::optional<std::size_t> collapsed_row;
