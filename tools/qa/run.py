@@ -328,7 +328,7 @@ def cmd_monkey(args: argparse.Namespace) -> int:
 
 
 def replay_record(record: dict, binary: Path, out: Path, actions: list | None = None,
-                  check: bool = True):
+                  check: bool = True, paced: bool | None = None):
     """Re-runs a replay record (the monkey's replay.json) on a fresh fixture and
     returns the App's findings, its findings' signatures and whether it ran to the
     end. The minimiser (tools/soak/minimize.py) calls this per candidate."""
@@ -345,7 +345,8 @@ def replay_record(record: dict, binary: Path, out: Path, actions: list | None = 
                           weird=bool(record.get("weird", False)))
         q.replay(app, actions,
                  churn=lambda row: m.apply_churn(project, row["churn"], row["counter"]),
-                 external=monkey.replay_external, check=check)
+                 external=monkey.replay_external, check=check, oracle=monkey.replay_oracle,
+                 paced=bool(record.get("paced", False)) if paced is None else paced)
         if not check:
             app.check("end of replay")
         monkey._dedupe(0)
@@ -357,7 +358,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
     record = json.loads(Path(args.file).read_text())
     if not isinstance(record, dict):
         record = {"actions": record}
-    app, signatures = replay_record(record, args.binary, args.out)
+    app, signatures = replay_record(record, args.binary, args.out, paced=True if args.paced else None)
     for entry in signatures:
         print(f"        {entry['signature']}  {entry['label']}")
     return report(f"replay of {args.file}", app)
@@ -434,6 +435,8 @@ def main() -> int:
                         help="commands/editor profiles: do not rewrite files under the editor")
     replay = sub.add_parser("replay", parents=[common(False)])
     replay.add_argument("file")
+    replay.add_argument("--paced", action="store_true",
+                        help="keep the recorded gaps between actions (a race the default pace loses)")
     invariants = sub.add_parser("invariants", parents=[common(False)])
     invariants.add_argument("--only", help="restrict to commands containing this substring")
     invariants.add_argument("--soft-wrap", action="store_true",

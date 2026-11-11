@@ -312,9 +312,17 @@ class UndoAlgebra:
     def __init__(self, app: q.App, rng: random.Random):
         self.app = app
         self.rng = rng
+        # The text before and after the last check's undos and redos, for the
+        # finding's evidence: {file name: bytes}.
+        self.evidence: dict[str, bytes] = {}
 
-    def check(self) -> list[tuple[str, str]]:
+    def pick(self) -> int:
+        """How many undos the next check asks for (recorded, so a replay asks the same)."""
+        return self.rng.randint(1, 4)
+
+    def check(self, asked: int | None = None) -> list[tuple[str, str]]:
         app = self.app
+        self.evidence = {}
         ui = app.last_ui or {}
         if ui.get("focus") != "editor" or (ui.get("overlay") or {}).get("visible") or ui.get("modal") \
                 or (ui.get("menu") or {}).get("open"):
@@ -330,7 +338,7 @@ class UndoAlgebra:
         # had undone earlier -- a changed text from a correct editor (soak
         # 1aa1784d1685, after twenty Ctrl+Z). An undo that applied moves the
         # buffer's content revision.
-        asked = self.rng.randint(1, 4)
+        asked = self.pick() if asked is None else asked
         k = 0
         revision = before.get("revision")
         for _ in range(asked):
@@ -356,6 +364,8 @@ class UndoAlgebra:
         if after.get("path") != before.get("path") or after.get("kind") != "editor":
             return []  # the commands moved focus somewhere else: not this rule's case
         if after.get("text") != before.get("text"):
+            self.evidence = {"undo-before.txt": str(before.get("text", "")).encode(),
+                             "undo-after.txt": str(after.get("text") or "").encode()}
             return [("undo", f"{k} undo(s) then {k} redo(s) changed the text of "
                              f"{Path(before.get('path') or 'untitled').name} "
                              f"({len(before['text'])} -> {len(after.get('text') or '')} chars)")]

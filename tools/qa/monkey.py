@@ -1126,26 +1126,56 @@ class Monkey:
 
     def _report_data(self, label: str, found: list[tuple[str, str]]) -> None:
         """A data finding, with the oracle's byte evidence beside it."""
+        self._report_with_evidence(label, found, self.data.evidence)
+        self.data.evidence = {}
+
+    def _report_with_evidence(self, label: str, found: list[tuple[str, str]],
+                              evidence: dict[str, bytes]) -> None:
+        """A finding, with the files its oracle kept written beside it."""
         before = len(self.app.findings)
         self.app.report(label, found)
-        if len(self.app.findings) > before and self.data.evidence:
+        if len(self.app.findings) > before and evidence:
             shot = self.app.findings[-1].screenshot
             if shot:
                 folder = Path(shot).parent
-                for name, data in self.data.evidence.items():
+                for name, data in evidence.items():
                     with contextlib.suppress(OSError):
                         (folder / name).write_bytes(data)
-        self.data.evidence = {}
         if found:
             self._dedupe(before)
+
+    def replay_oracle(self, row: dict[str, Any]) -> None:
+        """What q.replay calls for an {"oracle": ...} row: the oracle the run ran
+        there, run again. A replay that only re-sent the undo oracle's undos and
+        redos never compared the text, so every undo finding measured 0%; a data
+        finding compared once, at the end, long after the race it caught."""
+        label = "replayed oracle"
+        name = row.get("oracle")
+        if name == "data-clean":
+            self._report_data(label, self.data.check_clean())
+        elif name == "undo":
+            self.app.in_oracle = True
+            try:
+                found = self.undo.check(int(row.get("asked", 1)))
+            finally:
+                self.app.in_oracle = False
+            self._report_with_evidence(label, found, self.undo.evidence)
 
     def _periodic_oracles(self, index: int) -> None:
         label = f"monkey step {index}"
         self._report(label, self.liveness.check())
         if index % 20 == 19:
+            self.app.record_external({"oracle": "data-clean"})
             self._report_data(label, self.data.check_clean())
         if index % 40 == 39:
-            self._report(label, self.undo.check())
+            asked = self.undo.pick()
+            self.app.record_external({"oracle": "undo", "asked": asked})
+            self.app.in_oracle = True
+            try:
+                found = self.undo.check(asked)
+            finally:
+                self.app.in_oracle = False
+            self._report_with_evidence(label, found, self.undo.evidence)
         if index % 50 == 0:
             self._report(label, self.resources.check())
         if index % 150 == 149:

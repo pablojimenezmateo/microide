@@ -40,6 +40,7 @@ class Entry:
     bundle: str = ""
     deterministic: bool | None = None
     rate: float | None = None
+    paced: bool = False  # reproduces only at the run's recorded pace
     minimal_actions: int | None = None
     full_actions: int | None = None
     fix_commit: str = ""
@@ -102,6 +103,7 @@ class Ledger:
             elif kind == "checked":
                 entry.deterministic = bool(event.get("deterministic"))
                 entry.rate = event.get("rate")
+                entry.paced = bool(event.get("paced", False))
                 entry.full_actions = event.get("actions", entry.full_actions)
             elif kind == "minimized":
                 entry.minimal_actions = event.get("actions")

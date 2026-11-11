@@ -340,6 +340,10 @@ class App:
     # Set while the monkey runs a burst: actions recorded then carry "b": 1, and a
     # replay sends them with no settle or check between (the timing they had).
     in_burst: bool = False
+    # Set while an oracle drives the app (the undo algebra's undos and redos):
+    # what it sends is recorded with "o", after an {"oracle": ...} row, so a
+    # replay re-runs the oracle there instead of replaying its commands blind.
+    in_oracle: bool = False
     # Set by the monkey while it generates actions: given a press point, True when
     # the press must not happen (it would land on a window control and end the
     # run). click() and drag() then send and record nothing.
@@ -2093,6 +2097,8 @@ class App:
         action["t"] = round(time.monotonic(), 3)
         if self.in_burst:
             action["b"] = 1
+        if self.in_oracle:
+            action["o"] = 1
         self.actions.append(action)
 
     def record_external(self, action: dict[str, Any]) -> None:
@@ -2161,20 +2167,51 @@ def _surface_and_overlap_findings(ui: dict[str, Any]) -> list[tuple[str, str]]:
     return out
 
 
+# The longest recorded gap a paced replay reproduces: longer ones were a relaunch,
+# a sanitizer build's stall or a check, not a timing the app depended on.
+MAX_PACED_GAP = 5.0
+
+
 def replay(app: App, actions: list[dict[str, Any]], pause: float = 0.12,
            churn: Callable[[dict[str, Any]], None] | None = None,
            external: Callable[[dict[str, Any]], None] | None = None,
-           check: bool = True) -> None:
+           check: bool = True,
+           oracle: Callable[[dict[str, Any]], None] | None = None,
+           paced: bool = False) -> None:
     """Re-runs a recorded action list (what the monkey saves on a finding).
 
     `churn` re-applies a row the monkey's ExternalChurn recorded: a file rewrite
     that landed between two commands, with no settle or check of its own.
     `external` re-applies the monkey's outside-world rows (git, renames,
     permissions) and its kill -9s. Rows recorded inside a burst ("b") are sent
-    back to back, as they were."""
+    back to back, as they were.
+
+    `oracle` re-runs an oracle where the run ran it (an {"oracle": name} row);
+    the commands that oracle sent then ("o" rows) are its to send again, so they
+    are skipped. Without it they replay as plain actions.
+
+    `paced`: each action waits until at least its recorded gap after the one
+    before (up to MAX_PACED_GAP) -- the run's own timing, under the load it ran
+    in, which a race needs and the default settle-and-go does not keep."""
+    previous_recorded: float | None = None
+    previous_sent = time.monotonic()
     for index, action in enumerate(actions):
         if "check" in action or "note" in action or "type-via-control" in action:
             continue
+        if "oracle" in action:
+            if oracle is not None:
+                oracle(action)
+            continue
+        if action.get("o") and oracle is not None:
+            continue
+        if paced and isinstance(action.get("t"), (int, float)):
+            if previous_recorded is not None:
+                gap = min(MAX_PACED_GAP, max(0.0, action["t"] - previous_recorded))
+                wait = gap - (time.monotonic() - previous_sent)
+                if wait > 0:
+                    time.sleep(wait)
+            previous_recorded = action["t"]
+            previous_sent = time.monotonic()
         if "churn" in action:
             if churn is not None:
                 churn(action)

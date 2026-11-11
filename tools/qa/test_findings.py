@@ -75,6 +75,22 @@ class StaleSignatureTests(unittest.TestCase):
                         .startswith("log: [sidebar|outside|area|-] QA-STALE"))
         self.assertEqual(fnd.describe("undo", "3 undo(s)"), "undo: <n> undo(s)")
 
+    def test_a_layout_finding_keys_on_its_elements_stable_part(self):
+        a = "overlap: panel-tab:Git [10, 20, 30, 40] overlaps button:close-tab/3/tabs.txt [1, 2, 3, 4]"
+        b = "overlap: panel-tab:Git [11, 21, 30, 40] overlaps button:close-tab/1/*trailing-ws.txt [5, 6, 7, 8]"
+        self.assertEqual(fnd.signature("overlap", a), fnd.signature("overlap", b))
+        self.assertIn("button:close-tab", fnd.describe("overlap", a))
+        # Another pair of controls is another defect.
+        c = "overlap: panel-tab:Git [10, 20, 30, 40] overlaps button:search/replace-all [1, 2, 3, 4]"
+        self.assertNotEqual(fnd.signature("overlap", a), fnd.signature("overlap", c))
+
+    def test_a_window_size_is_not_hex(self):
+        one = "bounds: button:merge/prev [1, 2, 3, 4] leaves the 640x480 window"
+        two = "bounds: button:merge/prev [1, 2, 3, 4] leaves the 1024x700 window"
+        self.assertEqual(fnd.signature("bounds", one), fnd.signature("bounds", two))
+        self.assertIn("<n>x<n> window", fnd.describe("bounds", one))
+        self.assertIn("<hex>", fnd.normalize("crash at 0x7ffd1234"))
+
     def test_other_findings_have_no_context(self):
         self.assertEqual(fnd.stale_context("undo: 3 undo(s) changed the text", SURFACES), "")
 

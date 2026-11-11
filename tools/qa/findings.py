@@ -19,7 +19,9 @@ _MASKS = (
     (re.compile(r"/tmp/[^\s'\"]+|/home/[^\s'\"]+|build/[^\s'\"]+"), "<path>"),
     (re.compile(r"'[^']{0,200}'|\"[^\"]{0,200}\""), "<q>"),
     (re.compile(r"\[[-\d., ]+\]"), "<rect>"),
-    (re.compile(r"0x[0-9a-fA-F]+"), "<hex>"),
+    # A word of its own: "640x480" is a size, whose "0x480" read as hex split
+    # one bounds defect into "<n>x<n> window" and "<n><hex> window".
+    (re.compile(r"\b0x[0-9a-fA-F]+"), "<hex>"),
     # Digests and ids (a buffer's and a file's SHA-256 prefix differ every run).
     (re.compile(r"\b(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{8,}\b"), "<hash>"),
     (re.compile(r"\d+(\.\d+)?"), "<n>"),
@@ -31,8 +33,18 @@ _FRAME = re.compile(r"#\d+ 0x[0-9a-f]+ in (\S+?)(\(|\s).*?(src/[\w/.+-]+):\d+")
 _STEP_PREFIX = re.compile(r"^(after )?(monkey )?step \d+:?\s*|^after [^:]{0,120}: ")
 
 
-def normalize(message: str) -> str:
+# A `ui` element named in a layout finding ("button:close-tab/3/notes.md").
+_ELEMENT_NAME = re.compile(r"\b([a-z][a-z-]*):([^\s\[\]]+)")
+_LAYOUT_KINDS = frozenset({"overlap", "bounds"})
+
+
+def normalize(message: str, kind: str = "") -> str:
     text = _STEP_PREFIX.sub("", message.strip())
+    if kind in _LAYOUT_KINDS:
+        # The elements by their stable part (element_key): a tab's close button
+        # overlapping the panel tabs is one defect whichever file the tab holds,
+        # and keyed by the file it was a one-off per file.
+        text = _ELEMENT_NAME.sub(lambda m: element_key(m.group(0)), text)
     for pattern, replacement in _MASKS:
         text = pattern.sub(replacement, text)
     return text.strip()[:240]
@@ -183,7 +195,7 @@ def signature(kind: str, detail: str, log_text: str = "", context: str = "") -> 
     """A stable id for a finding: kind, normalized message (plus `context`, such
     as the surface a stale box sits on), and for a crash or a sanitizer report
     the top frames of ours."""
-    key = f"{kind}|{normalize(detail)}|{context}"
+    key = f"{kind}|{normalize(detail, kind)}|{context}"
     if kind in ("crash", "log") and log_text:
         stack = stack_key(log_text)
         if stack:
@@ -196,8 +208,8 @@ def describe(kind: str, detail: str, context: str = "") -> str:
     finding's context leads it: every such message reads the same once its
     numbers are masked, so the context is what tells two apart in a listing."""
     if context:
-        return f"{kind}: [{context}] {normalize(detail)}"[:200]
-    return f"{kind}: {normalize(detail)}"[:200]
+        return f"{kind}: [{context}] {normalize(detail, kind)}"[:200]
+    return f"{kind}: {normalize(detail, kind)}"[:200]
 
 
 # Kinds whose findings say nothing about the app if the machine was overloaded:

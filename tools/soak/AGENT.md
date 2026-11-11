@@ -23,7 +23,13 @@ only, a failing-first test for every fix, one commit per fix, and a TD entry in
    keeps real-size runs out of (`--min-logical`). Work top down; a `paint/tiny`
    finding is worth fixing only as part of a class a bigger window also shows.
    Prefer a deterministic finding with a minimal replay; a flaky one needs its
-   rate read before it is chased.
+   rate read before it is chased. A rate measured "at the recorded pace" means
+   the finding is a race: its replay record carries `"paced": true`, and
+   `run.py replay` keeps the run's gaps between actions (`--paced` forces it on
+   any record). A replay re-runs the data and undo oracles where the run ran
+   them (`{"oracle": ...}` rows; records from before 2026-11-11 lack them, so an
+   old undo finding never replays), and an undo finding keeps the text before
+   and after as `undo-before.txt` / `undo-after.txt` in its evidence.
 2. **Claim.** `tools/soak/soak.py ledger claim <sig> <your-name>`, so two agents
    never chase one defect.
 3. **Reproduce.** Build the tree at HEAD (`cmake --build build --target microide`)

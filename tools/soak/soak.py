@@ -492,7 +492,10 @@ def write_finding_md(bundle: Path) -> None:
         f"- **Status:** {entry.status if entry else 'new'}; seen {entry.count if entry else 1} time(s) in "
         f"{len(entry.cells) if entry else 1} cell(s)",
         f"- **Reproduction:** " + (f"{'deterministic' if entry.deterministic else 'flaky'}, rate "
-                                   f"{entry.rate:.0%}" if entry and entry.rate is not None else "not measured yet"),
+                                   f"{entry.rate:.0%}" + (" at the recorded pace (the replays keep the run's "
+                                                          "timing; `run.py replay` reads it from the record)"
+                                                          if entry.paced else "")
+                                   if entry and entry.rate is not None else "not measured yet"),
         f"- **Commit:** `{meta['sha'][:12]}`; build `{meta['build']}`; cell `{meta['cell']}`",
         f"- **Step:** {finding.get('step')} of the run, {finding.get('actions')} recorded actions; state "
         f"`{finding.get('state')}`",
@@ -580,14 +583,19 @@ def check_finding(sig: str, state: dict[str, Any], log) -> None:
                 "--signature", sig, "--binary", binary, "--out", str(bundle)]
     result = subprocess.run(["nice", "-n", "19", *minimize, "--check-only", "--runs", "3", "--jobs", "3"],
                             capture_output=True, text=True, env=env, timeout=3600)
-    rate = 0.0
+    rate, paced = 0.0, False
     for line in result.stdout.splitlines():
         if line.startswith("{"):
             rate = json.loads(line).get("rate", 0.0)
+            paced = bool(json.loads(line).get("paced", False))
     actions = len(json.loads(replay.read_text()).get("actions", []))
     deterministic = rate >= 2 / 3
-    ledger().append(sig, "checked", rate=rate, deterministic=deterministic, actions=actions)
-    log(f"  checked {sig}: rate {rate:.0%}")
+    ledger().append(sig, "checked", rate=rate, deterministic=deterministic, actions=actions, paced=paced)
+    log(f"  checked {sig}: rate {rate:.0%}" + (" at the recorded pace" if paced else ""))
+    if paced:
+        # Every later replay of it -- the minimizer's, the agent's, the fix's
+        # verification -- keeps the recorded pace.
+        replay.write_text(json.dumps({**json.loads(replay.read_text()), "paced": True}))
     if deterministic:
         if shutil.which("notify-send"):
             subprocess.run(["notify-send", "microide soak: new deterministic finding",

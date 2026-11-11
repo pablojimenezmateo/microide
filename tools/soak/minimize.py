@@ -151,6 +151,19 @@ def reproduction_rate(record: dict, signature: str, binary: Path, scratch: Path,
     return sum(hits) / max(1, runs)
 
 
+def rate_and_pace(record: dict, signature: str, binary: Path, scratch: Path, runs: int,
+                  jobs: int) -> tuple[float, bool]:
+    """The reproduction rate at the replay's default pace, and, when that never
+    shows the finding, at the run's recorded pace (q.replay `paced`): a race
+    needs the run's timing, which settle-and-go replays lose -- most one-off
+    findings measured 0% that way. Returns (rate, paced)."""
+    rate = reproduction_rate({**record, "paced": False}, signature, binary, scratch, runs, jobs)
+    if rate > 0:
+        return rate, False
+    paced = reproduction_rate({**record, "paced": True}, signature, binary, scratch, runs, jobs)
+    return paced, paced > 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("replay", type=Path)
@@ -163,6 +176,9 @@ def main() -> int:
     parser.add_argument("--time-budget", type=float, default=3600)
     parser.add_argument("--check-only", action="store_true", help="print the reproduction rate and exit")
     parser.add_argument("--runs", type=int, default=3)
+    parser.add_argument("--paced", action="store_true",
+                        help="replay every candidate at the run's recorded pace (what --check-only "
+                             "reports a race needs)")
     args = parser.parse_args()
     record = json.loads(args.replay.read_text())
     out = args.out or args.replay.parent
@@ -189,9 +205,11 @@ def main() -> int:
             args.signature = max(signatures, key=lambda entry: entry.get("actions", 0))["signature"]
             print(f"  signature: {args.signature}", flush=True)
         if args.check_only:
-            rate = reproduction_rate(record, args.signature, args.binary, scratch, args.runs, args.jobs)
-            print(json.dumps({"rate": rate, "runs": args.runs}))
+            rate, paced = rate_and_pace(record, args.signature, args.binary, scratch, args.runs, args.jobs)
+            print(json.dumps({"rate": rate, "runs": args.runs, "paced": paced}))
             return 0
+        if args.paced:
+            record = {**record, "paced": True}
         tester = Tester(record, args.signature, args.binary, scratch, args.jobs)
         if not tester.test_many([list(range(len(actions)))], lambda idx: [actions[i] for i in idx])[0]:
             print(json.dumps({"reproduced": False, "actions": len(actions)}))
