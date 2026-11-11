@@ -12,9 +12,11 @@
 // offsets the status line and result list start at.
 //
 // These are pure functions of the sidebar rect plus one "are the scope boxes
-// expanded?" flag. They live outside WorkspaceShell so the shell stays an
-// orchestrator and so render, hit-testing, cursor shaping, and the sidebar mouse
-// coordinator can all agree on the same numbers without routing five
+// expanded?" flag. A row that does not end inside the sidebar (a short window
+// beside a bottom panel) is left out: its rects are empty, as a collapsed scope
+// field's are, and every consumer already reads an empty rect as absent. They
+// live outside WorkspaceShell so the shell stays an orchestrator and so render,
+// hit-testing, cursor shaping, and the sidebar mouse coordinator can all agree on the same numbers without routing five
 // `std::function<SDL_FRect(const SDL_FRect&)>` callbacks through the shell.
 namespace microide::workspace::project_search_panel {
 

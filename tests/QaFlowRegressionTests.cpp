@@ -34,6 +34,7 @@
 #include "editor/TextViewport.h"
 #include "util/JsonValue.h"
 #include "workspace/HoverTextWrap.h"
+#include "workspace/ProjectSearchPanelLayout.h"
 #include "workspace/git/BranchReviewStateBridge.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
@@ -4937,6 +4938,50 @@ void TestMovingOntoAPanelTabsCloseButtonRepaintsIt() {
   }
 }
 
+
+// Soak 250931ec505a (640x480 at ui.scale 3): beside a bottom panel the search
+// view is 83 units tall, and its replace row started a unit above the panel and
+// reached into it. The paint lit Replace All with the pointer anywhere in its
+// rect; the hover probe stops at the sidebar's edge, so with the pointer just
+// below it the button lit on full frames only, and the pointer leaving it
+// repainted nothing. A row that does not fit the sidebar is left out.
+void TestASearchRowThatDoesNotFitTheSidebarIsLeftOut() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("a.txt", "a\n", 213, 160);
+  TestAccess::ShowSearchSidebar(fixture.shell, "[]", false);
+  WaitForProjectSearch(fixture.shell);
+  TestAccess::SetFocusEditor(fixture.shell);
+  // The soak's window: no status bar, so the toasts reach down to where the
+  // sidebar's replace row was.
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "status-bar-toggle"), "status-bar-toggle should run");
+  TestAccess::ShowNotification(fixture.shell, workspace::NotificationService::Tone::Error,
+                               "fatal: No configured push destination");
+  TestAccess::ShowNotification(fixture.shell, workspace::NotificationService::Tone::Info, "git remote is configured");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the search view in a short sidebar, with toasts");
+  const SDL_FRect sidebar = TestAccess::CurrentLayout(fixture.shell).sidebar;
+  const float bottom = sidebar.y + sidebar.h;
+  Expect(sidebar.y + workspace::project_search_panel::kReplaceTop +
+                 workspace::project_search_panel::kFieldHeight >
+             bottom,
+         "the sidebar should be too short for the replace row");
+  const auto all = fixture.ElementRect("button:search/replace-all");
+  Expect(!all.has_value() || all->w <= 0.0f || all->h <= 0.0f, "Replace All should not be laid out");
+  const auto replace = fixture.ElementRect("field:search/replace");
+  Expect(!replace.has_value() || replace->w <= 0.0f || replace->h <= 0.0f,
+         "the replace field should not be laid out");
+  const auto query = fixture.ElementRect("field:search/query");
+  Expect(query.has_value() && query->h > 0.0f && query->y + query->h <= bottom,
+         "the query field, which fits, should be");
+  // Where Replace All's right end was, just below the sidebar's edge.
+  const float x = sidebar.x + sidebar.w - workspace::project_search_panel::kInset - 3.0f;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x, bottom)}),
+                      "the pointer just below the sidebar, where Replace All was");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(150.0f, 60.0f)}), "the pointer away");
+}
 }  // namespace
 
 // remote-menu: the remote segment names the host and, clicked, opens the Remote
@@ -5124,6 +5169,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/ACodeActionsTitleStaysInsideItsMenu",
           TestACodeActionsTitleStaysInsideItsMenu);
   AddTest(tests, "QaFlowRegression/TabDragDropPreviewPaints", TestTabDragDropPreviewPaints);
+  AddTest(tests, "QaFlowRegression/ASearchRowThatDoesNotFitTheSidebarIsLeftOut",
+          TestASearchRowThatDoesNotFitTheSidebarIsLeftOut);
   AddTest(tests, "QaFlowRegression/ClosingAPromptOverTheFinderGivesTheFinderTheKeyboard",
           TestClosingAPromptOverTheFinderGivesTheFinderTheKeyboard);
   AddTest(tests, "QaFlowRegression/ToastsShowWithTheStatusBarHidden", TestToastsShowWithTheStatusBarHidden);
