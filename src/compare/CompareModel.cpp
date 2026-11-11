@@ -58,13 +58,14 @@ std::size_t LineMatchWeight(std::string_view text,
   return std::max<std::size_t>(1, (informative_bytes + 8) / rarity);
 }
 
-// Per-thread scratch for assembling one hunk: its two line runs and the
-// refinement the rows are laid out from. Grown once and reused for every hunk
+// Per-thread scratch for assembling one hunk: its two line runs and, for an
+// unrefined build, its rows. Grown once and reused for every hunk
 // of every build on the thread.
 struct HunkScratch {
   std::vector<std::string_view> deleted_lines;
   std::vector<std::string_view> inserted_lines;
-  HunkRefinement refinement;
+  // Rows of an unrefined (line-only) hunk.
+  std::vector<HunkRow> rows;
 };
 
 HunkScratch& HunkScratchForThread() {
@@ -885,7 +886,7 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
   const std::shared_ptr<const DiffSyntax>& syntax =
       options.syntax != nullptr ? options.syntax : GenericDiffSyntax();
   HunkRefinementStats refinement_stats;
-  scratch.hunk_refinements.BeginBuild();
+  scratch.hunk_refinements.BeginBuild(syntax);
   model.rows.reserve(left_lines.size() + right_lines.size());
   RowSink sink(model);
   int left_line = 1;
@@ -929,36 +930,32 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
 
     const int hunk_index = static_cast<int>(model.hunks.size());
     const Clock::time_point refine_start = Clock::now();
-    const HunkRefinement* refinement_source = &hunk_scratch.refinement;
+    HunkRefinementView refinement;
     if (options.refine_hunks) {
-      refinement_source = &scratch.hunk_refinements.Refine(deleted_lines, inserted_lines, syntax,
-                                                           &refinement_stats);
+      refinement =
+          scratch.hunk_refinements.Refine(deleted_lines, inserted_lines, &refinement_stats);
     } else {
-      hunk_scratch.refinement.left_spans.clear();
-      hunk_scratch.refinement.right_spans.clear();
-      ZipHunk(deleted_lines.size(), inserted_lines.size(), hunk_scratch.refinement.rows);
+      ZipHunk(deleted_lines.size(), inserted_lines.size(), hunk_scratch.rows);
+      refinement = HunkRefinementView(hunk_scratch.rows, {}, {}, 0);
     }
-    const HunkRefinement& refinement = *refinement_source;
     profile.hunk_refinement_ns += DurationNs(refine_start, Clock::now());
 
     const int left_base = left_line;
     const int right_base = right_line;
-    for (const HunkRow& hunk_row : refinement.rows) {
+    for (const HunkRow& hunk_row : refinement.rows()) {
       CompareRow& compare_row = sink.Next();
       compare_row.hunk = hunk_index;
       if (hunk_row.left != kNoHunkLine) {
         compare_row.left_text = deleted_lines[hunk_row.left];
         compare_row.left_line = left_base + static_cast<int>(hunk_row.left);
-        if (hunk_row.left < refinement.left_spans.size()) {
-          compare_row.left_changed_spans = refinement.left_spans[hunk_row.left];
-        }
+        const std::span<const CompareTextSpan> spans = refinement.LeftSpans(hunk_row.left);
+        compare_row.left_changed_spans.assign(spans.begin(), spans.end());
       }
       if (hunk_row.right != kNoHunkLine) {
         compare_row.right_text = inserted_lines[hunk_row.right];
         compare_row.right_line = right_base + static_cast<int>(hunk_row.right);
-        if (hunk_row.right < refinement.right_spans.size()) {
-          compare_row.right_changed_spans = refinement.right_spans[hunk_row.right];
-        }
+        const std::span<const CompareTextSpan> spans = refinement.RightSpans(hunk_row.right);
+        compare_row.right_changed_spans.assign(spans.begin(), spans.end());
       }
       if (compare_row.left_line != 0 && compare_row.right_line != 0) {
         compare_row.kind = CompareRowKind::Modified;
