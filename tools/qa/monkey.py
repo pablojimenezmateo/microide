@@ -701,7 +701,7 @@ class Monkey:
         key, element = self._pick([(mm.action_key({"how": "el"}, e), e) for e in elements])
         x, y = self.app.center(element)
         how = self.rng.random()
-        self.coverage.elements[element.get("name", "")] += 1
+        self.coverage.note("elements", element.get("name", ""))
         if how < 0.2:
             self.app.move(x, y)
             return f"hover:{key}"
@@ -920,7 +920,7 @@ class Monkey:
         pool = interesting if interesting and self.rng.random() < 0.6 else rows
         key, row = self._pick([(f"set:{row['id']}", row) for row in pool])
         value = self._setting_value(row)
-        self.coverage.settings[f"{row['id']}={value}"] += 1
+        self.coverage.note("settings", f"{row['id']}={value}")
         self.app.send_line(f"set-setting {row['id']} {q.quote_arg(value) if value else chr(34) * 2}")
         return key
 
@@ -1247,7 +1247,8 @@ class Monkey:
             commands = dict(self.app.action_counts().get("commands", {}))
         except Exception:  # noqa: BLE001 - a dead app has no counts to give
             pass
-        self.coverage.commands.update(commands)
+        for name, count in commands.items():
+            self.coverage.note("commands", name, count)
         return {"seed": self.seed, "profile": self.profile, "steps": self.step_index + 1,
                 "states": len(self.coverage.states), "new_states": self.new_states,
                 "new_transitions": self.new_transitions, "relaunches": self.relaunches,

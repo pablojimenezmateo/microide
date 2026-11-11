@@ -111,5 +111,54 @@ class SightingTests(unittest.TestCase):
         self.assertEqual(self.kept(), [])
 
 
+class CoverageFileTests(unittest.TestCase):
+    """The coverage file every soak job reads at its start and rewrites at its
+    end: it must stay small and must count each run's steps exactly once."""
+
+    def setUp(self):
+        self.path = Path(tempfile.mkdtemp(dir=os.environ.get("TMPDIR"))) / "coverage.json"
+
+    def run_steps(self, steps):
+        coverage = mm.Coverage.load(self.path)
+        news = [coverage.record(*step) for step in steps]
+        coverage.note("commands", "save")
+        coverage.merge_into(self.path)
+        return news
+
+    def test_runs_add_up_once_each(self):
+        self.run_steps([("s0", "key:a", "s1")])
+        news = self.run_steps([("s0", "key:a", "s1"), ("s1", "key:b", "s2")])
+        self.assertEqual(news, [(False, False), (True, True)])
+        coverage = mm.Coverage.load(self.path)
+        self.assertEqual(coverage.pair_count("s0", "key:a"), 2)
+        self.assertEqual(coverage.states["s1"], 2)
+        self.assertEqual(coverage.commands["save"], 2)
+
+    def test_transitions_and_pairs_are_stored_as_digests(self):
+        long_state = "f=editor o=- s=tree p=terminal m=open d=- g=1 r=0 h= t=editor b=editor::caret"
+        self.run_steps([(long_state, "key:a", long_state + "x")])
+        data = json.loads(self.path.read_text())
+        self.assertEqual(data["format"], mm.Coverage.FORMAT)
+        for name in ("transitions", "pairs"):
+            self.assertTrue(all(len(key) == 16 for key in data[name]), name)
+
+    def test_a_file_from_before_the_digests_keeps_its_counts(self):
+        self.path.write_text(json.dumps({"states": {"s1": 3}, "transitions": {"s0\tkey:a\ts1": 3},
+                                         "pairs": {"s0\tkey:a": 3}, "commands": {"save": 1}}))
+        coverage = mm.Coverage.load(self.path)
+        self.assertEqual(coverage.pair_count("s0", "key:a"), 3)
+        self.assertEqual(coverage.record("s0", "key:a", "s1"), (False, False))
+        coverage.merge_into(self.path)
+        self.assertEqual(mm.Coverage.load(self.path).pair_count("s0", "key:a"), 4)
+
+    def test_an_older_driver_merging_into_a_converted_file_adds_up(self):
+        self.run_steps([("s0", "key:a", "s1")])
+        data = json.loads(self.path.read_text())
+        data.pop("format")
+        data["pairs"]["s0\tkey:a"] = 5  # what the older driver writes back
+        self.path.write_text(json.dumps(data))
+        self.assertEqual(mm.Coverage.load(self.path).pair_count("s0", "key:a"), 6)
+
+
 if __name__ == "__main__":
     unittest.main()

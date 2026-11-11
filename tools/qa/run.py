@@ -292,7 +292,6 @@ def cmd_monkey(args: argparse.Namespace) -> int:
     for seed in seeds:
         project = fixture(kind, args.out / "fixtures")
         coverage = mm.Coverage.load(args.coverage)
-        loaded = mm.Coverage.load(args.coverage)
         with q.App.launch(project=project, binary=args.binary, size=size, extra_args=extra,
                           shots=args.out / f"seed-{seed}") as app:
             app.replay_header = {"fixture": kind, "profile": args.profile, "seed": seed,
@@ -322,7 +321,7 @@ def cmd_monkey(args: argparse.Namespace) -> int:
             print(f"        {summary['steps']} steps, {summary['new_states']} new states, "
                   f"{summary['new_transitions']} new transitions, {len(summary['findings'])} distinct finding(s)")
         if args.coverage is not None:
-            coverage.merge_into(args.coverage, loaded)
+            coverage.merge_into(args.coverage)
     print(f"monkey: {len(seeds) - failures}/{len(seeds)} seeds clean")
     return 1 if failures else 0
 

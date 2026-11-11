@@ -104,7 +104,19 @@ def action_key(action: dict[str, Any], element: dict[str, Any] | None = None) ->
 
 class Coverage:
     """States, transitions, state x action pairs and commands, with a persistent
-    form the soak runner merges across runs."""
+    form the soak runner merges across runs.
+
+    Transitions and pairs are only ever counted and looked up, never listed, so
+    they are kept under a 64-bit digest of their text (FORMAT 2). As text they
+    were 92% of a file every soak job parsed at start and rewrote at its end:
+    427 MB after three days and growing, 7 s and 2 GB of RAM to load twice, at
+    nine jobs at once. At 1.5 million keys a 64-bit collision has odds of about
+    one in ten million, and its whole cost is one novelty misjudged.
+    """
+
+    FORMAT = 2
+    NAMES = ("states", "transitions", "pairs", "commands", "elements", "settings")
+    DIGESTED = ("transitions", "pairs")
 
     def __init__(self) -> None:
         self.states: Counter[str] = Counter()
@@ -114,33 +126,52 @@ class Coverage:
         self.elements: Counter[str] = Counter()
         self.settings: Counter[str] = Counter()
         self.baseline_states: set[str] = set()  # what the loaded file had seen
+        # What THIS run added, which is all merge_into writes back: no second
+        # copy of the loaded file to subtract.
+        self.added: dict[str, Counter[str]] = {name: Counter() for name in self.NAMES}
+
+    @staticmethod
+    def digest(text: str) -> str:
+        return hashlib.blake2b(text.encode(), digest_size=8).hexdigest()
 
     # ---- recording ---------------------------------------------------------
 
+    def note(self, name: str, key: str, count: int = 1) -> None:
+        getattr(self, name)[key] += count
+        self.added[name][key] += count
+
     def pair_count(self, state: str, key: str) -> int:
-        return self.pairs.get(f"{state}\t{key}", 0)
+        return self.pairs.get(self.digest(f"{state}\t{key}"), 0)
 
     def record(self, before: str, key: str, after: str) -> tuple[bool, bool]:
         """Records one step; returns (new state, new transition) -- new to this
         run and everything loaded before it."""
         new_state = after not in self.states and after not in self.baseline_states
-        transition = f"{before}\t{key}\t{after}"
+        transition = self.digest(f"{before}\t{key}\t{after}")
         new_transition = transition not in self.transitions
-        self.states[after] += 1
-        self.transitions[transition] += 1
-        self.pairs[f"{before}\t{key}"] += 1
+        self.note("states", after)
+        self.note("transitions", transition)
+        self.note("pairs", self.digest(f"{before}\t{key}"))
         return new_state, new_transition
 
     # ---- persistence -------------------------------------------------------
 
     def to_json(self) -> dict[str, Any]:
-        return {"states": dict(self.states), "transitions": dict(self.transitions),
-                "pairs": dict(self.pairs), "commands": dict(self.commands),
-                "elements": dict(self.elements), "settings": dict(self.settings)}
+        return {"format": self.FORMAT, **{name: dict(getattr(self, name)) for name in self.NAMES}}
 
     def absorb(self, data: dict[str, Any]) -> None:
-        for name in ("states", "transitions", "pairs", "commands", "elements", "settings"):
-            getattr(self, name).update(data.get(name) or {})
+        for name in self.NAMES:
+            counts = data.get(name) or {}
+            if name in self.DIGESTED:
+                # Text from before the digests (a transition or pair always has a
+                # tab; a digest never does): same counts, keyed as now. Per key,
+                # not per file, so a run of the older driver still finishing
+                # when the file was converted adds up instead of corrupting it.
+                digested: Counter[str] = Counter()
+                for key, count in counts.items():
+                    digested[self.digest(key) if "\t" in key else key] += count
+                counts = digested
+            getattr(self, name).update(counts)
 
     @classmethod
     def load(cls, path: Path | None) -> "Coverage":
@@ -151,9 +182,9 @@ class Coverage:
         coverage.baseline_states = set(coverage.states)
         return coverage
 
-    def merge_into(self, path: Path, loaded: "Coverage | None" = None) -> None:
-        """Adds what THIS run saw (everything recorded minus what was loaded)
-        to the file, under an exclusive lock; atomic replace."""
+    def merge_into(self, path: Path) -> None:
+        """Adds what THIS run saw to the file, under an exclusive lock; atomic
+        replace."""
         path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = path.with_suffix(path.suffix + ".lock")
         with open(lock_path, "a+") as lock:
@@ -162,16 +193,10 @@ class Coverage:
             if path.exists():
                 with contextlib.suppress(OSError, ValueError):
                     current.absorb(json.loads(path.read_text()))
-            delta = self.to_json()
-            if loaded is not None:
-                base = loaded.to_json()
-                delta = {name: {k: v - base[name].get(k, 0) for k, v in counts.items()
-                                if v - base[name].get(k, 0) > 0}
-                         for name, counts in delta.items()}
-            current.absorb(delta)
+            current.absorb({"format": self.FORMAT, **self.added})
             fd, temp = tempfile.mkstemp(dir=path.parent, prefix=".coverage-")
             with os.fdopen(fd, "w") as out:
-                json.dump(current.to_json(), out)
+                json.dump(current.to_json(), out, separators=(",", ":"))
             os.replace(temp, path)
 
 
