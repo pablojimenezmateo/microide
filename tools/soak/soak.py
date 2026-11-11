@@ -106,7 +106,7 @@ def build_all(state: dict[str, Any], log) -> None:
     head = git("rev-parse", "main")
     if git("log", "-1", "--format=%ae", head) == QA_GIT_EMAIL:
         raise RuntimeError(f"main is at {head[:10]}, a QA monkey commit: not building it")
-    if state.get("built_sha") == head and all(BUILDS[name].binary().exists() for name in state.get("good", {})):
+    if is_built(state, head):
         return
     log(f"building {head[:10]}")
     subprocess.run(["git", "checkout", "-q", "--detach", head], cwd=WORKTREE, capture_output=True)
@@ -136,6 +136,25 @@ def build_all(state: dict[str, Any], log) -> None:
                             cell=build.name, detail=tail)
     state["built_sha"] = head
     prune_binaries(good)
+
+
+def is_built(state: dict[str, Any], head: str) -> bool:
+    """Whether every configuration's binary for `head` is already in hand."""
+    return state.get("built_sha") == head and all(BUILDS[name].binary().exists() for name in state.get("good", {}))
+
+
+def refresh_due(state: dict[str, Any]) -> bool:
+    """Whether the runner has to drain its jobs for a build and a verification.
+
+    Draining is what the build interval used to buy unconditionally, every
+    fifteen minutes: no new job started until the running ones ended, and the
+    longest of them is a check minimizing a finding for up to three hours. The
+    build it waited for was nearly always a no-op (main had not moved), so the
+    soak spent most of its time on one job -- three on average of a budget of
+    nine. A drain is now taken only when there is work behind it: main moved,
+    a binary went missing, or a fixed finding waits for its replay.
+    """
+    return not is_built(state, git("rev-parse", "main")) or any(True for _ in fixes_to_verify(state))
 
 
 def prune_binaries(good: dict[str, Any]) -> None:
@@ -609,20 +628,25 @@ def check_finding(sig: str, state: dict[str, Any], log) -> None:
     write_finding_md(bundle)
 
 
-def verify_fixed(state: dict[str, Any], log) -> None:
-    """A fixed signature whose fix commit is in the current default build is
-    replayed (minimal replay, else the full one): gone -> verified, back ->
-    reopened."""
+def fixes_to_verify(state: dict[str, Any]):
+    """The fixed ledger entries whose fix commit the default build contains, each
+    with that build's record."""
     good = state.get("good", {}).get("default")
     if not good:
         return
     for entry in ledger().entries().values():
         if entry.status != "fixed" or not entry.fix_commit:
             continue
-        ancestor = subprocess.run(["git", "merge-base", "--is-ancestor", entry.fix_commit, good["sha"]],
-                                  cwd=REPO, capture_output=True).returncode == 0
-        if not ancestor:
-            continue
+        if subprocess.run(["git", "merge-base", "--is-ancestor", entry.fix_commit, good["sha"]],
+                          cwd=REPO, capture_output=True).returncode == 0:
+            yield entry, good
+
+
+def verify_fixed(state: dict[str, Any], log) -> None:
+    """A fixed signature whose fix commit is in the current default build is
+    replayed (minimal replay, else the full one): gone -> verified, back ->
+    reopened."""
+    for entry, good in list(fixes_to_verify(state)):
         bundle = FINDINGS / entry.sig
         replay = bundle / "minimal.json" if (bundle / "minimal.json").exists() else bundle / "replay.json"
         if not replay.exists():
@@ -870,6 +894,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     last_cap = -1
     last_start = 0.0
     last_containment = 0.0
+    # Set once per build interval when refresh_due finds work, cleared by the
+    # build that does it: until then no job or check starts, so the running
+    # ones drain.
+    draining = False
     while not stopping:
         now = time.time()
         if deadline and now > deadline:
@@ -889,13 +917,19 @@ def cmd_run(args: argparse.Namespace) -> int:
         # END of the last one (stamped at its start, a 20-minute build on a moving
         # main left the interval spent and the runner rebuilt forever, starting no
         # job). Jobs keep running on the last good binaries meanwhile.
-        if now - last_build > args.build_interval and not jobs:
+        if now - last_build > args.build_interval and not draining:
+            if not state.get("good") or refresh_due(state):
+                draining = True
+            else:
+                last_build = now
+        if draining and not jobs:
             try:
                 build_all(state, log)
             except Exception as error:  # noqa: BLE001 - a broken build never stops the runner
                 log(f"build step failed: {error}")
             verify_fixed(state, log)
             last_build = time.time()
+            draining = False
             continue
         for job in list(jobs):
             if job.proc.poll() is not None or now - job.started > job.type.timeout:
@@ -912,7 +946,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         if cap != last_cap:
             log(f"job budget {cap} (load {os.getloadavg()[0]:.1f}, {len(jobs)} running)")
             last_cap = cap
-        if pending and len(jobs) < cap and busy_reason(len(jobs)) is None:
+        if pending and not draining and len(jobs) < cap and busy_reason(len(jobs)) is None:
             # Checks first: a new finding's rate and minimal replay are worth more
             # than another fresh run. A check holds three displays, so it counts
             # as a job of its own.
@@ -925,7 +959,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             log(f"check {sig}")
             save_state(state)
         reason = busy_reason(len(jobs))
-        if reason is None and state.get("good") and time.time() - last_build > args.build_interval:
+        if reason is None and draining:
             # A build is due: let the running jobs drain instead of starting more.
             reason = "draining for a build"
         if reason is None:

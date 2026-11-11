@@ -675,6 +675,9 @@ check_perf_gate() {
 # demand only (tools/qa/run.py remote).
 check_qa_driver() {
   run_logged "${LOG_DIR}/microide-qa-driver.log" python3 -m unittest discover -s tools/qa -p "test_*.py"
+  # The soak runner's own decisions (what it runs, what it drains for, what it
+  # keeps on disk): nothing else exercises them before the service does.
+  run_logged "${LOG_DIR}/microide-soak-driver.log" python3 -m unittest discover -s tools/soak -p "test_*.py"
 }
 
 check_qa() {
@@ -695,7 +698,10 @@ check_qa() {
     rm -rf '"$out"'
     locked_build build bash -c "cmake -S . -B build >/dev/null && cmake --build build --target microide -j'"$JOBS"'"
     status=0
-    python3 -m unittest discover -s tools/qa -p "test_*.py"
+    # The driver unit tests gate the lane: unchecked under this `bash -c`
+    # without -e, a failing one used to print FAILED and leave the lane green.
+    python3 -m unittest discover -s tools/qa -p "test_*.py" || status=1
+    python3 -m unittest discover -s tools/soak -p "test_*.py" || status=1
     python3 tools/qa/run.py --out '"$out"'/suite suite --jobs '"$qa_jobs"' || status=1
     python3 tools/qa/run.py --out '"$out"'/monkey monkey --seed 1 --steps '"$steps"' || status=1
     exit $status
@@ -724,7 +730,7 @@ check_qa_asan() {
     locked_build build/microide-asan bash -c "cmake --preset microide-asan >/dev/null && cmake --build build/microide-asan --target microide -j'"$JOBS"'"
     export MQA_SLOW_FACTOR="${MQA_SLOW_FACTOR:-3}"
     status=0
-    python3 -m unittest discover -s tools/qa -p "test_*.py"
+    python3 -m unittest discover -s tools/qa -p "test_*.py" || status=1
     python3 tools/qa/run.py --out '"$out"'/suite suite --jobs '"$qa_jobs"' \
       --binary build/microide-asan/microide/microide || status=1
     python3 tools/qa/run.py --out '"$out"'/monkey monkey --seeds '"$seeds"' --steps '"$steps"' \
