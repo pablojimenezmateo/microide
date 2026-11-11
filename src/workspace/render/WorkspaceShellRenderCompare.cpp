@@ -34,12 +34,52 @@ namespace {
 // Changed rows carry a faint full-row wash plus a saturated left-edge stripe. The wash
 // alone (previously 0.12) read almost flush with unchanged rows on the dark theme; the
 // stripe gives a scannable, full-saturation marker like the sidebar selection strip.
+//
+// The structural diff decides what is emphasised (difftastic's model): a side is
+// washed only when its line carries NOVEL tokens, and the novel tokens themselves
+// get a stronger fill, so the eye lands on what changed rather than on the lines
+// around it. A line that changed only in layout (indentation, wrapping) keeps a
+// muted stripe and no wash: git still sees it changed, but nothing in it is new.
+// The left side reads as removed and the right as added, whatever the row kind.
+// Text stays neutral throughout (low-contrast decoration rule, diff-merge spec).
 constexpr float kDiffRowTint = 0.17f;
 constexpr float kDiffRowTintSelected = 0.26f;
+constexpr float kDiffTokenTint = 0.42f;
 constexpr float kDiffEdgeStripeWidth = 3.0f;
 // Line numbers are inset past the edge stripe so the saturated change marker never
 // sits underneath the gutter digits. Stripe width plus a small breathing gap.
 constexpr float kDiffGutterNumberInset = kDiffEdgeStripeWidth + 3.0f;
+
+// One side's change decoration: its row wash, its edge stripe and the fill
+// behind its novel tokens.
+struct DiffSideStyle {
+  SDL_Color background{};
+  bool stripe = false;
+  SDL_Color stripe_color{};
+  SDL_Color token_fill{};
+};
+
+DiffSideStyle StyleDiffSide(const render::Theme& theme, compare::CompareSideChange change,
+                            SDL_Color side_color, bool selected) {
+  const SDL_Color base = selected ? theme.row_highlight : theme.editor_background;
+  DiffSideStyle style{.background = base};
+  switch (change) {
+    case compare::CompareSideChange::Novel:
+      style.background =
+          render::BlendColors(base, side_color, selected ? kDiffRowTintSelected : kDiffRowTint);
+      style.stripe = true;
+      style.stripe_color = side_color;
+      style.token_fill = render::BlendColors(base, side_color, kDiffTokenTint);
+      break;
+    case compare::CompareSideChange::LayoutOnly:
+      style.stripe = true;
+      style.stripe_color = theme.text_disabled;
+      break;
+    case compare::CompareSideChange::None:
+      break;
+  }
+  return style;
+}
 
 SDL_Color CompareMarkerColor(const render::Theme& theme, compare::CompareRowKind kind) {
   switch (kind) {
@@ -88,7 +128,7 @@ void EnsureCompareOverviewMarkers(const render::Theme& theme,
             compare_tab, static_cast<std::size_t>(std::max(0, run.start_row)))),
         .end_row = static_cast<int>(ComparePresentationRowToVisualRow(
             compare_tab, static_cast<std::size_t>(std::max(0, run.end_row)))),
-        .color = CompareMarkerColor(theme, run.kind),
+        .color = run.layout_only ? theme.text_disabled : CompareMarkerColor(theme, run.kind),
         .priority = 0});
   }
   overview::BuildMarkersInto(inner_lane, marker_rows, inputs,
@@ -496,55 +536,34 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
     const SDL_Color neutral_text_color = selected ? theme_.text_primary : theme_.text_secondary;
     SDL_Color left_color = neutral_text_color;
     SDL_Color right_color = neutral_text_color;
+    const compare::CompareSideChange left_change = compare::LeftSideChange(compare_row);
+    const compare::CompareSideChange right_change = compare::RightSideChange(compare_row);
+    const DiffSideStyle left_style =
+        StyleDiffSide(theme_, left_change, theme_.diff_deleted, selected);
+    const DiffSideStyle right_style =
+        StyleDiffSide(theme_, right_change, theme_.diff_added, selected);
     SDL_Color marker_color = selected ? theme_.text_secondary : theme_.text_muted;
     char marker = ' ';
     switch (compare_row.kind) {
       case compare::CompareRowKind::Added:
-        marker_color = theme_.diff_added;
         marker = '+';
         break;
       case compare::CompareRowKind::Deleted:
-        marker_color = theme_.diff_deleted;
         marker = '-';
         break;
       case compare::CompareRowKind::Modified:
-        marker_color = theme_.diff_modified;
         marker = '~';
         break;
       case compare::CompareRowKind::Unchanged:
       default:
         break;
     }
-    const SDL_Color left_row_background = [&]() {
-      const SDL_Color base = selected ? theme_.row_highlight : theme_.editor_background;
-      switch (compare_row.kind) {
-        case compare::CompareRowKind::Deleted:
-          return render::BlendColors(base, theme_.diff_deleted,
-                            selected ? kDiffRowTintSelected : kDiffRowTint);
-        case compare::CompareRowKind::Modified:
-          return render::BlendColors(base, theme_.diff_modified,
-                            selected ? kDiffRowTintSelected : kDiffRowTint);
-        case compare::CompareRowKind::Added:
-        case compare::CompareRowKind::Unchanged:
-        default:
-          return base;
-      }
-    }();
-    const SDL_Color right_row_background = [&]() {
-      const SDL_Color base = selected ? theme_.row_highlight : theme_.editor_background;
-      switch (compare_row.kind) {
-        case compare::CompareRowKind::Added:
-          return render::BlendColors(base, theme_.diff_added,
-                            selected ? kDiffRowTintSelected : kDiffRowTint);
-        case compare::CompareRowKind::Modified:
-          return render::BlendColors(base, theme_.diff_modified,
-                            selected ? kDiffRowTintSelected : kDiffRowTint);
-        case compare::CompareRowKind::Deleted:
-        case compare::CompareRowKind::Unchanged:
-        default:
-          return base;
-      }
-    }();
+    if (compare_row.kind != compare::CompareRowKind::Unchanged &&
+        !compare::CompareRowIsLayoutOnly(compare_row)) {
+      marker_color = CompareMarkerColor(theme_, compare_row.kind);
+    }
+    const SDL_Color left_row_background = left_style.background;
+    const SDL_Color right_row_background = right_style.background;
 
     const std::size_t left_row_start = wrapped ? wrap_row.left_start : compare_tab->horizontal_scroll;
     const std::size_t left_row_end =
@@ -561,8 +580,6 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
           &compare_tab->left_token_window.Tokens(static_cast<std::size_t>(model_index));
       const std::vector<compare::CompareTextSpan>& left_changed_spans =
           compare_row.left_changed_spans;
-      const bool left_diff_edge = compare_row.kind == compare::CompareRowKind::Deleted ||
-                                  compare_row.kind == compare::CompareRowKind::Modified;
       editor::RowDecorationInput left_input;
       // Continuation rows render under the line's own indent (hanging indent), so
       // the glyph origin shifts right by it while the visual span stays absolute.
@@ -583,19 +600,16 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                            surface.gutter_width + surface.left_width, surface.line_height),
           .color = left_row_background,
       };
-      left_input.has_edge_stripe = left_diff_edge;
-      if (left_diff_edge) {
+      left_input.has_edge_stripe = left_style.stripe;
+      if (left_style.stripe) {
         left_input.edge_stripe_fill = editor::DecoratedTextFill{
             .rect = MakeRect(surface.left_x, y - 1.0f, kDiffEdgeStripeWidth, surface.line_height),
-            .color = compare_row.kind == compare::CompareRowKind::Deleted ? theme_.diff_deleted
-                                                                          : theme_.diff_modified,
+            .color = left_style.stripe_color,
         };
       }
       left_input.changed_spans =
           std::span<const compare::CompareTextSpan>(left_changed_spans);
-      left_input.changed_span_color = compare_row.kind == compare::CompareRowKind::Deleted
-                                          ? theme_.diff_deleted
-                                          : theme_.diff_modified;
+      left_input.changed_span_fill = left_style.token_fill;
       left_input.layout = CompareVisibleLayoutForRow(
           *compare_tab, model_index, false, left_row_start,
           wrapped ? left_row_end - left_row_start : surface.left_visible_columns);
@@ -741,8 +755,6 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
               : &compare_tab->right_token_window.Tokens(right_token_row);
       const std::vector<compare::CompareTextSpan>& right_changed_spans =
           compare_row.right_changed_spans;
-      const bool right_diff_edge = compare_row.kind == compare::CompareRowKind::Added ||
-                                   compare_row.kind == compare::CompareRowKind::Modified;
       editor::RowDecorationInput right_input;
       right_input.text_x = right_interaction.text_x +
                            static_cast<float>(wrap_row.right_indent) * char_width_px;
@@ -762,20 +774,17 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                            surface.gutter_width + surface.right_width, surface.line_height),
           .color = right_row_background,
       };
-      right_input.has_edge_stripe = right_diff_edge;
-      if (right_diff_edge) {
+      right_input.has_edge_stripe = right_style.stripe;
+      if (right_style.stripe) {
         right_input.edge_stripe_fill = editor::DecoratedTextFill{
             .rect = MakeRect(surface.right_x, y - 1.0f, kDiffEdgeStripeWidth, surface.line_height),
-            .color = compare_row.kind == compare::CompareRowKind::Added ? theme_.diff_added
-                                                                        : theme_.diff_modified,
+            .color = right_style.stripe_color,
         };
       }
       right_input.column_fills = std::span<const editor::RowFillSpan>(right_column_fills);
       right_input.changed_spans =
           std::span<const compare::CompareTextSpan>(right_changed_spans);
-      right_input.changed_span_color = compare_row.kind == compare::CompareRowKind::Added
-                                           ? theme_.diff_added
-                                           : theme_.diff_modified;
+      right_input.changed_span_fill = right_style.token_fill;
       right_input.layout = CompareVisibleLayoutForRow(
           *compare_tab, model_index, true, right_row_start,
           wrapped ? right_row_end - right_row_start : surface.right_visible_columns);

@@ -4,6 +4,7 @@
 #include <array>
 #include <unordered_map>
 
+#include "compare/DiffSyntax.h"
 #include "plugin/PluginHost.h"
 #include "util/PerformanceCounters.h"
 #include "util/StringUtil.h"
@@ -195,6 +196,12 @@ struct WorkspaceLanguageContract::Impl {
   mutable bool editor_views_auto_close = false;
   mutable bool editor_views_surround = false;
   mutable bool editor_views_smart_indent = false;
+
+  // Memo behind ResolveDiffSyntax; same revision rule as `editor_views`.
+  mutable std::unordered_map<std::string, std::shared_ptr<const compare::DiffSyntax>,
+                             util::TransparentStringHash, std::equal_to<>>
+      diff_syntaxes;
+  mutable std::size_t diff_syntaxes_revision = 0;
 };
 
 WorkspaceLanguageContract::WorkspaceLanguageContract() : impl_(std::make_unique<Impl>()) {
@@ -491,6 +498,40 @@ LanguageContractView WorkspaceLanguageContract::ResolveView(std::string_view lan
   view.language_id = language_id;
   view.contract = Find(language_id);
   return view;
+}
+
+std::shared_ptr<const compare::DiffSyntax> WorkspaceLanguageContract::ResolveDiffSyntax(
+    std::string_view language_id) const {
+  if (impl_->diff_syntaxes_revision != revision_) {
+    impl_->diff_syntaxes.clear();
+    impl_->diff_syntaxes_revision = revision_;
+  } else if (const auto it = impl_->diff_syntaxes.find(language_id);
+             it != impl_->diff_syntaxes.end()) {
+    return it->second;
+  }
+  std::shared_ptr<const compare::DiffSyntax> resolved = compare::GenericDiffSyntax();
+  if (const LanguageContract* contract = Find(language_id); contract != nullptr) {
+    auto syntax = std::make_shared<compare::DiffSyntax>(*compare::GenericDiffSyntax());
+    syntax->delimiters.clear();
+    if (!contract->line_comment.empty()) {
+      syntax->line_comments.push_back(contract->line_comment);
+    }
+    if (!contract->block_comment.open.empty() && !contract->block_comment.close.empty()) {
+      syntax->block_comments.push_back(
+          compare::DiffDelimiterPair{contract->block_comment.open, contract->block_comment.close});
+    }
+    for (const LanguageBracketPair& pair : contract->bracket_pairs) {
+      if (!pair.open.empty() && !pair.close.empty()) {
+        syntax->delimiters.push_back(compare::DiffDelimiterPair{pair.open, pair.close});
+      }
+    }
+    if (syntax->delimiters.empty()) {
+      syntax->delimiters = compare::GenericDiffSyntax()->delimiters;
+    }
+    resolved = std::move(syntax);
+  }
+  impl_->diff_syntaxes.emplace(std::string(language_id), resolved);
+  return resolved;
 }
 
 std::shared_ptr<const editor::LanguageContractView> WorkspaceLanguageContract::ResolveEditorView(

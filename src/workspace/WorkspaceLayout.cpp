@@ -1164,42 +1164,47 @@ void BuildCompareScrollbarRunsInto(const compare::ComparePresentationModel& pres
     return;
   }
 
-  auto push_run = [&](int start_row, int end_row, compare::CompareRowKind kind) {
+  auto push_run = [&](int start_row, int end_row, compare::CompareRowKind kind, bool layout_only) {
     if (kind == compare::CompareRowKind::Unchanged || start_row < 0 || end_row <= start_row) {
       return;
     }
-    runs.push_back(CompareScrollbarRun{.kind = kind, .start_row = start_row, .end_row = end_row});
+    runs.push_back(CompareScrollbarRun{
+        .kind = kind, .layout_only = layout_only, .start_row = start_row, .end_row = end_row});
   };
 
   int run_start = -1;
   compare::CompareRowKind run_kind = compare::CompareRowKind::Unchanged;
+  bool run_layout_only = false;
+  const auto close_run = [&](std::size_t end) {
+    push_run(run_start, static_cast<int>(end), run_kind, run_layout_only);
+    run_start = -1;
+    run_kind = compare::CompareRowKind::Unchanged;
+  };
   for (std::size_t i = 0; i < presentation.rows.size(); ++i) {
     const compare::ComparePresentationRow& presentation_row = presentation.rows[i];
     if (presentation_row.kind != compare::ComparePresentationRowKind::Model ||
         presentation_row.model_row_index >= model.rows.size()) {
-      push_run(run_start, static_cast<int>(i), run_kind);
-      run_start = -1;
-      run_kind = compare::CompareRowKind::Unchanged;
+      close_run(i);
       continue;
     }
 
-    const compare::CompareRowKind kind = model.rows[presentation_row.model_row_index].kind;
-    if (kind == compare::CompareRowKind::Unchanged) {
-      push_run(run_start, static_cast<int>(i), run_kind);
-      run_start = -1;
-      run_kind = compare::CompareRowKind::Unchanged;
+    const compare::CompareRow& row = model.rows[presentation_row.model_row_index];
+    if (row.kind == compare::CompareRowKind::Unchanged) {
+      close_run(i);
       continue;
     }
 
-    if (run_start >= 0 && kind == run_kind) {
+    const bool layout_only = compare::CompareRowIsLayoutOnly(row);
+    if (run_start >= 0 && row.kind == run_kind && layout_only == run_layout_only) {
       continue;
     }
 
-    push_run(run_start, static_cast<int>(i), run_kind);
+    close_run(i);
     run_start = static_cast<int>(i);
-    run_kind = kind;
+    run_kind = row.kind;
+    run_layout_only = layout_only;
   }
-  push_run(run_start, static_cast<int>(presentation.rows.size()), run_kind);
+  close_run(presentation.rows.size());
 }
 
 namespace {

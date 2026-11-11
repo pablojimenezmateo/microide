@@ -3,6 +3,7 @@
 #include "CompareSummary.h"
 
 #include "compare/CompareModel.h"
+#include "compare/StructuralDiff.h"
 #include "util/StringUtil.h"
 
 #include <algorithm>
@@ -22,7 +23,11 @@ using microide::compare::CompareBuildOptions;
 using microide::compare::CompareModel;
 using microide::compare::CompareRow;
 using microide::compare::CompareRowKind;
+using microide::compare::CompareSideChange;
 using microide::compare::CompareTextSpan;
+using microide::compare::kStructuralDiffVertexBudget;
+using microide::compare::LeftSideChange;
+using microide::compare::RightSideChange;
 
 bool IsUtf8Boundary(std::string_view text, std::size_t offset) {
   if (offset > text.size()) {
@@ -176,10 +181,12 @@ void TestCompareUtf8ChangedSpans() {
   Expect(IsUtf8Boundary(row.right_text, right_span.start) &&
              IsUtf8Boundary(row.right_text, right_span.end),
          "utf8 right span should stay on codepoint boundaries");
-  Expect(SpanText(row.left_text, left_span) == "😀",
-         "utf8 left changed span should isolate the original emoji");
-  Expect(SpanText(row.right_text, right_span) == "😃",
-         "utf8 right changed span should isolate the replacement emoji");
+  // Non-ASCII bytes are word bytes, so each side is ONE token and the novel span
+  // is that whole token -- the structural diff never splits an atom.
+  Expect(SpanText(row.left_text, left_span) == "a😀x",
+         "utf8 left changed span should cover the original token");
+  Expect(SpanText(row.right_text, right_span) == "a😃x",
+         "utf8 right changed span should cover the replacement token");
 }
 
 void TestCompareCodeTokenChangedSpans() {
@@ -426,12 +433,16 @@ void TestCompareImportExpansionKeepsFollowingImportsUnchanged() {
         row.left_text == "import { useSupabaseTable } from '@example/hooks/supabase-table'") {
       saw_supabase_table_unchanged = true;
     }
-    if (row.kind == CompareRowKind::Deleted &&
-        row.left_text == "import { ordersQuery } from '@example/business/shared_queries'") {
+    // Every token of the one-line import reappears in the expanded one, so the
+    // structural diff calls the old line a layout change, not a deletion...
+    if (row.left_text == "import { ordersQuery } from '@example/business/shared_queries'" &&
+        LeftSideChange(row) == CompareSideChange::LayoutOnly) {
       saw_shared_query_deleted = true;
     }
-    if (row.kind == CompareRowKind::Added &&
-        row.right_text == "  ordersQueryWithoutLines") {
+    // ...and the only novel token is the symbol the expansion added.
+    if (row.kind == CompareRowKind::Added && row.right_text == "  ordersQueryWithoutLines" &&
+        row.right_changed_spans.size() == 1 &&
+        SpanText(row.right_text, row.right_changed_spans.front()) == "ordersQueryWithoutLines") {
       saw_shared_query_added = true;
     }
     if (row.kind == CompareRowKind::Modified &&
@@ -450,11 +461,11 @@ void TestCompareImportExpansionKeepsFollowingImportsUnchanged() {
   Expect(saw_supabase_table_unchanged,
          "import expansion diff should keep later unchanged imports aligned");
   Expect(saw_shared_query_deleted,
-         ("import expansion diff should keep the single-line shared query import deleted\n" +
+         ("import expansion diff should read the single-line import as a layout change\n" +
           DescribeRows(model, 6, 12))
              .c_str());
   Expect(saw_shared_query_added,
-         "import expansion diff should keep the extra shared query symbol as added");
+         "import expansion diff should mark only the extra shared query symbol novel");
   Expect(saw_late_reference_modified,
          "import expansion diff should still pair the later referencedTable edit");
 }
@@ -546,9 +557,12 @@ void TestCompareContextAwareAlignment() {
         row.right_text == "  } catch (error) {") {
       saw_modified_catch = true;
     }
-    if (row.kind == CompareRowKind::Added &&
-        row.right_text.find("logger.warn(`Failed to convert metric_value ${mv.id}`") !=
-            std::string::npos) {
+    // The new log call shares no token with anything it replaced, so it is novel
+    // whichever unmatched left line (the removed comment) sits beside it.
+    if (row.right_text.find("logger.warn(`Failed to convert metric_value ${mv.id}`") !=
+            std::string::npos &&
+        RightSideChange(row) == CompareSideChange::Novel &&
+        SpanText(row.right_text, row.right_changed_spans.front()) == "logger.warn") {
       saw_added_logger_warn = true;
     }
 
@@ -567,7 +581,7 @@ void TestCompareContextAwareAlignment() {
   Expect(saw_deleted_closing_if,
          "context-aware diff should keep the removed closing brace as deleted");
   Expect(saw_modified_catch, "context-aware diff should pair catch lines together");
-  Expect(saw_added_logger_warn, "context-aware diff should keep logger.warn as added");
+  Expect(saw_added_logger_warn, "context-aware diff should mark logger.warn novel");
 }
 
 // Reconstruct one side of the original input from the model rows: every row that
@@ -824,8 +838,7 @@ void TestProfiledCompareBuildMatchesUnprofiledModel() {
          "profiled compare build should keep the same hunk count");
   Expect(profiled.profile.total_ns >= profiled.profile.split_lines_ns +
                                          profiled.profile.line_alignment_ns +
-                                         profiled.profile.hunk_alignment_ns +
-                                         profiled.profile.intraline_ns,
+                                         profiled.profile.hunk_refinement_ns,
          "profiled compare build total should include the staged timings");
   Expect(profiled.profile.total_ns > 0,
          "profiled compare build should report a non-zero total duration");
@@ -897,11 +910,10 @@ void TestCompareIgnoreWhitespaceInteriorHunkLine() {
          "without ignore_whitespace the interior line stays Modified");
 }
 
-// Resilience: a modified row with a very long line on either side must not run
-// the O(n) per-codepoint/token intra-line diff (a UI-thread memory spike on a
-// minified or binary blob). Instead the whole line is marked changed. Sharing a
-// prefix/suffix forces the row to align as Modified (not delete+add), so the
-// guard — not the aligner — is what produces the full-line span.
+// Resilience: a very long changed line (a minified or binary blob) is lexed in one
+// linear pass. Here it is a single 300 KB word on each side, so the structural
+// diff sees one novel token per side and marks each whole line changed — without
+// any per-byte diff over it.
 void TestCompareLongLineSkipsIntralineRefinement() {
   const std::string middle_left(300000, 'a');
   const std::string middle_right(300000, 'b');
@@ -931,13 +943,11 @@ void TestCompareLongLineSkipsIntralineRefinement() {
 }
 
 // Regression (OOM / UI-thread crash): a single line packed with tens of thousands of
-// distinct significant tokens (a minified bundle: one huge line, changed) forms a 1x1
-// delete/insert hunk that sails past AlignHunkLines' line-COUNT gate. The alignment
-// similarity DP is sized by TOKEN count, so without a token-count cap it allocated
-// O(tokens^2) (~gigabytes) and OOM-crashed the synchronous compare build. Unlike
-// TestCompareLongLineSkipsIntralineRefinement (a single 300 KB run of one repeated
-// char = ~1 token), this line has ~30k *distinct* tokens, so it actually drives the
-// token DP. The build must stay bounded and still align the pair as one Modified row.
+// distinct tokens (a minified bundle: one huge line, changed) forms a 1x1 hunk whose
+// token count, not line count, is what any token-level diff scales with. The old
+// similarity DP once allocated O(tokens^2) here; now the flat token diff (itself
+// bounded) decides. The build must stay bounded and still align the pair as one
+// Modified row.
 void TestCompareManyTokenLineBoundsAlignmentDp() {
   std::string left_line;
   std::string right_line;
@@ -959,10 +969,10 @@ void TestCompareManyTokenLineBoundsAlignmentDp() {
   // Without the cap this allocates a ~(30001)^2 * 8-byte DP (~7 GB) and OOM-crashes;
   // with it, BuildCompareModel returns promptly.
   const auto result = BuildCompareModelProfiled(left, right);
-  // The pair went through the per-cell hunk aligner (passed the 1x1 line gate) rather
-  // than the coarse fallback — i.e. it genuinely exercises the token-DP path.
-  Expect(result.profile.exact_hunk_alignment_calls >= 1,
-         "the 1x1 huge-line hunk must reach the per-cell aligner, not the line-count fallback");
+  // 30k bare atoms a side: no nesting for a graph to reason about, so the
+  // bounded flat token diff matches them and no graph is built at all.
+  Expect(result.profile.graph_vertices == 0,
+         "a token-dense line of bare atoms must not reach the graph search");
 
   const CompareRow* modified = nullptr;
   for (const auto& row : result.model.rows) {
@@ -976,44 +986,36 @@ void TestCompareManyTokenLineBoundsAlignmentDp() {
          "the bounded build must preserve both sides verbatim");
 }
 
-// Regression: the oversized-hunk positional fallback pairs an unbounded number of
-// rows as Modified; each long line would otherwise cost a full intra-line DP. The
-// per-hunk cumulative intra-line budget bounds total work — early rows keep
-// character-level spans, later rows fall back to whole-line-changed once spent.
-void TestCompareIntralineBudgetBoundsLargeModifiedHunk() {
+// A large hunk rewritten line for line (every line one distinct token on each
+// side) is a worst case for the structural search: nothing matches, so it explores
+// the whole product graph. It must stay within its budget and still mark every
+// line of both sides novel, each row pairing a left line with a right line.
+void TestCompareLargeRewrittenHunkStaysBoundedAndNovel() {
   const std::string common_prefix(160, 'p');
   const std::string common_suffix(160, 's');
-  constexpr int kLineCount = 400;  // > budget/per-pair-cap so the tail must fall back
+  constexpr int kLineCount = 400;
   std::string left;
   std::string right;
   for (int i = 0; i < kLineCount; ++i) {
     const std::string idx = std::to_string(i);
-    // Unique on both sides so the line diff finds no equal lines -> one big hunk;
-    // shared prefix/suffix so a refined row yields a PARTIAL (not whole-line) span.
     left += common_prefix + "L" + idx + "L" + common_suffix + "\n";
     right += common_prefix + "R" + idx + "R" + common_suffix + "\n";
   }
 
-  const auto model = BuildCompareModel(left, right);
-
-  std::size_t refined = 0;
-  std::size_t whole_line = 0;
-  for (const auto& row : model.rows) {
+  const auto result = BuildCompareModelProfiled(left, right);
+  Expect(result.profile.graph_vertices <= kStructuralDiffVertexBudget + 64,
+         "the structural search must stay within its vertex budget");
+  std::size_t modified = 0;
+  for (const auto& row : result.model.rows) {
     if (row.kind != CompareRowKind::Modified) {
       continue;
     }
-    const bool is_whole_line = row.left_changed_spans.size() == 1 &&
-                               row.left_changed_spans[0].start == 0 &&
-                               row.left_changed_spans[0].end == row.left_text.size();
-    if (is_whole_line) {
-      ++whole_line;
-    } else {
-      ++refined;
-    }
+    ++modified;
+    Expect(LeftSideChange(row) == CompareSideChange::Novel &&
+               RightSideChange(row) == CompareSideChange::Novel,
+           "every rewritten line must be novel on both sides");
   }
-  Expect(refined > 0, "early modified rows must keep character-level intra-line spans");
-  Expect(whole_line > 0,
-         "once the per-hunk intra-line budget is spent, later rows fall back to whole-line-changed");
+  Expect(modified == kLineCount, "a line-for-line rewrite must pair every line");
 }
 
 }  // namespace
@@ -1502,7 +1504,7 @@ void RegisterCompareModelTests(std::vector<TestCase>& tests) {
   AddTest(tests, "CompareModel/LineEqualityInterningMatchesPredicate",
           TestCompareLineEqualityInterningMatchesPredicate);
   AddTest(tests, "Compare/IntralineBudgetBoundsLargeModifiedHunk",
-          TestCompareIntralineBudgetBoundsLargeModifiedHunk);
+          TestCompareLargeRewrittenHunkStaysBoundedAndNovel);
   AddTest(tests, "Compare/ManyTokenLineBoundsAlignmentDp",
           TestCompareManyTokenLineBoundsAlignmentDp);
   AddTest(tests, "Compare/LongLineSkipsIntralineRefinement",

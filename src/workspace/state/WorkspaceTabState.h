@@ -228,6 +228,9 @@ struct CompareTabState {
   // (TD-2026-07-17A-094). Recomputed only when the derived fingerprint rebuilds.
   std::size_t derived_left_line_count = 0;
   bool derived_ignore_whitespace = false;
+  // The lexical rules the model was refined with. Shared per language by the
+  // language contract, so pointer identity says whether they changed.
+  std::shared_ptr<const compare::DiffSyntax> derived_syntax;
   bool derived_fingerprint_valid = false;
   // Semantic classification (binary / submodule / line-ending-only) and the
   // presentation model derive from the same two content buffers the fingerprint

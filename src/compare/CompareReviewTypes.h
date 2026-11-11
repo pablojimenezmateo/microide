@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -65,8 +66,17 @@ struct BranchReviewTargetIdentity {
   }
 };
 
+struct DiffSyntax;
+
 struct CompareBuildOptions {
   bool ignore_whitespace = false;
+  // Refine every hunk structurally (novel-token spans, token-anchored row
+  // alignment). Off for callers that only need the hunks themselves — the patch
+  // generator — where it would be pure cost.
+  bool refine_hunks = true;
+  // The lexical rules of the file's language for the structural refinement.
+  // Null reads as GenericDiffSyntax(). Shared and immutable: one per language.
+  std::shared_ptr<const DiffSyntax> syntax;
   // Whether each side's file exists at all. A side that does not is a whole-file
   // creation/deletion, and its patch header says so (`/dev/null`); an EXISTING
   // empty file is an ordinary edit of zero lines. The two read alike as text —

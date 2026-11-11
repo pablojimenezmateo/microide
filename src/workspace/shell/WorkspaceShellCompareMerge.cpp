@@ -7,6 +7,7 @@
 
 #include "compare/BranchReviewStateTypes.h"
 #include "compare/CompareReviewTypes.h"
+#include "editor/RuntimeSyntaxRegistry.h"
 #include "workspace/git/BranchReviewStateBridge.h"
 #include "workspace/services/CompareMergeService.h"
 #include "workspace/git/CompareTabLoad.h"
@@ -135,6 +136,13 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
           // completion after, which orders the two (as the editor's async open).
           .begin_compare_tab_load =
               [this](CompareTabLoadRequest request) -> std::uint64_t {
+                // Resolved here, on the shell thread, from the path: the
+                // language contract is not the worker's to read. A file whose
+                // language only its content reveals (a shebang) is refined
+                // again by the first derived-state refresh, which reads it
+                // from the loaded buffer.
+                request.build_options.syntax = language_contract_.ResolveDiffSyntax(
+                    editor::runtime_syntax::DetectFiletype(request.path));
                 auto shared_request =
                     std::make_shared<const CompareTabLoadRequest>(std::move(request));
                 auto result = std::make_shared<CompareTabLoadResult>();

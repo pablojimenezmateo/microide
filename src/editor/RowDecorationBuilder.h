@@ -18,23 +18,6 @@
 
 namespace microide::editor {
 
-// Append intra-line word/token diff underlines for the visible window of `text`
-// to `row`. Clips the changed byte spans to the horizontally-scrolled visible
-// columns and emits a dimmed underline (0.55 alpha) under each changed run.
-// Shared by the compare side panes and merge; keep the alpha dim in sync with
-// the renderer. Moved here from workspace/CompareMergeRender so the unified
-// decorated-row builder can own intra-line underline assembly.
-void AppendChangedSpanUnderlines(DecoratedTextRow& row,
-                                 const render::TextRenderer& text_renderer,
-                                 float text_x,
-                                 float y,
-                                 float line_height,
-                                 std::string_view text,
-                                 std::size_t horizontal_scroll,
-                                 std::size_t visible_columns,
-                                 std::span<const compare::CompareTextSpan> changed_spans,
-                                 SDL_Color underline_color);
-
 // Append the render-whitespace marker for one cell: a 2x2 dot centered in the
 // cell for a space, or a thin horizontal bar spanning the tab's cells. Lives here
 // so the editor pane and the diff panes cannot draw the same marker differently.
@@ -242,9 +225,11 @@ struct RowDecorationInput {
   // glyphs, indent guides — their sub-cell geometry is resolved by the caller).
   std::span<const DecoratedTextFill> prepositioned_fills;
 
-  // Intra-line changed-span underlines (compare / merge). Empty => skipped.
+  // Novel-token spans (compare): byte spans painted with `changed_span_fill`
+  // above the background and edge stripe and below every column fill, so a
+  // selection or search hit still reads on top of a change. Empty => skipped.
   std::span<const compare::CompareTextSpan> changed_spans;
-  SDL_Color changed_span_color{};
+  SDL_Color changed_span_fill{};
 
   // Diagnostic underlines. Empty => skipped. The diagnostic window can differ
   // from `row_visual_start/end` (the editor passes the wrapped-row visual span),

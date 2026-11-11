@@ -611,19 +611,25 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
   // refresh: the editable right pane changes exactly when its viewport `content_revision`
   // (or line ending) advances, so it needs no per-refresh serialize; the read-only left
   // side is an immutable shared buffer, compared by identity (O(1) — see the field's
-  // comment); the ignore-whitespace option changes the
-  // model with no content change. The serialize below then runs only on an actual rebuild.
+  // comment); the ignore-whitespace option and the language's diff syntax change
+  // the model with no content change. The serialize below then runs only on an actual rebuild.
   // The review/presentation markers further down depend on external git + branch-review
   // state and always refresh.
   const std::uint64_t right_content_revision = compare_tab.right_viewport.content_revision();
   const util::LineEnding right_line_ending = compare_tab.right_viewport.line_ending();
   const bool ignore_whitespace = compare_tab.build_options.ignore_whitespace;
+  // The file's language decides how each hunk is read structurally. A rename, a
+  // content-detected language change or a language-contract refresh changes the
+  // rules, and the per-language shared pointer says so by identity.
+  compare_tab.build_options.syntax =
+      language_contract_.ResolveDiffSyntax(compare_tab.right_viewport.language_id());
   const bool content_changed =
       !compare_tab.derived_fingerprint_valid ||
       compare_tab.derived_right_content_revision != right_content_revision ||
       compare_tab.derived_right_line_ending != right_line_ending ||
       compare_tab.derived_left_content != compare_tab.left_content ||
-      compare_tab.derived_ignore_whitespace != ignore_whitespace;
+      compare_tab.derived_ignore_whitespace != ignore_whitespace ||
+      compare_tab.derived_syntax != compare_tab.build_options.syntax;
   if (content_changed) {
     util::PerformanceTrace::Scope rebuild_scope(
         "WorkspaceShell::RefreshCompareTabDerivedState::RebuildModel");
@@ -643,7 +649,7 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
                 compare_tab.derived_left_content == compare_tab.left_content
             ? compare_tab.derived_left_line_count
             : CountCompareTextLines(*compare_tab.left_content);
-    MarkCompareModelBuilt(compare_tab, ignore_whitespace, left_line_count);
+    MarkCompareModelBuilt(compare_tab, compare_tab.build_options, left_line_count);
   }
   CompareTabReviewRefreshInput review_input{
       .repository_root = context_.current_project_state.root,

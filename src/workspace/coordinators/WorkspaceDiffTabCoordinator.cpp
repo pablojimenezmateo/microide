@@ -471,8 +471,8 @@ void DiffTabCoordinator::ApplyCompareTabLoad(const std::uint64_t id, const bool 
         operations_.apply_editor_preferences(compare.right_viewport);
       }
       compare.model = std::move(result.model);
-      MarkCompareModelBuilt(compare, result.built_options.ignore_whitespace,
-                            result.left_line_count);
+      compare.build_options.syntax = result.built_options.syntax;
+      MarkCompareModelBuilt(compare, result.built_options, result.left_line_count);
       // An editor tab opened on the file while this ran read it for itself (the
       // stand-in is not a live buffer). One file is one buffer: join it, and the
       // fingerprint the adoption invalidates makes the refresh rebuild the diff.

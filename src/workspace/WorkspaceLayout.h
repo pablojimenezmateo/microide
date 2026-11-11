@@ -103,6 +103,9 @@ struct ScrollbarGeometry {
 // overview::BuildMarkers; this stays a pure, testable walk over the diff model.
 struct CompareScrollbarRun {
   compare::CompareRowKind kind = compare::CompareRowKind::Unchanged;
+  // Every row of the run changed only in layout (compare::CompareRowIsLayoutOnly):
+  // drawn muted, so the lane points at the changes that carry new tokens.
+  bool layout_only = false;
   int start_row = 0;
   int end_row = 0;
 };

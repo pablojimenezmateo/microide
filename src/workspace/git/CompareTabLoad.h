@@ -75,7 +75,7 @@ std::size_t CountCompareTextLines(std::string_view text);
 // visible-layout cache, and write the fingerprint the derived-state refresh
 // checks. Shared by the synchronous rebuild and the asynchronous load so the
 // two cannot disagree about what "built" means.
-void MarkCompareModelBuilt(CompareTabState& compare_tab, bool built_ignore_whitespace,
+void MarkCompareModelBuilt(CompareTabState& compare_tab, const compare::CompareBuildOptions& built,
                            std::size_t left_line_count);
 
 }  // namespace microide::workspace
