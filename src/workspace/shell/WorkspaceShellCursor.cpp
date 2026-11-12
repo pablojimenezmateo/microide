@@ -1323,9 +1323,24 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
         return row_band(ComputeTreeSidebarListLayout(layout.sidebar, entries.size()),
                         entries.size());
       }
-      default:
-        return std::nullopt;
+      // Problems and Tests paint their rows lit under the pointer like every list
+      // here (the secondary-row surface in WorkspaceShellRenderSidebar), and fell
+      // to the default: the row entered and the row left were never repainted (the
+      // monkey's tooling profile, with clangd's diagnostics in Problems).
+      case SidebarMode::Problems: {
+        const std::size_t count = context_.current_project_state.sidebar.problems.entries.size();
+        return row_band(ComputeProblemsSidebarListLayout(layout.sidebar, count), count);
+      }
+      case SidebarMode::Tests: {
+        const std::size_t count = context_.current_project_state.sidebar.tests.entries.size();
+        return row_band(ComputeTestsSidebarListLayout(layout.sidebar, count), count);
+      }
+      // No default: a sidebar view added later is a -Wswitch warning here, not a
+      // list whose hover nothing repaints.
+      case SidebarMode::None:
+        break;
     }
+    return std::nullopt;
   }
 
   // Bottom-panel header tabs.

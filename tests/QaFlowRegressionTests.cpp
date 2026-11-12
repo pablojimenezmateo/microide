@@ -128,6 +128,43 @@ struct FlowFixture {
   SoftwareCanvas canvas;
 };
 
+// The monkey's tooling profile (clangd behind the editor, its first run): the
+// pointer left a Problems row for the menu bar and the row kept its hover
+// background. Problems and Tests rows light up under the pointer like every
+// list's, but the motion probe that repaints the row left and the row entered
+// (HoveredInteractiveRect) knew neither view's rows, so nothing was repainted.
+void TestLeavingAProblemsRowRepaintsItsHover() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("main.cpp", "int x = ;\nint y = ;\n");
+  TestAccess::ShowProblemsSidebar(fixture.shell);
+  std::vector<editor::Diagnostic> diagnostics;
+  for (std::size_t line = 0; line < 2; ++line) {
+    diagnostics.push_back(editor::Diagnostic{
+        .range = editor::SelectionRange{.start = editor::TextPosition{.line = line, .column = 0},
+                                        .end = editor::TextPosition{.line = line, .column = 3}},
+        .severity = editor::DiagnosticSeverity::Error,
+        .message = "expected expression " + std::to_string(line)});
+  }
+  Expect(TestAccess::PublishDiagnostics(fixture.shell, "diagnostics", fixture.file, diagnostics),
+         "the fixture should publish two diagnostics");
+  Expect(TestAccess::RefreshProblemsSidebar(fixture.shell) &&
+             TestAccess::ProblemsSidebarEntries(fixture.shell).size() >= 2,
+         "the Problems view should list them");
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the Problems view with two rows");
+  const SDL_FRect row = TestAccess::ProblemsSidebarRowRect(fixture.shell, 1);
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(row.x + row.w / 2.0f, row.y + row.h / 2.0f)}),
+                      "the pointer onto a Problems row");
+  const auto file = fixture.ElementRect("menu:File");
+  Expect(file.has_value(), "the File menu item should be on screen");
+  if (!file) {
+    return;
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(file->x + file->w / 2.0f, file->y + 4.0f)}),
+                      "the pointer leaving the Problems row for the menu bar");
+}
+
 // Soak 9f2abbdf4b9c (28 sightings, every size): typing ' at the start of main.cpp
 // recoloured every line below it -- the carried syntax state now opened a literal --
 // and the frame repainted the edited line only, leaving the rest in their old
@@ -5331,6 +5368,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestFocusingAnotherGroupByCommandRepaintsBothPanes);
   AddTest(tests, "QaFlowRegression/RedoAfterASaveInASplitKeepsBothPanesFresh",
           TestRedoAfterASaveInASplitKeepsBothPanesFresh);
+  AddTest(tests, "QaFlowRegression/LeavingAProblemsRowRepaintsItsHover", TestLeavingAProblemsRowRepaintsItsHover);
   AddTest(tests, "QaFlowRegression/AnEditThatOpensABlockCommentRepaintsTheLinesBelow",
           TestAnEditThatOpensABlockCommentRepaintsTheLinesBelow);
   AddTest(tests, "QaFlowRegression/AFocusedPaneShortenedFromAnotherGroupShowsItsReconciledCaret",
