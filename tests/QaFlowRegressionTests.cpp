@@ -3145,6 +3145,47 @@ void TestTheDebugToolbarCoversNoOtherControl() {
   covered("with the panel maximized");
 }
 
+// Soak ce3279c5ceda, ae8ba5055314 (the overlap oracle): with the panel maximized
+// the editor pane is shorter than a line, and the code lens on its first line was
+// reported -- and laid out for the hit-test -- past the pane, over the panel's
+// tabs. Paint clips it to the pane; the lens's rect is the part of it there.
+void TestACodeLensStaysInsideItsPane() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("main.c", "int main() { return 0; }\nint x;\n");
+  editor::PluginDecorationData lenses;
+  lenses.code_lenses.push_back(
+      editor::CodeLensDecoration{.line = 0, .text = "greet (0)", .command = "refs.show"});
+  Expect(TestAccess::CurrentProjectState(fixture.shell).EnsurePluginPresentation().decorations.ReplaceForOwnerFile(
+             "lens-test", fixture.file, std::move(lenses)),
+         "publishing the lens should change the store");
+  const auto lens_rects = [&](const char* what) {
+    TestAccess::NoteLayoutInputsChanged(fixture.shell);
+    fixture.PinCaret();
+    fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+    const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+    const auto& pane = ui["editors"][std::size_t{0}]["rect"].AsArray();
+    std::size_t count = 0;
+    for (const util::JsonValue& element : ui["elements"].AsArray()) {
+      if (element["name"].AsString().rfind("button:lens/", 0) != 0) {
+        continue;
+      }
+      ++count;
+      const auto& r = element["rect"].AsArray();
+      Expect(pane.size() == 4 && r[1].AsDouble() >= pane[1].AsDouble() - 0.5 &&
+                 r[1].AsDouble() + r[3].AsDouble() <= pane[1].AsDouble() + pane[3].AsDouble() + 0.5,
+             std::string(what) + ": the lens is inside its pane: lens " + util::SerializeJson(element["rect"]) +
+                 " pane " + util::SerializeJson(ui["editors"][std::size_t{0}]["rect"]));
+    }
+    return count;
+  };
+  Expect(lens_rects("a full editor") == 1, "the lens is listed");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "panel-maximize"), "the panel should maximize");
+  lens_rects("the panel maximized");
+}
+
 // The QA monkey (seed 2): with the panel maximized, Settings open and the filter
 // taking the typing, a click on the second row's stepper value selected that row
 // and moved the keyboard to the rows -- and no frame repainted it. Settings asked
@@ -5462,6 +5503,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/DebugSessionRepaintsToolbarAndOutput", TestDebugSessionRepaintsToolbarAndOutput);
   AddTest(tests, "QaFlowRegression/DebugToolbarDoesNotHoverUnderAModal", TestDebugToolbarDoesNotHoverUnderAModal);
   AddTest(tests, "QaFlowRegression/TheDebugToolbarCoversNoOtherControl", TestTheDebugToolbarCoversNoOtherControl);
+  AddTest(tests, "QaFlowRegression/ACodeLensStaysInsideItsPane", TestACodeLensStaysInsideItsPane);
   AddTest(tests, "QaFlowRegression/ASettingsRowValueClickRepaintsTheRows", TestASettingsRowValueClickRepaintsTheRows);
   AddTest(tests, "QaFlowRegression/ExceptionFiltersStayListedAfterAStop", TestExceptionFiltersStayListedAfterAStop);
   AddTest(tests, "QaFlowRegression/StopWithNoSessionLeavesTheDebugPane", TestStopWithNoSessionLeavesTheDebugPane);

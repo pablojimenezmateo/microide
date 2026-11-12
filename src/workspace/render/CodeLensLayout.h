@@ -54,9 +54,17 @@ void ForEachLineCodeLens(const render::TextRenderer& text_renderer,
   editor::BuildEolDecorationSegments(text_renderer, inline_texts, code_lenses, anchor_x, line_y,
                                      interaction.line_height, right_limit, segments_scratch);
   for (const editor::EolDecorationSegment& segment : segments_scratch) {
-    if (segment.kind == editor::EolDecorationSegment::Kind::CodeLens &&
-        code_lenses[segment.index].activatable()) {
-      emit(code_lenses[segment.index], segment.rect);
+    if (segment.kind != editor::EolDecorationSegment::Kind::CodeLens ||
+        !code_lenses[segment.index].activatable()) {
+      continue;
+    }
+    // The part of the lens inside the pane, which is what paint shows (the pane
+    // paints under its own clip): a pane shorter than its first line -- the panel
+    // maximized -- reported a lens over the panel's tabs (the overlap oracle).
+    SDL_FRect shown{};
+    if (SDL_GetRectIntersectionFloat(&segment.rect, &interaction.rect, &shown) && shown.w > 0.0f &&
+        shown.h > 0.0f) {
+      emit(code_lenses[segment.index], shown);
     }
   }
 }
