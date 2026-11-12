@@ -35,5 +35,24 @@ class StateEvidenceTests(unittest.TestCase):
         self.assertIn("read 0: 2 frame(s) logged", evidence)
 
 
+class UndecodableRecordEvidenceTests(unittest.TestCase):
+    def test_a_record_that_did_not_decode_is_kept_with_its_backup(self) -> None:
+        with tempfile.TemporaryDirectory() as work:
+            state = Path(work) / "state"
+            state.mkdir()
+            (state / "config").write_bytes(b"MIDE\x00body")
+            (state / "config.bak").write_bytes(b"MIDE\x00older")
+            app = q.App(binary=Path("/bin/true"), work=Path(work), display=":0", size=(800, 600), env={})
+            app.shots = Path(work) / "shots"
+            app.log_path = Path(work) / "microide.log"
+            app.log_path.write_text("")
+            app.alive = lambda: False  # type: ignore[method-assign]
+            detail = f"persistence: {state / 'config'} read but did not decode"
+            app._write_finding("log", [q.Finding("log", detail)])
+            folder = next(app.shots.glob("finding-*"))
+            self.assertEqual((folder / "undecodable-config").read_bytes(), b"MIDE\x00body")
+            self.assertEqual((folder / "undecodable-config.bak").read_bytes(), b"MIDE\x00older")
+
+
 if __name__ == "__main__":
     unittest.main()

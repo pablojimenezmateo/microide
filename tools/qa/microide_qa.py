@@ -2061,6 +2061,18 @@ class App:
                 (folder / "log-tail-before-relaunch.txt").write_text(log.read().decode("utf-8", "replace"))
         if self.shots is not None and (self.shots / "stall-threads.txt").exists():
             shutil.copy2(self.shots / "stall-threads.txt", folder / "stall-threads.txt")
+        # A persisted record the app read but could not decode: its framing and
+        # checksum held, so the file is exactly what the encoder wrote and the
+        # decoder refused -- the bytes are the evidence, and the app's next save
+        # overwrites them (soak 4bbda24149d1).
+        for finding in found:
+            match = re.search(r"persistence: (\S+?)(?: \(backup\))? read but did not decode", finding.detail)
+            if match is None:
+                continue
+            for source in (Path(match.group(1)), Path(match.group(1) + ".bak")):
+                if source.is_file():
+                    with contextlib.suppress(OSError):
+                        shutil.copy2(source, folder / f"undecodable-{source.name}")
         if self.state_evidence and any(f.kind == "state" for f in found):
             (folder / "state-evidence.txt").write_text(
                 "\n".join(self.state_evidence + [f"reported: {self._frames_logged()} frame(s) logged"]) + "\n")

@@ -451,7 +451,8 @@ MAX_SIGHTINGS = 3
 # oracle's documents and on-disk state, the idle oracle's wake sampling. A
 # sighting carrying one the bundle has nowhere is kept even before any fix --
 # without it, a flaky finding that never replays never gets that evidence.
-DIAGNOSTIC_EVIDENCE = ("mismatch-*.txt", "kill-state.tar.gz", "kill-documents.json", "idle-wakes.txt")
+DIAGNOSTIC_EVIDENCE = ("mismatch-*.txt", "kill-state.tar.gz", "kill-documents.json", "idle-wakes.txt",
+                       "undecodable-*")
 
 
 def new_build_for(bundle: Path, sha: str) -> bool:
