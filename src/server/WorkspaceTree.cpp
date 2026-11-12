@@ -51,6 +51,24 @@ bool LinkStaysInRoot(std::string_view link_path, std::string_view target) {
   return !text.empty() && text != ".." && text.rfind("../", 0) != 0 && text.front() != '/';
 }
 
+// The root-relative path an ABSOLUTE link target names when it is inside the
+// root (lexically: a link through another link is not followed here), else
+// nothing. Such a link is shipped as the file it names (LinkStaysInRoot is
+// false for every absolute target), and that file's changes are the link's.
+std::optional<std::string> InRootPathNamedAbsolutely(const std::filesystem::path& root,
+                                                     std::string_view target) {
+  if (target.empty() || target.front() != '/') {
+    return std::nullopt;
+  }
+  const std::filesystem::path named = std::filesystem::path(std::string(target)).lexically_normal();
+  const std::filesystem::path relative = named.lexically_relative(root.lexically_normal());
+  const std::string text = relative.generic_string();
+  if (text.empty() || text == "." || text == ".." || text.rfind("../", 0) == 0) {
+    return std::nullopt;
+  }
+  return text;
+}
+
 struct HashedFile {
   util::ContentHash hash;
   std::uint64_t size = 0;
@@ -353,6 +371,12 @@ std::optional<std::vector<ManifestRow>> WorkspaceTree::RowsFor(
         continue;
       }
       const std::string_view target_view(target, static_cast<std::size_t>(length));
+      if (const std::optional<std::string> named = InRootPathNamedAbsolutely(root_, target_view)) {
+        std::vector<std::string>& followers = link_followers_[*named];
+        if (std::find(followers.begin(), followers.end(), row.path) == followers.end()) {
+          followers.push_back(row.path);
+        }
+      }
       if (LinkStaysInRoot(row.path, target_view)) {
         row.kind = ManifestEntryKind::Symlink;
         row.link_target.assign(target_view);
@@ -468,6 +492,7 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::BuildManifestLocked(
   if (!paths.has_value()) {
     return std::nullopt;
   }
+  link_followers_.clear();  // the listing below records every link again
   std::sort(paths->begin(), paths->end());
   paths->erase(std::unique(paths->begin(), paths->end()), paths->end());
   if (paths->size() > options_.max_files) {
@@ -573,6 +598,13 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::UpdateManifest(
     return std::nullopt;
   }
   std::vector<std::string> touched = changes.touched;
+  // A file some link is shipped as changed (or appeared, for a link that was
+  // dangling): the link's row is that file's content, so it is touched too.
+  for (std::size_t i = 0, n = touched.size(); i < n; ++i) {
+    if (const auto followers = link_followers_.find(touched[i]); followers != link_followers_.end()) {
+      touched.insert(touched.end(), followers->second.begin(), followers->second.end());
+    }
+  }
   std::sort(touched.begin(), touched.end());
   touched.erase(std::unique(touched.begin(), touched.end()), touched.end());
   const auto listed = [&](const std::string& path) {

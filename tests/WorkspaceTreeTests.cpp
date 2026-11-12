@@ -108,6 +108,42 @@ void TestWorkspaceTreeWriteTemporariesAreNotContent() {
          "a watch update does not list a temporary it names either");
 }
 
+// A link naming a file of the root by an absolute path is shipped as that file
+// (§ 6.2: an absolute target is out of the root as a link), so its row is the
+// file's content. A change to the file touches the file's path, not the link's,
+// and the mirror kept the link's first content for good (QA monkey, remote
+// profile: a link to CMakeLists.txt, rewritten later); a link left dangling
+// until its target appeared was never listed.
+void TestWorkspaceTreeAnAbsoluteLinkFollowsTheFileItNames() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "plain";
+  WriteFile(root / "CMakeLists.txt", "project(a)\n");
+  std::filesystem::create_directories(root / "qa-ext");
+  std::filesystem::create_symlink(root / "CMakeLists.txt", root / "qa-ext/link1");
+  std::filesystem::create_symlink(root / "later.txt", root / "qa-ext/link2");  // dangling for now
+  WorkspaceTree tree(root, WorkspaceTree::Options{.racy_window_ns = 0});
+  std::string error;
+  const auto manifest = tree.BuildManifest(&error);
+  Expect(manifest.has_value(), "the walk builds: " + error);
+  const ManifestRow* link = Find(*manifest, "qa-ext/link1");
+  Expect(link != nullptr && link->kind == ManifestEntryKind::File &&
+             link->hash == util::HashContent("project(a)\n"),
+         "the absolute link is shipped as the file it names");
+  Expect(Find(*manifest, "qa-ext/link2") == nullptr, "a dangling link is not listed");
+
+  WriteFile(root / "CMakeLists.txt", "project(b)\n");
+  WriteFile(root / "later.txt", "here now\n");
+  const auto updated =
+      tree.UpdateManifest(WorkspaceTree::Changes{.touched = {"CMakeLists.txt", "later.txt"}}, &error);
+  Expect(updated.has_value(), "the update builds: " + error);
+  link = Find(*updated, "qa-ext/link1");
+  Expect(link != nullptr && link->hash == util::HashContent("project(b)\n"),
+         "the link's row follows the file it names");
+  const ManifestRow* appeared = Find(*updated, "qa-ext/link2");
+  Expect(appeared != nullptr && appeared->hash == util::HashContent("here now\n"),
+         "the link whose target appeared is listed, as that file");
+}
+
 void TestWorkspaceTreeHashCache() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "plain";
@@ -362,6 +398,8 @@ void RegisterWorkspaceTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceTree/GitContentSet", TestWorkspaceTreeGitContentSet);
   AddTest(tests, "WorkspaceTree/WalksWithoutGit", TestWorkspaceTreeWalksWithoutGit);
   AddTest(tests, "WorkspaceTree/HashCache", TestWorkspaceTreeHashCache);
+  AddTest(tests, "WorkspaceTree/AnAbsoluteLinkFollowsTheFileItNames",
+          TestWorkspaceTreeAnAbsoluteLinkFollowsTheFileItNames);
   AddTest(tests, "WorkspaceTree/WriteTemporariesAreNotContent", TestWorkspaceTreeWriteTemporariesAreNotContent);
   AddTest(tests, "WorkspaceTree/FailsLoudly", TestWorkspaceTreeFailsLoudly);
   AddTest(tests, "WorkspaceTree/DropsOnlyWhatItCannotHash", TestWorkspaceTreeDropsOnlyWhatItCannotHash);

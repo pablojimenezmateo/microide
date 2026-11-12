@@ -167,6 +167,14 @@ class WorkspaceTree {
   // incremental update asks about a new path.
   std::vector<std::string> submodule_roots_;
   std::vector<std::string> unwatched_members_;
+  // Links shipped as the file they name, by the in-root path they name: an
+  // absolute link to a file in the root is out of the root as a link (its target
+  // means another file on the client), so its row is that file's content -- and
+  // a change to the file touches the file's path, not the link's. Without this
+  // the mirror kept the link's first content for good, and a link left dangling
+  // until its target appeared was never listed. Rebuilt with every full listing;
+  // an update adds to it (a stale entry only costs a recomputed row).
+  std::unordered_map<std::string, std::vector<std::string>> link_followers_;
   bool built_ = false;
   bool last_update_was_full_ = false;
   bool cache_dirty_ = false;
