@@ -700,6 +700,53 @@ void TestAFocusMoveByTheMaximizedPanelRulePaintsTheRingInItsFrame() {
                       "a later frame repainting only the menu bar");
 }
 
+// Soak 498dc546c6a9: a diff in an editor area too short for its summary, header
+// and a row -- a large editor font, the panel grown over most of the window --
+// still laid out one row, below the area, and painted it into the panel. A full
+// frame showed diff rows over the panel's first lines; a partial frame that did
+// not repaint the editor did not, so every such frame read as stale. The panel
+// is the same whichever tab is in front, so its pixels must be too.
+void TestADiffPaintsInsideItsPane() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("left.txt", "alpha\nbeta\ngamma\n");
+  const std::filesystem::path right = fixture.root / "right.txt";
+  WriteFile(right, "alpha\nBETA\ngamma\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting editor.font_size 32"), "a large font");
+  TestAccess::ShowOutputChannelWithLines(fixture.shell, "qa.panel", 60);
+  TestAccess::SetBottomPanelHeight(fixture.shell, static_cast<float>(FlowFixture::kHeight) - 200.0f);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  const auto panel_pixels = [&]() {
+    fixture.PinCaret();
+    fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+    const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+    const auto& panel = ui["surfaces"]["bottomPanel"].AsArray();
+    std::vector<std::uint32_t> pixels;
+    if (panel.size() == 4) {
+      for (int y = static_cast<int>(panel[1].AsInt()); y < panel[1].AsInt() + panel[3].AsInt(); ++y) {
+        for (int x = static_cast<int>(panel[0].AsInt()); x < panel[0].AsInt() + panel[2].AsInt(); x += 3) {
+          const SDL_Color c = fixture.canvas.PixelAt(x, y);
+          pixels.push_back((std::uint32_t{c.r} << 16) | (std::uint32_t{c.g} << 8) | c.b);
+        }
+      }
+    }
+    return std::pair{pixels, ui};
+  };
+  const auto [file_panel, file_ui] = panel_pixels();
+  Expect(!file_panel.empty(), "the panel is shown");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell,
+                                        "compare-files " + fixture.file.string() + " " + right.string()),
+         "compare-files should open a diff");
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  const auto [diff_panel, diff_ui] = panel_pixels();
+  const auto& editor = diff_ui["surfaces"]["editorSurface"].AsArray();
+  Expect(editor.size() == 4 && editor[3].AsInt() < 140,
+         "the editor area is too short for the diff's summary, header and a row");
+  Expect(diff_panel == file_panel, "the diff paints nothing over the panel below it");
+}
+
 // QA monkey (seed 2, step 62): typing on a diff's working side can regroup the
 // whole diff while the keystroke's damage names only the edited line. The left
 // side's first line was deleted and its empty second line paired with the
@@ -5469,6 +5516,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TheGitViewReportsTheSelectedEntrysRow", TestTheGitViewReportsTheSelectedEntrysRow);
   AddTest(tests, "QaFlowRegression/ReloadFromDiskRefusesADirtyBufferWithWhy", TestReloadFromDiskRefusesADirtyBufferWithWhy);
   AddTest(tests, "QaFlowRegression/NothingBeneathAnOpenMenuHovers", TestNothingBeneathAnOpenMenuHovers);
+  AddTest(tests, "QaFlowRegression/ADiffPaintsInsideItsPane", TestADiffPaintsInsideItsPane);
   AddTest(tests, "QaFlowRegression/TypingThatReshapesADiffRepaintsIt", TestTypingThatReshapesADiffRepaintsIt);
   AddTest(tests, "QaFlowRegression/TheRemoteSegmentOpensTheRemoteMenu", TestTheRemoteSegmentOpensTheRemoteMenu);
   AddTest(tests, "QaFlowRegression/AFocusMoveByTheMaximizedPanelRulePaintsTheRingInItsFrame",

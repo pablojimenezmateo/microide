@@ -1791,6 +1791,19 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
   const EditorPaneLayouts editor_panes =
       render_editor_surface ? EditorPaneLayoutsFromGroupRects(editor_surface_group_rects)
                             : EditorPaneLayouts{};
+  // A diff or a merge paints inside the editor area, as an editor pane does inside
+  // its own: in an area too short for its header and a row (a large font, the
+  // panel grown over the window) it laid out a row below the area anyway and
+  // painted it over the panel -- in a full frame, not in a partial one that left
+  // the editor alone (soak 498dc546c6a9).
+  std::optional<render::ScopedRenderClip> surface_clip;
+  if (active_compare_tab != nullptr || active_merge_tab != nullptr) {
+    const SDL_FRect& area = layout.editor_surface;
+    surface_clip.emplace(renderer, SDL_Rect{static_cast<int>(std::floor(area.x)),
+                                            static_cast<int>(std::floor(area.y)),
+                                            static_cast<int>(std::ceil(area.w)),
+                                            static_cast<int>(std::ceil(area.h))});
+  }
   if (active_compare_tab != nullptr) {
     const bool draw_compare_caret =
         active_compare_tab->right_view_active && prepared_frame_draw_editor_caret_;
@@ -1815,10 +1828,12 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                              .diagnostics_store = &project_state.diagnostics_store,
                              .right_plugin_decorations = compare_right_decorations,
                          });
+    surface_clip.reset();
   } else if (active_merge_tab != nullptr) {
     const bool draw_merge_caret = prepared_frame_draw_editor_caret_;
     RenderMergeSurface(renderer, layout.editor_surface, project_state.root, draw_merge_caret,
                        project_state.diagnostics_store);
+    surface_clip.reset();
   } else {
     // Resolved once per frame; "hint" (the default) means show all, so the filter
     // returns the store span untouched (zero cost).
