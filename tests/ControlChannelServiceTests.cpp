@@ -979,6 +979,17 @@ void TestCompareQueryReportsRowsAndNovelSpans() {
              (*changed)["rightSpans"].AsArray()[0].AsArray()[0].AsInt() == 4 &&
              (*changed)["rightSpans"].AsArray()[0].AsArray()[1].AsInt() == 5,
          "the novel token y is the one span on the right");
+
+  // A line that is not valid UTF-8 travels as JSON with U+FFFD in place of the
+  // bad bytes, which moves every offset after them: its exact bytes come along.
+  microide::workspace::CompareTabState lossy;
+  lossy.model = microide::compare::BuildCompareModel(std::string("f(\x80\x81, 1);\n"),
+                                                     std::string("f(\x80\x81, 2);\n"));
+  const util::JsonValue lossy_json = microide::workspace::BuildControlCompareJson(&lossy);
+  const util::JsonValue& lossy_row = lossy_json["rows"].AsArray().at(0);
+  Expect(lossy_row["leftHex"].AsString() == "662880812c2031293b" && lossy_row["rightHex"].AsString() == "662880812c2032293b",
+         "a side that is not valid UTF-8 carries its bytes as hex");
+  Expect(!json["rows"].AsArray().at(1).HasKey("leftHex"), "a valid side carries none");
 }
 
 // Cross-platform: the stdout JSONL mirror must surface debug events even when no

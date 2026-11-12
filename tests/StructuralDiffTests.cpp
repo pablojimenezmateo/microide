@@ -11,6 +11,7 @@
 #include "compare/DiffSyntax.h"
 #include "compare/HunkRefinement.h"
 #include "compare/StructuralDiff.h"
+#include "util/StringUtil.h"
 
 // The structural (difftastic-style) diff: lexing into a syntax forest, the
 // structural match, and what the compare model shows from it.
@@ -437,9 +438,67 @@ void TestRefinementCanBeTurnedOff() {
          "an unrefined build should carry no spans");
 }
 
+// Soak 1b3aae58e0b7 / 5226857eacc9 / 5fb20806dcf1 (the structural oracle, on diffs
+// the monkey opened over lines of emoji): novel spans that ended inside a
+// character -- the view highlights half a code point, and every byte column
+// after it that a caret or a selection reads from the span is off. Every span a
+// refinement reports starts and ends on a UTF-8 boundary, whatever the text.
+void TestNovelSpansNeverSplitACharacter() {
+  const std::string units[] = {"a", "x", " ", "(", ")", "\"", "//", "\xF0\x9F\x98\x80", "\xE4\xB8\xAD",
+                               "e\xCC\x81", "\xC3\xA9", std::string("\x80", 1), "\xFF", "\t", "foo", "1"};
+  std::mt19937 rng(7);
+  const auto line = [&](std::size_t length) {
+    std::string out;
+    for (std::size_t i = 0; i < length; ++i) {
+      out += units[rng() % std::size(units)];
+    }
+    return out;
+  };
+  const auto on_boundary = [](std::string_view text, std::size_t at) {
+    return at == 0 || at >= text.size() || (static_cast<unsigned char>(text[at]) & 0xC0u) != 0x80u ||
+           // A stray continuation byte is a unit of its own (the editor's tiling):
+           // a span may begin or end at one only where no lead byte claims it.
+           util::Utf8SequenceLength(text, [&] {
+             std::size_t lead = at;
+             while (lead > 0 && at - lead < 3 && (static_cast<unsigned char>(text[lead]) & 0xC0u) == 0x80u) {
+               --lead;
+             }
+             return lead;
+           }()) <= at - [&] {
+             std::size_t lead = at;
+             while (lead > 0 && at - lead < 3 && (static_cast<unsigned char>(text[lead]) & 0xC0u) == 0x80u) {
+               --lead;
+             }
+             return lead;
+           }();
+  };
+  for (int round = 0; round < 300; ++round) {
+    std::string left;
+    std::string right;
+    for (int l = 0; l < 6; ++l) {
+      const std::string base = line(1 + rng() % 40);
+      left += base + "\n";
+      right += (rng() % 3 == 0 ? line(1 + rng() % 70) : base + line(rng() % 4)) + "\n";
+    }
+    const CompareModel model = BuildCompareModel(left, right);
+    for (const CompareRow& row : model.rows) {
+      for (const auto& [text, spans] : {std::pair{row.left_text, &row.left_changed_spans},
+                                        std::pair{row.right_text, &row.right_changed_spans}}) {
+        for (const auto& span : *spans) {
+          Expect(span.start < span.end && span.end <= text.size(),
+                 "a novel span lies inside its line");
+          Expect(on_boundary(text, span.start) && on_boundary(text, span.end),
+                 "a novel span never starts or ends inside a character (round " + std::to_string(round) + ")");
+        }
+      }
+    }
+  }
+}
+
 }  // namespace
 
 void RegisterStructuralDiffTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "StructuralDiff/NovelSpansNeverSplitACharacter", TestNovelSpansNeverSplitACharacter);
   AddTest(tests, "StructuralDiff/LexerReadsCommentsStringsAndOperators",
           TestLexerReadsCommentsStringsAndOperators);
   AddTest(tests, "StructuralDiff/LexerApostropheInWordIsNotAQuote",

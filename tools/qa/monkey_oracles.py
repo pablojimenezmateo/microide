@@ -496,7 +496,11 @@ class StructuralDiffOracle:
                     found.append(("diff", f"the {side} side of {where} marks novel tokens on a side "
                                           f"that {'is absent' if not present else 'did not change'}"))
                     continue
-                raw = str(row.get(f"{side}Text", "")).encode()
+                # The spans are offsets into the line's real bytes: the JSON text of
+                # a line that is not valid UTF-8 has U+FFFD in place of each bad
+                # run, so such a side comes with its exact bytes as hex.
+                raw = bytes.fromhex(row[f"{side}Hex"]) if row.get(f"{side}Hex") \
+                    else str(row.get(f"{side}Text", "")).encode()
                 last = 0
                 for start, end in spans:
                     if not (last <= start < end <= len(raw)):

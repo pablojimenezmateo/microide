@@ -11,8 +11,11 @@
 //
 // Per row: `kind` (unchanged/added/deleted/modified), `hunk` (-1 outside one), the
 // 1-based `leftLine`/`rightLine` (0 = absent), both texts, and each side's novel
-// byte spans as [start, end) pairs into that side's text. Rows past `max_rows` are
-// dropped (`rowsTruncated: true`). Read-only: no state change, no redraw.
+// byte spans as [start, end) pairs into that side's text. A side that is not
+// valid UTF-8 also carries `leftHex`/`rightHex`, its exact bytes: the JSON text
+// has U+FFFD for each bad run, so the spans' offsets are only right against
+// these. Rows past `max_rows` are dropped (`rowsTruncated: true`). Read-only: no
+// state change, no redraw.
 
 #include <cstddef>
 

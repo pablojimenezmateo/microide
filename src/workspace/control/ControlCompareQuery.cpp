@@ -2,9 +2,12 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include "compare/CompareModel.h"
+#include "util/StringUtil.h"
 #include "workspace/state/WorkspaceTabState.h"
 
 namespace microide::workspace {
@@ -22,6 +25,23 @@ const char* RowKindName(compare::CompareRowKind kind) {
       break;
   }
   return "unchanged";
+}
+
+// A side's exact bytes as hex, for a line that is not valid UTF-8: JSON can only
+// carry such a line with U+FFFD in place of each bad run, which moves every byte
+// offset after it -- and the spans are byte offsets into the real line. The
+// structural oracle read them against the lossy text and reported spans
+// "splitting a character" that were on boundaries (soak 1b3aae58e0b7).
+std::string HexBytes(std::string_view text) {
+  static constexpr char kDigits[] = "0123456789abcdef";
+  std::string out;
+  out.reserve(text.size() * 2);
+  for (const char c : text) {
+    const auto byte = static_cast<unsigned char>(c);
+    out.push_back(kDigits[byte >> 4]);
+    out.push_back(kDigits[byte & 0x0F]);
+  }
+  return out;
 }
 
 util::JsonValue SpansJson(const std::vector<compare::CompareTextSpan>& spans) {
@@ -63,6 +83,12 @@ util::JsonValue BuildControlCompareJson(const CompareTabState* compare,
     object["rightText"] = util::JsonValue(std::string(row.right_text.substr(0, options.max_text_bytes)));
     if (truncated) {
       object["textTruncated"] = util::JsonValue(true);
+    }
+    for (const auto& [key, text] : {std::pair{"leftHex", row.left_text}, std::pair{"rightHex", row.right_text}}) {
+      const std::string_view kept = text.substr(0, options.max_text_bytes);
+      if (!util::IsValidUtf8(kept)) {
+        object[key] = util::JsonValue(HexBytes(kept));
+      }
     }
     object["leftSpans"] = SpansJson(row.left_changed_spans);
     object["rightSpans"] = SpansJson(row.right_changed_spans);

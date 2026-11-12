@@ -329,7 +329,9 @@ Answering reads state only: it requests no redraw and needs no painted frame.
 `rightPath`, `hunks`, and per row `kind` (unchanged/added/deleted/modified), `hunk`
 (-1 outside one), 1-based `leftLine`/`rightLine` (0 = absent), both texts, and each
 side's structural-diff novel spans as `[start, end)` byte pairs (`leftSpans`,
-`rightSpans`). Capped at 20,000 rows (`rowsTruncated`) and 4 KiB of text per row
+`rightSpans`); a side that is not valid UTF-8 also carries `leftHex`/`rightHex`,
+its exact bytes, since the spans are offsets into those and the JSON text has
+U+FFFD for each bad run. Capped at 20,000 rows (`rowsTruncated`) and 4 KiB of text per row
 (`textTruncated`). `{available:false}` when the active tab is not a diff.
 
 **Notification buttons.** `notifications` lists every toast oldest first:

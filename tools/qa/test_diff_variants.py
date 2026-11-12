@@ -64,6 +64,17 @@ class StructuralOracleTests(unittest.TestCase):
         self.assertEqual(len(_check([_row("modified", 0, "ab", "ac", [(1, 2)], [(1, 9)])])), 1)
         self.assertEqual(len(_check([_row("modified", 0, "é", "e", [(1, 2)], [(0, 1)])])), 1)
 
+    def test_a_lossy_line_is_checked_against_its_bytes(self) -> None:
+        # Soak 1b3aae58e0b7: "😀" then a cut-off emoji; the JSON text has one U+FFFD
+        # (3 bytes) for the two stray bytes, so the span after them read as splitting
+        # a character. Against the real bytes it sits on a boundary.
+        left, right = "😀".encode() + b"\xf0\x9f" + b"xy", "😀".encode() + b"\xf0\x9f" + b"xz"
+        row = _row("modified", 0, left.decode(errors="replace"), right.decode(errors="replace"),
+                   [(6, 8)], [(6, 8)])
+        self.assertEqual(len(_check([row])), 2, "against the lossy text: a false report per side")
+        row["leftHex"], row["rightHex"] = left.hex(), right.hex()
+        self.assertEqual(_check([row]), [])
+
     def test_spans_on_an_unchanged_row_are_reported(self) -> None:
         found = _check([_row("unchanged", -1, "x", "x", [(0, 1)])])
         self.assertEqual(len(found), 1)
