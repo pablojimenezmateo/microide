@@ -454,14 +454,26 @@ MAX_SIGHTINGS = 3
 DIAGNOSTIC_EVIDENCE = ("mismatch-*.txt", "kill-state.tar.gz", "kill-documents.json", "idle-wakes.txt")
 
 
+def new_build_for(bundle: Path, sha: str) -> bool:
+    """Neither the bundle nor any kept sighting comes from the build at `sha`.
+    An open finding whose evidence all predates a fix to its class otherwise
+    keeps nothing of what the current code does (ed121110a40f: seen on 5f577c2a
+    after 3793bc00b, and that run was deleted)."""
+    with contextlib.suppress(OSError, ValueError):
+        if json.loads((bundle / "meta.json").read_text()).get("sha") == sha:
+            return False
+    return not any(bundle.glob(f"sightings/*-{sha[:12]}-*"))
+
+
 def keep_sighting(job: Job, finding: dict[str, Any], entry: ld.Entry) -> None:
     """A later sighting of a known signature is evidence too, and the run
     directory holding it is deleted when the job is reaped. Keep it under the
     bundle's `sightings/` when it says something the first one cannot: it came
     after a fix (the sighting that reopens a finding is the only evidence of
-    what the fix missed), or it carries diagnostic evidence (DIAGNOSTIC_EVIDENCE)
+    what the fix missed), it carries diagnostic evidence (DIAGNOSTIC_EVIDENCE)
     the bundle has none of (that evidence postdates most such findings, which
-    never replay). The newest MAX_SIGHTINGS stay; FINDING.md lists them."""
+    never replay), or it is the first from a build the bundle has nothing from.
+    The newest MAX_SIGHTINGS stay; FINDING.md lists them."""
     bundle = FINDINGS / entry.sig
     evidence = finding_evidence(job, finding)
     if evidence is None or not bundle.is_dir():
@@ -471,7 +483,7 @@ def keep_sighting(job: Job, finding: dict[str, Any], entry: ld.Entry) -> None:
         any(evidence.glob(pattern)) and not any(bundle.glob(f"evidence/{pattern}"))
         and not any(bundle.glob(f"sightings/*/{pattern}"))
         for pattern in DIAGNOSTIC_EVIDENCE)
-    if not (after_fix or diagnostics_missing):
+    if not (after_fix or diagnostics_missing or new_build_for(bundle, job.sha)):
         return
     sightings = bundle / "sightings"
     name = f"{time.strftime('%Y%m%d-%H%M%S')}-{job.sha[:12]}-{job.cell.replace('/', '_')}"

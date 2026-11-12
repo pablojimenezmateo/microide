@@ -83,13 +83,13 @@ class SightingTests(unittest.TestCase):
             "seed": 1, "header": {}}))
         self.out = Path(tempfile.mkdtemp(dir=os.environ.get("TMPDIR")))
 
-    def sighting(self, *files: str) -> None:
+    def sighting(self, *files: str, sha: str = "0" * 40) -> None:
         evidence = self.out / "seed-1" / "finding-01-monkey-step-5"
         evidence.mkdir(parents=True, exist_ok=True)
         for name in files:
             (evidence / name).write_bytes(b"x")
         job = self.soak.Job(type=self.soak.JOB_TYPES[0], seed=1, out=self.out, command=[], cell="c/d/1x1@1",
-                            started=0.0, proc=None, sha="0" * 40, binary="")
+                            started=0.0, proc=None, sha=sha, binary="")
         entry = self.ld.Entry(sig="abc123abc123", status="new")
         self.soak.keep_sighting(job, {"evidence": str(evidence), "detail": "d"}, entry)
 
@@ -104,6 +104,15 @@ class SightingTests(unittest.TestCase):
     def test_a_new_findings_sighting_carrying_kill_state_the_bundle_lacks_is_kept(self):
         self.sighting("now.png", "kill-state.tar.gz")
         self.assertIn("kill-state.tar.gz", self.kept())
+
+    def test_the_first_sighting_on_a_build_the_bundle_has_none_from_is_kept(self):
+        # An open finding whose evidence all predates a related fix: the only
+        # evidence of what the current code does was deleted with its run
+        # (ed121110a40f, seen on 5f577c2a after 3793bc00b, nothing kept).
+        self.sighting("now.png", sha="1" * 40)
+        self.assertEqual(self.kept(), ["now.png", "sighting.json"])
+        self.sighting("now.png", "log-tail.txt", sha="1" * 40)
+        self.assertEqual(self.kept(), ["now.png", "sighting.json"])
 
     def test_kill_state_the_bundle_already_has_is_not_kept_again(self):
         (self.bundle / "evidence" / "kill-state.tar.gz").write_bytes(b"x")
