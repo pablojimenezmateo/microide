@@ -1193,7 +1193,11 @@ class Monkey:
             self.host.fault(kind)
             return f"remote:fault-{kind}"
         named = [name for name in self.files if name]
-        if self.rng.random() < 0.2 and named:
+        if self.rng.random() < 0.15 and self.project is not None:
+            # Blocked saves (a dangling link or an unreadable file where the save
+            # lands, both of which the outside world makes): every one at once.
+            command = f"remote-blocked {q.quote_arg(str(self.project))} {self.rng.choice(('retry', 'replace'))}"
+        elif self.rng.random() < 0.2 and named:
             command = (f"remote-resolve {q.quote_arg(self.rng.choice(named))} "
                        f"{self.rng.choice(('local', 'remote', 'compare', 'merge'))}")
         else:

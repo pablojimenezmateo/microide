@@ -33,6 +33,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Remote: Resolve Conflict", ""},
       ActionSpec{ActionId::RemoteResolveAllConflicts, "remote-resolve-all", "remote-resolve-all [root] <local|remote>",
                  "Remote: Resolve All Conflicts", ""},
+      ActionSpec{ActionId::RemoteBlockedSave, "remote-blocked", "remote-blocked <path|root> <retry|replace>",
+                 "Remote: Retry or Replace a Refused Save", ""},
       ActionSpec{ActionId::RemoteShowConflicts, "remote-conflicts", "remote-conflicts [root]",
                  "Remote: Show Conflicts", ""},
       ActionSpec{ActionId::RemoteRemoveMirror, "remote-remove-mirror",

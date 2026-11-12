@@ -1427,6 +1427,7 @@ util::JsonValue ControlChannelService::BuildStatus() const {
       remote_object["filesPending"] = util::JsonValue(remote->files_pending);
       remote_object["unsentPushes"] = util::JsonValue(remote->unsent_pushes);
       remote_object["conflicts"] = util::JsonValue(remote->conflicts);
+      remote_object["blocked"] = util::JsonValue(remote->blocked);
       remote_object["heldDeletes"] = util::JsonValue(remote->held_deletes);
       object["remote"] = util::JsonValue(std::move(remote_object));
     }

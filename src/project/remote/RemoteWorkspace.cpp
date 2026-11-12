@@ -55,6 +55,7 @@ RemoteWorkspace::WriteResult WriteResultFrom(std::optional<util::JsonValue> resu
     out.error = error.has_value() ? error->message : "no answer";
     out.unreachable = !error.has_value() || error->code == kErrorCancelled;
     out.may_have_applied = out.unreachable;  // this request was sent
+    out.blocked = error.has_value() && error->code == kErrorPathRefused;
     return out;
   }
   const util::JsonValue& hash = (*result)["hash"];

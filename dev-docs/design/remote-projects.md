@@ -908,6 +908,21 @@ host notices when the link drops.
   fetched remote content, using `CompareMergeService`; the user resolves and
   saves, which pushes). Nothing is done automatically; both sides' content exist
   until the user chooses.
+- **Blocked.** A push the host refuses for the path itself -- not a regular file
+  there (a link, dangling or not), permission, a read-only filesystem, a parent
+  that is not a directory -- is neither a conflict (nothing moved) nor unsent
+  (no reconnect will send it). The server answers `kErrorPathRefused`; the engine
+  parks the save as blocked with the host's reason (`MirrorStore::Entry::blocked`,
+  in memory: after a restart the journal's push is tried once and blocks again).
+  It is counted apart (`status.blocked`, "N blocked" in the status segment and
+  the home's status block) and not replayed by a sync; a row for the path that
+  differs from the last one (the host changed it), the host dropping a path it
+  listed, or a new save retries it. Its row names the file and the reason, with
+  **Retry** and **Replace on Host** (a write under `expect: replace`, the one
+  precondition that puts the file where a link was; plain `any` still refuses a
+  link); from two on, one counted row with Retry All and Replace All on Host
+  (`remote-blocked <path|root> <retry|replace>`). A full disk or an I/O error is
+  not this: it stays an error and the save stays unsent.
 - **Ordering with LSP.** `textDocument/didSave` is sent after the push is acked,
   not after the local write, or a language server that re-reads from disk on save sees the
   previous content.

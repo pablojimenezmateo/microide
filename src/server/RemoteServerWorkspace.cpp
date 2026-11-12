@@ -795,7 +795,8 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
       const std::uint64_t manifest = tree->tree.NewestManifestId();
       WithPeer(connection_id, [&](remote::RemotePeer& peer) {
         if (result.status == remote::FileOpResult::Status::Error) {
-          peer.ReplyError(id, remote::kErrorInvalidParams, result.error);
+          peer.ReplyError(id, result.blocked ? remote::kErrorPathRefused : remote::kErrorInvalidParams,
+                          result.error);
         } else {
           peer.Reply(id, OpResultJson(result, manifest));
         }

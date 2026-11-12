@@ -33,6 +33,11 @@ struct FileOpResult {
   // Conflict: what is there now, or nullopt when nothing is.
   std::optional<util::ContentHash> current;
   std::string error;
+  // Error only: the path itself refuses the operation as it stands on the host --
+  // not a regular file there, permission, a read-only filesystem, a parent that is
+  // not a directory. Retrying is pointless until something there changes; a disk
+  // that is full, or an I/O error, is not this.
+  bool blocked = false;
   bool ok() const { return status == Status::Ok; }
 };
 

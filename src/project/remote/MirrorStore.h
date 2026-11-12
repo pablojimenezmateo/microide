@@ -97,6 +97,13 @@ class MirrorStore {
     // change, and continues from it. Cleared by any answer. Not persisted: after a
     // reload such a push reads as the conflict it may be.
     std::vector<util::ContentHash> unacknowledged;
+    // The host refused this path's push for the path itself (not a regular file
+    // there, permission, a read-only filesystem): why, as it said. Set only with
+    // `push_pending`. A blocked push is not queued again until the host changes
+    // the path or the user asks (Retry, Replace on Host); a save retries it too.
+    // Not persisted: after a reload the journal's push is tried once more and,
+    // still refused, blocks again with the host's current reason.
+    std::string blocked;
 
     friend bool operator==(const Entry&, const Entry&) = default;
   };

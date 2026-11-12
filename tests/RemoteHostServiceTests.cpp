@@ -825,6 +825,95 @@ void TestAOneSidedConflictOffersNoMerge() {
   }
 }
 
+// Soak 464a40fee2bd: a save the host refuses for the path itself (here a folder
+// made read-only there) was a "Sync failed" error repeated at every reconnect,
+// with the save counted as unsent forever. It is blocked: a row of its own naming
+// the host's reason, with Retry and Replace on Host, counted apart from unsent.
+void TestASaveTheHostRefusesHasARowWithRetry() {
+  if (::geteuid() == 0) {
+    return;  // permissions do not refuse root
+  }
+  FakeSshHost host;
+  const std::filesystem::path host_root = host.home / "src" / "refusing";
+  WriteFile(host_root / "locked/a.txt", "base\n");
+  const std::string target = "dev@fake-refusing-" + std::to_string(::getpid());
+  WorkspaceShell shell;
+  PointAtFakeHost(shell, host);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open " + target + ":" + host_root.string()),
+         "the command is accepted");
+  const std::filesystem::path mirror = WorkspaceShellTestAccess::ProjectRoot(shell);
+  const std::filesystem::path file = mirror / "locked/a.txt";
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return std::filesystem::exists(file) &&
+                      WorkspaceShellTestAccess::ProjectRemoteStatus(shell).stages.size() == 3 &&
+                      WorkspaceShellTestAccess::ProjectRemoteStatus(shell).stages[2].text.rfind("synced ", 0) == 0;
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(10)),
+         "the mirror fills");
+  namespace fs = std::filesystem;
+  fs::permissions(host_root / "locked", fs::perms::owner_read | fs::perms::owner_exec);
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("mine ");
+  Expect(WorkspaceShellTestAccess::SaveTab(shell, 0), "the save succeeds locally");
+
+  const std::string row_key = "remote.blocked-save." + file.string();
+  const auto find = [&]() -> const workspace::NotificationService::Notification* {
+    for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+      if (row.key == row_key) {
+        return &row;
+      }
+    }
+    return nullptr;
+  };
+  const auto messages = [&] {
+    std::string all;
+    for (const auto& n : WorkspaceShellTestAccess::ActiveNotifications(shell)) all += " | " + n.message;
+    return all;
+  };
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return find() != nullptr;
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(10)),
+         [&] { return "a blocked-save row appears:" + messages(); });
+  {
+    const auto* row = find();
+    std::string labels;
+    for (const auto& action : row->actions) labels += " " + action.label;
+    Expect(row->message.find("Cannot save locked/a.txt on " + target) != std::string::npos &&
+               row->message.find("Permission denied") != std::string::npos,
+           "the row names the file, the host and its reason: " + row->message);
+    Expect(row->actions.size() == 2 && row->actions[0].label == "Retry" &&
+               row->actions[1].label == "Replace on Host",
+           "and offers Retry and Replace on Host:" + labels);
+  }
+  const util::JsonValue remote = WorkspaceShellTestAccess::ControlQuery(shell, "status")["remote"];
+  Expect(remote["blocked"].AsInt(-1) == 1 && remote["unsentPushes"].AsInt(-1) == 0,
+         "it is blocked, not unsent: " + util::SerializeJson(remote));
+  for (const auto& n : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+    Expect(n.message.rfind("Sync with ", 0) != 0, "no generic sync error repeats it: " + n.message);
+  }
+
+  fs::permissions(host_root / "locked", fs::perms::owner_all);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-blocked " + file.string() + " retry"),
+         "Retry is accepted");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return ReadFile(host_root / "locked/a.txt") == "mine base\n" && find() == nullptr;
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+         [&] { return "the retried save lands on the host and the row goes:" + messages(); });
+  Expect(WorkspaceShellTestAccess::ControlQuery(shell, "status")["remote"]["blocked"].AsInt(-1) == 0,
+         "nothing is blocked any more");
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-blocked " + file.string() + " retry"),
+         "a Retry with nothing blocked is refused");
+}
+
 void TestConflictsBatchIntoOneRowAndTheConflictsView() {
   FakeSshHost host;
   const std::filesystem::path host_root = host.home / "src" / "many";
@@ -2062,6 +2151,7 @@ void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostService/ConflictsBatchIntoOneRowAndTheConflictsView",
           TestConflictsBatchIntoOneRowAndTheConflictsView);
   AddTest(tests, "RemoteHostService/AOneSidedConflictOffersNoMerge", TestAOneSidedConflictOffersNoMerge);
+  AddTest(tests, "RemoteHostService/ASaveTheHostRefusesHasARowWithRetry", TestASaveTheHostRefusesHasARowWithRetry);
   AddTest(tests, "RemoteHostService/APortThatStartsListeningIsForwarded", TestAPortThatStartsListeningIsForwarded);
   AddTest(tests, "RemoteHostService/MentionsLocalPortReadsADevServersBanner", TestMentionsLocalPortReadsADevServersBanner);
   AddTest(tests, "RemoteHostService/APortTheProjectsTerminalPrintedIsTheProjects",

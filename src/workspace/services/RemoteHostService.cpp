@@ -389,6 +389,7 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
       break;
   }
   PublishConflictRows(tree, entry);
+  PublishBlockedRows(tree, entry);
   PublishHostChanges(tree, entry, sync);
   if (editor::WelcomeRemoteStatus block = StatusBlock(record.host, record.host_root, status, sync,
                                                              project.session().SshCommandText(), ServerRelease(project));
@@ -648,8 +649,9 @@ editor::WelcomeRemoteStatus RemoteHostService::StatusBlock(std::string_view host
   } else {
     stage("synced " + std::to_string(sync.files) + " files" +
               (sync.dirty > 0 ? " · " + std::to_string(sync.dirty) + " unsent" : std::string()) +
+              (sync.blocked > 0 ? " · " + std::to_string(sync.blocked) + " blocked" : std::string()) +
               (sync.conflicts > 0 ? " · " + std::to_string(sync.conflicts) + " in conflict" : std::string()),
-          sync.conflicts > 0 ? Stage::Attention : Stage::Done);
+          sync.conflicts > 0 || sync.blocked > 0 ? Stage::Attention : Stage::Done);
   }
   return block;
 }
@@ -875,6 +877,85 @@ void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, P
   } else if (operations_.dismiss_notification) {
     operations_.dismiss_notification(summary_key);
   }
+}
+
+void RemoteHostService::PublishBlockedRows(const std::filesystem::path& tree, Project& entry) {
+  // Shown until the host takes the save or the user replaces it; a save's
+  // refusal is said once per file, not at every reconnect (the generic "Sync
+  // failed" row used to repeat it, and the save sat counted as unsent).
+  const std::vector<remote::MirrorSyncEngine::Blocked> blocked = entry.project->engine().BlockedSaves();
+  const std::string summary_key = "remote.blocked." + tree.string();
+  const auto row_key = [&](const std::string& path) { return "remote.blocked-save." + (tree / path).string(); };
+  const bool own_row = blocked.size() == 1;
+  for (const std::string& shown : entry.blocked_rows) {
+    if ((!own_row || shown != blocked.front().path) && operations_.dismiss_notification) {
+      operations_.dismiss_notification(row_key(shown));
+    }
+  }
+  entry.blocked_rows.clear();
+  const std::string in_project = InProject(entry.host, entry.host_root);
+  if (own_row) {
+    const remote::MirrorSyncEngine::Blocked& save = blocked.front();
+    entry.blocked_rows.push_back(save.path);
+    const std::string absolute = (tree / save.path).string();
+    if (operations_.notify) {
+      operations_.notify(NotificationService::Request{
+          .tone = NotificationService::Tone::Error,
+          .key = row_key(save.path),
+          .message = "Cannot save " + save.path + " on " + entry.host + ": " + save.reason + in_project,
+          .sticky = true,
+          .actions = {
+              NotificationAction{.label = "Retry", .id = ActionId::RemoteBlockedSave,
+                                 .args = {absolute, "retry"}},
+              NotificationAction{.label = "Replace on Host", .id = ActionId::RemoteBlockedSave,
+                                 .args = {absolute, "replace"}},
+          },
+      });
+    }
+  }
+  if (blocked.size() >= 2 && operations_.notify) {
+    operations_.notify(NotificationService::Request{
+        .tone = NotificationService::Tone::Error,
+        .key = summary_key,
+        .message = std::to_string(blocked.size()) + " saves refused by " + entry.host + " (" +
+                   blocked.front().path + ": " + blocked.front().reason + ")" + in_project,
+        .sticky = true,
+        .actions = {
+            NotificationAction{.label = "Retry All", .id = ActionId::RemoteBlockedSave,
+                               .args = {tree.string(), "retry"}},
+            NotificationAction{.label = "Replace All on Host", .id = ActionId::RemoteBlockedSave,
+                               .args = {tree.string(), "replace"}},
+        },
+    });
+  } else if (operations_.dismiss_notification) {
+    operations_.dismiss_notification(summary_key);
+  }
+}
+
+bool RemoteHostService::SettleBlockedSaves(const std::filesystem::path& target, bool replace) {
+  const std::filesystem::path normal = target.lexically_normal();
+  for (auto& [tree, entry] : projects_) {
+    std::string relative = normal.lexically_relative(tree).generic_string();
+    if (relative.empty() || util::RelativeTextClimbsOut(relative)) {
+      continue;
+    }
+    const bool whole_project = relative == ".";
+    remote::MirrorSyncEngine& engine = entry.project->engine();
+    bool any = false;
+    for (const remote::MirrorSyncEngine::Blocked& save : engine.BlockedSaves()) {
+      if (!whole_project && save.path != relative) {
+        continue;
+      }
+      any = true;
+      if (replace) {
+        engine.ResolveConflict(save.path, remote::MirrorSyncEngine::Resolution::KeepLocal);
+      } else {
+        engine.RetryBlocked(save.path);
+      }
+    }
+    return any;
+  }
+  return false;
 }
 
 bool RemoteHostService::ResolveAllConflicts(const std::filesystem::path& root, bool keep_local) {
@@ -2175,6 +2256,7 @@ void RemoteHostService::PublishStatusSegment() {
   std::size_t sync_absent = 0;
   bool first_sync = false;
   std::size_t unsent = 0;
+  std::size_t blocked = 0;
   std::string tooltip;
   for (const auto& [tree, entry] : projects_) {
     (void)tree;
@@ -2188,8 +2270,11 @@ void RemoteHostService::PublishStatusSegment() {
         sync_absent += sync.absent;
       }
       unsent += sync.dirty;
+      blocked += sync.blocked;
       tooltip += record.host + ":" + record.host_root +
-                 (sync.dirty == 0 ? std::string() : " · " + std::to_string(sync.dirty) + " to push") + "\n";
+                 (sync.dirty == 0 ? std::string() : " · " + std::to_string(sync.dirty) + " to push") +
+                 (sync.blocked == 0 ? std::string() : " · " + std::to_string(sync.blocked) + " refused by the host") +
+                 "\n";
     }
   }
   if (connections.empty()) {
@@ -2240,13 +2325,15 @@ void RemoteHostService::PublishStatusSegment() {
                           std::to_string(sync_files)
                     : std::string()) +
                (unsent > 0 && state != State::Ready ? " · " + std::to_string(unsent) + " unsent" : std::string()) +
+               // Shown whatever the state: a blocked save goes nowhere on its own.
+               (blocked > 0 ? " · " + std::to_string(blocked) + " blocked" : std::string()) +
                (ports == 0 ? std::string() : " · " + std::to_string(ports) + (ports == 1 ? " port" : " ports"));
   // The click lists the remote verbs (the Remote menu) rather than running one.
   value.tooltip = tooltip + "Remote menu";
   value.menu = MenuId::Remote;
-  value.tone = rank(state) >= 3   ? StatusTone::Error
-               : rank(state) == 2 ? StatusTone::Warning
-                                  : StatusTone::Default;
+  value.tone = rank(state) >= 3 || blocked > 0 ? StatusTone::Error
+               : rank(state) == 2              ? StatusTone::Warning
+                                               : StatusTone::Default;
   operations_.set_status_segment(std::move(value));
 }
 

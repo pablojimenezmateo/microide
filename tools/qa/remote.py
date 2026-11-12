@@ -25,6 +25,9 @@ What it checks, each as the user would see it, with the measured latencies:
                                 no row per file; Manage… opens the Conflicts view, Enter
                                 ticks a file, Keep Local settles the ticked one, and
                                 remote-resolve-all remote settles the rest
+  U  blocked save               a save into a folder the host made read-only is blocked,
+                                not unsent: a row with Retry / Replace on Host; once the
+                                host allows it, Retry lands it and the row goes
   Y  tree conflicts             a folder the host archived while a file in it was
                                 edited here: ONE row saying deleted on the host, Keep
                                 Local / Take Remote only; Take Remote settles it. A file
@@ -773,6 +776,38 @@ class Suite:
     def conflict_rows(self) -> list[dict]:
         return self.app.elements("row", prefix="row:conflicts/")
 
+    def run_blocked_save(self) -> None:
+        """U: a save the host refuses for the path itself is blocked, not unsent: a
+        folder made read-only there. Its row names the file and the reason with
+        Retry and Replace on Host; status counts it apart from unsent; once the
+        host allows it, Retry lands the save and the row goes (soak 464a40fee2bd)."""
+        app, host, tok = self.app, self.host, self.token
+        rel = f"qa-ro-{tok}/note.txt"
+        host.ssh(f"mkdir -p {host.root}/qa-ro-{tok} && echo base > {host.root}/{rel}")
+        ok, dt = self.mirror_has(rel, "base", 30)
+        self.record("U.file-pulled", bool(ok), f"{dt:.1f}s")
+        host.ssh(f"chmod 555 {host.root}/qa-ro-{tok}")
+        app.send("open", rel); app.settle(0.3)
+        self.type_line(f"QA-BLOCKED-{tok}"); app.send("save")
+        rows, dt = wait_for(lambda: [n for n in self.notifs() if n["key"].startswith("remote.blocked-save.")] or None,
+                            30, 0.3)
+        labels = [a["label"] for a in (rows[0].get("actions", []) if rows else [])]
+        self.record("U.row-with-retry-and-replace",
+                    bool(rows) and labels == ["Retry", "Replace on Host"] and "Permission denied" in rows[0]["message"],
+                    f"{dt:.1f}s rows={rows}")
+        state = self.remote()
+        self.record("U.blocked-not-unsent", state.get("blocked") == 1 and state.get("unsentPushes") == 0,
+                    f"remote={state}")
+        host.ssh(f"chmod 755 {host.root}/qa-ro-{tok}")
+        app.send("remote-blocked", str(self.mirror / rel), "retry")
+        got, dt = wait_for(lambda: f"QA-BLOCKED-{tok}" in self.host.file(rel) or None, 30, 0.3)
+        gone, _ = wait_for(lambda: not [n for n in self.notifs() if n["key"].startswith("remote.blocked-save.")]
+                           or None, 15, 0.3)
+        self.record("U.retry-lands-and-the-row-goes", bool(got) and bool(gone) and self.remote().get("blocked") == 0,
+                    f"{dt:.1f}s remote={self.remote()}")
+        host.ssh(f"rm -rf {host.root}/qa-ro-{tok}")
+        app.check("U")
+
     def run_many_conflicts(self) -> None:
         """Q: two offline saves meet two host edits on reconnect. One counted row
         with Keep All Local / Take All Remote / Manage… and no row per file; Manage…
@@ -1371,6 +1406,9 @@ class Suite:
 
         if self.runs("Q"):
             self.run_many_conflicts()
+
+        if self.runs("U"):
+            self.run_blocked_save()
 
         if self.runs("F"):
             # F's own preconditions: the edited file active and the editor focused.

@@ -715,6 +715,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `remote-open [[user@]host[:port]:/path]`
 - `remote-resolve <path> <local|remote|compare|merge>`
 - `remote-resolve-all [root] <local|remote>`
+- `remote-blocked <path|root> <retry|replace>`
 - `remote-conflicts [root]`
 - `remote-remove-mirror <root> [discard]`
 - `remote-show-log [host]`

@@ -713,25 +713,6 @@ class RemoteConvergence:
                 and not remote.get("unsentPushes"))
 
     @staticmethod
-    def refusal_explains(remote: dict[str, Any], notices: Any) -> bool:
-        """Whether a ready project's unsent saves are ones the host refused, with
-        the reason on screen: nothing left to fetch, and an error notification
-        saying the sync failed.
-
-        >>> RemoteConvergence.refusal_explains(
-        ...     {"state": "ready", "filesPending": 0, "unsentPushes": 2},
-        ...     [{"tone": "error", "message": "Sync with h:/p failed: cannot read a: Permission denied"}])
-        True
-        >>> RemoteConvergence.refusal_explains({"state": "ready", "unsentPushes": 2}, [])
-        False
-        """
-        if remote.get("state") != "ready" or remote.get("filesPending") or not remote.get("unsentPushes"):
-            return False
-        return any(isinstance(n, dict) and n.get("tone") == "error" and
-                   str(n.get("message", "")).startswith("Sync with ") and " failed: " in str(n.get("message", ""))
-                   for n in (notices if isinstance(notices, list) else []))
-
-    @staticmethod
     def differing(host: dict[str, str], mirror: dict[str, str]) -> list[str]:
         """Paths whose content differs, or that one side has and the other not.
 
@@ -780,12 +761,6 @@ class RemoteConvergence:
                 notices = self.app.query("notifications", {"recent": True})
             except q.QaFailure:
                 notices = []
-            if self.refusal_explains(remote, notices):
-                # Saves the host refused (a file it made unreadable, a dangling
-                # link where the save would land) stay unsent, and the app says
-                # why: the design's answer, not a stall (soak 464a40fee2bd).
-                self.outcomes["refused"] += 1
-                return []
             self.outcomes["unsettled"] += 1
             self.evidence = {"remote-status.json": json.dumps(
                 {"remote": remote, "notifications": notices}, indent=1).encode()}
@@ -794,6 +769,13 @@ class RemoteConvergence:
                                f"{remote.get('unsentPushes')} unsent)")]
         if remote.get("conflicts") or remote.get("heldDeletes"):
             self.outcomes["conflicted"] += 1
+            return []
+        if remote.get("blocked"):
+            # Saves the host refused for the path itself (soak 464a40fee2bd: one onto
+            # a dangling link, one over a file made unreadable there): not unsent --
+            # `settled` holds -- and each has a row with Retry and Replace on Host.
+            # Those files differ on purpose until the user chooses.
+            self.outcomes["blocked"] += 1
             return []
         deadline = time.monotonic() + self.AGREE_SECONDS
         while True:
@@ -806,7 +788,8 @@ class RemoteConvergence:
             self.outcomes[f"agreed:{len(host)}"] += 1
             return []
         remote = self._remote()
-        if remote.get("conflicts") or remote.get("heldDeletes") or not self.settled(remote):
+        if remote.get("conflicts") or remote.get("heldDeletes") or remote.get("blocked") or \
+                not self.settled(remote):
             self.outcomes["moved"] += 1
             return []  # something new arrived while it compared: not a verdict
         self.outcomes["differed"] += 1

@@ -61,6 +61,38 @@ void TestTreeFilesWriteIsCompareAndSwap() {
          "an update keeps the exec bit");
 }
 
+// A write the path itself refuses is `blocked` (the client parks it instead of
+// retrying at every reconnect); `replace` -- the user's Replace on Host -- puts the
+// file where a link was, and nothing else does.
+void TestTreeFilesARefusedPathIsBlockedAndReplaceTakesALinksPlace() {
+  TemporaryDirectory temp;
+  const auto root = temp.path() / "root";
+  std::filesystem::create_directories(root / "dir");
+  std::filesystem::create_symlink("/nonexistent-qa/target", root / "dangling");
+  const FileOpResult onto_link =
+      project::remote::WriteTreeFile(root, "dangling", "x", Precondition::NotThere(), std::nullopt);
+  Expect(onto_link.status == FileOpResult::Status::Error && onto_link.blocked,
+         "a write onto a link is refused, and blocked: " + onto_link.error);
+  const FileOpResult onto_dir =
+      project::remote::WriteTreeFile(root, "dir", "x", Precondition::Replacing(), std::nullopt);
+  Expect(onto_dir.status == FileOpResult::Status::Error && onto_dir.blocked &&
+             std::filesystem::is_directory(root / "dir"),
+         "replace does not take a directory's place: " + onto_dir.error);
+  const FileOpResult replaced =
+      project::remote::WriteTreeFile(root, "dangling", "mine", Precondition::Replacing(), std::nullopt);
+  Expect(replaced.ok() && !std::filesystem::is_symlink(root / "dangling") && ReadFile(root / "dangling") == "mine",
+         "replace puts the file where the link was: " + replaced.error);
+  if (::geteuid() != 0) {
+    WriteFile(root / "locked.txt", "base");
+    std::filesystem::permissions(root / "locked.txt", std::filesystem::perms::none);
+    const FileOpResult unreadable = project::remote::WriteTreeFile(
+        root, "locked.txt", "x", Precondition::Of(util::HashContent("base")), std::nullopt);
+    Expect(unreadable.status == FileOpResult::Status::Error && unreadable.blocked,
+           "an update of a file the host cannot read is blocked: " + unreadable.error);
+    std::filesystem::permissions(root / "locked.txt", std::filesystem::perms::owner_all);
+  }
+}
+
 void TestTreeFilesStayUnderTheRoot() {
   TemporaryDirectory temp;
   const auto root = temp.path() / "root";
@@ -214,6 +246,8 @@ void TestTreeFilesWriteTemporaries() {
 
 void RegisterTreeFilesTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TreeFiles/WriteIsCompareAndSwap", TestTreeFilesWriteIsCompareAndSwap);
+  AddTest(tests, "TreeFiles/ARefusedPathIsBlockedAndReplaceTakesALinksPlace",
+          TestTreeFilesARefusedPathIsBlockedAndReplaceTakesALinksPlace);
   AddTest(tests, "TreeFiles/StayUnderTheRoot", TestTreeFilesStayUnderTheRoot);
   AddTest(tests, "TreeFiles/Read", TestTreeFilesRead);
   AddTest(tests, "TreeFiles/WriteTemporaries", TestTreeFilesWriteTemporaries);

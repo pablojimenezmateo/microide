@@ -349,7 +349,10 @@ route (arrows, Enter, Delete, Escape) a person uses for the same buttons.
 
 **Remote projects.** For a remote active project `status` carries
 `remote: {host, hostRoot, state, files, filesPending, unsentPushes, conflicts,
-heldDeletes}`; `state` is the connection's (`disconnected`, `connecting`,
+blocked, heldDeletes}` (`blocked`: saves the host refused for the path itself --
+not a regular file there, permission -- which no reconnect sends; each has a row
+with Retry and Replace on Host, `remote-blocked <path|root> <retry|replace>`);
+`state` is the connection's (`disconnected`, `connecting`,
 `needs-auth`, `starting`, `installing`, `reconnecting`, `offline`) or, on a live
 link, `syncing` until the first sync lands and `ready` after. `projects` marks a
 remote entry with `host` and `hostRoot`. A driver waits on `state == "ready"`

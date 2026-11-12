@@ -414,6 +414,8 @@ util::JsonValue ToJson(const Precondition& precondition) {
       return util::JsonValue(std::string("absent"));
     case Precondition::Kind::Any:
       return util::JsonValue(std::string("any"));
+    case Precondition::Kind::Replace:
+      return util::JsonValue(std::string("replace"));
     case Precondition::Kind::Hash:
       break;
   }
@@ -430,6 +432,9 @@ std::optional<Precondition> PreconditionFromJson(const util::JsonValue& json) {
   }
   if (text == "any") {
     return Precondition::Anything();
+  }
+  if (text == "replace") {
+    return Precondition::Replacing();
   }
   if (const auto hash = util::ContentHash::FromHex(text)) {
     return Precondition::Of(*hash);

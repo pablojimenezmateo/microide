@@ -136,6 +136,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     // rejects naming the host, path or handle it cannot find.
     case ActionId::RemoteResolveConflict:
     case ActionId::RemoteResolveAllConflicts:
+    case ActionId::RemoteBlockedSave:
     case ActionId::RemoteAttachHostTerminals:
     case ActionId::RemoteCloseHostTerminals:
     case ActionId::RemoteCopyCommand:

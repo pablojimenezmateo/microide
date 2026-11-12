@@ -182,6 +182,12 @@ class RemoteHostService {
   // the remote project at `root`, each settled as ResolveConflict would. False when
   // `root` is not a remote project or has no conflict.
   bool ResolveAllConflicts(const std::filesystem::path& root, bool keep_local);
+  // A save the host refused for the path itself (MirrorSyncEngine::Blocked):
+  // `target` a blocked file in a remote project's mirror, or a remote project's
+  // root for every blocked save in it. Retry sends it again as it is; replace
+  // (Replace on Host) overwrites whatever refused it there, a link included.
+  // False when nothing at `target` is blocked.
+  bool SettleBlockedSaves(const std::filesystem::path& target, bool replace);
   // The Conflicts view (§ 7.9b) for the remote project at `root`: the action rows
   // first (ids kConflictSelectAll, kConflictKeepLocal, kConflictTakeRemote,
   // kConflictMerge), then one row per conflicted file, id = relative path, its
@@ -417,6 +423,7 @@ class RemoteHostService {
     std::vector<std::string> conflict_rows;  // relative paths with a row of their own showing
     std::vector<std::string> conflicts;      // the engine's, sorted, as last published
     std::set<std::string, std::less<>> selected_conflicts;  // the Conflicts view's ticks
+    std::vector<std::string> blocked_rows;  // relative paths with a blocked-save row of their own
     // Changed on Host: the engine's change counter last seen, and when the "N files
     // changed on host" row was last raised (it is raised at most every 30 s).
     std::size_t seen_host_changes = 0;
@@ -472,6 +479,9 @@ class RemoteHostService {
                        std::string* error);
   void ApplyProject(const std::filesystem::path& tree);
   void PublishConflictRows(const std::filesystem::path& tree, Project& entry);
+  // Blocked saves (§ 6.3): one row per file naming the host's reason, with Retry
+  // and Replace on Host; from two on, one counted row that settles them all.
+  void PublishBlockedRows(const std::filesystem::path& tree, Project& entry);
   // After a connect's reattaches went out: ask server/status (off the UI thread)
   // and sum the connect up in one row (OnHostTerminals).
   void ListHostTerminals(const std::filesystem::path& tree, Project& entry);

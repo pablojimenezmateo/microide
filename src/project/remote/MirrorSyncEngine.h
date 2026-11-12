@@ -83,6 +83,9 @@ class MirrorSyncEngine {
     std::size_t stale = 0;
     std::size_t dirty = 0;
     std::size_t conflicts = 0;
+    // Saves the host refused for the path itself (Entry::blocked): not unsent --
+    // reconnecting sends nothing -- and not conflicts. Counted apart from `dirty`.
+    std::size_t blocked = 0;
     // A delete diff held for the user: how many paths it would remove.
     std::size_t held_deletes = 0;
     // Files the host listed but could not read (permissions, a file that changed
@@ -156,7 +159,7 @@ class MirrorSyncEngine {
   };
   void NotifyLocalTreeOps(std::vector<LocalTreeOp> ops);
   // Settle a conflict (§ 6.3: nothing is done automatically, both versions exist
-  // until the user chooses). KeepLocal pushes the mirror's bytes over whatever the
+  // until the user chooses), or a blocked save with KeepLocal (Replace on Host). KeepLocal pushes the mirror's bytes over whatever the
   // host has — the explicit Overwrite, the one write with `expect: any` — or
   // deletes the host's file when the mirror's is gone. TakeRemote writes the host's
   // current bytes over the mirror's, or removes the mirror's file when the host has
@@ -193,6 +196,17 @@ class MirrorSyncEngine {
   // file/read: the host file at absolute `host_path`, outside the project, written
   // read-only to `local_path` (the launcher's out-of-project cache). `done` as above.
   void FetchHostFile(std::string host_path, std::filesystem::path local_path, HostCopyDone done);
+  // A save the host refused for the path itself, and why (Entry::blocked).
+  struct Blocked {
+    std::string path;
+    std::string reason;
+  };
+  // Sorted by path.
+  std::vector<Blocked> BlockedSaves() const;
+  // Push a blocked save again as it is (the user fixed the host side, say).
+  // Replace on Host is ResolveConflict(path, KeepLocal): it overwrites whatever
+  // the host has there, a link included.
+  void RetryBlocked(std::string path);
   // Paths in conflict, sorted.
   std::vector<std::string> Conflicts() const;
   // The same, with what each side still holds: a row of the Conflicts view.

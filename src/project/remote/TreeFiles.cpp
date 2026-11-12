@@ -30,6 +30,24 @@ FileOpResult Error(std::string message) {
   return result;
 }
 
+// An error the path itself causes (FileOpResult::blocked).
+FileOpResult Refused(std::string message) {
+  FileOpResult result = Error(std::move(message));
+  result.blocked = true;
+  return result;
+}
+
+// Whether `err` is the path refusing the operation rather than the host failing it.
+bool RefusesThePath(int err) {
+  return err == EACCES || err == EPERM || err == EROFS || err == ENOTDIR || err == ELOOP ||
+         err == EISDIR || err == ENAMETOOLONG;
+}
+
+// Error, or Refused when `err` says the path refuses it.
+FileOpResult ErrorFor(std::string message, int err) {
+  return RefusesThePath(err) ? Refused(std::move(message)) : Error(std::move(message));
+}
+
 FileOpResult Conflict(std::optional<util::ContentHash> current) {
   FileOpResult result;
   result.status = FileOpResult::Status::Conflict;
@@ -61,14 +79,20 @@ struct Parent {
 };
 
 std::optional<Parent> OpenParent(const std::filesystem::path& root, std::string_view path,
-                                 bool create, std::string* error) {
+                                 bool create, std::string* error, int* error_code = nullptr) {
+  const auto fail = [&](std::string why) {
+    if (error_code != nullptr) {
+      *error_code = errno;
+    }
+    *error = std::move(why);
+  };
   if (!IsSafeRelativePath(path)) {
     *error = "unsafe path '" + std::string(path) + "'";
     return std::nullopt;
   }
   UniqueFd dir(::open(root.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
   if (dir.Get() < 0) {
-    *error = Errno("cannot open the workspace root " + root.string());
+    fail(Errno("cannot open the workspace root " + root.string()));
     return std::nullopt;
   }
   std::size_t start = 0;
@@ -81,15 +105,15 @@ std::optional<Parent> OpenParent(const std::filesystem::path& root, std::string_
     }
     if (next.Get() < 0 && errno == ENOENT && create) {
       if (::mkdirat(dir.Get(), component.c_str(), 0755) != 0 && errno != EEXIST) {
-        *error = Errno("cannot create " + std::string(path.substr(0, slash)));
+        fail(Errno("cannot create " + std::string(path.substr(0, slash))));
         return std::nullopt;
       }
       next = UniqueFd(::openat(dir.Get(), component.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
     }
     if (next.Get() < 0) {
-      *error = errno == ELOOP || errno == ENOTDIR
-                   ? std::string(path.substr(0, slash)) + " is not a directory on the host"
-                   : Errno("cannot open " + std::string(path.substr(0, slash)));
+      fail(errno == ELOOP || errno == ENOTDIR
+               ? std::string(path.substr(0, slash)) + " is not a directory on the host"
+               : Errno("cannot open " + std::string(path.substr(0, slash))));
       return std::nullopt;
     }
     dir = std::move(next);
@@ -100,12 +124,16 @@ std::optional<Parent> OpenParent(const std::filesystem::path& root, std::string_
 // What `name` in `dir` holds: nullopt when nothing is there. A link, a directory or
 // anything but a regular file sets *not_a_file (its content has no hash).
 std::optional<util::ContentHash> CurrentHash(int dir, const std::string& name, bool* exists,
-                                             bool* not_a_file, std::string* error) {
+                                             bool* not_a_file, std::string* error,
+                                             int* error_code = nullptr) {
   *exists = false;
   *not_a_file = false;
   struct stat info {};
   if (::fstatat(dir, name.c_str(), &info, AT_SYMLINK_NOFOLLOW) != 0) {
     if (errno != ENOENT) {
+      if (error_code != nullptr) {
+        *error_code = errno;
+      }
       *error = Errno("cannot stat " + name);
     }
     return std::nullopt;
@@ -117,6 +145,9 @@ std::optional<util::ContentHash> CurrentHash(int dir, const std::string& name, b
   }
   const UniqueFd fd(::openat(dir, name.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NOCTTY | O_NONBLOCK));
   if (fd.Get() < 0) {
+    if (error_code != nullptr) {
+      *error_code = errno;
+    }
     *error = Errno("cannot read " + name);
     return std::nullopt;
   }
@@ -130,24 +161,26 @@ std::optional<util::ContentHash> CurrentHash(int dir, const std::string& name, b
 // Whether `expect` holds for `name`; on false, `*result` is the answer to send.
 bool CheckExpect(int dir, const std::string& name, const Precondition& expect, bool allow_non_file,
                  FileOpResult* result, bool* exists) {
-  if (expect.kind == Precondition::Kind::Any && allow_non_file) {
+  if ((expect.kind == Precondition::Kind::Any && allow_non_file) || expect.kind == Precondition::Kind::Replace) {
     struct stat info {};
     *exists = ::fstatat(dir, name.c_str(), &info, AT_SYMLINK_NOFOLLOW) == 0;
     return true;
   }
   bool not_a_file = false;
   std::string error;
-  const auto current = CurrentHash(dir, name, exists, &not_a_file, &error);
+  int error_code = 0;
+  const auto current = CurrentHash(dir, name, exists, &not_a_file, &error, &error_code);
   if (!error.empty()) {
-    *result = Error(error);
+    *result = ErrorFor(error, error_code);
     return false;
   }
   if (not_a_file && !allow_non_file) {
-    *result = Error(name + " is not a regular file on the host");
+    *result = Refused(name + " is not a regular file on the host");
     return false;
   }
   switch (expect.kind) {
     case Precondition::Kind::Any:
+    case Precondition::Kind::Replace:
       return true;
     case Precondition::Kind::Absent:
       if (*exists) {
@@ -314,17 +347,21 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
   // creating the parents first left an empty directory behind on a host that had
   // moved the folder away.
   const bool update = expect.kind == Precondition::Kind::Hash;
-  std::optional<Parent> parent = OpenParent(root, path, /*create=*/!update, &error);
+  int error_code = 0;
+  std::optional<Parent> parent = OpenParent(root, path, /*create=*/!update, &error, &error_code);
   if (!parent.has_value()) {
-    return Error(error);
+    return ErrorFor(error, error_code);
   }
   if (parent->absent) {
     return Conflict(std::nullopt);
   }
   FileOpResult refused;
   bool exists = false;
-  if (!CheckExpect(parent->dir.Get(), parent->name, expect, /*allow_non_file=*/false, &refused,
-                   &exists)) {
+  // `expect: replace` (the user's Replace on Host) may replace what is not a
+  // file: a link, dangling or not, becomes the file -- the rename below replaces
+  // the link itself, never what it names. A directory there still refuses it (the
+  // rename fails with EISDIR). Every other precondition refuses a link.
+  if (!CheckExpect(parent->dir.Get(), parent->name, expect, /*allow_non_file=*/false, &refused, &exists)) {
     return refused;
   }
   mode_t final_mode = 0644;
@@ -332,7 +369,8 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
     final_mode = static_cast<mode_t>(*mode & 07777);
   } else if (exists) {
     struct stat info {};
-    if (::fstatat(parent->dir.Get(), parent->name.c_str(), &info, AT_SYMLINK_NOFOLLOW) == 0) {
+    if (::fstatat(parent->dir.Get(), parent->name.c_str(), &info, AT_SYMLINK_NOFOLLOW) == 0 &&
+        S_ISREG(info.st_mode)) {
       final_mode = info.st_mode & 07777;
     }
   }
@@ -352,7 +390,8 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
     const UniqueFd out(::openat(temp_dir, temp.c_str(),
                           O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600));
     if (out.Get() < 0) {
-      return Error(Errno("cannot create a temporary file for " + std::string(path)));
+      const int err = errno;
+      return ErrorFor(Errno("cannot create a temporary file for " + std::string(path)), err);
     }
     std::string fill_error;
     hash = fill(out.Get(), &fill_error);
@@ -397,7 +436,7 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
       return Conflict(CurrentHash(parent->dir.Get(), parent->name, &now_exists, &not_a_file, &ignored));
     }
     errno = saved;
-    return Error(Errno("cannot replace " + std::string(path)));
+    return ErrorFor(Errno("cannot replace " + std::string(path)), saved);
   }
   // A synced write's rename durable too (a deferred one is covered by the batch's
   // SyncTreeFilesystem): an acked push must not revert on the host after a power

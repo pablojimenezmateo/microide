@@ -119,14 +119,18 @@ inline constexpr std::string_view kPortsListening = "ports/listening";
 }  // namespace method
 
 // What a write or tree operation requires of the path's current content (§ 6.3):
-// a hash (an update), absent (a create: O_EXCL / RENAME_NOREPLACE), or any (the
-// user's explicit Overwrite, never a default). On the wire: "absent", "any", or
-// the hash's 64 hex digits.
+// a hash (an update), absent (a create: O_EXCL / RENAME_NOREPLACE), any (the
+// user's explicit Overwrite, never a default), or replace (any, and what is there
+// may be something other than a file -- a link, dangling or not, is replaced by
+// the file itself: the user's Replace on Host for a blocked save; plain `any`
+// still refuses a link). On the wire: "absent", "any", "replace", or the hash's 64
+// hex digits. A server that predates "replace" refuses the request.
 struct Precondition {
   enum class Kind {
     Hash,
     Absent,
     Any,
+    Replace,
   };
   Kind kind = Kind::Absent;
   util::ContentHash hash;
@@ -134,6 +138,7 @@ struct Precondition {
   static Precondition Of(const util::ContentHash& hash) { return Precondition{Kind::Hash, hash}; }
   static Precondition NotThere() { return Precondition{Kind::Absent, {}}; }
   static Precondition Anything() { return Precondition{Kind::Any, {}}; }
+  static Precondition Replacing() { return Precondition{Kind::Replace, {}}; }
   friend bool operator==(const Precondition&, const Precondition&) = default;
 };
 util::JsonValue ToJson(const Precondition& precondition);
@@ -145,6 +150,12 @@ inline constexpr std::int64_t kErrorUnknownMethod = -32601;
 inline constexpr std::int64_t kErrorInvalidParams = -32602;
 inline constexpr std::int64_t kErrorCancelled = -32800;
 inline constexpr std::int64_t kErrorIncompatible = -32001;   // version handshake failed
+// file/write and fs/op: the path cannot take the operation as it stands on the host
+// (not a regular file there, permission, a read-only filesystem, a parent that is
+// not a directory). Retrying changes nothing until the host does, so a client
+// parks the save as blocked rather than queueing it (§ 6.3). A server that
+// predates it answers kErrorInvalidParams, read as an ordinary error.
+inline constexpr std::int64_t kErrorPathRefused = -32002;
 
 // Whether processes survive the user logging out on the host (§ 6.12): systemd's
 // KillUserProcesses and the user's linger flag. Reported, never hidden — a host

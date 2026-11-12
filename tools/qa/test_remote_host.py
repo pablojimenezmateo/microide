@@ -82,17 +82,14 @@ class ConvergenceTests(unittest.TestCase):
         oracle.check()
         oracle.app.send_line.assert_called_once_with("remote-open qa-local:/h", record=False)
 
-    def test_saves_the_host_refused_with_a_reason_are_not_a_stall(self) -> None:
-        # Soak 464a40fee2bd: a save over a host file made unreadable, and one onto a
-        # dangling link, stay unsent with the reason on screen.
-        refused = {"projectRoot": "/m", "remote": {"state": "ready", "filesPending": 0, "unsentPushes": 2}}
-        oracle = self._oracle([refused])
-        oracle.app.query.side_effect = lambda verb, *args: (
-            [{"tone": "error", "message": "Sync with qa-local:/h failed: dangling is not a regular file on the host"}]
-            if verb == "notifications" else refused)
-        with mock.patch.object(mo.time, "sleep"), mock.patch.object(mo.RemoteConvergence, "SETTLE_SECONDS", 0.0):
-            self.assertEqual(oracle.check(), [])
-        self.assertEqual(oracle.outcomes["refused"], 1)
+    def test_saves_the_host_refused_are_blocked_not_a_stall(self) -> None:
+        # Soak 464a40fee2bd: refused saves are `blocked`, not unsent; the project
+        # settles, and their files differ on purpose until the user chooses.
+        blocked = {"projectRoot": "/m", "remote": {"state": "ready", "filesPending": 0, "unsentPushes": 0,
+                                                    "blocked": 2}}
+        oracle = self._oracle([blocked])
+        self.assertEqual(oracle.check(), [])
+        self.assertEqual(oracle.outcomes["blocked"], 1)
 
     def test_a_project_that_never_settles_is_reported(self) -> None:
         stuck = {"projectRoot": "/m", "remote": {"state": "connecting", "filesPending": 3}}

@@ -206,6 +206,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
     case ActionId::RemoteOpenFolder:
     case ActionId::RemoteResolveConflict:
     case ActionId::RemoteResolveAllConflicts:
+    case ActionId::RemoteBlockedSave:
     case ActionId::RemoteShowConflicts:
     case ActionId::RemoteShowLog:
     case ActionId::RemoteShowStatus:
@@ -297,6 +298,15 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
                                                               : context_.ProjectRoot();
           if (!hosts->ResolveAllConflicts(root, mode == "local")) {
             return reject("No conflicts in " + root.string());
+          }
+          return DispatchResult::Handled;
+        }
+        case ActionId::RemoteBlockedSave: {
+          if (args.size() != 2 || (args[1] != "retry" && args[1] != "replace")) {
+            return reject("usage: remote-blocked <path|root> <retry|replace>");
+          }
+          if (!hosts->SettleBlockedSaves(args[0], args[1] == "replace")) {
+            return reject("No save refused by the host at \"" + args[0] + "\"");
           }
           return DispatchResult::Handled;
         }

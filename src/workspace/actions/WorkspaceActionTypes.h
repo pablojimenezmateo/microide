@@ -42,6 +42,11 @@ enum class ActionId {
   // at `root` (the active one when omitted) -- Keep All Local / Take All Remote on
   // the counted conflict row (§ 7.7).
   RemoteResolveAllConflicts,
+  // `remote-blocked <path|root> <retry|replace>`: a save the host refused for the
+  // path itself (§ 6.3, blocked) -- send it again, or overwrite whatever refused
+  // it there (Replace on Host). A project root acts on every blocked save in it.
+  // The buttons on the blocked-save rows.
+  RemoteBlockedSave,
   // `remote-conflicts [root]`: the Conflicts view (§ 7.9b) -- the files both sides
   // changed, each tickable, with Keep Local / Take Remote / Merge for the ticked
   // ones. The counted row's Manage…; the Remote menu's Show Conflicts.

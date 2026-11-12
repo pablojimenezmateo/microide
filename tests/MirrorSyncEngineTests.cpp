@@ -558,6 +558,68 @@ void TestMirrorParksConflictsAndNeverOverwritesLocalEdits() {
   Expect(session.engine->status().conflicts == 1, "and still reports it");
 }
 
+// A save the host refuses for the path itself is blocked, not unsent: a file
+// saved where the host has a dangling link, an edit to a file the host made
+// unreadable. Each was an error retried at every reconnect, "unsent" forever with
+// a generic sync error (soak 464a40fee2bd). Blocked, it waits for the host to
+// change the path or for the user: Retry, or Replace on Host (KeepLocal).
+void TestMirrorASaveTheHostRefusesIsBlockedNotUnsent() {
+  MirrorSession session;
+  WriteFile(session.host / "locked.txt", "base\n");
+  std::filesystem::create_symlink("/nonexistent-qa/one", session.host / "link1");
+  std::filesystem::create_symlink("/nonexistent-qa/two", session.host / "link2");
+  session.Connect();
+  session.Sync();
+  const bool root = ::geteuid() == 0;  // permissions do not refuse root
+
+  std::filesystem::permissions(session.host / "locked.txt", std::filesystem::perms::none);
+  for (const char* path : {"link1", "link2", "locked.txt"}) {
+    WriteFile(session.Tree(path), std::string("mine ") + path + "\n");
+    session.engine->NotifyLocalWrite(path);
+  }
+  session.engine->Flush();
+  auto status = session.engine->status();
+  const std::size_t refused = root ? 2 : 3;
+  Expect(status.blocked == refused && status.dirty == 3 - refused && status.error.empty(),
+         "refused saves are blocked, not unsent, and not a sync error: blocked=" +
+             std::to_string(status.blocked) + " dirty=" + std::to_string(status.dirty) + " " + status.error);
+  const std::vector<remote::MirrorSyncEngine::Blocked> blocked = session.engine->BlockedSaves();
+  Expect(blocked.size() == refused && blocked[0].path == "link1" &&
+             blocked[0].reason.find("not a regular file") != std::string::npos,
+         "each says why, as the host did: " + (blocked.empty() ? std::string("none") : blocked[0].reason));
+
+  // A sync with nothing changed on the host sends none of them again.
+  session.Sync();
+  status = session.engine->status();
+  Expect(status.blocked == refused && status.error.empty(), "a reconnect leaves them blocked");
+
+  if (!root) {
+    // The host makes the file readable again: its row changes, and the save lands.
+    std::filesystem::permissions(session.host / "locked.txt",
+                                 std::filesystem::perms::owner_read | std::filesystem::perms::owner_write);
+    session.Sync();
+    Expect(ReadFile(session.host / "locked.txt") == "mine locked.txt\n",
+           "a change on the host retries the blocked save");
+  }
+
+  // The user removes the link on the host and retries.
+  std::filesystem::remove(session.host / "link1");
+  session.engine->RetryBlocked("link1");
+  session.engine->Flush();
+  Expect(ReadFile(session.host / "link1") == "mine link1\n", "Retry sends it once the host allows it");
+
+  // Replace on Host overwrites the link itself, not what it names.
+  session.engine->ResolveConflict("link2", remote::MirrorSyncEngine::Resolution::KeepLocal);
+  session.engine->Flush();
+  Expect(!std::filesystem::is_symlink(session.host / "link2") &&
+             ReadFile(session.host / "link2") == "mine link2\n" &&
+             !std::filesystem::exists("/nonexistent-qa"),
+         "Replace on Host puts the file where the link was");
+  status = session.engine->status();
+  Expect(status.blocked == 0 && status.dirty == 0 && session.engine->BlockedSaves().empty(),
+         "nothing is left blocked or unsent");
+}
+
 // Nothing is settled automatically; the user's choice is: keep mine (the one
 // unconditional write) or take the host's.
 void TestMirrorResolvesConflictsTheUsersWay() {
@@ -1438,6 +1500,8 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
           TestMirrorPullsAFileOverSixtyFourMegabytes);
   AddTest(tests, "MirrorSyncEngine/PulledFilesAreTrustedAtOnce", TestMirrorPulledFilesAreTrustedAtOnce);
   AddTest(tests, "MirrorSyncEngine/ResolvesConflictsTheUsersWay", TestMirrorResolvesConflictsTheUsersWay);
+  AddTest(tests, "MirrorSyncEngine/ASaveTheHostRefusesIsBlockedNotUnsent",
+          TestMirrorASaveTheHostRefusesIsBlockedNotUnsent);
   AddTest(tests, "MirrorSyncEngine/MergesAConflictThreeWays", TestMirrorMergesAConflictThreeWays);
   AddTest(tests, "MirrorSyncEngine/JournalSurvivesARestart", TestMirrorJournalSurvivesARestart);
   AddTest(tests, "MirrorSyncEngine/ACrashBeforeTheJournalLosesNothing", TestMirrorACrashBeforeTheJournalLosesNothing);

@@ -820,6 +820,7 @@ void WorkspaceShell::Bootstrapper::WireControlChannel() const {
                     .files_pending = count(std::min(sync.absent + sync.stale, sync.files)),
                     .unsent_pushes = count(sync.dirty),
                     .conflicts = count(sync.conflicts),
+                    .blocked = count(sync.blocked),
                     .held_deletes = count(sync.held_deletes),
                 };
               },

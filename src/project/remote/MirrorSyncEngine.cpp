@@ -541,6 +541,36 @@ void MirrorSyncEngine::FetchHostFile(std::string host_path, std::filesystem::pat
   });
 }
 
+std::vector<MirrorSyncEngine::Blocked> MirrorSyncEngine::BlockedSaves() const {
+  std::lock_guard lock(mutex_);
+  std::vector<Blocked> blocked;
+  for (const auto& [path, entry] : store_.entries()) {
+    if (entry.push_pending && !entry.blocked.empty()) {
+      blocked.push_back(Blocked{.path = path, .reason = entry.blocked});
+    }
+  }
+  return blocked;
+}
+
+void MirrorSyncEngine::RetryBlocked(std::string path) {
+  if (!IsSafeRelativePath(path)) {
+    return;
+  }
+  queue_.PostFront([this, path = std::move(path)]() {
+    {
+      std::lock_guard lock(mutex_);
+      MirrorStore::Entry* entry = store_.Find(path);
+      if (entry == nullptr || !entry->push_pending || entry->blocked.empty()) {
+        return;
+      }
+      entry->blocked.clear();
+      RecountLocked();
+    }
+    Changed();
+    PushNow(path);
+  });
+}
+
 std::vector<std::string> MirrorSyncEngine::Conflicts() const {
   std::lock_guard lock(mutex_);
   std::vector<std::string> paths;
@@ -577,7 +607,8 @@ void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution
   {
     std::lock_guard lock(mutex_);
     const MirrorStore::Entry* entry = store_.Find(path);
-    if (entry == nullptr || !entry->conflict) {
+    const bool blocked = entry != nullptr && entry->push_pending && !entry->blocked.empty();
+    if (entry == nullptr || !(entry->conflict || (blocked && resolution == Resolution::KeepLocal))) {
       return;
     }
   }
@@ -591,6 +622,14 @@ void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution
       return;
     }
     const bool local_exists = read.ok();
+    // A blocked save's Keep Local is Replace on Host: whatever refused it there --
+    // a link, a file it could not read -- gives way to the file.
+    bool replacing = false;
+    {
+      std::lock_guard lock(mutex_);
+      const MirrorStore::Entry* entry = store_.Find(path);
+      replacing = entry != nullptr && !entry->conflict && !entry->blocked.empty();
+    }
     RemoteWorkspace::WriteResult result;
     if (local_exists) {
       std::optional<std::uint32_t> mode;
@@ -601,9 +640,11 @@ void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution
           mode = entry->remote.mode;
         }
       }
-      result = workspace_.WriteFileSync(
-          path, content, expect_host.has_value() ? Precondition::Of(*expect_host) : Precondition::Anything(),
-          mode);
+      result = workspace_.WriteFileSync(path, content,
+                                        expect_host.has_value() ? Precondition::Of(*expect_host)
+                                        : replacing             ? Precondition::Replacing()
+                                                                : Precondition::Anything(),
+                                        mode);
     } else {
       result = workspace_.ApplyTreeOpSync(
           RemoteWorkspace::TreeOp::Delete, path, {},
@@ -615,12 +656,18 @@ void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution
       return;
     }
     if (result.status != Status::Ok) {
+      if (result.blocked && !entry->blocked.empty()) {
+        entry->blocked = result.error;  // still refused, now for this reason
+        RecountLocked();
+        return;
+      }
       status_.error = expect_host.has_value() && result.status == Status::Conflict
                           ? path + " changed on the host again while it was merged; merge it again"
                       : result.error.empty() ? "the host refused the overwrite of " + path
                                              : result.error;
       return;
     }
+    entry->blocked.clear();
     entry->conflict = false;
         entry->renamed_from.clear();
     entry->push_pending = false;
@@ -842,7 +889,7 @@ MirrorSyncEngine::ContentState MirrorSyncEngine::StateOf(std::string_view path) 
 
 void MirrorSyncEngine::RecountLocked() {
   Status& status = status_;
-  status.files = status.absent = status.stale = status.dirty = status.conflicts = 0;
+  status.files = status.absent = status.stale = status.dirty = status.conflicts = status.blocked = 0;
   for (const auto& [path, entry] : store_.entries()) {
     (void)path;
     if (entry.has_remote && entry.remote.kind == ManifestEntryKind::File) {
@@ -853,9 +900,11 @@ void MirrorSyncEngine::RecountLocked() {
         ++status.stale;
       }
     }
-    // A conflicted push is a conflict, not also an unsent save (StateOf says the same).
-    status.dirty += entry.push_pending && !entry.conflict ? 1 : 0;
+    // A conflicted push is a conflict, not also an unsent save (StateOf says the same);
+    // a blocked one is blocked, which no reconnect sends either.
+    status.dirty += entry.push_pending && !entry.conflict && entry.blocked.empty() ? 1 : 0;
     status.conflicts += entry.conflict ? 1 : 0;
+    status.blocked += entry.push_pending && !entry.blocked.empty() ? 1 : 0;
   }
   ListPendingLocked();
 }
@@ -970,6 +1019,10 @@ void MirrorSyncEngine::ReconcileRowLocked(ManifestRow row, Plan& plan, std::uint
   if (!inserted && manifest_id != 0 && manifest_id <= entry.pushed_manifest) {
     return;
   }
+  // What the host held here before this row: a blocked save is tried again only
+  // when the host changed the path (Entry::blocked).
+  const bool listed_before = !inserted && entry.has_remote;
+  const MirrorStore::RemoteContent listed_as = entry.remote;
   // The first sync is what the host held before this window saw it; after that, a
   // row the host moved is a host change. A pushed file's echo carries the hash the
   // push already recorded in `remote`, so it is not one.
@@ -996,6 +1049,12 @@ void MirrorSyncEngine::ReconcileRowLocked(ManifestRow row, Plan& plan, std::uint
       break;
   }
   if (entry.push_pending) {
+    if (!entry.blocked.empty()) {
+      if (listed_before && listed_as == entry.remote) {
+        return;  // refused, and nothing at the path changed since: not again
+      }
+      entry.blocked.clear();  // the host changed it: worth one more try
+    }
     plan.pushes.push_back(path);  // the journal: the push finds any conflict itself
     return;
   }
@@ -1058,6 +1117,12 @@ bool MirrorSyncEngine::ReconcileDeleteLocked(std::map<std::string, MirrorStore::
     RecordHostChangeLocked(it->first, HostChange::Kind::Deleted, entry.remote.hash);
   }
   if (entry.local_only || entry.push_pending || entry.conflict) {
+    if (!entry.blocked.empty()) {
+      if (!entry.has_remote) {
+        return false;  // refused, never listed, still not: nothing changed there
+      }
+      entry.blocked.clear();  // the host removed what refused it: try again
+    }
     if (entry.has_remote) {
       entry.has_remote = false;
       if (!entry.local_only && !entry.push_pending) {
@@ -1824,6 +1889,7 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
         } else {
           entry->local_only = true;  // until the host's content set lists it
         }
+        entry->blocked.clear();
         // Saved again while this push was on the wire: push that too.
         entry->local_known = false;
         if (store_.CheckLocal(path, *entry) != LocalState::MatchesBase) {
@@ -1855,6 +1921,7 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
         }
         queue_.Post([this, path]() { PushNow(path); });
       } else if (result.status == Status::Conflict) {
+        entry->blocked.clear();
         entry->conflict = true;
         if (!result.hash.has_value()) {
           // The host's answer is that nothing is there: it deleted the file. A push
@@ -1873,7 +1940,15 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
             entry->unacknowledged.erase(entry->unacknowledged.begin());
           }
         }
-        status_.error = result.error;
+        if (result.blocked && !result.unreachable && entry->push_pending) {
+          // The path refuses it as it stands on the host: parked as blocked, with
+          // the host's reason, rather than an error retried at every reconnect
+          // (soak 464a40fee2bd: a save onto a dangling link, one over a file made
+          // unreadable there).
+          entry->blocked = result.error.empty() ? "the host refused the write" : result.error;
+        } else {
+          status_.error = result.error;
+        }
       }
       RecountLocked();
       SaveLocked();

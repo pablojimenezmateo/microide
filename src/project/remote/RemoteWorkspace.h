@@ -124,6 +124,9 @@ class RemoteWorkspace {
     // out, before the answer came): the host may have applied it. False when it was
     // never sent (no connection).
     bool may_have_applied = false;
+    // Error only: the host says the path itself refuses the write as it stands
+    // (kErrorPathRefused) -- nothing a retry changes until the host does.
+    bool blocked = false;
     // The host's newest manifest id once the write was done (0 from a server that
     // does not say): a watch row in a manifest at or below it predates the write.
     std::uint64_t manifest_id = 0;

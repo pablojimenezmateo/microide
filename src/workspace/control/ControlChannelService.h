@@ -44,6 +44,7 @@ struct ControlRemoteProjectInfo {
   std::int64_t files_pending = 0;  // listed but not yet pulled
   std::int64_t unsent_pushes = 0;  // saved here, not yet on the host
   std::int64_t conflicts = 0;      // parked, waiting for the user
+  std::int64_t blocked = 0;        // saves the host refused for the path itself
   std::int64_t held_deletes = 0;   // a mass delete waiting for Apply
 };
 
