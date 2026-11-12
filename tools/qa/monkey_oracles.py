@@ -713,6 +713,25 @@ class RemoteConvergence:
                 and not remote.get("unsentPushes"))
 
     @staticmethod
+    def refusal_explains(remote: dict[str, Any], notices: Any) -> bool:
+        """Whether a ready project's unsent saves are ones the host refused, with
+        the reason on screen: nothing left to fetch, and an error notification
+        saying the sync failed.
+
+        >>> RemoteConvergence.refusal_explains(
+        ...     {"state": "ready", "filesPending": 0, "unsentPushes": 2},
+        ...     [{"tone": "error", "message": "Sync with h:/p failed: cannot read a: Permission denied"}])
+        True
+        >>> RemoteConvergence.refusal_explains({"state": "ready", "unsentPushes": 2}, [])
+        False
+        """
+        if remote.get("state") != "ready" or remote.get("filesPending") or not remote.get("unsentPushes"):
+            return False
+        return any(isinstance(n, dict) and n.get("tone") == "error" and
+                   str(n.get("message", "")).startswith("Sync with ") and " failed: " in str(n.get("message", ""))
+                   for n in (notices if isinstance(notices, list) else []))
+
+    @staticmethod
     def differing(host: dict[str, str], mirror: dict[str, str]) -> list[str]:
         """Paths whose content differs, or that one side has and the other not.
 
@@ -755,7 +774,21 @@ class RemoteConvergence:
             return [("remote", f"the remote project is not in front {self.SETTLE_SECONDS:.0f} s after "
                                f"`{self.open_line.split()[0]}` asked for it")]
         if not self.settled(remote):
+            # What the project says about itself: a refused push or a paused sync
+            # posts a notification, and a screenshot cuts its text off.
+            try:
+                notices = self.app.query("notifications", {"recent": True})
+            except q.QaFailure:
+                notices = []
+            if self.refusal_explains(remote, notices):
+                # Saves the host refused (a file it made unreadable, a dangling
+                # link where the save would land) stay unsent, and the app says
+                # why: the design's answer, not a stall (soak 464a40fee2bd).
+                self.outcomes["refused"] += 1
+                return []
             self.outcomes["unsettled"] += 1
+            self.evidence = {"remote-status.json": json.dumps(
+                {"remote": remote, "notifications": notices}, indent=1).encode()}
             return [("remote", f"the remote project did not settle within {self.SETTLE_SECONDS:.0f} s "
                                f"(state {remote.get('state')}, {remote.get('filesPending')} pending, "
                                f"{remote.get('unsentPushes')} unsent)")]
