@@ -873,6 +873,14 @@ class TextViewport {
   // extended); nullopt with no selection anchor.
   const std::optional<TextPosition>& selection_anchor() const { return selection_anchor_; }
   const std::optional<AppliedEdit>& last_applied_edit() const { return last_applied_edit_; }
+  // Whether the last content edit changed the syntax state that `line` -- the
+  // edit's last line, after it -- carries into the next one: an opened string or
+  // block comment restyles every line below, which the edit's own line range does
+  // not cover (soak 9f2abbdf4b9c: typing ' at the top of a file recoloured it,
+  // and the frame repainted line 1). True when that cannot be told: the edit
+  // changed the line count, the state before it was not known, or `line` is not
+  // the edit's last line. False with highlighting off or nothing below `line`.
+  bool LastEditChangedCarriedSyntaxState(std::size_t line) const;
   // The last_applied_edit() as the step from `base_revision` to the current content,
   // or null when it is not that step: several edits since (a snippet's mirrors, a
   // choice, a plugin's edits applied one by one) or a change it does not describe.
@@ -1576,6 +1584,14 @@ class TextViewport {
   // this vector) would otherwise jump the frontier over the still-stale gap below
   // it and falsely mark those pre-edit states valid.
   mutable std::size_t line_highlight_states_valid_through_ = 0;
+  // The end-of-line state the last content edit's last line had BEFORE the edit,
+  // snapshotted by InvalidateDerivedCaches while it is still in storage (only for
+  // an edit that keeps the line count, whose lines keep their indices).
+  struct EditCarry {
+    std::size_t line = 0;
+    SyntaxState before;
+  };
+  std::optional<EditCarry> edit_carry_before_;
   // The one writer of line_highlight_states_: stores at or below the frontier,
   // advances it on a contiguous write, drops a write above it.
   void StoreLineHighlightState(std::size_t line, const SyntaxState& state) const;

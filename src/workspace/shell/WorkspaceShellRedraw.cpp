@@ -505,7 +505,13 @@ void WorkspaceShell::RequestActiveEditableLastChangeRedraw() {
     return;
   }
 
-  const std::size_t end_line = start_line + inserted_lines + 1;
+  // An edit that changes the syntax state its last line carries out restyles
+  // every line below it, on screen in the same frame: an opened string or block
+  // comment recolours the rest of the file. Its own range repainted line 1 and
+  // left the rest in their old colours (soak 9f2abbdf4b9c).
+  const std::size_t end_line = viewport->LastEditChangedCarriedSyntaxState(start_line + inserted_lines)
+                                   ? std::max(viewport->lines().size(), start_line + inserted_lines + 1)
+                                   : start_line + inserted_lines + 1;
   if (ActiveTabIsCompare()) {
     util::PerformanceTrace::Scope redraw_scope(
         "WorkspaceShell::RequestActiveEditableLastChangeRedraw::ComparePartialRedraw");

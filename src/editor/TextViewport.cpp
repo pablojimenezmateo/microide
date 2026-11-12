@@ -1386,6 +1386,18 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
   }
 
   const std::size_t safe_start = std::min(start_line, document_->lines.size());
+  // Before the validity cursor drops below it: the state the edit's last line
+  // carried out, if this viewport had it for the content just replaced (its
+  // caches are one revision behind the bump above, and on the same syntax).
+  edit_carry_before_.reset();
+  if (splice.has_value() && splice->removed == splice->inserted && splice->inserted > 0) {
+    const std::size_t last = safe_start + splice->inserted - 1;
+    if (last < line_highlight_states_valid_through_ && last < line_highlight_states_.size() &&
+        highlight_state_content_revision_ + 1 == document_->content_revision &&
+        highlight_state_syntax_revision_ == document_->syntax_revision) {
+      edit_carry_before_ = EditCarry{.line = last, .before = line_highlight_states_[last]};
+    }
+  }
   util::AddPerformanceCounter(util::PerfCounterId::EditorInvalidateDerivedCachesCalls);
   util::AddPerformanceCounter(util::PerfCounterId::EditorInvalidateDerivedCachesLines,
                               document_->lines.size() - safe_start);

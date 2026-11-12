@@ -467,6 +467,22 @@ void TextViewport::InstallPrefetchedHighlights(HighlightPrefetchResult result) {
   }
 }
 
+bool TextViewport::LastEditChangedCarriedSyntaxState(std::size_t line) const {
+  if (document_ == nullptr || !syntax_highlighting_enabled() || line + 1 >= document_->lines.size()) {
+    return false;
+  }
+  if (!edit_carry_before_.has_value() || edit_carry_before_->line != line) {
+    return true;
+  }
+  // Tokenizing the line is what the repaint does next anyway: the entry it leaves
+  // in the token cache is the one the frame reads.
+  (void)HighlightedLineTokens(line);
+  if (line >= line_highlight_states_valid_through_) {
+    return true;  // resumed from an approximate state: not stored, not known
+  }
+  return line_highlight_states_[line] != edit_carry_before_->before;
+}
+
 SyntaxState TextViewport::HighlightStateBeforeLine(std::size_t line_index) const {
   util::PerformanceTrace::Scope perf_scope("TextViewport::HighlightStateBeforeLine");
   EnsureHighlightCaches();

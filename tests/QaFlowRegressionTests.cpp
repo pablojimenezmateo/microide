@@ -128,6 +128,27 @@ struct FlowFixture {
   SoftwareCanvas canvas;
 };
 
+// Soak 9f2abbdf4b9c (28 sightings, every size): typing ' at the start of main.cpp
+// recoloured every line below it -- the carried syntax state now opened a literal --
+// and the frame repainted the edited line only, leaving the rest in their old
+// colours. An edit that changes the state its last line carries restyles the lines
+// below it in the same frame.
+void TestAnEditThatOpensABlockCommentRepaintsTheLinesBelow() {
+  FlowFixture fixture("main.cpp",
+                      "#include <cstdio>\n\nint main() {\n  int x = 1;\n  return x;\n}\n");
+  TestAccess::ActiveEditor(fixture.shell).MoveCursorTo(0, 0);
+  fixture.PinCaret();
+  fixture.shell.Render(fixture.canvas.renderer(), fixture.width, fixture.height);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("/*")}),
+                      "typing /* at the top of the file, which comments out every line below");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("x")}),
+                      "a keystroke inside the comment, which leaves the lines below as they are");
+  // And costs only its own line: the widening is for a changed carry, not every edit.
+  Expect(!TestAccess::ActiveEditor(fixture.shell).LastEditChangedCarriedSyntaxState(0),
+         "a keystroke that leaves the carried state alone does not restyle the lines below");
+}
+
 // branch review: a file marked reviewed from the diff an Outgoing row opens showed
 // no marker on that row. The diff stored the mark under its absolute path and the
 // git view looked it up under git's repository-relative one. And with no
@@ -5310,6 +5331,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestFocusingAnotherGroupByCommandRepaintsBothPanes);
   AddTest(tests, "QaFlowRegression/RedoAfterASaveInASplitKeepsBothPanesFresh",
           TestRedoAfterASaveInASplitKeepsBothPanesFresh);
+  AddTest(tests, "QaFlowRegression/AnEditThatOpensABlockCommentRepaintsTheLinesBelow",
+          TestAnEditThatOpensABlockCommentRepaintsTheLinesBelow);
   AddTest(tests, "QaFlowRegression/AFocusedPaneShortenedFromAnotherGroupShowsItsReconciledCaret",
           TestAFocusedPaneShortenedFromAnotherGroupShowsItsReconciledCaret);
   AddTest(tests, "QaFlowRegression/ANarrowSearchToggleHoverKeepsEveryFrameFresh",
