@@ -292,10 +292,12 @@ def cmd_monkey(args: argparse.Namespace) -> int:
     for seed in seeds:
         project = fixture(kind, args.out / "fixtures")
         coverage = mm.Coverage.load(args.coverage)
+        plugins = m.PROFILE_PLUGINS.get(args.profile, ())
         with q.App.launch(project=project, binary=args.binary, size=size, extra_args=extra,
-                          shots=args.out / f"seed-{seed}") as app:
+                          shots=args.out / f"seed-{seed}", plugins=plugins) as app:
             app.replay_header = {"fixture": kind, "profile": args.profile, "seed": seed,
-                                 "size": list(size), "args": extra, "weird": not args.no_weird}
+                                 "size": list(size), "args": extra, "weird": not args.no_weird,
+                                 "plugins": list(plugins)}
             app.check("start")
             monkey = m.Monkey(app, seed, args.profile, project, coverage=coverage,
                               corpus=mm.Corpus(args.corpus), weird=not args.no_weird,

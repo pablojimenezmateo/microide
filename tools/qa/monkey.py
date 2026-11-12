@@ -437,7 +437,10 @@ def apply_external(project: Path, op: str, target: str, counter: int) -> None:
         subprocess.run(["git", "-C", str(project), *args], capture_output=True, env=env, timeout=30)
 
     try:
-        if op == "diff-variant":
+        if op == "compile-flags":
+            # What clangd needs to resolve the fixture's includes (flows_lsp_debug._lsp_ready).
+            (project / "compile_flags.txt").write_text("-Iinclude\n-std=c++17\n")
+        elif op == "diff-variant":
             # Two versions of one generated source, for compare-files: the
             # structural diff's paths (diff_variants.py). Six slots, reused.
             language, left, right = dv.variant_pair(counter)
@@ -566,10 +569,32 @@ PROFILES: dict[str, dict[str, float]] = {
     "terminal": {"terminal": 30, "element": 14, "chord": 12, "type": 10, "burst": 6, "window": 4,
                  "command": 6, "wheel": 6, "setting": 2},
     "settings": {"setting": 25, "element": 25, "chord": 10, "type": 8, "text": 6, "window": 4, "command": 6},
+    # Language servers and the debugger, through their plugins (PROFILE_PLUGINS):
+    # clangd answering at random positions, gdb running the fixture's program.
+    "tooling": {"tooling": 18, "type": 12, "text": 8, "chord": 12, "element": 16, "burst": 4, "wheel": 4,
+                "command": 6, "point": 4, "file": 3},
     # Diffs: structural refinement over generated code, typed into on the editable side.
     "diff": {"diff": 14, "type": 16, "text": 10, "chord": 12, "element": 14, "burst": 6, "wheel": 6,
              "command": 4, "setting": 2, "window": 2},
 }
+# Plugins a profile's runs load (tools/qa/microide_qa.py App.launch copies them
+# in; the replay header records them, so a replay loads the same). Every other
+# profile runs with none -- which is why no soak run had ever had a language
+# server, a debug adapter or the Lua plugin host behind its commands.
+PROFILE_PLUGINS: dict[str, tuple[str, ...]] = {
+    "tooling": ("cpp-lsp", "gdb-dap", "todo-highlight", "eol-annotations", "language-tools"),
+}
+# Where the taskflow fixture's code is, for language-server and debugger actions:
+# (file, lines it has) -- breakpoints land on real lines, positions inside them.
+TOOLING_FILES = (("src/scheduler.cpp", 26), ("src/main.cpp", 16), ("include/scheduler.hpp", 26))
+TOOLING_FUNCTIONS = ("taskflow::Scheduler::run", "taskflow::Scheduler::add", "main", "nosuchfunction")
+LSP_COMMANDS = ("goto-definition", "goto-declaration", "goto-type-definition", "goto-implementation",
+                "find-references", "completion", "signature-help", "show-hover", "code-actions",
+                "format-document", "next-problem", "goto-symbol")
+DEBUG_COMMANDS = ("debug-continue", "debug-step-over", "debug-step-in", "debug-step-out", "debug-pause",
+                  "debug-stop", "debug-restart", "debug-step-back", "debug-reverse-continue",
+                  "debug-switch-session", "debug-stop-all", "debug-pane-callstack", "debug-pane-variables",
+                  "debug-pane-watch", "debug-repl", "debug-show-output", "debug-start-or-continue")
 COMMAND_PROFILES = ("commands", "editor")
 ALL_PROFILES = tuple(PROFILES) + COMMAND_PROFILES
 
@@ -613,7 +638,9 @@ class Monkey:
             "setting": self.setting_action, "window": self.window_action,
             "terminal": self.terminal_action, "file": self.file_action,
             "external": self.external_action, "kill9": self.kill9_action, "diff": self.diff_action,
+            "tooling": self.tooling_action,
         }
+        self._tooling_ready = False
         self.data = mo.DataOracle(app)
         self.undo = mo.UndoAlgebra(app, random.Random(seed ^ 0x0DD))
         self.resources = mo.ResourceOracle(app)
@@ -1056,6 +1083,64 @@ class Monkey:
             time.sleep(0.1)
         self._check_structural(f"monkey step {self.step_index}")
         return "diff:open"
+
+    def tooling_action(self) -> str:
+        """A language-server or debugger action with real arguments on the
+        fixture's code. The first one sets up what they need (a compile_flags.txt
+        for clangd, the debugger on), as recorded actions a replay repeats."""
+        if self.project is None:
+            return self.command_action()
+        if not self._tooling_ready:
+            self._tooling_ready = True
+            self.counter += 1
+            self.app.record_external({"external": "compile-flags", "target": "", "counter": self.counter})
+            apply_external(self.project, "compile-flags", "", self.counter)
+            self.app.send_line("set-setting debug.enabled true")
+            self.app.send_line("open src/scheduler.cpp")
+            return "tooling:setup"
+        path, lines = self.rng.choice(TOOLING_FILES)
+        line = self.rng.randrange(1, lines + 1)
+        roll = self.rng.random()
+        if roll < 0.45:
+            # At a position in the code, then the request: most land on a symbol.
+            self.app.send_line(f"open {path}")
+            self.app.send_line(f"goto {line}:{self.rng.randrange(1, 40)}")
+            command = self.rng.choice(LSP_COMMANDS)
+            if command == "goto-symbol":
+                command += " " + self.rng.choice(("Scheduler", "run", "add", "zz"))
+            self.app.send_line(command)
+            return f"tooling:{command.split()[0]}"
+        if roll < 0.55:
+            self.app.send_line(f"open {path}")
+            self.app.send_line(f"goto {line}:{self.rng.randrange(1, 30)}")
+            self.app.send_line(f"rename-symbol {self.rng.choice(('task', 'total', 'renamed', 'queue_'))}")
+            return "tooling:rename"
+        if roll < 0.75:
+            absolute = q.quote_arg(str(self.project / path))
+            command = self.rng.choice((
+                f"breakpoint-set {absolute} {line}",
+                f"breakpoint-set {absolute} {line} total>{self.rng.randrange(10)}",
+                f"breakpoint-condition {absolute} {line} task.cost=={self.rng.randrange(5)}",
+                f"breakpoint-hit-condition {absolute} {line} {self.rng.randrange(1, 4)}",
+                f"breakpoint-logmessage {absolute} {line} \"total is {{total}}\"",
+                f"breakpoint-enable {absolute} {line}", f"breakpoint-disable {absolute} {line}",
+                f"breakpoint-remove {absolute} {line}", f"breakpoint-clear {absolute}", "breakpoint-clear",
+                f"breakpoint-function-add {self.rng.choice(TOOLING_FUNCTIONS)}",
+                f"breakpoint-function-toggle {self.rng.choice(TOOLING_FUNCTIONS)}",
+                f"breakpoint-function-condition {self.rng.choice(TOOLING_FUNCTIONS)} total>1",
+                f"breakpoint-function-remove {self.rng.choice(TOOLING_FUNCTIONS)}",
+                f"breakpoint-exception-condition {self.rng.choice(('throw', 'catch', 'all'))} 1",
+                "breakpoint-toggle"))
+            self.app.send_line(command)
+            return f"tooling:{command.split()[0]}"
+        if roll < 0.85:
+            self.app.send_line(f"debug-run --type gdb {q.quote_arg(str(self.project / 'taskflow'))}")
+            return "tooling:debug-run"
+        command = self.rng.choice(DEBUG_COMMANDS)
+        if command == "debug-switch-session":
+            command += f" {self.rng.randrange(0, 3)}"
+        self.app.send_line(command)
+        return f"tooling:{command}"
 
     def _check_structural(self, label: str) -> None:
         self.app.record_external({"oracle": "structural-diff"})
