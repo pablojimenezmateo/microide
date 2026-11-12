@@ -281,8 +281,25 @@ class Job:
     binary: str
 
 
+_ANCESTRY: dict[tuple[str, str], bool] = {}
+
+
+def has_commit(fix: str, commit: str) -> bool:
+    """The build at `commit` has `fix` (git merge-base --is-ancestor). Answers
+    for known objects never change, so they are memoized: the ledger asks for
+    every sighting of every fixed signature on each fold."""
+    key = (fix, commit)
+    if key not in _ANCESTRY:
+        code = subprocess.run(["git", "merge-base", "--is-ancestor", fix, commit],
+                              cwd=REPO, capture_output=True).returncode
+        if code not in (0, 1):
+            return False  # an object this checkout lacks: ask again later
+        _ANCESTRY[key] = code == 0
+    return _ANCESTRY[key]
+
+
 def ledger() -> ld.Ledger:
-    return ld.Ledger(SOAK / "ledger.jsonl")
+    return ld.Ledger(SOAK / "ledger.jsonl", contains=has_commit)
 
 
 def choose_job(rng: random.Random, state: dict[str, Any]) -> JobType | None:
@@ -449,7 +466,7 @@ def keep_sighting(job: Job, finding: dict[str, Any], entry: ld.Entry) -> None:
     evidence = finding_evidence(job, finding)
     if evidence is None or not bundle.is_dir():
         return
-    after_fix = entry.status in ("fixed", "verified", "reopened")
+    after_fix = entry.status == "reopened" or entry.fixed_in(job.sha, has_commit)
     diagnostics_missing = any(
         any(evidence.glob(pattern)) and not any(bundle.glob(f"evidence/{pattern}"))
         and not any(bundle.glob(f"sightings/*/{pattern}"))
@@ -637,8 +654,7 @@ def fixes_to_verify(state: dict[str, Any]):
     for entry in ledger().entries().values():
         if entry.status != "fixed" or not entry.fix_commit:
             continue
-        if subprocess.run(["git", "merge-base", "--is-ancestor", entry.fix_commit, good["sha"]],
-                          cwd=REPO, capture_output=True).returncode == 0:
+        if has_commit(entry.fix_commit, good["sha"]):
             yield entry, good
 
 

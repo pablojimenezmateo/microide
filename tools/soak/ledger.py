@@ -9,7 +9,8 @@ sighting: the count rises, no new entry), `checked` (determinism measured: rate,
 deterministic), `minimized` (the minimal replay's length), `claimed` (by an
 agent), `fixed` (with the fix commit), `verified` (the fix's commit is in the
 soak build and the minimal replay no longer reproduces), `reopened` (a fixed or
-verified signature came back), `note`.
+verified signature came back: a sighting from a build that has the fix, or the
+verification replay), `note`.
 
 The state of a signature is the fold of its events; nothing is rewritten, so two
 writers (the runner and an agent marking a fix) never lose each other's lines.
@@ -23,7 +24,10 @@ import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
+
+# contains(fix_commit, commit): the build at `commit` has the fix.
+Contains = Callable[[str, str], bool]
 
 STATES = ("new", "claimed", "fixed", "verified", "reopened")
 
@@ -49,6 +53,16 @@ class Entry:
     commits: set[str] = field(default_factory=set)
     notes: list[str] = field(default_factory=list)
 
+    def fixed_in(self, commit: str, contains: Contains | None) -> bool:
+        """A sighting at `commit` comes after this entry's fix: it is fixed or
+        verified and that build has the fix commit. Without an ancestry check
+        every sighting counts."""
+        if self.status not in ("fixed", "verified"):
+            return False
+        if contains is None or not self.fix_commit or not commit:
+            return True
+        return contains(self.fix_commit, commit)
+
     def to_json(self) -> dict[str, Any]:
         out = dict(self.__dict__)
         out["cells"] = sorted(self.cells)
@@ -57,8 +71,13 @@ class Entry:
 
 
 class Ledger:
-    def __init__(self, path: Path):
+    """`contains` tells whether a build has a fix commit; with it, a sighting from
+    a build older than the fix (the runner keeps the previous build's jobs going
+    while it builds the next) does not reopen the finding."""
+
+    def __init__(self, path: Path, contains: Contains | None = None):
         self.path = path
+        self.contains = contains
         path.parent.mkdir(parents=True, exist_ok=True)
 
     def append(self, sig: str, event: str, **fields: Any) -> None:
@@ -98,7 +117,7 @@ class Ledger:
                     entry.cells.add(event["cell"])
                 if event.get("commit"):
                     entry.commits.add(event["commit"])
-                if kind == "seen" and entry.status in ("fixed", "verified"):
+                if kind == "seen" and entry.fixed_in(event.get("commit", ""), self.contains):
                     entry.status = "reopened"
             elif kind == "checked":
                 entry.deterministic = bool(event.get("deterministic"))
