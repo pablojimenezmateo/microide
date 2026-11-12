@@ -10,6 +10,7 @@
 
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
+#include <algorithm>
 #include <array>
 #include <optional>
 #include <string_view>
@@ -68,16 +69,23 @@ bool WorkspaceShell::DebugToolbarVisible() const {
 }
 
 std::optional<float> WorkspaceShell::DebugToolbarAvoidBelowY(const WorkspaceLayout& layout) const {
+  // What sits at the top of the editor area that the toolbar must not cover: the
+  // find widget, and an editor banner -- whose Reload / Keep / dismiss the bar
+  // used to sit on (the QA monkey's overlap oracle).
+  std::optional<float> below;
   const OverlayState& overlay = context_.current_project_state.overlay;
-  if (!overlay.visible) {
-    return std::nullopt;
+  if (overlay.visible &&
+      (overlay.mode == OverlayMode::BufferSearch || overlay.mode == OverlayMode::BufferReplace)) {
+    const SDL_FRect fw =
+        ComputeFindWidgetRect(layout.editor_surface, overlay.mode == OverlayMode::BufferReplace);
+    below = fw.y + fw.h;
   }
-  if (overlay.mode != OverlayMode::BufferSearch && overlay.mode != OverlayMode::BufferReplace) {
-    return std::nullopt;
+  if (const SDL_FRect banner =
+          ActiveEditorBannerStripRect(context_.current_project_state, ComputeEditorGroupRectsForState(layout));
+      banner.h > 0.0f) {
+    below = std::max(below.value_or(banner.y + banner.h), banner.y + banner.h);
   }
-  const SDL_FRect fw =
-      ComputeFindWidgetRect(layout.editor_surface, overlay.mode == OverlayMode::BufferReplace);
-  return fw.y + fw.h;
+  return below;
 }
 
 void WorkspaceShell::RenderDebugToolbar(SDL_Renderer* renderer, const WorkspaceLayout& layout,

@@ -1414,9 +1414,18 @@ DebugToolbarLayout ComputeDebugToolbarLayout(const SDL_FRect& editor_area,
                       (count - 1.0f) * kDebugToolbarButtonGap;
   const float height = 2.0f * kDebugToolbarPad + kDebugToolbarButton;
   const float x = editor_area.x + editor_area.w - width - kDebugToolbarMargin;
-  // Stack below the find widget when present, otherwise anchor at the editor top.
+  // Stack below the find widget or a banner when present, otherwise anchor at the
+  // editor top.
   const float y = avoid_below_y.has_value() ? *avoid_below_y + kDebugToolbarStackGap
                                             : editor_area.y + kDebugToolbarMargin;
+  // It floats over the editor and nothing else: where the editor area cannot hold
+  // it (the panel maximized, a window narrower than the bar) it is not shown --
+  // hung past the area it covered the panel's tabs, which then could not be
+  // clicked. The Debug menu, the keys and the debug pane still drive the session.
+  if (x < editor_area.x || y + height > editor_area.y + editor_area.h) {
+    layout.button_count = 0;
+    return layout;
+  }
   layout.widget = MakeRect(std::floor(x), std::floor(y), std::floor(width), std::floor(height));
 
   float bx = layout.widget.x + kDebugToolbarPad;

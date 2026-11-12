@@ -3083,6 +3083,68 @@ void TestDebugToolbarDoesNotHoverUnderAModal() {
                       "the pointer over Restart under the prompt");
 }
 
+// Soak 47880e079590, 030a0a023f4b, c839150f3fa9 (the overlap oracle): the floating
+// debug toolbar sat at the editor area's top-right whatever was there. It covered
+// an editor banner's buttons (Keep, dismiss), and with the panel maximized --
+// an editor area too short to hold it -- it hung over the panel's tabs. Covered,
+// those cannot be clicked. It stacks below a banner as it does below the find
+// widget, and where it does not fit it is not shown (the Debug menu, the keys and
+// the debug pane still drive the session).
+void TestTheDebugToolbarCoversNoOtherControl() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("main.c", "int main() { return 0; }\n");
+  const std::filesystem::path adapter = fixture.temp_dir.path() / "adapter.py";
+  WriteFile(adapter, MockAdapterSource());
+  TestAccess::RegisterDebugAdapterForTest(fixture.shell, "mock", MockAdapterCommand(adapter, "stop"));
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting debug.enabled true"),
+         "debug.enabled should turn on");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-run --type mock /bin/true"),
+         "debug-run should start the mock session");
+  Expect(WaitUntil([&]() { return TestAccess::DebugSessionStopped(fixture.shell); },
+                   std::chrono::seconds(10), std::chrono::milliseconds(5),
+                   [&]() { TestAccess::ConsumeDapCallbacks(fixture.shell); }),
+         "the mock adapter should stop on configurationDone");
+  const auto covered = [&](const char* what) {
+    fixture.PinCaret();
+    fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+    const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+    std::vector<std::pair<std::string, std::array<float, 4>>> toolbar;
+    std::vector<std::pair<std::string, std::array<float, 4>>> others;
+    for (const util::JsonValue& element : ui["elements"].AsArray()) {
+      const std::string name = element["name"].AsString();
+      const auto& rect = element["rect"].AsArray();
+      const std::string kind = element["kind"].AsString();
+      if (rect.size() != 4 || (kind != "button" && kind != "panel-tab" && kind != "tab")) {
+        continue;
+      }
+      const std::array<float, 4> r{static_cast<float>(rect[0].AsDouble()), static_cast<float>(rect[1].AsDouble()),
+                                   static_cast<float>(rect[2].AsDouble()), static_cast<float>(rect[3].AsDouble())};
+      (name.rfind("button:debug-toolbar/", 0) == 0 ? toolbar : others).emplace_back(name, r);
+    }
+    for (const auto& [tool, t] : toolbar) {
+      for (const auto& [other, o] : others) {
+        const bool overlap = t[0] < o[0] + o[2] && o[0] < t[0] + t[2] && t[1] < o[1] + o[3] && o[1] < t[1] + t[3];
+        Expect(!overlap, std::string(what) + ": " + tool + " covers " + other);
+      }
+    }
+    return toolbar.size();
+  };
+  Expect(covered("the first stop") > 0, "the toolbar shows at the stop");
+
+  workspace::SetEditorBanner(TestAccess::CurrentProjectState(fixture.shell),
+                             workspace::EditorBannerState::Kind::ExternalChange, fixture.file,
+                             "changed on disk");
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  Expect(covered("with a banner on the file") > 0, "the toolbar still shows below the banner");
+
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "panel-maximize"), "the panel should maximize");
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  covered("with the panel maximized");
+}
+
 // The QA monkey (seed 2): with the panel maximized, Settings open and the filter
 // taking the typing, a click on the second row's stepper value selected that row
 // and moved the keyboard to the rows -- and no frame repainted it. Settings asked
@@ -5399,6 +5461,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/HoverTextKeepsItsLines", TestHoverTextKeepsItsLines);
   AddTest(tests, "QaFlowRegression/DebugSessionRepaintsToolbarAndOutput", TestDebugSessionRepaintsToolbarAndOutput);
   AddTest(tests, "QaFlowRegression/DebugToolbarDoesNotHoverUnderAModal", TestDebugToolbarDoesNotHoverUnderAModal);
+  AddTest(tests, "QaFlowRegression/TheDebugToolbarCoversNoOtherControl", TestTheDebugToolbarCoversNoOtherControl);
   AddTest(tests, "QaFlowRegression/ASettingsRowValueClickRepaintsTheRows", TestASettingsRowValueClickRepaintsTheRows);
   AddTest(tests, "QaFlowRegression/ExceptionFiltersStayListedAfterAStop", TestExceptionFiltersStayListedAfterAStop);
   AddTest(tests, "QaFlowRegression/StopWithNoSessionLeavesTheDebugPane", TestStopWithNoSessionLeavesTheDebugPane);
