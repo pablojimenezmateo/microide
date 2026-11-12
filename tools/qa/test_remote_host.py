@@ -52,6 +52,17 @@ class ContentSetTests(unittest.TestCase):
         _write(self.mirror / "build" / "local.o", "x\n")
         self.assertEqual(self.diff(), [])
 
+    def test_a_host_file_it_cannot_read_is_not_compared(self) -> None:
+        if os.geteuid() == 0:
+            return  # permissions do not refuse root
+        _write(self.host / "locked.txt", "secret\n")
+        _write(self.mirror / "locked.txt", "the last copy\n")
+        os.chmod(self.host / "locked.txt", 0)
+        try:
+            self.assertEqual(self.diff(), [])
+        finally:
+            os.chmod(self.host / "locked.txt", 0o644)
+
     def test_a_changed_file_differs(self) -> None:
         _write(self.mirror / "src" / "a.cpp", "int b;\n")
         self.assertEqual(self.diff(), ["src/a.cpp"])

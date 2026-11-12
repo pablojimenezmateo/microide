@@ -109,7 +109,12 @@ def content_set(host_root: Path, mirror: Path) -> tuple[dict[str, str], dict[str
     ignored = _git_paths(host_root, "check-ignore", "--stdin", "-z",
                          stdin="\0".join(only_mirror) + "\0") if only_mirror else set()
     host = {p: f for p in host_paths if (f := _fingerprint(host_root / p)) is not None}
-    mirror_side = {p: f for p in mirror_paths - ignored if (f := _fingerprint(mirror / p)) is not None}
+    # A host file that is there but cannot be read (mode 000, the outside world's
+    # chmod): the sync reports it unreadable and leaves the mirror's last copy
+    # alone, so neither side is compared (soak 37ec61829b08).
+    unreadable = {p for p in host_paths if p not in host and (host_root / p).is_file()
+                  and not os.access(host_root / p, os.R_OK)}
+    mirror_side = {p: f for p in mirror_paths - ignored - unreadable if (f := _fingerprint(mirror / p)) is not None}
     return host, mirror_side
 
 
