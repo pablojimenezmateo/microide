@@ -384,6 +384,13 @@ class ResourceOracle:
     THREAD_BUDGET = 64
     CHILD_BUDGET = 48
     RSS_BUDGET_KB = 1_500_000
+    # What one open terminal pane holds, measured (2026-11-12): its pty (3 fds),
+    # its reader thread and its shell. Twenty opened and closed again return to
+    # the baseline exactly, so terminals the run still has open are not a leak --
+    # the terminal profile keeps 200 of them and every run "leaked" its budgets
+    # (soak 6da9bc4a526a, d1e39df0281e, bdea62052550). Growth is measured past
+    # what the open panes account for, with a little slack per pane.
+    PER_PANE = {"fds": 4, "threads": 2, "children": 1, "rss_kb": 0}
 
     def __init__(self, app: q.App):
         self.app = app
@@ -411,25 +418,38 @@ class ResourceOracle:
                 children += len((task / "children").read_text().split())
         except (OSError, ValueError):
             return None
-        sample = {"fds": fds, "threads": threads, "rss_kb": rss, "children": children}
+        sample = {"fds": fds, "threads": threads, "rss_kb": rss, "children": children,
+                  "panes": self._terminal_panes()}
         self.samples.append(sample)
         if self.baseline is None:
             self.baseline = sample
         return sample
+
+    def _terminal_panes(self) -> int:
+        try:
+            tabs = self.app.query("terminals")
+        except Exception:  # noqa: BLE001 - a busy app: count none, the budgets stay strict
+            return 0
+        tabs = tabs if isinstance(tabs, list) else tabs.get("tabs", [])
+        return sum(max(1, len(tab.get("panes", []))) for tab in tabs)
 
     def check(self) -> list[tuple[str, str]]:
         sample = self.sample()
         if sample is None or self.baseline is None:
             return []
         out = []
+        opened = max(0, sample.get("panes", 0) - self.baseline.get("panes", 0))
         budgets = {"fds": self.FD_BUDGET, "threads": self.THREAD_BUDGET, "children": self.CHILD_BUDGET,
                    "rss_kb": int(self.RSS_BUDGET_KB * max(1.0, q.SLOW_FACTOR / 2))}
         for name, budget in budgets.items():
             grown = sample[name] - self.baseline[name]
-            if grown > budget and name not in self.reported:
+            held = self.PER_PANE[name] * opened
+            if grown - held > budget and name not in self.reported:
                 self.reported.add(name)
                 out.append(("leak", f"the app's {name} grew by {grown} over the run "
-                                    f"({self.baseline[name]} -> {sample[name]}; budget {budget})"))
+                                    f"({self.baseline[name]} -> {sample[name]}; budget {budget}"
+                                    + (f", plus {held} for {opened} more open terminal pane(s)" if held else "")
+                                    + ")"))
         return out
 
 

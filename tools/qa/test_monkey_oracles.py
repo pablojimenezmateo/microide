@@ -121,5 +121,42 @@ class IdleEvidenceTests(unittest.TestCase):
         oracle = monkey_oracles.IdleOracle(mock.Mock())
         self.assertEqual(oracle._repainted_regions(["microide redraw frame: frame=1 dirty=1"]), [])
 
+
+class ResourceOracleTests(unittest.TestCase):
+    """Soak 6da9bc4a526a / d1e39df0281e / bdea62052550: the terminal profile keeps
+    up to 200 terminals open, each with its pty, reader thread and shell, and every
+    run crossed the fixed budgets with nothing leaked (20 opened and closed return
+    to the baseline exactly). What the open panes hold is not growth."""
+
+    def _oracle(self, samples):
+        oracle = monkey_oracles.ResourceOracle(mock.Mock())
+        it = iter(samples)
+
+        def sample():
+            current = next(it)
+            oracle.samples.append(current)
+            if oracle.baseline is None:
+                oracle.baseline = current
+            return current
+        oracle.sample = sample  # type: ignore[method-assign]
+        return oracle
+
+    def test_open_terminals_are_not_a_leak(self) -> None:
+        start = {"fds": 33, "threads": 50, "children": 1, "rss_kb": 1, "panes": 1}
+        many = {"fds": 33 + 3 * 120, "threads": 50 + 120, "children": 121, "rss_kb": 1, "panes": 121}
+        oracle = self._oracle([start, many])
+        oracle.check()
+        self.assertEqual(oracle.check(), [])
+
+    def test_growth_past_the_open_panes_is_reported(self) -> None:
+        start = {"fds": 33, "threads": 50, "children": 1, "rss_kb": 1, "panes": 1}
+        leaky = {"fds": 33 + 3 * 10 + 400, "threads": 60, "children": 11, "rss_kb": 1, "panes": 11}
+        oracle = self._oracle([start, leaky])
+        oracle.check()
+        found = oracle.check()
+        self.assertEqual(len(found), 1)
+        self.assertIn("fds grew by 430", found[0][1])
+        self.assertIn("plus 40 for 10 more open terminal pane(s)", found[0][1])
+
 if __name__ == "__main__":
     unittest.main()
