@@ -51,6 +51,14 @@ import monkey_model as mm  # noqa: E402
 
 SOAK = Path(os.environ.get("MICROIDE_SOAK_DIR", REPO / "build" / "soak"))
 WORKTREE = Path(os.environ.get("MICROIDE_SOAK_WORKTREE", REPO / "build" / "wt-soak"))
+# The QA driver a build's jobs run, copied out of the worktree at build time
+# (snapshot_driver): jobs and checks run from here, so the worktree can move to
+# the next commit under them and a build needs no drain.
+DRIVERS = SOAK / "driver"
+# What the driver reads from the repository (microide_qa.REPO is two levels up
+# from tools/qa): the driver itself, the fixture script, the soak's own tools
+# (minimize.py) and the plugins a profile loads.
+DRIVER_PATHS = ("tools/qa", "tools/capture-media", "tools/soak", "plugins")
 PAUSE = SOAK / "PAUSE"
 STATE = SOAK / "state.json"
 RUNS = SOAK / "runs"
@@ -107,6 +115,10 @@ def build_all(state: dict[str, Any], log) -> None:
     if git("log", "-1", "--format=%ae", head) == QA_GIT_EMAIL:
         raise RuntimeError(f"main is at {head[:10]}, a QA monkey commit: not building it")
     if is_built(state, head):
+        # Built before this runner had snapshots (or lost it): take it now, from
+        # the worktree that is still at `head`.
+        if not (Path(state.get("driver") or "") / "tools" / "qa" / "run.py").exists():
+            state["driver"] = str(snapshot_driver(head))
         return
     log(f"building {head[:10]}")
     subprocess.run(["git", "checkout", "-q", "--detach", head], cwd=WORKTREE, capture_output=True)
@@ -135,7 +147,41 @@ def build_all(state: dict[str, Any], log) -> None:
                             kind="build", label=f"build: the {build.name} build fails", commit=head,
                             cell=build.name, detail=tail)
     state["built_sha"] = head
+    state["driver"] = str(snapshot_driver(head))
     prune_binaries(good)
+    prune_drivers(state)
+
+
+def snapshot_driver(head: str) -> Path:
+    """The worktree's QA driver at `head`, copied where the next checkout cannot
+    change it under a running job (about 4 MB)."""
+    target = DRIVERS / head[:12]
+    if not target.exists():
+        staging = DRIVERS / f".{head[:12]}.partial"
+        shutil.rmtree(staging, ignore_errors=True)
+        for relative in DRIVER_PATHS:
+            source = WORKTREE / relative
+            if source.exists():
+                shutil.copytree(source, staging / relative, symlinks=True,
+                                ignore=shutil.ignore_patterns("__pycache__"))
+        staging.rename(target)
+    return target
+
+
+def driver_root(state: dict[str, Any]) -> Path:
+    """Where jobs and checks run the driver from: the newest build's snapshot (the
+    worktree before the first build that took one)."""
+    path = Path(state.get("driver") or WORKTREE)
+    return path if (path / "tools" / "qa" / "run.py").exists() else WORKTREE
+
+
+def prune_drivers(state: dict[str, Any]) -> None:
+    """Snapshots older than the longest job (checks: three hours), but never the
+    current one: a job started on an older snapshot finishes on it."""
+    keep = Path(state.get("driver") or "")
+    for snapshot in DRIVERS.glob("*"):
+        if snapshot != keep and time.time() - snapshot.stat().st_mtime > 6 * 3600:
+            shutil.rmtree(snapshot, ignore_errors=True)
 
 
 def is_built(state: dict[str, Any], head: str) -> bool:
@@ -144,15 +190,13 @@ def is_built(state: dict[str, Any], head: str) -> bool:
 
 
 def refresh_due(state: dict[str, Any]) -> bool:
-    """Whether the runner has to drain its jobs for a build and a verification.
+    """Whether a build and a verification are due (they run beside the jobs).
 
-    Draining is what the build interval used to buy unconditionally, every
-    fifteen minutes: no new job started until the running ones ended, and the
-    longest of them is a check minimizing a finding for up to three hours. The
-    build it waited for was nearly always a no-op (main had not moved), so the
-    soak spent most of its time on one job -- three on average of a budget of
-    nine. A drain is now taken only when there is work behind it: main moved,
-    a binary went missing, or a fixed finding waits for its replay.
+    A build used to drain the runner first, and draining unconditionally every
+    fifteen minutes left the soak at about three jobs of a budget of nine. Since
+    jobs run their own build's driver snapshot there is no drain at all; this
+    still skips the work when there is none: main has not moved, no binary is
+    missing, and no fixed finding waits for its replay.
     """
     return not is_built(state, git("rev-parse", "main")) or any(True for _ in fixes_to_verify(state))
 
@@ -328,7 +372,8 @@ def start_job(job_type: JobType, state: dict[str, Any], rng: random.Random) -> J
     out = RUNS / f"{time.strftime('%Y%m%d-%H%M%S')}-{job_type.name}-{seed}"
     out.mkdir(parents=True, exist_ok=True)
     size, scale = choose_cell(rng) if job_type.matrix else ((1440, 900), "1")
-    qa = WORKTREE / "tools" / "qa" / "run.py"
+    driver = driver_root(state)
+    qa = driver / "tools" / "qa" / "run.py"
     command = ["nice", "-n", "19", "ionice", "-c3", *build.prefix, sys.executable, str(qa),
                "--binary", entry["binary"], "--out", str(out), "monkey", "--profile", job_type.profile,
                "--seed", str(seed), "--steps", str(job_type.steps), "--time-budget", str(job_type.timeout * 0.8)]
@@ -345,7 +390,7 @@ def start_job(job_type: JobType, state: dict[str, Any], rng: random.Random) -> J
     env = {**os.environ, "MQA_SLOW_FACTOR": str(build.slow), **build.env}
     cell = f"{job_type.name}/{job_type.build}/{size[0]}x{size[1]}@{scale}"
     with open(out / "driver.log", "wb") as log:
-        proc = subprocess.Popen(command, cwd=WORKTREE, env=env, stdout=log, stderr=subprocess.STDOUT,
+        proc = subprocess.Popen(command, cwd=driver, env=env, stdout=log, stderr=subprocess.STDOUT,
                                 start_new_session=True)
     return Job(job_type, seed, out, command, cell, time.time(), proc, entry["sha"], entry["binary"])
 
@@ -440,7 +485,9 @@ def finding_evidence(job: Job, finding: dict[str, Any]) -> Path | None:
         return None
     evidence = Path(evidence_text)
     if not evidence.is_absolute():
-        evidence = (WORKTREE / evidence).resolve()
+        # Relative to the job's working directory: the driver snapshot it ran from.
+        root = next((Path(arg).parents[2] for arg in job.command if arg.endswith("tools/qa/run.py")), WORKTREE)
+        evidence = (root / evidence).resolve()
     if evidence.is_dir() and evidence.name.startswith("finding-") and \
             job.out.resolve() in evidence.resolve().parents:
         return evidence
@@ -630,7 +677,7 @@ def check_finding(sig: str, state: dict[str, Any], log) -> None:
     meta = json.loads(meta_path.read_text())
     binary = meta["binary"]
     env = {**os.environ, "MQA_SLOW_FACTOR": str(meta.get("slow", 1))}
-    minimize = [sys.executable, str(WORKTREE / "tools" / "soak" / "minimize.py"), str(replay),
+    minimize = [sys.executable, str(driver_root(state) / "tools" / "soak" / "minimize.py"), str(replay),
                 "--signature", sig, "--binary", binary, "--out", str(bundle)]
     result = subprocess.run(["nice", "-n", "19", *minimize, "--check-only", "--runs", "3", "--jobs", "3"],
                             capture_output=True, text=True, env=env, timeout=3600)
@@ -684,7 +731,7 @@ def verify_fixed(state: dict[str, Any], log) -> None:
             ledger().append(entry.sig, "verified", note="no replay to re-check; trusted the fix")
             prune_verified_bundle(bundle)
             continue
-        result = subprocess.run(["nice", "-n", "19", sys.executable, str(WORKTREE / "tools/soak/minimize.py"),
+        result = subprocess.run(["nice", "-n", "19", sys.executable, str(driver_root(state) / "tools/soak/minimize.py"),
                                  str(replay), "--signature", entry.sig, "--binary", good["binary"],
                                  "--check-only", "--runs", "3", "--jobs", "3", "--out", str(bundle / "verify")],
                                 capture_output=True, text=True, timeout=3600)
@@ -752,7 +799,7 @@ def contain_breach(breach: str, jobs: list["Job"], log) -> None:
                     commit=git("rev-parse", "main"), cell="runner", detail=message)
 
 
-def busy_reason(our_jobs: int) -> str | None:
+def busy_reason(our_cores: float) -> str | None:
     if PAUSE.exists():
         return "paused (build/soak/PAUSE)"
     free = shutil.disk_usage(SOAK).free
@@ -762,13 +809,16 @@ def busy_reason(our_jobs: int) -> str | None:
         return "a run-checks lane is running"
     cores = os.cpu_count() or 4
     load = os.getloadavg()[0]
-    if external_load(load, our_jobs) > cores * BUSY_FRACTION:
+    if max(0.0, load - our_cores) > cores * BUSY_FRACTION:
         return f"the machine is busy (load {load:.1f})"
     return None
 
 
-# Our own jobs each keep about one and a half cores busy (the app, Xvfb, the
-# driver), which is what both the load accounting and the job budget count.
+# A job's cost before one is measured (JobLoad): the app, Xvfb and the driver.
+# Measured, a job costs about twice this (an ASan app alone takes a core and a
+# half), and the estimate -- the whole accounting until 2026-11-12 -- booked the
+# soak's own load as someone else's: at five running jobs the load read 16 and
+# the budget fell to nothing on a machine running only the soak.
 CORES_PER_JOB = 1.5
 # Someone else's load above this share of the cores: start nothing.
 BUSY_FRACTION = 0.6
@@ -780,39 +830,86 @@ FILL_FRACTION = 0.9
 RAMP_SECONDS = 20.0
 
 
-def external_load(load: float, our_jobs: int) -> float:
-    """The 1-minute load that is not ours."""
-    return max(0.0, load - CORES_PER_JOB * our_jobs)
+class JobLoad:
+    """The cores the soak's own jobs use, measured rather than assumed: the CPU
+    time of every process in their sessions (each job is a session of its own:
+    start_new_session), children already reaped included (cutime/cstime), over
+    the time since the last sample."""
+
+    WINDOW = 15.0
+
+    def __init__(self) -> None:
+        self._time = 0.0
+        self._ticks: dict[int, int] = {}
+        self.cores: float | None = None
+
+    @staticmethod
+    def session_ticks(sessions: set[int]) -> dict[int, int]:
+        totals: dict[int, int] = {}
+        with contextlib.suppress(OSError):
+            for entry in os.scandir("/proc"):
+                if not entry.name.isdigit():
+                    continue
+                try:
+                    with open(f"/proc/{entry.name}/stat") as handle:
+                        stat = handle.read()
+                except OSError:
+                    continue
+                fields = stat[stat.rfind(")") + 2:].split()
+                if len(fields) < 15 or int(fields[3]) not in sessions:
+                    continue
+                totals[int(fields[3])] = totals.get(int(fields[3]), 0) + sum(int(f) for f in fields[11:15])
+        return totals
+
+    def sample(self, sessions: set[int]) -> float | None:
+        now = time.monotonic()
+        if self._time and now - self._time < self.WINDOW:
+            return self.cores
+        ticks = self.session_ticks(sessions)
+        if self._time:
+            # A session seen both times: its growth. One that ended took its time
+            # with it (no negative deltas); one that started counts from its first sample.
+            used = sum(max(0, ticks[s] - self._ticks[s]) for s in ticks if s in self._ticks)
+            self.cores = used / os.sysconf("SC_CLK_TCK") / (now - self._time)
+        self._time, self._ticks = now, ticks
+        return self.cores
 
 
 def max_jobs(cores: int) -> int:
     return max(1, int(cores * FILL_FRACTION / CORES_PER_JOB))
 
 
-def allowed_jobs(load: float, our_jobs: int, cores: int, ceiling: int) -> int:
+def allowed_jobs(load: float, our_cores: float | None, our_jobs: int, cores: int, ceiling: int) -> int:
     """How many jobs may run at once now: the cores others leave free, in jobs.
+
+    `our_cores` is what the soak's jobs measurably use (None before a sample:
+    CORES_PER_JOB each); a job is counted at what the running ones cost on average.
 
     Running jobs are never killed when this falls; they finish (each has a hard
     timeout) and are not replaced. The load average lags by about a minute, so
     the runner starts at most one job per RAMP_SECONDS and the ramp shows in
     the load before it goes further.
 
-    >>> allowed_jobs(0.0, 0, 16, 9)    # idle: the ceiling
+    >>> allowed_jobs(0.0, None, 0, 16, 9)     # idle: the ceiling
     9
-    >>> allowed_jobs(9.0, 6, 16, 9)    # all of it ours: still the ceiling
+    >>> allowed_jobs(9.0, None, 6, 16, 9)     # all of it ours, estimated: still the ceiling
     9
-    >>> allowed_jobs(7.0, 0, 16, 9)    # someone compiling on 7 cores
+    >>> allowed_jobs(16.0, 15.0, 5, 16, 9)    # five jobs measured at 3 cores: four fit in 90%
     4
-    >>> allowed_jobs(12.0, 2, 16, 9)   # 9 cores not ours: what they leave
+    >>> allowed_jobs(16.0, None, 5, 16, 9)    # the same, estimated: 8.5 cores booked as not ours
     3
-    >>> allowed_jobs(14.0, 0, 16, 9)   # busy: nothing new
+    >>> allowed_jobs(7.0, None, 0, 16, 9)     # someone compiling on 7 cores
+    4
+    >>> allowed_jobs(14.0, 0.0, 0, 16, 9)     # busy: nothing new
     0
     """
-    other = external_load(load, our_jobs)
+    ours = our_cores if our_cores is not None else CORES_PER_JOB * our_jobs
+    other = max(0.0, load - ours)
     if other > cores * BUSY_FRACTION:
         return 0
+    per_job = max(1.0, ours / our_jobs) if our_jobs and our_cores is not None else CORES_PER_JOB
     free = cores * FILL_FRACTION - other
-    return max(1, min(ceiling, int(free / CORES_PER_JOB)))
+    return max(1, min(ceiling, int(free / per_job)))
 
 
 def disk_usage(path: Path) -> int:
@@ -905,10 +1002,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     cores = os.cpu_count() or 4
     ceiling = args.jobs or max_jobs(cores)
 
+    job_load = JobLoad()
+
+    def our_cores() -> float | None:
+        return job_load.sample({job.proc.pid for job in jobs})
+
     def current_cap(our_jobs: int) -> int:
         if args.fixed:
             return ceiling
-        return allowed_jobs(os.getloadavg()[0], our_jobs, cores, ceiling)
+        return allowed_jobs(os.getloadavg()[0], our_cores(), our_jobs, cores, ceiling)
     jobs: list[Job] = []
     stopping = False
 
@@ -925,10 +1027,6 @@ def cmd_run(args: argparse.Namespace) -> int:
     last_cap = -1
     last_start = 0.0
     last_containment = 0.0
-    # Set once per build interval when refresh_due finds work, cleared by the
-    # build that does it: until then no job or check starts, so the running
-    # ones drain.
-    draining = False
     while not stopping:
         now = time.time()
         if deadline and now > deadline:
@@ -944,23 +1042,23 @@ def cmd_run(args: argparse.Namespace) -> int:
                 state["current"] = []
                 save_state(state)
                 continue
-        # A build runs between jobs, at most once per interval counted from the
-        # END of the last one (stamped at its start, a 20-minute build on a moving
-        # main left the interval spent and the runner rebuilt forever, starting no
-        # job). Jobs keep running on the last good binaries meanwhile.
-        if now - last_build > args.build_interval and not draining:
-            if not state.get("good") or refresh_due(state):
-                draining = True
-            else:
-                last_build = now
-        if draining and not jobs:
-            try:
-                build_all(state, log)
-            except Exception as error:  # noqa: BLE001 - a broken build never stops the runner
-                log(f"build step failed: {error}")
-            verify_fixed(state, log)
+        # A build runs at most once per interval counted from the END of the last
+        # one (stamped at its start, a 20-minute build on a moving main left the
+        # interval spent and the runner rebuilt forever, starting no job). It runs
+        # beside the jobs: they run the binaries and the driver snapshot of their
+        # own build (snapshot_driver), so nothing they read moves under them. It
+        # used to wait for every running job to end first -- a drain that left the
+        # soak at zero jobs 4.5 hours a day, waiting on hour-long ASan jobs for a
+        # build that took seconds.
+        if now - last_build > args.build_interval:
+            if not state.get("good") or driver_root(state) == WORKTREE or refresh_due(state):
+                try:
+                    build_all(state, log)
+                except Exception as error:  # noqa: BLE001 - a broken build never stops the runner
+                    log(f"build step failed: {error}")
+                verify_fixed(state, log)
+                save_state(state)
             last_build = time.time()
-            draining = False
             continue
         for job in list(jobs):
             if job.proc.poll() is not None or now - job.started > job.type.timeout:
@@ -977,7 +1075,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         if cap != last_cap:
             log(f"job budget {cap} (load {os.getloadavg()[0]:.1f}, {len(jobs)} running)")
             last_cap = cap
-        if pending and not draining and len(jobs) < cap and busy_reason(len(jobs)) is None:
+        if pending and len(jobs) < cap and busy_reason(our_cores() or CORES_PER_JOB * len(jobs)) is None:
             # Checks first: a new finding's rate and minimal replay are worth more
             # than another fresh run. A check holds three displays, so it counts
             # as a job of its own.
@@ -989,10 +1087,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             jobs.append(start_check(sig, state))
             log(f"check {sig}")
             save_state(state)
-        reason = busy_reason(len(jobs))
-        if reason is None and draining:
-            # A build is due: let the running jobs drain instead of starting more.
-            reason = "draining for a build"
+        reason = busy_reason(our_cores() or CORES_PER_JOB * len(jobs))
         if reason is None:
             # One per RAMP_SECONDS: the load average needs time to show what the
             # last one costs before the budget is trusted for the next.
@@ -1163,7 +1258,7 @@ def main() -> int:
     sub = parser.add_subparsers(dest="mode", required=True)
     run = sub.add_parser("run")
     run.add_argument("--jobs", type=int, default=0,
-                     help="the most jobs at once (default: 90%% of the cores, at 1.5 cores a job)")
+                     help="the most jobs at once (default: 90%% of the cores at 1.5 cores a job; the measured cost per job then decides how many fit)")
     run.add_argument("--fixed", action="store_true",
                      help="always run --jobs jobs instead of following the machine's load")
     run.add_argument("--once", action="store_true", help="exit when the started jobs and checks are done")

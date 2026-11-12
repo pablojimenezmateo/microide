@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import ctypes
 import importlib.util
 import json
 import re
@@ -659,6 +660,25 @@ class App:
             return b"microide redraw frame: frame=1 " in self.log_path.read_bytes()
         return False
 
+    @staticmethod
+    def _dies_with_driver() -> Callable[[], None]:
+        """A preexec_fn: the child is sent SIGTERM when this driver dies.
+
+        Xvfb is not in the app's session, and a driver killed by anything that
+        signals only its own process -- the soak's minimizer and verifier under
+        subprocess.run(timeout=...), a crash, a ^C in the wrong place -- left it
+        behind: 16 Xvfb servers sat orphaned for 3 to 13 days on the soak
+        machine. The parent's pid is taken before the fork, so a driver that died
+        between the fork and the prctl is caught too."""
+        parent = os.getpid()
+
+        def arm() -> None:
+            libc = ctypes.CDLL(None, use_errno=True)
+            libc.prctl(1, signal.SIGTERM)  # PR_SET_PDEATHSIG
+            if os.getppid() != parent:
+                os.kill(os.getpid(), signal.SIGTERM)
+        return arm
+
     def _start_xvfb(self, w: int, h: int) -> None:
         """Xvfb picks a free display and tells us (-displayfd); scanning lock
         files raced when two drivers started at once on one machine."""
@@ -667,14 +687,15 @@ class App:
         if self.display:
             self.xvfb = subprocess.Popen(
                 ["Xvfb", self.display, *xkb_args, "-screen", "0", f"{w}x{h}x24", "-nolisten", "tcp"],
-                env=self.tool_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                env=self.tool_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                preexec_fn=self._dies_with_driver())
         else:
             read_fd, write_fd = os.pipe()
             self.xvfb = subprocess.Popen(
                 ["Xvfb", "-displayfd", str(write_fd), *xkb_args, "-screen", "0", f"{w}x{h}x24",
                  "-nolisten", "tcp"],
                 env=self.tool_env, pass_fds=(write_fd,), stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL)
+                stderr=subprocess.DEVNULL, preexec_fn=self._dies_with_driver())
             os.close(write_fd)
             with os.fdopen(read_fd) as reader:
                 number = reader.readline().strip()
