@@ -148,18 +148,20 @@ std::size_t TextLayout::ClampTextColumn(std::string_view line, std::size_t text_
   // backspace. It was the single largest remaining cost on the edit path after
   // the copies were removed (TD-2026-08-05-131), at ~1.2 ms a call.
   //
-  // For well-formed UTF-8 the two agree exactly. They can differ inside a
-  // malformed sequence (a truncated lead byte's claimed length is not observable
-  // from a later byte); the answer is still a valid clamp -- inside the line, no
-  // greater than asked, and never splitting a well-formed code point -- and it
-  // matches how the rest of the editor re-syncs (PreviousTextColumn already
-  // scanned backwards this way).
+  // It agrees with that tiling on ANY bytes, malformed included: a byte that is
+  // not a continuation byte always starts a unit (no multi-byte unit contains one
+  // past its lead), so the nearest such byte behind the column is the only lead
+  // that can cover it, and does exactly when its forward length reaches past the
+  // column. A continuation byte no lead claims is a one-byte unit of its own. The
+  // "valid clamp" this used to settle for on malformed bytes put the caret's
+  // boundary one byte early after \x7F\x80 -- the status bar said Col 117 with
+  // the caret 118 in (soak 5a2cb8ba7f6b).
   std::size_t column = clamped_column;
   const std::size_t floor = column >= 3 ? column - 3 : 0;
-  while (column > floor && (static_cast<unsigned char>(line[column]) & 0xC0u) == 0x80u) {
+  while (column > floor && util::IsUtf8ContinuationByte(static_cast<unsigned char>(line[column]))) {
     --column;
   }
-  return column;
+  return util::Utf8SequenceLength(line, column) > clamped_column - column ? column : clamped_column;
 }
 
 std::size_t TextLayout::PreviousTextColumn(std::string_view line, std::size_t text_column) {
@@ -168,11 +170,16 @@ std::size_t TextLayout::PreviousTextColumn(std::string_view line, std::size_t te
     return 0;
   }
 
+  // The unit that ends at `clamped_column` (a tiling boundary): the nearest
+  // non-continuation byte behind it when that lead's sequence ends exactly
+  // there, else the single byte before it -- the same tiling as above, so a
+  // backspace after a stray continuation byte deletes that byte alone.
   std::size_t pos = clamped_column - 1;
-  while (pos > 0 && (static_cast<unsigned char>(line[pos]) & 0xC0u) == 0x80u) {
+  const std::size_t floor = clamped_column >= 4 ? clamped_column - 4 : 0;
+  while (pos > floor && util::IsUtf8ContinuationByte(static_cast<unsigned char>(line[pos]))) {
     --pos;
   }
-  return pos;
+  return util::Utf8SequenceLength(line, pos) == clamped_column - pos ? pos : clamped_column - 1;
 }
 
 std::size_t TextLayout::NextTextColumn(std::string_view line, std::size_t text_column) {

@@ -993,6 +993,64 @@ void TestClampTextColumnBoundsMalformedSequences() {
   }
 }
 
+// Soak 5a2cb8ba7f6b: on a line of every byte value the status bar said Col 117
+// with the caret after 117 bytes. The forward tiling (Utf8SequenceLength) takes a
+// byte no lead claims as a one-byte unit, so the caret steps onto the boundary
+// between \x7F and a stray \x80; the backward re-sync stepped over ANY
+// continuation byte and put that boundary one byte earlier -- so the visual
+// column, and a backspace there, disagreed with where the caret stood. On ANY
+// bytes, malformed included, the backward answers must equal the forward tiling.
+void TestColumnStepsAgreeWithForwardTilingOnAnyBytes() {
+  const auto tiling = [](std::string_view line) {
+    std::vector<std::size_t> starts;
+    for (std::size_t at = 0; at < line.size(); at += util::Utf8SequenceLength(line, at)) {
+      starts.push_back(at);
+    }
+    starts.push_back(line.size());
+    return starts;
+  };
+  const std::string units[] = {
+      "a", "\x7F", std::string("\x80", 1), "\xBF", "\xC3", "\xC3\xA9", "\xE4\xB8", "\xE4\xB8\xAD",
+      "\xE0\x80\x80", "\xF0\x9F\x98", "\xF0\x9F\x98\x80", "\xFF"};
+  std::vector<std::string> lines = {"\x7F\x80\x81\x82\x83\x84" "b"};
+  for (const std::string& first : units) {
+    for (const std::string& second : units) {
+      for (const std::string& third : units) {
+        lines.push_back(first + second + third);
+      }
+    }
+  }
+  for (const std::string& line : lines) {
+    const std::vector<std::size_t> starts = tiling(line);
+    for (std::size_t column = 0; column <= line.size() + 1; ++column) {
+      const std::size_t within = std::min(column, line.size());
+      std::size_t floor_start = 0;
+      for (const std::size_t start : starts) {
+        if (start <= within) {
+          floor_start = start;
+        }
+      }
+      const std::size_t clamped = TextLayout::ClampTextColumn(line, column);
+      Expect(clamped == floor_start,
+             "ClampTextColumn must land on the forward tiling's boundary at or before the column");
+      if (clamped == 0) {
+        continue;
+      }
+      std::size_t want_previous = 0;
+      for (const std::size_t start : starts) {
+        if (start < clamped) {
+          want_previous = start;
+        }
+      }
+      Expect(TextLayout::PreviousTextColumn(line, column) == want_previous,
+             "PreviousTextColumn must step back exactly one unit of the forward tiling");
+    }
+  }
+  const std::string every_byte_tail("\x7F\x80\x81", 3);
+  Expect(TextLayout::VisualColumnForTextColumn(every_byte_tail, 1, kTabSize) == 1,
+         "the caret between \\x7F and a stray \\x80 is one column in");
+}
+
 // The facts carry a tab-indented line's shape (leading tabs, then plain ASCII)
 // so column conversions and the box mapping are arithmetic on such lines and the
 // table build does not walk them byte by byte. Checked against the walk on
@@ -1077,6 +1135,8 @@ void RegisterTextLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextLayout/BuildVisibleLineMatchesWalkFromColumnZero",
           TestBuildVisibleLineMatchesWalkFromColumnZero);
   AddTest(tests, "TextLayout/TextVisualRoundTrip", TestTextVisualRoundTrip);
+  AddTest(tests, "TextLayout/ColumnStepsAgreeWithForwardTilingOnAnyBytes",
+          TestColumnStepsAgreeWithForwardTilingOnAnyBytes);
   AddTest(tests, "TextLayout/WideAndZeroWidthCodepointsTakeTheirCells",
           TestWideAndZeroWidthCodepointsTakeTheirCells);
   AddTest(tests, "TextLayout/WrapRowsPartitionTheLineAndResumeFromAnyBoundary",

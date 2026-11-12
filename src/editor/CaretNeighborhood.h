@@ -34,19 +34,21 @@ struct CaretNeighborhood {
   char prev_char = '\0';
 };
 
-// Bytes read before the caret. Four is what the clamp needs (a code-point start is
-// at most three bytes back, and `prev` sits one before that); eight leaves the
-// backward code-point walk the same room, and caps it the way
-// `TextLayout::ClampTextColumn` already caps its own: inside a malformed run
-// longer than this the answer stays a valid position -- inside the line, no
-// greater than asked, never splitting a well-formed code point -- it is simply
-// nearer the caret.
+// Bytes read before the caret. Seven is what the clamp and `prev` need together
+// (the covering lead is at most three bytes back, and the unit before it starts
+// at most four bytes before that); eight covers it, so the answers equal
+// `TextLayout::ClampTextColumn` / `PreviousTextColumn` over the whole line on
+// any bytes, malformed included.
 inline constexpr std::size_t kCaretNeighborhoodLookbehindBytes = 8;
+// Bytes read from the caret on: the byte there plus the three continuation bytes
+// a sequence starting before it can still need.
+inline constexpr std::size_t kCaretNeighborhoodLookaheadBytes = 4;
 
-// Reads the line's LENGTH (no text) plus at most five bytes ending at `column`.
-// Five is the bound the clamp forces: UTF-8 is self-synchronizing, so the code
-// point containing `column` starts at most three bytes back, and `prev` sits one
-// byte before that start.
+// Reads the line's LENGTH (no text) plus a window of at most a dozen bytes
+// around `column`. The clamp is exact against the forward tiling on any bytes
+// (TextLayout::ClampTextColumn), so it must see the whole sequence of the one
+// lead that could cover the caret: up to three bytes back and, to check its
+// continuation bytes, up to three bytes past the caret.
 inline CaretNeighborhood ReadCaretNeighborhood(LineSpan lines, std::size_t line,
                                                std::size_t column) {
   CaretNeighborhood result;
@@ -59,10 +61,13 @@ inline CaretNeighborhood ReadCaretNeighborhood(LineSpan lines, std::size_t line,
   const std::size_t window_start =
       at >= kCaretNeighborhoodLookbehindBytes ? at - kCaretNeighborhoodLookbehindBytes : 0;
   std::string scratch;
-  // `+ 1` so the byte AT the caret is in the window when there is one; LineWindow
+  // The byte AT the caret plus the three after it: a lead up to three bytes
+  // behind the caret covers it only when its continuation bytes are really there,
+  // and a window cut at the caret would read that lead as truncated. LineWindow
   // clamps to the line, so at end-of-line the window simply ends there.
   const std::string_view window =
-      lines.LineWindow(line, window_start, (at - window_start) + 1, scratch);
+      lines.LineWindow(line, window_start, (at - window_start) + kCaretNeighborhoodLookaheadBytes,
+                       scratch);
   const std::size_t local_at = at - window_start;
   // `at >= length` is ClampTextColumn's own end-of-line answer, reached without
   // needing the line to produce it.
@@ -80,11 +85,7 @@ inline CaretNeighborhood ReadCaretNeighborhood(LineSpan lines, std::size_t line,
   result.has_prev = result.clamped_column > 0 && local_clamped > 0;
   if (result.has_prev) {
     result.prev = window[local_clamped - 1];
-    std::size_t local_prev = local_clamped - 1;
-    while (local_prev > 0 &&
-           (static_cast<unsigned char>(window[local_prev]) & 0xC0u) == 0x80u) {
-      --local_prev;
-    }
+    const std::size_t local_prev = TextLayout::PreviousTextColumn(window, local_clamped);
     result.prev_column = window_start + local_prev;
     result.prev_char = window[local_prev];
   }

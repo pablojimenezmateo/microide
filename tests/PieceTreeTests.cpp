@@ -631,6 +631,10 @@ void TestCaretNeighborhoodMatchesWholeLineReading() {
       // to reach FOUR bytes back rather than three: the caret on its last
       // continuation byte clamps three columns down, and `prev` sits one before
       // that.
+      // Malformed bytes (soak 5a2cb8ba7f6b): a continuation byte no lead claims is
+      // a unit of its own, and a lead covers the caret only when its continuation
+      // bytes past the caret are really there -- which the window must read.
+      std::string("x\x7f\x80\x81\x82\x83y\xe2\x82\xacz\xe2\x82!\xf0\x9f\x98\x80\x80", 19),
   };
   std::string content;
   for (const std::string& line : lines) {
