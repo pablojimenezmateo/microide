@@ -1977,7 +1977,9 @@ class App:
                             f"status {status.get('label')!r}; caret line {caret['line']} byte column "
                             f"{caret['column']} of {len(cursors)} caret(s); tabSize {buffer.get('tabSize')}; "
                             f"revision {buffer.get('revision')}; line text "
-                            f"{lines[caret['line'] - 1][:512]!r}")
+                            f"{lines[caret['line'] - 1][:512]!r}; {len(lines)} line(s); carets {cursors[:8]}; "
+                            f"the status bar's line text "
+                            f"{lines[got[0] - 1][:512] if 1 <= got[0] <= len(lines) else None!r}")
         overlay = ui.get("overlay") or {}
         query = overlay.get("query") or ""
         if (overlay.get("visible") and overlay.get("mode") in ("buffer-search", "buffer-replace")
