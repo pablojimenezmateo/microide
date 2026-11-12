@@ -5880,6 +5880,127 @@ void TestAppliedEditRecordAnswersForOneStepOnly() {
   Expect(viewport.LatestAppliedEdit() != nullptr, "an undo is a step of its own, recorded");
 }
 
+// The smallest shape of soak 76e3925879dc: a formatter's edits, applied last-first
+// in one group -- one inside line 1, then one joining line 0 onto it. The second
+// replaces lines the first already changed.
+void TestTextViewportAGroupedJoinOverAnEditedLineUndoesAndRedoesExactly() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdefgh\nwxyz\n", "/tmp/grouped-join.cpp");
+  viewport.BeginUndoGroup();
+  Expect(viewport.ReplaceRange(SelectionRange{TextPosition{1, 1}, TextPosition{1, 3}}, "x", true),
+         "the in-line edit applies");
+  Expect(viewport.ReplaceRange(SelectionRange{TextPosition{0, 7}, TextPosition{1, 0}}, "ab", true),
+         "the join applies");
+  viewport.EndUndoGroup();
+  Expect(viewport.SerializeText() == "abcdefgabwxz\n", "both edits are in the buffer");
+  Expect(viewport.Undo() && viewport.SerializeText() == "abcdefgh\nwxyz\n", "one undo restores the original");
+  Expect(viewport.Redo() && viewport.SerializeText() == "abcdefgabwxz\n",
+         "the redo replays the group as it was, without a second copy of line 1");
+}
+
+// Soak 76e3925879dc, 822fc591ce19, d54631ea30df: k undos then k redos are the
+// identity, whatever mix of typing, single replaces and grouped multi-range edits
+// (a language server's formatting) built the history. A grouped edit that joined
+// lines an earlier edit of the same group had changed was recorded as a range
+// beside that one instead of over it, and the redo duplicated the line.
+void TestTextViewportUndoThenRedoIsTheIdentityOverRandomHistories() {
+  for (std::uint32_t round = 0; round < 600; ++round) {
+    // Odd rounds undo and redo one step after every edit, which names the edit
+    // whose entry was recorded wrong; even rounds ask for 1-4 at random moments.
+    const bool stepwise = (round & 1U) != 0;
+    const std::uint32_t seed = round / 2 + 1;
+    std::uint32_t state = seed * 2654435761u;
+    const auto next = [&](std::uint32_t bound) {
+      state = state * 1664525u + 1013904223u;
+      return bound == 0 ? 0u : (state >> 8) % bound;
+    };
+    static constexpr const char* kPieces[] = {"x", "ab", "\n", "  ", "foo(bar);\n", "}", "\n\n", "é", ""};
+    TextViewport viewport;
+    viewport.LoadContent("int main() {\n  a;\n  b;\n  c;\n}\n", "/tmp/undo-identity.cpp");
+    const auto random_position = [&]() {
+      const std::size_t line = next(static_cast<std::uint32_t>(viewport.lines().size()));
+      const std::size_t length = viewport.lines()[line].size();
+      std::size_t column = next(static_cast<std::uint32_t>(length + 1));
+      while (column > 0 && column < length &&
+             (static_cast<unsigned char>(viewport.lines()[line][column]) & 0xC0) == 0x80) {
+        --column;
+      }
+      return TextPosition{line, column};
+    };
+    std::string log;
+    for (int step = 0; step < 30; ++step) {
+      const std::uint32_t op = next(4);
+      if (op == 0) {
+        const TextPosition at = random_position();
+        viewport.MoveCursorTo(at.line, at.column);
+        const char* piece = kPieces[next(9)];
+        viewport.InsertText(piece);
+        log += "type@" + std::to_string(at.line) + ":" + std::to_string(at.column) + " '" + piece + "'\n";
+      } else if (op == 1) {
+        const TextPosition at = random_position();
+        viewport.MoveCursorTo(at.line, at.column);
+        viewport.Backspace();
+        log += "bs@" + std::to_string(at.line) + ":" + std::to_string(at.column) + "\n";
+      } else {
+        // A batch: disjoint ranges applied last-first inside one group.
+        std::vector<TextPosition> points;
+        const std::uint32_t count = 1 + next(4);
+        for (std::uint32_t i = 0; i < count * 2; ++i) {
+          points.push_back(random_position());
+        }
+        std::sort(points.begin(), points.end(), [](TextPosition a, TextPosition b) {
+          return a.line != b.line ? a.line < b.line : a.column < b.column;
+        });
+        viewport.BeginUndoGroup();
+        for (std::size_t i = points.size(); i >= 2; i -= 2) {
+          const SelectionRange range{points[i - 2], points[i - 1]};
+          if (i < points.size() && !(points[i - 1].line < points[i].line ||
+                                      (points[i - 1].line == points[i].line && points[i - 1].column < points[i].column))) {
+            continue;
+          }
+          const char* piece = kPieces[next(9)];
+          log += "  rr " + std::to_string(range.start.line) + ":" + std::to_string(range.start.column) + "-" +
+                 std::to_string(range.end.line) + ":" + std::to_string(range.end.column) + " '" + piece + "'\n";
+          (void)viewport.ReplaceRange(range, piece, true);
+        }
+        viewport.EndUndoGroup();
+        log += "batch\n";
+      }
+      if (stepwise) {
+        const std::string now = viewport.SerializeText();
+        if (viewport.Undo()) {
+          const std::string mid = viewport.SerializeText();
+          (void)viewport.Redo();
+          if (viewport.SerializeText() != now) {
+            Expect(false, "seed " + std::to_string(seed) + " step " + std::to_string(step) + " stepwise\n" + log +
+                              "--- now\n" + now + "--- mid\n" + mid + "--- after\n" + viewport.SerializeText());
+            return;
+          }
+        }
+        continue;
+      }
+      if (next(3) == 0) {
+        const std::string before = viewport.SerializeText();
+        const std::uint32_t asked = 1 + next(4);
+        std::uint32_t undone = 0;
+        for (std::uint32_t i = 0; i < asked; ++i) {
+          undone += viewport.Undo() ? 1 : 0;
+        }
+        for (std::uint32_t i = 0; i < undone; ++i) {
+          (void)viewport.Redo();
+        }
+        log += "check " + std::to_string(undone) + "\n";
+        if (viewport.SerializeText() != before) {
+          Expect(false, "seed " + std::to_string(seed) + " step " + std::to_string(step) + ": " +
+                            std::to_string(undone) + " undos/redos changed the text\n" + log +
+                            "--- before\n" + before + "--- after\n" + viewport.SerializeText());
+          return;
+        }
+      }
+    }
+  }
+}
+
 }  // namespace
 
 // The undo history caps total bytes, not just entry count: a handful of
@@ -6566,6 +6687,10 @@ void TestFormattedTextIsOneUndoStepAndKeepsHistory() {
 }
 
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
+AddTest(tests, "TextViewport/AGroupedJoinOverAnEditedLineUndoesAndRedoesExactly",
+        TestTextViewportAGroupedJoinOverAnEditedLineUndoesAndRedoesExactly);
+AddTest(tests, "TextViewport/UndoThenRedoIsTheIdentityOverRandomHistories",
+        TestTextViewportUndoThenRedoIsTheIdentityOverRandomHistories);
   AddTest(tests, "TextViewport/AppliedEditRecordAnswersForOneStepOnly", TestAppliedEditRecordAnswersForOneStepOnly);
   AddTest(tests, "TextViewport/FormattedTextIsOneUndoStepAndKeepsHistory",
           TestFormattedTextIsOneUndoStepAndKeepsHistory);

@@ -287,6 +287,10 @@ class TextViewportUndoHistory {
   // into a containing/adjacent range or insert a new one, reindexing strictly-lower
   // ranges by the child's net line delta. O(#ranges), never a whole-buffer copy.
   static void MergeChildIntoDisjoint(std::vector<Entry>& entries, Entry next);
+  // The child's replaced span reaches into the ranges [first, last) without lying
+  // inside one of them: they and the child become one range.
+  static void MergeChildOverRanges(std::vector<Entry>& entries, std::size_t first,
+                                   std::size_t last, Entry next);
   // Insert `next` keeping `entries` sorted ascending by start_line.
   static void InsertSortedDisjoint(std::vector<Entry>& entries, Entry next);
   // Merge any now-adjacent (gap-free) neighbours so the disjoint invariant holds.

@@ -127,6 +127,24 @@ void TextViewportUndoHistory::MergeChildIntoDisjoint(std::vector<Entry>& entries
     }
   }
 
+  // The ranges the child's span reaches into without lying inside one: found in
+  // pre-shift coordinates, where they can be compared with the span. The shift
+  // below leaves their order and indices alone (they all start before the span's
+  // end, so none of them moves).
+  std::size_t overlap_first = entries.size();
+  std::size_t overlap_last = entries.size();
+  if (!container.has_value()) {
+    const auto overlaps = [&](const Entry& e) {
+      const std::size_t start = e.start_line;
+      const std::size_t end = start + e.after_lines.size();
+      return start == end ? child_start < start && start < child_before_end
+                          : start < child_before_end && child_start < end;
+    };
+    const auto first = std::find_if(entries.begin(), entries.end(), overlaps);
+    overlap_first = static_cast<std::size_t>(first - entries.begin());
+    overlap_last = static_cast<std::size_t>(std::find_if_not(first, entries.end(), overlaps) - entries.begin());
+  }
+
   // Shift every range strictly below the child's replaced span into the post-edit
   // coordinate frame. The container (start < child_before_end) is never in this set;
   // a right neighbour that sat exactly at child_before_end shifts to abut the child.
@@ -145,10 +163,65 @@ void TextViewportUndoHistory::MergeChildIntoDisjoint(std::vector<Entry>& entries
     } else {
       InsertSortedDisjoint(entries, std::move(next));
     }
-  } else {
+  } else if (overlap_first == overlap_last) {
     InsertSortedDisjoint(entries, std::move(next));
+  } else {
+    MergeChildOverRanges(entries, overlap_first, overlap_last, std::move(next));
   }
   CoalesceAdjacentDisjoint(entries);
+}
+
+void TextViewportUndoHistory::MergeChildOverRanges(std::vector<Entry>& entries,
+                                                   std::size_t first_index,
+                                                   std::size_t last_index, Entry next) {
+  // [first_index, last_index): the ranges the child's replaced span reaches into
+  // without lying inside one of them -- it re-edits lines an earlier child of the
+  // group already changed (a formatter's edit that joins a line it also edited
+  // further right, applied last-first). These used to be filed as a separate
+  // range beside the ones they overlap, so the group's images replayed both and a
+  // redo duplicated lines (soak 76e3925879dc, 822fc591ce19, d54631ea30df). They
+  // and the child become one range.
+  const std::size_t child_start = next.start_line;
+  const std::size_t child_end = child_start + next.before_lines.size();
+  const auto first = entries.begin() + static_cast<std::ptrdiff_t>(first_index);
+  const auto last = entries.begin() + static_cast<std::ptrdiff_t>(last_index);
+  const Entry& low = *first;
+  const Entry& high = *(last - 1);
+
+  // Before the child, the buffer between the ranges is what it was when the group
+  // began, and the child's before-image holds it.
+  LineBlob before;
+  std::size_t at = std::min(child_start, low.start_line);
+  for (auto it = first; it != last; ++it) {
+    if (at < it->start_line) {
+      before.append(next.before_lines.SubRange(at - child_start, it->start_line - child_start));
+    }
+    before.append(it->before_lines);
+    at = it->start_line + it->after_lines.size();
+  }
+  if (at < child_end) {
+    before.append(next.before_lines.SubRange(at - child_start, child_end - child_start));
+  }
+
+  // After the child: whatever of the first and last ranges lies outside its span,
+  // around its own after-image.
+  LineBlob after;
+  if (low.start_line < child_start) {
+    after.append(low.after_lines.SubRange(0, child_start - low.start_line));
+  }
+  after.append(next.after_lines);
+  const std::size_t high_end = high.start_line + high.after_lines.size();
+  if (child_end < high_end) {
+    after.append(high.after_lines.SubRange(child_end - high.start_line, high.after_lines.size()));
+  }
+
+  Entry merged = std::move(next);
+  merged.start_line = std::min(child_start, low.start_line);
+  merged.before_state = low.before_state;
+  merged.before_lines = std::move(before);
+  merged.after_lines = std::move(after);
+  const auto slot = entries.erase(first, last);
+  entries.insert(slot, std::move(merged));
 }
 
 void TextViewportUndoHistory::InsertSortedDisjoint(std::vector<Entry>& entries, Entry next) {
