@@ -157,7 +157,8 @@ chrome scenarios and the registry. Each module exports `FLOWS` (`{name: f(app)}`
 and may export `PLUGINS` (bundled ones, `plugins/<name>`, or QA-only ones under
 `plugins/` here, for test content no bundled plugin ships: `qa-snippets`;
 `qa-launch`, a launch configuration for the fixture's binary; `qa-api`, one of
-each provider and event) and `ENV`. `scenarios.FLOW_MODULES` lists the modules in
+each provider and event; `qa-tests`, a test provider for C++ and Python the
+monkey's `tooling` profile drives) and `ENV`. `scenarios.FLOW_MODULES` lists the modules in
 suite order; a `flows_*.py` missing from it, or a scenario name two modules
 define, fails the import rather than dropping a flow. The import also rejects
 duplicate literal dictionary keys before Python can silently overwrite them,

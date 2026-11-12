@@ -582,7 +582,7 @@ PROFILES: dict[str, dict[str, float]] = {
 # profile runs with none -- which is why no soak run had ever had a language
 # server, a debug adapter or the Lua plugin host behind its commands.
 PROFILE_PLUGINS: dict[str, tuple[str, ...]] = {
-    "tooling": ("cpp-lsp", "gdb-dap", "todo-highlight", "eol-annotations", "language-tools"),
+    "tooling": ("cpp-lsp", "gdb-dap", "todo-highlight", "eol-annotations", "language-tools", "qa-tests"),
 }
 # Where the taskflow fixture's code is, for language-server and debugger actions:
 # (file, lines it has) -- breakpoints land on real lines, positions inside them.
@@ -1115,7 +1115,7 @@ class Monkey:
             self.app.send_line(f"goto {line}:{self.rng.randrange(1, 30)}")
             self.app.send_line(f"rename-symbol {self.rng.choice(('task', 'total', 'renamed', 'queue_'))}")
             return "tooling:rename"
-        if roll < 0.75:
+        if roll < 0.70:
             absolute = q.quote_arg(str(self.project / path))
             command = self.rng.choice((
                 f"breakpoint-set {absolute} {line}",
@@ -1133,7 +1133,24 @@ class Monkey:
                 "breakpoint-toggle"))
             self.app.send_line(command)
             return f"tooling:{command.split()[0]}"
-        if roll < 0.85:
+        if roll < 0.80:
+            # The Tests sidebar, through tools/qa/plugins/qa-tests: discovery on a
+            # file, a run of everything or of a few ids it reports (and one it never
+            # did), then the sidebar is where the monkey's clicks land.
+            choice = self.rng.random()
+            if choice < 0.4:
+                self.app.send_line(f"open {path}")
+                command = "tests-discover"
+            elif choice < 0.7:
+                command = "tests-run"
+            else:
+                suite = f"qa-tests/{path}"
+                ids = self.rng.sample((suite, f"{suite}::wide", f"{suite}::long", f"{suite}::nosuch",
+                                       "qa-tests/elsewhere::x"), self.rng.randint(1, 3))
+                command = "tests-run " + " ".join(ids)
+            self.app.send_line(command)
+            return f"tooling:{command.split()[0]}"
+        if roll < 0.87:
             self.app.send_line(f"debug-run --type gdb {q.quote_arg(str(self.project / 'taskflow'))}")
             return "tooling:debug-run"
         command = self.rng.choice(DEBUG_COMMANDS)
