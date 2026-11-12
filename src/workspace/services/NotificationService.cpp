@@ -105,6 +105,7 @@ bool NotificationService::Show(Request request, std::uint64_t now_ms) {
                                         ? std::nullopt
                                         : std::optional<std::size_t>(existing.actions.size() - 1);
         }
+        Remember(existing);
         return painted_change;
       }
     }
@@ -143,8 +144,16 @@ bool NotificationService::Show(Request request, std::uint64_t now_ms) {
       .progress = request.progress,
       .actions = std::move(actions),
   });
+  Remember(notifications_.back());
   TrimTransientOverflow();
   return true;
+}
+
+void NotificationService::Remember(const Notification& posted) {
+  if (recent_.size() >= kRecentCapacity) {
+    recent_.pop_front();
+  }
+  recent_.push_back(posted);
 }
 
 void NotificationService::TrimTransientOverflow() {

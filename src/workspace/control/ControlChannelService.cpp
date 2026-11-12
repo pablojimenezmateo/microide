@@ -470,7 +470,7 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
     return BuildTerminalOutput(args, ok, error);
   }
   if (verb == "notifications") {
-    return BuildNotifications();
+    return BuildNotifications(args.IsObject() && args["recent"].AsBool(false));
   }
   if (verb == "output") {
     return BuildOutput(args);
@@ -1127,7 +1127,7 @@ util::JsonValue ControlChannelService::BuildKeybindings() const {
   return util::JsonValue(std::move(rows));
 }
 
-util::JsonValue ControlChannelService::BuildNotifications() const {
+util::JsonValue ControlChannelService::BuildNotifications(bool recent) const {
   util::JsonArray rows;
   if (operations_.notifications == nullptr) {
     return util::JsonValue(std::move(rows));
@@ -1140,9 +1140,20 @@ util::JsonValue ControlChannelService::BuildNotifications() const {
     }
     return "info";
   };
-  const auto& active = operations_.notifications->Active();
-  for (std::size_t i = 0; i < active.size(); ++i) {
-    const NotificationService::Notification& row = active[i];
+  // `recent`: the rows posted lately, oldest first, up or not (NotificationService::
+  // Recent) -- what a driver reads to see a row that came and went between looks.
+  std::vector<const NotificationService::Notification*> listed;
+  if (recent) {
+    for (const NotificationService::Notification& row : operations_.notifications->Recent()) {
+      listed.push_back(&row);
+    }
+  } else {
+    for (const NotificationService::Notification& row : operations_.notifications->Active()) {
+      listed.push_back(&row);
+    }
+  }
+  for (std::size_t i = 0; i < listed.size(); ++i) {
+    const NotificationService::Notification& row = *listed[i];
     util::JsonObject object;
     object["index"] = util::JsonValue(static_cast<std::int64_t>(i));
     object["key"] = util::JsonValue(row.key);

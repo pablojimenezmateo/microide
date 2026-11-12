@@ -293,6 +293,11 @@ class Suite:
     def notifs(self):
         return self.app.query("notifications")
 
+    def recent_notifs(self):
+        """Rows posted lately, up or not: a state row over a link that comes back
+        between two polls is only ever seen here."""
+        return self.app.query("notifications", {"recent": True})
+
     def remote(self) -> dict:
         # A status query can time out while the shell thread is busy with the
         # connection itself (the server install, the first sync); one timed-out
@@ -1377,12 +1382,21 @@ class Suite:
             masters = [int(l.split()[0]) for l in out.splitlines()[1:]
                        if "ssh" in l and host.name in l and "ControlMaster" in l]
             self.info("F.ssh-masters", str(masters))
+            # Rows already posted do not count: only one the kill causes.
+            before = len(self.recent_notifs())
             for pid in masters:
                 os.kill(pid, 9)
-            row, dt = wait_for(lambda: next((n for n in self.notifs()
-                                            if any(a["label"] == "Reconnect" for a in n["actions"])), None), 30, 0.3)
+            # From `recent`, not the rows up now: on a loopback host the editor
+            # rebuilt its master and reconnected inside one 0.3 s poll, so the row
+            # was posted and dismissed between two looks and the check timed out
+            # on a link that had dropped and come back exactly as it should.
+            def reconnect_row():
+                rows = self.recent_notifs()
+                return next((n for n in rows[before:] if any(a["label"] == "Reconnect" for a in n["actions"])),
+                            None)
+            row, dt = wait_for(reconnect_row, 30, 0.3)
             self.record("F.reconnecting-row", row is not None,
-                        f"{dt:.2f}s {json.dumps(row)[:200] if row else [n['message'] for n in self.notifs()]}")
+                        f"{dt:.2f}s {json.dumps(row)[:200] if row else [n['message'] for n in self.recent_notifs()]}")
             self.type_line(f"QA-AFTER-DROP-{tok}"); app.send("save")
             ok, dt = self.host_has(f"QA-AFTER-DROP-{tok}", 90)
             self.record("F.save-after-link-death", bool(ok), f"on the host {dt:.2f}s after the kill")

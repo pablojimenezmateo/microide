@@ -218,7 +218,7 @@ class ControlChannelService {
   util::JsonValue BuildFunctionBreakpoints() const;
   util::JsonValue BuildExceptionFilters() const;
   util::JsonValue BuildTabs() const;
-  util::JsonValue BuildNotifications() const;
+  util::JsonValue BuildNotifications(bool recent) const;
   util::JsonValue BuildOutput(const util::JsonValue& args) const;
   util::JsonValue BuildKeybindings() const;
   // Every registered setting: {id, label, description, type, scope, plugin?,

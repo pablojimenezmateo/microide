@@ -937,6 +937,19 @@ void TestNotificationsQueryListsActions() {
              key_rows.AsArray()[0]["skipsTerminal"].AsBool(),
          "each binding is reported with its id, chord, context and terminal skip");
 
+  // A state row that comes and goes between two looks -- "Reconnecting…" over a
+  // link back in 50 ms, which the remote suite's F.reconnecting-row polled for and
+  // never saw -- is still in `recent`, with its buttons.
+  (void)notifications.DismissKey("remote.link");
+  const auto gone = util::ParseJson(ExchangeLine(service, fd, R"({"id":3,"query":"notifications"})"));
+  Expect(gone.has_value() && (*gone)["result"].AsArray().empty(), "the dismissed row is not up");
+  const auto recent = util::ParseJson(
+      ExchangeLine(service, fd, R"({"id":4,"query":"notifications","args":{"recent":true}})"));
+  Expect(recent.has_value() && (*recent)["ok"].AsBool() && (*recent)["result"].AsArray().size() == 1 &&
+             (*recent)["result"].AsArray()[0]["key"].AsString() == "remote.link" &&
+             (*recent)["result"].AsArray()[0]["actions"].AsArray().at(0)["label"].AsString() == "Reconnect",
+         "a row posted and dismissed since is listed under recent, buttons and all");
+
   ::close(fd);
   service.Stop();
   std::filesystem::remove_all(runtime, ec);

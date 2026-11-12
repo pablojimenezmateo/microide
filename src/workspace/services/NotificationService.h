@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <deque>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -200,6 +201,13 @@ class NotificationService {
   }
 
   const std::vector<Notification>& Active() const { return notifications_; }
+  // The last kRecentCapacity rows posted (new or replacing a keyed row), oldest
+  // first, whether or not they are still up. A state row that is posted and
+  // dismissed between two looks -- "Reconnecting…" over a link that comes back in
+  // 50 ms -- is otherwise unobservable; the control channel reads this
+  // (`notifications {"recent": true}`), the window never does.
+  static constexpr std::size_t kRecentCapacity = 32;
+  const std::deque<Notification>& Recent() const { return recent_; }
   bool Empty() const { return notifications_.empty(); }
   void Clear() { notifications_.clear(); }
 
@@ -228,7 +236,10 @@ class NotificationService {
   static bool CapMessage(std::string& message);
   void TrimTransientOverflow();
 
+  void Remember(const Notification& posted);
+
   std::vector<Notification> notifications_;
+  std::deque<Notification> recent_;
 };
 
 }  // namespace microide::workspace

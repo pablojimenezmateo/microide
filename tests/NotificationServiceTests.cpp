@@ -37,6 +37,27 @@ void TestNotificationServiceExpiresAfterDuration() {
 // keyed row on every state tick (remote sync's conflict rows) costs no frame when
 // the row is the same. Measured on a real host: every sync tick during agent
 // churn was a full-window repaint.
+// Recent(): every posting, keyed updates included, oldest first, bounded -- and a
+// row stays in it after it is dismissed.
+void TestNotificationServiceRemembersRecentPostings() {
+  microide::workspace::NotificationService service;
+  using Tone = microide::workspace::NotificationService::Tone;
+  service.Show({.tone = Tone::Warning, .key = "link", .message = "Reconnecting", .sticky = true}, 0);
+  service.Show({.tone = Tone::Info, .key = "link", .message = "Connected", .sticky = true}, 0);
+  (void)service.DismissKey("link");
+  Expect(service.Active().empty(), "the row is gone");
+  Expect(service.Recent().size() == 2 && service.Recent()[0].message == "Reconnecting" &&
+             service.Recent()[1].message == "Connected",
+         "both postings of the keyed row are remembered, oldest first");
+  for (std::size_t i = 0; i < 2 * microide::workspace::NotificationService::kRecentCapacity; ++i) {
+    service.Show(Tone::Info, "toast " + std::to_string(i), 0);
+  }
+  Expect(service.Recent().size() == microide::workspace::NotificationService::kRecentCapacity &&
+             service.Recent().back().message ==
+                 "toast " + std::to_string(2 * microide::workspace::NotificationService::kRecentCapacity - 1),
+         "the memory is bounded and keeps the newest");
+}
+
 void TestNotificationServiceShowReportsPaintedChanges() {
   using Request = NotificationService::Request;
   NotificationService service;
@@ -479,6 +500,7 @@ void TestNotificationServiceKeyboardFocus() {
 void RegisterNotificationServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "NotificationService/ByteCapsOversizedMessage",
           TestNotificationServiceByteCapsOversizedMessage);
+  AddTest(tests, "NotificationService/RemembersRecentPostings", TestNotificationServiceRemembersRecentPostings);
   AddTest(tests, "NotificationService/ShowReportsPaintedChanges",
           TestNotificationServiceShowReportsPaintedChanges);
   AddTest(tests, "NotificationService/ExpiresAfterDuration",
