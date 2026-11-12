@@ -84,10 +84,15 @@ void RenderHelpAboutRows(SDL_Renderer* renderer, const SettingsOverlayViewModel&
     float detail_y = y;
     text_renderer.ForEachWrappedLine(row.detail, vm.help_detail_width,
                                      [&](std::string_view line) {
+                                       // Cut to the column: one token longer than it (a
+                                       // command id) cannot be wrapped, and ran past the
+                                       // card, painted only in a full frame (soak
+                                       // 417bdf85c98b). The label column is cut the same way.
                                        if (detail_y + line_height <= list_bottom) {
-                                         text_renderer.DrawStringOn(renderer, vm.help_detail_x,
-                                                                    detail_y, theme.text_muted,
-                                                                    theme.surface_background, line);
+                                         text_renderer.DrawStringOn(
+                                             renderer, vm.help_detail_x, detail_y, theme.text_muted,
+                                             theme.surface_background,
+                                             text_renderer.TruncateToWidthEphemeralView(line, vm.help_detail_width));
                                        }
                                        detail_y += line_height;
                                      });

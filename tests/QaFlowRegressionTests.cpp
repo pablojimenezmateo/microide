@@ -3186,6 +3186,26 @@ void TestACodeLensStaysInsideItsPane() {
   lens_rects("the panel maximized");
 }
 
+// Soak 417bdf85c98b (deterministic, minimized to 168 actions): Help / About's
+// detail column is word-wrapped to its width, but one token longer than the
+// column -- a command id like toggle-editor-save-ensure-newline -- cannot be
+// broken and ran past the card. The filter's keystroke repainted the card, so
+// the overhang, drawn only in a full frame, read as stale. Each wrapped line is
+// cut to the column, as the label column already is.
+void TestHelpAboutKeepsALongCommandInsideTheCard() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("main.c", "int main() { return 0; }\n", 1024, 703);
+  // The right pane open narrows the editor area the card is centred on.
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting debug.enabled true"), "debugging on");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-pane-variables"), "the debug pane opens");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "about"), "Help / About opens");
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "Help / About open");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("ensure-new")}),
+                      "the filter bringing up a command id wider than the column");
+}
+
 // The QA monkey (seed 2): with the panel maximized, Settings open and the filter
 // taking the typing, a click on the second row's stepper value selected that row
 // and moved the keyboard to the rows -- and no frame repainted it. Settings asked
@@ -5504,6 +5524,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/DebugToolbarDoesNotHoverUnderAModal", TestDebugToolbarDoesNotHoverUnderAModal);
   AddTest(tests, "QaFlowRegression/TheDebugToolbarCoversNoOtherControl", TestTheDebugToolbarCoversNoOtherControl);
   AddTest(tests, "QaFlowRegression/ACodeLensStaysInsideItsPane", TestACodeLensStaysInsideItsPane);
+  AddTest(tests, "QaFlowRegression/HelpAboutKeepsALongCommandInsideTheCard", TestHelpAboutKeepsALongCommandInsideTheCard);
   AddTest(tests, "QaFlowRegression/ASettingsRowValueClickRepaintsTheRows", TestASettingsRowValueClickRepaintsTheRows);
   AddTest(tests, "QaFlowRegression/ExceptionFiltersStayListedAfterAStop", TestExceptionFiltersStayListedAfterAStop);
   AddTest(tests, "QaFlowRegression/StopWithNoSessionLeavesTheDebugPane", TestStopWithNoSessionLeavesTheDebugPane);
