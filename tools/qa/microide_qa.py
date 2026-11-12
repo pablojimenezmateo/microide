@@ -297,6 +297,10 @@ class App:
     xvfb: subprocess.Popen | None = None
     proc: subprocess.Popen | None = None
     log_path: Path | None = None
+    # The project the run edits, which a replay has at a different path (a fresh
+    # fixture, a remote project's mirror): drops under it are recorded relative
+    # to it and replayed against the replay's own. Set by the monkey's runner.
+    replay_root: Path | None = None
     log_offset: int = 0
     findings: list[Finding] = field(default_factory=list)
     actions: list[dict[str, Any]] = field(default_factory=list)
@@ -1299,7 +1303,14 @@ class App:
     def drop(self, x: float, y: float, path: Path | str) -> None:
         """A file dragged in from another application and released at (x, y). Through
         the control channel on every backend: X cannot synthesize a drop either."""
-        self._record({"drop": [round(x), round(y)], "path": str(path)})
+        row: dict[str, Any] = {"drop": [round(x), round(y)], "path": str(path)}
+        if self.replay_root is not None:
+            # Recorded as an absolute path only, a replay dropped a file of the
+            # run's own fixture, long gone: every drop in a replay was a drop of
+            # nothing (a remote run's mirror path came from a deleted work dir).
+            with contextlib.suppress(ValueError):
+                row["projectPath"] = Path(path).relative_to(self.replay_root).as_posix()
+        self._record(row)
         self._pointer("drop", x, y, str(path))
 
     def wheel(self, x: float, y: float, notches: int, modifiers: tuple[str, ...] = ()) -> None:
@@ -1867,6 +1878,11 @@ class App:
 
         def names(element: dict, label: str) -> bool:
             shown_label = element.get("label", "")
+            # A host terminal whose link is down says so after its label
+            # (TabStripService's " · detached"): a disconnected remote project's
+            # terminals were each reported as named by no tab.
+            if shown_label.endswith(" · detached"):
+                shown_label = shown_label[:-len(" · detached")]
             return shown_label == label or (shown_label.endswith("…") and label.startswith(shown_label[:-1]))
         out: list[tuple[str, str]] = []
         # A strip that overflows shows some of its tabs and an "<N"/"N>" chip for
@@ -2294,7 +2310,10 @@ def replay(app: App, actions: list[dict[str, Any]], pause: float = 0.12,
         elif "focus-out" in action:
             app.focus_out()
         elif "drop" in action:
-            app.drop(*action["drop"], action["path"])
+            path = action["path"]
+            if "projectPath" in action and app.replay_root is not None:
+                path = str(app.replay_root / action["projectPath"])
+            app.drop(*action["drop"], path)
         elif "hold" in action:
             app.hold(action["hold"], action.get("keys", []))
         elif "send" in action:

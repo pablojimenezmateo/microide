@@ -16,7 +16,11 @@ umask 077
 STATE="${MQA_SSHD_DIR:-$HOME/.cache/microide-qa/sshd}"
 PORT="${MQA_SSHD_PORT:-22220}"
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
-SSHD="$STATE/root/usr/sbin/sshd"
+# Where the unpacked package lives. A host of its own (the soak's remote jobs: one
+# sshd per run, so a lane's `start`, which restarts this one and drops its server,
+# never cuts a run's link) shares the one unpack instead of fetching its own.
+SSHD_ROOT="${MQA_SSHD_ROOT:-$STATE/root}"
+SSHD="$SSHD_ROOT/usr/sbin/sshd"
 HOST_HOME="$STATE/hosthome"
 HOST_REPO="$HOST_HOME/repo"
 
@@ -27,7 +31,7 @@ unpack_sshd() {
   command -v apt >/dev/null || die "no sshd under $STATE and no apt to fetch openssh-server"
   mkdir -p "$STATE/deb"
   (cd "$STATE/deb" && apt download openssh-server >/dev/null 2>&1) || die "apt download openssh-server failed"
-  dpkg -x "$STATE"/deb/openssh-server_*.deb "$STATE/root"
+  dpkg -x "$STATE"/deb/openssh-server_*.deb "$SSHD_ROOT"
   [[ -x "$SSHD" ]] || die "the package had no usr/sbin/sshd"
 }
 
@@ -131,8 +135,12 @@ case "${1:-}" in
       sleep 0.1
     done
     ssh -F "$STATE/ssh_config" qa-local true || die "cannot log in (see $STATE/sshd.log)"
-    host_repo
-    echo "export MQA_REMOTE_HOST=qa-local MQA_REMOTE_ROOT=$HOST_REPO MQA_SSH_CONFIG=$STATE/ssh_config"
+    # MQA_SSHD_NO_REPO=1: the caller brings its own host directory (the soak's
+    # remote runs put their fixture under $MQA_HOST_HOME).
+    if [[ "${MQA_SSHD_NO_REPO:-0}" != 1 ]]; then
+      host_repo
+    fi
+    echo "export MQA_REMOTE_HOST=qa-local MQA_REMOTE_ROOT=$HOST_REPO MQA_SSH_CONFIG=$STATE/ssh_config MQA_HOST_HOME=$HOST_HOME"
     ;;
   stop)
     stop

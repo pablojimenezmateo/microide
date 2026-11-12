@@ -1,13 +1,19 @@
 """A replay re-runs the run's oracles where it ran them, and can keep its pace."""
 import time
 import unittest
+from pathlib import Path
 
 import microide_qa as q
 
 
 class FakeApp:
+    replay_root = None
+
     def __init__(self):
         self.sent: list[tuple[float, str]] = []
+
+    def drop(self, x, y, path):
+        self.sent.append((time.monotonic(), f"drop {path}"))
 
     def send_line(self, line):
         self.sent.append((time.monotonic(), line))
@@ -23,6 +29,19 @@ class FakeApp:
 
 
 class ReplayTests(unittest.TestCase):
+    def test_a_drop_lands_on_the_replay_projects_file(self):
+        # The run's mirror (or fixture) is gone by the time anything replays it.
+        recorded = q.App.__new__(q.App)
+        recorded.replay_root = Path("/tmp/run-1/mirror")
+        recorded.actions, recorded._pointer = [], lambda *args: None
+        recorded._record = recorded.actions.append
+        recorded.drop(10, 20, "/tmp/run-1/mirror/qa-weird/binary.bin")
+        self.assertEqual(recorded.actions[0]["projectPath"], "qa-weird/binary.bin")
+        app = FakeApp()
+        app.replay_root = Path("/tmp/replay/mirror")
+        q.replay(app, recorded.actions, check=False)
+        self.assertEqual(app.sent[0][1], "drop /tmp/replay/mirror/qa-weird/binary.bin")
+
     def test_an_oracle_row_reruns_the_oracle_and_skips_its_commands(self):
         actions = [
             {"line": "open a.txt", "t": 1.0},

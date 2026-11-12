@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import contextlib
 import fnmatch
 import json
 import os
@@ -39,6 +40,7 @@ import monkey as m  # noqa: E402
 import scenarios as s  # noqa: E402
 import invariants as inv  # noqa: E402
 import monkey_model as mm  # noqa: E402
+import remote_host as rh  # noqa: E402
 
 REQUIRED_TOOLS = ("Xvfb", "xdotool", "xwd", "xdpyinfo", "xmodmap")
 
@@ -277,6 +279,50 @@ def launch_args(sets: list[str] | None) -> list[str]:
     return out
 
 
+REMOTE_PROFILES = ("remote",)
+
+
+def server_binary(binary: Path) -> Path:
+    """The microide-server a remote run installs on its host: $MICROIDE_SERVER_BINARY,
+    else the one built beside the app (the soak keeps them together)."""
+    named = os.environ.get("MICROIDE_SERVER_BINARY")
+    return Path(named).resolve() if named else (binary.parent / "microide-server").resolve()
+
+
+@contextlib.contextmanager
+def remote_project(project: Path, binary: Path, out: Path):
+    """For a remote run: a loopback host of its own holding a copy of `project`,
+    and what the app needs to reach it. Yields (host, extra args, extra env); open
+    it with `open_remote` once the app is up. Stops the host on the way out."""
+    server = server_binary(binary)
+    if not server.exists():
+        raise FileNotFoundError(f"no microide-server at {server} (set MICROIDE_SERVER_BINARY)")
+    host = rh.LoopbackHost(project, out / "host")
+    host.start()
+    try:
+        yield host, host.launch_args(), {"MICROIDE_SERVER_BINARY": str(server)}
+    finally:
+        host.stop()
+
+
+def open_remote(app: q.App, host: rh.LoopbackHost, timeout: float = 120.0) -> Path:
+    """Opens the host's project in the app and waits for its first sync; the
+    mirror's path, which is the project the editor then has."""
+    app.send_line(host.open_line(), record=False)
+
+    found: list[Path] = []
+
+    def synced() -> bool:
+        status = app.query("status")
+        remote = status.get("remote") or {}
+        if remote.get("state") == "ready" and not remote.get("filesPending") and status.get("projectRoot"):
+            found.append(Path(status["projectRoot"]))
+        return bool(found)
+    if not app.wait_until(synced, timeout, "the remote project's first sync"):
+        raise q.QaFailure(f"the remote project on {host.name} never synced")
+    return found[-1]
+
+
 def cmd_monkey(args: argparse.Namespace) -> int:
     start, _, end = args.seeds.partition("-") if args.seeds else (str(args.seed), "", "")
     seeds = range(int(start), int(end or start) + 1)
@@ -289,20 +335,28 @@ def cmd_monkey(args: argparse.Namespace) -> int:
     print(f"monkey: profile {args.profile}, seeds {seeds.start}-{seeds.stop - 1}, "
           f"{steps} steps, {size[0]}x{size[1]} {' '.join(extra)} -> {args.out}")
     summaries = []
+    remote = args.profile in REMOTE_PROFILES
     for seed in seeds:
         project = fixture(kind, args.out / "fixtures")
         coverage = mm.Coverage.load(args.coverage)
         plugins = m.PROFILE_PLUGINS.get(args.profile, ())
-        with q.App.launch(project=project, binary=args.binary, size=size, extra_args=extra,
-                          shots=args.out / f"seed-{seed}", plugins=plugins) as app:
+        with contextlib.ExitStack() as stack:
+            host, remote_args, remote_env = stack.enter_context(
+                remote_project(project, args.binary, args.out / f"seed-{seed}")) if remote else (None, [], {})
+            app = stack.enter_context(q.App.launch(
+                project=project, binary=args.binary, size=size, extra_args=extra + remote_args,
+                extra_env=remote_env, shots=args.out / f"seed-{seed}", plugins=plugins))
             app.replay_header = {"fixture": kind, "profile": args.profile, "seed": seed,
                                  "size": list(size), "args": extra, "weird": not args.no_weird,
-                                 "plugins": list(plugins)}
+                                 "plugins": list(plugins), "remote": remote}
+            edited = open_remote(app, host) if host is not None else project
+            app.replay_root = edited
             app.check("start")
-            monkey = m.Monkey(app, seed, args.profile, project, coverage=coverage,
+            monkey = m.Monkey(app, seed, args.profile, edited, coverage=coverage,
                               corpus=mm.Corpus(args.corpus), weird=not args.no_weird,
                               max_findings=args.max_findings, keep_going=not args.stop_at_first,
-                              min_logical=parse_size(args.min_logical) if args.min_logical else None)
+                              min_logical=parse_size(args.min_logical) if args.min_logical else None,
+                              host=host)
             settle = args.delay if command_profile else 0.12
             if command_profile and not args.no_churn:
                 with m.ExternalChurn(project, m.random.Random(seed ^ 0x5F5F), app.record_external):
@@ -337,15 +391,21 @@ def replay_record(record: dict, binary: Path, out: Path, actions: list | None = 
     kind = record.get("fixture", "taskflow")
     project = fixture(kind, out / "fixtures")
     size = tuple(record.get("size", (1440, 900)))
-    with q.App.launch(project=project, binary=binary, shots=out / "replay", size=size,
-                      extra_env=record.get("env", {}), extra_args=list(record.get("args", [])),
-                      plugins=tuple(record.get("plugins", ()))) as app:
+    with contextlib.ExitStack() as stack:
+        host, remote_args, remote_env = stack.enter_context(
+            remote_project(project, binary, out)) if record.get("remote") else (None, [], {})
+        app = stack.enter_context(q.App.launch(
+            project=project, binary=binary, shots=out / "replay", size=size,
+            extra_env={**record.get("env", {}), **remote_env},
+            extra_args=list(record.get("args", [])) + remote_args, plugins=tuple(record.get("plugins", ()))))
         app.replay_header = {**{k: v for k, v in record.items() if k != "actions"}}
+        edited = open_remote(app, host) if host is not None else project
+        app.replay_root = edited
         app.check("start")
-        monkey = m.Monkey(app, int(record.get("seed", 0) or 0), record.get("profile", "default"), project,
-                          weird=bool(record.get("weird", False)))
+        monkey = m.Monkey(app, int(record.get("seed", 0) or 0), record.get("profile", "default"), edited,
+                          weird=bool(record.get("weird", False)), host=host)
         q.replay(app, actions,
-                 churn=lambda row: m.apply_churn(project, row["churn"], row["counter"]),
+                 churn=lambda row: m.apply_churn(monkey.world, row["churn"], row["counter"]),
                  external=monkey.replay_external, check=check, oracle=monkey.replay_oracle,
                  paced=bool(record.get("paced", False)) if paced is None else paced)
         if not check:

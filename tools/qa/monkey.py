@@ -68,6 +68,7 @@ import microide_qa as q
 import monkey_model as mm
 import diff_variants as dv
 import monkey_oracles as mo
+import remote_host as rh
 
 # Every command name the palette registers, so the sweep cannot silently stop
 # covering a verb that was added after it was written. Regenerate with:
@@ -573,6 +574,11 @@ PROFILES: dict[str, dict[str, float]] = {
     # clangd answering at random positions, gdb running the fixture's program.
     "tooling": {"tooling": 18, "type": 12, "text": 8, "chord": 12, "element": 16, "burst": 4, "wheel": 4,
                 "command": 6, "point": 4, "file": 3},
+    # A remote project over a loopback ssh host of the run's own (remote_host.py):
+    # editing the mirror while the host's files change, the link is cut and the
+    # host's server killed; the convergence oracle compares the two trees.
+    "remote": {"remote": 8, "external": 8, "type": 14, "text": 8, "chord": 12, "element": 14, "burst": 4,
+               "wheel": 4, "command": 6, "file": 6, "terminal": 3},
     # Diffs: structural refinement over generated code, typed into on the editable side.
     "diff": {"diff": 14, "type": 16, "text": 10, "chord": 12, "element": 14, "burst": 6, "wheel": 6,
              "command": 4, "setting": 2, "window": 2},
@@ -595,6 +601,13 @@ DEBUG_COMMANDS = ("debug-continue", "debug-step-over", "debug-step-in", "debug-s
                   "debug-stop", "debug-restart", "debug-step-back", "debug-reverse-continue",
                   "debug-switch-session", "debug-stop-all", "debug-pane-callstack", "debug-pane-variables",
                   "debug-pane-watch", "debug-repl", "debug-show-output", "debug-start-or-continue")
+# The remote profile's commands, with arguments that resolve (`qa-local` is the
+# run's host; a path argument is added from the project's files).
+REMOTE_COMMANDS = ("remote-conflicts", "remote-resolve-all local", "remote-resolve-all remote",
+                   "remote-show-log", "remote-status", "remote-disconnect", "remote-reconnect",
+                   "remote-reconnect qa-local", "remote-changes", "remote-clear-changes",
+                   "remote-apply-deletes", "remote-local-terminal", "remote-forward-port 18080",
+                   "remote-stop-server")
 COMMAND_PROFILES = ("commands", "editor")
 ALL_PROFILES = tuple(PROFILES) + COMMAND_PROFILES
 
@@ -603,8 +616,13 @@ class Monkey:
     def __init__(self, app: q.App, seed: int, profile: str = "default", project: Path | None = None,
                  coverage: mm.Coverage | None = None, corpus: mm.Corpus | None = None,
                  weird: bool = True, max_findings: int = 25, keep_going: bool = True,
-                 min_logical: tuple[int, int] | None = None):
+                 min_logical: tuple[int, int] | None = None, host: rh.LoopbackHost | None = None):
         self.app = app
+        # A remote project's run: `project` is the mirror the editor edits and the
+        # host's directory is the outside world -- external changes, churn and the
+        # weird files go there and reach the editor through the connection.
+        self.host = host
+        self.world = host.root if host is not None else project
         # The smallest window, in layout units (pixels / ui.scale), the run may
         # leave the app at; None: any. A resize, a ui.scale or a `ui-scale 999999`
         # that went under it is undone after the step (_keep_window_usable).
@@ -614,8 +632,8 @@ class Monkey:
         self.profile = profile
         self.project = project
         self.files = project_files(project) if project is not None else []
-        self.weird = seed_weird_files(project) if (weird and project is not None
-                                                   and profile not in COMMAND_PROFILES) else []
+        self.weird = seed_weird_files(self.world) if (weird and self.world is not None
+                                                      and profile not in COMMAND_PROFILES) else []
         self.editor_generator = make_editor_generator()
         self.coverage = coverage or mm.Coverage()
         self.corpus = corpus or mm.Corpus(None)
@@ -638,7 +656,7 @@ class Monkey:
             "setting": self.setting_action, "window": self.window_action,
             "terminal": self.terminal_action, "file": self.file_action,
             "external": self.external_action, "kill9": self.kill9_action, "diff": self.diff_action,
-            "tooling": self.tooling_action,
+            "tooling": self.tooling_action, "remote": self.remote_action,
         }
         self._tooling_ready = False
         self.data = mo.DataOracle(app)
@@ -647,6 +665,8 @@ class Monkey:
         self.liveness = mo.Liveness(app)
         self.idle = mo.IdleOracle(app)
         self.structural = mo.StructuralDiffOracle(app)
+        self.converge = mo.RemoteConvergence(app, project, host.root, host.open_line()) \
+            if host is not None and project is not None else None
         self.new_states = 0
         self.new_transitions = 0
 
@@ -1054,7 +1074,7 @@ class Monkey:
                       if name and not name.endswith(("loop", "dangling")) and "." in Path(name).name]
         target = self.rng.choice(candidates) if candidates else "README.md"
         self.app.record_external({"external": op, "target": target, "counter": self.counter})
-        apply_external(self.project, op, target, self.counter)
+        apply_external(self.world, op, target, self.counter)
         if op.startswith("git-"):
             self.app.outside_change_pending = True
         return f"ext:{op}"
@@ -1159,6 +1179,35 @@ class Monkey:
         self.app.send_line(command)
         return f"tooling:{command}"
 
+    def remote_action(self) -> str:
+        """The connection under a remote project: the link cut or the host's server
+        killed (recorded, so a replay cuts it at the same point), or one of the
+        remote commands -- conflicts listed and resolved, deletes applied, a
+        disconnect and a reconnect, the server stopped."""
+        if self.host is None:
+            return self.command_action()
+        if self.rng.random() < 0.3:
+            kind = self.rng.choice(rh.FAULTS)
+            self.counter += 1
+            self.app.record_external({"external": "remote-fault", "target": kind, "counter": self.counter})
+            self.host.fault(kind)
+            return f"remote:fault-{kind}"
+        named = [name for name in self.files if name]
+        if self.rng.random() < 0.2 and named:
+            command = (f"remote-resolve {q.quote_arg(self.rng.choice(named))} "
+                       f"{self.rng.choice(('local', 'remote', 'compare', 'merge'))}")
+        else:
+            command = self.rng.choice(REMOTE_COMMANDS)
+        self.app.send_line(command)
+        return f"remote:{command.split()[0]}"
+
+    def _check_converged(self, label: str) -> None:
+        if self.converge is None:
+            return
+        self.app.record_external({"oracle": "converge"})
+        self._report_with_evidence(label, self.converge.check(), self.converge.evidence)
+        self.converge.evidence = {}
+
     def _check_structural(self, label: str) -> None:
         self.app.record_external({"oracle": "structural-diff"})
         self._report_with_evidence(label, self.structural.check(), self.structural.evidence)
@@ -1181,8 +1230,11 @@ class Monkey:
             # every kill -9 finding measured 0% (soak 48a294e57a19).
             self._report_kill("kill -9 (replayed)",
                               self.data.kill9_and_check(self.rng, waited=bool(row.get("waited"))))
-        elif self.project is not None:
-            apply_external(self.project, row["external"], row.get("target", ""), int(row.get("counter", 0)))
+        elif row.get("external") == "remote-fault":
+            if self.host is not None:
+                self.host.fault(row.get("target", ""))
+        elif self.world is not None:
+            apply_external(self.world, row["external"], row.get("target", ""), int(row.get("counter", 0)))
 
     # ---- findings ----------------------------------------------------------------
 
@@ -1301,6 +1353,9 @@ class Monkey:
         elif name == "structural-diff":
             self._report_with_evidence(label, self.structural.check(), self.structural.evidence)
             self.structural.evidence = {}
+        elif name == "converge" and self.converge is not None:
+            self._report_with_evidence(label, self.converge.check(), self.converge.evidence)
+            self.converge.evidence = {}
         elif name == "undo":
             self.app.in_oracle = True
             try:
@@ -1326,6 +1381,8 @@ class Monkey:
             self._report_with_evidence(label, found, self.undo.evidence)
         if index % 5 == 4 and "t=compare" in self.state:
             self._check_structural(label)
+        if index % 60 == 59:
+            self._check_converged(label)
         if index % 50 == 0:
             self._report(label, self.resources.check())
         if index % 150 == 149:
@@ -1340,6 +1397,9 @@ class Monkey:
             return
         label = "end of run"
         self._report_data(label, self.data.check_clean())
+        if self.converge is not None:
+            self._report_with_evidence(label, self.converge.check(), self.converge.evidence)
+            self.converge.evidence = {}
         self._report(label, self.resources.check())
         pid = self.app.proc.pid if self.app.proc else None
         left = self.data.staging_leftovers(pid)
@@ -1404,4 +1464,5 @@ class Monkey:
                 "new_transitions": self.new_transitions, "relaunches": self.relaunches,
                 "commands": commands, "header": self.app.replay_header,
                 "findings": list(self.signatures.values()),
-                "resources": self.resources.samples[-1] if self.resources.samples else {}}
+                "resources": self.resources.samples[-1] if self.resources.samples else {},
+                **({"converge": dict(self.converge.outcomes)} if self.converge is not None else {})}

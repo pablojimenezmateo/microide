@@ -668,3 +668,120 @@ class IdleOracle:
             out.append(f"  {count:3d}  {text}  under: {', '.join(under[:12]) or '-'}")
         return out
 
+
+
+class RemoteConvergence:
+    """A remote project's mirror and the host's directory hold the same files once
+    the connection has nothing left to do: the `remote` profile's oracle, after
+    link cuts, server kills and changes on both sides.
+
+    It waits for the project to settle (ready, nothing pending or unsent) and
+    compares the two trees only then, and only when the editor has no conflict or
+    held delete open -- those are divergence the user has been asked about. A
+    project that does not settle at all is a finding of its own."""
+
+    SETTLE_SECONDS = 90.0
+    AGREE_SECONDS = 15.0
+
+    def __init__(self, app: q.App, mirror: Path, host_root: Path, open_line: str):
+        self.app = app
+        self.mirror = mirror
+        self.host_root = host_root
+        # What brings the project back in front when the run left it (another
+        # project switched to, this one closed): `remote-open host:root`.
+        self.open_line = open_line
+        self.evidence: dict[str, bytes] = {}
+        # How each check ended, for the run's summary: an oracle that only ever
+        # skipped (another project in front, a conflict open) checked nothing.
+        self.outcomes: collections.Counter[str] = collections.Counter()
+
+    def _remote(self) -> dict[str, Any]:
+        """The status query's `remote`, which describes the ACTIVE project: with
+        another project in front (the run switched, or closed this one) it is
+        not this one's, and the answer is {"elsewhere": True}."""
+        try:
+            status = self.app.query("status")
+        except q.QaFailure:
+            return {}
+        if Path(status.get("projectRoot") or "") != self.mirror:
+            return {"elsewhere": True}
+        return status.get("remote") or {}
+
+    @staticmethod
+    def settled(remote: dict[str, Any]) -> bool:
+        return (remote.get("state") == "ready" and not remote.get("filesPending")
+                and not remote.get("unsentPushes"))
+
+    @staticmethod
+    def differing(host: dict[str, str], mirror: dict[str, str]) -> list[str]:
+        """Paths whose content differs, or that one side has and the other not.
+
+        >>> RemoteConvergence.differing({"a": "1", "b": "2"}, {"a": "1", "b": "3", "c": "4"})
+        ['b', 'c']
+        """
+        return sorted(k for k in set(host) | set(mirror) if host.get(k) != mirror.get(k))
+
+    def check(self) -> list[tuple[str, str]]:
+        import remote_host  # the monkey's other profiles never load it
+        self.evidence = {}
+        if not self.app.alive():
+            return []
+        deadline = time.monotonic() + self.SETTLE_SECONDS
+        remote = self._remote()
+        if remote.get("elsewhere"):
+            # Not a verdict to skip: reopening it is a path of its own (the
+            # project switched back to, or reopened after a close), and the
+            # comparison is owed either way. Not recorded: a replay of the
+            # oracle sends it again.
+            self.outcomes["reopened"] += 1
+            try:
+                self.app.send_line(self.open_line, record=False)
+            except q.QaFailure:
+                pass
+            remote = self._remote()
+        if remote.get("state") == "disconnected":
+            # The run disconnected on purpose (remote-disconnect, a menu row): the
+            # comparison is owed once it is back, so the oracle asks for that. A
+            # replay of the oracle sends it again; it is not recorded twice.
+            try:
+                self.app.send_line("remote-reconnect", record=False)
+            except q.QaFailure:
+                pass
+        while not self.settled(remote) and time.monotonic() < deadline:
+            time.sleep(0.5)
+            remote = self._remote()
+        if remote.get("elsewhere"):
+            self.outcomes["elsewhere"] += 1
+            return [("remote", f"the remote project is not in front {self.SETTLE_SECONDS:.0f} s after "
+                               f"`{self.open_line.split()[0]}` asked for it")]
+        if not self.settled(remote):
+            self.outcomes["unsettled"] += 1
+            return [("remote", f"the remote project did not settle within {self.SETTLE_SECONDS:.0f} s "
+                               f"(state {remote.get('state')}, {remote.get('filesPending')} pending, "
+                               f"{remote.get('unsentPushes')} unsent)")]
+        if remote.get("conflicts") or remote.get("heldDeletes"):
+            self.outcomes["conflicted"] += 1
+            return []
+        deadline = time.monotonic() + self.AGREE_SECONDS
+        while True:
+            host, mirror = remote_host.content_set(self.host_root, self.mirror)
+            diff = self.differing(host, mirror)
+            if not diff or time.monotonic() >= deadline:
+                break
+            time.sleep(0.5)
+        if not diff:
+            self.outcomes[f"agreed:{len(host)}"] += 1
+            return []
+        remote = self._remote()
+        if remote.get("conflicts") or remote.get("heldDeletes") or not self.settled(remote):
+            self.outcomes["moved"] += 1
+            return []  # something new arrived while it compared: not a verdict
+        self.outcomes["differed"] += 1
+        self.evidence = {"trees.txt": "\n".join(
+            f"{path}: host {host.get(path, 'absent')[:12]} mirror {mirror.get(path, 'absent')[:12]}"
+            for path in diff).encode()}
+        first = diff[0]
+        where = "only on the host" if first not in mirror else "only in the mirror" if first not in host \
+            else "with different content"
+        return [("remote", f"the settled mirror and the host differ in {len(diff)} file(s); "
+                           f"{Path(first).name} is {where}")]

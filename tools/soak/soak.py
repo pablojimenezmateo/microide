@@ -130,14 +130,19 @@ def build_all(state: dict[str, Any], log) -> None:
         started = time.monotonic()
         configure = subprocess.run(["nice", "-n", "19", "cmake", *build.configure], cwd=WORKTREE,
                                    capture_output=True, text=True, env=env)
+        # The server too: a remote job installs the one built with its app on the
+        # run's loopback host (tools/qa/remote_host.py).
         result = configure if configure.returncode else subprocess.run(
             ["nice", "-n", "19", "ionice", "-c3", "cmake", "--build", build.directory, "--target", "microide",
-             f"-j{cores}"], cwd=WORKTREE, capture_output=True, text=True, env=env)
+             "microide-server", f"-j{cores}"], cwd=WORKTREE, capture_output=True, text=True, env=env)
         if result.returncode == 0 and build.binary().exists():
             # A copy per commit: jobs keep running the binary they started with.
             target = SOAK / "bin" / build.name / head[:12]
             target.mkdir(parents=True, exist_ok=True)
             shutil.copy2(build.binary(), target / "microide")
+            server = build.binary().parent / "microide-server"
+            if server.exists():
+                shutil.copy2(server, target / "microide-server")
             good[build.name] = {"sha": head, "binary": str(target / "microide")}
             log(f"  {build.name}: ok ({time.monotonic() - started:.0f}s)")
         else:
@@ -232,6 +237,9 @@ JOB_TYPES = [
     JobType("tooling", 8, "default", "tooling"),
     JobType("terminal", 4, "default", "terminal"),
     JobType("settings", 4, "default", "settings"),
+    # A remote project over a loopback host of the run's own, with link cuts and
+    # server kills: no other job reaches src/project/remote or the server.
+    JobType("remote", 6, "default", "remote", steps=800),
     JobType("commands", 4, "default", "commands", steps=600, project="repo", matrix=False),
     JobType("editor", 3, "default", "editor", steps=600, project="repo", matrix=False),
     JobType("release", 6, "release"),

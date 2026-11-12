@@ -338,7 +338,23 @@ Latin-1, a BOM, binary, a 300 KB line, Unicode names, symlink loops), `external`
 (rewrites, renames, deletes, chmods, symlinks, git commit/switch/stash/a
 conflicting merge -- recorded, so a replay redoes them) and `kill9`. A **profile**
 sets the weights: `default`, `editing`, `layout`, `world`, `terminal`, `settings`,
-and the former command fuzzer's `commands` and `editor`.
+`diff`, `tooling` (clangd, gdb and the `qa-tests` test provider through their
+plugins), `remote`, and the former command fuzzer's `commands` and `editor`.
+
+**The `remote` profile** edits a remote project: the run gets a loopback ssh host
+of its own (`remote_host.py`: an sshd on a free port, state under a short
+`/tmp/mqa-ssh-*`, sharing only the unpacked openssh-server with `local-sshd.sh`,
+so a qa-remote lane's restart never cuts it), the fixture copied there and
+opened with `remote-open`; the editor works on the mirror while the `external`
+source changes the host's directory, and the `remote` source cuts the link,
+kills the host's server (both recorded, so a replay does too) or runs the
+remote commands. The convergence oracle (`RemoteConvergence`) waits for the
+project to settle and compares the mirror with the host's content set as the
+sync defines it (tracked plus untracked-not-ignored, read through symlinks),
+every 60 steps and at the end; a replay header's `"remote": true` sets the host
+up again. The app installs the `microide-server` beside its binary
+(`$MICROIDE_SERVER_BINARY` overrides). A host whose driver died is stopped by
+the next one to start.
 
 **Steering.** A coarse state signature per step (focus, overlay, sidebar, panel,
 menu, modal, split count, tab kind, wrap, selection: `monkey_model.py`) feeds a
@@ -432,7 +448,8 @@ assumptions (a column off by one, a key a focused terminal owns).
 | `fakebin/` | stand-in programs a scenario puts first on the app's PATH (`zenity`, for the native dialogs; `xdg-open`, which records what the desktop opener was handed) |
 | `monkey.py` | the monkey: sources, profiles, steering, the outside world, the run loop |
 | `monkey_model.py` | state signatures, the coverage model and the prefix corpus |
-| `monkey_oracles.py` | the data-loss, undo, leak and liveness oracles |
+| `monkey_oracles.py` | the data-loss, undo, leak, liveness, structural-diff, idle and remote-convergence oracles |
+| `remote_host.py` | a loopback ssh host of a monkey run's own (the `remote` profile), its faults and the content-set comparison |
 | `findings.py` | finding signatures (shared with tools/soak) |
 | `stress/` | the SDL lost-wake probe and its lane driver (`wake_race.py`) |
 | `invariants.py` | the editor-invariants sweep (formerly `tools/sweep-editor-invariants.py`) |

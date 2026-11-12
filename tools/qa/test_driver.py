@@ -328,3 +328,23 @@ class PressGuardTests(unittest.TestCase):
         self.assertTrue(guard(monkey, 779, 12))
         self.assertFalse(guard(monkey, 330, 40))
         self.assertEqual(monkey.app.ui.call_count, 3)
+
+
+class TerminalTabNamesTests(unittest.TestCase):
+    """The panel's tabs name their terminals (App._terminal_tab_findings)."""
+
+    def _findings(self, shown: list[str], label: str = "bash") -> list:
+        app = q.App.__new__(q.App)
+        app.query = Mock(return_value=[{"tab": 0, "active": True, "panes": [
+            {"active": True, "labelPrefix": "qa-local · ", "label": label}]}])
+        ui = {"panel": {"visible": True},
+              "elements": [{"kind": "panel-tab", "label": text, "active": i == 0} for i, text in enumerate(shown)]}
+        return app._terminal_tab_findings(ui)
+
+    def test_a_detached_host_terminal_is_still_named_by_its_tab(self):
+        # A disconnected remote project's terminals: the strip says " · detached"
+        # after the label, and each was reported as named by no tab.
+        self.assertEqual(self._findings(["qa-local · bash · detached", "local · bash"]), [])
+
+    def test_a_tab_naming_another_program_is_still_reported(self):
+        self.assertEqual(len(self._findings(["qa-local · vim · detached"])), 1)
