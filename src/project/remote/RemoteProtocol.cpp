@@ -48,6 +48,7 @@ bool ReadString(const util::JsonValue& json, std::string_view key, std::size_t m
 util::JsonValue SettingsJson(const HelloSettings& settings) {
   util::JsonObject object;
   object["backfill_inflight_bytes"] = util::JsonValue(settings.backfill_inflight_bytes);
+  object["max_manifest_files"] = util::JsonValue(settings.max_manifest_files);
   return util::JsonValue(std::move(object));
 }
 
@@ -62,10 +63,21 @@ bool ReadSettings(const util::JsonValue& json, HelloSettings* out, std::string* 
     return false;
   }
   out->backfill_inflight_bytes = bytes.IsNull() ? 0 : bytes.AsInt();
+  // Absent from an older peer: 0, the default.
+  const util::JsonValue& files = settings["max_manifest_files"];
+  if (!files.IsNull() && (!files.IsInt() || files.AsInt() < 0)) {
+    *error = "settings.max_manifest_files must be a non-negative integer";
+    return false;
+  }
+  out->max_manifest_files = files.IsNull() ? 0 : files.AsInt();
   return true;
 }
 
 }  // namespace
+
+std::int64_t EffectiveMaxManifestFiles(std::int64_t requested) {
+  return requested <= 0 ? kDefaultMaxManifestFiles : std::min(requested, kMaxManifestFilesCeiling);
+}
 
 std::int64_t EffectiveBackfillInflightBytes(std::int64_t requested) {
   constexpr std::int64_t kFloor = 64 * 1024;

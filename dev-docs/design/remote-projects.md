@@ -558,8 +558,12 @@ host notices when the link drops.
   the one failure the content-state model cannot express — a file that is missing
   from the manifest is indistinguishable from a file that does not exist, so the
   tree is wrong with no `absent` marker to show for it. Therefore
-  `remote.max_manifest_files` (default 50,000, matching the watch budget) is a
-  hard limit: exceeding it fails the connection at `server/hello` with the count
+  `remote.max_manifest_files` (default 500,000; 0 means the default, up to
+  2,000,000; sent in `server/hello` and echoed as applied) is a hard limit. It
+  started at 50,000 "matching the watch budget", but the watch budgets
+  DIRECTORIES (100,000), not files, and 50,000 refused a real 99,000-file SVN
+  checkout -- the cap guards against a root opened by mistake, not against a large
+  repository (a 98,858-file manifest hashes in 2.2 s cold, 1.1 s warm): exceeding it fails the connection at `server/hello` with the count
   and the limit, and points at Phase 4's on-demand tier. `truncated` from the
   snapshot is an error, never a shrug. The manifest itself is already chunked as
   `tree/rows` notifications, so the 64 MiB frame ceiling applies per chunk and
@@ -2286,7 +2290,7 @@ true.
 | `remote.server_idle_timeout` | User | int (min) | 30 | workspace close delay with no client and no live terminal or kept process; a server started by hand never idle-exits (§ 6.12) |
 | `remote.scrollback_prefetch_lines` | User | int | 500 | scrollback sent on attach before lazy backfill (§ 6.12) |
 | `remote.host_scrollback_budget` | User | int | 64 MiB | total host memory across all terminal rings for one server; the oldest lines of the least-recently-active terminal are dropped first |
-| `remote.max_manifest_files` | User | int | 50000 | hard cap on the content set; exceeding it fails the connection rather than truncating the manifest (§ 6.2) |
+| `remote.max_manifest_files` | User | int | 0 (= 500,000; max 2,000,000) | hard cap on the content set; exceeding it fails the connection rather than truncating the manifest (§ 6.2) |
 | `remote.term_credit_bytes` | User | int | 256 KiB | per-terminal and per-process outstanding output before the host drops with a marked gap (§ 6.4) |
 | `remote.server_socket_dir` | User | path | empty | override for the server's socket directory; empty means `~/.local/state/microide/server/`, owner-verified on every bind (§ 6.12) |
 | `remote.mass_delete_threshold` | User | percent | 25 | share of the manifest a single diff may delete before it prompts instead of applying; floor of 100 rows (§ 6.3) |

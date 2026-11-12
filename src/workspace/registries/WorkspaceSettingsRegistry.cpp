@@ -605,6 +605,23 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "Remote",
       },
       SettingSpec{
+          .id = "remote.max_manifest_files",
+          .label = "Max Host Project Files",
+          .description = "The most files a host project may have (after .gitignore and the "
+                         "built-in skips: .git, .svn, node_modules, build output) before opening "
+                         "it fails rather than mirror part of it (0 = 500,000; up to 2,000,000). "
+                         "Applies when the host first opens the project.",
+          .type = SettingType::Int,
+          .scope = SettingScope::User,
+          .default_int = 0,
+          .min_int = 0,
+          .max_int = 2'000'000,
+          .int_step = 50'000,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Remote",
+      },
+      SettingSpec{
           .id = "remote.term_credit_bytes",
           .label = "Host Terminal Window",
           .description = "Bytes of terminal output a host may send before this client "

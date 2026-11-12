@@ -25,9 +25,9 @@ class RemoteServerClient;
 // there is no client.
 class RemoteWorkspace {
  public:
-  // Ceiling on decoded rows, far over the server's remote.max_manifest_files: a
-  // server streaming more is broken or hostile, and the connection is failed.
-  static constexpr std::size_t kMaxManifestRows = 1'000'000;
+  // Ceiling on decoded rows: the most remote.max_manifest_files can ask a server
+  // for. A server streaming more is broken or hostile, and the connection is failed.
+  static constexpr std::size_t kMaxManifestRows = static_cast<std::size_t>(kMaxManifestFilesCeiling);
 
   struct Manifest {
     std::uint64_t id = 0;

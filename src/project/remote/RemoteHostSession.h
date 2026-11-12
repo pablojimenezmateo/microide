@@ -113,6 +113,7 @@ class RemoteHostSession {
     // (~/.local/state/microide/server). Passed to the server as --socket-dir.
     std::string server_socket_dir;
     std::int64_t backfill_inflight_bytes = 0;  // `remote.backfill_inflight_bytes`
+    std::int64_t max_manifest_files = 0;       // `remote.max_manifest_files`; 0 = the default
     bool install = true;                   // `remote.server_install`
     // The local server to install on a host of the given architecture (`uname -m`,
     // normalized: "x86_64", "aarch64"); an empty path means this build has none

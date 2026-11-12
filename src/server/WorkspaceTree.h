@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "project/remote/RemoteManifest.h"
+#include "project/remote/RemoteProtocol.h"
 #include "util/ContentHash.h"
 
 namespace microide::server {
@@ -38,7 +39,7 @@ class WorkspaceTree {
  public:
   struct Options {
     // remote.max_manifest_files: over it, the manifest fails loudly (§ 6.2).
-    std::size_t max_files = 50'000;
+    std::size_t max_files = static_cast<std::size_t>(project::remote::kDefaultMaxManifestFiles);
     // 0 = min(hardware threads, 8).
     unsigned hash_threads = 0;
     // A file whose mtime or ctime is this recent is hashed on every manifest rather

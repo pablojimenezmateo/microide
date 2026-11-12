@@ -530,7 +530,8 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::BuildManifestLocked(
 
 std::string WorkspaceTree::OverLimitMessage() const {
   return "the content set of " + root_.string() + " has over " + std::to_string(options_.max_files) +
-         " files (remote.max_manifest_files); narrow it with remote.exclude";
+         " files; raise Max Host Project Files (remote.max_manifest_files) in Settings, or leave "
+         "generated trees out with a .gitignore";
 }
 
 std::optional<std::vector<std::string>> WorkspaceTree::SearchPaths(std::string* error) {

@@ -455,6 +455,7 @@ void TestSocketDirAndBackfillBoundReachTheServer() {
   RemoteHostSession::Config config = host.Config();
   config.server_socket_dir = socket_dir.string();
   config.backfill_inflight_bytes = 200 * 1024;
+  config.max_manifest_files = 123'456;
   {
     RemoteHostSession session(config, log.Listener());
     session.Connect();
@@ -465,6 +466,8 @@ void TestSocketDirAndBackfillBoundReachTheServer() {
     Expect(client->hello().settings.backfill_inflight_bytes == 200 * 1024,
            "the server echoes the bound it applied");
     Expect(client->peer().bulk_window() == 200 * 1024, "and the client pins the same window");
+    Expect(client->hello().settings.max_manifest_files == 123'456,
+           "remote.max_manifest_files travels in the hello and the server echoes the cap it applied");
     session.Disconnect();
   }
   (void)platform::RunSubprocess({MICROIDE_SERVER_BINARY, "stop", "--socket-dir", socket_dir.string()},

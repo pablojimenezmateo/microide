@@ -226,6 +226,10 @@ void RemoteServer::InstallHandlers(Connection& connection) {
                        ++workspace.clients;
                        if (!workspace.tree) {
                          WorkspaceTree::Options tree_options;
+                         // The first client's cap: the tree is shared by every
+                         // client of this root.
+                         tree_options.max_files = static_cast<std::size_t>(
+                             remote::EffectiveMaxManifestFiles(hello->settings.max_manifest_files));
                          // Beside the socket, keyed by the root: a hand-started or
                          // on-demand server finds its predecessor's hashes.
                          if (!config_.socket_path.empty()) {
@@ -249,7 +253,9 @@ void RemoteServer::InstallHandlers(Connection& connection) {
                                .daemon_epoch = epoch_,
                                .capabilities = {"proc", "term", "tree", "watch", std::string(remote::method::kUploadCapability)},
                                .session_survival = config_.session_survival,
-                               .settings = {.backfill_inflight_bytes = backfill},
+                               .settings = {.backfill_inflight_bytes = backfill,
+                                            .max_manifest_files = remote::EffectiveMaxManifestFiles(
+                                                hello->settings.max_manifest_files)},
                                .ephemeral_ports = EphemeralPortRange(),
                            }));
                  });

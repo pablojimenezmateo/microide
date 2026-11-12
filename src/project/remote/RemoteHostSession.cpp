@@ -612,7 +612,8 @@ std::shared_ptr<RemoteServerClient> RemoteHostSession::StartServer(bool* not_ins
                              HelloRequest{.release = config_.release,
                                           .root = config_.workspace_root,
                                           .settings = {.backfill_inflight_bytes =
-                                                           config_.backfill_inflight_bytes}},
+                                                           config_.backfill_inflight_bytes,
+                                                       .max_manifest_files = config_.max_manifest_files}},
                              error)) {
     return client;
   }

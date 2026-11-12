@@ -4,6 +4,7 @@
 #include "project/remote/RemoteFrame.h"
 #include "project/remote/RemotePeer.h"
 #include "project/remote/RemoteProtocol.h"
+#include "project/remote/RemoteWorkspace.h"
 #include "util/JsonValue.h"
 
 #include <atomic>
@@ -113,6 +114,25 @@ void TestHelloRoundTripsAndValidates() {
       &error);
   Expect(request.has_value() && request->settings.backfill_inflight_bytes == 5,
          "the client's settings round-trip: " + error);
+  // remote.max_manifest_files: carried both ways, absent from an older peer = the
+  // default, and the default opens a 99,093-file checkout the old 50,000 refused.
+  const auto with_cap = remote::HelloRequestFromJson(
+      *util::ParseJson(util::SerializeJson(remote::ToJson(
+          remote::HelloRequest{.release = "x", .settings = {.max_manifest_files = 250'000}}))),
+      &error);
+  Expect(with_cap.has_value() && with_cap->settings.max_manifest_files == 250'000,
+         "the content-set cap round-trips: " + error);
+  const auto older = remote::HelloRequestFromJson(
+      *util::ParseJson(R"({"protocol":1,"min_protocol":1,"release":"x","settings":{"backfill_inflight_bytes":0}})"),
+      &error);
+  Expect(older.has_value() && older->settings.max_manifest_files == 0, "an older client names no cap");
+  Expect(remote::EffectiveMaxManifestFiles(0) == remote::kDefaultMaxManifestFiles &&
+             remote::kDefaultMaxManifestFiles > 99'093 &&
+             remote::EffectiveMaxManifestFiles(10) == 10 &&
+             remote::EffectiveMaxManifestFiles(std::int64_t{1} << 40) == remote::kMaxManifestFilesCeiling &&
+             static_cast<std::int64_t>(remote::RemoteWorkspace::kMaxManifestRows) >=
+                 remote::kMaxManifestFilesCeiling,
+         "0 is the default; anything else is clamped to what a client accepts");
   Expect(remote::EffectiveBackfillInflightBytes(0) == 0 &&
              remote::EffectiveBackfillInflightBytes(5) == 64 * 1024 &&
              remote::EffectiveBackfillInflightBytes(std::int64_t{1} << 40) == 64 * 1024 * 1024,
@@ -132,6 +152,8 @@ void TestHelloRoundTripsAndValidates() {
   Expect(bad("[]"), "a non-object is refused");
   Expect(bad(R"({"protocol":1,"min_protocol":1,"release":"x","settings":{"backfill_inflight_bytes":-1}})"),
          "a negative bulk bound is refused");
+  Expect(bad(R"({"protocol":1,"min_protocol":1,"release":"x","settings":{"max_manifest_files":-1}})"),
+         "a negative content-set cap is refused");
 }
 
 // Only a release both sides can order triggers a server update, and only toward

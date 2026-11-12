@@ -89,6 +89,8 @@ remote::RemoteHostSession::Config RemoteHostService::SessionConfig(
   config.backfill_inflight_bytes =
       util::ParseInt64(setting("remote.backfill_inflight_bytes").value_or(std::string()))
           .value_or(0);
+  config.max_manifest_files =
+      util::ParseInt64(setting("remote.max_manifest_files").value_or(std::string())).value_or(0);
   config.install = SettingFlagEnabled(setting("remote.server_install"), true);
   config.server_binary = [](std::string_view arch) { return platform::ResolveBundledServerBinary(arch); };
   return config;

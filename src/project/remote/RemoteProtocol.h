@@ -161,7 +161,19 @@ struct HelloSettings {
   // `remote.backfill_inflight_bytes`: bulk bytes either side may have
   // unacknowledged. 0 = adaptive (~100 ms of measured bandwidth, 64 KiB..1 MiB).
   std::int64_t backfill_inflight_bytes = 0;
+  // `remote.max_manifest_files`: the most files a workspace's content set may have
+  // before opening it fails (§ 6.2). 0 = kDefaultMaxManifestFiles.
+  std::int64_t max_manifest_files = 0;
 };
+// The content-set cap when the client names none. A fail-loud ceiling against a
+// root opened by mistake (a home directory, /), never a size a real repository
+// should reach: the 50,000 this started at refused a 99,000-file checkout.
+inline constexpr std::int64_t kDefaultMaxManifestFiles = 500'000;
+// The most any client may ask for, and what RemoteWorkspace accepts from a server.
+inline constexpr std::int64_t kMaxManifestFilesCeiling = 2'000'000;
+// The cap a requested `max_manifest_files` resolves to: 0 (or less) is the
+// default, anything else is clamped to [1, kMaxManifestFilesCeiling].
+std::int64_t EffectiveMaxManifestFiles(std::int64_t requested);
 // The bound a requested `backfill_inflight_bytes` resolves to: 0 stays adaptive;
 // anything else is clamped to [64 KiB, 64 MiB] — below one bulk chunk nothing
 // moves, and above that the bound no longer bounds an echo's wait.
