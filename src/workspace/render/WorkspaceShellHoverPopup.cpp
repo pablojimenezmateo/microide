@@ -1,5 +1,7 @@
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
+#include "workspace/render/HoverCardLimits.h"
+
 #include <algorithm>
 #include <array>
 #include <optional>
@@ -50,8 +52,6 @@ constexpr std::size_t kEditorHoverPopupMaxSummaryLines = 4;
 // Line caps count the text's own lines now (HoverTextWrap keeps them), not one
 // run-on paragraph wrapped, so they leave room for a structured hover.
 constexpr std::size_t kEditorHoverPopupMaxDiagnosticLines = 10;
-constexpr std::size_t kEditorHoverPopupMaxPluginTitleLines = 2;
-constexpr std::size_t kEditorHoverPopupMaxPluginContentLines = 12;
 constexpr float kEditorHoverPopupPrimaryActionHitPaddingX = 12.0f;
 constexpr float kEditorHoverPopupPrimaryActionHitPaddingY = 6.0f;
 // Shortcut shown next to the diagnostic "Quick Fix" button (matches ActionId::CodeActions).
@@ -871,22 +871,15 @@ void WorkspaceShell::MaybeExpireSignatureHelp() {
 }
 
 void WorkspaceShell::RenderSignatureHelpPopup(SDL_Renderer* renderer) const {
-  if (!active_signature_help_.has_value() || MenuSurfaceCapturingMouse()) {
+  // The card frame prep laid out and accounted the damage for
+  // (PreparedFrameState::painted_signature_help_rect), never one laid out again
+  // here: paint laid it out from live state, and a menu closing over a card it
+  // had hidden brought the card back with nothing repainting its rect.
+  if (!frame_state_.painted_signature_help_rect.has_value() || !active_signature_help_.has_value()) {
     return;
   }
-  const auto layout_state = CurrentWorkspaceLayout();
-  if (!layout_state.has_value()) {
-    return;
-  }
-  const auto caret = ActiveEditorCaretRect(*layout_state);
-  if (!caret.has_value()) {
-    return;
-  }
-
   const SignatureHelpPopup& popup = *active_signature_help_;
-  const SDL_FRect card_rect = ComputeTwoBlockHoverCardRect(
-      popup.signature, popup.documentation, kEditorHoverPopupMaxPluginTitleLines,
-      kEditorHoverPopupMaxPluginContentLines, *caret, layout_state->editor_surface);
+  const SDL_FRect card_rect = *frame_state_.painted_signature_help_rect;
   DrawCardFrame(renderer, theme_, card_rect, CardStyle::Overlay);
 
   const float text_x = card_rect.x + kEditorHoverPopupPadding;

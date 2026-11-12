@@ -3373,6 +3373,90 @@ void TestWorkspaceShellSignatureHelpClosingRepaintsWhereItWas() {
       });
 }
 
+// QA monkey (tooling, seed 7): the signature-help card hides while a menu holds the
+// pointer, and paint laid it out from live state. A menu opening and closing over
+// it never touched the card's rect, so the card came back in a full repaint while
+// the partial frame -- the menu's clips -- left the editor without it.
+void TestWorkspaceShellSignatureHelpComesBackWhenAMenuClosesOverIt() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  WithMarkdownCompletionServer(
+      "one\ntwo\nthree\n", 0, 3,
+      [](std::string, workspace::LspClient::Position, workspace::LspClient::CompletionCallback) {},
+      [&](WorkspaceShell& shell, editor::TextViewport&) {
+        auto* client =
+            WorkspaceShellTestAccess::LspManagerForTesting(shell).FindStartedServer("markdown");
+        Expect(client != nullptr, "the stub client should be installed");
+        if (client == nullptr) {
+          return;
+        }
+        client->SetSignatureHelpTriggerCharactersForTesting("(");
+        client->SetTestSignatureHelpHandler(
+            [](std::string, workspace::LspClient::Position, workspace::LspClient::SignatureHelpCallback cb) {
+              workspace::LspClient::SignatureHelp help;
+              workspace::LspClient::SignatureInformation info;
+              info.label = "one(alpha, beta)";
+              help.signatures.push_back(std::move(info));
+              cb(std::move(help));
+            });
+        constexpr int kWidth = 1280;
+        constexpr int kHeight = 720;
+        EnsureDummySdlVideoInitialized();
+        WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+        WorkspaceShellTestAccess::SetFocusEditor(shell);
+        WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+        const auto pin_caret = [&]() {
+          WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks());
+        };
+        SoftwareCanvas canvas(kWidth, kHeight);
+        pin_caret();
+        shell.Render(canvas.renderer(), kWidth, kHeight);
+        (void)shell.ConsumePendingRenderInvalidation();
+        const auto frame = [&](std::initializer_list<SDL_Event> events, const char* what) {
+          const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight,
+                                                        DispatchEvents(shell, events), pin_caret);
+          Expect(diff.identical(), std::string(what) + " paints what a full repaint paints; " +
+                                       DescribePixelDiff(diff));
+          WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+          const auto settled = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight,
+                                                           shell.ConsumePendingRenderInvalidation(), pin_caret);
+          Expect(settled.identical(), std::string(what) + ", settled, paints what a full repaint paints; " +
+                                          DescribePixelDiff(settled));
+        };
+        frame({TextInputEvent("(")}, "opening the hints");
+        Expect(WorkspaceShellTestAccess::SignatureHelpPopup(shell).has_value(),
+               "the trigger character opens the hints");
+        // The tree's context menu, opened by a right-click on a row: the card goes
+        // while the menu holds the pointer, and the frame repaints the menu's
+        // region, not the card's.
+        const std::optional<SDL_FRect> row = WorkspaceShellTestAccess::TreeSidebarRowRect(shell, 0);
+        Expect(row.has_value(), "the tree shows a row to right-click");
+        if (!row.has_value()) {
+          return;
+        }
+        const float rx = row->x + row->w / 2.0f;
+        const float ry = row->y + row->h / 2.0f;
+        SDL_Event right_down = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, rx, ry);
+        SDL_Event right_up = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, rx, ry);
+        right_down.button.button = SDL_BUTTON_RIGHT;
+        right_up.button.button = SDL_BUTTON_RIGHT;
+        frame({MouseMotionEvent(rx, ry), right_down, right_up}, "a menu opening over the hints");
+        Expect(WorkspaceShellTestAccess::AnyMenuPopupOpen(shell), "the tree's context menu is open");
+        // A press outside an open menu only closes it (the caret stays, so the
+        // hints do too): the monkey's drag that began in the editor.
+        const SDL_FRect editor = WorkspaceShellTestAccess::CurrentLayout(shell).editor_surface;
+        const float ex = editor.x + editor.w - 24.0f;
+        const float ey = editor.y + editor.h - 24.0f;
+        frame({MouseMotionEvent(ex, ey), MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, ex, ey),
+               MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, ex, ey)},
+              "the menu closing over the hints");
+        Expect(!WorkspaceShellTestAccess::AnyMenuPopupOpen(shell), "the press closes the menu");
+        Expect(WorkspaceShellTestAccess::SignatureHelpPopup(shell).has_value(),
+               "the hints are still up: the caret never moved");
+      });
+}
+
 // QA flow lsp-signature-help: typing a closer steps over the auto-inserted one --
 // no edit -- yet still reported "the last change", and the LSP sync re-sent the
 // viewport's last_applied_edit, which was the PREVIOUS keystroke's. The server then
@@ -7816,6 +7900,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginProvidersOpenOnTheirTriggerCharacters);
   AddTest(tests, "WorkspaceShell/SignatureHelpClosingRepaintsWhereItWas",
           TestWorkspaceShellSignatureHelpClosingRepaintsWhereItWas);
+  AddTest(tests, "WorkspaceShell/SignatureHelpComesBackWhenAMenuClosesOverIt",
+          TestWorkspaceShellSignatureHelpComesBackWhenAMenuClosesOverIt);
   AddTest(tests, "WorkspaceShell/SteppingOverACloserSendsTheServerNothing",
           TestWorkspaceShellSteppingOverACloserSendsTheServerNothing);
   AddTest(tests, "WorkspaceShell/SignatureHelpPrefersLspOverPlugin",

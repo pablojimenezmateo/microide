@@ -1,5 +1,7 @@
 #include "workspace/services/SidebarService.h"
+
 #include "workspace/OpenDocumentWatch.h"
+#include "workspace/render/HoverCardLimits.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
 #include <algorithm>
@@ -1587,6 +1589,28 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     std::optional<SDL_FRect> painted_hover_popup_rect = card_rect(frame_state_.painted_hover_popup);
     repaint_if_moved(painted_hover_popup_rect, card_rect(hover_popup));
     frame_state_.painted_hover_popup = std::move(hover_popup);
+    // The signature-help card: shown while a request's answer is up and the caret
+    // has not moved, hidden while a menu holds the pointer -- so a menu opening
+    // and closing over it is a card going and coming back with no edit.
+    std::optional<SDL_FRect> signature_rect;
+    std::size_t signature_hash = 0;
+    if (active_signature_help_.has_value() && !MenuSurfaceCapturingMouse()) {
+      if (const std::optional<SDL_FRect> caret = ActiveEditorCaretRect(layout); caret.has_value()) {
+        signature_rect = ComputeTwoBlockHoverCardRect(
+            active_signature_help_->signature, active_signature_help_->documentation,
+            kEditorHoverPopupMaxPluginTitleLines, kEditorHoverPopupMaxPluginContentLines, *caret,
+            layout.editor_surface);
+        signature_hash = std::hash<std::string_view>{}(active_signature_help_->signature) * 31U +
+                         std::hash<std::string_view>{}(active_signature_help_->documentation);
+      }
+    }
+    std::optional<SDL_FRect> painted_signature_rect = frame_state_.painted_signature_help_rect;
+    if (signature_hash != frame_state_.painted_signature_help_hash && signature_rect.has_value()) {
+      RequestRedrawRect(*signature_rect);  // the same card saying something else
+    }
+    repaint_if_moved(painted_signature_rect, signature_rect);
+    frame_state_.painted_signature_help_rect = signature_rect;
+    frame_state_.painted_signature_help_hash = signature_hash;
   }
   // The editor (and the compare/merge editable panes) paint the caret only while
   // the editor OWNS the blinking caret -- the condition under which the blink

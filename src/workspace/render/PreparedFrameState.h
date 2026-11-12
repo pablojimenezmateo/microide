@@ -77,6 +77,13 @@ struct PreparedFrameState {
   // painted, or one it had kept dropped, and its pixels outside the frame's clips
   // stayed on screen (TD-2026-10-22-377: a blame card left on a split's divider).
   std::optional<EditorHoverPopupLayout> painted_hover_popup;
+  // The signature-help card the same way: its rect as this frame paints it
+  // (none while a menu holds the pointer, or with no caret on screen) and a hash
+  // of its text. Paint laid it out from live state, so a menu closing over a
+  // card it had hidden brought the card back in a full render while the partial
+  // frame's clips -- the menu's -- never reached it (QA monkey, tooling seed 7).
+  std::optional<SDL_FRect> painted_signature_help_rect;
+  std::size_t painted_signature_help_hash = 0;
   // Per editor pane, the (viewport, content revision) painted.
   std::array<std::uint64_t, kMaxEditorGroups> painted_pane_content{};
   // Per editor pane, the (viewport, content, scroll position) painted.
