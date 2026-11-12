@@ -530,10 +530,7 @@ class App:
         self.log_offset = 0
         if between is not None:
             between()
-        if restore_workspace:
-            self._spawn(None, self._extra_args)
-        else:
-            self._spawn(project if project is not None else self.project, self._extra_args)
+        self._spawn(project if project is not None else self.project, self._extra_args)
 
     def crash_and_relaunch(self, project: Path | None = None,
                            between: Callable[[], None] | None = None,
