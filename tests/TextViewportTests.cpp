@@ -5898,6 +5898,46 @@ void TestTextViewportAGroupedJoinOverAnEditedLineUndoesAndRedoesExactly() {
          "the redo replays the group as it was, without a second copy of line 1");
 }
 
+// Soak d54631ea30df, minimized to "open src/main.cpp; format-document": clangd's
+// own edits for the taskflow fixture -- each replaces a line break and the next
+// line's indent, so neighbouring edits share lines -- applied the way
+// WorkspaceEditService::ApplyBatch applies them (last first, one group).
+void TestTextViewportClangdFormattingEditsUndoAndRedoExactly() {
+  struct Edit {
+    TextPosition start;
+    TextPosition end;
+    const char* text;
+  };
+  static constexpr Edit kEdits[] = {
+      {{4, 12}, {5, 4}, "\n  "},
+      {{5, 34}, {6, 4}, "\n  "},
+      {{6, 27}, {6, 29}, " "},
+      {{6, 35}, {7, 4}, "\n  "},
+      {{7, 26}, {7, 29}, " "},
+      {{7, 35}, {8, 4}, "\n  "},
+      {{8, 35}, {9, 4}, "\n  "},
+      {{9, 26}, {9, 29}, " "},
+      {{9, 35}, {11, 4}, "\n\n  "},
+      {{11, 38}, {12, 4}, "\n  "},
+      {{12, 55}, {13, 16}, " "},
+      {{13, 41}, {13, 42}, "\n              "},
+      {{13, 49}, {14, 4}, "\n  "},
+  };
+  TextViewport viewport;
+  viewport.LoadContent("#include \"scheduler.hpp\"\n\n#include <cstdio>\n\nint main() {\n    taskflow::Scheduler scheduler;\n    scheduler.add(\"ingest\",  5, 3);\n    scheduler.add(\"index\",   8, 4);\n    scheduler.add(\"compact\", 2, 2);\n    scheduler.add(\"flush\",   9, 1);\n\n    const int total = scheduler.run();\n    std::printf(\"scheduled %zu tasks, total cost %d\\n\",\n                scheduler.queue().size(), total);\n    return total;\n}\n", "/tmp/format-main.cpp");
+  const std::string original = viewport.SerializeText();
+  viewport.BeginUndoGroup();
+  for (std::size_t i = std::size(kEdits); i-- > 0;) {
+    Expect(viewport.ReplaceRange(SelectionRange{kEdits[i].start, kEdits[i].end}, kEdits[i].text, true),
+           "every formatting edit applies");
+  }
+  viewport.EndUndoGroup();
+  const std::string formatted = viewport.SerializeText();
+  Expect(viewport.Undo() && viewport.SerializeText() == original, "one undo restores the unformatted text");
+  Expect(viewport.Redo() && viewport.SerializeText() == formatted,
+         "the redo restores the formatted text:\n" + viewport.SerializeText());
+}
+
 // Soak 76e3925879dc, 822fc591ce19, d54631ea30df: k undos then k redos are the
 // identity, whatever mix of typing, single replaces and grouped multi-range edits
 // (a language server's formatting) built the history. A grouped edit that joined
@@ -6689,6 +6729,8 @@ void TestFormattedTextIsOneUndoStepAndKeepsHistory() {
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
 AddTest(tests, "TextViewport/AGroupedJoinOverAnEditedLineUndoesAndRedoesExactly",
         TestTextViewportAGroupedJoinOverAnEditedLineUndoesAndRedoesExactly);
+AddTest(tests, "TextViewport/ClangdFormattingEditsUndoAndRedoExactly",
+        TestTextViewportClangdFormattingEditsUndoAndRedoExactly);
 AddTest(tests, "TextViewport/UndoThenRedoIsTheIdentityOverRandomHistories",
         TestTextViewportUndoThenRedoIsTheIdentityOverRandomHistories);
   AddTest(tests, "TextViewport/AppliedEditRecordAnswersForOneStepOnly", TestAppliedEditRecordAnswersForOneStepOnly);
