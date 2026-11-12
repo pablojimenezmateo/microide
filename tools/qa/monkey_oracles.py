@@ -527,6 +527,7 @@ class IdleOracle:
             self.evidence = "\n".join([
                 f"voluntary wakes/s: {rate:.0f} (budget {self.BUDGET_PER_SECOND:.0f})",
                 f"frames in the window: {len(frames)} {dict(reasons)}",
+                *self._repainted_regions(frames),
                 f"log lines in the window: {len(logged)}",
                 "main thread wchan + syscall, sampled:",
                 *(f"  {count:3d}  {sample}" for sample, count in collections.Counter(samples).most_common()),
@@ -537,4 +538,28 @@ class IdleOracle:
             return [("idle", f"the main thread woke {rate:.0f} times a second while the app was idle "
                              f"(budget {self.BUDGET_PER_SECOND:.0f})")]
         return []
+
+    def _repainted_regions(self, frames: list[str]) -> list[str]:
+        """What the idle frames repainted: each frame's dirty bounds (the app logs
+        them), most common first, with the UI elements under each -- the frame log
+        said "dirty=1" and nothing about which surface kept asking."""
+        bounds = collections.Counter(
+            line.split("bounds=", 1)[1].split()[0] for line in frames if "bounds=" in line)
+        if not bounds:
+            return []
+        try:
+            elements = (self.app.ui() or {}).get("elements", [])
+        except Exception:  # noqa: BLE001 - evidence only
+            elements = []
+        out = ["repainted bounds (x,y,w,h), most common first:"]
+        for text, count in bounds.most_common(3):
+            try:
+                x, y, w, h = (int(v) for v in text.split(","))
+            except ValueError:
+                continue
+            under = [e["name"] for e in elements
+                     if len(e.get("rect") or ()) == 4 and e["rect"][0] < x + w and x < e["rect"][0] + e["rect"][2]
+                     and e["rect"][1] < y + h and y < e["rect"][1] + e["rect"][3]]
+            out.append(f"  {count:3d}  {text}  under: {', '.join(under[:12]) or '-'}")
+        return out
 

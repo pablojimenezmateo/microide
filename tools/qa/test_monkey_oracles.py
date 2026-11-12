@@ -97,5 +97,29 @@ class Kill9OracleTests(unittest.TestCase):
         self.assertEqual([app.ROOTS[p] for p in app.catalog], ["/p/a", "/p/b"])
 
 
+
+class IdleEvidenceTests(unittest.TestCase):
+    """Soak a64655101a5a: an idle app redrawing 60 times a second, and the evidence
+    could not say what it redrew. The frames' dirty bounds name the surface."""
+
+    def test_the_repainted_bounds_name_the_elements_under_them(self) -> None:
+        app = mock.Mock()
+        app.ui.return_value = {"elements": [
+            {"name": "tab:README.md", "rect": [125, 18, 80, 14]},
+            {"name": "status:line-column", "rect": [900, 300, 60, 12]},
+        ]}
+        oracle = monkey_oracles.IdleOracle(app)
+        frames = [f"microide redraw frame: frame={i} reason=scheduled-partial dirty=1 clips=1 "
+                  f"elapsed=1.0 ms bounds=120,16,200,18" for i in range(5)]
+        frames.append("microide redraw frame: frame=9 reason=event-partial bounds=0,0,0,0")
+        lines = oracle._repainted_regions(frames)
+        self.assertEqual(lines[0], "repainted bounds (x,y,w,h), most common first:")
+        self.assertIn("5  120,16,200,18  under: tab:README.md", lines[1])
+        self.assertNotIn("status:line-column", lines[1])
+
+    def test_frames_without_bounds_add_nothing(self) -> None:
+        oracle = monkey_oracles.IdleOracle(mock.Mock())
+        self.assertEqual(oracle._repainted_regions(["microide redraw frame: frame=1 dirty=1"]), [])
+
 if __name__ == "__main__":
     unittest.main()

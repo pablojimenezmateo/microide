@@ -17,6 +17,11 @@ struct RedrawFrameStats {
   std::uint64_t frame_index = 0;
   const char* reason = nullptr;
   Uint64 elapsed_ns = 0;
+  // The union of the requested dirty rects (logical pixels; empty for a full
+  // frame). Logged with each verbose frame so a frame nobody asked for names the
+  // surface that keeps asking (soak a64655101a5a: 60 scheduled partial frames a
+  // second on an idle app, and the log said only "dirty=1").
+  SDL_FRect dirty_bounds{};
 };
 
 // Accumulates redraw timing/coverage statistics and logs a rolling summary
@@ -34,6 +39,7 @@ class RedrawTraceAccumulator {
   void Configure(bool enabled, bool verbose);
 
   bool enabled() const { return enabled_; }
+  bool verbose() const { return verbose_; }
 
   // Record one rendered frame: emits the verbose per-frame line when verbose
   // tracing is on, accumulates totals, and flushes a summary + resets once

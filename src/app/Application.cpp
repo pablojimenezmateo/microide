@@ -823,6 +823,13 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
   ++frame_index_;
 
   const bool full_redraw_requested = dirty_rects.empty() || !scene_texture_.valid();
+  SDL_FRect dirty_bounds{};
+  if (redraw_trace_.verbose() && !dirty_rects.empty()) {
+    dirty_bounds = dirty_rects.front();
+    for (const SDL_FRect& rect : dirty_rects) {
+      SDL_GetRectUnionFloat(&dirty_bounds, &rect, &dirty_bounds);
+    }
+  }
   util::PerformanceTrace::Scope trace_scope(
       full_redraw_requested ? "Application::Render(full)" : "Application::Render(partial)");
   std::optional<util::StartupTrace::Scope> first_render_scope;
@@ -1005,7 +1012,8 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
                                           .rendered_clip_count = rendered_clip_count,
                                           .frame_index = frame_index_,
                                           .reason = reason,
-                                          .elapsed_ns = SDL_GetTicksNS() - render_start});
+                                          .elapsed_ns = SDL_GetTicksNS() - render_start,
+                                          .dirty_bounds = dirty_bounds});
   } else {
     render_fallback_full();
   }
