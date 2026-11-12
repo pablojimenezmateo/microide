@@ -1,5 +1,7 @@
 #include "project/remote/MirrorWriteGate.h"
 
+#include "util/TextFileIO.h"
+
 #include <mutex>
 #include <vector>
 
@@ -25,17 +27,24 @@ FileWriteGate::Result MirrorWriteGate::WriteText(const std::filesystem::path& pa
   if (!relative.has_value()) {
     return LocalFileWriteGate().WriteText(path, text, signature, target);
   }
+  // Where the bytes land: a save through a link writes the file the link names
+  // (the atomic write resolves the chain the same way, so the link survives), and
+  // that path is the one that changed. Journaling the link's own path pushed the
+  // link path, which the host refuses -- a link is there -- and never sent the
+  // file that changed (the QA monkey's remote job: soak 517966306bfc). A link
+  // out of the tree names a file no host path is: it is written and not synced.
+  const std::optional<std::string> written = MirrorRelative(util::ResolveSymlinkTarget(path));
   Result result;
   {
-    std::lock_guard path_lock(store_.PathLock(*relative));
+    std::lock_guard path_lock(store_.PathLock(written.value_or(*relative)));
     // The temporary in meta/staging, not beside the file: a crash between writing
     // it and renaming it into place must not leave it in the tree, where nothing
     // would ever remove it (the fault matrix's disk axis found one). Open sweeps
     // staging.
     result = WriteTextLocally(path, text, signature, target, store_.staging());
   }
-  if (result.ok) {
-    engine_.NotifyLocalWrite(*relative);
+  if (result.ok && written.has_value()) {
+    engine_.NotifyLocalWrite(*written);
   }
   return result;
 }

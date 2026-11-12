@@ -558,6 +558,38 @@ void TestMirrorParksConflictsAndNeverOverwritesLocalEdits() {
   Expect(session.engine->status().conflicts == 1, "and still reports it");
 }
 
+// The QA monkey's remote job (soak 517966306bfc, 14a5c9606a3a): a save through a
+// link in the mirror -- an in-root link is recreated as a link -- writes the file
+// the link names (the atomic save resolves the chain, so the link survives), but
+// the write gate journaled the LINK's path. The engine pushed the link path,
+// which the host refuses (a link is there), and the file that changed was never
+// sent: it stayed only in the mirror. The gate journals where the bytes landed.
+void TestMirrorASaveThroughALinkPushesTheFileItNames() {
+  MirrorSession session;
+  WriteFile(session.host / "target.txt", "base\n");
+  std::filesystem::create_symlink("target.txt", session.host / "link");
+  std::filesystem::create_symlink("later.txt", session.host / "dangling");
+  session.Connect();
+  session.Sync();
+  Expect(std::filesystem::is_symlink(session.Tree("link")) && std::filesystem::is_symlink(session.Tree("dangling")),
+         "the in-root links are links in the mirror");
+  remote::MirrorWriteGate gate(*session.store, *session.engine);
+  Expect(gate.WriteText(session.Tree("link"), "through the link\n").ok, "the save through the link lands");
+  Expect(gate.WriteText(session.Tree("dangling"), "made by the save\n").ok, "the save through the dangling link lands");
+  session.engine->Flush();
+  Expect(ReadFile(session.host / "target.txt") == "through the link\n",
+         "the file the link names reaches the host: " + ReadFile(session.host / "target.txt"));
+  Expect(std::filesystem::exists(session.host / "later.txt") &&
+             ReadFile(session.host / "later.txt") == "made by the save\n",
+         "the file a dangling link names is created on the host");
+  Expect(std::filesystem::is_symlink(session.host / "link") && std::filesystem::is_symlink(session.host / "dangling"),
+         "the host's links stay links");
+  const auto status = session.engine->status();
+  Expect(status.dirty == 0 && status.blocked == 0 && status.error.empty(),
+         "nothing is left unsent or blocked: dirty=" + std::to_string(status.dirty) + " blocked=" +
+             std::to_string(status.blocked) + " " + status.error);
+}
+
 // A save the host refuses for the path itself is blocked, not unsent: a file
 // saved where the host has a dangling link, an edit to a file the host made
 // unreadable. Each was an error retried at every reconnect, "unsent" forever with
@@ -1500,6 +1532,8 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
           TestMirrorPullsAFileOverSixtyFourMegabytes);
   AddTest(tests, "MirrorSyncEngine/PulledFilesAreTrustedAtOnce", TestMirrorPulledFilesAreTrustedAtOnce);
   AddTest(tests, "MirrorSyncEngine/ResolvesConflictsTheUsersWay", TestMirrorResolvesConflictsTheUsersWay);
+  AddTest(tests, "MirrorSyncEngine/ASaveThroughALinkPushesTheFileItNames",
+          TestMirrorASaveThroughALinkPushesTheFileItNames);
   AddTest(tests, "MirrorSyncEngine/ASaveTheHostRefusesIsBlockedNotUnsent",
           TestMirrorASaveTheHostRefusesIsBlockedNotUnsent);
   AddTest(tests, "MirrorSyncEngine/MergesAConflictThreeWays", TestMirrorMergesAConflictThreeWays);
