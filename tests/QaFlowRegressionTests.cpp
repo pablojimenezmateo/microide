@@ -1844,6 +1844,36 @@ void TestRedoAfterASaveInASplitKeepsBothPanesFresh() {
   }
 }
 
+// Soak 5a2cb8ba7f6b: a file open in two groups, shortened from one of them, then
+// re-activated in the other. That tab's caret still named a line past the end
+// until frame prep reconciled it -- AFTER the status bar had composed "Ln N" from
+// it. The frame drew the stale position and nothing asked for another, so the bar
+// disagreed with the caret until an unrelated repaint (the caret's next blink).
+void TestAFocusedPaneShortenedFromAnotherGroupShowsItsReconciledCaret() {
+  FlowFixture fixture("main.txt", "one\ntwo\nthree\nfour\nfive\n");
+  WriteFile(fixture.root / "other.txt", "other\n");
+  const auto frame = [&fixture] { fixture.shell.Render(fixture.canvas.renderer(), fixture.width, fixture.height); };
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "split-right runs");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "goto 5"), "goto 5 runs in the right pane");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "open other.txt"), "the right pane opens another file");
+  frame();
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "focus-group-left"), "focus-group-left runs");
+  TestAccess::ActiveEditor(fixture.shell).ReplaceRange(editor::SelectionRange{{0, 0}, {5, 0}}, "only\n");
+  frame();
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "focus-group-right"), "focus-group-right runs");
+  frame();
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "open main.txt"), "the right pane's main.txt tab comes back");
+  frame();
+
+  const editor::TextViewport& right = TestAccess::ActiveEditor(fixture.shell);
+  const std::string caret = "Ln " + std::to_string(right.cursor_line() + 1) + ", Col " +
+                            std::to_string(right.cursor_visual_column() + 1);
+  const std::string label =
+      TestAccess::StatusBarSegmentText(fixture.shell, workspace::StatusBarSegmentId::LineColumn);
+  Expect(right.cursor_line() < right.line_count(), "the right pane's caret is back inside the document");
+  Expect(label == caret, "the status bar names the caret the frame drew: '" + label + "' vs '" + caret + "'");
+}
+
 // The QA monkey (seed 4, CI's ASan lane): at the sidebar's narrowest the search
 // view's "Hidden" toggle drew its label past its button, over the "…" button
 // beside it; the toggle's hover repaint covered the button and left the
@@ -5280,6 +5310,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestFocusingAnotherGroupByCommandRepaintsBothPanes);
   AddTest(tests, "QaFlowRegression/RedoAfterASaveInASplitKeepsBothPanesFresh",
           TestRedoAfterASaveInASplitKeepsBothPanesFresh);
+  AddTest(tests, "QaFlowRegression/AFocusedPaneShortenedFromAnotherGroupShowsItsReconciledCaret",
+          TestAFocusedPaneShortenedFromAnotherGroupShowsItsReconciledCaret);
   AddTest(tests, "QaFlowRegression/ANarrowSearchToggleHoverKeepsEveryFrameFresh",
           TestANarrowSearchToggleHoverKeepsEveryFrameFresh);
   AddTest(tests, "QaFlowRegression/AClickBelowADiffsLastRowRepaintsTheWorkingSide",

@@ -252,6 +252,18 @@ bool TabCoordinator::SplitEditorGroup(EditorSplitOrientation orientation) {
   return true;
 }
 
+void TabCoordinator::ReconcileActiveCaretsWithDocuments() {
+  for (EditorGroup& group : state_.editor_groups) {
+    if (group.active_tab_index >= group.open_tabs.size()) {
+      continue;
+    }
+    TabEntry& tab = group.active_tab();
+    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
+      tab.editor_state->viewport.ReconcileCaretsWithDocument();
+    }
+  }
+}
+
 bool TabCoordinator::FocusOtherGroup() {
   if (state_.editor_groups.size() < 2) {
     return false;

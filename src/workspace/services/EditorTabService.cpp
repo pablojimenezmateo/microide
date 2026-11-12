@@ -176,6 +176,10 @@ bool EditorTabService::FocusEditorGroupAt(std::size_t index) {
   return coordinator_.FocusEditorGroupAt(index);
 }
 
+void EditorTabService::ReconcileActiveCaretsWithDocuments() {
+  coordinator_.ReconcileActiveCaretsWithDocuments();
+}
+
 void EditorTabService::ObserveNavigationLocation() {
   coordinator_.ObserveNavigationLocation();
 }

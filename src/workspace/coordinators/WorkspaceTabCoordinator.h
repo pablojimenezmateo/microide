@@ -317,6 +317,10 @@ class TabCoordinator {
   bool FocusEditorGroupAt(std::size_t index);
   // Feeds the active file editor's caret into the project's navigation history
   // (Go Back / Go Forward). Called once per prepared frame and before each step.
+  // Brings every group's active editor viewport's carets back into its document
+  // after another viewport over the same document changed it. Frame prep runs it
+  // first, before anything reads a caret (soak 5a2cb8ba7f6b).
+  void ReconcileActiveCaretsWithDocuments();
   void ObserveNavigationLocation();
   // Steps the navigation history back (-1) or forward (+1), skipping files that no
   // longer exist; the caller reveals the result.

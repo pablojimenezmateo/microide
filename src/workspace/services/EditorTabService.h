@@ -74,6 +74,7 @@ class EditorTabService {
   bool SplitEditorGroup(EditorSplitOrientation orientation);
   bool FocusOtherGroup();
   bool FocusEditorGroupAt(std::size_t index);
+  void ReconcileActiveCaretsWithDocuments();
   void ObserveNavigationLocation();
   std::optional<EditorNavigationHistory::Location> StepNavigation(int direction);
   bool FocusEditorGroupInDirection(EditorGroupDirection direction);

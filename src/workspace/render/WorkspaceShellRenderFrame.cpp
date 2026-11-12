@@ -366,6 +366,15 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       file_read_service_.DrainCompletions();
     }
   }
+  // A pane whose document another pane edited keeps the caret set it had before
+  // that edit, which can name lines the document no longer has; each pane's
+  // carets come back into its document here, before anything below reads them.
+  // Done after the status bar had composed "Ln N, Col M" from the stale caret, the
+  // frame drew a position the caret was no longer at and asked for no other, so
+  // the bar disagreed with the caret until an unrelated repaint (soak
+  // 5a2cb8ba7f6b: a tab re-activated in one group after its file was shortened
+  // from another).
+  MakeEditorTabService().ReconcileActiveCaretsWithDocuments();
   // Every caret move, jump and tab switch ends in a frame, so this is where the
   // Go Back / Go Forward history sees them -- one place instead of a hook in each
   // of the dozens of ways the caret can move.
@@ -804,9 +813,6 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     const EditorGroupRectsLayout pane_rects = ComputeEditorGroupRectsForState(layout);
     const std::size_t focused_group = project_state.clamped_focused_group_index();
     for (std::size_t gi = 0; gi < project_state.editor_groups.size() && gi < kMaxEditorGroups; ++gi) {
-      if (editor::TextViewport* shared = GroupActiveViewport(project_state.editor_groups[gi]); shared != nullptr) {
-        shared->ReconcileCaretsWithDocument();
-      }
       const editor::TextViewport* viewport = GroupActiveViewport(project_state.editor_groups[gi]);
       const std::uint64_t content =
           viewport == nullptr ? 0
