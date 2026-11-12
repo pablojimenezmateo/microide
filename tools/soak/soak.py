@@ -183,6 +183,7 @@ JOB_TYPES = [
     JobType("editing", 12, "default", "editing"),
     JobType("layout", 10, "default", "layout"),
     JobType("world", 8, "default", "world"),
+    JobType("diff", 6, "default", "diff"),
     JobType("terminal", 4, "default", "terminal"),
     JobType("settings", 4, "default", "settings"),
     JobType("commands", 4, "default", "commands", steps=600, project="repo", matrix=False),

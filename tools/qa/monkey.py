@@ -66,6 +66,7 @@ from typing import Any, Callable
 import findings as fnd
 import microide_qa as q
 import monkey_model as mm
+import diff_variants as dv
 import monkey_oracles as mo
 
 # Every command name the palette registers, so the sweep cannot silently stop
@@ -436,7 +437,15 @@ def apply_external(project: Path, op: str, target: str, counter: int) -> None:
         subprocess.run(["git", "-C", str(project), *args], capture_output=True, env=env, timeout=30)
 
     try:
-        if op == "rewrite" and path.is_file():
+        if op == "diff-variant":
+            # Two versions of one generated source, for compare-files: the
+            # structural diff's paths (diff_variants.py). Six slots, reused.
+            language, left, right = dv.variant_pair(counter)
+            folder = project / "qa-diff"
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / f"v{counter % 6}.left.{language}").write_text(left)
+            (folder / f"v{counter % 6}.right.{language}").write_text(right)
+        elif op == "rewrite" and path.is_file():
             path.write_text(f"rewritten {counter}\n" + path.read_text(errors="replace"))
         elif op == "append" and path.is_file():
             with open(path, "a") as out:
@@ -557,6 +566,9 @@ PROFILES: dict[str, dict[str, float]] = {
     "terminal": {"terminal": 30, "element": 14, "chord": 12, "type": 10, "burst": 6, "window": 4,
                  "command": 6, "wheel": 6, "setting": 2},
     "settings": {"setting": 25, "element": 25, "chord": 10, "type": 8, "text": 6, "window": 4, "command": 6},
+    # Diffs: structural refinement over generated code, typed into on the editable side.
+    "diff": {"diff": 14, "type": 16, "text": 10, "chord": 12, "element": 14, "burst": 6, "wheel": 6,
+             "command": 4, "setting": 2, "window": 2},
 }
 COMMAND_PROFILES = ("commands", "editor")
 ALL_PROFILES = tuple(PROFILES) + COMMAND_PROFILES
@@ -600,13 +612,14 @@ class Monkey:
             "drag": self.drag_action, "wheel": self.wheel_action, "point": self.point_action,
             "setting": self.setting_action, "window": self.window_action,
             "terminal": self.terminal_action, "file": self.file_action,
-            "external": self.external_action, "kill9": self.kill9_action,
+            "external": self.external_action, "kill9": self.kill9_action, "diff": self.diff_action,
         }
         self.data = mo.DataOracle(app)
         self.undo = mo.UndoAlgebra(app, random.Random(seed ^ 0x0DD))
         self.resources = mo.ResourceOracle(app)
         self.liveness = mo.Liveness(app)
         self.idle = mo.IdleOracle(app)
+        self.structural = mo.StructuralDiffOracle(app)
         self.new_states = 0
         self.new_transitions = 0
 
@@ -1019,6 +1032,36 @@ class Monkey:
             self.app.outside_change_pending = True
         return f"ext:{op}"
 
+    def diff_action(self) -> str:
+        """Two versions of a generated source in a diff, then the structural
+        oracle on what it shows. The editable right side takes the typing that
+        follows, which rebuilds the refinement per keystroke."""
+        if self.project is None:
+            return self.command_action()
+        self.counter += 1
+        self.app.record_external({"external": "diff-variant", "target": "", "counter": self.counter})
+        apply_external(self.project, "diff-variant", "", self.counter)
+        language = dv.LANGUAGES[self.counter % len(dv.LANGUAGES)]
+        folder = self.project / "qa-diff"
+        left, right = (folder / f"v{self.counter % 6}.{side}.{language}" for side in ("left", "right"))
+        self.app.send_line(f"compare-files {q.quote_arg(str(left))} {q.quote_arg(str(right))}")
+        # The tab builds its model after the command answers: checked before, the
+        # oracle reads the previous tab or a one-row placeholder and checks nothing.
+        deadline = time.monotonic() + 3.0 * q.SLOW_FACTOR
+        while time.monotonic() < deadline:
+            with contextlib.suppress(Exception):
+                shown = self.app.query("compare")
+                if shown.get("rightPath") == str(right) and len(shown.get("rows") or []) > 1:
+                    break
+            time.sleep(0.1)
+        self._check_structural(f"monkey step {self.step_index}")
+        return "diff:open"
+
+    def _check_structural(self, label: str) -> None:
+        self.app.record_external({"oracle": "structural-diff"})
+        self._report_with_evidence(label, self.structural.check(), self.structural.evidence)
+        self.structural.evidence = {}
+
     def kill9_action(self) -> str:
         if self.relaunches >= 3:
             return self.chord_action()
@@ -1153,6 +1196,9 @@ class Monkey:
         name = row.get("oracle")
         if name == "data-clean":
             self._report_data(label, self.data.check_clean())
+        elif name == "structural-diff":
+            self._report_with_evidence(label, self.structural.check(), self.structural.evidence)
+            self.structural.evidence = {}
         elif name == "undo":
             self.app.in_oracle = True
             try:
@@ -1176,6 +1222,8 @@ class Monkey:
             finally:
                 self.app.in_oracle = False
             self._report_with_evidence(label, found, self.undo.evidence)
+        if index % 5 == 4 and "t=compare" in self.state:
+            self._check_structural(label)
         if index % 50 == 0:
             self._report(label, self.resources.check())
         if index % 150 == 149:

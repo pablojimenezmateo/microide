@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import collections
 import hashlib
+import json
 import os
 import random
 import shutil
@@ -448,6 +449,86 @@ class Liveness:
             self.reported.add(what)
             return [("latency", f"{what} took {seconds:.2f}s to answer (budget {self.budget:.1f}s)")]
         return []
+
+
+class StructuralDiffOracle:
+    """What the compare view's structural refinement claims, held against what it
+    shows (the `compare` query: rows, hunks and each side's novel byte spans).
+
+    - spans: inside their line, sorted, non-overlapping, on UTF-8 boundaries, and
+      only where the row has that side and is not unchanged;
+    - layout only: a hunk whose two sides are the same text once whitespace is
+      gone marks no token -- re-indenting, re-wrapping or re-spacing code costs
+      nothing (checked where no string or comment could make whitespace matter);
+    - a real change shows: a hunk whose sides differ beyond whitespace marks a
+      token, or adds or deletes a row with text -- never "layout only".
+
+    Rows with cut text (`textTruncated`) are skipped, and a cut row list is
+    checked only up to the cut, hunk by complete hunk."""
+
+    _QUOTES_OR_COMMENTS = ('"', "'", "//", "/*", "#")
+
+    def __init__(self, app: q.App):
+        self.app = app
+        self.evidence: dict[str, bytes] = {}
+
+    def check(self) -> list[tuple[str, str]]:
+        try:
+            diff = self.app.query("compare")
+        except Exception:  # noqa: BLE001 - a dead or busy app is another oracle's
+            return []
+        if not diff.get("available"):
+            return []
+        rows = diff.get("rows") or []
+        found: list[tuple[str, str]] = []
+        hunks: dict[int, list[dict[str, Any]]] = collections.defaultdict(list)
+        for index, row in enumerate(rows):
+            if row.get("hunk", -1) >= 0:
+                hunks[row["hunk"]].append(row)
+            if row.get("textTruncated"):
+                continue
+            for side, present in (("left", row.get("leftLine", 0) > 0), ("right", row.get("rightLine", 0) > 0)):
+                spans = row.get(f"{side}Spans") or []
+                if not spans:
+                    continue
+                where = f"row {index + 1} ({row.get('kind')}, {side} line {row.get(side + 'Line')})"
+                if not present or row.get("kind") == "unchanged":
+                    found.append(("diff", f"the {side} side of {where} marks novel tokens on a side "
+                                          f"that {'is absent' if not present else 'did not change'}"))
+                    continue
+                raw = str(row.get(f"{side}Text", "")).encode()
+                last = 0
+                for start, end in spans:
+                    if not (last <= start < end <= len(raw)):
+                        found.append(("diff", f"the {side} side of {where} has a novel span [{start}, {end}) "
+                                              f"outside its {len(raw)}-byte line or out of order"))
+                        break
+                    if any(0 < at < len(raw) and (raw[at] & 0xC0) == 0x80 for at in (start, end)):
+                        found.append(("diff", f"the {side} side of {where} has a novel span [{start}, {end}) "
+                                              f"that splits a character"))
+                        break
+                    last = end
+        complete = sorted(hunks)[:-1] if diff.get("rowsTruncated") else sorted(hunks)
+        for hunk in complete:
+            members = hunks[hunk]
+            if any(r.get("textTruncated") for r in members):
+                continue
+            left = "".join(r.get("leftText", "") for r in members if r.get("leftLine", 0) > 0)
+            right = "".join(r.get("rightText", "") for r in members if r.get("rightLine", 0) > 0)
+            marked = any(r.get("leftSpans") or r.get("rightSpans") for r in members)
+            squeezed_left, squeezed_right = "".join(left.split()), "".join(right.split())
+            if squeezed_left == squeezed_right:
+                if marked and not any(m in left + right for m in self._QUOTES_OR_COMMENTS):
+                    found.append(("diff", f"hunk {hunk + 1} changes only whitespace and line breaks, "
+                                          f"and marks tokens novel"))
+                    self.evidence[f"structural-hunk-{hunk + 1}.json"] = json.dumps(members, indent=1).encode()
+            elif not marked and not any(r.get("kind") in ("added", "deleted") and
+                                        (r.get("leftText", "") + r.get("rightText", "")).strip()
+                                        for r in members):
+                found.append(("diff", f"hunk {hunk + 1} changes more than whitespace, and shows it as "
+                                      f"layout only (no novel token, no added or deleted line)"))
+                self.evidence[f"structural-hunk-{hunk + 1}.json"] = json.dumps(members, indent=1).encode()
+        return found
 
 
 class IdleOracle:

@@ -325,6 +325,13 @@ order, so a name resolves to one element. Every rect comes from the geometry the
 matching mouse path hit-tests, so clicking an element's center lands on it.
 Answering reads state only: it requests no redraw and needs no painted frame.
 
+**Diffs.** `compare` reports the focused compare tab's model: `leftPath`,
+`rightPath`, `hunks`, and per row `kind` (unchanged/added/deleted/modified), `hunk`
+(-1 outside one), 1-based `leftLine`/`rightLine` (0 = absent), both texts, and each
+side's structural-diff novel spans as `[start, end)` byte pairs (`leftSpans`,
+`rightSpans`). Capped at 20,000 rows (`rowsTruncated`) and 4 KiB of text per row
+(`textTruncated`). `{available:false}` when the active tab is not a diff.
+
 **Notification buttons.** `notifications` lists every toast oldest first:
 `{index, key, tone, message, sticky, progress?, actions}`, each action
 `{index, label, command, args}`. With `{"recent": true}` it lists instead the last

@@ -1,4 +1,8 @@
 #include "TestSupport.h"
+
+#include "compare/CompareModel.h"
+#include "workspace/control/ControlCompareQuery.h"
+#include "workspace/state/WorkspaceTabState.h"
 #include "TerminalSessionTestAccess.h"
 
 #include "util/Log.h"
@@ -955,6 +959,28 @@ void TestNotificationsQueryListsActions() {
   std::filesystem::remove_all(runtime, ec);
 }
 
+// The `compare` query reports what the diff view paints: rows, hunks and the
+// structural refinement's novel spans, which an oracle holds to its claims.
+void TestCompareQueryReportsRowsAndNovelSpans() {
+  Expect(!microide::workspace::BuildControlCompareJson(nullptr)["available"].AsBool(),
+         "no diff in front: not available");
+  microide::workspace::CompareTabState compare;
+  compare.model = microide::compare::BuildCompareModel("int a = 1;\nfoo(x);\n", "int a = 1;\nfoo(y);\n");
+  const util::JsonValue json = microide::workspace::BuildControlCompareJson(&compare);
+  Expect(json["available"].AsBool() && json["hunks"].AsInt() == 1 && !json["rowsTruncated"].AsBool(),
+         "one hunk, nothing cut");
+  const auto& rows = json["rows"].AsArray();
+  const auto changed = std::find_if(rows.begin(), rows.end(),
+                                    [](const util::JsonValue& r) { return r["kind"].AsString() == "modified"; });
+  Expect(changed != rows.end() && (*changed)["leftText"].AsString() == "foo(x);" &&
+             (*changed)["rightText"].AsString() == "foo(y);" && (*changed)["leftLine"].AsInt() == 2,
+         "the changed row is reported with its texts and 1-based lines");
+  Expect(changed != rows.end() && (*changed)["rightSpans"].AsArray().size() == 1 &&
+             (*changed)["rightSpans"].AsArray()[0].AsArray()[0].AsInt() == 4 &&
+             (*changed)["rightSpans"].AsArray()[0].AsArray()[1].AsInt() == 5,
+         "the novel token y is the one span on the right");
+}
+
 // Cross-platform: the stdout JSONL mirror must surface debug events even when no
 // socket client is connected (the whole point of `--control`).
 void TestStdoutMirrorEmitsWithoutConnections() {
@@ -1194,6 +1220,8 @@ void RegisterControlChannelServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlChannelService/AgentQueriesOverSocket", TestAgentQueriesOverSocket);
   AddTest(tests, "ControlChannelService/LaunchConfigsAndAdaptersOverSocket",
           TestLaunchConfigsAndAdaptersOverSocket);
+  AddTest(tests, "ControlChannelService/CompareQueryReportsRowsAndNovelSpans",
+          TestCompareQueryReportsRowsAndNovelSpans);
   AddTest(tests, "ControlChannelService/StdoutMirrorEmitsWithoutConnections",
           TestStdoutMirrorEmitsWithoutConnections);
   AddTest(tests, "ControlChannelService/StoppedEventCarriesPopulatedExecutionView",

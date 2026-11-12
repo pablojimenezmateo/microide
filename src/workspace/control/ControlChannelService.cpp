@@ -23,6 +23,7 @@
 #include "util/Parse.h"
 #include "util/Sha256.h"
 #include "util/StringUtil.h"
+#include "workspace/control/ControlCompareQuery.h"
 #include "workspace/control/ControlProtocol.h"
 #include "workspace/WorkspaceTerminalSelection.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
@@ -468,6 +469,18 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
   }
   if (verb == "terminal-output") {
     return BuildTerminalOutput(args, ok, error);
+  }
+  if (verb == "compare") {
+    // The focused group's active tab, when it is a diff.
+    const CompareTabState* compare = nullptr;
+    if (context_ != nullptr) {
+      const EditorGroup& group = context_->current_project_state.focused_group();
+      if (group.has_active_tab() && group.active_tab().kind == TabEntry::Kind::Compare &&
+          group.active_tab().compare.has_value()) {
+        compare = &*group.active_tab().compare;
+      }
+    }
+    return BuildControlCompareJson(compare);
   }
   if (verb == "notifications") {
     return BuildNotifications(args.IsObject() && args["recent"].AsBool(false));
