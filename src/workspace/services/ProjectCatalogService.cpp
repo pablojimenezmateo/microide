@@ -134,6 +134,7 @@ void ProjectCatalogService::StoreCurrentProjectState(ProjectWorkspaceState& stat
     perf_label.Field("root", context_.current_project_state.root);
   }
   util::PerformanceTrace::Scope trace_scope(perf_label.View());
+  operations_.cancel_open_prompts();
   {
     util::PerformanceTrace::Scope scope(
         "ProjectCatalogService::StoreCurrentProjectState::SyncActiveEditorTab");

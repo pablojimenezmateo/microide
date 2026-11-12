@@ -1138,6 +1138,42 @@ void TestWorkspaceShellProjectNextAndPrevCommandsCycleProjects() {
          "project-next should activate the next project tab");
 }
 
+// Soak 1dd177bb2104: back on a project, keyboard focus sat on "the overlay" with
+// no overlay, prompt or menu up, so every key went nowhere. The prompts are the
+// window's (`context_.prompts`), focus is the project's: a prompt opened in one
+// project set THAT project's focus to the overlay, a project switch stored it so,
+// and closing the prompt in the other project restored focus there -- the first
+// project kept focus on a prompt that no longer existed.
+void TestWorkspaceShellAProjectLeftUnderAPromptGetsItsFocusBack() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
+  const std::filesystem::path root_b = temp_dir.path() / "beta-project";
+  WriteFile(root_a / "README.md", "alpha\n");
+  WriteFile(root_b / "README.md", "beta\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_a, false, false), "first project should open");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_b, false, false), "second project should open");
+  Expect(RunCommandLine(shell, "project-prev"), "project-prev should run");
+  Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == root_a.lexically_normal(), "alpha is in front");
+  WorkspaceShellTestAccess::OpenFile(shell, root_a / "README.md");
+  WorkspaceShellTestAccess::FocusedGroupTabEditor(shell, 0).InsertText("!");
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  WorkspaceShellTestAccess::RequestCloseTab(shell, 0);
+  Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell), "closing the dirty tab asks first");
+
+  Expect(RunCommandLine(shell, "project-next"), "project-next should run under the prompt");
+  if (WorkspaceShellTestAccess::DirtyPromptVisible(shell)) {
+    WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 2);  // Cancel
+  }
+  Expect(!WorkspaceShellTestAccess::DirtyPromptVisible(shell), "the prompt is gone");
+  Expect(RunCommandLine(shell, "project-prev"), "project-prev should run");
+  Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == root_a.lexically_normal(), "alpha is back in front");
+  Expect(!WorkspaceShellTestAccess::DirtyPromptVisible(shell), "no prompt is up on alpha");
+  Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
+         "alpha's focus must be back on the editor it was on, not on a prompt that is gone");
+}
+
 void TestWorkspaceShellProjectSwitchPreservesProjectScopedCommandState() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
@@ -9275,6 +9311,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellOpenCommandRequiresPath);
   AddTest(tests, "WorkspaceShell/ProjectNextAndPrevCommandsCycleProjects",
           TestWorkspaceShellProjectNextAndPrevCommandsCycleProjects);
+  AddTest(tests, "WorkspaceShell/AProjectLeftUnderAPromptGetsItsFocusBack",
+          TestWorkspaceShellAProjectLeftUnderAPromptGetsItsFocusBack);
   AddTest(tests, "WorkspaceShell/ProjectSwitchPreservesProjectScopedCommandState",
           TestWorkspaceShellProjectSwitchPreservesProjectScopedCommandState);
   AddTest(tests, "WorkspaceShell/ProjectSwitchReloadsCleanBuffersChangedInTheBackground",

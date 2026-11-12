@@ -13,6 +13,7 @@
 #include "workspace/coordinators/WorkspaceMenuCoordinator.h"
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 #include "workspace/services/ProjectCatalogService.h"
+#include "workspace/services/PromptSurfaceService.h"
 #include "workspace/services/RemoteHostService.h"
 
 namespace microide::workspace {
@@ -62,6 +63,7 @@ ProjectCatalogService& WorkspaceShell::MakeProjectCatalogService() {
                 return initialized;
               },
           .sync_active_editor_tab = [this]() { SyncActiveEditorTab(); },
+          .cancel_open_prompts = [this]() { MakePromptSurfaceService().CancelOpenPrompts(); },
           .stop_project_search = [this]() { StopProjectSearch(); },
           .close_tree_context_menu = [this]() { MakeMenuCoordinator().CloseTreeContextMenu(); },
           .clear_editor_blame = [this]() { ClearEditorBlame(); },

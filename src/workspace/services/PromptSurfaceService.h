@@ -39,6 +39,11 @@ class PromptSurfaceService {
   // prompt, an overlay), else `previous` while it is still shown.
   FocusTarget FocusAfterPrompt(FocusTarget previous) const;
   void DismissPromptSurface(bool restore_focus);
+  // Cancels whichever prompts are up, focus back where they were opened from. The
+  // prompts are the window's but act on the project in front (its tab, its path),
+  // while focus is the project's: a project leaving the front under one would keep
+  // focus on a prompt that is closed later, elsewhere (soak 1dd177bb2104).
+  void CancelOpenPrompts();
   void OpenPromptSurface(PromptSurfaceState::Action action,
                          PromptSurfaceState::Kind kind,
                          const std::filesystem::path& path,

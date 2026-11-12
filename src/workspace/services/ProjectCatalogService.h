@@ -15,6 +15,9 @@ class ProjectCatalogService {
                        const project::ProjectLocality&)>
         initialize_current_project;
     std::function<void()> sync_active_editor_tab;
+    // PromptSurfaceService::CancelOpenPrompts: a prompt up over the project that is
+    // leaving the front is cancelled, so its focus is stored where it was.
+    std::function<void()> cancel_open_prompts;
     std::function<void()> stop_project_search;
     std::function<void()> close_tree_context_menu;
     std::function<void()> clear_editor_blame;

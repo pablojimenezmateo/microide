@@ -184,6 +184,18 @@ void PromptSurfaceService::DismissPromptSurface(bool restore_focus) {
   operations_.request_prompt_redraw();
 }
 
+void PromptSurfaceService::CancelOpenPrompts() {
+  // The surface prompt first: when it was opened over the dirty prompt, its
+  // previous focus is the dirty prompt's, and the dirty prompt's own previous
+  // focus is the surface the user was on.
+  if (prompts_.surface_visible) {
+    DismissPromptSurface(true);
+  }
+  if (prompts_.dirty_visible) {
+    DismissDirtyPrompt(true);
+  }
+}
+
 void PromptSurfaceService::OpenPromptSurface(PromptSurfaceState::Action action,
                                              PromptSurfaceState::Kind kind,
                                              const std::filesystem::path& path,
