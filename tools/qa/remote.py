@@ -1382,8 +1382,10 @@ class Suite:
             masters = [int(l.split()[0]) for l in out.splitlines()[1:]
                        if "ssh" in l and host.name in l and "ControlMaster" in l]
             self.info("F.ssh-masters", str(masters))
-            # Rows already posted do not count: only one the kill causes.
-            before = len(self.recent_notifs())
+            # Rows already posted do not count: only one the kill causes. By
+            # posting number -- the list is a ring of 32, full by now, so its
+            # length stops telling old rows from new ones.
+            before = max((n.get("seq", 0) for n in self.recent_notifs()), default=0)
             for pid in masters:
                 os.kill(pid, 9)
             # From `recent`, not the rows up now: on a loopback host the editor
@@ -1392,7 +1394,8 @@ class Suite:
             # on a link that had dropped and come back exactly as it should.
             def reconnect_row():
                 rows = self.recent_notifs()
-                return next((n for n in rows[before:] if any(a["label"] == "Reconnect" for a in n["actions"])),
+                return next((n for n in rows
+                             if n.get("seq", 0) > before and any(a["label"] == "Reconnect" for a in n["actions"])),
                             None)
             row, dt = wait_for(reconnect_row, 30, 0.3)
             self.record("F.reconnecting-row", row is not None,

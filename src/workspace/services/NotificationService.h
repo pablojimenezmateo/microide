@@ -207,7 +207,11 @@ class NotificationService {
   // 50 ms -- is otherwise unobservable; the control channel reads this
   // (`notifications {"recent": true}`), the window never does.
   static constexpr std::size_t kRecentCapacity = 32;
-  const std::deque<Notification>& Recent() const { return recent_; }
+  struct Posted {
+    std::uint64_t seq = 0;  // 1, 2, 3... per posting: "posted after X" survives the ring wrapping
+    Notification row;
+  };
+  const std::deque<Posted>& Recent() const { return recent_; }
   bool Empty() const { return notifications_.empty(); }
   void Clear() { notifications_.clear(); }
 
@@ -239,7 +243,8 @@ class NotificationService {
   void Remember(const Notification& posted);
 
   std::vector<Notification> notifications_;
-  std::deque<Notification> recent_;
+  std::deque<Posted> recent_;
+  std::uint64_t posted_seq_ = 0;
 };
 
 }  // namespace microide::workspace

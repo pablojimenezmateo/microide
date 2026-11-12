@@ -153,7 +153,7 @@ void NotificationService::Remember(const Notification& posted) {
   if (recent_.size() >= kRecentCapacity) {
     recent_.pop_front();
   }
-  recent_.push_back(posted);
+  recent_.push_back(Posted{.seq = ++posted_seq_, .row = posted});
 }
 
 void NotificationService::TrimTransientOverflow() {

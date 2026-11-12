@@ -1142,20 +1142,25 @@ util::JsonValue ControlChannelService::BuildNotifications(bool recent) const {
   };
   // `recent`: the rows posted lately, oldest first, up or not (NotificationService::
   // Recent) -- what a driver reads to see a row that came and went between looks.
-  std::vector<const NotificationService::Notification*> listed;
+  // Each recent row carries its posting's `seq`, so "posted after X" holds once
+  // the ring is full and its length stops growing.
+  std::vector<std::pair<const NotificationService::Notification*, std::uint64_t>> listed;
   if (recent) {
-    for (const NotificationService::Notification& row : operations_.notifications->Recent()) {
-      listed.push_back(&row);
+    for (const NotificationService::Posted& posted : operations_.notifications->Recent()) {
+      listed.emplace_back(&posted.row, posted.seq);
     }
   } else {
     for (const NotificationService::Notification& row : operations_.notifications->Active()) {
-      listed.push_back(&row);
+      listed.emplace_back(&row, 0);
     }
   }
   for (std::size_t i = 0; i < listed.size(); ++i) {
-    const NotificationService::Notification& row = *listed[i];
+    const NotificationService::Notification& row = *listed[i].first;
     util::JsonObject object;
     object["index"] = util::JsonValue(static_cast<std::int64_t>(i));
+    if (recent) {
+      object["seq"] = util::JsonValue(static_cast<std::int64_t>(listed[i].second));
+    }
     object["key"] = util::JsonValue(row.key);
     object["tone"] = util::JsonValue(tone_name(row.tone));
     object["message"] = util::JsonValue(row.message);

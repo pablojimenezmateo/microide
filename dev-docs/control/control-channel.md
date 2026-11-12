@@ -329,7 +329,8 @@ Answering reads state only: it requests no redraw and needs no painted frame.
 `{index, key, tone, message, sticky, progress?, actions}`, each action
 `{index, label, command, args}`. With `{"recent": true}` it lists instead the last
 32 rows POSTED (a new row, or a keyed row's update), oldest first, whether or not
-they are still up: a state row that is posted and dismissed between two looks
+they are still up, each with its posting's `seq` (1, 2, 3…; filter on it, not
+on the list's length, which stops growing once the ring is full): a state row that is posted and dismissed between two looks
 ("Reconnecting…" over a link back in 50 ms) is seen only there. `notification-action <row> <action>` presses one
 exactly as a click does: the row by its `key` (else its index), the button by its
 label (exact, then case-insensitive; else its index). It runs through the same

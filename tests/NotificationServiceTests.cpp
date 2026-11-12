@@ -46,14 +46,16 @@ void TestNotificationServiceRemembersRecentPostings() {
   service.Show({.tone = Tone::Info, .key = "link", .message = "Connected", .sticky = true}, 0);
   (void)service.DismissKey("link");
   Expect(service.Active().empty(), "the row is gone");
-  Expect(service.Recent().size() == 2 && service.Recent()[0].message == "Reconnecting" &&
-             service.Recent()[1].message == "Connected",
+  Expect(service.Recent().size() == 2 && service.Recent()[0].row.message == "Reconnecting" &&
+             service.Recent()[1].row.message == "Connected" && service.Recent()[0].seq == 1 &&
+             service.Recent()[1].seq == 2,
          "both postings of the keyed row are remembered, oldest first");
   for (std::size_t i = 0; i < 2 * microide::workspace::NotificationService::kRecentCapacity; ++i) {
     service.Show(Tone::Info, "toast " + std::to_string(i), 0);
   }
   Expect(service.Recent().size() == microide::workspace::NotificationService::kRecentCapacity &&
-             service.Recent().back().message ==
+             service.Recent().back().seq == 2 + 2 * microide::workspace::NotificationService::kRecentCapacity &&
+             service.Recent().back().row.message ==
                  "toast " + std::to_string(2 * microide::workspace::NotificationService::kRecentCapacity - 1),
          "the memory is bounded and keeps the newest");
 }
