@@ -32,6 +32,7 @@ import contextlib
 import json
 import os
 import random
+import re
 import shutil
 import signal
 import subprocess
@@ -1196,6 +1197,7 @@ def cmd_report(args: argparse.Namespace) -> int:
                   f"- elements pressed: {len(coverage.get('elements', {}))}",
                   f"- setting values set: {len(coverage.get('settings', {}))}",
                   f"- corpus prefixes: {len(list(CORPUS.glob('*.json')))}", ""])
+    lines.extend(command_gaps(coverage.get("commands", {})))
     parts = {name: disk_usage(SOAK / name) / 1e9 for name in ("bin", "corpus", "findings", "runs")}
     lines.extend(["## Disk", "", f"- {sum(parts.values()):.1f} GB of the {DISK_BUDGET_GB:.0f} GB budget: "
                   + ", ".join(f"{name} {size:.1f}" for name, size in parts.items()),
@@ -1206,6 +1208,40 @@ def cmd_report(args: argparse.Namespace) -> int:
     (SOAK / "report.md").write_text("\n".join(lines))
     print(SOAK / "report.md")
     return 0
+
+
+# Commands the monkey does not run on purpose: control-channel primitives a
+# driver uses to steer (`key`, `pointer`) and the one that ends the run.
+UNSOUGHT_COMMANDS = frozenset({"key", "pointer", "quit"})
+RARE_COMMAND_RUNS = 20
+
+
+def registered_commands(source: Path | None = None) -> list[str]:
+    """The app's command names, from its command registry's source (the soak
+    keeps no running app to ask)."""
+    path = source or WORKTREE / "src" / "workspace" / "registries" / "WorkspaceCommandRegistry.cpp"
+    if not path.exists():
+        path = REPO / "src" / "workspace" / "registries" / "WorkspaceCommandRegistry.cpp"
+    text = path.read_text() if path.exists() else ""
+    return sorted(set(re.findall(r'ActionSpec\{ActionId::\w+,\s*"([^"]+)"', text)))
+
+
+def command_gaps(ran: dict[str, int], registered: list[str] | None = None) -> list[str]:
+    """The report's list of commands the soak has never run, or barely: a whole
+    area with no soak behind it (the debugger, remote projects) shows up here
+    before anyone has to go looking for it.
+
+    >>> command_gaps({"open": 900, "goto": 3}, ["open", "goto", "debug-run", "quit"])[:5]
+    ['## Command gaps', '', '- never run (1): `debug-run`', '- run fewer than 20 times (1): `goto` 3', '']
+    """
+    names = [n for n in (registered if registered is not None else registered_commands())
+             if n not in UNSOUGHT_COMMANDS]
+    never = [n for n in names if not ran.get(n)]
+    rare = sorted(((n, ran[n]) for n in names if 0 < ran.get(n, 0) < RARE_COMMAND_RUNS), key=lambda x: x[1])
+    return ["## Command gaps", "",
+            f"- never run ({len(never)}): " + (", ".join(f"`{n}`" for n in never) or "none"),
+            f"- run fewer than {RARE_COMMAND_RUNS} times ({len(rare)}): "
+            + (", ".join(f"`{n}` {c}" for n, c in rare) or "none"), ""]
 
 
 def cmd_ledger(args: argparse.Namespace) -> int:
