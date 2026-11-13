@@ -39,15 +39,30 @@ order of expected value:
    buttons). The picked text shows in the field, but no row is highlighted. Bound
    the cycle by the laid-out count if a short window turns out to be common.
 
-### TD-2026-11-13-446 — `RemoteHostService/APortTheProjectsTerminalPrintedIsTheProjects` failed once under load. [OPEN]
+### TD-2026-11-13-446 — four checks fail under heavy machine load, not on their own. [OPEN]
 
-One failure, "the printed one is forwarded as the project's", in a 32-shard
-`ctest -j16` run at load average ~44 (an agent session, the soak and two other
-worktrees' lanes). It was not reproduced afterwards: 3/3 passes alone and 12/12
-with twelve copies in parallel. The test turns automatic forwarding on and waits
-30 s for the forward. Next time it fails, keep the shard's log. Whether the port
-watcher missed the listen, or ran late under load, decides between a real
-ordering bug (the print is scanned once, before `listen`) and a timeout to widen.
+On 2026-11-13 the dev PC ran an agent session, the soak and two other
+worktrees' lanes at once, at load average 44-57 on 16 cores. Four checks failed
+there and passed (or failed the same on base) once isolated:
+
+- `RemoteHostService/APortTheProjectsTerminalPrintedIsTheProjects` ("the
+  printed one is forwarded as the project's", 30 s wait) failed once in a
+  32-shard `ctest -j16`. It passed 3/3 alone and 12/12 with twelve copies in
+  parallel. Next time, keep the shard log. It decides between a real ordering
+  bug (the print is scanned once, before `listen`) and a wait to widen.
+- QA `huge-file`: "undo of it (the buffer clean again) took Ns (budget 2.0s)".
+  2.5-3.2 s, and the **base** binary (the branch point, `build/wt-lanes`)
+  missed it the same (2.45, 2.70 s) in an interleaved A/B, so it is the load,
+  not a change. A wall-clock budget in a GUI scenario on a shared machine.
+- QA `lsp-csharp`: timed out waiting for the language server (128 s), then
+  passed alone in 21 s.
+- `tools/soak/test_job_load.py` `test_a_busy_session_measures_about_one_core`:
+  measured 0.26 of a core (>0.6 wanted) while starved, then passed.
+
+Not regressions. They make a loaded lane red for reasons unrelated to the
+change under test. Options: run the timing-budget scenarios at `--jobs 1` after
+the parallel pass, or scale their budgets by a measured idle-CPU factor the way
+the perf gate normalizes.
 
 ### TD-2026-11-13-447 — detached host terminals never expire, against a hard 64-terminal cap. [OPEN]
 

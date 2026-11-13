@@ -22,7 +22,7 @@ place a user goes to open a host folder is the one place that has forgotten them
   prompt is remote-specific beyond where it is filled.
 - `ComputePromptSurfaceRect` takes the recent row count (no default, so every hit
   test, cursor, redraw, occluder and control-ui caller agrees with the paint), and
-  `ComputePromptSurfaceRecentRowRects` lays the rows between the input and the
+  `ComputePromptSurfaceRecentLayout` lays the rows between the input and the
   buttons, dropping rows that do not fit a short window.
 - The control channel's ui listing reports each row as a `prompt/recent/<n>` button.
 
