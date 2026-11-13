@@ -159,7 +159,29 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   // (right pane, editor split, compare, and both merge dividers) flickered back to
   // an arrow the moment the pointer left the thin divider band.
   if (const DragTarget target = context_.interaction_state.drag_target; IsDividerDrag(target)) {
-    return target == DragTarget::BottomPanelDivider ? CursorKind::NsResize : CursorKind::EwResize;
+    // A split divider's axis is its branch's: a stacked pair's divider is dragged
+    // up and down. Reading the drag target alone gave every split divider the
+    // left-right arrows, so dragging a stacked editor or terminal split showed
+    // the wrong shape for the whole gesture.
+    const auto split_axis_cursor = [](const SplitTree& tree, std::uint8_t node) {
+      return node < tree.node_count() && tree.node(node).orientation == SplitOrientation::Horizontal
+                 ? CursorKind::NsResize
+                 : CursorKind::EwResize;
+    };
+    const ProjectWorkspaceState& state = context_.current_project_state;
+    switch (target) {
+      case DragTarget::BottomPanelDivider:
+        return CursorKind::NsResize;
+      case DragTarget::EditorSplitDivider:
+        return split_axis_cursor(state.editor_split, context_.interaction_state.drag_editor_split_node);
+      case DragTarget::TerminalPaneDivider:
+        if (const TerminalTabState* tab = state.active_terminal_tab(); tab != nullptr) {
+          return split_axis_cursor(tab->split, context_.interaction_state.drag_terminal_pane_node);
+        }
+        return CursorKind::EwResize;
+      default:
+        return CursorKind::EwResize;
+    }
   }
 
   const auto window_rect = CurrentWindowRect();

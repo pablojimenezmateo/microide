@@ -2933,8 +2933,12 @@ void TestWorkspaceShellTerminalSplitDownStacksAndItsDividerDragsVertically() {
   const SDL_FRect divider = rects.dividers[0].rect;
   const float grab_x = divider.x + divider.w * 0.5f;
   const float grab_y = divider.y + divider.h * 0.5f;
+  Expect(WorkspaceShellTestAccess::CursorKindAtIsNsResize(shell, grab_x, grab_y),
+         "a horizontal divider shows the vertical arrows");
   Expect(SendMouseDown(shell, grab_x, grab_y, SDL_BUTTON_LEFT), "a press on the divider starts a drag");
   Expect(SendMouseMotion(shell, grab_x, grab_y + 40.0f, SDL_BUTTON_LMASK), "dragging is handled");
+  Expect(WorkspaceShellTestAccess::CursorKindAtIsNsResize(shell, grab_x + 100.0f, grab_y + 40.0f),
+         "and holds them for the drag, off the band");
   Expect(SendMouseUp(shell, grab_x, grab_y + 40.0f, SDL_BUTTON_LEFT), "release ends the drag");
   const auto moved = WorkspaceShellTestAccess::TerminalPaneRects(shell);
   Expect(moved.dividers[0].rect.y > divider.y + 20.0f && moved.panes[0].h > rects.panes[0].h,

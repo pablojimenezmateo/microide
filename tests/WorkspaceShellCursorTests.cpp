@@ -407,6 +407,34 @@ void TestWorkspaceShellCursorSplitNonFocusedGroupTabUsesPointer() {
          "hovering a non-focused split-group tab should cache the pointer cursor");
 }
 
+// A stacked split's divider is dragged up and down, and the cursor says so for
+// the whole gesture -- including once the pointer has left the divider band. The
+// drag-held cursor used to read only the drag target, so every split divider
+// kept the left-right arrows however it was oriented.
+void TestWorkspaceShellCursorStackedSplitDividerDragKeepsTheVerticalArrows() {
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "int main() { return 0; }\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, SplitOrientation::Horizontal), "split down");
+  const auto dividers = WorkspaceShellTestAccess::EditorSplitDividerRects(shell);
+  Expect(dividers.size() == 1 && !dividers[0].vertical, "one horizontal divider");
+  const SDL_FRect divider = dividers[0].rect;
+  const float x = divider.x + divider.w * 0.5f;
+  const float y = divider.y + divider.h * 0.5f;
+  Expect(WorkspaceShellTestAccess::CursorKindAtIsNsResize(shell, x, y), "hovering it shows the vertical arrows");
+  Expect(SendMouseDown(shell, x, y, SDL_BUTTON_LEFT), "a press on the divider starts a drag");
+  Expect(SendMouseMotion(shell, x + 200.0f, y + 60.0f, SDL_BUTTON_LMASK), "the drag moves off the band");
+  Expect(WorkspaceShellTestAccess::CursorKindAtIsNsResize(shell, x + 200.0f, y + 60.0f),
+         "the drag holds the vertical arrows off the divider");
+  SendMouseUp(shell, x + 200.0f, y + 60.0f, SDL_BUTTON_LEFT);
+}
+
 // The command palette stores match rows as INDICES into `items` (not copied rows) to
 // avoid copying every matched row's strings on each keystroke (TD-2026-07-17A-032). This
 // pins that the index indirection resolves to the correct rows: with no query every match
@@ -1336,6 +1364,8 @@ void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellStatusBarSegmentsDispatchTheirCommands);
   AddTest(tests, "WorkspaceShell/CursorUpdatesWhenProjectSearchResultsArriveWithoutMotion",
           TestWorkspaceShellCursorUpdatesWhenProjectSearchResultsArriveWithoutMotion);
+  AddTest(tests, "WorkspaceShell/CursorStackedSplitDividerDragKeepsTheVerticalArrows",
+          TestWorkspaceShellCursorStackedSplitDividerDragKeepsTheVerticalArrows);
   AddTest(tests, "WorkspaceShell/CursorSplitNonFocusedGroupTabUsesPointer",
           TestWorkspaceShellCursorSplitNonFocusedGroupTabUsesPointer);
   AddTest(tests, "WorkspaceShell/CursorRecomputesWhenCommandPaletteOpensWithoutMotion",
