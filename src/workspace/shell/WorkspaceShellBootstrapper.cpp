@@ -161,6 +161,12 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
                                         .key = "editor.read-only",
                                         .message = "Cannot edit in read-only editor"});
   }
+  // A panel shown maximized covers the sidebar, the editor and the debug pane.
+  // Whichever handler showed it, the keyboard leaves a surface it covers before
+  // the next event reads it, not at the next frame: a Git command whose output
+  // brought a maximized panel back left the keyboard on the covered sidebar
+  // (soak b6cc343b6ee1).
+  MakeTerminalPanelService().SyncPanelMaximizedWithFocus();
   const FocusTarget focus_after = context_.current_project_state.surface.focus;
   if (typing || event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
       event.type == SDL_EVENT_MOUSE_BUTTON_UP || event.type == SDL_EVENT_MOUSE_WHEEL ||

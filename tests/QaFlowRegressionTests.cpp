@@ -1209,6 +1209,36 @@ void TestATabDraggedAcrossStackedPanesPaintsItsGhostInTheTargetStrip() {
                       "dropping it in the bottom strip");
 }
 
+// Soak b6cc343b6ee1 (reproduced by d9ec05f4132a's replay): a panel hidden while
+// maximized comes back maximized, over the sidebar and the editor. A Git command
+// that showed its output brought it back with the keyboard on the sidebar, and
+// the keyboard stayed on the covered sidebar until a frame was prepared -- a key
+// typed before then went to a surface no one could see.
+void TestAPanelShownMaximizedTakesTheKeyboardAtOnce() {
+  // A Git result shows its output channel the way this does: the panel back,
+  // maximized, and the keyboard left where it was. Whatever delivered it -- a
+  // wake, an event -- ends with the keyboard on what is on screen, before any
+  // frame: a key typed then goes where the focus is.
+  for (const bool by_wake : {true, false}) {
+    FlowFixture fixture("notes.txt", "notes\n");
+    TestAccess::OpenTerminalViaService(fixture.shell);
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, "panel-maximize"), "panel-maximize should run");
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, "panel-toggle"), "panel-toggle should hide the panel");
+    fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the panel hidden, still maximized");
+    TestAccess::SetFocusSidebar(fixture.shell);
+    TestAccess::ShowOutputChannelWithLines(fixture.shell, "git", 3);
+    Expect(TestAccess::BottomPanelVisible(fixture.shell), "the output shows the panel again");
+    if (by_wake) {
+      (void)TestAccess::HandleScheduledWake(fixture.shell);
+    } else {
+      (void)DispatchEvents(fixture.shell, {MouseMotionEvent(10.0f, 10.0f)});
+    }
+    Expect(!TestAccess::FocusIsSidebar(fixture.shell),
+           std::string("after ") + (by_wake ? "a wake" : "an event") +
+               ", the keyboard should leave the sidebar the maximized panel covers");
+  }
+}
+
 // QA monkey (CI qa-asan, seed 2): a tab dragged along its own strip, leftwards
 // across another tab's close button, left that button painted hovered after the
 // drop -- the full render drew it idle. Each drag step and the drop must paint
@@ -5679,6 +5709,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/MergeToolbarStaysInsideANarrowPane",
           TestMergeToolbarStaysInsideANarrowPane);
   AddTest(tests, "QaFlowRegression/LeavingAPanelTabMidSlideLeavesNoHover", TestLeavingAPanelTabMidSlideLeavesNoHover);
+  AddTest(tests, "QaFlowRegression/APanelShownMaximizedTakesTheKeyboardAtOnce",
+          TestAPanelShownMaximizedTakesTheKeyboardAtOnce);
   AddTest(tests, "QaFlowRegression/ATabDraggedAcrossStackedPanesPaintsItsGhostInTheTargetStrip",
           TestATabDraggedAcrossStackedPanesPaintsItsGhostInTheTargetStrip);
   AddTest(tests, "QaFlowRegression/ADragAcrossPanelTabsLeavesNoHoveredCloseButton",

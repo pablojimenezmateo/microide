@@ -4,6 +4,7 @@
 #include "workspace/services/SidebarService.h"
 #include "util/InlineVector.h"
 #include "workspace/services/RemoteHostService.h"
+#include "workspace/services/TerminalPanelService.h"
 
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 
@@ -1300,6 +1301,9 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
 
 WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWake() {
   EventResult result = HandleScheduledWakeSources();
+  // As HandleEvent: a wake whose result showed a maximized panel (a Git command's
+  // output) leaves no keyboard on a surface it covers (soak b6cc343b6ee1).
+  MakeTerminalPanelService().SyncPanelMaximizedWithFocus();
   // Redraws requested from the render path (progressive compare tokenization, the
   // status-bar strip) accumulate in pending_render_invalidation_, which the event
   // dispatcher drains for events. A frame with no event behind it has to drain it
