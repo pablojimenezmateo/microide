@@ -36,6 +36,9 @@ class _RelaunchingApp:
             0: [{"path": "/p/a/x.txt", "dirty": False, "sha256": "aa", "project": "/p/a"}],
             1: [{"path": "/p/b/y.txt", "dirty": True, "sha256": "bb", "project": "/p/b"}],
         }
+        # `editor.autosave`: with on_focus_change, leaving a project saves its
+        # dirty buffers -- the save's transforms (a final newline) change them.
+        self.autosave = "off"
 
     def query(self, verb, args=None):
         if verb == "persistence":
@@ -43,13 +46,19 @@ class _RelaunchingApp:
         if verb == "projects":
             return [{"root": self.ROOTS[p], "index": i, "active": p == self.active, "loaded": self.loaded[p]}
                     for i, p in enumerate(self.catalog)]
+        if verb == "settings":
+            return [{"id": "editor.autosave", "value": self.autosave}]
         if verb == "documents":
-            return [doc for p in self.catalog if self.loaded[p] for doc in self.docs[p]]
+            return [dict(doc) for p in self.catalog if self.loaded[p] for doc in self.docs[p]]
         raise AssertionError(verb)
 
     def send_line(self, line, timeout=15.0, record=True):
         self.lines.append(line)
         if line == "project-next":
+            if self.autosave == "on_focus_change":
+                for doc in self.docs[self.active]:
+                    if doc["dirty"]:
+                        doc.update(dirty=False, sha256=doc["sha256"] + "-saved")
             at = self.catalog.index(self.active)
             self.active = self.catalog[(at + 1) % len(self.catalog)]
             self.loaded[self.active] = True
@@ -96,6 +105,36 @@ class Kill9OracleTests(unittest.TestCase):
         self.assertEqual(found, [], found)
         self.assertEqual([app.ROOTS[p] for p in app.catalog], ["/p/a", "/p/b"])
 
+
+    def test_a_save_the_oracles_own_lap_made_is_not_a_changed_buffer(self) -> None:
+        # Soak 0afa15c55c0f: with autosave on focus change, the lap that loads the
+        # other projects is the user leaving each one, and saves its buffers.
+        app = _RelaunchingApp()
+        app.active = 0  # the buffer's project loads only through the lap
+        app.autosave = "on_focus_change"
+        oracle = monkey_oracles.DataOracle(app)
+        with mock.patch.object(monkey_oracles, "CRASH_SAFETY_QUIET_S", 0.0), \
+                mock.patch.object(monkey_oracles.time, "sleep", lambda _s: None):
+            found = oracle.kill9_and_check(random.Random(1), waited=True)
+        self.assertEqual(found, [], found)
+
+    def test_a_restored_buffer_read_before_the_lap_is_still_compared(self) -> None:
+        # The active project's buffers are read before any lap: one that came back
+        # different is reported, autosave or not.
+        app = _RelaunchingApp()
+        app.autosave = "on_focus_change"
+        oracle = monkey_oracles.DataOracle(app)
+        original_relaunch = app.crash_and_relaunch
+
+        def relaunch_changing(*args, **kwargs):
+            original_relaunch(*args, **kwargs)
+            app.docs[1][0] = {**app.docs[1][0], "sha256": "changed"}
+        app.crash_and_relaunch = relaunch_changing
+        with mock.patch.object(monkey_oracles, "CRASH_SAFETY_QUIET_S", 0.0), \
+                mock.patch.object(monkey_oracles.time, "sleep", lambda _s: None):
+            found = oracle.kill9_and_check(random.Random(1), waited=True)
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("different content", found[0][1])
 
 
 class IdleEvidenceTests(unittest.TestCase):

@@ -226,16 +226,21 @@ class DataOracle:
         # record, were reported lost (soak e946ec9333d7).
         app.crash_and_relaunch(between=keep_state, restore_workspace=True)
         dirty = [doc for doc in before if doc.get("dirty")]
-        self._load_restored_projects(dirty)
-        # Restore lands over a few frames: wait until every dirty path is back.
-        deadline = time.monotonic() + 10 * q.SLOW_FACTOR
-        after = self.documents(all_projects=True)
-        while time.monotonic() < deadline:
-            keys = {_doc_key(d) for d in after}
-            if all(_doc_key(d) in keys for d in dirty):
-                break
-            time.sleep(0.2)
-            after = self.documents(all_projects=True)
+        # Read what the relaunch restored BEFORE the lap that loads the other
+        # projects: with `editor.autosave = on_focus_change` each project-next of
+        # that lap is the user leaving an editor, and it saves the dirty buffers --
+        # the oracle's own switch saved a restored buffer and then reported it as
+        # coming back different (soak 0afa15c55c0f, once the relaunch itself no
+        # longer saved them).
+        restored = self._wait_restored(dirty)
+        # The projects the lap left with `editor.autosave = on_focus_change` (the
+        # setting is per project: what the active one says after the lap is not
+        # what the one it left had).
+        saving = self._load_restored_projects(dirty)
+        after = self._wait_restored(dirty) if saving is not None else restored
+        by_first = {_doc_key(d): d for d in restored}
+        after = [by_first.get(_doc_key(d), d) for d in after] + \
+                [d for d in restored if _doc_key(d) not in {_doc_key(a) for a in after}]
         self.last_kill = {"before": before, "after": after}
         if waited:
             by_key = {_doc_key(d): d for d in after}
@@ -245,6 +250,9 @@ class DataOracle:
                 if back is None:
                     out.append(("data", f"the unsaved buffer {Path(str(key)).name} did not come back after a kill -9 "
                                         f"(the crash-safety flush had {CRASH_SAFETY_QUIET_S:.1f}s of quiet)"))
+                elif not back.get("dirty") and saving and doc.get("project") in saving and \
+                        _doc_key(doc) not in by_first:
+                    continue  # back, then saved by the lap's own project switch, as configured
                 elif back.get("sha256") != doc.get("sha256"):
                     out.append(("data", f"the unsaved buffer {Path(str(key)).name} came back after a kill -9 with "
                                         f"different content ({doc.get('bytes')} -> {back.get('bytes')} bytes)"))
@@ -258,29 +266,61 @@ class DataOracle:
                                     f"and nothing saved it"))
         return out
 
-    def _load_restored_projects(self, dirty: list[dict[str, Any]]) -> None:
+    def _wait_restored(self, dirty: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Every project's documents, once the dirty ones are back (a restore lands
+        over a few frames) or after a bounded wait."""
+        deadline = time.monotonic() + 10 * q.SLOW_FACTOR
+        after = self.documents(all_projects=True)
+        while time.monotonic() < deadline:
+            keys = {_doc_key(d) for d in after}
+            if all(_doc_key(d) in keys for d in dirty):
+                break
+            time.sleep(0.2)
+            after = self.documents(all_projects=True)
+        return after
+
+    def _autosave_mode(self) -> str | None:
+        try:
+            rows = self.app.query("settings")
+        except Exception:  # noqa: BLE001 - a dead or busy app is another oracle's
+            return None
+        for row in rows if isinstance(rows, list) else []:
+            if row.get("id") == "editor.autosave":
+                return str(row.get("value"))
+        return None
+
+    def _load_restored_projects(self, dirty: list[dict[str, Any]]) -> set[str] | None:
         """A relaunch restores every project of the workspace, but only the active
         one loads its tabs; the others load on their first activation, and until
         then `documents` lists nothing of them -- their unsaved buffers read as
         lost (soak 55673209c35c). When a project owing one has not loaded, one lap
-        of project-next activates each project once and ends where it began."""
+        of project-next activates each project once and ends where it began.
+
+        None when there was no lap; else the roots it LEFT with
+        `editor.autosave = on_focus_change`, whose dirty buffers that switch saved."""
         owed = {doc.get("project") for doc in dirty if doc.get("project")}
         if not owed:
-            return
+            return None
         try:
             projects = self.app.query("projects")
         except Exception:  # noqa: BLE001 - a dead or busy app is another oracle's
-            return
+            return None
         if not isinstance(projects, list):
-            return
+            return None
         # `loaded` is absent from a binary that predates it: nothing to wait for.
         if not any(p.get("loaded") is False and p.get("root") in owed for p in projects):
-            return
+            return None
+        saving: set[str] = set()
         try:
             for _ in projects:
+                if self._autosave_mode() == "on_focus_change":
+                    now = next((p.get("root") for p in self.app.query("projects") if p.get("active")), None)
+                    if now:
+                        saving.add(now)
                 self.app.send_line("project-next")
         except Exception:  # noqa: BLE001 - as above
-            return
+            pass
+        return saving
 
     def wait_staged(self, limit_s: float) -> bool | None:
         """Polls the `persistence` query until it answers staged: True when it did,
