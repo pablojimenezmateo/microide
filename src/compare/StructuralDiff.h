@@ -65,6 +65,15 @@ void MatchSyntaxTrees(const DiffSyntaxTree& lhs,
                       StructuralMatch& match,
                       StructuralDiffStats* stats = nullptr);
 
+// Moves novelty between equal nodes to where a reader expects it (difftastic's
+// slider correction, TD-2026-11-11-442): a novel run of siblings that could sit
+// at several positions at the same cost goes where it starts and ends on line
+// boundaries, else to the latest such position (an item appended after its
+// separator, a new block's own closing brace); a novel list wrapping one matched
+// list with the same delimiters gives its novelty to the inner pair. Only which
+// of two EQUAL nodes is called unchanged changes. MatchSyntaxTrees runs it.
+void FixStructuralSliders(const DiffSyntaxTree& lhs, const DiffSyntaxTree& rhs, StructuralMatch& match);
+
 // The flat fallback on its own: an LCS over the two token sequences' texts.
 void MatchTokensFlat(const DiffSyntaxTree& lhs, const DiffSyntaxTree& rhs, StructuralMatch& match);
 

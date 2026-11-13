@@ -359,6 +359,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/compare/HunkRefinement.cpp
   src/compare/StructuralDiff.cpp
   src/compare/StructuralSearch.cpp
+  src/compare/StructuralSliders.cpp
   src/compare/ComparePresentationModel.cpp
   src/compare/CompareReviewTypes.cpp
   src/compare/CompareSemanticMetadata.cpp
@@ -2158,6 +2159,7 @@ add_executable(microide_diff_bench
   src/compare/HunkRefinement.cpp
   src/compare/StructuralDiff.cpp
   src/compare/StructuralSearch.cpp
+  src/compare/StructuralSliders.cpp
   src/platform/RuntimePaths.cpp
   src/platform/Subprocess.cpp
   src/platform/SubprocessSandbox.cpp

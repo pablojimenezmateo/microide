@@ -353,6 +353,86 @@ void TestStructuralMatchInvariantsOnRandomInput() {
   }
 }
 
+// TD-2026-11-11-442: slider correction. Each of these has two placements of the
+// novel tokens at the same cost; the reader expects one of them. The first three
+// the search's tie-break already gets right -- the pass must keep them; the two
+// after it the tie-break got wrong (found by probing random insertions with the
+// pass on and off): novelty straddling a line break it does not need to.
+void TestAppendedListItemIsTheNovelOne() {
+  const auto model = Build("call(a, b);\n", "call(a, b, b);\n");
+  const CompareRow& row = model.rows.front();
+  Expect(Novel(row.right_text, row.right_changed_spans) == ", b",
+         "the appended item and its separator are novel, not the middle item (got '" +
+             Novel(row.right_text, row.right_changed_spans) + "')");
+}
+
+void TestNewBlockInsideABlockIsTheInnerPair() {
+  const auto model = Build(
+      "{\n"
+      "  x;\n"
+      "}\n",
+      "{\n"
+      "  {\n"
+      "    x;\n"
+      "  }\n"
+      "}\n");
+  const CompareRow* inner_open = FindRight(model, "  {");
+  const CompareRow* inner_close = FindRight(model, "  }");
+  Expect(inner_open != nullptr && Novel(inner_open->right_text, inner_open->right_changed_spans) == "{",
+         "the inner, indented brace is the new one");
+  Expect(inner_close != nullptr && Novel(inner_close->right_text, inner_close->right_changed_spans) == "}",
+         "and its closing brace");
+  for (const auto& row : model.rows) {
+    if (row.right_text == "{" || row.right_text == "}") {
+      Expect(row.right_changed_spans.empty(), "the outer pair, at column 0, is the old block");
+    }
+  }
+}
+
+void TestNewStatementBeforeAnEqualOneSlidesToWholeLines() {
+  // Inserting `y = 1;` before an equal `y = 1;`: the novel run can be the first
+  // or the second statement; whole lines read better than a run that starts
+  // mid-line, and the later one wins a tie.
+  const auto model = Build("f();\ny = 1;\ng();\n", "f();\ny = 1;\ny = 1;\ng();\n");
+  int novel_rows = 0;
+  for (const auto& row : model.rows) {
+    if (!row.right_changed_spans.empty()) {
+      ++novel_rows;
+      Expect(Novel(row.right_text, row.right_changed_spans) == "y = 1;",
+             "the novel run is one whole statement");
+    }
+  }
+  Expect(novel_rows <= 1, "the inserted statement is novel on one line only");
+}
+
+void TestNovelRunDoesNotStraddleALineBreakItNeedNot() {
+  // `)b();` inserted before an equal `)`: the search split it as `b();` at the
+  // end of line 1 plus the `)` that starts line 2. Sliding over the equal `)`
+  // keeps it on one line, which is what was typed.
+  const auto model = Build("  )d, )[a]  if (x) {\n)\n", "  )d, )b();\n)[a]  if (x) {\n)\n");
+  int novel_rows = 0;
+  for (const auto& row : model.rows) {
+    if (!row.right_changed_spans.empty()) {
+      ++novel_rows;
+      Expect(Novel(row.right_text, row.right_changed_spans) == ")b();",
+             "the inserted tokens are one run at the end of line 1 (got '" +
+                 Novel(row.right_text, row.right_changed_spans) + "')");
+    }
+  }
+  Expect(novel_rows == 1, "the insertion is novel on one line");
+}
+
+void TestNovelCallSlidesOntoItsOwnLine() {
+  // `f(a)}` inserted before an equal `f(a)`: novel `}` on line 1 and `f(a)` on
+  // line 2 becomes `f(a)}`, the tail of line 1.
+  const auto model = Build(")d, f(a)f(a))\n", ")d, f(a)}\nf(a)f(a))\n");
+  const CompareRow* first = FindRight(model, ")d, f(a)}");
+  const CompareRow* second = FindRight(model, "f(a)f(a))");
+  Expect(first != nullptr && Novel(first->right_text, first->right_changed_spans) == "f(a)}",
+         "the novel run is the tail of line 1");
+  Expect(second != nullptr && second->right_changed_spans.empty(), "and line 2 is unchanged");
+}
+
 // An in-place rebuild refines only the hunks that changed, and its rows are the
 // ones a fresh build produces.
 void TestRebuildRefinesOnlyChangedHunks() {
@@ -527,6 +607,14 @@ void RegisterStructuralDiffTests(std::vector<TestCase>& tests) {
   AddTest(tests, "StructuralDiff/RebuildRefinesOnlyChangedHunks",
           TestRebuildRefinesOnlyChangedHunks);
   AddTest(tests, "StructuralDiff/CacheIsKeyedOnTextAndSyntax", TestCacheIsKeyedOnTextAndSyntax);
+  AddTest(tests, "StructuralDiff/AppendedListItemIsTheNovelOne", TestAppendedListItemIsTheNovelOne);
+  AddTest(tests, "StructuralDiff/NewBlockInsideABlockIsTheInnerPair",
+          TestNewBlockInsideABlockIsTheInnerPair);
+  AddTest(tests, "StructuralDiff/NewStatementBeforeAnEqualOneSlidesToWholeLines",
+          TestNewStatementBeforeAnEqualOneSlidesToWholeLines);
+  AddTest(tests, "StructuralDiff/NovelRunDoesNotStraddleALineBreakItNeedNot",
+          TestNovelRunDoesNotStraddleALineBreakItNeedNot);
+  AddTest(tests, "StructuralDiff/NovelCallSlidesOntoItsOwnLine", TestNovelCallSlidesOntoItsOwnLine);
 }
 
 }  // namespace microide::tests

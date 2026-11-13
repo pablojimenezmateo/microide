@@ -489,6 +489,7 @@ void MatchSyntaxTrees(const DiffSyntaxTree& lhs,
                       StructuralDiffStats* stats) {
   match.Reset(lhs.tokens.size(), rhs.tokens.size());
   Matcher(lhs, rhs, vertex_budget, match, stats).Run();
+  FixStructuralSliders(lhs, rhs, match);
 }
 
 }  // namespace microide::compare

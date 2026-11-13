@@ -87,17 +87,6 @@ hunk's first line, which needs a state scan of the unchanged text above it (or
 the grammar of TD-440); measure the cost against the per-keystroke rebuild of an
 editable compare pane before doing it.
 
-### TD-2026-11-11-442 — no slider correction in the structural diff. [OPEN]
-
-difftastic post-processes its match (`fix_all_sliders`) so that, when a novel run
-could equally sit at two positions (inserting an item into a list whose
-neighbours are equal, or a block whose closing brace equals the next block's),
-it lands where a reader expects -- the inner position for nested novelty, the
-later delimiter for a list item. Here the Dijkstra tie-break decides, which is
-deterministic but occasionally highlights `}` of the existing block instead of
-the new one. Add the pass over `StructuralMatch` (it only moves novelty between
-equal tokens, so the line diff and the row alignment's inputs are unchanged).
-
 ### TD-2026-11-11-443 — the structural refinement is per hunk; moved code is not matched across hunks. [OPEN]
 
 Each hunk is matched alone, so code moved between two hunks shows as novel in
@@ -482,7 +471,7 @@ cross-subsystem bug-hunt passes 5–24 closeout) — now lives in:
   `2026-11-03-resolved-debt-ledger.md` (every TD id from 2026-08-04 to 2026-11-02 not listed
   above, with the per-pass review summaries that headed this file) and
   `2026-11-08-resolved-debt-ledger.md` (TD-406, 408, 429-434) and
-  `2026-11-13-resolved-debt-ledger.md` (TD-437, 438, 439 onward)
+  `2026-11-13-resolved-debt-ledger.md` (TD-437 to 439, 442 onward)
 - `CHANGELOG.md` — shipped, user-facing release history
 - `openspec/changes/archive/` — the full proposal/spec/tasks record per shipped change
 

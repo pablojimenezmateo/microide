@@ -3,6 +3,37 @@
 Moved from `dev-docs/project/known-tech-debt.md`'s open queue as each entry was
 resolved or closed, with its resolution appended. Newest first.
 
+### TD-2026-11-11-442 — no slider correction in the structural diff. [FIXED 2026-11-13]
+
+difftastic post-processes its match (`fix_all_sliders`) so that, when a novel run
+could equally sit at two positions (inserting an item into a list whose
+neighbours are equal, or a block whose closing brace equals the next block's),
+it lands where a reader expects -- the inner position for nested novelty, the
+later delimiter for a list item. Here the Dijkstra tie-break decides, which is
+deterministic but occasionally highlights `}` of the existing block instead of
+the new one. Add the pass over `StructuralMatch` (it only moves novelty between
+equal tokens, so the line diff and the row alignment's inputs are unchanged).
+
+**Fixed 2026-11-13**: `FixStructuralSliders` (`src/compare/StructuralSliders.cpp`),
+run by `MatchSyntaxTrees` after the search. Two passes per side. Nested: a
+novel list wrapping exactly one matched list with the same delimiters gives its
+novelty to the inner pair. Sibling: every maximal novel stretch of a sibling
+run slides across equal, wholly-matched neighbours (one node at a time, so each
+intermediate match stays symmetric and ordered) to the placement ranked best --
+whole lines; then fewer lines touched; then ending its line; then the latest.
+Only which of two equal nodes is unchanged moves, so the line diff, hunks and
+row alignment are untouched; `StructuralDiff/MatchInvariantsOnRandomInput` holds
+with it. Found the wrong placements by probing random insertions with the pass on
+and off: every difference left was novelty straddling a line break it did not
+need (`)b();` split as `b();` + a `)` on the next line). Gates:
+`StructuralDiff/NovelRunDoesNotStraddleALineBreakItNeedNot` (fails without the
+pass), `NovelCallSlidesOntoItsOwnLine`, and three guards the tie-break already
+got right that the pass must keep (appended list item, inner block, whole-line
+statement). Cost: linear in tokens x depth per hunk; `microide_diff_bench`
+A/B on the four bench files was within the noise of the loaded machine (same
+vertex counts).
+
+
 ### TD-2026-11-11-439 — a compare or merge tab in a split draws over the whole editor column. [FIXED 2026-11-13]
 
 Soak `ae1203cffa96`, `ea6f9461e041`, `d211729515a9` (oracle `overlap`, flaky
