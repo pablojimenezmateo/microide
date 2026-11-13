@@ -133,6 +133,42 @@ void TestFirstConnectInstallsTheServerAndReachesReady() {
   Expect(WaitForState(session, State::Disconnected), "it disconnects");
 }
 
+// The client runs inside a microide host terminal of some OTHER server (a user
+// working in a remote project, or an agent started from one), so its environment
+// names that server: MICROIDE_SERVER_SOCKET_DIR, MICROIDE_TERMINAL_HANDLE and a
+// BROWSER that is its helper. sshd starts a session with an environment of its
+// own, so none of that reaches a host. The fake host passed it through, and every
+// fixture host's `attach` obeyed the socket-dir override: the tests' terminals
+// opened in the user's real server, 61 of them, until its terminal cap refused
+// the next one and ten remote-terminal tests failed.
+void TestTheClientsOwnServerVariablesDoNotReachTheHost() {
+  FakeHost host;
+  const std::filesystem::path decoy = host.dir.scratch() / "decoy";
+  std::filesystem::create_directories(decoy);
+  std::filesystem::permissions(decoy, std::filesystem::perms::owner_all);
+  const ScopedEnvVar socket_dir("MICROIDE_SERVER_SOCKET_DIR", decoy.string());
+  const ScopedEnvVar handle("MICROIDE_TERMINAL_HANDLE", "7");
+  const ScopedEnvVar browser("BROWSER", (decoy / "microide-browser").string());
+  StateLog log;
+  RemoteHostSession session(host.Config(), log.Listener());
+  session.Connect();
+  Expect(WaitForState(session, State::Ready), "the session is ready: " + log.Error());
+  Expect(!std::filesystem::exists(decoy / "server.sock"), "no server answers in the client's server directory");
+  const std::filesystem::path own = host.home / ".local/state/microide/server";
+  Expect(std::filesystem::exists(own / "server.sock"), "the host's own server answers in its home");
+
+  const remote::RemoteProcessLauncher launcher(session.connection(), remote::RemotePathMap({}, {}),
+                                               {.description = "fake-host"});
+  terminal::TerminalSession terminal;
+  Expect(terminal.Start(launcher, "/nowhere/local", {}, "sh"), "a host terminal opens");
+  terminal.SendBytes("echo SERVER-IS-$MICROIDE_SERVER_SOCKET_DIR\n");
+  Expect(WaitForText(terminal, "SERVER-IS-" + own.string()),
+         "and its shell names the host's server:\n" + ScreenText(terminal));
+  terminal.Stop();
+  session.Disconnect();
+  Expect(WaitForState(session, State::Disconnected), "it disconnects");
+}
+
 // A session that starts somewhere other than $HOME (sshd starts it in the passwd
 // home; sshd's SetEnv, a login script or a container can point $HOME elsewhere).
 // The install wrote relative to the working directory and the launch chain looked
@@ -545,6 +581,8 @@ void RegisterRemoteHostSessionTests(std::vector<TestCase>& tests) {
           TestTheServerInstallsUnderHomeWhereverTheSessionStarts);
   AddTest(tests, "RemoteHostSession/FirstConnectInstallsTheServerAndReachesReady",
           TestFirstConnectInstallsTheServerAndReachesReady);
+  AddTest(tests, "RemoteHostSession/TheClientsOwnServerVariablesDoNotReachTheHost",
+          TestTheClientsOwnServerVariablesDoNotReachTheHost);
   AddTest(tests, "RemoteHostSession/NeedsAuthWaitsForTheInteractiveMaster",
           TestNeedsAuthWaitsForTheInteractiveMaster);
   AddTest(tests, "RemoteHostSession/LinkDeathReconnectsAndTerminalsResume",

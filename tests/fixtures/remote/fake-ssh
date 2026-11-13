@@ -62,6 +62,11 @@ fi
 [ -e "$ctl" ] || { echo "ssh: no master at $ctl" >&2; exit 255; }
 HOME="$FAKE_SSH_HOME"
 export HOME
+# sshd starts a session with an environment of its own: nothing of the client's
+# reaches the host. In particular not the variables a microide host terminal sets,
+# which a client running inside one carries -- the host's `attach` would obey the
+# socket-dir override and use the CLIENT's server.
+unset MICROIDE_SERVER_SOCKET_DIR MICROIDE_TERMINAL_HANDLE BROWSER
 # sshd starts a session in the account's passwd home, which need not be $HOME
 # (sshd's SetEnv, a login script, a container): FAKE_SSH_CWD stands for it.
 cd "${FAKE_SSH_CWD:-$HOME}" || exit 255
