@@ -274,6 +274,9 @@ bool TabCoordinator::SaveGroupTabAs(std::size_t group_index, std::size_t index,
   if (path.empty() || path.filename().empty()) {
     return fail("save needs a file name");
   }
+  if (path.native().find('\0') != std::string::npos) {
+    return fail("a file name cannot contain a NUL character");  // the write would cut it short
+  }
   editor::TextViewport& viewport = tab.editor_state->viewport;
   const std::filesystem::path normalized = path.lexically_normal();
   if (normalized == viewport.path().lexically_normal()) {

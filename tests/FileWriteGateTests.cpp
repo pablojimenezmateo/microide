@@ -333,9 +333,32 @@ void TestReloadingIdenticalContentKeepsTheEditHistory() {
          "a file that really changed is reloaded");
 }
 
+// Soak 345e41d424a8: a Save As whose name took pasted binary (a NUL in it)
+// wrote the file under the name cut short at the NUL -- every system call stops
+// there -- while the tab went on titled with the whole name. A name with a NUL is
+// refused where it would reach the filesystem: the write and the tree ops.
+void TestFileWriteGateRefusesANameWithANul() {
+  TemporaryDirectory temp;
+  FileWriteGate& gate = LocalFileWriteGate();
+  const std::filesystem::path cut = temp.path() / "echo";
+  const std::filesystem::path named = temp.path() / std::string("echo\0tail", 9);
+  const auto written = gate.WriteText(named, "x\n");
+  Expect(!written.ok, "a write to a name with a NUL is refused");
+  Expect(!std::filesystem::exists(cut), "and nothing is written under the name cut short at it");
+  WriteFile(temp.path() / "a.txt", "a\n");
+  const std::vector<FileWriteGate::TreeOp> rename = {FileWriteGate::TreeOp{
+      .kind = FileWriteGate::TreeOp::Kind::Rename, .path = temp.path() / "a.txt", .new_path = named}};
+  const auto renamed = gate.ApplyTreeOps(rename);
+  Expect(!renamed.ok && renamed.error_message.find("NUL") != std::string::npos,
+         "a rename to such a name is refused, saying why: " + renamed.error_message);
+  Expect(std::filesystem::exists(temp.path() / "a.txt") && !std::filesystem::exists(cut),
+         "and the file stays where it was");
+}
+
 }  // namespace
 
 void RegisterFileWriteGateTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "FileWriteGate/RefusesANameWithANul", TestFileWriteGateRefusesANameWithANul);
   AddTest(tests, "FileWriteGate/SameTickRewriteIsStillADiskConflict",
           TestSameTickRewriteIsStillADiskConflict);
   AddTest(tests, "FileWriteGate/LocalGateWritesAndReportsTheSignature",

@@ -72,6 +72,18 @@ struct Undo {
 class Batch {
  public:
   TreeResult Apply(std::span<const TreeOp> ops) {
+    // A NUL cannot be in a file name: a system call stops at it and would act on
+    // the name cut short there (see WriteTextFileAtomically). Refused before any op.
+    for (std::size_t i = 0; i < ops.size(); ++i) {
+      if (ops[i].path.native().find('\0') != std::string::npos ||
+          ops[i].new_path.native().find('\0') != std::string::npos) {
+        return TreeResult{.ok = false,
+                          .failed_index = i,
+                          .error_message = "a file name cannot contain a NUL character",
+                          .resulting_path = {},
+                          .staged_directories = {}};
+      }
+    }
     for (std::size_t i = 0; i < ops.size(); ++i) {
       std::string failure = ApplyOne(ops[i]);
       if (!failure.empty()) {

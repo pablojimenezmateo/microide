@@ -419,7 +419,11 @@ bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view
     }
     return false;
   };
-  if (path.empty()) {
+  // A NUL cannot be in a file name: every system call stops at it, so the write
+  // landed on the name cut short there while the caller went on believing the
+  // whole name (a Save As whose name took pasted binary: the tab was titled with
+  // the NUL and what followed, the file was not; the QA monkey, soak 345e41d424a8).
+  if (path.empty() || path.native().find('\0') != std::string::npos) {
     return fail(std::make_error_code(std::errc::invalid_argument));
   }
 
