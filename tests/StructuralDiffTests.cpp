@@ -433,6 +433,153 @@ void TestNovelCallSlidesOntoItsOwnLine() {
   Expect(second != nullptr && second->right_changed_spans.empty(), "and line 2 is unchanged");
 }
 
+// TD-2026-11-11-441: raw strings, here-documents, and the state a region starts in.
+std::shared_ptr<const DiffSyntax> WithRaw(const std::shared_ptr<const DiffSyntax>& base, std::uint8_t raw) {
+  auto syntax = std::make_shared<DiffSyntax>(*base);
+  syntax->raw_strings = raw;
+  return std::shared_ptr<const DiffSyntax>(std::move(syntax));
+}
+
+std::shared_ptr<const DiffSyntax> CppRawSyntax() {
+  static const auto kSyntax = WithRaw(CSyntax(), compare::kDiffRawCpp);
+  return kSyntax;
+}
+
+std::shared_ptr<const DiffSyntax> RustSyntax() {
+  static const auto kSyntax = WithRaw(CSyntax(), compare::kDiffRawRust);
+  return kSyntax;
+}
+
+std::shared_ptr<const DiffSyntax> ShellSyntax() {
+  static const auto kSyntax =
+      WithRaw(PythonSyntax(), compare::kDiffHeredoc | compare::kDiffHeredocSpaced);
+  return kSyntax;
+}
+
+void TestRawStringsAreOneToken() {
+  Expect(Tokens("auto s = R\"x(a )\" b\n)y)x\";", CppRawSyntax()) ==
+             std::vector<std::string>{"auto", "s", "=", "R\"x(a )\" b\n)y)x\"", ";"},
+         "a C++ raw string runs to its own delimiter, across lines and quotes");
+  Expect(Tokens("let s = r#\"has \"quote\"\"#;", RustSyntax()) ==
+             std::vector<std::string>{"let", "s", "=", "r#\"has \"quote\"\"#", ";"},
+         "a Rust raw string runs to its hashes");
+  Expect(Tokens("let r#type = 1;", RustSyntax()) ==
+             std::vector<std::string>{"let", "r", "#", "type", "=", "1", ";"},
+         "a raw identifier is not a raw string");
+  Expect(Tokens("fooR\"x\"", CppRawSyntax()) == std::vector<std::string>{"fooR", "\"x\""},
+         "R in the middle of a word does not start a raw string");
+  Expect(Tokens("cat <<'EOF' | sort\nb $x \"\nEOF\necho done", ShellSyntax()) ==
+             std::vector<std::string>{"cat", "<<'EOF'", "|", "sort", "b $x \"\nEOF", "echo", "done"},
+         "a here-document's body is one token, after the rest of its line");
+  Expect(Tokens("x <<-END\n\tbody\n\tEND\ny", ShellSyntax()) ==
+             std::vector<std::string>{"x", "<<-END", "\tbody\n\tEND", "y"},
+         "<<- ends at the word after leading tabs");
+  Expect(Tokens("echo $((1<<2))", ShellSyntax()) ==
+             std::vector<std::string>{"echo", "$", "(", "(", "1", "<<", "2", ")", ")"},
+         "a shift by a number is not a here-document");
+}
+
+void TestScanStateCarriesMultiLineTokens() {
+  const auto state = [](const std::string& text, const std::shared_ptr<const DiffSyntax>& syntax) {
+    const std::vector<std::string_view> lines = Lines(text);
+    return compare::ScanDiffLexState(lines, lines.size(), *syntax, {});
+  };
+  using Kind = compare::DiffLexState::Kind;
+  Expect(state("int a; /* opens\nstill", CSyntax()).kind == Kind::BlockComment, "inside a comment");
+  Expect(state("int a; /* opens */ int b;", CSyntax()).code(), "a closed comment leaves code");
+  Expect(state("s = \"/* not a comment\";", CSyntax()).code(), "a comment opener in a string");
+  Expect(state("// /* not a comment", CSyntax()).code(), "a comment opener in a line comment");
+  const std::string raw_text = "x = R\"tag(\nbody";
+  const compare::DiffLexState raw = state(raw_text, CppRawSyntax());
+  Expect(raw.kind == Kind::CppRawString && raw.delimiter == "tag", "inside a raw string, by its tag");
+  Expect(state("s = '''\nbody", PythonSyntax()).kind == Kind::TripleString, "inside a triple quote");
+  const std::string heredoc_text = "cat <<EOF";
+  const compare::DiffLexState heredoc = state(heredoc_text, ShellSyntax());
+  Expect(heredoc.kind == Kind::Heredoc && heredoc.delimiter == "EOF",
+         "a here-document marker on the last line: its body starts the next region");
+}
+
+// The mechanism the refinement relies on: a region lexed from the state the
+// scan reports for the text above it yields the tokens a lex of the whole text
+// yields from that line on (the remainder of a token crossing into it first).
+void TestRegionLexedFromScannedStateAgreesWithAWholeLex() {
+  std::mt19937 random(20261113);
+  const std::vector<std::string> pieces = {
+      "a", "b1", "(", ")", "{", "}", ";", ",", "+", "/*", "*/", "//", "\"", "\"\"\"", "'",
+      "`", "R\"(", ")\"", "R\"t(", ")t\"", "r#\"", "\"#", "<<EOF", "<<-EOF", "EOF", "\tEOF",
+      "\\", "#", "  ", "\n", "\n", "\n"};
+  const std::vector<std::shared_ptr<const DiffSyntax>> syntaxes = {
+      CSyntax(), CppRawSyntax(), RustSyntax(),
+      WithRaw(CSyntax(), compare::kDiffHeredoc | compare::kDiffHeredocSpaced)};
+  const auto same_class = [](DiffTokenKind kind) {
+    return kind == DiffTokenKind::Open || kind == DiffTokenKind::Close ? DiffTokenKind::Punctuation
+                                                                       : kind;
+  };
+  for (int round = 0; round < 400; ++round) {
+    std::string text;
+    const int count = 4 + static_cast<int>(random() % 40);
+    for (int index = 0; index < count; ++index) {
+      text += pieces[random() % pieces.size()];
+      if (random() % 3 == 0) {
+        text += ' ';
+      }
+    }
+    const DiffSyntax& syntax = *syntaxes[static_cast<std::size_t>(round) % syntaxes.size()];
+    const std::vector<std::string_view> lines = Lines(text);
+    DiffContentInterner interner;
+    DiffSyntaxTree whole;
+    compare::BuildDiffSyntaxTree(lines, syntax, interner, whole);
+    for (std::size_t split = 1; split < lines.size(); ++split) {
+      const auto below = std::span<const std::string_view>(lines).subspan(split);
+      const compare::DiffLexState entry = compare::ScanDiffLexState(lines, split, syntax, {});
+      DiffContentInterner region_interner;  // entries point into their tree
+      DiffSyntaxTree region;
+      compare::BuildDiffSyntaxTree(below, syntax, region_interner, region, entry);
+      std::vector<std::string> expected;
+      std::vector<std::string> actual;
+      for (const auto& token : whole.tokens) {
+        if (token.end_line < split) {
+          continue;
+        }
+        const char* begin = token.line >= split ? token.text.data() : below.front().data();
+        const std::string_view rest(
+            begin, static_cast<std::size_t>(token.text.data() + token.text.size() - begin));
+        if (rest.empty()) {
+          continue;
+        }
+        expected.push_back(std::to_string(static_cast<int>(same_class(token.kind))) + ":" +
+                           std::string(rest));
+      }
+      for (const auto& token : region.tokens) {
+        actual.push_back(std::to_string(static_cast<int>(same_class(token.kind))) + ":" +
+                         std::string(token.text));
+      }
+      Expect(expected == actual, "a region lexed from the scanned state must agree with the whole "
+                                 "lex (round " + std::to_string(round) + ", split " +
+                                 std::to_string(split) + "):\n" + text);
+      if (expected != actual) {
+        return;
+      }
+    }
+  }
+}
+
+void TestEntryStateIsPartOfTheRefinementKey() {
+  // The same hunk text, once inside a comment and once not: two refinements.
+  CompareBuildOptions options;
+  options.syntax = CSyntax();
+  CompareModel model;
+  (void)compare::BuildCompareModelInto(model, "/*\nkeep\nold words\nend\n", "/*\nkeep\nnew words\nend\n",
+                                       options);
+  const auto other_state = compare::BuildCompareModelInto(model, "x;\nkeep\nold words\nend\n",
+                                                          "x;\nkeep\nnew words\nend\n", options);
+  Expect(other_state.cached_hunks == 0,
+         "a hunk whose first line is in another lexical state is not served from the cache");
+  const auto same_state = compare::BuildCompareModelInto(model, "x;\nkeep\nold words\nend\n",
+                                                         "x;\nkeep\nnew words\nend\n", options);
+  Expect(same_state.cached_hunks == 1, "the same text in the same state is");
+}
+
 // An in-place rebuild refines only the hunks that changed, and its rows are the
 // ones a fresh build produces.
 void TestRebuildRefinesOnlyChangedHunks() {
@@ -615,6 +762,12 @@ void RegisterStructuralDiffTests(std::vector<TestCase>& tests) {
   AddTest(tests, "StructuralDiff/NovelRunDoesNotStraddleALineBreakItNeedNot",
           TestNovelRunDoesNotStraddleALineBreakItNeedNot);
   AddTest(tests, "StructuralDiff/NovelCallSlidesOntoItsOwnLine", TestNovelCallSlidesOntoItsOwnLine);
+  AddTest(tests, "StructuralDiff/RawStringsAreOneToken", TestRawStringsAreOneToken);
+  AddTest(tests, "StructuralDiff/ScanStateCarriesMultiLineTokens", TestScanStateCarriesMultiLineTokens);
+  AddTest(tests, "StructuralDiff/RegionLexedFromScannedStateAgreesWithAWholeLex",
+          TestRegionLexedFromScannedStateAgreesWithAWholeLex);
+  AddTest(tests, "StructuralDiff/EntryStateIsPartOfTheRefinementKey",
+          TestEntryStateIsPartOfTheRefinementKey);
 }
 
 }  // namespace microide::tests

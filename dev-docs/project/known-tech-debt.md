@@ -74,19 +74,6 @@ only producer of a `DiffSyntaxTree`, and the search reads nothing but nodes,
 tokens and content ids. A grammar-backed builder for the top languages, with the
 lexer kept as the fallback, is the follow-up; gate it on `microide_diff_bench`.
 
-### TD-2026-11-11-441 — hunk-local lexing starts in code state; raw strings are not lexed. [OPEN]
-
-Each hunk side is lexed on its own, starting as code. A hunk that begins inside
-a multi-line block comment or string (its opener is on an unchanged line above
-the hunk) lexes that text as code tokens. Raw/heredoc strings (Rust `r#"…"#`,
-C++ `R"(…)"`, shell heredocs) are not recognised either. Both only change the
-granularity of the highlighting -- the tokens are still matched or marked novel,
-and the line diff, hunks and staging are unaffected -- and the replaced-literal
-word diff absorbs most of it. The proper fix is to carry the lexer state at each
-hunk's first line, which needs a state scan of the unchanged text above it (or
-the grammar of TD-440); measure the cost against the per-keystroke rebuild of an
-editable compare pane before doing it.
-
 ### TD-2026-11-11-443 — the structural refinement is per hunk; moved code is not matched across hunks. [OPEN]
 
 Each hunk is matched alone, so code moved between two hunks shows as novel in
@@ -471,7 +458,7 @@ cross-subsystem bug-hunt passes 5–24 closeout) — now lives in:
   `2026-11-03-resolved-debt-ledger.md` (every TD id from 2026-08-04 to 2026-11-02 not listed
   above, with the per-pass review summaries that headed this file) and
   `2026-11-08-resolved-debt-ledger.md` (TD-406, 408, 429-434) and
-  `2026-11-13-resolved-debt-ledger.md` (TD-437 to 439, 442 onward)
+  `2026-11-13-resolved-debt-ledger.md` (TD-437 to 439, 441, 442 onward)
 - `CHANGELOG.md` — shipped, user-facing release history
 - `openspec/changes/archive/` — the full proposal/spec/tasks record per shipped change
 

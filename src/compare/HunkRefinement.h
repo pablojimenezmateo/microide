@@ -48,11 +48,15 @@ struct HunkRefinementStats {
 
 // Refines one hunk. `left_lines`/`right_lines` are consecutive lines of their
 // buffers. Reuses `out`'s storage.
+// `left_entry`/`right_entry`: the lexical state each side starts in (inside a
+// comment or string opened above the hunk; ScanDiffLexState).
 void RefineHunk(std::span<const std::string_view> left_lines,
                 std::span<const std::string_view> right_lines,
                 const DiffSyntax& syntax,
                 HunkRefinement& out,
-                HunkRefinementStats* stats = nullptr);
+                HunkRefinementStats* stats = nullptr,
+                const DiffLexState& left_entry = {},
+                const DiffLexState& right_entry = {});
 
 // One hunk's refinement as the model build reads it: the rows, and the novel
 // spans of each line. A view into storage it does not own (a HunkRefinement or
@@ -80,7 +84,8 @@ class HunkRefinementView {
 };
 
 // Memoizes RefineHunk across rebuilds of one compare model, keyed on the exact
-// text of the hunk's two sides and the syntax of the build.
+// text of the hunk's two sides, the lexical state each starts in, and the
+// syntax of the build.
 //
 // An editable compare pane rebuilds its model on every keystroke, and a
 // keystroke changes one hunk: without this, every other hunk of the file was
@@ -102,7 +107,9 @@ class HunkRefinementCache {
   // until the next Refine or EndBuild.
   HunkRefinementView Refine(std::span<const std::string_view> left_lines,
                             std::span<const std::string_view> right_lines,
-                            HunkRefinementStats* stats);
+                            HunkRefinementStats* stats,
+                            const DiffLexState& left_entry = {},
+                            const DiffLexState& right_entry = {});
   void EndBuild();
 
   // Hunks held from the last finished build.
@@ -119,6 +126,14 @@ class HunkRefinementCache {
     std::uint32_t lines_begin = 0;  // into line_starts: left + right + 1 offsets
     std::uint32_t left_lines = 0;
     std::uint32_t right_lines = 0;
+    // The entry states; their delimiters are text in the arena, ahead of the
+    // lines (left's, then right's).
+    DiffLexState::Kind left_kind = DiffLexState::Kind::Code;
+    DiffLexState::Kind right_kind = DiffLexState::Kind::Code;
+    std::uint8_t left_index = 0;
+    std::uint8_t right_index = 0;
+    std::uint16_t left_delimiter = 0;   // bytes
+    std::uint16_t right_delimiter = 0;
   };
   struct Arena {
     // Shared, not raw: a freed syntax's address can be reused by a different
@@ -133,15 +148,16 @@ class HunkRefinementCache {
 
     void Clear();
     std::uint32_t Find(std::uint64_t hash, std::span<const std::string_view> left,
-                       std::span<const std::string_view> right) const;
+                       std::span<const std::string_view> right, const DiffLexState& left_entry,
+                       const DiffLexState& right_entry) const;
     void Index(std::uint32_t entry);
     HunkRefinementView View(std::uint32_t entry) const;
   };
 
   std::uint32_t CopyFrom(const Arena& source, std::uint32_t entry);
   std::uint32_t Append(std::uint64_t hash, std::span<const std::string_view> left,
-                       std::span<const std::string_view> right,
-                       const HunkRefinement& refinement);
+                       std::span<const std::string_view> right, const DiffLexState& left_entry,
+                       const DiffLexState& right_entry, const HunkRefinement& refinement);
 
   Arena current_;
   Arena previous_;

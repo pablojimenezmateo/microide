@@ -47,6 +47,43 @@ struct DiffSyntax {
   // (`"""`, `'''`), which may span lines. A quote with no closing partner is
   // read as an ordinary punctuation atom.
   std::string string_quotes = "\"'`";
+  // Raw string forms beyond the plain quotes (DiffRawStrings bits): C++
+  // `R"d(...)d"`, Rust `r#"..."#`, and here-documents (`<<EOF` ... `EOF`).
+  std::uint8_t raw_strings = 0;
+};
+
+enum DiffRawStrings : std::uint8_t {
+  kDiffRawCpp = 1u << 0,
+  kDiffRawRust = 1u << 1,
+  kDiffHeredoc = 1u << 2,
+  // The shell's `<< EOF`: a space may sit between the operator and the word
+  // (in Ruby or Perl that is a shift or an append, so it is shell-only).
+  kDiffHeredocSpaced = 1u << 3,
+};
+
+// Where a region begins, lexically: in code, or inside a multi-line comment or
+// string that opened above it. A hunk is lexed on its own, so without this a
+// hunk inside a block comment read the comment's words as code
+// (TD-2026-11-11-441). ScanDiffLexState computes it from the text above.
+struct DiffLexState {
+  enum class Kind : std::uint8_t {
+    Code,
+    BlockComment,    // index: the DiffSyntax::block_comments pair
+    TripleString,    // index: the quote byte
+    BacktickString,
+    CppRawString,    // delimiter: the d-char sequence between `R"` and `(`
+    RustRawString,   // index: the number of `#`
+    Heredoc,         // delimiter: the word; index: 1 = `<<-` (tabs), 2 = `<<~` (any indent)
+  };
+  Kind kind = Kind::Code;
+  std::uint8_t index = 0;
+  // A view into the scanned text; valid while that text is.
+  std::string_view delimiter;
+
+  bool code() const { return kind == Kind::Code; }
+  friend bool operator==(const DiffLexState& a, const DiffLexState& b) {
+    return a.kind == b.kind && a.index == b.index && a.delimiter == b.delimiter;
+  }
 };
 
 // The rules used when the host has none for the file's language: the three
@@ -142,9 +179,26 @@ class DiffContentInterner {
 // builds their syntax forest into `tree`, interning every node. Delimiters that
 // do not pair up inside the region become punctuation atoms, so a region that
 // opens a block and a later region that closes it each still diff sensibly.
+//
+// `entry` is the state the region starts in: a region that begins inside a
+// comment or string reads up to its close as that one token.
 void BuildDiffSyntaxTree(std::span<const std::string_view> lines,
                          const DiffSyntax& syntax,
                          DiffContentInterner& interner,
-                         DiffSyntaxTree& tree);
+                         DiffSyntaxTree& tree,
+                         const DiffLexState& entry = {});
+
+// The lexical state line `stop_line` of `lines` (consecutive lines of one
+// buffer) starts in, lexing from line 0 in `state`. A pass that recognises only
+// what can span lines -- comments, strings, raw strings, here-documents -- and
+// skips everything else, so it is cheap enough to run over the unchanged text
+// above every hunk of a rebuild. The lines from `stop_line` on are read only to
+// find where a token that opened above ends: whether a backtick opens a string
+// depends on a closing one further down. Agrees with BuildDiffSyntaxTree over
+// all of `lines` on where every multi-line token ends.
+DiffLexState ScanDiffLexState(std::span<const std::string_view> lines,
+                              std::size_t stop_line,
+                              const DiffSyntax& syntax,
+                              DiffLexState state);
 
 }  // namespace microide::compare

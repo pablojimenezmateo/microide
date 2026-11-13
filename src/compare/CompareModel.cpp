@@ -887,6 +887,24 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
       options.syntax != nullptr ? options.syntax : GenericDiffSyntax();
   HunkRefinementStats refinement_stats;
   scratch.hunk_refinements.BeginBuild(syntax);
+  // The lexical state each side is in at the next hunk's first line, carried
+  // down the file one hunk at a time: a hunk inside a comment or string that
+  // opened above it is read as that comment or string (TD-2026-11-11-441).
+  struct SideScan {
+    DiffLexState state;
+    std::size_t line = 0;  // 0-based line `state` holds at
+  };
+  SideScan left_scan;
+  SideScan right_scan;
+  const auto state_at = [&syntax](const std::vector<std::string_view>& lines, SideScan& scan,
+                                  std::size_t line) {
+    if (line > scan.line) {
+      scan.state = ScanDiffLexState(std::span<const std::string_view>(lines).subspan(scan.line),
+                                    line - scan.line, *syntax, scan.state);
+      scan.line = line;
+    }
+    return scan.state;
+  };
   model.rows.reserve(left_lines.size() + right_lines.size());
   RowSink sink(model);
   int left_line = 1;
@@ -932,8 +950,12 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
     const Clock::time_point refine_start = Clock::now();
     HunkRefinementView refinement;
     if (options.refine_hunks) {
-      refinement =
-          scratch.hunk_refinements.Refine(deleted_lines, inserted_lines, &refinement_stats);
+      const DiffLexState left_entry =
+          state_at(left_lines, left_scan, static_cast<std::size_t>(left_line - 1));
+      const DiffLexState right_entry =
+          state_at(right_lines, right_scan, static_cast<std::size_t>(right_line - 1));
+      refinement = scratch.hunk_refinements.Refine(deleted_lines, inserted_lines, &refinement_stats,
+                                                   left_entry, right_entry);
     } else {
       ZipHunk(deleted_lines.size(), inserted_lines.size(), hunk_scratch.rows);
       refinement = HunkRefinementView(hunk_scratch.rows, {}, {}, 0);

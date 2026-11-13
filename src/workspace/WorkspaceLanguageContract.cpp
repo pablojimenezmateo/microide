@@ -528,6 +528,17 @@ std::shared_ptr<const compare::DiffSyntax> WorkspaceLanguageContract::ResolveDif
     if (syntax->delimiters.empty()) {
       syntax->delimiters = compare::GenericDiffSyntax()->delimiters;
     }
+    // The raw string forms the diff's lexer reads whole (TD-2026-11-11-441).
+    // The contract carries no string syntax, so they are named per language.
+    if (language_id == "c++") {
+      syntax->raw_strings = compare::kDiffRawCpp;
+    } else if (language_id == "rust") {
+      syntax->raw_strings = compare::kDiffRawRust;
+    } else if (language_id == "shell") {
+      syntax->raw_strings = compare::kDiffHeredoc | compare::kDiffHeredocSpaced;
+    } else if (language_id == "ruby" || language_id == "perl") {
+      syntax->raw_strings = compare::kDiffHeredoc;
+    }
     resolved = std::move(syntax);
   }
   impl_->diff_syntaxes.emplace(std::string(language_id), resolved);

@@ -1902,6 +1902,22 @@ if(MICROIDE_FUZZ)
   )
   microide_configure_fuzz_target(JsonRpcMessageFramingFuzz)
 
+  # The structural diff end to end: lexer (raw strings, here-documents), the
+  # lexical-state scan that seeds each hunk, the match and its sliders, and the
+  # model build (TD-2026-11-11-441/442).
+  add_executable(StructuralDiffFuzz
+    src/compare/CompareModel.cpp
+    src/compare/DiffSyntax.cpp
+    src/compare/HunkRefinement.cpp
+    src/compare/StructuralDiff.cpp
+    src/compare/StructuralSearch.cpp
+    src/compare/StructuralSliders.cpp
+    src/util/StringUtil.cpp
+    tests/fuzz/StructuralDiffFuzz.cpp
+  )
+  target_link_libraries(StructuralDiffFuzz PRIVATE ${MICROIDE_KERNEL_LIBS})
+  microide_configure_fuzz_target(StructuralDiffFuzz)
+
   add_executable(TerminalCsiParserFuzz
     src/util/Parse.cpp
     src/terminal/TerminalCsiParser.cpp

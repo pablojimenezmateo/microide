@@ -3,6 +3,51 @@
 Moved from `dev-docs/project/known-tech-debt.md`'s open queue as each entry was
 resolved or closed, with its resolution appended. Newest first.
 
+### TD-2026-11-11-441 — hunk-local lexing starts in code state; raw strings are not lexed. [FIXED 2026-11-13]
+
+Each hunk side is lexed on its own, starting as code. A hunk that begins inside
+a multi-line block comment or string (its opener is on an unchanged line above
+the hunk) lexes that text as code tokens. Raw/heredoc strings (Rust `r#"…"#`,
+C++ `R"(…)"`, shell heredocs) are not recognised either. Both only change the
+granularity of the highlighting -- the tokens are still matched or marked novel,
+and the line diff, hunks and staging are unaffected -- and the replaced-literal
+word diff absorbs most of it. The proper fix is to carry the lexer state at each
+hunk's first line, which needs a state scan of the unchanged text above it (or
+the grammar of TD-440); measure the cost against the per-keystroke rebuild of an
+editable compare pane before doing it.
+
+**Fixed 2026-11-13.** Both halves.
+
+- Raw strings: `DiffSyntax::raw_strings` (`kDiffRawCpp` `R"d(...)d"` with the
+  `u8`/`u`/`U`/`L` prefixes, `kDiffRawRust` `r#"..."#` / `br` / `cr`, raw
+  identifiers excluded, `kDiffHeredoc` `<<WORD` / `<<-` / `<<~` / quoted words, and
+  the shell-only spaced `<< WORD`). The host names them per language in
+  `ResolveDiffSyntax` (`c++`, `rust`, `shell`, `ruby`, `perl`): the language
+  contract carries no string syntax.
+- Entry state: `DiffLexState` (code, or inside a block comment / triple string /
+  backtick string / raw string / here-document, with its delimiter) seeds
+  `BuildDiffSyntaxTree`; `ScanDiffLexState` computes it with the same recognisers
+  as the lexer in a mode that emits nothing and steps over every byte that cannot
+  start a multi-line token (a 256-entry table). The model build carries one scan
+  per side down the file, hunk to hunk, so a build reads each line above the last
+  hunk once. The scan looks AHEAD past its stop line to find where a token that
+  opened above ends: whether a backtick opens a string depends on a closing one
+  further down, which the first draft got wrong and the property test caught.
+  The state is part of the `HunkRefinementCache` key (delimiter text copied into
+  the arena), so a hunk whose text is unchanged but whose context moved into a
+  comment is refined again.
+- Gates: `StructuralDiff/RegionLexedFromScannedStateAgreesWithAWholeLex` (for
+  random text and every split line, a region lexed from the scanned state yields
+  exactly the whole lex's tokens from that line on; also stress-run at 20,000
+  rounds on two seeds), `RawStringsAreOneToken`, `ScanStateCarriesMultiLineTokens`,
+  `EntryStateIsPartOfTheRefinementKey`, and the new fuzz target
+  `StructuralDiffFuzz` (model rows cover both sides; the same scan/region
+  property; 329k runs clean). Two definitions the property forced: an empty
+  here-document body is no token, and a here-document marker on a line that a
+  multi-line token carries lexing off is dropped (a region starting inside that
+  token cannot know it was pending; no real code does this).
+
+
 ### TD-2026-11-11-442 — no slider correction in the structural diff. [FIXED 2026-11-13]
 
 difftastic post-processes its match (`fix_all_sliders`) so that, when a novel run

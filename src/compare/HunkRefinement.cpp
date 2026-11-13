@@ -287,6 +287,11 @@ std::uint64_t HashSide(std::uint64_t hash, std::span<const std::string_view> lin
   return hash;
 }
 
+std::uint64_t HashState(std::uint64_t hash, const DiffLexState& state) {
+  hash = util::Fnv1aValue(hash, (static_cast<std::uint32_t>(state.kind) << 8) | state.index);
+  return state.delimiter.empty() ? hash : util::Fnv1aBytes(hash, state.delimiter);
+}
+
 bool SideEquals(std::string_view stored, std::span<const std::string_view> lines) {
   std::size_t at = 0;
   for (const std::string_view line : lines) {
@@ -357,17 +362,27 @@ void HunkRefinementCache::Arena::Clear() {
 
 std::uint32_t HunkRefinementCache::Arena::Find(std::uint64_t hash,
                                                std::span<const std::string_view> left,
-                                               std::span<const std::string_view> right) const {
+                                               std::span<const std::string_view> right,
+                                               const DiffLexState& left_entry,
+                                               const DiffLexState& right_entry) const {
   if (index.empty()) {
     return kNoHunkLine;
   }
   const std::size_t mask = index.size() - 1;
   for (std::size_t slot = MixHash(hash) & mask; index[slot] != 0; slot = (slot + 1) & mask) {
     const Entry& entry = entries[index[slot] - 1];
-    if (entry.hash == hash) {
-      const std::string_view stored(text.data() + entry.text_begin,
+    if (entry.hash == hash && entry.left_kind == left_entry.kind &&
+        entry.right_kind == right_entry.kind && entry.left_index == left_entry.index &&
+        entry.right_index == right_entry.index &&
+        entry.left_delimiter == left_entry.delimiter.size() &&
+        entry.right_delimiter == right_entry.delimiter.size()) {
+      const std::string_view delimiters(text.data() + entry.text_begin,
+                                        std::size_t{entry.left_delimiter} + entry.right_delimiter);
+      const std::string_view stored(delimiters.data() + delimiters.size(),
                                     std::size_t{entry.left_bytes} + entry.right_bytes);
-      if (SideEquals(stored.substr(0, entry.left_bytes), left) &&
+      if (delimiters.substr(0, entry.left_delimiter) == left_entry.delimiter &&
+          delimiters.substr(entry.left_delimiter) == right_entry.delimiter &&
+          SideEquals(stored.substr(0, entry.left_bytes), left) &&
           SideEquals(stored.substr(entry.left_bytes), right)) {
         return index[slot] - 1;
       }
@@ -417,7 +432,9 @@ std::uint32_t HunkRefinementCache::CopyFrom(const Arena& source, std::uint32_t e
   const Entry& from = source.entries[entry_index];
   Entry entry = from;
   entry.text_begin = static_cast<std::uint32_t>(current_.text.size());
-  current_.text.append(source.text, from.text_begin, std::size_t{from.left_bytes} + from.right_bytes);
+  current_.text.append(source.text, from.text_begin,
+                       std::size_t{from.left_delimiter} + from.right_delimiter + from.left_bytes +
+                           from.right_bytes);
   entry.rows_begin = static_cast<std::uint32_t>(current_.rows.size());
   current_.rows.insert(current_.rows.end(), source.rows.begin() + from.rows_begin,
                        source.rows.begin() + from.rows_begin + from.rows_count);
@@ -442,21 +459,32 @@ std::uint32_t HunkRefinementCache::CopyFrom(const Arena& source, std::uint32_t e
 std::uint32_t HunkRefinementCache::Append(std::uint64_t hash,
                                           std::span<const std::string_view> left,
                                           std::span<const std::string_view> right,
+                                          const DiffLexState& left_entry,
+                                          const DiffLexState& right_entry,
                                           const HunkRefinement& refinement) {
   Entry entry;
   entry.hash = hash;
   entry.text_begin = static_cast<std::uint32_t>(current_.text.size());
+  entry.left_kind = left_entry.kind;
+  entry.right_kind = right_entry.kind;
+  entry.left_index = left_entry.index;
+  entry.right_index = right_entry.index;
+  entry.left_delimiter = static_cast<std::uint16_t>(left_entry.delimiter.size());
+  entry.right_delimiter = static_cast<std::uint16_t>(right_entry.delimiter.size());
+  current_.text.append(left_entry.delimiter);
+  current_.text.append(right_entry.delimiter);
+  const std::size_t lines_begin = current_.text.size();
   for (const std::string_view line : left) {
     current_.text.append(line);
     current_.text.push_back('\n');
   }
-  entry.left_bytes = static_cast<std::uint32_t>(current_.text.size() - entry.text_begin);
+  entry.left_bytes = static_cast<std::uint32_t>(current_.text.size() - lines_begin);
   for (const std::string_view line : right) {
     current_.text.append(line);
     current_.text.push_back('\n');
   }
   entry.right_bytes =
-      static_cast<std::uint32_t>(current_.text.size() - entry.text_begin - entry.left_bytes);
+      static_cast<std::uint32_t>(current_.text.size() - lines_begin - entry.left_bytes);
   entry.rows_begin = static_cast<std::uint32_t>(current_.rows.size());
   entry.rows_count = static_cast<std::uint32_t>(refinement.rows.size());
   current_.rows.insert(current_.rows.end(), refinement.rows.begin(), refinement.rows.end());
@@ -483,12 +511,15 @@ std::uint32_t HunkRefinementCache::Append(std::uint64_t hash,
 
 HunkRefinementView HunkRefinementCache::Refine(std::span<const std::string_view> left_lines,
                                                std::span<const std::string_view> right_lines,
-                                               HunkRefinementStats* stats) {
-  const std::uint64_t hash =
-      HashSide(HashSide(util::kFnv1aOffsetBasis, left_lines), right_lines);
-  std::uint32_t entry = current_.Find(hash, left_lines, right_lines);
+                                               HunkRefinementStats* stats,
+                                               const DiffLexState& left_entry,
+                                               const DiffLexState& right_entry) {
+  const std::uint64_t hash = HashState(
+      HashState(HashSide(HashSide(util::kFnv1aOffsetBasis, left_lines), right_lines), left_entry),
+      right_entry);
+  std::uint32_t entry = current_.Find(hash, left_lines, right_lines, left_entry, right_entry);
   if (entry == kNoHunkLine && previous_.syntax == current_.syntax) {
-    if (const std::uint32_t old = previous_.Find(hash, left_lines, right_lines);
+    if (const std::uint32_t old = previous_.Find(hash, left_lines, right_lines, left_entry, right_entry);
         old != kNoHunkLine) {
       entry = CopyFrom(previous_, old);
     }
@@ -499,8 +530,8 @@ HunkRefinementView HunkRefinementCache::Refine(std::span<const std::string_view>
     }
     return current_.View(entry);
   }
-  RefineHunk(left_lines, right_lines, *current_.syntax, scratch_, stats);
-  return current_.View(Append(hash, left_lines, right_lines, scratch_));
+  RefineHunk(left_lines, right_lines, *current_.syntax, scratch_, stats, left_entry, right_entry);
+  return current_.View(Append(hash, left_lines, right_lines, left_entry, right_entry, scratch_));
 }
 
 void HunkRefinementCache::EndBuild() {
@@ -523,7 +554,9 @@ void RefineHunk(std::span<const std::string_view> left_lines,
                 std::span<const std::string_view> right_lines,
                 const DiffSyntax& syntax,
                 HunkRefinement& out,
-                HunkRefinementStats* stats) {
+                HunkRefinementStats* stats,
+                const DiffLexState& left_entry,
+                const DiffLexState& right_entry) {
   ResetSpans(out.left_spans, left_lines.size());
   ResetSpans(out.right_spans, right_lines.size());
 
@@ -541,8 +574,8 @@ void RefineHunk(std::span<const std::string_view> left_lines,
 
   RefineScratch& scratch = Scratch();
   scratch.interner.Reset();
-  BuildDiffSyntaxTree(left_lines, syntax, scratch.interner, scratch.lhs);
-  BuildDiffSyntaxTree(right_lines, syntax, scratch.interner, scratch.rhs);
+  BuildDiffSyntaxTree(left_lines, syntax, scratch.interner, scratch.lhs, left_entry);
+  BuildDiffSyntaxTree(right_lines, syntax, scratch.interner, scratch.rhs, right_entry);
   StructuralDiffStats diff_stats;
   MatchSyntaxTrees(scratch.lhs, scratch.rhs, kStructuralDiffVertexBudget, scratch.match,
                    &diff_stats);
