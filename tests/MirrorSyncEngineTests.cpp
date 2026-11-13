@@ -586,6 +586,32 @@ void TestMirrorANameTheHostCannotTakeIsRefused() {
          "nothing was made in the mirror");
 }
 
+// The QA monkey's remote job (soak 4399652f0e70): a save under a path that goes
+// THROUGH a link to a folder in the mirror -- `d/loop -> .`, saved as
+// `d/loop/new.txt` -- lands in the folder the link names (`d/new.txt`), but the
+// gate journaled the path as typed, link and all. The host refuses a path through
+// a link, and the file stayed only in the mirror. The gate journals the file's
+// real place in the tree.
+void TestMirrorASaveThroughAFolderLinkPushesItsRealPath() {
+  MirrorSession session;
+  WriteFile(session.host / "d/a.txt", "a\n");
+  std::filesystem::create_directory_symlink(".", session.host / "d/loop");
+  session.Connect();
+  session.Sync();
+  Expect(std::filesystem::is_symlink(session.Tree("d/loop")), "the folder link is a link in the mirror");
+  remote::MirrorWriteGate gate(*session.store, *session.engine);
+  Expect(gate.WriteText(session.Tree("d/loop/new.txt"), "through the folder link\n").ok,
+         "the save through the folder link lands");
+  session.engine->Flush();
+  Expect(std::filesystem::exists(session.host / "d/new.txt") &&
+             ReadFile(session.host / "d/new.txt") == "through the folder link\n",
+         "the host gets the file where it really is");
+  const auto status = session.engine->status();
+  Expect(status.dirty == 0 && status.blocked == 0 && status.error.empty(),
+         "nothing is unsent or blocked: dirty=" + std::to_string(status.dirty) +
+             " blocked=" + std::to_string(status.blocked) + " " + status.error);
+}
+
 // The QA monkey's remote job (soak 517966306bfc, 14a5c9606a3a): a save through a
 // link in the mirror -- an in-root link is recreated as a link -- writes the file
 // the link names (the atomic save resolves the chain, so the link survives), but
@@ -1561,6 +1587,8 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/PulledFilesAreTrustedAtOnce", TestMirrorPulledFilesAreTrustedAtOnce);
   AddTest(tests, "MirrorSyncEngine/ResolvesConflictsTheUsersWay", TestMirrorResolvesConflictsTheUsersWay);
   AddTest(tests, "MirrorSyncEngine/ANameTheHostCannotTakeIsRefused", TestMirrorANameTheHostCannotTakeIsRefused);
+  AddTest(tests, "MirrorSyncEngine/ASaveThroughAFolderLinkPushesItsRealPath",
+          TestMirrorASaveThroughAFolderLinkPushesItsRealPath);
   AddTest(tests, "MirrorSyncEngine/ASaveThroughALinkPushesTheFileItNames",
           TestMirrorASaveThroughALinkPushesTheFileItNames);
   AddTest(tests, "MirrorSyncEngine/ASaveTheHostRefusesIsBlockedNotUnsent",

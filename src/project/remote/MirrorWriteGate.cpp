@@ -11,6 +11,29 @@
 
 namespace microide::project::remote {
 
+namespace {
+
+// `path`'s real place under `tree`, every link on the way resolved -- the final
+// component's chain (util::ResolveSymlinkTarget, as the atomic save resolves it)
+// and any folder link before it (weakly_canonical) -- as a tree-relative path;
+// nullopt when it is outside the tree.
+std::optional<std::string> RealTreeRelative(const std::filesystem::path& tree, const std::filesystem::path& path) {
+  std::error_code path_error;
+  std::error_code tree_error;
+  const std::filesystem::path real = std::filesystem::weakly_canonical(util::ResolveSymlinkTarget(path), path_error);
+  const std::filesystem::path real_tree = std::filesystem::weakly_canonical(tree, tree_error);
+  if (path_error || tree_error) {
+    return std::nullopt;
+  }
+  std::string text = real.lexically_relative(real_tree).generic_string();
+  if (text.empty() || text == "." || !IsSafeRelativePath(text)) {
+    return std::nullopt;
+  }
+  return text;
+}
+
+}  // namespace
+
 std::optional<std::string> MirrorWriteGate::MirrorRelative(const std::filesystem::path& path) const {
   const std::filesystem::path relative = path.lexically_normal().lexically_relative(store_.tree());
   std::string text = relative.generic_string();
@@ -48,9 +71,11 @@ FileWriteGate::Result MirrorWriteGate::WriteText(const std::filesystem::path& pa
   // (the atomic write resolves the chain the same way, so the link survives), and
   // that path is the one that changed. Journaling the link's own path pushed the
   // link path, which the host refuses -- a link is there -- and never sent the
-  // file that changed (the QA monkey's remote job: soak 517966306bfc). A link
-  // out of the tree names a file no host path is: it is written and not synced.
-  const std::optional<std::string> written = MirrorRelative(util::ResolveSymlinkTarget(path));
+  // file that changed (the QA monkey's remote job: soak 517966306bfc). The same
+  // for a folder link on the way: `d/loop/new.txt` with `d/loop -> .` is
+  // `d/new.txt`, and the host refuses a path through a link (soak 4399652f0e70).
+  // A link out of the tree names a file no host path is: written, not synced.
+  const std::optional<std::string> written = RealTreeRelative(store_.tree(), path);
   Result result;
   {
     std::lock_guard path_lock(store_.PathLock(written.value_or(*relative)));
