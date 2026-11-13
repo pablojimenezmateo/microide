@@ -2399,6 +2399,49 @@ void TestTogglingTheMergeBasePaneKeepsTheToolbarAndEveryFrameFresh() {
   fixture.ExpectFresh(fixture.Click(*toggle_after), "Toggle Base (hidden)");
 }
 
+// Soak 439b6a49e946 (deterministic; minimized to 242 actions): with a menu open,
+// the pointer went to the merge toolbar's Toggle Base and clicked, closing the
+// menu, then went straight to the status bar's line ending -- and the button kept
+// its hover highlight. Its hover was remembered from the merge coordinator's own
+// motion, which the menu had taken, so leaving it repainted nothing.
+void TestAMergeToolbarButtonLosesItsHoverWhenThePointerLeaves() {
+  // The soak's window: 1440x600 at ui.scale 1.1.
+  FlowFixture fixture("notes.txt", "notes\n", 1440, 600);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting ui.scale 1.1"), "a fractional ui scale");
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  WriteFile(fixture.root / "base.txt", "zero\none\ntwo\n");
+  WriteFile(fixture.root / "incoming.txt", "zero\none incoming\ntwo\n");
+  WriteFile(fixture.root / "current.txt", "zero\none current\ntwo\n");
+  WriteFile(fixture.root / "result.txt", "zero\n<<<<<<< HEAD\none current\n=======\none incoming\n>>>>>>> in\ntwo\n");
+  Expect(TestAccess::OpenMergeEditor(fixture.shell, fixture.root / "base.txt", fixture.root / "incoming.txt",
+                                     fixture.root / "current.txt", fixture.root / "result.txt"),
+         "the merge editor opens");
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the merge editor");
+  const auto toggle = fixture.ElementRect("button:merge/Toggle Base");
+  Expect(toggle.has_value(), "the toolbar shows Toggle Base");
+  if (!toggle.has_value()) {
+    return;
+  }
+  // A menu open: the pointer's way onto Toggle Base is the menu's motion, and the
+  // click there closes the menu.
+  const auto menu = fixture.ElementRect("menu:Remote");
+  Expect(menu.has_value(), "the menu bar shows Remote");
+  if (!menu.has_value()) {
+    return;
+  }
+  fixture.ExpectFresh(fixture.Click(*menu), "opening the Remote menu");
+  fixture.ExpectFresh(fixture.Click(*toggle), "a click on Toggle Base that closes the menu");
+  // The pointer goes straight to a status-bar item whose tooltip shows at once.
+  const auto line_ending = fixture.ElementRect("status:line-ending");
+  Expect(line_ending.has_value(), "the status bar shows the line ending");
+  if (!line_ending.has_value()) {
+    return;
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(line_ending->x + line_ending->w / 2.0f,
+                                                                      line_ending->y + line_ending->h / 2.0f)}),
+                      "the pointer leaving Toggle Base for the line ending's tooltip");
+}
+
 // Soak ee7ad7b12a7e: the three merge panes scroll together from one shared row,
 // but a caret move in the result pane damaged the result pane alone. With the
 // panes wheeled away from the caret, Down scrolled the caret back into view --
@@ -5595,6 +5638,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TheDebugToolbarCoversNoOtherControl", TestTheDebugToolbarCoversNoOtherControl);
   AddTest(tests, "QaFlowRegression/ACodeLensStaysInsideItsPane", TestACodeLensStaysInsideItsPane);
   AddTest(tests, "QaFlowRegression/TheMergeEditorsColumnsPaintInsideThemselves", TestTheMergeEditorsColumnsPaintInsideThemselves);
+  AddTest(tests, "QaFlowRegression/AMergeToolbarButtonLosesItsHoverWhenThePointerLeaves",
+          TestAMergeToolbarButtonLosesItsHoverWhenThePointerLeaves);
   AddTest(tests, "QaFlowRegression/HelpAboutKeepsALongCommandInsideTheCard", TestHelpAboutKeepsALongCommandInsideTheCard);
   AddTest(tests, "QaFlowRegression/ASettingsRowValueClickRepaintsTheRows", TestASettingsRowValueClickRepaintsTheRows);
   AddTest(tests, "QaFlowRegression/ExceptionFiltersStayListedAfterAStop", TestExceptionFiltersStayListedAfterAStop);

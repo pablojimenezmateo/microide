@@ -444,45 +444,11 @@ bool MergeMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
         static_cast<float>(event.motion.y));
   }
 
-  // The toolbar buttons: which one the pointer is over, repainting the one it
-  // left and the one it reached.
-  std::optional<SDL_FRect> next_button;
-  if (Contains(surface, event.motion.x, event.motion.y)) {
-    const auto surface_layout =
-        operations_.compute_merge_surface_layout(surface, *merge_tab);
-    const auto toolbar = operations_.compute_merge_toolbar_layout(surface, surface_layout);
-    for (const SDL_FRect& rect : {toolbar.prev_rect, toolbar.next_rect, toolbar.open_rect, toolbar.save_rect}) {
-      if (Contains(rect, event.motion.x, event.motion.y)) {
-        next_button = rect;
-      }
-    }
-    if (!next_button.has_value() && operations_.merge_secondary_toolbar_button_rect) {
-      for (const std::string_view label : {"Unresolved", "Toggle Base", "Mark Resolved"}) {
-        const auto rect =
-            operations_.merge_secondary_toolbar_button_rect(surface, surface_layout, label);
-        if (rect.has_value() && Contains(*rect, event.motion.x, event.motion.y)) {
-          next_button = rect;
-        }
-      }
-    }
-  }
-  const auto same_rect = [](const std::optional<SDL_FRect>& a, const std::optional<SDL_FRect>& b) {
-    return a.has_value() == b.has_value() &&
-           (!a.has_value() || (a->x == b->x && a->y == b->y && a->w == b->w && a->h == b->h));
-  };
-  const bool button_changed = !same_rect(merge_tab->hovered_toolbar_button, next_button);
-  if (button_changed && operations_.request_redraw_rect) {
-    for (const std::optional<SDL_FRect>& rect : {merge_tab->hovered_toolbar_button, next_button}) {
-      if (rect.has_value()) {
-        operations_.request_redraw_rect(*rect);
-      }
-    }
-  }
-  merge_tab->hovered_toolbar_button = next_button;
-
+  // The toolbar buttons' hover is the shell's HoveredInteractiveRect probe, which
+  // compares the pointer's old and new positions rather than remembering one.
   merge_tab->hover_state = next_hover;
   if (previous_hover == merge_tab->hover_state) {
-    return button_changed;
+    return false;
   }
   if (previous_hover.has_value()) {
     operations_.request_merge_conflict_redraw(previous_hover->conflict_index);
@@ -671,7 +637,6 @@ MergeMouseCoordinator& WorkspaceShell::MakeMergeMouseCoordinator() {
                      std::string_view label) {
                 return ComputeMergeSecondaryToolbarButtonRect(rect, surface, label);
               },
-          .request_redraw_rect = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); },
       });
   return *glue_->merge_mouse_coordinator;
 }

@@ -1232,6 +1232,40 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
     }
   }
 
+  // The merge editor's toolbar buttons light up under the pointer. Their hover
+  // was the merge coordinator's to remember, from its own motion: a pointer that
+  // reached Toggle Base while a menu took the motion was never recorded, the click
+  // that closed the menu drew it hovered, and the move off it repainted nothing
+  // (soak 439b6a49e946).
+  // Every pane that shows a merge paints its toolbar, focused or not, in the
+  // pane's own surface (as RenderActiveWorkspaceSurface lays them out).
+  {
+    const ProjectWorkspaceState& state = context_.current_project_state;
+    const EditorGroupRectsLayout group_rects = ComputeEditorGroupRectsForState(layout);
+    for (std::size_t gi = 0; gi < group_rects.groups.size() && gi < state.editor_groups.size(); ++gi) {
+      const SDL_FRect& surface = group_rects.groups[gi].editor_surface;
+      const EditorGroup& group = state.editor_groups[gi];
+      if (!Contains(surface, x, y) || !group.has_active_tab() ||
+          group.active_tab().kind != TabEntry::Kind::Merge || !group.active_tab().merge.has_value()) {
+        continue;
+      }
+      const MergeTabState& merge_tab = *group.active_tab().merge;
+      const MergeSurfaceLayout merge_surface = ComputeMergeSurfaceLayout(surface, merge_tab);
+      const MergeToolbarLayout toolbar = ComputeMergeToolbarLayout(surface, merge_surface);
+      for (const SDL_FRect& rect : {toolbar.prev_rect, toolbar.next_rect, toolbar.open_rect, toolbar.save_rect}) {
+        if (Contains(rect, x, y)) {
+          return rect;
+        }
+      }
+      for (const std::string_view label : {"Unresolved", "Toggle Base", "Mark Resolved"}) {
+        if (const auto rect = ComputeMergeSecondaryToolbarButtonRect(surface, merge_surface, label);
+            rect.has_value() && Contains(*rect, x, y)) {
+          return rect;
+        }
+      }
+    }
+  }
+
   // Sidebar: the view tabs and each view's header buttons, then its list rows.
   if (context_.current_project_state.sidebar.visible && Contains(layout.sidebar, x, y)) {
     if (!MenuSurfaceCapturingMouse()) {
