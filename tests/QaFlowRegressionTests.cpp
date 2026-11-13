@@ -714,6 +714,7 @@ void TestADiffPaintsInsideItsPane() {
   const std::filesystem::path right = fixture.root / "right.txt";
   WriteFile(right, "alpha\nBETA\ngamma\n");
   Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting editor.font_size 32"), "a large font");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting editor.wrap word"), "word wrap");
   TestAccess::ShowOutputChannelWithLines(fixture.shell, "qa.panel", 60);
   TestAccess::SetBottomPanelHeight(fixture.shell, static_cast<float>(FlowFixture::kHeight) - 200.0f);
   TestAccess::NoteLayoutInputsChanged(fixture.shell);
@@ -4178,6 +4179,50 @@ void TestTheDiffsOwnVerbsAreCommands() {
          "diff-next-file outside a review should say so, said \"" + feedback() + "\"");
 }
 
+// Soak e97cacbc359f (deterministic; minimized to 1267 actions): at a large editor
+// font with word wrap on, the merge editor's result column drew wrapped lines
+// past its edge into the local column: the editor view lays out at least 8
+// columns, and the merge panes painted under no clip of their own.
+// Typing there repainted the result column alone, and the old overhang stayed. Each
+// column paints inside itself, as an editor pane does.
+void TestTheMergeEditorsColumnsPaintInsideThemselves() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  // The first line is the same on every side, so typing in it is no conflict
+  // change: only the result column is damaged.
+  const std::string common = "#include <scheduler_with_a_long_name.hpp>\n#include <algorithm>\nint a;\nint b;\n";
+  FlowFixture fixture("base.txt", common + "two\nthree\n", 1154, 900);
+  const std::filesystem::path incoming = fixture.root / "incoming.txt";
+  const std::filesystem::path current = fixture.root / "current.txt";
+  WriteFile(incoming, common + "two from incoming\nthree\n");
+  WriteFile(current, common + "two from current\nthree\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "merge " + fixture.file.string() + " " +
+                                                           incoming.string() + " " + current.string()),
+         "merge should open the merge editor");
+  TestAccess::SetFocusEditor(fixture.shell);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the merge editor");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting editor.font_size 32"), "a large font");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting editor.wrap word"), "word wrap");
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the merge editor at a large font");
+  // A window narrow enough that the result column holds fewer than the 8 columns
+  // the editor view lays out at least (EditorViewRenderer::ComputeMetrics).
+  for (const int width : {800}) {
+    fixture.width = width;
+    TestAccess::SetWindowSize(fixture.shell, width, 900);
+    TestAccess::NoteLayoutInputsChanged(fixture.shell);
+    fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the merge editor resized");
+  }
+  // The tab already dirty (the soak's was), so the edit below damages only the
+  // result column rather than the tab strip and the whole surface with it.
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent(";")}), "a first edit");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_HOME)}), "the caret to the line's start");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("int ")}),
+                      "typing in the result column, whose first line runs past its edge");
+}
+
 // The merge editor's side panes are read-only views with no selection of their
 // own; copying a conflict's side was implemented (CopyMergeSideSnippet) and
 // reachable from nothing. merge-copy-remote / merge-copy-local copy the
@@ -5524,6 +5569,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/DebugToolbarDoesNotHoverUnderAModal", TestDebugToolbarDoesNotHoverUnderAModal);
   AddTest(tests, "QaFlowRegression/TheDebugToolbarCoversNoOtherControl", TestTheDebugToolbarCoversNoOtherControl);
   AddTest(tests, "QaFlowRegression/ACodeLensStaysInsideItsPane", TestACodeLensStaysInsideItsPane);
+  AddTest(tests, "QaFlowRegression/TheMergeEditorsColumnsPaintInsideThemselves", TestTheMergeEditorsColumnsPaintInsideThemselves);
   AddTest(tests, "QaFlowRegression/HelpAboutKeepsALongCommandInsideTheCard", TestHelpAboutKeepsALongCommandInsideTheCard);
   AddTest(tests, "QaFlowRegression/ASettingsRowValueClickRepaintsTheRows", TestASettingsRowValueClickRepaintsTheRows);
   AddTest(tests, "QaFlowRegression/ExceptionFiltersStayListedAfterAStop", TestExceptionFiltersStayListedAfterAStop);

@@ -162,13 +162,16 @@ struct PreparedFrameState {
   // rows the edit damages -- typing into a compare tab's long line left the
   // horizontal thumb at its old width (QA monkey, seed 17). As painted_horizontal_bars
   // does for an editor pane: a bar shown or hidden repaints the surface, a moved one
-  // its strip.
+  // its strip. The lane's markers (a hash) likewise: a merge result edit that
+  // wrapped a line onto one more row moved the conflicts below it, and the lane
+  // kept their old markers (soak e97cacbc359f).
   struct DiffSurfaceBars {
     const void* tab = nullptr;
     std::optional<SDL_FRect> horizontal_track;
     SDL_FRect horizontal_thumb{};
     std::optional<SDL_FRect> vertical_lane;  // the overview lane, track included
     SDL_FRect vertical_thumb{};
+    std::uint64_t vertical_markers = 0;
   };
   DiffSurfaceBars painted_diff_surface_bars{};
   // A compare or merge surface whose syntax tokenizer is still behind its visible

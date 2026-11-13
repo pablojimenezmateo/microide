@@ -14,10 +14,12 @@
 #include "editor/RowDecorationBuilder.h"
 #include "editor/SyntaxHighlighter.h"
 #include "editor/TextLayout.h"
+#include "render/ScopedRenderClip.h"
 #include "render/Theme.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/render/CompareMergeRender.h"
 #include "workspace/git/MergeResolverContext.h"
+#include "workspace/render/DiffOverviewMarkers.h"
 #include "workspace/render/OverviewRuler.h"
 #include "workspace/MergeWrapRows.h"
 #include "workspace/SettingFlags.h"
@@ -52,6 +54,8 @@ SDL_Color MergeMarkerColor(const render::Theme& theme,
       return theme.diff_deleted;
   }
 }
+
+}  // namespace
 
 // Rebuilds the cached overview markers for `merge_tab` when the model or the lane
 // geometry changed. One marker per conflict, pre-mapped to `inner_lane`.
@@ -94,8 +98,6 @@ void EnsureMergeOverviewMarkers(const render::Theme& theme,
   merge_tab.scrollbar_marker_cache_theme_token = theme_token;
   merge_tab.scrollbar_marker_cache_valid = true;
 }
-
-}  // namespace
 
 std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildMergeTextInputVisual(
     const SDL_FRect& editor_surface) const {
@@ -489,6 +491,12 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   const bool render_whitespace_enabled =
       merge_setting_enabled("editor.view.render_whitespace", false);
   const bool line_numbers_enabled = merge_setting_enabled("editor.line_numbers", true);
+  {
+  // The result pane paints inside itself, as an editor pane does: the editor view
+  // lays out at least 8 columns, so in a column narrower than that (a large font,
+  // word wrap) its lines ran on into the Local column -- painted in a full frame
+  // and left standing by a partial one of the result alone (soak e97cacbc359f).
+  const render::ScopedRenderClip result_clip(renderer, interaction.result.rect);
   editor_view_renderer_.Render(renderer, editor_text_renderer_, theme_, merge_tab->result_viewport,
                                interaction.result.rect,
                                draw_caret, "", std::nullopt,
@@ -503,6 +511,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                                /*welcome_view=*/nullptr,
                                /*plugin_decorations=*/nullptr,
                                line_numbers_enabled);
+  }
   merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
   merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
 

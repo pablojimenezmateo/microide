@@ -17,6 +17,7 @@
 #include "util/Fnv1a.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
+#include "workspace/render/DiffOverviewMarkers.h"
 #include "workspace/render/OverviewRuler.h"
 #include "workspace/PluginSurfacePreview.h"
 #include "workspace/render/RenderViewModelBuilder.h"
@@ -24,6 +25,7 @@
 #include "workspace/services/TerminalPanelService.h"
 #include "workspace/WorkspaceTextSearch.h"
 #include "workspace/git/MergeResultValidation.h"
+#include "workspace/MergeWrapRows.h"
 #include "render/ScopedRenderClip.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceUiText.h"
@@ -1086,7 +1088,9 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   }
   {
     PreparedFrameState::DiffSurfaceBars bars;
-    const auto take = [&](const void* tab, const ScrollSurfaceLayout& scroll) {
+    // The lane's markers are built here, against the lane this frame paints, so
+    // paint only draws them and a change in them is damage this frame knows of.
+    const auto take = [&](const void* tab, const ScrollSurfaceLayout& scroll, const auto& build_markers) {
       bars.tab = tab;
       if (scroll.horizontal_scrollbar.has_value()) {
         bars.horizontal_track = scroll.horizontal_scrollbar->track;
@@ -1095,14 +1099,30 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       if (scroll.vertical_scrollbar.has_value()) {
         bars.vertical_lane = overview::LaneRect(scroll.vertical_scrollbar->track, layout.editor_surface.x);
         bars.vertical_thumb = scroll.vertical_scrollbar->thumb;
+        const std::vector<overview::Marker>& markers = build_markers(overview::LaneInnerRect(*bars.vertical_lane));
+        std::uint64_t hash = util::kFnv1aOffsetBasis;
+        for (const overview::Marker& marker : markers) {
+          hash = util::Fnv1aBytes(hash, std::string_view(reinterpret_cast<const char*>(&marker.rect), sizeof marker.rect));
+          hash = util::Fnv1aBytes(hash, std::string_view(reinterpret_cast<const char*>(&marker.color), sizeof marker.color));
+        }
+        bars.vertical_markers = hash;
       }
     };
-    if (const CompareTabState* compare = ActiveCompareTab(); compare != nullptr) {
+    const std::uint64_t theme_token = overview::ThemeMarkerToken(theme_);
+    if (CompareTabState* compare = ActiveCompareTab(); compare != nullptr) {
       const CompareSurfaceLayout surface = ComputeCompareSurfaceLayout(layout.editor_surface, *compare);
-      take(compare, ComputeCompareScrollLayout(layout.editor_surface, surface, *compare));
-    } else if (const MergeTabState* merge = ActiveMergeTab(); merge != nullptr) {
+      take(compare, ComputeCompareScrollLayout(layout.editor_surface, surface, *compare),
+           [&](const SDL_FRect& inner_lane) -> const std::vector<overview::Marker>& {
+             EnsureCompareOverviewMarkers(theme_, inner_lane, theme_token, *compare);
+             return compare->scrollbar_marker_cache;
+           });
+    } else if (MergeTabState* merge = ActiveMergeTab(); merge != nullptr) {
       const MergeSurfaceLayout surface = ComputeMergeSurfaceLayout(layout.editor_surface, *merge);
-      take(merge, ComputeMergeScrollLayout(layout.editor_surface, surface, *merge));
+      take(merge, ComputeMergeScrollLayout(layout.editor_surface, surface, *merge),
+           [&](const SDL_FRect& inner_lane) -> const std::vector<overview::Marker>& {
+             EnsureMergeOverviewMarkers(theme_, inner_lane, MergeTotalVisualRowCount(*merge), theme_token, *merge);
+             return merge->scrollbar_marker_cache;
+           });
     }
     PreparedFrameState::DiffSurfaceBars& painted = frame_state_.painted_diff_surface_bars;
     // Another tab in front repaints the surface on its own (a tab switch).
@@ -1122,6 +1142,11 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       diff_bar(painted.horizontal_track, painted.horizontal_thumb, bars.horizontal_track,
                bars.horizontal_thumb);
       diff_bar(painted.vertical_lane, painted.vertical_thumb, bars.vertical_lane, bars.vertical_thumb);
+      if (bars.vertical_lane.has_value() && painted.vertical_lane.has_value() &&
+          same_rect(*bars.vertical_lane, *painted.vertical_lane) &&
+          bars.vertical_markers != painted.vertical_markers) {
+        RequestRedrawRect(*bars.vertical_lane);
+      }
     }
     painted = bars;
   }
@@ -1799,11 +1824,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
   // the editor alone (soak 498dc546c6a9).
   std::optional<render::ScopedRenderClip> surface_clip;
   if (active_compare_tab != nullptr || active_merge_tab != nullptr) {
-    const SDL_FRect& area = layout.editor_surface;
-    surface_clip.emplace(renderer, SDL_Rect{static_cast<int>(std::floor(area.x)),
-                                            static_cast<int>(std::floor(area.y)),
-                                            static_cast<int>(std::ceil(area.w)),
-                                            static_cast<int>(std::ceil(area.h))});
+    surface_clip.emplace(renderer, layout.editor_surface);
   }
   if (active_compare_tab != nullptr) {
     const bool draw_compare_caret =
@@ -1935,9 +1956,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       // edge overhung onto the neighbouring border in a full frame and not in a
       // partial one of the pane (QaFlowRegression/
       // EveryDividerDraggedToItsExtremesKeepsEveryFrameFresh).
-      const render::ScopedRenderClip pane_clip(
-          renderer, SDL_Rect{static_cast<int>(std::floor(pane.rect.x)), static_cast<int>(std::floor(pane.rect.y)),
-                             static_cast<int>(std::ceil(pane.rect.w)), static_cast<int>(std::ceil(pane.rect.h))});
+      const render::ScopedRenderClip pane_clip(renderer, pane.rect);
 
       // An empty group renders the welcome home surface (recents + shortcuts).
       // Sized at frame prep (pane_metrics): paint reads the geometry everything

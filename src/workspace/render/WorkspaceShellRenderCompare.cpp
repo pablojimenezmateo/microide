@@ -22,6 +22,7 @@
 #include "workspace/SettingFlags.h"
 #include "workspace/render/CompareMergeRender.h"
 #include "workspace/git/CompareTabReview.h"
+#include "workspace/render/DiffOverviewMarkers.h"
 #include "workspace/render/OverviewRuler.h"
 #include "workspace/render/CompareVisibleLayoutCache.h"
 #include "workspace/WorkspaceLayout.h"
@@ -95,6 +96,8 @@ SDL_Color CompareMarkerColor(const render::Theme& theme, compare::CompareRowKind
   }
 }
 
+}  // namespace
+
 // Rebuilds the cached overview markers for `compare_tab` when the presentation or the
 // lane geometry changed. Markers are pre-mapped to `inner_lane` so the render path is a
 // plain draw.
@@ -139,8 +142,6 @@ void EnsureCompareOverviewMarkers(const render::Theme& theme,
   compare_tab.scrollbar_marker_cache_theme_token = theme_token;
   compare_tab.scrollbar_marker_cache_valid = true;
 }
-
-}  // namespace
 
 void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                                           const SDL_FRect& rect,
