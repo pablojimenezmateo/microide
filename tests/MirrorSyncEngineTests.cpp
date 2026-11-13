@@ -558,6 +558,34 @@ void TestMirrorParksConflictsAndNeverOverwritesLocalEdits() {
   Expect(session.engine->status().conflicts == 1, "and still reports it");
 }
 
+// The QA monkey's remote job (soak f3ad7063ff9a): a folder renamed in the mirror
+// to a name the host cannot be sent (one with a backslash in it) read as a move
+// out of the project -- the host DELETED the folder, and the mirror kept it under
+// the new name, never synced. Such a rename, create or save is refused before
+// anything changes on either side.
+void TestMirrorANameTheHostCannotTakeIsRefused() {
+  MirrorSession session;
+  WriteFile(session.host / "docs/a.txt", "a\n");
+  session.Connect();
+  session.Sync();
+  remote::MirrorWriteGate gate(*session.store, *session.engine);
+  using TreeOp = project::FileWriteGate::TreeOp;
+  const std::vector<TreeOp> rename = {TreeOp{.kind = TreeOp::Kind::Rename, .path = session.Tree("docs"),
+                                             .new_path = session.Tree("printf '\\033[?1049l'")}};
+  const auto renamed = gate.ApplyTreeOps(rename);
+  Expect(!renamed.ok && renamed.error_message.find("cannot be synced") != std::string::npos,
+         "the rename is refused, saying why: " + renamed.error_message);
+  const std::vector<TreeOp> create = {TreeOp{.kind = TreeOp::Kind::CreateFile, .path = session.Tree("a\\b.txt")}};
+  Expect(!gate.ApplyTreeOps(create).ok, "a new file with such a name is refused");
+  Expect(!gate.WriteText(session.Tree("c\\d.txt"), "x\n").ok, "and so is a save to one");
+  session.engine->Flush();
+  session.Sync();
+  Expect(ReadFile(session.host / "docs/a.txt") == "a\n" && ReadFile(session.Tree("docs/a.txt")) == "a\n",
+         "the folder is still there on both sides");
+  Expect(!std::filesystem::exists(session.Tree("a\\b.txt")) && !std::filesystem::exists(session.Tree("c\\d.txt")),
+         "nothing was made in the mirror");
+}
+
 // The QA monkey's remote job (soak 517966306bfc, 14a5c9606a3a): a save through a
 // link in the mirror -- an in-root link is recreated as a link -- writes the file
 // the link names (the atomic save resolves the chain, so the link survives), but
@@ -1532,6 +1560,7 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
           TestMirrorPullsAFileOverSixtyFourMegabytes);
   AddTest(tests, "MirrorSyncEngine/PulledFilesAreTrustedAtOnce", TestMirrorPulledFilesAreTrustedAtOnce);
   AddTest(tests, "MirrorSyncEngine/ResolvesConflictsTheUsersWay", TestMirrorResolvesConflictsTheUsersWay);
+  AddTest(tests, "MirrorSyncEngine/ANameTheHostCannotTakeIsRefused", TestMirrorANameTheHostCannotTakeIsRefused);
   AddTest(tests, "MirrorSyncEngine/ASaveThroughALinkPushesTheFileItNames",
           TestMirrorASaveThroughALinkPushesTheFileItNames);
   AddTest(tests, "MirrorSyncEngine/ASaveTheHostRefusesIsBlockedNotUnsent",

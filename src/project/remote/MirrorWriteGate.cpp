@@ -20,9 +20,26 @@ std::optional<std::string> MirrorWriteGate::MirrorRelative(const std::filesystem
   return text;
 }
 
+std::optional<std::string> MirrorWriteGate::UnsyncableTarget(const std::filesystem::path& path) const {
+  const std::string relative = path.lexically_normal().lexically_relative(store_.tree()).generic_string();
+  if (relative.empty() || relative == "." || relative == ".." || relative.rfind("../", 0) == 0 ||
+      IsSafeRelativePath(relative)) {
+    return std::nullopt;
+  }
+  return "\"" + path.filename().string() + "\" cannot be synced to the host (a remote project's names " +
+         "cannot hold a backslash, and each part of a name is at most 255 bytes)";
+}
+
 FileWriteGate::Result MirrorWriteGate::WriteText(const std::filesystem::path& path,
                                                  std::string_view text, Signature signature,
                                                  util::WriteTarget target) {
+  if (UnsyncableTarget(path).has_value()) {
+    // Written here, it would never reach the host: refused, as a rename to such a
+    // name is (ApplyTreeOps).
+    Result refused;
+    refused.error = std::make_error_code(std::errc::invalid_argument);
+    return refused;
+  }
   const std::optional<std::string> relative = MirrorRelative(path);
   if (!relative.has_value()) {
     return LocalFileWriteGate().WriteText(path, text, signature, target);
@@ -83,6 +100,25 @@ void ReplayCopiedTree(const MirrorWriteGate& gate, MirrorSyncEngine& engine, con
 }  // namespace
 
 FileWriteGate::TreeResult MirrorWriteGate::ApplyTreeOps(std::span<const TreeOp> ops) {
+  // A target inside the tree under a name the host cannot be sent is refused
+  // before anything is applied. A rename to one read as a move out of the
+  // project: the host deleted the folder while the mirror kept it under its new
+  // name, which never synced (the QA monkey's remote job: soak f3ad7063ff9a, a
+  // folder renamed to text with a backslash in it).
+  for (std::size_t index = 0; index < ops.size(); ++index) {
+    const TreeOp& op = ops[index];
+    const bool to_new_path = op.kind == TreeOp::Kind::Rename || op.kind == TreeOp::Kind::Copy;
+    const bool creates = op.kind == TreeOp::Kind::CreateFile || op.kind == TreeOp::Kind::CreateDirectory;
+    if (!to_new_path && !creates) {
+      continue;
+    }
+    if (std::optional<std::string> why = UnsyncableTarget(to_new_path ? op.new_path : op.path)) {
+      TreeResult refused;
+      refused.failed_index = index;
+      refused.error_message = std::move(*why);
+      return refused;
+    }
+  }
   TreeResult result = LocalFileWriteGate().ApplyTreeOps(ops);
   if (!result.ok) {
     return result;  // all or nothing: undone locally, so nothing to replay

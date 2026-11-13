@@ -34,6 +34,10 @@ class MirrorWriteGate final : public FileWriteGate {
 
   // `path` as a path relative to tree/, or nullopt when it is not under it.
   std::optional<std::string> MirrorRelative(const std::filesystem::path& path) const;
+  // `path` is inside the mirror's tree but under a name the host cannot be sent
+  // (IsSafeRelativePath: a backslash, a component too long): what it is, for the
+  // user. Nullopt for a path that can be synced, or one outside the tree.
+  std::optional<std::string> UnsyncableTarget(const std::filesystem::path& path) const;
 
  private:
   MirrorStore& store_;
