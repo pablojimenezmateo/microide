@@ -23,7 +23,7 @@ Nice=19
 IOSchedulingClass=idle
 CPUWeight=10
 # The runner keeps everything under build/soak, within MICROIDE_SOAK_DISK_GB.
-Environment=MICROIDE_SOAK_DISK_GB=25
+Environment=MICROIDE_SOAK_DISK_GB=80
 KillMode=control-group
 TimeoutStopSec=30
 

@@ -418,6 +418,26 @@ def start_check(sig: str, state: dict[str, Any]) -> Job:
     return Job(CHECK_JOB, 0, out, command, f"check/{sig}", time.time(), proc, state.get("built_sha", ""), "")
 
 
+# A check or a verification replays its finding three runs at a time
+# (minimize --runs 3 --jobs 3): three apps, three displays. Counted as one job,
+# five checks were fifteen apps in a budget of five, and the machine ran at a
+# load of 45 on 16 cores (2026-11-14) -- every job slowed, and the latency
+# oracles filed the slowness as findings.
+REPLAY_JOB_SLOTS = 3
+
+
+def slots(jobs: list["Job"]) -> int:
+    """The budget the running jobs take: a check or verification counts as the
+    runs it replays at once.
+
+    >>> class J:
+    ...     def __init__(self, t): self.type = t
+    >>> slots([J(CHECK_JOB), J(VERIFY_JOB), J(JOB_TYPES[0])])
+    7
+    """
+    return sum(REPLAY_JOB_SLOTS if job.type is CHECK_JOB or job.type is VERIFY_JOB else 1 for job in jobs)
+
+
 def start_verify(sig: str, state: dict[str, Any]) -> Job:
     out = RUNS / f"verify-{sig}"
     out.mkdir(parents=True, exist_ok=True)
@@ -1224,12 +1244,12 @@ def cmd_run(args: argparse.Namespace) -> int:
                 state["current"] = [j.cell for j in jobs]
                 save_state(state)
         pending = state.get("pending_checks", [])
-        cap = current_cap(len(jobs))
+        cap = current_cap(slots(jobs))
         if cap != last_cap:
             log(f"job budget {cap} (load {os.getloadavg()[0]:.1f}, {memory_available()[0] / 2**30:.0f} GB available, "
-                f"{len(jobs)} running)")
+                f"{len(jobs)} running, {slots(jobs)} slots)")
             last_cap = cap
-        if pending and len(jobs) < cap and busy_reason(our_cores() or CORES_PER_JOB * len(jobs), job_load.others(os.getloadavg()[0])) is None:
+        if pending and slots(jobs) + REPLAY_JOB_SLOTS <= cap and busy_reason(our_cores() or CORES_PER_JOB * slots(jobs), job_load.others(os.getloadavg()[0])) is None:
             # Checks first: a new finding's rate and minimal replay are worth more
             # than another fresh run. A check holds three displays, so it counts
             # as a job of its own.
@@ -1242,7 +1262,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             log(f"check {sig}")
             save_state(state)
         verifies = state.get("pending_verifies", [])
-        if verifies and len(jobs) < cap and busy_reason(our_cores() or CORES_PER_JOB * len(jobs), job_load.others(os.getloadavg()[0])) is None:
+        if verifies and slots(jobs) + REPLAY_JOB_SLOTS <= cap and busy_reason(our_cores() or CORES_PER_JOB * slots(jobs), job_load.others(os.getloadavg()[0])) is None:
             # A fix's verification next, as a job of its own like a check (three
             # displays): it used to run inline here and hold every start behind it.
             sig = verifies.pop(0)
@@ -1250,11 +1270,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             log(f"verify {sig}")
             state["current"] = [j.cell for j in jobs]
             save_state(state)
-        reason = busy_reason(our_cores() or CORES_PER_JOB * len(jobs), job_load.others(os.getloadavg()[0]))
+        reason = busy_reason(our_cores() or CORES_PER_JOB * slots(jobs), job_load.others(os.getloadavg()[0]))
         if reason is None:
             # One per RAMP_SECONDS: the load average needs time to show what the
             # last one costs before the budget is trusted for the next.
-            if len(jobs) < cap and (args.fixed or now - last_start >= RAMP_SECONDS):
+            if slots(jobs) < cap and (args.fixed or now - last_start >= RAMP_SECONDS):
                 job_type = choose_job(rng, state)
                 if job_type is not None:
                     job = start_job(job_type, state, rng)
