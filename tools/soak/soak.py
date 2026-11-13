@@ -841,7 +841,9 @@ def contain_breach(breach: str, jobs: list["Job"], log) -> None:
                     commit=git("rev-parse", "main"), cell="runner", detail=message)
 
 
-def busy_reason(our_cores: float) -> str | None:
+def busy_reason(our_cores: float, others: float | None = None) -> str | None:
+    """Why no job may start now, or None. `others` is the cores something other
+    than the soak uses (JobLoad.others); without it, the load average less ours."""
     if PAUSE.exists():
         return "paused (build/soak/PAUSE)"
     free = shutil.disk_usage(SOAK).free
@@ -855,8 +857,9 @@ def busy_reason(our_cores: float) -> str | None:
     # sessions on the machine was most of the day (2026-11-13).
     cores = os.cpu_count() or 4
     load = os.getloadavg()[0]
-    if max(0.0, load - our_cores) > cores * BUSY_FRACTION:
-        return f"the machine is busy (load {load:.1f})"
+    other = others if others is not None else max(0.0, load - our_cores)
+    if other > cores * BUSY_FRACTION:
+        return f"the machine is busy ({other:.1f} cores not the soak's; load {load:.1f})"
     return None
 
 
@@ -889,7 +892,11 @@ class JobLoad:
     def __init__(self) -> None:
         self._time = 0.0
         self._ticks: dict[int, int] = {}
+        self._machine: tuple[int, int] | None = None
         self.cores: float | None = None
+        # The cores the whole machine kept busy over the same window (/proc/stat),
+        # the soak's own included: what is not the soak is `busy - cores`.
+        self.busy: float | None = None
         # The resident memory of the same sessions, in bytes, as of the last scan.
         self.rss: int | None = None
 
@@ -925,13 +932,41 @@ class JobLoad:
         resident: list[int] = []
         ticks = self.session_ticks(sessions, resident)
         self.rss = resident[0] if resident else None
+        machine = self.machine_ticks()
         if self._time:
             # A session seen both times: its growth. One that ended took its time
             # with it (no negative deltas); one that started counts from its first sample.
             used = sum(max(0, ticks[s] - self._ticks[s]) for s in ticks if s in self._ticks)
             self.cores = used / os.sysconf("SC_CLK_TCK") / (now - self._time)
-        self._time, self._ticks = now, ticks
+            if machine is not None and self._machine is not None:
+                busy = machine[0] - self._machine[0]
+                total = machine[1] - self._machine[1]
+                if total > 0:
+                    self.busy = (os.cpu_count() or 1) * busy / total
+        self._time, self._ticks, self._machine = now, ticks, machine
         return self.cores
+
+    @staticmethod
+    def machine_ticks() -> tuple[int, int] | None:
+        """(busy, total) CPU ticks of the whole machine since boot, from /proc/stat's
+        `cpu` line: busy is everything but idle and iowait."""
+        try:
+            with open("/proc/stat") as handle:
+                fields = [int(f) for f in handle.readline().split()[1:9]]
+        except (OSError, ValueError):
+            return None
+        return sum(fields) - fields[3] - fields[4], sum(fields)
+
+    def others(self, fallback_load: float) -> float:
+        """The cores something other than the soak uses now: measured over the
+        same window as the soak's own when both are known. The load average,
+        which this replaces once measured, trails by a minute: the CPU of jobs
+        that had just ended was still in it and no longer in the soak's own
+        measurement, so it was booked as someone else's, the budget fell to
+        zero and a machine running two jobs idled (2026-11-13)."""
+        if self.busy is not None and self.cores is not None:
+            return max(0.0, self.busy - self.cores)
+        return max(0.0, fallback_load - (self.cores or 0.0))
 
 
 def max_jobs(cores: int) -> int:
@@ -1122,7 +1157,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     def current_cap(our_jobs: int) -> int:
         if args.fixed:
             return ceiling
-        by_cores = allowed_jobs(os.getloadavg()[0], our_cores(), our_jobs, cores, ceiling)
+        ours = our_cores()
+        # allowed_jobs takes the machine's demand and subtracts ours: hand it ours
+        # plus what others measurably use, not the trailing load average.
+        demand = (ours or 0.0) + job_load.others(os.getloadavg()[0])
+        by_cores = allowed_jobs(demand, ours, our_jobs, cores, ceiling)
         available, total = memory_available()
         return min(by_cores, memory_jobs(available, total, job_load.rss, our_jobs))
     jobs: list[Job] = []
@@ -1190,7 +1229,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             log(f"job budget {cap} (load {os.getloadavg()[0]:.1f}, {memory_available()[0] / 2**30:.0f} GB available, "
                 f"{len(jobs)} running)")
             last_cap = cap
-        if pending and len(jobs) < cap and busy_reason(our_cores() or CORES_PER_JOB * len(jobs)) is None:
+        if pending and len(jobs) < cap and busy_reason(our_cores() or CORES_PER_JOB * len(jobs), job_load.others(os.getloadavg()[0])) is None:
             # Checks first: a new finding's rate and minimal replay are worth more
             # than another fresh run. A check holds three displays, so it counts
             # as a job of its own.
@@ -1203,7 +1242,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             log(f"check {sig}")
             save_state(state)
         verifies = state.get("pending_verifies", [])
-        if verifies and len(jobs) < cap and busy_reason(our_cores() or CORES_PER_JOB * len(jobs)) is None:
+        if verifies and len(jobs) < cap and busy_reason(our_cores() or CORES_PER_JOB * len(jobs), job_load.others(os.getloadavg()[0])) is None:
             # A fix's verification next, as a job of its own like a check (three
             # displays): it used to run inline here and hold every start behind it.
             sig = verifies.pop(0)
@@ -1211,7 +1250,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             log(f"verify {sig}")
             state["current"] = [j.cell for j in jobs]
             save_state(state)
-        reason = busy_reason(our_cores() or CORES_PER_JOB * len(jobs))
+        reason = busy_reason(our_cores() or CORES_PER_JOB * len(jobs), job_load.others(os.getloadavg()[0]))
         if reason is None:
             # One per RAMP_SECONDS: the load average needs time to show what the
             # last one costs before the budget is trusted for the next.

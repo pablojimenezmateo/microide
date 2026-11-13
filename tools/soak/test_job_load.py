@@ -87,5 +87,30 @@ class BusyReasonTests(unittest.TestCase):
             self.assertIn("busy", soak.busy_reason(0.0) or "")
 
 
+class OthersTests(unittest.TestCase):
+    def test_others_are_the_machine_less_the_soak_not_the_load_average(self) -> None:
+        # Two jobs just ended: their CPU is still in the minute-long load average
+        # (11 here), and no longer in the soak's own measurement. Counted from
+        # the load average it was "someone else's" and the budget fell to zero.
+        load = soak.JobLoad()
+        load.cores, load.busy = 2.0, 3.0
+        self.assertAlmostEqual(load.others(11.0), 1.0)
+
+    def test_before_a_measurement_the_load_average_stands_in(self) -> None:
+        load = soak.JobLoad()
+        self.assertAlmostEqual(load.others(5.0), 5.0)
+
+    def test_the_machine_ticks_read_this_machine(self) -> None:
+        busy, total = soak.JobLoad.machine_ticks()
+        self.assertGreater(total, busy)
+        self.assertGreater(busy, 0)
+
+    def test_a_busy_gate_reads_the_measured_others(self) -> None:
+        cores = os.cpu_count() or 4
+        with mock.patch.object(soak.os, "getloadavg", return_value=(cores * 0.9, 0.0, 0.0)), \
+             mock.patch.object(soak, "PAUSE", Path("/nonexistent/PAUSE")):
+            self.assertIsNone(soak.busy_reason(0.0, others=0.5), "a lagging load average is not a busy machine")
+
+
 if __name__ == "__main__":
     unittest.main()
