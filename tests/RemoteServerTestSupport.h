@@ -32,10 +32,13 @@ inline bool ProcessIsAlive(pid_t pid) {
   return pid > 0 && (::kill(pid, 0) == 0 || errno == EPERM);
 }
 
-// SIGKILL every process whose command line names something under `fixture_root`
-// — the server started there (a plain socket dir or a fake host's home), and
-// anything still holding one of its paths. Linux reads /proc; elsewhere the
-// `stop` the caller already sent is all there is.
+// SIGKILL every process whose command line or environment names something under
+// `fixture_root` — the server started there (a plain socket dir or a fake host's
+// home), anything still holding one of its paths, and what a host terminal ran:
+// a program started in one names nothing of the fixture on its command line,
+// but its HOME is the fake host's (a `yes` from a terminal test ran for five
+// days at a full core after its fixture was gone). Linux reads /proc; elsewhere
+// the `stop` the caller already sent is all there is.
 //
 // Runs from destructors, against processes that exit while it reads them, so it
 // must not throw: a /proc read of a process that has just gone fails with ESRCH,
@@ -65,8 +68,13 @@ inline void KillProcessesUnder(const std::filesystem::path& fixture_root) {
     if (name.empty() || name.find_first_not_of("0123456789") != std::string::npos) {
       continue;
     }
-    if (ReadProcFile(it->path() / "cmdline").find(needle) != std::string::npos) {
-      ::kill(static_cast<pid_t>(std::atoi(name.c_str())), SIGKILL);
+    const pid_t pid = static_cast<pid_t>(std::atoi(name.c_str()));
+    if (pid == ::getpid()) {
+      continue;  // the test itself: a variable it set may name the fixture
+    }
+    if (ReadProcFile(it->path() / "cmdline").find(needle) != std::string::npos ||
+        ReadProcFile(it->path() / "environ").find(needle) != std::string::npos) {
+      ::kill(pid, SIGKILL);
     }
   }
 }

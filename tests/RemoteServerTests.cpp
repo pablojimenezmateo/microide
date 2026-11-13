@@ -223,6 +223,26 @@ int DaemonsFor(const std::filesystem::path& dir) {
   return count;
 }
 
+// A program a fake host's terminal ran names nothing of the fixture on its
+// command line -- only its environment says whose it is (HOME, the fake host's
+// home). The sweep matched command lines alone, and a terminal test's `yes` ran
+// at a full core for five days after its fixture was gone.
+void TestTheFixtureSweepEndsWhatAHostTerminalRan() {
+  ShortTempDir temp;
+  const std::filesystem::path home = temp.path() / "h";
+  std::filesystem::create_directories(home);
+  platform::AsyncSubprocess program;
+  // `env` execs the program: its command line is then `sleep 60`, nothing of the fixture.
+  Expect(program.Start({"env", "HOME=" + home.string(), "sleep", "60"}), "a program starts on the host");
+  const std::filesystem::path cmdline = "/proc/" + std::to_string(program.pid()) + "/cmdline";
+  Expect(WaitUntil([&] { return server_fixture_detail::ReadProcFile(cmdline).starts_with("sleep"); },
+                   std::chrono::seconds(5), std::chrono::milliseconds(5)),
+         "it runs, naming nothing of the fixture");
+  server_fixture_detail::KillProcessesUnder(temp.path());
+  Expect(WaitUntil([&] { return !program.IsRunning(); }, std::chrono::seconds(5), std::chrono::milliseconds(10)),
+         "the sweep ends it");
+}
+
 // Two projects reaching one fresh host at once each run `attach`, which starts a
 // daemon when none answers. Both found none, both started one, and the second's
 // bind unlinked the first's LIVE socket: two daemons, the projects split between
@@ -922,6 +942,7 @@ void RegisterRemoteServerTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteServer/ListeningPortsParseProcNetTcp", TestListeningPortsParseProcNetTcp);
   AddTest(tests, "RemoteServer/ListeningPortsParseSockDiag", TestListeningPortsParseSockDiag);
   AddTest(tests, "RemoteServer/ConcurrentStartsLeaveOneDaemon", TestConcurrentStartsLeaveOneDaemon);
+  AddTest(tests, "RemoteServer/TheFixtureSweepEndsWhatAHostTerminalRan", TestTheFixtureSweepEndsWhatAHostTerminalRan);
   AddTest(tests, "RemoteServer/ConcurrentCallersCreateTheSocketDirTogether",
           TestConcurrentCallersCreateTheSocketDirTogether);
   AddTest(tests, "RemoteServer/AProcessTableWithNothingRunningSleeps", TestAProcessTableWithNothingRunningSleeps);
