@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -64,6 +65,26 @@ class JobLoadTests(unittest.TestCase):
         load.sample({999_999_999})
         time.sleep(0.2)
         self.assertEqual(load.sample({999_999_999}), 0.0)
+
+
+class BusyReasonTests(unittest.TestCase):
+    def test_a_lane_running_does_not_stop_the_soak(self) -> None:
+        # The soak runs at the lowest priority, so a lane takes the cores first;
+        # only the load (a lane's included) keeps new jobs from starting.
+        lane = subprocess.Popen(["bash", "-c", "exec -a 'bash tools/run-checks.sh qa' sleep 30"])
+        try:
+            with mock.patch.object(soak.os, "getloadavg", return_value=(0.5, 0.5, 0.5)), \
+                 mock.patch.object(soak, "PAUSE", Path("/nonexistent/PAUSE")):
+                self.assertIsNone(soak.busy_reason(0.0))
+        finally:
+            lane.kill()
+            lane.wait()
+
+    def test_a_busy_machine_still_does(self) -> None:
+        cores = os.cpu_count() or 4
+        with mock.patch.object(soak.os, "getloadavg", return_value=(cores * 0.9, 0.0, 0.0)), \
+             mock.patch.object(soak, "PAUSE", Path("/nonexistent/PAUSE")):
+            self.assertIn("busy", soak.busy_reason(0.0) or "")
 
 
 if __name__ == "__main__":

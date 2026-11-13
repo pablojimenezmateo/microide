@@ -814,8 +814,12 @@ def busy_reason(our_cores: float) -> str | None:
     free = shutil.disk_usage(SOAK).free
     if free < MIN_FREE_BYTES:
         return f"only {free / 1e9:.0f} GB free on the disk (MICROIDE_SOAK_MIN_FREE_GB)"
-    if subprocess.run(["pgrep", "-f", "tools/run-checks.sh"], capture_output=True).returncode == 0:
-        return "a run-checks lane is running"
+    # A run-checks lane is not a reason to stop: every soak process runs at nice
+    # 19, idle I/O and a cgroup CPU weight of 10 (microide-soak.service), so a
+    # lane takes the cores it wants first, and the load below -- a lane's load
+    # included -- is what keeps new jobs from starting on a busy machine. The
+    # runner used to stand idle for every lane anyone ran, which with several
+    # sessions on the machine was most of the day (2026-11-13).
     cores = os.cpu_count() or 4
     load = os.getloadavg()[0]
     if max(0.0, load - our_cores) > cores * BUSY_FRACTION:

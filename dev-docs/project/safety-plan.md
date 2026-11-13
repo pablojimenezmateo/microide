@@ -69,7 +69,7 @@ ready to fix.
 - **A good neighbour.**
   - Everything runs under `nice -n 19` and `ionice -c3`, with a job cap (default: half the
     cores) and a pause file (`build/soak/PAUSE`).
-  - It backs off on your own load and while a `run-checks` lane holds its lock.
+  - It backs off on your own load -- a `run-checks` lane's included -- and runs at the lowest CPU and I/O priority, so a lane takes the cores first.
   - Output stays in `build/soak/` (not the `/tmp` tmpfs) within a disk budget
     (`MICROIDE_SOAK_DISK_GB`, 25). A verified finding drops its evidence and keeps its
     record and replays. The corpus holds only prefixes a run can start from
