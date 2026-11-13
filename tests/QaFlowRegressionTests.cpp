@@ -5069,6 +5069,61 @@ void TestMergeToolbarHoverRepaintsTheButton() {
   }
 }
 
+// Soak 38f44bf79ca8 (deterministic 67%; minimized to 607 actions): a panel tab
+// dropped well along the strip glides home, and its neighbours slide, for a few
+// frames after the release. Paint lit the tab whose SLID rect held the pointer,
+// while the hover probe that repaints a pointer's leave knows each tab's resting
+// rect: the pointer left for the menu bar mid-slide and the lit tab stayed lit.
+void TestLeavingAPanelTabMidSlideLeavesNoHover() {
+  FlowFixture fixture("notes.txt", "notes\n");
+  for (int i = 0; i < 4; ++i) {
+    TestAccess::OpenTerminalViaService(fixture.shell);
+  }
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "four shell tabs");
+  std::vector<SDL_FRect> tabs;
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    if (entry["kind"].AsString() == "panel-tab" &&
+        entry["name"].AsString().rfind("panel-tab:bash", 0) == 0) {
+      const auto& r = entry["rect"].AsArray();
+      tabs.push_back(SDL_FRect{static_cast<float>(r[0].AsInt()), static_cast<float>(r[1].AsInt()),
+                               static_cast<float>(r[2].AsInt()), static_cast<float>(r[3].AsInt())});
+    }
+  }
+  Expect(tabs.size() >= 4, "the panel should show the four shell tabs");
+  if (tabs.size() < 4) {
+    return;
+  }
+  const float y = tabs[0].y + tabs[0].h / 2.0f;
+  const float start = tabs[0].x + 12.0f;
+  const float end = tabs[3].x + tabs[3].w * 0.4f;  // three slots along: a long glide home
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(start, y)}), "resting on the first tab");
+  fixture.ExpectFresh(
+      DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, start, y)}),
+      "pressing the first tab");
+  // Motion with the button held: a drag, as the window system reports it.
+  const auto held_motion = [](float x, float motion_y) {
+    SDL_Event event = MouseMotionEvent(x, motion_y);
+    event.motion.state = SDL_BUTTON_LMASK;
+    return event;
+  };
+  for (float x = start; x < end; x += 24.0f) {
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {held_motion(x, y)}), "dragging along the strip");
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {held_motion(end, y)}), "dragging onto the last tab");
+  fixture.ExpectFresh(
+      DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, end, y)}),
+      "dropping it there");
+  const auto file_menu = fixture.ElementRect("menu:File");
+  Expect(file_menu.has_value(), "the ui query should name the File menu");
+  if (!file_menu.has_value()) {
+    return;
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(file_menu->x + 4.0f, file_menu->y + 4.0f)}),
+                      "the pointer leaving for the menu bar while the tabs slide");
+}
+
 // QA monkey (seed 14, 2026-10-25): after a press on a panel tab, with a menu open
 // a moment before, the tab's close button stayed drawn hovered while a full render
 // drew it plain. Neither the replay nor these gestures reproduce it (it is in
@@ -5563,6 +5618,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestATabDraggedAcrossThreePanesPaintsFresh);
   AddTest(tests, "QaFlowRegression/MergeToolbarStaysInsideANarrowPane",
           TestMergeToolbarStaysInsideANarrowPane);
+  AddTest(tests, "QaFlowRegression/LeavingAPanelTabMidSlideLeavesNoHover", TestLeavingAPanelTabMidSlideLeavesNoHover);
   AddTest(tests, "QaFlowRegression/ADragAcrossPanelTabsLeavesNoHoveredCloseButton",
           TestADragAcrossPanelTabsLeavesNoHoveredCloseButton);
   AddTest(tests, "QaFlowRegression/SearchResultsCaughtUpAtFramePrepRepaintTheirCount",

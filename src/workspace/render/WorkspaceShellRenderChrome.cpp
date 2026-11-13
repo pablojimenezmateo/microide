@@ -19,10 +19,11 @@ using namespace detail;
 
 void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                                         const WorkspaceLayout& layout) const {
+  // `strip_still`: no slide animating the tab's strip (see tab_hovered).
   const auto draw_tab_close_button = [&](const SDL_FRect& rect, SDL_Color color,
-                                         SDL_Color hover_color) {
+                                         SDL_Color hover_color, bool strip_still) {
     DrawHoverableCloseGlyph(renderer, rect,
-                            !context_.interaction_state.tab_drag.dragging &&
+                            strip_still && !context_.interaction_state.tab_drag.dragging &&
                                 PointerOver(rect),
                             color, hover_color);
   };
@@ -39,8 +40,13 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   // and `last_mouse_*` stays where the press landed. Nothing on a strip may claim
   // hover from that stale point — an auto-scrolled strip would otherwise light up
   // whichever tab drifted under it. VS Code drops tab hover during a drag too.
-  const auto tab_hovered = [&](const SDL_FRect& rect) {
-    return !context_.interaction_state.tab_drag.dragging && PointerOver(rect);
+  // Nor while the strip's tabs slide after a release: paint draws them at their
+  // slid rects, which overlap one another and the resting rects the hover probe
+  // repaints a pointer's leave from, so a tab lit mid-slide stayed lit when the
+  // pointer left (soak 38f44bf79ca8). The slide repaints its strip every frame
+  // until it lands, and hover returns with the tabs at rest.
+  const auto tab_hovered = [&](const SDL_FRect& rect, bool strip_still) {
+    return strip_still && !context_.interaction_state.tab_drag.dragging && PointerOver(rect);
   };
   // Chrome-like reorder: neighbor tabs render offset by the live slide animation,
   // and the dragged tab is lifted out of the flow (drawn as the floating ghost by
@@ -140,6 +146,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   // Skip all project-tab work when the strip is hidden (zero height): no tab measuring,
   // overflow controls, or drag ghost.
   if (layout.project_tab_strip.h > 0.0f) {
+    const bool project_strip_still = tab_slide.OffsetsFor(TabDragKind::Project, 0).empty();
     const auto& visible_project_tabs =
         tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
     for (const VisibleStripTab& tab : visible_project_tabs) {
@@ -160,12 +167,13 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                        .close_right_reserve = 46.0f,
                        .accent_edge = StripAccentEdge::Top,
                    },
-                   chrome_tab_palette, tab_hovered(rect), RemoteMarkOf(tab));
+                   chrome_tab_palette, tab_hovered(rect, project_strip_still), RemoteMarkOf(tab));
       draw_tab_close_button(close_rect,
                             tab.active ? chrome_tab_palette.active_glyph
                                        : chrome_tab_palette.inactive_glyph,
                             tab.active ? chrome_tab_palette.active_text
-                                       : chrome_tab_palette.inactive_text);
+                                       : chrome_tab_palette.inactive_text,
+                            project_strip_still);
     }
     {
       const auto project_overflow =
@@ -271,6 +279,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                                             static_cast<int>(std::floor(group_tab_strip.y)),
                                             static_cast<int>(std::ceil(group_tab_strip.w)),
                                             static_cast<int>(std::ceil(group_tab_strip.h))});
+      const bool group_strip_still = tab_slide.OffsetsFor(TabDragKind::Editor, gi).empty();
       for (const VisibleStripTab& tab : visible_tabs) {
         if (tab_lifted(TabDragKind::Editor, gi, tab.index)) {
           continue;  // rendered as the floating ghost below
@@ -287,12 +296,13 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                          .close_right_reserve = 46.0f,
                          .accent_edge = StripAccentEdge::Top,
                      },
-                     group_tab_palette, tab_hovered(rect));
+                     group_tab_palette, tab_hovered(rect, group_strip_still));
         draw_tab_close_button(close_rect,
                               tab.active ? group_tab_palette.active_glyph
                                          : group_tab_palette.inactive_glyph,
                               tab.active ? group_tab_palette.active_text
-                                         : group_tab_palette.inactive_text);
+                                         : group_tab_palette.inactive_text,
+                              group_strip_still);
       }
       const auto tab_overflow =
           tab_strip_chrome_.ComputeTabOverflowControlsForGroup(gi, group_tab_strip, visible_tabs);

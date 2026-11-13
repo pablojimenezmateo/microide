@@ -76,11 +76,17 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   const std::vector<VisibleStripTab>& visible_panel_tabs =
       panel_vm.tabs != nullptr ? *panel_vm.tabs : TabStripService::EmptyVisibleTabs();
 
+  // No tab or close-button hover while the strip slides: paint draws the tabs at
+  // their slid rects, which overlap one another and the resting rects the hover
+  // probe repaints a pointer's leave from, so a tab lit mid-slide stayed lit when
+  // the pointer left for the menu bar (soak 38f44bf79ca8). The slide repaints the
+  // strip every frame until it lands; hover returns with the tabs at rest.
+  const bool panel_strip_still = !panel_vm.tab_drag.active && !panel_vm.tab_drag.sliding;
   const auto draw_tab_close_button = [&](const SDL_FRect& rect,
                                          SDL_Color color,
                                          SDL_Color hover_color) {
     DrawHoverableCloseGlyph(renderer, rect,
-                            PointerOver(rect),
+                            panel_strip_still && PointerOver(rect),
                             color, hover_color);
   };
   const StripTabPalette panel_tab_palette{
@@ -214,7 +220,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                        .close_right_reserve = 40.0f,
                        .accent_edge = StripAccentEdge::Top,
                    },
-                   panel_tab_palette, !panel_slide.active && PointerOver(rect), RemoteMarkOf(tab));
+                   panel_tab_palette, panel_strip_still && PointerOver(rect), RemoteMarkOf(tab));
       draw_tab_close_button(close_rect,
                             tab.active ? panel_tab_palette.active_glyph
                                        : panel_tab_palette.inactive_glyph,
