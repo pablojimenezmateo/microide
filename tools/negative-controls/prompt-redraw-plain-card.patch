@@ -1,0 +1,13 @@
+diff --git a/src/workspace/shell/WorkspaceShellRedraw.cpp b/src/workspace/shell/WorkspaceShellRedraw.cpp
+index 3f0c03795..a3e841824 100644
+--- a/src/workspace/shell/WorkspaceShellRedraw.cpp
++++ b/src/workspace/shell/WorkspaceShellRedraw.cpp
+@@ -918,7 +918,7 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentPromptRedrawRect() const {
+     rect = ComputeDirtyPromptRect(*window_rect);
+   }
+   if (context_.prompts.surface_visible) {
+-    rect = UnionOptionalRects(rect, ComputePromptSurfaceRect(*window_rect, context_.prompts.surface.recent_inputs.size()));
++    rect = UnionOptionalRects(rect, ComputePromptSurfaceRect(*window_rect, 0));
+   }
+   return rect;
+ }

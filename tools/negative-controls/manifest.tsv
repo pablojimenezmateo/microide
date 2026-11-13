@@ -11,3 +11,4 @@ sticky-band-zero.patch	microide_tests	build/microide/microide_tests Architecture
 range-for-json-temporary.patch	microide_tests	build/microide/microide_tests ArchitectureInvariants/Kernel/CheckRangeForDoesNotSubscriptATemporary
 save-drops-a-byte.patch	microide	python3 tools/qa/run.py --binary build/microide/microide --out build/bite-qa suite save-round-trip
 save-not-atomic.patch	microide_kernel_tests	build/microide/microide_kernel_tests LocalWriteFaultMatrix/EveryCrashPointOfASaveLeavesTheOldOrTheNewFile
+prompt-redraw-plain-card.patch	microide_tests	build/microide/microide_tests WorkspaceShell/RemoteFolderRecentRowsRepaintExactly

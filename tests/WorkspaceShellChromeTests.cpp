@@ -3095,6 +3095,71 @@ void TestWorkspaceShellAStackedModalRedimsTheWindow() {
                                DescribePixelDiff(diff));
 }
 
+// The host prompt's Recent rows paint the same through every partial frame as in
+// a full one: the grown card as it opens, a row lifting under the pointer, a row
+// selected from the keyboard, and the pointer leaving. The QA monkey's state has
+// no remote recents, so the redraw verifier never sees the grown card there.
+void TestWorkspaceShellRemoteFolderRecentRowsRepaintExactly() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "the fixture opens its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  for (const char* folder : {"/srv/one", "/srv/two", "/srv/three"}) {
+    WorkspaceShellTestAccess::RecordRecentProject(shell, microide::project::ProjectId::ForRemote("dev@box", folder));
+  }
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::RemoteOpenFolder, {}),
+         "the host prompt opens");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceRecentRows(shell).row_count == 3, "with its three rows");
+  auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, shell.ConsumePendingRenderInvalidation(),
+                                          pin_caret);
+  Expect(diff.identical(), "the grown card paints whole as it opens; " + DescribePixelDiff(diff));
+
+  const SDL_FRect row = WorkspaceShellTestAccess::PromptSurfaceRecentRows(shell).rows[1];
+  diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight,
+                                     DispatchEvents(shell, {MouseMotionEvent(row.x + 40.0f, row.y + row.h * 0.5f)}),
+                                     pin_caret);
+  Expect(diff.identical(), "a row lifts under the pointer; " + DescribePixelDiff(diff));
+
+  diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, DispatchEvents(shell, {KeyDownEvent(SDLK_DOWN)}),
+                                     pin_caret);
+  Expect(WorkspaceShellTestAccess::PromptSurfaceInput(shell) == "dev@box:/srv/three", "Down picks the newest");
+  Expect(diff.identical(), "the picked row and the field repaint together; " + DescribePixelDiff(diff));
+
+  // The grown card's buttons sit below where the plain card ends: a redraw rect
+  // sized for the plain card leaves a button's hover stale.
+  const SDL_FRect dialog = WorkspaceShellTestAccess::PromptSurfaceDialogRect(shell);
+  // Cancel: Open is drawn active already, so hovering it changes nothing.
+  const SDL_FRect cancel_button = microide::workspace::ComputePromptSurfaceButtonRects(dialog).back();
+  diff = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight,
+      DispatchEvents(shell, {MouseMotionEvent(cancel_button.x + 10.0f, cancel_button.y + cancel_button.h * 0.5f)}),
+      pin_caret);
+  Expect(diff.identical(), "the grown card's button lifts under the pointer; " + DescribePixelDiff(diff));
+
+  diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight,
+                                     DispatchEvents(shell, {MouseMotionEvent(row.x + 40.0f, row.y - 200.0f)}),
+                                     pin_caret);
+  Expect(diff.identical(), "the lifted row and button drop as the pointer leaves; " + DescribePixelDiff(diff));
+}
+
 // A tab tooltip whose tab changed under a still pointer (a tab moved into the
 // slot) repaints with the new name. Found by the QA monkey (seed 5: the card still
 // named README.md over the taskflow tab).
@@ -6826,6 +6891,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellNarrowGitViewKeepsItsLabelsInside);
   AddTest(tests, "WorkspaceShell/TabTooltipFollowsATabMovedUnderThePointer",
           TestWorkspaceShellTabTooltipFollowsATabMovedUnderThePointer);
+  AddTest(tests, "WorkspaceShell/RemoteFolderRecentRowsRepaintExactly",
+          TestWorkspaceShellRemoteFolderRecentRowsRepaintExactly);
   AddTest(tests, "WorkspaceShell/AStackedModalRedimsTheWindow",
           TestWorkspaceShellAStackedModalRedimsTheWindow);
   AddTest(tests, "WorkspaceShell/PanelDividerResetRepaintsTheLayout",
