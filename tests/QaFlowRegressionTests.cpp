@@ -1472,6 +1472,52 @@ void TestATabDraggedAcrossThreePanesPaintsFresh() {
   }
 }
 
+// TD-2026-11-09-436 (soak): the same drag across three panes, abandoned with
+// Escape over the first pane's strip and then released. The release must leave
+// the screen a full repaint would draw.
+void TestATabDragAbandonedWithEscapeThenReleasedPaintsFresh() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("a.txt", "a\n");
+  WriteFile(fixture.root / "b.txt", "b\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "split-right should run");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "a second split-right should run");
+  TestAccess::OpenFileInNewTab(fixture.shell, fixture.root / "b.txt");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "three panes");
+  const auto dragged = fixture.ElementRect("tab:2/b.txt");
+  const auto target = fixture.ElementRect("tab:0/a.txt");
+  Expect(dragged.has_value() && target.has_value(), "the strips should name tab:2/b.txt and tab:0/a.txt");
+  if (!dragged || !target) {
+    return;
+  }
+  const float y = dragged->y + dragged->h / 2.0f;
+  const float x0 = dragged->x + dragged->w / 2.0f;
+  const float x1 = target->x + 4.0f;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x0, y),
+                                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x0, y)}),
+                      "pressing on b.txt's tab");
+  for (int step = 1; step <= 24; ++step) {
+    SDL_Event motion = MouseMotionEvent(x0 + (x1 - x0) * static_cast<float>(step) / 24.0f, y);
+    motion.motion.state = SDL_BUTTON_LMASK;
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {motion}), "dragging, step " + std::to_string(step));
+  }
+  SDL_Event escape{};
+  escape.type = SDL_EVENT_KEY_DOWN;
+  escape.key.key = SDLK_ESCAPE;
+  escape.key.down = true;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {escape}), "Escape abandons the drag");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x1, y)}),
+                      "the release after Escape");
+  for (int wake = 0; wake < 30; ++wake) {
+    SDL_Delay(10);
+    fixture.ExpectFresh(TestAccess::HandleScheduledWake(fixture.shell).redraw,
+                        "the glide home, wake " + std::to_string(wake));
+  }
+}
+
 // Soak 0c1b56e84217 (ui.scale 2): a tab nudged six pixels and dropped left a
 // dark line under the tab strip. The ghost's drop shadow sat two pixels below
 // the ghost, past the strip -- the only thing a tab drag damages -- so where the
@@ -5491,6 +5537,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestHoverUnderAStickyBandResolvesThePointersLine);
   AddTest(tests, "QaFlowRegression/MergeToolbarHoverRepaintsTheButton",
           TestMergeToolbarHoverRepaintsTheButton);
+  AddTest(tests, "QaFlowRegression/ATabDragAbandonedWithEscapeThenReleasedPaintsFresh",
+          TestATabDragAbandonedWithEscapeThenReleasedPaintsFresh);
   AddTest(tests, "QaFlowRegression/ATabDraggedAcrossThreePanesPaintsFresh",
           TestATabDraggedAcrossThreePanesPaintsFresh);
   AddTest(tests, "QaFlowRegression/MergeToolbarStaysInsideANarrowPane",

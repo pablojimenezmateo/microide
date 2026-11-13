@@ -323,6 +323,17 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   // FULL-WINDOW repaint. Nothing outside the dragged strip moves, so the damage
   // is that strip (padded for the ghost's drop shadow).
   if (context_.interaction_state.tab_drag.kind != TabDragKind::None) {
+    // The pointer is where it is whoever owns the gesture. This branch skips the
+    // hover pipeline (UpdateMouseCursor), and so used to leave the recorded
+    // position at the PRESS: a drag abandoned with Escape -- which ends it with
+    // the button still down -- then resolved the tab tooltip, in a full repaint,
+    // for the tab the drag STARTED on, and the release moved it to the tab under
+    // the pointer without damaging either card (TD-2026-11-09-436). The cursor
+    // and the editor hover are re-resolved once, when the drag ends
+    // (clear_tab_drag), not per motion.
+    last_mouse_x_ = static_cast<float>(event.motion.x);
+    last_mouse_y_ = static_cast<float>(event.motion.y);
+    last_mouse_position_valid_ = true;
     // The tab tooltip that was up when the gesture started is hidden for the whole
     // drag (HoveredTooltip refuses while dragging), so the frame that starts the
     // drag has to damage where it was or its card is left painted on the strip.

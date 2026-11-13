@@ -501,7 +501,14 @@ TabMouseCoordinator& WorkspaceShell::MakeTabMouseCoordinator() {
                 return tab_strip_service_.BottomPanelTabIsTerminal(
                     context_.current_project_state, index, output_channels_.Channels());
               },
-          .clear_tab_drag = [this]() { context_.interaction_state.tab_drag = TabDragState{}; },
+          .clear_tab_drag =
+              [this]() {
+                context_.interaction_state.tab_drag = TabDragState{};
+                // The drag tracked the pointer without the hover pipeline; the
+                // cursor shape and the editor hover catch up with it now.
+                InvalidateCursorKindFingerprint();
+                QueueEditorHoverRefresh();
+              },
           .current_workspace_layout = [this]() { return CurrentWorkspaceLayout(); },
           .move_active_project_to = [this](std::size_t index) { return MoveActiveProjectTo(index); },
           .move_active_tab_to = [this](std::size_t index) { return MoveActiveTabTo(index); },

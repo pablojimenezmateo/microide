@@ -203,7 +203,14 @@ test (inverted std::clamp at ui.scale 3; overlapping status-bar segments; the fi
 widget, tab-strip contents, banner and merge-toolbar buttons leaving their area;
 the crash-safety flush missing edits to a non-active buffer) and left these:
 
-- **A tab drag abandoned with Escape, then released, paints stale.** Three panes
+- **A tab drag abandoned with Escape, then released, paints stale. (fixed
+  2026-11-13)** Cause: the tab-drag branch of mouse motion skipped the hover
+  pipeline and so never recorded the pointer, so the Escape frame (a full repaint)
+  drew the tab tooltip for the tab the drag STARTED on and the release moved it
+  to the tab under the pointer with no damage. The drag now records the pointer
+  and re-resolves cursor and hover once at its end; pinned by
+  `QaFlowRegression/ATabDragAbandonedWithEscapeThenReleasedPaintsFresh`. The
+  original report: three panes
   side by side (`split-right` twice), press `tab:2/b.txt`, drag it into the first
   pane's strip, Escape, release: the release requests no damage, yet a full repaint
   then differs over every strip (13k px; the hover tooltip moves to the tab under
