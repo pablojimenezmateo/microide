@@ -168,6 +168,12 @@ inline SDL_Rect NarrowToCurrentClip(SDL_Renderer* renderer, const SDL_Rect& requ
 //     it — letting later draws escape the dirty region.
 class ScopedRenderClip {
  public:
+  // A pane's float rect, rounded out to whole pixels the way every pane clip is.
+  ScopedRenderClip(SDL_Renderer* renderer, const SDL_FRect& pane)
+      : ScopedRenderClip(renderer, SDL_Rect{static_cast<int>(std::floor(pane.x)),
+                                            static_cast<int>(std::floor(pane.y)),
+                                            static_cast<int>(std::ceil(pane.w)),
+                                            static_cast<int>(std::ceil(pane.h))}) {}
   ScopedRenderClip(SDL_Renderer* renderer, const SDL_Rect& clip) : renderer_(renderer) {
     had_clip_ = SDL_RenderClipEnabled(renderer_);
     if (had_clip_) {
