@@ -202,6 +202,7 @@ std::uint64_t ThemeMarkerToken(const render::Theme& theme) {
   // including the marker set here is enough to invalidate every baked-in color on a switch.
   const SDL_Color colors[] = {
       theme.diff_added,        theme.diff_deleted,       theme.diff_modified,
+      theme.diff_moved,
       theme.text_muted,        theme.accent,             theme.text_disabled,
       theme.diagnostic_error,  theme.diagnostic_warning, theme.diagnostic_info,
       theme.diagnostic_hint,   theme.search_match,       theme.search_match_active,

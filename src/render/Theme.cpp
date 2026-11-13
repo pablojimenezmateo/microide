@@ -250,6 +250,9 @@ Theme BuildThemeFromStyles(const ThemeStyleMap& styles) {
   theme.diff_added = ResolveForeground(styles, "diff-added", theme.diff_added);
   theme.diff_modified = ResolveForeground(styles, "diff-modified", theme.diff_modified);
   theme.diff_deleted = ResolveForeground(styles, "diff-deleted", theme.diff_deleted);
+  // No scheme names it yet: its constant colour reads apart from added and
+  // removed and was chosen for its background.
+  theme.diff_moved = ResolveForeground(styles, "diff-moved", theme.syntax_constant);
   theme.diagnostic_error = ResolveForeground(styles, "diagnostic-error", theme.diagnostic_error);
   theme.diagnostic_warning =
       ResolveForeground(styles, "diagnostic-warning", theme.diagnostic_warning);
@@ -307,6 +310,7 @@ Theme MakeDefaultTheme() {
       .diff_added = SDL_Color{0x66, 0xb0, 0x74, 0xff},
       .diff_modified = SDL_Color{0xc2, 0x99, 0x5f, 0xff},
       .diff_deleted = SDL_Color{0xcd, 0x7a, 0x82, 0xff},
+      .diff_moved = SDL_Color{0xb4, 0x8e, 0xe0, 0xff},
       .diagnostic_error = SDL_Color{0xff, 0x7b, 0x86, 0xff},
       .diagnostic_warning = SDL_Color{0xe8, 0xc5, 0x6d, 0xff},
       .diagnostic_info = SDL_Color{0x7a, 0xb0, 0xff, 0xff},
@@ -361,6 +365,7 @@ Theme MakeLightTheme() {
       .diff_added = SDL_Color{0x2e, 0x89, 0x43, 0xff},
       .diff_modified = SDL_Color{0xa8, 0x75, 0x1e, 0xff},
       .diff_deleted = SDL_Color{0xc3, 0x41, 0x4b, 0xff},
+      .diff_moved = SDL_Color{0x7c, 0x4d, 0xc4, 0xff},
       .diagnostic_error = SDL_Color{0xcf, 0x38, 0x43, 0xff},
       .diagnostic_warning = SDL_Color{0xb4, 0x83, 0x11, 0xff},
       .diagnostic_info = SDL_Color{0x25, 0x6b, 0xd5, 0xff},

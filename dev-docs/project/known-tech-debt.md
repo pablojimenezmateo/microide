@@ -67,16 +67,6 @@ only producer of a `DiffSyntaxTree`, and the search reads nothing but nodes,
 tokens and content ids. A grammar-backed builder for the top languages, with the
 lexer kept as the fallback, is the follow-up; gate it on `microide_diff_bench`.
 
-### TD-2026-11-11-443 — the structural refinement is per hunk; moved code is not matched across hunks. [OPEN]
-
-Each hunk is matched alone, so code moved between two hunks shows as novel in
-both. That is also difftastic's behaviour (it has no move detection), and it keeps
-the refinement proportional to the change, which the editable compare pane needs
--- it rebuilds on every keystroke. A move pass would match novel subtrees of one
-hunk against novel subtrees of others by content id (cheap: the ids are already
-interned per hunk; the interner would need to span the build) and mark them as
-moved rather than novel, with a presentation of its own.
-
 ### TD-2026-11-09-436 — soak triage, 2026-11-09: what the first four hours left open. [OPEN]
 
 The soak runner's first four hours on `6d7e96e07` produced 113 signatures. The
@@ -451,7 +441,7 @@ cross-subsystem bug-hunt passes 5–24 closeout) — now lives in:
   `2026-11-03-resolved-debt-ledger.md` (every TD id from 2026-08-04 to 2026-11-02 not listed
   above, with the per-pass review summaries that headed this file) and
   `2026-11-08-resolved-debt-ledger.md` (TD-406, 408, 429-434) and
-  `2026-11-13-resolved-debt-ledger.md` (TD-437 to 439, 441, 442, 445 onward)
+  `2026-11-13-resolved-debt-ledger.md` (TD-437 to 439, 441 to 443, 445 onward)
 - `CHANGELOG.md` — shipped, user-facing release history
 - `openspec/changes/archive/` — the full proposal/spec/tasks record per shipped change
 

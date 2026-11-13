@@ -9,6 +9,7 @@
 
 #include "compare/CompareModel.h"
 #include "compare/DiffSyntax.h"
+#include "compare/CompareMoves.h"
 #include "compare/HunkRefinement.h"
 #include "compare/StructuralDiff.h"
 #include "util/StringUtil.h"
@@ -580,6 +581,102 @@ void TestEntryStateIsPartOfTheRefinementKey() {
   Expect(same_state.cached_hunks == 1, "the same text in the same state is");
 }
 
+// TD-2026-11-11-443: code moved from one hunk to another.
+std::string MiddleLines() {
+  std::string text;
+  for (int line = 0; line < 12; ++line) {
+    text += "keep_" + std::to_string(line) + "();\n";
+  }
+  return text;
+}
+
+const std::string kHelper =
+    "void helper() {\n"
+    "  do_work(alpha, beta);\n"
+    "  finish(gamma);\n"
+    "}\n";
+
+void TestMovedBlockIsMarkedOnBothSides() {
+  const auto model = Build(kHelper + MiddleLines(), MiddleLines() + kHelper);
+  int left_moved = 0;
+  int right_moved = 0;
+  for (const auto& row : model.rows) {
+    left_moved += row.left_moved ? 1 : 0;
+    right_moved += row.right_moved ? 1 : 0;
+    if (row.left_moved) {
+      Expect(compare::LeftSideChange(row) == CompareSideChange::Moved, "a moved line reads as moved");
+    }
+  }
+  Expect(left_moved == 4 && right_moved == 4,
+         "the four moved lines are marked where they left and where they landed (" +
+             std::to_string(left_moved) + "/" + std::to_string(right_moved) + ")");
+}
+
+void TestReindentedMoveIsStillAMove() {
+  std::string indented;
+  for (const std::string_view line : Lines(kHelper)) {
+    if (!line.empty()) {
+      indented += "    " + std::string(line) + "\n";
+    }
+  }
+  const auto model = Build(kHelper + MiddleLines(), MiddleLines() + "namespace n {\n" + indented + "}\n");
+  int moved = 0;
+  for (const auto& row : model.rows) {
+    moved += row.right_moved ? 1 : 0;
+  }
+  Expect(moved == 4, "indentation does not stop a move (" + std::to_string(moved) + ")");
+}
+
+void TestTrivialOrEditedLinesAreNotMoves() {
+  // A lone brace reappearing elsewhere carries too little text to be a move.
+  const auto braces = Build("}\n" + MiddleLines(), MiddleLines() + "}\n");
+  for (const auto& row : braces.rows) {
+    Expect(!row.left_moved && !row.right_moved, "a lone brace is not moved code");
+  }
+  // Edited on the way: not the same lines.
+  std::string edited = kHelper;
+  edited.replace(edited.find("beta"), 4, "delta");
+  const auto changed = Build(kHelper + MiddleLines(), MiddleLines() + edited);
+  int moved = 0;
+  for (const auto& row : changed.rows) {
+    moved += row.right_moved ? 1 : 0;
+  }
+  Expect(moved == 0, "the runs around the edit are each under 20 alphanumerics: no move (" +
+                         std::to_string(moved) + ")");
+}
+
+// The hunk rule, on rows built by hand: the same deleted and added run is a move
+// across hunks and not within one (there the structural match already paired them).
+void TestMovesAreBetweenHunksOnly() {
+  const auto run = [](int deleted_hunk, int added_hunk) {
+    CompareModel model;
+    const char* lines[] = {"  do_work(alpha, beta);", "  finish(gamma, delta);"};
+    for (int index = 0; index < 2; ++index) {
+      CompareRow row;
+      row.kind = CompareRowKind::Deleted;
+      row.left_text = lines[index];
+      row.left_line = index + 1;
+      row.hunk = deleted_hunk;
+      row.left_changed_spans.push_back({0, row.left_text.size()});
+      model.rows.push_back(row);
+    }
+    for (int index = 0; index < 2; ++index) {
+      CompareRow row;
+      row.kind = CompareRowKind::Added;
+      row.right_text = lines[index];
+      row.right_line = index + 1;
+      row.hunk = added_hunk;
+      row.right_changed_spans.push_back({0, row.right_text.size()});
+      model.rows.push_back(row);
+    }
+    compare::MarkMovedLines(model);
+    return model.rows[0].left_moved && model.rows[1].left_moved && model.rows[2].right_moved &&
+           model.rows[3].right_moved;
+  };
+  Expect(run(0, 1), "a run deleted in one hunk and added in another is moved");
+  Expect(!run(0, 0), "the same run inside one hunk is not");
+}
+
 // An in-place rebuild refines only the hunks that changed, and its rows are the
 // ones a fresh build produces.
 void TestRebuildRefinesOnlyChangedHunks() {
@@ -768,6 +865,10 @@ void RegisterStructuralDiffTests(std::vector<TestCase>& tests) {
           TestRegionLexedFromScannedStateAgreesWithAWholeLex);
   AddTest(tests, "StructuralDiff/EntryStateIsPartOfTheRefinementKey",
           TestEntryStateIsPartOfTheRefinementKey);
+  AddTest(tests, "StructuralDiff/MovedBlockIsMarkedOnBothSides", TestMovedBlockIsMarkedOnBothSides);
+  AddTest(tests, "StructuralDiff/ReindentedMoveIsStillAMove", TestReindentedMoveIsStillAMove);
+  AddTest(tests, "StructuralDiff/TrivialOrEditedLinesAreNotMoves", TestTrivialOrEditedLinesAreNotMoves);
+  AddTest(tests, "StructuralDiff/MovesAreBetweenHunksOnly", TestMovesAreBetweenHunksOnly);
 }
 
 }  // namespace microide::tests

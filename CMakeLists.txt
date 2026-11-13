@@ -360,6 +360,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/compare/StructuralDiff.cpp
   src/compare/StructuralSearch.cpp
   src/compare/StructuralSliders.cpp
+  src/compare/CompareMoves.cpp
   src/compare/ComparePresentationModel.cpp
   src/compare/CompareReviewTypes.cpp
   src/compare/CompareSemanticMetadata.cpp
@@ -1912,6 +1913,7 @@ if(MICROIDE_FUZZ)
     src/compare/StructuralDiff.cpp
     src/compare/StructuralSearch.cpp
     src/compare/StructuralSliders.cpp
+  src/compare/CompareMoves.cpp
     src/util/StringUtil.cpp
     tests/fuzz/StructuralDiffFuzz.cpp
   )
@@ -2176,6 +2178,7 @@ add_executable(microide_diff_bench
   src/compare/StructuralDiff.cpp
   src/compare/StructuralSearch.cpp
   src/compare/StructuralSliders.cpp
+  src/compare/CompareMoves.cpp
   src/platform/RuntimePaths.cpp
   src/platform/Subprocess.cpp
   src/platform/SubprocessSandbox.cpp

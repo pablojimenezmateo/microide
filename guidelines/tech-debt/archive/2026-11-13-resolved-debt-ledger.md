@@ -3,6 +3,34 @@
 Moved from `dev-docs/project/known-tech-debt.md`'s open queue as each entry was
 resolved or closed, with its resolution appended. Newest first.
 
+### TD-2026-11-11-443 — the structural refinement is per hunk; moved code is not matched across hunks. [FIXED 2026-11-13]
+
+Each hunk is matched alone, so code moved between two hunks shows as novel in
+both. That is also difftastic's behaviour (it has no move detection), and it keeps
+the refinement proportional to the change, which the editable compare pane needs
+-- it rebuilds on every keystroke. A move pass would match novel subtrees of one
+hunk against novel subtrees of others by content id (cheap: the ids are already
+interned per hunk; the interner would need to span the build) and mark them as
+moved rather than novel, with a presentation of its own.
+
+**Fixed 2026-11-13**, at the line level rather than inside the search: the
+refinement stays per hunk (the per-keystroke rebuild needs it), and moves are read
+off the finished rows as git's `--color-moved` reads them. `MarkMovedLines`
+(`src/compare/CompareMoves.cpp`): a run of whole deleted rows in one hunk whose
+text, indentation trimmed, reappears as a run of whole added rows in ANOTHER hunk
+is moved (`CompareRow::left_moved` / `right_moved`, `CompareSideChange::Moved`),
+given git's minimum of 20 alphanumerics per block; a hash per added line and at
+most 16 candidates per deleted line keep it linear. The view tints a moved side
+with the new theme colour `diff_moved` (colorscheme key `diff-moved`, falling back
+to the scheme's constant colour). Tests: moved block marked on both sides,
+re-indented move, lone brace / edited block not moves, the between-hunks rule on
+hand-built rows; the fuzz target links it.
+
+Left: a move whose lines were ALSO edited is two novel blocks (the token-level
+cross-hunk matcher this entry first sketched would mark the unedited tokens), and
+the overview ruler marks moved runs in the added/removed colours.
+
+
 ### TD-2026-11-13-445 — residuals of the per-pane diff (TD-439). [FIXED 2026-11-13]
 
 Three paths still route by the FOCUSED group rather than the pane under the

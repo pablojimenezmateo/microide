@@ -64,6 +64,11 @@ DiffSideStyle StyleDiffSide(const render::Theme& theme, compare::CompareSideChan
   const SDL_Color base = selected ? theme.row_highlight : theme.editor_background;
   DiffSideStyle style{.background = base};
   switch (change) {
+    case compare::CompareSideChange::Moved:
+      // The same lines are in another hunk: tinted as moved, not as added or
+      // removed (TD-2026-11-11-443).
+      side_color = theme.diff_moved;
+      [[fallthrough]];
     case compare::CompareSideChange::Novel:
       style.background =
           render::BlendColors(base, side_color, selected ? kDiffRowTintSelected : kDiffRowTint);

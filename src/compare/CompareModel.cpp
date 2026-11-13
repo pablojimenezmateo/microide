@@ -1,4 +1,5 @@
 #include "compare/CompareModel.h"
+#include "compare/CompareMoves.h"
 
 #include <chrono>
 #include <algorithm>
@@ -604,21 +605,24 @@ EqualEnds FindEqualEnds(std::span<const std::string_view> left_lines,
 namespace {
 
 CompareSideChange SideChange(const CompareRow& row, int line,
-                             const std::vector<CompareTextSpan>& spans) {
+                             const std::vector<CompareTextSpan>& spans, bool moved) {
   if (line == 0 || row.kind == CompareRowKind::Unchanged) {
     return CompareSideChange::None;
   }
-  return spans.empty() ? CompareSideChange::LayoutOnly : CompareSideChange::Novel;
+  if (spans.empty()) {
+    return CompareSideChange::LayoutOnly;
+  }
+  return moved ? CompareSideChange::Moved : CompareSideChange::Novel;
 }
 
 }  // namespace
 
 CompareSideChange LeftSideChange(const CompareRow& row) {
-  return SideChange(row, row.left_line, row.left_changed_spans);
+  return SideChange(row, row.left_line, row.left_changed_spans, row.left_moved);
 }
 
 CompareSideChange RightSideChange(const CompareRow& row) {
-  return SideChange(row, row.right_line, row.right_changed_spans);
+  return SideChange(row, row.right_line, row.right_changed_spans, row.right_moved);
 }
 
 bool CompareRowIsLayoutOnly(const CompareRow& row) {
@@ -744,6 +748,8 @@ class RowSink {
     row.hunk = -1;
     row.left_changed_spans.clear();
     row.right_changed_spans.clear();
+    row.left_moved = false;
+    row.right_moved = false;
     return row;
   }
 
@@ -1042,6 +1048,9 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
     }
   }
   sink.Finish();
+  if (options.refine_hunks) {
+    MarkMovedLines(model);  // what the view shows; the patch generator does not ask
+  }
 
   profile.total_ns = DurationNs(total_start, Clock::now());
   // Saturating subtract: the residual row-assembly time is total minus the

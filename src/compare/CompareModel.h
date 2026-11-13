@@ -61,6 +61,10 @@ struct CompareRow {
   int hunk = -1;
   std::vector<CompareTextSpan> left_changed_spans;
   std::vector<CompareTextSpan> right_changed_spans;
+  // The side's line moved from (left) or to (right) another hunk of the diff:
+  // MarkMovedLines.
+  bool left_moved = false;
+  bool right_moved = false;
 };
 
 // How one side of a row changed, as the compare view presents it.
@@ -72,6 +76,7 @@ struct CompareRow {
 enum class CompareSideChange {
   None,        // the side is absent, or the row is unchanged
   Novel,       // the line carries novel tokens (its changed spans)
+  Moved,       // novel here, but the same lines appear in another hunk (moved code)
   LayoutOnly,  // the line changed, but only in whitespace and line breaks
 };
 

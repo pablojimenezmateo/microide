@@ -52,6 +52,8 @@ struct Theme {
   SDL_Color diff_added;
   SDL_Color diff_modified;
   SDL_Color diff_deleted;
+  // Lines a diff moved between hunks (`diff-moved`): neither added nor removed.
+  SDL_Color diff_moved;
   SDL_Color diagnostic_error;
   SDL_Color diagnostic_warning;
   SDL_Color diagnostic_info;
