@@ -142,10 +142,14 @@ The codebase is organized by responsibility:
 - `src/compare`: side-by-side diff and merge models. Compare is two layers: the line
   diff decides the hunks (what git sees, stages and applies), and a difftastic-style
   structural diff refines each hunk -- a lexer + bracket syntax forest per side
-  (`DiffSyntax`, rules from the language contract), a Dijkstra match over the two
-  forests (`StructuralDiff`), and novel-token spans plus a token-anchored row
-  layout (`HunkRefinement`). A changed line with no novel token changed only in
-  layout and is shown without emphasis
+  (`DiffSyntax`, rules from the language contract plus per-language raw strings;
+  each hunk lexed from the state `ScanDiffLexState` finds above it), an A* match
+  over the two forests (`StructuralDiff`, `StructuralSearch`) with difftastic's
+  slider correction after it (`StructuralSliders`), and novel-token spans plus a
+  token-anchored row layout (`HunkRefinement`). A changed line with no novel token
+  changed only in layout and is shown without emphasis; whole lines moved between
+  hunks are marked moved (`CompareMoves`). In a split, a compare or merge tab lives
+  in its group's pane (`WorkspaceShell::ActiveTabSurface`)
 - `src/terminal`: PTY session and terminal screen state; also the host-terminal wire model
   (`TerminalHostWire`, `TerminalHostFrameBuilder`), the session's *host mode* and the echo
   `TerminalPredictionOverlay`

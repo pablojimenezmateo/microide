@@ -244,6 +244,18 @@ Compare tabs SHALL refine every hunk structurally, in the manner of difftastic: 
 - **WHEN** one word of a comment changes
 - **THEN** only that word SHALL be marked novel on each side
 
+#### Scenario: A hunk inside a comment or string opened above it
+- **WHEN** a hunk's first line lies inside a block comment, a multi-line string, a raw string or a here-document that opened in the unchanged text above it
+- **THEN** the hunk SHALL be read from that state, as a lex of the whole file reads it, and not as code
+
+#### Scenario: Raw strings and here-documents are literals
+- **WHEN** a C++ `R"d(...)d"`, a Rust `r#"..."#` or a shell/Ruby/Perl here-document changes
+- **THEN** it SHALL be read as one string literal, its delimiters and quotes inside it included
+
+#### Scenario: Equal-cost novelty sits where a reader expects it
+- **WHEN** novel nodes could sit at several positions at the same cost (an item appended to a list of equal items, a new block around an existing one)
+- **THEN** the novelty SHALL move only between equal nodes, to the placement that covers whole lines, else touches fewer lines, else ends its line, else is the latest; and a new delimiter pair around an existing one SHALL be the inner pair
+
 ### Requirement: Structural Refinement Does Not Change Hunks
 The line diff SHALL remain the authority on which lines changed: hunk membership, staging, discarding and generated patches SHALL NOT depend on the structural refinement. Within a hunk, rows SHALL pair the left and right lines that share the most matched tokens, in order on both sides.
 
@@ -264,4 +276,22 @@ The structural search SHALL be bounded per gap, never by file size: a gap too la
 
 #### Scenario: Typing in an editable compare
 - **WHEN** the user edits one hunk of an editable compare pane
-- **THEN** the rebuild SHALL reuse the refinement of every other hunk
+- **THEN** the rebuild SHALL reuse the refinement of every other hunk whose text and lexical starting state are unchanged
+
+### Requirement: Moved Code Is Shown As Moved
+A run of whole deleted lines in one hunk whose text, indentation aside, reappears as a run of whole added lines in another hunk SHALL be shown as moved on both sides, in a colour of its own, and not as removed and added. A block SHALL carry at least 20 alphanumeric characters to count, so that a lone brace or keyword reappearing elsewhere is not a move. Moves SHALL NOT change hunks, staging or patches.
+
+#### Scenario: A function moved down the file
+- **WHEN** a function is cut from the top of a file and pasted, re-indented or not, at the bottom
+- **THEN** its old lines and its new lines SHALL be shown as moved
+
+#### Scenario: A move with an edit
+- **WHEN** the moved lines were also edited so that no run of 20 alphanumerics is unchanged
+- **THEN** the lines SHALL be shown as removed and added
+
+### Requirement: Diffs And Merges In A Split Stay In Their Pane
+With the editor split into groups, a compare or merge tab SHALL lay out, paint and take pointer input inside the pane of the group it belongs to, as an editor does; every other pane SHALL keep showing its own front tab, and a compare or merge in a pane without focus SHALL still be painted there. A click into such a pane SHALL focus it; the wheel SHALL scroll the pane under the pointer without moving focus. The find widget and the debug toolbar SHALL float over the focused pane.
+
+#### Scenario: A merge opened beside an editor
+- **WHEN** a merge tab is active in one group of a split and an editor in another
+- **THEN** the editor SHALL stay visible and usable in its pane, and no merge control SHALL lie outside the merge's pane
