@@ -374,6 +374,9 @@ class App:
     # The answers the last check read (ui, buffer, editor): the monkey's state
     # signature is built from them, so steering costs no extra query.
     last_ui: dict[str, Any] | None = None
+    # How many actions were recorded when last_ui was read: it still describes
+    # the screen while no action has been recorded since (Monkey._ui reuses it).
+    last_ui_actions: int = -1
     last_buffer: dict[str, Any] | None = None
     # What the state oracles saw when one disagreed, written beside a state
     # finding as state-evidence.txt: the caret line's text, the buffer's tab size
@@ -1934,6 +1937,7 @@ class App:
             self.last_ui = None
             return []
         self.last_ui = ui
+        self.last_ui_actions = len(self.actions)
         out: list[tuple[str, str]] = []
         focus = ui.get("focus")
         menu = ui.get("menu") or {}

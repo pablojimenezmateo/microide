@@ -764,8 +764,14 @@ class Monkey:
                    for element in ui.get("elements", []))
 
     def _ui(self) -> dict[str, Any]:
+        # The check after the last action read it, and nothing has been sent since:
+        # the same screen. A second `ui` query per step was ~5 ms of each
+        # (profiled 2026-11-13). The press and activation guards still read afresh.
+        if self.app.last_ui is not None and self.app.last_ui_actions == len(self.app.actions):
+            return self.app.last_ui
         ui = self.app.ui()
         self.app.last_ui = ui
+        self.app.last_ui_actions = len(self.app.actions)
         return ui
 
     def _safe_elements(self) -> list[dict[str, Any]]:
