@@ -5,6 +5,7 @@ someone else's, and the runner stopped starting jobs on a machine running only
 the soak."""
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -21,14 +22,23 @@ class JobLoadTests(unittest.TestCase):
         spin = subprocess.Popen([sys.executable, "-c", "import time\nt=time.time()\nwhile time.time()-t<4: pass"],
                                 start_new_session=True)
         try:
+            def cpu_seconds() -> float:
+                fields = Path(f"/proc/{spin.pid}/stat").read_text().rsplit(")", 1)[1].split()
+                return (int(fields[11]) + int(fields[12])) / os.sysconf("SC_CLK_TCK")
+
             load = soak.JobLoad()
             load.WINDOW = 0.0
             self.assertIsNone(load.sample({spin.pid}), "the first sample has nothing to compare with")
+            cpu0, wall0 = cpu_seconds(), time.monotonic()
             time.sleep(1.5)
             cores = load.sample({spin.pid})
+            got = (cpu_seconds() - cpu0) / (time.monotonic() - wall0)
             self.assertIsNotNone(cores)
-            self.assertGreater(cores, 0.6)
-            self.assertLess(cores, 1.4)
+            # What the spinner was actually given, not one whole core: on a machine
+            # with every core taken (the soak's own, at load 48 on 16) it gets a
+            # fraction, and the measurement has to say so.
+            self.assertGreater(got, 0.05, "the spinner ran")
+            self.assertAlmostEqual(cores, got, delta=max(0.15, 0.25 * got))
         finally:
             spin.kill()
             spin.wait()
