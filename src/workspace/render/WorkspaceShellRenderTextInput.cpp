@@ -162,7 +162,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       };
     }
     case TextInputSurface::PromptInput: {
-      const SDL_FRect dialog = ComputePromptSurfaceRect(layout.full);
+      const SDL_FRect dialog = ComputePromptSurfaceRect(layout.full, context_.prompts.surface.recent_inputs.size());
       const SDL_FRect input_rect = ComputePromptSurfaceInputRect(dialog);
       const float text_x = input_rect.x + 6.0f;
       const float text_y =

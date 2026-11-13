@@ -39,6 +39,9 @@ using microide::workspace::ComputeSettingsOverlaySurfaceRect;
 using microide::workspace::ComputePromptSurfaceButtonRects;
 using microide::workspace::ComputePromptSurfaceInputRect;
 using microide::workspace::ComputePromptSurfaceRect;
+using microide::workspace::ComputePromptSurfaceRecentLayout;
+using microide::workspace::kPromptSurfaceMaxRecentRows;
+using microide::workspace::PromptSurfaceRecentLayout;
 using microide::workspace::ComputeScrollSurfaceLayout;
 using microide::workspace::ComputeScrollableListLayout;
 using microide::workspace::ComputeScrollbarThumb;
@@ -488,7 +491,7 @@ void TestWorkspaceSharedPromptGeometry() {
              dirty_buttons[0].y == 344.0f,
          "dirty prompt button rects should align to the shared footer button layout");
 
-  const SDL_FRect prompt_surface = ComputePromptSurfaceRect(full);
+  const SDL_FRect prompt_surface = ComputePromptSurfaceRect(full, 0);
   Expect(prompt_surface.x == 140.0f && prompt_surface.y == 192.0f &&
              prompt_surface.w == 520.0f && prompt_surface.h == 216.0f,
          "prompt surface rect should stay centered while preserving the shared surface size");
@@ -503,10 +506,56 @@ void TestWorkspaceSharedPromptGeometry() {
              input_rect.h == 24.0f,
          "prompt surface input rect should align to the shared text-input slot");
 
-  const SDL_FRect compact_prompt = ComputePromptSurfaceRect(MakeRect(0.0f, 0.0f, 300.0f, 200.0f));
+  const SDL_FRect compact_prompt = ComputePromptSurfaceRect(MakeRect(0.0f, 0.0f, 300.0f, 200.0f), 0);
   Expect(compact_prompt.x == 16.0f && compact_prompt.y == 16.0f && compact_prompt.w == 268.0f &&
              compact_prompt.h == 168.0f,
          "prompt surface rect should clamp to the compact fallback when the window is small");
+}
+
+// The host prompt's Recent section: the card grows by it and only by it, its rows
+// sit between the field and the buttons, the cap holds, and a window too short
+// for the grown card drops rows instead of drawing them over the buttons.
+void TestWorkspaceSharedPromptSurfaceRecentSection() {
+  const SDL_FRect full = MakeRect(0.0f, 0.0f, 1280.0f, 800.0f);
+  const SDL_FRect plain = ComputePromptSurfaceRect(full, 0);
+  Expect(ComputePromptSurfaceRecentLayout(plain, 0).row_count == 0, "no recents, no section");
+
+  const SDL_FRect grown = ComputePromptSurfaceRect(full, 3);
+  Expect(grown.w == plain.w && grown.h > plain.h, "recent rows grow the card's height only");
+  const PromptSurfaceRecentLayout three = ComputePromptSurfaceRecentLayout(grown, 3);
+  Expect(three.row_count == 3, "every row fits a tall window");
+  const SDL_FRect input = ComputePromptSurfaceInputRect(grown);
+  const SDL_FRect button = ComputePromptSurfaceButtonRects(grown).front();
+  Expect(three.heading.y >= input.y + input.h, "the heading is under the field");
+  Expect(three.rows[0].y >= three.heading.y + three.heading.h, "the rows are under the heading");
+  for (std::size_t i = 1; i < three.row_count; ++i) {
+    Expect(three.rows[i].y >= three.rows[i - 1].y + three.rows[i - 1].h, "rows do not overlap");
+  }
+  Expect(three.rows[2].y + three.rows[2].h <= button.y, "the last row ends above the buttons");
+  const SDL_FRect plain_input = ComputePromptSurfaceInputRect(plain);
+  Expect(button.y - (three.rows[2].y + three.rows[2].h) ==
+             ComputePromptSurfaceButtonRects(plain).front().y - (plain_input.y + plain_input.h),
+         "the buttons keep the plain card's gap above them");
+
+  const SDL_FRect capped = ComputePromptSurfaceRect(full, kPromptSurfaceMaxRecentRows + 4);
+  Expect(capped.h == ComputePromptSurfaceRect(full, kPromptSurfaceMaxRecentRows).h &&
+             ComputePromptSurfaceRecentLayout(capped, kPromptSurfaceMaxRecentRows + 4).row_count ==
+                 kPromptSurfaceMaxRecentRows,
+         "the section is capped");
+
+  // A short window: the card clamps to the window, and rows that would reach the
+  // buttons are dropped.
+  const SDL_FRect short_full = MakeRect(0.0f, 0.0f, 640.0f, 300.0f);
+  const SDL_FRect clamped = ComputePromptSurfaceRect(short_full, 5);
+  const PromptSurfaceRecentLayout dropped = ComputePromptSurfaceRecentLayout(clamped, 5);
+  Expect(clamped.h <= short_full.h - 32.0f, "the card stays inside the window");
+  Expect(dropped.row_count < 5, "rows that do not fit are dropped");
+  const SDL_FRect short_button = ComputePromptSurfaceButtonRects(clamped).front();
+  for (std::size_t i = 0; i < dropped.row_count; ++i) {
+    Expect(dropped.rows[i].y + dropped.rows[i].h <= short_button.y, "no kept row reaches the buttons");
+  }
+  const PromptSurfaceRecentLayout none = ComputePromptSurfaceRecentLayout(ComputePromptSurfaceRect(short_full, 0), 5);
+  Expect(none.row_count == 0 && none.heading.h == 0.0f, "no room for a row, no heading either");
 }
 
 void TestWorkspaceSharedScrollbarEdgeCases() {
@@ -1872,7 +1921,7 @@ void TestDialogFooterButtonsStayInsideANarrowDialog() {
       Expect(inside(button, dirty), "a dirty prompt button should stay inside its dialog at width " +
                                         std::to_string(static_cast<int>(width)));
     }
-    const SDL_FRect surface = ComputePromptSurfaceRect(full);
+    const SDL_FRect surface = ComputePromptSurfaceRect(full, 0);
     for (int count = 1; count <= 3; ++count) {
       for (const SDL_FRect& button : ComputePromptSurfaceButtonRects(surface, count)) {
         Expect(inside(button, surface), "a prompt button should stay inside its surface at width " +
@@ -1924,6 +1973,7 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/PanelGeometryHelpers", TestWorkspaceSharedPanelGeometryHelpers);
   AddTest(tests, "WorkspaceShared/PromptGeometry", TestWorkspaceSharedPromptGeometry);
   AddTest(tests, "WorkspaceShared/ScrollbarEdgeCases", TestWorkspaceSharedScrollbarEdgeCases);
+  AddTest(tests, "WorkspaceShared/PromptSurfaceRecentSection", TestWorkspaceSharedPromptSurfaceRecentSection);
   AddTest(tests, "WorkspaceShared/ScrollSurfaceLayout", TestWorkspaceSharedScrollSurfaceLayout);
   AddTest(tests, "WorkspaceShared/TextGridInteractionLayout",
           TestWorkspaceSharedTextGridInteractionLayout);

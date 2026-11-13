@@ -1468,7 +1468,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   if (context_.prompts.dirty_visible) {
     modal = ComputeDirtyPromptRect(layout.full);
   } else if (context_.prompts.surface_visible) {
-    modal = ComputePromptSurfaceRect(layout.full);
+    modal = ComputePromptSurfaceRect(layout.full, context_.prompts.surface.recent_inputs.size());
   } else if (settings_overlay_service_.Visible()) {
     modal = layout.editor_area;
   }

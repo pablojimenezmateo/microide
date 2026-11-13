@@ -918,7 +918,7 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentPromptRedrawRect() const {
     rect = ComputeDirtyPromptRect(*window_rect);
   }
   if (context_.prompts.surface_visible) {
-    rect = UnionOptionalRects(rect, ComputePromptSurfaceRect(*window_rect));
+    rect = UnionOptionalRects(rect, ComputePromptSurfaceRect(*window_rect, context_.prompts.surface.recent_inputs.size()));
   }
   return rect;
 }

@@ -1582,9 +1582,7 @@ void TestWorkspaceShellPromptFieldSelectsByDragAndShiftClick() {
   WorkspaceShellTestAccess::OpenPromptSurfaceForTest(shell, workspace::PromptSurfaceState::Action::RenamePath,
                                                      workspace::PromptSurfaceState::Kind::TextInput, root / "a.txt",
                                                      "Rename", "drag me");
-  const workspace::WorkspaceLayout layout = WorkspaceShellTestAccess::CurrentLayout(shell);
-  const SDL_FRect field =
-      workspace::ComputePromptSurfaceInputRect(workspace::ComputePromptSurfaceRect(layout.full));
+  const SDL_FRect field = WorkspaceShellTestAccess::PromptSurfaceInputRect(shell);
   const float y = field.y + field.h * 0.5f;
   const float left = field.x + 2.0f;
   const float right = field.x + field.w - 2.0f;
@@ -1618,7 +1616,66 @@ void TestWorkspaceShellPromptFieldSelectsByDragAndShiftClick() {
          "Shift+click extends the selection from the caret (" + input.SelectedText() + ")");
 }
 
+// Remote › Open Folder on Host… lists the latest host folders under its field:
+// only remote ones, newest first, as `host:/path`. Up/Down write them into the
+// field (wrapping), and a click opens the clicked one exactly as Enter would --
+// proven with a host the open refuses before spawning anything, whose refusal
+// names the clicked row's text.
+void TestWorkspaceShellRemoteFolderPromptOffersRecentFolders() {
+  TemporaryDirectory temp;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  // No remote recents: the plain card, no section.
+  WorkspaceShellTestAccess::RecordRecentProject(shell, microide::project::ProjectId::ForLocal(temp.path()));
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::RemoteOpenFolder, {}),
+         "the bare action opens the host prompt");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell) &&
+             WorkspaceShellTestAccess::PromptSurfaceRecentInputs(shell).empty() &&
+             WorkspaceShellTestAccess::PromptSurfaceRecentRows(shell).row_count == 0,
+         "with only local recents the prompt offers no Recent rows");
+  const float plain_height = WorkspaceShellTestAccess::PromptSurfaceDialogRect(shell).h;
+  Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE) && WorkspaceShellTestAccess::PromptSurfaceInput(shell).empty(),
+         "Down with no rows leaves the field alone");
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "Escape closes it");
+
+  WorkspaceShellTestAccess::RecordRecentProject(shell,
+                                                microide::project::ProjectId::ForRemote("-oProxyCommand=x", "/srv/old"));
+  WorkspaceShellTestAccess::RecordRecentProject(shell, microide::project::ProjectId::ForLocal(temp.path() / "l"));
+  WorkspaceShellTestAccess::RecordRecentProject(shell, microide::project::ProjectId::ForRemote("dev@box", "/srv/new"));
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::RemoteOpenFolder, {}),
+         "the prompt opens again");
+  const std::vector<std::string>& rows = WorkspaceShellTestAccess::PromptSurfaceRecentInputs(shell);
+  Expect(rows == std::vector<std::string>{"dev@box:/srv/new", "-oProxyCommand=x:/srv/old"},
+         "the remote recents, newest first, by their host names");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceRecentRows(shell).row_count == 2 &&
+             WorkspaceShellTestAccess::PromptSurfaceDialogRect(shell).h > plain_height,
+         "both rows are laid out on a grown card");
+
+  Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE) &&
+             WorkspaceShellTestAccess::PromptSurfaceInput(shell) == "dev@box:/srv/new",
+         "Down from a free field takes the first row");
+  SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE);
+  Expect(WorkspaceShellTestAccess::PromptSurfaceInput(shell) == "-oProxyCommand=x:/srv/old", "Down steps on");
+  SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE);
+  Expect(WorkspaceShellTestAccess::PromptSurfaceInput(shell) == "dev@box:/srv/new", "and wraps");
+  SendKeyDown(shell, SDLK_UP, SDL_KMOD_NONE);
+  Expect(WorkspaceShellTestAccess::PromptSurfaceInput(shell) == "-oProxyCommand=x:/srv/old", "Up wraps back");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell), "picking a row does not open it");
+
+  const SDL_FRect row = WorkspaceShellTestAccess::PromptSurfaceRecentRows(shell).rows[1];
+  Expect(SendMouseDown(shell, row.x + row.w * 0.5f, row.y + row.h * 0.5f, SDL_BUTTON_LEFT),
+         "a click on a row is handled");
+  Expect(!WorkspaceShellTestAccess::PromptSurfaceVisible(shell), "the click confirms the prompt");
+  const auto& notifications = WorkspaceShellTestAccess::ActiveNotifications(shell);
+  Expect(std::any_of(notifications.begin(), notifications.end(),
+                     [](const auto& n) { return n.message.find("-oProxyCommand=x:/srv/old") != std::string::npos; }),
+         "the clicked row's folder is what the open was asked for (and refused)");
+}
+
 void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/RemoteFolderPromptOffersRecentFolders",
+          TestWorkspaceShellRemoteFolderPromptOffersRecentFolders);
   AddTest(tests, "WorkspaceShell/PromptFieldSelectsByDragAndShiftClick",
           TestWorkspaceShellPromptFieldSelectsByDragAndShiftClick);
   AddTest(tests, "WorkspaceShell/ClosingOneViewOfASharedDirtyBufferDoesNotPrompt",

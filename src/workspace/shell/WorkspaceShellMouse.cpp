@@ -138,13 +138,28 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
 
   if (context_.prompts.surface_visible) {
-    const SDL_FRect dialog = ComputePromptSurfaceRect(*window_rect);
+    const SDL_FRect dialog = ComputePromptSurfaceRect(*window_rect, context_.prompts.surface.recent_inputs.size());
     const auto buttons =
         ComputePromptSurfaceButtonRects(dialog, context_.prompts.surface.button_count);
     for (std::size_t i = 0; i < buttons.size(); ++i) {
       if (Contains(buttons[i], event.button.x, event.button.y)) {
         context_.prompts.surface.selected_button = static_cast<int>(i);
         if (event.button.button == SDL_BUTTON_LEFT) {
+          ConfirmPromptSurface();
+        }
+        EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
+        return true;
+      }
+    }
+    // A Recent row opens what it names: the field takes the row, then the
+    // prompt confirms as Enter would, so a click and Enter cannot diverge.
+    const std::vector<std::string>& recents = context_.prompts.surface.recent_inputs;
+    const PromptSurfaceRecentLayout recent_layout = ComputePromptSurfaceRecentLayout(dialog, recents.size());
+    for (std::size_t i = 0; i < recent_layout.row_count; ++i) {
+      if (Contains(recent_layout.rows[i], event.button.x, event.button.y)) {
+        if (event.button.button == SDL_BUTTON_LEFT) {
+          context_.prompts.surface.input.SetText(recents[i]);
+          context_.prompts.surface.selected_button = 0;
           ConfirmPromptSurface();
         }
         EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });

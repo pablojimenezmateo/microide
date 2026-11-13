@@ -199,10 +199,17 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   }
 
   if (context_.prompts.surface_visible) {
-    const SDL_FRect dialog = ComputePromptSurfaceRect(*window_rect);
+    const SDL_FRect dialog = ComputePromptSurfaceRect(*window_rect, context_.prompts.surface.recent_inputs.size());
     for (const SDL_FRect& button :
          ComputePromptSurfaceButtonRects(dialog, context_.prompts.surface.button_count)) {
       if (Contains(button, x, y)) {
+        return CursorKind::Pointer;
+      }
+    }
+    const PromptSurfaceRecentLayout recent_layout =
+        ComputePromptSurfaceRecentLayout(dialog, context_.prompts.surface.recent_inputs.size());
+    for (std::size_t i = 0; i < recent_layout.row_count; ++i) {
+      if (Contains(recent_layout.rows[i], x, y)) {
         return CursorKind::Pointer;
       }
     }

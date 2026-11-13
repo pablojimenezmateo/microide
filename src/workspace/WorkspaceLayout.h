@@ -507,10 +507,29 @@ std::array<SDL_FRect, 3> ComputeDirtyPromptButtonRects(const SDL_FRect& dialog);
 SDL_FRect ComputeEditorBannerStripRect(const SDL_FRect& editor_surface);
 EditorBannerButtonLayout ComputeEditorBannerButtonRects(const SDL_FRect& strip,
                                                         std::span<const EditorBannerButton> buttons);
-SDL_FRect ComputePromptSurfaceRect(const SDL_FRect& full);
+// The prompt card. `recent_rows` is how many recent-input rows it offers under
+// its field (PromptSurfaceState::recent_inputs.size()): the card grows by their
+// section, and stays its plain size at 0. Required, not defaulted -- the paint,
+// every hit test, the cursor, the redraw rect, the hover occluder and the control
+// listing must all see the same card, and a forgotten argument would silently
+// hit-test a shorter one.
+SDL_FRect ComputePromptSurfaceRect(const SDL_FRect& full, std::size_t recent_rows);
 std::vector<SDL_FRect> ComputePromptSurfaceButtonRects(const SDL_FRect& dialog,
                                                        int button_count = 2);
 SDL_FRect ComputePromptSurfaceInputRect(const SDL_FRect& dialog);
+// The most recent-input rows a prompt card lays out.
+inline constexpr std::size_t kPromptSurfaceMaxRecentRows = 5;
+// The Recent section between a prompt's field and its buttons: a heading, then
+// one row per input. Rows that would reach the buttons -- a window too short for
+// the grown card -- are dropped, never drawn over them; with none left there is
+// no heading either (row_count 0).
+struct PromptSurfaceRecentLayout {
+  SDL_FRect heading{};
+  std::array<SDL_FRect, kPromptSurfaceMaxRecentRows> rows{};
+  std::size_t row_count = 0;
+};
+PromptSurfaceRecentLayout ComputePromptSurfaceRecentLayout(const SDL_FRect& dialog,
+                                                           std::size_t recent_rows);
 TextGridInteractionLayout ComputeTextGridInteractionLayout(
     const SDL_FRect& rect,
     float text_x,

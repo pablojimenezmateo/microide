@@ -125,6 +125,14 @@ struct PromptSurfaceState {
   // What Tab completes the input from (the host prompts: known ssh hosts). Empty =
   // Tab does nothing special.
   std::vector<std::string> completions;
+  // Inputs offered as rows under the field, newest first (the host prompt: the
+  // latest remote folders opened). Clicking a row confirms it; Up/Down write one
+  // into the field. The row equal to the field is the highlighted one -- derived,
+  // not stored, so typing cannot leave a stale selection. Empty = no section, and
+  // the card keeps its plain size.
+  // At most kPromptSurfaceMaxRecentRows (WorkspaceLayout.h): the card's capacity
+  // is the cap, so a row is never listed that the card has no slot for.
+  std::vector<std::string> recent_inputs;
 };
 
 struct PromptState {

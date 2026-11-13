@@ -38,6 +38,10 @@ constexpr float kPromptSurfaceInputHeight = 24.0f;
 constexpr float kPromptSurfaceButtonWidth = 108.0f;
 constexpr float kPromptSurfaceButtonHeight = 28.0f;
 constexpr float kPromptSurfaceButtonGap = 10.0f;
+// The Recent section: a gap under the field, a heading line, then the rows.
+constexpr float kPromptSurfaceRecentGap = 8.0f;
+constexpr float kPromptSurfaceRecentHeadingHeight = 20.0f;
+constexpr float kPromptSurfaceRecentRowHeight = 22.0f;
 constexpr float kEditorSplitDividerThickness = kWorkspaceEditorSplitDividerThickness;
 
 }  // namespace
@@ -777,9 +781,14 @@ EditorBannerButtonLayout ComputeEditorBannerButtonRects(const SDL_FRect& strip,
   return layout;
 }
 
-SDL_FRect ComputePromptSurfaceRect(const SDL_FRect& full) {
+SDL_FRect ComputePromptSurfaceRect(const SDL_FRect& full, std::size_t recent_rows) {
+  const std::size_t rows = std::min(recent_rows, kPromptSurfaceMaxRecentRows);
+  const float recent_height =
+      rows == 0 ? 0.0f
+                : kPromptSurfaceRecentGap + kPromptSurfaceRecentHeadingHeight +
+                      static_cast<float>(rows) * kPromptSurfaceRecentRowHeight;
   const float width = std::min(kPromptSurfaceWidth, full.w - 32.0f);
-  const float height = std::min(kPromptSurfaceHeight, full.h - 32.0f);
+  const float height = std::min(kPromptSurfaceHeight + recent_height, full.h - 32.0f);
   return MakeRect(full.x + std::floor((full.w - width) * 0.5f),
                   full.y + std::floor((full.h - height) * 0.5f), width, height);
 }
@@ -796,6 +805,31 @@ std::vector<SDL_FRect> ComputePromptSurfaceButtonRects(const SDL_FRect& dialog, 
 SDL_FRect ComputePromptSurfaceInputRect(const SDL_FRect& dialog) {
   return MakeRect(dialog.x + 16.0f, dialog.y + 98.0f, dialog.w - 32.0f,
                   kPromptSurfaceInputHeight);
+}
+
+PromptSurfaceRecentLayout ComputePromptSurfaceRecentLayout(const SDL_FRect& dialog,
+                                                           std::size_t recent_rows) {
+  PromptSurfaceRecentLayout layout;
+  const std::size_t wanted = std::min(recent_rows, kPromptSurfaceMaxRecentRows);
+  if (wanted == 0) {
+    return layout;
+  }
+  const SDL_FRect input = ComputePromptSurfaceInputRect(dialog);
+  const float x = input.x;
+  const float w = input.w;
+  const float heading_y = input.y + input.h + kPromptSurfaceRecentGap;
+  // The buttons' top, less the gap the plain card keeps above them.
+  const float limit = dialog.y + dialog.h - kDialogFooterPadding - kPromptSurfaceButtonHeight - 6.0f;
+  float y = heading_y + kPromptSurfaceRecentHeadingHeight;
+  for (std::size_t i = 0; i < wanted && y + kPromptSurfaceRecentRowHeight <= limit; ++i) {
+    layout.rows[i] = MakeRect(x, y, w, kPromptSurfaceRecentRowHeight);
+    layout.row_count = i + 1;
+    y += kPromptSurfaceRecentRowHeight;
+  }
+  if (layout.row_count > 0) {
+    layout.heading = MakeRect(x, heading_y, w, kPromptSurfaceRecentHeadingHeight);
+  }
+  return layout;
 }
 
 TextGridInteractionLayout ComputeTextGridInteractionLayout(const SDL_FRect& rect,

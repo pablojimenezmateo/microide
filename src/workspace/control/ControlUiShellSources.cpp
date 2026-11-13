@@ -856,10 +856,17 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
             }
             if (context_.prompts.surface_visible) {
               const PromptSurfaceState& prompt = context_.prompts.surface;
-              const SDL_FRect dialog = ComputePromptSurfaceRect(layout.full);
+              const SDL_FRect dialog = ComputePromptSurfaceRect(layout.full, prompt.recent_inputs.size());
               if (prompt.kind == PromptSurfaceState::Kind::TextInput) {
                 AddControlUiElement(out, kField, "prompt", ComputePromptSurfaceInputRect(dialog),
                                     prompt.input.text());
+              }
+              const PromptSurfaceRecentLayout recent_layout =
+                  ComputePromptSurfaceRecentLayout(dialog, prompt.recent_inputs.size());
+              for (std::size_t i = 0; i < recent_layout.row_count; ++i) {
+                AddControlUiElement(out, kButton, "prompt/recent/" + std::to_string(i), recent_layout.rows[i],
+                                    prompt.recent_inputs[i]);
+                out.back().active = prompt.recent_inputs[i] == prompt.input.text();
               }
               const auto buttons = ComputePromptSurfaceButtonRects(dialog, prompt.button_count);
               const auto labels = PromptSurfaceActionLabels();

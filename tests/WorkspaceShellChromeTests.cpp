@@ -3087,8 +3087,7 @@ void TestWorkspaceShellAStackedModalRedimsTheWindow() {
   Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell), "goto should open its prompt");
   // Only the dialog's own damage, as a prompt opening asks for.
   microide::workspace::RenderInvalidation dialog_only;
-  const SDL_FRect dialog = microide::workspace::ComputePromptSurfaceRect(
-      WorkspaceShellTestAccess::CurrentLayout(shell).full);
+  const SDL_FRect dialog = WorkspaceShellTestAccess::PromptSurfaceDialogRect(shell);
   dialog_only.rects.push_back(dialog);
   (void)shell.ConsumePendingRenderInvalidation();
   const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, dialog_only, pin_caret);

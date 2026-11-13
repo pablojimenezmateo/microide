@@ -2054,7 +2054,10 @@ segment, which opens that menu (§ 7.4); the Terminal menu
 (`New Local Terminal`, `Remote: Open Local Terminal` / `remote-local-terminal`,
 under New Terminal: a shell on this machine, prefixed `local · `, offered only in a
 remote project), the welcome page's second start button, and `remote-open` on the
-command line and control channel. `Remote: Open Terminal on Host…` (Phase 2a's
+command line and control channel. The Open Folder on Host… prompt lists the five
+remote folders opened last under its field (Recent; a click opens one, Up/Down
+pick one into the field), from the same MRU as the welcome page's recents
+(`openspec/changes/archive/2026-11-13-remote-folder-recents`). `Remote: Open Terminal on Host…` (Phase 2a's
 host terminals with no project) was removed on 2026-10-27
 (`openspec/changes/archive/2026-10-27-remove-host-terminal-command`): a remote project's Terminal >
 New already runs on its host, a shell on a host with no project is `ssh` in a

@@ -265,7 +265,33 @@ void TestRecentsDualWriteTheLegacyRoots() {
          "beside each one's I/O root under the legacy tag");
 }
 
+// The host prompt's Recent rows: only the remote projects, newest first, as the
+// `host:/path` each is reopened by, capped -- local folders interleaved in the MRU
+// neither show nor use up the cap.
+void TestRecentsRemoteFoldersAreTheLatestRemoteOnly() {
+  RecentsService recents;
+  for (int i = 0; i < 7; ++i) {
+    recents.RecordProjectOpen(ProjectId::ForRemote("dev@box:2222", "/srv/r" + std::to_string(i)));
+    recents.RecordProjectOpen(Local("/local" + std::to_string(i)));
+  }
+  recents.RecordProjectOpen(ProjectId::ForRemote("dev@box:2222", "/srv/r2"));  // promoted
+  const std::vector<std::string> folders = recents.RecentRemoteFolders(5);
+  Expect(folders.size() == 5, "capped at the limit");
+  Expect(folders[0] == "dev@box:2222:/srv/r2", "a reopened folder moves to the front");
+  Expect(folders[1] == "dev@box:2222:/srv/r6" && folders[4] == "dev@box:2222:/srv/r3",
+         "then the rest newest first");
+  for (const std::string& folder : folders) {
+    Expect(folder.starts_with("dev@box:2222:/srv/"), "every row is a host folder, never a local one");
+  }
+  Expect(recents.RecentRemoteFolders(0).empty(), "a zero limit lists nothing");
+  RecentsService local_only;
+  local_only.RecordProjectOpen(Local("/proj"));
+  Expect(local_only.RecentRemoteFolders(5).empty(), "no remote project, no rows");
+}
+
 void RegisterRecentsServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RecentsService/RemoteFoldersAreTheLatestRemoteOnly",
+          TestRecentsRemoteFoldersAreTheLatestRemoteOnly);
   AddTest(tests, "RecentsService/LegacyPathsResolveOnLoad", TestRecentsLegacyPathsResolveOnLoad);
   AddTest(tests, "RecentsService/KeepARemoteProjectWhoseMirrorIsGone",
           TestRecentsKeepARemoteProjectWhoseMirrorIsGone);

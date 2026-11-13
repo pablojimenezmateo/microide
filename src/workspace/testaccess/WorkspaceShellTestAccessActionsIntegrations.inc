@@ -77,6 +77,9 @@
   static const std::vector<microide::project::ProjectId>& RecentProjects(const WorkspaceShell& shell) {
     return shell.recents_service_.RecentProjects();
   }
+  static void RecordRecentProject(WorkspaceShell& shell, const microide::project::ProjectId& id) {
+    shell.recents_service_.RecordProjectOpen(id);
+  }
   // One query verb through the control channel, as its socket client gets it; a
   // null value (with *error) when the verb is refused.
   static util::JsonValue ExecuteControlQuery(const WorkspaceShell& shell, const std::string& verb,

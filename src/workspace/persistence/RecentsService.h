@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <string>
 #include <vector>
 
 #include "workspace/persistence/WorkspacePersistenceFormat.h"
@@ -69,6 +70,13 @@ class RecentsService {
   const std::vector<project::ProjectId>& ExistingRecentProjects() const;
   const std::vector<std::filesystem::path>& ExistingRecentFilesFor(
       const std::filesystem::path& project_root, std::size_t limit) const;
+
+  // The remote projects among the recents, newest first, at most `limit`, each as
+  // the `[user@]host[:port]:/path` it is reopened by (its id's Location(), never
+  // its mirror's path): what the Open Folder on Host… prompt offers under its
+  // input. Not cached -- it is read once per prompt open, over at most
+  // MaxProjects() ids.
+  std::vector<std::string> RecentRemoteFolders(std::size_t limit) const;
 
   // The MRU revision the caches above key on, exposed so a presentation-layer
   // memo (the welcome view model) can key on the same thing rather than

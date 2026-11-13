@@ -186,6 +186,7 @@ void WorkspaceShell::OpenPromptSurface(PromptSurfaceState::Action action,
   MakePromptSurfaceService().OpenPromptSurface(action, kind, path, std::move(input));
   if (action == PromptSurfaceState::Action::RemoteFolder) {
     context_.prompts.surface.completions = MakeRemoteHostService().KnownHosts();
+    context_.prompts.surface.recent_inputs = recents_service_.RecentRemoteFolders(kPromptSurfaceMaxRecentRows);
   }
 }
 

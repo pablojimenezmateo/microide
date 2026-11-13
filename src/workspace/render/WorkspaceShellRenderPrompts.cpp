@@ -15,7 +15,7 @@ void WorkspaceShell::RenderPromptSurface(
 
   DrawFilledRect(renderer, layout.full, theme_.overlay_backdrop);
 
-  const SDL_FRect dialog = ComputePromptSurfaceRect(layout.full);
+  const SDL_FRect dialog = ComputePromptSurfaceRect(layout.full, context_.prompts.surface.recent_inputs.size());
   const SDL_FRect header = DrawTitledCardFrame(renderer, theme_, dialog, 32.0f, CardStyle::Overlay);
   const SDL_FRect message_rect =
       MakeRect(dialog.x + 16.0f, dialog.y + 50.0f, dialog.w - 32.0f, 36.0f);
@@ -59,6 +59,30 @@ void WorkspaceShell::RenderPromptSurface(
     DrawSingleLineTextTail(renderer, input_rect.x + 6.0f, input_rect.y + 4.0f,
                            std::max(1.0f, input_rect.w - 12.0f), theme_.surface_text,
                            theme_.surface_background, prompt_text);
+  }
+
+  // The Recent section (the host prompt's latest folders). The row equal to the
+  // field is the selected one -- Up/Down write rows into it -- and the row under
+  // the pointer lifts, like a palette row.
+  const std::vector<std::string>& recents = context_.prompts.surface.recent_inputs;
+  const PromptSurfaceRecentLayout recent_layout = ComputePromptSurfaceRecentLayout(dialog, recents.size());
+  if (recent_layout.row_count > 0) {
+    DrawVCenteredTextOn(text_renderer_, renderer, recent_layout.heading, 0.0f, theme_.text_muted,
+                        theme_.overlay_background, std::string_view("Recent"));
+    const std::string_view input_text = context_.prompts.surface.input.text();
+    for (std::size_t i = 0; i < recent_layout.row_count; ++i) {
+      const SDL_FRect& row = recent_layout.rows[i];
+      const bool selected = recents[i] == input_text;
+      const bool emphasized = selected || PointerOver(row);
+      DrawSelectableRowBackground(renderer, theme_, row, theme_.overlay_background, emphasized, selected);
+      if (selected) {
+        DrawFilledRect(renderer, MakeRect(row.x, row.y + 2.0f, 3.0f, row.h - 4.0f), theme_.accent);
+      }
+      DrawVCenteredTextOn(text_renderer_, renderer, row, 10.0f,
+                          emphasized ? theme_.text_primary : theme_.text_secondary,
+                          emphasized ? theme_.row_highlight : theme_.overlay_background,
+                          TruncateLabelView(recents[i], std::max(1.0f, row.w - 16.0f)));
+    }
   }
 
   const auto labels = PromptSurfaceActionLabels();

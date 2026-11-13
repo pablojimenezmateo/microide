@@ -204,6 +204,23 @@ bool KeyInputCoordinator::HandlePromptSurfaceKeyDown(const SDL_KeyboardEvent& ev
           }
         }
         return true;
+      case SDLK_UP:
+      case SDLK_DOWN:
+        // Cycle the Recent rows through the field: the next row after the one
+        // the field holds, or the first (Down) / last (Up) when it holds none.
+        if (const std::vector<std::string>& recents = prompts_.surface.recent_inputs; !recents.empty()) {
+          const std::size_t count = recents.size();
+          const auto current = std::find(recents.begin(), recents.end(), prompts_.surface.input.text());
+          std::size_t next = event.key == SDLK_DOWN ? 0 : count - 1;
+          if (current != recents.end()) {
+            const auto index = static_cast<std::size_t>(current - recents.begin());
+            next = event.key == SDLK_DOWN ? (index + 1) % count : (index + count - 1) % count;
+          }
+          prompts_.surface.input.SetText(recents[next]);
+          operations_.request_prompt_redraw();
+          return true;
+        }
+        return operations_.text_input_handle_single_line_key_down(event, modifiers) || true;
       case SDLK_BACKSPACE:
       case SDLK_DELETE:
       case SDLK_LEFT:

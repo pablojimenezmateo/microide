@@ -346,6 +346,15 @@ new terminal behaviour lands there.
 > (`remote-remove-mirror` now takes its root) and the host verbs ask which host
 > when several are open. See `openspec/changes/archive/2026-10-27-remote-menu`.
 >
+> **The host prompt remembers (2026-11-13, remote-folder-recents).** Open
+> Folder on Host… lists the five remote folders opened last under its field,
+> headed Recent, as the `[user@]host[:port]:/path` each reopens by (read from the
+> recents MRU through `RecentsService::RecentRemoteFolders`; no format change).
+> A click opens a row as Enter would; Up/Down write rows into the field. With no
+> remote recent the prompt is unchanged. `ComputePromptSurfaceRect` takes the row
+> count with no default, so every hit test sees the card the paint draws. See
+> `openspec/changes/archive/2026-11-13-remote-folder-recents`.
+>
 > **Remote data safety under fault injection (2026-11-02, TD-2026-11-02-430).**
 > `MirrorFaultMatrix` kills the client, kills the host's daemon or drops the link at
 > every wire frame of a push, a journal replay, a pull and a conflict resolution,

@@ -142,6 +142,19 @@ std::vector<std::filesystem::path> RecentsService::RecentFilesFor(
   return result;
 }
 
+std::vector<std::string> RecentsService::RecentRemoteFolders(std::size_t limit) const {
+  std::vector<std::string> folders;
+  for (const project::ProjectId& id : state_.recent_projects) {
+    if (folders.size() >= limit) {
+      break;
+    }
+    if (id.IsRemote()) {
+      folders.push_back(id.Location());
+    }
+  }
+  return folders;
+}
+
 const std::vector<project::ProjectId>& RecentsService::ExistingRecentProjects() const {
   if (!existing_projects_valid_ || existing_projects_revision_ != revision_) {
     existing_projects_.clear();

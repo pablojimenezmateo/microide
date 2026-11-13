@@ -215,6 +215,7 @@ void PromptSurfaceService::OpenPromptSurface(PromptSurfaceState::Action action,
   prompts_.surface.tool_id.clear();
   prompts_.surface.capability_scope.clear();
   prompts_.surface.completions.clear();
+  prompts_.surface.recent_inputs.clear();
   prompts_.surface.button_count = 2;
   prompts_.surface.selected_button = 0;
   state_.surface.focus = FocusTarget::Overlay;

@@ -145,7 +145,7 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
   // Modal prompt (rename / create file / etc).
   if (context_.prompts.surface_visible &&
       context_.prompts.surface.kind == PromptSurfaceState::Kind::TextInput) {
-    const SDL_FRect dialog = ComputePromptSurfaceRect(layout.full);
+    const SDL_FRect dialog = ComputePromptSurfaceRect(layout.full, context_.prompts.surface.recent_inputs.size());
     const SDL_FRect input_rect = ComputePromptSurfaceInputRect(dialog);
     if (Contains(input_rect, x, y)) {
       return FilledHit(TextInputSurface::PromptInput, input_rect, "",
@@ -430,7 +430,7 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
     case TextInputSurface::PromptInput: {
       if (context_.prompts.surface_visible &&
           context_.prompts.surface.kind == PromptSurfaceState::Kind::TextInput) {
-        const SDL_FRect dialog = ComputePromptSurfaceRect(layout.full);
+        const SDL_FRect dialog = ComputePromptSurfaceRect(layout.full, context_.prompts.surface.recent_inputs.size());
         hit = FilledHit(surface, ComputePromptSurfaceInputRect(dialog), "",
                         &context_.prompts.surface.input);
       }

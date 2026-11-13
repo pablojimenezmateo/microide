@@ -173,7 +173,7 @@
   }
   static std::size_t PromptSurfaceButtonRectCount(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    return ComputePromptSurfaceButtonRects(ComputePromptSurfaceRect(layout.full),
+    return ComputePromptSurfaceButtonRects(ComputePromptSurfaceRect(layout.full, shell.context_.prompts.surface.recent_inputs.size()),
                                            shell.context_.prompts.surface.button_count)
         .size();
   }
@@ -198,7 +198,19 @@
   }
   static SDL_FRect PromptSurfaceInputRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    return ComputePromptSurfaceInputRect(ComputePromptSurfaceRect(layout.full));
+    return ComputePromptSurfaceInputRect(
+        ComputePromptSurfaceRect(layout.full, shell.context_.prompts.surface.recent_inputs.size()));
+  }
+  static SDL_FRect PromptSurfaceDialogRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return ComputePromptSurfaceRect(layout.full, shell.context_.prompts.surface.recent_inputs.size());
+  }
+  static PromptSurfaceRecentLayout PromptSurfaceRecentRows(WorkspaceShell& shell) {
+    const std::size_t rows = shell.context_.prompts.surface.recent_inputs.size();
+    return ComputePromptSurfaceRecentLayout(ComputePromptSurfaceRect(CurrentLayout(shell).full, rows), rows);
+  }
+  static const std::vector<std::string>& PromptSurfaceRecentInputs(const WorkspaceShell& shell) {
+    return shell.context_.prompts.surface.recent_inputs;
   }
   static const std::string& PromptSurfaceInput(const WorkspaceShell& shell) {
     return shell.context_.prompts.surface.input.text();
