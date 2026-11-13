@@ -1147,8 +1147,25 @@ void WorkspaceShell::FlushSessionStateForCrashSafety() {
   // window can cost; quit still flushes (flush_persisted_state) before it exits.
 }
 
-WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() const {
+WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() {
   std::optional<Uint32> wait_ms;
+  // Something still owed off the main thread: the loop's short wait is for it.
+  bool in_flight = false;
+  // The loop is about to block. When nothing is moving -- no tab sliding, no
+  // selection autoscroll, no file-change batch due, nothing queued, nothing in
+  // flight -- the app is idle, and every `idle` query waiting for that moment is
+  // answered (ControlChannelService::ReleaseIdleWaiters). A blinking caret, a
+  // toast's expiry and a plugin's poll timer are compatible with idle; a driver
+  // used to infer this moment from 30 ms of silence in the app's log.
+  const auto release_idle_waiters = [&] {
+    if (in_flight || NextTabSlideDelayMs().has_value() ||
+        selection_autoscroll::NextDelayMs(context_.interaction_state).has_value() ||
+        project_change_coalescer_.NextReadyDelayMs(SDL_GetTicks()).has_value() ||
+        SDL_HasEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST)) {
+      return;
+    }
+    control_channel_service_.ReleaseIdleWaiters();
+  };
   if (const auto next_delay = NextAnimationDelayMs(); next_delay.has_value()) {
     wait_ms = std::max<Uint32>(1, *next_delay);
   }
@@ -1174,6 +1191,7 @@ WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() const {
   // worst-case backstop latency (only hit if the wake is dropped) below the
   // ~100 ms perception threshold, so stepping still feels immediate.
   if (DebugEnabled() && debug_service_.HasInFlightDapWork()) {
+    in_flight = true;
     constexpr Uint32 kDapPollMs = 64;
     wait_ms = wait_ms.has_value() ? std::min(*wait_ms, kDapPollMs) : kDapPollMs;
   }
@@ -1184,6 +1202,7 @@ WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() const {
   // re-checks and drains the ready state instead of blocking until unrelated input.
   // (TD-2026-07-16-54.)
   if (util::ConsumeOwedWake()) {
+    in_flight = true;
     constexpr Uint32 kWakeOwedPollMs = 32;
     wait_ms = wait_ms.has_value() ? std::min(*wait_ms, kWakeOwedPollMs) : kWakeOwedPollMs;
   }
@@ -1193,9 +1212,11 @@ WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() const {
   // than stranded until unrelated input. Rare (SDL event-type exhaustion at startup),
   // so the steady poll is acceptable. (TD-2026-07-16-56.)
   if (util::WakeRegistrationDegraded()) {
+    in_flight = true;  // a result may sit ready with no wake: never call this idle
     constexpr Uint32 kDegradedPollMs = 64;
     wait_ms = wait_ms.has_value() ? std::min(*wait_ms, kDegradedPollMs) : kDegradedPollMs;
   }
+  release_idle_waiters();
   if (wait_ms.has_value()) {
     return IdleWaitState{
         .hint = IdleHint::CaretOnly,

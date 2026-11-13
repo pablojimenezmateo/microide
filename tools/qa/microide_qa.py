@@ -393,6 +393,9 @@ class App:
     # the press must not happen (it would land on a window control and end the
     # run). click() and drag() then send and record nothing.
     press_guard: Callable[[float, float], bool] | None = None
+    # Whether the app answers `idle` (settle_quiet): None until asked, False once
+    # an app without it refused.
+    _idle_query: bool | None = None
     # Its keyboard half: True when a key that ACTIVATES (Return, keypad Enter,
     # Space) would choose a row the run must not choose -- an open menu's
     # keyboard selection on Quit/Exit. key() and type() then close the menu with
@@ -1747,6 +1750,14 @@ class App:
         settle was 80% of a step; most actions are painted in a few ms."""
         started = time.monotonic()
         deadline = started + most * SLOW_FACTOR
+        # The app says when it is idle (the `idle` query, answered at its next idle
+        # point): no 30 ms of silence to wait out, which was a third of a monkey step
+        # (profiled 2026-11-13). A binary without the query -- an old finding's
+        # replay -- falls back to watching the log.
+        if self._idle_query is not False and self.alive():
+            idle = self._wait_idle(deadline)
+            if idle is not None:
+                return time.monotonic() - started
         time.sleep(least)
         last_size = -1
         still_since = time.monotonic()
@@ -1764,6 +1775,49 @@ class App:
                 break
             time.sleep(0.004)
         return time.monotonic() - started
+
+    def _wait_idle(self, deadline: float) -> bool | None:
+        """Waits for the app's next idle point (`idle` with wait) until `deadline`:
+        True when it came, False when the deadline did first (the app is busier
+        than the settle allows -- not a stall; its late answer is skipped by id),
+        None when the app does not know the query. Never raises."""
+        try:
+            self._await_typed_input()
+            if self._socket is None:
+                listing = _last_json(self._control(["control-list"]).stdout) or {}
+                if not listing.get("socket"):
+                    return None
+                self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                self._socket.connect(listing["socket"])
+            request_id = self._next_id
+            self._next_id += 1
+            self._socket.sendall(json.dumps({"id": request_id, "query": "idle", "args": {"wait": True}}).encode()
+                                 + b"\n")
+            while True:
+                newline = self._socket_buffer.find(b"\n")
+                if newline < 0:
+                    left = deadline - time.monotonic()
+                    if left <= 0:
+                        return False
+                    self._socket.settimeout(left)
+                    try:
+                        chunk = self._socket.recv(65536)
+                    except socket.timeout:
+                        return False
+                    if not chunk:
+                        return None
+                    self._socket_buffer += chunk
+                    continue
+                raw, self._socket_buffer = self._socket_buffer[:newline], self._socket_buffer[newline + 1:]
+                with contextlib.suppress(json.JSONDecodeError, UnicodeDecodeError):
+                    reply = json.loads(raw.decode("utf-8", "replace"))
+                    if isinstance(reply, dict) and reply.get("id") == request_id:
+                        if not reply.get("ok"):
+                            self._idle_query = False  # an app without the query
+                            return None
+                        return True
+        except (OSError, QaFailure):
+            return None
 
     def grab_raw(self) -> "bytes | xtest.Shot | None":
         """The screen as xwd bytes (converted only if a finding needs it: the

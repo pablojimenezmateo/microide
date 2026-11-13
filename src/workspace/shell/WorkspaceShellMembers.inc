@@ -130,7 +130,7 @@
   void PrepareRenderFrame(SDL_Renderer* renderer, int width, int height);
   void Render(SDL_Renderer* renderer, int width, int height);
   void RenderPrepared(SDL_Renderer* renderer, int width, int height);
-  IdleWaitState CurrentIdleWaitState() const;
+  IdleWaitState CurrentIdleWaitState();
   std::optional<Uint32> NextAnimationDelayMs() const;
   // The repaint owed after a frame that reflowed the terminal, or nullopt when
   // none is owed. Scoped to the bottom panel rather than the whole window --

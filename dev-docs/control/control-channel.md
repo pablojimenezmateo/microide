@@ -164,8 +164,17 @@ Query verbs: `debug-state`, `breakpoints`, `function-breakpoints`,
 `exception-filters`, `tabs`, `projects`, `status`, `launch-configs`, `adapters`,
 `editor`, `commands`, `terminals`, `terminal-output`, `notifications`,
 `keybindings`, `settings`, `ui`, `buffer`, `documents`, `output`, `action-counts`, `hit-test`,
-`surface`, `persistence`. `ControlQueryVerbs()` is the one list: the dispatcher refuses a verb
+`surface`, `persistence`, `compare`, `idle`. `ControlQueryVerbs()` is the one list: the dispatcher refuses a verb
 missing from it, and a test asks every listed verb.
+
+**When the app is done (`idle`).** `{"query":"idle","args":{"wait":true}}` is
+answered `{idle: true}` at the app's next idle point -- the main loop about to
+block with no event queued and no redraw owed (`WorkspaceShell::CurrentIdleWaitState`
+releases the waiters) -- rather than when it is read. A driver that sent input
+waits on it instead of guessing from a quiet log; the QA driver's `settle_quiet`
+does (a blinking caret still counts as idle). Without `wait` it answers at once,
+`{idle: false}`: an app serving a query is busy serving it. Work still running
+off the main thread (a file read, a language server) is not waited for.
 
 **Where a press lands (`hit-test`).** Args `{x, y}` in layout units; answers
 `{region}`: `normal` (the app gets the press), `draggable` or `resize` (the title

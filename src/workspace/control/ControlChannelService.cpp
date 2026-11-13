@@ -393,6 +393,11 @@ void ControlChannelService::ConsumeControlCallbacks() {
       response.ok = outcome.ok;
       response.feedback = outcome.feedback;
       response.error = outcome.error;
+    } else if (request.query == "idle" && request.args.IsObject() && request.args.HasKey("wait") &&
+               request.args["wait"].IsBool() && request.args["wait"].AsBool()) {
+      // Answered at the next idle point (ReleaseIdleWaiters), not now.
+      idle_waiters_.emplace_back(message.connection_id, request.id);
+      continue;
     } else {
       bool ok = false;
       std::string error;
@@ -408,6 +413,25 @@ void ControlChannelService::ConsumeControlCallbacks() {
     server_.SendLine(message.connection_id, serialized);
     EmitJsonLine(serialized);
   }
+}
+
+void ControlChannelService::ReleaseIdleWaiters() {
+  if (idle_waiters_.empty()) {
+    return;
+  }
+  util::JsonObject result;
+  result["idle"] = util::JsonValue(true);
+  const util::JsonValue idle(std::move(result));
+  for (const auto& [connection, id] : idle_waiters_) {
+    ControlResponse response;
+    response.id = id;
+    response.ok = true;
+    response.result = idle;
+    const std::string serialized = SerializeControlResponse(response);
+    server_.SendLine(connection, serialized);
+    EmitJsonLine(serialized);
+  }
+  idle_waiters_.clear();
 }
 
 util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
@@ -481,6 +505,13 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
       }
     }
     return BuildControlCompareJson(compare);
+  }
+  if (verb == "idle") {
+    // Read now: an app serving a query is busy serving it. {"wait": true} is
+    // answered at the next idle point instead (ConsumeControlCallbacks).
+    util::JsonObject idle;
+    idle["idle"] = util::JsonValue(false);
+    return util::JsonValue(std::move(idle));
   }
   if (verb == "notifications") {
     return BuildNotifications(args.IsObject() && args["recent"].AsBool(false));

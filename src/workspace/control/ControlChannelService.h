@@ -183,6 +183,11 @@ class ControlChannelService {
 
   // Main thread: drain + dispatch queued inbound requests (control wake event).
   void ConsumeControlCallbacks();
+  // Answers every `idle` query that asked to wait ({"wait": true}): the app is at
+  // an idle point. Called where the main loop is about to block with nothing
+  // queued (WorkspaceShell::CurrentIdleWaitState). A driver waits on this instead
+  // of guessing the moment from a quiet log.
+  void ReleaseIdleWaiters();
 
   // Main thread: push debug notifications to connected clients. No-ops when the
   // server is not running.
@@ -260,6 +265,9 @@ class ControlChannelService {
   std::filesystem::path descriptor_path_;
   std::filesystem::path project_root_;
   bool stdout_mirror_ = false;
+  // `idle` queries waiting for the next idle point: the connection and the
+  // request id to answer.
+  std::vector<std::pair<std::uint64_t, std::optional<std::int64_t>>> idle_waiters_;
 };
 
 }  // namespace microide::workspace

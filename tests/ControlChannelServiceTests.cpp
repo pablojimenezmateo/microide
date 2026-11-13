@@ -348,6 +348,77 @@ void TestQueryAndCommandOverSocket() {
   std::filesystem::remove_all(runtime, ec);
 }
 
+// `idle` with {"wait": true} is answered at the app's next idle point -- the
+// main loop about to block with nothing queued (WorkspaceShell::
+// CurrentIdleWaitState releases the waiters) -- not when it is read. The QA
+// driver used to infer that point from 30 ms of silence in the app's log, a
+// third of every monkey step (profiled 2026-11-13). Without `wait` the answer
+// is immediate: an app serving a query is not idle.
+void TestAnIdleWaitIsAnsweredAtTheNextIdlePoint() {
+  const std::filesystem::path runtime =
+      std::filesystem::temp_directory_path() /
+      ("microide-control-idle-" + std::to_string(::getpid()));
+  std::error_code ec;
+  std::filesystem::remove_all(runtime, ec);
+  std::filesystem::create_directories(runtime, ec);
+  ::setenv("XDG_RUNTIME_DIR", runtime.string().c_str(), 1);
+
+  microide::workspace::WorkspaceContext context;
+  context.current_project_state.root = "/tmp/proj";
+  microide::workspace::ControlChannelService service;
+  service.Configure(context, microide::workspace::ControlChannelService::Operations{});
+  service.SetWakeChannel(0);
+  Expect(service.Start("/tmp/proj"), "control service should start");
+  const std::string socket_path =
+      (runtime / "microide" / (std::to_string(::getpid()) + ".sock")).string();
+  int fd = -1;
+  const auto connect_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (fd < 0 && std::chrono::steady_clock::now() < connect_deadline) {
+    fd = ConnectUnix(socket_path);
+    if (fd < 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+  Expect(fd >= 0, "client should connect to the control socket");
+
+  const auto now = util::ParseJson(ExchangeLine(service, fd, R"({"id":1,"query":"idle"})"));
+  Expect(now.has_value() && (*now)["ok"].AsBool() && !(*now)["result"]["idle"].AsBool(),
+         "a plain idle query answers at once: not idle while it is being served");
+
+  const std::string wait = R"({"id":2,"query":"idle","args":{"wait":true}})" "\n";
+  ::send(fd, wait.data(), wait.size(), 0);
+  std::string received;
+  const auto read_some = [&](std::chrono::milliseconds span) {
+    const auto until = std::chrono::steady_clock::now() + span;
+    while (std::chrono::steady_clock::now() < until && received.find('\n') == std::string::npos) {
+      service.ConsumeControlCallbacks();
+      char buffer[512];
+      const ssize_t count = ::recv(fd, buffer, sizeof(buffer), MSG_DONTWAIT);
+      if (count > 0) {
+        received.append(buffer, static_cast<std::size_t>(count));
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  };
+  read_some(std::chrono::milliseconds(300));
+  Expect(received.empty(), "a waiting idle query is not answered while the app is busy: " + received);
+
+  service.ReleaseIdleWaiters();
+  read_some(std::chrono::seconds(3));
+  const auto answer = util::ParseJson(received.substr(0, received.find('\n')));
+  Expect(answer.has_value() && (*answer)["id"].AsInt() == 2 && (*answer)["ok"].AsBool() &&
+             (*answer)["result"]["idle"].AsBool(),
+         "the idle point answers it: " + received);
+  received.clear();
+  service.ReleaseIdleWaiters();
+  read_some(std::chrono::milliseconds(100));
+  Expect(received.empty(), "and only once");
+
+  ::close(fd);
+  service.Stop();
+  std::filesystem::remove_all(runtime, ec);
+}
+
 // A single control query must not materialize an unbounded JSON array on the UI
 // path. A debug-state response with a huge call stack is capped at
 // kMaxControlQueryEntries frames and flagged `framesTruncated`. TD-2026-07-17A-095.
@@ -1216,6 +1287,8 @@ void TestOverlongSocketPathSaysWhyItRefused() {
 }
 
 void RegisterControlChannelServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ControlChannelService/AnIdleWaitIsAnsweredAtTheNextIdlePoint",
+          TestAnIdleWaitIsAnsweredAtTheNextIdlePoint);
   AddTest(tests, "ControlChannelService/HitTestQueryNamesWhereAPressLands",
           TestHitTestQueryNamesWhereAPressLands);
   AddTest(tests, "ControlChannelService/OverlongSocketPathSaysWhyItRefused",
