@@ -242,7 +242,13 @@ std::vector<std::filesystem::path> TabCoordinator::OpenSymlinkAliasesOf(
       if (!real_target.has_value()) {
         real_target = util::ResolveRealPath(normalized_target);
       }
-      if (!util::SameAsNormalizedPath(viewport.real_path(), *real_target)) {
+      // Where the view's chain leads NOW, not the real path it recorded when it
+      // opened: a link in the chain can be replaced underneath it (a regular file
+      // put in its place by a rename back or a branch switch), and the recorded
+      // path then names a file the chain no longer reaches -- the change went to
+      // nobody and the clean buffer kept its old text (soak 77fa58de2a44). Only
+      // views opened through a link pay this resolve, once per change batch path.
+      if (!util::SameAsNormalizedPath(util::ResolveRealPath(viewport.path()), *real_target)) {
         continue;
       }
       const bool seen = std::any_of(aliases.begin(), aliases.end(), [&](const auto& alias) {

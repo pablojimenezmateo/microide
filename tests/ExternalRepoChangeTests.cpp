@@ -896,6 +896,40 @@ void TestWorkspaceShellChangeToASymlinkTargetReloadsTheLinksCleanBuffer() {
          "and says so, on the link's tab");
 }
 
+// Soak 77fa58de2a44: `qa-ext/link1 -> qa-weird/link-to-crlf.txt`, itself a link
+// to crlf.txt when link1 was opened. The world then put a regular file in
+// link-to-crlf.txt's place (a rename back, a branch switch), and a save through
+// that tab wrote it -- the change the watcher names, by that path. Which views
+// see it was decided by the real path each view recorded WHEN IT OPENED (crlf.txt
+// for link1), not by where its chain leads now (link-to-crlf.txt itself): link1
+// matched nothing, and its clean buffer kept the old text for good.
+void TestWorkspaceShellALinksChainThatChangedStillReachesItsCleanBuffer() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path target = root / "target.txt";
+  const std::filesystem::path middle = root / "middle.txt";
+  const std::filesystem::path link = root / "link.txt";
+  WriteFile(target, "the first target\n");
+  std::filesystem::create_symlink("target.txt", middle);
+  std::filesystem::create_symlink("middle.txt", link);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, link);
+  DrainProjectChanges(shell);
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "the first target", "opened through the chain");
+
+  // The middle link becomes a regular file of its own, then changes.
+  std::filesystem::remove(middle);
+  WriteFile(middle, "middle is a file now\n");
+  ForceDistinctModificationTime(middle);
+  DispatchAndApply(shell, BuildModifiedBatch(root, "middle.txt"), "the middle file's batch");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "middle is a file now",
+         "the link's clean buffer follows where its chain leads now, got: " +
+             std::string(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0]));
+}
+
 // Soak `88696b6b00ac` and its family (`data` oracle: "the clean buffer of
 // bom.txt differs from its file on disk", under qa-weird/loop/): the same file
 // open twice, once through a symlinked FOLDER (`loop -> .`). The file itself is no
@@ -1163,6 +1197,8 @@ void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCleanReloadRaisesNotice);
   AddTest(tests, "ExternalRepoChange/ChangeToASymlinkTargetReloadsTheLinksCleanBuffer",
           TestWorkspaceShellChangeToASymlinkTargetReloadsTheLinksCleanBuffer);
+  AddTest(tests, "ExternalRepoChange/ALinksChainThatChangedStillReachesItsCleanBuffer",
+          TestWorkspaceShellALinksChainThatChangedStillReachesItsCleanBuffer);
   AddTest(tests, "ExternalRepoChange/AnEditedMergeResultDoesNotKeepTheFilesCleanTabStale",
           TestWorkspaceShellAnEditedMergeResultDoesNotKeepTheFilesCleanTabStale);
   AddTest(tests, "ExternalRepoChange/SaveThroughASymlinkIsItsOwnEcho",
