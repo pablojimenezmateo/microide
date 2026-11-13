@@ -1149,6 +1149,66 @@ void TestTabDragDropPreviewPaints() {
       "dropping the tab");
 }
 
+// Soak d9ec05f4132a (deterministic; minimized to 2616 actions): with the top row
+// split into two panes over a full-width pane, a tab dragged from the top-right
+// strip down into the bottom one painted its ghost at the x the BOTTOM strip
+// clamps it to but at the y of the tab it came from -- in the top row, over the
+// top-left strip, which neither damaged strip covers. The ghost belongs to the
+// strip it is over.
+void TestATabDraggedAcrossStackedPanesPaintsItsGhostInTheTargetStrip() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("first.txt", "first\n");
+  WriteFile(fixture.root / "second.txt", "second\n");
+  TestAccess::OpenFileInNewTab(fixture.shell, fixture.root / "second.txt");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-down"), "split-down should run");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "focus-group-up"), "focus-group-up should run");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "split-right should run");
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "two panes over one");
+  // The top-right pane's tab, and the bottom pane's strip under the top-left one.
+  std::optional<SDL_FRect> tab;
+  std::optional<SDL_FRect> bottom_tab;
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    if (entry["kind"].AsString() != "tab") {
+      continue;
+    }
+    const auto& r = entry["rect"].AsArray();
+    const SDL_FRect rect{static_cast<float>(r[0].AsInt()), static_cast<float>(r[1].AsInt()),
+                         static_cast<float>(r[2].AsInt()), static_cast<float>(r[3].AsInt())};
+    if (rect.x > FlowFixture::kWidth / 2.0f && rect.y < FlowFixture::kHeight / 4.0f &&
+        (!tab.has_value() || rect.x < tab->x)) {
+      tab = rect;
+    }
+    if (rect.y > FlowFixture::kHeight / 4.0f && (!bottom_tab.has_value() || rect.x < bottom_tab->x)) {
+      bottom_tab = rect;
+    }
+  }
+  Expect(tab.has_value() && bottom_tab.has_value(), "the top-right and bottom panes should show tabs");
+  if (!tab.has_value() || !bottom_tab.has_value()) {
+    return;
+  }
+  const float x0 = tab->x + tab->w / 2.0f;
+  const float y0 = tab->y + tab->h / 2.0f;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x0, y0),
+                                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x0, y0)}),
+                      "pressing the top-right pane's tab");
+  // Down and left, onto the bottom strip under the top-left pane.
+  const float x1 = bottom_tab->x + 20.0f;
+  const float y1 = bottom_tab->y + bottom_tab->h / 2.0f;
+  for (int step = 1; step <= 8; ++step) {
+    const float x = x0 + (x1 - x0) * static_cast<float>(step) / 8.0f;
+    const float y = y0 + (y1 - y0) * static_cast<float>(step) / 8.0f;
+    SDL_Event motion = MouseMotionEvent(x, y);
+    motion.motion.state = SDL_BUTTON_LMASK;  // the button is held: a drag
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {motion}),
+                        "dragging the tab down and left, step " + std::to_string(step));
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x1, y1)}),
+                      "dropping it in the bottom strip");
+}
+
 // QA monkey (CI qa-asan, seed 2): a tab dragged along its own strip, leftwards
 // across another tab's close button, left that button painted hovered after the
 // drop -- the full render drew it idle. Each drag step and the drop must paint
@@ -5619,6 +5679,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/MergeToolbarStaysInsideANarrowPane",
           TestMergeToolbarStaysInsideANarrowPane);
   AddTest(tests, "QaFlowRegression/LeavingAPanelTabMidSlideLeavesNoHover", TestLeavingAPanelTabMidSlideLeavesNoHover);
+  AddTest(tests, "QaFlowRegression/ATabDraggedAcrossStackedPanesPaintsItsGhostInTheTargetStrip",
+          TestATabDraggedAcrossStackedPanesPaintsItsGhostInTheTargetStrip);
   AddTest(tests, "QaFlowRegression/ADragAcrossPanelTabsLeavesNoHoveredCloseButton",
           TestADragAcrossPanelTabsLeavesNoHoveredCloseButton);
   AddTest(tests, "QaFlowRegression/SearchResultsCaughtUpAtFramePrepRepaintTheirCount",

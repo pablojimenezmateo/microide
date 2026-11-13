@@ -1098,12 +1098,15 @@ inline void DrawTabStripOverflowButton(const render::TextRenderer& text_renderer
 // whose index == `source_index`, offset to track under the pointer. The
 // insertion point is shown by the gap the neighbor tabs slide open (Chrome-like),
 // so no caret is drawn here. No allocations: the ghost reuses the visible tab's
-// already-built title string_view.
+// already-built title string_view. `tabs_strip` is the strip `tabs` were laid
+// out in -- in a drag across editor groups, the SOURCE strip, while `strip` is
+// the one the ghost paints over.
 inline void DrawTabDragFeedback(const render::TextRenderer& text_renderer,
                                 SDL_Renderer* renderer,
                                 const render::Theme& theme,
                                 const SDL_FRect& strip,
                                 const std::vector<VisibleStripTab>& tabs,
+                                const SDL_FRect& tabs_strip,
                                 std::size_t source_index,
                                 float pointer_x,
                                 float grab_offset_x,
@@ -1126,7 +1129,11 @@ inline void DrawTabDragFeedback(const render::TextRenderer& text_renderer,
   }
   const float ghost_x =
       ClampedGhostX(strip.x, strip.w, ghost->rect.w, pointer_x, grab_offset_x);
-  const SDL_FRect ghost_rect = MakeRect(ghost_x, ghost->rect.y, ghost->rect.w, ghost->rect.h);
+  // In the strip it paints over, at the tab's place within its own: with the
+  // panes stacked, the source tab's y put the ghost in the row above, over a strip
+  // no damage covered (soak d9ec05f4132a).
+  const SDL_FRect ghost_rect =
+      MakeRect(ghost_x, strip.y + (ghost->rect.y - tabs_strip.y), ghost->rect.w, ghost->rect.h);
   // The drop shadow stays inside the strip: a drag damages the strip and no more,
   // so shadow drawn below it was never painted over (soak 0c1b56e84217).
   const SDL_FRect shadow = MakeRect(ghost_rect.x + 1.0f, ghost_rect.y + 2.0f, ghost_rect.w, ghost_rect.h);

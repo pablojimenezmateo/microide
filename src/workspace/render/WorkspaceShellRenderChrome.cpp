@@ -188,7 +188,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
     if (const TabDragState& drag = context_.interaction_state.tab_drag;
         drag.dragging && drag.kind == TabDragKind::Project) {
       DrawTabDragFeedback(text_renderer_, renderer, theme_, layout.project_tab_strip,
-                          visible_project_tabs, drag.source_index, drag.pointer_x,
+                          visible_project_tabs, layout.project_tab_strip, drag.source_index, drag.pointer_x,
                           drag.grab_offset_x,
                           StripTabStyle{
                               .text_left_padding = 10.0f,
@@ -322,14 +322,15 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
         // another group's visible list is safe here: the memo is per group index,
         // so it cannot invalidate the `visible_tabs` reference above it.
         const bool cross_group = drag.source_group_index != gi;
+        const bool source_known = drag.source_group_index < editor_group_rects.groups.size();
+        const SDL_FRect& ghost_tabs_strip =
+            cross_group && source_known ? editor_group_rects.groups[drag.source_group_index].tab_strip
+                                        : group_tab_strip;
         const std::vector<VisibleStripTab>& ghost_tabs =
             !cross_group ? visible_tabs
-            : drag.source_group_index < editor_group_rects.groups.size()
-                ? tab_strip_chrome_.ComputeVisibleTabsForGroup(
-                      drag.source_group_index,
-                      editor_group_rects.groups[drag.source_group_index].tab_strip)
-                : TabStripService::EmptyVisibleTabs();
-        DrawTabDragFeedback(text_renderer_, renderer, theme_, group_tab_strip, ghost_tabs,
+            : source_known ? tab_strip_chrome_.ComputeVisibleTabsForGroup(drag.source_group_index, ghost_tabs_strip)
+                           : TabStripService::EmptyVisibleTabs();
+        DrawTabDragFeedback(text_renderer_, renderer, theme_, group_tab_strip, ghost_tabs, ghost_tabs_strip,
                             drag.source_index, drag.pointer_x, drag.grab_offset_x,
                             StripTabStyle{
                                 .text_left_padding = 10.0f,

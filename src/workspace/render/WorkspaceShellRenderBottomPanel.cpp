@@ -246,7 +246,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
         panel_overflow.hidden_right,
         PointerOver(panel_overflow.right_button));
     if (panel_vm.tab_drag.active) {
-      DrawTabDragFeedback(text_renderer_, renderer, theme_, panel_header, visible_panel_tabs,
+      DrawTabDragFeedback(text_renderer_, renderer, theme_, panel_header, visible_panel_tabs, panel_header,
                           panel_vm.tab_drag.source_index,
                           panel_vm.tab_drag.pointer_x, panel_vm.tab_drag.grab_offset_x,
                           StripTabStyle{
