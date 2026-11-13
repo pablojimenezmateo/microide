@@ -41,7 +41,7 @@ covered_by = "qa scenarios dbg-* (gdb through plugins/gdb-dap); the monkey exclu
 
 [item."remote projects"]
 kind = "remote"
-covered_by = "tools/qa/remote.py against a loopback sshd (run-checks qa-remote), not yet a soak job"
+covered_by = "the soak's `remote` job type (its own loopback sshd per run, tools/qa/remote_host.py, with link and server faults and the convergence oracle); tools/qa/remote.py in run-checks qa-remote"
 
 [item."native file dialogs"]
 kind = "window system"
@@ -53,7 +53,7 @@ excluded = "Xvfb has no input method; needs a control-channel composition hook (
 
 [item."clipboard set by other applications"]
 kind = "window system"
-excluded = "needs an X clipboard owner in the driver (TD-2026-11-08-435 item 4); copy/paste inside the app is reached"
+covered_by = "monkey `external` source puts foreign text on the X CLIPBOARD (App.foreign_clipboard, tools/qa/x_clipboard.py); qa scenario edit-foreign-clipboard. X only; SDL's paste race: TD-2026-11-13-449"
 
 [item."suspend/resume and display hotplug"]
 kind = "window system"

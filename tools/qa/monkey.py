@@ -131,6 +131,19 @@ PASTE_TEXTS = [
     "a\u0300" * 300,
     "\U0001F600" * 200,
 ]
+# What only another application leaves on the clipboard: what the app's own copy
+# never produces (App.foreign_clipboard; surface-extra.toml).
+FOREIGN_CLIPBOARD_TEXTS = [
+    "",
+    "\r\n",
+    "a\rb\rc",
+    "x" * 200_000,
+    "path/with spaces/and\ttab.txt\n",
+    "\u00a0non-breaking\u00a0spaces\u00a0",
+    "trailing whitespace   \n\t\n",
+    "\ufeffbom at the start",
+    "line\u2028separator\u2029paragraph",
+]
 
 # What the pointer must never press: it ends the run or opens a native dialog that
 # blocks the event loop on a portal nobody answers under Xvfb.
@@ -1083,6 +1096,12 @@ class Monkey:
         if self.project is None:
             return self.chord_action()
         self.counter += 1
+        if self.rng.random() < 0.15:
+            # Another application's clipboard: the app's paste reads text it never
+            # copied (CRLF, an enormous line, wide characters), and its own next
+            # copy takes the selection back (App.foreign_clipboard).
+            self.app.foreign_clipboard(self.rng.choice(PASTE_TEXTS + FOREIGN_CLIPBOARD_TEXTS))
+            return "ext:foreign-clipboard"
         op = self.rng.choice(EXTERNAL_OPS)
         candidates = [name for name in self.files + self.weird
                       if name and not name.endswith(("loop", "dangling")) and "." in Path(name).name]

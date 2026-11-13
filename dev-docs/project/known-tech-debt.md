@@ -16,6 +16,29 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 
 ## Open items
 
+### TD-2026-11-13-449 — SDL's X11 clipboard can paste the previous text right after another application copies. [OPEN]
+
+Found standing up the QA driver's foreign clipboard (`App.foreign_clipboard`,
+`tools/qa/x_clipboard.py`): a paste a few milliseconds after another client took
+the CLIPBOARD returned the text of the paste BEFORE it, into a buffer confirmed
+empty -- about one paste in three in `edit-foreign-clipboard` without a settle.
+
+The mechanism is SDL 3.2's X11 backend (`SDL_x11clipboard.c` / `SDL_x11events.c`):
+on the XFixes notice that the owner changed, SDL asks the new owner for TARGETS
+(into the `SDL_FORMATS` property). A paste then runs `GetSelectionData`, which
+converts into the `SDL_SELECTION` property and waits on `selection_waiting` --
+a flag ANY SelectionNotify clears, the TARGETS answer included. It then reads
+`SDL_SELECTION`, which still holds the previous paste (read with delete=False),
+and returns it. The same read also happens after its 1 s timeout, where it then
+takes the selection itself with empty data.
+
+Who meets it: a paste right after a copy elsewhere, and more often with a
+clipboard manager, which re-takes the selection after every copy. The app cannot
+tell: `SystemClipboard::Read` gets well-formed text. The fix is SDL's: match the
+SelectionNotify to the request (its target and property), and delete or clear
+the property before converting. Report upstream; the QA scenario settles 0.5 s
+before pasting meanwhile, as a person does.
+
 ### TD-2026-11-11-444 — a cold structural refinement of a heavily churned file costs several times the old intraline pass. [OPEN]
 
 `microide_diff_bench`, min of runs, interleaved with `main` on the same machine,

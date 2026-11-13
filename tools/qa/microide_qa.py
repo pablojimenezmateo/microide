@@ -45,6 +45,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -784,6 +785,7 @@ class App:
         self.display = "wayland:mqa-wl"
 
     def stop(self) -> None:
+        self._end_clipboard_owner()
         if (xt := getattr(self, "_xt", None)) is not None:
             xt.close()
             self._xt = None
@@ -1432,6 +1434,37 @@ class App:
         if (xt := self._xt_or_none()) and xt.resize(int(self.window), int(width), int(height)):
             return
         self._xdotool("windowsize", self.window, str(int(width)), str(int(height)))
+
+    def foreign_clipboard(self, text: str) -> None:
+        """Puts `text` on the X CLIPBOARD as another application would: a helper
+        (tools/qa/x_clipboard.py) owns the selection and answers the app's paste
+        until something else takes it. X only -- Wayland's clipboard has no
+        stand-in here, so the row is recorded and nothing is sent."""
+        self._record({"foreign-clipboard": text})
+        if self.wayland:
+            return
+        self._end_clipboard_owner()
+        owner = subprocess.Popen([sys.executable, str(Path(__file__).resolve().parent / "x_clipboard.py")], env=self.tool_env,
+                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                 text=True, preexec_fn=self._dies_with_driver())
+        assert owner.stdin is not None and owner.stdout is not None
+        owner.stdin.write(text)
+        owner.stdin.close()
+        ready = owner.stdout.readline().strip()
+        if ready != "ready":
+            owner.kill()
+            owner.wait()
+            self.expect(False, f"the foreign clipboard owner did not start: {ready!r}")
+            return
+        self._clipboard_owner = owner
+
+    def _end_clipboard_owner(self) -> None:
+        owner = getattr(self, "_clipboard_owner", None)
+        if owner is not None:
+            if owner.poll() is None:
+                owner.kill()
+            owner.wait()
+            self._clipboard_owner = None
 
     def focus_out(self) -> None:
         """Takes the X input focus away from the window (another application
@@ -2378,6 +2411,8 @@ def replay(app: App, actions: list[dict[str, Any]], pause: float = 0.12,
             app.resize(*action["resize"])
         elif "focus-out" in action:
             app.focus_out()
+        elif "foreign-clipboard" in action:
+            app.foreign_clipboard(action["foreign-clipboard"])
         elif "drop" in action:
             path = action["path"]
             if "projectPath" in action and app.replay_root is not None:

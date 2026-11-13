@@ -7,6 +7,7 @@ expected behaviour is VS Code's wherever the two could differ.
 
 from __future__ import annotations
 
+import time
 from typing import Callable
 
 import microide_qa as q
@@ -567,10 +568,48 @@ def flow_multi_caret_lines(app: q.App) -> None:
     expect_text(app, source, "the second toggle unwraps them")
 
 
+def flow_foreign_clipboard(app: q.App) -> None:
+    """Text another application put on the clipboard (App.foreign_clipboard):
+    the app's own copy never produces a CRLF, a lone CR, a non-breaking space or
+    a 200,000-character line, so its paste had only ever read text it wrote. On
+    Wayland the driver has no stand-in owner, and the flow checks nothing."""
+    if app.wayland:
+        return
+    open_file(app, "notes/foreign.txt", "")
+    cases = [
+        ("one\r\ntwo\r\n", "one\ntwo\n", "a CRLF paste lands with the buffer's endings"),
+        ("a\rb", "a\nb", "a lone CR is a line break"),
+        ("\u00a0nb\u00a0", "\u00a0nb\u00a0", "non-breaking spaces stay what they are"),
+        ("x" * 200_000, "x" * 200_000, "a 200,000-character line arrives whole"),
+    ]
+    for pasted, expected, what in cases:
+        app.send_line("select-all")
+        app.key("Delete")
+        step(app, "clear")
+        app.expect(app.text() == "", f"the buffer is cleared before: {what}")
+        app.foreign_clipboard(pasted)
+        # A person pastes after the copy has settled. Sooner, SDL's X11 clipboard
+        # can hand back the PREVIOUS paste: the new owner's arrival makes it ask
+        # for the TARGETS list, and a paste that starts before that answer lands
+        # takes it for its own reply and reads its stale property
+        # (TD-2026-11-13-449).
+        time.sleep(0.5)
+        app.key("ctrl+v")
+        step(app, f"paste {what}")
+        # A paste asks the owner for the text and waits on its answer: judged once
+        # it lands, not at the first quiet frame.
+        deadline = time.monotonic() + 5.0 * q.SLOW_FACTOR
+        while app.text() != expected and time.monotonic() < deadline:
+            time.sleep(0.1)
+        got = app.text()
+        app.expect(got == expected, f"{what} (got {len(got)} chars: {got[:40]!r})")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "edit-type-save": flow_type_and_save,
     "edit-multi-caret-lines": flow_multi_caret_lines,
     "edit-selection-clipboard": flow_selection_and_clipboard,
+    "edit-foreign-clipboard": flow_foreign_clipboard,
     "edit-multi-cursor": flow_multi_cursor,
     "edit-line-ops": flow_line_operations,
     "edit-auto-close": flow_auto_close_and_indent,
