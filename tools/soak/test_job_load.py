@@ -33,6 +33,21 @@ class JobLoadTests(unittest.TestCase):
             spin.kill()
             spin.wait()
 
+    def test_a_session_measures_its_resident_memory(self) -> None:
+        # The memory budget (soak.memory_jobs) reads what the jobs hold: systemd-oomd
+        # killed the runner at a 53.6 GB peak when only the cores were budgeted.
+        holder = subprocess.Popen([sys.executable, "-c", "b = bytearray(200 * 2**20)\nimport time\ntime.sleep(5)"],
+                                  start_new_session=True)
+        try:
+            time.sleep(1.0)
+            load = soak.JobLoad()
+            load.sample({holder.pid})
+            self.assertIsNotNone(load.rss)
+            self.assertGreater(load.rss, 150 * 2**20)
+        finally:
+            holder.kill()
+            holder.wait()
+
     def test_a_session_not_listed_is_not_counted(self) -> None:
         load = soak.JobLoad()
         load.WINDOW = 0.0

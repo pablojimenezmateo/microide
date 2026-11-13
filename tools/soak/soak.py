@@ -851,10 +851,16 @@ class JobLoad:
         self._time = 0.0
         self._ticks: dict[int, int] = {}
         self.cores: float | None = None
+        # The resident memory of the same sessions, in bytes, as of the last scan.
+        self.rss: int | None = None
 
     @staticmethod
-    def session_ticks(sessions: set[int]) -> dict[int, int]:
+    def session_ticks(sessions: set[int], rss: list[int] | None = None) -> dict[int, int]:
+        """CPU ticks per session; with `rss`, also appends the sessions' total
+        resident bytes (stat's rss field, in pages)."""
         totals: dict[int, int] = {}
+        resident = 0
+        page = os.sysconf("SC_PAGE_SIZE")
         with contextlib.suppress(OSError):
             for entry in os.scandir("/proc"):
                 if not entry.name.isdigit():
@@ -865,16 +871,21 @@ class JobLoad:
                 except OSError:
                     continue
                 fields = stat[stat.rfind(")") + 2:].split()
-                if len(fields) < 15 or int(fields[3]) not in sessions:
+                if len(fields) < 22 or int(fields[3]) not in sessions:
                     continue
                 totals[int(fields[3])] = totals.get(int(fields[3]), 0) + sum(int(f) for f in fields[11:15])
+                resident += int(fields[21]) * page
+        if rss is not None:
+            rss.append(resident)
         return totals
 
     def sample(self, sessions: set[int]) -> float | None:
         now = time.monotonic()
         if self._time and now - self._time < self.WINDOW:
             return self.cores
-        ticks = self.session_ticks(sessions)
+        resident: list[int] = []
+        ticks = self.session_ticks(sessions, resident)
+        self.rss = resident[0] if resident else None
         if self._time:
             # A session seen both times: its growth. One that ended took its time
             # with it (no negative deltas); one that started counts from its first sample.
@@ -919,6 +930,51 @@ def allowed_jobs(load: float, our_cores: float | None, our_jobs: int, cores: int
     per_job = max(1.0, ours / our_jobs) if our_jobs and our_cores is not None else CORES_PER_JOB
     free = cores * FILL_FRACTION - other
     return max(1, min(ceiling, int(free / per_job)))
+
+
+# Memory: what one job holds before any is measured (the app, Xvfb, the driver;
+# an ASan app, clangd or a check's parallel replays hold several times this),
+# and what the machine keeps free whatever the soak would like to run.
+BYTES_PER_JOB = 3 * 2**30
+MEMORY_RESERVE_FRACTION = 0.15
+
+
+def memory_available() -> tuple[int, int]:
+    """(MemAvailable, MemTotal) in bytes, from /proc/meminfo."""
+    values: dict[str, int] = {}
+    with contextlib.suppress(OSError), open("/proc/meminfo") as meminfo:
+        for line in meminfo:
+            name, _, rest = line.partition(":")
+            if name in ("MemAvailable", "MemTotal"):
+                values[name] = int(rest.split()[0]) * 1024
+    return values.get("MemAvailable", 0), values.get("MemTotal", 0)
+
+
+def memory_jobs(available: int, total: int, our_rss: int | None, our_jobs: int) -> int:
+    """How many jobs memory allows at once: those running, plus as many more as
+    fit in what is available above the reserve, each at what a running job holds
+    on average.
+
+    The budget followed the cores alone. On 2026-11-13 systemd-oomd killed the
+    whole runner at a 53.6 GB peak on a 61 GB machine: two tooling jobs with
+    clangd, an ASan job and checks replaying four apps at once, each counted as
+    one job of a core and a half. Running jobs are never killed for this; they
+    finish and are not replaced.
+
+    >>> G = 2**30
+    >>> memory_jobs(40 * G, 61 * G, None, 0)        # idle: (40 - 9.15) / 3
+    10
+    >>> memory_jobs(14 * G, 61 * G, 30 * G, 6)      # 5 GB each, 4.85 GB spare: none more
+    6
+    >>> memory_jobs(8 * G, 61 * G, 40 * G, 7)       # under the reserve: not even those
+    7
+    >>> memory_jobs(30 * G, 61 * G, 6 * G, 3)       # 2 GB each, but no less than the estimate
+    9
+    """
+    reserve = int(total * MEMORY_RESERVE_FRACTION)
+    per_job = max(BYTES_PER_JOB, our_rss // our_jobs) if our_rss and our_jobs else BYTES_PER_JOB
+    spare = available - reserve
+    return our_jobs + max(0, spare // per_job)
 
 
 def disk_usage(path: Path) -> int:
@@ -1019,7 +1075,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     def current_cap(our_jobs: int) -> int:
         if args.fixed:
             return ceiling
-        return allowed_jobs(os.getloadavg()[0], our_cores(), our_jobs, cores, ceiling)
+        by_cores = allowed_jobs(os.getloadavg()[0], our_cores(), our_jobs, cores, ceiling)
+        available, total = memory_available()
+        return min(by_cores, memory_jobs(available, total, job_load.rss, our_jobs))
     jobs: list[Job] = []
     stopping = False
 
@@ -1082,7 +1140,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         pending = state.get("pending_checks", [])
         cap = current_cap(len(jobs))
         if cap != last_cap:
-            log(f"job budget {cap} (load {os.getloadavg()[0]:.1f}, {len(jobs)} running)")
+            log(f"job budget {cap} (load {os.getloadavg()[0]:.1f}, {memory_available()[0] / 2**30:.0f} GB available, "
+                f"{len(jobs)} running)")
             last_cap = cap
         if pending and len(jobs) < cap and busy_reason(our_cores() or CORES_PER_JOB * len(jobs)) is None:
             # Checks first: a new finding's rate and minimal replay are worth more
