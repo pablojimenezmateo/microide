@@ -35,6 +35,33 @@ def _ignore_x_error(display, event) -> int:
     return 0
 
 
+class _XImage(ctypes.Structure):
+    """The head of Xlib's XImage: what a ZPixmap read needs, and the destroy hook
+    (XDestroyImage is a macro over it, not an exported function)."""
+    _fields_ = [("width", ctypes.c_int), ("height", ctypes.c_int), ("xoffset", ctypes.c_int),
+                ("format", ctypes.c_int), ("data", ctypes.c_void_p), ("byte_order", ctypes.c_int),
+                ("bitmap_unit", ctypes.c_int), ("bitmap_bit_order", ctypes.c_int), ("bitmap_pad", ctypes.c_int),
+                ("depth", ctypes.c_int), ("bytes_per_line", ctypes.c_int), ("bits_per_pixel", ctypes.c_int),
+                ("red_mask", ctypes.c_ulong), ("green_mask", ctypes.c_ulong), ("blue_mask", ctypes.c_ulong),
+                ("obdata", ctypes.c_void_p), ("create_image", ctypes.c_void_p),
+                ("destroy_image", ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p))]
+
+
+class Shot:
+    """A screen read: raw pixels, converted to an image only when evidence needs
+    one (App.image_of). BGRX at 32 bits per pixel, the only layout Xvfb's 24-bit
+    screens produce."""
+
+    __slots__ = ("width", "height", "stride", "data")
+
+    def __init__(self, width: int, height: int, stride: int, data: bytes) -> None:
+        self.width, self.height, self.stride, self.data = width, height, stride, data
+
+    def image(self):
+        from PIL import Image
+        return Image.frombuffer("RGB", (self.width, self.height), self.data, "raw", "BGRX", self.stride, 1)
+
+
 class _SizeHints(ctypes.Structure):
     """Xlib's XSizeHints: what a window asks of the window manager."""
     _fields_ = [("flags", ctypes.c_long), ("x", ctypes.c_int), ("y", ctypes.c_int), ("width", ctypes.c_int),
@@ -102,6 +129,12 @@ def _load() -> bool:
         x11.XMoveWindow.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_int]
         x11.XGetWMNormalHints.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(_SizeHints),
                                            ctypes.POINTER(ctypes.c_long)]
+        x11.XDefaultScreen.argtypes = [ctypes.c_void_p]
+        x11.XDisplayWidth.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        x11.XDisplayHeight.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        x11.XGetImage.restype = ctypes.POINTER(_XImage)
+        x11.XGetImage.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_int, ctypes.c_uint,
+                                  ctypes.c_uint, ctypes.c_ulong, ctypes.c_int]
         xtst.XTestFakeMotionEvent.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
                                                ctypes.c_int, ctypes.c_ulong]
         xtst.XTestFakeButtonEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_ulong]
@@ -140,6 +173,29 @@ class XTest:
         if self._dpy:
             _x11.XCloseDisplay(self._dpy)
             self._dpy = None
+
+    # ---- screen ------------------------------------------------------------
+
+    def screenshot(self) -> Shot | None:
+        """The whole screen, over this connection: an `xwd` process per step was
+        a fifth of a monkey step's own time (profiled 2026-11-13: 22 ms, against
+        a few here). None when the read fails or the layout is not 32-bit BGRX."""
+        if not self._dpy:
+            return None
+        screen = _x11.XDefaultScreen(self._dpy)
+        width, height = _x11.XDisplayWidth(self._dpy, screen), _x11.XDisplayHeight(self._dpy, screen)
+        image = _x11.XGetImage(self._dpy, _x11.XDefaultRootWindow(self._dpy), 0, 0, width, height,
+                               ctypes.c_ulong(-1).value, 2)  # AllPlanes, ZPixmap
+        if not image:
+            return None
+        try:
+            head = image.contents
+            if head.bits_per_pixel != 32 or head.byte_order != 0:  # LSBFirst
+                return None
+            data = ctypes.string_at(head.data, head.bytes_per_line * head.height)
+            return Shot(head.width, head.height, head.bytes_per_line, data)
+        finally:
+            image.contents.destroy_image(ctypes.cast(image, ctypes.c_void_p))
 
     # ---- pointer -----------------------------------------------------------
 

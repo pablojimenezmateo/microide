@@ -1765,23 +1765,29 @@ class App:
             time.sleep(0.004)
         return time.monotonic() - started
 
-    def grab_raw(self) -> bytes | None:
+    def grab_raw(self) -> "bytes | xtest.Shot | None":
         """The screen as xwd bytes (converted only if a finding needs it: the
         evidence ring keeps one per action, and converting each was most of a
         check's cost)."""
         if self.wayland:
             return None
+        if (xt := self._xt_or_none()) is not None:
+            with contextlib.suppress(Exception):
+                if (shot := xt.screenshot()) is not None:
+                    return shot
         try:
             return subprocess.run(["xwd", "-display", self.display, "-root", "-silent"],
                                   capture_output=True, env=self.tool_env, timeout=10).stdout
         except Exception:  # noqa: BLE001 - evidence must never abort the suite
             return None
 
-    def image_of(self, raw: "bytes | Image.Image | None"):
+    def image_of(self, raw: "bytes | xtest.Shot | Image.Image | None"):
         if raw is None:
             return Image.new("RGB", self.size, (0, 0, 0))
         if isinstance(raw, Image.Image):
             return raw
+        if isinstance(raw, xtest.Shot):
+            return raw.image()
         import io
         try:
             return _XWD.convert(io.BytesIO(raw))
@@ -1794,6 +1800,10 @@ class App:
             # No screen reader on a headless weston without its debug protocols:
             # evidence is the frame trace and the redraw verifier's own dumps.
             return Image.new("RGB", self.size, (0, 0, 0))
+        if (xt := self._xt_or_none()) is not None:
+            with contextlib.suppress(Exception):
+                if (shot := xt.screenshot()) is not None:
+                    return shot.image()
         import io
         try:
             xwd = subprocess.run(["xwd", "-display", self.display, "-root", "-silent"],
