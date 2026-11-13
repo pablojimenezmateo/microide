@@ -1429,7 +1429,8 @@ class Monkey:
         if index % 60 == 59:
             self._check_converged(label)
         if index % 50 == 0:
-            self._report(label, self.resources.check())
+            self._report_with_evidence(label, self.resources.check(), self.resources.evidence)
+            self.resources.evidence = {}
         if index % 150 == 149:
             before = len(self.app.findings)
             self._report(label, self.idle.check())
@@ -1445,7 +1446,8 @@ class Monkey:
         if self.converge is not None:
             self._report_with_evidence(label, self.converge.check(), self.converge.evidence)
             self.converge.evidence = {}
-        self._report(label, self.resources.check())
+        self._report_with_evidence(label, self.resources.check(), self.resources.evidence)
+        self.resources.evidence = {}
         pid = self.app.proc.pid if self.app.proc else None
         left = self.data.staging_leftovers(pid)
         if left:

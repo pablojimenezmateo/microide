@@ -16,6 +16,7 @@ records them through App.report so they carry the same evidence directory.
 from __future__ import annotations
 
 import collections
+import contextlib
 import hashlib
 import json
 import os
@@ -454,6 +455,49 @@ class ResourceOracle:
         self.pid: int | None = None
         self.samples: list[dict[str, int]] = []
         self.reported: set[str] = set()
+        # Files for a leak finding's bundle: what the app's children are and what
+        # its descriptors point at. The counts alone said "grew by 108" and
+        # nothing about what (soak d1e39df0281e, 6da9bc4a526a).
+        self.evidence: dict[str, bytes] = {}
+
+    def _what_it_holds(self, pid: int) -> dict[str, bytes]:
+        base = Path(f"/proc/{pid}")
+        lines = ["pid state age_s  command"]
+        ticks = os.sysconf("SC_CLK_TCK")
+        try:
+            uptime = float(Path("/proc/uptime").read_text().split()[0])
+        except (OSError, ValueError):
+            uptime = 0.0
+        kinds: collections.Counter[str] = collections.Counter()
+        try:
+            children = [int(c) for task in (base / "task").iterdir()
+                        for c in (task / "children").read_text().split()]
+        except (OSError, ValueError):
+            children = []
+        for child in children:
+            try:
+                stat = Path(f"/proc/{child}/stat").read_text()
+                fields = stat[stat.rfind(")") + 2:].split()
+                age = uptime - int(fields[19]) / ticks
+                argv = Path(f"/proc/{child}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+                lines.append(f"{child} {fields[0]} {age:8.1f}  {argv.strip()[:200]}")
+                kinds[argv.split(" ", 1)[0].rsplit("/", 1)[-1] or "?"] += 1
+            except (OSError, ValueError, IndexError):
+                continue
+        lines.insert(0, f"{len(children)} direct children by program: {dict(kinds.most_common())}")
+        fd_kinds: collections.Counter[str] = collections.Counter()
+        try:
+            for fd in (base / "fd").iterdir():
+                with contextlib.suppress(OSError):
+                    target = os.readlink(fd)
+                    kind = target.split(":", 1)[0] if ":" in target and not target.startswith("/") else \
+                        ("/dev/pts" if target.startswith("/dev/pts") else
+                         target if target.startswith("/dev") else "file:" + Path(target).suffix)
+                    fd_kinds[kind] += 1
+        except OSError:
+            pass
+        return {"children.txt": ("\n".join(lines) + "\n").encode(),
+                "fds.txt": ("\n".join(f"{n:5d}  {k}" for k, n in fd_kinds.most_common()) + "\n").encode()}
 
     def sample(self) -> dict[str, int] | None:
         proc = self.app.proc
@@ -502,6 +546,8 @@ class ResourceOracle:
             held = self.PER_PANE[name] * opened
             if grown - held > budget and name not in self.reported:
                 self.reported.add(name)
+                if not self.evidence and self.pid is not None:
+                    self.evidence = self._what_it_holds(self.pid)
                 out.append(("leak", f"the app's {name} grew by {grown} over the run "
                                     f"({self.baseline[name]} -> {sample[name]}; budget {budget}"
                                     + (f", plus {held} for {opened} more open terminal pane(s)" if held else "")
