@@ -736,6 +736,20 @@ class Monkey:
             return False
         return self._inside(self._forbidden_rects(ui), x, y)
 
+    def _activation_chooses_forbidden(self) -> bool:
+        """App.activation_guard while the monkey runs: an open menu (the menu bar's,
+        a context menu, the overflow popup) whose keyboard selection is a row the
+        run must not choose."""
+        try:
+            ui = self.app.ui()
+        except q.QaFailure:
+            return False
+        menu = ui.get("menu") or {}
+        if not (menu.get("open") or menu.get("contextMenu") or menu.get("overflow")):
+            return False
+        return any(element.get("kind") == "menu-item" and element.get("active") and self._forbidden(element)
+                   for element in ui.get("elements", []))
+
     def _ui(self) -> dict[str, Any]:
         ui = self.app.ui()
         self.app.last_ui = ui
@@ -1417,6 +1431,7 @@ class Monkey:
         distinct findings). Returns True when clean."""
         started = time.monotonic()
         self.app.press_guard = self._press_lands_on_forbidden
+        self.app.activation_guard = self._activation_chooses_forbidden
         self.resources.sample()
         self._start_from_corpus(corpus_probability)
         self._keep_window_usable()

@@ -392,6 +392,14 @@ class App:
     # the press must not happen (it would land on a window control and end the
     # run). click() and drag() then send and record nothing.
     press_guard: Callable[[float, float], bool] | None = None
+    # Its keyboard half: True when a key that ACTIVATES (Return, keypad Enter,
+    # Space) would choose a row the run must not choose -- an open menu's
+    # keyboard selection on Quit/Exit. key() and type() then close the menu with
+    # Escape (recorded, so a replay does the same) before sending what they were
+    # asked to. The pointer never pressed Quit; arrow keys walked onto it and a
+    # typed newline chose it, and the app quit cleanly: an "exit (0)" filed as a
+    # crash (soak 7ab9a5476905, 43 sightings).
+    activation_guard: Callable[[], bool] | None = None
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -1364,11 +1372,17 @@ class App:
         for key in reversed(modifiers):
             self._x_modifier(key, False)
 
+    def _guard_activation(self) -> None:
+        if self.activation_guard is not None and self.activation_guard():
+            self.key("Escape")
+
     def key(self, chord: str) -> None:
         """An xdotool chord: "ctrl+shift+f", "Escape", "alt+Up"; a two-step chord
         is its steps separated by a space: "ctrl+k ctrl+o"."""
-        self._record({"key": chord})
         steps = chord.split()
+        if any(step.rsplit("+", 1)[-1] in _ACTIVATING_KEYS for step in steps):
+            self._guard_activation()
+        self._record({"key": chord})
         if self.wayland:
             for step in steps:
                 answer = self._input("key", chord_for_key_command(step))
@@ -1574,6 +1588,8 @@ class App:
         """Types `text`. A newline is a Return press and a tab a Tab press: xdotool
         types '\n' as the Linefeed keysym, which no keyboard sends and SDL drops,
         so a typed command line never ran."""
+        if "\n" in text or " " in text:
+            self._guard_activation()
         self._record({"type": text})
         if self.wayland:
             # Key by key, as typed: `key <char>` is a key press with its text, so
@@ -2241,6 +2257,22 @@ _SURFACE_OWNERS = (
 )
 _OVERLAP_KINDS = {"button", "sidebar-view", "debug-tab", "panel-tab"}
 _FLOATING_PREFIX = "button:notification/"
+# The keys that choose an open menu's highlighted row (App.activation_guard).
+_ACTIVATING_KEYS = {"Return", "KP_Enter", "Enter", "space"}
+# Floating cards over the editor's CONTENT, and the content controls they float
+# over: the debug toolbar is a card over the text ("the editor stays usable
+# underneath"), and a code lens is part of that text -- it scrolls under the card
+# like a line does (soak 5dd22e100ed0). VS Code's floating toolbar covers it the
+# same way. The toolbar over chrome (a banner, the find widget, a panel button)
+# is still a collision: those do not move out from under it.
+_FLOATS_OVER_CONTENT = ("button:debug-toolbar/",)
+_EDITOR_CONTENT_PREFIXES = ("button:lens/",)
+
+
+def _floats_over(a: str, b: str) -> bool:
+    """Whether one of the two is a floating card over editor content the other is."""
+    return any(x.startswith(_FLOATS_OVER_CONTENT) and y.startswith(_EDITOR_CONTENT_PREFIXES)
+               for x, y in ((a, b), (b, a)))
 
 
 def _surface_and_overlap_findings(ui: dict[str, Any]) -> list[tuple[str, str]]:
@@ -2276,6 +2308,8 @@ def _surface_and_overlap_findings(ui: dict[str, Any]) -> list[tuple[str, str]]:
             # one covering a panel or editor button is the stack's layer, not a
             # layout collision. Two rows' own buttons overlapping still is.
             if element["name"].startswith(_FLOATING_PREFIX) != other["name"].startswith(_FLOATING_PREFIX):
+                continue
+            if _floats_over(element["name"], other["name"]):
                 continue
             b = other["rect"]
             ix = min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0])
