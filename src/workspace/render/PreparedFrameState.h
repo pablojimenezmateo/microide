@@ -120,6 +120,13 @@ struct PreparedFrameState {
   // The editor viewport that had the keyboard last frame (null: none did), for
   // the on_focus_change auto-save.
   const void* focused_editor = nullptr;
+  // `editor.autosave = on_focus_change` saves when the USER moves focus off an
+  // editor: armed by the first input (a key, text, a mouse press, a wheel) or
+  // control command. Before it, the editor in front changes only because the app
+  // is setting itself up -- a relaunch restoring its projects showed the start
+  // page, a restored tab, the start page again -- and that saved the unsaved
+  // buffers the crash recovery had just brought back (soak 0afa15c55c0f).
+  bool focus_autosave_armed = false;
   // The tab strips painted mid-slide (kind None: none). A new drag can take a
   // strip's animation slot while it still glides, and that strip's tabs then
   // snap back with no frame of their own.

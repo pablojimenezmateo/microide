@@ -4,6 +4,7 @@
 #include "util/PerformanceCounters.h"
 #include "TerminalSessionTestAccess.h"
 #include "support/SoftwareCanvas.h"
+#include "TestSupportSdl.h"
 
 #include "platform/AppDirectories.h"
 #include "persistence/PersistedRecordWriter.h"
@@ -532,6 +533,61 @@ void TestWorkspaceShellCrashSafetyKeepsASecondProjectAndItsActiveIndex() {
     loaded += project["loaded"].IsBool() && project["loaded"].AsBool() ? '1' : '0';
   }
   Expect(loaded == "11", "a project once activated stays loaded (" + loaded + ")");
+}
+
+// Soak 0afa15c55c0f (deterministic, minimized to 60 actions): with
+// `editor.autosave = on_focus_change`, the relaunch after a crash brought the
+// unsaved buffer back -- and then saved it, with the save's transforms (a final
+// newline), before the user did anything. Restoring the projects put the start
+// page, a restored tab and the start page again in front on the first frames,
+// and frame prep read each change of the editor in front as the user leaving it.
+// The focus-change autosave is the USER moving focus: it arms on the first input.
+void TestWorkspaceShellARestoredUnsavedBufferIsNotAutosaved() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "alpha";
+  WriteFile(root / "README.md", "alpha\n");
+  WriteFile(root / "empty.txt", "");
+  const std::filesystem::path home = temp_dir.path() / "home";
+  std::filesystem::create_directories(home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(temp_dir.path() / "xdg-state-home", temp_dir.path() / "xdg-config-home");
+  EnsureDummySdlVideoInitialized();
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "open alpha");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "set-setting editor.autosave on_focus_change"),
+         "autosave on focus change");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  SoftwareCanvas canvas(1280, 720);
+  const auto frame = [&]() {
+    shell.Render(canvas.renderer(), 1280, 720);
+    (void)shell.ConsumePendingRenderInvalidation();
+  };
+  frame();  // the start page in front, as on a relaunch's first frame
+  // What a restore does, with no input: an unsaved buffer comes back, then another
+  // tab is put in front.
+  WorkspaceShellTestAccess::OpenFile(shell, root / "empty.txt");
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("Mé");
+  frame();
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, root / "README.md"), "another tab in front");
+  frame();
+  Expect(ReadFile(root / "empty.txt").empty(),
+         "nothing the user did moved focus, so nothing is saved: empty.txt holds [" +
+             ReadFile(root / "empty.txt") + "]");
+  // The user's input arms it: a key, then focus moves to the other editor.
+  (void)shell.HandleEvent(KeyDownEvent(SDLK_RIGHT));
+  frame();
+  WorkspaceShellTestAccess::ActivateTab(shell, 1 - WorkspaceShellTestAccess::GroupActiveTabIndex(shell, 0));
+  frame();
+  std::string tabs;
+  for (std::size_t tab = 0; tab < WorkspaceShellTestAccess::GroupTabCount(shell, 0); ++tab) {
+    const editor::TextViewport* view = WorkspaceShellTestAccess::GroupTabViewport(shell, 0, tab);
+    tabs += view == nullptr ? std::string(" -") : " " + view->path().filename().string() + (view->dirty() ? "*" : "");
+  }
+  Expect(!ReadFile(root / "empty.txt").empty(), "after the user's input, a focus change saves as before; tabs:" + tabs +
+         " autosave=" + WorkspaceShellTestAccess::GetSettingValue(shell, "editor.autosave").value_or("?"));
 }
 
 void TestWorkspaceShellRestoredProjectTabBadgeColorsHydrateOnStartup() {
@@ -3913,6 +3969,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoreRemapsActiveIndexAfterMissingProjectCulled);
   AddTest(tests, "WorkspaceShell/CrashSafetyKeepsASecondProjectAndItsActiveIndex",
           TestWorkspaceShellCrashSafetyKeepsASecondProjectAndItsActiveIndex);
+  AddTest(tests, "WorkspaceShell/ARestoredUnsavedBufferIsNotAutosaved",
+          TestWorkspaceShellARestoredUnsavedBufferIsNotAutosaved);
   AddTest(tests, "WorkspaceShell/RestoredProjectTabBadgeColorsHydrateOnStartup",
           TestWorkspaceShellRestoredProjectTabBadgeColorsHydrateOnStartup);
   AddTest(tests, "WorkspaceShell/TerminalLayoutRevivesAcrossSessions",

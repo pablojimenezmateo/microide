@@ -126,6 +126,11 @@ void TraceTypedEvent(const SDL_Event& event, FocusTarget before, FocusTarget aft
 }  // namespace
 
 WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) {
+  // The user's first input arms the focus-change autosave (PreparedFrameState).
+  if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_TEXT_INPUT ||
+      event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_WHEEL) {
+    frame_state_.focus_autosave_armed = true;
+  }
   // Escape puts away a card Show Hover pinned to the caret, before anything else
   // reads the key -- as in VS Code, where it closes the hover and nothing more.
   if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE &&
@@ -778,7 +783,10 @@ void WorkspaceShell::Bootstrapper::WireControlChannel() const {
       shell->context_,
       ControlChannelService::Operations{
           .execute_command_line =
-              [shell](const std::string& line) { return shell->ExecuteControlCommand(line); },
+              [shell](const std::string& line) {
+                shell->frame_state_.focus_autosave_armed = true;  // a command is input too
+                return shell->ExecuteControlCommand(line);
+              },
           .emit_jsonl = [](const std::string& line) { std::cout << line << '\n' << std::flush; },
           .adapters =
               [shell]() {

@@ -536,7 +536,8 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     const bool editor_has_keys = project_state.surface.focus == FocusTarget::Editor ||
                                  (project_state.surface.focus == FocusTarget::Overlay && editor_widget);
     const void* focused_editor = editor_has_keys ? ActiveEditorViewport() : nullptr;
-    if (frame_state_.focused_editor != nullptr && focused_editor != frame_state_.focused_editor) {
+    if (frame_state_.focus_autosave_armed && frame_state_.focused_editor != nullptr &&
+        focused_editor != frame_state_.focused_editor) {
       MaybeAutosaveDirtyTabs(/*on_focus_change=*/true);
     }
     frame_state_.focused_editor = focused_editor;
