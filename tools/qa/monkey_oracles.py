@@ -655,7 +655,10 @@ class IdleOracle:
     def check(self) -> list[tuple[str, str]]:
         if self.reported:
             return []
-        time.sleep(1.0 * q.SLOW_FACTOR)
+        # Settled first: the app's own idle answer (App.settle_quiet waits on the
+        # `idle` query), not a fixed second -- half of this oracle's two seconds,
+        # every time it ran (profiled 2026-11-13). The window below is the measure.
+        self.app.settle_quiet(most=1.0)
         log_path = getattr(self.app, "log_path", None)
         log_start = log_path.stat().st_size if log_path is not None and log_path.exists() else None
         before = self._main_thread_wakes()

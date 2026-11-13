@@ -1139,7 +1139,9 @@ class Monkey:
                 shown = self.app.query("compare")
                 if shown.get("rightPath") == str(right) and len(shown.get("rows") or []) > 1:
                     break
-            time.sleep(0.1)
+            # The model is built off the main thread, so the app's idle answer does
+            # not cover it: poll, but finely (0.1 s cost ~50 ms a diff on average).
+            time.sleep(0.02)
         self._check_structural(f"monkey step {self.step_index}")
         return "diff:open"
 
