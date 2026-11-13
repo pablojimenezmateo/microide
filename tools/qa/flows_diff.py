@@ -634,6 +634,31 @@ def flow_diff_in_split(app: q.App) -> None:
         app.expect(not stray, f"every merge control sits in the merge's pane ({stray})")
 
 
+def flow_diff_moved_code(app: q.App) -> None:
+    """TD-2026-11-11-443: a function cut from the top of a file and pasted at
+    the bottom is drawn as moved on both sides, not as removed and added; a lone
+    brace moved the same way is not."""
+    assert app.project is not None
+    helper = "void helper() {\n  do_work(alpha, beta);\n  finish(gamma);\n}\n"
+    middle = "".join(f"keep_{i}();\n" for i in range(12))
+    write(app, "notes/moved.c", helper + middle)
+    git(app, "add", "notes/moved.c")
+    git(app, "commit", "-q", "-m", "qa: moved-code fixture")
+    write(app, "notes/moved.c", middle + helper)
+    app.key("ctrl+shift+g")
+    step(app, "git view", 0.5)
+    row = app.wait_for("row:git/moved.c", 5.0)
+    if row is None:
+        return
+    app.click(*app.center(row))
+    if not app.wait_until(lambda: _diff_tab(app).get("kind") == "compare", 5.0, "the diff to open"):
+        return
+    step(app, "the diff", 0.5)
+    tab = _diff_tab(app)
+    app.expect(tab.get("movedLeftLines") == 4 and tab.get("movedRightLines") == 4,
+               f"the moved function is drawn as moved where it left and where it landed ({tab})")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "merge-commands": flow_merge_commands,
     "merge-panes": flow_merge_panes,
@@ -644,4 +669,5 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "diff-review-files": flow_diff_review_files,
     "git-stash-switch": flow_git_stash_switch,
     "diff-in-split": flow_diff_in_split,
+    "diff-moved-code": flow_diff_moved_code,
 }

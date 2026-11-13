@@ -789,6 +789,15 @@ util::JsonValue BuildEditorTabJson(std::size_t index, const TabEntry& tab, bool 
     object["changes"] = util::JsonValue(static_cast<std::int64_t>(compare.model.hunks.size()));
     object["ignoreWhitespace"] = util::JsonValue(compare.build_options.ignore_whitespace);
     object["showWhitespace"] = util::JsonValue(compare.show_whitespace);
+    // Lines drawn as moved between hunks, per side (TD-2026-11-11-443).
+    std::int64_t moved_left = 0;
+    std::int64_t moved_right = 0;
+    for (const compare::CompareRow& row : compare.model.rows) {
+      moved_left += row.left_moved ? 1 : 0;
+      moved_right += row.right_moved ? 1 : 0;
+    }
+    object["movedLeftLines"] = util::JsonValue(moved_left);
+    object["movedRightLines"] = util::JsonValue(moved_right);
     object["leftLabel"] = util::JsonValue(compare.left_label);
     object["rightLabel"] = util::JsonValue(compare.right_label);
     // A branch review's hunk marks as the diff draws them: hunks marked reviewed,

@@ -377,7 +377,8 @@ The last four are the agent-facing ones (ported 2026-10-07 from the never-merged
   `foldedLines` (the 1-based opener of each collapsed fold); a file still loading
   off-thread reports `loading: true` and the view it will open with. The focused group's active tab also reports `visibleTop`/`visibleCount`
   — what the user is looking at. A diff tab reports `changes` (its hunk count),
-  `ignoreWhitespace`, `showWhitespace`, `leftLabel`/`rightLabel`, in a branch
+  `ignoreWhitespace`, `showWhitespace`, `leftLabel`/`rightLabel`,
+  `movedLeftLines`/`movedRightLines` (lines drawn as moved between hunks), in a branch
   review `reviewedHunks`/`notedHunks` (the hunks drawn marked reviewed or with a
   note) and, inside a review of several files, `reviewFiles` and the 1-based
   `reviewFileIndex`.
