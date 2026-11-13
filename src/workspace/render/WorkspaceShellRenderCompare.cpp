@@ -217,7 +217,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                                      static_cast<std::size_t>(upper - lower));
   };
   const std::optional<editor::EditorBlameOverlay> blame_overlay =
-      compare_tab->right_editable && compare_tab->right_view_active
+      project_inputs.focused && compare_tab->right_editable && compare_tab->right_view_active
           ? editor_blame_overlay_service_.BuildCompareOverlay(
                 project_root, editor_text_renderer_, git_blame_service_, *compare_tab,
                 EditorBlameOverlayService::CompareOverlayLayout{
@@ -958,7 +958,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
 
 void WorkspaceShell::RenderCompareScrollbars(SDL_Renderer* renderer,
                                              const SDL_FRect& editor_surface,
-                                             CompareTabState& compare_tab_state) {
+                                             CompareTabState& compare_tab_state,
+                                             bool focused) {
   CompareTabState* compare_tab = &compare_tab_state;
   if (renderer == nullptr) {
     return;
@@ -980,13 +981,13 @@ void WorkspaceShell::RenderCompareScrollbars(SDL_Renderer* renderer,
     overview::DrawLane(renderer, theme_, lane, compare_tab->scrollbar_marker_cache);
     detail::DrawScrollbarTrack(renderer, theme_, track);
     detail::DrawScrollbarThumb(renderer, theme_, scroll_layout.vertical_scrollbar->thumb,
-                       context_.interaction_state.drag_target == DragTarget::CompareVerticalScrollbar);
+                       focused && context_.interaction_state.drag_target == DragTarget::CompareVerticalScrollbar);
   }
 
   if (scroll_layout.horizontal_scrollbar.has_value()) {
     detail::DrawScrollbar(renderer, theme_, scroll_layout.horizontal_scrollbar->track,
                   scroll_layout.horizontal_scrollbar->thumb,
-                  context_.interaction_state.drag_target == DragTarget::CompareHorizontalScrollbar);
+                  focused && context_.interaction_state.drag_target == DragTarget::CompareHorizontalScrollbar);
   }
 }
 

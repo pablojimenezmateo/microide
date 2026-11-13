@@ -57,6 +57,15 @@ EditorGroupRectsLayout WorkspaceShell::ComputeEditorGroupRectsForState(
   return editor_group_rects_memo_;
 }
 
+SDL_FRect WorkspaceShell::ActiveTabSurface(const WorkspaceLayout& layout) const {
+  const ProjectWorkspaceState& state = context_.current_project_state;
+  if (state.editor_groups.size() < 2) {
+    return layout.editor_surface;  // one pane: the column (no memo walk)
+  }
+  return FocusedGroupSurface(ComputeEditorGroupRectsForState(layout),
+                             state.clamped_focused_group_index(), layout);
+}
+
 WorkspaceShell::EditorPaneLayouts WorkspaceShell::EditorPaneLayoutsFromGroupRects(
     const EditorGroupRectsLayout& group_rects) const {
   EditorPaneLayouts panes;

@@ -3143,6 +3143,31 @@ void TestTheDebugToolbarCoversNoOtherControl() {
   Expect(TestAccess::ExecuteCommandLine(fixture.shell, "panel-maximize"), "the panel should maximize");
   TestAccess::NoteLayoutInputsChanged(fixture.shell);
   covered("with the panel maximized");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "panel-maximize"), "the panel should restore");
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+
+  // Soak 83dfd7f84e2f, 3cea0cf87f72 (TD-2026-11-11-439): in a split the toolbar
+  // sat at the editor COLUMN's top-right, over whichever pane was there -- a lower
+  // pane's tab strip, another pane's merge buttons. It floats over the focused
+  // pane, as the find widget does, and is not shown where that pane cannot hold it.
+  TestAccess::ClearEditorBannersForTesting(fixture.shell);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-down"), "the editor should split down");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-down"), "and again, into three rows");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "and the last row in two");
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  const std::size_t groups = TestAccess::EditorGroupCount(fixture.shell);
+  Expect(groups == 4, "the fixture builds a four-pane grid");
+  for (std::size_t g = 0; g < groups; ++g) {
+    TestAccess::FocusEditorGroup(fixture.shell, g);
+    const std::string what = "pane " + std::to_string(g) + " of the grid focused";
+    covered(what.c_str());
+    const SDL_FRect pane = TestAccess::GroupEditorSurfaceRect(fixture.shell, g);
+    if (const auto stop = fixture.ElementRect("button:debug-toolbar/stop"); stop.has_value()) {
+      Expect(stop->x >= pane.x && stop->y >= pane.y && stop->x + stop->w <= pane.x + pane.w &&
+                 stop->y + stop->h <= pane.y + pane.h,
+             what + ": the toolbar floats over the focused pane");
+    }
+  }
 }
 
 // Soak ce3279c5ceda, ae8ba5055314 (the overlap oracle): with the panel maximized

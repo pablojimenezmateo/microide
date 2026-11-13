@@ -641,9 +641,9 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
             // surface has no height and nothing of it is drawn, so naming its
             // buttons put them over the panel's tabs (soak 8864c9127fb2).
             if (MergeTabState* merge_tab = ActiveTabIsMerge() ? ActiveMergeTab() : nullptr;
-                merge_tab != nullptr && layout.editor_surface.w > 0.0f &&
-                layout.editor_surface.h > 0.0f) {
-              const SDL_FRect surface_rect = layout.editor_surface;
+                merge_tab != nullptr && ActiveTabSurface(layout).w > 0.0f &&
+                ActiveTabSurface(layout).h > 0.0f) {
+              const SDL_FRect surface_rect = ActiveTabSurface(layout);
               const MergeSurfaceLayout surface = ComputeMergeSurfaceLayout(surface_rect, *merge_tab);
               const MergeToolbarLayout toolbar = ComputeMergeToolbarLayout(surface_rect, surface);
               for (const auto& [name, rect, label] :
@@ -725,7 +725,7 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
             // helpers the click and the cursor shape use.
             if (CompareTabState* compare_tab = ActiveTabIsCompare() ? ActiveCompareTab() : nullptr;
                 compare_tab != nullptr) {
-              const SDL_FRect surface_rect = layout.editor_surface;
+              const SDL_FRect surface_rect = ActiveTabSurface(layout);
               const CompareSurfaceLayout surface = ComputeCompareSurfaceLayout(surface_rect, *compare_tab);
               AddControlUiElement(out, kDivider, "compare", CompareDividerHitRect(surface_rect, surface));
               const auto compare_scroll = ComputeCompareScrollLayout(surface_rect, surface, *compare_tab);
@@ -1023,7 +1023,7 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
             // (HandleDebugToolbarButtonDown) uses.
             if (DebugToolbarVisible()) {
               const DebugToolbarLayout tb = ComputeDebugToolbarLayout(
-                  layout.editor_surface, DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
+                  ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
               const bool stopped = IsDebugSessionStopped();
               for (std::size_t i = 0; i < tb.button_count; ++i) {
                 const DebugToolbarButton button = tb.kinds[i];

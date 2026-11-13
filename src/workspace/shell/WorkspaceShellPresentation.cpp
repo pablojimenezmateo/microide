@@ -224,9 +224,12 @@ SDL_FRect WorkspaceShell::ComputeCenteredMenuOverlayRect(const SDL_FRect& editor
 SDL_FRect WorkspaceShell::FindWidgetAnchorRect(const SDL_FRect& fallback) const {
   // The find/replace widget floats over the editor text region (below the
   // breadcrumb). Fall back to the supplied rect only if the surface is unavailable.
-  if (const auto layout = CurrentWorkspaceLayout();
-      layout.has_value() && layout->editor_surface.w > 0.0f && layout->editor_surface.h > 0.0f) {
-    return layout->editor_surface;
+  // The focused pane's surface: in a split, the column put the widget over
+  // whichever pane sits top-right, not the buffer it searches (TD-2026-11-11-439).
+  if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
+    if (const SDL_FRect surface = ActiveTabSurface(*layout); surface.w > 0.0f && surface.h > 0.0f) {
+      return surface;
+    }
   }
   return fallback;
 }

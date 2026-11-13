@@ -245,11 +245,11 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
           .scroll_compare_rows =
               [this](CompareTabState& compare_tab, int delta) {
                 if (const auto layout_state = CurrentWorkspaceLayout(); layout_state.has_value()) {
-                  const WorkspaceLayout layout = *layout_state;
+                  const SDL_FRect surface = ActiveTabSurface(*layout_state);
                   const auto surface_layout =
-                      ComputeCompareSurfaceLayout(layout.editor_surface, compare_tab);
+                      ComputeCompareSurfaceLayout(surface, compare_tab);
                   const auto scroll_layout =
-                      ComputeCompareScrollLayout(layout.editor_surface, surface_layout, compare_tab);
+                      ComputeCompareScrollLayout(surface, surface_layout, compare_tab);
                   compare_tab.scroll_row = std::clamp(scroll_layout.vertical_scroll + delta, 0,
                                                       scroll_layout.max_vertical_scroll);
                   SyncCompareViewportScroll(compare_tab);
@@ -258,11 +258,11 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
           .scroll_compare_columns =
               [this](CompareTabState& compare_tab, int delta) {
                 if (const auto layout_state = CurrentWorkspaceLayout(); layout_state.has_value()) {
-                  const WorkspaceLayout layout = *layout_state;
+                  const SDL_FRect surface = ActiveTabSurface(*layout_state);
                   const auto surface_layout =
-                      ComputeCompareSurfaceLayout(layout.editor_surface, compare_tab);
+                      ComputeCompareSurfaceLayout(surface, compare_tab);
                   const auto scroll_layout =
-                      ComputeCompareScrollLayout(layout.editor_surface, surface_layout, compare_tab);
+                      ComputeCompareScrollLayout(surface, surface_layout, compare_tab);
                   const long long target_scroll =
                       static_cast<long long>(scroll_layout.horizontal_scroll) +
                       static_cast<long long>(delta);
@@ -279,11 +279,11 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
           .scroll_merge_columns =
               [this](MergeTabState& merge_tab, int delta) {
                 if (const auto layout_state = CurrentWorkspaceLayout(); layout_state.has_value()) {
-                  const WorkspaceLayout layout = *layout_state;
+                  const SDL_FRect surface = ActiveTabSurface(*layout_state);
                   const auto surface_layout =
-                      ComputeMergeSurfaceLayout(layout.editor_surface, merge_tab);
+                      ComputeMergeSurfaceLayout(surface, merge_tab);
                   const auto scroll_layout =
-                      ComputeMergeScrollLayout(layout.editor_surface, surface_layout, merge_tab);
+                      ComputeMergeScrollLayout(surface, surface_layout, merge_tab);
                   const long long target_scroll =
                       static_cast<long long>(scroll_layout.horizontal_scroll) +
                       static_cast<long long>(delta);

@@ -570,6 +570,70 @@ def flow_git_stash_switch(app: q.App) -> None:
     app.check("git stash and switch")
 
 
+def _element_or_none(app: q.App, name: str) -> dict | None:
+    return next((e for e in app.elements() if e.get("name") == name), None)
+
+
+def _focused_group_index(app: q.App) -> int:
+    groups = app.editor_state().get("groups", [])
+    return next((i for i, g in enumerate(groups) if g.get("focused")), -1)
+
+
+def flow_diff_in_split(app: q.App) -> None:
+    """TD-2026-11-11-439: a diff and a merge in one pane of a split paint, lay out
+    and take clicks inside that pane. They used to take the whole editor column:
+    the other pane's editor was not drawn, and the diff's buttons sat under that
+    pane's tab strip, where a click reached whichever the hit test met first."""
+    assert app.project is not None
+    write(app, "notes/split.txt", BASE)
+    git(app, "add", "notes/split.txt")
+    git(app, "commit", "-q", "-m", "qa: split diff fixture")
+    write(app, "notes/split.txt", BASE.replace("line 20\n", "line twenty\n"))
+    open_file(app, "notes/left.txt", "the left pane\n")
+    app.send("split-right", "notes/left.txt")
+    if not app.wait_until(lambda: len(app.editor_state().get("groups", [])) == 2, 5.0, "a second group"):
+        return
+    diff_group = _focused_group_index(app)
+    app.key("ctrl+shift+g")
+    step(app, "git view", 0.5)
+    row = app.wait_for("row:git/split.txt", 5.0)
+    if row is None:
+        return
+    app.click(*app.center(row))
+    if not app.wait_until(lambda: _diff_tab(app).get("kind") == "compare", 5.0, "the diff to open"):
+        return
+    app.send("focus", "editor")
+    step(app, "the diff in the right pane", 0.5)
+    app.expect(_focused_group_index(app) == diff_group, "the diff opened in the focused pane")
+    split = _element_or_none(app, "divider:editor/0")
+    divider = _element_or_none(app, "divider:compare")
+    if app.expect(split is not None and divider is not None, "the split and the diff's divider are shown"):
+        split_x = split["rect"][0]
+        app.expect(divider["rect"][0] > split_x,
+                   f"the diff lays out inside its pane, right of the split ({divider['rect']} vs {split['rect']})")
+        # A click into the other pane focuses it; the diff stays in its own.
+        left_pane_x = split_x - 120
+        app.click(left_pane_x, divider["rect"][1] + 40)
+        step(app, "click the left pane", 0.4)
+        app.expect(_focused_group_index(app) != diff_group, "a click into the left pane focuses it")
+        app.expect((app.active_tab() or {}).get("kind") != "compare",
+                   "the left pane's own tab is in front there, not the diff")
+        app.click(divider["rect"][0] - 60, divider["rect"][1] + 40)
+        step(app, "click the diff's pane", 0.4)
+        app.expect(_focused_group_index(app) == diff_group and _diff_tab(app).get("kind") == "compare",
+                   "a click into the unfocused diff focuses its pane")
+
+    # A merge in the same pane: its toolbar and dividers stay right of the split.
+    if not open_conflict(app):
+        return
+    step(app, "the merge in the right pane", 0.4)
+    split = _element_or_none(app, "divider:editor/0")
+    if split is not None:
+        stray = [e["name"] for e in app.elements("button", prefix="button:merge/") + app.elements("divider", prefix="divider:merge/")
+                 if e["rect"][0] < split["rect"][0]]
+        app.expect(not stray, f"every merge control sits in the merge's pane ({stray})")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "merge-commands": flow_merge_commands,
     "merge-panes": flow_merge_panes,
@@ -579,4 +643,5 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "diff-commands": flow_diff_commands,
     "diff-review-files": flow_diff_review_files,
     "git-stash-switch": flow_git_stash_switch,
+    "diff-in-split": flow_diff_in_split,
 }

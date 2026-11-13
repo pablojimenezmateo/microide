@@ -2682,6 +2682,115 @@ void TestWorkspaceShellCompareHorizontalScrollRepaintsTheSurface() {
 }
 
 
+// TD-2026-11-11-439: a compare tab in one pane of a split paints, lays out and
+// takes clicks inside that pane. It used to take the whole editor column: the
+// other pane's editor was not drawn, the diff's header and buttons sat under that
+// pane's tab strip, and a click there reached whichever the hit test met first.
+void TestWorkspaceShellCompareInASplitStaysInItsPane() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "notes.md";
+  const std::filesystem::path other = root / "other.md";
+  WriteFile(source, "alpha\nbeta\ngamma\n");
+  WriteFile(other, "the other pane's editor\nsecond line\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add split compare fixture", "split compare fixture");
+  WriteFile(source, "alpha\nBETA\ngamma\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, other);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+             shell, microide::workspace::EditorSplitOrientation::Vertical),
+         "the fixture must split the editor area");
+  const std::size_t compare_group = WorkspaceShellTestAccess::FocusedGroupIndex(shell);
+  const std::size_t editor_group = compare_group == 0 ? 1 : 0;
+  const SDL_FRect editor_pane = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, editor_group);
+
+  // One canvas throughout: the shell's glyph atlas belongs to the renderer it
+  // first drew with, so a second canvas would paint without text.
+  microide::tests::SoftwareCanvas canvas(kWidth, kHeight);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  SDL_FlushRenderer(canvas.renderer());
+  SDL_Surface* before = SDL_DuplicateSurface(canvas.surface());
+  Expect(before != nullptr, "the fixture keeps the pre-diff frame");
+
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == compare_group,
+         "the comparison opens in the focused pane");
+  const SDL_FRect compare_pane = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, compare_group);
+  const SDL_FRect surface = WorkspaceShellTestAccess::ActiveTabSurface(shell);
+  Expect(surface.x == compare_pane.x && surface.y == compare_pane.y && surface.w == compare_pane.w &&
+             surface.h == compare_pane.h,
+         "the diff's surface is its own pane, not the editor column");
+
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+  pin_caret();
+  WorkspaceShellTestAccess::ResetRenderCompareSurfaceInvocationCount(shell);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  Expect(WorkspaceShellTestAccess::RenderCompareSurfaceInvocationCount(shell) == 1,
+         "the diff paints once, in its pane");
+  std::size_t changed = 0;
+  for (int y = static_cast<int>(editor_pane.y) + 1; y < static_cast<int>(editor_pane.y + editor_pane.h) - 1;
+       y += 2) {
+    for (int x = static_cast<int>(editor_pane.x) + 1; x < static_cast<int>(editor_pane.x + editor_pane.w) - 1;
+         x += 2) {
+      Uint8 ar = 0, ag = 0, ab = 0, aa = 0;
+      Expect(SDL_ReadSurfacePixel(before, x, y, &ar, &ag, &ab, &aa), "read the pre-diff frame");
+      const SDL_Color b = canvas.PixelAt(x, y);
+      changed += (ar != b.r || ag != b.g || ab != b.b) ? 1 : 0;
+    }
+  }
+  SDL_DestroySurface(before);
+  Expect(changed == 0, "the other pane still shows its own editor, untouched by the diff (" +
+                           std::to_string(changed) + " sampled pixels changed)");
+
+  // A click into the editor pane focuses it; the diff stays painted in its pane.
+  {
+    const float x = editor_pane.x + editor_pane.w * 0.5f;
+    const float y = editor_pane.y + editor_pane.h * 0.5f;
+    const auto diff = PaintAndDiffWithFullRepaint(
+        shell, canvas, kWidth, kHeight,
+        DispatchEvents(shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
+                               MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)}),
+        pin_caret);
+    Expect(diff.identical(), "focusing the editor pane paints what a full repaint paints; " +
+                                 DescribePixelDiff(diff));
+  }
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == editor_group,
+         "a click into the editor pane focuses it");
+  WorkspaceShellTestAccess::ResetRenderCompareSurfaceInvocationCount(shell);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  Expect(WorkspaceShellTestAccess::RenderCompareSurfaceInvocationCount(shell) == 1,
+         "a diff in an unfocused pane still paints there (not the welcome page)");
+
+  // And a click into the diff's pane focuses it back, through the diff's own hit test.
+  {
+    const float x = compare_pane.x + compare_pane.w * 0.25f;
+    const float y = compare_pane.y + compare_pane.h * 0.5f;
+    const auto diff = PaintAndDiffWithFullRepaint(
+        shell, canvas, kWidth, kHeight,
+        DispatchEvents(shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
+                               MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)}),
+        pin_caret);
+    Expect(diff.identical(), "focusing the diff pane paints what a full repaint paints; " +
+                                 DescribePixelDiff(diff));
+  }
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == compare_group,
+         "a click into an unfocused diff's pane focuses that pane");
+}
+
 // Typing into a compare tab's long line WITHOUT scrolling (the caret mid-line)
 // widens the content, so the horizontal thumb shrinks -- on a strip none of the
 // edited row's damage covers. The thumb stayed at its old width (QA monkey, seed
@@ -3862,6 +3971,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareSyntaxCatchUpSchedulesTheNextFrame);
   AddTest(tests, "WorkspaceShell/CompareTypingRepaintsTheHorizontalThumb",
           TestWorkspaceShellCompareTypingRepaintsTheHorizontalThumb);
+  AddTest(tests, "WorkspaceShell/CompareInASplitStaysInItsPane",
+          TestWorkspaceShellCompareInASplitStaysInItsPane);
   AddTest(tests, "WorkspaceShell/CompareHorizontalScrollRepaintsTheSurface",
           TestWorkspaceShellCompareHorizontalScrollRepaintsTheSurface);
   AddTest(tests, "WorkspaceShell/StagesHunksInSequence",

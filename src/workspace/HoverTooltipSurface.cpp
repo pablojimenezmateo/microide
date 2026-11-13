@@ -260,7 +260,7 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
           "Find in Selection (Alt+L)",
       };
       found = find_widget_hit(
-          ComputeBufferFindWidgetLayout(layout.editor_surface,
+          ComputeBufferFindWidgetLayout(ActiveTabSurface(layout),
                                         overlay.mode == OverlayMode::BufferReplace),
           kEditorToggles);
     }
@@ -300,7 +300,7 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
   //     before/after invalidation as every other chrome tooltip.
   if (!found && DebugToolbarVisible()) {
     const DebugToolbarLayout tb = ComputeDebugToolbarLayout(
-        layout.editor_surface, DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
+        ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
     if (Contains(tb.widget, x, y)) {
       const bool session_stopped = IsDebugSessionStopped();
       for (std::size_t i = 0; i < tb.button_count && !found; ++i) {

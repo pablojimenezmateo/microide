@@ -794,7 +794,7 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentFocusedEditorRedrawRect() const 
       return std::nullopt;
     }
     const CompareSurfaceLayout surface_layout =
-        ComputeCompareSurfaceLayout(layout->editor_surface, *compare_tab);
+        ComputeCompareSurfaceLayout(ActiveTabSurface(*layout), *compare_tab);
     return BuildCompareRightInteractionLayout(surface_layout, *compare_tab).rect;
   }
 
@@ -803,9 +803,9 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentFocusedEditorRedrawRect() const 
     if (merge_tab == nullptr) {
       return std::nullopt;
     }
-    const MergeSurfaceLayout surface_layout =
-        ComputeMergeSurfaceLayout(layout->editor_surface, *merge_tab);
-    return ComputeMergeResultViewportRect(layout->editor_surface, surface_layout.center_x,
+    const SDL_FRect surface = ActiveTabSurface(*layout);
+    const MergeSurfaceLayout surface_layout = ComputeMergeSurfaceLayout(surface, *merge_tab);
+    return ComputeMergeResultViewportRect(surface, surface_layout.center_x,
                                           surface_layout.rows_y, surface_layout.gutter_width,
                                           surface_layout.center_width,
                                           surface_layout.show_horizontal);
@@ -1528,9 +1528,9 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
           BottomPanelShowsTerminal()) {
         (void)MakePanelMouseCoordinator().HandleMotion(synthetic);
       } else if (ActiveTabIsCompare()) {
-        (void)MakeCompareMouseCoordinator().HandleSelectionMotion(synthetic, *layout);
+        (void)MakeCompareMouseCoordinator().HandleSelectionMotion(synthetic, ActiveTabSurface(*layout));
       } else if (ActiveTabIsMerge()) {
-        (void)MakeMergeMouseCoordinator().HandleSelectionMotion(synthetic, *layout);
+        (void)MakeMergeMouseCoordinator().HandleSelectionMotion(synthetic, ActiveTabSurface(*layout));
       } else {
         (void)MakeEditorMouseCoordinator().HandleSelectionMotion(synthetic, *layout);
       }

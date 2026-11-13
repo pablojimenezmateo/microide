@@ -252,7 +252,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       return true;
     }
 
-    if (MakeMergeMouseCoordinator().HandleDrag(event, drag_layout)) {
+    if (MakeMergeMouseCoordinator().HandleDrag(event, ActiveTabSurface(drag_layout))) {
       EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
       return true;
     }
@@ -292,7 +292,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       return true;
     }
 
-    if (MakeCompareMouseCoordinator().HandleDrag(event, drag_layout)) {
+    if (MakeCompareMouseCoordinator().HandleDrag(event, ActiveTabSurface(drag_layout))) {
       EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
       return true;
     }
@@ -391,7 +391,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     // cursor kind per motion event would both flicker it over other surfaces and
     // do a hit-test this path has no use for.
     if (ActiveTabIsCompare()) {
-      const bool handled = MakeCompareMouseCoordinator().HandleSelectionMotion(event, layout);
+      const bool handled = MakeCompareMouseCoordinator().HandleSelectionMotion(event, ActiveTabSurface(layout));
       if (handled) {
         EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
       }
@@ -399,7 +399,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     }
 
     if (ActiveTabIsMerge()) {
-      const bool handled = MakeMergeMouseCoordinator().HandleSelectionMotion(event, layout);
+      const bool handled = MakeMergeMouseCoordinator().HandleSelectionMotion(event, ActiveTabSurface(layout));
       if (handled) {
         EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
       }
@@ -654,12 +654,12 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   if (ActiveTabIsMerge()) {
     hover_visual_changed =
         hover_visual_changed ||
-        MakeMergeMouseCoordinator().HandleHoverMotion(event, layout);
+        MakeMergeMouseCoordinator().HandleHoverMotion(event, ActiveTabSurface(layout));
   }
   if (ActiveTabIsCompare()) {
     hover_visual_changed =
         hover_visual_changed ||
-        MakeCompareMouseCoordinator().HandleHoverMotion(event, layout);
+        MakeCompareMouseCoordinator().HandleHoverMotion(event, ActiveTabSurface(layout));
   }
 
   if (hover_visual_changed) {
@@ -786,17 +786,21 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
   }
 
   if (Contains(layout.editor_surface, event.wheel.mouse_x, event.wheel.mouse_y)) {
-    if (ActiveTabIsCompare()) {
+    // In a split the diff or merge in front of the focused group owns only its
+    // own pane; a wheel over another pane scrolls that pane (TD-2026-11-11-439).
+    const bool over_view_surface =
+        Contains(ActiveTabSurface(layout), event.wheel.mouse_x, event.wheel.mouse_y);
+    if (ActiveTabIsCompare() && over_view_surface) {
       const bool handled =
-          MakeCompareMouseCoordinator().HandleWheel(event, layout, vertical_ticks, horizontal_ticks);
+          MakeCompareMouseCoordinator().HandleWheel(event, ActiveTabSurface(layout), vertical_ticks, horizontal_ticks);
       if (handled) {
         EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
       }
       return handled;
     }
-    if (ActiveTabIsMerge()) {
+    if (ActiveTabIsMerge() && over_view_surface) {
       const bool handled =
-          MakeMergeMouseCoordinator().HandleWheel(event, layout, vertical_ticks, horizontal_ticks);
+          MakeMergeMouseCoordinator().HandleWheel(event, ActiveTabSurface(layout), vertical_ticks, horizontal_ticks);
       if (handled) {
         EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
       }

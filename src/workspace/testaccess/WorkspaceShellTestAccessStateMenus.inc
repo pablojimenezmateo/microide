@@ -785,10 +785,10 @@
     return shell.CurrentTextInputSurface() == WorkspaceShell::TextInputSurface::BufferSearch;
   }
   static FindWidgetLayout FindWidgetControls(WorkspaceShell& shell, bool replace_mode) {
-    return ComputeBufferFindWidgetLayout(CurrentLayout(shell).editor_surface, replace_mode);
+    return ComputeBufferFindWidgetLayout(shell.ActiveTabSurface(CurrentLayout(shell)), replace_mode);
   }
   static SDL_FRect FindWidgetRect(WorkspaceShell& shell, bool replace_mode) {
-    return ComputeFindWidgetRect(CurrentLayout(shell).editor_surface, replace_mode);
+    return ComputeFindWidgetRect(shell.ActiveTabSurface(CurrentLayout(shell)), replace_mode);
   }
   static SDL_FRect EditorAreaRect(WorkspaceShell& shell) {
     return CurrentLayout(shell).editor_area;

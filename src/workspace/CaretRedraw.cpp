@@ -194,11 +194,11 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentCaretDirtyRect() const {
 std::optional<SDL_FRect> WorkspaceShell::ActiveEditorCaretRect(
     const WorkspaceLayout& layout) const {
   if (ActiveTabIsCompare()) {
-    const auto visual = BuildCompareTextInputVisual(layout.editor_surface);
+    const auto visual = BuildCompareTextInputVisual(ActiveTabSurface(layout));
     return visual.has_value() ? std::optional<SDL_FRect>(visual->area) : std::nullopt;
   }
   if (ActiveTabIsMerge()) {
-    const auto visual = BuildMergeTextInputVisual(layout.editor_surface);
+    const auto visual = BuildMergeTextInputVisual(ActiveTabSurface(layout));
     return visual.has_value() ? std::optional<SDL_FRect>(visual->area) : std::nullopt;
   }
 

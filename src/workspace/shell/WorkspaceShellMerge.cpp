@@ -338,10 +338,10 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentMergeResultLineRangeRect(std::si
     return std::nullopt;
   }
 
-  const MergeSurfaceLayout surface_layout =
-      ComputeMergeSurfaceLayout(layout->editor_surface, *merge_tab);
+  const SDL_FRect surface = ActiveTabSurface(*layout);
+  const MergeSurfaceLayout surface_layout = ComputeMergeSurfaceLayout(surface, *merge_tab);
   const MergeInteractionLayout interaction =
-      BuildMergeInteractionLayout(layout->editor_surface, surface_layout, *merge_tab);
+      BuildMergeInteractionLayout(surface, surface_layout, *merge_tab);
   const auto band = ComputeVisibleLineRangeRect(interaction.result.rect, interaction.result.lines,
                                                 start_line, end_line);
   return band.has_value() ? std::optional<SDL_FRect>(DirtyRectWithHalo(*band)) : std::nullopt;
@@ -359,8 +359,9 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentMergeResultLineToBottomRect(
   if (!layout.has_value()) {
     return line_rect;
   }
-  return MakeRect(layout->editor_surface.x, line_rect->y, layout->editor_surface.w,
-                  std::max(0.0f, layout->editor_surface.y + layout->editor_surface.h - line_rect->y));
+  const SDL_FRect surface = ActiveTabSurface(*layout);
+  return MakeRect(surface.x, line_rect->y, surface.w,
+                  std::max(0.0f, surface.y + surface.h - line_rect->y));
 }
 
 std::optional<SDL_FRect> WorkspaceShell::CurrentMergeConflictRect(std::size_t conflict_index) const {
@@ -370,10 +371,10 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentMergeConflictRect(std::size_t co
     return std::nullopt;
   }
 
-  const MergeSurfaceLayout surface_layout =
-      ComputeMergeSurfaceLayout(layout->editor_surface, *merge_tab);
+  const SDL_FRect surface = ActiveTabSurface(*layout);
+  const MergeSurfaceLayout surface_layout = ComputeMergeSurfaceLayout(surface, *merge_tab);
   const MergeInteractionLayout interaction =
-      BuildMergeInteractionLayout(layout->editor_surface, surface_layout, *merge_tab);
+      BuildMergeInteractionLayout(surface, surface_layout, *merge_tab);
   const MergeTrackedConflict& conflict = MergeVisualConflicts(*merge_tab)[conflict_index];
   const VisibleLineRangeLayout source_lines = {
       .first_line_y = surface_layout.rows_y,
@@ -541,7 +542,7 @@ void WorkspaceShell::RevealActiveMergeSelection() {
   }
   const WorkspaceLayout layout = *layout_state;
   const MergeSurfaceLayout surface_layout =
-      ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
+      ComputeMergeSurfaceLayout(ActiveTabSurface(layout), *merge_tab);
   ClampMergeScrollRow(*merge_tab, surface_layout.visible_rows);
   ClampMergeHorizontalScroll(*merge_tab, surface_layout.visible_columns);
   const auto& selected_conflict =

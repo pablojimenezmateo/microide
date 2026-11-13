@@ -202,6 +202,22 @@ EditorGroupRects ChromeForRegion(const WorkspaceLayout& layout, const SDL_FRect&
 
 }  // namespace
 
+SDL_FRect FocusedGroupSurface(const EditorGroupRectsLayout& rects,
+                              std::size_t focused_group,
+                              const WorkspaceLayout& layout) {
+  return focused_group < rects.groups.size() ? rects.groups[focused_group].editor_surface
+                                             : layout.editor_surface;
+}
+
+SDL_FRect FocusedGroupSurface(const WorkspaceLayout& layout,
+                              const EditorSplitTree& split,
+                              std::size_t focused_group) {
+  if (!split.is_split()) {
+    return layout.editor_surface;
+  }
+  return FocusedGroupSurface(ComputeEditorGroupRects(layout, split), focused_group, layout);
+}
+
 EditorGroupRectsLayout ComputeEditorGroupRects(const WorkspaceLayout& layout,
                                                const EditorSplitTree& split) {
   util::AddPerformanceCounter(util::PerfCounterId::WorkspaceEditorGroupRectBuilds);

@@ -26,6 +26,9 @@ struct CompareRenderProjectInputs {
   // different revision of the file, so a decoration published against the
   // working-tree line numbers would land on the wrong line there.
   const editor::FileDecorations* right_plugin_decorations = nullptr;
+  // The focused group's diff. Only it shows the caret's inline blame: two diffs
+  // in a split would otherwise trade the one blame request every frame.
+  bool focused = true;
 };
 
 

@@ -5,6 +5,7 @@
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <functional>
 #include <cmath>
@@ -689,12 +690,24 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   //     paint ran it only when a clip touched the editor surface, so whether the
   //     popup outlived its caret depended on which clips a frame painted.
   MaybeExpireSignatureHelp();
-  // 2b) The focused compare or merge tab's visible syntax tokens, so paint only
-  //     reads them (see PopulateCompareSyntaxTokensForWindow).
-  if (CompareTabState* compare = ActiveCompareTab(); compare != nullptr) {
-    PopulateCompareSyntaxTokensForWindow(*compare, layout.editor_surface);
-  } else if (MergeTabState* merge = ActiveMergeTab(); merge != nullptr) {
-    PopulateMergeSyntaxTokensForWindow(*merge, layout.editor_surface);
+  // 2b) The visible syntax tokens of every compare or merge tab in front of a
+  //     pane, laid out in that pane, so paint only reads them (see
+  //     PopulateCompareSyntaxTokensForWindow). A split shows one per pane.
+  {
+    const EditorGroupRectsLayout group_rects = ComputeEditorGroupRectsForState(layout);
+    for (std::size_t gi = 0; gi < group_rects.groups.size() && gi < project_state.editor_groups.size();
+         ++gi) {
+      EditorGroup& group = project_state.editor_groups[gi];
+      if (!group.has_active_tab()) {
+        continue;
+      }
+      TabEntry& tab = group.active_tab();
+      if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
+        PopulateCompareSyntaxTokensForWindow(*tab.compare, group_rects.groups[gi].editor_surface);
+      } else if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
+        PopulateMergeSyntaxTokensForWindow(*tab.merge, group_rects.groups[gi].editor_surface);
+      }
+    }
   }
   // 3) Commit-draft body viewport sizing + caret-keep-visible scroll clamp (the
   //    083 residual): moved out of RenderCommitBodyField so paint stays pure.
@@ -1093,16 +1106,17 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         bars.horizontal_thumb = scroll.horizontal_scrollbar->thumb;
       }
       if (scroll.vertical_scrollbar.has_value()) {
-        bars.vertical_lane = overview::LaneRect(scroll.vertical_scrollbar->track, layout.editor_surface.x);
+        bars.vertical_lane = overview::LaneRect(scroll.vertical_scrollbar->track, ActiveTabSurface(layout).x);
         bars.vertical_thumb = scroll.vertical_scrollbar->thumb;
       }
     };
+    const SDL_FRect view_surface = ActiveTabSurface(layout);
     if (const CompareTabState* compare = ActiveCompareTab(); compare != nullptr) {
-      const CompareSurfaceLayout surface = ComputeCompareSurfaceLayout(layout.editor_surface, *compare);
-      take(compare, ComputeCompareScrollLayout(layout.editor_surface, surface, *compare));
+      const CompareSurfaceLayout surface = ComputeCompareSurfaceLayout(view_surface, *compare);
+      take(compare, ComputeCompareScrollLayout(view_surface, surface, *compare));
     } else if (const MergeTabState* merge = ActiveMergeTab(); merge != nullptr) {
-      const MergeSurfaceLayout surface = ComputeMergeSurfaceLayout(layout.editor_surface, *merge);
-      take(merge, ComputeMergeScrollLayout(layout.editor_surface, surface, *merge));
+      const MergeSurfaceLayout surface = ComputeMergeSurfaceLayout(view_surface, *merge);
+      take(merge, ComputeMergeScrollLayout(view_surface, surface, *merge));
     }
     PreparedFrameState::DiffSurfaceBars& painted = frame_state_.painted_diff_surface_bars;
     // Another tab in front repaints the surface on its own (a tab switch).
@@ -1301,7 +1315,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     if (DebugToolbarVisible()) {
       toolbar.visible = true;
       toolbar.stopped = IsDebugSessionStopped();
-      toolbar.rect = ComputeDebugToolbarLayout(layout.editor_surface, DebugToolbarAvoidBelowY(layout),
+      toolbar.rect = ComputeDebugToolbarLayout(ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout),
                                                DebugSupportsReverse())
                          .widget;
     }
@@ -1772,70 +1786,85 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     const OverlaySurfaceViewModel& overlay_vm) {
   (void)frame_token;
   ProjectWorkspaceState& project_state = *frame_vm.project_state;
-  CompareTabState* active_compare_tab = nullptr;
-  MergeTabState* active_merge_tab = nullptr;
-  EditorGroup& focused_group = project_state.focused_group();
-  if (frame_vm.compare_surface.has_value() && focused_group.has_active_tab()) {
-    TabEntry& active_tab = focused_group.active_tab();
-    if (frame_vm.compare_surface->kind == TabEntry::Kind::Compare && active_tab.compare.has_value()) {
-      active_compare_tab = &active_tab.compare.value();
-    } else if (frame_vm.compare_surface->kind == TabEntry::Kind::Merge &&
-               active_tab.merge.has_value()) {
-      active_merge_tab = &active_tab.merge.value();
+  // Every pane paints the tab in front of its own group, inside its own rect: an
+  // editor, or a diff or a merge. A diff in one pane of a split used to take the
+  // whole editor column, drawing over the other panes' editors while their tab
+  // strips stayed on top of it (TD-2026-11-11-439).
+  const EditorGroupRectsLayout editor_surface_group_rects = ComputeEditorGroupRectsForState(layout);
+  const EditorPaneLayouts editor_panes = EditorPaneLayoutsFromGroupRects(editor_surface_group_rects);
+  const std::size_t focused_group_index = project_state.clamped_focused_group_index();
+  const auto diff_tab_in_front = [&project_state](std::size_t group_index) -> TabEntry* {
+    if (group_index >= project_state.editor_groups.size()) {
+      return nullptr;
+    }
+    EditorGroup& group = project_state.editor_groups[group_index];
+    if (!group.has_active_tab()) {
+      return nullptr;
+    }
+    TabEntry& tab = group.active_tab();
+    const bool diff = (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) ||
+                      (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value());
+    return diff ? &tab : nullptr;
+  };
+  bool focused_pane_is_diff = false;
+  std::array<bool, kMaxEditorGroups> pane_shows_diff{};
+  for (std::size_t gi = 0; gi < editor_surface_group_rects.groups.size() && gi < kMaxEditorGroups; ++gi) {
+    TabEntry* tab = diff_tab_in_front(gi);
+    if (tab == nullptr) {
+      continue;
+    }
+    const bool focused = gi == focused_group_index;
+    // The focused one only when the frame's view model has it (as before): the
+    // view model is what says the frame shows it.
+    if (focused && !frame_vm.compare_surface.has_value()) {
+      continue;
+    }
+    focused_pane_is_diff = focused_pane_is_diff || focused;
+    pane_shows_diff[gi] = true;
+    const SDL_FRect& area = editor_surface_group_rects.groups[gi].editor_surface;
+    // A diff or a merge paints inside its pane, as an editor pane does inside its
+    // own: in an area too short for its header and a row (a large font, the panel
+    // grown over the window) it laid out a row below the area anyway and painted
+    // it over the panel -- in a full frame, not in a partial one that left the
+    // editor alone (soak 498dc546c6a9).
+    const render::ScopedRenderClip surface_clip(
+        renderer, SDL_Rect{static_cast<int>(std::floor(area.x)), static_cast<int>(std::floor(area.y)),
+                           static_cast<int>(std::ceil(area.w)), static_cast<int>(std::ceil(area.h))});
+    if (tab->kind == TabEntry::Kind::Compare) {
+      CompareTabState& compare_tab = *tab->compare;
+      const bool draw_compare_caret =
+          focused && compare_tab.right_view_active && prepared_frame_draw_editor_caret_;
+      // Plugin decorations for the EDITABLE right pane only, and resolved here
+      // because the compare render TU may not read project state itself. The left
+      // pane is a different revision of the file, so a decoration published against
+      // the working-tree line numbers would land on the wrong line there
+      // (TD-2026-08-13-206).
+      const editor::FileDecorations* compare_right_decorations = nullptr;
+      if (compare_tab.right_editable && !compare_tab.right_viewport.path().empty() &&
+          !compare_tab.right_viewport.dirty()) {
+        const auto* presentation = project_state.plugin_presentation_if_present();
+        compare_right_decorations =
+            presentation != nullptr
+                ? presentation->decorations.FindByPathKey(compare_tab.right_viewport.path_key())
+                : nullptr;
+      }
+      RenderCompareSurface(renderer, area, compare_tab, draw_compare_caret,
+                           CompareRenderProjectInputs{
+                               .project_root = &project_state.root,
+                               .diagnostics_store = &project_state.diagnostics_store,
+                               .right_plugin_decorations = compare_right_decorations,
+                               .focused = focused,
+                           });
+      RenderCompareScrollbars(renderer, area, compare_tab, focused);
+    } else {
+      MergeTabState& merge_tab = *tab->merge;
+      RenderMergeSurface(renderer, area, merge_tab, project_state.root,
+                         focused && prepared_frame_draw_editor_caret_,
+                         project_state.diagnostics_store);
+      RenderMergeScrollbars(renderer, area, merge_tab, focused);
     }
   }
-  const bool render_editor_surface = active_compare_tab == nullptr && active_merge_tab == nullptr;
-  // Carve the editor surface into per-group rects once; both the pane layouts and
-  // the split divider below are derived from this single split.
-  const EditorGroupRectsLayout editor_surface_group_rects =
-      render_editor_surface ? ComputeEditorGroupRectsForState(layout) : EditorGroupRectsLayout{};
-  const EditorPaneLayouts editor_panes =
-      render_editor_surface ? EditorPaneLayoutsFromGroupRects(editor_surface_group_rects)
-                            : EditorPaneLayouts{};
-  // A diff or a merge paints inside the editor area, as an editor pane does inside
-  // its own: in an area too short for its header and a row (a large font, the
-  // panel grown over the window) it laid out a row below the area anyway and
-  // painted it over the panel -- in a full frame, not in a partial one that left
-  // the editor alone (soak 498dc546c6a9).
-  std::optional<render::ScopedRenderClip> surface_clip;
-  if (active_compare_tab != nullptr || active_merge_tab != nullptr) {
-    const SDL_FRect& area = layout.editor_surface;
-    surface_clip.emplace(renderer, SDL_Rect{static_cast<int>(std::floor(area.x)),
-                                            static_cast<int>(std::floor(area.y)),
-                                            static_cast<int>(std::ceil(area.w)),
-                                            static_cast<int>(std::ceil(area.h))});
-  }
-  if (active_compare_tab != nullptr) {
-    const bool draw_compare_caret =
-        active_compare_tab->right_view_active && prepared_frame_draw_editor_caret_;
-    // Plugin decorations for the EDITABLE right pane only, and resolved here
-    // because the compare render TU may not read project state itself. The left
-    // pane is a different revision of the file, so a decoration published against
-    // the working-tree line numbers would land on the wrong line there
-    // (TD-2026-08-13-206).
-    const editor::FileDecorations* compare_right_decorations = nullptr;
-    if (active_compare_tab->right_editable &&
-        !active_compare_tab->right_viewport.path().empty() &&
-        !active_compare_tab->right_viewport.dirty()) {
-      const auto* presentation = project_state.plugin_presentation_if_present();
-      compare_right_decorations =
-          presentation != nullptr
-              ? presentation->decorations.FindByPathKey(active_compare_tab->right_viewport.path_key())
-              : nullptr;
-    }
-    RenderCompareSurface(renderer, layout.editor_surface, *active_compare_tab, draw_compare_caret,
-                         CompareRenderProjectInputs{
-                             .project_root = &project_state.root,
-                             .diagnostics_store = &project_state.diagnostics_store,
-                             .right_plugin_decorations = compare_right_decorations,
-                         });
-    surface_clip.reset();
-  } else if (active_merge_tab != nullptr) {
-    const bool draw_merge_caret = prepared_frame_draw_editor_caret_;
-    RenderMergeSurface(renderer, layout.editor_surface, project_state.root, draw_merge_caret,
-                       project_state.diagnostics_store);
-    surface_clip.reset();
-  } else {
+  {
     // Resolved once per frame; "hint" (the default) means show all, so the filter
     // returns the store span untouched (zero cost).
     const editor::DiagnosticSeverity diagnostics_min_severity =
@@ -1922,6 +1951,9 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       const EditorPaneLayout& pane = panes[pane_index];
       if (pane.group_index >= project_state.editor_groups.size()) {
         continue;
+      }
+      if (pane.group_index < kMaxEditorGroups && pane_shows_diff[pane.group_index]) {
+        continue;  // painted above
       }
       EditorGroup& group = project_state.editor_groups[pane.group_index];
       editor::TextViewport* viewport = GroupActiveViewport(group);
@@ -2082,6 +2114,9 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       if (pane.group_index >= project_state.editor_groups.size()) {
         continue;
       }
+      if (pane.group_index < kMaxEditorGroups && pane_shows_diff[pane.group_index]) {
+        continue;
+      }
       editor::TextViewport* viewport =
           GroupActiveViewport(project_state.editor_groups[pane.group_index]);
       if (viewport == nullptr || viewport->is_placeholder() ||
@@ -2120,13 +2155,12 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     }
   }
 
-  if (active_compare_tab != nullptr) {
-    RenderCompareScrollbars(renderer, layout.editor_surface, *active_compare_tab);
-  } else if (active_merge_tab != nullptr) {
-    RenderMergeScrollbars(renderer, layout.editor_surface);
-  }
-
-  if (const SDL_FRect strip = ActiveEditorBannerStripRect(project_state, editor_surface_group_rects);
+  // The external-change banner belongs to an editor; a diff or merge in front
+  // shows none (it never laid one out).
+  if (const SDL_FRect strip =
+          focused_pane_is_diff
+              ? SDL_FRect{}
+              : ActiveEditorBannerStripRect(project_state, editor_surface_group_rects);
       frame_vm.editor_banner.has_value() && strip.h > 0.0f) {
     const EditorBannerViewModel& banner_vm = *frame_vm.editor_banner;
     DrawFilledRect(renderer, strip, theme_.chrome_background);
@@ -2175,7 +2209,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
   // Floating debug control bar, drawn over the editor whenever a session is live.
   // Stacks below the find widget (which renders later, in the overlay layer) when
   // both are visible, so draw order between them is irrelevant.
-  if (render_editor_surface && DebugToolbarVisible()) {
+  if (!focused_pane_is_diff && DebugToolbarVisible()) {
     RenderDebugToolbar(renderer, layout, IsDebugSessionStopped(),
                        DebugToolbarAvoidBelowY(layout));
   }

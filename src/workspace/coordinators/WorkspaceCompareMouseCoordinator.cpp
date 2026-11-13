@@ -46,7 +46,7 @@ CompareTabState* CompareMouseCoordinator::ActiveCompareTab() const {
 }
 
 bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
-                                               const WorkspaceLayout& layout) {
+                                               const SDL_FRect& surface) {
   if (!ActiveTabIsCompare()) {
     return false;
   }
@@ -57,13 +57,13 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   }
 
   const auto surface_layout =
-      operations_.compute_compare_surface_layout(layout.editor_surface, *compare_tab);
+      operations_.compute_compare_surface_layout(surface, *compare_tab);
   const auto scroll_layout =
-      operations_.compute_compare_scroll_layout(layout.editor_surface, surface_layout, *compare_tab);
+      operations_.compute_compare_scroll_layout(surface, surface_layout, *compare_tab);
   compare_tab->scroll_row = scroll_layout.vertical_scroll;
   compare_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
   operations_.sync_compare_viewport_scroll(*compare_tab);
-  const SDL_FRect divider_rect = CompareDividerHitRect(layout.editor_surface, surface_layout);
+  const SDL_FRect divider_rect = CompareDividerHitRect(surface, surface_layout);
 
   if (Contains(divider_rect, event.button.x, event.button.y)) {
     // Double-click restores the even split, the same contract the sidebar, right
@@ -148,7 +148,7 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
           CompareTabPresentationRowAt(*compare_tab, compare_tab->selected_row);
       row != nullptr && row->kind == compare::ComparePresentationRowKind::CollapsedContext) {
     const SDL_FRect block_rect = CompareCollapsedContextBlockRect(
-        layout.editor_surface, surface_layout.rows_y, surface_layout.line_height,
+        surface, surface_layout.rows_y, surface_layout.line_height,
         surface_layout.show_vertical, clicked_row);
     const auto action_rects =
         operations_.build_compare_collapsed_context_action_rects != nullptr
@@ -233,7 +233,7 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
 }
 
 bool CompareMouseCoordinator::HandleDrag(const SDL_Event& event,
-                                         const WorkspaceLayout& layout) {
+                                         const SDL_FRect& surface) {
   if (!ActiveTabIsCompare() ||
       (interaction_state_.drag_target != DragTarget::CompareDivider &&
        interaction_state_.drag_target != DragTarget::CompareVerticalScrollbar &&
@@ -248,14 +248,14 @@ bool CompareMouseCoordinator::HandleDrag(const SDL_Event& event,
   }
 
   const auto surface_layout =
-      operations_.compute_compare_surface_layout(layout.editor_surface, *compare_tab);
+      operations_.compute_compare_surface_layout(surface, *compare_tab);
   const auto scroll_layout =
-      operations_.compute_compare_scroll_layout(layout.editor_surface, surface_layout, *compare_tab);
+      operations_.compute_compare_scroll_layout(surface, surface_layout, *compare_tab);
   compare_tab->scroll_row = scroll_layout.vertical_scroll;
   compare_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
   if (interaction_state_.drag_target == DragTarget::CompareDivider) {
     const float content_width = std::max(
-        1.0f, layout.editor_surface.w -
+        1.0f, surface.w -
                    (surface_layout.show_vertical ? kCompareScrollbarReserve : 0.0f) -
                    surface_layout.gutter_width * 2.0f - surface_layout.divider_width - 16.0f);
     const float desired_left_width =
@@ -297,7 +297,7 @@ bool CompareMouseCoordinator::HandleDrag(const SDL_Event& event,
 }
 
 bool CompareMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
-                                                    const WorkspaceLayout& layout) {
+                                                    const SDL_FRect& surface) {
   if (!ActiveTabIsCompare()) {
     return false;
   }
@@ -313,7 +313,7 @@ bool CompareMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
   }
 
   const auto surface_layout =
-      operations_.compute_compare_surface_layout(layout.editor_surface, *compare_tab);
+      operations_.compute_compare_surface_layout(surface, *compare_tab);
   const TextGridInteractionLayout right_interaction =
       operations_.build_compare_right_interaction_layout(surface_layout, *compare_tab);
   // A drag that leaves the right pane -- sideways into the left pane, or above /
@@ -367,7 +367,7 @@ bool CompareMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
 }
 
 bool CompareMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
-                                                const WorkspaceLayout& layout) {
+                                                const SDL_FRect& surface) {
   if (!ActiveTabIsCompare()) {
     return false;
   }
@@ -379,18 +379,18 @@ bool CompareMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
 
   const std::optional<CompareHoverState> previous_hover = compare_tab->hover_state;
   std::optional<CompareHoverState> next_hover;
-  if (Contains(layout.editor_surface, event.motion.x, event.motion.y) &&
+  if (Contains(surface, event.motion.x, event.motion.y) &&
       !(interaction_state_.mouse_selecting && (event.motion.state & SDL_BUTTON_LMASK) != 0)) {
     const auto surface_layout =
-        operations_.compute_compare_surface_layout(layout.editor_surface, *compare_tab);
+        operations_.compute_compare_surface_layout(surface, *compare_tab);
     const auto scroll_layout =
-        operations_.compute_compare_scroll_layout(layout.editor_surface, surface_layout, *compare_tab);
+        operations_.compute_compare_scroll_layout(surface, surface_layout, *compare_tab);
     compare_tab->scroll_row = scroll_layout.vertical_scroll;
     compare_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
     operations_.sync_compare_viewport_scroll(*compare_tab);
 
     if (const auto hit = CompareCollapsedContextRowAt(
-            *compare_tab, layout.editor_surface, surface_layout.rows_y,
+            *compare_tab, surface, surface_layout.rows_y,
             surface_layout.line_height, surface_layout.show_vertical,
             static_cast<float>(event.motion.y));
         hit.has_value()) {
@@ -431,11 +431,11 @@ bool CompareMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
 }
 
 bool CompareMouseCoordinator::HandleWheel(const SDL_Event& event,
-                                          const WorkspaceLayout& layout,
+                                          const SDL_FRect& surface,
                                           int vertical_ticks,
                                           int horizontal_ticks) {
   if (!ActiveTabIsCompare() ||
-      !Contains(layout.editor_surface, event.wheel.mouse_x, event.wheel.mouse_y)) {
+      !Contains(surface, event.wheel.mouse_x, event.wheel.mouse_y)) {
     return false;
   }
 

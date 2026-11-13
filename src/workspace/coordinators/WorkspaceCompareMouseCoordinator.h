@@ -42,12 +42,12 @@ class CompareMouseCoordinator {
                           InteractionState& interaction_state,
                           Operations operations);
 
-  bool HandleButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
-  bool HandleDrag(const SDL_Event& event, const WorkspaceLayout& layout);
-  bool HandleHoverMotion(const SDL_Event& event, const WorkspaceLayout& layout);
-  bool HandleSelectionMotion(const SDL_Event& event, const WorkspaceLayout& layout);
+  bool HandleButtonDown(const SDL_Event& event, const SDL_FRect& surface);
+  bool HandleDrag(const SDL_Event& event, const SDL_FRect& surface);
+  bool HandleHoverMotion(const SDL_Event& event, const SDL_FRect& surface);
+  bool HandleSelectionMotion(const SDL_Event& event, const SDL_FRect& surface);
   bool HandleWheel(const SDL_Event& event,
-                   const WorkspaceLayout& layout,
+                   const SDL_FRect& surface,
                    int vertical_ticks,
                    int horizontal_ticks);
 

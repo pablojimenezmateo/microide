@@ -412,6 +412,18 @@ inline WorkspaceLayout ComputeLayout(float window_width,
 // per-child weights and reports the dividers between them.
 EditorGroupRectsLayout ComputeEditorGroupRects(const WorkspaceLayout& layout,
                                                const EditorSplitTree& split);
+// The focused group's pane surface: where the tab in front of that group lays
+// out, and where the widgets floating over that tab (find/replace, the debug
+// toolbar) sit. With one group it is `layout.editor_surface`. The column is never
+// right in a split: a diff, a merge or a floating widget anchored to it lands on
+// another pane (TD-2026-11-11-439). The shell's `ActiveTabSurface` is the
+// memoized form; this one is for code with the state but not the shell.
+SDL_FRect FocusedGroupSurface(const WorkspaceLayout& layout,
+                              const EditorSplitTree& split,
+                              std::size_t focused_group);
+SDL_FRect FocusedGroupSurface(const EditorGroupRectsLayout& rects,
+                              std::size_t focused_group,
+                              const WorkspaceLayout& layout);
 
 // Which way a directional pane verb points. `focus-other-group` cycles; these are
 // VS Code's `focusLeftGroup` / `moveActiveEditorGroupLeft` family, which is what a

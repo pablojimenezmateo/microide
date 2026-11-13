@@ -380,7 +380,7 @@ std::optional<EditorHoverTarget> WorkspaceShell::DiagnosticHoverTargetAtPosition
         visible_diagnostics(std::span<const editor::PublishedDiagnostic>(*diagnostics_all));
 
     const CompareSurfaceLayout surface =
-        ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
+        ComputeCompareSurfaceLayout(ActiveTabSurface(layout), *compare_tab);
     const std::optional<CompareRightGridHit> hit =
         HitTestCompareRightGrid(editor_text_renderer_, surface, *compare_tab, x, y);
     if (!hit.has_value()) {
@@ -431,9 +431,9 @@ std::optional<EditorHoverTarget> WorkspaceShell::DiagnosticHoverTargetAtPosition
       return std::nullopt;
     }
 
-    const MergeSurfaceLayout surface = ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
+    const MergeSurfaceLayout surface = ComputeMergeSurfaceLayout(ActiveTabSurface(layout), *merge_tab);
     const SDL_FRect result_rect = ComputeMergeResultViewportRect(
-        layout.editor_surface, surface.center_x, surface.rows_y, surface.gutter_width,
+        ActiveTabSurface(layout), surface.center_x, surface.rows_y, surface.gutter_width,
         surface.center_width, surface.show_horizontal);
     return DiagnosticHoverTargetForViewport(
         merge_tab->result_viewport,
@@ -500,7 +500,7 @@ std::optional<EditorHoverTarget> WorkspaceShell::PluginHoverTargetAtPosition(
     }
 
     const CompareSurfaceLayout surface =
-        ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
+        ComputeCompareSurfaceLayout(ActiveTabSurface(layout), *compare_tab);
     const std::optional<CompareRightGridHit> hit =
         HitTestCompareRightGrid(editor_text_renderer_, surface, *compare_tab, x, y);
     if (!hit.has_value()) {
@@ -526,9 +526,9 @@ std::optional<EditorHoverTarget> WorkspaceShell::PluginHoverTargetAtPosition(
       return std::nullopt;
     }
 
-    const MergeSurfaceLayout surface = ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
+    const MergeSurfaceLayout surface = ComputeMergeSurfaceLayout(ActiveTabSurface(layout), *merge_tab);
     const SDL_FRect result_rect = ComputeMergeResultViewportRect(
-        layout.editor_surface, surface.center_x, surface.rows_y, surface.gutter_width,
+        ActiveTabSurface(layout), surface.center_x, surface.rows_y, surface.gutter_width,
         surface.center_width, surface.show_horizontal);
     return PluginHoverTargetForViewport(
         merge_tab->result_viewport,

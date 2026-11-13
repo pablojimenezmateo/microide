@@ -1364,6 +1364,7 @@ void RunAllRuleFixtures() {
   RunTextViewportDefaultedSpecialMembersRuleFixtures();
   RunRangeForTemporaryRuleFixtures();
   RunEditorMetricsStickyBandRuleFixtures();
+  RunTabSurfacesRuleFixtures();
   RunRelativeClimbOutRuleFixtures();
   RunWaitFailureMessageRuleFixtures();
 }

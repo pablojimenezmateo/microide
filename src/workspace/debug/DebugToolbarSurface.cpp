@@ -77,7 +77,7 @@ std::optional<float> WorkspaceShell::DebugToolbarAvoidBelowY(const WorkspaceLayo
   if (overlay.visible &&
       (overlay.mode == OverlayMode::BufferSearch || overlay.mode == OverlayMode::BufferReplace)) {
     const SDL_FRect fw =
-        ComputeFindWidgetRect(layout.editor_surface, overlay.mode == OverlayMode::BufferReplace);
+        ComputeFindWidgetRect(ActiveTabSurface(layout), overlay.mode == OverlayMode::BufferReplace);
     below = fw.y + fw.h;
   }
   if (const SDL_FRect banner =
@@ -95,7 +95,7 @@ void WorkspaceShell::RenderDebugToolbar(SDL_Renderer* renderer, const WorkspaceL
     return;
   }
   const DebugToolbarLayout tb =
-      ComputeDebugToolbarLayout(layout.editor_surface, avoid_below_y, DebugSupportsReverse());
+      ComputeDebugToolbarLayout(ActiveTabSurface(layout), avoid_below_y, DebugSupportsReverse());
   if (tb.widget.w <= 0.0f || tb.widget.h <= 0.0f) {
     return;
   }
@@ -199,7 +199,7 @@ bool WorkspaceShell::HandleDebugToolbarButtonDown(const SDL_Event& event,
     return false;
   }
   const DebugToolbarLayout tb = ComputeDebugToolbarLayout(
-      layout.editor_surface, DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
+      ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
   const float x = static_cast<float>(event.button.x);
   const float y = static_cast<float>(event.button.y);
   if (!Contains(tb.widget, x, y)) {

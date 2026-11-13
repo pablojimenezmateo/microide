@@ -304,19 +304,19 @@
   }
   static WorkspaceShell::MergeSurfaceLayout ActiveMergeSurfaceLayout(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    return shell.ComputeMergeSurfaceLayout(layout.editor_surface, ActiveMerge(shell));
+    return shell.ComputeMergeSurfaceLayout(shell.ActiveTabSurface(layout), ActiveMerge(shell));
   }
   static ScrollSurfaceLayout ActiveMergeScrollLayout(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    const auto surface = shell.ComputeMergeSurfaceLayout(layout.editor_surface, ActiveMerge(shell));
-    return shell.ComputeMergeScrollLayout(layout.editor_surface, surface, ActiveMerge(shell));
+    const auto surface = shell.ComputeMergeSurfaceLayout(shell.ActiveTabSurface(layout), ActiveMerge(shell));
+    return shell.ComputeMergeScrollLayout(shell.ActiveTabSurface(layout), surface, ActiveMerge(shell));
   }
   static WorkspaceShell::MergeInteractionLayout ActiveMergeInteractionLayout(WorkspaceShell& shell) {
     auto& merge = ActiveMerge(shell);
     const WorkspaceLayout layout = CurrentLayout(shell);
-    const auto surface = shell.ComputeMergeSurfaceLayout(layout.editor_surface, merge);
+    const auto surface = shell.ComputeMergeSurfaceLayout(shell.ActiveTabSurface(layout), merge);
     const auto scroll =
-        shell.ComputeMergeScrollLayout(layout.editor_surface, surface, merge);
+        shell.ComputeMergeScrollLayout(shell.ActiveTabSurface(layout), surface, merge);
     merge.scroll_row = scroll.vertical_scroll;
     merge.horizontal_scroll = scroll.horizontal_scroll;
     merge.result_viewport.SetScrollLine(
@@ -324,11 +324,11 @@
     merge.result_viewport.SetHorizontalScroll(merge.horizontal_scroll);
     merge.scroll_row = static_cast<int>(merge.result_viewport.scroll_line());
     merge.horizontal_scroll = merge.result_viewport.horizontal_scroll();
-    return shell.BuildMergeInteractionLayout(layout.editor_surface, surface, merge);
+    return shell.BuildMergeInteractionLayout(shell.ActiveTabSurface(layout), surface, merge);
   }
   static WorkspaceShell::CompareSurfaceLayout ActiveCompareSurfaceLayout(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    return shell.ComputeCompareSurfaceLayout(layout.editor_surface, ActiveCompare(shell));
+    return shell.ComputeCompareSurfaceLayout(shell.ActiveTabSurface(layout), ActiveCompare(shell));
   }
   static std::size_t ActiveComparePresentationRowCount(WorkspaceShell& shell) {
     return CompareTabPresentationRowCount(ActiveCompare(shell));
@@ -403,7 +403,7 @@
       std::size_t presentation_row) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     auto& compare = ActiveCompare(shell);
-    const auto surface = shell.ComputeCompareSurfaceLayout(layout.editor_surface, compare);
+    const auto surface = shell.ComputeCompareSurfaceLayout(shell.ActiveTabSurface(layout), compare);
     const int visible_row =
         static_cast<int>(ComparePresentationRowToVisualRow(compare, presentation_row)) -
         compare.scroll_row;
@@ -422,7 +422,7 @@
     // rects assert against the wrong place — the centered `all` button still
     // overlapped enough to pass, the left-aligned `previous` button did not.
     const SDL_FRect block_rect = CompareCollapsedContextBlockRect(
-        layout.editor_surface, surface.rows_y, surface.line_height, surface.show_vertical,
+        shell.ActiveTabSurface(layout), surface.rows_y, surface.line_height, surface.show_vertical,
         visible_row);
     return BuildCollapsedContextActionRects(shell.editor_text_renderer_, block_rect,
                                             row->previous_hunk_index >= 0,
@@ -436,7 +436,7 @@
   static SDL_FRect ActiveMergeResultRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     const auto surface = ActiveMergeSurfaceLayout(shell);
-    return ComputeMergeResultViewportRect(layout.editor_surface, surface.center_x, surface.rows_y,
+    return ComputeMergeResultViewportRect(shell.ActiveTabSurface(layout), surface.center_x, surface.rows_y,
                                           surface.gutter_width, surface.center_width,
                                           surface.show_horizontal);
   }
@@ -460,7 +460,7 @@
   static std::array<SDL_FRect, 2> MergeToolbarNavigationRects(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     const auto surface = ActiveMergeSurfaceLayout(shell);
-    const auto toolbar = shell.ComputeMergeToolbarLayout(layout.editor_surface, surface);
+    const auto toolbar = shell.ComputeMergeToolbarLayout(shell.ActiveTabSurface(layout), surface);
     return {toolbar.prev_rect, toolbar.next_rect};
   }
   // The divider grab rects themselves come from workspace/render/DiffDividerGeometry.h,

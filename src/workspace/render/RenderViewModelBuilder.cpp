@@ -780,10 +780,10 @@ OverlayLabelRef QueryFieldText(const render::TextRenderer& tr, std::string& blob
 // The find widget (a compact non-modal card): its own submodel, no list chrome.
 void BuildFindWidgetInto(OverlayFindWidgetViewModel& fw_vm, std::string& blob,
                          const BufferSearchState& buffer_search, bool replace_mode,
-                         TextInputSurface current_surface, const WorkspaceLayout& layout,
+                         TextInputSurface current_surface, const SDL_FRect& surface,
                          const render::TextRenderer& tr) {
   fw_vm.replace_mode = replace_mode;
-  fw_vm.fw = ComputeBufferFindWidgetLayout(layout.editor_surface, fw_vm.replace_mode);
+  fw_vm.fw = ComputeBufferFindWidgetLayout(surface, fw_vm.replace_mode);
   fw_vm.search_focused = current_surface == TextInputSurface::BufferSearch ||
                          current_surface == TextInputSurface::BufferReplaceSearch;
   fw_vm.replace_focused = current_surface == TextInputSurface::BufferReplaceReplace;
@@ -1275,7 +1275,10 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
   }
   if (overlay.mode == OverlayMode::BufferSearch || overlay.mode == OverlayMode::BufferReplace) {
     BuildFindWidgetInto(out.find_widget, out.label_storage, overlay.workflow.buffer_search,
-                        overlay.mode == OverlayMode::BufferReplace, current_surface, layout, tr);
+                        overlay.mode == OverlayMode::BufferReplace, current_surface,
+                        FocusedGroupSurface(layout, context_.current_project_state.editor_split,
+                                            context_.current_project_state.clamped_focused_group_index()),
+                        tr);
     out.list_layout = ScrollableListLayout{};
     return;
   }

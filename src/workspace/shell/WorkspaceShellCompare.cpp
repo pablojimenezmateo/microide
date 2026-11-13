@@ -373,8 +373,8 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentCompareRowRangeRect(std::size_t 
     return std::nullopt;
   }
 
-  const CompareSurfaceLayout surface_layout =
-      ComputeCompareSurfaceLayout(layout->editor_surface, *compare_tab);
+  const SDL_FRect surface = ActiveTabSurface(*layout);
+  const CompareSurfaceLayout surface_layout = ComputeCompareSurfaceLayout(surface, *compare_tab);
   // Callers name PRESENTATION rows (a selection, a hover); the surface scrolls in
   // on-screen rows, which soft wrap makes a different space. Project the range,
   // covering every wrapped row of the last presentation row in it.
@@ -397,7 +397,7 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentCompareRowRangeRect(std::size_t 
   const float h = static_cast<float>(rect_end - rect_start) * surface_layout.line_height;
   // The whole surface's width: the selected change's markers sit at its outer
   // edges, outside the panes' text (QA compare-keys left them behind).
-  return DirtyRectWithHalo(MakeRect(layout->editor_surface.x, y, layout->editor_surface.w, h));
+  return DirtyRectWithHalo(MakeRect(surface.x, y, surface.w, h));
 }
 
 int WorkspaceShell::CompareMaxScrollRow(const CompareTabState& compare_tab, int visible_rows) const {
@@ -553,7 +553,7 @@ void WorkspaceShell::RevealActiveCompareSelection() {
   }
   const WorkspaceLayout layout = *layout_state;
   const CompareSurfaceLayout surface_layout =
-      ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
+      ComputeCompareSurfaceLayout(ActiveTabSurface(layout), *compare_tab);
   ClampCompareScrollRow(*compare_tab, surface_layout.visible_rows);
   ClampCompareHorizontalScroll(*compare_tab, surface_layout.visible_columns);
   RevealCompareSelectedRow(*compare_tab, surface_layout.visible_rows);
@@ -725,7 +725,7 @@ void WorkspaceShell::SyncCompareViewportScroll(CompareTabState& compare_tab) con
 
   if (const auto layout_state = CurrentWorkspaceLayout(); layout_state.has_value()) {
     const CompareSurfaceLayout surface_layout =
-        ComputeCompareSurfaceLayout(layout_state->editor_surface, compare_tab);
+        ComputeCompareSurfaceLayout(ActiveTabSurface(*layout_state), compare_tab);
     compare_tab.right_viewport.SetViewportSize(static_cast<std::size_t>(surface_layout.visible_rows),
                                                surface_layout.right_visible_columns);
     // The two panes scroll horizontally in lock-step off this shared offset. Clamp it
@@ -766,7 +766,7 @@ void WorkspaceShell::SyncCompareSelectionFromViewport(CompareTabState& compare_t
     if (const auto layout_state = CurrentWorkspaceLayout(); layout_state.has_value()) {
       const WorkspaceLayout layout = *layout_state;
       const CompareSurfaceLayout surface_layout =
-          ComputeCompareSurfaceLayout(layout.editor_surface, compare_tab);
+          ComputeCompareSurfaceLayout(ActiveTabSurface(layout), compare_tab);
       ClampCompareScrollRow(compare_tab, surface_layout.visible_rows);
       ClampCompareHorizontalScroll(compare_tab, surface_layout.visible_columns);
       RevealCompareSelectedRow(compare_tab, surface_layout.visible_rows);

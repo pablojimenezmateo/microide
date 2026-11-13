@@ -820,6 +820,11 @@
   // editor-group state, carved from `layout`. Single source of truth shared by
   // the render, cursor, and mouse paths so they cannot drift apart.
   EditorGroupRectsLayout ComputeEditorGroupRectsForState(const WorkspaceLayout& layout) const;
+  // The surface the focused group's active tab paints in: that group's pane, not
+  // the editor column. A compare or merge tab lays out, paints and hit-tests
+  // against this, so in a split it stays inside its own pane (TD-2026-11-11-439).
+  // With one group it IS `layout.editor_surface`.
+  SDL_FRect ActiveTabSurface(const WorkspaceLayout& layout) const;
   // Width of one pane's editor tab strip. With a split open a pane's strip is a
   // fraction of the window, so the tab-scroll math has to size against THAT, not
   // the window (which fits far more tabs and so never scrolled the active one
@@ -1032,6 +1037,7 @@
                             const CompareRenderProjectInputs& project_inputs);
   void RenderMergeSurface(SDL_Renderer* renderer,
                           const SDL_FRect& rect,
+                          MergeTabState& merge_tab,
                           const std::filesystem::path& project_root,
                           bool draw_caret,
                           const editor::DiagnosticsStore& diagnostics_store);
@@ -1906,10 +1912,11 @@
   std::optional<SDL_FRect> ActiveTerminalCaretRect(const WorkspaceLayout& layout) const;
   std::optional<TextInputVisual> BuildCompareTextInputVisual(const SDL_FRect& editor_surface) const;
   std::optional<TextInputVisual> BuildMergeTextInputVisual(const SDL_FRect& editor_surface) const;
-  void RenderCompareScrollbars(SDL_Renderer* renderer,
-                               const SDL_FRect& editor_surface,
-                               CompareTabState& compare_tab);
-  void RenderMergeScrollbars(SDL_Renderer* renderer, const SDL_FRect& editor_surface);
+  // `focused`: the pane whose scrollbar a drag in flight belongs to.
+  void RenderCompareScrollbars(SDL_Renderer* renderer, const SDL_FRect& editor_surface,
+                               CompareTabState& compare_tab, bool focused);
+  void RenderMergeScrollbars(SDL_Renderer* renderer, const SDL_FRect& editor_surface,
+                             MergeTabState& merge_tab, bool focused);
   CursorKind CursorKindForPosition(float x, float y) const;
   SDL_Cursor* CursorHandle(CursorKind kind);
   void ClearMouseHoverState();

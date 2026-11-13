@@ -182,7 +182,7 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
       case OverlayMode::BufferSearch: {
         // Compact find widget: fields carry no inline prefix, so the field rect
         // from the shared layout (matching the renderer) is the hit target.
-        const FindWidgetLayout fw = ComputeBufferFindWidgetLayout(layout.editor_surface, false);
+        const FindWidgetLayout fw = ComputeBufferFindWidgetLayout(ActiveTabSurface(layout), false);
         if (Contains(fw.search_field, x, y)) {
           return FilledHit(TextInputSurface::BufferSearch, fw.search_field, "",
                            &state.overlay.workflow.buffer_search.query);
@@ -190,7 +190,7 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
         break;
       }
       case OverlayMode::BufferReplace: {
-        const FindWidgetLayout fw = ComputeBufferFindWidgetLayout(layout.editor_surface, true);
+        const FindWidgetLayout fw = ComputeBufferFindWidgetLayout(ActiveTabSurface(layout), true);
         if (Contains(fw.search_field, x, y)) {
           return FilledHit(TextInputSurface::BufferReplaceSearch, fw.search_field, "",
                            &state.overlay.workflow.buffer_search.query);
@@ -469,19 +469,19 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
           break;
         case TextInputSurface::BufferSearch:
           if (proj.overlay.visible) {
-            hit = FilledHit(surface, ComputeBufferFindWidgetLayout(layout.editor_surface, false).search_field,
+            hit = FilledHit(surface, ComputeBufferFindWidgetLayout(ActiveTabSurface(layout), false).search_field,
                             "", &proj.overlay.workflow.buffer_search.query);
           }
           break;
         case TextInputSurface::BufferReplaceSearch:
           if (proj.overlay.visible) {
-            hit = FilledHit(surface, ComputeBufferFindWidgetLayout(layout.editor_surface, true).search_field,
+            hit = FilledHit(surface, ComputeBufferFindWidgetLayout(ActiveTabSurface(layout), true).search_field,
                             "", &proj.overlay.workflow.buffer_search.query);
           }
           break;
         case TextInputSurface::BufferReplaceReplace:
           if (proj.overlay.visible) {
-            hit = FilledHit(surface, ComputeBufferFindWidgetLayout(layout.editor_surface, true).replace_field,
+            hit = FilledHit(surface, ComputeBufferFindWidgetLayout(ActiveTabSurface(layout), true).replace_field,
                             "", &proj.overlay.workflow.buffer_search.replace_text);
           }
           break;

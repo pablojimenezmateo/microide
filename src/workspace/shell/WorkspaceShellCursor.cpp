@@ -353,7 +353,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     // editor cursor logic so the live editor underneath behaves as usual.
     if (overlay_mode == OverlayMode::BufferSearch || overlay_mode == OverlayMode::BufferReplace) {
       const FindWidgetLayout fw =
-          ComputeBufferFindWidgetLayout(layout.editor_surface, overlay_mode == OverlayMode::BufferReplace);
+          ComputeBufferFindWidgetLayout(ActiveTabSurface(layout), overlay_mode == OverlayMode::BufferReplace);
       if (Contains(fw.search_field, x, y) ||
           (fw.replace_mode && Contains(fw.replace_field, x, y))) {
         return CursorKind::Text;
@@ -779,7 +779,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   // editor and must claim the cursor before the editor surface does.
   if (DebugToolbarVisible()) {
     const DebugToolbarLayout toolbar = ComputeDebugToolbarLayout(
-        layout.editor_surface, DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
+        ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
     if (Contains(toolbar.widget, x, y)) {
       for (std::size_t i = 0; i < toolbar.button_count; ++i) {
         if (Contains(toolbar.buttons[i], x, y)) {
@@ -794,15 +794,17 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
 
-  if (ActiveTabIsCompare()) {
+  const SDL_FRect view_surface = ActiveTabSurface(layout);
+  const bool over_view_surface = Contains(view_surface, x, y);
+  if (ActiveTabIsCompare() && over_view_surface) {
     const CompareTabState* compare_tab = ActiveCompareTab();
     if (compare_tab == nullptr) {
       return CursorKind::Default;
     }
     const CompareSurfaceLayout surface_layout =
-        ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
+        ComputeCompareSurfaceLayout(view_surface, *compare_tab);
     const auto scroll_layout =
-        ComputeCompareScrollLayout(layout.editor_surface, surface_layout, *compare_tab);
+        ComputeCompareScrollLayout(view_surface, surface_layout, *compare_tab);
     if (scroll_layout.vertical_scrollbar.has_value() &&
         Contains(scroll_layout.vertical_scrollbar->track, x, y)) {
       return CursorKind::Default;
@@ -812,14 +814,14 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       return CursorKind::Default;
     }
     const SDL_FRect divider_rect =
-        CompareDividerHitRect(layout.editor_surface, surface_layout);
+        CompareDividerHitRect(view_surface, surface_layout);
     if (Contains(divider_rect, x, y)) {
       return CursorKind::EwResize;
     }
     // Resolved through the same two helpers the click and the hover highlight use,
     // so the hand cursor cannot appear over a button the click will ignore.
     if (const auto hit = CompareCollapsedContextRowAt(
-            *compare_tab, layout.editor_surface, surface_layout.rows_y,
+            *compare_tab, view_surface, surface_layout.rows_y,
             surface_layout.line_height, surface_layout.show_vertical, y);
         hit.has_value()) {
       const auto action_rects =
@@ -835,20 +837,20 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     }
     return CursorKind::Pointer;
   }
-  if (ActiveTabIsMerge()) {
+  if (ActiveTabIsMerge() && over_view_surface) {
     const MergeTabState* merge_tab = ActiveMergeTab();
     if (merge_tab == nullptr) {
       return CursorKind::Default;
     }
     const MergeSurfaceLayout surface_layout =
-        ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
+        ComputeMergeSurfaceLayout(view_surface, *merge_tab);
     const auto scroll_layout =
-        ComputeMergeScrollLayout(layout.editor_surface, surface_layout, *merge_tab);
-    const auto divider_rects = MergeDividerHitRects(layout.editor_surface, surface_layout);
+        ComputeMergeScrollLayout(view_surface, surface_layout, *merge_tab);
+    const auto divider_rects = MergeDividerHitRects(view_surface, surface_layout);
     if (Contains(divider_rects[0], x, y) || Contains(divider_rects[1], x, y)) {
       return CursorKind::EwResize;
     }
-    const MergeToolbarLayout toolbar = ComputeMergeToolbarLayout(layout.editor_surface, surface_layout);
+    const MergeToolbarLayout toolbar = ComputeMergeToolbarLayout(view_surface, surface_layout);
     if (Contains(toolbar.prev_rect, x, y) || Contains(toolbar.next_rect, x, y) ||
         Contains(toolbar.save_rect, x, y) || Contains(toolbar.open_rect, x, y)) {
       return CursorKind::Pointer;
@@ -869,7 +871,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     // (line_count - visible_rows) named the wrong row on a wrapped result pane.
     const MergeInteractionLayout interaction = {
         .content_bottom = scroll_layout.content_rect.y + scroll_layout.content_rect.h,
-        .result = BuildMergeResultInteractionLayout(layout.editor_surface, surface_layout,
+        .result = BuildMergeResultInteractionLayout(view_surface, surface_layout,
                                                     *merge_tab),
         .incoming_accept_button_width =
             ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Accept Remote")),
@@ -1128,14 +1130,14 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
     if (overlay.visible &&
         (overlay.mode == OverlayMode::BufferSearch || overlay.mode == OverlayMode::BufferReplace)) {
       probe_find_widget(ComputeBufferFindWidgetLayout(
-          layout.editor_surface, overlay.mode == OverlayMode::BufferReplace));
+          ActiveTabSurface(layout), overlay.mode == OverlayMode::BufferReplace));
     }
     if (BottomPanelVisible() && terminal_find_service_.visible()) {
       probe_find_widget(ComputeTerminalFindWidgetLayout(ActiveTerminalBodyRect(layout), layout));
     }
     if (DebugToolbarVisible()) {
       const DebugToolbarLayout tb = ComputeDebugToolbarLayout(
-          layout.editor_surface, DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
+          ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
       probe(tb.widget, std::span<const SDL_FRect>(tb.buttons.data(), tb.button_count));
     }
     if (floating.has_value()) {

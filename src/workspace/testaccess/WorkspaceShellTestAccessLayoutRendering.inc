@@ -70,6 +70,10 @@
     return group_index < group_rects.groups.size() ? group_rects.groups[group_index].editor_surface
                                                    : SDL_FRect{};
   }
+  // Where the focused group's tab in front lays out and hit-tests (its pane).
+  static SDL_FRect ActiveTabSurface(WorkspaceShell& shell) {
+    return shell.ActiveTabSurface(CurrentLayout(shell));
+  }
   // Every split divider the editor area currently shows, in visual order.
   static microide::util::InlineVector<microide::workspace::EditorSplitDividerRect,
                                       microide::workspace::kMaxEditorGroups - 1>
@@ -403,14 +407,14 @@
       return std::nullopt;
     }
     auto& compare = ActiveCompare(shell);
-    const auto surface = shell.ComputeCompareSurfaceLayout(layout.editor_surface, compare);
+    const SDL_FRect pane = shell.ActiveTabSurface(layout);
+    const auto surface = shell.ComputeCompareSurfaceLayout(pane, compare);
     return shell.editor_blame_overlay_service_.BuildCompareOverlay(
         shell.context_.current_project_state.root, shell.editor_text_renderer_, shell.git_blame_service_,
         compare,
         EditorBlameOverlayService::CompareOverlayLayout{
-            .pane_rect = MakeRect(surface.right_x, layout.editor_surface.y,
-                                  surface.gutter_width + surface.right_width,
-                                  std::max(0.0f, layout.editor_surface.h - (surface.show_horizontal ? 12.0f : 0.0f))),
+            .pane_rect = MakeRect(surface.right_x, pane.y, surface.gutter_width + surface.right_width,
+                                  std::max(0.0f, pane.h - (surface.show_horizontal ? 12.0f : 0.0f))),
             .right_x = surface.right_x,
             .gutter_width = surface.gutter_width,
             .right_width = surface.right_width,

@@ -145,8 +145,11 @@ bool ChromeMouseCoordinator::HandleWheel(const SDL_Event& event,
   // is over it (to cycle matches); otherwise let the editor scroll normally.
   if (state_.overlay.mode == OverlayMode::BufferSearch ||
       state_.overlay.mode == OverlayMode::BufferReplace) {
+    // The rect the widget paints in (it used to test `editor_area`, which starts
+    // a tab strip and breadcrumb higher than where the widget is drawn).
     const FindWidgetLayout fw = ComputeBufferFindWidgetLayout(
-        layout.editor_area, state_.overlay.mode == OverlayMode::BufferReplace);
+        FocusedGroupSurface(layout, state_.editor_split, state_.clamped_focused_group_index()),
+        state_.overlay.mode == OverlayMode::BufferReplace);
     if (!Contains(fw.widget, event.wheel.mouse_x, event.wheel.mouse_y)) {
       return false;
     }
@@ -501,7 +504,9 @@ bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
   if (state_.overlay.mode == OverlayMode::BufferSearch ||
       state_.overlay.mode == OverlayMode::BufferReplace) {
     const bool replace_mode = state_.overlay.mode == OverlayMode::BufferReplace;
-    const FindWidgetLayout fw = ComputeBufferFindWidgetLayout(layout.editor_surface, replace_mode);
+    const FindWidgetLayout fw = ComputeBufferFindWidgetLayout(
+        FocusedGroupSurface(layout, state_.editor_split, state_.clamped_focused_group_index()),
+        replace_mode);
     if (!Contains(fw.widget, event.button.x, event.button.y)) {
       // Repaint the widget (it will render unfocused once the editor takes focus)
       // and let the press fall through to the editor mouse path.

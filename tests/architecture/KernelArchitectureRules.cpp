@@ -818,6 +818,7 @@ const std::vector<NamedRule>& KernelArchitectureRuleList() {
       {"CheckRelativeClimbOutTestsTheFirstComponent", CheckRelativeClimbOutTestsTheFirstComponent},
       {"CheckWaitFailureMessagesAreLazy", CheckWaitFailureMessagesAreLazy},
       {"CheckEditorMetricsNameTheirStickyBand", CheckEditorMetricsNameTheirStickyBand},
+      {"CheckTabSurfacesLayOutInTheFocusedPane", CheckTabSurfacesLayOutInTheFocusedPane},
   };
   return rules;
 }

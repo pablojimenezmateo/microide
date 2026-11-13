@@ -130,9 +130,12 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildMergeTextInp
   };
 }
 
-void WorkspaceShell::RenderMergeScrollbars(SDL_Renderer* renderer, const SDL_FRect& editor_surface) {
-  MergeTabState* merge_tab = ActiveMergeTab();
-  if (renderer == nullptr || merge_tab == nullptr) {
+void WorkspaceShell::RenderMergeScrollbars(SDL_Renderer* renderer,
+                                           const SDL_FRect& editor_surface,
+                                           MergeTabState& merge_tab_state,
+                                           bool focused) {
+  MergeTabState* merge_tab = &merge_tab_state;
+  if (renderer == nullptr) {
     return;
   }
 
@@ -153,23 +156,24 @@ void WorkspaceShell::RenderMergeScrollbars(SDL_Renderer* renderer, const SDL_FRe
     overview::DrawLane(renderer, theme_, lane, merge_tab->scrollbar_marker_cache);
     detail::DrawScrollbarTrack(renderer, theme_, track);
     detail::DrawScrollbarThumb(renderer, theme_, scroll_layout.vertical_scrollbar->thumb,
-                       context_.interaction_state.drag_target == DragTarget::CompareVerticalScrollbar);
+                       focused && context_.interaction_state.drag_target == DragTarget::CompareVerticalScrollbar);
   }
 
   if (scroll_layout.horizontal_scrollbar.has_value()) {
     detail::DrawScrollbar(renderer, theme_, scroll_layout.horizontal_scrollbar->track,
                   scroll_layout.horizontal_scrollbar->thumb,
-                  context_.interaction_state.drag_target == DragTarget::CompareHorizontalScrollbar);
+                  focused && context_.interaction_state.drag_target == DragTarget::CompareHorizontalScrollbar);
   }
 }
 
 void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                                         const SDL_FRect& rect,
+                                        MergeTabState& merge_tab_state,
                                         const std::filesystem::path& project_root,
                                         bool draw_caret,
                                         const editor::DiagnosticsStore& diagnostics_store) {
-  MergeTabState* merge_tab = ActiveMergeTab();
-  if (renderer == nullptr || merge_tab == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
+  MergeTabState* merge_tab = &merge_tab_state;
+  if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
 

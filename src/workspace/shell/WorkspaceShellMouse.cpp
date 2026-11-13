@@ -546,16 +546,37 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return false;
   }
 
-  if (ActiveTabIsCompare()) {
-    const bool handled = MakeCompareMouseCoordinator().HandleButtonDown(event, layout);
+  // A click into another pane whose tab in front is a diff or a merge focuses that
+  // pane first, as a click into an editor pane does (the editor coordinator does
+  // that for its own); the diff then takes the click against its own surface.
+  if (EditorGroupCount() > 1) {
+    const EditorGroupRectsLayout group_rects = ComputeEditorGroupRectsForState(layout);
+    const auto& groups = context_.current_project_state.editor_groups;
+    for (std::size_t gi = 0; gi < group_rects.groups.size() && gi < groups.size(); ++gi) {
+      if (!Contains(group_rects.groups[gi].editor_surface, event.button.x, event.button.y)) {
+        continue;
+      }
+      if (gi != context_.current_project_state.focused_group_index && groups[gi].has_active_tab() &&
+          (groups[gi].active_tab().kind == TabEntry::Kind::Compare ||
+           groups[gi].active_tab().kind == TabEntry::Kind::Merge)) {
+        FocusEditorGroup(gi);
+      }
+      break;
+    }
+  }
+  const SDL_FRect view_surface = ActiveTabSurface(layout);
+  const bool in_view_surface = Contains(view_surface, event.button.x, event.button.y);
+
+  if (ActiveTabIsCompare() && in_view_surface) {
+    const bool handled = MakeCompareMouseCoordinator().HandleButtonDown(event, view_surface);
     if (handled) {
       EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
     }
     return handled;
   }
 
-  if (ActiveTabIsMerge()) {
-    const bool handled = MakeMergeMouseCoordinator().HandleButtonDown(event, layout);
+  if (ActiveTabIsMerge() && in_view_surface) {
+    const bool handled = MakeMergeMouseCoordinator().HandleButtonDown(event, view_surface);
     if (handled) {
       EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
     }
@@ -687,21 +708,30 @@ bool WorkspaceShell::ProbeWelcomeSurface(const editor::WelcomeViewModel** model_
   // copy the path out first -- acting on it changes the root the memo is keyed
   // on, which rebuilds the model the reference points into.
   const editor::WelcomeViewModel& model = RenderViewModelBuilder(context_).BuildWelcomeView(recents_service_);
+  // The focused pane, as paint lays the welcome page out in it: in a split, the
+  // column's rect put every hit region somewhere the page is not drawn.
+  SDL_FRect surface = layout->editor_surface;
+  for (const EditorPaneLayout& pane : ComputeEditorPaneLayouts(*layout)) {
+    if (pane.active) {
+      surface = pane.rect;
+      break;
+    }
+  }
   const float line_height = editor_text_renderer_.LineHeight();
   WelcomeProbeLayoutCache& cache = g_welcome_probe_layout_cache;
   if (!cache.valid || cache.recents_instance != recents_service_.instance_id() ||
       cache.recents_revision != recents_service_.revision() ||
       cache.remote_revision != context_.current_project_state.remote_status_revision ||
       cache.root != context_.current_project_state.root ||
-      !SameRect(cache.surface, layout->editor_surface) || cache.line_height != line_height) {
+      !SameRect(cache.surface, surface) || cache.line_height != line_height) {
     cache.valid = true;
     cache.recents_instance = recents_service_.instance_id();
     cache.recents_revision = recents_service_.revision();
     cache.remote_revision = context_.current_project_state.remote_status_revision;
     cache.root = context_.current_project_state.root;
-    cache.surface = layout->editor_surface;
+    cache.surface = surface;
     cache.line_height = line_height;
-    cache.layout = editor::ComputeWelcomeLayout(layout->editor_surface, model, line_height);
+    cache.layout = editor::ComputeWelcomeLayout(surface, model, line_height);
   }
   *model_out = &model;
   *layout_out = &cache.layout;

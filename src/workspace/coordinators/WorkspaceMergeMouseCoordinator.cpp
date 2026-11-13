@@ -65,7 +65,7 @@ MergeTabState* MergeMouseCoordinator::ActiveMergeTab() const {
 }
 
 bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
-                                             const WorkspaceLayout& layout) {
+                                             const SDL_FRect& surface) {
   if (!ActiveTabIsMerge()) {
     return false;
   }
@@ -76,9 +76,9 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   }
 
   const auto surface_layout =
-      operations_.compute_merge_surface_layout(layout.editor_surface, *merge_tab);
+      operations_.compute_merge_surface_layout(surface, *merge_tab);
   const auto scroll_layout =
-      operations_.compute_merge_scroll_layout(layout.editor_surface, surface_layout, *merge_tab);
+      operations_.compute_merge_scroll_layout(surface, surface_layout, *merge_tab);
   merge_tab->scroll_row = scroll_layout.vertical_scroll;
   merge_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
   merge_tab->result_viewport.SetScrollLine(static_cast<std::size_t>(std::max(0, merge_tab->scroll_row)));
@@ -86,8 +86,8 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
   merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
   const auto interaction =
-      operations_.build_merge_interaction_layout(layout.editor_surface, surface_layout, *merge_tab);
-  const auto divider_rects = MergeDividerHitRects(layout.editor_surface, surface_layout);
+      operations_.build_merge_interaction_layout(surface, surface_layout, *merge_tab);
+  const auto divider_rects = MergeDividerHitRects(surface, surface_layout);
   // Double-click restores the equal thirds, the same contract the sidebar, right
   // pane, editor split and bottom panel dividers already answer. Either divider
   // resets both, so one double-click recovers the layout instead of two.
@@ -112,7 +112,7 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     return true;
   }
 
-  const auto toolbar = operations_.compute_merge_toolbar_layout(layout.editor_surface, surface_layout);
+  const auto toolbar = operations_.compute_merge_toolbar_layout(surface, surface_layout);
   if (Contains(toolbar.prev_rect, event.button.x, event.button.y)) {
     operations_.move_merge_selection(-1);
     return true;
@@ -132,7 +132,7 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   if (operations_.merge_secondary_toolbar_button_rect) {
     const auto hit = [&](std::string_view label) {
       const auto rect = operations_.merge_secondary_toolbar_button_rect(
-          layout.editor_surface, surface_layout, label);
+          surface, surface_layout, label);
       return rect.has_value() && Contains(*rect, event.button.x, event.button.y);
     };
     if (hit("Unresolved") && operations_.jump_next_unresolved_merge_conflict) {
@@ -318,7 +318,7 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
 }
 
 bool MergeMouseCoordinator::HandleDrag(const SDL_Event& event,
-                                       const WorkspaceLayout& layout) {
+                                       const SDL_FRect& surface) {
   if (!ActiveTabIsMerge()) {
     return false;
   }
@@ -339,7 +339,7 @@ bool MergeMouseCoordinator::HandleDrag(const SDL_Event& event,
   if (interaction_state_.drag_target == DragTarget::MergeLeftDivider ||
       interaction_state_.drag_target == DragTarget::MergeRightDivider) {
     const auto surface_layout =
-        operations_.compute_merge_surface_layout(layout.editor_surface, *merge_tab);
+        operations_.compute_merge_surface_layout(surface, *merge_tab);
     const float content_width =
         std::max(1.0f, surface_layout.left_width + surface_layout.center_width +
                            surface_layout.right_width);
@@ -348,7 +348,7 @@ bool MergeMouseCoordinator::HandleDrag(const SDL_Event& event,
         (surface_layout.left_width + surface_layout.center_width) / content_width;
     if (interaction_state_.drag_target == DragTarget::MergeLeftDivider) {
       const float divider_center_x =
-          layout.editor_surface.x + 8.0f + surface_layout.gutter_width +
+          surface.x + 8.0f + surface_layout.gutter_width +
           surface_layout.divider_width * 0.5f;
       const float raw_fraction =
           (static_cast<float>(event.motion.x) - divider_center_x) / content_width;
@@ -363,7 +363,7 @@ bool MergeMouseCoordinator::HandleDrag(const SDL_Event& event,
           std::clamp(raw_fraction, surface_layout.min_divider_fraction, left_hi);
     } else {
       const float divider_center_x =
-          layout.editor_surface.x + 8.0f + surface_layout.gutter_width * 2.0f +
+          surface.x + 8.0f + surface_layout.gutter_width * 2.0f +
           surface_layout.divider_width * 1.5f;
       const float raw_fraction =
           (static_cast<float>(event.motion.x) - divider_center_x) / content_width;
@@ -378,9 +378,9 @@ bool MergeMouseCoordinator::HandleDrag(const SDL_Event& event,
   }
 
   const auto surface_layout =
-      operations_.compute_merge_surface_layout(layout.editor_surface, *merge_tab);
+      operations_.compute_merge_surface_layout(surface, *merge_tab);
   const auto scroll_layout =
-      operations_.compute_merge_scroll_layout(layout.editor_surface, surface_layout, *merge_tab);
+      operations_.compute_merge_scroll_layout(surface, surface_layout, *merge_tab);
   merge_tab->scroll_row = scroll_layout.vertical_scroll;
   merge_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
   if (interaction_state_.drag_target == DragTarget::CompareVerticalScrollbar) {
@@ -415,7 +415,7 @@ bool MergeMouseCoordinator::HandleDrag(const SDL_Event& event,
 }
 
 bool MergeMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
-                                              const WorkspaceLayout& layout) {
+                                              const SDL_FRect& surface) {
   if (!ActiveTabIsMerge()) {
     return false;
   }
@@ -427,18 +427,18 @@ bool MergeMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
 
   const std::optional<MergeHoverState> previous_hover = merge_tab->hover_state;
   std::optional<MergeHoverState> next_hover;
-  if (Contains(layout.editor_surface, event.motion.x, event.motion.y) &&
+  if (Contains(surface, event.motion.x, event.motion.y) &&
       !(interaction_state_.mouse_selecting && (event.motion.state & SDL_BUTTON_LMASK) != 0)) {
     const auto surface_layout =
-        operations_.compute_merge_surface_layout(layout.editor_surface, *merge_tab);
+        operations_.compute_merge_surface_layout(surface, *merge_tab);
     const auto scroll_layout =
-        operations_.compute_merge_scroll_layout(layout.editor_surface, surface_layout, *merge_tab);
+        operations_.compute_merge_scroll_layout(surface, surface_layout, *merge_tab);
     merge_tab->result_viewport.SetScrollLine(static_cast<std::size_t>(std::max(0, scroll_layout.vertical_scroll)));
     merge_tab->result_viewport.SetHorizontalScroll(scroll_layout.horizontal_scroll);
     merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
     merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
     const auto interaction =
-        operations_.build_merge_interaction_layout(layout.editor_surface, surface_layout, *merge_tab);
+        operations_.build_merge_interaction_layout(surface, surface_layout, *merge_tab);
     next_hover = operations_.classify_merge_hover_state(
         surface_layout, interaction, *merge_tab, static_cast<float>(event.motion.x),
         static_cast<float>(event.motion.y));
@@ -447,10 +447,10 @@ bool MergeMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
   // The toolbar buttons: which one the pointer is over, repainting the one it
   // left and the one it reached.
   std::optional<SDL_FRect> next_button;
-  if (Contains(layout.editor_surface, event.motion.x, event.motion.y)) {
+  if (Contains(surface, event.motion.x, event.motion.y)) {
     const auto surface_layout =
-        operations_.compute_merge_surface_layout(layout.editor_surface, *merge_tab);
-    const auto toolbar = operations_.compute_merge_toolbar_layout(layout.editor_surface, surface_layout);
+        operations_.compute_merge_surface_layout(surface, *merge_tab);
+    const auto toolbar = operations_.compute_merge_toolbar_layout(surface, surface_layout);
     for (const SDL_FRect& rect : {toolbar.prev_rect, toolbar.next_rect, toolbar.open_rect, toolbar.save_rect}) {
       if (Contains(rect, event.motion.x, event.motion.y)) {
         next_button = rect;
@@ -459,7 +459,7 @@ bool MergeMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
     if (!next_button.has_value() && operations_.merge_secondary_toolbar_button_rect) {
       for (const std::string_view label : {"Unresolved", "Toggle Base", "Mark Resolved"}) {
         const auto rect =
-            operations_.merge_secondary_toolbar_button_rect(layout.editor_surface, surface_layout, label);
+            operations_.merge_secondary_toolbar_button_rect(surface, surface_layout, label);
         if (rect.has_value() && Contains(*rect, event.motion.x, event.motion.y)) {
           next_button = rect;
         }
@@ -494,7 +494,7 @@ bool MergeMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
 }
 
 bool MergeMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
-                                                  const WorkspaceLayout& layout) {
+                                                  const SDL_FRect& surface) {
   if (!ActiveTabIsMerge()) {
     return false;
   }
@@ -508,9 +508,9 @@ bool MergeMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
   }
 
   const auto surface_layout =
-      operations_.compute_merge_surface_layout(layout.editor_surface, *merge_tab);
+      operations_.compute_merge_surface_layout(surface, *merge_tab);
   const auto interaction =
-      operations_.build_merge_interaction_layout(layout.editor_surface, surface_layout, *merge_tab);
+      operations_.build_merge_interaction_layout(surface, surface_layout, *merge_tab);
   // Same as the editor and compare surfaces: a drag that leaves the result pane
   // keeps extending toward the pointer rather than freezing where it crossed the
   // edge. The row was already clamped through ClampTextGridLineAtY; only the
@@ -556,11 +556,11 @@ bool MergeMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
 }
 
 bool MergeMouseCoordinator::HandleWheel(const SDL_Event& event,
-                                        const WorkspaceLayout& layout,
+                                        const SDL_FRect& surface,
                                         int vertical_ticks,
                                         int horizontal_ticks) {
   if (!ActiveTabIsMerge() ||
-      !Contains(layout.editor_surface, event.wheel.mouse_x, event.wheel.mouse_y)) {
+      !Contains(surface, event.wheel.mouse_x, event.wheel.mouse_y)) {
     return false;
   }
 
@@ -570,9 +570,9 @@ bool MergeMouseCoordinator::HandleWheel(const SDL_Event& event,
     MergeTabState* merge_tab = ActiveMergeTab();
     if (merge_tab != nullptr) {
       const auto surface_layout =
-          operations_.compute_merge_surface_layout(layout.editor_surface, *merge_tab);
+          operations_.compute_merge_surface_layout(surface, *merge_tab);
       const auto scroll_layout =
-          operations_.compute_merge_scroll_layout(layout.editor_surface, surface_layout, *merge_tab);
+          operations_.compute_merge_scroll_layout(surface, surface_layout, *merge_tab);
       merge_tab->scroll_row =
           std::clamp(scroll_layout.vertical_scroll - vertical_ticks * kWheelScrollRows, 0,
                      scroll_layout.max_vertical_scroll);

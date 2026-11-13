@@ -17,4 +17,14 @@ namespace microide::tests::architecture {
 RuleResult CheckEditorMetricsNameTheirStickyBand(const std::filesystem::path& repo_root);
 void RunEditorMetricsStickyBandRuleFixtures();
 
+// A compare, a merge, the find widget and the debug toolbar lay out against the
+// focused pane (`WorkspaceShell::ActiveTabSurface`, `FocusedGroupSurface`), never
+// against the editor COLUMN (`layout.editor_surface`). In a split the column is a
+// different rect: a diff anchored to it painted over the other panes under their
+// tab strips, and the toolbar sat on another pane's buttons (TD-2026-11-11-439,
+// soak 3cea0cf87f72 / 83dfd7f84e2f). Flags those layout calls whose surface
+// argument names the column.
+RuleResult CheckTabSurfacesLayOutInTheFocusedPane(const std::filesystem::path& repo_root);
+void RunTabSurfacesRuleFixtures();
+
 }  // namespace microide::tests::architecture

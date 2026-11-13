@@ -118,10 +118,10 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
   switch (surface) {
     case TextInputSurface::Editor: {
       if (ActiveTabIsCompare()) {
-        return BuildCompareTextInputVisual(layout.editor_surface);
+        return BuildCompareTextInputVisual(ActiveTabSurface(layout));
       }
       if (ActiveTabIsMerge()) {
-        return BuildMergeTextInputVisual(layout.editor_surface);
+        return BuildMergeTextInputVisual(ActiveTabSurface(layout));
       }
       if (!active_editor_pane_rect.has_value()) {
         return std::nullopt;
@@ -193,7 +193,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       const bool replace_mode = surface == TextInputSurface::BufferReplaceSearch ||
                                 surface == TextInputSurface::BufferReplaceReplace;
       const bool replace_field = surface == TextInputSurface::BufferReplaceReplace;
-      const FindWidgetLayout fw = ComputeBufferFindWidgetLayout(layout.editor_surface, replace_mode);
+      const FindWidgetLayout fw = ComputeBufferFindWidgetLayout(ActiveTabSurface(layout), replace_mode);
       const SDL_FRect field = replace_field ? fw.replace_field : fw.search_field;
       const float text_x = field.x + 6.0f;
       const float text_y = field.y + std::floor((field.h - line_height) * 0.5f);
