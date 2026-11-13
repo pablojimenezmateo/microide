@@ -237,6 +237,38 @@ DOUBLE_CLICK_RADIUS = 40
 
 WORK_OWNER_FILE = "owner.pid"
 _swept_orphans = False
+# Set to the run's work tree in the app's environment, so every process the app
+# starts carries it -- and keeps it, whatever process group or session it moves
+# to. See kill_run_processes.
+RUN_MARKER = "MQA_RUN"
+
+
+def kill_run_processes(work: Path) -> int:
+    """SIGKILLs every process left from the run whose work tree is `work`: each
+    one whose environment carries RUN_MARKER for it. Returns how many.
+
+    Killing the app's process group is not enough. What the app starts can leave
+    the group -- gdb runs a program in a group of its own, a terminal's shell in
+    a session of its own -- and a debug session's processes outlived every run:
+    the soak machine held 999 gdb processes, orphaned, when they were found
+    (2026-11-13). Twice, since killing a process can strand a child it had not
+    reaped yet."""
+    needle = f"\0{RUN_MARKER}={work}\0".encode()
+    own = os.getpid()
+    killed = 0
+    for _ in range(2):
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit() or int(entry.name) == own:
+                continue
+            try:
+                environ = b"\0" + (entry / "environ").read_bytes()
+            except OSError:
+                continue  # gone, or not ours
+            if needle in environ:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.kill(int(entry.name), signal.SIGKILL)
+                    killed += 1
+    return killed
 
 
 def sweep_orphaned_work_trees(root: Path = Path("/tmp"), legacy_age_s: float = 24 * 3600) -> list[Path]:
@@ -271,6 +303,7 @@ def sweep_orphaned_work_trees(root: Path = Path("/tmp"), legacy_age_s: float = 2
                 continue
         except (OSError, ValueError):
             continue
+        kill_run_processes(tree)  # what its app left running
         shutil.rmtree(tree, ignore_errors=True)
         removed.append(tree)
     return removed
@@ -387,6 +420,7 @@ class App:
         (work / WORK_OWNER_FILE).write_text(str(os.getpid()))
         env = app_base_env(dict(os.environ))
         env.update({
+            RUN_MARKER: str(work),
             "SDL_VIDEODRIVER": "wayland" if BACKEND == "wayland" else "x11",
             # One SDL_Log line per frame and per clip under an open menu: the frame
             # sequence a finding is read against.
@@ -757,6 +791,7 @@ class App:
                     proc.wait(timeout=5)
                 if proc.poll() is None:
                     proc.kill()
+        kill_run_processes(self.work)
         if os.environ.get("MQA_KEEP_WORK") != "1":
             shutil.rmtree(self.work, ignore_errors=True)
 
