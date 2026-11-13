@@ -405,6 +405,8 @@ def start_job(job_type: JobType, state: dict[str, Any], rng: random.Random) -> J
 
 
 CHECK_JOB = JobType("check", 0, "default", timeout=3 * 3600, matrix=False)
+# A fixed finding's replay on the build that has its fix (verify_one): three runs.
+VERIFY_JOB = JobType("verify", 0, "default", timeout=3600 + 600, matrix=False)
 
 
 def start_check(sig: str, state: dict[str, Any]) -> Job:
@@ -416,8 +418,17 @@ def start_check(sig: str, state: dict[str, Any]) -> Job:
     return Job(CHECK_JOB, 0, out, command, f"check/{sig}", time.time(), proc, state.get("built_sha", ""), "")
 
 
+def start_verify(sig: str, state: dict[str, Any]) -> Job:
+    out = RUNS / f"verify-{sig}"
+    out.mkdir(parents=True, exist_ok=True)
+    command = [sys.executable, str(HERE / "soak.py"), "verify", sig]
+    with open(out / "driver.log", "wb") as log:
+        proc = subprocess.Popen(command, cwd=REPO, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    return Job(VERIFY_JOB, 0, out, command, f"verify/{sig}", time.time(), proc, state.get("built_sha", ""), "")
+
+
 def reap_job(job: Job, state: dict[str, Any], log) -> None:
-    if job.type is CHECK_JOB:
+    if job.type is CHECK_JOB or job.type is VERIFY_JOB:
         tail = (job.out / "driver.log").read_text(errors="replace")[-400:] if (job.out / "driver.log").exists() else ""
         log(f"  {job.cell} done: {tail.strip().splitlines()[-1] if tail.strip() else ''}")
         shutil.rmtree(job.out, ignore_errors=True)
@@ -730,27 +741,49 @@ def fixes_to_verify(state: dict[str, Any]):
 
 
 def verify_fixed(state: dict[str, Any], log) -> None:
-    """A fixed signature whose fix commit is in the current default build is
-    replayed (minimal replay, else the full one): gone -> verified, back ->
-    reopened."""
-    for entry, good in list(fixes_to_verify(state)):
-        bundle = FINDINGS / entry.sig
-        replay = bundle / "minimal.json" if (bundle / "minimal.json").exists() else bundle / "replay.json"
-        if not replay.exists():
-            ledger().append(entry.sig, "verified", note="no replay to re-check; trusted the fix")
-            prune_verified_bundle(bundle)
-            continue
-        result = subprocess.run(["nice", "-n", "19", sys.executable, str(driver_root(state) / "tools/soak/minimize.py"),
-                                 str(replay), "--signature", entry.sig, "--binary", good["binary"],
-                                 "--check-only", "--runs", "3", "--jobs", "3", "--out", str(bundle / "verify")],
-                                capture_output=True, text=True, timeout=3600)
-        rate = next((json.loads(l)["rate"] for l in result.stdout.splitlines() if l.startswith("{")), 1.0)
-        if rate == 0:
-            ledger().append(entry.sig, "verified", commit=good["sha"])
-            log(f"  verified {entry.sig}; pruned {prune_verified_bundle(bundle) / 1e6:.1f} MB of its evidence")
-        else:
-            ledger().append(entry.sig, "reopened", commit=good["sha"], rate=rate)
-            log(f"  REOPENED {entry.sig} (rate {rate:.0%} on {good['sha'][:10]})")
+    """Queues every fixed signature whose fix commit is in the current default
+    build for a verify job (start_verify, `soak.py verify SIG`), which replays it:
+    gone -> verified, back -> reopened.
+
+    Queued, not replayed here: this runs inside the scheduling loop, and a
+    replay is three runs of up to an hour each. Inline, a build that brought in
+    five fixes kept the runner from starting any job for as long as their
+    replays took, one after another (2026-11-13: zero jobs for the better part
+    of an hour after a restart)."""
+    queued = state.setdefault("pending_verifies", [])
+    running = set(state.get("current", []))
+    for entry, _good in fixes_to_verify(state):
+        if entry.sig not in queued and f"verify/{entry.sig}" not in running:
+            queued.append(entry.sig)
+            log(f"  queued {entry.sig} to verify")
+
+
+def verify_one(sig: str, state: dict[str, Any], log) -> None:
+    """Replays one fixed signature on the current default build (its minimal
+    replay, else the full one) and books the verdict."""
+    match = next(((entry, good) for entry, good in fixes_to_verify(state) if entry.sig == sig), None)
+    if match is None:
+        log(f"{sig}: not a fixed signature the current build contains; nothing to verify")
+        return
+    entry, good = match
+    bundle = FINDINGS / entry.sig
+    replay = bundle / "minimal.json" if (bundle / "minimal.json").exists() else bundle / "replay.json"
+    if not replay.exists():
+        ledger().append(entry.sig, "verified", note="no replay to re-check; trusted the fix")
+        prune_verified_bundle(bundle)
+        log(f"verified {entry.sig}: no replay to re-check; trusted the fix")
+        return
+    result = subprocess.run(["nice", "-n", "19", sys.executable, str(driver_root(state) / "tools/soak/minimize.py"),
+                             str(replay), "--signature", entry.sig, "--binary", good["binary"],
+                             "--check-only", "--runs", "3", "--jobs", "3", "--out", str(bundle / "verify")],
+                            capture_output=True, text=True, timeout=3600)
+    rate = next((json.loads(l)["rate"] for l in result.stdout.splitlines() if l.startswith("{")), 1.0)
+    if rate == 0:
+        ledger().append(entry.sig, "verified", commit=good["sha"])
+        log(f"verified {entry.sig}; pruned {prune_verified_bundle(bundle) / 1e6:.1f} MB of its evidence")
+    else:
+        ledger().append(entry.sig, "reopened", commit=good["sha"], rate=rate)
+        log(f"REOPENED {entry.sig} (rate {rate:.0%} on {good['sha'][:10]})")
 
 
 # ---- housekeeping ----------------------------------------------------------------
@@ -1159,6 +1192,15 @@ def cmd_run(args: argparse.Namespace) -> int:
             jobs.append(start_check(sig, state))
             log(f"check {sig}")
             save_state(state)
+        verifies = state.get("pending_verifies", [])
+        if verifies and len(jobs) < cap and busy_reason(our_cores() or CORES_PER_JOB * len(jobs)) is None:
+            # A fix's verification next, as a job of its own like a check (three
+            # displays): it used to run inline here and hold every start behind it.
+            sig = verifies.pop(0)
+            jobs.append(start_verify(sig, state))
+            log(f"verify {sig}")
+            state["current"] = [j.cell for j in jobs]
+            save_state(state)
         reason = busy_reason(our_cores() or CORES_PER_JOB * len(jobs))
         if reason is None:
             # One per RAMP_SECONDS: the load average needs time to show what the
@@ -1174,7 +1216,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             state["waiting"] = reason
         state["current"] = [j.cell for j in jobs]
         save_state(state)
-        if args.once and not jobs and not state.get("pending_checks"):
+        if args.once and not jobs and not state.get("pending_checks") and not state.get("pending_verifies"):
             break
         if now - last_housekeeping > 600:
             collect_garbage(log)
@@ -1349,6 +1391,11 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_verify(args: argparse.Namespace) -> int:
+    verify_one(args.sig, load_state(), print)
+    return 0
+
+
 def cmd_build(args: argparse.Namespace) -> int:
     state = load_state()
     build_all(state, print)
@@ -1377,13 +1424,15 @@ def main() -> int:
     sub.add_parser("gc", help="delete verified findings' evidence and unusable corpus prefixes")
     check = sub.add_parser("check", help="measure a finding's reproduction rate and minimize it")
     check.add_argument("sig")
+    verify = sub.add_parser("verify", help="replay a fixed finding on the current build and book the verdict")
+    verify.add_argument("sig")
     led = sub.add_parser("ledger")
     led.add_argument("action", nargs="?", default="list", choices=("list", "show", "claim", "fixed", "reopen", "note"))
     led.add_argument("sig", nargs="?")
     led.add_argument("extra", nargs="?")
     args = parser.parse_args()
     return {"run": cmd_run, "status": cmd_status, "report": cmd_report, "ledger": cmd_ledger,
-            "build": cmd_build, "check": cmd_check, "gc": cmd_gc}[args.mode](args)
+            "build": cmd_build, "check": cmd_check, "verify": cmd_verify, "gc": cmd_gc}[args.mode](args)
 
 
 
