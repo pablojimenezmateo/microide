@@ -133,7 +133,9 @@ void EnsureCompareOverviewMarkers(const render::Theme& theme,
             compare_tab, static_cast<std::size_t>(std::max(0, run.start_row)))),
         .end_row = static_cast<int>(ComparePresentationRowToVisualRow(
             compare_tab, static_cast<std::size_t>(std::max(0, run.end_row)))),
-        .color = run.layout_only ? theme.text_disabled : CompareMarkerColor(theme, run.kind),
+        .color = run.layout_only ? theme.text_disabled
+                 : run.moved     ? theme.diff_moved
+                                 : CompareMarkerColor(theme, run.kind),
         .priority = 0});
   }
   overview::BuildMarkersInto(inner_lane, marker_rows, inputs,

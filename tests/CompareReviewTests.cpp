@@ -12,6 +12,7 @@
 #include "workspace/actions/WorkspaceActionServices.h"
 #include "workspace/actions/WorkspaceActionTypes.h"
 #include "workspace/state/WorkspaceProjectState.h"
+#include "workspace/WorkspaceLayout.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -459,6 +460,35 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                      Expect(!presentation.rows.empty(), "presentation should include rows");
                      Expect(presentation.rows.front().kind == ComparePresentationRowKind::Metadata,
                             "rename metadata should add a metadata row");
+                   }});
+
+  // TD-2026-11-11-443: the overview lane marks a moved run as moved, in its own
+  // run, so it is drawn in the moved colour rather than as removed or added.
+  tests.push_back({"CompareReview/OverviewRunsSeparateMovedLines",
+                   [] {
+                     std::string middle;
+                     for (int line = 0; line < 12; ++line) {
+                       middle += "keep_" + std::to_string(line) + "();\n";
+                     }
+                     const std::string helper =
+                         "void helper() {\n  do_work(alpha, beta);\n  finish(gamma);\n}\n";
+                     const auto model = BuildCompareModel(helper + middle + "tail_old();\n",
+                                                          middle + helper + "tail_new();\n");
+                     const auto semantic = InferCompareSemanticFileMetadata(CompareSemanticMetadataInput{
+                         .path = "f.c", .left_content = "", .right_content = "", .git_entry = std::nullopt,
+                         .old_path = {}});
+                     const auto presentation = BuildComparePresentationModel(
+                         model, semantic, ComparePresentationOptions{}, ComparePresentationCollapseState{});
+                     std::vector<microide::workspace::CompareScrollbarRun> runs;
+                     microide::workspace::BuildCompareScrollbarRunsInto(presentation, model, runs);
+                     int moved_runs = 0;
+                     int plain_runs = 0;
+                     for (const auto& run : runs) {
+                       (run.moved ? moved_runs : plain_runs) += 1;
+                     }
+                     Expect(moved_runs == 2, "the moved function is one run where it left and one where it "
+                                             "landed (" + std::to_string(moved_runs) + ")");
+                     Expect(plain_runs >= 1, "and the edited tail line is an ordinary run");
                    }});
 
   tests.push_back({"CompareReview/IgnoreWhitespaceRebuildsModel",

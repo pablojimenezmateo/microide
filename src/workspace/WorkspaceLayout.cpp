@@ -1180,19 +1180,24 @@ void BuildCompareScrollbarRunsInto(const compare::ComparePresentationModel& pres
     return;
   }
 
-  auto push_run = [&](int start_row, int end_row, compare::CompareRowKind kind, bool layout_only) {
+  auto push_run = [&](int start_row, int end_row, compare::CompareRowKind kind, bool layout_only,
+                      bool moved) {
     if (kind == compare::CompareRowKind::Unchanged || start_row < 0 || end_row <= start_row) {
       return;
     }
-    runs.push_back(CompareScrollbarRun{
-        .kind = kind, .layout_only = layout_only, .start_row = start_row, .end_row = end_row});
+    runs.push_back(CompareScrollbarRun{.kind = kind,
+                                       .layout_only = layout_only,
+                                       .moved = moved,
+                                       .start_row = start_row,
+                                       .end_row = end_row});
   };
 
   int run_start = -1;
   compare::CompareRowKind run_kind = compare::CompareRowKind::Unchanged;
   bool run_layout_only = false;
+  bool run_moved = false;
   const auto close_run = [&](std::size_t end) {
-    push_run(run_start, static_cast<int>(end), run_kind, run_layout_only);
+    push_run(run_start, static_cast<int>(end), run_kind, run_layout_only, run_moved);
     run_start = -1;
     run_kind = compare::CompareRowKind::Unchanged;
   };
@@ -1211,7 +1216,9 @@ void BuildCompareScrollbarRunsInto(const compare::ComparePresentationModel& pres
     }
 
     const bool layout_only = compare::CompareRowIsLayoutOnly(row);
-    if (run_start >= 0 && row.kind == run_kind && layout_only == run_layout_only) {
+    const bool moved = row.left_moved || row.right_moved;
+    if (run_start >= 0 && row.kind == run_kind && layout_only == run_layout_only &&
+        moved == run_moved) {
       continue;
     }
 
@@ -1219,6 +1226,7 @@ void BuildCompareScrollbarRunsInto(const compare::ComparePresentationModel& pres
     run_start = static_cast<int>(i);
     run_kind = row.kind;
     run_layout_only = layout_only;
+    run_moved = moved;
   }
   close_run(presentation.rows.size());
 }

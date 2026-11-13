@@ -27,8 +27,11 @@ re-indented move, lone brace / edited block not moves, the between-hunks rule on
 hand-built rows; the fuzz target links it.
 
 Left: a move whose lines were ALSO edited is two novel blocks (the token-level
-cross-hunk matcher this entry first sketched would mark the unedited tokens), and
-the overview ruler marks moved runs in the added/removed colours.
+cross-hunk matcher this entry first sketched would mark the unedited tokens).
+The overview ruler marks moved runs in `diff_moved` too
+(`CompareReview/OverviewRunsSeparateMovedLines`), and the control channel's
+`editor` query reports `movedLeftLines`/`movedRightLines` (QA flow
+`diff-moved-code`).
 
 
 ### TD-2026-11-13-445 — residuals of the per-pane diff (TD-439). [FIXED 2026-11-13]

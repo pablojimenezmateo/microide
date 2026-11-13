@@ -106,6 +106,8 @@ struct CompareScrollbarRun {
   // Every row of the run changed only in layout (compare::CompareRowIsLayoutOnly):
   // drawn muted, so the lane points at the changes that carry new tokens.
   bool layout_only = false;
+  // Every row of the run is drawn as moved between hunks (CompareRow::*_moved).
+  bool moved = false;
   int start_row = 0;
   int end_row = 0;
 };
