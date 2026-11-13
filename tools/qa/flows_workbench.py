@@ -677,6 +677,52 @@ def flow_search_query_recovery(app: q.App) -> None:
     step(app, "open the recovered result")
 
 
+def flow_terminal_drag_split(app: q.App) -> None:
+    """Two full-screen terminals put side by side by dragging one tab onto the
+    other's right edge, then a third stacked under them by its bottom edge."""
+    if not app.ui()["panel"]["visible"]:
+        app.key("ctrl+grave")
+        step(app, "ctrl+`", 0.5)
+    if not app.ui()["panel"]["maximized"]:
+        app.send("panel-maximize")
+        step(app, "full-screen terminals", 0.4)
+
+    def tabs() -> list[dict]:
+        rows = app.query("terminals")
+        return rows if isinstance(rows, list) else rows.get("tabs", [])
+
+    def active_tab() -> dict:
+        return next((t for t in tabs() if t.get("active")), {})
+
+    def drop_on_body(fx: float, fy: float, label: str) -> None:
+        """Show the first tab, then drag the last one to (fx, fy) of the body."""
+        strip = app.elements("panel-tab")
+        app.click(*app.center(strip[0]))
+        step(app, "show the first terminal", 0.3)
+        x, y, w, h = app.ui()["surfaces"]["bottomPanel"]
+        body_y, body_h = y + 28, h - 28
+        app.drag(*app.center(strip[len(tabs()) - 1]), x + w * fx, body_y + body_h * fy)
+        step(app, label, 0.5)
+
+    while len(tabs()) < 2:
+        app.click_named("button:panel/new-terminal")
+        step(app, "click +", 0.6)
+    before = len(tabs())
+    drop_on_body(0.99, 0.5, "drag the last terminal onto the first one's right edge")
+    app.expect(len(tabs()) == before - 1, f"the dragged tab joins the one on screen ({before} -> {len(tabs())})")
+    app.expect(len(active_tab().get("panes", [])) == 2, f"side by side in one tab ({active_tab()})")
+    app.expect(app.element("divider:terminal/0") is not None, "with a divider between them")
+
+    app.click_named("button:panel/new-terminal")
+    step(app, "click +", 0.6)
+    drop_on_body(0.25, 0.99, "drag the new terminal onto the left pane's bottom edge")
+    split = active_tab().get("split", [])
+    app.expect(len(active_tab().get("panes", [])) == 3 and any(n.get("orientation") == "horizontal" for n in split),
+               f"the third terminal is stacked under the pane it was dropped on ({split})")
+    app.send("panel-maximize")
+    step(app, "restore the panel", 0.4)
+
+
 def flow_maximized_terminal_survives(app: q.App) -> None:
     """A maximized terminal stays maximized through what used to restore it a
     frame later: a restart (the restored session put the keyboard in the editor,
@@ -715,6 +761,7 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "wb-settings": flow_settings,
     "wb-status-bar": flow_status_bar,
     "wb-terminal": flow_terminal,
+    "wb-terminal-drag-split": flow_terminal_drag_split,
     "wb-layouts": flow_layouts,
     "wb-zoom-chrome": flow_zoom_and_chrome_toggles,
     "wb-help": flow_help,
