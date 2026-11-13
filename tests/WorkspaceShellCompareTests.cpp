@@ -6,7 +6,9 @@
 #include "support/SoftwareCanvas.h"
 #include "WorkspaceShellEventHelpers.h"
 
+#include "workspace/render/CompareMergeRender.h"
 #include "workspace/render/DiffDividerGeometry.h"
+#include "render/TextRenderer.h"
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
@@ -2831,6 +2833,25 @@ void TestWorkspaceShellCompareSyntaxCatchUpSchedulesTheNextFrame() {
   Expect(frames < 16, "the catch-up stops asking for frames once it has caught up");
 }
 
+// Soak 8cffab44c08e (deterministic, minimized to 20 actions): at a small editor
+// font a diff's collapsed-lines bar is one line tall, shorter than its "Show all"
+// / "Show next 20" buttons, which sat at the bar's top and hung below it. A frame
+// that repainted the bar's row left the overhang's border behind. The buttons
+// stay inside their row.
+void TestCompareCollapsedBarButtonsStayInsideTheirRow() {
+  render::TextRenderer text_renderer;  // backend-less: widths only
+  for (const float row_height : {10.0f, 15.0f, 16.0f, 24.0f}) {
+    const SDL_FRect row{100.0f, 200.0f, 800.0f, row_height};
+    const workspace::CollapsedContextActionRects rects =
+        workspace::BuildCollapsedContextActionRects(text_renderer, row, true, true);
+    for (const std::optional<SDL_FRect>& button : {rects.previous_rect, std::optional(rects.all_rect), rects.next_rect}) {
+      Expect(button.has_value() && button->y >= row.y && button->y + button->h <= row.y + row.h,
+             "a " + std::to_string(row_height) + " px row holds its buttons: button y=" +
+                 std::to_string(button ? button->y : -1.0f) + " h=" + std::to_string(button ? button->h : -1.0f));
+    }
+  }
+}
+
 }  // namespace
 
 // H11/J41: an unreadable or binary working-tree file must NOT open as an editable
@@ -3706,6 +3727,8 @@ void TestWorkspaceShellCompareMultiCaretIsPainted() {
 }
 
 void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/CompareCollapsedBarButtonsStayInsideTheirRow",
+          TestCompareCollapsedBarButtonsStayInsideTheirRow);
   AddTest(tests, "WorkspaceShell/IdenticalMergeOutputRewriteKeepsResolution",
           TestWorkspaceShellIdenticalMergeOutputRewriteKeepsResolution);
   AddTest(tests, "WorkspaceShell/RealMergeOutputEditDropsResolution",

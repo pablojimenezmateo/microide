@@ -37,7 +37,11 @@ CollapsedContextActionRects BuildCollapsedContextActionRects(
     const SDL_FRect& row_rect,
     bool show_previous,
     bool show_next) {
-  const float center_y = row_rect.y + std::floor(std::max(0.0f, row_rect.h - kCollapsedContextButtonHeight) * 0.5f);
+  // As tall as the bar allows: at a small editor font the bar (one line) is
+  // shorter than the button, which sat at its top and hung below it -- a frame
+  // repainting the bar's row left the overhang behind (soak 8cffab44c08e).
+  const float button_height = std::min(kCollapsedContextButtonHeight, std::max(0.0f, row_rect.h));
+  const float center_y = row_rect.y + std::floor((row_rect.h - button_height) * 0.5f);
   const float all_width = CollapsedContextButtonWidth(text_renderer, "Show all");
   const float next_width = show_next ? CollapsedContextButtonWidth(text_renderer, "Show next 20") : 0.0f;
   const float previous_width =
@@ -54,13 +58,13 @@ CollapsedContextActionRects BuildCollapsedContextActionRects(
   CollapsedContextActionRects rects;
   rects.text_right_edge = std::max(row_rect.x, x - 10.0f);
   if (show_previous) {
-    rects.previous_rect = MakeRect(x, center_y, previous_width, kCollapsedContextButtonHeight);
+    rects.previous_rect = MakeRect(x, center_y, previous_width, button_height);
     x += previous_width + kCollapsedContextButtonGap;
   }
-  rects.all_rect = MakeRect(x, center_y, all_width, kCollapsedContextButtonHeight);
+  rects.all_rect = MakeRect(x, center_y, all_width, button_height);
   x += all_width + kCollapsedContextButtonGap;
   if (show_next) {
-    rects.next_rect = MakeRect(x, center_y, next_width, kCollapsedContextButtonHeight);
+    rects.next_rect = MakeRect(x, center_y, next_width, button_height);
   }
   return rects;
 }
