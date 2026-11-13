@@ -820,6 +820,57 @@ void TestWorkspaceShellCleanReloadRaisesNotice() {
 // watcher names the file written -- the target -- and the sweep matched open
 // views by path, so the link's view was never asked. The batch here names only
 // the target, as the watcher does.
+// Soak 4f0b1aff2ec8: `review-conflicts` opened a merge tab for scheduler.cpp beside
+// its clean editor tab, the resolver's result was edited, and `git merge --abort`
+// rewrote the file. The edited RESULT is unsaved work and keeps its edits; the
+// editor tab is a clean view of the file and has
+// nothing to keep. The dirty check was asked about the path, though, and found
+// the merge result: the change was handled as one under edits, the clean editor
+// tab never reloaded, and it kept the conflict markers git had just removed.
+void TestWorkspaceShellAnEditedMergeResultDoesNotKeepTheFilesCleanTabStale() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_path = root / "scheduler.cpp";
+  const std::filesystem::path base = temp_dir.path() / "base.cpp";
+  const std::filesystem::path incoming = temp_dir.path() / "incoming.cpp";
+  WriteFile(file_path, "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature\n");
+  WriteFile(base, "base\n");
+  WriteFile(incoming, "theirs\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+  for (int attempt = 0; attempt < 20; ++attempt) {
+    if (!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false)) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, file_path, file_path),
+         "a merge tab opens for the same file");
+  WorkspaceShellTestAccess::ActiveMerge(shell).result_viewport.InsertText("resolving ");
+  Expect(WorkspaceShellTestAccess::ActiveMerge(shell).result_viewport.dirty(), "its result is edited");
+
+  WriteFile(file_path, "ours\n");  // git merge --abort
+  Expect(WaitForProjectReload(shell, std::chrono::seconds(1)), "the change reaches the project");
+
+  const editor::TextViewport* editor = nullptr;
+  for (const auto& tab : WorkspaceShellTestAccess::OpenTabs(shell)) {
+    if (tab.kind == microide::workspace::TabEntry::Kind::Editor && tab.editor_state.has_value() &&
+        tab.editor_state->viewport.path() == file_path) {
+      editor = &tab.editor_state->viewport;
+    }
+  }
+  Expect(editor != nullptr, "the editor tab is still open");
+  Expect(!editor->dirty() && editor->lines().size() == 2 && editor->lines()[0] == "ours",
+         "the clean editor tab reloads what the file now holds: '" +
+             (editor->lines().empty() ? std::string() : std::string(editor->lines()[0])) + "'");
+  const auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  Expect(merge.result_viewport.dirty() && merge.result_viewport.lines()[0].starts_with("resolving "),
+         "the merge result keeps its edits");
+}
+
 void TestWorkspaceShellChangeToASymlinkTargetReloadsTheLinksCleanBuffer() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1112,6 +1163,8 @@ void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCleanReloadRaisesNotice);
   AddTest(tests, "ExternalRepoChange/ChangeToASymlinkTargetReloadsTheLinksCleanBuffer",
           TestWorkspaceShellChangeToASymlinkTargetReloadsTheLinksCleanBuffer);
+  AddTest(tests, "ExternalRepoChange/AnEditedMergeResultDoesNotKeepTheFilesCleanTabStale",
+          TestWorkspaceShellAnEditedMergeResultDoesNotKeepTheFilesCleanTabStale);
   AddTest(tests, "ExternalRepoChange/SaveThroughASymlinkIsItsOwnEcho",
           TestWorkspaceShellSaveThroughASymlinkIsItsOwnEcho);
   AddTest(tests, "ExternalRepoChange/ChangeReachesAViewOpenedThroughASymlinkedFolder",

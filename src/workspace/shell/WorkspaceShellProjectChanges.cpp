@@ -307,22 +307,31 @@ void WorkspaceShell::ApplyExternalFileChange(const std::filesystem::path& normal
   InvalidateMergeTabsForPath(normalized_path);
   refresh_compare_paths.insert(normalized_path);
   PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
-  if (MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
-          .HasDirtyEditorTabsForPath(normalized_path, nullptr)) {
+  const bool under_edits = MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
+                               .HasDirtyEditorTabsForPath(normalized_path, nullptr);
+  if (under_edits) {
     editor_tabs.NoteDiskChangedUnderEditsForPath(normalized_path);
     dirty_external_paths.insert(normalized_path);
-    return;
   }
+  // Every CLEAN view of the path reloads, whatever else is dirty. The dirty view
+  // need not be one of them: a merge tab's edited result is a buffer of its own,
+  // and it kept the file's clean editor tab on the text git had just replaced
+  // (soak 4f0b1aff2ec8: conflict markers after `git merge --abort`). The reload
+  // skips dirty views itself, and a dirty editor's document is every editor view's.
+  //
   // Reload silently and, only when an open clean buffer was actually refreshed,
   // surface a passive "reloaded from disk" notice -- not for a buffer that already
-  // held what the file holds (the late echo of its own save), which is kept.
+  // held what the file holds (the late echo of its own save), which is kept. Not
+  // under edits: the external-change banner the caller raises is the one to show.
   // AlreadyResolved: the verdict above IS the echo check, and it has already read
   // the file (off-thread) if a read was needed. Letting the reload re-ask would
   // read the same file a second time, on the shell thread, to learn what the
   // caller just established.
   if (ReloadCleanEditorTabsForPath(normalized_path, EditorReloadEchoGuard::AlreadyResolved)) {
-    SetEditorBanner(context_.current_project_state, EditorBannerState::Kind::ReloadedNotice,
-                    normalized_path);
+    if (!under_edits) {
+      SetEditorBanner(context_.current_project_state, EditorBannerState::Kind::ReloadedNotice,
+                      normalized_path);
+    }
     RequestEditorSurfaceRedraw();
   }
 }
