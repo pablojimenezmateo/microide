@@ -16,6 +16,33 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 
 ## Open items
 
+### TD-2026-11-13-448 — terminal grids: what the first cut left out. [OPEN]
+
+Terminal tabs became split grids on the editor's `SplitTree`, with split
+right/down, directional focus, both-axis dividers and a strip tab dropped on a
+pane edge (`openspec/changes/archive/*-terminal-pane-grid`). Left out, in order
+of expected value:
+
+- **No way back out of a grid.** A pane cannot be moved to its own tab (tmux's
+  `break-pane`, VS Code's "Unsplit Terminal" / dragging a terminal out of a
+  group). Joining is one-way today: the only exit is closing the pane. Wants a
+  `TerminalTabState::DetachPane` (tree `RemoveLeaf` + a new tab around the pane)
+  and a verb plus a drag source (the pane's body, or a per-pane title).
+- **No move-pane verbs.** The editor has `move-editor-group-left/right/up/down`
+  (`SplitTree::MoveLeaf`, remove-then-insert so a full grid still takes it); the
+  terminal has focus verbs only. Same tree call; the cost is four ActionIds and
+  their bindings.
+- **The drop target is the tab shown before the press.** Pressing a strip tab
+  activates it, so the body shows the dragged tab; the drag shows the previous
+  tab again over the body and joins into that. To join into a THIRD tab the user
+  shows it first. VS Code-style spring-loaded strip hover (dwell on a strip tab to
+  bring it up as the target) would lift that, but it competes with the reorder
+  gesture on the same strip and needs a dwell timer on the animation tick.
+- **No pane-size floor for stacked panes.** `SplitTree::kMinDividerShare` (10 %)
+  is the only floor; eight stacked panes in a 156 px panel are a few rows each.
+  The terminal still grids them (a pane can be 1 row), so this is a usability
+  limit, not a correctness one -- the editor grid has the same property.
+
 ### TD-2026-11-11-444 — a cold structural refinement of a heavily churned file costs several times the old intraline pass. [OPEN]
 
 `microide_diff_bench`, min of runs, interleaved with `main` on the same machine,
