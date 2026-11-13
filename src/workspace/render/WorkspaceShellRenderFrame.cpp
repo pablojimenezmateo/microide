@@ -277,7 +277,7 @@ void WorkspaceShell::ResizeTerminalToPanel(const WorkspaceLayout& layout) {
   // Every pane of the tab on screen gets its own column count from its own slice
   // of the body; the row count is the panel's, shared by all of them.
   const int rows = BottomPanelVisibleRows(layout.bottom_panel.h);
-  const TerminalPaneRectsLayout rects = tab->PaneRects(BottomPanelContentRect(layout));
+  const SplitRegionsLayout rects = tab->PaneRects(BottomPanelContentRect(layout));
   bool regridded = false;
   for (std::size_t i = 0; i < tab->panes.size() && i < rects.panes.size(); ++i) {
     TerminalPaneState* pane = tab->panes[i].get();
@@ -1152,7 +1152,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   }
   {
     std::uint64_t dividers = 0;
-    for (const EditorSplitDividerRect& divider : ComputeEditorGroupRectsForState(layout).dividers) {
+    for (const SplitDividerRect& divider : ComputeEditorGroupRectsForState(layout).dividers) {
       for (const float edge : {divider.rect.x, divider.rect.y, divider.rect.w, divider.rect.h}) {
         dividers = dividers * 0x100000001B3ull ^ static_cast<std::uint64_t>(std::lround(edge * 4.0f));
       }
@@ -2130,7 +2130,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                          context_.interaction_state.drag_target == DragTarget::EditorHorizontalScrollbar);
       }
     }
-    for (const EditorSplitDividerRect& divider : editor_surface_group_rects.dividers) {
+    for (const SplitDividerRect& divider : editor_surface_group_rects.dividers) {
       const bool divider_active =
           context_.interaction_state.drag_target == DragTarget::EditorSplitDivider &&
           divider.node == context_.interaction_state.drag_editor_split_node &&

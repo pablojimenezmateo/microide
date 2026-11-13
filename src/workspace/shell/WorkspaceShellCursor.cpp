@@ -733,10 +733,10 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         y >= layout.bottom_panel.y + kWorkspaceBottomPanelHeaderHeight) {
       if (const TerminalTabState* tab = context_.current_project_state.active_terminal_tab();
           tab != nullptr && tab->pane_count() > 1) {
-        for (const TerminalPaneDividerRect& divider :
+        for (const SplitDividerRect& divider :
              tab->PaneRects(BottomPanelContentRect(layout)).dividers) {
           if (Contains(divider.rect, x, y)) {
-            return CursorKind::EwResize;
+            return divider.vertical ? CursorKind::EwResize : CursorKind::NsResize;
           }
         }
       }
@@ -912,7 +912,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     }
   }
 
-  for (const EditorSplitDividerRect& divider : ComputeEditorGroupRectsForState(layout).dividers) {
+  for (const SplitDividerRect& divider : ComputeEditorGroupRectsForState(layout).dividers) {
     if (Contains(divider.rect, x, y)) {
       return divider.vertical ? CursorKind::EwResize : CursorKind::NsResize;
     }

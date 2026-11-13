@@ -60,9 +60,19 @@ class TabMouseCoordinator {
     // drag-a-tab-onto-a-pane-edge split; a body drop in the CENTER of a pane goes
     // through `move_tab_to_group` instead, because that is a move into an existing
     // group and nothing about the split changes.
-    std::function<bool(std::size_t, std::size_t, std::size_t, EditorSplitOrientation, bool)>
+    std::function<bool(std::size_t, std::size_t, std::size_t, SplitOrientation, bool)>
         move_tab_to_new_group;
     std::function<bool(std::size_t)> move_active_terminal_tab_to;
+    // A terminal strip tab dragged onto the terminal BODY (TerminalPanelService):
+    // whether tab `source` may join tab `target` at all, the active tab's pane
+    // regions over the panel body, and the join itself -- every pane of `source`
+    // seated on `zone`'s side of `target`'s pane `pane`, and `source` closed.
+    std::function<bool(std::size_t, std::size_t)> can_join_terminal_tabs;
+    std::function<SplitRegionsLayout(const WorkspaceLayout&)> terminal_pane_rects;
+    std::function<bool(std::size_t, std::size_t, std::size_t, PaneDropZone)> join_terminal_tab_into_pane;
+    // Show terminal tab `index` (a real activation: the body the drop resolves
+    // against is the one on screen).
+    std::function<bool(std::size_t)> show_terminal_tab;
     std::function<bool(std::size_t)> move_active_output_tab_to;
     std::function<void()> save_workspace_session;
     std::function<void()> save_session_state;
@@ -177,6 +187,14 @@ class TabMouseCoordinator {
   // Commits a drop onto a pane body: a move into that pane's group for the center
   // zone, a new group carved out on that side for the four edge zones.
   void FinishEditorBodyDrop(const WorkspaceLayout& layout);
+  // The terminal's counterpart: over the panel body, the tab the drag will join
+  // into is shown and the pane under the pointer offers its four edges; anywhere
+  // else the dragged tab is shown and the zone is `None`.
+  void ResolveTerminalBodyDrop(const WorkspaceLayout& layout);
+  void FinishTerminalBodyDrop();
+  // Put the dragged terminal tab back on screen if the body drop swapped another
+  // in (the pointer left the body, the drag was abandoned).
+  void ShowDraggedTerminalTab();
   // Recomputes slot + slide targets for the current `pointer_x`, auto-scrolling
   // first if the pointer is parked at an edge with something hidden behind it.
   bool UpdateDragForPointer();

@@ -133,11 +133,11 @@ struct PersistedProjectSessionState {
   OutgoingBaseChoice outgoing_base_choice;
   // Editor groups, in visual order; decode caps them at `kMaxEditorGroups`.
   // `split_tree` is the pre-order encoding of how they are arranged (see
-  // EditorSplitTree::Flatten). An empty tree, or one whose leaf count does not
+  // SplitTree::Flatten). An empty tree, or one whose leaf count does not
   // match `groups`, restores as an even side-by-side row.
   std::vector<PersistedEditorGroupState> groups;
   std::size_t focused_group_index = 0;
-  EditorSplitTreeRecord split_tree;
+  SplitTreeRecord split_tree;
   // Right-side debug pane (visibility / width / active surface). Only restored
   // when `debug.enabled` is on. `right_pane_mode` is a DebugPaneMode cast to u8.
   bool right_pane_visible = false;

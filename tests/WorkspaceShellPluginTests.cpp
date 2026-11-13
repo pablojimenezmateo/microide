@@ -5188,7 +5188,7 @@ return ide.plugin({
 // and the user-visible symptom: a diagnostic in the *unfocused* group still shows
 // its hover popup.
 void TestWorkspaceShellSplitGroupHoverResolvesPaneViewport() {
-  using microide::workspace::EditorSplitOrientation;
+  using microide::workspace::SplitOrientation;
   TemporaryDirectory temp_dir;
   const std::filesystem::path project_root = temp_dir.path() / "project";
   const std::filesystem::path file_a = project_root / "a.md";
@@ -5203,7 +5203,7 @@ void TestWorkspaceShellSplitGroupHoverResolvesPaneViewport() {
 
   // Split right (clones a.md into a new, focused group), then open b.md in that
   // focused group. Result: group 0 (inactive) shows a.md, group 1 (focused) b.md.
-  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, SplitOrientation::Vertical),
          "split-right should succeed when an editor tab is active");
   WorkspaceShellTestAccess::OpenFile(shell, file_b);
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "two groups should be open");
@@ -7565,7 +7565,7 @@ void TestWorkspaceShellWorkspaceEditRefreshesFolds() {
 // split's non-focused pane kept the stale per-viewport config (tab_size, soft_wrap, …)
 // until reopened.
 void TestWorkspaceShellEditorPreferencesReachAllSplitGroups() {
-  using microide::workspace::EditorSplitOrientation;
+  using microide::workspace::SplitOrientation;
   TemporaryDirectory temp_dir;
   const std::filesystem::path project_root = temp_dir.path() / "project";
   const std::filesystem::path file_a = project_root / "a.txt";
@@ -7575,7 +7575,7 @@ void TestWorkspaceShellEditorPreferencesReachAllSplitGroups() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, project_root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::OpenFile(shell, file_a);
-  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, SplitOrientation::Vertical),
          "split-right should succeed with an editor tab active");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "two groups should be open");
 

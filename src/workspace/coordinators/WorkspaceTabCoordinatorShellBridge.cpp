@@ -946,7 +946,7 @@ bool WorkspaceShell::OpenUntitledTab() {
   return MakeEditorTabService().OpenUntitled();
 }
 
-bool WorkspaceShell::SplitEditorGroup(EditorSplitOrientation orientation) {
+bool WorkspaceShell::SplitEditorGroup(SplitOrientation orientation) {
   return MakeEditorTabService().SplitEditorGroup(orientation);
 }
 

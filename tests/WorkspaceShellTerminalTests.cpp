@@ -2907,6 +2907,200 @@ void TestWorkspaceShellTerminalPaneDividerDragResizesAndDoubleClickResets() {
   Expect(std::abs(reset[0] - 0.5f) < 1e-5f, "double-click restores the even split");
 }
 
+// Split Terminal Down stacks the new pane under the active one; the divider
+// between them runs horizontally and drags along y.
+void TestWorkspaceShellTerminalSplitDownStacksAndItsDividerDragsVertically() {
+  SplitTerminalFixture fixture;
+  WorkspaceShell& shell = fixture.shell;
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TerminalSplitDown, {}),
+         "Split Terminal Down is accepted with a terminal open");
+  Expect(WorkspaceShellTestAccess::TerminalPaneCount(shell) == 2 &&
+             WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 1,
+         "the new pane is added and takes the keyboard");
+  const SDL_FRect body = WorkspaceShellTestAccess::BottomPanelContentRect(shell);
+  const auto rects = WorkspaceShellTestAccess::TerminalPaneRects(shell);
+  Expect(rects.panes.size() == 2 && rects.dividers.size() == 1 && !rects.dividers[0].vertical,
+         "two stacked panes and one horizontal divider");
+  Expect(rects.panes[0].x == body.x && rects.panes[1].x == body.x && rects.panes[0].w == body.w &&
+             rects.panes[1].y > rects.panes[0].y,
+         "the new pane sits under the first, both the body's full width");
+
+  fixture.PaintFrame();
+  Expect(WorkspaceShellTestAccess::TerminalPaneSession(shell, 0).columns() ==
+             WorkspaceShellTestAccess::TerminalPaneSession(shell, 1).columns(),
+         "stacked panes share the body's column count");
+
+  const SDL_FRect divider = rects.dividers[0].rect;
+  const float grab_x = divider.x + divider.w * 0.5f;
+  const float grab_y = divider.y + divider.h * 0.5f;
+  Expect(SendMouseDown(shell, grab_x, grab_y, SDL_BUTTON_LEFT), "a press on the divider starts a drag");
+  Expect(SendMouseMotion(shell, grab_x, grab_y + 40.0f, SDL_BUTTON_LMASK), "dragging is handled");
+  Expect(SendMouseUp(shell, grab_x, grab_y + 40.0f, SDL_BUTTON_LEFT), "release ends the drag");
+  const auto moved = WorkspaceShellTestAccess::TerminalPaneRects(shell);
+  Expect(moved.dividers[0].rect.y > divider.y + 20.0f && moved.panes[0].h > rects.panes[0].h,
+         "dragging the divider down grows the upper pane");
+}
+
+// In a grid the pane verbs follow the screen: from the lower right pane of
+// [left | upper right / lower right], Up is the upper right and Left the left.
+void TestWorkspaceShellTerminalPaneFocusFollowsTheGrid() {
+  SplitTerminalFixture fixture;
+  WorkspaceShell& shell = fixture.shell;
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TerminalSplit, {}) &&
+             WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TerminalSplitDown, {}),
+         "split right, then split the right pane down");
+  Expect(WorkspaceShellTestAccess::TerminalPaneCount(shell) == 3 &&
+             WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 2,
+         "three panes, the lower right one active");
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TerminalFocusPaneUp, {}) &&
+             WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 1,
+         "Up moves to the pane above");
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TerminalFocusPaneDown, {}) &&
+             WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 2,
+         "Down moves back");
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TerminalFocusPaneLeft, {}) &&
+             WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 0,
+         "Left from either stacked pane is the left pane");
+  (void)WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TerminalFocusPaneUp, {});
+  Expect(WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 0,
+         "nothing is above the full-height left pane");
+}
+
+namespace {
+
+// Two terminal tabs, the first on screen: the shape the drag-to-split tests start
+// from ("two full-screen terminals").
+void OpenSecondTerminalTabShowingTheFirst(SplitTerminalFixture& fixture) {
+  WorkspaceShell& shell = fixture.shell;
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::Term, {}),
+         "a second terminal tab opens");
+  Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 2, "two tabs");
+  const auto first = WorkspaceShellTestAccess::BottomPanelTabRect(shell, 0);
+  Expect(first.has_value(), "the first tab is on the strip");
+  Expect(SendMouseDown(shell, first->x + 4.0f, first->y + first->h * 0.5f, SDL_BUTTON_LEFT) &&
+             SendMouseUp(shell, first->x + 4.0f, first->y + first->h * 0.5f, SDL_BUTTON_LEFT),
+         "clicking the first tab shows it");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalTabIndex(shell) == 0, "the first tab is on screen");
+}
+
+// Press the strip tab `index` and drag it to (x, y), without releasing.
+void DragTerminalTabTo(WorkspaceShell& shell, std::size_t index, float x, float y) {
+  const auto tab = WorkspaceShellTestAccess::BottomPanelTabRect(shell, index);
+  Expect(tab.has_value(), "the dragged tab is on the strip");
+  const float press_x = tab->x + tab->w * 0.5f;
+  const float press_y = tab->y + tab->h * 0.5f;
+  Expect(SendMouseDown(shell, press_x, press_y, SDL_BUTTON_LEFT), "press starts a drag");
+  Expect(SendMouseMotion(shell, press_x, press_y + 40.0f, SDL_BUTTON_LMASK), "the drag leaves the strip");
+  Expect(SendMouseMotion(shell, x, y, SDL_BUTTON_LMASK), "the drag reaches the drop point");
+}
+
+}  // namespace
+
+// The feature: with two full-screen terminals, drag one onto the other's right
+// edge and they sit side by side in one tab.
+void TestWorkspaceShellTerminalTabDragToBodyEdgeSplitsTheTabOnScreen() {
+  using microide::workspace::PaneDropZone;
+  SplitTerminalFixture fixture;
+  WorkspaceShell& shell = fixture.shell;
+  WorkspaceShellTestAccess::SetBottomPanelHeight(shell, 400.0f);
+  OpenSecondTerminalTabShowingTheFirst(fixture);
+  const auto* second_pane = &WorkspaceShellTestAccess::TerminalTabSession(shell, 1);
+
+  const SDL_FRect body = WorkspaceShellTestAccess::BottomPanelContentRect(shell);
+  const float drop_x = body.x + body.w - 8.0f;
+  const float drop_y = body.y + body.h * 0.5f;
+  DragTerminalTabTo(shell, 1, drop_x, drop_y);
+  const auto& drag = WorkspaceShellTestAccess::TabDrag(shell);
+  Expect(drag.body_drop_zone == PaneDropZone::Right, "the right fifth of the body offers a split to the right");
+  Expect(drag.body_drop_rect.x > body.x + body.w * 0.4f && drag.body_drop_rect.w > 0.0f,
+         "the preview covers the right half");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalTabIndex(shell) == 0,
+         "over the body, the tab the drop joins into is the one shown");
+  Expect(WorkspaceShellTestAccess::TabDragBodyDropActive(shell), "the drop preview is live");
+
+  Expect(SendMouseUp(shell, drop_x, drop_y, SDL_BUTTON_LEFT), "release commits the join");
+  Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 1, "the dragged tab is gone from the strip");
+  Expect(WorkspaceShellTestAccess::TerminalPaneCount(shell) == 2, "its pane joined the tab on screen");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 1 &&
+             &WorkspaceShellTestAccess::TerminalPaneSession(shell, 1) == second_pane,
+         "the dragged terminal is the right pane, and it has the keyboard");
+  const auto rects = WorkspaceShellTestAccess::TerminalPaneRects(shell);
+  Expect(rects.panes.size() == 2 && rects.panes[1].x > rects.panes[0].x && rects.dividers[0].vertical,
+         "side by side");
+}
+
+void TestWorkspaceShellTerminalTabDragToBodyBottomStacksAndTheStripStillReorders() {
+  using microide::workspace::PaneDropZone;
+  SplitTerminalFixture fixture;
+  WorkspaceShell& shell = fixture.shell;
+  WorkspaceShellTestAccess::SetBottomPanelHeight(shell, 400.0f);
+  OpenSecondTerminalTabShowingTheFirst(fixture);
+
+  const SDL_FRect body = WorkspaceShellTestAccess::BottomPanelContentRect(shell);
+  DragTerminalTabTo(shell, 1, body.x + body.w * 0.5f, body.y + body.h - 4.0f);
+  Expect(WorkspaceShellTestAccess::TabDrag(shell).body_drop_zone == PaneDropZone::Bottom, "the bottom fifth");
+
+  // The middle of a terminal pane is not a drop: one pane holds one session.
+  Expect(SendMouseMotion(shell, body.x + body.w * 0.5f, body.y + body.h * 0.5f, SDL_BUTTON_LMASK),
+         "motion to the middle");
+  Expect(WorkspaceShellTestAccess::TabDrag(shell).body_drop_zone == PaneDropZone::None,
+         "the middle offers nothing");
+
+  // Back to the strip: a reorder again, and the dragged tab is on screen.
+  const auto strip_tab = WorkspaceShellTestAccess::BottomPanelTabRect(shell, 1);
+  Expect(SendMouseMotion(shell, strip_tab->x + 2.0f, strip_tab->y + strip_tab->h * 0.5f, SDL_BUTTON_LMASK),
+         "motion back to the strip");
+  Expect(WorkspaceShellTestAccess::TabDrag(shell).body_drop_zone == PaneDropZone::None &&
+             WorkspaceShellTestAccess::ActiveTerminalTabIndex(shell) == 1,
+         "on the strip the dragged tab is shown and no body drop is offered");
+
+  // And down again, this time released on the bottom edge.
+  Expect(SendMouseMotion(shell, body.x + body.w * 0.5f, body.y + body.h - 4.0f, SDL_BUTTON_LMASK),
+         "motion to the bottom edge");
+  Expect(SendMouseUp(shell, body.x + body.w * 0.5f, body.y + body.h - 4.0f, SDL_BUTTON_LEFT), "release");
+  const auto rects = WorkspaceShellTestAccess::TerminalPaneRects(shell);
+  Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 1 && rects.panes.size() == 2 &&
+             rects.panes[1].y > rects.panes[0].y && !rects.dividers[0].vertical,
+         "the dragged terminal is stacked under the one on screen");
+}
+
+void TestWorkspaceShellTerminalTabDragToBodyIsRefusedPastTheCapAndCancelRestores() {
+  using microide::workspace::PaneDropZone;
+  SplitTerminalFixture fixture;
+  WorkspaceShell& shell = fixture.shell;
+  WorkspaceShellTestAccess::SetBottomPanelHeight(shell, 400.0f);
+  // Fill the first tab to the cap.
+  while (WorkspaceShellTestAccess::TerminalPaneCount(shell) < microide::workspace::kMaxTerminalPanes) {
+    Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TerminalSplitDown, {}),
+           "split up to the cap");
+  }
+  (void)WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TerminalSplit, {});
+  Expect(WorkspaceShellTestAccess::TerminalPaneCount(shell) == microide::workspace::kMaxTerminalPanes,
+         "a full tab takes no more panes");
+  OpenSecondTerminalTabShowingTheFirst(fixture);
+  const SDL_FRect body = WorkspaceShellTestAccess::BottomPanelContentRect(shell);
+  DragTerminalTabTo(shell, 1, body.x + body.w - 4.0f, body.y + body.h * 0.5f);
+  Expect(WorkspaceShellTestAccess::TabDrag(shell).body_drop_zone == PaneDropZone::None,
+         "no zone is offered when the panes would pass the cap");
+  Expect(SendMouseUp(shell, body.x + body.w - 4.0f, body.y + body.h * 0.5f, SDL_BUTTON_LEFT), "release");
+  Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 2, "nothing joined");
+
+  // Escape mid-drag over a body that DOES accept puts the dragged tab back.
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::Term, {}), "a third tab");
+  const auto second = WorkspaceShellTestAccess::BottomPanelTabRect(shell, 1);
+  Expect(SendMouseDown(shell, second->x + 4.0f, second->y + second->h * 0.5f, SDL_BUTTON_LEFT) &&
+             SendMouseUp(shell, second->x + 4.0f, second->y + second->h * 0.5f, SDL_BUTTON_LEFT),
+         "show the one-pane second tab");
+  DragTerminalTabTo(shell, 2, body.x + body.w - 4.0f, body.y + body.h * 0.5f);
+  Expect(WorkspaceShellTestAccess::TabDrag(shell).body_drop_zone == PaneDropZone::Right &&
+             WorkspaceShellTestAccess::ActiveTerminalTabIndex(shell) == 1,
+         "the third tab hovers over the second's right edge");
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "Escape abandons the drag");
+  Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 3 &&
+             WorkspaceShellTestAccess::ActiveTerminalTabIndex(shell) == 2,
+         "nothing joined, and the dragged tab is on screen as its press left it");
+}
+
 void TestWorkspaceShellTerminalCloseTerminalClosesThePaneThenTheTab() {
   SplitTerminalFixture fixture;
   WorkspaceShell& shell = fixture.shell;
@@ -3348,6 +3542,15 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalPaneClickActivatesAndWheelScrollsUnderThePointer);
   AddTest(tests, "WorkspaceShell/TerminalPaneDividerDragResizesAndDoubleClickResets",
           TestWorkspaceShellTerminalPaneDividerDragResizesAndDoubleClickResets);
+  AddTest(tests, "WorkspaceShell/TerminalSplitDownStacksAndItsDividerDragsVertically",
+          TestWorkspaceShellTerminalSplitDownStacksAndItsDividerDragsVertically);
+  AddTest(tests, "WorkspaceShell/TerminalPaneFocusFollowsTheGrid", TestWorkspaceShellTerminalPaneFocusFollowsTheGrid);
+  AddTest(tests, "WorkspaceShell/TerminalTabDragToBodyEdgeSplitsTheTabOnScreen",
+          TestWorkspaceShellTerminalTabDragToBodyEdgeSplitsTheTabOnScreen);
+  AddTest(tests, "WorkspaceShell/TerminalTabDragToBodyBottomStacksAndTheStripStillReorders",
+          TestWorkspaceShellTerminalTabDragToBodyBottomStacksAndTheStripStillReorders);
+  AddTest(tests, "WorkspaceShell/TerminalTabDragToBodyIsRefusedPastTheCapAndCancelRestores",
+          TestWorkspaceShellTerminalTabDragToBodyIsRefusedPastTheCapAndCancelRestores);
   AddTest(tests, "WorkspaceShell/TerminalCloseTerminalClosesThePaneThenTheTab",
           TestWorkspaceShellTerminalCloseTerminalClosesThePaneThenTheTab);
   AddTest(tests, "WorkspaceShell/TerminalPaneFocusKeysFallThroughWithOnePane",

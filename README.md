@@ -886,8 +886,11 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `term [command]`
 - `term-close`
 - `term-split`
+- `term-split-down`
 - `term-pane-left`
 - `term-pane-right`
+- `term-pane-up`
+- `term-pane-down`
 - `term-next`
 - `term-prev`
 - `term-relaunch`

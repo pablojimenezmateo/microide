@@ -71,14 +71,14 @@ class EditorTabService {
   // thread on the formatter. See TabCoordinator::SaveForClose; the close of a
   // deferred tab is a save continuation (DirtyPromptCoordinator::SaveThenClose).
   TabCoordinator::SaveForCloseResult SaveForClose(std::size_t index);
-  bool SplitEditorGroup(EditorSplitOrientation orientation);
+  bool SplitEditorGroup(SplitOrientation orientation);
   bool FocusOtherGroup();
   bool FocusEditorGroupAt(std::size_t index);
   void ReconcileActiveCaretsWithDocuments();
   void ObserveNavigationLocation();
   std::optional<EditorNavigationHistory::Location> StepNavigation(int direction);
-  bool FocusEditorGroupInDirection(EditorGroupDirection direction);
-  bool MoveEditorGroupInDirection(EditorGroupDirection direction);
+  bool FocusEditorGroupInDirection(PaneDirection direction);
+  bool MoveEditorGroupInDirection(PaneDirection direction);
   bool CloseEditorGroup();
   std::size_t EditorGroupCount() const;
   bool MoveActiveTo(std::size_t index);
@@ -89,7 +89,7 @@ class EditorTabService {
   bool MoveTabToNewGroup(std::size_t from_group,
                          std::size_t from_index,
                          std::size_t target_group,
-                         EditorSplitOrientation orientation,
+                         SplitOrientation orientation,
                          bool insert_before);
   std::optional<std::size_t> FindIndexBySpecifier(std::string_view specifier,
                                                   std::string* error_message) const;

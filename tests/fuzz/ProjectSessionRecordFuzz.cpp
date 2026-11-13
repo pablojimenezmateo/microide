@@ -1,4 +1,4 @@
-#include "workspace/TerminalPaneLayout.h"
+#include "workspace/SplitTree.h"
 #include "workspace/persistence/WorkspacePersistenceFormat.h"
 
 #include <cstddef>
@@ -67,7 +67,13 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     }
     for (const auto& tab : state.terminal_layout.tabs) {
       if (tab.panes.empty() || tab.panes.size() > microide::workspace::kMaxTerminalPanes ||
-          tab.weights.size() > microide::workspace::kMaxTerminalPanes) {
+          tab.split.size() > microide::workspace::kMaxSplitNodes) {
+        __builtin_trap();
+      }
+      // A decoded tree either loads as a well-formed grid within the cap or is
+      // refused (the revive then lays the panes out as a row).
+      if (microide::workspace::SplitTree tree; tree.Load(tab.split) &&
+                                               tree.leaf_count() > microide::workspace::kMaxTerminalPanes) {
         __builtin_trap();
       }
       // A recorded host terminal is whole or absent: a reopen must never attach

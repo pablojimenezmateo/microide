@@ -203,7 +203,7 @@ EditorGroupRects ChromeForRegion(const WorkspaceLayout& layout, const SDL_FRect&
 }  // namespace
 
 EditorGroupRectsLayout ComputeEditorGroupRects(const WorkspaceLayout& layout,
-                                               const EditorSplitTree& split) {
+                                               const SplitTree& split) {
   util::AddPerformanceCounter(util::PerfCounterId::WorkspaceEditorGroupRectBuilds);
   EditorGroupRectsLayout result;
   if (!split.is_split()) {
@@ -212,136 +212,29 @@ EditorGroupRectsLayout ComputeEditorGroupRects(const WorkspaceLayout& layout,
     return result;
   }
   util::AddPerformanceCounter(util::PerfCounterId::WorkspaceEditorGroupRectTreeWalks);
-
-  // Iterative depth-first walk, children left to right: the visit order of the
-  // leaves is the group order, and the whole walk is heap-free (the stack is
-  // bounded by the node budget, which the group cap bounds).
-  struct Frame {
-    std::uint8_t node = 0;
-    SDL_FRect rect{};
-  };
-  util::InlineVector<Frame, EditorSplitTree::kMaxNodes> stack;
-  stack.push_back(Frame{split.root(), layout.editor_area});
-  while (!stack.empty()) {
-    const Frame frame = stack.back();
-    stack.pop_back();
-    const EditorSplitTree::Node& node = split.node(frame.node);
-    if (node.leaf()) {
-      if (result.groups.size() < result.groups.capacity()) {
-        result.groups.push_back(ChromeForRegion(layout, frame.rect));
-      }
-      continue;
-    }
-
-    const bool vertical = node.orientation == EditorSplitOrientation::Vertical;
-    const std::size_t count = node.children.size();
-    const float span = vertical ? frame.rect.w : frame.rect.h;
-    const float avail = std::max(
-        0.0f, span - kEditorSplitDividerThickness * static_cast<float>(count - 1));
-    // Extents first: the divider between children i and i+1 needs both, and the
-    // last child absorbs the rounding so the panes always tile the span exactly.
-    util::InlineVector<float, kMaxEditorGroups> extents;
-    float remaining = avail;
-    for (std::size_t i = 0; i < count; ++i) {
-      const float extent = i + 1 == count
-                               ? remaining
-                               : std::clamp(std::floor(avail * node.weights[i]), 0.0f, remaining);
-      extents.push_back(extent);
-      remaining = std::max(0.0f, remaining - extent);
-    }
-
-    float cursor = vertical ? frame.rect.x : frame.rect.y;
-    util::InlineVector<Frame, kMaxEditorGroups> children;
-    for (std::size_t i = 0; i < count; ++i) {
-      const SDL_FRect child = vertical
-                                  ? MakeRect(cursor, frame.rect.y, extents[i], frame.rect.h)
-                                  : MakeRect(frame.rect.x, cursor, frame.rect.w, extents[i]);
-      children.push_back(Frame{node.children[i], child});
-      cursor += extents[i];
-      if (i + 1 < count && result.dividers.size() < result.dividers.capacity()) {
-        result.dividers.push_back(EditorSplitDividerRect{
-            .rect = vertical
-                        ? MakeRect(cursor, frame.rect.y, kEditorSplitDividerThickness,
-                                   frame.rect.h)
-                        : MakeRect(frame.rect.x, cursor, frame.rect.w,
-                                   kEditorSplitDividerThickness),
-            .node = frame.node,
-            .boundary = static_cast<std::uint8_t>(i),
-            .vertical = vertical,
-            .pair_start = cursor - extents[i],
-            .pair_extent = extents[i] + extents[i + 1],
-        });
-        cursor += kEditorSplitDividerThickness;
-      }
-    }
-    for (std::size_t i = children.size(); i > 0; --i) {
-      stack.push_back(children[i - 1]);
-    }
+  // The one tree walk every split surface shares; each region then gets the
+  // editor's own chrome (strip, breadcrumb, surface).
+  const SplitRegionsLayout regions =
+      ComputeSplitRegions(split, layout.editor_area, kEditorSplitDividerThickness);
+  for (const SDL_FRect& region : regions.panes) {
+    result.groups.push_back(ChromeForRegion(layout, region));
   }
+  result.dividers = regions.dividers;
   return result;
 }
 
 std::size_t AdjacentEditorGroup(const EditorGroupRectsLayout& rects,
                                 std::size_t from,
-                                EditorGroupDirection direction) {
-  if (from >= rects.groups.size() || rects.groups.size() < 2) {
-    return kNoEditorGroup;
+                                PaneDirection direction) {
+  // By the text surfaces: a stacked pane's synthesized strip sits between it and
+  // the pane above, and the surfaces are what the user reads as "the panes".
+  util::InlineVector<SDL_FRect, kMaxEditorGroups> surfaces;
+  for (const EditorGroupRects& group : rects.groups) {
+    surfaces.push_back(group.editor_surface);
   }
-  // Panes tile the editor area exactly, so a neighbour's near edge sits ON the
-  // focused pane's far edge; the tolerance only absorbs the divider and the
-  // per-child rounding the tiling walk pushes into the last pane.
-  constexpr float kEdgeSlack = kEditorSplitDividerThickness + 1.0f;
-  const SDL_FRect& self = rects.groups[from].editor_surface;
-  const bool horizontal =
-      direction == EditorGroupDirection::Left || direction == EditorGroupDirection::Right;
-
-  std::size_t best = kNoEditorGroup;
-  float best_gap = 0.0f;
-  float best_overlap = 0.0f;
-  for (std::size_t i = 0; i < rects.groups.size(); ++i) {
-    if (i == from) {
-      continue;
-    }
-    const SDL_FRect& other = rects.groups[i].editor_surface;
-    if (other.w <= 0.0f || other.h <= 0.0f) {
-      continue;
-    }
-    float gap = 0.0f;
-    switch (direction) {
-      case EditorGroupDirection::Left:
-        gap = self.x - (other.x + other.w);
-        break;
-      case EditorGroupDirection::Right:
-        gap = other.x - (self.x + self.w);
-        break;
-      case EditorGroupDirection::Up:
-        gap = self.y - (other.y + other.h);
-        break;
-      case EditorGroupDirection::Down:
-        gap = other.y - (self.y + self.h);
-        break;
-    }
-    if (gap < -kEdgeSlack) {
-      continue;  // Overlaps or sits the other way; not on that side.
-    }
-    // How much of the CROSS axis the two share. A pane directly beside this one
-    // beats one that merely starts further along the same row.
-    const float overlap =
-        horizontal ? std::max(0.0f, std::min(self.y + self.h, other.y + other.h) -
-                                        std::max(self.y, other.y))
-                   : std::max(0.0f, std::min(self.x + self.w, other.x + other.w) -
-                                        std::max(self.x, other.x));
-    if (overlap <= 0.0f) {
-      continue;
-    }
-    if (best == kNoEditorGroup || gap < best_gap - kEdgeSlack ||
-        (gap < best_gap + kEdgeSlack && overlap > best_overlap)) {
-      best = i;
-      best_gap = gap;
-      best_overlap = overlap;
-    }
-  }
-  return best;
+  const std::size_t found = AdjacentSplitRegion(std::span<const SDL_FRect>(surfaces.data(), surfaces.size()),
+                                                from, direction, kEditorSplitDividerThickness + 1.0f);
+  return found == kNoSplitRegion ? kNoEditorGroup : found;
 }
 
 std::optional<SDL_FRect> UnionOptionalRects(std::optional<SDL_FRect> lhs,

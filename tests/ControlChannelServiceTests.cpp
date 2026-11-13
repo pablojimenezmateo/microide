@@ -89,7 +89,8 @@ void TestAgentQueriesOverSocket() {
     state.terminal_tabs.push_back(microide::workspace::MakeTerminalTab(
         std::make_unique<microide::workspace::TerminalPaneState>()));
   }
-  state.terminal_tabs[0]->InsertPane(1, std::make_unique<microide::workspace::TerminalPaneState>());
+  state.terminal_tabs[0]->SplitPane(0, microide::workspace::SplitOrientation::Vertical, false,
+                                     std::make_unique<microide::workspace::TerminalPaneState>());
   state.terminal_tabs[0]->active_pane = 0;
   state.active_terminal_tab_index = 0;
   auto& left = state.terminal_tabs[0]->panes[0]->session;

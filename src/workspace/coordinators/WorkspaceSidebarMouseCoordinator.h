@@ -79,7 +79,7 @@ class SidebarMouseCoordinator {
     std::function<bool()> editor_area_full;
     std::function<std::optional<SDL_FRect>(const WorkspaceLayout&)> terminal_drop_rect;
     std::function<bool(const std::filesystem::path&, std::size_t group)> open_path_in_group;
-    std::function<bool(const std::filesystem::path&, std::size_t group, EditorSplitOrientation, bool insert_before)>
+    std::function<bool(const std::filesystem::path&, std::size_t group, SplitOrientation, bool insert_before)>
         open_path_in_new_group;
     std::function<std::string(const std::filesystem::path& source, bool cut, const std::filesystem::path& folder)>
         paste_tree_path;

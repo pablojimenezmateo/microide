@@ -762,7 +762,7 @@
     return shell.workspace_edit_service_.ApplyLspEdit(edits, out_any_rejected);
   }
   static bool SplitEditorGroup(WorkspaceShell& shell,
-                               microide::workspace::EditorSplitOrientation orientation) {
+                               microide::workspace::SplitOrientation orientation) {
     return shell.SplitEditorGroup(orientation);
   }
   static bool FocusOtherEditorGroup(WorkspaceShell& shell) {
@@ -770,11 +770,11 @@
   }
   static bool CloseEditorGroup(WorkspaceShell& shell) { return shell.CloseEditorGroup(); }
   static bool FocusEditorGroupInDirection(WorkspaceShell& shell,
-                                          microide::workspace::EditorGroupDirection direction) {
+                                          microide::workspace::PaneDirection direction) {
     return shell.MakeEditorTabService().FocusEditorGroupInDirection(direction);
   }
   static bool MoveEditorGroupInDirection(WorkspaceShell& shell,
-                                         microide::workspace::EditorGroupDirection direction) {
+                                         microide::workspace::PaneDirection direction) {
     return shell.MakeEditorTabService().MoveEditorGroupInDirection(direction);
   }
   static std::size_t EditorGroupCount(WorkspaceShell& shell) { return shell.EditorGroupCount(); }
@@ -804,11 +804,11 @@
   // Orientation of the editor area's OUTERMOST split (None when there is one
   // pane). The split model is a tree now, so this is a summary, not the whole
   // layout — reach for `EditorSplit` when a test cares about the shape.
-  static microide::workspace::EditorSplitOrientation GroupSplitOrientation(WorkspaceShell& shell) {
+  static microide::workspace::SplitOrientation GroupSplitOrientation(WorkspaceShell& shell) {
     const auto& tree = shell.context_.current_project_state.editor_split;
     return tree.node(tree.root()).orientation;
   }
-  static const microide::workspace::EditorSplitTree& EditorSplit(WorkspaceShell& shell) {
+  static const microide::workspace::SplitTree& EditorSplit(WorkspaceShell& shell) {
     return shell.context_.current_project_state.editor_split;
   }
   // Move divider `boundary` of the root branch to `first_share` directly on the
@@ -822,7 +822,7 @@
                                 std::size_t from_group,
                                 std::size_t from_index,
                                 std::size_t target_group,
-                                microide::workspace::EditorSplitOrientation orientation,
+                                microide::workspace::SplitOrientation orientation,
                                 bool insert_before) {
     return shell.MakeEditorTabService().MoveTabToNewGroup(from_group, from_index, target_group,
                                                           orientation, insert_before);

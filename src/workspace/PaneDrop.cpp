@@ -1,4 +1,4 @@
-#include "workspace/EditorBodyDrop.h"
+#include "workspace/PaneDrop.h"
 
 #include <algorithm>
 
@@ -13,8 +13,8 @@ constexpr float kBodyDropEdgeFraction = 0.2f;
 
 }  // namespace
 
-EditorBodyDrop EditorBodyDropAt(const SDL_FRect& pane, float x, float y, bool can_split) {
-  EditorBodyDrop drop{.zone = EditorBodyDropZone::Center, .region = pane};
+PaneDrop PaneDropAt(const SDL_FRect& pane, float x, float y, bool can_split, bool can_center) {
+  const PaneDrop drop{.zone = can_center ? PaneDropZone::Center : PaneDropZone::None, .region = pane};
   if (!can_split || pane.w <= 0.0f || pane.h <= 0.0f) {
     return drop;
   }
@@ -29,15 +29,15 @@ EditorBodyDrop EditorBodyDropAt(const SDL_FRect& pane, float x, float y, bool ca
   const float half_w = pane.w * 0.5f;
   const float half_h = pane.h * 0.5f;
   if (nearest == left) {
-    return {EditorBodyDropZone::Left, SDL_FRect{pane.x, pane.y, half_w, pane.h}};
+    return {PaneDropZone::Left, SDL_FRect{pane.x, pane.y, half_w, pane.h}};
   }
   if (nearest == right) {
-    return {EditorBodyDropZone::Right, SDL_FRect{pane.x + pane.w - half_w, pane.y, half_w, pane.h}};
+    return {PaneDropZone::Right, SDL_FRect{pane.x + pane.w - half_w, pane.y, half_w, pane.h}};
   }
   if (nearest == top) {
-    return {EditorBodyDropZone::Top, SDL_FRect{pane.x, pane.y, pane.w, half_h}};
+    return {PaneDropZone::Top, SDL_FRect{pane.x, pane.y, pane.w, half_h}};
   }
-  return {EditorBodyDropZone::Bottom, SDL_FRect{pane.x, pane.y + pane.h - half_h, pane.w, half_h}};
+  return {PaneDropZone::Bottom, SDL_FRect{pane.x, pane.y + pane.h - half_h, pane.w, half_h}};
 }
 
 }  // namespace microide::workspace

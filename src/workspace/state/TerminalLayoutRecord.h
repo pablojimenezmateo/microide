@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "terminal/TerminalHostChannel.h"
+#include "workspace/SplitTree.h"
 
 namespace microide::workspace {
 
@@ -28,7 +29,10 @@ struct TerminalPaneRecord {
 
 struct TerminalTabRecord {
   std::vector<TerminalPaneRecord> panes;
-  std::vector<float> weights;  // parallel to panes; anything invalid restores even
+  // How the panes are arranged, in the editor grid's pre-order form; its leaves
+  // are `panes` in order. Empty, or a tree whose leaf count is not the number of
+  // panes that revived, restores as an even side-by-side row.
+  SplitTreeRecord split;
   std::size_t active_pane = 0;
 };
 

@@ -71,7 +71,7 @@
                                                    : SDL_FRect{};
   }
   // Every split divider the editor area currently shows, in visual order.
-  static microide::util::InlineVector<microide::workspace::EditorSplitDividerRect,
+  static microide::util::InlineVector<microide::workspace::SplitDividerRect,
                                       microide::workspace::kMaxEditorGroups - 1>
   EditorSplitDividerRects(WorkspaceShell& shell) {
     return shell.ComputeEditorGroupRectsForState(CurrentLayout(shell)).dividers;
@@ -528,6 +528,25 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     return MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
                     kWorkspaceBottomPanelHeaderHeight);
+  }
+  // The strip rect of bottom-panel tab `index` (terminals first, then output
+  // channels), when it is visible.
+  static std::optional<SDL_FRect> BottomPanelTabRect(WorkspaceShell& shell, std::size_t index) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const SDL_FRect panel_header =
+        MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w, 28.0f);
+    const std::vector<WorkspaceShell::VisibleStripTab> visible_tabs =
+        shell.tab_strip_service_.ComputeVisibleBottomPanelTabs(
+            shell.context_.current_project_state, panel_header,
+            shell.layout_mode_service_.CurrentMode(),
+            [&shell](std::string_view text) { return shell.text_renderer_.MeasureWidth(text); },
+            shell.output_channels_.Channels());
+    for (const WorkspaceShell::VisibleStripTab& tab : visible_tabs) {
+      if (tab.index == index) {
+        return tab.rect;
+      }
+    }
+    return std::nullopt;
   }
   static std::optional<SDL_FRect> BottomPanelTabRectByTitle(WorkspaceShell& shell,
                                                              std::string_view title) {

@@ -456,7 +456,7 @@ class ScenarioContext {
   std::size_t EditorGroupCount();
   SDL_FRect EditorGroupSurfaceRect(std::size_t group_index);
   std::size_t EditorSplitDividerCount();
-  SDL_FRect EditorSplitDividerRect(std::size_t divider_index);
+  SDL_FRect SplitDividerRect(std::size_t divider_index);
 
   void SetSetting(std::string_view id, std::string value);
   void ApplyEditorPreferencesToAllTabs();

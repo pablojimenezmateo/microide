@@ -488,13 +488,13 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
             if (context_.current_project_state.panel.content == PanelContentKind::Terminal) {
               AddControlUiElement(out, kButton, "panel/new-terminal",
                                   tab_strip_service_.BottomPanelTerminalNewTabRect(mode, header));
-              // The dividers between a split terminal's panes, by the boundary
-              // they move (the same index the pane layout and the drag use).
+              // The dividers between a split terminal's panes, in layout order --
+              // the same numbering as the editor grid's `editor/<i>` (a single
+              // row's i is the boundary it moves).
               if (const auto* tab = context_.current_project_state.active_terminal_tab(); tab != nullptr) {
-                for (const TerminalPaneDividerRect& divider :
-                     tab->PaneRects(BottomPanelContentRect(layout)).dividers) {
-                  AddControlUiElement(out, kDivider, "terminal/" + std::to_string(divider.boundary),
-                                      divider.rect);
+                const SplitRegionsLayout rects = tab->PaneRects(BottomPanelContentRect(layout));
+                for (std::size_t i = 0; i < rects.dividers.size(); ++i) {
+                  AddControlUiElement(out, kDivider, "terminal/" + std::to_string(i), rects.dividers[i].rect);
                 }
               }
             }
@@ -506,7 +506,7 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
             const ProjectWorkspaceState& ps = context_.current_project_state;
             if (ps.panel.content == PanelContentKind::Terminal) {
               if (const TerminalTabState* tab = ps.active_terminal_tab(); tab != nullptr) {
-                const TerminalPaneRectsLayout rects = tab->PaneRects(BottomPanelContentRect(layout));
+                const SplitRegionsLayout rects = tab->PaneRects(BottomPanelContentRect(layout));
                 for (std::size_t i = 0; i < tab->panes.size() && i < rects.panes.size(); ++i) {
                   if (const TerminalPaneState* pane = tab->panes[i].get(); pane != nullptr) {
                     const LogSurfaceLayout pane_layout = ComputeTerminalPaneLogLayout(

@@ -743,7 +743,7 @@ void TestWorkspaceShellExternalChangeRefreshesACompareInAnUnfocusedPane() {
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, other), "open a file to split");
   const std::size_t compare_group = WorkspaceShellTestAccess::FocusedGroupIndex(shell);
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
-             shell, microide::workspace::EditorSplitOrientation::Vertical),
+             shell, microide::workspace::SplitOrientation::Vertical),
          "split the editor area");
   const std::size_t other_group = WorkspaceShellTestAccess::FocusedGroupIndex(shell);
   Expect(other_group != compare_group, "the split made a second pane");

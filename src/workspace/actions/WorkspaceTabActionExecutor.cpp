@@ -386,9 +386,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
       }
-      const EditorSplitOrientation orientation = id == ActionId::SplitEditorDown
-                                                     ? EditorSplitOrientation::Horizontal
-                                                     : EditorSplitOrientation::Vertical;
+      const SplitOrientation orientation = id == ActionId::SplitEditorDown
+                                                     ? SplitOrientation::Horizontal
+                                                     : SplitOrientation::Vertical;
       // Tree context-menu split: open the right-clicked file into the new group.
       // (Editor tab/body menus dispatch with ActionSource::Menu and skip this.)
       if (source == ActionSource::ContextMenu) {
@@ -442,28 +442,28 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       return reject("No editor group " + std::to_string(*n));
     }
     case ActionId::FocusEditorGroupLeft:
-      context_.editor_tabs().FocusEditorGroupInDirection(EditorGroupDirection::Left);
+      context_.editor_tabs().FocusEditorGroupInDirection(PaneDirection::Left);
       return DispatchResult::Handled;
     case ActionId::FocusEditorGroupRight:
-      context_.editor_tabs().FocusEditorGroupInDirection(EditorGroupDirection::Right);
+      context_.editor_tabs().FocusEditorGroupInDirection(PaneDirection::Right);
       return DispatchResult::Handled;
     case ActionId::FocusEditorGroupUp:
-      context_.editor_tabs().FocusEditorGroupInDirection(EditorGroupDirection::Up);
+      context_.editor_tabs().FocusEditorGroupInDirection(PaneDirection::Up);
       return DispatchResult::Handled;
     case ActionId::FocusEditorGroupDown:
-      context_.editor_tabs().FocusEditorGroupInDirection(EditorGroupDirection::Down);
+      context_.editor_tabs().FocusEditorGroupInDirection(PaneDirection::Down);
       return DispatchResult::Handled;
     case ActionId::MoveEditorGroupLeft:
-      context_.editor_tabs().MoveEditorGroupInDirection(EditorGroupDirection::Left);
+      context_.editor_tabs().MoveEditorGroupInDirection(PaneDirection::Left);
       return DispatchResult::Handled;
     case ActionId::MoveEditorGroupRight:
-      context_.editor_tabs().MoveEditorGroupInDirection(EditorGroupDirection::Right);
+      context_.editor_tabs().MoveEditorGroupInDirection(PaneDirection::Right);
       return DispatchResult::Handled;
     case ActionId::MoveEditorGroupUp:
-      context_.editor_tabs().MoveEditorGroupInDirection(EditorGroupDirection::Up);
+      context_.editor_tabs().MoveEditorGroupInDirection(PaneDirection::Up);
       return DispatchResult::Handled;
     case ActionId::MoveEditorGroupDown:
-      context_.editor_tabs().MoveEditorGroupInDirection(EditorGroupDirection::Down);
+      context_.editor_tabs().MoveEditorGroupInDirection(PaneDirection::Down);
       return DispatchResult::Handled;
     case ActionId::CloseGroup:
       context_.CloseEditorGroup();

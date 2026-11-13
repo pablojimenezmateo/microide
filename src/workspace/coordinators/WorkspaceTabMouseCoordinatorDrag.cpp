@@ -7,7 +7,8 @@
 #include <vector>
 
 #include "util/PerformanceTrace.h"
-#include "workspace/EditorBodyDrop.h"
+#include "workspace/PaneDrop.h"
+#include "workspace/SplitTreeLayout.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/render/TabStripAnimation.h"
 
@@ -165,7 +166,7 @@ std::size_t TabMouseCoordinator::ResolvePointerEditorGroup(
 }
 
 void TabMouseCoordinator::ResolveEditorBodyDrop(const EditorGroupRectsLayout& rects) {
-  tab_drag_state_.body_drop_zone = EditorBodyDropZone::None;
+  tab_drag_state_.body_drop_zone = PaneDropZone::None;
   if (tab_drag_state_.kind != TabDragKind::Editor || !tab_drag_state_.dragging) {
     return;
   }
@@ -199,10 +200,10 @@ void TabMouseCoordinator::ResolveEditorBodyDrop(const EditorGroupRectsLayout& re
     const bool can_split = (!state_.editor_split.full() || source_gives_up_its_pane) &&
                            (gi != tab_drag_state_.source_group_index ||
                             state_.editor_groups[gi].open_tabs.size() >= 2);
-    const auto [zone, region] = EditorBodyDropAt(pane, x, y, can_split);
+    const auto [zone, region] = PaneDropAt(pane, x, y, can_split);
     // Dropping a tab into the middle of the pane it already lives in changes
     // nothing, so no target is offered and no overlay is painted.
-    if (zone == EditorBodyDropZone::Center && gi == tab_drag_state_.source_group_index) {
+    if (zone == PaneDropZone::Center && gi == tab_drag_state_.source_group_index) {
       return;
     }
     tab_drag_state_.body_drop_zone = zone;
@@ -210,6 +211,65 @@ void TabMouseCoordinator::ResolveEditorBodyDrop(const EditorGroupRectsLayout& re
     tab_drag_state_.body_drop_rect = region;
     return;
   }
+}
+
+void TabMouseCoordinator::ShowDraggedTerminalTab() {
+  if (tab_drag_state_.kind == TabDragKind::Terminal &&
+      tab_drag_state_.terminal_drop_tab != TabDragState::kNoTerminalDropTab &&
+      state_.active_terminal_tab_index != tab_drag_state_.source_index && operations_.show_terminal_tab) {
+    (void)operations_.show_terminal_tab(tab_drag_state_.source_index);
+  }
+}
+
+void TabMouseCoordinator::ResolveTerminalBodyDrop(const WorkspaceLayout& layout) {
+  tab_drag_state_.body_drop_zone = PaneDropZone::None;
+  const std::size_t target = tab_drag_state_.terminal_drop_tab;
+  const std::size_t source = tab_drag_state_.source_index;
+  if (!tab_drag_state_.dragging || target == TabDragState::kNoTerminalDropTab ||
+      !operations_.can_join_terminal_tabs || !operations_.terminal_pane_rects || !operations_.show_terminal_tab ||
+      !operations_.bottom_panel_visible() || state_.panel.content != PanelContentKind::Terminal) {
+    return;
+  }
+  const float x = tab_drag_state_.pointer_x;
+  const float y = tab_drag_state_.pointer_y;
+  if (!Contains(BottomPanelContentRect(layout), x, y) || !operations_.can_join_terminal_tabs(source, target)) {
+    // Off the body (back on the strip, or out of the panel): the gesture is a
+    // strip reorder again, and that is the dragged tab's own strip slot.
+    ShowDraggedTerminalTab();
+    return;
+  }
+  // Over the body: it shows the tab the drop joins into -- the one that was on
+  // screen before the press -- so the edges offered are its panes'.
+  if (state_.active_terminal_tab_index != target && !operations_.show_terminal_tab(target)) {
+    return;
+  }
+  const SplitRegionsLayout rects = operations_.terminal_pane_rects(layout);
+  const std::size_t pane = SplitRegionIndexAt(rects, x, y);
+  if (pane == kNoSplitRegion) {
+    return;  // on a divider
+  }
+  // No centre: a terminal pane holds one session, so "into this pane" is not a
+  // drop. The middle of a pane offers nothing and paints nothing.
+  const auto [zone, region] = PaneDropAt(rects.panes[pane], x, y, /*can_split=*/true, /*can_center=*/false);
+  tab_drag_state_.body_drop_zone = zone;
+  tab_drag_state_.body_drop_group_index = pane;
+  tab_drag_state_.body_drop_rect = region;
+}
+
+void TabMouseCoordinator::FinishTerminalBodyDrop() {
+  tab_slide_state_ = TabSlideState{};
+  const std::size_t source = tab_drag_state_.source_index;
+  const std::size_t target = tab_drag_state_.terminal_drop_tab;
+  // The body showed the target for the whole hover; anything else means the model
+  // moved under the gesture (a tab closed, a project switched) and the indices
+  // the drag holds name other tabs now.
+  if (state_.active_terminal_tab_index != target || !operations_.join_terminal_tab_into_pane ||
+      !operations_.join_terminal_tab_into_pane(source, target, tab_drag_state_.body_drop_group_index,
+                                               tab_drag_state_.body_drop_zone)) {
+    ShowDraggedTerminalTab();
+    return;
+  }
+  PersistReorderedTabs(TabDragKind::Terminal);
 }
 
 TabMouseCoordinator::DragStrip TabMouseCoordinator::ResolveBottomPanelDragStrip(
@@ -268,7 +328,11 @@ bool TabMouseCoordinator::CancelDrag() {
   }
   // FinishDrag already knows how to drop without moving anything and glide the
   // lifted tab home from wherever the ghost is; clearing `reordered` is the whole
-  // difference between abandoning a drag and completing one.
+  // difference between abandoning a drag and completing one. A terminal drag that
+  // was hovering the body shows the dragged tab again first, as the click that
+  // started it left it.
+  ShowDraggedTerminalTab();
+  tab_drag_state_.body_drop_zone = PaneDropZone::None;
   tab_drag_state_.reordered = false;
   FinishDrag();
   operations_.clear_tab_drag();
@@ -328,7 +392,7 @@ bool TabMouseCoordinator::UpdateDragForPointer() {
   // auto-scrolls THAT strip, and opens its gap there while the source strip
   // closes the hole the lifted tab left (TD-2026-08-14-213).
   const std::size_t previous_target_group = tab_drag_state_.target_group_index;
-  const EditorBodyDropZone previous_zone = tab_drag_state_.body_drop_zone;
+  const PaneDropZone previous_zone = tab_drag_state_.body_drop_zone;
   const std::size_t previous_zone_group = tab_drag_state_.body_drop_group_index;
   if (tab_drag_state_.kind == TabDragKind::Editor) {
     // One editor-layout computation feeds both probes; they used to be two calls
@@ -342,6 +406,8 @@ bool TabMouseCoordinator::UpdateDragForPointer() {
     tab_drag_state_.target_group_index =
         tab_drag_state_.body_drop() ? tab_drag_state_.source_group_index
                                     : ResolvePointerEditorGroup(*layout_state, rects);
+  } else if (tab_drag_state_.kind == TabDragKind::Terminal) {
+    ResolveTerminalBodyDrop(*layout_state);
   }
   const bool zone_changed = tab_drag_state_.body_drop_zone != previous_zone ||
                             tab_drag_state_.body_drop_group_index != previous_zone_group;
@@ -538,9 +604,16 @@ void TabMouseCoordinator::FinishDrag() {
   // that pane's group or carves a new group out on the side that was highlighted.
   // Gated on `reordered` like the others so Escape still abandons the gesture.
   if (tab_drag_state_.body_drop() && tab_drag_state_.reordered) {
-    FinishEditorBodyDrop(*layout_state);
+    if (kind == TabDragKind::Terminal) {
+      FinishTerminalBodyDrop();
+    } else {
+      FinishEditorBodyDrop(*layout_state);
+    }
     return;
   }
+  // A terminal drag released anywhere but a body zone is a strip reorder of the
+  // dragged tab, which must be the one on screen for the guard below.
+  ShowDraggedTerminalTab();
   if (tab_drag_state_.cross_group() && tab_drag_state_.reordered) {
     FinishCrossGroupDrag(*layout_state);
     return;
@@ -633,7 +706,7 @@ void TabMouseCoordinator::FinishDrag() {
 void TabMouseCoordinator::FinishEditorBodyDrop(const WorkspaceLayout& layout) {
   const std::size_t source_group = tab_drag_state_.source_group_index;
   const std::size_t target_group = tab_drag_state_.body_drop_group_index;
-  const EditorBodyDropZone zone = tab_drag_state_.body_drop_zone;
+  const PaneDropZone zone = tab_drag_state_.body_drop_zone;
   // The dropped tab lands in a different pane than the one it was lifted from, so
   // there is no strip glide to carry: the whole editor area repaints anyway.
   tab_slide_state_ = TabSlideState{};
@@ -647,23 +720,18 @@ void TabMouseCoordinator::FinishEditorBodyDrop(const WorkspaceLayout& layout) {
   }
 
   bool committed = false;
-  if (zone == EditorBodyDropZone::Center) {
+  if (zone == PaneDropZone::Center) {
     if (operations_.move_tab_to_group && target_group < state_.editor_groups.size()) {
       committed = operations_.move_tab_to_group(
           source_group, tab_drag_state_.source_index, target_group,
           state_.editor_groups[target_group].open_tabs.size());
     }
   } else if (operations_.move_tab_to_new_group) {
-    const bool side_by_side =
-        zone == EditorBodyDropZone::Left || zone == EditorBodyDropZone::Right;
-    const bool insert_before =
-        zone == EditorBodyDropZone::Left || zone == EditorBodyDropZone::Top;
     // The pane under the pointer is the one that gets split, which is what lets an
     // edge drop land beside a pane that is already half of a split.
-    committed = operations_.move_tab_to_new_group(
-        source_group, tab_drag_state_.source_index, target_group,
-        side_by_side ? EditorSplitOrientation::Vertical : EditorSplitOrientation::Horizontal,
-        insert_before);
+    const PaneDropSplit split = SplitForPaneDropZone(zone);
+    committed = operations_.move_tab_to_new_group(source_group, tab_drag_state_.source_index, target_group,
+                                                  split.orientation, split.before);
   }
   if (committed) {
     PersistReorderedTabs(TabDragKind::Editor);

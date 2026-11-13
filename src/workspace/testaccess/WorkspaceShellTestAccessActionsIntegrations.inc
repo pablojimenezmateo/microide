@@ -683,12 +683,23 @@
     const auto* tab = shell.context_.current_project_state.active_terminal_tab();
     return tab == nullptr ? 0 : tab->active_pane;
   }
+  // The shares of the active tab's ROOT row: one weight for a single pane, the
+  // row's shares for panes side by side (the tree's root branch).
   static std::vector<float> TerminalPaneWeights(const WorkspaceShell& shell) {
     const auto* tab = shell.context_.current_project_state.active_terminal_tab();
-    return tab == nullptr ? std::vector<float>{}
-                          : std::vector<float>(tab->weights.begin(), tab->weights.end());
+    if (tab == nullptr) {
+      return {};
+    }
+    if (!tab->split.is_split()) {
+      return {1.0f};
+    }
+    const auto& root = tab->split.node(tab->split.root());
+    return std::vector<float>(root.weights.begin(), root.weights.end());
   }
-  static microide::workspace::TerminalPaneRectsLayout TerminalPaneRects(WorkspaceShell& shell) {
+  static const microide::workspace::SplitTree& TerminalSplit(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.active_terminal_tab()->split;
+  }
+  static microide::workspace::SplitRegionsLayout TerminalPaneRects(WorkspaceShell& shell) {
     return shell.MakeTerminalPanelService().PaneRects(CurrentLayout(shell));
   }
   static microide::terminal::TerminalSession& TerminalPaneSession(WorkspaceShell& shell,

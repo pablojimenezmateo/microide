@@ -935,7 +935,7 @@ std::size_t ScenarioContext::EditorSplitDividerCount() {
   return workspace::WorkspaceShell::TestAccess::EditorSplitDividerRects(shell_).size();
 }
 
-SDL_FRect ScenarioContext::EditorSplitDividerRect(std::size_t divider_index) {
+SDL_FRect ScenarioContext::SplitDividerRect(std::size_t divider_index) {
   const auto dividers = workspace::WorkspaceShell::TestAccess::EditorSplitDividerRects(shell_);
   return divider_index < dividers.size() ? dividers[divider_index].rect : SDL_FRect{};
 }

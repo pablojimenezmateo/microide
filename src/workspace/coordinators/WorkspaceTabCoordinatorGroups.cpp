@@ -113,9 +113,9 @@ bool TabCoordinator::MoveTabToGroup(std::size_t from_group,
 bool TabCoordinator::MoveTabToNewGroup(std::size_t from_group,
                                        std::size_t from_index,
                                        std::size_t target_group,
-                                       EditorSplitOrientation orientation,
+                                       SplitOrientation orientation,
                                        bool insert_before) {
-  if (orientation == EditorSplitOrientation::None ||
+  if (orientation == SplitOrientation::None ||
       from_group >= state_.editor_groups.size() || target_group >= state_.editor_groups.size() ||
       from_index >= state_.editor_groups[from_group].open_tabs.size()) {
     return false;
@@ -152,7 +152,7 @@ bool TabCoordinator::MoveTabToNewGroup(std::size_t from_group,
 
   const std::size_t carved_index =
       state_.editor_split.InsertLeaf(target_group, orientation, insert_before);
-  if (carved_index == EditorSplitTree::kNoLeaf) {
+  if (carved_index == SplitTree::kNoLeaf) {
     return false;
   }
 
@@ -213,8 +213,8 @@ TabEntry TabCoordinator::CloneEditorTabForSplit(const TabEntry& tab) {
   return clone;
 }
 
-bool TabCoordinator::SplitEditorGroup(EditorSplitOrientation orientation) {
-  if (orientation == EditorSplitOrientation::None || state_.editor_groups.empty() ||
+bool TabCoordinator::SplitEditorGroup(SplitOrientation orientation) {
+  if (orientation == SplitOrientation::None || state_.editor_groups.empty() ||
       state_.editor_split.full()) {
     return false;
   }
@@ -238,7 +238,7 @@ bool TabCoordinator::SplitEditorGroup(EditorSplitOrientation orientation) {
 
   // VS Code's "Split Right"/"Split Down" put the new pane after the active one.
   const std::size_t carved_index = state_.editor_split.InsertLeaf(focused, orientation, false);
-  if (carved_index == EditorSplitTree::kNoLeaf) {
+  if (carved_index == SplitTree::kNoLeaf) {
     return false;
   }
   state_.editor_groups.insert(
@@ -286,7 +286,7 @@ bool TabCoordinator::FocusEditorGroupAt(std::size_t index) {
   return true;
 }
 
-std::size_t TabCoordinator::AdjacentGroupInDirection(EditorGroupDirection direction) const {
+std::size_t TabCoordinator::AdjacentGroupInDirection(PaneDirection direction) const {
   if (state_.editor_groups.size() < 2 || !operations_.editor_group_rects) {
     return kNoEditorGroup;
   }
@@ -299,7 +299,7 @@ std::size_t TabCoordinator::AdjacentGroupInDirection(EditorGroupDirection direct
   return AdjacentEditorGroup(rects, state_.clamped_focused_group_index(), direction);
 }
 
-bool TabCoordinator::FocusEditorGroupInDirection(EditorGroupDirection direction) {
+bool TabCoordinator::FocusEditorGroupInDirection(PaneDirection direction) {
   const std::size_t target = AdjacentGroupInDirection(direction);
   if (target == kNoEditorGroup) {
     return false;
@@ -310,21 +310,21 @@ bool TabCoordinator::FocusEditorGroupInDirection(EditorGroupDirection direction)
   return true;
 }
 
-bool TabCoordinator::MoveEditorGroupInDirection(EditorGroupDirection direction) {
+bool TabCoordinator::MoveEditorGroupInDirection(PaneDirection direction) {
   const std::size_t focused = state_.clamped_focused_group_index();
   const std::size_t target = AdjacentGroupInDirection(direction);
   if (target == kNoEditorGroup) {
     return false;
   }
   const bool horizontal =
-      direction == EditorGroupDirection::Left || direction == EditorGroupDirection::Right;
+      direction == PaneDirection::Left || direction == PaneDirection::Right;
   // Land on the far side of the neighbour, so moving left through a row of three
   // walks the pane to the front rather than swapping it back and forth.
   const bool before =
-      direction == EditorGroupDirection::Left || direction == EditorGroupDirection::Up;
+      direction == PaneDirection::Left || direction == PaneDirection::Up;
   return RelocateEditorGroup(
       focused, target,
-      horizontal ? EditorSplitOrientation::Vertical : EditorSplitOrientation::Horizontal, before);
+      horizontal ? SplitOrientation::Vertical : SplitOrientation::Horizontal, before);
 }
 
 // The one place a pane changes position. Both callers -- the directional move
@@ -334,10 +334,10 @@ bool TabCoordinator::MoveEditorGroupInDirection(EditorGroupDirection direction) 
 // caches drift apart.
 bool TabCoordinator::RelocateEditorGroup(std::size_t from,
                                          std::size_t target,
-                                         EditorSplitOrientation orientation,
+                                         SplitOrientation orientation,
                                          bool before) {
   const std::size_t landed = state_.editor_split.MoveLeaf(from, target, orientation, before);
-  if (landed == EditorSplitTree::kNoLeaf) {
+  if (landed == SplitTree::kNoLeaf) {
     return false;
   }
   // The tree's leaves ARE the groups, in order: the vector has to make the same

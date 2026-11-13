@@ -353,7 +353,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     // Every pane was sampled once for this frame (PrepareTerminalPanesForFrame):
     // its line count, persisted scroll, visible lines and cursor. Nothing below
     // reads the live session or writes pane state.
-    const TerminalPaneRectsLayout& rects = panel_vm.terminal_panes;
+    const SplitRegionsLayout& rects = panel_vm.terminal_panes;
     const float panel_height = layout.bottom_panel.h;
     for (std::size_t pane_index = 0; pane_index < tab->panes.size() && pane_index < rects.panes.size();
          ++pane_index) {
@@ -511,11 +511,18 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       }
     }
 
-    for (const TerminalPaneDividerRect& divider : rects.dividers) {
+    for (const SplitDividerRect& divider : rects.dividers) {
       const bool divider_active =
           context_.interaction_state.drag_target == DragTarget::TerminalPaneDivider &&
+          divider.node == context_.interaction_state.drag_terminal_pane_node &&
           divider.boundary == context_.interaction_state.drag_terminal_pane_boundary;
       DrawFilledRect(renderer, divider.rect, divider_active ? theme_.accent : theme_.border);
+    }
+    // A terminal tab dragged onto this body: the side of the pane it would take
+    // (the same drop preview the editor grid paints).
+    if (const TabDragState& drag = context_.interaction_state.tab_drag;
+        drag.kind == TabDragKind::Terminal && drag.dragging && drag.body_drop()) {
+      detail::DrawPaneDropPreview(renderer, theme_, drag.body_drop_rect);
     }
   };
 

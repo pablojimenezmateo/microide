@@ -1297,7 +1297,7 @@ void WorkspaceActionContext::ResetCaretBlink() {
   operations_.reset_caret_blink();
 }
 
-bool WorkspaceActionContext::SplitEditorGroup(EditorSplitOrientation orientation,
+bool WorkspaceActionContext::SplitEditorGroup(SplitOrientation orientation,
                                               const std::filesystem::path& path,
                                               std::string* error_message) {
   // The split clones the active tab, which only an editor tab can do; say which

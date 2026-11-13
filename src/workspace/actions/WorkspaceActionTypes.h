@@ -251,8 +251,11 @@ enum class ActionId {
   TabToGroup,
   // Terminal panes and the panel's visibility/maximized state (TerminalPanelService).
   TerminalSplit,
+  TerminalSplitDown,
   TerminalFocusPaneLeft,
   TerminalFocusPaneRight,
+  TerminalFocusPaneUp,
+  TerminalFocusPaneDown,
   TerminalNext,
   TerminalPrev,
   TerminalRelaunch,

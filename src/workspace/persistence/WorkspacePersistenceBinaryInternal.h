@@ -134,7 +134,10 @@ enum class ProjectSessionTag : std::uint16_t {
 enum class TerminalTabTag : std::uint16_t {
   ActivePane = 1,
   Pane = 2,    // repeated; one nested TerminalPaneTag record per pane
-  Weight = 3,  // repeated; one f32 per pane, in pane order
+  // 3 was `Weight` (one f32 per pane of a side-by-side row): retired when a tab
+  // became a split grid. Never reuse it; an older session's weights are skipped
+  // and its tab restores as an even row.
+  Split = 4,  // the tab's split tree, in the editor grid's pre-order form
 };
 
 enum class TerminalPaneTag : std::uint16_t {

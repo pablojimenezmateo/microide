@@ -546,7 +546,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
     if (!state.editor_split.Load(persisted_session.split_tree) ||
         state.editor_split.leaf_count() != state.editor_groups.size()) {
       state.editor_split.ResetToEvenSplit(state.editor_groups.size(),
-                                          EditorSplitOrientation::Vertical);
+                                          SplitOrientation::Vertical);
     }
     state.focused_group_index =
         std::min(persisted_session.focused_group_index, state.editor_groups.size() - 1);

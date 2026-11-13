@@ -168,7 +168,7 @@ void EditorTabService::CloseGroupTab(std::size_t group_index, std::size_t index)
   coordinator_.CloseGroupTab(group_index, index);
 }
 
-bool EditorTabService::SplitEditorGroup(EditorSplitOrientation orientation) {
+bool EditorTabService::SplitEditorGroup(SplitOrientation orientation) {
   return coordinator_.SplitEditorGroup(orientation);
 }
 
@@ -192,11 +192,11 @@ bool EditorTabService::FocusOtherGroup() {
   return coordinator_.FocusOtherGroup();
 }
 
-bool EditorTabService::FocusEditorGroupInDirection(EditorGroupDirection direction) {
+bool EditorTabService::FocusEditorGroupInDirection(PaneDirection direction) {
   return coordinator_.FocusEditorGroupInDirection(direction);
 }
 
-bool EditorTabService::MoveEditorGroupInDirection(EditorGroupDirection direction) {
+bool EditorTabService::MoveEditorGroupInDirection(PaneDirection direction) {
   return coordinator_.MoveEditorGroupInDirection(direction);
 }
 
@@ -222,7 +222,7 @@ bool EditorTabService::MoveTabToGroup(std::size_t from_group,
 bool EditorTabService::MoveTabToNewGroup(std::size_t from_group,
                                          std::size_t from_index,
                                          std::size_t target_group,
-                                         EditorSplitOrientation orientation,
+                                         SplitOrientation orientation,
                                          bool insert_before) {
   return coordinator_.MoveTabToNewGroup(from_group, from_index, target_group, orientation,
                                         insert_before);

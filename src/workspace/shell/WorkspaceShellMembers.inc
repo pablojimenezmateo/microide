@@ -222,7 +222,7 @@
   class Bootstrapper;
   using FocusTarget = workspace::FocusTarget;
   using BufferSearchField = workspace::BufferSearchField;
-  using EditorSplitOrientation = workspace::EditorSplitOrientation;
+  using SplitOrientation = workspace::SplitOrientation;
   using ProjectSearchEditField = workspace::ProjectSearchEditField;
   using CompareTabState = workspace::CompareTabState;
   using MergeTrackedConflict = workspace::MergeTrackedConflict;
@@ -1513,7 +1513,7 @@
   // one call when it next becomes active. A switch to or from the alternate screen
   // changes the row space outright, so it drops the selection.
   void RebaseActiveTerminalRowSpace();
-  void PrepareTerminalPanesForFrame(TerminalTabState& tab, const TerminalPaneRectsLayout& rects, float panel_height);
+  void PrepareTerminalPanesForFrame(TerminalTabState& tab, const SplitRegionsLayout& rects, float panel_height);
   void ClearTerminalSelection();
   std::optional<TerminalLinkHit> TerminalLinkAtPoint(float x, float y) const;
   std::optional<TerminalSelectionPoint> TerminalSelectionPointAt(
@@ -1529,7 +1529,7 @@
   void ResizeTerminalToPanel(const WorkspaceLayout& layout);
   bool OpenUntitledTab();
   bool OpenFileInNewTab(const std::filesystem::path& path);
-  bool SplitEditorGroup(EditorSplitOrientation orientation);
+  bool SplitEditorGroup(SplitOrientation orientation);
   bool FocusOtherEditorGroup();
   void FocusEditorGroup(std::size_t group_index);
   bool CloseEditorGroup();

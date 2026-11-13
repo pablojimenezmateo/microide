@@ -273,6 +273,11 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         (event.button.button == SDL_BUTTON_LEFT && hit.on_close)) {
       operations_.close_bottom_panel_tab(hit.index);
     } else if (event.button.button == SDL_BUTTON_LEFT) {
+      // The terminal tab on screen BEFORE this press activates another: a drag
+      // of the pressed tab onto the body joins it into this one.
+      const bool showed_terminal = state_.panel.content == PanelContentKind::Terminal &&
+                                   state_.active_terminal_tab_index < state_.terminal_tabs.size();
+      const std::size_t shown_before = state_.active_terminal_tab_index;
       if (operations_.activate_bottom_panel_tab(hit.index)) {
         tab_drag_state_ = TabDragState{
             .kind = TabDragKind::Terminal,
@@ -283,6 +288,9 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
             .ghost_width = hit.rect.w,
             .grab_offset_x = static_cast<float>(event.button.x) - hit.rect.x,
         };
+        if (showed_terminal && hit.index < state_.terminal_tabs.size() && shown_before != hit.index) {
+          tab_drag_state_.terminal_drop_tab = shown_before;
+        }
       }
     } else if (event.button.button == SDL_BUTTON_RIGHT) {
       if (operations_.activate_bottom_panel_tab(hit.index) &&
@@ -512,7 +520,7 @@ TabMouseCoordinator& WorkspaceShell::MakeTabMouseCoordinator() {
               },
           .move_tab_to_new_group =
               [this](std::size_t from_group, std::size_t from_index, std::size_t target_group,
-                     EditorSplitOrientation orientation, bool insert_before) {
+                     SplitOrientation orientation, bool insert_before) {
                 // Same geometry drop as the cross-group move, and for the same
                 // reason: both strips change length and the per-group title/width
                 // cache keys only on (tab_count, window_width).
@@ -524,6 +532,20 @@ TabMouseCoordinator& WorkspaceShell::MakeTabMouseCoordinator() {
               [this](std::size_t index) {
                 return MakeTerminalPanelService().MoveActiveTerminalTabTo(index);
               },
+          .can_join_terminal_tabs =
+              [this](std::size_t source, std::size_t target) {
+                return MakeTerminalPanelService().CanJoinTabs(source, target);
+              },
+          .terminal_pane_rects =
+              [this](const WorkspaceLayout& layout) { return MakeTerminalPanelService().PaneRects(layout); },
+          .join_terminal_tab_into_pane =
+              [this](std::size_t source, std::size_t target, std::size_t pane, PaneDropZone zone) {
+                // The strip loses a tab: its title/width cache keys on the count.
+                tab_strip_service_.InvalidateTabStripGeometry();
+                return MakeTerminalPanelService().JoinTabIntoPane(source, target, pane, zone);
+              },
+          .show_terminal_tab =
+              [this](std::size_t index) { return MakeTerminalPanelService().ActivateTerminalTab(index); },
           .move_active_output_tab_to =
               [this](std::size_t index) { return MoveActiveOutputTabTo(index); },
           .save_workspace_session =

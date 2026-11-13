@@ -182,21 +182,20 @@ void TerminalPanelService::OpenTerminalsForProjectInit() {
         if (tab == nullptr) {
           tab = MakeTerminalTab(std::move(pane));
         } else {
-          (void)tab->InsertPane(tab->pane_count(), std::move(pane));  // capped by decode
+          // Seated as a row for now; the saved arrangement replaces it below.
+          (void)tab->SplitPane(tab->pane_count() - 1, SplitOrientation::Vertical, false,
+                               std::move(pane));  // capped by decode
         }
       }
       if (tab == nullptr) {
         continue;
       }
-      // The saved shares only when they still describe these panes.
-      if (record.weights.size() == tab->pane_count() &&
-          std::all_of(record.weights.begin(), record.weights.end(),
-                      [](float w) { return std::isfinite(w) && w > 0.0f; })) {
-        tab->weights.clear();
-        for (const float weight : record.weights) {
-          tab->weights.push_back(std::max(weight, kTerminalPaneMinShare));
-        }
-        NormalizeTerminalPaneWeights(tab->weights);
+      // The saved arrangement only when it still describes these panes: a pane
+      // that failed to start leaves the row the loop above built.
+      if (SplitTree saved; !record.split.empty() && saved.Load(record.split) &&
+                           saved.leaf_count() == tab->pane_count()) {
+        tab->split = saved;
+        ++tab->layout_revision;
       }
       tab->active_pane = std::min(record.active_pane, tab->pane_count() - 1);
       state_.terminal_tabs.push_back(std::move(tab));
@@ -227,11 +226,19 @@ TerminalLayoutRecord TerminalPanelService::CaptureLayout(const ProjectWorkspaceS
   for (std::size_t t = 0; t < state.terminal_tabs.size(); ++t) {
     const TerminalTabState& tab = *state.terminal_tabs[t];
     TerminalTabRecord record;
-    bool all_panes_kept = true;
+    // Panes that run through their own launcher (the ssh authentication tab, a
+    // local terminal in a remote project) are not revived; the tree loses their
+    // leaves the way closing them would, so the rest keep their arrangement.
+    SplitTree kept = tab.split;
+    for (std::size_t p = tab.pane_count(); p > 0; --p) {
+      const TerminalPaneState& pane = *tab.panes[p - 1];
+      if (pane.launcher != nullptr && kept.leaf_count() > 1) {
+        kept.RemoveLeaf(p - 1);
+      }
+    }
     for (std::size_t p = 0; p < tab.pane_count(); ++p) {
       const TerminalPaneState& pane = *tab.panes[p];
       if (pane.launcher != nullptr) {
-        all_panes_kept = false;
         continue;
       }
       if (p == tab.active_pane) {
@@ -244,11 +251,8 @@ TerminalLayoutRecord TerminalPanelService::CaptureLayout(const ProjectWorkspaceS
     if (record.panes.empty()) {
       continue;
     }
-    // A tab that lost an own-launcher pane (the auth tab, a local terminal in a
-    // remote project: neither is revived) keeps its panes, evenly: the shares were
-    // the whole row's.
-    if (all_panes_kept) {
-      record.weights.assign(tab.weights.begin(), tab.weights.end());
+    if (kept.leaf_count() == record.panes.size()) {
+      record.split = kept.Flatten();
     }
     if (t == state.active_terminal_tab_index) {
       layout.active_tab = layout.tabs.size();
@@ -392,6 +396,38 @@ bool TerminalPanelService::MoveActiveTerminalTabTo(std::size_t index) {
   return true;
 }
 
+bool TerminalPanelService::CanJoinTabs(std::size_t source, std::size_t target) const {
+  const auto& tabs = state_.terminal_tabs;
+  return source != target && source < tabs.size() && target < tabs.size() && tabs[source] != nullptr &&
+         tabs[target] != nullptr && !tabs[source]->panes.empty() && !tabs[target]->panes.empty() &&
+         tabs[source]->pane_count() + tabs[target]->pane_count() <= kMaxTerminalPanes;
+}
+
+bool TerminalPanelService::JoinTabIntoPane(std::size_t source,
+                                           std::size_t target,
+                                           std::size_t target_pane,
+                                           PaneDropZone zone) {
+  const PaneDropSplit split = SplitForPaneDropZone(zone);
+  if (!split.edge || !CanJoinTabs(source, target) || target_pane >= state_.terminal_tabs[target]->pane_count()) {
+    return false;
+  }
+  TerminalTabState& into = *state_.terminal_tabs[target];
+  if (!into.GraftTab(target_pane, split.orientation, split.before, *state_.terminal_tabs[source])) {
+    return false;
+  }
+  const bool was_visible = PanelVisible();
+  // The emptied source tab goes; the target's index shifts down past it.
+  state_.terminal_tabs.erase(state_.terminal_tabs.begin() + static_cast<std::ptrdiff_t>(source));
+  state_.active_terminal_tab_index = target > source ? target - 1 : target;
+  // The selection named rows of a pane that may have moved; panes keep their own
+  // sessions, so nothing else needs to follow.
+  operations_.clear_terminal_selection();
+  ShowTerminalContent(true);
+  operations_.note_layout_inputs_changed();
+  NotePanelVisibilityChanged(was_visible);
+  return true;
+}
+
 bool TerminalPanelService::ActivateTerminalTab(std::size_t index) {
   if (index >= state_.terminal_tabs.size()) {
     return false;
@@ -439,7 +475,7 @@ bool TerminalPanelService::CycleTerminalTab(int delta) {
 
 // --- panes --------------------------------------------------------------------
 
-bool TerminalPanelService::SplitActivePane() {
+bool TerminalPanelService::SplitActivePane(SplitOrientation orientation) {
   TerminalTabState* tab = state_.active_terminal_tab();
   const TerminalPaneState* active = tab != nullptr ? tab->active() : nullptr;
   // A split of a host terminal is another terminal on that host.
@@ -459,8 +495,8 @@ bool TerminalPanelService::SplitActivePane() {
     return false;
   }
   const bool was_visible = PanelVisible();
-  // VS Code puts the new pane after the active one.
-  if (!tab->InsertPane(tab->active_pane + 1, std::move(pane))) {
+  // VS Code puts the new pane after (right of, or below) the active one.
+  if (!tab->SplitPane(tab->active_pane, orientation, /*before=*/false, std::move(pane))) {
     return false;
   }
   operations_.clear_terminal_selection();
@@ -486,17 +522,24 @@ bool TerminalPanelService::CloseActivePane() {
   return true;
 }
 
-bool TerminalPanelService::FocusPaneInDirection(int delta) {
+bool TerminalPanelService::FocusPaneInDirection(PaneDirection direction) {
   TerminalTabState* tab = state_.active_terminal_tab();
   if (tab == nullptr || tab->pane_count() < 2) {
     return false;
   }
-  const long long target = static_cast<long long>(tab->active_pane) + delta;
-  if (target < 0 || target >= static_cast<long long>(tab->pane_count())) {
+  // By the arrangement on screen, not by index: in a grid the next index can sit
+  // below. Adjacency depends only on the tree's proportions, so it is answered
+  // over a fixed square rather than the panel body -- which a hidden panel (a
+  // verb asked for by name shows it below) does not have.
+  constexpr SDL_FRect kShapeOnly{0.0f, 0.0f, 4096.0f, 4096.0f};
+  const SplitRegionsLayout rects = tab->PaneRects(kShapeOnly);
+  const std::size_t target = AdjacentSplitRegion(
+      std::span<const SDL_FRect>(rects.panes.data(), rects.panes.size()), tab->active_pane, direction);
+  if (target == kNoSplitRegion || target >= tab->pane_count()) {
     return false;
   }
   operations_.clear_terminal_selection();
-  tab->active_pane = static_cast<std::size_t>(target);
+  tab->active_pane = target;
   // Shown, as switching terminal tabs shows it: setting the focus alone left the
   // keyboard on a hidden panel when it was asked for by name (soak c0c5719bdbce).
   const bool was_visible = PanelVisible();
@@ -511,8 +554,8 @@ TerminalPaneState* TerminalPanelService::PaneAt(const WorkspaceLayout& layout, f
   if (tab == nullptr || !PanelShowsTerminal()) {
     return nullptr;
   }
-  const TerminalPaneRectsLayout rects = PaneRects(layout);
-  const std::size_t index = TerminalPaneIndexAt(rects, x, y);
+  const SplitRegionsLayout rects = PaneRects(layout);
+  const std::size_t index = SplitRegionIndexAt(rects, x, y);
   return index < tab->pane_count() ? tab->panes[index].get() : nullptr;
 }
 
@@ -521,7 +564,7 @@ bool TerminalPanelService::ActivatePaneAt(const WorkspaceLayout& layout, float x
   if (tab == nullptr || !PanelShowsTerminal()) {
     return false;
   }
-  const std::size_t index = TerminalPaneIndexAt(PaneRects(layout), x, y);
+  const std::size_t index = SplitRegionIndexAt(PaneRects(layout), x, y);
   if (index >= tab->pane_count() || index == tab->active_pane) {
     return false;
   }
@@ -560,7 +603,7 @@ bool TerminalPanelService::RelaunchActivePane() {
 
 // --- geometry -----------------------------------------------------------------
 
-TerminalPaneRectsLayout TerminalPanelService::PaneRects(const WorkspaceLayout& layout) const {
+SplitRegionsLayout TerminalPanelService::PaneRects(const WorkspaceLayout& layout) const {
   const TerminalTabState* tab = state_.active_terminal_tab();
   if (tab == nullptr || state_.panel.content != PanelContentKind::Terminal) {
     return {};
@@ -574,10 +617,10 @@ SDL_FRect TerminalPanelService::ActivePaneBodyRect(const WorkspaceLayout& layout
   return tab != nullptr ? tab->ActivePaneRect(body) : body;
 }
 
-std::optional<TerminalPaneDividerRect> TerminalPanelService::DividerAt(const WorkspaceLayout& layout,
+std::optional<SplitDividerRect> TerminalPanelService::DividerAt(const WorkspaceLayout& layout,
                                                                        float x,
                                                                        float y) const {
-  for (const TerminalPaneDividerRect& divider : PaneRects(layout).dividers) {
+  for (const SplitDividerRect& divider : PaneRects(layout).dividers) {
     const SDL_FRect& r = divider.rect;
     if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) {
       return divider;
@@ -586,17 +629,17 @@ std::optional<TerminalPaneDividerRect> TerminalPanelService::DividerAt(const Wor
   return std::nullopt;
 }
 
-bool TerminalPanelService::ResizeActiveTabDivider(std::size_t boundary, float first_share) {
+bool TerminalPanelService::ResizeActiveTabDivider(std::uint8_t node, std::size_t boundary, float first_share) {
   TerminalTabState* tab = state_.active_terminal_tab();
-  if (tab == nullptr || !tab->ResizeDivider(boundary, first_share)) {
+  if (tab == nullptr || !tab->ResizeDivider(node, boundary, first_share)) {
     return false;
   }
   operations_.request_bottom_panel_redraw();
   return true;
 }
 
-bool TerminalPanelService::ResetActiveTabDivider(std::size_t boundary) {
-  return ResizeActiveTabDivider(boundary, 0.5f);
+bool TerminalPanelService::ResetActiveTabDivider(std::uint8_t node, std::size_t boundary) {
+  return ResizeActiveTabDivider(node, boundary, 0.5f);
 }
 
 // --- panel --------------------------------------------------------------------

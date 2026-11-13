@@ -6,7 +6,7 @@
 #include "workspace/persistence/PersistenceService.h"
 #include "workspace/persistence/RecentsService.h"
 #include "workspace/persistence/WorkspacePersistenceFormat.h"
-#include "workspace/TerminalPaneLayout.h"
+#include "workspace/SplitTreeLayout.h"
 #include "workspace/state/WorkspaceProjectState.h"
 
 #include <cmath>
@@ -373,8 +373,8 @@ PersistedProjectSessionState BuildProjectSessionFixture() {
   session.focused_group_index = 1;
   // A stacked pair, weighted 0.4/0.6 — the tree shape the session must carry now.
   {
-    microide::workspace::EditorSplitTree tree;
-    tree.InsertLeaf(0, microide::workspace::EditorSplitOrientation::Horizontal, false);
+    microide::workspace::SplitTree tree;
+    tree.InsertLeaf(0, microide::workspace::SplitOrientation::Horizontal, false);
     tree.ResizeDivider(tree.root(), 0, 0.4f);
     session.split_tree = tree.Flatten();
   }
@@ -437,12 +437,12 @@ void TestPersistedStateProjectSessionSkipsOverCapGroupsBeforeDecoding() {
 void TestPersistedStateProjectSessionRepeatedSplitTreeReplaces() {
   const auto session_with_leaves = [](std::size_t leaves) {
     PersistedProjectSessionState session;
-    microide::workspace::EditorSplitTree tree;
+    microide::workspace::SplitTree tree;
     for (std::size_t i = 1; i < leaves; ++i) {
       // Alternating directions nests every split: 2N-1 nodes for N panes.
       tree.InsertLeaf(i - 1,
-                      i % 2 == 0 ? microide::workspace::EditorSplitOrientation::Vertical
-                                 : microide::workspace::EditorSplitOrientation::Horizontal,
+                      i % 2 == 0 ? microide::workspace::SplitOrientation::Vertical
+                                 : microide::workspace::SplitOrientation::Horizontal,
                       false);
     }
     session.split_tree = tree.Flatten();
@@ -450,7 +450,7 @@ void TestPersistedStateProjectSessionRepeatedSplitTreeReplaces() {
   };
   const PersistedProjectSessionState full = session_with_leaves(microide::workspace::kMaxEditorGroups);
   const PersistedProjectSessionState pair = session_with_leaves(2);
-  Expect(full.split_tree.size() + pair.split_tree.size() > microide::workspace::kMaxEditorSplitNodes,
+  Expect(full.split_tree.size() + pair.split_tree.size() > microide::workspace::kMaxSplitNodes,
          "the two trees together should hold more nodes than one session can carry (got " +
              std::to_string(full.split_tree.size()) + " + " + std::to_string(pair.split_tree.size()) + ")");
   std::vector<std::byte> first;
@@ -474,15 +474,21 @@ void TestPersistedStateProjectSessionTerminalLayoutRoundTrips() {
   PersistedProjectSessionState session;
   session.panel_maximized = true;
   session.terminal_layout.active_tab = 1;
+  // A pane beside a stack of two: the grid Split Terminal + Split Terminal Down
+  // leaves, with a moved divider.
+  microide::workspace::SplitTree grid;
+  (void)grid.InsertLeaf(0, microide::workspace::SplitOrientation::Vertical, false);
+  (void)grid.InsertLeaf(1, microide::workspace::SplitOrientation::Horizontal, false);
+  (void)grid.ResizeDivider(grid.root(), 0, 0.3f);
   session.terminal_layout.tabs.push_back(TerminalTabRecord{
       .panes = {TerminalPaneRecord{.cwd = "/work/a", .command = ""},
                 TerminalPaneRecord{.cwd = "/work/b",
                                    .command = "htop",
-                                   .host = {.epoch = "1730000000-4242-ab", .handle = 17}}},
-      .weights = {0.3f, 0.7f},
+                                   .host = {.epoch = "1730000000-4242-ab", .handle = 17}},
+                TerminalPaneRecord{.cwd = "/work/c", .command = ""}},
+      .split = grid.Flatten(),
       .active_pane = 1});
-  session.terminal_layout.tabs.push_back(
-      TerminalTabRecord{.panes = {TerminalPaneRecord{.cwd = "", .command = ""}}, .weights = {1.0f}});
+  session.terminal_layout.tabs.push_back(TerminalTabRecord{.panes = {TerminalPaneRecord{.cwd = "", .command = ""}}});
   std::vector<std::byte> record;
   Expect(EncodeProjectSessionRecord(session, &record), "encode");
   PersistedProjectSessionState decoded;
@@ -490,11 +496,14 @@ void TestPersistedStateProjectSessionTerminalLayoutRoundTrips() {
   Expect(decoded.panel_maximized, "the maximized panel round-trips");
   const auto& layout = decoded.terminal_layout;
   Expect(layout.active_tab == 1 && layout.tabs.size() == 2, "both tabs and the active one");
-  Expect(layout.tabs[0].panes.size() == 2 && layout.tabs[0].panes[1].cwd == "/work/b" &&
+  Expect(layout.tabs[0].panes.size() == 3 && layout.tabs[0].panes[1].cwd == "/work/b" &&
              layout.tabs[0].panes[1].command == "htop" && layout.tabs[0].active_pane == 1,
          "panes keep their directory, command and the active pane");
-  Expect(layout.tabs[0].weights.size() == 2 && std::fabs(layout.tabs[0].weights[0] - 0.3f) < 1e-6f,
-         "the shares round-trip");
+  microide::workspace::SplitTree decoded_grid;
+  Expect(decoded_grid.Load(layout.tabs[0].split) && decoded_grid == grid &&
+             std::fabs(decoded_grid.node(decoded_grid.root()).weights[0] - 0.3f) < 1e-6f,
+         "the split grid and its shares round-trip");
+  Expect(layout.tabs[1].split.empty(), "a single pane records no tree");
   Expect(layout.tabs[0].panes[1].host ==
                  microide::terminal::HostIdentity{.epoch = "1730000000-4242-ab", .handle = 17} &&
              layout.tabs[0].panes[0].host.empty() && layout.tabs[1].panes[0].host.empty(),
@@ -602,10 +611,10 @@ void TestPersistedStateProjectSessionRoundTripOmitsChatRegistry() {
              microide::workspace::OutgoingBaseChoice::Kind::SpecificRef &&
              decoded_session.outgoing_base_choice.custom_ref == "release/2.0",
          "project session outgoing base choice should round-trip");
-  microide::workspace::EditorSplitTree decoded_tree;
+  microide::workspace::SplitTree decoded_tree;
   Expect(decoded_tree.Load(decoded_session.split_tree) && decoded_tree.leaf_count() == 2 &&
              decoded_tree.node(decoded_tree.root()).orientation ==
-                 microide::workspace::EditorSplitOrientation::Horizontal &&
+                 microide::workspace::SplitOrientation::Horizontal &&
              std::fabs(decoded_tree.node(decoded_tree.root()).weights[0] - 0.4f) < 0.0001f,
          "project session group split layout should round-trip");
   Expect(decoded_session.groups.size() == 2 &&
@@ -972,10 +981,10 @@ void TestPersistedStateProjectSessionRoundTripsRandomContent() {
     }
     session.focused_group_index = next(group_count);
     {
-      microide::workspace::EditorSplitTree tree;
+      microide::workspace::SplitTree tree;
       for (std::size_t g = 1; g < group_count; ++g) {
-        tree.InsertLeaf(next(g), next(2) == 0 ? microide::workspace::EditorSplitOrientation::Horizontal
-                                              : microide::workspace::EditorSplitOrientation::Vertical,
+        tree.InsertLeaf(next(g), next(2) == 0 ? microide::workspace::SplitOrientation::Horizontal
+                                              : microide::workspace::SplitOrientation::Vertical,
                         next(2) == 0);
       }
       session.split_tree = tree.Flatten();

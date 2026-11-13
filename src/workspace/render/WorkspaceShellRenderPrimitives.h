@@ -85,6 +85,13 @@ inline void OutlineRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color
   render::OutlineRect(renderer, rect, color);
 }
 
+// VS Code's drop overlay: the region a dragged tab would take, tinted with the
+// accent and outlined. One look for the editor grid and the terminal body.
+inline void DrawPaneDropPreview(SDL_Renderer* renderer, const render::Theme& theme, const SDL_FRect& region) {
+  FillRect(renderer, region, SDL_Color{theme.accent.r, theme.accent.g, theme.accent.b, 64});
+  OutlineRect(renderer, region, theme.accent);
+}
+
 // The colour a status tone paints with, or `fallback` for the default tone.
 inline SDL_Color StatusToneColor(const render::Theme& theme, StatusTone tone, SDL_Color fallback) {
   switch (tone) {

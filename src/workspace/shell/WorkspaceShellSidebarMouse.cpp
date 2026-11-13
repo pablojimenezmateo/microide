@@ -139,7 +139,7 @@ SidebarMouseCoordinator& WorkspaceShell::MakeSidebarMouseCoordinator() {
                 return true;
               },
           .open_path_in_new_group =
-              [this](const std::filesystem::path& path, std::size_t group, EditorSplitOrientation orientation,
+              [this](const std::filesystem::path& path, std::size_t group, SplitOrientation orientation,
                      bool insert_before) {
                 EditorTabService& tabs = MakeEditorTabService();
                 if (!tabs.FocusEditorGroupAt(group)) {
@@ -158,9 +158,9 @@ SidebarMouseCoordinator& WorkspaceShell::MakeSidebarMouseCoordinator() {
                   return false;
                 }
                 if (insert_before) {
-                  (void)tabs.MoveEditorGroupInDirection(orientation == EditorSplitOrientation::Vertical
-                                                            ? EditorGroupDirection::Left
-                                                            : EditorGroupDirection::Up);
+                  (void)tabs.MoveEditorGroupInDirection(orientation == SplitOrientation::Vertical
+                                                            ? PaneDirection::Left
+                                                            : PaneDirection::Up);
                 }
                 return true;
               },

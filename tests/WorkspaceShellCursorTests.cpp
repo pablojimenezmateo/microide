@@ -20,7 +20,7 @@ using microide::workspace::BottomPanelResizeHandleRect;
 using microide::workspace::BottomPanelResizeCursorRect;
 using microide::workspace::BottomPanelResizeHitRect;
 using microide::workspace::Contains;
-using microide::workspace::EditorSplitOrientation;
+using microide::workspace::SplitOrientation;
 using microide::workspace::RectsEqual;
 using microide::workspace::SidebarResizeCursorRect;
 using microide::workspace::SidebarResizeHandleRect;
@@ -385,7 +385,7 @@ void TestWorkspaceShellCursorSplitNonFocusedGroupTabUsesPointer() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::OpenFile(shell, source);
-  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, SplitOrientation::Vertical),
          "splitting the editor should succeed with an active tab");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2,
          "the split should create a second editor group");

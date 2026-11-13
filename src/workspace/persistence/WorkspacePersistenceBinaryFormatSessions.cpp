@@ -1,7 +1,7 @@
 #include "workspace/persistence/WorkspacePersistenceBinaryInternal.h"
 
 #include "util/PathMatch.h"
-#include "workspace/TerminalPaneLayout.h"
+#include "workspace/SplitTreeLayout.h"
 
 namespace microide::workspace {
 
@@ -36,12 +36,12 @@ OutgoingBaseChoice::Kind ParseOutgoingBaseChoiceKind(std::string_view value) {
 
 // The split tree, pre-order: one entry per node as (orientation, child count,
 // child weights). Children follow their parent, so the shape needs no explicit
-// links — see EditorSplitTree::Flatten / ::Load, which own the validation.
-bool WriteSplitTree(PrimitiveWriter& w, const EditorSplitTreeRecord& record) {
+// links — see SplitTree::Flatten / ::Load, which own the validation.
+bool WriteSplitTree(PrimitiveWriter& w, const SplitTreeRecord& record) {
   if (!w.WriteU8(static_cast<std::uint8_t>(record.size()))) {
     return false;
   }
-  for (const EditorSplitNodeRecord& node : record) {
+  for (const SplitNodeRecord& node : record) {
     if (!w.WriteU8(static_cast<std::uint8_t>(node.orientation)) ||
         !w.WriteU8(static_cast<std::uint8_t>(node.weights.size()))) {
       return false;
@@ -55,26 +55,26 @@ bool WriteSplitTree(PrimitiveWriter& w, const EditorSplitTreeRecord& record) {
   return true;
 }
 
-bool ReadSplitTree(PrimitiveReader& reader, EditorSplitTreeRecord* out) {
+bool ReadSplitTree(PrimitiveReader& reader, SplitTreeRecord* out) {
   // A stream that repeats this record describes one tree, the later one, as a
   // repeated scalar field does. Appending let two in-bounds trees (each count
   // checked against the cap only on its own) overrun the fixed node list
   // (fuzz-smoke, ProjectSessionRecordFuzz).
   out->clear();
   std::uint8_t node_count = 0;
-  if (!reader.ReadU8(&node_count) || node_count > kMaxEditorSplitNodes) {
+  if (!reader.ReadU8(&node_count) || node_count > kMaxSplitNodes) {
     return false;
   }
   for (std::uint8_t i = 0; i < node_count; ++i) {
     std::uint8_t orientation = 0;
     std::uint8_t weight_count = 0;
     if (!reader.ReadU8(&orientation) || !reader.ReadU8(&weight_count) ||
-        orientation > static_cast<std::uint8_t>(EditorSplitOrientation::Horizontal) ||
+        orientation > static_cast<std::uint8_t>(SplitOrientation::Horizontal) ||
         weight_count > kMaxEditorGroups) {
       return false;
     }
-    EditorSplitNodeRecord node;
-    node.orientation = static_cast<EditorSplitOrientation>(orientation);
+    SplitNodeRecord node;
+    node.orientation = static_cast<SplitOrientation>(orientation);
     for (std::uint8_t w = 0; w < weight_count; ++w) {
       float weight = 0.0f;
       if (!reader.ReadF32(&weight)) {
@@ -108,17 +108,16 @@ bool EncodeTerminalTab(const TerminalTabRecord& tab, std::vector<std::byte>* out
       return false;
     }
   }
-  for (const float weight : tab.weights) {
-    if (!AppendRecord(TerminalTabTag::Weight, [&](PrimitiveWriter& w) { return w.WriteF32(weight); },
-                      out)) {
-      return false;
-    }
+  if (!tab.split.empty() &&
+      !AppendRecord(TerminalTabTag::Split, [&](PrimitiveWriter& w) { return WriteSplitTree(w, tab.split); },
+                    out)) {
+    return false;
   }
   return true;
 }
 
-// Panes past kMaxTerminalPanes are dropped (with their weights, which then no
-// longer match and restore even) rather than failing the session.
+// Panes past kMaxTerminalPanes are dropped (the tree then no longer matches the
+// panes and the tab restores as an even row) rather than failing the session.
 bool DecodeTerminalTab(std::span<const std::byte> input, TerminalTabRecord* tab) {
   return ParseRecordStream<TerminalTabTag>(
       input, [&](TerminalTabTag tag, std::span<const std::byte> payload) {
@@ -161,16 +160,10 @@ bool DecodeTerminalTab(std::span<const std::byte> input, TerminalTabRecord* tab)
             tab->panes.push_back(std::move(pane));
             return true;
           }
-          case TerminalTabTag::Weight: {
-            float weight = 0.0f;
-            if (!reader.ReadF32(&weight) || reader.remaining() != 0) {
-              return false;
-            }
-            if (tab->weights.size() < kMaxTerminalPanes) {
-              tab->weights.push_back(weight);
-            }
-            return true;
-          }
+          case TerminalTabTag::Split:
+            // The tree's shape is validated where it is used (SplitTree::Load at
+            // revive), as the editor grid's is.
+            return ReadSplitTree(reader, &tab->split) && reader.remaining() == 0;
         }
         return true;
       });

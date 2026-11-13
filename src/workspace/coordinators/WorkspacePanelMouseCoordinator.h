@@ -60,11 +60,12 @@ class PanelMouseCoordinator {
     // under a point, and the divider edits a drag performs.
     std::function<TerminalPaneState*(const WorkspaceLayout&, float, float)> terminal_pane_at;
     std::function<bool(const WorkspaceLayout&, float, float)> activate_terminal_pane_at;
-    std::function<std::optional<TerminalPaneDividerRect>(const WorkspaceLayout&, float, float)>
+    std::function<std::optional<SplitDividerRect>(const WorkspaceLayout&, float, float)>
         terminal_pane_divider_at;
-    std::function<TerminalPaneRectsLayout(const WorkspaceLayout&)> terminal_pane_rects;
-    std::function<bool(std::size_t, float)> resize_terminal_pane_divider;
-    std::function<bool(std::size_t)> reset_terminal_pane_divider;
+    std::function<SplitRegionsLayout(const WorkspaceLayout&)> terminal_pane_rects;
+    // The divider is addressed in the active tab's split tree (node, boundary).
+    std::function<bool(std::uint8_t, std::size_t, float)> resize_terminal_pane_divider;
+    std::function<bool(std::uint8_t, std::size_t)> reset_terminal_pane_divider;
   };
 
   PanelMouseCoordinator(ProjectWorkspaceState& state,

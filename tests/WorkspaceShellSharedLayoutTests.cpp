@@ -728,18 +728,18 @@ void TestWorkspaceSharedChromeTabRenderItems() {
 }
 
 void TestWorkspaceSharedEditorSplitLayout() {
-  using microide::workspace::EditorSplitOrientation;
-  using microide::workspace::EditorSplitTree;
+  using microide::workspace::SplitOrientation;
+  using microide::workspace::SplitTree;
 
-  EditorSplitTree tree;
+  SplitTree tree;
   Expect(tree.leaf_count() == 1 && !tree.is_split() && tree.node(tree.root()).leaf(),
          "a fresh split tree should be a single pane");
 
   // Splitting the same way twice in a row keeps ONE flat row (VS Code's grid),
   // not a nest of pairs, and every new pane takes half of the one it split.
-  Expect(tree.InsertLeaf(0, EditorSplitOrientation::Vertical, false) == 1,
+  Expect(tree.InsertLeaf(0, SplitOrientation::Vertical, false) == 1,
          "splitting the only pane to the right should seat the new pane after it");
-  Expect(tree.InsertLeaf(1, EditorSplitOrientation::Vertical, false) == 2 &&
+  Expect(tree.InsertLeaf(1, SplitOrientation::Vertical, false) == 2 &&
              tree.leaf_count() == 3 && tree.node(tree.root()).children.size() == 3,
          "a same-axis split should extend the row rather than nest");
   Expect(std::fabs(tree.node(tree.root()).weights[0] - 0.5f) < 0.001f &&
@@ -747,7 +747,7 @@ void TestWorkspaceSharedEditorSplitLayout() {
          "a new pane should take half of the pane it split");
 
   // A cross-axis split nests, and dropping that pane again flattens the row back.
-  Expect(tree.InsertLeaf(0, EditorSplitOrientation::Horizontal, true) == 0 &&
+  Expect(tree.InsertLeaf(0, SplitOrientation::Horizontal, true) == 0 &&
              tree.leaf_count() == 4 && tree.node(tree.root()).children.size() == 3,
          "a cross-axis split should nest inside the pane it splits");
   tree.RemoveLeaf(0);
@@ -764,12 +764,12 @@ void TestWorkspaceSharedEditorSplitLayout() {
 
   // The cap is a hard one, and the tree stays consistent at it.
   while (!tree.full()) {
-    Expect(tree.InsertLeaf(tree.leaf_count() - 1, EditorSplitOrientation::Vertical, false) !=
-               EditorSplitTree::kNoLeaf,
+    Expect(tree.InsertLeaf(tree.leaf_count() - 1, SplitOrientation::Vertical, false) !=
+               SplitTree::kNoLeaf,
            "splitting below the cap should succeed");
   }
   Expect(tree.leaf_count() == microide::workspace::kMaxEditorGroups &&
-             tree.InsertLeaf(0, EditorSplitOrientation::Vertical, false) == EditorSplitTree::kNoLeaf,
+             tree.InsertLeaf(0, SplitOrientation::Vertical, false) == SplitTree::kNoLeaf,
          "the split tree should refuse to grow past the editor group cap");
 
   // MoveLeaf relocates without ever growing: it is the one structural edit a FULL
@@ -777,37 +777,37 @@ void TestWorkspaceSharedEditorSplitLayout() {
   // lets another pane's last tab be dropped on an edge at the cap.
   Expect(tree.full(), "the cap fixture should still be full here");
   const std::size_t moved_at_cap = tree.MoveLeaf(microide::workspace::kMaxEditorGroups - 1, 0,
-                                                 EditorSplitOrientation::Vertical, true);
-  Expect(moved_at_cap != EditorSplitTree::kNoLeaf &&
+                                                 SplitOrientation::Vertical, true);
+  Expect(moved_at_cap != SplitTree::kNoLeaf &&
              tree.leaf_count() == microide::workspace::kMaxEditorGroups,
          "moving a pane at the cap should succeed and keep the pane count");
-  Expect(!tree.node(tree.root()).leaf() && tree.NodeForLeaf(moved_at_cap) != EditorSplitTree::kNoNode,
+  Expect(!tree.node(tree.root()).leaf() && tree.NodeForLeaf(moved_at_cap) != SplitTree::kNoNode,
          "the moved pane should still be addressable");
-  Expect(tree.MoveLeaf(0, 0, EditorSplitOrientation::Vertical, true) == EditorSplitTree::kNoLeaf &&
-             tree.MoveLeaf(0, 99, EditorSplitOrientation::Vertical, true) ==
-                 EditorSplitTree::kNoLeaf &&
-             tree.MoveLeaf(0, 1, EditorSplitOrientation::None, true) == EditorSplitTree::kNoLeaf,
+  Expect(tree.MoveLeaf(0, 0, SplitOrientation::Vertical, true) == SplitTree::kNoLeaf &&
+             tree.MoveLeaf(0, 99, SplitOrientation::Vertical, true) ==
+                 SplitTree::kNoLeaf &&
+             tree.MoveLeaf(0, 1, SplitOrientation::None, true) == SplitTree::kNoLeaf,
          "a move onto itself, past the end, or with no orientation should be refused");
 
   // A row of three: moving the last pane to the front reorders the row.
-  EditorSplitTree row;
-  row.InsertLeaf(0, EditorSplitOrientation::Vertical, false);
-  row.InsertLeaf(1, EditorSplitOrientation::Vertical, false);
-  Expect(row.leaf_count() == 3 && row.MoveLeaf(2, 0, EditorSplitOrientation::Vertical, true) == 0,
+  SplitTree row;
+  row.InsertLeaf(0, SplitOrientation::Vertical, false);
+  row.InsertLeaf(1, SplitOrientation::Vertical, false);
+  Expect(row.leaf_count() == 3 && row.MoveLeaf(2, 0, SplitOrientation::Vertical, true) == 0,
          "moving the trailing pane before the leading one should land it at ordinal 0");
   Expect(row.leaf_count() == 3 && row.node(row.root()).children.size() == 3,
          "the row should stay one flat branch of three across the move");
-  Expect(row.MoveLeaf(0, 1, EditorSplitOrientation::Vertical, true) == EditorSplitTree::kNoLeaf ||
+  Expect(row.MoveLeaf(0, 1, SplitOrientation::Vertical, true) == SplitTree::kNoLeaf ||
              row.leaf_count() == 3,
          "a same-axis move should never change the pane count");
 
   // Round-trip through the persisted pre-order form, and reject a malformed one.
-  EditorSplitTree restored;
+  SplitTree restored;
   Expect(restored.Load(tree.Flatten()) && restored == tree,
          "a split tree should survive its flat pre-order form");
-  microide::workspace::EditorSplitTreeRecord malformed;
-  malformed.push_back(microide::workspace::EditorSplitNodeRecord{
-      .orientation = EditorSplitOrientation::Vertical, .weights = {}});
+  microide::workspace::SplitTreeRecord malformed;
+  malformed.push_back(microide::workspace::SplitNodeRecord{
+      .orientation = SplitOrientation::Vertical, .weights = {}});
   Expect(!restored.Load(malformed) && restored.leaf_count() == 1,
          "a branch with no children should be rejected and leave a single pane");
 }
@@ -817,19 +817,19 @@ void TestWorkspaceSharedEditorSplitLayout() {
 // keyed on this (TD-2026-08-30-280), so a mutator that forgot to stamp would
 // serve the previous grid's rects for the new one -- and nothing else would say.
 void TestWorkspaceSharedEditorSplitTreeRevision() {
-  using microide::workspace::EditorSplitOrientation;
-  using microide::workspace::EditorSplitTree;
+  using microide::workspace::SplitOrientation;
+  using microide::workspace::SplitTree;
 
-  EditorSplitTree tree;
+  SplitTree tree;
   std::uint64_t seen = tree.revision();
   auto expect_stamped = [&](const char* what) {
     Expect(tree.revision() != seen, std::string(what) + " should stamp a new tree revision");
     seen = tree.revision();
   };
 
-  Expect(tree.InsertLeaf(0, EditorSplitOrientation::Vertical, false) == 1, "first split");
+  Expect(tree.InsertLeaf(0, SplitOrientation::Vertical, false) == 1, "first split");
   expect_stamped("InsertLeaf (leaf becomes a branch)");
-  Expect(tree.InsertLeaf(1, EditorSplitOrientation::Vertical, false) == 2, "second split");
+  Expect(tree.InsertLeaf(1, SplitOrientation::Vertical, false) == 2, "second split");
   expect_stamped("InsertLeaf (sibling in an existing branch)");
   Expect(tree.ResizeDivider(tree.root(), 0, 0.3f), "divider move");
   expect_stamped("ResizeDivider");
@@ -838,11 +838,11 @@ void TestWorkspaceSharedEditorSplitTreeRevision() {
   Expect(tree.ResetDivider(tree.root(), 0), "divider reset");
   expect_stamped("ResetDivider");
 
-  const EditorSplitTree copy = tree;
+  const SplitTree copy = tree;
   Expect(copy.revision() == tree.revision() && copy == tree,
          "a copy should carry its source's revision, and be equal to it");
 
-  Expect(tree.MoveLeaf(0, 2, EditorSplitOrientation::Vertical, false) != EditorSplitTree::kNoLeaf,
+  Expect(tree.MoveLeaf(0, 2, SplitOrientation::Vertical, false) != SplitTree::kNoLeaf,
          "move pane");
   expect_stamped("MoveLeaf");
   Expect(copy.revision() != tree.revision(),
@@ -850,7 +850,7 @@ void TestWorkspaceSharedEditorSplitTreeRevision() {
   tree.RemoveLeaf(0);
   expect_stamped("RemoveLeaf");
 
-  EditorSplitTree loaded;
+  SplitTree loaded;
   const std::uint64_t before_load = loaded.revision();
   Expect(loaded.Load(copy.Flatten()) && loaded == copy, "Load should round-trip the copy");
   Expect(loaded.revision() != before_load, "Load should stamp a new revision");
@@ -859,7 +859,7 @@ void TestWorkspaceSharedEditorSplitTreeRevision() {
          "equal revisions imply equal shape, never the converse");
 
   seen = tree.revision();
-  tree.ResetToEvenSplit(3, EditorSplitOrientation::Horizontal);
+  tree.ResetToEvenSplit(3, SplitOrientation::Horizontal);
   expect_stamped("ResetToEvenSplit");
   tree.Reset();
   expect_stamped("Reset");
@@ -981,14 +981,14 @@ void TestWorkspaceLayoutInputsStructMatchesPositionalForm() {
 }
 
 void TestWorkspaceEditorGroupRects() {
-  using microide::workspace::EditorSplitOrientation;
-  using microide::workspace::EditorSplitTree;
+  using microide::workspace::SplitOrientation;
+  using microide::workspace::SplitTree;
   // A reference single-window layout: sidebar hidden, no bottom panel.
   const auto layout = microide::workspace::ComputeLayout(1000.0f, 700.0f, /*sidebar_visible=*/false,
                                                          /*bottom_panel_visible=*/false, 0.0f, 0.0f);
 
   // Single group reproduces the base layout rects byte-for-byte.
-  EditorSplitTree tree;
+  SplitTree tree;
   const auto one = microide::workspace::ComputeEditorGroupRects(layout, tree);
   Expect(one.groups.size() == 1 && one.dividers.empty(),
          "single editor group should produce one rect and no divider");
@@ -999,8 +999,8 @@ void TestWorkspaceEditorGroupRects() {
 
   // Side-by-side split: surfaces partition the editor-area width with a divider
   // between them; both groups keep their own breadcrumb band.
-  EditorSplitTree side_by_side;
-  side_by_side.InsertLeaf(0, EditorSplitOrientation::Vertical, false);
+  SplitTree side_by_side;
+  side_by_side.InsertLeaf(0, SplitOrientation::Vertical, false);
   const auto vertical = microide::workspace::ComputeEditorGroupRects(layout, side_by_side);
   Expect(vertical.groups.size() == 2 && vertical.dividers.size() == 1 &&
              vertical.dividers[0].vertical,
@@ -1022,8 +1022,8 @@ void TestWorkspaceEditorGroupRects() {
 
   // Stacked split: group 0 keeps the top tab strip; group 1 synthesizes a tab
   // strip inside its own region, with no breadcrumb of its own.
-  EditorSplitTree stacked;
-  stacked.InsertLeaf(0, EditorSplitOrientation::Horizontal, false);
+  SplitTree stacked;
+  stacked.InsertLeaf(0, SplitOrientation::Horizontal, false);
   const auto horizontal = microide::workspace::ComputeEditorGroupRects(layout, stacked);
   Expect(horizontal.groups.size() == 2 && horizontal.dividers.size() == 1 &&
              !horizontal.dividers[0].vertical,
@@ -1042,10 +1042,10 @@ void TestWorkspaceEditorGroupRects() {
   // Three panes in a row, then the middle one split downward: the rects tile the
   // editor area with one divider per gap, and the nested pair stays inside the
   // column it was carved from.
-  EditorSplitTree grid;
-  grid.InsertLeaf(0, EditorSplitOrientation::Vertical, false);
-  grid.InsertLeaf(1, EditorSplitOrientation::Vertical, false);
-  grid.InsertLeaf(1, EditorSplitOrientation::Horizontal, false);
+  SplitTree grid;
+  grid.InsertLeaf(0, SplitOrientation::Vertical, false);
+  grid.InsertLeaf(1, SplitOrientation::Vertical, false);
+  grid.InsertLeaf(1, SplitOrientation::Horizontal, false);
   const auto four = microide::workspace::ComputeEditorGroupRects(layout, grid);
   Expect(four.groups.size() == 4 && four.dividers.size() == 3,
          "four panes should produce four rect sets and three dividers");
@@ -1061,27 +1061,27 @@ void TestWorkspaceEditorGroupRects() {
   // Directional neighbours read straight off those rects: pane 0 is the left
   // column, 1/2 are the top/bottom of the middle column, 3 is the right column.
   using microide::workspace::AdjacentEditorGroup;
-  using microide::workspace::EditorGroupDirection;
+  using microide::workspace::PaneDirection;
   using microide::workspace::kNoEditorGroup;
-  Expect(AdjacentEditorGroup(four, 0, EditorGroupDirection::Right) == 1,
+  Expect(AdjacentEditorGroup(four, 0, PaneDirection::Right) == 1,
          "right of the left column is the top pane of the middle column");
-  Expect(AdjacentEditorGroup(four, 0, EditorGroupDirection::Left) == kNoEditorGroup &&
-             AdjacentEditorGroup(four, 0, EditorGroupDirection::Up) == kNoEditorGroup &&
-             AdjacentEditorGroup(four, 0, EditorGroupDirection::Down) == kNoEditorGroup,
+  Expect(AdjacentEditorGroup(four, 0, PaneDirection::Left) == kNoEditorGroup &&
+             AdjacentEditorGroup(four, 0, PaneDirection::Up) == kNoEditorGroup &&
+             AdjacentEditorGroup(four, 0, PaneDirection::Down) == kNoEditorGroup,
          "a full-height leftmost column has no neighbour left, above or below it");
-  Expect(AdjacentEditorGroup(four, 1, EditorGroupDirection::Down) == 2 &&
-             AdjacentEditorGroup(four, 2, EditorGroupDirection::Up) == 1,
+  Expect(AdjacentEditorGroup(four, 1, PaneDirection::Down) == 2 &&
+             AdjacentEditorGroup(four, 2, PaneDirection::Up) == 1,
          "the stacked pair should be each other's vertical neighbours");
-  Expect(AdjacentEditorGroup(four, 1, EditorGroupDirection::Left) == 0 &&
-             AdjacentEditorGroup(four, 2, EditorGroupDirection::Left) == 0,
+  Expect(AdjacentEditorGroup(four, 1, PaneDirection::Left) == 0 &&
+             AdjacentEditorGroup(four, 2, PaneDirection::Left) == 0,
          "both halves of the middle column see the left column beside them");
-  Expect(AdjacentEditorGroup(four, 3, EditorGroupDirection::Right) == kNoEditorGroup,
+  Expect(AdjacentEditorGroup(four, 3, PaneDirection::Right) == kNoEditorGroup,
          "nothing lies right of the rightmost column");
-  Expect(AdjacentEditorGroup(four, 3, EditorGroupDirection::Left) == 1,
+  Expect(AdjacentEditorGroup(four, 3, PaneDirection::Left) == 1,
          "the pane left of the right column is the nearer of the stacked pair");
-  Expect(AdjacentEditorGroup(one, 0, EditorGroupDirection::Right) == kNoEditorGroup,
+  Expect(AdjacentEditorGroup(one, 0, PaneDirection::Right) == kNoEditorGroup,
          "a single pane has no neighbour in any direction");
-  Expect(AdjacentEditorGroup(four, 9, EditorGroupDirection::Right) == kNoEditorGroup,
+  Expect(AdjacentEditorGroup(four, 9, PaneDirection::Right) == kNoEditorGroup,
          "an out-of-range origin resolves to no neighbour");
 }
 

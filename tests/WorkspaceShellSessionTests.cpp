@@ -84,12 +84,12 @@ void TestWorkspaceShellTerminalLayoutRevivesAcrossSessions() {
     TerminalSessionTestAccess::AppendOutput(
         WorkspaceShellTestAccess::TerminalPaneSession(shell, 1),
         "\x1b]7;file://localhost" + (root / "src").string() + "\x1b\\");
-    Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::TerminalSplit, {}),
-           "split the moved pane");
+    Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::TerminalSplitDown, {}),
+           "split the moved pane down: a grid, not a row");
     Expect(WorkspaceShellTestAccess::ActiveTerminalPaneLaunchDirectory(shell) == root / "src",
            "a split starts where the pane it splits is now");
-    Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::TerminalFocusPaneLeft, {}),
-           "back to the middle pane");
+    Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::TerminalFocusPaneUp, {}),
+           "back up to the moved pane");
     Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::Term, {}), "a second tab");
     Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::TerminalPrev, {}),
            "back to the split tab");
@@ -109,9 +109,13 @@ void TestWorkspaceShellTerminalLayoutRevivesAcrossSessions() {
   Expect(WorkspaceShellTestAccess::ActiveTerminalPaneLaunchDirectory(restored) == root / "src",
          "each shell starts in the directory it was in");
   const std::vector<float> weights = WorkspaceShellTestAccess::TerminalPaneWeights(restored);
-  Expect(weights.size() == 3 && std::fabs(weights[0] - 0.5f) < 1e-4f &&
-             std::fabs(weights[1] - 0.25f) < 1e-4f,
-         "the splits keep their shares");
+  const auto& grid = WorkspaceShellTestAccess::TerminalSplit(restored);
+  Expect(weights.size() == 2 && std::fabs(weights[0] - 0.5f) < 1e-4f && grid.leaf_count() == 3 &&
+             grid.node(grid.root()).orientation == microide::workspace::SplitOrientation::Vertical &&
+             !grid.node(grid.node(grid.root()).children[1]).leaf() &&
+             grid.node(grid.node(grid.root()).children[1]).orientation ==
+                 microide::workspace::SplitOrientation::Horizontal,
+         "the grid comes back as it was: a pane beside a stack of two, with its shares");
   Expect(WorkspaceShellTestAccess::PanelMaximized(restored), "the panel comes back maximized");
   Expect(WorkspaceShellTestAccess::PanelContent(restored) ==
              WorkspaceShell::PanelContentKind::Terminal,
@@ -1923,7 +1927,7 @@ void TestWorkspaceShellRestoredBackgroundTabSharesALiveBuffer() {
 
   // beta goes live in a second pane first.
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
-             restored, microide::workspace::EditorSplitOrientation::Vertical),
+             restored, microide::workspace::SplitOrientation::Vertical),
          "split");
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(restored, file_b), "beta opens in the new pane");
   const microide::editor::TextViewport& live = WorkspaceShellTestAccess::ActiveEditor(restored);
@@ -3511,7 +3515,7 @@ void TestWorkspaceShellRestoreSessionPreservesOutgoingBaseChoice() {
 }
 
 void TestWorkspaceShellRestoreSessionPreservesEditorGroupSplit() {
-  using microide::workspace::EditorSplitOrientation;
+  using microide::workspace::SplitOrientation;
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path file_a = root / "a.txt";
@@ -3539,7 +3543,7 @@ void TestWorkspaceShellRestoreSessionPreservesEditorGroupSplit() {
   WorkspaceShellTestAccess::SetGroupScrollLine(shell, 0, 40);
   // Stack a second group (split-down) and give it a distinct document; focus
   // stays on the new group.
-  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Horizontal),
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, SplitOrientation::Horizontal),
          "split-down should create the second group");
   WorkspaceShellTestAccess::OpenFile(shell, file_b);
   WorkspaceShellTestAccess::SaveSessionState(shell);
@@ -3554,7 +3558,7 @@ void TestWorkspaceShellRestoreSessionPreservesEditorGroupSplit() {
   Expect(WorkspaceShellTestAccess::EditorGroupCount(restored) == 2,
          "restore should rebuild both editor groups");
   Expect(WorkspaceShellTestAccess::GroupSplitOrientation(restored) ==
-             EditorSplitOrientation::Horizontal,
+             SplitOrientation::Horizontal,
          "restore should preserve the stacked split orientation");
   Expect(WorkspaceShellTestAccess::FocusedGroupIndex(restored) == 1,
          "restore should preserve the focused group index");
@@ -3573,7 +3577,7 @@ void TestWorkspaceShellRestoreSessionPreservesEditorGroupSplit() {
 // back with two independent documents for one file: an edit in one pane no
 // longer showed in the other. The second restored tab must share the first's.
 void TestWorkspaceShellRestoreSessionSharesADirtyBufferAcrossPanes() {
-  using microide::workspace::EditorSplitOrientation;
+  using microide::workspace::SplitOrientation;
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path file_a = root / "a.txt";
@@ -3591,7 +3595,7 @@ void TestWorkspaceShellRestoreSessionSharesADirtyBufferAcrossPanes() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenFile(shell, file_a);
-  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, SplitOrientation::Vertical),
          "split-right should clone a.txt into a second pane");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "X"), "typing dirties the shared buffer");
   Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).dirty() &&
@@ -3620,7 +3624,7 @@ void TestWorkspaceShellRestoreSessionSharesADirtyBufferAcrossPanes() {
 // A three-pane grid (two columns, the second stacked) must come back with its
 // SHAPE, not just its group count: the split tree is what the session carries now.
 void TestWorkspaceShellRestoreSessionPreservesNestedEditorSplitShape() {
-  using microide::workspace::EditorSplitOrientation;
+  using microide::workspace::SplitOrientation;
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path file_a = root / "a.txt";
@@ -3639,9 +3643,9 @@ void TestWorkspaceShellRestoreSessionPreservesNestedEditorSplitShape() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1400, 900);
   WorkspaceShellTestAccess::OpenFile(shell, file_a);
-  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, SplitOrientation::Vertical),
          "split right");
-  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Horizontal),
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, SplitOrientation::Horizontal),
          "split the new column downward");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 3, "three panes before saving");
   const SDL_FRect pane_one_before = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, 1);
@@ -3659,7 +3663,7 @@ void TestWorkspaceShellRestoreSessionPreservesNestedEditorSplitShape() {
   Expect(WorkspaceShellTestAccess::EditorSplit(restored).leaf_count() == 3,
          "the restored split tree should have one leaf per group");
   Expect(WorkspaceShellTestAccess::GroupSplitOrientation(restored) ==
-             EditorSplitOrientation::Vertical,
+             SplitOrientation::Vertical,
          "the outermost split should still be side-by-side");
   Expect(microide::workspace::RectsEqual(
              WorkspaceShellTestAccess::GroupEditorSurfaceRect(restored, 1), pane_one_before) &&
@@ -3772,7 +3776,7 @@ void TestWorkspaceShellClosePromotesDeferredTabWithRestoredViewState() {
 // its own strip was highlighting. The destination had this loader call from the
 // start; the source never got one.
 void TestWorkspaceShellMoveTabToGroupHydratesSourceGroupNeighbor() {
-  using microide::workspace::EditorSplitOrientation;
+  using microide::workspace::SplitOrientation;
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path file_a = root / "alpha.txt";
@@ -3805,7 +3809,7 @@ void TestWorkspaceShellMoveTabToGroupHydratesSourceGroupNeighbor() {
          "the never-activated neighbour must restore deferred for this fixture to bite");
 
   WorkspaceShellTestAccess::SetWindowSize(restored, 1600, 900);
-  Expect(WorkspaceShellTestAccess::SplitEditorGroup(restored, EditorSplitOrientation::Vertical),
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(restored, SplitOrientation::Vertical),
          "the fixture needs a second editor group");
   Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(restored), "focus returns to group 0");
   Expect(WorkspaceShellTestAccess::GroupActiveTabIndex(restored, 0) == 1,

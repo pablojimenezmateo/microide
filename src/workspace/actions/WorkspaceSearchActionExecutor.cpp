@@ -32,25 +32,42 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
       }
       return DispatchResult::Handled;
     case ActionId::TerminalSplit:
-      if (!context_.terminal_panel().SplitActivePane()) {
+    case ActionId::TerminalSplitDown:
+      if (!context_.terminal_panel().SplitActivePane(id == ActionId::TerminalSplitDown
+                                                         ? SplitOrientation::Horizontal
+                                                         : SplitOrientation::Vertical)) {
         return reject("No terminal to split");
       }
       return DispatchResult::Handled;
     case ActionId::TerminalFocusPaneLeft:
     case ActionId::TerminalFocusPaneRight:
-      // Declined SILENTLY (empty feedback) from the Alt+Left/Right shortcut when
+    case ActionId::TerminalFocusPaneUp:
+    case ActionId::TerminalFocusPaneDown: {
+      // Declined SILENTLY (empty feedback) from the Ctrl+Shift+arrow shortcut when
       // there is no pane that way: the key then falls through to the shell, so a
       // single-pane terminal keeps the chord for its own programs. Asked for by
       // name, the answer says why ("command failed" said nothing).
-      if (!context_.terminal_panel().FocusPaneInDirection(
-              id == ActionId::TerminalFocusPaneLeft ? -1 : 1)) {
+      const PaneDirection direction = id == ActionId::TerminalFocusPaneLeft    ? PaneDirection::Left
+                                      : id == ActionId::TerminalFocusPaneRight ? PaneDirection::Right
+                                      : id == ActionId::TerminalFocusPaneUp    ? PaneDirection::Up
+                                                                               : PaneDirection::Down;
+      if (!context_.terminal_panel().FocusPaneInDirection(direction)) {
         if (source == ActionSource::Shortcut) {
           return reject("");
         }
-        return reject(id == ActionId::TerminalFocusPaneLeft ? "No terminal pane to the left"
-                                                            : "No terminal pane to the right");
+        switch (direction) {
+          case PaneDirection::Left:
+            return reject("No terminal pane to the left");
+          case PaneDirection::Right:
+            return reject("No terminal pane to the right");
+          case PaneDirection::Up:
+            return reject("No terminal pane above");
+          case PaneDirection::Down:
+            return reject("No terminal pane below");
+        }
       }
       return DispatchResult::Handled;
+    }
     case ActionId::TerminalNext:
     case ActionId::TerminalPrev:
       if (!context_.terminal_panel().CycleTerminalTab(id == ActionId::TerminalNext ? 1 : -1)) {

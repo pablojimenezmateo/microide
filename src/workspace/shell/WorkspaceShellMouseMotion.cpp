@@ -198,15 +198,14 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       // that pair's share and no other pane in the row moves.
       const std::uint8_t node = context_.interaction_state.drag_editor_split_node;
       const std::uint8_t boundary = context_.interaction_state.drag_editor_split_boundary;
-      for (const EditorSplitDividerRect& divider :
+      for (const SplitDividerRect& divider :
            ComputeEditorGroupRectsForState(drag_layout).dividers) {
         if (divider.node != node || divider.boundary != boundary || divider.pair_extent <= 0.0f) {
           continue;
         }
-        const float pointer = divider.vertical ? static_cast<float>(event.motion.x)
-                                               : static_cast<float>(event.motion.y);
         context_.current_project_state.editor_split.ResizeDivider(
-            node, boundary, (pointer - divider.pair_start) / divider.pair_extent);
+            node, boundary,
+            divider.ShareAt(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y)));
         NoteLayoutInputsChanged();
         // Only the two panes sharing this divider move, and their COMBINED span
         // is what `pair_start`/`pair_extent` name -- an invariant of the resize,

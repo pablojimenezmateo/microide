@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "TestSupport.h"
-#include "workspace/EditorSplitTree.h"
+#include "workspace/SplitTree.h"
 
 namespace microide::tests {
 
@@ -14,12 +14,12 @@ namespace microide::tests {
 // walk, the focus index, the per-group caches, session persistence -- stated as
 // one check and run after every edit of a random edit sequence. A tree that
 // breaks any of these draws a group nowhere, or two groups in one place.
-inline void ExpectSplitTreeWellFormed(const microide::workspace::EditorSplitTree& tree,
+inline void ExpectSplitTreeWellFormed(const microide::workspace::SplitTree& tree,
                                       const std::string& context) {
   const auto nodes = tree.nodes();
-  Expect(tree.node_count() <= microide::workspace::EditorSplitTree::kMaxNodes, "node budget: " + context);
+  Expect(tree.node_count() <= microide::workspace::SplitTree::kMaxNodes, "node budget: " + context);
   Expect(tree.root() < tree.node_count(), "root is a live node: " + context);
-  Expect(nodes[tree.root()].parent == microide::workspace::EditorSplitTree::kNoNode, "root has no parent: " + context);
+  Expect(nodes[tree.root()].parent == microide::workspace::SplitTree::kNoNode, "root has no parent: " + context);
 
   // Reachability and per-branch shape, by a walk of our own.
   std::vector<bool> seen(tree.node_count(), false);
@@ -69,20 +69,20 @@ inline void ExpectSplitTreeWellFormed(const microide::workspace::EditorSplitTree
   std::vector<bool> leaf_seen(tree.node_count(), false);
   for (std::size_t ordinal = 0; ordinal < tree.leaf_count(); ++ordinal) {
     const std::uint8_t node = tree.NodeForLeaf(ordinal);
-    Expect(node != microide::workspace::EditorSplitTree::kNoNode && node < tree.node_count() && nodes[node].leaf(),
+    Expect(node != microide::workspace::SplitTree::kNoNode && node < tree.node_count() && nodes[node].leaf(),
            "every ordinal names a live leaf: " + context);
-    if (node == microide::workspace::EditorSplitTree::kNoNode || node >= tree.node_count()) {
+    if (node == microide::workspace::SplitTree::kNoNode || node >= tree.node_count()) {
       return;
     }
     Expect(!leaf_seen[node], "ordinals name distinct leaves: " + context);
     leaf_seen[node] = true;
     Expect(tree.LeafOrdinal(node) == ordinal, "LeafOrdinal inverts NodeForLeaf: " + context);
   }
-  Expect(tree.NodeForLeaf(tree.leaf_count()) == microide::workspace::EditorSplitTree::kNoNode,
+  Expect(tree.NodeForLeaf(tree.leaf_count()) == microide::workspace::SplitTree::kNoNode,
          "one past the last ordinal is no leaf: " + context);
 
   // The persisted form round-trips to an equal, well-formed tree.
-  microide::workspace::EditorSplitTree reloaded;
+  microide::workspace::SplitTree reloaded;
   Expect(reloaded.Load(tree.Flatten()), "Flatten() loads back: " + context);
   Expect(reloaded == tree, "the reloaded tree equals the original: " + context);
   Expect(reloaded.leaf_count() == tree.leaf_count(), "and keeps the leaf count: " + context);

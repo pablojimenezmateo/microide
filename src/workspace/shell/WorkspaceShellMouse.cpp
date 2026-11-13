@@ -392,7 +392,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
 
   // Editor-group split divider: grab it to resize the two panes it separates.
   if (event.button.button == SDL_BUTTON_LEFT) {
-    for (const EditorSplitDividerRect& divider :
+    for (const SplitDividerRect& divider :
          ComputeEditorGroupRectsForState(layout).dividers) {
       // Grab region == cursor region: the resize cursor is shown over divider.rect
       // exactly (see CursorKindForPosition), so the drag starts in the same span and

@@ -7,7 +7,8 @@
 #include <string>
 #include <string_view>
 
-#include "workspace/TerminalPaneLayout.h"
+#include "workspace/PaneDrop.h"
+#include "workspace/SplitTreeLayout.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/state/WorkspaceProjectState.h"
 
@@ -176,17 +177,26 @@ class TerminalPanelService {
   bool FindHostTerminal(const terminal::HostIdentity& identity, bool focus);
 
   // --- panes ----------------------------------------------------------------
-  // Split the active tab: a started pane to the right of its active pane, which
-  // becomes the new active pane. False when there is no terminal, the tab is
-  // full, or the launch failed.
-  bool SplitActivePane();
+  // Split the active tab: a started pane beside its active pane -- to the right
+  // (`Vertical`) or below (`Horizontal`) -- which becomes the new active pane.
+  // False when there is no terminal, the tab is full, or the launch failed.
+  bool SplitActivePane(SplitOrientation orientation = SplitOrientation::Vertical);
+  // Move every pane of tab `source` into tab `target`, beside its pane
+  // `target_pane` on the side `zone` names (a strip tab dropped on a pane edge),
+  // then close the emptied source tab and show `target` with the dragged tab's
+  // active pane focused. False (nothing changed) for a centre/none zone, the
+  // same tab, an index out of range, or panes past the cap.
+  bool JoinTabIntoPane(std::size_t source, std::size_t target, std::size_t target_pane, PaneDropZone zone);
+  // Whether that join would be accepted: the predicate the drop overlay offers
+  // a zone by, so an overlay is never painted for a drop that is then refused.
+  bool CanJoinTabs(std::size_t source, std::size_t target) const;
   // Close the active pane; the tab closes with its last pane. False when there
   // is no terminal.
   bool CloseActivePane();
-  // Move the active pane left (-1) or right (+1) inside the active tab, without
-  // wrapping. False when there is no pane that way — the key then falls through
-  // to the shell, so a single-pane terminal keeps Alt+Left/Right for its programs.
-  bool FocusPaneInDirection(int delta);
+  // Activate the pane on screen that way from the active one, without wrapping.
+  // False when there is no pane that way -- the key then falls through to the
+  // shell, so a single-pane terminal keeps the chord for its programs.
+  bool FocusPaneInDirection(PaneDirection direction);
   // Make the pane under (x, y) active. True when a DIFFERENT pane was activated.
   bool ActivatePaneAt(const WorkspaceLayout& layout, float x, float y);
   // Pane whose body contains the point, or nullptr.
@@ -198,16 +208,17 @@ class TerminalPanelService {
   // --- geometry -------------------------------------------------------------
   // The active tab's panes carved out of the panel body. Empty when the panel is
   // not showing a terminal.
-  TerminalPaneRectsLayout PaneRects(const WorkspaceLayout& layout) const;
+  SplitRegionsLayout PaneRects(const WorkspaceLayout& layout) const;
   // Body rect of the pane the keyboard acts on: the whole panel body for a
   // single pane, that pane's slice when split.
   SDL_FRect ActivePaneBodyRect(const WorkspaceLayout& layout) const;
   // Divider under the point, if any.
-  std::optional<TerminalPaneDividerRect> DividerAt(const WorkspaceLayout& layout,
+  std::optional<SplitDividerRect> DividerAt(const WorkspaceLayout& layout,
                                                    float x,
                                                    float y) const;
-  bool ResizeActiveTabDivider(std::size_t boundary, float first_share);
-  bool ResetActiveTabDivider(std::size_t boundary);
+  // The divider at (`node`, `boundary`) of the active tab's tree.
+  bool ResizeActiveTabDivider(std::uint8_t node, std::size_t boundary, float first_share);
+  bool ResetActiveTabDivider(std::uint8_t node, std::size_t boundary);
 
   // --- panel ----------------------------------------------------------------
   // Hide the panel, or show it again with the content it had. Showing an empty

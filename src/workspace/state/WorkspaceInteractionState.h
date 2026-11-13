@@ -11,6 +11,7 @@
 #include <span>
 #include <vector>
 
+#include "workspace/PaneDrop.h"
 #include "workspace/state/WorkspaceTextInputState.h"
 
 namespace microide::workspace {
@@ -64,20 +65,6 @@ enum class TabDragKind {
   Terminal,
 };
 
-// Where an editor tab dragged over an editor PANE BODY (rather than over a tab
-// strip) would land, VS Code style. `Center` moves it into that pane's group;
-// the four edge zones carve a new group out of that pane on that side. `None`
-// means the pointer is not offering a body drop at all -- it is over a strip, or
-// over a pane where the drop would be a no-op.
-enum class EditorBodyDropZone : std::uint8_t {
-  None,
-  Center,
-  Left,
-  Right,
-  Top,
-  Bottom,
-};
-
 struct TabDragState {
   TabDragKind kind = TabDragKind::None;
   float press_x = 0.0f;
@@ -116,16 +103,27 @@ struct TabDragState {
   // rate-limited so it steps at a readable pace rather than per motion event.
   int autoscroll_direction = 0;
   Uint64 last_autoscroll_ms = 0;
-  // Drop-on-editor-body target (VS Code's drag-to-split). Resolved on every
-  // motion event while the pointer sits over a pane body instead of a strip; the
-  // commit and the translucent drop overlay both read it, and `body_drop_rect`
-  // is the exact region that overlay paints, kept here so neither the renderer
-  // nor the damage pass has to recompute the pane geometry.
-  EditorBodyDropZone body_drop_zone = EditorBodyDropZone::None;
+  // Drop-on-pane-body target (VS Code's drag-to-split), for an editor tab over
+  // an editor pane and for a terminal tab over the terminal body. Resolved on
+  // every motion event while the pointer sits over a pane body instead of a
+  // strip; the commit and the translucent drop overlay both read it, and
+  // `body_drop_rect` is the exact region that overlay paints, kept here so
+  // neither the renderer nor the damage pass has to recompute the pane geometry.
+  // `body_drop_group_index` is the editor group, or the terminal pane, under the
+  // pointer.
+  PaneDropZone body_drop_zone = PaneDropZone::None;
   std::size_t body_drop_group_index = 0;
   SDL_FRect body_drop_rect{0.0f, 0.0f, 0.0f, 0.0f};
+  // Terminal drags only. The tab that was on screen before the press activated
+  // the dragged one, and so the tab a body drop joins the dragged one into: the
+  // body shows it again while the pointer is over the body. `kNoTerminalDropTab`
+  // when the panel was showing no other terminal (the press landed on the tab
+  // already on screen, or the panel showed an output channel).
+  static constexpr std::size_t kNoTerminalDropTab = static_cast<std::size_t>(-1);
+  std::size_t terminal_drop_tab = kNoTerminalDropTab;
   bool body_drop() const {
-    return kind == TabDragKind::Editor && body_drop_zone != EditorBodyDropZone::None;
+    return (kind == TabDragKind::Editor || kind == TabDragKind::Terminal) &&
+           body_drop_zone != PaneDropZone::None;
   }
 };
 
@@ -147,7 +145,7 @@ struct PathDragState {
   float pointer_x = 0.0f;
   float pointer_y = 0.0f;
   Target target = Target::None;
-  EditorBodyDropZone zone = EditorBodyDropZone::None;  // EditorGroup
+  PaneDropZone zone = PaneDropZone::None;  // EditorGroup
   std::size_t group_index = 0;                         // EditorGroup
   std::filesystem::path folder;                        // TreeFolder
   // What the drop preview paints for the target (a pane or its half, a folder's
@@ -244,7 +242,9 @@ struct InteractionState {
   // boundary pair still names the same two panes after the resize moves them.
   std::uint8_t drag_editor_split_node = 0;
   std::uint8_t drag_editor_split_boundary = 0;
-  // Boundary (left pane index) of the terminal pane divider being dragged.
+  // The terminal pane divider being dragged, addressed in the active tab's split
+  // tree the same way as the editor's.
+  std::uint8_t drag_terminal_pane_node = 0;
   std::uint8_t drag_terminal_pane_boundary = 0;
   TabDragState tab_drag;
   PathDragState path_drag;

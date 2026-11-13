@@ -1034,7 +1034,7 @@ void OpenFileDirtiedOnlyInNonFocusedGroup(WorkspaceShell& shell,
          "non-focused-group fixture should open the project");
   WorkspaceShellTestAccess::OpenFile(shell, file_a);
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
-             shell, microide::workspace::EditorSplitOrientation::Vertical),
+             shell, microide::workspace::SplitOrientation::Vertical),
          "splitting the editor group should succeed");
   Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1, "the new group should be focused");
   WorkspaceShellTestAccess::OpenFile(shell, file_b);
@@ -1301,7 +1301,7 @@ void TestWorkspaceShellClosingNonActiveDirtyTabDoesNotStrandFocus() {
 // non-focused group too. Otherwise it keeps the stale path and (with all-groups autosave)
 // writes the buffer back to the old path, resurrecting the pre-rename file.
 void TestWorkspaceShellRenameRetargetsAllEditorGroups() {
-  using microide::workspace::EditorSplitOrientation;
+  using microide::workspace::SplitOrientation;
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   std::filesystem::create_directories(root);
@@ -1313,7 +1313,7 @@ void TestWorkspaceShellRenameRetargetsAllEditorGroups() {
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
   // Split (clones the active tab) so shared.txt is open in both groups, then focus back.
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
-             shell, microide::workspace::EditorSplitOrientation::Vertical),
+             shell, microide::workspace::SplitOrientation::Vertical),
          "split should create a second group showing the same file");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "two groups after split");
   Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "focus back to group 0");
@@ -1333,7 +1333,7 @@ void TestWorkspaceShellRenameRetargetsAllEditorGroups() {
 // non-focused group too (otherwise a dirty split view resurrects the deleted file on the
 // next autosave flush).
 void TestWorkspaceShellDeleteClosesTabInAllEditorGroups() {
-  using microide::workspace::EditorSplitOrientation;
+  using microide::workspace::SplitOrientation;
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   std::filesystem::create_directories(root);
@@ -1344,7 +1344,7 @@ void TestWorkspaceShellDeleteClosesTabInAllEditorGroups() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
-             shell, microide::workspace::EditorSplitOrientation::Vertical),
+             shell, microide::workspace::SplitOrientation::Vertical),
          "split should create a second group showing the same file");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "two groups after split");
   Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "focus back to group 0");
@@ -1365,7 +1365,7 @@ void TestWorkspaceShellDeleteClosesTabInAllEditorGroups() {
 // Regression (TD-2026-07-17A-036): a compare tab living in a BACKGROUND split group must
 // be retargeted on a folder rename, not left to "self-heal" on the old/deleted path.
 void TestWorkspaceShellRenameRetargetsBackgroundCompareTab() {
-  using microide::workspace::EditorSplitOrientation;
+  using microide::workspace::SplitOrientation;
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
   const std::filesystem::path source = root / "src" / "compare.txt";
@@ -1382,7 +1382,7 @@ void TestWorkspaceShellRenameRetargetsBackgroundCompareTab() {
   // ends up in the eventual BACKGROUND group after we refocus group 0.
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, scratch);
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
-             shell, microide::workspace::EditorSplitOrientation::Vertical),
+             shell, microide::workspace::SplitOrientation::Vertical),
          "split should create a second group");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "two groups after split");
   Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
@@ -1411,7 +1411,7 @@ void TestWorkspaceShellRenameRetargetsBackgroundCompareTab() {
 // Regression (TD-2026-07-17A-036): a merge tab living in a BACKGROUND split group must be
 // retargeted on rename of its output path, mirroring the compare case above.
 void TestWorkspaceShellRenameRetargetsBackgroundMergeTab() {
-  using microide::workspace::EditorSplitOrientation;
+  using microide::workspace::SplitOrientation;
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path base = root / "base.txt";
@@ -1429,7 +1429,7 @@ void TestWorkspaceShellRenameRetargetsBackgroundMergeTab() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, scratch);
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
-             shell, microide::workspace::EditorSplitOrientation::Vertical),
+             shell, microide::workspace::SplitOrientation::Vertical),
          "split should create a second group");
   Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
          "merge editor should open in the focused (soon background) group");
@@ -1459,7 +1459,7 @@ void TestWorkspaceShellRenameRetargetsBackgroundMergeTab() {
 // Regression (TD-2026-07-17A-036): deleting a folder must close compare AND merge tabs that
 // live in a BACKGROUND split group, not just the focused group.
 void TestWorkspaceShellDeleteClosesBackgroundCompareAndMergeTabs() {
-  using microide::workspace::EditorSplitOrientation;
+  using microide::workspace::SplitOrientation;
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
   const std::filesystem::path work = root / "work";
@@ -1483,7 +1483,7 @@ void TestWorkspaceShellDeleteClosesBackgroundCompareAndMergeTabs() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, scratch);
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
-             shell, microide::workspace::EditorSplitOrientation::Vertical),
+             shell, microide::workspace::SplitOrientation::Vertical),
          "split should create a second group");
   Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
          "merge editor should open in the focused (soon background) group");
@@ -1523,7 +1523,7 @@ void TestWorkspaceShellClosingOneViewOfASharedDirtyBufferDoesNotPrompt() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, alpha);
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
-             shell, microide::workspace::EditorSplitOrientation::Vertical),
+             shell, microide::workspace::SplitOrientation::Vertical),
          "split-right should clone alpha into a second pane");
   Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1, "the split is focused");
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("X");
@@ -1541,7 +1541,7 @@ void TestWorkspaceShellClosingOneViewOfASharedDirtyBufferDoesNotPrompt() {
 
   // close-group on a pane whose view is not the last one: no prompt either.
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
-             shell, microide::workspace::EditorSplitOrientation::Vertical),
+             shell, microide::workspace::SplitOrientation::Vertical),
          "split-right again");
   Expect(WorkspaceShellTestAccess::CloseEditorGroup(shell), "close-group should succeed");
   Expect(!WorkspaceShellTestAccess::DirtyPromptVisible(shell),

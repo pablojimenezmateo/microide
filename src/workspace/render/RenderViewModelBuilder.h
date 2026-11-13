@@ -315,7 +315,7 @@ struct BottomPanelSurfaceViewModel {
   // is filled by frame prep (which owns the state) along with `terminal_panes`
   // once the panel rect is known.
   TerminalTabState* terminal_tab = nullptr;
-  TerminalPaneRectsLayout terminal_panes;
+  SplitRegionsLayout terminal_panes;
 };
 
 // Right-side debug pane surface (Call Stack / Variables / Watch / Breakpoints).

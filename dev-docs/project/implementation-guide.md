@@ -43,11 +43,16 @@ The current SDL shell already includes:
 
 - multi-project tabs with app-level workspace restore
 - normal editor tabs, compare tabs, and merge tabs
-- first-class editor groups laid out by an n-ary split TREE (`EditorSplitTree`, whose leaves ARE
+- first-class editor groups laid out by an n-ary split TREE (`SplitTree`, whose leaves ARE
   `editor_groups` in order), with split-right/split-down and drag-a-tab-onto-a-pane-edge, on any
   pane including one that is already half of a split; a pane emptied by a drag collapses and its
   room goes back to its siblings. Capped at `kMaxEditorGroups` (8) so every layout container
   stays heap-free
+- terminal tabs laid out by the same `SplitTree` (leaves ARE `TerminalTabState::panes`):
+  split right/down, directional pane focus by geometry, dividers on both axes, and a terminal
+  strip tab dragged onto the panel body's pane edge joins the tab on screen (the editor's
+  `PaneDropAt` rule, edges only). One region walk (`ComputeSplitRegions`) and one cap
+  (`kMaxSplitLeaves`) serve both surfaces
 - a shared decorated text-grid render path across editor, compare, and merge surfaces, so row
   fills, syntax runs, and underline semantics do not degrade just because a file or diff is large
 - checkpointed syntax-highlight state in `TextViewport`, so random jumps in large files reuse

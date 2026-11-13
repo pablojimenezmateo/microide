@@ -733,8 +733,8 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/coordinators/WorkspacePathMutationCoordinatorDirty.cpp
   src/workspace/coordinators/WorkspacePathMutationCoordinatorTabs.cpp
   src/workspace/coordinators/WorkspaceLifecycleCoordinator.cpp
-  src/workspace/EditorSplitTree.cpp
-  src/workspace/TerminalPaneLayout.cpp
+  src/workspace/SplitTree.cpp
+  src/workspace/SplitTreeLayout.cpp
   src/workspace/WorkspaceLayout.cpp
   src/workspace/render/OverviewRuler.cpp
   src/workspace/WorkspaceLayoutMergeAndChrome.cpp
@@ -848,7 +848,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceVirtualDocument.cpp
   src/workspace/WorkspaceTerminalSelection.cpp
   src/workspace/BufferFindScope.cpp
-  src/workspace/EditorBodyDrop.cpp
+  src/workspace/PaneDrop.cpp
   src/workspace/ProjectSearchLiveHits.cpp
   src/workspace/OpenDocumentWatch.cpp
   src/workspace/WorkspaceTextSearch.cpp
@@ -897,7 +897,7 @@ add_library(microide_core OBJECT ${MICROIDE_CORE_SOURCES})
 target_include_directories(microide_core PRIVATE src)
 # SYSTEM: stb_image.h is vendored upstream code. Its warnings (35 of them under a
 # broad -W set) are not ours to fix, and leaving them in the stream is what makes a
-# real one — like the dead ternary -Wduplicated-branches found in EditorSplitTree —
+# real one — like the dead ternary -Wduplicated-branches found in SplitTree —
 # invisible in the noise. This is also what lets that flag be permanent below.
 target_include_directories(microide_core SYSTEM PRIVATE third_party/stb)
 target_precompile_headers(microide_core PRIVATE ${MICROIDE_PCH_HEADERS})
@@ -942,7 +942,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   # identical, or an else-if repeating an earlier test, is a decision that was
   # written and then does not happen. The sweep that added -Wduplicated-cond found
   # dead ternaries; the one that added -Wduplicated-branches found another
-  # (EditorSplitTree::Rebuild). GCC-only — clang has neither, and turns an unknown
+  # (SplitTree::Rebuild). GCC-only — clang has neither, and turns an unknown
   # -W into an error under -Werror.
   list(APPEND MICROIDE_EXTRA_WARNINGS -Wduplicated-cond -Wduplicated-branches)
 endif()
@@ -1330,8 +1330,8 @@ add_executable(microide_tests
   tests/KeybindingReachabilityTests.cpp
   tests/TypeNavigationTests.cpp
   tests/EditorNavigationHistoryTests.cpp
-  tests/EditorSplitTreeTests.cpp
-  tests/TerminalPaneLayoutTests.cpp
+  tests/SplitTreeTests.cpp
+  tests/SplitTreeLayoutTests.cpp
   tests/RecentsServiceTests.cpp
   tests/GitServiceTests.cpp
   tests/GitRepositoryServiceTests.cpp

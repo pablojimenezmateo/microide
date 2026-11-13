@@ -85,12 +85,13 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       if (const auto divider = operations_.terminal_pane_divider_at(layout, x, y);
           divider.has_value()) {
         if (event.button.clicks >= 2) {
-          operations_.reset_terminal_pane_divider(divider->boundary);
+          operations_.reset_terminal_pane_divider(divider->node, divider->boundary);
           interaction_state_.drag_target = DragTarget::None;
           return true;
         }
         interaction_state_.drag_target = DragTarget::TerminalPaneDivider;
-        interaction_state_.drag_terminal_pane_boundary = static_cast<std::uint8_t>(divider->boundary);
+        interaction_state_.drag_terminal_pane_node = divider->node;
+        interaction_state_.drag_terminal_pane_boundary = divider->boundary;
         state_.surface.focus = FocusTarget::Panel;
         return true;
       }
@@ -398,14 +399,17 @@ bool PanelMouseCoordinator::HandleDrag(const SDL_Event& event,
       return false;
     }
     // Re-derive the divider's pair span for this frame's rects, so the pointer
-    // converts straight into that pair's share and no other pane moves.
-    const std::size_t boundary = interaction_state_.drag_terminal_pane_boundary;
-    for (const TerminalPaneDividerRect& divider : operations_.terminal_pane_rects(layout).dividers) {
-      if (divider.boundary != boundary || divider.pair_extent <= 0.0f) {
+    // converts straight into that pair's share along the divider's own axis and
+    // no other pane moves.
+    const std::uint8_t node = interaction_state_.drag_terminal_pane_node;
+    const std::uint8_t boundary = interaction_state_.drag_terminal_pane_boundary;
+    for (const SplitDividerRect& divider : operations_.terminal_pane_rects(layout).dividers) {
+      if (divider.node != node || divider.boundary != boundary || divider.pair_extent <= 0.0f) {
         continue;
       }
       operations_.resize_terminal_pane_divider(
-          boundary, (static_cast<float>(event.motion.x) - divider.pair_start) / divider.pair_extent);
+          node, boundary,
+          divider.ShareAt(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y)));
       return true;
     }
     return false;
@@ -842,12 +846,12 @@ PanelMouseCoordinator& WorkspaceShell::MakePanelMouseCoordinator() {
                 return MakeTerminalPanelService().PaneRects(layout);
               },
           .resize_terminal_pane_divider =
-              [this](std::size_t boundary, float share) {
-                return MakeTerminalPanelService().ResizeActiveTabDivider(boundary, share);
+              [this](std::uint8_t node, std::size_t boundary, float share) {
+                return MakeTerminalPanelService().ResizeActiveTabDivider(node, boundary, share);
               },
           .reset_terminal_pane_divider =
-              [this](std::size_t boundary) {
-                return MakeTerminalPanelService().ResetActiveTabDivider(boundary);
+              [this](std::uint8_t node, std::size_t boundary) {
+                return MakeTerminalPanelService().ResetActiveTabDivider(node, boundary);
               },
       });
   return *glue_->panel_mouse_coordinator;

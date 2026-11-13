@@ -519,8 +519,8 @@ std::optional<TerminalLinkHit> WorkspaceShell::TerminalLinkAtPoint(float x, floa
   if (tab == nullptr || !BottomPanelShowsTerminal() || !layout_state.has_value()) {
     return std::nullopt;
   }
-  const TerminalPaneRectsLayout pane_rects = tab->PaneRects(BottomPanelContentRect(*layout_state));
-  const std::size_t pane_index = TerminalPaneIndexAt(pane_rects, x, y);
+  const SplitRegionsLayout pane_rects = tab->PaneRects(BottomPanelContentRect(*layout_state));
+  const std::size_t pane_index = SplitRegionIndexAt(pane_rects, x, y);
   if (pane_index >= tab->pane_count()) {
     return std::nullopt;
   }
@@ -769,7 +769,7 @@ void WorkspaceShell::SetBottomPanelScrollRow(int scroll_row,
 // them live let a partial frame's clips, and the QA redraw verifier's reference,
 // see different output and a different caret.
 void WorkspaceShell::PrepareTerminalPanesForFrame(TerminalTabState& tab,
-                                                  const TerminalPaneRectsLayout& rects,
+                                                  const SplitRegionsLayout& rects,
                                                   float panel_height) {
   // Before the layouts read scroll_row, so a scrolled-up view tracks the same
   // content instead of jumping forward by a trimmed batch.

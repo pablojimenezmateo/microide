@@ -112,7 +112,7 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
       }
     }
     if (HasPositiveArea(layout.editor_surface)) {
-      for (const EditorSplitDividerRect& divider : group_rects.dividers) {
+      for (const SplitDividerRect& divider : group_rects.dividers) {
         if (!DirtyHintSkips(dirty_rect_hint, divider.rect)) {
           skip_editor_surface = false;
           break;
@@ -126,7 +126,8 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
   // without the preview: on screen it never appeared (QA flow wb-editor-groups).
   if (skip_window_chrome && dirty_rect_hint.has_value()) {
     const TabDragState& drag = context_.interaction_state.tab_drag;
-    if (drag.dragging && drag.body_drop() && !DirtyHintSkips(dirty_rect_hint, drag.body_drop_rect)) {
+    if (drag.dragging && drag.kind == TabDragKind::Editor && drag.body_drop() &&
+        !DirtyHintSkips(dirty_rect_hint, drag.body_drop_rect)) {
       skip_window_chrome = false;
     }
   }

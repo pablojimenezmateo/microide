@@ -853,16 +853,36 @@ util::JsonValue BuildEditorTabJson(std::size_t index, const TabEntry& tab, bool 
   return util::JsonValue(std::move(object));
 }
 
-const char* SplitOrientationName(EditorSplitOrientation orientation) {
+const char* SplitOrientationName(SplitOrientation orientation) {
   switch (orientation) {
-    case EditorSplitOrientation::Vertical:
+    case SplitOrientation::Vertical:
       return "vertical";
-    case EditorSplitOrientation::Horizontal:
+    case SplitOrientation::Horizontal:
       return "horizontal";
-    case EditorSplitOrientation::None:
+    case SplitOrientation::None:
       break;
   }
   return "leaf";
+}
+
+// A split tree in its persisted pre-order form: a leaf is one pane (in pane
+// order); a branch lays its children along `orientation` with `weights`. The
+// editor grid and every terminal tab report this one shape.
+util::JsonArray SplitTreeJson(const SplitTree& tree) {
+  util::JsonArray split;
+  for (const SplitNodeRecord& record : tree.Flatten()) {
+    util::JsonObject node;
+    node["orientation"] = util::JsonValue(std::string(SplitOrientationName(record.orientation)));
+    if (!record.weights.empty()) {
+      util::JsonArray weights;
+      for (float weight : record.weights) {
+        weights.push_back(util::JsonValue(static_cast<double>(weight)));
+      }
+      node["weights"] = util::JsonValue(std::move(weights));
+    }
+    split.push_back(util::JsonValue(std::move(node)));
+  }
+  return split;
 }
 
 }  // namespace
@@ -877,19 +897,7 @@ util::JsonValue ControlChannelService::BuildEditor() const {
   root["focusedGroupIndex"] = util::JsonValue(static_cast<std::int64_t>(focused));
   // The split tree in its persisted pre-order form: a leaf is one group (in group
   // order); a branch lays its children along `orientation` with `weights`.
-  util::JsonArray split;
-  for (const EditorSplitNodeRecord& record : state.editor_split.Flatten()) {
-    util::JsonObject node;
-    node["orientation"] = util::JsonValue(std::string(SplitOrientationName(record.orientation)));
-    if (!record.weights.empty()) {
-      util::JsonArray weights;
-      for (float weight : record.weights) {
-        weights.push_back(util::JsonValue(static_cast<double>(weight)));
-      }
-      node["weights"] = util::JsonValue(std::move(weights));
-    }
-    split.push_back(util::JsonValue(std::move(node)));
-  }
+  util::JsonArray split = SplitTreeJson(state.editor_split);
   root["split"] = util::JsonValue(std::move(split));
 
   util::JsonArray groups;
@@ -1241,6 +1249,7 @@ util::JsonValue ControlChannelService::BuildTerminals() const {
       panes.push_back(util::JsonValue(std::move(pane_object)));
     }
     tab_object["panes"] = util::JsonValue(std::move(panes));
+    tab_object["split"] = util::JsonValue(SplitTreeJson(tab->split));
     tabs.push_back(util::JsonValue(std::move(tab_object)));
   }
   return util::JsonValue(std::move(tabs));

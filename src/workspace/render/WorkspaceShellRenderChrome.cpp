@@ -203,11 +203,10 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   // panes (window chrome runs later in the frame) so it tints the buffer it will
   // replace. The rect was resolved on the motion event that produced it; nothing
   // is recomputed per frame.
-  if (tab_drag.body_drop() && tab_drag.dragging) {
-    const SDL_FRect& region = tab_drag.body_drop_rect;
-    DrawFilledRect(renderer, region,
-                   SDL_Color{theme_.accent.r, theme_.accent.g, theme_.accent.b, 64});
-    render::OutlineRect(renderer, region, theme_.accent);
+  // A terminal tab's drop over the panel body paints in the panel's own pass,
+  // which runs after this one and would cover it.
+  if (tab_drag.kind == TabDragKind::Editor && tab_drag.body_drop() && tab_drag.dragging) {
+    detail::DrawPaneDropPreview(renderer, theme_, tab_drag.body_drop_rect);
   }
 
   // VS Code's tab.unfocusedActive* colours: with a split open, EVERY pane paints

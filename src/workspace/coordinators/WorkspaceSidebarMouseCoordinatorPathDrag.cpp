@@ -3,7 +3,7 @@
 #include <cmath>
 #include <string>
 
-#include "workspace/EditorBodyDrop.h"
+#include "workspace/PaneDrop.h"
 #include "workspace/SidebarMetrics.h"
 #include "util/PathMatch.h"
 
@@ -41,7 +41,7 @@ bool SidebarMouseCoordinator::HandlePathDragMotion(float x, float y, const Works
 void SidebarMouseCoordinator::ResolvePathDropTarget(const WorkspaceLayout& layout) {
   PathDragState& drag = interaction_state_.path_drag;
   drag.target = PathDragState::Target::None;
-  drag.zone = EditorBodyDropZone::None;
+  drag.zone = PaneDropZone::None;
   drag.folder.clear();
   drag.drop_rect = SDL_FRect{0.0f, 0.0f, 0.0f, 0.0f};
   const float x = drag.pointer_x;
@@ -58,7 +58,7 @@ void SidebarMouseCoordinator::ResolvePathDropTarget(const WorkspaceLayout& layou
         continue;
       }
       const bool can_split = !on_strip && !(operations_.editor_area_full && operations_.editor_area_full());
-      const EditorBodyDrop drop = EditorBodyDropAt(group.editor_surface, x, y, can_split);
+      const PaneDrop drop = PaneDropAt(group.editor_surface, x, y, can_split);
       drag.target = PathDragState::Target::EditorGroup;
       drag.group_index = gi;
       drag.zone = drop.zone;
@@ -120,16 +120,14 @@ bool SidebarMouseCoordinator::FinishPathDrag(bool copy) {
   }
   switch (drag.target) {
     case PathDragState::Target::EditorGroup:
-      if (drag.zone == EditorBodyDropZone::Center || drag.zone == EditorBodyDropZone::None) {
+      if (drag.zone == PaneDropZone::Center || drag.zone == PaneDropZone::None) {
         if (operations_.open_path_in_group) {
           (void)operations_.open_path_in_group(drag.path, drag.group_index);
         }
       } else if (operations_.open_path_in_new_group) {
-        const bool side_by_side = drag.zone == EditorBodyDropZone::Left || drag.zone == EditorBodyDropZone::Right;
-        const bool before = drag.zone == EditorBodyDropZone::Left || drag.zone == EditorBodyDropZone::Top;
-        (void)operations_.open_path_in_new_group(
-            drag.path, drag.group_index,
-            side_by_side ? EditorSplitOrientation::Vertical : EditorSplitOrientation::Horizontal, before);
+        const PaneDropSplit split = SplitForPaneDropZone(drag.zone);
+        (void)operations_.open_path_in_new_group(drag.path, drag.group_index, split.orientation,
+                                                 split.before);
       }
       break;
     case PathDragState::Target::TreeFolder:

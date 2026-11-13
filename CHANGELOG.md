@@ -10,6 +10,17 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Added
 
+- **Terminal tabs split both ways, and a terminal tab can be dragged into
+  another.** With two or three terminal tabs open, drag one off the strip onto
+  the terminal on screen: its left, right, top or bottom edge highlights as the
+  editor's do, and dropping puts the dragged terminal on that side -- every pane
+  it had, in their own arrangement -- and closes its tab. **Split Terminal Down**
+  (`term-split-down`) stacks a new pane under the active one; **Focus Terminal
+  Pane Up / Down** (Ctrl+Shift+Up / Down, `term-pane-up` / `term-pane-down`)
+  join Left / Right, and all four follow the panes on screen. Dividers between
+  stacked panes drag vertically. A tab holds up to eight panes, as the editor
+  area holds eight groups, and a session restores each tab's arrangement.
+
 - **Structural diffs, after difftastic.** Compare tabs now read each changed
   hunk as syntax -- identifiers, operators, whole strings and comments, and
   bracketed groups, by the file's language -- and highlight only the tokens that

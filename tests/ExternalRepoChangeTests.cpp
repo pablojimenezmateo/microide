@@ -378,7 +378,7 @@ void TestWorkspaceShellIdenticalRewriteWithSplitViewsReadsOnce() {
   // anything in flight has landed before the assertions run.
   Expect(WorkspaceShellTestAccess::QuiesceFileIndexWatcherForTesting(shell),
          "the fixture must have a live watcher to quiesce");
-  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, workspace::EditorSplitOrientation::Vertical),
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, workspace::SplitOrientation::Vertical),
          "the fixture must actually split, or this is the single-view test again");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2 &&
              WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == 1,
@@ -1001,7 +1001,7 @@ void TestWorkspaceShellExternalChangeReloadsBothSplitGroups() {
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
   // Split, then open the same file as a clean view in the new (now focused) group.
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
-             shell, microide::workspace::EditorSplitOrientation::Vertical),
+             shell, microide::workspace::SplitOrientation::Vertical),
          "splitting the editor group should succeed");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "there should be two groups");
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
@@ -1042,7 +1042,7 @@ void TestWorkspaceShellAutosaveFlushesNonFocusedGroupDirtyTab() {
   WorkspaceShellTestAccess::OpenFile(shell, file_a);
   // Split, then open file_b only in the new (focused) group 1.
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
-             shell, microide::workspace::EditorSplitOrientation::Vertical),
+             shell, microide::workspace::SplitOrientation::Vertical),
          "splitting the editor group should succeed");
   Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1, "the new group should be focused");
   WorkspaceShellTestAccess::OpenFile(shell, file_b);

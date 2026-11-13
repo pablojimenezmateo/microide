@@ -552,7 +552,7 @@ class WorkspaceActionContext {
   void ResetCaretBlink();
   // Split the focused editor group in the given orientation, optionally opening
   // `path` in the new group instead of the cloned active document.
-  bool SplitEditorGroup(EditorSplitOrientation orientation,
+  bool SplitEditorGroup(SplitOrientation orientation,
                         const std::filesystem::path& path,
                         std::string* error_message);
   bool FocusOtherGroup();

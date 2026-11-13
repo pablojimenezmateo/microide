@@ -18,18 +18,27 @@ terminal strip, and its structure lives in `src/workspace/`:
   the selection, the pending-input capture for "copy last command", and the
   launch record (`launch_working_directory`, `launch_command`) that Relaunch
   reuses.
-- `TerminalTabState` is one strip tab: one to `kMaxTerminalPanes` (6) panes side
-  by side, their normalised horizontal shares (`weights`), the active pane and
-  the unseen-output flag behind the strip's activity dot. `InsertPane` /
-  `RemovePane` / `ResizeDivider` edit panes and weights together, so a pane is
-  never left without a share; `PaneRects(body)` carves the panel body for the
-  render, hit-test and grid-fit paths.
-- `TerminalPaneLayout.{h,cpp}` holds the pure arithmetic: the weight edits (a
-  split halves the split pane, a removal hands the share to the left neighbour,
-  a divider drag moves only its pair with a 10 % floor) and the exact tiling of a
-  body rect into panes and 6 px dividers, with the last pane absorbing the
-  rounding. `tests/TerminalPaneLayoutTests.cpp` pins it, including a random
-  weight-mix tiling property.
+- `TerminalTabState` is one strip tab: one to `kMaxTerminalPanes` (8, the
+  shared `kMaxSplitLeaves`) panes arranged by a `SplitTree` -- the same n-ary,
+  heap-free tree the editor grid uses, whose leaves in order ARE the panes -- the
+  active pane and the unseen-output / bell flags behind the strip's marks.
+  `SplitPane` / `GraftTab` / `RemovePane` / `ResizeDivider` edit panes and tree
+  together, so a pane is never left without a region; `PaneRects(body)` carves
+  the panel body for the render, hit-test and grid-fit paths.
+- `SplitTreeLayout.{h,cpp}` holds the pure geometry both surfaces share:
+  `ComputeSplitRegions` tiles a rect by a tree (6 px dividers addressed by node
+  and boundary, the last child absorbing the rounding), `SplitRegionIndexAt`
+  hit-tests, `AdjacentSplitRegion` answers the directional pane verbs from what
+  is on screen. `tests/SplitTreeLayoutTests.cpp` pins it with a random-tree
+  tiling property; `tests/SplitTreeTests.cpp` pins the tree edits, including
+  `GraftTree`.
+- Dragging a terminal strip tab off the strip onto the panel body joins it into
+  the tab that was on screen before the press (`TabMouseCoordinator`
+  `ResolveTerminalBodyDrop` / `TerminalPanelService::JoinTabIntoPane`): the body
+  shows that tab while the pointer is over it, each pane offers its four edges
+  through the editor's `PaneDropAt` rule (no centre: a pane holds one session),
+  and the drop grafts every pane of the dragged tab, in its own arrangement, onto
+  that side. Back on the strip the gesture is a plain reorder again.
 - `TerminalPanelService` (`services/`) owns the verbs: open / close / cycle tabs,
   split / close / focus / activate panes, relaunch, divider edits, and the
   panel's visibility (`TogglePanel`, `ToggleTerminal`) and maximized state. The

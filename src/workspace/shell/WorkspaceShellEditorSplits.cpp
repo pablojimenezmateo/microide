@@ -9,7 +9,7 @@
 namespace microide::workspace {
 
 // Editor splits are modelled as editor *groups* above the tab level, arranged by
-// `ProjectWorkspaceState::editor_split` (see EditorSplitTree). Every geometry
+// `ProjectWorkspaceState::editor_split` (see SplitTree). Every geometry
 // query here goes through the one tree walk in ComputeEditorGroupRects, which
 // produces each group's tab strip, breadcrumb and surface together — the panes
 // below are just that walk's surface rects, with the focused group's external-
@@ -44,7 +44,7 @@ EditorGroupRectsLayout WorkspaceShell::ComputeEditorGroupRectsForState(
   // leaf and ran ~490 times in one grid scenario, once per damage event
   // (TD-2026-08-30-280). Returned by value on purpose: a reference into a mutable
   // memo would silently change under a caller that asks again mid-loop.
-  const EditorSplitTree& split = context_.current_project_state.editor_split;
+  const SplitTree& split = context_.current_project_state.editor_split;
   if (editor_group_rects_memo_layout_.has_value() &&
       editor_group_rects_memo_tree_revision_ == split.revision() &&
       *editor_group_rects_memo_layout_ == layout) {

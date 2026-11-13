@@ -1128,7 +1128,7 @@ struct ProjectWorkspaceState {
   std::vector<DeferredTabHandle> recently_closed_editors;
   // Go Back / Go Forward across this project's editors (Alt+Left / Alt+Right).
   EditorNavigationHistory navigation_history;
-  EditorSplitTree editor_split;
+  SplitTree editor_split;
 
   // Side-effect-free accessors. `editor_groups` is invariantly non-empty (the
   // mutation sites that erase/clear a group always restore at least one), and

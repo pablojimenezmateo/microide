@@ -1,4 +1,4 @@
-#include "workspace/EditorSplitTree.h"
+#include "workspace/SplitTree.h"
 
 #include <algorithm>
 #include <atomic>
@@ -9,15 +9,15 @@ namespace microide::workspace {
 namespace {
 
 // Depth-first, children left to right: the order panes appear on screen, and so
-// the order leaf ordinals (== editor group indices) are assigned in.
+// the order leaf ordinals (== pane indices) are assigned in.
 template <typename Visit>
-void WalkDepthFirst(std::span<const EditorSplitTree::Node> nodes,
+void WalkDepthFirst(std::span<const SplitTree::Node> nodes,
                     std::uint8_t root,
                     Visit&& visit) {
   if (root >= nodes.size()) {
     return;
   }
-  util::InlineVector<std::uint8_t, EditorSplitTree::kMaxNodes> stack;
+  util::InlineVector<std::uint8_t, SplitTree::kMaxNodes> stack;
   stack.push_back(root);
   while (!stack.empty()) {
     const std::uint8_t index = stack.back();
@@ -28,7 +28,7 @@ void WalkDepthFirst(std::span<const EditorSplitTree::Node> nodes,
     if (!visit(index)) {
       return;
     }
-    const EditorSplitTree::Node& current = nodes[index];
+    const SplitTree::Node& current = nodes[index];
     for (std::size_t i = current.children.size(); i > 0; --i) {
       stack.push_back(current.children[i - 1]);
     }
@@ -37,7 +37,7 @@ void WalkDepthFirst(std::span<const EditorSplitTree::Node> nodes,
 
 }  // namespace
 
-void EditorSplitTree::Touch() {
+void SplitTree::Touch() {
   // Process-wide so that two DIFFERENT trees can never share a stamp: a
   // per-instance counter would let project A's tree at edit #5 collide with
   // project B's at edit #5 the moment the shell switched between them.
@@ -45,7 +45,7 @@ void EditorSplitTree::Touch() {
   revision_ = next_revision.fetch_add(1, std::memory_order_relaxed) + 1;
 }
 
-void EditorSplitTree::Reset() {
+void SplitTree::Reset() {
   nodes_.clear();
   nodes_.push_back(Node{});
   root_ = 0;
@@ -53,15 +53,15 @@ void EditorSplitTree::Reset() {
   Touch();
 }
 
-void EditorSplitTree::ResetToEvenSplit(std::size_t leaves, EditorSplitOrientation orientation) {
+void SplitTree::ResetToEvenSplit(std::size_t leaves, SplitOrientation orientation) {
   Reset();
-  const std::size_t wanted = std::clamp<std::size_t>(leaves, 1, kMaxEditorGroups);
-  if (wanted < 2 || orientation == EditorSplitOrientation::None) {
+  const std::size_t wanted = std::clamp<std::size_t>(leaves, 1, kMaxSplitLeaves);
+  if (wanted < 2 || orientation == SplitOrientation::None) {
     return;
   }
   nodes_[0].orientation = orientation;
   for (std::size_t i = 0; i < wanted; ++i) {
-    const std::uint8_t leaf = AddNode(EditorSplitOrientation::None, 0);
+    const std::uint8_t leaf = AddNode(SplitOrientation::None, 0);
     nodes_[0].children.push_back(leaf);
     nodes_[0].weights.push_back(1.0f / static_cast<float>(wanted));
   }
@@ -69,7 +69,7 @@ void EditorSplitTree::ResetToEvenSplit(std::size_t leaves, EditorSplitOrientatio
   Touch();
 }
 
-std::uint8_t EditorSplitTree::AddNode(EditorSplitOrientation orientation, std::uint8_t parent) {
+std::uint8_t SplitTree::AddNode(SplitOrientation orientation, std::uint8_t parent) {
   if (nodes_.size() >= kMaxNodes) {
     return kNoNode;
   }
@@ -80,7 +80,7 @@ std::uint8_t EditorSplitTree::AddNode(EditorSplitOrientation orientation, std::u
   return static_cast<std::uint8_t>(nodes_.size() - 1);
 }
 
-std::uint8_t EditorSplitTree::NodeForLeaf(std::size_t leaf) const {
+std::uint8_t SplitTree::NodeForLeaf(std::size_t leaf) const {
   std::size_t seen = 0;
   std::uint8_t found = kNoNode;
   WalkDepthFirst(nodes(), root_, [&](std::uint8_t index) {
@@ -96,7 +96,7 @@ std::uint8_t EditorSplitTree::NodeForLeaf(std::size_t leaf) const {
   return found;
 }
 
-std::size_t EditorSplitTree::LeafOrdinal(std::uint8_t node) const {
+std::size_t SplitTree::LeafOrdinal(std::uint8_t node) const {
   if (node >= nodes_.size() || !nodes_[node].leaf()) {
     return kNoLeaf;
   }
@@ -116,7 +116,7 @@ std::size_t EditorSplitTree::LeafOrdinal(std::uint8_t node) const {
   return ordinal;
 }
 
-std::size_t EditorSplitTree::CountLeaves() const {
+std::size_t SplitTree::CountLeaves() const {
   std::size_t leaves = 0;
   WalkDepthFirst(nodes(), root_, [&](std::uint8_t index) {
     leaves += nodes_[index].leaf() ? 1 : 0;
@@ -125,7 +125,7 @@ std::size_t EditorSplitTree::CountLeaves() const {
   return leaves;
 }
 
-void EditorSplitTree::Normalise(Node& branch) {
+void SplitTree::Normalise(Node& branch) {
   if (branch.weights.empty()) {
     return;
   }
@@ -160,10 +160,10 @@ void EditorSplitTree::Normalise(Node& branch) {
   }
 }
 
-std::size_t EditorSplitTree::InsertLeaf(std::size_t leaf,
-                                        EditorSplitOrientation orientation,
+std::size_t SplitTree::InsertLeaf(std::size_t leaf,
+                                        SplitOrientation orientation,
                                         bool before) {
-  if (orientation == EditorSplitOrientation::None || full()) {
+  if (orientation == SplitOrientation::None || full()) {
     return kNoLeaf;
   }
   const std::uint8_t target = NodeForLeaf(leaf);
@@ -184,7 +184,7 @@ std::size_t EditorSplitTree::InsertLeaf(std::size_t leaf,
     if (position == branch.children.size()) {
       return kNoLeaf;
     }
-    const std::uint8_t fresh = AddNode(EditorSplitOrientation::None, parent);
+    const std::uint8_t fresh = AddNode(SplitOrientation::None, parent);
     if (fresh == kNoNode) {
       return kNoLeaf;
     }
@@ -202,8 +202,8 @@ std::size_t EditorSplitTree::InsertLeaf(std::size_t leaf,
 
   // Otherwise the leaf itself becomes the branch, keeping its slot in whatever
   // holds it, with the old pane and the new one as its two children.
-  const std::uint8_t moved = AddNode(EditorSplitOrientation::None, target);
-  const std::uint8_t fresh = AddNode(EditorSplitOrientation::None, target);
+  const std::uint8_t moved = AddNode(SplitOrientation::None, target);
+  const std::uint8_t fresh = AddNode(SplitOrientation::None, target);
   if (moved == kNoNode || fresh == kNoNode) {
     Rebuild();
     return kNoLeaf;
@@ -221,11 +221,11 @@ std::size_t EditorSplitTree::InsertLeaf(std::size_t leaf,
   return LeafOrdinal(fresh);
 }
 
-std::size_t EditorSplitTree::MoveLeaf(std::size_t from,
+std::size_t SplitTree::MoveLeaf(std::size_t from,
                                       std::size_t target,
-                                      EditorSplitOrientation orientation,
+                                      SplitOrientation orientation,
                                       bool before) {
-  if (orientation == EditorSplitOrientation::None || from == target || from >= leaf_count_ ||
+  if (orientation == SplitOrientation::None || from == target || from >= leaf_count_ ||
       target >= leaf_count_ || leaf_count_ < 2) {
     return kNoLeaf;
   }
@@ -237,7 +237,86 @@ std::size_t EditorSplitTree::MoveLeaf(std::size_t from,
   return InsertLeaf(target > from ? target - 1 : target, orientation, before);
 }
 
-void EditorSplitTree::RemoveLeaf(std::size_t leaf) {
+std::size_t SplitTree::GraftTree(std::size_t target,
+                                 SplitOrientation orientation,
+                                 bool before,
+                                 const SplitTree& graft) {
+  if (orientation == SplitOrientation::None || target >= leaf_count_ ||
+      leaf_count_ + graft.leaf_count() > kMaxSplitLeaves) {
+    return kNoLeaf;
+  }
+  // Seat one leaf where the graft goes, with every canonical-form rule InsertLeaf
+  // already applies; a single-leaf graft is exactly that and nothing more.
+  const std::size_t seat = InsertLeaf(target, orientation, before);
+  if (seat == kNoLeaf || !graft.is_split()) {
+    return seat;
+  }
+  const std::uint8_t seat_node = NodeForLeaf(seat);
+  if (seat_node == kNoNode) {
+    return kNoLeaf;
+  }
+
+  // Copy the graft's nodes in, its root INTO the seat (which keeps the seat's
+  // place in its parent) and every other node appended. The budget holds: the
+  // tree is compact after InsertLeaf (it never leaves garbage), so it has at most
+  // 2(L+1)-1 nodes, the graft brings G-node count minus its reused root, and
+  // 2(L+1)-1 + 2G-2 = 2(L+G)-1, inside the node budget for L+G <= the leaf cap.
+  util::InlineVector<std::uint8_t, kMaxNodes> remap;
+  for (std::size_t i = 0; i < graft.node_count(); ++i) {
+    remap.push_back(kNoNode);
+  }
+  remap[graft.root()] = seat_node;
+  for (std::size_t i = 0; i < graft.node_count(); ++i) {
+    if (i == graft.root()) {
+      continue;
+    }
+    remap[i] = AddNode(SplitOrientation::None, kNoNode);
+    if (remap[i] == kNoNode) {
+      // Unreachable by the arithmetic above; drop what was added and undo the seat
+      // rather than leave a half-grafted tree.
+      RemoveLeaf(LeafOrdinal(seat_node));
+      return kNoLeaf;
+    }
+  }
+  const std::uint8_t seat_parent = nodes_[seat_node].parent;
+  for (std::size_t i = 0; i < graft.node_count(); ++i) {
+    Node copy = graft.node(static_cast<std::uint8_t>(i));
+    copy.parent = i == graft.root() ? seat_parent : remap[copy.parent];
+    for (std::size_t c = 0; c < copy.children.size(); ++c) {
+      copy.children[c] = remap[copy.children[c]];
+    }
+    nodes_[remap[i]] = copy;
+  }
+
+  // Canonical form: a graft whose root splits the way its new parent does is a
+  // run of siblings in that row, not a nested branch.
+  if (seat_parent != kNoNode && nodes_[seat_parent].orientation == nodes_[seat_node].orientation) {
+    Node& above = nodes_[seat_parent];
+    std::size_t slot = 0;
+    while (slot < above.children.size() && above.children[slot] != seat_node) {
+      ++slot;
+    }
+    if (slot < above.children.size()) {
+      const Node lifted = nodes_[seat_node];
+      const float share = above.weights[slot];
+      above.children.erase(slot);
+      above.weights.erase(slot);
+      for (std::size_t i = 0; i < lifted.children.size(); ++i) {
+        above.children.insert(slot + i, lifted.children[i]);
+        above.weights.insert(slot + i, share * lifted.weights[i]);
+        nodes_[lifted.children[i]].parent = seat_parent;
+      }
+      Normalise(above);
+    }
+  }
+  // Drops the seat node when it was flattened away and recounts the leaves. The
+  // graft occupies the seat's place in leaf order, so its first leaf keeps the
+  // seat's ordinal.
+  Rebuild();
+  return seat;
+}
+
+void SplitTree::RemoveLeaf(std::size_t leaf) {
   if (leaf_count_ <= 1) {
     return;
   }
@@ -304,7 +383,7 @@ void EditorSplitTree::RemoveLeaf(std::size_t leaf) {
   Rebuild();
 }
 
-void EditorSplitTree::Rebuild() {
+void SplitTree::Rebuild() {
   util::InlineVector<std::uint8_t, kMaxNodes> remap;
   for (std::size_t i = 0; i < nodes_.size(); ++i) {
     remap.push_back(kNoNode);
@@ -338,7 +417,7 @@ void EditorSplitTree::Rebuild() {
   Touch();
 }
 
-bool EditorSplitTree::ResizeDivider(std::uint8_t node, std::size_t boundary, float first_share) {
+bool SplitTree::ResizeDivider(std::uint8_t node, std::size_t boundary, float first_share) {
   if (node >= nodes_.size() || nodes_[node].leaf() ||
       boundary + 1 >= nodes_[node].children.size() || !std::isfinite(first_share)) {
     return false;
@@ -354,15 +433,15 @@ bool EditorSplitTree::ResizeDivider(std::uint8_t node, std::size_t boundary, flo
   return true;
 }
 
-bool EditorSplitTree::ResetDivider(std::uint8_t node, std::size_t boundary) {
+bool SplitTree::ResetDivider(std::uint8_t node, std::size_t boundary) {
   return ResizeDivider(node, boundary, 0.5f);
 }
 
-EditorSplitTreeRecord EditorSplitTree::Flatten() const {
-  EditorSplitTreeRecord record;
+SplitTreeRecord SplitTree::Flatten() const {
+  SplitTreeRecord record;
   WalkDepthFirst(nodes(), root_, [&](std::uint8_t index) {
     const Node& current = nodes_[index];
-    EditorSplitNodeRecord entry;
+    SplitNodeRecord entry;
     entry.orientation = current.orientation;
     entry.weights = current.weights;
     record.push_back(entry);
@@ -375,26 +454,26 @@ namespace {
 
 // Consume one node (and, recursively, its children) from a pre-order record.
 // Returns false on anything malformed; `cursor` ends past the subtree.
-bool LoadSubtree(const EditorSplitTreeRecord& record,
+bool LoadSubtree(const SplitTreeRecord& record,
                  std::size_t& cursor,
                  std::uint8_t parent,
-                 util::InlineVector<EditorSplitNode, EditorSplitTree::kMaxNodes>& out,
+                 util::InlineVector<SplitNode, SplitTree::kMaxNodes>& out,
                  std::size_t& leaves) {
-  if (cursor >= record.size() || out.size() >= EditorSplitTree::kMaxNodes) {
+  if (cursor >= record.size() || out.size() >= SplitTree::kMaxNodes) {
     return false;
   }
-  const EditorSplitNodeRecord& entry = record[cursor++];
+  const SplitNodeRecord& entry = record[cursor++];
   const std::uint8_t self = static_cast<std::uint8_t>(out.size());
-  EditorSplitNode node;
+  SplitNode node;
   node.orientation = entry.orientation;
   node.parent = parent;
   out.push_back(node);
-  if (entry.orientation == EditorSplitOrientation::None) {
+  if (entry.orientation == SplitOrientation::None) {
     ++leaves;
-    return entry.weights.empty() && leaves <= kMaxEditorGroups;
+    return entry.weights.empty() && leaves <= kMaxSplitLeaves;
   }
-  if (entry.orientation != EditorSplitOrientation::Vertical &&
-      entry.orientation != EditorSplitOrientation::Horizontal) {
+  if (entry.orientation != SplitOrientation::Vertical &&
+      entry.orientation != SplitOrientation::Horizontal) {
     return false;
   }
   if (entry.weights.size() < 2) {
@@ -413,12 +492,12 @@ bool LoadSubtree(const EditorSplitTreeRecord& record,
 
 }  // namespace
 
-bool EditorSplitTree::Load(const EditorSplitTreeRecord& record) {
+bool SplitTree::Load(const SplitTreeRecord& record) {
   util::InlineVector<Node, kMaxNodes> loaded;
   std::size_t cursor = 0;
   std::size_t leaves = 0;
   if (!LoadSubtree(record, cursor, kNoNode, loaded, leaves) || cursor != record.size() ||
-      leaves == 0 || leaves > kMaxEditorGroups) {
+      leaves == 0 || leaves > kMaxSplitLeaves) {
     Reset();
     return false;
   }
@@ -434,7 +513,7 @@ bool EditorSplitTree::Load(const EditorSplitTreeRecord& record) {
   return true;
 }
 
-bool operator==(const EditorSplitTree& lhs, const EditorSplitTree& rhs) {
+bool operator==(const SplitTree& lhs, const SplitTree& rhs) {
   // STRUCTURAL, not index-by-index. `AddNode` appends, so a tree that has been
   // edited (insert after a remove, say) carries the same shape under a different
   // node numbering than the identical tree built by `Load`. Comparing the storage

@@ -1,4 +1,4 @@
-// Performance scenarios for the n-way editor grid (`EditorSplitTree`).
+// Performance scenarios for the n-way editor grid (`SplitTree`).
 //
 // The split tree shipped with no perf scenario at all. That is the shape
 // dev-docs/project/validation-traps.md warns about: the feature was measured by
@@ -124,7 +124,7 @@ void RunEditorSplitGridWorkout(ScenarioContext& context) {
     context.SkipScenario("editor_split_grid_workout: a four-pane grid reported no dividers");
     return;
   }
-  const SDL_FRect divider = context.EditorSplitDividerRect(0);
+  const SDL_FRect divider = context.SplitDividerRect(0);
   if (divider.w <= 0.0f || divider.h <= 0.0f) {
     context.SkipScenario("editor_split_grid_workout: divider 0 has no geometry to drag");
     return;

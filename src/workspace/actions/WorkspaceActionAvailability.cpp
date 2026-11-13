@@ -455,8 +455,11 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::TermClose:
     case ActionId::TerminalSelectAll:
     case ActionId::TerminalSplit:
+    case ActionId::TerminalSplitDown:
     case ActionId::TerminalFocusPaneLeft:
     case ActionId::TerminalFocusPaneRight:
+    case ActionId::TerminalFocusPaneUp:
+    case ActionId::TerminalFocusPaneDown:
       return active_terminal_pane != nullptr;
     case ActionId::TerminalNext:
     case ActionId::TerminalPrev:

@@ -2196,7 +2196,7 @@ void TestWorkspaceShellEditRepaintsEveryPaneOfTheDocument() {
   WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
   WorkspaceShellTestAccess::SetFocusEditor(shell);
-  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, microide::workspace::EditorSplitOrientation::Vertical) ||
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, microide::workspace::SplitOrientation::Vertical) ||
              WorkspaceShellTestAccess::EditorGroupCount(shell) == 2,
          "the editor should split");
   WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
@@ -3240,7 +3240,7 @@ void TestWorkspaceShellEditorSplitDividerDragPaintsCleanly() {
   WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
-             shell, microide::workspace::EditorSplitOrientation::Vertical),
+             shell, microide::workspace::SplitOrientation::Vertical),
          "the fixture should split the editor");
   WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
   const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
@@ -3294,7 +3294,7 @@ void TestWorkspaceShellPaneTabStripRepaintKeepsTheSplitDivider() {
   WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
-             shell, microide::workspace::EditorSplitOrientation::Vertical),
+             shell, microide::workspace::SplitOrientation::Vertical),
          "the fixture should split the editor");
   WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
   const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
@@ -3700,7 +3700,7 @@ void TestWorkspaceShellASplitDividerThatMovedRepaintsOnAnUnrelatedFrame() {
   WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
-             shell, microide::workspace::EditorSplitOrientation::Vertical),
+             shell, microide::workspace::SplitOrientation::Vertical),
          "the fixture should split the editor");
   WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
   const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
@@ -3756,7 +3756,7 @@ void TestWorkspaceShellBlinkInALowerPaneKeepsTheDivider() {
   WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
   WorkspaceShellTestAccess::SetFocusEditor(shell);
-  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, microide::workspace::EditorSplitOrientation::Horizontal),
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, microide::workspace::SplitOrientation::Horizontal),
          "the editor should split down");
   WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
 
@@ -5456,7 +5456,7 @@ void TestWorkspaceShellLayoutMemoTracksEveryInput() {
 // the same question twice hits and answers identically.
 void TestWorkspaceShellEditorGroupRectsMemoFollowsTheTree() {
   using microide::workspace::EditorGroupRectsLayout;
-  using microide::workspace::EditorSplitOrientation;
+  using microide::workspace::SplitOrientation;
   using microide::workspace::WorkspaceLayout;
   EnsureDummySdlVideo();
   TemporaryDirectory temp_dir;
@@ -5502,7 +5502,7 @@ void TestWorkspaceShellEditorGroupRectsMemoFollowsTheTree() {
   const EditorGroupRectsLayout single = rects_after(layout, false, "single pane, first ask");
   Expect(single.groups.size() == 1, "one pane before the split");
 
-  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, SplitOrientation::Vertical),
          "the fixture needs a split");
   // `SplitEditorGroup` queries the rects itself (redraw placement), so the memo
   // may already be warm here; what matters is that the ANSWER follows the tree.
@@ -6224,7 +6224,7 @@ void TestWorkspaceShellSplitKeepsTheUntitledNumber() {
   auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
   const std::string title = state.focused_group().active_tab().title;
   Expect(title == "Untitled-2", "the second untitled tab is numbered: " + title);
-  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, microide::workspace::EditorSplitOrientation::Vertical),
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, microide::workspace::SplitOrientation::Vertical),
          "the untitled tab splits");
   // Activating the split's tab (a click on it) re-derives its title.
   WorkspaceShellTestAccess::FocusEditorGroup(shell, 1);
@@ -6259,7 +6259,7 @@ void TestWorkspaceShellTabTitleChangeRepaintsTheStrip() {
   // In a pane that is NOT focused: the focused tab's title is also the window
   // title, whose own fingerprint repainted it and hid the gap.
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
-             shell, microide::workspace::EditorSplitOrientation::Vertical),
+             shell, microide::workspace::SplitOrientation::Vertical),
          "the editor splits");
   WorkspaceShellTestAccess::FocusEditorGroup(shell, 0);
   microide::tests::SoftwareCanvas canvas(kWidth, kHeight);
@@ -6304,7 +6304,7 @@ void TestWorkspaceShellSaveAsRenamesANamedTab() {
   // one pane re-points the shared buffer, so the other pane's tab must follow too.
   WorkspaceShellTestAccess::OpenFile(shell, root / "README.md");
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
-             shell, microide::workspace::EditorSplitOrientation::Vertical),
+             shell, microide::workspace::SplitOrientation::Vertical),
          "the editor splits");
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "save renamed.md"),
          "save renamed.md writes the shared buffer");
@@ -6370,7 +6370,7 @@ void TestWorkspaceShellPaletteRowOverATabStripRepaintsOnHover() {
   WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
   WorkspaceShellTestAccess::OpenFile(shell, root / "file_0.txt");
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
-             shell, microide::workspace::EditorSplitOrientation::Horizontal),
+             shell, microide::workspace::SplitOrientation::Horizontal),
          "the editor splits");
   for (int i = 1; i < 12; ++i) {  // a lower strip full of tabs, running under the palette
     WorkspaceShellTestAccess::OpenFileInNewTab(shell, root / ("file_" + std::to_string(i) + ".txt"));
@@ -6584,7 +6584,7 @@ void TestWorkspaceShellEditorClickOnWrappedContinuationRow() {
 // open into. VS Code's tab.unfocusedActiveBorderTop: the unfocused pane's accent
 // is dimmed toward the chrome behind it.
 void TestWorkspaceShellUnfocusedSplitPaneTabIsDimmed() {
-  using microide::workspace::EditorSplitOrientation;
+  using microide::workspace::SplitOrientation;
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path alpha = root / "alpha.txt";
@@ -6595,7 +6595,7 @@ void TestWorkspaceShellUnfocusedSplitPaneTabIsDimmed() {
          "the dimming fixture needs a project tab so the editor strip paints");
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::OpenFile(shell, alpha);
-  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, SplitOrientation::Vertical),
          "the dimming fixture needs two panes");
   const std::size_t focused = WorkspaceShellTestAccess::FocusedGroupIndex(shell);
   const std::size_t unfocused = focused == 0 ? 1 : 0;

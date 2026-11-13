@@ -29,7 +29,7 @@
 #include "workspace/DiffWrapLayout.h"
 #include "workspace/render/OverviewRuler.h"
 #include "workspace/state/SurfaceTokenWindow.h"
-#include "workspace/TerminalPaneLayout.h"
+#include "workspace/SplitTreeLayout.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceTerminalSelection.h"
 
@@ -725,15 +725,17 @@ struct TerminalPaneState {
 };
 
 // One tab of the bottom panel's terminal strip: one to `kMaxTerminalPanes`
-// sessions laid out side by side (VS Code's terminal group). The strip shows the
-// tab; the keyboard, the find bar, the selection and the scroll verbs all act on
-// its ACTIVE pane, and every other pane only paints. `panes` and `weights` are
-// parallel and edited together through the methods below so a pane can never be
-// left without a share of the body (the same discipline `EditorSplitTree` keeps
-// with `editor_groups`).
+// sessions arranged in a split grid (VS Code's terminal group, on both axes).
+// The strip shows the tab; the keyboard, the find bar, the selection and the
+// scroll verbs all act on its ACTIVE pane, and every other pane only paints.
+// `panes` and `split` are ONE structure in two containers -- the tree's leaves in
+// order ARE the panes -- and are edited together only through the methods below,
+// so a pane can never be left without a region (the discipline `SplitTree` keeps
+// with `editor_groups`). An empty tab still has a one-leaf tree; the first pane
+// takes that leaf.
 struct TerminalTabState {
   std::vector<std::unique_ptr<TerminalPaneState>> panes;
-  TerminalPaneWeights weights;
+  SplitTree split;
   std::size_t active_pane = 0;
   // Output arrived while this tab was not the one on screen. Drawn as a dot on
   // the strip tab and cleared the first frame the tab is shown, so an agent that
@@ -757,60 +759,98 @@ struct TerminalTabState {
   std::size_t pane_count() const { return panes.size(); }
   bool full() const { return panes.size() >= kMaxTerminalPanes; }
 
-  // Insert `pane` at `index` (clamped), halving the share of the pane it was
-  // split from, and make it the active pane. Returns false (pane untouched) when
-  // the tab is full.
-  bool InsertPane(std::size_t index, std::unique_ptr<TerminalPaneState> pane) {
-    if (full() || pane == nullptr) {
+  // Seat `pane` beside pane `target` along `orientation` (`before`: on its
+  // leading side), halving the target's room, and make it the active pane. The
+  // first pane of an empty tab takes the tree's lone leaf whatever the
+  // arguments. Returns false (pane untouched) when the tab is full.
+  bool SplitPane(std::size_t target,
+                 SplitOrientation orientation,
+                 bool before,
+                 std::unique_ptr<TerminalPaneState> pane) {
+    if (pane == nullptr) {
       return false;
     }
-    index = std::min(index, panes.size());
-    InsertTerminalPaneWeight(weights, index);
-    panes.insert(panes.begin() + static_cast<std::ptrdiff_t>(index), std::move(pane));
-    active_pane = index;
+    if (panes.empty()) {
+      split.Reset();
+      panes.push_back(std::move(pane));
+      active_pane = 0;
+      ++layout_revision;
+      return true;
+    }
+    const std::size_t at = split.InsertLeaf(std::min(target, panes.size() - 1), orientation, before);
+    if (at == SplitTree::kNoLeaf) {
+      return false;
+    }
+    panes.insert(panes.begin() + static_cast<std::ptrdiff_t>(at), std::move(pane));
+    active_pane = at;
     ++layout_revision;
     return true;
   }
 
-  // Drop pane `index`, giving its share to its left neighbour. The active pane
-  // follows the survivor on the left (or the new first pane). Returns the
-  // removed pane so a caller can finish its shutdown; null when `index` is out
-  // of range.
+  // Move every pane of `other` into this tab, in `other`'s own arrangement, beside
+  // pane `target` (a terminal tab dropped on a pane edge). `other` is left empty.
+  // The pane that was active in `other` becomes this tab's active pane. Returns
+  // false (both untouched) when the panes would not fit or `other` is empty.
+  bool GraftTab(std::size_t target, SplitOrientation orientation, bool before, TerminalTabState& other) {
+    if (other.panes.empty() || panes.empty() || &other == this) {
+      return false;
+    }
+    const std::size_t first = split.GraftTree(target, orientation, before, other.split);
+    if (first == SplitTree::kNoLeaf) {
+      return false;
+    }
+    const std::size_t incoming_active = std::min(other.active_pane, other.panes.size() - 1);
+    for (std::size_t i = 0; i < other.panes.size(); ++i) {
+      panes.insert(panes.begin() + static_cast<std::ptrdiff_t>(first + i), std::move(other.panes[i]));
+    }
+    other.panes.clear();
+    other.split.Reset();
+    other.active_pane = 0;
+    ++other.layout_revision;
+    active_pane = first + incoming_active;
+    ++layout_revision;
+    return true;
+  }
+
+  // Drop pane `index`, giving its room to its siblings. The active pane follows
+  // the survivor before it (or the new first pane). Returns the removed pane so a
+  // caller can finish its shutdown; null when `index` is out of range.
   std::unique_ptr<TerminalPaneState> RemovePane(std::size_t index) {
     if (index >= panes.size()) {
       return nullptr;
     }
     std::unique_ptr<TerminalPaneState> removed = std::move(panes[index]);
     panes.erase(panes.begin() + static_cast<std::ptrdiff_t>(index));
-    RemoveTerminalPaneWeight(weights, index);
     if (panes.empty()) {
+      split.Reset();
       active_pane = 0;
-    } else if (active_pane > index || active_pane >= panes.size()) {
-      active_pane = std::min(active_pane == 0 ? 0 : active_pane - 1, panes.size() - 1);
+    } else {
+      split.RemoveLeaf(index);
+      if (active_pane > index || active_pane >= panes.size()) {
+        active_pane = std::min(active_pane == 0 ? 0 : active_pane - 1, panes.size() - 1);
+      }
     }
     ++layout_revision;
     return removed;
   }
 
-  bool ResizeDivider(std::size_t boundary, float first_share) {
-    if (!ResizeTerminalPaneDivider(weights, boundary, first_share)) {
+  bool ResizeDivider(std::uint8_t node, std::size_t boundary, float first_share) {
+    if (!split.ResizeDivider(node, boundary, first_share)) {
       return false;
     }
     ++layout_revision;
     return true;
   }
-  bool ResetDivider(std::size_t boundary) { return ResizeDivider(boundary, 0.5f); }
+  bool ResetDivider(std::uint8_t node, std::size_t boundary) { return ResizeDivider(node, boundary, 0.5f); }
 
   // The panes carved out of the panel body, and the active pane's slice of it
   // (the whole body for a single pane).
-  TerminalPaneRectsLayout PaneRects(const SDL_FRect& body) const {
-    return ComputeTerminalPaneRects(body, std::span<const float>(weights.data(), weights.size()));
-  }
+  SplitRegionsLayout PaneRects(const SDL_FRect& body) const { return ComputeSplitRegions(split, body); }
   SDL_FRect ActivePaneRect(const SDL_FRect& body) const {
     if (panes.size() < 2) {
       return body;
     }
-    const TerminalPaneRectsLayout rects = PaneRects(body);
+    const SplitRegionsLayout rects = PaneRects(body);
     return active_pane < rects.panes.size() ? rects.panes[active_pane] : body;
   }
 };
@@ -818,7 +858,7 @@ struct TerminalTabState {
 // A tab around one pane: the shape every terminal starts in.
 inline std::unique_ptr<TerminalTabState> MakeTerminalTab(std::unique_ptr<TerminalPaneState> pane) {
   auto tab = std::make_unique<TerminalTabState>();
-  tab->InsertPane(0, std::move(pane));
+  (void)tab->SplitPane(0, SplitOrientation::Vertical, false, std::move(pane));  // an empty tab takes any pane
   return tab;
 }
 

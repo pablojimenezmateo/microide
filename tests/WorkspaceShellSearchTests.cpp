@@ -1871,7 +1871,7 @@ void TestWorkspaceShellWorkbenchShortcutsWorkFromTheTree() {
 
   // Ctrl+K Ctrl+<arrow> (focus the editor pane that way) is a workbench chord too.
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(
-             shell, microide::workspace::EditorSplitOrientation::Vertical),
+             shell, microide::workspace::SplitOrientation::Vertical),
          "the fixture splits the editor");
   if (WorkspaceShellTestAccess::FocusedGroupIndex(shell) != 0) {
     WorkspaceShellTestAccess::FocusOtherEditorGroup(shell);
