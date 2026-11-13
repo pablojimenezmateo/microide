@@ -557,28 +557,28 @@ bool MergeMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
 
 bool MergeMouseCoordinator::HandleWheel(const SDL_Event& event,
                                         const SDL_FRect& surface,
+                                        MergeTabState& merge_tab,
                                         int vertical_ticks,
                                         int horizontal_ticks) {
-  if (!ActiveTabIsMerge() ||
-      !Contains(surface, event.wheel.mouse_x, event.wheel.mouse_y)) {
+  if (!Contains(surface, event.wheel.mouse_x, event.wheel.mouse_y)) {
     return false;
   }
-
+  const auto surface_layout = operations_.compute_merge_surface_layout(surface, merge_tab);
+  const auto scroll_layout =
+      operations_.compute_merge_scroll_layout(surface, surface_layout, merge_tab);
   if (horizontal_ticks != 0) {
-    operations_.scroll_merge_columns(-horizontal_ticks * kWheelScrollRows);
+    const long long target = static_cast<long long>(scroll_layout.horizontal_scroll) -
+                             static_cast<long long>(horizontal_ticks) * kWheelScrollRows;
+    merge_tab.horizontal_scroll = static_cast<std::size_t>(
+        std::clamp(target, 0LL, static_cast<long long>(scroll_layout.max_horizontal_scroll)));
+    merge_tab.result_viewport.SetHorizontalScroll(merge_tab.horizontal_scroll);
+    merge_tab.horizontal_scroll = merge_tab.result_viewport.horizontal_scroll();
   } else {
-    MergeTabState* merge_tab = ActiveMergeTab();
-    if (merge_tab != nullptr) {
-      const auto surface_layout =
-          operations_.compute_merge_surface_layout(surface, *merge_tab);
-      const auto scroll_layout =
-          operations_.compute_merge_scroll_layout(surface, surface_layout, *merge_tab);
-      merge_tab->scroll_row =
-          std::clamp(scroll_layout.vertical_scroll - vertical_ticks * kWheelScrollRows, 0,
-                     scroll_layout.max_vertical_scroll);
-      merge_tab->result_viewport.SetScrollLine(static_cast<std::size_t>(std::max(0, merge_tab->scroll_row)));
-      merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
-    }
+    merge_tab.scroll_row =
+        std::clamp(scroll_layout.vertical_scroll - vertical_ticks * kWheelScrollRows, 0,
+                   scroll_layout.max_vertical_scroll);
+    merge_tab.result_viewport.SetScrollLine(static_cast<std::size_t>(std::max(0, merge_tab.scroll_row)));
+    merge_tab.scroll_row = static_cast<int>(merge_tab.result_viewport.scroll_line());
   }
   // Scrolling is not focusing — see SidebarMouseCoordinator::HandleWheel.
   return true;
@@ -662,8 +662,6 @@ MergeMouseCoordinator& WorkspaceShell::MakeMergeMouseCoordinator() {
           .reset_caret_blink = [this]() { ResetCaretBlink(); },
           .move_merge_selection =
               [this](int delta) { MakeCompareMergeService().MoveMergeSelection(delta); },
-          .scroll_merge_columns =
-              [this](int delta) { MakeCompareMergeService().ScrollMergeColumns(delta); },
           .mark_merge_resolved = [this]() { MarkMergeResolved(); },
           .toggle_merge_base_pane = [this]() { ToggleMergeBasePane(); },
           .jump_next_unresolved_merge_conflict =

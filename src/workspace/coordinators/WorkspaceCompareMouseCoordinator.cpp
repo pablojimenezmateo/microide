@@ -432,21 +432,26 @@ bool CompareMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
 
 bool CompareMouseCoordinator::HandleWheel(const SDL_Event& event,
                                           const SDL_FRect& surface,
+                                          CompareTabState& compare_tab,
                                           int vertical_ticks,
                                           int horizontal_ticks) {
-  if (!ActiveTabIsCompare() ||
-      !Contains(surface, event.wheel.mouse_x, event.wheel.mouse_y)) {
+  if (!Contains(surface, event.wheel.mouse_x, event.wheel.mouse_y)) {
     return false;
   }
-
+  const auto surface_layout = operations_.compute_compare_surface_layout(surface, compare_tab);
+  const auto scroll_layout =
+      operations_.compute_compare_scroll_layout(surface, surface_layout, compare_tab);
   if (horizontal_ticks != 0) {
-    operations_.scroll_compare_columns(-horizontal_ticks * kWheelScrollRows);
+    const long long target = static_cast<long long>(scroll_layout.horizontal_scroll) -
+                             static_cast<long long>(horizontal_ticks) * kWheelScrollRows;
+    compare_tab.horizontal_scroll = static_cast<std::size_t>(
+        std::clamp(target, 0LL, static_cast<long long>(scroll_layout.max_horizontal_scroll)));
   } else {
-    operations_.scroll_compare_rows(-vertical_ticks * kWheelScrollRows);
+    compare_tab.scroll_row =
+        std::clamp(scroll_layout.vertical_scroll - vertical_ticks * kWheelScrollRows, 0,
+                   scroll_layout.max_vertical_scroll);
   }
-  if (auto* compare_tab = ActiveCompareTab(); compare_tab != nullptr) {
-    operations_.sync_compare_viewport_scroll(*compare_tab);
-  }
+  operations_.sync_compare_viewport_scroll(compare_tab);
   // Scrolling is not focusing — see SidebarMouseCoordinator::HandleWheel.
   return true;
 }
@@ -510,10 +515,6 @@ CompareMouseCoordinator& WorkspaceShell::MakeCompareMouseCoordinator() {
                 }
                 return expanded;
               },
-          .scroll_compare_rows =
-              [this](int delta) { MakeCompareMergeService().ScrollCompareRows(delta); },
-          .scroll_compare_columns =
-              [this](int delta) { MakeCompareMergeService().ScrollCompareColumns(delta); },
           .clear_drag_state = [this]() { ClearDragState(); },
       });
   return *glue_->compare_mouse_coordinator;

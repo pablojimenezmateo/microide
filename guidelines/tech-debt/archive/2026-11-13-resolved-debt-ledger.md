@@ -3,6 +3,37 @@
 Moved from `dev-docs/project/known-tech-debt.md`'s open queue as each entry was
 resolved or closed, with its resolution appended. Newest first.
 
+### TD-2026-11-13-445 — residuals of the per-pane diff (TD-439). [FIXED 2026-11-13]
+
+Three paths still route by the FOCUSED group rather than the pane under the
+pointer, and are harmless but wrong in a split with a diff or merge open:
+
+- The wheel over an UNFOCUSED diff/merge pane goes to the editor wheel handler,
+  which scrolls that group's (hidden) welcome viewport: the diff does not move.
+  The compare/merge wheel handlers act on the focused tab; they want a
+  "tab under the pointer" parameter, as the editor wheel's pane lookup has.
+- Diagnostic and plugin hover cards over an EDITOR pane are not resolved while
+  the focused group shows a diff (`DiagnosticHoverTargetAtPosition` returns at
+  the compare branch).
+- Merge divider drag highlights read the shared `drag_target`, so two merges in
+  a split light both dividers while one is dragged (scrollbars take `focused`).
+
+Each wants the hit-test to resolve the pane first and then the tab in front of
+it -- the shape the editor pane loop already has.
+
+**Fixed 2026-11-13**, the same day: the wheel resolves the pane under the pointer
+and hands a diff or merge there its own tab and surface (the coordinators'
+`HandleWheel` take both and scroll through their layout ops, so the three
+focused-tab scroll operations they used are gone); `ActiveTabSurface(layout,
+shown)` sizes a tab's viewport against the pane that shows it; the hover
+resolvers answer for the diff only over its pane and let editor panes answer
+beside it; the merge render takes `focused` for its caret, divider highlight and
+inline blame (an unfocused merge no longer replaces the visible blame overlay the
+hover card reads). Gate: the wheel step in
+`WorkspaceShell/CompareInASplitStaysInItsPane` (scrolls the unfocused diff, keeps
+focus, partial == full repaint).
+
+
 ### TD-2026-11-11-441 — hunk-local lexing starts in code state; raw strings are not lexed. [FIXED 2026-11-13]
 
 Each hunk side is lexed on its own, starting as code. A hunk that begins inside

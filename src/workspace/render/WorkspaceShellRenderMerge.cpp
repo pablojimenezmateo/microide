@@ -170,7 +170,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                                         const SDL_FRect& rect,
                                         MergeTabState& merge_tab_state,
                                         const std::filesystem::path& project_root,
-                                        bool draw_caret,
+                                        bool focused,
                                         const editor::DiagnosticsStore& diagnostics_store) {
   MergeTabState* merge_tab = &merge_tab_state;
   if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
@@ -328,11 +328,11 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                  theme_.border);
   DrawFilledRect(renderer,
                  MakeRect(surface.center_x - surface.divider_width * 0.5f, rect.y, 1.0f, content_height),
-                 context_.interaction_state.drag_target == DragTarget::MergeLeftDivider ? theme_.accent
+                 focused && context_.interaction_state.drag_target == DragTarget::MergeLeftDivider ? theme_.accent
                                                                                 : theme_.border);
   DrawFilledRect(renderer,
                  MakeRect(surface.right_x - surface.divider_width * 0.5f, rect.y, 1.0f, content_height),
-                 context_.interaction_state.drag_target == DragTarget::MergeRightDivider ? theme_.accent
+                 focused && context_.interaction_state.drag_target == DragTarget::MergeRightDivider ? theme_.accent
                                                                                  : theme_.border);
 
   }
@@ -472,13 +472,17 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   }
   }
 
+  // The focused merge only: the visible overlay is the one the blame hover card
+  // reads, and a merge in another pane of a split would replace it.
   const std::optional<editor::EditorBlameOverlay> merge_blame_overlay =
-      editor_blame_overlay_service_.EditorOverlayForFrame(prepared_frame_id_, project_root,
-                                                          editor_text_renderer_, git_blame_service_,
-                                                       merge_tab->result_viewport,
-                                                       interaction.result.rect, 280.0f, 0,
-                                                       LineNumbersEnabled());
-  editor_blame_overlay_service_.SetVisibleOverlay(merge_blame_overlay);
+      focused ? editor_blame_overlay_service_.EditorOverlayForFrame(
+                    prepared_frame_id_, project_root, editor_text_renderer_, git_blame_service_,
+                    merge_tab->result_viewport, interaction.result.rect, 280.0f, 0,
+                    LineNumbersEnabled())
+              : std::nullopt;
+  if (focused) {
+    editor_blame_overlay_service_.SetVisibleOverlay(merge_blame_overlay);
+  }
   const auto* merge_diagnostics =
       !merge_tab->result_viewport.path().empty() && !merge_tab->result_viewport.dirty()
           ? diagnostics_store.FindByPathKey(merge_tab->result_viewport.path_key())
@@ -495,7 +499,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   const bool line_numbers_enabled = merge_setting_enabled("editor.line_numbers", true);
   editor_view_renderer_.Render(renderer, editor_text_renderer_, theme_, merge_tab->result_viewport,
                                interaction.result.rect,
-                               draw_caret, "", std::nullopt,
+                               focused && prepared_frame_draw_editor_caret_, "", std::nullopt,
                                merge_blame_overlay,
                                merge_diagnostics != nullptr
                                    ? std::span<const editor::PublishedDiagnostic>(*merge_diagnostics)

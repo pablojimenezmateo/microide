@@ -786,23 +786,29 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
   }
 
   if (Contains(layout.editor_surface, event.wheel.mouse_x, event.wheel.mouse_y)) {
-    // In a split the diff or merge in front of the focused group owns only its
-    // own pane; a wheel over another pane scrolls that pane (TD-2026-11-11-439).
-    const bool over_view_surface =
-        Contains(ActiveTabSurface(layout), event.wheel.mouse_x, event.wheel.mouse_y);
-    if (ActiveTabIsCompare() && over_view_surface) {
-      const bool handled =
-          MakeCompareMouseCoordinator().HandleWheel(event, ActiveTabSurface(layout), vertical_ticks, horizontal_ticks);
-      if (handled) {
-        EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
+    // The pane under the pointer scrolls, focused or not, as an editor pane
+    // does: a diff or merge in front of it takes the wheel against its own
+    // surface (TD-2026-11-11-439 / -445).
+    const EditorGroupRectsLayout group_rects = ComputeEditorGroupRectsForState(layout);
+    auto& groups = context_.current_project_state.editor_groups;
+    for (std::size_t gi = 0; gi < group_rects.groups.size() && gi < groups.size(); ++gi) {
+      const SDL_FRect& pane = group_rects.groups[gi].editor_surface;
+      if (!Contains(pane, event.wheel.mouse_x, event.wheel.mouse_y) || !groups[gi].has_active_tab()) {
+        continue;
       }
-      return handled;
-    }
-    if (ActiveTabIsMerge() && over_view_surface) {
-      const bool handled =
-          MakeMergeMouseCoordinator().HandleWheel(event, ActiveTabSurface(layout), vertical_ticks, horizontal_ticks);
+      TabEntry& tab = groups[gi].active_tab();
+      bool handled = false;
+      if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
+        handled = MakeCompareMouseCoordinator().HandleWheel(event, pane, *tab.compare, vertical_ticks,
+                                                            horizontal_ticks);
+      } else if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
+        handled = MakeMergeMouseCoordinator().HandleWheel(event, pane, *tab.merge, vertical_ticks,
+                                                          horizontal_ticks);
+      } else {
+        break;  // an editor pane: the editor path below
+      }
       if (handled) {
-        EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
+        EnsureRedraw(mark, [this, pane]() { RequestRedrawRect(pane); });
       }
       return handled;
     }

@@ -1858,8 +1858,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       RenderCompareScrollbars(renderer, area, compare_tab, focused);
     } else {
       MergeTabState& merge_tab = *tab->merge;
-      RenderMergeSurface(renderer, area, merge_tab, project_state.root,
-                         focused && prepared_frame_draw_editor_caret_,
+      RenderMergeSurface(renderer, area, merge_tab, project_state.root, focused,
                          project_state.diagnostics_store);
       RenderMergeScrollbars(renderer, area, merge_tab, focused);
     }

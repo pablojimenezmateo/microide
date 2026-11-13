@@ -54,7 +54,6 @@ class MergeMouseCoordinator {
         classify_merge_hover_state;
     std::function<void()> reset_caret_blink;
     std::function<void(int)> move_merge_selection;
-    std::function<void(int)> scroll_merge_columns;
     std::function<void()> mark_merge_resolved;
     std::function<void()> toggle_merge_base_pane;
     std::function<void()> jump_next_unresolved_merge_conflict;
@@ -74,8 +73,11 @@ class MergeMouseCoordinator {
   bool HandleDrag(const SDL_Event& event, const SDL_FRect& surface);
   bool HandleHoverMotion(const SDL_Event& event, const SDL_FRect& surface);
   bool HandleSelectionMotion(const SDL_Event& event, const SDL_FRect& surface);
+  // Scrolls `merge_tab`, shown in `surface` -- the pane under the pointer,
+  // focused or not (scrolling is not focusing).
   bool HandleWheel(const SDL_Event& event,
                    const SDL_FRect& surface,
+                   MergeTabState& merge_tab,
                    int vertical_ticks,
                    int horizontal_ticks);
 

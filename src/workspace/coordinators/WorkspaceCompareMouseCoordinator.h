@@ -33,8 +33,6 @@ class CompareMouseCoordinator {
         build_compare_collapsed_context_action_rects;
     std::function<bool(CompareTabState&, std::size_t, CompareCollapsedContextAction)>
         expand_compare_collapsed_context;
-    std::function<void(int)> scroll_compare_rows;
-    std::function<void(int)> scroll_compare_columns;
     std::function<void()> clear_drag_state;
   };
 
@@ -46,8 +44,11 @@ class CompareMouseCoordinator {
   bool HandleDrag(const SDL_Event& event, const SDL_FRect& surface);
   bool HandleHoverMotion(const SDL_Event& event, const SDL_FRect& surface);
   bool HandleSelectionMotion(const SDL_Event& event, const SDL_FRect& surface);
+  // Scrolls `compare_tab`, shown in `surface` -- the pane under the pointer,
+  // focused or not (scrolling is not focusing).
   bool HandleWheel(const SDL_Event& event,
                    const SDL_FRect& surface,
+                   CompareTabState& compare_tab,
                    int vertical_ticks,
                    int horizontal_ticks);
 

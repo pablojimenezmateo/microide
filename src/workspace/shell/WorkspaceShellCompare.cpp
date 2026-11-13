@@ -725,7 +725,7 @@ void WorkspaceShell::SyncCompareViewportScroll(CompareTabState& compare_tab) con
 
   if (const auto layout_state = CurrentWorkspaceLayout(); layout_state.has_value()) {
     const CompareSurfaceLayout surface_layout =
-        ComputeCompareSurfaceLayout(ActiveTabSurface(*layout_state), compare_tab);
+        ComputeCompareSurfaceLayout(ActiveTabSurface(*layout_state, &compare_tab), compare_tab);
     compare_tab.right_viewport.SetViewportSize(static_cast<std::size_t>(surface_layout.visible_rows),
                                                surface_layout.right_visible_columns);
     // The two panes scroll horizontally in lock-step off this shared offset. Clamp it
@@ -766,7 +766,7 @@ void WorkspaceShell::SyncCompareSelectionFromViewport(CompareTabState& compare_t
     if (const auto layout_state = CurrentWorkspaceLayout(); layout_state.has_value()) {
       const WorkspaceLayout layout = *layout_state;
       const CompareSurfaceLayout surface_layout =
-          ComputeCompareSurfaceLayout(ActiveTabSurface(layout), compare_tab);
+          ComputeCompareSurfaceLayout(ActiveTabSurface(layout, &compare_tab), compare_tab);
       ClampCompareScrollRow(compare_tab, surface_layout.visible_rows);
       ClampCompareHorizontalScroll(compare_tab, surface_layout.visible_columns);
       RevealCompareSelectedRow(compare_tab, surface_layout.visible_rows);

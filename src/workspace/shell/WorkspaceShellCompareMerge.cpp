@@ -245,7 +245,7 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
           .scroll_compare_rows =
               [this](CompareTabState& compare_tab, int delta) {
                 if (const auto layout_state = CurrentWorkspaceLayout(); layout_state.has_value()) {
-                  const SDL_FRect surface = ActiveTabSurface(*layout_state);
+                  const SDL_FRect surface = ActiveTabSurface(*layout_state, &compare_tab);
                   const auto surface_layout =
                       ComputeCompareSurfaceLayout(surface, compare_tab);
                   const auto scroll_layout =
@@ -258,7 +258,7 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
           .scroll_compare_columns =
               [this](CompareTabState& compare_tab, int delta) {
                 if (const auto layout_state = CurrentWorkspaceLayout(); layout_state.has_value()) {
-                  const SDL_FRect surface = ActiveTabSurface(*layout_state);
+                  const SDL_FRect surface = ActiveTabSurface(*layout_state, &compare_tab);
                   const auto surface_layout =
                       ComputeCompareSurfaceLayout(surface, compare_tab);
                   const auto scroll_layout =
@@ -279,7 +279,7 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
           .scroll_merge_columns =
               [this](MergeTabState& merge_tab, int delta) {
                 if (const auto layout_state = CurrentWorkspaceLayout(); layout_state.has_value()) {
-                  const SDL_FRect surface = ActiveTabSurface(*layout_state);
+                  const SDL_FRect surface = ActiveTabSurface(*layout_state, &merge_tab);
                   const auto surface_layout =
                       ComputeMergeSurfaceLayout(surface, merge_tab);
                   const auto scroll_layout =

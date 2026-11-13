@@ -57,13 +57,26 @@ EditorGroupRectsLayout WorkspaceShell::ComputeEditorGroupRectsForState(
   return editor_group_rects_memo_;
 }
 
-SDL_FRect WorkspaceShell::ActiveTabSurface(const WorkspaceLayout& layout) const {
+SDL_FRect WorkspaceShell::ActiveTabSurface(const WorkspaceLayout& layout, const void* shown) const {
   const ProjectWorkspaceState& state = context_.current_project_state;
   if (state.editor_groups.size() < 2) {
     return layout.editor_surface;  // one pane: the column (no memo walk)
   }
-  return FocusedGroupSurface(ComputeEditorGroupRectsForState(layout),
-                             state.clamped_focused_group_index(), layout);
+  const EditorGroupRectsLayout rects = ComputeEditorGroupRectsForState(layout);
+  if (shown != nullptr) {
+    for (std::size_t gi = 0; gi < rects.groups.size() && gi < state.editor_groups.size(); ++gi) {
+      const EditorGroup& group = state.editor_groups[gi];
+      if (!group.has_active_tab()) {
+        continue;
+      }
+      const TabEntry& tab = group.active_tab();
+      if ((tab.compare.has_value() && &*tab.compare == shown) ||
+          (tab.merge.has_value() && &*tab.merge == shown)) {
+        return rects.groups[gi].editor_surface;
+      }
+    }
+  }
+  return FocusedGroupSurface(rects, state.clamped_focused_group_index(), layout);
 }
 
 WorkspaceShell::EditorPaneLayouts WorkspaceShell::EditorPaneLayoutsFromGroupRects(

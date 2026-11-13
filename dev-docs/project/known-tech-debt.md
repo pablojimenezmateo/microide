@@ -16,24 +16,6 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 
 ## Open items
 
-### TD-2026-11-13-445 — residuals of the per-pane diff (TD-439). [OPEN]
-
-Three paths still route by the FOCUSED group rather than the pane under the
-pointer, and are harmless but wrong in a split with a diff or merge open:
-
-- The wheel over an UNFOCUSED diff/merge pane goes to the editor wheel handler,
-  which scrolls that group's (hidden) welcome viewport: the diff does not move.
-  The compare/merge wheel handlers act on the focused tab; they want a
-  "tab under the pointer" parameter, as the editor wheel's pane lookup has.
-- Diagnostic and plugin hover cards over an EDITOR pane are not resolved while
-  the focused group shows a diff (`DiagnosticHoverTargetAtPosition` returns at
-  the compare branch).
-- Merge divider drag highlights read the shared `drag_target`, so two merges in
-  a split light both dividers while one is dragged (scrollbars take `focused`).
-
-Each wants the hit-test to resolve the pane first and then the tab in front of
-it -- the shape the editor pane loop already has.
-
 ### TD-2026-11-11-444 — a cold structural refinement of a heavily churned file costs several times the old intraline pass. [OPEN]
 
 `microide_diff_bench`, min of runs, interleaved with `main` on the same machine,
@@ -469,7 +451,7 @@ cross-subsystem bug-hunt passes 5–24 closeout) — now lives in:
   `2026-11-03-resolved-debt-ledger.md` (every TD id from 2026-08-04 to 2026-11-02 not listed
   above, with the per-pass review summaries that headed this file) and
   `2026-11-08-resolved-debt-ledger.md` (TD-406, 408, 429-434) and
-  `2026-11-13-resolved-debt-ledger.md` (TD-437 to 439, 441, 442 onward)
+  `2026-11-13-resolved-debt-ledger.md` (TD-437 to 439, 441, 442, 445 onward)
 - `CHANGELOG.md` — shipped, user-facing release history
 - `openspec/changes/archive/` — the full proposal/spec/tasks record per shipped change
 

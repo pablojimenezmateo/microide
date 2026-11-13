@@ -823,8 +823,10 @@
   // The surface the focused group's active tab paints in: that group's pane, not
   // the editor column. A compare or merge tab lays out, paints and hit-tests
   // against this, so in a split it stays inside its own pane (TD-2026-11-11-439).
-  // With one group it IS `layout.editor_surface`.
-  SDL_FRect ActiveTabSurface(const WorkspaceLayout& layout) const;
+  // With one group it IS `layout.editor_surface`. With `shown` (a compare or
+  // merge tab's state), the pane whose front tab it is -- a diff scrolled under
+  // the pointer need not be the focused one; the focused pane when none shows it.
+  SDL_FRect ActiveTabSurface(const WorkspaceLayout& layout, const void* shown = nullptr) const;
   // Width of one pane's editor tab strip. With a split open a pane's strip is a
   // fraction of the window, so the tab-scroll math has to size against THAT, not
   // the window (which fits far more tabs and so never scrolled the active one
@@ -1039,7 +1041,7 @@
                           const SDL_FRect& rect,
                           MergeTabState& merge_tab,
                           const std::filesystem::path& project_root,
-                          bool draw_caret,
+                          bool focused,  // the caret, and a divider drag's highlight
                           const editor::DiagnosticsStore& diagnostics_store);
   void ShowTreeSidebar(const std::filesystem::path& root = {});
   void ShowSearchSidebar(std::string query = {}, bool temporary = false);

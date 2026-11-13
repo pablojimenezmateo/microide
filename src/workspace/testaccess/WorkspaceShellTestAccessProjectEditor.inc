@@ -791,6 +791,11 @@
   static std::unordered_map<std::string, std::size_t> OpenBufferViewCounts(WorkspaceShell& shell) {
     return shell.OpenBufferViewCounts();
   }
+  // The compare tab in front of group `group_index` (which need not be focused).
+  static WorkspaceShell::CompareTabState& ActiveCompareInGroup(WorkspaceShell& shell,
+                                                               std::size_t group_index) {
+    return *shell.context_.current_project_state.editor_groups.at(group_index).active_tab().compare;
+  }
   static std::size_t FocusedGroupIndex(WorkspaceShell& shell) {
     return shell.context_.current_project_state.focused_group_index;
   }

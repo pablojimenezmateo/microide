@@ -2695,11 +2695,18 @@ void TestWorkspaceShellCompareInASplitStaysInItsPane() {
   const std::filesystem::path root = temp_dir.path() / "repo";
   const std::filesystem::path source = root / "notes.md";
   const std::filesystem::path other = root / "other.md";
-  WriteFile(source, "alpha\nbeta\ngamma\n");
+  // Long enough to scroll, changed throughout so no context collapses away.
+  std::string base;
+  std::string edited;
+  for (int line = 0; line < 240; ++line) {
+    base += "line " + std::to_string(line) + "\n";
+    edited += (line % 2 == 0 ? "LINE " : "line ") + std::to_string(line) + "\n";
+  }
+  WriteFile(source, base);
   WriteFile(other, "the other pane's editor\nsecond line\n");
   InitializeGitRepo(root);
   CommitAll(root, "Add split compare fixture", "split compare fixture");
-  WriteFile(source, "alpha\nBETA\ngamma\n");
+  WriteFile(source, edited);
 
   static constexpr int kWidth = 1280;
   static constexpr int kHeight = 720;
@@ -2774,6 +2781,23 @@ void TestWorkspaceShellCompareInASplitStaysInItsPane() {
   (void)shell.ConsumePendingRenderInvalidation();
   Expect(WorkspaceShellTestAccess::RenderCompareSurfaceInvocationCount(shell) == 1,
          "a diff in an unfocused pane still paints there (not the welcome page)");
+
+  // TD-2026-11-13-445: the wheel over the unfocused diff scrolls that diff, and
+  // scrolling is not focusing.
+  {
+    auto& unfocused_compare = WorkspaceShellTestAccess::ActiveCompareInGroup(shell, compare_group);
+    const int scroll_before = unfocused_compare.scroll_row;
+    const float x = compare_pane.x + compare_pane.w * 0.25f;
+    const float y = compare_pane.y + compare_pane.h * 0.5f;
+    const auto diff = PaintAndDiffWithFullRepaint(
+        shell, canvas, kWidth, kHeight, DispatchEvents(shell, {MouseWheelEvent(x, y, -3.0f)}),
+        pin_caret);
+    Expect(diff.identical(), "wheeling the unfocused diff paints what a full repaint paints; " +
+                                 DescribePixelDiff(diff));
+    Expect(unfocused_compare.scroll_row > scroll_before, "the wheel scrolls the diff under the pointer");
+    Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == editor_group,
+           "and leaves the focus where it was");
+  }
 
   // And a click into the diff's pane focuses it back, through the diff's own hit test.
   {

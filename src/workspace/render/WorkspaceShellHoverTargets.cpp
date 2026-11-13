@@ -364,7 +364,10 @@ std::optional<EditorHoverTarget> WorkspaceShell::DiagnosticHoverTargetAtPosition
                                                         tls_hover_filtered_diagnostics);
       };
 
-  if (ActiveTabIsCompare()) {
+  // A diff or merge in front of the focused group answers only over its own pane;
+  // over another pane of a split, that pane's editor does (TD-2026-11-13-445).
+  const bool over_view_surface = Contains(ActiveTabSurface(layout), x, y);
+  if (ActiveTabIsCompare() && over_view_surface) {
     const CompareTabState* compare_tab = ActiveCompareTab();
     if (compare_tab == nullptr || !compare_tab->right_editable ||
         compare_tab->right_viewport.path().empty() || compare_tab->right_viewport.dirty()) {
@@ -418,7 +421,7 @@ std::optional<EditorHoverTarget> WorkspaceShell::DiagnosticHoverTargetAtPosition
     return std::nullopt;
   }
 
-  if (ActiveTabIsMerge()) {
+  if (ActiveTabIsMerge() && over_view_surface) {
     const MergeTabState* merge_tab = ActiveMergeTab();
     if (merge_tab == nullptr || merge_tab->result_viewport.path().empty() ||
         merge_tab->result_viewport.dirty()) {
@@ -442,7 +445,7 @@ std::optional<EditorHoverTarget> WorkspaceShell::DiagnosticHoverTargetAtPosition
         visible_diagnostics(std::span<const editor::PublishedDiagnostic>(*diagnostics)), x, y);
   }
 
-  if (!ActiveTabIsEditor()) {
+  if (!ActiveTabIsEditor() && !ActiveTabIsCompare() && !ActiveTabIsMerge()) {
     return std::nullopt;
   }
 
@@ -492,7 +495,10 @@ std::optional<EditorHoverTarget> WorkspaceShell::PluginHoverTargetAtPosition(
   }
   const WorkspaceLayout layout = *layout_state;
 
-  if (ActiveTabIsCompare()) {
+  // A diff or merge in front of the focused group answers only over its own pane;
+  // over another pane of a split, that pane's editor does (TD-2026-11-13-445).
+  const bool over_view_surface = Contains(ActiveTabSurface(layout), x, y);
+  if (ActiveTabIsCompare() && over_view_surface) {
     const CompareTabState* compare_tab = ActiveCompareTab();
     if (compare_tab == nullptr || !compare_tab->right_editable ||
         compare_tab->right_viewport.path().empty()) {
@@ -520,7 +526,7 @@ std::optional<EditorHoverTarget> WorkspaceShell::PluginHoverTargetAtPosition(
                                     compare_tab->right_viewport.tab_size(), interaction, x, y);
   }
 
-  if (ActiveTabIsMerge()) {
+  if (ActiveTabIsMerge() && over_view_surface) {
     const MergeTabState* merge_tab = ActiveMergeTab();
     if (merge_tab == nullptr || merge_tab->result_viewport.path().empty()) {
       return std::nullopt;
@@ -536,7 +542,7 @@ std::optional<EditorHoverTarget> WorkspaceShell::PluginHoverTargetAtPosition(
                                      LineNumbersEnabled()), x, y);
   }
 
-  if (!ActiveTabIsEditor()) {
+  if (!ActiveTabIsEditor() && !ActiveTabIsCompare() && !ActiveTabIsMerge()) {
     return std::nullopt;
   }
 
