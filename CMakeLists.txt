@@ -1780,6 +1780,7 @@ if(MICROIDE_FUZZ)
     src/editor/DocumentSnapshot.cpp
     src/persistence/PersistedRecord.cpp
     src/util/Log.cpp  # AppendRecord's encode-failure line
+    src/workspace/SplitTree.cpp  # the invariant loads each decoded terminal grid
     src/workspace/persistence/WorkspacePersistenceBinaryFormatSessions.cpp
     tests/fuzz/ProjectSessionRecordFuzz.cpp
   )
