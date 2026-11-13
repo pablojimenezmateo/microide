@@ -43,7 +43,7 @@ inline bool ProcessIsAlive(pid_t pid) {
 // it has no sentry to catch that, so it escaped ~ShortServerDir as std::terminate
 // (a TSan run, RemoteTerminal/ScrollingUpFetchesOlderHostHistory). Plain read(2)
 // and the error_code forms of the directory walk instead.
-inline std::string ReadProcCmdline(const std::filesystem::path& path) {
+inline std::string ReadProcFile(const std::filesystem::path& path) {
   std::string text;
   const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
   if (fd < 0) {
@@ -65,7 +65,7 @@ inline void KillProcessesUnder(const std::filesystem::path& fixture_root) {
     if (name.empty() || name.find_first_not_of("0123456789") != std::string::npos) {
       continue;
     }
-    if (ReadProcCmdline(it->path() / "cmdline").find(needle) != std::string::npos) {
+    if (ReadProcFile(it->path() / "cmdline").find(needle) != std::string::npos) {
       ::kill(static_cast<pid_t>(std::atoi(name.c_str())), SIGKILL);
     }
   }

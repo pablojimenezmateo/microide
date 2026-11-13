@@ -200,16 +200,18 @@ void TestConcurrentCallersCreateTheSocketDirTogether() {
 // Processes whose argv is a `microide-server start` for `dir` and that are still
 // running: the daemons serving it (each starter exits once the socket answers).
 int DaemonsFor(const std::filesystem::path& dir) {
+  // The starters exit while this reads them: ReadProcFile and the error_code walk
+  // do not throw on a process that has just gone (an istreambuf_iterator over its
+  // /proc file did, with ESRCH -- a UBSan CI run).
   int count = 0;
-  for (const auto& entry : std::filesystem::directory_iterator("/proc")) {
-    const std::string pid = entry.path().filename().string();
+  std::error_code ec;
+  for (std::filesystem::directory_iterator it("/proc", ec), end; !ec && it != end; it.increment(ec)) {
+    const std::string pid = it->path().filename().string();
     if (pid.empty() || pid.find_first_not_of("0123456789") != std::string::npos) {
       continue;  // not a process
     }
-    std::ifstream in(entry.path() / "cmdline", std::ios::binary);
-    std::string argv((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    std::ifstream stat_in(entry.path() / "stat");
-    std::string stat((std::istreambuf_iterator<char>(stat_in)), std::istreambuf_iterator<char>());
+    const std::string argv = server_fixture_detail::ReadProcFile(it->path() / "cmdline");
+    const std::string stat = server_fixture_detail::ReadProcFile(it->path() / "stat");
     const std::size_t close_paren = stat.rfind(')');
     const bool zombie = close_paren != std::string::npos && close_paren + 2 < stat.size() &&
                         stat[close_paren + 2] == 'Z';
