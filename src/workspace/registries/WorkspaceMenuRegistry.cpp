@@ -267,6 +267,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::RemoteOpenLocalTerminal, "New Local Terminal"),
       MenuItem(ActionId::TerminalSplit, {}, "Ctrl+Shift+\\"),
       MenuItem(ActionId::TerminalSplitDown),
+      MenuItem(ActionId::TerminalUnsplit),
       MenuItem(ActionId::TerminalRelaunch),
       MenuSeparator(),
       MenuItem(ActionId::TerminalFocusPaneLeft, {}, "Ctrl+Shift+Left"),
@@ -321,6 +322,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuSeparator(),
       MenuItem(ActionId::TerminalSplit, "Split Right", "Ctrl+Shift+\\"),
       MenuItem(ActionId::TerminalSplitDown, "Split Down"),
+      MenuItem(ActionId::TerminalUnsplit, "Unsplit"),
       MenuItem(ActionId::TerminalRelaunch),
       MenuItem(ActionId::PanelToggleMaximized, {}, "Ctrl+Shift+J", {}, 0, true),
   });
@@ -345,6 +347,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   static const auto kTerminalTabContextItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::TerminalSplit, "Split Right", "Ctrl+Shift+\\"),
       MenuItem(ActionId::TerminalSplitDown, "Split Down"),
+      MenuItem(ActionId::TerminalUnsplit, "Unsplit"),
       MenuItem(ActionId::TerminalRelaunch),
       MenuItem(ActionId::CopyLastTerminalCommand),
       MenuSeparator(),

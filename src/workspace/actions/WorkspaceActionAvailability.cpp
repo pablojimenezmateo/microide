@@ -461,6 +461,9 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::TerminalFocusPaneUp:
     case ActionId::TerminalFocusPaneDown:
       return active_terminal_pane != nullptr;
+    case ActionId::TerminalUnsplit:
+      return context_.current_project_state.active_terminal_tab() != nullptr &&
+             context_.current_project_state.active_terminal_tab()->pane_count() > 1;
     case ActionId::TerminalNext:
     case ActionId::TerminalPrev:
       return context_.current_project_state.terminal_tabs.size() > 1;

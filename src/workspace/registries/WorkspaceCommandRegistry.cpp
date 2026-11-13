@@ -348,6 +348,7 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Ctrl+Shift+\\"},
       ActionSpec{ActionId::TerminalSplitDown, "term-split-down", "term-split-down",
                  "Split Terminal Down", ""},
+      ActionSpec{ActionId::TerminalUnsplit, "term-unsplit", "term-unsplit", "Unsplit Terminal", ""},
       ActionSpec{ActionId::TerminalFocusPaneLeft, "term-pane-left", "term-pane-left",
                  "Focus Terminal Pane Left", "Ctrl+Shift+Left"},
       ActionSpec{ActionId::TerminalFocusPaneRight, "term-pane-right", "term-pane-right",

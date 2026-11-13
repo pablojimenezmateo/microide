@@ -522,6 +522,27 @@ bool TerminalPanelService::CloseActivePane() {
   return true;
 }
 
+bool TerminalPanelService::UnsplitActivePane() {
+  TerminalTabState* tab = state_.active_terminal_tab();
+  if (tab == nullptr || tab->pane_count() < 2) {
+    return false;
+  }
+  std::unique_ptr<TerminalPaneState> pane = tab->RemovePane(tab->active_pane);
+  if (pane == nullptr) {
+    return false;
+  }
+  operations_.clear_terminal_selection();
+  const bool was_visible = PanelVisible();
+  const std::size_t at = state_.active_terminal_tab_index + 1;
+  state_.terminal_tabs.insert(state_.terminal_tabs.begin() + static_cast<std::ptrdiff_t>(at),
+                              MakeTerminalTab(std::move(pane)));
+  state_.active_terminal_tab_index = at;
+  ShowTerminalContent(true);
+  operations_.note_layout_inputs_changed();
+  NotePanelVisibilityChanged(was_visible);
+  return true;
+}
+
 bool TerminalPanelService::FocusPaneInDirection(PaneDirection direction) {
   TerminalTabState* tab = state_.active_terminal_tab();
   if (tab == nullptr || tab->pane_count() < 2) {

@@ -23,11 +23,10 @@ right/down, directional focus, both-axis dividers and a strip tab dropped on a
 pane edge (`openspec/changes/archive/*-terminal-pane-grid`). Left out, in order
 of expected value:
 
-- **No way back out of a grid.** A pane cannot be moved to its own tab (tmux's
-  `break-pane`, VS Code's "Unsplit Terminal" / dragging a terminal out of a
-  group). Joining is one-way today: the only exit is closing the pane. Wants a
-  `TerminalTabState::DetachPane` (tree `RemoveLeaf` + a new tab around the pane)
-  and a verb plus a drag source (the pane's body, or a per-pane title).
+- **No drag out of a grid.** Unsplit Terminal (`term-unsplit`, the panel and
+  tab context menus) moves the active pane to its own tab -- the way back from a
+  join -- but there is no drag source for it: a pane has no title to grab, and
+  the body's press is the selection gesture.
 - **No move-pane verbs.** The editor has `move-editor-group-left/right/up/down`
   (`SplitTree::MoveLeaf`, remove-then-insert so a full grid still takes it); the
   terminal has focus verbs only. Same tree call; the cost is four ActionIds and

@@ -39,6 +39,11 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
         return reject("No terminal to split");
       }
       return DispatchResult::Handled;
+    case ActionId::TerminalUnsplit:
+      if (!context_.terminal_panel().UnsplitActivePane()) {
+        return reject(context_.HasActiveTerminalPane() ? "The terminal is not split" : "No terminal");
+      }
+      return DispatchResult::Handled;
     case ActionId::TerminalFocusPaneLeft:
     case ActionId::TerminalFocusPaneRight:
     case ActionId::TerminalFocusPaneUp:

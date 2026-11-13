@@ -193,6 +193,11 @@ class TerminalPanelService {
   // Close the active pane; the tab closes with its last pane. False when there
   // is no terminal.
   bool CloseActivePane();
+  // Move the active pane out of its split into a tab of its own, right after the
+  // one it left, which then shows and has the keyboard (VS Code's Unsplit
+  // Terminal; the way back from a join). Its session is untouched. False when
+  // there is no terminal or the tab holds one pane.
+  bool UnsplitActivePane();
   // Activate the pane on screen that way from the active one, without wrapping.
   // False when there is no pane that way -- the key then falls through to the
   // shell, so a single-pane terminal keeps the chord for its programs.

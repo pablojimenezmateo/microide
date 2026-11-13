@@ -252,6 +252,9 @@ enum class ActionId {
   // Terminal panes and the panel's visibility/maximized state (TerminalPanelService).
   TerminalSplit,
   TerminalSplitDown,
+  // Move the active pane out of its split into its own tab (the way back from a
+  // tab dropped onto another's pane edge).
+  TerminalUnsplit,
   TerminalFocusPaneLeft,
   TerminalFocusPaneRight,
   TerminalFocusPaneUp,

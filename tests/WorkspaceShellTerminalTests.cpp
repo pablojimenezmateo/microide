@@ -3031,6 +3031,16 @@ void TestWorkspaceShellTerminalTabDragToBodyEdgeSplitsTheTabOnScreen() {
   const auto rects = WorkspaceShellTestAccess::TerminalPaneRects(shell);
   Expect(rects.panes.size() == 2 && rects.panes[1].x > rects.panes[0].x && rects.dividers[0].vertical,
          "side by side");
+
+  // And the way back: Unsplit Terminal moves the active pane to a tab of its own.
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TerminalUnsplit, {}),
+         "Unsplit Terminal is accepted on a split tab");
+  Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 2 &&
+             WorkspaceShellTestAccess::ActiveTerminalTabIndex(shell) == 1 &&
+             WorkspaceShellTestAccess::TerminalPaneCount(shell) == 1 &&
+             &WorkspaceShellTestAccess::TerminalPaneSession(shell, 0) == second_pane,
+         "the pane gets its own tab, after the one it left, shown with its session");
+  Expect(WorkspaceShellTestAccess::TerminalSplit(shell).leaf_count() == 1, "an unsplit tab is one leaf");
 }
 
 void TestWorkspaceShellTerminalTabDragToBodyBottomStacksAndTheStripStillReorders() {
