@@ -16,6 +16,56 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 
 ## Open items
 
+### TD-2026-11-13-445 — the host prompt's Recent rows: what the first cut left out. [OPEN]
+
+Open Folder on Host… lists the five remote folders opened last
+(`openspec/changes/archive/2026-11-13-remote-folder-recents`). Deferred, in
+order of expected value:
+
+1. **Remote rows compete with local ones for the shared MRU.**
+   `RecentRemoteFolders` reads `RecentsService`'s one 15-entry project list, so a
+   user who opens many local folders between host sessions sees fewer than five
+   host rows, or none. A per-kind bound in `RecentsService::RecordProjectOpen`
+   (keep the newest N of each kind, still one persisted list) would fix it without
+   a format change.
+2. **No way to drop one row.** A host folder that no longer exists stays offered
+   until it ages out; the only removal is Remove Mirror… (`ForgetProject`), which
+   needs a closed mirror. Delete on a row (VS Code's recent list has an ×) through
+   a `RecentsService::ForgetProject` call.
+3. **Rows do not filter as the user types.** With five rows the list is short
+   enough to scan; it would matter with a larger cap.
+4. **Up/Down cycle through every row, including ones a short window dropped from
+   the card** (`ComputePromptSurfaceRecentLayout` keeps only rows that clear the
+   buttons). The picked text shows in the field, but no row is highlighted. Bound
+   the cycle by the laid-out count if a short window turns out to be common.
+
+### TD-2026-11-13-446 — `RemoteHostService/APortTheProjectsTerminalPrintedIsTheProjects` failed once under load. [OPEN]
+
+One failure, "the printed one is forwarded as the project's", in a 32-shard
+`ctest -j16` run at load average ~44 (an agent session, the soak and two other
+worktrees' lanes). It was not reproduced afterwards: 3/3 passes alone and 12/12
+with twelve copies in parallel. The test turns automatic forwarding on and waits
+30 s for the forward. Next time it fails, keep the shard's log. Whether the port
+watcher missed the listen, or ran late under load, decides between a real
+ordering bug (the print is scanned once, before `listen`) and a timeout to widen.
+
+### TD-2026-11-13-447 — detached host terminals never expire, against a hard 64-terminal cap. [OPEN]
+
+By design (remote-terminal spec, "Host terminals survive quitting microide and
+closing the project"), a host terminal outlives its client. `TerminalTable`
+has no reaper, though: unlike a kept process (`ProcessTable`'s
+`keep_grace`, 30 min), a terminal with no client and a workspace nobody reopens
+lives until its shell exits. `TerminalTable::Open` refuses the 65th terminal
+with "too many terminals on this host". Found on 2026-11-13, when test runs
+leaked into a developer's live server (fixed in the fake-ssh shim): 54 abandoned
+`/tmp/mip.*` terminals, 0 clients, "not open", had filled it. A user who quits
+with terminals open across many remote projects reaches the same state. Then
+every new terminal on that host fails, and the message does not say how to
+recover (the Host view's End). Options: expire a detached terminal whose
+workspace has had no client for a long grace (days, not minutes, so a weekend
+build survives); or keep the cap and have the refusal name the Host view, plus a
+"End all detached terminals" verb there.
+
 ### TD-2026-11-11-444 — a cold structural refinement of a heavily churned file costs several times the old intraline pass. [OPEN]
 
 `microide_diff_bench`, min of runs, interleaved with `main` on the same machine,

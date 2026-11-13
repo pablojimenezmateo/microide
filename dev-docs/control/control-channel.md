@@ -223,6 +223,7 @@ selected?}` in layout units -- the coordinates the app's mouse paths test, which
 | `field:<surface>/<name>` | a text field, its text as `label`: `find/search`, `find/replace` (the in-file find widget), `prompt` (a prompt's input), `settings/filter`, `search/{query,replace,include,exclude}` (the search view), `git/subject`, `git/body` (the commit panel); `active` marks the one being edited |
 | `button:find/...` | the find widget's `previous`, `next`, `close`, `replace`, `replace-all`, `match-case`, `whole-word`, `regex` (`active` = toggle on) |
 | `button:prompt/<label>` | a prompt's buttons (`Save`, `Don't Save`, `Cancel`; a confirm's two) |
+| `button:prompt/recent/<n>` | the host prompt's Recent rows, newest first from 0, the folder as `label`; `active` on the row the field holds |
 | `button:search/...`, `button:git/...` | the search view's `mode`, `case`, `hidden`, `scope` toggles; the git view's `stage-all`, `discard-all`, `refresh`, `branch`, `sync`, `commit`, `confirm-commit` (labels as drawn: the branch name, Sync with its behind/ahead counts; `enabled` for Stage All, Discard All and Commit) |
 | `setting:<id>` | a Settings row (value as `label`, `on`/`off` for a checkbox), with `button:setting/<id>/{checkbox,decrement,increment,value,reset,scope}` for its controls |
 | `settings-category:<label>` | a Settings category in the left rail |
