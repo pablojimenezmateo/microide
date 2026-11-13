@@ -868,9 +868,11 @@ def busy_reason(our_cores: float) -> str | None:
 CORES_PER_JOB = 1.5
 # Someone else's load above this share of the cores: start nothing.
 BUSY_FRACTION = 0.6
-# The share of the cores the soak may fill when nothing else runs: the rest is
-# headroom for the desktop and for the load average's minute of lag.
-FILL_FRACTION = 0.9
+# The share of the cores the soak may fill when nothing else runs. The machine is
+# the soak's (2026-11-13: "full use of the PC"), and every soak process runs at
+# the lowest priority, so anything else started on it still gets the cores first;
+# the ramp (RAMP_SECONDS) covers the load average's minute of lag.
+FILL_FRACTION = 1.0
 # The least time between two job starts: an idle night reaches the ceiling in a
 # few minutes, and a job's cost is in the load average before the next starts.
 RAMP_SECONDS = 20.0
@@ -933,7 +935,15 @@ class JobLoad:
 
 
 def max_jobs(cores: int) -> int:
-    return max(1, int(cores * FILL_FRACTION / CORES_PER_JOB))
+    """The most jobs at once: one per core. Only a bound -- the measured cost of
+    the running jobs (allowed_jobs) and the memory they hold (memory_jobs) decide
+    how many fit. It used to be the cores over the 1.5-core estimate, which held a
+    machine whose cheap jobs measure under a core to 9 of 16 (2026-11-13).
+
+    >>> max_jobs(16)
+    16
+    """
+    return max(1, int(cores * FILL_FRACTION))
 
 
 def allowed_jobs(load: float, our_cores: float | None, our_jobs: int, cores: int, ceiling: int) -> int:
@@ -951,12 +961,12 @@ def allowed_jobs(load: float, our_cores: float | None, our_jobs: int, cores: int
     9
     >>> allowed_jobs(9.0, None, 6, 16, 9)     # all of it ours, estimated: still the ceiling
     9
-    >>> allowed_jobs(16.0, 15.0, 5, 16, 9)    # five jobs measured at 3 cores: four fit in 90%
-    4
+    >>> allowed_jobs(16.0, 15.0, 5, 16, 9)    # five jobs measured at 3 cores: five fit
+    5
     >>> allowed_jobs(16.0, None, 5, 16, 9)    # the same, estimated: 8.5 cores booked as not ours
-    3
+    5
     >>> allowed_jobs(7.0, None, 0, 16, 9)     # someone compiling on 7 cores
-    4
+    6
     >>> allowed_jobs(14.0, 0.0, 0, 16, 9)     # busy: nothing new
     0
     """
@@ -1412,7 +1422,7 @@ def main() -> int:
     sub = parser.add_subparsers(dest="mode", required=True)
     run = sub.add_parser("run")
     run.add_argument("--jobs", type=int, default=0,
-                     help="the most jobs at once (default: 90%% of the cores at 1.5 cores a job; the measured cost per job then decides how many fit)")
+                     help="the most jobs at once (default: one per core; the measured cost per job and the memory then decide how many fit)")
     run.add_argument("--fixed", action="store_true",
                      help="always run --jobs jobs instead of following the machine's load")
     run.add_argument("--once", action="store_true", help="exit when the started jobs and checks are done")
