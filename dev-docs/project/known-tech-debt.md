@@ -20,7 +20,7 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 
 Terminal tabs became split grids on the editor's `SplitTree`, with split
 right/down, directional focus, both-axis dividers and a strip tab dropped on a
-pane edge (`openspec/changes/archive/*-terminal-pane-grid`). Left out, in order
+pane edge (`openspec/changes/archive/2026-11-13-terminal-pane-grid`). Left out, in order
 of expected value:
 
 - **No drag out of a grid.** Unsplit Terminal (`term-unsplit`, the panel and

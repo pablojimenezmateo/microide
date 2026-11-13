@@ -24,4 +24,4 @@
 
 - [x] 4.1 Editor audit: the held divider-drag cursor ignored a stacked split's axis (fixed, regression test); TD-436's Escape-then-release stale frame (tab drag never recorded the pointer; fixed, regression test); remaining gaps recorded as TD-2026-11-13-448
 - [x] 4.2 Docs: implementation guide, terminal-emulation, CLAUDE.md invariant, CHANGELOG, known-tech-debt
-- [ ] 4.3 Full test shards, clang-build, asan, ubsan, qa, perf-tests
+- [x] 4.3 Full test shards, clang-build, asan, ubsan, qa (233/233 + monkey seed 1, run alone; under six concurrent lanes only latency budgets missed), perf-tests, fuzz (ProjectSessionRecordFuzz 90 s)
