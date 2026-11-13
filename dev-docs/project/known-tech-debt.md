@@ -54,6 +54,17 @@ atom gaps skip the graph too; (2) packing a vertex's identity into one 64-bit
 key and dropping `Vertex::stack` group reads from the hot path; (3) a lower
 search cap for gaps that contain no list at all. Gate each on the bench table.
 
+Lead (1) measured 2026-11-13 and NOT taken: an exact DP aligner for atom-only
+gaps with literals on both sides (the search's own edge costs, tabulated; its
+cost matched the A* path cost on 600 random gaps) took 206 of the Markdown
+file's 111,061 vertices and 34 of `PerfMain.cpp`'s 26,221 -- such gaps are a
+rounding error, and the DP always fills n*m cells where A* runs near-linear on
+near-identical gaps; wall time showed no gain. The Markdown cost is in gaps
+that CONTAIN lists (link `[text](url)` pairs, parentheses in prose), so the
+remaining leads are (2) and (3), plus a profile: `perf` needs
+`kernel.perf_event_paranoid` <= 2 on this machine (it is 4) and valgrind is not
+installed, so the next pass should start by getting one of them.
+
 ### TD-2026-11-11-440 — the structural diff reads a lexer's tree, not a grammar's. [OPEN]
 
 The compare view's structural refinement (`src/compare/DiffSyntax.*`,
