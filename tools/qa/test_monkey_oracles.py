@@ -4,6 +4,7 @@ queries the oracle asks."""
 from __future__ import annotations
 
 import random
+import time
 import sys
 import unittest
 from pathlib import Path
@@ -48,6 +49,8 @@ class _RelaunchingApp:
                     for i, p in enumerate(self.catalog)]
         if verb == "settings":
             return [{"id": "editor.autosave", "value": self.autosave}]
+        if verb == "status":
+            return {"projectRoot": self.ROOTS[self.active]}
         if verb == "documents":
             return [dict(doc) for p in self.catalog if self.loaded[p] for doc in self.docs[p]]
         raise AssertionError(verb)
@@ -82,6 +85,20 @@ class _RelaunchingApp:
 
 
 class Kill9OracleTests(unittest.TestCase):
+    def test_the_first_wait_is_for_the_active_projects_buffers_alone(self) -> None:
+        # A background project's buffer can only come back through the lap; the
+        # wait before it waited for that one too and ran to its 10 s deadline
+        # on every such kill.
+        app = _RelaunchingApp()
+        app.active = 0  # the dirty buffer is in the background project
+        oracle = monkey_oracles.DataOracle(app)
+        started = time.monotonic()
+        with mock.patch.object(monkey_oracles, "CRASH_SAFETY_QUIET_S", 0.0), \
+                mock.patch.object(monkey_oracles.time, "sleep", lambda _s: None):
+            found = oracle.kill9_and_check(random.Random(1), waited=True)
+        self.assertEqual(found, [], found)
+        self.assertLess(time.monotonic() - started, 3.0, "no wait for a buffer the lap has not loaded")
+
     def test_a_restored_project_that_has_not_loaded_is_loaded_before_the_compare(self) -> None:
         app = _RelaunchingApp()
         app.active = 0  # the buffer's project is a background one at the kill

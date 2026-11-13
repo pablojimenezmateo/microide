@@ -232,7 +232,12 @@ class DataOracle:
         # the oracle's own switch saved a restored buffer and then reported it as
         # coming back different (soak 0afa15c55c0f, once the relaunch itself no
         # longer saved them).
-        restored = self._wait_restored(dirty)
+        # Only the ACTIVE project's buffers can be back before the lap: the others
+        # load on their first activation. Waiting for all of them here ran to the
+        # full deadline whenever a second project held a dirty buffer -- ten
+        # seconds of every such kill (profiled 2026-11-13: a kill cost ~5 s on
+        # average, a quarter of a 300-step run). The lap below waits for the rest.
+        restored = self._wait_restored(self._of_active_project(dirty))
         # The projects the lap left with `editor.autosave = on_focus_change` (the
         # setting is per project: what the active one says after the lap is not
         # what the one it left had).
@@ -278,6 +283,17 @@ class DataOracle:
             time.sleep(0.2)
             after = self.documents(all_projects=True)
         return after
+
+    def _of_active_project(self, docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """The documents of the project now in front (`status`'s projectRoot); all
+        of them when that cannot be asked, as before."""
+        try:
+            root = str(self.app.query("status").get("projectRoot") or "")
+        except Exception:  # noqa: BLE001 - a dead or busy app is another oracle's
+            return docs
+        if not root:
+            return docs
+        return [doc for doc in docs if str(doc.get("project") or root) == root]
 
     def _autosave_mode(self) -> str | None:
         try:
