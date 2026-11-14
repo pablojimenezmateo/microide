@@ -34,6 +34,12 @@ class OverlapOracleTests(unittest.TestCase):
                  ("button:debug-toolbar/continue", [1246, 136, 26, 26]))
         self.assertEqual(self.overlaps(ui), [])
 
+    def test_the_debug_toolbar_floats_over_a_diffs_collapsed_lines_bar(self) -> None:
+        # Soak 4df2b07d4b82: the bar's buttons scroll with the diff's rows.
+        ui = _ui(("button:compare/context-0/all", [1246, 127, 76, 16]),
+                 ("button:debug-toolbar/continue", [1246, 104, 26, 26]))
+        self.assertEqual(self.overlaps(ui), [])
+
     def test_two_lenses_on_each_other_still_are(self) -> None:
         ui = _ui(("button:lens/a", [10, 10, 100, 16]), ("button:lens/b", [50, 12, 100, 16]))
         self.assertEqual(len(self.overlaps(ui)), 1)

@@ -2367,7 +2367,9 @@ _ACTIVATING_KEYS = {"Return", "KP_Enter", "Enter", "space"}
 # same way. The toolbar over chrome (a banner, the find widget, a panel button)
 # is still a collision: those do not move out from under it.
 _FLOATS_OVER_CONTENT = ("button:debug-toolbar/",)
-_EDITOR_CONTENT_PREFIXES = ("button:lens/",)
+# A diff's collapsed-lines bar ("Show all", "Show 20 more") is a row of the
+# compare's content like a lens is of the editor's (soak 4df2b07d4b82).
+_EDITOR_CONTENT_PREFIXES = ("button:lens/", "button:compare/context-")
 
 
 def _floats_over(a: str, b: str) -> bool:
