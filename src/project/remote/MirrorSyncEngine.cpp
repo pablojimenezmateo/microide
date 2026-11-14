@@ -894,9 +894,13 @@ void MirrorSyncEngine::RecountLocked() {
     (void)path;
     if (entry.has_remote && entry.remote.kind == ManifestEntryKind::File) {
       ++status.files;
-      if (!entry.base.has_value()) {
+      // Absent and stale count the pulls still to come, which StateOf says too:
+      // no pull touches a parked conflict or a save not yet sent. Counted, a
+      // conflict read as "1 pending" until the user settled it (soak 464a40fee2bd).
+      const bool pullable = !entry.conflict && !entry.push_pending;
+      if (pullable && !entry.base.has_value()) {
         ++status.absent;
-      } else if (*entry.base != entry.remote.hash) {
+      } else if (pullable && *entry.base != entry.remote.hash) {
         ++status.stale;
       }
     }

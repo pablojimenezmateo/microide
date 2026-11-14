@@ -558,6 +558,30 @@ void TestMirrorParksConflictsAndNeverOverwritesLocalEdits() {
   Expect(session.engine->status().conflicts == 1, "and still reports it");
 }
 
+// Soak 464a40fee2bd: a parked conflict read as a pull still to come. The recount
+// counted its stale base as pending while every pull skips a conflicted path, so
+// the project reported "1 pending" until the user settled the conflict, and the
+// QA oracle waited 90 s for a sync that was never going to run. A conflict is a
+// conflict, not also a pending pull -- as it is already not also an unsent save.
+void TestMirrorAParkedConflictIsNotAPendingPull() {
+  MirrorSession session;
+  WriteFile(session.host / "a.txt", "base\n");
+  session.Connect();
+  session.Sync();
+
+  WriteFile(session.host / "a.txt", "agent\n");
+  WriteFile(session.Tree("a.txt"), "human\n");
+  session.engine->NotifyLocalWrite("a.txt");
+  session.engine->Flush();
+  session.Sync();
+  const auto status = session.engine->status();
+  Expect(session.engine->StateOf("a.txt") == ContentState::Conflict && status.conflicts == 1,
+         "the path is a parked conflict");
+  Expect(status.stale == 0 && status.absent == 0,
+         "and not a pull still to come: stale " + std::to_string(status.stale) + ", absent " +
+             std::to_string(status.absent));
+}
+
 // The QA monkey's remote job (soak f3ad7063ff9a): a folder renamed in the mirror
 // to a name the host cannot be sent (one with a backslash in it) read as a move
 // out of the project -- the host DELETED the folder, and the mirror kept it under
@@ -1561,6 +1585,7 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
           TestMirrorAPushWhoseAnswerWasLostIsNotAConflict);
   AddTest(tests, "MirrorSyncEngine/ParksConflictsAndNeverOverwritesLocalEdits",
           TestMirrorParksConflictsAndNeverOverwritesLocalEdits);
+  AddTest(tests, "MirrorSyncEngine/AParkedConflictIsNotAPendingPull", TestMirrorAParkedConflictIsNotAPendingPull);
   AddTest(tests, "MirrorSyncEngine/HoldsAMassDelete", TestMirrorHoldsAMassDelete);
   AddTest(tests, "MirrorSyncEngine/HoldsAMassDeleteSplitAcrossBatches",
           TestMirrorHoldsAMassDeleteSplitAcrossBatches);
