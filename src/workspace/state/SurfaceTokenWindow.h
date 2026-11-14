@@ -98,11 +98,12 @@ class SurfaceTokenWindow {
     if (rows == 0) {
       return;
     }
-    start = std::min(start, rows);
     end = std::min(end, rows);
-    if (start >= end) {
-      return;
-    }
+    start = std::min(start, end);
+    // An empty range still walks the frontier to it: the caller asked for the
+    // state at `end` (a collapsed run on screen inherits it), and measures being
+    // behind against `end`. Returning here left it behind for good, and the
+    // compare render asked for a catch-up frame forever (soak a64655101a5a).
 
     // 1. Walk the state frontier up to `end`, budgeted. Nothing is tokenized here.
     if (frontier_ < end) {

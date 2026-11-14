@@ -192,9 +192,27 @@ void TestSurfaceTokenWindowSteadyScrollDoesNotAllocate() {
 #endif
 }
 
+// Soak a64655101a5a: a diff scrolled so the only row on screen is a collapsed
+// run reaching the end of the file asks for the empty range [end, end). The
+// window returned before walking the state frontier, the compare render saw it
+// still behind the visible rows and asked for another frame -- 80 a second, for
+// as long as the app sat idle.
+void TestSurfaceTokenWindowAnEmptyRangeStillWalksTheFrontierToIt() {
+  const Pane pane = MakePane(300);
+  SurfaceTokenWindow window;
+  window.Reset(pane.lines.size(), SyntaxHighlighter::InitialState(pane.path, pane.lines));
+  for (int frame = 0; frame < 4 && window.frontier() < pane.lines.size(); ++frame) {
+    EnsureRows(window, pane, pane.lines.size(), pane.lines.size(), 256);
+  }
+  Expect(window.frontier() == pane.lines.size(),
+         "the frontier reaches the end of an empty range: it stopped at " + std::to_string(window.frontier()));
+}
+
 }  // namespace
 
 void RegisterSurfaceTokenWindowTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "SurfaceTokenWindow/AnEmptyRangeStillWalksTheFrontierToIt",
+          TestSurfaceTokenWindowAnEmptyRangeStillWalksTheFrontierToIt);
   AddTest(tests, "SurfaceTokenWindow/MatchesTheWholePaneTokenization",
           TestSurfaceTokenWindowMatchesTheWholePaneTokenization);
   AddTest(tests, "SurfaceTokenWindow/ScrollBackRetokenizesCorrectly",
