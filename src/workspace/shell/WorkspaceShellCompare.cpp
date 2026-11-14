@@ -267,11 +267,18 @@ WorkspaceShell::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout
         reserve_horizontal ? (kWorkspaceScrollbarThickness + kWorkspaceScrollbarInset) : 0.0f;
     const float char_width = std::max(1.0f, editor_text_renderer_.CharWidth());
     const float min_pane_width = 8.0f + char_width;
-    const float content_width = std::max(
-        min_pane_width * 2.0f,
-        rect.w - reserved_width - layout.gutter_width * 2.0f - layout.divider_width - 16.0f);
-    const float min_fraction =
-        std::min(0.5f, min_pane_width / std::max(content_width, 1.0f));
+    // Everything fits in `rect`, however narrow the pane: the gutters give way
+    // first, then the two text panes split what is left. The content width was
+    // floored at two minimum panes whatever the pane held, and in an editor split
+    // three ways the right pane ran past its pane and the window (soak
+    // 33efed186772: divider at x 817..829 in an 824-wide window).
+    const float fixed_width = reserved_width + layout.divider_width + 16.0f;
+    layout.gutter_width = std::min(layout.gutter_width, std::max(0.0f, (rect.w - fixed_width) * 0.5f));
+    const float content_width = std::max(0.0f, rect.w - fixed_width - layout.gutter_width * 2.0f);
+    // Each pane keeps its minimum while both fit; below that they share evenly.
+    const float min_fraction = content_width >= min_pane_width * 2.0f
+                                   ? min_pane_width / content_width
+                                   : 0.5f;
     const float divider_fraction =
         std::clamp(compare_tab.divider_fraction, min_fraction, 1.0f - min_fraction);
     layout.min_divider_fraction = min_fraction;

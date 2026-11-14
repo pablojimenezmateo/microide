@@ -155,12 +155,18 @@ WorkspaceShell::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(
                                       : 0.0f;
     const float char_width = std::max(1.0f, editor_text_renderer_.CharWidth());
     const float min_pane_width = 8.0f + char_width;
-    const float content_width = std::max(
-        min_pane_width * 3.0f,
-        rect.w - reserved_width - layout.gutter_width * 3.0f - layout.divider_width * 2.0f -
-            16.0f);
-    const float min_fraction =
-        std::min(1.0f / 3.0f, min_pane_width / std::max(content_width, 1.0f));
+    // Everything fits in `rect`, however narrow the pane: the gutters give way
+    // first, then the three text panes split what is left. The content width was
+    // floored at three minimum panes whatever the pane held, and a merge in a
+    // narrow split ran its dividers past the pane and the window (soak
+    // 82935dcbd8bc; the compare's twin, 33efed186772).
+    const float fixed_width = reserved_width + layout.divider_width * 2.0f + 16.0f;
+    layout.gutter_width = std::min(layout.gutter_width, std::max(0.0f, (rect.w - fixed_width) / 3.0f));
+    const float content_width = std::max(0.0f, rect.w - fixed_width - layout.gutter_width * 3.0f);
+    // Each pane keeps its minimum while all three fit; below that they share evenly.
+    const float min_fraction = content_width >= min_pane_width * 3.0f
+                                   ? min_pane_width / content_width
+                                   : 1.0f / 3.0f;
     // Each bound pair is ordered explicitly: at the degenerate width where
     // min_fraction saturates to 1/3, `1 - min_fraction * 2` computes one float
     // ulp BELOW min_fraction (1/3 is not representable), and std::clamp with an

@@ -2249,6 +2249,75 @@ void TestWorkspaceShellCompareDividerMatchesMarkerWidth() {
          "compare divider should not reserve extra empty space before the right gutter");
 }
 
+// Soak 33efed186772: a diff in a narrow pane (the editor split three ways, 824
+// units wide) put its divider at x 817..829 -- past its pane and past the
+// window. The layout floored the content width at two minimum panes whatever the
+// pane held, and the gutters on top of that ran the divider out of it.
+void TestWorkspaceShellCompareInANarrowPaneStaysInsideIt() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add narrow compare fixture", "narrow compare fixture");
+  WriteFile(source, "int beta() {\n  return 2;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 824, 600);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  for (int i = 0; i < 3; ++i) {
+    Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, microide::workspace::EditorSplitOrientation::Vertical),
+           "the editor splits");
+  }
+  // The diff opens in the focused group: the last, narrowest one.
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"), "the diff opens");
+  Expect(WorkspaceShellTestAccess::ActiveTabIsCompare(shell), "in the focused pane");
+  const SDL_FRect pane = WorkspaceShellTestAccess::ActiveTabSurface(shell);
+  const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
+  const float right = pane.x + pane.w;
+  Expect(pane.w < 300.0f, "the pane is narrow: " + std::to_string(pane.w));
+  Expect(surface.center_x >= pane.x && surface.center_x + surface.divider_width <= right + 0.5f,
+         "the divider stays inside the pane: divider at " + std::to_string(surface.center_x) + ", pane " +
+             std::to_string(pane.x) + ".." + std::to_string(right));
+  Expect(surface.right_x + surface.gutter_width + surface.right_width <= right + 0.5f,
+         "and so does the right pane: it ends at " +
+             std::to_string(surface.right_x + surface.gutter_width + surface.right_width));
+}
+
+// The merge's twin (soak 82935dcbd8bc): three minimum panes floored the width
+// whatever the pane held, and its dividers ran out of a narrow split.
+void TestWorkspaceShellMergeInANarrowPaneStaysInsideIt() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  const std::filesystem::path base = temp_dir.path() / "base.cpp";
+  const std::filesystem::path incoming = temp_dir.path() / "incoming.cpp";
+  WriteFile(source, "line 1\ncurrent line\nline 3\n");
+  WriteFile(base, "line 1\nbase line\nline 3\n");
+  WriteFile(incoming, "line 1\nincoming line\nline 3\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add narrow merge fixture", "narrow merge fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 824, 600);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  for (int i = 0; i < 3; ++i) {
+    Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, microide::workspace::EditorSplitOrientation::Vertical),
+           "the editor splits");
+  }
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, source, source), "the merge opens");
+  const SDL_FRect pane = WorkspaceShellTestAccess::ActiveTabSurface(shell);
+  const auto surface = WorkspaceShellTestAccess::ActiveMergeSurfaceLayout(shell);
+  const float right = pane.x + pane.w;
+  Expect(pane.w < 300.0f, "the pane is narrow: " + std::to_string(pane.w));
+  Expect(surface.right_x + surface.gutter_width + surface.right_width <= right + 0.5f,
+         "the merge's right pane stays inside its pane: it ends at " +
+             std::to_string(surface.right_x + surface.gutter_width + surface.right_width) + ", pane at " +
+             std::to_string(right));
+}
+
 void TestWorkspaceShellCompareRenderKeepsDividerBorderOnUnchangedRows() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -3953,6 +4022,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMergeTabUsesFilenameOnlyLabelAndTooltip);
   AddTest(tests, "WorkspaceShell/MergeEditorRefusesBinaryInput",
           TestWorkspaceShellMergeEditorRefusesBinaryInput);
+  AddTest(tests, "WorkspaceShell/MergeInANarrowPaneStaysInsideIt", TestWorkspaceShellMergeInANarrowPaneStaysInsideIt);
+  AddTest(tests, "WorkspaceShell/CompareInANarrowPaneStaysInsideIt", TestWorkspaceShellCompareInANarrowPaneStaysInsideIt);
   AddTest(tests, "WorkspaceShell/CompareDividerMatchesMarkerWidth",
           TestWorkspaceShellCompareDividerMatchesMarkerWidth);
   AddTest(tests, "WorkspaceShell/CompareRenderKeepsDividerBorderOnUnchangedRows",
