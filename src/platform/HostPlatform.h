@@ -11,6 +11,14 @@ namespace microide::platform {
 // at startup before any subprocess/terminal/LSP I/O. Idempotent.
 void IgnoreBrokenPipeSignal();
 
+// For the QA driver only: when MICROIDE_QA_PARENT_MAY_TRACE=1, lets the process
+// that started this one (and that process's descendants) attach a debugger.
+// Yama's ptrace scope 1 otherwise refuses a gdb the driver starts -- a sibling,
+// not the parent -- so a stall the driver sees left only thread states, not
+// backtraces (soak d3f7c53a3cd7: every thread asleep on a futex). Nobody else is
+// let in, and without the variable this does nothing. Linux only.
+void AllowParentToTraceWhenAskedByQa();
+
 // Set the process's CHARACTER locale (LC_CTYPE only) to the user's, or to
 // C.UTF-8 when the user's is not UTF-8 (a bare `C`/`POSIX` environment). The app
 // is UTF-8 throughout, and Xlib converts text through the C library's locale: in

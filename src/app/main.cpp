@@ -35,6 +35,8 @@ int main(int argc, char** argv) {
   // Writing to a subprocess/terminal/LSP pipe whose reader has died must surface as
   // EPIPE, not kill the editor. Install this before any I/O can occur.
   microide::platform::IgnoreBrokenPipeSignal();
+  // The QA driver's stall evidence: lets the driver's gdb attach (a no-op unless asked).
+  microide::platform::AllowParentToTraceWhenAskedByQa();
   // Before any thread: Xlib's text conversions (the window title) follow it.
   (void)microide::platform::UseUtf8CharacterLocale();
 

@@ -447,6 +447,9 @@ class App:
             # One line per read, write, adopted baseline and undo-to-clean of a
             # buffer: the history a data finding's evidence quotes for its file.
             "MICROIDE_TRACE_BUFFER_IO": "1",
+            # Lets this driver's gdb attach when the app stops answering: yama's
+            # ptrace scope 1 refuses a sibling otherwise (capture_stall).
+            "MICROIDE_QA_PARENT_MAY_TRACE": "1",
             # The debug adapter's traffic, for a debugger flow's evidence.
             "MICROIDE_DAP_LOG": str(work / "dap.log"),
             "XDG_CONFIG_HOME": str(work / "config"),
@@ -923,6 +926,20 @@ class App:
             lines.append("  ".join(fields))
         self.shots.mkdir(parents=True, exist_ok=True)
         (self.shots / "stall-threads.txt").write_text("\n".join(lines) + "\n")
+        # Where each thread is in the code, not only that it sleeps: every thread of
+        # soak d3f7c53a3cd7 was asleep on a futex, and the states alone cannot say
+        # which wait. The app lets its parent's descendants trace it
+        # (MICROIDE_QA_PARENT_MAY_TRACE); bounded, and skipped without gdb.
+        gdb = shutil.which("gdb")
+        if gdb is not None:
+            try:
+                traced = subprocess.run(
+                    [gdb, "-p", str(self.proc.pid), "-batch", "-nx", "-ex", "set pagination off",
+                     "-ex", "thread apply all bt 40"],
+                    env=self.tool_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60, check=False)
+                (self.shots / "stall-backtrace.txt").write_bytes(traced.stdout[-512 * 1024:])
+            except (OSError, subprocess.TimeoutExpired) as error:
+                (self.shots / "stall-backtrace.txt").write_text(f"gdb could not attach: {error}\n")
 
     def query(self, verb: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
         """A query over the persistent control connection (a spawned control
@@ -2248,8 +2265,9 @@ class App:
                 log.seek(0, os.SEEK_END)
                 log.seek(max(0, log.tell() - 64 * 1024))
                 (folder / "log-tail-before-relaunch.txt").write_text(log.read().decode("utf-8", "replace"))
-        if self.shots is not None and (self.shots / "stall-threads.txt").exists():
-            shutil.copy2(self.shots / "stall-threads.txt", folder / "stall-threads.txt")
+        for name in ("stall-threads.txt", "stall-backtrace.txt"):
+            if self.shots is not None and (self.shots / name).exists():
+                shutil.copy2(self.shots / name, folder / name)
         # A persisted record the app read but could not decode: its framing and
         # checksum held, so the file is exactly what the encoder wrote and the
         # decoder refused -- the bytes are the evidence, and the app's next save
