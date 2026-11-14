@@ -7,7 +7,7 @@
 | [`perf-harness.md`](perf-harness.md) | Scenario DSL, CI baselines, `perf-baseline:` change-record rule |
 | [`startup-tracing.md`](startup-tracing.md) | Cold-start investigation (`MICROIDE_STARTUP_TRACE`) |
 | [`runtime-profiling.md`](runtime-profiling.md) | Typing, scroll, redraw profiling (`MICROIDE_PERF_TRACE`, etc.) |
-| [`performance-findings.md`](performance-findings.md) | Shipped wins and durable numbers worth preserving |
+| [`performance-findings.md`](performance-findings.md) | Index of past performance passes (the full record is archived); add new findings there |
 
 Authoritative policy: [`openspec/specs/performance-budgets/spec.md`](../../openspec/specs/performance-budgets/spec.md).
 
