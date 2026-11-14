@@ -81,5 +81,20 @@ class MonkeyGuardTests(unittest.TestCase):
         self.assertFalse(self._monkey(ui)._activation_chooses_forbidden())
 
 
+class PressGuardTests(unittest.TestCase):
+    def test_a_press_on_the_edge_of_quit_is_refused(self) -> None:
+        # Soak 7ab9a5476905 (again, at ui.scale 1.25): the File menu's Quit row was
+        # [14, 315, 312, 22], the press (326, 336) -- its right edge, outside by the
+        # rect, but the point is rounded to device pixels on the way in and the app
+        # took it at 325: Quit, and the app's clean exit filed as a crash.
+        monkey = mk.Monkey.__new__(mk.Monkey)
+        monkey.app = Mock()
+        monkey.app.ui.return_value = {"elements": [
+            {"kind": "menu-item", "name": "menu-item:File/Quit", "label": "Quit", "rect": [14, 315, 312, 22]}]}
+        self.assertTrue(monkey._press_lands_on_forbidden(326, 336))
+        self.assertTrue(monkey._press_lands_on_forbidden(14 - 1, 320))
+        self.assertFalse(monkey._press_lands_on_forbidden(400, 336), "well away from it is fine")
+
+
 if __name__ == "__main__":
     unittest.main()

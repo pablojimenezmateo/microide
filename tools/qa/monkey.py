@@ -150,6 +150,8 @@ FOREIGN_CLIPBOARD_TEXTS = [
 # Maximize too: the harness, not a window manager, owns the window's size, and
 # Maximize sits beside Close -- a press aimed at it from a layout read before a
 # resize or a scale change settled landed on Close and ended the run.
+# Layout units kept clear around a forbidden element (Monkey._inside).
+FORBIDDEN_MARGIN = 2
 FORBIDDEN_ELEMENTS = ("button:window/close", "button:window/minimize", "button:window/maximize")
 FORBIDDEN_LABELS = ("Quit", "Exit", "Open File", "Open Folder", "Save As", "Close Window",
                     "Open Font", "Choose Font")
@@ -735,7 +737,13 @@ class Monkey:
 
     @staticmethod
     def _inside(rects: list[list[float]], x: float, y: float) -> bool:
-        return any(rx <= x < rx + rw and ry <= y < ry + rh for rx, ry, rw, rh in rects)
+        """Within FORBIDDEN_MARGIN of one of the forbidden `rects`: a press goes to
+        the app in whole device pixels, and at a fractional ui.scale the point the
+        app takes can be a unit inside a rect the press was on the edge of -- the
+        File menu's Quit row at 1.25 took a press at its right edge (soak
+        7ab9a5476905), and the app quit."""
+        m = FORBIDDEN_MARGIN
+        return any(rx - m <= x < rx + rw + m and ry - m <= y < ry + rh + m for rx, ry, rw, rh in rects)
 
     def _press_lands_on_forbidden(self, x: float, y: float) -> bool:
         """App.press_guard while the monkey runs. Every source aims from SOME read
