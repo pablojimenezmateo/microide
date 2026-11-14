@@ -113,10 +113,14 @@ bool MovePath(const std::filesystem::path& source, const std::filesystem::path& 
   // pre-exist" and the rollback below then deleted it: a move that fails is
   // supposed to be a no-op, and this one destroyed a directory entry it never
   // created. `MovePath(<missing source>, <dangling symlink>)` did exactly that.
+  // Read off the type alone: a missing path comes back not_found WITH the error
+  // set to ENOENT, so testing the error too read every absent destination as
+  // pre-existing and skipped the rollback, stranding the partial copy (soak
+  // d3f7c53a3cd7). A real stat error reports file_type::none: still fail closed.
   const std::filesystem::file_status destination_status =
       std::filesystem::symlink_status(destination, error);
   const bool destination_preexisted =
-      error || destination_status.type() != std::filesystem::file_type::not_found;
+      destination_status.type() != std::filesystem::file_type::not_found;
   error.clear();
   if (!CopyPath(source, destination)) {
     // Copy failed after possibly creating part of the destination. Leaving that

@@ -8,9 +8,12 @@
 #include "platform/Trash.h"
 
 #include <poll.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <chrono>
+#include <cstdio>
+#include <iostream>
 #include <condition_variable>
 #include <filesystem>
 #include <fstream>
@@ -402,6 +405,110 @@ void TestTrashAcceptsDanglingSymlink() {
          "the dangling symlink should be removed from its original location");
 }
 
+// Removes a tree on scope exit, even when an Expect throws: the cross-device
+// tests below write to /dev/shm, which outlives the test's temp directory.
+struct RemoveTreeOnExit {
+  std::filesystem::path path;
+  ~RemoveTreeOnExit() {
+    std::error_code ec;
+    std::filesystem::remove_all(path, ec);
+  }
+};
+
+// A folder the trash must reach across devices (the data home on another mount,
+// as /tmp is a tmpfs on the dev PC) and cannot copy -- here an unreadable file --
+// fails once and leaves the trash as it found it. Trash took every failed move
+// whose slot it then found occupied for a lost race and retried at the next
+// suffix: a full copy of the folder per attempt, up to 10000, on the UI thread
+// (soak d3f7c53a3cd7, stalled copying "qa-weird 5273").
+void TestTrashOfAnUncopyableFolderAcrossDevicesFailsOnce() {
+  namespace fs = std::filesystem;
+  TemporaryDirectory temp_dir;
+  std::error_code ec;
+  const fs::path shm("/dev/shm");
+  struct stat temp_stat {};
+  struct stat shm_stat {};
+  if (::stat(temp_dir.path().c_str(), &temp_stat) != 0 || ::stat(shm.c_str(), &shm_stat) != 0 ||
+      temp_stat.st_dev == shm_stat.st_dev) {
+    std::cerr << "skipped: no second filesystem at /dev/shm\n";
+    return;
+  }
+  const fs::path data_home = shm / ("microide-trash-test-" + std::to_string(::getpid()));
+  const RemoveTreeOnExit remove_data_home{data_home};
+  fs::create_directories(data_home, ec);
+  Expect(!ec, "the data home on the second filesystem should be created");
+  ScopedEnvVar data_home_env("XDG_DATA_HOME", data_home.string());
+
+  const fs::path folder = temp_dir.path() / "folder";
+  fs::create_directories(folder / "sub", ec);
+  WriteFile(folder / "a.txt", "a");
+  WriteFile(folder / "sub" / "b.txt", "b");
+  const fs::path unreadable = folder / "unreadable.txt";
+  WriteFile(unreadable, "secret");
+  fs::permissions(unreadable, fs::perms::none, ec);
+  if (std::FILE* probe = std::fopen(unreadable.c_str(), "rb"); probe != nullptr) {
+    std::fclose(probe);  // running as root: the file is readable after all
+    std::cerr << "skipped: an unreadable file is readable here\n";
+    return;
+  }
+
+  const microide::platform::TrashOperationResult result =
+      microide::platform::MovePathToTrash(folder);
+  Expect(!result.ok, "a folder the trash cannot copy is not trashed");
+  // One attempt, failing for what it is -- not every suffix tried until the slots
+  // ran out.
+  Expect(result.error_message == "Failed to move the path to trash",
+         "the trash fails on its first attempt, not after exhausting its slots: " +
+             result.error_message);
+  Expect(fs::exists(folder / "a.txt") && fs::exists(folder / "sub" / "b.txt"),
+         "the folder stays where it was");
+  std::size_t left = 0;
+  for (const fs::path& dir : {data_home / "Trash" / "files", data_home / "Trash" / "info"}) {
+    for (const fs::directory_entry& entry : fs::directory_iterator(dir, ec)) {
+      ++left;
+      std::cerr << "left in the trash: " << entry.path() << "\n";
+    }
+  }
+  Expect(left == 0, "a failed trash leaves nothing in the trash");
+}
+
+// A rename across devices that cannot copy the folder is a no-op: MovePath read
+// an absent destination as pre-existing (symlink_status reports it not_found
+// with ENOENT set), skipped its rollback and left the half-made copy behind.
+void TestMovePathOfAnUncopyableFolderAcrossDevicesLeavesNoCopy() {
+  namespace fs = std::filesystem;
+  TemporaryDirectory temp_dir;
+  std::error_code ec;
+  const fs::path shm("/dev/shm");
+  struct stat temp_stat {};
+  struct stat shm_stat {};
+  if (::stat(temp_dir.path().c_str(), &temp_stat) != 0 || ::stat(shm.c_str(), &shm_stat) != 0 ||
+      temp_stat.st_dev == shm_stat.st_dev) {
+    std::cerr << "skipped: no second filesystem at /dev/shm\n";
+    return;
+  }
+  const fs::path folder = temp_dir.path() / "folder";
+  fs::create_directories(folder / "sub", ec);
+  WriteFile(folder / "a.txt", "a");
+  WriteFile(folder / "sub" / "b.txt", "b");
+  const fs::path unreadable = folder / "zz-unreadable.txt";  // after a.txt and sub/
+  WriteFile(unreadable, "secret");
+  fs::permissions(unreadable, fs::perms::none, ec);
+  if (std::FILE* probe = std::fopen(unreadable.c_str(), "rb"); probe != nullptr) {
+    std::fclose(probe);
+    std::cerr << "skipped: an unreadable file is readable here\n";
+    return;
+  }
+  const fs::path destination = shm / ("microide-move-test-" + std::to_string(::getpid()));
+  const RemoveTreeOnExit remove_destination{destination};
+  fs::remove_all(destination, ec);
+  Expect(!microide::platform::MovePath(folder, destination),
+         "a folder that cannot be copied is not moved");
+  const bool left = fs::symlink_status(destination, ec).type() != fs::file_type::not_found;
+  Expect(!left, "the failed move leaves no partial copy at the destination");
+  Expect(fs::exists(folder / "a.txt"), "the folder stays where it was");
+}
+
 // TD-2026-07-17-027: OpenUrl is a trust boundary. Unsupported schemes and
 // over-long URLs must be refused before reaching the OS opener. Only the
 // rejection paths are exercised here (an allowed scheme would launch a real
@@ -456,6 +563,10 @@ void RegisterFilesystemTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Filesystem/CopyPathAcceptsBareFilenameDestination",
           TestCopyPathAcceptsBareFilenameDestination);
   AddTest(tests, "Trash/AcceptsDanglingSymlink", TestTrashAcceptsDanglingSymlink);
+  AddTest(tests, "Trash/AnUncopyableFolderAcrossDevicesFailsOnce",
+          TestTrashOfAnUncopyableFolderAcrossDevicesFailsOnce);
+  AddTest(tests, "FsOps/MovePathOfAnUncopyableFolderAcrossDevicesLeavesNoCopy",
+          TestMovePathOfAnUncopyableFolderAcrossDevicesLeavesNoCopy);
   AddTest(tests, "Filesystem/CopyPathPreservesSymlinksAndDoesNotThrow",
           TestCopyPathPreservesSymlinksAndDoesNotThrow);
   AddTest(tests, "Filesystem/CopyPathPreservesTopLevelFileSymlink",

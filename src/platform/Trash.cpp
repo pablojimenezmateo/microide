@@ -155,11 +155,16 @@ TrashOperationResult MovePathToTrashLinux(const std::filesystem::path& source) {
     // the slot made the two disagree: the move refused ("destination present") while
     // this read "absent", so the retry was skipped and the delete failed outright
     // instead of taking the next suffix. Any stat error also counts as occupied,
-    // which is the same fail-closed rule the move uses.
+    // which is the same fail-closed rule the move uses. An absent slot is read off
+    // the TYPE alone: libstdc++ reports a missing path as not_found AND sets the
+    // error to ENOENT, so testing the error too read every free slot as taken. A
+    // move that failed for any reason then retried at the next suffix, copying the
+    // whole folder again up to 10000 times on the UI thread (soak d3f7c53a3cd7). A
+    // real stat error reports file_type::none, which still counts as taken.
     std::error_code dest_status_error;
     const std::filesystem::file_status dest_status =
         std::filesystem::symlink_status(trashed_path, dest_status_error);
-    if (dest_status_error || dest_status.type() != std::filesystem::file_type::not_found) {
+    if (dest_status.type() != std::filesystem::file_type::not_found) {
       std::filesystem::remove(candidate_info, error);
       continue;  // Slot taken during the window — reserve the next one.
     }
