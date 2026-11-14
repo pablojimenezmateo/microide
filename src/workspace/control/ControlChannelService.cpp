@@ -1002,10 +1002,12 @@ util::JsonValue ControlChannelService::BuildDocuments(const util::JsonValue& arg
         }
         seen.push_back(view.document_identity());
         const bool opaque = view.encoding() == editor::TextViewport::TextEncoding::Bytes;
-        // What Save writes: an opaque (binary) buffer joins with LF (its CR bytes
-        // are data, kept in the lines).
-        const std::string bytes = view.SerializeDocumentText(
-            opaque ? std::optional<util::LineEnding>(util::LineEnding::LF) : std::nullopt);
+        // What Save writes: the document's own ending and mark. A file opened as
+        // bytes records LF (its CR bytes are data, kept in the lines); a text file
+        // an edit made opaque keeps the ending it was opened with. Forcing LF for
+        // every opaque buffer hashed bytes the save does not write (soak
+        // a7e72d7d3c4c: a saved, clean crlf.txt read as differing from its file).
+        const std::string bytes = view.SerializeDocumentText();
         util::JsonObject object;
         object["path"] = util::JsonValue(view.path().generic_string());
         object["title"] = util::JsonValue(tab.title);

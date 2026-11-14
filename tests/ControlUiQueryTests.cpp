@@ -351,6 +351,37 @@ void TestBufferQueryReportsTextCaretsAndFolds() {
          "fold-all should leave the query reporting the fold at line 1");
 }
 
+// Soak a7e72d7d3c4c, cb7d46af163b, 58b38cf6a12c: a CRLF file that an edit made
+// opaque (bytes that are not UTF-8) saves with its CRLF endings since b84babbed,
+// but the query still joined an opaque buffer with LF -- the digest it gave was
+// not what the save wrote, and the data oracle called the saved, clean buffer
+// different from its file.
+void TestDocumentsQueryHashesWhatASaveWritesForABufferMadeOpaque() {
+  UiFixture fixture;
+  const std::filesystem::path path = fixture.root / "crlf.txt";
+  WriteFile(path, "one\r\ntwo\r\n");
+  TestAccess::OpenFileInNewTab(fixture.shell, path);
+  TestAccess::FlushPendingFileReads(fixture.shell);
+  Expect(TestAccess::ActiveEditor(fixture.shell).path() == path, "the file is the active editor");
+  TestAccess::ActiveEditor(fixture.shell).InsertText("\x80");
+  Expect(TestAccess::ActiveEditor(fixture.shell).EncodingLabel() == "Bytes", "the edit makes the buffer opaque");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "save"), "save should run");
+  const std::string disk = util::ReadTextFile(path).value_or("");
+  Expect(disk.find("\r\n") != std::string::npos, "the save kept the file's CRLF endings");
+  std::size_t seen = 0;
+  const util::JsonValue documents = TestAccess::ControlQuery(fixture.shell, "documents");
+  for (const util::JsonValue& doc : documents.AsArray()) {
+    if (doc["path"].AsString().ends_with("crlf.txt")) {
+      ++seen;
+      Expect(!doc["dirty"].AsBool(), "the saved buffer is clean");
+      Expect(doc["sha256"].AsString() == util::Sha256Hex(disk),
+             "and its digest is the file's: " + std::to_string(doc["bytes"].AsInt()) + " bytes against " +
+                 std::to_string(disk.size()));
+    }
+  }
+  Expect(seen == 1, "the query lists the document once");
+}
+
 // The `documents` query: every open editor document once, however many panes show
 // it, with the SHA-256 of the bytes a save writes -- the QA monkey's data-loss
 // oracle compares it with the file (a clean buffer) and across a kill -9 (a dirty
@@ -840,6 +871,8 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/LargeEditorFontKeepsTheChromeSize", TestLargeEditorFontKeepsTheChromeSize);
   AddTest(tests, "ControlUiQuery/EveryListedQueryVerbIsAnswered", TestEveryListedQueryVerbIsAnswered);
   AddTest(tests, "ControlUiQuery/DocumentsQueryHashesWhatASaveWrites", TestDocumentsQueryHashesWhatASaveWrites);
+  AddTest(tests, "ControlUiQuery/DocumentsQueryHashesWhatASaveWritesForABufferMadeOpaque",
+          TestDocumentsQueryHashesWhatASaveWritesForABufferMadeOpaque);
   AddTest(tests, "ControlUiQuery/InjectedInputRepaintsWhatItChanged", TestInjectedInputRepaintsWhatItChanged);
   AddTest(tests, "ControlUiQuery/PointerCommandClicksWhatTheUiNames",
           TestPointerCommandClicksWhatTheUiNames);
