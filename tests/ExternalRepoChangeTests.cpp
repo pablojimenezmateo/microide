@@ -106,6 +106,57 @@ void TestWorkspaceShellExternalChangeReloadsAnOpenFileTheProjectDoesNotTrack() {
          "an open file outside the root reloads after a write (" + line_of(outside) + ")");
 }
 
+void DrainProjectChangesBeforeTheWrite(WorkspaceShell& shell) {
+  for (int attempt = 0; attempt < 20; ++attempt) {
+    if (!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false)) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+}
+
+// Soak 8c7737a346f4: a project whose root is gone -- here a symlink to its parent,
+// deleted while another project was in front -- comes back to the front with no
+// tree to watch. The shell dropped the whole watcher then, its open-file watch
+// with it, and a clean buffer open there never heard of a change to its file:
+// an append outside left it empty for good.
+void TestWorkspaceShellAProjectWhoseRootIsGoneStillWatchesItsOpenFiles() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path first = temp_dir.path() / "first";
+  const std::filesystem::path second = temp_dir.path() / "second";
+  const std::filesystem::path shared = temp_dir.path() / "shared.txt";
+  WriteFile(first / "a.txt", "a\n");
+  WriteFile(second / "b.txt", "b\n");
+  WriteFile(shared, "before\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  SoftwareCanvas canvas(1280, 720);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, first, false, false), "open the first project");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, second, false, false), "open the second project");
+  WorkspaceShellTestAccess::OpenFile(shell, shared);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "project-next"), "the first project comes to the front");
+  std::filesystem::remove_all(second);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "project-next"),
+         "the second project comes back, its root gone");
+  // Frame prep is what hands the open documents to the watcher.
+  WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
+  DrainProjectChangesBeforeTheWrite(shell);
+
+  WriteFile(shared, "after\n");
+  const auto line = [&shell, &shared]() -> std::string {
+    const editor::TextViewport* view = WorkspaceShellTestAccess::EditorViewportForPath(shell, shared);
+    return view != nullptr && !view->lines().empty() ? view->lines()[0] : std::string("<none>");
+  };
+  (void)WaitUntil([&]() { return line() == "after"; }, std::chrono::seconds(10), std::chrono::milliseconds(10),
+                  [&]() {
+                    (void)WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false);
+                    WorkspaceShellTestAccess::FlushPendingFileReads(shell);
+                  });
+  Expect(line() == "after", "the open file reloads after a write (" + line() + ")");
+}
+
 // Drains any pending project-change events so the watcher baseline is settled.
 void DrainProjectChanges(WorkspaceShell& shell) {
   for (int attempt = 0; attempt < 20; ++attempt) {
@@ -1161,6 +1212,8 @@ void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellExternalChangeReloadsCleanBuffer);
   AddTest(tests, "ExternalRepoChange/ReloadsAnOpenFileTheProjectDoesNotTrack",
           TestWorkspaceShellExternalChangeReloadsAnOpenFileTheProjectDoesNotTrack);
+  AddTest(tests, "ExternalRepoChange/AProjectWhoseRootIsGoneStillWatchesItsOpenFiles",
+          TestWorkspaceShellAProjectWhoseRootIsGoneStillWatchesItsOpenFiles);
   AddTest(tests, "ExternalRepoChange/CleanReloadDoesNotSnapshotBuffers",
           TestWorkspaceShellCleanReloadDoesNotSnapshotBuffers);
   AddTest(tests, "ExternalRepoChange/ReloadsBothSplitGroups",

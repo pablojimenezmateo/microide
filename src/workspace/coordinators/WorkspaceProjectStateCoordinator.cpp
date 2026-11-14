@@ -136,8 +136,8 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
 
   util::IncrementBackgroundTaskCount();
   file_index_initial_build_in_flight_.store(true, std::memory_order_release);
-  if (!file_index_watcher_->Watch(context_.current_project_state.root)) {
-    file_index_watcher_.reset();
+  const bool watching_tree = file_index_watcher_->Watch(context_.current_project_state.root);
+  if (!watching_tree) {
     // Guard the decrement with the same exchange used by the batch callback and
     // StopFileIndexWatcher: if the initial-build batch already fired and consumed
     // the in-flight flag, it already decremented, so decrementing again here would
@@ -145,7 +145,11 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
     if (file_index_initial_build_in_flight_.exchange(false, std::memory_order_acq_rel)) {
       util::DecrementBackgroundTaskCountAndWake();
     }
-    return false;
+    // No tree to watch -- the root is gone, or is not a directory -- but the
+    // open documents still are files, wherever they are. Dropping the whole
+    // watcher here dropped their watch with it, and a clean buffer of a project
+    // whose root had been deleted never heard of a change to its file (soak
+    // 8c7737a346f4). The watcher stays, for them alone.
   }
   // The open documents the tracked tree's watch does not reach -- `.git/HEAD`, a
   // file outside the root, one open through a symlinked directory -- are watched
@@ -166,7 +170,7 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
           project_file_event_pending_.store(false, std::memory_order_release);
         }
       });
-  return true;
+  return watching_tree;
 }
 
 void WorkspaceShell::StopFileIndexWatcher() {
