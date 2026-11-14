@@ -5572,6 +5572,25 @@ void TestTextViewportFastLoadEmptyFile() {
 // highlighting and shebang detection missed line 1, and typing at the start of
 // the file put the new text in front of the mark. VS Code strips it on load and
 // writes it back on save; so does this.
+// Soak 88696b6b00ac: a BOM file with CRLF endings, then a paste of bytes that
+// are not UTF-8. The edit reclassified the buffer as opaque bytes, and Save took
+// "opaque" to mean "opened as bytes": it dropped the mark the open had stripped
+// and joined the lines with LF. The buffer (and its session snapshot) kept both;
+// the file on disk lost them on an autosave.
+void TestTextViewportABufferThatBecameBytesSavesItsMarkAndEndings() {
+  const std::filesystem::path path =
+      WriteScratchFile("bom-crlf.txt", "\xEF\xBB\xBFwith a\r\nmark\r\n");
+  TextViewport view;
+  Expect(view.OpenFile(path), "the BOM file opens");
+  view.InsertText("\x80\x81");
+  Expect(view.EncodingLabel() == "Bytes", "the paste makes the buffer bytes");
+  const std::string expected = "\xEF\xBB\xBF\x80\x81with a\r\nmark\r\n";
+  Expect(view.SerializeDocumentText() == expected, "the buffer's disk form keeps the mark and CRLF");
+  Expect(view.Save(microide::project::LocalFileWriteGate()), "it saves");
+  Expect(microide::util::ReadTextFile(path).value_or("") == expected,
+         "and the file gets what the buffer holds: the mark, the bytes and CRLF");
+}
+
 void TestTextViewportUtf8BomIsStrippedOnOpenAndWrittenOnSave() {
   const std::filesystem::path path =
       WriteScratchFile("bom.txt", "\xEF\xBB\xBF#!/bin/sh\necho hi\n");
@@ -6789,6 +6808,8 @@ AddTest(tests, "TextViewport/UndoThenRedoIsTheIdentityOverRandomHistories",
           TestTextViewportFastLoadDetectsEncoding);
   AddTest(tests, "TextViewport/Utf8BomIsStrippedOnOpenAndWrittenOnSave",
           TestTextViewportUtf8BomIsStrippedOnOpenAndWrittenOnSave);
+  AddTest(tests, "TextViewport/ABufferThatBecameBytesSavesItsMarkAndEndings",
+          TestTextViewportABufferThatBecameBytesSavesItsMarkAndEndings);
   AddTest(tests, "TextViewport/SmallFileKeepsSyntaxHighlighting",
           TestTextViewportSmallFileKeepsSyntaxHighlighting);
   AddTest(tests, "TextViewport/SplitSiblingCaretsSurviveAForeignEdit",

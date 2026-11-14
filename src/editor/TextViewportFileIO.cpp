@@ -293,9 +293,12 @@ bool TextViewport::Save(project::FileWriteGate& gate, std::error_code* error) {
   }
 
   // "auto" keeps the file's detected ending; an explicit lf/crlf override wins. Opaque
-  // content ignores both and always joins with LF.
+  // content ignores the override and keeps the document's ending: LF for a file
+  // opened as bytes (split on '\n' only, so its CRs are in the lines), the file's
+  // own for a text file an edit made opaque -- forcing LF there rewrote every
+  // CRLF in it (soak 88696b6b00ac).
   const LineEnding effective_ending =
-      opaque ? LineEnding::LF : save_line_ending_override_.value_or(document_->line_ending);
+      opaque ? document_->line_ending : save_line_ending_override_.value_or(document_->line_ending);
   // The changed path already holds a materialized `normalized` vector. The common
   // clean-save path streams straight from the live TextBuffer (zero-copy via LineView)
   // instead of materializing a whole-document vector with Snapshot() before the join
@@ -303,9 +306,11 @@ bool TextViewport::Save(project::FileWriteGate& gate, std::error_code* error) {
   std::string text =
       changed ? util::SerializeLines(normalized, effective_ending)
               : util::SerializeLinesStreaming(LineSpan(document_->lines), effective_ending);
-  if (document_->utf8_bom && !opaque) {
+  if (document_->utf8_bom) {
     // The mark was stripped on open so the buffer's line 0 starts at the text;
-    // the file keeps it.
+    // the file keeps it. Only a text open strips one, so a buffer that is opaque
+    // now became so by an edit, and its mark is still the file's (soak
+    // 88696b6b00ac: an autosave after a paste of non-UTF-8 bytes dropped it).
     text.insert(0, util::kUtf8Bom);
   }
   // A buffer whose baseline found no file there (a Save As's new name, a new
