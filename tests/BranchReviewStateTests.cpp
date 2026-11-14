@@ -415,6 +415,38 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                             "high-bit content_hash must be preserved exactly");
                    }});
 
+  // Soak 4bbda24149d1: the same defect one field over. A reviewed file's diff
+  // fingerprint is a full-range hash too, written through WriteI64 and read
+  // back behind a signed >= 0 guard -- a file whose fingerprint had its top
+  // bit set (about half of them) made the whole project config undecodable.
+  tests.push_back({"BranchReviewState/HighBitFileFingerprintSurvivesRoundTrip",
+                   [] {
+                     const BranchReviewTargetIdentity target =
+                         MakeBranchReviewTargetIdentity("/repo", "HEAD~2~1", "HEAD~2", "HEAD~2~1", 7);
+                     constexpr std::uint64_t kFingerprint = 0xDA2B853A67404A38ULL;  // from the soak's file
+                     BranchReviewStateService service;
+                     service.MarkFileReviewed(target, std::filesystem::path(".gitignore"), kFingerprint);
+
+                     PersistedProjectConfigState persisted{
+                         .project_base_color = std::nullopt,
+                         .settings = {},
+                         .sidebar_policies = {},
+                         .commit_draft = std::nullopt,
+                         .branch_review = ToPersistedBranchReviewState(service),
+                     };
+                     std::vector<std::byte> encoded;
+                     Expect(EncodeProjectConfigRecord(persisted, &encoded),
+                            "project config with a reviewed file should encode");
+                     PersistedProjectConfigState decoded;
+                     Expect(DecodeProjectConfigRecord(encoded, &decoded),
+                            "a high-bit file fingerprint must not fail whole-record decode");
+                     Expect(decoded.branch_review.targets.size() == 1 &&
+                                decoded.branch_review.targets[0].reviewed_files.size() == 1 &&
+                                decoded.branch_review.targets[0].reviewed_files[0].reviewed_diff_fingerprint ==
+                                    kFingerprint,
+                            "and the fingerprint must be preserved exactly");
+                   }});
+
   // TD-2026-07-16-34: a persisted config with MORE targets / per-target files than the
   // live service caps must be truncated to the caps at decode (a corrupt/hostile
   // .microide config cannot bypass the runtime PruneTarget limits).

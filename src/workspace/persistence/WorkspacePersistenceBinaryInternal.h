@@ -844,7 +844,8 @@ inline constexpr std::size_t kMaxSessionClosedEditors = kMaxPersistedClosedEdito
                       [&](PrimitiveWriter& w) { return w.WritePath(file.path); }, &payload) ||
         !AppendRecord(BranchReviewFileEntryTag::ReviewedSnapshotGeneration,
                       [&](PrimitiveWriter& w) {
-                        return w.WriteI64(file.reviewed_diff_fingerprint);
+                        // A full-range hash: unsigned, as the hunk's content_hash.
+                        return w.WriteU64(file.reviewed_diff_fingerprint);
                       },
                       &payload) ||
         !AppendRecord(BranchReviewFileEntryTag::ReviewedAtUnixMs,
@@ -934,13 +935,14 @@ inline constexpr std::size_t kMaxSessionClosedEditors = kMaxPersistedClosedEdito
                   switch (file_tag) {
                     case BranchReviewFileEntryTag::Path:
                       return file_reader.ReadPath(&file.path) && file_reader.remaining() == 0;
-                    case BranchReviewFileEntryTag::ReviewedSnapshotGeneration: {
-                      std::int64_t value = 0;
-                      return file_reader.ReadI64(&value) && file_reader.remaining() == 0 &&
-                             value >= 0 &&
-                             (file.reviewed_diff_fingerprint = static_cast<std::uint64_t>(value),
-                              true);
-                    }
+                    case BranchReviewFileEntryTag::ReviewedSnapshotGeneration:
+                      // The diff fingerprint, a full-range hash whose top bit is set
+                      // about half the time: read unsigned, as the hunk's content_hash
+                      // is. A signed >= 0 guard here discarded the whole project
+                      // config for such a file (soak 4bbda24149d1). Wire bytes match
+                      // the prior WriteI64 memcpy, so files already written decode.
+                      return file_reader.ReadU64(&file.reviewed_diff_fingerprint) &&
+                             file_reader.remaining() == 0;
                     case BranchReviewFileEntryTag::ReviewedAtUnixMs: {
                       std::int64_t value = 0;
                       return file_reader.ReadI64(&value) && file_reader.remaining() == 0 &&
