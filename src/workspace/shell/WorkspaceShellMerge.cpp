@@ -126,7 +126,6 @@ WorkspaceShell::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(
                      static_cast<std::size_t>(line_count_end - line_count_buf.data())}) +
                      12.0f);
     layout.divider_width = 16.0f;
-    layout.left_x = rect.x + 8.0f;
     layout.button_y = rect.y + 6.0f;
     layout.secondary_button_y =
         layout.button_y + kMergeToolbarButtonHeight + kMergeToolbarRowGap;
@@ -160,7 +159,13 @@ WorkspaceShell::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(
     // floored at three minimum panes whatever the pane held, and a merge in a
     // narrow split ran its dividers past the pane and the window (soak
     // 82935dcbd8bc; the compare's twin, 33efed186772).
-    const float fixed_width = reserved_width + layout.divider_width * 2.0f + 16.0f;
+    // In a pane narrower than the dividers and their margins (a nested split's
+    // sliver), the margins give way too, then the dividers.
+    layout.divider_width = std::min(layout.divider_width, std::max(1.0f, (rect.w - reserved_width) * 0.5f));
+    const float margin =
+        std::clamp((rect.w - reserved_width - layout.divider_width * 2.0f) * 0.5f, 0.0f, 8.0f);
+    layout.left_x = rect.x + margin;
+    const float fixed_width = reserved_width + layout.divider_width * 2.0f + margin * 2.0f;
     layout.gutter_width = std::min(layout.gutter_width, std::max(0.0f, (rect.w - fixed_width) / 3.0f));
     const float content_width = std::max(0.0f, rect.w - fixed_width - layout.gutter_width * 3.0f);
     // Each pane keeps its minimum while all three fit; below that they share evenly.

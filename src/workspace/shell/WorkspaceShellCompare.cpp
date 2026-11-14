@@ -256,7 +256,6 @@ WorkspaceShell::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout
             static_cast<std::size_t>(line_count_end - line_count_buf.data())}) +
             12.0f);
     layout.divider_width = std::max(1.0f, std::ceil(editor_text_renderer_.CharWidth()));
-    layout.left_x = rect.x + 8.0f;
     layout.review_summary_y = rect.y + 4.0f;
     layout.header_y = layout.review_summary_y + layout.line_height;
     layout.rows_y = layout.header_y + layout.line_height + 6.0f;
@@ -272,7 +271,13 @@ WorkspaceShell::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout
     // floored at two minimum panes whatever the pane held, and in an editor split
     // three ways the right pane ran past its pane and the window (soak
     // 33efed186772: divider at x 817..829 in an 824-wide window).
-    const float fixed_width = reserved_width + layout.divider_width + 16.0f;
+    // In a pane narrower than the divider and its margins (a nested split's
+    // sliver), the margins give way too, then the divider (soak 33efed186772 at
+    // 14 px: the divider sat 8 px in and past the pane's right edge).
+    layout.divider_width = std::min(layout.divider_width, std::max(1.0f, rect.w - reserved_width));
+    const float margin = std::clamp((rect.w - reserved_width - layout.divider_width) * 0.5f, 0.0f, 8.0f);
+    layout.left_x = rect.x + margin;
+    const float fixed_width = reserved_width + layout.divider_width + margin * 2.0f;
     layout.gutter_width = std::min(layout.gutter_width, std::max(0.0f, (rect.w - fixed_width) * 0.5f));
     const float content_width = std::max(0.0f, rect.w - fixed_width - layout.gutter_width * 2.0f);
     // Each pane keeps its minimum while both fit; below that they share evenly.

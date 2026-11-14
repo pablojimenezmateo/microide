@@ -2285,6 +2285,42 @@ void TestWorkspaceShellCompareInANarrowPaneStaysInsideIt() {
              std::to_string(surface.right_x + surface.gutter_width + surface.right_width));
 }
 
+// Soak 33efed186772 again, after the above: a pane narrower than the divider
+// and its margins (14 px of a nested split at scale 1.5). The divider still sat
+// 8 px into the pane, past its right edge, and its grab rect -- centered on it
+// and wider than it -- reached past the window.
+void TestWorkspaceShellCompareInAPaneNarrowerThanItsDividerStaysInsideIt() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add sliver compare fixture", "sliver compare fixture");
+  WriteFile(source, "int beta() {\n  return 2;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 640, 600);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  // Split the focused pane until it is a sliver, then open the diff there.
+  while (WorkspaceShellTestAccess::ActiveTabSurface(shell).w > 12.0f &&
+         WorkspaceShellTestAccess::SplitEditorGroup(shell, microide::workspace::EditorSplitOrientation::Vertical)) {
+  }
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"), "the diff opens");
+  Expect(WorkspaceShellTestAccess::ActiveTabIsCompare(shell), "in the focused pane");
+  const SDL_FRect pane = WorkspaceShellTestAccess::ActiveTabSurface(shell);
+  const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
+  const float right = pane.x + pane.w;
+  Expect(pane.w < surface.divider_width + 16.0f, "the pane is a sliver: " + std::to_string(pane.w));
+  Expect(surface.center_x >= pane.x && surface.center_x + surface.divider_width <= right + 0.5f,
+         "the divider stays inside the pane: divider at " + std::to_string(surface.center_x) + "+" +
+             std::to_string(surface.divider_width) + ", pane " + std::to_string(pane.x) + ".." +
+             std::to_string(right));
+  const SDL_FRect grab = microide::workspace::CompareDividerHitRect(pane, surface);
+  Expect(grab.x >= pane.x - 0.5f && grab.x + grab.w <= right + 0.5f,
+         "and so does its grab rect: " + std::to_string(grab.x) + ".." + std::to_string(grab.x + grab.w));
+}
+
 // The merge's twin (soak 82935dcbd8bc): three minimum panes floored the width
 // whatever the pane held, and its dividers ran out of a narrow split.
 void TestWorkspaceShellMergeInANarrowPaneStaysInsideIt() {
@@ -2316,6 +2352,43 @@ void TestWorkspaceShellMergeInANarrowPaneStaysInsideIt() {
          "the merge's right pane stays inside its pane: it ends at " +
              std::to_string(surface.right_x + surface.gutter_width + surface.right_width) + ", pane at " +
              std::to_string(right));
+}
+
+// The merge in the same sliver: two 16-px dividers and their margins are wider
+// than the pane.
+void TestWorkspaceShellMergeInAPaneNarrowerThanItsDividersStaysInsideIt() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  const std::filesystem::path base = temp_dir.path() / "base.cpp";
+  const std::filesystem::path incoming = temp_dir.path() / "incoming.cpp";
+  WriteFile(source, "line 1\ncurrent line\nline 3\n");
+  WriteFile(base, "line 1\nbase line\nline 3\n");
+  WriteFile(incoming, "line 1\nincoming line\nline 3\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add sliver merge fixture", "sliver merge fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 640, 600);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  while (WorkspaceShellTestAccess::ActiveTabSurface(shell).w > 12.0f &&
+         WorkspaceShellTestAccess::SplitEditorGroup(shell, microide::workspace::EditorSplitOrientation::Vertical)) {
+  }
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, source, source), "the merge opens");
+  const SDL_FRect pane = WorkspaceShellTestAccess::ActiveTabSurface(shell);
+  const auto surface = WorkspaceShellTestAccess::ActiveMergeSurfaceLayout(shell);
+  const float right = pane.x + pane.w;
+  Expect(pane.w < 48.0f, "the pane is a sliver: " + std::to_string(pane.w));
+  Expect(surface.left_x >= pane.x && surface.right_x + surface.gutter_width + surface.right_width <= right + 0.5f,
+         "the merge stays inside its pane: " + std::to_string(surface.left_x) + ".." +
+             std::to_string(surface.right_x + surface.gutter_width + surface.right_width) + ", pane " +
+             std::to_string(pane.x) + ".." + std::to_string(right));
+  for (const SDL_FRect& grab : microide::workspace::MergeDividerHitRects(pane, surface)) {
+    Expect(grab.x >= pane.x - 0.5f && grab.x + grab.w <= right + 0.5f,
+           "and so do its dividers' grab rects: " + std::to_string(grab.x) + ".." +
+               std::to_string(grab.x + grab.w));
+  }
 }
 
 void TestWorkspaceShellCompareRenderKeepsDividerBorderOnUnchangedRows() {
@@ -4023,7 +4096,11 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/MergeEditorRefusesBinaryInput",
           TestWorkspaceShellMergeEditorRefusesBinaryInput);
   AddTest(tests, "WorkspaceShell/MergeInANarrowPaneStaysInsideIt", TestWorkspaceShellMergeInANarrowPaneStaysInsideIt);
+  AddTest(tests, "WorkspaceShell/MergeInAPaneNarrowerThanItsDividersStaysInsideIt",
+          TestWorkspaceShellMergeInAPaneNarrowerThanItsDividersStaysInsideIt);
   AddTest(tests, "WorkspaceShell/CompareInANarrowPaneStaysInsideIt", TestWorkspaceShellCompareInANarrowPaneStaysInsideIt);
+  AddTest(tests, "WorkspaceShell/CompareInAPaneNarrowerThanItsDividerStaysInsideIt",
+          TestWorkspaceShellCompareInAPaneNarrowerThanItsDividerStaysInsideIt);
   AddTest(tests, "WorkspaceShell/CompareDividerMatchesMarkerWidth",
           TestWorkspaceShellCompareDividerMatchesMarkerWidth);
   AddTest(tests, "WorkspaceShell/CompareRenderKeepsDividerBorderOnUnchangedRows",
