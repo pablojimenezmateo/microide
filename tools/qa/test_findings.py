@@ -11,6 +11,24 @@ def stale(bbox: str, first: str, clips: str, scale: str = "") -> str:
             f"clips={clips}" + (f" scale={scale}" if scale else ""))
 
 
+class ReplayPrefixTests(unittest.TestCase):
+    def test_a_replay_names_the_same_finding_the_run_did(self):
+        # Soak 3f4a5a06d599: the run prefixes "after monkey step 118:", a replay
+        # "after {<the action as JSON>}:" -- its colons stopped the prefix pattern,
+        # the two hashed apart, and the minimizer and the fix verification
+        # (minimize.py --signature) never saw the finding they replayed come back.
+        run = "after monkey step 118: the active tab 'crlf.txt' and its buffer disagree about unsaved changes (dirty: True)"
+        replay = ('after {"key": "ctrl+shift+t", "t": 1767689.148}: the active tab \'crlf.txt\' and its buffer '
+                  'disagree about unsaved changes (dirty: True)')
+        self.assertEqual(fnd.signature("state", run), fnd.signature("state", replay))
+
+    def test_a_click_with_a_nested_list_too(self):
+        run = "after monkey step 9: the clean buffer of a.txt differs from its file on disk"
+        replay = ('after {"click": [414, 43], "button": 1, "clicks": 1, "modifiers": ["ctrl"], "t": 1.5}: '
+                  'the clean buffer of a.txt differs from its file on disk')
+        self.assertEqual(fnd.signature("data", run), fnd.signature("data", replay))
+
+
 class StaleSignatureTests(unittest.TestCase):
     def test_clip_relation(self):
         # The soak's 49a23ffecdf7 held all three of these under one signature.

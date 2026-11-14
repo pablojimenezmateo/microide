@@ -29,8 +29,12 @@ _MASKS = (
 )
 # A stack frame of ours in a sanitizer or glibc report: "#3 0x... in Func(...) /path/src/x.cpp:12".
 _FRAME = re.compile(r"#\d+ 0x[0-9a-f]+ in (\S+?)(\(|\s).*?(src/[\w/.+-]+):\d+")
-# The "step N:" / "after monkey step N:" prefixes the monkey puts on a message.
-_STEP_PREFIX = re.compile(r"^(after )?(monkey )?step \d+:?\s*|^after [^:]{0,120}: ")
+# The "step N:" / "after monkey step N:" prefixes the monkey puts on a message, a
+# flow's "after <label>:", and a replay's "after {<the action as JSON>}:" -- whose
+# colons the label form stops at: kept, it hashed a replayed finding apart from the
+# run's, and the minimizer and the fix verification never saw it come back (soak
+# 3f4a5a06d599). An action is one flat JSON object (lists inside, no objects).
+_STEP_PREFIX = re.compile(r"^(after )?(monkey )?step \d+:?\s*|^after \{[^{}]*\}: |^after [^:]{0,120}: ")
 
 
 # A `ui` element named in a layout finding ("button:close-tab/3/notes.md").
