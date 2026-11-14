@@ -390,7 +390,12 @@ void WorkspaceShell::RequestActiveTabRedraw(bool include_tree_sidebar) {
 
 void WorkspaceShell::RequestFocusedEditorRedraw() {
   if (const auto rect = CurrentFocusedEditorRedrawRect(); rect.has_value()) {
-    RequestRedrawRect(*rect);
+    // A focused pane with no rows (a split the panel squeezed, the editor area
+    // left only its strips) still edits and moves its caret, and the status bar
+    // shows that -- but it is derived at frame prep, and a dropped request
+    // prepares no frame: the bar kept the old Ln/Col for good (soak 5a2cb8ba7f6b).
+    // Then the bar is the damage, as the window title is for a strip of no area.
+    RequestRedrawRect(rect->w > 0.0f && rect->h > 0.0f ? *rect : CurrentWorkspaceLayout()->status_bar);
     return;
   }
   RequestEditorSurfaceRedraw();

@@ -5661,6 +5661,26 @@ void TestClosingTheLastTabWhenZoomedInRepaintsTheStrip() {
                       "Ctrl+W on the only tab, zoomed in");
 }
 
+// Soak 5a2cb8ba7f6b (276 sightings): the focused editor pane had no rows -- a
+// horizontal split squeezed by the panel, or the panel leaving the editor area
+// only its strips -- and typing there was a real edit that asked to repaint a
+// pane of no area. The request was dropped, no frame was prepared, and the status
+// bar (derived at frame prep) kept the caret's old Ln/Col for good.
+void TestTypingInAnEditorWithNoRowsRepaintsTheStatusBar() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("README.md", "# taskflow\n", 214, 160);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "term"), "a terminal panel opens");
+  TestAccess::SetFocusEditor(fixture.shell);
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "an editor with no rows under the panel");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("x")}), "typing into it");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_END, SDL_KMOD_NONE)}),
+                      "moving its caret");
+}
+
 // Soak 538a455016ef (1024x700 at a scale of 3.25: 316x216 units): the dirty
 // prompt in a window that narrow kept its three full-width buttons, and Save
 // hung past the dialog's left edge. Tab moved the choice off it and repainted
@@ -5688,6 +5708,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestTabInANarrowDirtyPromptRepaintsEveryButton);
   AddTest(tests, "QaFlowRegression/ClosingTheLastTabWhenZoomedInRepaintsTheStrip",
           TestClosingTheLastTabWhenZoomedInRepaintsTheStrip);
+  AddTest(tests, "QaFlowRegression/TypingInAnEditorWithNoRowsRepaintsTheStatusBar",
+          TestTypingInAnEditorWithNoRowsRepaintsTheStatusBar);
   AddTest(tests, "QaFlowRegression/TypingIntoAMirroredPlaceholderRepaintsEveryMirrorsLine",
           TestTypingIntoAMirroredPlaceholderRepaintsEveryMirrorsLine);
   AddTest(tests, "QaFlowRegression/ABreakpointFollowsAnEditOnceNotOnEveryRedraw",
