@@ -58,11 +58,14 @@ WorkspaceShell::MergeToolbarLayout WorkspaceShell::ComputeMergeToolbarLayout(
   const SDL_FRect prev_rect = make_button_rect(
       next_rect.x - kMergeToolbarButtonGap - make_button_rect(0.0f, "Prev").w, "Prev");
   // Laid right to left, so a pane narrower than the row pushed the leading
-  // buttons left of it, over the sidebar (soak 780af9fe3d1d). A button with no
-  // room is not laid out: an empty rect is neither drawn nor hit.
+  // buttons left of it, over the sidebar (soak 780af9fe3d1d); and below the
+  // pane's top whatever its height, so a pane shorter than the row ran it over
+  // the bottom panel's tabs (soak 000c9b180769). A button with no room is not
+  // laid out: an empty rect is neither drawn nor hit.
   const float min_x = rect.x + kMergeToolbarEdgeInset;
-  const auto fitted = [min_x](const SDL_FRect& button) {
-    return button.x >= min_x ? button : SDL_FRect{};
+  const float max_bottom = rect.y + rect.h;
+  const auto fitted = [min_x, max_bottom](const SDL_FRect& button) {
+    return button.x >= min_x && button.y + button.h <= max_bottom ? button : SDL_FRect{};
   };
   return {
       .prev_rect = fitted(prev_rect),
@@ -77,11 +80,13 @@ std::optional<SDL_FRect> WorkspaceShell::ComputeMergeSecondaryToolbarButtonRect(
     const MergeSurfaceLayout& surface,
     std::string_view label) const {
   const float width = ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth(label));
-  // The same left bound as the first row: a button with no room is not laid
-  // out, and neither is any button left of it.
+  // The same bounds as the first row: a button with no room is not laid out,
+  // and neither is any button left of it. In a pane shorter than both rows the
+  // second ran over the bottom panel's tabs (soak 598f8491c248, 075ba8eec673).
   const float min_x = rect.x + kMergeToolbarEdgeInset;
+  const float max_bottom = rect.y + rect.h;
   const auto fitted = [&](float x) -> std::optional<SDL_FRect> {
-    if (x < min_x) {
+    if (x < min_x || surface.secondary_button_y + kMergeToolbarButtonHeight > max_bottom) {
       return std::nullopt;
     }
     return MakeRect(x, surface.secondary_button_y, width, kMergeToolbarButtonHeight);

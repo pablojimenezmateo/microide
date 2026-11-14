@@ -5140,6 +5140,54 @@ void TestMergeToolbarStaysInsideANarrowPane() {
   Expect(seen > 0, "the narrow pane still shows the toolbar buttons that fit");
 }
 
+// The toolbar's two rows sit below the pane's top whatever its height: in a pane
+// shorter than them (a tall bottom panel), the second row -- and in a shorter
+// one the first -- ran past the pane's bottom over the panel's tabs, where the
+// ui query named Unresolved on top of a bash tab and Prev on top of Git (soak
+// 598f8491c248, 000c9b180769, 075ba8eec673). A button with no room is not laid
+// out, as across the pane's width.
+void TestMergeToolbarStaysInsideAShortPane() {
+  FlowFixture fixture("notes.txt", "notes\n");
+  const std::filesystem::path base = fixture.root / "base.txt";
+  const std::filesystem::path incoming = fixture.root / "incoming.txt";
+  const std::filesystem::path current = fixture.root / "current.txt";
+  const std::filesystem::path output = fixture.root / "result.txt";
+  WriteFile(base, "alpha\none\ntwo\n");
+  WriteFile(incoming, "incoming\none\ntwo\n");
+  WriteFile(current, "current\none\ntwo\n");
+  WriteFile(output, "alpha\none\ntwo\n");
+  // Two stacked groups under a tall panel: the editor area keeps its minimum
+  // height, and the split halves it.
+  Expect(TestAccess::SplitEditorGroup(fixture.shell, workspace::EditorSplitOrientation::Horizontal),
+         "the editor should split into stacked groups");
+  Expect(TestAccess::OpenMergeEditor(fixture.shell, base, incoming, current, output),
+         "the merge editor should open");
+  TestAccess::OpenTerminalViaService(fixture.shell);
+  bool squeezed = false;
+  for (const float panel : {500.0f, 540.0f, 580.0f, 620.0f, 660.0f}) {
+    TestAccess::SetBottomPanelHeight(fixture.shell, panel);
+    TestAccess::NoteLayoutInputsChanged(fixture.shell);
+    fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+    const SDL_FRect pane = TestAccess::ActiveTabSurface(fixture.shell);
+    if (pane.h <= 0.0f || pane.h >= 56.0f) {
+      continue;  // collapsed, or tall enough for both rows
+    }
+    squeezed = true;
+    const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+    for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+      const std::string& name = entry["name"].AsString();
+      if (!name.starts_with("button:merge/") || name.find('/', 13) != std::string::npos) {
+        continue;  // the toolbar's own buttons, not a conflict's accept buttons
+      }
+      const auto& r = entry["rect"].AsArray();
+      Expect(static_cast<float>(r[1].AsInt() + r[3].AsInt()) <= pane.y + pane.h,
+             name + " must not run past the bottom of a " + std::to_string(pane.h) +
+                 " px pane");
+    }
+  }
+  Expect(squeezed, "the fixture must squeeze the editor pane below the toolbar's two rows");
+}
+
 void TestMergeToolbarHoverRepaintsTheButton() {
   FlowFixture fixture("notes.txt", "notes\n");
   const std::filesystem::path base = fixture.root / "base.txt";
@@ -5744,6 +5792,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestATabDraggedAcrossThreePanesPaintsFresh);
   AddTest(tests, "QaFlowRegression/MergeToolbarStaysInsideANarrowPane",
           TestMergeToolbarStaysInsideANarrowPane);
+  AddTest(tests, "QaFlowRegression/MergeToolbarStaysInsideAShortPane",
+          TestMergeToolbarStaysInsideAShortPane);
   AddTest(tests, "QaFlowRegression/LeavingAPanelTabMidSlideLeavesNoHover", TestLeavingAPanelTabMidSlideLeavesNoHover);
   AddTest(tests, "QaFlowRegression/APanelShownMaximizedTakesTheKeyboardAtOnce",
           TestAPanelShownMaximizedTakesTheKeyboardAtOnce);
