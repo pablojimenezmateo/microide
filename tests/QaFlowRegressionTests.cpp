@@ -3302,6 +3302,20 @@ void TestTheDebugToolbarCoversNoOtherControl() {
              what + ": the toolbar floats over the focused pane");
     }
   }
+
+  // Soak 3cea0cf87f72 again, on a merge: the toolbar anchored at the focused
+  // pane's top-right, where a merge keeps its own toolbar -- Continue sat on
+  // Open Result. It stacks below the merge's toolbar rows as below a banner.
+  const std::filesystem::path base = fixture.temp_dir.path() / "base.c";
+  const std::filesystem::path incoming = fixture.temp_dir.path() / "incoming.c";
+  const std::filesystem::path current = fixture.temp_dir.path() / "current.c";
+  WriteFile(base, "int main() { return 0; }\n");
+  WriteFile(incoming, "int main() { return 1; }\n");
+  WriteFile(current, "int main() { return 2; }\n");
+  TestAccess::FocusEditorGroup(fixture.shell, 0);
+  Expect(TestAccess::OpenMergeEditor(fixture.shell, base, incoming, current, current), "the merge opens");
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  Expect(covered("a merge in the focused pane") > 0, "the toolbar still shows over the merge");
 }
 
 // Soak ce3279c5ceda, ae8ba5055314 (the overlap oracle): with the panel maximized

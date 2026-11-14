@@ -8,6 +8,7 @@
 // it may read state for the hit-test alongside the render). The render builds
 // only static label strings and short-lived tooltip text, off any hot path.
 
+#include "workspace/MergeToolbarMetrics.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
 #include <algorithm>
@@ -84,6 +85,13 @@ std::optional<float> WorkspaceShell::DebugToolbarAvoidBelowY(const WorkspaceLayo
           ActiveEditorBannerStripRect(context_.current_project_state, ComputeEditorGroupRectsForState(layout));
       banner.h > 0.0f) {
     below = std::max(below.value_or(banner.y + banner.h), banner.y + banner.h);
+  }
+  // A merge keeps its own toolbar (Previous, Next, Open Result, Save) in the same
+  // top-right corner: the bar sat on Open Result (soak 3cea0cf87f72).
+  if (const MergeTabState* merge_tab = ActiveTabIsMerge() ? ActiveMergeTab() : nullptr; merge_tab != nullptr) {
+    const MergeSurfaceLayout merge = ComputeMergeSurfaceLayout(ActiveTabSurface(layout), *merge_tab);
+    const float toolbar_bottom = merge.secondary_button_y + kMergeToolbarButtonHeight;
+    below = std::max(below.value_or(toolbar_bottom), toolbar_bottom);
   }
   return below;
 }
