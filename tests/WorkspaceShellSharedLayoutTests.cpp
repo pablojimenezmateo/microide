@@ -1854,6 +1854,24 @@ void TestEditorBannerButtonsStayInsideANarrowStrip() {
          "a wide strip keeps every button");
 }
 
+// Soak fd5e983d0496: the find widget's first row drops what does not fit in a
+// narrow card (250931ec505a), but its Replace row did not: in a 75-px pane,
+// Replace sat at x -48, past the window's left edge. Every Replace-row control
+// is inside the card or not laid out at all.
+void TestFindWidgetReplaceRowStaysInsideANarrowCard() {
+  for (float width = 20.0f; width <= 420.0f; width += 5.0f) {
+    const SDL_FRect area{30.0f, 40.0f, width, 300.0f};
+    const workspace::FindWidgetLayout layout = workspace::ComputeBufferFindWidgetLayout(area, /*replace_mode=*/true);
+    const SDL_FRect& card = layout.widget;
+    for (const SDL_FRect* control : {&layout.replace_button, &layout.replace_all_button, &layout.replace_field}) {
+      Expect(control->w <= 0.0f ||
+                 (control->x >= card.x - 0.01f && control->x + control->w <= card.x + card.w + 0.01f),
+             "a Replace-row control stays inside a card " + std::to_string(static_cast<int>(card.w)) +
+                 " wide: x " + std::to_string(control->x) + " w " + std::to_string(control->w));
+    }
+  }
+}
+
 // Soak 2dc534f1ceac: the dismiss button had no bound either. Laid at the strip's
 // right edge less its pad and size, in a sliver of a pane narrower than that
 // (a nested split, 1024x700 at 1.25) it started left of the strip, over the
@@ -1907,6 +1925,8 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
           TestEditorBannerButtonsStayInsideANarrowStrip);
   AddTest(tests, "WorkspaceShared/EditorBannerDismissStaysInsideASliverStrip",
           TestEditorBannerDismissStaysInsideASliverStrip);
+  AddTest(tests, "WorkspaceShared/FindWidgetReplaceRowStaysInsideANarrowCard",
+          TestFindWidgetReplaceRowStaysInsideANarrowCard);
   AddTest(tests, "WorkspaceShared/MergeConflictButtonsStayInsideTheirPane",
           TestWorkspaceSharedMergeConflictButtonsStayInsideTheirPane);
   AddTest(tests, "WorkspaceShared/FindWidgetStaysInsideAShortOrNarrowArea",

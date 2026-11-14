@@ -1412,9 +1412,14 @@ FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area,
     layout.replace_button =
         MakeRect(layout.replace_all_button.x - kFindWidgetButtonGap - kFindWidgetReplaceButtonWidth,
                  row2_y, kFindWidgetReplaceButtonWidth, kFindWidgetRowHeight);
+    // The same rule as the first row: what does not fit is not laid out, Replace
+    // going first. Without it, in a 75-px pane Replace sat at x -48, past the
+    // window's left edge (soak fd5e983d0496).
+    row_start = r.x + r.w - kFindWidgetPad;
+    keep(layout.replace_all_button);
+    keep(layout.replace_button);
     layout.replace_field =
-        MakeRect(field_x, row2_y,
-                 std::max(0.0f, layout.replace_button.x - kFindWidgetButtonGap - field_x),
+        MakeRect(field_x, row2_y, std::max(0.0f, row_start - kFindWidgetButtonGap - field_x),
                  kFindWidgetRowHeight);
   }
   return layout;
