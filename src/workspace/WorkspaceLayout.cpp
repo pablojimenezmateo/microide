@@ -769,8 +769,13 @@ EditorBannerButtonLayout ComputeEditorBannerButtonRects(const SDL_FRect& strip,
   }
   const std::span<const EditorBannerButton> wanted =
       buttons.first(std::min(buttons.size(), kMaxEditorBannerButtons));
-  layout.dismiss = MakeRect(strip.x + strip.w - kEdgePad - kDismissSize,
-                            strip.y + (strip.h - kDismissSize) * 0.5f, kDismissSize, kDismissSize);
+  // Inside the strip at any width: in a sliver of a pane narrower than its pad
+  // and size, the dismiss button started left of the strip, over the sidebar
+  // (soak 2dc534f1ceac). The pad gives way first, then the button.
+  const float dismiss_size = std::min(kDismissSize, strip.w);
+  const float dismiss_pad = std::clamp(strip.w - dismiss_size, 0.0f, kEdgePad);
+  layout.dismiss = MakeRect(strip.x + strip.w - dismiss_pad - dismiss_size,
+                            strip.y + (strip.h - dismiss_size) * 0.5f, dismiss_size, dismiss_size);
   // Laid right to left from the dismiss button, and only while they fit: the
   // leading buttons of a row wider than the strip used to land left of it, over
   // the sidebar (soak 6b622ef8a9ea). The trailing buttons that fit are kept.

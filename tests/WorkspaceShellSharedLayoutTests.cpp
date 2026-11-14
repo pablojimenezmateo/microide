@@ -1854,6 +1854,23 @@ void TestEditorBannerButtonsStayInsideANarrowStrip() {
          "a wide strip keeps every button");
 }
 
+// Soak 2dc534f1ceac: the dismiss button had no bound either. Laid at the strip's
+// right edge less its pad and size, in a sliver of a pane narrower than that
+// (a nested split, 1024x700 at 1.25) it started left of the strip, over the
+// sidebar's Sync button. It stays inside the strip at every width.
+void TestEditorBannerDismissStaysInsideASliverStrip() {
+  static constexpr workspace::EditorBannerButton kButtons[] = {
+      {workspace::EditorBannerAction::Keep, "Reload", 64.0f, false}};
+  for (float width = 1.0f; width <= 60.0f; width += 1.0f) {
+    const SDL_FRect strip{377.0f, 88.0f, width, 26.0f};
+    const workspace::EditorBannerButtonLayout layout = workspace::ComputeEditorBannerButtonRects(strip, kButtons);
+    Expect(layout.dismiss.x >= strip.x - 0.01f && layout.dismiss.x + layout.dismiss.w <= strip.x + strip.w + 0.01f,
+           "the dismiss button stays inside a strip " + std::to_string(static_cast<int>(width)) + " wide: " +
+               std::to_string(layout.dismiss.x) + "+" + std::to_string(layout.dismiss.w));
+    Expect(layout.controls_left() >= strip.x - 0.01f, "and so does the message's right bound");
+  }
+}
+
 // Soak 538a455016ef (1024x700 at a scale of 3.25: 316x216 units): the dirty
 // prompt narrowed to the window and its three fixed-width buttons did not --
 // Save hung past the dialog's left edge, outside the dialog's repaint, so Tab
@@ -1888,6 +1905,8 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
           TestDialogFooterButtonsStayInsideANarrowDialog);
   AddTest(tests, "WorkspaceShared/EditorBannerButtonsStayInsideANarrowStrip",
           TestEditorBannerButtonsStayInsideANarrowStrip);
+  AddTest(tests, "WorkspaceShared/EditorBannerDismissStaysInsideASliverStrip",
+          TestEditorBannerDismissStaysInsideASliverStrip);
   AddTest(tests, "WorkspaceShared/MergeConflictButtonsStayInsideTheirPane",
           TestWorkspaceSharedMergeConflictButtonsStayInsideTheirPane);
   AddTest(tests, "WorkspaceShared/FindWidgetStaysInsideAShortOrNarrowArea",
