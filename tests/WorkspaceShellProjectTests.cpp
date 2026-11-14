@@ -8390,6 +8390,54 @@ void TestWorkspaceShellReplaceAllReplacesInADirtyOpenBuffer() {
          "nothing is refused: " + WorkspaceShellTestAccess::ProjectSearchError(shell));
 }
 
+// Soak 3f4a5a06d599 / 993fa989aee6: crlf.txt closed, made unreadable, and its tab
+// reopened (Ctrl+Shift+T). The read fails, so the tab keeps naming its file with
+// no editor content. Every lookup of "the active editor" then fell back to the
+// group's welcome surface -- whose viewport held README.md -- so the tab said
+// crlf.txt while typing went into that hidden README.md view, dirtying it (a save
+// would have written it). An editor tab with no content has nothing to edit.
+void TestWorkspaceShellAContentlessReopenedTabEditsNothing() {
+  if (::geteuid() == 0) {
+    return;  // permissions do not refuse root
+  }
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file = root / "crlf.txt";
+  WriteFile(root / "README.md", "# readme\n");
+  WriteFile(file, "one\r\ntwo\r\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "open the project");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "open crlf.txt"), "open crlf.txt");
+  const auto& group = WorkspaceShellTestAccess::CurrentProjectState(shell).focused_group();
+  WorkspaceShellTestAccess::CloseTab(shell, group.active_tab_index);
+  std::filesystem::permissions(file, std::filesystem::perms::none);
+  WorkspaceShellTestAccess::ExecuteCommandLine(shell, "reopen-closed-editor");
+  const std::string welcome_before = group.welcome_surface.viewport.SerializeText();
+  const bool welcome_dirty_before = group.welcome_surface.viewport.dirty();
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  (void)DispatchEvents(shell, {TextInputEvent("typed-into-the-wrong-buffer"), KeyDownEvent(SDLK_RETURN)});
+  (void)WorkspaceShellTestAccess::ExecuteCommandLine(shell, "type typed-into-the-wrong-buffer");
+  std::filesystem::permissions(file, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write);
+
+  Expect(group.has_active_tab() && group.active_tab().path.filename() == "crlf.txt",
+         "the reopened tab is active, naming its file");
+  // What the editor reports as the active buffer is the tab's own (the control
+  // channel's `buffer`, the pane's paint, navigation): never the welcome view.
+  const editor::TextViewport* active = WorkspaceShellTestAccess::ActiveNavigableViewport(shell);
+  Expect(active != &group.welcome_surface.viewport, "the active editor is not the welcome surface's view");
+  Expect(active == nullptr || active->path().filename() == "crlf.txt",
+         "it is the tab's own: " + (active ? active->path().string() : std::string("none")));
+  Expect(group.welcome_surface.viewport.SerializeText() == welcome_before &&
+             group.welcome_surface.viewport.dirty() == welcome_dirty_before,
+         "typing does not reach the welcome surface's view behind the tab: '" +
+             group.welcome_surface.viewport.SerializeText() + "'");
+  for (const auto& tab : group.open_tabs) {
+    Expect(!tab.editor_state.has_value() || !tab.editor_state->viewport.dirty(),
+           "nor any open buffer: " + tab.title);
+  }
+}
+
 // Soak 88696b6b00ac: qa-weird/bom.txt lost its UTF-8 byte order mark on disk.
 // Replace-all in the project read each file through ReadFileForTextSearch, which
 // strips the mark (search columns count from the text after it, as the editor's
@@ -9331,6 +9379,7 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellReplaceAllAbortsWithFeedbackPastAggregateCap);
   AddTest(tests, "WorkspaceShell/ReplaceAllReplacesInADirtyOpenBuffer",
           TestWorkspaceShellReplaceAllReplacesInADirtyOpenBuffer);
+  AddTest(tests, "WorkspaceShell/AContentlessReopenedTabEditsNothing", TestWorkspaceShellAContentlessReopenedTabEditsNothing);
   AddTest(tests, "WorkspaceShell/ReplaceAllKeepsAUtf8ByteOrderMark", TestWorkspaceShellReplaceAllKeepsAUtf8ByteOrderMark);
   AddTest(tests, "WorkspaceShell/ReplaceAllReadsOnlyMatchedFiles",
           TestWorkspaceShellReplaceAllReadsOnlyMatchedFiles);

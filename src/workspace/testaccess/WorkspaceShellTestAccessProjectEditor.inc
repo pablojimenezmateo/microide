@@ -186,6 +186,11 @@
   static std::string ActiveEditorSelectedText(WorkspaceShell& shell) {
     return shell.ActiveEditorViewport()->SelectedText();
   }
+  // What the control channel's `buffer`, navigation and the pane report as the
+  // active editor's view (WorkspaceShell::ActiveNavigableViewport).
+  static const editor::TextViewport* ActiveNavigableViewport(WorkspaceShell& shell) {
+    return shell.ActiveNavigableViewport();
+  }
   static std::size_t ActiveEditorViewportScrollLine(WorkspaceShell& shell) {
     const editor::TextViewport* viewport = shell.ActiveEditorViewport();
     return viewport != nullptr ? viewport->scroll_line() : 0;

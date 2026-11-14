@@ -143,9 +143,24 @@ bool TabCoordinator::LoadEditorTabForActivation(TabEntry& tab) {
   editor::TextViewport view;
   std::uint64_t read_id = 0;
   if (!LoadRestoreView(handle, view, read_id)) {
-    // Not readable now (deleted, unreadable): keep it unloaded, as the handle
-    // was, so the next activation tries again.
-    tab.deferred_handle = std::move(handle);
+    // Not readable now (deleted, unreadable): the tab fails as an off-thread
+    // read's does -- an empty read-only stand-in bound to its path, Failed, with
+    // the OpenFailed banner's Retry. Left with no editor state, every lookup of
+    // "the active editor" fell back to the group's welcome surface, whose view
+    // holds the startup file: a reopened crlf.txt tab painted and reported
+    // README.md's buffer (soak 3f4a5a06d599, 993fa989aee6).
+    const std::filesystem::path path = handle.path;
+    editor::TextViewport stand_in;
+    stand_in.LoadContent("", path);
+    stand_in.SetReadOnly(true);
+    operations_.apply_editor_preferences(stand_in);
+    tab.editor_state = operations_.make_editor_tab_state(stand_in);
+    tab.editor_state->restore = std::move(handle);
+    tab.editor_state->content = EditorTabState::Content::Failed;
+    tab.path = path;
+    tab.title = TabTitleForPath(tab.path, tab.untitled_number);
+    SetEditorBanner(state_, EditorBannerState::Kind::OpenFailed, path,
+                    "Could not read " + path.filename().string());
     return false;
   }
   tab.deferred_handle.reset();
