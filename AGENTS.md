@@ -91,146 +91,16 @@ patterns can be broken or removed if that is the cleanest way to improve the sys
 
 ## Do-Not-Regress Patterns
 
-The 2026-04-29 `comprehensive-tech-debt-cleanup` (archived under
-`openspec/changes/archive/2026-04-29-comprehensive-tech-debt-cleanup/`) removed several patterns
-that had previously grown back. Do not reintroduce any of them. The architectural-lint test
-(`tests/ArchitectureInvariantsTests.cpp`, registered as `ArchitectureInvariants/SoftChecks` in the
-default `ctest` run) hard-fails on most of these; the rest are policy and reviewer-enforced.
-
-Hard-fail invariants (lint will reject the change):
-
-- No `friend class` or `friend struct` in `src/workspace/*`. Use a service interface or an
-  explicit narrow accessor instead.
-- No `WorkspaceShell&` or `WorkspaceShell*` parameters in any
-  `src/workspace/Workspace*Coordinator*.h` constructor. Inject the specific service interface
-  (`EditorTabService`, `ProjectCatalogService`, `PromptSurfaceService`, `SidebarService`,
-  `CompareMergeService`, `TerminalPanelService`, `PluginRuntimeService`, `PersistenceService`) or
-  a small callback bundle.
-- No `try`/`catch` around `std::stoi`, `std::stoll`, `std::stoull`, `std::stof`, or `std::stod`.
-  Use the non-throwing `util/Parse.h` helpers (`ParseInt`, `ParseInt64`, `ParseSize`,
-  `ParseFloat`) and handle `std::optional` directly.
-- `src/workspace/shell/WorkspaceShell.h` ≤ 400 code lines, `src/workspace/shell/WorkspaceShell.cpp` ≤ 600 code lines, and `src/workspace/shell/WorkspaceShellMembers.inc` under its own ratcheting code-line cap.
-  All three are hard-linted and count CODE lines only. The `.inc` belongs in that list: it is
-  the class's real declaration surface (included inside the class body), so the header's 400
-  bounds one of the class's two halves, not the class (TD-2026-09-13-293a). Its cap ratchets
-  DOWN only — take the number from `tests/ArchitectureInvariantsTests.cpp`, not from memory.
-  Add behavior to a service, not the shell.
-- The render translation units covered by `CheckRenderSurfaceStateAccess`
-  (`WorkspaceShellRenderFrame`, `WorkspaceShellRenderOverlay`, `WorkspaceShellRenderTextInput`,
-  `WorkspaceShellRenderSidebar`, `WorkspaceShellRenderBottomPanel`, `WorkspaceShellHoverPopup`,
-  `WorkspaceShellHoverTargets`, `DebugPaneRender`) consume view models built by `RenderViewModelBuilder`. Do not read
-  `context_.current_project_state` or call `CurrentTextInputSurface(...)` from these files.
-- Render view models are owned/precomputed data, not live state pointers
-  (`CheckRenderViewModelsOwnProjectState`, TD-2026-07-17-084/26): `OverlayState` must not appear
-  in `RenderViewModelBuilder.h` at all, and a `ProjectWorkspaceState` pointer is allowed only in
-  the two documented escape hatches (`FrameSurfaceViewModel`, `SidebarSurfaceViewModel`) until
-  their own view-model passes land. The converted render TUs (`WorkspaceShellRenderOverlay`,
-  `WorkspaceShellRenderBottomPanel`, `WorkspaceShellRenderTextInput`, `WorkspaceShellHoverPopup`,
-  `WorkspaceShellHoverTargets`, `DebugPaneRender`) must not name either broad state type.
-- The two sides of a conflict, a merge or a compare are **Local** and **Remote** in every
-  user-visible string: buttons, menus, palette titles and command ids, toasts, row details, pane
-  captions, compare titles. Never mine / yours / ours / theirs / the host's, nor current /
-  incoming (git's own mergetool calls them `$LOCAL` and `$REMOTE`). "Host" stays the name of the
-  remote *machine* ("Open Folder on Host…", "Changed on Host"); prose that merely addresses the
-  user ("your ~/.ssh/config") is not a side name. Enforced by `CheckSideNamesAreLocalAndRemote`
-  (string literals naming a side after Keep/Take/Accept/Copy/Use, as a parenthesised suffix, or
-  as a whole caption).
-
-Policy invariants (no automated lint, but reviewers will reject):
-
-- No project-level or shell-level fallback editor viewport. Resolve the active editor target
-  through `EditorTabService::ActiveViewport()` (or equivalent typed accessor). The legacy symbols
-  `text_viewport_` and `current_project_state_.text_viewport` were deleted intentionally; do not
-  reintroduce equivalents under a new name. (The `text_viewport_` spelling itself is now
-  hard-linted by `CheckNoFallbackEditorViewportSymbols`; renamed revivals stay reviewer-enforced.)
-- No bespoke per-section parser for project state, user config, and session restore.
-  These artifacts route through `PersistedRecordReader`/`PersistedRecordWriter`
-  and `PersistenceService`. Add a typed record, do not hand-roll a text format.
-- No new direct file I/O for workspace/session/config/conversation state outside
-  `PersistenceService`. (Now hard-linted as a ratchet: `CheckPersistenceFileIoBoundary` bans
-  raw file streams across `src/workspace/*` outside a documented three-TU allowlist —
-  PersistenceService, ControlChannelService, LspService.)
-- No per-surface duplicate of single-line edit operations (insert, backspace, delete-forward,
-  caret movement, selection, copy, cut, paste, select-all). Single-line surfaces consume
-  `editor/SingleLineEditor.{h,cpp}` plus `editor/SingleLineKeyHandler.{h,cpp}`.
-- No `lua_State*` outside `plugin/LuaRuntime.{h,cpp}`. Plugin extension-surface modules consume
-  the runtime through opaque handles.
-- Plugin extension surfaces stay split across focused translation units (commands, sidebars,
-  syntax, diagnostics, hover, providers, lifecycle); do not collapse them back into a monolithic
-  `PluginHost.cpp`. Each `src/plugin/*.cpp` translation unit stays at or below 800 lines.
-- View models do not hold pointers or references to `WorkspaceShell`, coordinators, or services.
-  They are POD-like structs populated by the builder.
-- Responsive shell surfaces (`LayoutModeService`, `StatusBarService`, `SettingsOverlayService`) stay
-  host-owned and service-backed. Menu overflow, status-bar actions, Settings, and
-  Help/About must route through action/service state and `RenderViewModelBuilder`, not plugin-owned
-  rendering or render-TU product logic.
-- Project reactivation paths do not reload plugins. Reactivation refresh uses
-  `refresh_plugin_surfaces_for_reactivation` and must not call
-  `ReloadPluginsForCurrentProject`. (Now hard-linted for the ProjectCatalogService flow by
-  `CheckReactivationDoesNotReloadPlugins`, with a loud-missing-target vacuity guard.)
-- Compare-surface rendering is structurally gated by `RenderViewModelBuilder` output. Render units
-  must not inspect shell or project state to decide whether compare content renders.
-- Per-frame preparation work executes once per frame. Per-clip entry points must not rebuild frame
-  layout, normalize state, or rebuild render view models.
-- Plugin reload/shutdown must drain async process workers before plugin teardown using the bounded
-  drain seam; do not call teardown directly without the drain step.
-
-The 2026-05-02 `deferred-work-and-throughput-pass` added four further invariants:
-
-- No synchronous subprocess wait on the main thread in workspace code (`src/workspace/`). New code
-  that needs subprocess results must dispatch through `ProjectBackgroundExecutor` or a similar
-  background executor and deliver results via SDL user event. The
-  `CheckNoSynchronousSubprocessWaitInWorkspace` lint rule hard-fails on direct `Subprocess::Wait`,
-  `waitpid`, `WaitForSingleObject`, or `WaitForMultipleObjects` calls in workspace TUs.
-- LSP `textDocument/didOpen` and `textDocument/didChange` notifications must not be sent
-  synchronously on the `ActivateTab` call path. The hydration notification must be posted
-  asynchronously so the tab is visible before any LSP acknowledgement is awaited.
-- `ComputeLayout()` must be skipped when the layout-dirty flag is clear. Layout recomputation must
-  only run when a window-resize, divider-drag, sidebar-toggle, or panel-toggle event has set the
-  dirty flag; do not call it unconditionally from `PrepareFrameOnce`.
-- The SDL event loop must never use a zero-delay `SDL_PollEvent` spin at idle. Use the
-  `IdleHint`-driven strategy: `Full` hint → `SDL_PollEvent`; `CaretOnly` hint →
-  `SDL_WaitEventTimeout(caret_remaining_ms)`; `Idle` hint → `SDL_WaitEvent`.
-
-The 2026-05-06 `codebase-cleanup-perf-and-debt` adds four further hard invariants:
-
-- No legacy persistence symbols (`WorkspacePersistenceLegacyFormat`, `EncodeSessionNodePath`,
-  `DecodeSessionNodePath`, `ParseUserConfigText`, `ParseProjectConfigText`,
-  `ParseProjectSessionText`, `ParseWorkspaceSessionText`) anywhere in `src/`, `tests/`, or
-  `tools/`; this prevents accidental resurrection of the deleted importer path.
-- No `platform::RunSubprocess(...)` calls in `src/workspace/*.cpp`; workspace subprocess work must
-  route through `ProjectBackgroundExecutor` to keep shell-thread latency predictable.
-- Render translation units (`WorkspaceShellRender*.cpp`) must not materialize new strings in hot
-  paths; string assembly belongs in `RenderViewModelBuilder` so per-frame rendering stays lean.
-  This includes the compare/merge surface render TUs `WorkspaceShellRenderCompare.cpp` and
-  `WorkspaceShellRenderMerge.cpp` — the `WorkspaceShellRender*` prefix is what places them under the
-  lint set, so do not rename them back to `*CompareRender`/`*MergeRender`. They reuse scratch
-  `DecoratedTextRow` members instead of a fresh per-row row and truncate hot labels through
-  `TruncateLabelView` (`CheckCompareMergeRenderUsesScratchRows`).
-- A `Make*Service()` / `Make*Coordinator()` result must be bound by REFERENCE (`auto&`, or
-  `Type&`), never copied. These factories return a reference into the shell-owned
-  `ShellGlueCache`; a value binding copies the whole coordinator — two references and
-  seventeen `std::function`s — on every call, which silently undoes the caching. Twenty-two
-  sites had drifted back to the value spelling by 2026-09-29, one of them inside the
-  watcher's per-changed-file loop. Enforced by `CheckShellGlueIsBoundByReference`, which is
-  loud rather than vacuous when it finds no factory calls at all.
-- Capturing one of those locals BY VALUE into a lambda is the same copy per hook, and a
-  reference binding does not make it free — `[svc]` on a reference copies the referent.
-  Enforced by `CheckFactoryResultsAreNotCapturedByValue` (TD-2026-08-10-177), which matches
-  BOTH the value and reference spellings: it once matched only `auto x = Make…()`, so the
-  sweep to `auto&` left it scanning nothing and only its missing-target guard said so.
-- Write and start APIs whose dropped result is a silent failure are `[[nodiscard]]`:
-  `util::WriteTextFileAtomically`, `TextViewport::Save`, `FileWriteGate::WriteText`,
-  `ControlSocketServer::Start`, `ControlChannelService::Start`. Deliberate discards use
-  `(void)` WITH the reason — an ignored `Start()` was once a control channel that did not
-  exist with nothing anywhere explaining why. Add the attribute to new APIs of this shape.
-- `TextViewport` non-const mutation paths must not copy `document_->lines` wholesale; undo and
-  edit flows should capture only the affected ranges to avoid large-buffer copy regressions.
-
-The durable contracts these rules implement live in
-`openspec/specs/workspace-architecture/spec.md`, `openspec/specs/persisted-state-format/spec.md`,
-and `openspec/specs/shared-edit-primitives/spec.md`. Update those specs in the same change when a
-durable invariant moves.
+The cleanups since 2026-04-29 removed patterns that had grown back more than once. The
+rules that keep them out are listed once, compactly, in `CLAUDE.md` § Hard
+Architectural Invariants -- each with the check in `tests/ArchitectureInvariantsTests.cpp`
+/ `tests/architecture/` that hard-fails it, or marked reviewer-enforced. The full
+reasoning behind each (this section's former text and CLAUDE.md's, moved verbatim on
+2026-11-14) is in `dev-docs/project/architecture-invariants.md`. The durable contracts
+are `openspec/specs/workspace-architecture/spec.md`,
+`openspec/specs/persisted-state-format/spec.md` and
+`openspec/specs/shared-edit-primitives/spec.md`; update them in the same change when an
+invariant moves.
 
 ## Testing Rules
 

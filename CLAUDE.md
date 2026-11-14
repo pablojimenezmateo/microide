@@ -70,142 +70,41 @@ roadmap entry describes intended rather than shipped state.
 
 ## Development Workflow
 
-Configure and build with the repo's CMake flow:
+Full guide, with the reasoning behind each lane: `dev-docs/project/development-workflow.md`.
 
 ```bash
-cmake -S . -B build
-cmake --build build -j8
-```
-
-For the inner test loop, build only the two test binaries and run only their
-shards. The narrow build skips the production `microide` executable and the bench
-binaries (roughly halves the build), and the narrow test selection is what keeps it
-HONEST:
-
-```bash
+cmake -S . -B build && cmake --build build -j8          # configure + full build
+# inner loop: the two test binaries only, and only their shards
 cmake --build build --target microide_tests microide_kernel_tests -j8
 ctest --test-dir build -R _tests_shard --output-on-failure -j$(nproc)
+./build/microide/microide_tests "WorkspaceShell/EditorDirty"   # focused filters (substrings)
 ```
 
-There are TWO test binaries. `microide_kernel_tests` holds the tests of the
-SDL-free kernel (util, platform, project, compare, persistence, terminal) and
-links `microide_kernel` alone — the link unit `microide-server` is built from — so
-a test there that reaches for SDL or the shell fails to compile or link; move such
-a test to `microide_tests` rather than adding the dependency. Focused filters work
-the same on both (`./build/microide/microide_kernel_tests TerminalSession`).
-`-R microide_tests_shard` on its own silently skips every kernel test.
-
-`ctest` with no `-R` does **not** invoke just `microide_tests`. It also runs
-`microide_perf_tests` (the `--smoke` perf gate), `microide_kernel_link_probe` and
-the perf-fixture generators — none of which the narrow build rebuilds. Running
-the full `ctest` after a narrow build therefore validates your change against
-STALE copies of those binaries and reports green: `validation-traps.md` § "A lane
-that narrows the build target but not the test selection" is the same trap, and
-it was found in `run-checks.sh` before it was found here. A whole session's worth
-of "31/31 passed" can mean the perf gate never ran.
-
-So: the two lines above for the fast loop, and `tools/run-checks.sh tests` —
-which builds every target `ctest` invokes — before concluding anything.
-
-The build auto-uses **ccache** (compiler cache) and **ld.lld** (fast linker)
-when installed; both are no-ops if absent. For the best inner-loop speed install
-`ccache` once (`sudo apt install ccache`, then `ccache --max-size=10G`); the
-shared `microide_core` object library means core compiles once across the
-`microide`/`microide_tests`/`microide_perf` targets. `tools/run-checks.sh`
-already exports the `CCACHE_SLOPPINESS` needed for ccache to cache PCH builds.
-
-Run the full automated test suite with:
-
-```bash
-ctest --test-dir build --output-on-failure -j$(nproc)
-```
-
-The suite is registered as `MICROIDE_TEST_SHARDS` ctest tests (default 24), each
-a `microide_tests --shard-index=I --shard-count=N` process running a
-deterministic round-robin slice, so `ctest -jN` uses every core instead of
-running the whole suite in one serial process. This is the dominant win for the
-sanitizers, which used to run 18–30 min single-threaded. `run-checks.sh` passes
-`-j` automatically (full width for plain runs, capped at 6 for the
-memory-heavy sanitizers; override with `MICROIDE_CTEST_JOBS` /
-`MICROIDE_CTEST_SAN_JOBS`). Set `-DMICROIDE_TEST_SHARDS=1` to get the old single
-`microide_tests` test back. Run one shard directly with
-`./build/microide/microide_tests --shard-index=0 --shard-count=24`.
-
-Prefer the logging wrapper, which tees all build+test output to a deterministic
-file under `/tmp` so results can be read back without rerunning:
-
-```bash
-tools/run-checks.sh tests   # -> /tmp/microide-tests.log
-tools/run-checks.sh asan    # -> /tmp/microide-asan.log
-tools/run-checks.sh ubsan   # -> /tmp/microide-ubsan.log
-tools/run-checks.sh tsan    # -> /tmp/microide-tsan.log  (no sudo needed; see below)
-tools/run-checks.sh perf-tests  # -> /tmp/microide-perf-tests.log (allocation counting armed)
-tools/run-checks.sh perf-canary # -> /tmp/microide-perf-canary.log (proves the perf gate can fail)
-tools/run-checks.sh clang-build # -> /tmp/microide-clang-build.log (2nd compiler, warnings-as-errors)
-tools/run-checks.sh hardened    # -> /tmp/microide-hardened.log (_GLIBCXX_ASSERTIONS; catches library-precondition UB the sanitizers cannot)
-tools/run-checks.sh tidy        # -> /tmp/microide-tidy.log (clang-tidy use-after-move + unchecked-optional-access; reviewed findings ratchet in tools/tidy-baseline.txt)
-tools/run-checks.sh qa          # -> /tmp/microide-qa.log (GUI QA on Xvfb: scenario suite + 300-step monkey, redraw verifier on; see tools/qa/README.md)
-tools/run-checks.sh qa-asan     # -> /tmp/microide-qa-asan.log (the GUI QA suite on the ASan build: a slow binary under a memory checker)
-tools/run-checks.sh qa-remote   # -> /tmp/microide-qa-remote.log (remote-project scenarios against a loopback-only sshd run as you, then over a 60 ms each-way link; tools/qa/local-sshd.sh)
-tools/run-checks.sh qa-wayland  # -> /tmp/microide-qa-wayland.log (the GUI QA suite on headless weston at scale 2; input over the control channel's pointer/key)
-tools/run-checks.sh qa-scale    # -> /tmp/microide-qa-scale.log (scale-sensitive scenarios + a layout monkey at ui.scale 1.25 and 1.75)
-tools/run-checks.sh wake-race   # -> /tmp/microide-wake-race.log (SDL's lost wake under contention, with and without LostWakeRelay)
-tools/check-invariants-bite.sh  # every recorded negative control (tools/negative-controls/) must make its check fail
-tools/run-checks.sh all     # all four in sequence
-```
-
-`clang-build` is the only lane that compiles the whole tree with clang and the only
-one that sets `MICROIDE_WARNINGS_AS_ERRORS=ON`. Every other lane is GCC (the
-sanitizer presets set no compiler), and `coverage` builds only `microide_tests` —
-so `src/app/main.cpp`, `microide_perf` and the three bench binaries are covered by
-nothing else. Run it after adding a source to a curated target list.
-
-`perf-canary` is a vacuity probe for the perf gate: it runs `perf_gate_canary`
-clean (must pass) and inflated 4x (must **fail**), so a gate that has stopped
-gating is loud instead of green. See `dev-docs/project/validation-traps.md`
-§ Perf-Gate Vacuity.
-
-The default `tests` target leaves `MICROIDE_PERF_HARNESS_BUILD` OFF, which is what
-arms the counting `operator new`/`delete`. Every `#if MICROIDE_PERF_HARNESS_BUILD`
-assertion — all of `PluginPresentationAllocationTests` and
-`EditorRenderViewModelAllocationTests`, plus parts of `TextViewportTests` — therefore
-compiles to nothing there. Run `perf-tests` after touching a render, view-model, or
-presentation hot path, or those "must not allocate" contracts go unchecked.
-
-After a run, READ `/tmp/microide-<target>.log` instead of rebuilding and rerunning.
-
-The QA monkey also runs continuously on the dev PC: `tools/soak/soak.py run` (a
-`systemd --user` unit, `tools/soak/microide-soak.service`) follows `main` in
-`build/wt-soak`, rotates jobs over builds, profiles, sizes and scales, and keeps a
-findings ledger with a `FINDING.md` per finding. `tools/soak/soak.py status` /
-`report` read it; `tools/soak/AGENT.md` is the brief for fixing what it finds
-(`dev-docs/project/safety-plan.md`).
-
-Run focused tests with one or more substring filters:
-
-```bash
-./build/microide/microide_tests TextRenderer
-./build/microide/microide_tests "WorkspaceShell/EditorDirty"
-```
-
-When a change affects performance-sensitive code, run relevant `dev-docs/performance/perf-harness.md` scenarios first, then use startup/runtime tracing docs for deeper diagnosis.
-
-Sanitizer and fuzz workflows expected for risky changes:
-
-```bash
-cmake --preset microide-asan && cmake --build build/microide-asan -j8 && LSAN_OPTIONS=suppressions=$PWD/tests/lsan.supp ctest --test-dir build/microide-asan --output-on-failure
-cmake --preset microide-ubsan && cmake --build build/microide-ubsan -j8 && ctest --test-dir build/microide-ubsan --output-on-failure
-cmake --preset microide-tsan && cmake --build build/microide-tsan -j8
-# LSan reads tests/lsan.supp (system-library leaks only); run-checks.sh fails a lane on ANY
-# sanitizer report in its log, including one from a spawned microide-server.
-# No sudo: setarch -R clears ASLR for this process only. `sudo sysctl
-# vm.mmap_rnd_bits=28` is the machine-wide fallback if personality() is blocked.
-setarch -R env TSAN_OPTIONS=suppressions=tests/tsan.supp \
-  ctest --test-dir build/microide-tsan --output-on-failure
-cmake -S . -B build/microide-fuzz -DMICROIDE_FUZZ=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
-cmake --build build/microide-fuzz -j8
-./build/microide-fuzz/microide/PersistedRecordReaderFuzz -max_total_time=60 tests/fuzz/corpora/PersistedRecordReaderFuzz
-```
+- Two test binaries: `microide_kernel_tests` (the SDL-free kernel: util, platform,
+  project, compare, persistence, terminal; links `microide_kernel` alone) and
+  `microide_tests`. A kernel test that needs SDL or the shell moves to
+  `microide_tests`. `-R microide_tests_shard` alone skips every kernel test.
+- A plain `ctest` after the narrow build runs STALE perf/probe binaries and reports
+  green. Before concluding anything: `tools/run-checks.sh tests`, which builds every
+  target ctest invokes. ccache and ld.lld are used automatically when installed.
+- `tools/run-checks.sh <lane>` tees to `/tmp/microide-<lane>.log` (or
+  `$MICROIDE_LOG_DIR`); read the log instead of rerunning. Lanes: `tests`, `asan`,
+  `ubsan`, `tsan`, `perf-tests` (arms the allocation counters -- run after touching a
+  render, view-model or presentation hot path), `perf-canary` (proves the perf gate
+  can fail), `clang-build` (second compiler, warnings as errors -- run after adding a
+  source to a curated target list), `hardened` (`_GLIBCXX_ASSERTIONS`), `tidy`, `qa`
+  (GUI QA on Xvfb with the redraw verifier -- run after touching damage, redraw,
+  hover, focus or paint), `qa-asan`, `qa-remote`, `qa-wayland`, `qa-scale`,
+  `wake-race`, `all`. `tools/check-invariants-bite.sh` proves every recorded negative
+  control still fails its check.
+- Sanitizer and fuzz recipes (presets, `setarch -R` for TSan, LSan/TSan
+  suppressions, fuzz corpora) are in the full guide.
+- The QA monkey runs continuously on the dev PC: `tools/soak/soak.py run` (a
+  `systemd --user` unit) follows `main`, and `tools/soak/soak.py status` / `report`
+  read its findings ledger (`build/soak`, a `FINDING.md` per finding).
+  `tools/soak/AGENT.md` is the brief for fixing what it finds.
+- Performance work: `dev-docs/performance/perf-harness.md`, then the startup/runtime
+  tracing docs.
 
 ## Architecture Stance
 
@@ -218,62 +117,60 @@ cmake --build build/microide-fuzz -j8
 
 ## Hard Architectural Invariants
 
-Several patterns were intentionally removed by the 2026-04-29 `comprehensive-tech-debt-cleanup` change. Do not reintroduce them. The architectural-lint test (`tests/ArchitectureInvariantsTests.cpp`) hard-fails on the load-bearing ones; the policy ones are reviewer-enforced.
+Do not reintroduce what these rules removed. Each names the check in
+`tests/ArchitectureInvariantsTests.cpp` / `tests/architecture/` that hard-fails it
+(fixtures both ways in `tests/architecture/ArchitectureRuleFixtures.cpp`), or says it
+is reviewer-enforced. The reasoning behind each -- the bug that made it a rule -- is
+in `dev-docs/project/architecture-invariants.md`; read it before relaxing one. A new
+lint needs fixtures both ways and a loud missing-target guard (`RequireRuleTarget` /
+`ReadRuleTarget`); see `dev-docs/project/validation-traps.md`.
 
-- Workspace coordinator constructors take service-interface references, never `WorkspaceShell&` or `WorkspaceShell*`. Services live alongside the shell (`EditorTabService`, `ProjectCatalogService`, `PromptSurfaceService`, `SidebarService`, `CompareMergeService`, `TerminalPanelService`, `PluginRuntimeService`, `PersistenceService`).
-- No `friend class`/`friend struct` in `src/workspace/*`, except the sanctioned `WorkspaceShell::TestAccess` backdoor (now declared unconditionally so the shared `microide_core` object library compiles an ODR-identical `WorkspaceShell` for the production and test binaries; the lint exempts friends naming a `*TestAccess` type).
-- Numeric token parsing uses `util/Parse.h` (`ParseInt`, `ParseInt64`, `ParseSize`, `ParseFloat`). No `try`/`catch` around `std::sto*`.
-- The shell stays a thin orchestrator, bounded by THREE hard-linted caps, not the two that used to be quoted here: `src/workspace/shell/WorkspaceShell.h` ≤ 400 lines, `src/workspace/shell/WorkspaceShell.cpp` ≤ 600 code lines, and `src/workspace/shell/WorkspaceShellMembers.inc` under a ratcheting code-line cap. The header is ~158 lines only because the class's real declaration surface is that `.inc`, included inside the class body — quoting the 400 on its own reads as a bound on the class and is not one (TD-2026-09-13-293a). All three count CODE lines (comments and blanks are free), and the `.inc` cap ratchets DOWN only: read its current number from `tests/ArchitectureInvariantsTests.cpp`, never from memory. New shell-adjacent behavior lands on a service — the `WorkspaceShell*.cpp` companion count is at its ratchet-only cap of 47, so there is no room for another companion TU either.
-- Workspace-state persistence (project state, user config, session restore) routes through `PersistenceService` plus `PersistedRecordReader`/`PersistedRecordWriter`. Do not hand-roll a new text format or open these files directly elsewhere.
-- Single-line input surfaces consume `editor/SingleLineEditor` plus `editor/SingleLineKeyHandler`.
-- The active editor viewport is owned by the active editor tab; resolve it through `EditorTabService::ActiveViewport()`. Do not reintroduce a shell-level or project-level viewport fallback under any name.
-- Plugin host stays decomposed; `lua_State*` lives behind `plugin/LuaRuntime` only, and no `src/plugin/*.cpp` translation unit exceeds 800 lines. Production code outside `src/plugin` must not name `lua_State`, include a Lua header, or include a Lua-exposing plugin header (transitively) — enforced by the hard invariant `CheckLuaStaysBehindPluginBoundary`; the outward-facing surfaces (`PluginHost.h`, `PluginThread.h`) stay Lua-free at the type level. Sole exemption: `src/editor/SyntaxDefinitionLoader.cpp`'s self-contained sandbox state.
-- Plugin Lua errors never `longjmp` over live C++ destructors. The project links the C build of Lua, so `luaL_error` unwinds the native stack without running C++ destructors. Raise via `lua_error_util::PushMessage` (`src/plugin/LuaError.h`) then `lua_error` only after every `std::string`/`std::vector`/`std::filesystem::path` local has destructed; delegating TUs return `lua_error_util::kPendingError` and let the thin `.inc` wrapper raise; wrappers bind null-host fallbacks by reference (no temporaries). `luaL_error` is banned in `src/plugin` by the hard invariant `CheckPluginLuaErrorDoesNotLongjmpOverCppLocals` (entry-only `luaL_check*` stays allowed). After touching raise paths in `src/plugin`, rerun the AST scope audit `tools/audit-lua-longjmp.py` (verifies no raise-capable Lua call has a live non-trivially-destructible local in scope; see its docstring for setup).
-- Render TUs covered by the lint (`WorkspaceShellRenderFrame`, `WorkspaceShellRenderOverlay`, `WorkspaceShellRenderTextInput`, `WorkspaceShellRenderSidebar`, `WorkspaceShellRenderBottomPanel`, `WorkspaceShellHoverPopup`, `WorkspaceShellHoverTargets`, `DebugPaneRender`) consume view models built by `RenderViewModelBuilder` and do not read `context_.current_project_state` or call `CurrentTextInputSurface(...)`. The debug pane's state-reading geometry/scroll helpers live in `DebugPaneLayout.cpp` (not lint-covered), keeping the render TU view-model-only.
-- Render view models own their data (`CheckRenderViewModelsOwnProjectState`, TD-2026-07-17-084/26): no `OverlayState` in `RenderViewModelBuilder.h`, and a `ProjectWorkspaceState*` only in the two documented escape hatches (`FrameSurfaceViewModel`, `SidebarSurfaceViewModel`). The converted render TUs (Overlay, BottomPanel, TextInput, HoverPopup, HoverTargets, DebugPaneRender) must not name either broad state type — labels/rows are precomposed in the builder (owned `label_storage` blob or frame-stable views), and paint-time state mutation moved to frame prep (overlay scroll clamp, bottom-panel tab-strip fill, `PrepareCommitBodyViewportForFrame`).
-- Responsive shell surfaces (`LayoutModeService`, `StatusBarService`, `SettingsOverlayService`) stay host-owned and service-backed. Menu overflow, status-bar actions, Settings, and Help/About route through action/service state and `RenderViewModelBuilder`, not plugin-owned rendering or render-TU product logic.
-- No legacy persistence symbols (`WorkspacePersistenceLegacyFormat`, `EncodeSessionNodePath`, `DecodeSessionNodePath`, `ParseUserConfigText`, `ParseProjectConfigText`, `ParseProjectSessionText`, `ParseWorkspaceSessionText`) may appear in `src/`, `tests/`, or `tools/`; the legacy importer path is deleted and must not be revived.
-- No `platform::RunSubprocess(...)` calls in workspace `.cpp` units; dispatch through `ProjectBackgroundExecutor` to avoid shell-thread stalls.
-- Render translation units must not materialize new strings in hot paths (`std::string(...)`, string `+`/`+=`, `to_string`, or `std::format`/`fmt::format`); compute render text in `RenderViewModelBuilder` instead. The compare/merge surface render TUs are named `WorkspaceShellRenderCompare.cpp` / `WorkspaceShellRenderMerge.cpp` (the `WorkspaceShellRender*` prefix is what pulls them under the lint set); do not rename them back to `*CompareRender`/`*MergeRender` or they silently escape the string, single-char, and structural-gate rules. They render one `editor::DecoratedTextRow` per visible row via reused scratch members (`compare_left/right_scratch_row_`, `merge_incoming/current_scratch_row_`) — never a fresh per-row `DecoratedTextRow` — and truncate hot labels through `TruncateLabelView` (allocation-free fits-case), enforced by `CheckCompareMergeRenderUsesScratchRows` and `CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings`.
-- `Make*Service()`/`Make*Coordinator()` return a reference into the shell-owned `ShellGlueCache`; bind with `auto&` or `Type&`, never by value (a value binding copies the whole coordinator — 17 `std::function`s — per call, undoing the caching). Enforced by `CheckShellGlueIsBoundByReference`. Capturing such a local BY VALUE into a lambda is the same copy per hook even when the local is a reference, and is enforced by `CheckFactoryResultsAreNotCapturedByValue` (which matches both spellings — matching only `auto x = …` once left it scanning nothing).
-- Write/start APIs whose dropped result is a silent failure carry `[[nodiscard]]` (`WriteTextFileAtomically`, `TextViewport::Save`, `FileWriteGate::WriteText`, both `Start()`s). A deliberate discard is `(void)` plus the reason. New APIs of this shape get the attribute.
-- `FileWriteGate::WriteText` takes `Signature::Skip` by default and only captures a post-write signature on `Signature::Capture`. The editor's save is the one caller that wants it; statting for the others (replace-in-project over N files, the plugin file API, the merge rollback) is a stat per file nobody reads.
-- Git availability is THREE states (`project::GitAvailability{Unknown, Repository, NotARepository}`), not a bool. The local source never returns `Unknown`; a remote one is unknown until its first `git/metadata`, and rendering that as "not a repository" is a claim about the user's directory. The status bar shows `scm-unknown` for it.
-- `TextViewport` non-const editing paths must not snapshot-copy `document_->lines`; capture affected ranges only for undo/edit operations.
-- Overlay dismissal is centralized: no bare `overlay.visible = false` in `src/workspace/*.cpp` outside `WorkspaceShellOverlay.cpp` (canonical `DismissOverlay`) and `WorkspacePersistenceCoordinatorSession.cpp` (full-state restore reset). Hide overlays via `WorkspaceShell::DismissOverlay` or the focus-safe `HideOverlay(state)` helper so keyboard focus never strands on a hidden surface (enforced by `CheckOverlayDismissalIsCentralized`).
-- Every descriptor-creating call (`socket`, `accept4`, `open`/`openat`, `pipe2`, `inotify_init1`) must request close-on-exec **on the creating call itself** (`SOCK_CLOEXEC` / `O_CLOEXEC` / `IN_CLOEXEC`), never via a follow-up `fcntl(F_SETFD)` — another thread can fork/exec in the window between the two. The editor spawns terminal shells, LSP servers, DAP adapters, git, and plugin tools, so an unflagged descriptor is inherited by all of them; for the control socket that is a containment hole, not just a leak. Enforced by `CheckDescriptorCreationIsCloseOnExec`, which also bans plain `accept(`, code-masks matches (so `open(`/`socket(` inside string literals are not call sites), and fails loudly if it finds no call sites at all rather than passing vacuously. That rule shipped with `openat?` as its `open` pattern — which matches `opena`/`openat` and never plain `open(` — so it passed green while blind; it now carries negative + positive control fixtures in `tests/architecture/ArchitectureRuleFixtures.cpp`, and any new lint should too.
-- Every bool setting read in `src/` through `SettingFlagEnabled`/`SettingEnabled`/`SettingOn`/`SettingBoolIsOn` with a literal dotted key must be declared in `WorkspaceSettingsRegistry`. An unregistered key is silent — it reads as its default forever, stays out of the Settings overlay, and is reachable only by hand-editing a config file with a name found in a source comment. Enforced by `CheckSettingsReadAreRegistered` (code-masked, with the same loud-missing-target guard).
+Shell and coordinators
+- Coordinator constructors take service interfaces, never `WorkspaceShell&`/`*`. `CheckCoordinatorShellConstructors`
+- No `friend` in `src/workspace/*` except the `*TestAccess` backdoor. `CheckWorkspaceFriends`
+- The shell is a thin orchestrator: `WorkspaceShell.h` <= 400 and `WorkspaceShell.cpp` <= 600 code lines, `WorkspaceShellMembers.inc` under a cap that ratchets DOWN (read it from the test, never from memory), companion TUs capped at 47. New behavior lands on a service. `CheckShellFileSize`, `CheckWorkspaceShellCompanionTuCount`
+- `Make*Service()`/`Make*Coordinator()` results are bound by reference and never captured by value into a lambda. `CheckShellGlueIsBoundByReference`, `CheckFactoryResultsAreNotCapturedByValue`
+- No `platform::RunSubprocess` and no synchronous subprocess wait in workspace code; dispatch through `ProjectBackgroundExecutor`. `CheckNoSynchronousSubprocessInWorkspace`, `CheckNoSynchronousSubprocessWaitInWorkspace`
+- Overlays hide through `DismissOverlay` / `HideOverlay(state)`, never a bare `overlay.visible = false`. `CheckOverlayDismissalIsCentralized`
+- Responsive shell surfaces (`LayoutModeService`, `StatusBarService`, `SettingsOverlayService`) stay host-owned and service-backed. Reviewer.
 
-- The editor area's panes are ONE structure in two containers: `EditorSplitTree`'s
-  leaves are `ProjectWorkspaceState::editor_groups`, in order (leaf ordinal ==
-  group index), so every group-indexed cache, the focused index and the pane rects
-  all read that correspondence. A site that inserts or erases a group without a
-  matching `InsertLeaf`/`RemoveLeaf`/`Reset` leaves a group with no pane rect, and
-  nothing reports it — the group is simply never drawn. Enforced per-TU by
-  `CheckEditorGroupsMutateWithTheSplitTree` (a TU that reshapes `editor_groups`
-  must call a structural tree method; pairing each individual mutation with its
-  tree call stays reviewer-enforced). The cap is `kMaxEditorGroups` (8) and it is
-  the capacity of every per-pane inline container plus the tree's node budget
-  (2N-1), so raising it cannot leave one behind.
+Editor, tabs and panes
+- The active editor viewport resolves through `EditorTabService::ActiveViewport()`; no shell- or project-level fallback viewport under any name. `CheckNoFallbackEditorViewportSymbols` (renamed revivals: reviewer)
+- `EditorSplitTree`'s leaves are `editor_groups` in order: a TU that reshapes the groups calls a structural tree method; the cap is `kMaxEditorGroups` (8). `CheckEditorGroupsMutateWithTheSplitTree`
+- Compare, merge, the find widget and the debug toolbar lay out in the FOCUSED pane (`ActiveTabSurface`), never `layout.editor_surface`. `CheckTabSurfacesLayOutInTheFocusedPane`
+- `TextViewport` editing never snapshot-copies `document_->lines`; capture affected ranges only. `CheckTextViewportNoFullDocCopy`
+- Filetype detection goes through `TextViewport::language_id()`; the content-reading `DetectFiletype(path, lines)` is reserved for that memo. `CheckViewportFiletypeGoesThroughTheViewportMemo`
+- Same-language tabs share one `LanguageContractView` (`WorkspaceLanguageContract::ResolveEditorView`); never an owned view per tab. Perf scenario `settings_change_many_tabs`.
+- Single-line inputs use `editor/SingleLineEditor` + `SingleLineKeyHandler`. Reviewer.
 
-- A compare, a merge, the find widget and the debug toolbar lay out and hit-test
-  in the FOCUSED PANE -- `WorkspaceShell::ActiveTabSurface(layout)` (memoized) or
-  `FocusedGroupSurface(layout, split, focused)` -- never in `layout.editor_surface`,
-  which is the whole editor column. With one group they are the same rect, which is
-  how a diff in a split came to paint over every other pane (TD-2026-11-11-439).
-  Each pane renders its own front tab, a diff or merge included. Enforced by
-  `CheckTabSurfacesLayOutInTheFocusedPane` (no layout entry point of those surfaces
-  fed `*.editor_surface`; fixtures both ways).
+Rendering
+- Render TUs consume view models from `RenderViewModelBuilder`; they never read `context_.current_project_state` or call `CurrentTextInputSurface`. `CheckRenderSurfaceStateAccess`
+- View models own their data: no `OverlayState` in `RenderViewModelBuilder.h`, a `ProjectWorkspaceState*` only in `FrameSurfaceViewModel` / `SidebarSurfaceViewModel`, and no pointers to the shell, coordinators or services. `CheckRenderViewModelsOwnProjectState` (pointers to services: reviewer)
+- Render TUs materialize no strings in hot paths. Compare/merge render TUs keep their `WorkspaceShellRender*` names, paint through the reused scratch rows and truncate through `TruncateLabelView`. `CheckRenderTuDoesNotMaterializeStrings`, `CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings`, `CheckCompareMergeRenderUsesScratchRows`
+- Frame preparation runs once per frame; `ComputeLayout()` only when the layout is dirty; the idle loop never spins `SDL_PollEvent` at zero delay (`IdleHint`). Reviewer.
 
-- Key-hint lists join through `AppendHintSegment`/`JoinHintSegments` in `workspace/WorkspaceUiText.h` (separator `kHintSeparator`, `" · "`). Do not re-declare `AppendHintSegment` in a TU — two files independently grew byte-identical private copies joining on `"  |  "`, which is how the git sidebar's action line and the compare review header ended up spelled differently from every other hint in the app. (The "both are also mirrored into Help/About" once recorded here is not true of the compare one: its strings live only in `CompareTabReview.cpp`, and as of 2026-09-19 that line is not drawn at all — see TD-2026-09-19-296.) Enforced by `CheckHintSegmentsUseTheSharedSeparator`, which has **two** halves. The first targets the redefinition. The second (2026-09-19) targets a string literal that contains `"  |  "` as part of a larger line: scoping to the redefinition alone missed every line that simply typed the wrong separator inline, which was two more — the dirty prompt's hint line, and the git sidebar action line's **no-selection** variant, so the very line the first cleanup was about still changed punctuation as the selection came and went. A **bare** `"  |  "` literal joined at runtime stays legal: that separator is legitimate between unrelated fields (the breadcrumb's `path | left -> right`, the merge status line). That half walks string literals itself rather than matching with a regex and skipping on `BuildCodeMask` — the mask marks literal BODIES as not-code, so the mask-and-skip draft was structurally incapable of firing, and `std::regex` recursed per character and segfaulted on this repo's longer sources.
+Persistence, files and processes
+- Workspace state persists through `PersistenceService` + `PersistedRecordReader`/`Writer`; no hand-rolled format, no direct file I/O elsewhere, no legacy persistence symbols. `CheckPersistenceFileIoBoundary`, `CheckNoLegacyPersistenceSymbols`
+- Every descriptor-creating call requests close-on-exec on the call itself (`SOCK_CLOEXEC`/`O_CLOEXEC`/`IN_CLOEXEC`); no plain `accept(`. `CheckDescriptorCreationIsCloseOnExec`
+- Write/start APIs whose dropped result is a silent failure are `[[nodiscard]]`; a deliberate discard is `(void)` plus the reason. Reviewer.
+- `FileWriteGate::WriteText` captures a post-write signature only on `Signature::Capture` (the editor's save). Reviewer.
+- Git availability is three states (`GitAvailability{Unknown, Repository, NotARepository}`), never a bool. Reviewer.
+- Numeric tokens parse through `util/Parse.h`; no `try`/`catch` around `std::sto*`. `CheckThrowingStoParsers`
+- LSP `didOpen`/`didChange` are never sent synchronously on the tab-activation path. `CheckLspDidOpenIsNonBlocking`
 
-- The two sides of a conflict, a merge or a compare are **Local** and **Remote** in every user-visible string -- menus, buttons, palette titles and command ids (`git-accept-local`, `remote-resolve <path> local|remote`), toasts, row details, pane captions, compare titles. Never mine / yours / ours / theirs / the host's, nor current / incoming. The same two sides had five names across the app ("Keep Mine" / "Take Host's", "Accept Ours" / "Accept Theirs", "Accept Current (Keep Ours)", "(yours)"), and a row of conflicts could not be read for which button kept what. "Host" stays the remote machine's name ("Open Folder on Host…"). Enforced by `CheckSideNamesAreLocalAndRemote` (literal-walking, short literals only, anchored on the remote conflict row's labels).
+Plugins
+- `lua_State*` and Lua headers stay behind `plugin/LuaRuntime` (sole exemption: `SyntaxDefinitionLoader.cpp`'s sandbox); no `src/plugin/*.cpp` over 800 lines. `CheckLuaStaysBehindPluginBoundary`, `CheckPluginTranslationUnitSize`
+- Lua errors never `longjmp` over live C++ destructors: no `luaL_error` in `src/plugin`; raise with `lua_error_util::PushMessage` then `lua_error` after every non-trivial local is gone; rerun `tools/audit-lua-longjmp.py` after touching raise paths. `CheckPluginLuaErrorDoesNotLongjmpOverCppLocals`
+- Project reactivation refreshes plugin surfaces, never reloads plugins; reload/shutdown drains async process workers first. `CheckReactivationDoesNotReloadPlugins` (the drain: reviewer)
 
-- Buffer-content filetype detection goes through `TextViewport::language_id()`, which memoizes on (document identity, content revision, path, syntax-registry revision). Four independent caches for this had accreted — `runtime_syntax::FiletypeMemo` with two instances, plus `LspUiState::language_cache_*`, whose path-only key silently pinned a stale language for content-detected buffers (a shebang with no extension). The content-reading two-argument `DetectFiletype(path, lines)` overload is reserved for that memo; the one-argument path-only form stays legal for callers with no buffer in hand. Enforced by `CheckViewportFiletypeGoesThroughTheViewportMemo` (code-masked, arity-aware, loud on a missing target).
+User-visible text
+- Bool settings read with a literal key are declared in `WorkspaceSettingsRegistry`. `CheckSettingsReadAreRegistered`
+- Key-hint lists join through `AppendHintSegment`/`JoinHintSegments` (`" · "`). `CheckHintSegmentsUseTheSharedSeparator`
+- The two sides of a conflict, merge or compare are **Local** and **Remote** in every user-visible string; "Host" names the remote machine. `CheckSideNamesAreLocalAndRemote`
 
-- Same-language editor tabs share ONE `editor::LanguageContractView`, held by `shared_ptr<const>` and built/cached by `WorkspaceLanguageContract::ResolveEditorView` (keyed by language id, dropped whole when the contract revision or any of the three editor toggles changes). Do not give `TextViewport` an owned view back: `ApplyEditorPreferences` walks every open tab, so an owned view means one deep copy of four vectors and three strings per tab per settings change, project activation and session restore. Gated by the `settings_change_many_tabs` perf scenario (TD-2026-08-03-110).
-
-The durable contracts live in `openspec/specs/workspace-architecture/spec.md`, `openspec/specs/persisted-state-format/spec.md`, and `openspec/specs/shared-edit-primitives/spec.md`. The full reasoning is in `AGENTS.md` § Do-Not-Regress Patterns and in the archived change at `openspec/changes/archive/2026-04-29-comprehensive-tech-debt-cleanup/`.
+Durable contracts: `openspec/specs/workspace-architecture/spec.md`,
+`persisted-state-format/spec.md`, `shared-edit-primitives/spec.md`; update them in the
+same change when an invariant moves.
 
 ## Validation Expectations
 
@@ -289,6 +186,8 @@ The durable contracts live in `openspec/specs/workspace-architecture/spec.md`, `
 ## Related Docs
 
 - `AGENTS.md`: repo policy, priorities, and iteration loop
+- `dev-docs/project/architecture-invariants.md`: each invariant above with the bug that made it a rule
+- `dev-docs/project/development-workflow.md`: the full build/test/lane guide, sanitizer and fuzz recipes
 - `dev-docs/debugger/dap-integration.md`: debugger/DAP architecture, status, and phased roadmap (shipped on `main` in v2.0.0; Phases 0–10 done)
 - `dev-docs/control/control-channel.md`: external control channel for headless/LLM-driven control. Headless entry point: `microide --control [--set <id> <value>]... [--control-spec <file>]` force-starts the channel and mirrors responses/events/applied lines to stdout as JSONL (live AF_UNIX socket + `--control-spec` cold start also supported)
 - `dev-docs/project/media-generation.md`: how the showcase screenshots + hero video under `docs/media/` are generated (`tools/capture-media.sh`); regenerate them whenever the UI changes. `tools/release.sh` drives the full release (build → tests → media → signed `.deb`)
