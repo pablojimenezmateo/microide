@@ -52,6 +52,22 @@ class StructuralOracleTests(unittest.TestCase):
         self.assertEqual(len(found), 1)
         self.assertIn("only whitespace", found[0][1])
 
+    def test_a_line_break_inside_an_identifier_is_a_real_change(self) -> None:
+        # Soak 96055d2c8eec: "cmake_minimum_required(...)" became "cmake" and
+        # "_minimum_required(...)" on the next line. Only a line break went in, but
+        # it split one token into two, and marking both is right.
+        rows = [_row("added", 0, right="cmake", right_spans=[(0, 5)]),
+                _row("modified", 0, "cmake_minimum_required(VERSION 3.16)", "_minimum_required(VERSION 3.16)",
+                     [(0, 22)], [(0, 17)])]
+        self.assertEqual(_check(rows), [])
+
+    def test_rewrapping_between_tokens_still_is_layout_only(self) -> None:
+        rows = [_row("modified", 0, "foo(a, b);", "foo(a,", right_spans=[(0, 3)]),
+                _row("added", 0, right="    b);")]
+        found = _check(rows)
+        self.assertEqual(len(found), 1)
+        self.assertIn("only whitespace", found[0][1])
+
     def test_a_real_change_shown_as_layout_only_is_reported(self) -> None:
         found = _check([_row("modified", 0, "foo(x);", "foo(y);")])
         self.assertEqual(len(found), 1)

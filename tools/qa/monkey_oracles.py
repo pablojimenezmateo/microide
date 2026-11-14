@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import shutil
 import time
 from pathlib import Path
@@ -579,8 +580,8 @@ class StructuralDiffOracle:
 
     - spans: inside their line, sorted, non-overlapping, on UTF-8 boundaries, and
       only where the row has that side and is not unchanged;
-    - layout only: a hunk whose two sides are the same text once whitespace is
-      gone marks no token -- re-indenting, re-wrapping or re-spacing code costs
+    - layout only: a hunk whose two sides are the same tokens (words and single
+      punctuation characters) marks no token -- re-indenting, re-wrapping or re-spacing code costs
       nothing (checked where no string or comment could make whitespace matter);
     - a real change shows: a hunk whose sides differ beyond whitespace marks a
       token, or adds or deletes a row with text -- never "layout only".
@@ -589,6 +590,11 @@ class StructuralDiffOracle:
     checked only up to the cut, hunk by complete hunk."""
 
     _QUOTES_OR_COMMENTS = ('"', "'", "//", "/*", "#")
+    _TOKEN = re.compile(r"\w+|[^\w\s]")
+
+    @classmethod
+    def _tokens(cls, text: str) -> list[str]:
+        return cls._TOKEN.findall(text)
 
     def __init__(self, app: q.App):
         self.app = app
@@ -639,11 +645,14 @@ class StructuralDiffOracle:
             members = hunks[hunk]
             if any(r.get("textTruncated") for r in members):
                 continue
-            left = "".join(r.get("leftText", "") for r in members if r.get("leftLine", 0) > 0)
-            right = "".join(r.get("rightText", "") for r in members if r.get("rightLine", 0) > 0)
+            left = "\n".join(r.get("leftText", "") for r in members if r.get("leftLine", 0) > 0)
+            right = "\n".join(r.get("rightText", "") for r in members if r.get("rightLine", 0) > 0)
             marked = any(r.get("leftSpans") or r.get("rightSpans") for r in members)
-            squeezed_left, squeezed_right = "".join(left.split()), "".join(right.split())
-            if squeezed_left == squeezed_right:
+            # Layout only means the same TOKENS, not the same characters once the
+            # whitespace is gone: a line break inside an identifier splits it into
+            # two, and marking both is right (soak 96055d2c8eec,
+            # "cmake_minimum_required" -> "cmake" / "_minimum_required").
+            if self._tokens(left) == self._tokens(right):
                 if marked and not any(m in left + right for m in self._QUOTES_OR_COMMENTS):
                     found.append(("diff", f"hunk {hunk + 1} changes only whitespace and line breaks, "
                                           f"and marks tokens novel"))
