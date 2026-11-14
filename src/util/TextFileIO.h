@@ -196,7 +196,10 @@ std::optional<std::uint64_t> FileModificationTick(const std::filesystem::path& p
 // binary), or if it exceeds `max_bytes` (skipped before allocation). On a false
 // return `out`'s contents are unspecified. `max_bytes` defaults to the search cap;
 // pass `kMaxTextFileBytes` for whole-file callers that must slurp large files.
+// A UTF-8 byte order mark is stripped (columns count from the text, as the
+// editor's do); `had_utf8_bom`, when given, says whether there was one -- a
+// caller that writes the text back must put it back.
 bool ReadFileForTextSearch(const std::filesystem::path& path, std::string& out,
-                           std::uintmax_t max_bytes = kMaxSearchFileBytes);
+                           std::uintmax_t max_bytes = kMaxSearchFileBytes, bool* had_utf8_bom = nullptr);
 
 }  // namespace microide::util

@@ -215,7 +215,10 @@ TextFileReadResult ReadTextFileClassified(const std::filesystem::path& path) {
 }
 
 bool ReadFileForTextSearch(const std::filesystem::path& path, std::string& out,
-                           std::uintmax_t max_bytes) {
+                           std::uintmax_t max_bytes, bool* had_utf8_bom) {
+  if (had_utf8_bom != nullptr) {
+    *had_utf8_bom = false;
+  }
   // Reject non-regular files before opening so a special file under the project
   // tree cannot block a search worker on open/seek.
   if (!IsRegularFileFollowingSymlinks(path)) {
@@ -257,6 +260,9 @@ bool ReadFileForTextSearch(const std::filesystem::path& path, std::string& out,
     // lands three bytes late.
     if (HasUtf8Bom(out)) {
       out.erase(0, kUtf8Bom.size());
+      if (had_utf8_bom != nullptr) {
+        *had_utf8_bom = true;
+      }
     }
   }
   return true;

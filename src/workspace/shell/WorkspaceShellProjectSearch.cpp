@@ -63,7 +63,11 @@ ProjectReplaceOutcome RunProjectReplace(const std::filesystem::path& root,
     // Same read cap as the finder/search: a file too large to search shows no
     // matches, so replace-all must not silently rewrite it either.
     util::AddPerformanceCounter(util::PerfCounterId::SearchProjectReplaceFilesRead);
-    if (!util::ReadFileForTextSearch(absolute_path, content)) {
+    // The reader strips a UTF-8 byte order mark, as search must; the write below
+    // puts it back. It did not, and every file a project replace touched lost its
+    // BOM (soak 88696b6b00ac).
+    bool had_utf8_bom = false;
+    if (!util::ReadFileForTextSearch(absolute_path, content, util::kMaxSearchFileBytes, &had_utf8_bom)) {
       continue;
     }
     std::size_t replacements = 0;
@@ -95,6 +99,9 @@ ProjectReplaceOutcome RunProjectReplace(const std::filesystem::path& root,
     if (aggregate_bytes > aggregate_cap_bytes) {
       outcome.status = ProjectReplaceOutcome::Status::CapExceeded;
       return outcome;
+    }
+    if (had_utf8_bom) {
+      content.insert(0, util::kUtf8Bom);
     }
     pending.push_back(Buffered{.relative_path = relative_path,
                                .absolute_path = absolute_path,

@@ -8390,6 +8390,38 @@ void TestWorkspaceShellReplaceAllReplacesInADirtyOpenBuffer() {
          "nothing is refused: " + WorkspaceShellTestAccess::ProjectSearchError(shell));
 }
 
+// Soak 88696b6b00ac: qa-weird/bom.txt lost its UTF-8 byte order mark on disk.
+// Replace-all in the project read each file through ReadFileForTextSearch, which
+// strips the mark (search columns count from the text after it, as the editor's
+// do), and wrote the replaced text back without it: every file a project replace
+// touched dropped its BOM, silently.
+void TestWorkspaceShellReplaceAllKeepsAUtf8ByteOrderMark() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::string bom = "\xEF\xBB\xBF";
+  WriteFile(root / "bom.txt", bom + "a needle here\n");
+  WriteFile(root / "plain.txt", "a needle there\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "open the project");
+  Expect(WaitForFileIndexSize(shell, 2, std::chrono::milliseconds(1500)), "index both files");
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "needle", false);
+  Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)), "the search completes");
+  WorkspaceShellTestAccess::ReplaceAllProjectSearchMatches(shell);
+  const bool replaced = WaitUntil(
+      [&root]() {
+        return ReadFile(root / "bom.txt").find("needle") == std::string::npos &&
+               ReadFile(root / "plain.txt").find("needle") == std::string::npos;
+      },
+      std::chrono::seconds(2), std::chrono::milliseconds(5),
+      [&shell]() { WorkspaceShellTestAccess::ConsumeProjectSearchUpdates(shell); });
+  Expect(replaced, "replace-all rewrites both files");
+  const std::string with_bom = ReadFile(root / "bom.txt");
+  Expect(with_bom == bom + "a  here\n", "the BOM file keeps its mark and changes only the match, got " +
+                                               std::to_string(with_bom.size()) + " bytes");
+  Expect(ReadFile(root / "plain.txt") == "a  there\n", "a file without one gains none");
+}
+
 // TD-2026-07-16-21 / TD-2026-07-17-021: replace-all used to re-read and re-scan
 // EVERY file in the project to rediscover the match set the just-completed search
 // already knew. When the cached results provably cover all matches, it must touch
@@ -9299,6 +9331,7 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellReplaceAllAbortsWithFeedbackPastAggregateCap);
   AddTest(tests, "WorkspaceShell/ReplaceAllReplacesInADirtyOpenBuffer",
           TestWorkspaceShellReplaceAllReplacesInADirtyOpenBuffer);
+  AddTest(tests, "WorkspaceShell/ReplaceAllKeepsAUtf8ByteOrderMark", TestWorkspaceShellReplaceAllKeepsAUtf8ByteOrderMark);
   AddTest(tests, "WorkspaceShell/ReplaceAllReadsOnlyMatchedFiles",
           TestWorkspaceShellReplaceAllReadsOnlyMatchedFiles);
   AddTest(tests, "WorkspaceShell/ReplaceAllFallsBackWhenResultsTruncated",
