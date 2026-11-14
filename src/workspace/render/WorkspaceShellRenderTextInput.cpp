@@ -195,6 +195,11 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       const bool replace_field = surface == TextInputSurface::BufferReplaceReplace;
       const FindWidgetLayout fw = ComputeBufferFindWidgetLayout(ActiveTabSurface(layout), replace_mode);
       const SDL_FRect field = replace_field ? fw.replace_field : fw.search_field;
+      // A field the layout left out (a pane too short or a card too narrow to hold
+      // it) has no caret to draw: placed by its empty rect, it landed at the origin.
+      if (field.w <= 0.0f || field.h <= 0.0f) {
+        return std::nullopt;
+      }
       const float text_x = field.x + 6.0f;
       const float text_y = field.y + std::floor((field.h - line_height) * 0.5f);
       const float available_width = std::max(1.0f, field.w - 12.0f);

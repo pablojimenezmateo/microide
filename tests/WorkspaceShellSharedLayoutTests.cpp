@@ -1872,6 +1872,26 @@ void TestFindWidgetReplaceRowStaysInsideANarrowCard() {
   }
 }
 
+// Soak 938ea521923b: the find widget in a pane shorter than itself (a split at
+// the bottom of a 534-px window) hung below the pane and past the window's
+// bottom edge. Like the terminal's find bar, it is laid out inside its pane or
+// not at all; every rect is then empty, so nothing paints, hit-tests or reports.
+void TestFindWidgetStaysInsideAShortPane() {
+  for (float height = 1.0f; height <= 120.0f; height += 1.0f) {
+    for (const bool replace : {false, true}) {
+      const SDL_FRect pane{300.0f, 520.0f, 500.0f, height};
+      const workspace::FindWidgetLayout layout = workspace::ComputeBufferFindWidgetLayout(pane, replace);
+      const SDL_FRect& card = layout.widget;
+      const bool empty = card.w <= 0.0f || card.h <= 0.0f;
+      Expect(empty || (card.y >= pane.y - 0.01f && card.y + card.h <= pane.y + pane.h + 0.01f),
+             "the find widget stays inside a pane " + std::to_string(static_cast<int>(height)) + " tall: y " +
+                 std::to_string(card.y) + " h " + std::to_string(card.h));
+      Expect(!empty || (layout.search_field.w <= 0.0f && layout.close_button.w <= 0.0f),
+             "and when it is left out, so is every control in it");
+    }
+  }
+}
+
 // Soak 2dc534f1ceac: the dismiss button had no bound either. Laid at the strip's
 // right edge less its pad and size, in a sliver of a pane narrower than that
 // (a nested split, 1024x700 at 1.25) it started left of the strip, over the
@@ -1927,6 +1947,7 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
           TestEditorBannerDismissStaysInsideASliverStrip);
   AddTest(tests, "WorkspaceShared/FindWidgetReplaceRowStaysInsideANarrowCard",
           TestFindWidgetReplaceRowStaysInsideANarrowCard);
+  AddTest(tests, "WorkspaceShared/FindWidgetStaysInsideAShortPane", TestFindWidgetStaysInsideAShortPane);
   AddTest(tests, "WorkspaceShared/MergeConflictButtonsStayInsideTheirPane",
           TestWorkspaceSharedMergeConflictButtonsStayInsideTheirPane);
   AddTest(tests, "WorkspaceShared/FindWidgetStaysInsideAShortOrNarrowArea",

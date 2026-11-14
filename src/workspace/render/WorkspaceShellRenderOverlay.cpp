@@ -139,6 +139,10 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
 void WorkspaceShell::RenderFindWidget(SDL_Renderer* renderer,
                                       const OverlayFindWidgetViewModel& fw_vm) {
   const FindWidgetLayout& fw = fw_vm.fw;
+  // Not laid out: its pane is too short to hold it (ComputeBufferFindWidgetLayout).
+  if (fw.widget.w <= 0.0f || fw.widget.h <= 0.0f) {
+    return;
+  }
 
   // Floating card only — no backdrop, so the editor underneath stays visible and
   // editable while the widget floats above it.

@@ -781,9 +781,20 @@ FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area,
 // The in-file find widget's layout. Resolve it through this rather than calling
 // ComputeFindWidgetLayout directly: paint, hit-test and the tooltip resolver all
 // have to agree on the toggle count or the buttons move out from under the mouse.
+//
+// Laid out inside its pane or not at all, as the terminal's find bar is: in a pane
+// shorter than the widget it hung past the pane and the window's bottom edge (soak
+// 938ea521923b). Every rect is then empty, so nothing paints, hit-tests or reports.
 inline FindWidgetLayout ComputeBufferFindWidgetLayout(const SDL_FRect& editor_area,
                                                       bool replace_mode) {
-  return ComputeFindWidgetLayout(editor_area, replace_mode, kBufferFindToggleCount);
+  FindWidgetLayout fw = ComputeFindWidgetLayout(editor_area, replace_mode, kBufferFindToggleCount);
+  if (fw.widget.y + fw.widget.h > editor_area.y + editor_area.h) {
+    FindWidgetLayout none;
+    none.replace_mode = replace_mode;
+    none.toggle_count = fw.toggle_count;
+    return none;
+  }
+  return fw;
 }
 // The terminal's find bar floats over the active pane's body, lifted within the
 // panel's body (never over its tab row) when the pane is too short to hold it.
