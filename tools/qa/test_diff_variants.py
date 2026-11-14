@@ -76,6 +76,20 @@ class StructuralOracleTests(unittest.TestCase):
     def test_an_added_line_shows_a_change_without_spans(self) -> None:
         self.assertEqual(_check([_row("added", 0, right="bar();")]), [])
 
+    def test_a_span_beside_a_stray_byte_splits_nothing(self) -> None:
+        # Soak 1b3aae58e0b7 (883 sightings): a binary line, `%` then a lone 0x97.
+        # A byte from 0x80 to 0xBF with no lead byte before it is not inside any
+        # character -- it is one on its own -- so a span may start or end at it.
+        raw = b"\\\x00\x00\x04%\x97\x0b \\"
+        row = _row("added", 0, right=raw.decode("utf-8", "replace"), right_spans=[(0, 5), (6, 9)])
+        row["rightHex"] = raw.hex()
+        self.assertEqual(_check([row]), [])
+        # ...while a span that cuts a real two-byte character still is a split.
+        raw = "aé".encode()
+        row = _row("added", 0, right="aé", right_spans=[(0, 2)])
+        row["rightHex"] = raw.hex()
+        self.assertEqual(len(_check([row])), 1)
+
     def test_a_span_outside_its_line_or_inside_a_character_is_reported(self) -> None:
         self.assertEqual(len(_check([_row("modified", 0, "ab", "ac", [(1, 2)], [(1, 9)])])), 1)
         self.assertEqual(len(_check([_row("modified", 0, "é", "e", [(1, 2)], [(0, 1)])])), 1)

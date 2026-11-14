@@ -574,6 +574,28 @@ class Liveness:
         return []
 
 
+def _utf8_boundaries(raw: bytes) -> set[int]:
+    """The offsets in `raw` that are not inside a character: every well-formed
+    UTF-8 sequence is one character, and every byte that is not part of one --
+    a stray continuation byte in binary data, a cut-off lead -- is one on its own.
+    Reading every 0x80-0xBF byte as "inside a character" called a span beside a
+    lone 0x97 a split (soak 1b3aae58e0b7, 883 sightings on binary lines)."""
+    out = {0, len(raw)}
+    i = 0
+    while i < len(raw):
+        lead = raw[i]
+        n = 1 if lead < 0x80 else 2 if 0xC2 <= lead <= 0xDF else 3 if 0xE0 <= lead <= 0xEF \
+            else 4 if 0xF0 <= lead <= 0xF4 else 1
+        if n > 1:
+            try:
+                raw[i:i + n].decode("utf-8")
+            except UnicodeDecodeError:
+                n = 1
+        i += n
+        out.add(i)
+    return out
+
+
 class StructuralDiffOracle:
     """What the compare view's structural refinement claims, held against what it
     shows (the `compare` query: rows, hunks and each side's novel byte spans).
@@ -601,6 +623,7 @@ class StructuralDiffOracle:
         self.evidence: dict[str, bytes] = {}
 
     def check(self) -> list[tuple[str, str]]:
+        self.evidence = {}
         try:
             diff = self.app.query("compare")
         except Exception:  # noqa: BLE001 - a dead or busy app is another oracle's
@@ -630,14 +653,20 @@ class StructuralDiffOracle:
                 raw = bytes.fromhex(row[f"{side}Hex"]) if row.get(f"{side}Hex") \
                     else str(row.get(f"{side}Text", "")).encode()
                 last = 0
+                boundaries = _utf8_boundaries(raw)
                 for start, end in spans:
                     if not (last <= start < end <= len(raw)):
                         found.append(("diff", f"the {side} side of {where} has a novel span [{start}, {end}) "
                                               f"outside its {len(raw)}-byte line or out of order"))
                         break
-                    if any(0 < at < len(raw) and (raw[at] & 0xC0) == 0x80 for at in (start, end)):
+                    if any(at not in boundaries for at in (start, end)):
                         found.append(("diff", f"the {side} side of {where} has a novel span [{start}, {end}) "
                                               f"that splits a character"))
+                        # The row as the query gave it, and the bytes the check
+                        # read: a split is the app's or this check's, and only
+                        # the row says which.
+                        self.evidence.setdefault(f"split-span-row-{index + 1}.json", json.dumps(
+                            {"row": row, "side": side, "bytes": raw.hex()}, indent=1).encode())
                         break
                     last = end
         complete = sorted(hunks)[:-1] if diff.get("rowsTruncated") else sorted(hunks)
