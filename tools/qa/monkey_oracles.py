@@ -92,14 +92,30 @@ class DataOracle:
                 out[doc["path"]] = (doc.get("sha256", ""), disk)
         return out
 
+    def check_untitled_names(self, docs: list[dict[str, Any]] | None = None) -> list[tuple[str, str]]:
+        """Two different unsaved buffers of one project under one Untitled-N name.
+        Each untitled buffer has a number of its own (a split shows ONE buffer in
+        two panes, same text): a duplicate is the editor's own bookkeeping going
+        wrong, and the kill -9 restore then brings both back with one text (soak
+        93ba7c8703e3). Caught where it starts, not at the restore that loses one."""
+        docs = self.documents() if docs is None else docs
+        texts: dict[tuple[str, str], set[str]] = collections.defaultdict(set)
+        for doc in docs:
+            if not doc.get("path") and doc.get("title"):
+                texts[_doc_key(doc)].add(str(doc.get("sha256", "")))
+        return [("data", f"{len(shas)} different unsaved buffers are all titled {title}")
+                for (_, title), shas in sorted(texts.items()) if len(shas) > 1]
+
     def check_clean(self, attempts: int = 4, gap: float = 0.3) -> list[tuple[str, str]]:
         """A clean document whose file differs, and keeps differing while the
         file stays the same for `attempts` reads -- an external rewrite the
         watcher has not reloaded yet is not a finding, a stable disagreement is."""
-        mismatched = self.clean_mismatches(self.documents())
+        docs = self.documents()
+        names = self.check_untitled_names(docs)
+        mismatched = self.clean_mismatches(docs)
         for _ in range(attempts - 1):
             if not mismatched:
-                return []
+                return names
             time.sleep(gap * q.SLOW_FACTOR)
             again = self.clean_mismatches(self.documents())
             # Only what still differs from the SAME disk bytes.
@@ -108,9 +124,9 @@ class DataOracle:
         self.evidence = {}
         for path, pair in mismatched.items():
             self.evidence.update(self._mismatch_evidence(path, pair))
-        return [("data", f"the clean buffer of {Path(path).name} differs from its file on disk "
-                         f"(buffer {pair[0][:12]}, disk {pair[1][:12]}) and the file is not changing")
-                for path, pair in mismatched.items()]
+        return names + [("data", f"the clean buffer of {Path(path).name} differs from its file on disk "
+                                 f"(buffer {pair[0][:12]}, disk {pair[1][:12]}) and the file is not changing")
+                        for path, pair in mismatched.items()]
 
     def _mismatch_evidence(self, path: str, pair: tuple[str, str]) -> dict[str, bytes]:
         """Both sides' bytes and where they first part, for one mismatched path."""

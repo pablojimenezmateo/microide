@@ -384,5 +384,34 @@ class UndoAlgebraTests(unittest.TestCase):
         self.assertIn("2 undo(s) then 2 redo(s) changed the text of CHANGELOG.md", found[0][1])
 
 
+class _DocumentsApp:
+    """Answers `documents` with a fixed list."""
+
+    def __init__(self, docs: list[dict]) -> None:
+        self.docs = docs
+
+    def query(self, verb, args=None):
+        assert verb == "documents", verb
+        return [dict(doc) for doc in self.docs]
+
+
+class UntitledNamesTests(unittest.TestCase):
+    def _doc(self, title: str, sha: str, project: str = "/p") -> dict:
+        return {"path": "", "title": title, "dirty": True, "sha256": sha, "bytes": len(sha), "project": project}
+
+    def test_two_different_unsaved_buffers_with_one_title_are_reported(self) -> None:
+        # Soak 93ba7c8703e3: two different buffers both "Untitled-1"; a kill -9's
+        # restore then brought both back with one of their texts.
+        app = _DocumentsApp([self._doc("Untitled-1", "aa"), self._doc("Untitled-1", "bbbb")])
+        found = monkey_oracles.DataOracle(app).check_untitled_names()
+        self.assertEqual(len(found), 1)
+        self.assertIn("2 different unsaved buffers are all titled Untitled-1", found[0][1])
+
+    def test_one_buffer_in_two_panes_and_other_projects_are_not(self) -> None:
+        app = _DocumentsApp([self._doc("Untitled-1", "aa"), self._doc("Untitled-1", "aa"),
+                             self._doc("Untitled-1", "cc", project="/q"), self._doc("Untitled-2", "dd")])
+        self.assertEqual(monkey_oracles.DataOracle(app).check_untitled_names(), [])
+
+
 if __name__ == "__main__":
     unittest.main()
