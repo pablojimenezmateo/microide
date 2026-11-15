@@ -73,19 +73,10 @@ void WorkspaceShell::DrawSingleLineTextTail(SDL_Renderer* renderer,
   if (available_width <= 0.0f || text.empty()) {
     return;
   }
-  if (text_renderer_.MeasureWidth(text) <= available_width) {
-    text_renderer_.DrawString(renderer, x, y, foreground, text);
-    return;
-  }
-
-  std::size_t byte_offset = 0;
-  while (byte_offset < text.size()) {
-    const std::string_view suffix = text.substr(byte_offset);
-    if (text_renderer_.MeasureWidth(suffix) <= available_width) {
-      text_renderer_.DrawString(renderer, x, y, foreground, suffix);
-      return;
-    }
-    byte_offset += util::Utf8SequenceLength(text, byte_offset);
+  const std::size_t start = FittingTailStart(
+      text, available_width, [this](std::string_view tail) { return text_renderer_.MeasureWidth(tail); });
+  if (start < text.size()) {
+    text_renderer_.DrawString(renderer, x, y, foreground, text.substr(start));
   }
 }
 

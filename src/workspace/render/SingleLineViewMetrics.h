@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -30,5 +32,12 @@ SingleLineViewMetrics ComputeSingleLineViewMetrics(const render::TextRenderer& t
                                                    const editor::SingleLineEditor& state,
                                                    std::string_view prefix,
                                                    float available_width);
+
+// Where the longest tail of `text` that fits `available_width` begins:
+// text.size() when not even its last character fits, 0 when all of it does.
+// `measure` is a string's drawn width; a shorter tail is never the wider. An
+// unfocused single-line field draws this tail of its value.
+std::size_t FittingTailStart(std::string_view text, float available_width,
+                             const std::function<float(std::string_view)>& measure);
 
 }  // namespace microide::workspace

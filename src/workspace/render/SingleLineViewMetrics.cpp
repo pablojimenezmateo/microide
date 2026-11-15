@@ -121,4 +121,24 @@ SingleLineViewMetrics ComputeSingleLineViewMetrics(const render::TextRenderer& t
   };
 }
 
+std::size_t FittingTailStart(std::string_view text, float available_width,
+                             const std::function<float(std::string_view)>& measure) {
+  if (measure(text) <= available_width) {
+    return 0;
+  }
+  // From the END, one character more each step, until the next one no longer
+  // fits: bounded by what can show. Walking from the start measured every
+  // suffix -- n^2/2 bytes for a long value, every frame (soak d3f7c53a3cd7: a
+  // 300 000-character find query held the UI thread for minutes).
+  std::size_t start = text.size();
+  while (start > 0) {
+    const std::size_t previous = util::PreviousUtf8Boundary(text, start);
+    if (measure(text.substr(previous)) > available_width) {
+      break;
+    }
+    start = previous;
+  }
+  return start;
+}
+
 }  // namespace microide::workspace

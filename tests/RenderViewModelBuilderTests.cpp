@@ -1676,6 +1676,33 @@ void TestSettingsOverlayCategoryIndexIsRebuiltPerFilter() {
 // (workspace/render/SingleLineViewMetrics.h) and a default-constructed TextRenderer
 // measures a deterministic 8px per ASCII char, so the whole contract is reachable
 // directly.
+// Soak d3f7c53a3cd7: a long line in the find field stopped the editor. An
+// unfocused field draws its value's tail, which was found by measuring every
+// suffix from the START -- n^2/2 bytes measured, every frame, for the few dozen
+// characters that can show (300 000 characters: minutes in one frame).
+void TestFittingTailStartMeasuresOnlyWhatCanShow() {
+  std::size_t measured_bytes = 0;
+  const auto measure = [&](std::string_view text) {
+    measured_bytes += text.size();
+    return static_cast<float>(text.size()) * 7.0f;  // a monospace advance
+  };
+  const std::string long_value = std::string(100000, 'y') + "TAIL";
+  const std::size_t start = workspace::FittingTailStart(long_value, 70.0f, measure);
+  Expect(start == long_value.size() - 10, "the tail that fits is its last ten characters, got " +
+                                              std::to_string(long_value.size() - start));
+  Expect(measured_bytes < 100000 * 4, "and finding it measures about the text once, not every suffix: " +
+                                          std::to_string(measured_bytes) + " bytes");
+
+  measured_bytes = 0;
+  Expect(workspace::FittingTailStart("short", 70.0f, measure) == 0, "a value that fits is drawn whole");
+  Expect(workspace::FittingTailStart("xyz", 5.0f, measure) == 3, "nothing fits: nothing is drawn");
+  // A character is never split: the tail starts on a UTF-8 boundary.
+  const std::string wide = "a\xc3\xa9\xc3\xa9\xc3\xa9";  // a + three two-byte characters
+  const std::size_t wide_start = workspace::FittingTailStart(wide, 3 * 7.0f, measure);
+  Expect(wide_start == 1 || (wide_start > 1 && (static_cast<unsigned char>(wide[wide_start]) & 0xC0) != 0x80),
+         "the tail starts on a character boundary, at " + std::to_string(wide_start));
+}
+
 void TestSingleLineViewMetricsCaretWindow() {
   using microide::workspace::ComputeSingleLineViewMetrics;
   TextRenderer text_renderer;  // no-backend: deterministic 8px/char
@@ -1735,6 +1762,7 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RenderViewModelBuilder/SidebarSurfaceResolvesPluginViews", TestSidebarSurfaceResolvesPluginViews);
   AddTest(tests, "RenderViewModelBuilder/SingleLineViewMetricsCaretWindow",
           TestSingleLineViewMetricsCaretWindow);
+  AddTest(tests, "RenderViewModelBuilder/FittingTailStartMeasuresOnlyWhatCanShow", TestFittingTailStartMeasuresOnlyWhatCanShow);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayCategoryIndexIsRebuiltPerFilter",
           TestSettingsOverlayCategoryIndexIsRebuiltPerFilter);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayQueryFilterIsCaseInsensitive",
