@@ -1961,6 +1961,51 @@ void TestOpenFolderOnHostEditsTheHostTree() {
 // moment it is restored -- before any connection, without being activated. Both
 // session forms: one with identity records, and one written before them that names
 // the mirror tree by path alone.
+// Soak 500d49cd7220: a file of a remote project's mirror, opened while a LOCAL
+// project was in front (dropped on the window), saved through that project's
+// gate -- the plain local write. The mirror changed and the sync was never told:
+// it read settled, nothing pending, while the host kept the old text. A write's
+// gate is the one of the project whose tree holds the path (locality is the
+// path's, as the plugin API already has it), whichever project is in front.
+void TestASaveIntoAMirrorFromALocalProjectReachesTheHost() {
+  FakeSshHost host;
+  const std::filesystem::path host_root = host.home / "src" / "routed";
+  WriteFile(host_root / "main.c", "int main(void) { return 0; }\n");
+  TemporaryDirectory local_dir;
+  const std::filesystem::path local_root = local_dir.path() / "local";
+  WriteFile(local_root / "notes.txt", "local\n");
+  const std::string target = "dev@fake-routed-" + std::to_string(::getpid());
+  WorkspaceShell shell;
+  PointAtFakeHost(shell, host);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open " + target + ":" + host_root.string()),
+         "the remote folder opens");
+  const std::filesystem::path mirror = WorkspaceShellTestAccess::ProjectRoot(shell);
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return std::filesystem::exists(mirror / "main.c");
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(10)),
+         "the mirror fills from the host");
+
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, local_root, true, false),
+         "a local project opens in front");
+  Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == local_root, "the local project is the active one");
+  WorkspaceShellTestAccess::OpenFile(shell, mirror / "main.c");
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("// from the local window\n");
+  Expect(WorkspaceShellTestAccess::SaveTab(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
+         "the save succeeds locally");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return ReadFile(host_root / "main.c") ==
+                      "// from the local window\nint main(void) { return 0; }\n";
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+         [&] { return "the edit reaches the host's file: '" + ReadFile(host_root / "main.c") + "'"; });
+}
+
 void TestARestoredRemoteProjectIsNamedBeforeItIsActivated() {
   TemporaryDirectory state_home;
   ScopedEnvVar scoped_state("XDG_STATE_HOME", state_home.path().string());
@@ -2164,6 +2209,8 @@ void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
           TestRemoveMirrorDeletesAClosedMirrorAndKeepsUnsentSaves);
   AddTest(tests, "RemoteHostService/OpenFolderOnHostEditsTheHostTree",
           TestOpenFolderOnHostEditsTheHostTree);
+  AddTest(tests, "RemoteHostService/ASaveIntoAMirrorFromALocalProjectReachesTheHost",
+          TestASaveIntoAMirrorFromALocalProjectReachesTheHost);
 }
 
 }  // namespace microide::tests

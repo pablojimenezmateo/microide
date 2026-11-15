@@ -19,6 +19,7 @@
 #include "project/ProjectId.h"
 #include "project/remote/RemoteServerClient.h"
 #include "project/ProjectLocality.h"
+#include "project/remote/MirrorRoutingWriteGate.h"
 #include "project/remote/MirrorSyncEngine.h"
 #include "project/remote/RemoteHostSession.h"
 #include "project/remote/RemoteProtocol.h"
@@ -170,6 +171,10 @@ class RemoteHostService {
   // after a close. nullopt for a local id, and, with a notification saying why,
   // for a mirror that cannot be opened.
   std::optional<project::ProjectLocality> LocalityFor(const project::ProjectId& id);
+  // The write gate of a LOCAL project: a path in an open remote project's mirror
+  // is written through that project's gate (journaled and pushed), anything else
+  // locally (project::remote::MirrorRoutingWriteGate).
+  project::FileWriteGate& LocalProjectWriteGate() { return local_project_write_gate_; }
   // The project at `root` was closed: drop its connection (the ssh channel, the
   // host's workspace and its watch). The RemoteProject itself stays — a project state
   // may still point at its locality while it is torn down — and reopening reconnects.
@@ -531,6 +536,9 @@ class RemoteHostService {
   std::map<std::string, PortWatch, std::less<>> port_watches_;  // by host
   // By mirror tree. Kept until the service goes: a project state may still hold
   // their launcher and gate (ProjectLocality's lifetime rule).
+  // Before projects_: the mirrors registered in it are unregistered (the
+  // destructor, RemoveMirror) before their projects go.
+  project::remote::MirrorRoutingWriteGate local_project_write_gate_;
   std::map<std::filesystem::path, Project> projects_;
   // Bumped whenever a project opens, closes or goes: with the recents revision,
   // the key HasRemovableMirror's cached answer holds for.

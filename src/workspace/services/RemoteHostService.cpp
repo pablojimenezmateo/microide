@@ -59,6 +59,10 @@ RemoteHostService::RemoteHostService(Operations operations) : operations_(std::m
 
 RemoteHostService::~RemoteHostService() {
   work_.Shutdown();
+  // A local project's write in flight into a mirror finishes before its gate goes.
+  for (const auto& [root, project] : projects_) {
+    local_project_write_gate_.Unregister(project.project->tree());
+  }
   // Sessions next: their threads post into the mailbox until they are joined.
   projects_.clear();
 }
@@ -176,6 +180,10 @@ RemoteHostService::Project* RemoteHostService::OpenProject(const remote::RemoteH
   if (!raw->Open(error)) {
     projects_.erase(tree);
     return nullptr;
+  }
+  // From now on a local project's write into this mirror is this project's write.
+  if (project::FileWriteGate* gate = raw->locality().write_gate; gate != nullptr) {
+    local_project_write_gate_.Register(raw->tree(), *gate);
   }
   PublishStatusSegment();
   return &stored;
@@ -499,6 +507,7 @@ bool RemoteHostService::RemoveMirror(const std::filesystem::path& root, bool dis
     if (operations_.dismiss_notification) {
       operations_.dismiss_notification("remote.project." + root.string());
     }
+    local_project_write_gate_.Unregister(it->second.project->tree());
     projects_.erase(it);
     ++open_generation_;
   }

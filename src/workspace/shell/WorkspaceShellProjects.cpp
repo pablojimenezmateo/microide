@@ -47,6 +47,11 @@ ProjectCatalogService& WorkspaceShell::MakeProjectCatalogService() {
                     return false;
                   }
                   resolved = *remote;
+                } else if (resolved.write_gate == &project::LocalFileWriteGate()) {
+                  // A local project writes a remote project's mirror through that
+                  // project's gate: the path decides, not the project in front
+                  // (soak 500d49cd7220).
+                  resolved.write_gate = &MakeRemoteHostService().LocalProjectWriteGate();
                 }
                 const bool initialized = InitializeCurrentProject(
                     id, project_root, restore_persistence, log_feedback, activate_restored_tab, resolved);

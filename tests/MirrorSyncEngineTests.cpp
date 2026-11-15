@@ -3,6 +3,7 @@
 
 #include "project/FileWriteGate.h"
 #include "project/remote/MirrorObjects.h"
+#include "project/remote/MirrorRoutingWriteGate.h"
 #include "project/remote/MirrorStore.h"
 #include "project/remote/MirrorSyncEngine.h"
 #include "project/remote/MirrorWriteGate.h"
@@ -1622,6 +1623,65 @@ void TestMirrorListsWhatItHasNotFetched() {
   Expect(session.engine->PendingPaths() == nullptr, "and nothing is pending any more");
 }
 
+// A gate that records what reached it and writes nothing.
+class RecordingGate final : public project::FileWriteGate {
+ public:
+  std::vector<std::filesystem::path> written;
+  std::size_t tree_batches = 0;
+  Result WriteText(const std::filesystem::path& path, std::string_view, Signature,
+                   util::WriteTarget) override {
+    written.push_back(path);
+    Result result;
+    result.ok = true;
+    return result;
+  }
+  TreeResult ApplyTreeOps(std::span<const TreeOp>) override {
+    ++tree_batches;
+    TreeResult result;
+    result.ok = true;
+    return result;
+  }
+  void DisposeStaged(std::span<const std::filesystem::path>) override {}
+};
+
+// Soak 500d49cd7220: a local project's save of a mirror file went to the local
+// gate, and the sync never heard of it. The local projects' gate hands a path in
+// an open mirror to that mirror's gate, the deepest one holding it.
+void TestMirrorRoutingSendsAMirrorPathToItsMirrorsGate() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path mirror = temp_dir.path() / "remote" / "app";
+  const std::filesystem::path nested = mirror / "vendor" / "lib";
+  const std::filesystem::path local = temp_dir.path() / "local" / "notes.txt";
+  RecordingGate outer;
+  RecordingGate inner;
+  project::remote::MirrorRoutingWriteGate router;
+  router.Register(mirror, outer);
+  router.Register(nested, inner);
+
+  Expect(router.WriteText(mirror / "main.c", "x").ok && outer.written == std::vector{mirror / "main.c"},
+         "a mirror file is written through the mirror's gate");
+  Expect(router.WriteText(nested / "a.c", "x").ok && inner.written == std::vector{nested / "a.c"},
+         "the deepest mirror holding the path wins");
+  std::filesystem::create_directories(local.parent_path());
+  Expect(router.WriteText(local, "mine\n").ok && ReadFile(local) == "mine\n" && outer.written.size() == 1,
+         "a path in no mirror is written locally");
+  const std::filesystem::path sibling = temp_dir.path() / "remote" / "app-other" / "x";
+  std::filesystem::create_directories(sibling.parent_path());
+  Expect(router.WriteText(sibling, "x").ok && ReadFile(sibling) == "x" && outer.written.size() == 1,
+         "a sibling whose name only starts like the mirror's is not in it");
+
+  const project::FileWriteGate::TreeOp into_mirror{
+      .kind = project::FileWriteGate::TreeOp::Kind::Rename, .path = local, .new_path = mirror / "notes.txt"};
+  Expect(router.ApplyTreeOp(into_mirror).ok && outer.tree_batches == 1,
+         "a batch that touches a mirror goes to that mirror's gate");
+
+  router.Unregister(mirror);
+  std::filesystem::create_directories(mirror);
+  Expect(router.WriteText(mirror / "main.c", "local").ok && ReadFile(mirror / "main.c") == "local" &&
+             outer.written.size() == 1,
+         "an unregistered mirror is a local path again");
+}
+
 }  // namespace
 
 void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
@@ -1665,6 +1725,8 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/ANameTheHostCannotTakeIsRefused", TestMirrorANameTheHostCannotTakeIsRefused);
   AddTest(tests, "MirrorSyncEngine/ASaveThroughAFolderLinkPushesItsRealPath",
           TestMirrorASaveThroughAFolderLinkPushesItsRealPath);
+  AddTest(tests, "MirrorSyncEngine/MirrorRoutingSendsAMirrorPathToItsMirrorsGate",
+          TestMirrorRoutingSendsAMirrorPathToItsMirrorsGate);
   AddTest(tests, "MirrorSyncEngine/TreeOpsThroughAFolderLinkReachTheHost",
           TestMirrorTreeOpsThroughAFolderLinkReachTheHost);
   AddTest(tests, "MirrorSyncEngine/ASaveThroughALinkPushesTheFileItNames",
