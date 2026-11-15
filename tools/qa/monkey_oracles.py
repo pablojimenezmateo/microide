@@ -899,6 +899,23 @@ class RemoteConvergence:
         return (remote.get("state") == "ready" and not remote.get("filesPending")
                 and not remote.get("unsentPushes"))
 
+    def _side_evidence(self, path: str) -> dict[str, bytes]:
+        """{file name: bytes} of `path` on each side, and a line of sizes and
+        mtimes, for the finding's evidence directory."""
+        name = path.replace("/", "__")
+        out: dict[str, bytes] = {}
+        stamps = []
+        for side, root in (("host", self.host_root), ("mirror", self.mirror)):
+            target = Path(root) / path
+            try:
+                out[f"diff-{name}.{side}"] = target.read_bytes()[:1 << 20]
+                info = target.stat()
+                stamps.append(f"{side}: {info.st_size} bytes, mtime_ns {info.st_mtime_ns}")
+            except OSError as error:
+                stamps.append(f"{side}: {error.strerror}")
+        out[f"diff-{name}.txt"] = ("\n".join(stamps) + "\n").encode()
+        return out
+
     @staticmethod
     def differing(host: dict[str, str], mirror: dict[str, str]) -> list[str]:
         """Paths whose content differs, or that one side has and the other not.
@@ -983,6 +1000,10 @@ class RemoteConvergence:
         self.evidence = {"trees.txt": "\n".join(
             f"{path}: host {host.get(path, 'absent')[:12]} mirror {mirror.get(path, 'absent')[:12]}"
             for path in diff).encode()}
+        # Both sides' bytes for the first few, with their mtimes: a hash says they
+        # differ, not which side moved last -- the side the sync failed to carry.
+        for path in diff[:3]:
+            self.evidence.update(self._side_evidence(path))
         first = diff[0]
         where = "only on the host" if first not in mirror else "only in the mirror" if first not in host \
             else "with different content"
