@@ -144,6 +144,50 @@ void TestWorkspaceTreeAnAbsoluteLinkFollowsTheFileItNames() {
          "the link whose target appeared is listed, as that file");
 }
 
+// Soak 5fdc4f6dac88: the absolute link named another LINK of the root
+// (`qa-ext/link1 -> /root/qa-weird/link-to-crlf.txt`, itself `-> crlf.txt`). The
+// row is crlf.txt's content, but only the link it named was recorded as what it
+// follows: crlf.txt changed, the link in the middle did not, and the mirror kept
+// the old text. Every in-root hop of the chain is followed.
+void TestWorkspaceTreeAnAbsoluteLinkFollowsTheChainItNames() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "plain";
+  WriteFile(root / "qa-weird/crlf.txt", "first\r\n");
+  WriteFile(root / "qa-weird/other.txt", "other\n");
+  std::filesystem::create_symlink("crlf.txt", root / "qa-weird/link-to-crlf.txt");
+  std::filesystem::create_directories(root / "qa-ext");
+  std::filesystem::create_symlink(root / "qa-weird/link-to-crlf.txt", root / "qa-ext/link1");
+  WorkspaceTree tree(root, WorkspaceTree::Options{.racy_window_ns = 0});
+  std::string error;
+  const auto manifest = tree.BuildManifest(&error);
+  Expect(manifest.has_value(), "the walk builds: " + error);
+  const ManifestRow* link = Find(*manifest, "qa-ext/link1");
+  Expect(link != nullptr && link->kind == ManifestEntryKind::File &&
+             link->hash == util::HashContent("first\r\n"),
+         "the absolute link is shipped as the file at the end of its chain");
+
+  WriteFile(root / "qa-weird/crlf.txt", "rewritten\n");
+  auto updated = tree.UpdateManifest(WorkspaceTree::Changes{.touched = {"qa-weird/crlf.txt"}}, &error);
+  Expect(updated.has_value(), "the update builds: " + error);
+  link = Find(*updated, "qa-ext/link1");
+  Expect(link != nullptr && link->hash == util::HashContent("rewritten\n"),
+         "a change to the file at the end of the chain reaches the link's row");
+
+  // The link in the middle re-pointed: the chain now ends elsewhere.
+  std::filesystem::remove(root / "qa-weird/link-to-crlf.txt");
+  std::filesystem::create_symlink("other.txt", root / "qa-weird/link-to-crlf.txt");
+  updated = tree.UpdateManifest(WorkspaceTree::Changes{.touched = {"qa-weird/link-to-crlf.txt"}}, &error);
+  Expect(updated.has_value(), "the update builds: " + error);
+  link = Find(*updated, "qa-ext/link1");
+  Expect(link != nullptr && link->hash == util::HashContent("other\n"),
+         "re-pointing a link in the middle reaches the link's row");
+  WriteFile(root / "qa-weird/other.txt", "other, later\n");
+  updated = tree.UpdateManifest(WorkspaceTree::Changes{.touched = {"qa-weird/other.txt"}}, &error);
+  link = Find(*updated, "qa-ext/link1");
+  Expect(updated.has_value() && link != nullptr && link->hash == util::HashContent("other, later\n"),
+         "and from then on the new end of the chain is followed");
+}
+
 void TestWorkspaceTreeHashCache() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "plain";
@@ -400,6 +444,8 @@ void RegisterWorkspaceTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceTree/HashCache", TestWorkspaceTreeHashCache);
   AddTest(tests, "WorkspaceTree/AnAbsoluteLinkFollowsTheFileItNames",
           TestWorkspaceTreeAnAbsoluteLinkFollowsTheFileItNames);
+  AddTest(tests, "WorkspaceTree/AnAbsoluteLinkFollowsTheChainItNames",
+          TestWorkspaceTreeAnAbsoluteLinkFollowsTheChainItNames);
   AddTest(tests, "WorkspaceTree/WriteTemporariesAreNotContent", TestWorkspaceTreeWriteTemporariesAreNotContent);
   AddTest(tests, "WorkspaceTree/FailsLoudly", TestWorkspaceTreeFailsLoudly);
   AddTest(tests, "WorkspaceTree/DropsOnlyWhatItCannotHash", TestWorkspaceTreeDropsOnlyWhatItCannotHash);

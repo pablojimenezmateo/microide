@@ -69,6 +69,30 @@ std::optional<std::string> InRootPathNamedAbsolutely(const std::filesystem::path
   return text;
 }
 
+// `path` (root-relative) with every directory link on the way resolved, as the
+// root-relative path the watch reports it under; nothing when that is outside
+// the root. The final component is kept as named: it may be a link itself.
+std::optional<std::string> RealInRootPath(const std::filesystem::path& root, const std::string& path) {
+  std::error_code error;
+  const std::filesystem::path real_root = std::filesystem::weakly_canonical(root, error);
+  if (error) {
+    return std::nullopt;
+  }
+  const std::filesystem::path named(path);
+  const std::filesystem::path real_parent = std::filesystem::weakly_canonical(root / named.parent_path(), error);
+  if (error || !named.has_filename()) {
+    return std::nullopt;
+  }
+  const std::string text = (real_parent / named.filename()).lexically_relative(real_root).generic_string();
+  if (text.empty() || text == "." || text == ".." || text.rfind("../", 0) == 0) {
+    return std::nullopt;
+  }
+  return text;
+}
+
+// The kernel's own limit on a chain of links (ELOOP).
+constexpr int kMaxLinkHops = 40;
+
 struct HashedFile {
   util::ContentHash hash;
   std::uint64_t size = 0;
@@ -372,9 +396,32 @@ std::optional<std::vector<ManifestRow>> WorkspaceTree::RowsFor(
       }
       const std::string_view target_view(target, static_cast<std::size_t>(length));
       if (const std::optional<std::string> named = InRootPathNamedAbsolutely(root_, target_view)) {
-        std::vector<std::string>& followers = link_followers_[*named];
-        if (std::find(followers.begin(), followers.end(), row.path) == followers.end()) {
-          followers.push_back(row.path);
+        // Shipped as the file at the END of its chain, so a change at any in-root
+        // hop is the link's: the file it names may be another link (soak
+        // 5fdc4f6dac88: `link1 -> /root/qa-weird/link-to-crlf.txt -> crlf.txt`;
+        // crlf.txt changed, the link in the middle did not, and the mirror kept
+        // the old text).
+        std::optional<std::string> hop = RealInRootPath(root_, *named);
+        for (int hops = 0; hop.has_value() && hops < kMaxLinkHops; ++hops) {
+          std::vector<std::string>& followers = link_followers_[*hop];
+          if (std::find(followers.begin(), followers.end(), row.path) == followers.end()) {
+            followers.push_back(row.path);
+          }
+          char next[4096];
+          const ssize_t next_length = ::readlinkat(root_fd, hop->c_str(), next, sizeof(next));
+          if (next_length <= 0 || static_cast<std::size_t>(next_length) >= sizeof(next)) {
+            break;  // a file (or gone): the chain ends here
+          }
+          const std::string_view next_view(next, static_cast<std::size_t>(next_length));
+          std::optional<std::string> following;
+          if (next_view.front() == '/') {
+            following = InRootPathNamedAbsolutely(root_, next_view);
+          } else if (LinkStaysInRoot(*hop, next_view)) {
+            following = (std::filesystem::path(*hop).parent_path() / std::string(next_view))
+                            .lexically_normal()
+                            .generic_string();
+          }
+          hop = following.has_value() ? RealInRootPath(root_, *following) : std::nullopt;
         }
       }
       if (LinkStaysInRoot(row.path, target_view)) {
