@@ -880,8 +880,7 @@ void TestPluginHostPatternFunctionsMatchLua() {
       "return string.gsub('abc', '^a', 'x')",
       "return string.gsub('', '', 'x')",
       "return string.gsub('abc', '', '-')",
-      "local t = {} for k, v in string.gmatch('a=1, b=2', '(%w+)=(%w+)') do t[#t+1] = k .. v end "
-      "return table.concat(t, ';')",
+      "local t = {} for k, v in string.gmatch('a=1, b=2', '(%w+)=(%w+)') do t[#t+1] = k .. v end return table.concat(t, ';')",
       "local n = 0 for _ in ('one two three'):gmatch('%a+', 5) do n = n + 1 end return n",
       "local t = {} for p in ('abc'):gmatch('()') do t[#t+1] = p end return table.concat(t, ',')",
       "return select(2, pcall(string.match, 'x', '%'))",
