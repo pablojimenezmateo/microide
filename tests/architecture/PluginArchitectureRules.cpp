@@ -232,8 +232,12 @@ RuleResult CheckPluginFieldReadsAreMetamethodProtected(const std::filesystem::pa
   // UB + leak the luaL_error rule guards against. All field reads in src/plugin must
   // instead go through lua_interop::GetFieldProtected, which runs the lookup inside a
   // nested lua_pcall. Indexed sequence reads already use the raw, metamethod-free
-  // lua_rawgeti (allowed). Only PluginLuaInterop.cpp is exempt: it defines
-  // GetFieldProtected + its GetFieldTrampoline, the one sanctioned site.
+  // lua_rawgeti (allowed). PluginLuaInterop.cpp is exempt: it defines
+  // GetFieldProtected + its GetFieldTrampoline, the sanctioned site. So is
+  // LuaBudgetedPatterns.cpp, the port of Lua's own string-pattern functions:
+  // string.gsub with a table replacement indexes it with __index honoured, as
+  // Lua does, and the TU holds no C++ object with a destructor for a raise to
+  // skip (tools/audit-lua-longjmp.py checks exactly that on the AST).
   RuleResult result;
   result.label = "plugin field reads are metamethod-protected (no raw lua_getfield/gettable/geti)";
   result.hard_fail = true;
@@ -252,6 +256,9 @@ RuleResult CheckPluginFieldReadsAreMetamethodProtected(const std::filesystem::pa
     }
     if (entry.path().filename() == "PluginLuaInterop.cpp") {
       continue;  // sanctioned home of GetFieldProtected / GetFieldTrampoline
+    }
+    if (entry.path().filename() == "LuaBudgetedPatterns.cpp") {
+      continue;  // Lua's lstrlib, ported: gsub's table lookup is Lua semantics
     }
     const std::string text = ReadText(entry.path());
     AppendCodeMaskRegexViolations(

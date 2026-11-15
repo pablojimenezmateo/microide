@@ -53,6 +53,14 @@ class LuaRuntime {
   // Override the per-call watchdog budget. Primarily for tests that need to trip
   // the watchdog quickly; production uses the generous default hang guard.
   void set_call_budget(std::chrono::steady_clock::duration budget) { call_budget_ = budget; }
+
+  // Whether the plugin call running on `state` is past its budget: for the C
+  // code a plugin call can spend its time in without a VM instruction for the
+  // count hook to fire on (the budgeted pattern matcher, LuaBudgetedPatterns).
+  static bool CallBudgetSpent(lua_State* state);
+  // The watchdog's error, the same whichever check raised it.
+  static constexpr const char* kTimeBudgetMessage =
+      "plugin call exceeded its time budget (possible infinite loop)";
 #endif
 
  private:

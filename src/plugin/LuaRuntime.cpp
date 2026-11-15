@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <string>
 
+#include "plugin/LuaBudgetedPatterns.h"
 #include "plugin/LuaError.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
@@ -69,6 +70,9 @@ std::unique_ptr<LuaRuntime> LuaRuntime::Create(std::string* error_message) {
   lua_pop(runtime->state_, 1);
   luaL_requiref(runtime->state_, LUA_STRLIBNAME, luaopen_string, 1);
   lua_pop(runtime->state_, 1);
+  // Its pattern functions honour the call budget, which a match -- one call into
+  // C -- otherwise never meets (soak 7ff52075dc30).
+  InstallBudgetedPatternFunctions(runtime->state_);
   luaL_requiref(runtime->state_, LUA_MATHLIBNAME, luaopen_math, 1);
   lua_pop(runtime->state_, 1);
   luaL_requiref(runtime->state_, LUA_UTF8LIBNAME, luaopen_utf8, 1);
@@ -141,12 +145,16 @@ void* LuaRuntime::BoundedAlloc(void* ud, void* ptr, std::size_t osize, std::size
 // live on the native stack and the longjmp (caught by the enclosing lua_pcall)
 // cannot skip a non-trivial destructor. We raise with the lua_error_util idiom
 // rather than luaL_error, which is banned in src/plugin.
-void LuaRuntime::TimeoutHook(lua_State* state, lua_Debug* /*ar*/) {
+bool LuaRuntime::CallBudgetSpent(lua_State* state) {
   const LuaRuntime* runtime = *static_cast<LuaRuntime**>(lua_getextraspace(state));
-  if (runtime == nullptr || std::chrono::steady_clock::now() <= runtime->deadline_) {
+  return runtime != nullptr && std::chrono::steady_clock::now() > runtime->deadline_;
+}
+
+void LuaRuntime::TimeoutHook(lua_State* state, lua_Debug* /*ar*/) {
+  if (!CallBudgetSpent(state)) {
     return;
   }
-  lua_error_util::PushMessage(state, "plugin call exceeded its time budget (possible infinite loop)");
+  lua_error_util::PushMessage(state, kTimeBudgetMessage);
   lua_error(state);
 }
 

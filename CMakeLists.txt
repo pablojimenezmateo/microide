@@ -579,6 +579,7 @@ set(MICROIDE_CORE_SOURCES
   src/plugin/PluginSidebarHoverInterop.cpp
   src/plugin/PluginStateTeardownInterop.cpp
   src/plugin/PluginWorkspaceInterop.cpp
+  src/plugin/LuaBudgetedPatterns.cpp
   src/plugin/LuaRuntime.cpp
   src/plugin/PluginHost.cpp
   src/plugin/PluginHostCallbacks.cpp

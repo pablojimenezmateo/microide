@@ -21,6 +21,7 @@
 #include <future>
 #include <span>
 #include <string_view>
+#include <functional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -775,6 +776,136 @@ void TestPluginHostWatchdogAbortsRunawayCall() {
   Expect(runaway_error.find("time budget") != std::string::npos,
          "watchdog error should explain the time-budget abort");
   Expect(elapsed < std::chrono::seconds(5), "watchdog should abort well before any real hang");
+#endif
+}
+
+// Soak 7ff52075dc30: a plugin's pattern match is one call into C, so the
+// watchdog's count hook never fired inside it -- `([%w_:~]+)%s*%b()` on a long
+// line backtracks quadratically (the QA test provider on a 300 000-character
+// line: minutes) while the UI thread waited for the plugin worker. The sandbox's
+// pattern functions check the same deadline themselves.
+void TestPluginHostWatchdogAbortsARunawayPatternMatch() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#else
+  std::string create_error;
+  std::unique_ptr<microide::plugin::LuaRuntime> runtime =
+      microide::plugin::LuaRuntime::Create(&create_error);
+  Expect(runtime != nullptr, "LuaRuntime should be creatable for the pattern watchdog test");
+  runtime->set_call_budget(std::chrono::milliseconds(50));
+  lua_State* state = runtime->state();
+  const char* calls[] = {
+      "return (LINE):match('([%w_:~]+)%s*%b()%s*[%w%s]*{?%s*$')",
+      "return string.find(LINE, '([%w_:~]+)%s*%b()')",
+      "for w in (LINE):gmatch('([%w_:~]+)%s*%b()') do end",
+      "return (LINE):gsub('([%w_:~]+)%s*%b()', 'x')",
+  };
+  for (const char* call : calls) {
+    const std::string chunk = std::string("local LINE = string.rep('y', 40000) ") + call;
+    Expect(luaL_loadstring(state, chunk.c_str()) == LUA_OK, std::string("compiles: ") + call);
+    std::string error;
+    const auto started = std::chrono::steady_clock::now();
+    const bool ok = runtime->PCall(0, LUA_MULTRET, &error);
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    lua_settop(state, 0);
+    Expect(!ok && error.find("time budget") != std::string::npos,
+           std::string("a runaway match is aborted by the watchdog: ") + call + " -> " + error);
+    Expect(elapsed < std::chrono::seconds(2),
+           std::string("and promptly, not after the match runs out: ") + call + " took " +
+               std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()) + " ms");
+  }
+#endif
+}
+
+// The budgeted pattern functions are Lua's own: every case answers what the
+// stock string library answers, errors included.
+void TestPluginHostPatternFunctionsMatchLua() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#else
+  std::string create_error;
+  std::unique_ptr<microide::plugin::LuaRuntime> runtime =
+      microide::plugin::LuaRuntime::Create(&create_error);
+  Expect(runtime != nullptr, "LuaRuntime should be creatable for the pattern parity test");
+  lua_State* stock = luaL_newstate();
+  luaL_openlibs(stock);
+  const auto results = [](lua_State* state, const char* code, const std::function<bool()>& call) {
+    if (luaL_loadstring(state, code) != LUA_OK) {
+      lua_settop(state, 0);
+      return std::string("<does not compile>");
+    }
+    if (!call()) {
+      lua_settop(state, 0);
+      return std::string("<call failed>");
+    }
+    std::string got;
+    for (int i = 1; i <= lua_gettop(state); ++i) {
+      got += (i > 1 ? "|" : "");
+      got += lua_isnil(state, i) ? std::string("nil") : std::string(luaL_tolstring(state, i, nullptr));
+      if (!lua_isnil(state, i)) {
+        lua_pop(state, 1);  // luaL_tolstring's copy
+      }
+    }
+    lua_settop(state, 0);
+    return got;
+  };
+  const char* cases[] = {
+      "return string.find('hello world', 'o w')",
+      "return string.find('a.b', '.', 1, true)",
+      "return string.find('hello', 'l+')",
+      "return string.find('hello', 'xyz')",
+      "return string.find('hello', 'l', -2)",
+      "return string.find('hello', '', 10)",
+      "return string.find('hello', '(h)(e)')",
+      "return string.match('key = value', '(%w+)%s*=%s*(%w+)')",
+      "return string.match('hello', '()ll()')",
+      "return string.match('f(a(b)c)d', '%b()')",
+      "return string.match('THE (quick) fox', '%f[%a]%a+')",
+      "return string.match('  x  ', '^%s*(.-)%s*$')",
+      "return string.match('abcabc', '(abc)%1')",
+      "return string.match('[a]', '[%[]')",
+      "return string.match('a-z', '[%-]')",
+      "return string.match('2024-11-15', '(%d+)-(%d+)-(%d+)')",
+      "return string.match('hello', 'l?l?o$')",
+      "return string.match('\\0a\\0', '%z?a')",
+      "return string.gsub('hello world', 'o', '0')",
+      "return string.gsub('hello world', '(%w+)', '<%1>')",
+      "return string.gsub('abc', '%w', '%0%0')",
+      "return string.gsub('abc', '%w', '%%')",
+      "return string.gsub('$name is $age', '%$(%w+)', {name='Ann', age=3})",
+      "return string.gsub('abc', '.', function(c) return c:upper() end, 2)",
+      "return string.gsub('abc', '.', function(c) return nil end)",
+      "return string.gsub('ab', '%w', setmetatable({}, {__index = function(_, k) return k .. k end}))",
+      "return select(2, pcall(string.gsub, 'a', '%w', setmetatable({}, {__index = function() error('no') end})))",
+      "return string.gsub('abc', '^a', 'x')",
+      "return string.gsub('', '', 'x')",
+      "return string.gsub('abc', '', '-')",
+      "local t = {} for k, v in string.gmatch('a=1, b=2', '(%w+)=(%w+)') do t[#t+1] = k .. v end "
+      "return table.concat(t, ';')",
+      "local n = 0 for _ in ('one two three'):gmatch('%a+', 5) do n = n + 1 end return n",
+      "local t = {} for p in ('abc'):gmatch('()') do t[#t+1] = p end return table.concat(t, ',')",
+      "return select(2, pcall(string.match, 'x', '%'))",
+      "return select(2, pcall(string.match, 'x', '[a'))",
+      "return select(2, pcall(string.match, 'x', '%b'))",
+      "return select(2, pcall(string.match, 'x', '%f'))",
+      "return select(2, pcall(string.match, 'x', '(x'))",
+      "return select(2, pcall(string.match, 'x', 'x)'))",
+      "return select(2, pcall(string.match, 'x', '%1'))",
+      "return select(2, pcall(string.gsub, 'x', 'x', '%2'))",
+      "return select(2, pcall(string.gsub, 'x', 'x', '%y'))",
+      "return select(2, pcall(string.gsub, 'x', 'x', function() return {} end))",
+      "return select(2, pcall(string.gsub, 'x', 'x', true))",
+  };
+  for (const char* code : cases) {
+    lua_State* budgeted = runtime->state();
+    const std::string got = results(budgeted, code, [&]() {
+      std::string error;
+      return runtime->PCall(0, LUA_MULTRET, &error);
+    });
+    const std::string want = results(stock, code, [&]() { return lua_pcall(stock, 0, LUA_MULTRET, 0) == LUA_OK; });
+    Expect(got == want, std::string(code) + " gave '" + got + "', Lua gives '" + want + "'");
+  }
+  lua_close(stock);
 #endif
 }
 
@@ -4648,6 +4779,9 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestGetFieldProtectedCatchesRaisingIndexMetamethod);
   AddTest(tests, "PluginHost/PublishDiagnosticsSurvivesHostileIndexMetamethod",
           TestPublishDiagnosticsSurvivesHostileIndexMetamethod);
+  AddTest(tests, "PluginHost/WatchdogAbortsARunawayPatternMatch",
+          TestPluginHostWatchdogAbortsARunawayPatternMatch);
+  AddTest(tests, "PluginHost/PatternFunctionsMatchLua", TestPluginHostPatternFunctionsMatchLua);
   AddTest(tests, "PluginHost/LuaRuntimePanicThrowsInsteadOfAbort",
           TestLuaRuntimePanicThrowsInsteadOfAbort);
   AddTest(tests, "PluginHost/BatchedCommandRegistrationSortsOnce",
