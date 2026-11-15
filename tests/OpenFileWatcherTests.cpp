@@ -100,6 +100,57 @@ void TestOpenFileWatcherReArmsAfterItsDirectoryGoes() {
   Expect(reports.WaitFor(file), "the recreated directory is watched again");
 }
 
+// Soak adbdbecb317b: `git stash -u` took the whole untracked folder an open file
+// lived in, the caller's re-arm came while it was still gone -- the watch failed
+// and the set read as armed all the same -- and `git stash pop` brought the
+// folder and the file back with nobody listening: the clean buffer kept text the
+// file no longer held. A missing directory is waited for from the nearest one
+// that exists, and what reappears is reported once it is watched again.
+void TestOpenFileWatcherWaitsForADirectoryThatIsGoneWhenArmed() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path file = temp_dir.path() / "tree" / "notes.txt";
+  WriteFile(file, "one\n");
+  Reports reports;
+  OpenFileWatcher watcher(reports.Callback());
+  watcher.SetFiles(3, {file});
+  std::filesystem::remove_all(file.parent_path());
+  Expect(reports.WaitFor(file), "the deleted file is reported");
+  {
+    std::lock_guard lock(reports.mutex);
+    reports.paths.clear();
+  }
+  watcher.SetFiles(3, {file});  // the re-arm, while the directory is still gone
+
+  WriteFile(file, "two\n");  // the folder and its file come back, and nothing re-arms
+  Expect(reports.WaitFor(file), "the file that came back is reported");
+  {
+    std::lock_guard lock(reports.mutex);
+    reports.paths.clear();
+  }
+  WriteFile(file, "three\n");
+  Expect(reports.WaitFor(file), "and its directory is watched again");
+}
+
+// Two levels gone, coming back one at a time (a checkout makes the parent before
+// the child): the wait follows them down.
+void TestOpenFileWatcherFollowsADeepDirectoryBackDown() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path top = temp_dir.path() / "a";
+  const std::filesystem::path file = top / "b" / "c" / "notes.txt";
+  std::filesystem::create_directories(temp_dir.path());
+  Reports reports;
+  OpenFileWatcher watcher(reports.Callback());
+  watcher.SetFiles(5, {file});
+  std::filesystem::create_directory(top);
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  std::filesystem::create_directory(top / "b");
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  std::filesystem::create_directory(top / "b" / "c");
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  WriteFile(file, "here\n");
+  Expect(reports.WaitFor(file), "the file is reported once its directory exists");
+}
+
 }  // namespace
 
 void RegisterOpenFileWatcherTests(std::vector<TestCase>& tests) {
@@ -109,6 +160,10 @@ void RegisterOpenFileWatcherTests(std::vector<TestCase>& tests) {
           TestOpenFileWatcherReportsASymlinkedFileUnderItsOpenPath);
   AddTest(tests, "OpenFileWatcher/ReArmsAfterItsDirectoryGoes",
           TestOpenFileWatcherReArmsAfterItsDirectoryGoes);
+  AddTest(tests, "OpenFileWatcher/WaitsForADirectoryThatIsGoneWhenArmed",
+          TestOpenFileWatcherWaitsForADirectoryThatIsGoneWhenArmed);
+  AddTest(tests, "OpenFileWatcher/FollowsADeepDirectoryBackDown",
+          TestOpenFileWatcherFollowsADeepDirectoryBackDown);
 }
 
 }  // namespace microide::tests

@@ -24,6 +24,12 @@ namespace microide::platform {
 // rename it over) is seen like an in-place write; a symlinked file is watched at
 // its target as well, and reported under the path it is open as.
 //
+// A file whose directory does not exist (yet, or any more: a stash took the
+// folder, a branch switch has not brought it back) is waited for from the
+// nearest directory that does; when its directory is back the watcher arms it
+// on its own and reports the file, which may have been written before the watch
+// existed. Nothing has to call SetFiles again for that.
+//
 // Threading contract: the callback fires on the watcher's own thread with the
 // paths that changed (each once per wake); SetFiles is called from one thread.
 class OpenFileWatcher {
@@ -50,16 +56,35 @@ class OpenFileWatcher {
     std::string name;                // the directory entry's name
     std::filesystem::path reported;  // the path the document is open as
   };
+  // A file whose directory is missing, waited for from an existing ancestor.
+  struct Waiting {
+    std::filesystem::path file;      // the file to watch, through its directory
+    std::filesystem::path reported;  // the path the document is open as
+  };
+  using EntriesByWatch = std::unordered_map<int, std::vector<Entry>>;
+  using WaitingByWatch = std::unordered_map<int, std::vector<Waiting>>;
+  enum class Armed { Watching, Waiting, Unwatchable };
 
   bool StartLocked();
   void WorkerMain();
+  // Watches `file`'s directory into `entries`, or, when that directory is
+  // missing, its nearest existing ancestor into `waiting`. Under mutex_.
+  Armed ArmLocked(const std::filesystem::path& file, const std::filesystem::path& reported,
+                  EntriesByWatch& entries, WaitingByWatch& waiting);
+  // Something appeared under a waited-on ancestor: arms again every waiting
+  // file, reporting into `changed` each one whose directory is now watched.
+  void RearmWaitingLocked(std::vector<std::filesystem::path>& changed);
+  // Removes the watches in `before` that neither map uses any more.
+  void DropUnusedWatchesLocked(const EntriesByWatch& before_entries,
+                               const WaitingByWatch& before_waiting);
 
   Callback callback_;
   std::atomic<std::uint64_t> signature_{0};
   std::mutex mutex_;
   int inotify_fd_ = -1;
   int control_pipe_[2] = {-1, -1};
-  std::unordered_map<int, std::vector<Entry>> entries_by_watch_;
+  EntriesByWatch entries_by_watch_;
+  WaitingByWatch waiting_by_watch_;
   std::thread worker_;
 };
 

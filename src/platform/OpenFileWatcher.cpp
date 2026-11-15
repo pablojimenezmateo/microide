@@ -9,6 +9,7 @@
 #include <array>
 #include <cerrno>
 #include <cstring>
+#include <iterator>
 #include <system_error>
 #include <utility>
 
@@ -74,47 +75,116 @@ void OpenFileWatcher::SetFiles(std::uint64_t signature,
   if (!StartLocked()) {
     return;
   }
-  // Two spellings of one directory (a symlinked directory and its target, a
-  // symlink loop) are one watch: inotify answers the same descriptor for the
-  // same inode, so the entries are merged per descriptor, never replaced.
-  std::unordered_map<int, std::vector<Entry>> next;
-  const auto add = [&](const std::filesystem::path& file, const std::filesystem::path& reported) {
-    const std::filesystem::path directory = file.parent_path();
-    if (directory.empty() || !file.has_filename()) {
-      return;
-    }
-    const int wd = inotify_add_watch(inotify_fd_, directory.c_str(), kMask);
-    if (wd < 0) {
-      return;  // gone, unreadable, or the watch limit: nothing to report on
-    }
-    std::vector<Entry>& entries = next[wd];
-    const std::string name = file.filename().native();
-    const bool known = std::any_of(entries.begin(), entries.end(), [&](const Entry& entry) {
-      return entry.name == name && entry.reported == reported;
-    });
-    if (!known) {
-      entries.push_back(Entry{.name = name, .reported = reported});
-    }
-  };
+  EntriesByWatch next;
+  WaitingByWatch next_waiting;
   for (const std::filesystem::path& file : files) {
     if (file.empty() || !file.is_absolute()) {
       continue;
     }
-    add(file, file);
+    (void)ArmLocked(file, file, next, next_waiting);
     std::error_code error;
     if (std::filesystem::is_symlink(file, error) && !error) {
       const std::filesystem::path target = std::filesystem::weakly_canonical(file, error);
       if (!error && target != file) {
-        add(target, file);
+        (void)ArmLocked(target, file, next, next_waiting);
       }
     }
   }
-  for (const auto& [wd, entries] : entries_by_watch_) {
-    if (next.find(wd) == next.end()) {
+  EntriesByWatch before_entries = std::exchange(entries_by_watch_, std::move(next));
+  WaitingByWatch before_waiting = std::exchange(waiting_by_watch_, std::move(next_waiting));
+  DropUnusedWatchesLocked(before_entries, before_waiting);
+}
+
+OpenFileWatcher::Armed OpenFileWatcher::ArmLocked(const std::filesystem::path& file,
+                                                  const std::filesystem::path& reported,
+                                                  EntriesByWatch& entries,
+                                                  WaitingByWatch& waiting) {
+  const std::filesystem::path directory = file.parent_path();
+  if (directory.empty() || !file.has_filename()) {
+    return Armed::Unwatchable;
+  }
+  // Bounded by the path's depth: each pass either watches the directory, waits
+  // under an ancestor that holds, or found the directory back and goes again.
+  for (std::size_t pass = 0, depth = static_cast<std::size_t>(
+                                 std::distance(directory.begin(), directory.end()));
+       pass <= depth; ++pass) {
+    const int wd = inotify_add_watch(inotify_fd_, directory.c_str(), kMask);
+    if (wd >= 0) {
+      // Two spellings of one directory (a symlinked directory and its target, a
+      // symlink loop) are one watch: inotify answers the same descriptor for the
+      // same inode, so the entries are merged per descriptor, never replaced.
+      std::vector<Entry>& listed = entries[wd];
+      const std::string name = file.filename().native();
+      const bool known = std::any_of(listed.begin(), listed.end(), [&](const Entry& entry) {
+        return entry.name == name && entry.reported == reported;
+      });
+      if (!known) {
+        listed.push_back(Entry{.name = name, .reported = reported});
+      }
+      return Armed::Watching;
+    }
+    if (errno != ENOENT && errno != ENOTDIR) {
+      return Armed::Unwatchable;  // unreadable, or the watch limit: nothing to report on
+    }
+    // The directory is not there: wait for it from the nearest one that is.
+    int ancestor_wd = -1;
+    for (std::filesystem::path ancestor = directory.parent_path();
+         !ancestor.empty() && ancestor_wd < 0; ancestor = ancestor.parent_path()) {
+      ancestor_wd = inotify_add_watch(inotify_fd_, ancestor.c_str(), kMask);
+      if (ancestor_wd < 0 && errno != ENOENT && errno != ENOTDIR) {
+        return Armed::Unwatchable;
+      }
+      if (ancestor == ancestor.parent_path()) {
+        break;
+      }
+    }
+    if (ancestor_wd < 0) {
+      return Armed::Unwatchable;
+    }
+    // The directory may have come back between the failed watch and this one,
+    // with no event left to say so: only wait when it is still missing.
+    std::error_code error;
+    if (!std::filesystem::is_directory(directory, error)) {
+      waiting[ancestor_wd].push_back(Waiting{.file = file, .reported = reported});
+      return Armed::Waiting;
+    }
+  }
+  return Armed::Unwatchable;
+}
+
+void OpenFileWatcher::RearmWaitingLocked(std::vector<std::filesystem::path>& changed) {
+  WaitingByWatch before_waiting = std::exchange(waiting_by_watch_, {});
+  const EntriesByWatch before_entries = entries_by_watch_;
+  for (const auto& [wd, waiting] : before_waiting) {
+    for (const Waiting& file : waiting) {
+      // Back, and watched from now on: whatever it holds was written before the
+      // watch existed, so the document is told to look.
+      if (ArmLocked(file.file, file.reported, entries_by_watch_, waiting_by_watch_) ==
+              Armed::Watching &&
+          std::find(changed.begin(), changed.end(), file.reported) == changed.end()) {
+        changed.push_back(file.reported);
+      }
+    }
+  }
+  DropUnusedWatchesLocked(before_entries, before_waiting);
+}
+
+void OpenFileWatcher::DropUnusedWatchesLocked(const EntriesByWatch& before_entries,
+                                              const WaitingByWatch& before_waiting) {
+  const auto unused = [this](int wd) {
+    return entries_by_watch_.find(wd) == entries_by_watch_.end() &&
+           waiting_by_watch_.find(wd) == waiting_by_watch_.end();
+  };
+  for (const auto& [wd, entries] : before_entries) {
+    if (unused(wd)) {
       inotify_rm_watch(inotify_fd_, wd);
     }
   }
-  entries_by_watch_ = std::move(next);
+  for (const auto& [wd, waiting] : before_waiting) {
+    if (unused(wd) && before_entries.find(wd) == before_entries.end()) {
+      inotify_rm_watch(inotify_fd_, wd);
+    }
+  }
 }
 
 void OpenFileWatcher::WorkerMain() {
@@ -144,6 +214,7 @@ void OpenFileWatcher::WorkerMain() {
     };
     {
       std::lock_guard lock(mutex_);
+      bool rearm_waiting = false;
       while (true) {
         const ssize_t length = read(inotify_fd_, buffer.data(), buffer.size());
         if (length <= 0) {
@@ -153,6 +224,7 @@ void OpenFileWatcher::WorkerMain() {
           const auto* event = reinterpret_cast<const inotify_event*>(buffer.data() + offset);
           offset += static_cast<ssize_t>(sizeof(inotify_event) + event->len);
           if ((event->mask & IN_Q_OVERFLOW) != 0) {
+            rearm_waiting = true;
             // Events were dropped: any file may have changed.
             for (const auto& [wd, entries] : entries_by_watch_) {
               for (const Entry& entry : entries) {
@@ -160,6 +232,14 @@ void OpenFileWatcher::WorkerMain() {
               }
             }
             continue;
+          }
+          // Something appeared under a directory a missing one is waited for
+          // from (or that directory itself went, so the wait moves up): look
+          // again once the batch is read.
+          if (waiting_by_watch_.find(event->wd) != waiting_by_watch_.end() &&
+              (event->mask & (IN_CREATE | IN_MOVED_TO | IN_DELETE_SELF | IN_MOVE_SELF |
+                              IN_IGNORED)) != 0) {
+            rearm_waiting = true;
           }
           const auto found = entries_by_watch_.find(event->wd);
           if (found == entries_by_watch_.end()) {
@@ -189,6 +269,9 @@ void OpenFileWatcher::WorkerMain() {
             }
           }
         }
+      }
+      if (rearm_waiting) {
+        RearmWaitingLocked(changed);
       }
     }
     if (!changed.empty() && callback_) {
