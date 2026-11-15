@@ -567,8 +567,23 @@ void WorkspaceShell::ReloadCleanOpenBuffersFromDisk() {
   }
   std::sort(paths.begin(), paths.end());
   paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+  EditorTabService& editor_tabs = MakeEditorTabService();
+  bool noted_any = false;
   for (const auto& path : paths) {
+    // A dirty buffer is no reload's business, but a change made while this
+    // project was in the background (another project saving the same file, a
+    // checkout) is still a change under its edits: the watcher path notes it
+    // and raises the banner, and this sweep is the watcher's stand-in for what
+    // it never delivered. Passing over it let an undo back to the read content
+    // read clean against a file that held something else (soak ed121110a40f).
+    if (editor_tabs.NoteMissedDiskChangeUnderEdits(path)) {
+      SetEditorBanner(context_.current_project_state, EditorBannerState::Kind::ExternalChange, path);
+      noted_any = true;
+    }
     ReloadCleanEditorTabsForPath(path);
+  }
+  if (noted_any) {
+    RequestEditorSurfaceRedraw();
   }
 }
 

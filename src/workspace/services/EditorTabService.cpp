@@ -101,6 +101,10 @@ void EditorTabService::NoteDiskChangedUnderEditsForPath(const std::filesystem::p
   coordinator_.NoteDiskChangedUnderEditsForPath(path);
 }
 
+bool EditorTabService::NoteMissedDiskChangeUnderEdits(const std::filesystem::path& path) {
+  return coordinator_.NoteMissedDiskChangeUnderEdits(path);
+}
+
 void EditorTabService::ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path) {
   coordinator_.ReloadEditorTabsForPathFromDisk(path);
 }

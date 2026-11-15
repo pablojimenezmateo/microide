@@ -265,6 +265,52 @@ void TestWorkspaceShellUndoAfterADiskChangeDoesNotReadClean() {
          "a buffer undone to content the file no longer holds must not read clean");
 }
 
+// Soak ed121110a40f: a buffer edited in one project, the file then saved over by
+// a second project open on the same tree, the first project brought back and
+// its edit undone -- the undo read clean against a file that held the other
+// save. A project in the background catches up when it comes back, and that
+// catch-up reloaded the clean buffers but passed over the dirty ones, so the
+// change under their edits was never noted.
+void TestWorkspaceShellUndoAfterADiskChangeInTheBackgroundDoesNotReadClean() {
+  TemporaryDirectory temp_dir;
+  ScopedAppHomes homes(temp_dir.path() / "state", temp_dir.path() / "config");
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path other = temp_dir.path() / "other";
+  const std::filesystem::path file_path = root / "notes.txt";
+  WriteFile(file_path, "original\n");
+  WriteFile(other / "b.txt", "b\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, true, false),
+         "the first project should open");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("//");
+  DrainProjectChanges(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, other, true, false),
+         "the second project should open in front");
+
+  WriteFile(file_path, "changed on disk\noriginal\n");
+  DrainProjectChanges(shell);
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0), "the first project comes back");
+  DrainProjectChanges(shell);
+
+  Expect(WorkspaceShellTestAccess::HasExternalChangeBanner(shell, file_path),
+         "the change made in the background should be shown under the unsaved edit");
+  // Keep is an answer: the next catch-up, with nothing new on disk, asks nothing.
+  WorkspaceShellTestAccess::EditorBannerKeep(shell, file_path);
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 1), "to the second project again");
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0), "and back");
+  DrainProjectChanges(shell);
+  Expect(!WorkspaceShellTestAccess::HasExternalChangeBanner(shell, file_path),
+         "a change already kept over should not raise its banner again");
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(editor.Undo(), "the typed edit should undo");
+  Expect(editor.lines()[0] == "original", "the undo should restore the content as read");
+  Expect(editor.dirty(),
+         "a buffer undone to content the file no longer holds must not read clean");
+}
+
 void TestWorkspaceShellSelfWriteDoesNotRaiseBanner() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1222,6 +1268,8 @@ void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellExternalChangeBannerForDirtyBuffer);
   AddTest(tests, "ExternalRepoChange/UndoAfterADiskChangeDoesNotReadClean",
           TestWorkspaceShellUndoAfterADiskChangeDoesNotReadClean);
+AddTest(tests, "ExternalRepoChange/UndoAfterADiskChangeInTheBackgroundDoesNotReadClean",
+          TestWorkspaceShellUndoAfterADiskChangeInTheBackgroundDoesNotReadClean);
   AddTest(tests, "ExternalRepoChange/SelfWriteDoesNotRaiseBanner",
           TestWorkspaceShellSelfWriteDoesNotRaiseBanner);
   AddTest(tests, "ExternalRepoChange/AutosaveFlushRespectsDiskConflict",

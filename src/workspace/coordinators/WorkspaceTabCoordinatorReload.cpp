@@ -61,6 +61,28 @@ void TabCoordinator::NoteDiskChangedUnderEditsForPath(const std::filesystem::pat
   }
 }
 
+bool TabCoordinator::NoteMissedDiskChangeUnderEdits(const std::filesystem::path& path) {
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  bool could_read_clean = false;
+  for (const EditorGroup& group : state_.editor_groups) {
+    for (const TabEntry& tab : group.open_tabs) {
+      if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
+          tab.editor_state->content == EditorTabState::Content::Ready &&
+          EditorViewPathIs(*tab.editor_state, normalized_path) &&
+          tab.editor_state->viewport.DirtyWithACleanPosition()) {
+        could_read_clean = true;
+      }
+    }
+  }
+  // The same confirmation the watcher's echo check uses: a touch or a
+  // byte-identical rewrite is not a change.
+  if (!could_read_clean || DiskSignatureMatchesOpenView(normalized_path)) {
+    return false;
+  }
+  NoteDiskChangedUnderEditsForPath(normalized_path);
+  return true;
+}
+
 bool TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, bool clean_only,
                                              EchoGuard echo_guard) {
   const std::filesystem::path normalized_path = path.lexically_normal();

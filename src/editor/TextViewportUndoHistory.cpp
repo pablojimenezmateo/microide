@@ -488,6 +488,14 @@ void TextViewportUndoHistory::MarkNoPositionSaved() {
   }
 }
 
+bool TextViewportUndoHistory::HasSavedPosition() const {
+  const auto clean = [](const Entry& entry) {
+    return !entry.before_state.dirty || !entry.after_state.dirty;
+  };
+  return std::any_of(undo_stack_.begin(), undo_stack_.end(), clean) ||
+         std::any_of(redo_stack_.begin(), redo_stack_.end(), clean);
+}
+
 void TextViewportUndoHistory::MarkSaved() {
   // Dirty is tracked per undo/redo position via the captured ViewState flags. The
   // freshly-saved buffer is the one clean position; every OTHER reachable position

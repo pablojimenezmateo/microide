@@ -497,6 +497,9 @@ class TextViewport {
   // with is no longer the file's, so no undo position is clean (the soak's
   // 3b57c171523f: an undo back to it read clean and differed from disk).
   void NoteDiskChangedUnderEdits();
+  // Unsaved edits that an undo or redo can still walk back to a position read as
+  // clean -- the state NoteDiskChangedUnderEdits ends. False for a clean buffer.
+  bool DirtyWithACleanPosition() const;
   std::size_t cursor_line() const { return cursor_line_; }
   std::size_t cursor_column() const { return cursor_column_; }
   std::size_t cursor_visual_column() const;

@@ -482,6 +482,10 @@ void TextViewport::NoteDiskChangedUnderEdits() {
   }
 }
 
+bool TextViewport::DirtyWithACleanPosition() const {
+  return document_ != nullptr && document_->dirty && document_->undo_history.HasSavedPosition();
+}
+
 bool TextViewport::RevertToDiskContent(const TextViewport& disk) {
   EnsureDocument();
   if (disk.document_ == nullptr || line_ending() != disk.line_ending() ||

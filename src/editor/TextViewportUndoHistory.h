@@ -206,6 +206,10 @@ class TextViewportUndoHistory {
   // unsaved edits. Every position then reads dirty, so undoing back to where the
   // buffer was last read or saved no longer calls it clean.
   void MarkNoPositionSaved();
+  // Some reachable position still reads clean: undo or redo can bring the buffer
+  // back to what it believes the file holds. False after MarkNoPositionSaved
+  // until the next MarkSaved.
+  bool HasSavedPosition() const;
 
   // Heap bytes both stacks are holding, including the group scratch. Part of
   // the per-tab retention accounting TD-2026-08-06-142 asked for, and the one

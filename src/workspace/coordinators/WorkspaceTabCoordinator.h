@@ -174,6 +174,12 @@ class TabCoordinator {
   // The file changed on disk under unsaved edits: see
   // TextViewport::NoteDiskChangedUnderEdits. Every dirty view of `path`.
   void NoteDiskChangedUnderEditsForPath(const std::filesystem::path& path);
+  // The catch-up form, for a sweep that names no change (a project brought back,
+  // focus regained): notes it only where a dirty view of `path` can still undo
+  // to a clean position AND the file no longer holds what the view was read or
+  // saved with. True when it noted one -- the caller raises the banner. A view
+  // already noted (or kept over its banner) is not asked again.
+  bool NoteMissedDiskChangeUnderEdits(const std::filesystem::path& path);
   // Revert File: every view of `path` takes the file's content as one undoable
   // edit (one shared document, so one edit), clean afterwards; a reload when the
   // file's line ending or encoding changed. False when the file cannot be read.
