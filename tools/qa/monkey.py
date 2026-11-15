@@ -411,9 +411,12 @@ class ExternalChurn:
             counter += 1
             target = self._rng.choice(self._targets)
             relative = str(target.relative_to(self._project))
-            apply_churn(self._project, relative, counter)
+            # The row goes in before the write, so an oracle that reads the
+            # buffer after the rewrite always finds the row that explains it
+            # (UndoAlgebra). A replay applies it at this same point either way.
             if self._record is not None:
                 self._record({"churn": relative, "counter": counter})
+            apply_churn(self._project, relative, counter)
 
 
 def apply_churn(project: Path, relative: str, counter: int) -> None:

@@ -289,5 +289,100 @@ class ResourceOracleTests(unittest.TestCase):
         self.assertIn("fds grew by 430", found[0][1])
         self.assertIn("plus 40 for 10 more open terminal pane(s)", found[0][1])
 
+
+class _UndoEditor:
+    """One clean editor buffer. `undo` and `redo` walk a real history; a churn
+    hook may rewrite the file under the buffer between two commands, as the
+    monkey's ExternalChurn thread does, and the buffer then reloads it."""
+
+    def __init__(self, history: list[str], at: int, redo_drops: bool = False) -> None:
+        self.project = "/w"
+        self.actions: list[dict] = []
+        self.last_ui = {"focus": "editor"}
+        self.history = history
+        self.at = at
+        self.text = history[at]
+        self.revision = 1
+        self.redo_drops = redo_drops
+        self.on_line = None  # called with each line sent, before it applies
+
+    def query(self, verb, args=None):
+        assert verb == "buffer", verb
+        return {"kind": "editor", "path": "/w/CHANGELOG.md", "text": self.text,
+                "revision": self.revision}
+
+    def churn(self, counter: int) -> None:
+        """The file rewritten on disk and the clean buffer reloaded; the row
+        is recorded as App.record_external does, after the write."""
+        self.text = f"churn {counter}\n" + self.text
+        self.revision += 1
+        self.actions.append({"churn": "CHANGELOG.md", "counter": counter,
+                             "t": round(time.monotonic(), 3)})
+
+    def send_line(self, line, timeout=15.0, record=True):
+        if self.on_line is not None:
+            self.on_line(line)
+        if line == "undo" and self.at > 0:
+            self.at -= 1
+        elif line == "redo" and self.at + 1 < len(self.history):
+            self.at += 1
+            if self.redo_drops:
+                self.text = self.history[self.at][:-1]
+                self.revision += 1
+                return {}
+        else:
+            return {}
+        self.text = self.history[self.at]
+        self.revision += 1
+        return {}
+
+
+class UndoAlgebraTests(unittest.TestCase):
+    def test_a_churn_rewrite_during_the_check_is_not_an_undo_bug(self) -> None:
+        # Soak d6710c671734: the churn thread prepended "churn 13\n" to the open
+        # CHANGELOG.md between the check's two undos (at the bottom of the
+        # history, so neither applied); the buffer reloaded it and the check
+        # blamed "0 undo(s) then 0 redo(s)" for the 9 new characters.
+        app = _UndoEditor(["v0"], at=0)
+        lines = []
+
+        def churn_on_second_undo(line: str) -> None:
+            lines.append(line)
+            if lines.count("undo") == 2:
+                app.churn(13)
+
+        app.on_line = churn_on_second_undo
+        oracle = monkey_oracles.UndoAlgebra(app, random.Random(0))
+        self.assertEqual(oracle.check(asked=2), [])
+
+    def test_a_reload_from_a_churn_just_before_the_check_is_not_an_undo_bug(self) -> None:
+        # The row is recorded when the write lands, but the buffer reloads from
+        # the file watcher a moment later -- inside the check.
+        app = _UndoEditor(["v0"], at=0)
+        app.actions.append({"churn": "CHANGELOG.md", "counter": 4,
+                            "t": round(time.monotonic(), 3)})
+        reloaded = []
+
+        def late_reload(line: str) -> None:
+            if not reloaded:
+                reloaded.append(line)
+                app.text = "churn 4\n" + app.text
+                app.revision += 1
+
+        app.on_line = late_reload
+        oracle = monkey_oracles.UndoAlgebra(app, random.Random(0))
+        self.assertEqual(oracle.check(asked=1), [])
+
+    def test_a_redo_that_loses_text_is_still_reported(self) -> None:
+        app = _UndoEditor(["v0", "v1", "v12"], at=2, redo_drops=True)
+        # A churn of another file, and an old one of this file, excuse nothing.
+        app.actions += [{"churn": "README.md", "counter": 1, "t": round(time.monotonic(), 3)},
+                        {"churn": "CHANGELOG.md", "counter": 0, "t": round(time.monotonic() - 60, 3)}]
+        oracle = monkey_oracles.UndoAlgebra(app, random.Random(0))
+        found = oracle.check(asked=2)
+        self.assertEqual(len(found), 1)
+        self.assertIn("2 undo(s) then 2 redo(s) changed the text of CHANGELOG.md", found[0][1])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -374,10 +374,20 @@ class DataOracle:
 
     def _churned(self, path: str) -> bool:
         """The file churn (or an external git step) rewrote it during the kill."""
-        project = str(self.app.project or "")
-        relative = path[len(project) + 1:] if path.startswith(project) else path
+        relative = _project_relative(self.app, path)
         recent = self.app.actions[-20:]
         return any(row.get("churn") == relative or "external" in row for row in recent)
+
+
+def _project_relative(app: q.App, path: str) -> str:
+    project = str(app.project or "")
+    return path[len(project) + 1:] if project and path.startswith(project + "/") else path
+
+
+# How long after the churn writes a file an open clean buffer may still reload
+# it: inotify reports at once, the FileTreeWatcher poll fallback within its
+# 750 ms interval, and the reload lands on the next frame.
+CHURN_RELOAD_GRACE_S = 1.5
 
 
 class UndoAlgebra:
@@ -414,6 +424,7 @@ class UndoAlgebra:
         # 1aa1784d1685, after twenty Ctrl+Z). An undo that applied moves the
         # buffer's content revision.
         asked = self.pick() if asked is None else asked
+        started = time.monotonic()
         k = 0
         revision = before.get("revision")
         for _ in range(asked):
@@ -439,12 +450,30 @@ class UndoAlgebra:
         if after.get("path") != before.get("path") or after.get("kind") != "editor":
             return []  # the commands moved focus somewhere else: not this rule's case
         if after.get("text") != before.get("text"):
+            if self._churned_during_check(str(before.get("path") or ""), started):
+                # The monkey's ExternalChurn rewrote this file under the clean
+                # buffer while the commands ran, and the buffer reloaded it: the
+                # text moved for a reason that is not undo or redo (soak
+                # d6710c671734, "churn 13\n" prepended between two undos).
+                return []
             self.evidence = {"undo-before.txt": str(before.get("text", "")).encode(),
                              "undo-after.txt": str(after.get("text") or "").encode()}
             return [("undo", f"{k} undo(s) then {k} redo(s) changed the text of "
                              f"{Path(before.get('path') or 'untitled').name} "
                              f"({len(before['text'])} -> {len(after.get('text') or '')} chars)")]
         return []
+
+
+    def _churned_during_check(self, path: str, started: float) -> bool:
+        """A churn row for `path` from the reload grace before the check began
+        on: ExternalChurn records each row before its write, so a rewrite the
+        check could have seen is already in the list."""
+        if not path:
+            return False
+        relative = _project_relative(self.app, path)
+        since = started - CHURN_RELOAD_GRACE_S
+        return any(row.get("churn") == relative and row.get("t", since) >= since
+                   for row in reversed(self.app.actions[-64:]))
 
 
 class ResourceOracle:
