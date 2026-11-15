@@ -43,6 +43,27 @@ std::optional<std::string> MirrorWriteGate::MirrorRelative(const std::filesystem
   return text;
 }
 
+std::optional<std::string> MirrorWriteGate::HostRelative(const std::filesystem::path& path) const {
+  const std::filesystem::path normal = path.lexically_normal();
+  if (!normal.has_filename() || normal.filename() == "..") {
+    return std::nullopt;
+  }
+  std::error_code parent_error;
+  std::error_code tree_error;
+  // weakly_canonical resolves the links of the part that exists and keeps the
+  // rest as written: a folder an earlier op of the same batch creates is no link.
+  const std::filesystem::path real_parent = std::filesystem::weakly_canonical(normal.parent_path(), parent_error);
+  const std::filesystem::path real_tree = std::filesystem::weakly_canonical(store_.tree(), tree_error);
+  if (parent_error || tree_error) {
+    return std::nullopt;
+  }
+  std::string text = (real_parent / normal.filename()).lexically_relative(real_tree).generic_string();
+  if (text.empty() || text == "." || !IsSafeRelativePath(text)) {
+    return std::nullopt;
+  }
+  return text;
+}
+
 std::optional<std::string> MirrorWriteGate::UnsyncableTarget(const std::filesystem::path& path) const {
   const std::string relative = path.lexically_normal().lexically_relative(store_.tree()).generic_string();
   if (relative.empty() || relative == "." || relative == ".." || relative.rfind("../", 0) == 0 ||
@@ -100,17 +121,17 @@ void ReplayCopiedTree(const MirrorWriteGate& gate, MirrorSyncEngine& engine, con
   using Kind = MirrorSyncEngine::LocalTreeOp::Kind;
   std::error_code error;
   if (!std::filesystem::is_directory(std::filesystem::symlink_status(root, error))) {
-    if (const std::optional<std::string> relative = gate.MirrorRelative(root)) {
+    if (const std::optional<std::string> relative = gate.HostRelative(root)) {
       engine.NotifyLocalWrite(*relative);
     }
     return;
   }
-  if (const std::optional<std::string> relative = gate.MirrorRelative(root)) {
+  if (const std::optional<std::string> relative = gate.HostRelative(root)) {
     replay.push_back({Kind::CreateDirectory, *relative, {}});
   }
   for (auto it = std::filesystem::recursive_directory_iterator(root, error);
        !error && it != std::filesystem::recursive_directory_iterator(); it.increment(error)) {
-    const std::optional<std::string> relative = gate.MirrorRelative(it->path());
+    const std::optional<std::string> relative = gate.HostRelative(it->path());
     if (!relative.has_value()) {
       continue;
     }
@@ -144,13 +165,27 @@ FileWriteGate::TreeResult MirrorWriteGate::ApplyTreeOps(std::span<const TreeOp> 
       return refused;
     }
   }
+  // Each op is replayed by the path the host knows its node by, read before the
+  // ops change the tree: an op through a folder link -- `d/loop/sub` with
+  // `d/loop -> .` -- was replayed as typed, the host refused the path through the
+  // link, and the folder (and every file later saved into it) stayed only in the
+  // mirror (the QA monkey's remote job: soak 9e0fe5eaa149, 367234368d0e).
+  std::vector<std::optional<std::string>> host_from(ops.size());
+  std::vector<std::optional<std::string>> host_to(ops.size());
+  for (std::size_t index = 0; index < ops.size(); ++index) {
+    host_from[index] = HostRelative(ops[index].path);
+    if (ops[index].kind == TreeOp::Kind::Rename) {
+      host_to[index] = HostRelative(ops[index].new_path);
+    }
+  }
   TreeResult result = LocalFileWriteGate().ApplyTreeOps(ops);
   if (!result.ok) {
     return result;  // all or nothing: undone locally, so nothing to replay
   }
   std::vector<MirrorSyncEngine::LocalTreeOp> replay;
-  for (const TreeOp& op : ops) {
-    const std::optional<std::string> from = MirrorRelative(op.path);
+  for (std::size_t index = 0; index < ops.size(); ++index) {
+    const TreeOp& op = ops[index];
+    const std::optional<std::string>& from = host_from[index];
     if (!from.has_value()) {
       continue;
     }
@@ -163,7 +198,7 @@ FileWriteGate::TreeResult MirrorWriteGate::ApplyTreeOps(std::span<const TreeOp> 
         replay.push_back({Kind::CreateDirectory, *from, {}});
         break;
       case TreeOp::Kind::Rename:
-        if (const std::optional<std::string> to = MirrorRelative(op.new_path)) {
+        if (const std::optional<std::string>& to = host_to[index]) {
           replay.push_back({Kind::Rename, *from, *to});
         } else {
           replay.push_back({Kind::Delete, *from, {}});  // moved out of the project

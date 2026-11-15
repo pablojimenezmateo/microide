@@ -636,6 +636,57 @@ void TestMirrorASaveThroughAFolderLinkPushesItsRealPath() {
              " blocked=" + std::to_string(status.blocked) + " " + status.error);
 }
 
+// The QA monkey's remote job (soak 9e0fe5eaa149, 367234368d0e): the tree ops'
+// twin of the save above. A folder made in the mirror through `d/loop -> .` was
+// replayed to the host by the path as typed, link and all; the host refuses a
+// path through a link, so the folder existed only in the mirror, and every file
+// later saved into it -- pushed by its real path -- had no folder to land in.
+// Each op is replayed by its real place: the folder links on the way resolved,
+// the node itself (which may be a link) kept.
+void TestMirrorTreeOpsThroughAFolderLinkReachTheHost() {
+  MirrorSession session;
+  WriteFile(session.host / "d/a.txt", "a\n");
+  WriteFile(session.host / "d/doomed.txt", "doomed\n");
+  WriteFile(session.host / "d/orig.txt", "orig\n");
+  std::filesystem::create_directory_symlink(".", session.host / "d/loop");
+  session.Connect();
+  session.Sync();
+  remote::MirrorWriteGate gate(*session.store, *session.engine);
+  using TreeOp = project::FileWriteGate::TreeOp;
+  const std::vector<TreeOp> ops = {
+      TreeOp{.kind = TreeOp::Kind::CreateDirectory, .path = session.Tree("d/loop/sub")},
+      TreeOp{.kind = TreeOp::Kind::CreateFile, .path = session.Tree("d/loop/sub/empty.txt")},
+      TreeOp{.kind = TreeOp::Kind::Rename, .path = session.Tree("d/loop/a.txt"),
+             .new_path = session.Tree("d/loop/renamed.txt")},
+      TreeOp{.kind = TreeOp::Kind::Copy, .path = session.Tree("d/orig.txt"),
+             .new_path = session.Tree("d/loop/copy.txt")},
+      TreeOp{.kind = TreeOp::Kind::Delete, .path = session.Tree("d/loop/doomed.txt")},
+  };
+  const auto applied = gate.ApplyTreeOps(ops);
+  Expect(applied.ok, "the ops through the folder link apply locally: " + applied.error_message);
+  Expect(gate.WriteText(session.Tree("d/loop/sub/saved.txt"), "saved\n").ok,
+         "a save into the new folder lands");
+  session.engine->Flush();
+  session.Sync();
+  Expect(std::filesystem::is_directory(session.host / "d/sub"), "the host gets the new folder");
+  Expect(std::filesystem::exists(session.host / "d/sub/empty.txt"), "and the new file in it");
+  Expect(std::filesystem::exists(session.host / "d/sub/saved.txt") &&
+             ReadFile(session.host / "d/sub/saved.txt") == "saved\n",
+         "and the file saved into it");
+  Expect(!std::filesystem::exists(session.host / "d/a.txt") &&
+             std::filesystem::exists(session.host / "d/renamed.txt"),
+         "the rename reaches the host");
+  Expect(std::filesystem::exists(session.host / "d/copy.txt") &&
+             ReadFile(session.host / "d/copy.txt") == "orig\n",
+         "the copy reaches the host");
+  Expect(!std::filesystem::exists(session.host / "d/doomed.txt"), "the delete reaches the host");
+  Expect(std::filesystem::is_symlink(session.host / "d/loop"), "the host's folder link stays a link");
+  const auto status = session.engine->status();
+  Expect(status.dirty == 0 && status.blocked == 0 && status.error.empty(),
+         "nothing is unsent or blocked: dirty=" + std::to_string(status.dirty) +
+             " blocked=" + std::to_string(status.blocked) + " " + status.error);
+}
+
 // The QA monkey's remote job (soak 517966306bfc, 14a5c9606a3a): a save through a
 // link in the mirror -- an in-root link is recreated as a link -- writes the file
 // the link names (the atomic save resolves the chain, so the link survives), but
@@ -1614,6 +1665,8 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/ANameTheHostCannotTakeIsRefused", TestMirrorANameTheHostCannotTakeIsRefused);
   AddTest(tests, "MirrorSyncEngine/ASaveThroughAFolderLinkPushesItsRealPath",
           TestMirrorASaveThroughAFolderLinkPushesItsRealPath);
+  AddTest(tests, "MirrorSyncEngine/TreeOpsThroughAFolderLinkReachTheHost",
+          TestMirrorTreeOpsThroughAFolderLinkReachTheHost);
   AddTest(tests, "MirrorSyncEngine/ASaveThroughALinkPushesTheFileItNames",
           TestMirrorASaveThroughALinkPushesTheFileItNames);
   AddTest(tests, "MirrorSyncEngine/ASaveTheHostRefusesIsBlockedNotUnsent",
