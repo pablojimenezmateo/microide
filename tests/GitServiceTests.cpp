@@ -552,6 +552,27 @@ void TestGitDiscardStagedRenameRestoresSource() {
          "discarding a staged rename must leave a clean working tree");
 }
 
+// A file staged as new and then deleted on disk ("AD") is discarded by dropping
+// it from the index. The untracked-row gate classified the path with
+// symlink_status(path, ec), and libstdc++ reports a missing path as not_found
+// WITH ec set to ENOENT: the gate read that as a stat error and refused, so the
+// row could not be discarded at all (the trap soak d3f7c53a3cd7 found in Trash).
+void TestGitDiscardStagedNewFileDeletedOnDisk() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  InitializeGitRepo(repo_path);
+  WriteFile(repo_path / "base.txt", "base\n");
+  CommitAll(repo_path, "base", "base");
+  WriteFile(repo_path / "added.txt", "added\n");
+  Expect(RunGitCommand(repo_path, {"add", "added.txt"}) == 0, "git add should stage the file");
+  std::filesystem::remove(repo_path / "added.txt");
+
+  GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
+  Expect(repo.Discard("added.txt"), "discarding a staged new file gone from disk should succeed");
+  Expect(RequireWorkingTreeEntries(repo_path).empty(),
+         "the discard leaves nothing staged and a clean tree");
+}
+
 void TestGitUnstageStagedRenameResetsBothSides() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -1481,6 +1502,7 @@ void RegisterGitServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Git/BulkStageAndDiscard", TestGitBulkStageAndDiscard);
   AddTest(tests, "Git/StageHonorsLiteralPathspecs", TestGitStageHonorsLiteralPathspecs);
   AddTest(tests, "Git/DiscardStagedRenameRestoresSource", TestGitDiscardStagedRenameRestoresSource);
+  AddTest(tests, "Git/DiscardStagedNewFileDeletedOnDisk", TestGitDiscardStagedNewFileDeletedOnDisk);
   AddTest(tests, "Git/UnstageStagedRenameResetsBothSides", TestGitUnstageStagedRenameResetsBothSides);
   AddTest(tests, "Git/DiscardRefusesAnUnstattableTarget",
           TestGitDiscardRefusesAnUnstattableTarget);

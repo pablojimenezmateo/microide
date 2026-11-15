@@ -406,9 +406,13 @@ bool GitRepository::Discard(const std::filesystem::path& relative_path,
   // `git clean -f -- <link>` removes on its own; is_directory() would follow it and
   // refuse the discard as if it were a real subtree (TD-2026-07-17A-124). Only a
   // genuine directory node must be refused here.
+  // A path already gone from disk (a file staged as new, then deleted) is no
+  // stat error: libstdc++ reports it as not_found WITH dir_error set to ENOENT, and
+  // refusing it left such a row undiscardable. A real stat error reports
+  // file_type::none.
   const std::filesystem::file_status node_status =
       std::filesystem::symlink_status(root_ / relative_path, dir_error);
-  if (dir_error) {
+  if (node_status.type() == std::filesystem::file_type::none) {
     // Fail CLOSED on a stat error. `file_type::none` is not a directory, so an
     // unconsulted error read as "not a directory" and let the discard proceed --
     // the gate's whole job is to refuse a target it cannot classify. The
