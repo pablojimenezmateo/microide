@@ -6,6 +6,7 @@
     tools/soak/soak.py report                                    writes build/soak/report.md
     tools/soak/soak.py ledger [list|show SIG|claim SIG|fixed SIG COMMIT|reopen SIG|note SIG TEXT]
     tools/soak/soak.py build                                     update the worktree and build once
+    tools/soak/soak.py pause [REASON] [--wait S] / resume         take turns with the fixing agent
 
 It follows `main` in its own worktree (`build/wt-soak`, never the live tree) and
 rebuilds when `main` moves: the default build (assertions on), an optimized
@@ -861,6 +862,48 @@ def contain_breach(breach: str, jobs: list["Job"], log) -> None:
                     commit=git("rev-parse", "main"), cell="runner", detail=message)
 
 
+# The first line of a PAUSE the fixing agent wrote for its phase (`pause`): the
+# soak and the agent take turns on the machine, each with every core. Any other
+# PAUSE -- a containment breach -- waits for a person, and `resume` leaves it.
+PHASE_PAUSE_MARK = "phase: "
+
+
+def pause_for_phase(reason: str) -> bool:
+    """Stops new jobs and builds for the agent's phase. False, and nothing
+    written, when the runner is already paused for something else."""
+    if PAUSE.exists() and not PAUSE.read_text(errors="replace").startswith(PHASE_PAUSE_MARK):
+        return False
+    PAUSE.write_text(f"{PHASE_PAUSE_MARK}{reason}\n")
+    return True
+
+
+def resume_from_phase() -> bool:
+    """Lifts a phase pause. False when the pause is not one (it stays)."""
+    if not PAUSE.exists():
+        return True
+    if not PAUSE.read_text(errors="replace").startswith(PHASE_PAUSE_MARK):
+        return False
+    PAUSE.unlink()
+    return True
+
+
+def build_paused() -> bool:
+    """A paused runner builds nothing either: a push during the agent's phase
+    would otherwise start five builds beside its lanes."""
+    return PAUSE.exists()
+
+
+def wait_for_idle(timeout: float, poll: float = 10.0) -> bool:
+    """Until the runner's running jobs and checks have ended (they finish under
+    a pause; nothing new starts). False at `timeout` with some still running."""
+    deadline = time.monotonic() + timeout
+    while load_state().get("current"):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(poll)
+    return True
+
+
 def busy_reason(our_cores: float, others: float | None = None) -> str | None:
     """Why no job may start now, or None. `others` is the cores something other
     than the soak uses (JobLoad.others); without it, the load average less ours."""
@@ -1223,7 +1266,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         # used to wait for every running job to end first -- a drain that left the
         # soak at zero jobs 4.5 hours a day, waiting on hour-long ASan jobs for a
         # build that took seconds.
-        if now - last_build > args.build_interval:
+        if now - last_build > args.build_interval and not build_paused():
             if not state.get("good") or driver_root(state) == WORKTREE or refresh_due(state):
                 try:
                     build_all(state, log)
@@ -1472,6 +1515,27 @@ def cmd_build(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_pause(args: argparse.Namespace) -> int:
+    if not pause_for_phase(args.reason):
+        print(f"already paused, not for a phase -- left as it is: {PAUSE.read_text(errors='replace').strip()}")
+        return 1
+    print(f"paused for: {args.reason}")
+    if args.wait > 0:
+        if not wait_for_idle(args.wait):
+            print(f"still running after {args.wait:.0f} s: {', '.join(load_state().get('current', []))}")
+            return 2
+        print("idle: no job running")
+    return 0
+
+
+def cmd_resume(_args) -> int:
+    if not resume_from_phase():
+        print(f"paused for something other than a phase -- not lifted: {PAUSE.read_text(errors='replace').strip()}")
+        return 1
+    print("resumed")
+    return 0
+
+
 def cmd_gc(_args) -> int:
     collect_garbage(print)
     return 0
@@ -1491,6 +1555,10 @@ def main() -> int:
     sub.add_parser("report")
     sub.add_parser("build")
     sub.add_parser("gc", help="delete verified findings' evidence and unusable corpus prefixes")
+    pause = sub.add_parser("pause", help="stop new jobs and builds for the fixing agent's phase")
+    pause.add_argument("reason", nargs="?", default="fixing")
+    pause.add_argument("--wait", type=float, default=0, help="seconds to wait for the running jobs to end")
+    sub.add_parser("resume", help="lift a phase pause (never a containment one)")
     check = sub.add_parser("check", help="measure a finding's reproduction rate and minimize it")
     check.add_argument("sig")
     verify = sub.add_parser("verify", help="replay a fixed finding on the current build and book the verdict")
@@ -1501,7 +1569,8 @@ def main() -> int:
     led.add_argument("extra", nargs="?")
     args = parser.parse_args()
     return {"run": cmd_run, "status": cmd_status, "report": cmd_report, "ledger": cmd_ledger,
-            "build": cmd_build, "check": cmd_check, "verify": cmd_verify, "gc": cmd_gc}[args.mode](args)
+            "build": cmd_build, "check": cmd_check, "verify": cmd_verify, "gc": cmd_gc,
+            "pause": cmd_pause, "resume": cmd_resume}[args.mode](args)
 
 
 

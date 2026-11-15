@@ -13,6 +13,13 @@ only, a failing-first test for every fix, one commit per fix, and a TD entry in
 
 ## The loop
 
+0. **Take the machine.** The soak and the fixing agent take turns, each with
+   every core: `tools/soak/soak.py pause "fixing" --wait 3600` stops new jobs and
+   builds and returns once the running ones have ended. Replays, `rr` recordings
+   and lanes then have the machine to themselves -- under a full soak the
+   remote lanes time out and a replay's timing is not the user's. When the
+   phase's fixes are pushed (or handed over), `soak.py resume` gives the
+   machine back; it never lifts a containment pause.
 1. **Pick.** `tools/soak/soak.py report` (or `status`) lists open findings in
    fix order, each tagged with its impact tier (`soak.py` `priority_key`):
    `severe` (crash, sanitizer report, `data`, `undo`, `leak`), `behaviour`
