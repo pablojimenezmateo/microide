@@ -15,8 +15,27 @@ namespace microide::workspace {
 // 900-line coordinator budget; one coherent family with one entry point.
 
 bool TabCoordinator::ReloadCleanEditorTabsForPath(const std::filesystem::path& path,
-                                                  EchoGuard echo_guard) {
-  return ReloadEditorTabsForPath(path, /*clean_only=*/true, echo_guard);
+                                                  EchoGuard echo_guard,
+                                                  std::vector<std::filesystem::path>* reloaded_paths) {
+  bool reloaded = ReloadEditorTabsForPath(path, /*clean_only=*/true, echo_guard);
+  if (reloaded && reloaded_paths != nullptr) {
+    reloaded_paths->push_back(path.lexically_normal());
+  }
+  // A view open through a link to this file names the link, so the path above
+  // does not reach it. Only the watcher's batch used to ask after such views; a
+  // reload by path -- a git discard, a patch apply, a catch-up sweep, the remote
+  // pull -- left them stale (soak a5c68f4f464f: link-to-crlf.txt opened before
+  // its target arrived, an empty clean buffer for good). Each is asked as
+  // itself, its own echo check included.
+  for (const std::filesystem::path& alias : OpenSymlinkAliasesOf(path.lexically_normal())) {
+    if (ReloadEditorTabsForPath(alias, /*clean_only=*/true, EchoGuard::Check)) {
+      reloaded = true;
+      if (reloaded_paths != nullptr) {
+        reloaded_paths->push_back(alias);
+      }
+    }
+  }
+  return reloaded;
 }
 
 void TabCoordinator::ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path) {

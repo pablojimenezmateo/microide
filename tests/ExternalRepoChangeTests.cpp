@@ -993,6 +993,75 @@ void TestWorkspaceShellChangeToASymlinkTargetReloadsTheLinksCleanBuffer() {
          "and says so, on the link's tab");
 }
 
+// Soak a5c68f4f464f, the run that still failed: link-to-crlf.txt was opened
+// before the sync had made the LINK (an empty buffer, no file, so no real path
+// recorded); the sync then made it, dangling a moment -- the watcher named it,
+// read as deleted -- and crlf.txt arrived. The views open through a link to
+// crlf.txt were chosen by the real path each recorded when it opened: this one
+// had none, and kept its empty text. A change naming a view's own path makes it
+// look again at where that path leads.
+void TestWorkspaceShellAViewOpenedBeforeItsPathBecameALinkFollowsTheTarget() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path target_path = root / "target.txt";
+  const std::filesystem::path link_path = root / "link.txt";
+  WriteFile(root / "other.txt", "other\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
+  (void)WorkspaceShellTestAccess::ExecuteCommandLine(shell, "open " + link_path.string());
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == link_path &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0].empty(),
+         "nothing at the path yet: an empty buffer bound to it");
+  DrainProjectChanges(shell);
+
+  std::filesystem::create_symlink("target.txt", link_path);  // the link first, dangling
+  platform::IndexUpdateBatch link_made;
+  link_made.is_initial = false;
+  link_made.changes.push_back(platform::IndexUpdateBatch::Change{
+      .kind = platform::IndexUpdateBatch::Kind::Deleted,
+      .entry = platform::IndexFileEntry{.relative_path = "link.txt"},
+  });
+  DispatchAndApply(shell, std::move(link_made), "the dangling link, read as gone");
+
+  WriteFile(target_path, "arrived\n");  // then what it names
+  ForceDistinctModificationTime(target_path);
+  DispatchAndApply(shell, BuildModifiedBatch(root, "target.txt"), "the target's arrival");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "arrived",
+         "the view open at the link's path follows it to the target, got: " +
+             std::string(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0]));
+}
+
+// Soak a5c68f4f464f (remote, reproduced 3/3 from its replay): link-to-crlf.txt
+// opened while its target had not arrived -- an empty clean buffer bound to the
+// link -- and crlf.txt then written by a route that reloads by path (a git
+// discard, a patch apply, a catch-up sweep, the remote pull) rather than by a
+// watcher batch. Only the watcher batch asked after the views open through a
+// link; every reload by path left them stale. Reloading a path reloads them too.
+void TestWorkspaceShellAReloadByPathReachesAViewOpenedThroughALink() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path target_path = root / "target.txt";
+  const std::filesystem::path link_path = root / "link.txt";
+  std::filesystem::create_directories(root);
+  std::filesystem::create_symlink("target.txt", link_path);  // dangling: the target has not arrived
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
+  (void)WorkspaceShellTestAccess::ExecuteCommandLine(shell, "open " + link_path.string());  // the soak's step
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == link_path &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0].empty(),
+         "the link opens, empty");
+
+  WriteFile(target_path, "arrived\n");
+  WorkspaceShellTestAccess::ReloadCleanEditorTabsForPath(shell, target_path);
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "arrived",
+         "reloading the target reloads the view open through the link, got: " +
+             std::string(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0]));
+}
+
 // Soak 77fa58de2a44: `qa-ext/link1 -> qa-weird/link-to-crlf.txt`, itself a link
 // to crlf.txt when link1 was opened. The world then put a regular file in
 // link-to-crlf.txt's place (a rename back, a branch switch), and a save through
@@ -1298,6 +1367,10 @@ AddTest(tests, "ExternalRepoChange/UndoAfterADiskChangeInTheBackgroundDoesNotRea
           TestWorkspaceShellCleanReloadRaisesNotice);
   AddTest(tests, "ExternalRepoChange/ChangeToASymlinkTargetReloadsTheLinksCleanBuffer",
           TestWorkspaceShellChangeToASymlinkTargetReloadsTheLinksCleanBuffer);
+  AddTest(tests, "ExternalRepoChange/AReloadByPathReachesAViewOpenedThroughALink",
+          TestWorkspaceShellAReloadByPathReachesAViewOpenedThroughALink);
+  AddTest(tests, "ExternalRepoChange/AViewOpenedBeforeItsPathBecameALinkFollowsTheTarget",
+          TestWorkspaceShellAViewOpenedBeforeItsPathBecameALinkFollowsTheTarget);
   AddTest(tests, "ExternalRepoChange/ALinksChainThatChangedStillReachesItsCleanBuffer",
           TestWorkspaceShellALinksChainThatChangedStillReachesItsCleanBuffer);
   AddTest(tests, "ExternalRepoChange/AnEditedMergeResultDoesNotKeepTheFilesCleanTabStale",

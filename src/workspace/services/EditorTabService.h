@@ -43,7 +43,8 @@ class EditorTabService {
   void SyncActiveEditorTabMetadata();
   using EchoGuard = TabCoordinator::EchoGuard;
   bool ReloadCleanEditorTabsForPath(const std::filesystem::path& path,
-                                    EchoGuard echo_guard = EchoGuard::Check);
+                                    EchoGuard echo_guard = EchoGuard::Check,
+                                    std::vector<std::filesystem::path>* reloaded_paths = nullptr);
   void ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path);
   void NoteDiskChangedUnderEditsForPath(const std::filesystem::path& path);
   bool NoteMissedDiskChangeUnderEdits(const std::filesystem::path& path);
@@ -58,6 +59,7 @@ class EditorTabService {
                                const util::FileSignature& read_signature) const;
   std::vector<std::filesystem::path> OpenSymlinkAliasesOf(
       const std::filesystem::path& normalized_target) const;
+  void RefreshRealPathsOf(const std::filesystem::path& normalized_path);
   bool OpenUntitled();
   bool OpenFileInNewTab(const std::filesystem::path& path);
   bool OpenNewBufferInNewTab(const std::filesystem::path& path);

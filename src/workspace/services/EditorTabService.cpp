@@ -93,8 +93,9 @@ void EditorTabService::SyncActiveEditorTabMetadata() {
 }
 
 bool EditorTabService::ReloadCleanEditorTabsForPath(const std::filesystem::path& path,
-                                                   EchoGuard echo_guard) {
-  return coordinator_.ReloadCleanEditorTabsForPath(path, echo_guard);
+                                                    EchoGuard echo_guard,
+                                                    std::vector<std::filesystem::path>* reloaded_paths) {
+  return coordinator_.ReloadCleanEditorTabsForPath(path, echo_guard, reloaded_paths);
 }
 
 void EditorTabService::NoteDiskChangedUnderEditsForPath(const std::filesystem::path& path) {
@@ -135,6 +136,10 @@ bool EditorTabService::ExternalChangeIsOwnEcho(const std::filesystem::path& path
 std::vector<std::filesystem::path> EditorTabService::OpenSymlinkAliasesOf(
     const std::filesystem::path& normalized_target) const {
   return coordinator_.OpenSymlinkAliasesOf(normalized_target);
+}
+
+void EditorTabService::RefreshRealPathsOf(const std::filesystem::path& normalized_path) {
+  coordinator_.RefreshRealPathsOf(normalized_path);
 }
 
 bool EditorTabService::DiskSignatureMatchesOpenView(const std::filesystem::path& path) const {

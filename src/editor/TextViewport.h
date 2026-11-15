@@ -411,6 +411,14 @@ class TextViewport {
   // (`loop -> .`) -- so a view opened by another name is found by this, and the
   // shell routes the change to it as well.
   const std::filesystem::path& real_path() const { return document_->real_path; }
+  // Looks again at where the path leads: it may have become (or stopped being) a
+  // link since the view opened, and real_path() is what decides which changes to
+  // other paths reach this view (TabCoordinator::OpenSymlinkAliasesOf).
+  void RefreshRealPath() {
+    if (document_ != nullptr) {
+      SetDocumentPath(document_->path);
+    }
+  }
   const TextBuffer& lines() const { return document_->lines; }
 
   // On-disk identity recorded at the last load/save. `disk_signature().exists`

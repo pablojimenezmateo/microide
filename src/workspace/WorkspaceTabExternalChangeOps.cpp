@@ -223,6 +223,24 @@ bool TabCoordinator::ExternalChangeIsOwnEcho(const std::filesystem::path& path,
   return sweep.matched_any && !sweep.stopped;
 }
 
+void TabCoordinator::RefreshRealPathsOf(const std::filesystem::path& normalized_path) {
+  // Views of one path share one document: refreshed once is refreshed for all.
+  const editor::TextViewport* refreshed = nullptr;
+  for (EditorGroup& group : state_.editor_groups) {
+    for (TabEntry& tab : group.open_tabs) {
+      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
+          !util::SameAsNormalizedPath(tab.editor_state->viewport.path(), normalized_path)) {
+        continue;
+      }
+      editor::TextViewport& viewport = tab.editor_state->viewport;
+      if (refreshed == nullptr || !viewport.SharesDocumentWith(*refreshed)) {
+        viewport.RefreshRealPath();
+        refreshed = &viewport;
+      }
+    }
+  }
+}
+
 std::vector<std::filesystem::path> TabCoordinator::OpenSymlinkAliasesOf(
     const std::filesystem::path& normalized_target) const {
   std::vector<std::filesystem::path> aliases;

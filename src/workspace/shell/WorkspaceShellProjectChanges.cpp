@@ -69,6 +69,10 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
   bool editor_config_changed = false;
   for (const project::ProjectFileChange& change : batch.file_changes) {
     const std::filesystem::path normalized_path = change.absolute_path.lexically_normal();
+    // Whatever changed at this path, its open views look again at where it leads:
+    // a path that became a link (the sync makes the link, then the file it names)
+    // is how a later change to that file reaches them (soak a5c68f4f464f).
+    MakeEditorTabService().RefreshRealPathsOf(normalized_path);
     if (normalized_path.filename() == ".editorconfig") {
       editor_config_changed = true;
     }
@@ -327,10 +331,15 @@ void WorkspaceShell::ApplyExternalFileChange(const std::filesystem::path& normal
   // the file (off-thread) if a read was needed. Letting the reload re-ask would
   // read the same file a second time, on the shell thread, to learn what the
   // caller just established.
-  if (ReloadCleanEditorTabsForPath(normalized_path, EditorReloadEchoGuard::AlreadyResolved)) {
+  // The notice goes on each tab that reloaded -- a view open through a link to
+  // this file is reloaded with it and says so on its own tab.
+  std::vector<std::filesystem::path> reloaded_paths;
+  if (editor_tabs.ReloadCleanEditorTabsForPath(normalized_path, EditorReloadEchoGuard::AlreadyResolved,
+                                               &reloaded_paths)) {
     if (!under_edits) {
-      SetEditorBanner(context_.current_project_state, EditorBannerState::Kind::ReloadedNotice,
-                      normalized_path);
+      for (const std::filesystem::path& reloaded : reloaded_paths) {
+        SetEditorBanner(context_.current_project_state, EditorBannerState::Kind::ReloadedNotice, reloaded);
+      }
     }
     RequestEditorSurfaceRedraw();
   }

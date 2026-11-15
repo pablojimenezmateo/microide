@@ -167,9 +167,12 @@ class TabCoordinator {
   // the guard is what avoids a full re-read plus a width rebuild.
   using EchoGuard = EditorReloadEchoGuard;
   // Returns whether any view's content was replaced; a view that already held
-  // what the file holds is kept, history and all, and does not count.
+  // what the file holds is kept, history and all, and does not count. Views open
+  // through a link to the file are reloaded too; `reloaded_paths`, when given,
+  // receives each path whose views were (the file's own, a link's).
   bool ReloadCleanEditorTabsForPath(const std::filesystem::path& path,
-                                    EchoGuard echo_guard = EchoGuard::Check);
+                                    EchoGuard echo_guard = EchoGuard::Check,
+                                    std::vector<std::filesystem::path>* reloaded_paths = nullptr);
   void ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path);
   // The file changed on disk under unsaved edits: see
   // TextViewport::NoteDiskChangedUnderEdits. Every dirty view of `path`.
@@ -245,6 +248,10 @@ class TabCoordinator {
   // path is a change to these views as well.
   [[nodiscard]] std::vector<std::filesystem::path> OpenSymlinkAliasesOf(
       const std::filesystem::path& normalized_target) const;
+  // A change named `normalized_path`: its open views look again at where it leads
+  // (TextViewport::RefreshRealPath), so one opened before the path was a link --
+  // nothing there yet -- is found when the file the link names changes.
+  void RefreshRealPathsOf(const std::filesystem::path& normalized_path);
   bool OpenUntitled();
   // The live editor view of `normalized_path` in ANY group, or nullptr. A file is
   // one buffer however many panes show it (VS Code's model per resource, and the
