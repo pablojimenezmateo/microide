@@ -266,7 +266,22 @@ class DataOracle:
                 elif not back.get("dirty"):
                     out.append(("data", f"the unsaved buffer {Path(str(key)).name} came back after a kill -9 "
                                         f"marked saved; its file does not hold it"))
+        # The files a restored dirty buffer was saved to (the lap's autosave), by
+        # the file they resolve to: a clean tab can reach the same file by another
+        # path -- a project rooted at qa-weird/loop, a link to qa-weird -- and the
+        # save through the buffer's path changed the clean tab's file with it
+        # (soak ce9c3a0386c3).
+        # The same rule as the buffer check above: back clean, in a project the
+        # lap left with autosave on, and not already back before the lap.
+        back_by_key = {_doc_key(d): d for d in after}
+        saved_files = {os.path.realpath(doc["path"]) for doc in dirty
+                       if doc.get("path") and saving and doc.get("project") in saving
+                       and _doc_key(doc) not in by_first
+                       and (back := back_by_key.get(_doc_key(doc))) is not None
+                       and not back.get("dirty")}
         for path, sha in disk_before.items():
+            if os.path.realpath(path) in saved_files:
+                continue
             now = _sha256_file(Path(path))
             if sha is not None and now is not None and now != sha and not self._churned(path):
                 out.append(("data", f"{Path(path).name} changed on disk across a kill -9 and relaunch, "

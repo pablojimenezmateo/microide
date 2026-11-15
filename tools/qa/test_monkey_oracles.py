@@ -6,6 +6,7 @@ from __future__ import annotations
 import random
 import time
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -68,7 +69,10 @@ class _RelaunchingApp:
         return {}
 
     def record_external(self, row) -> None:
-        self.actions.append({"external": row})
+        # As App.record_external: the row itself. Wrapped in {"external": ...} it
+        # read as an external step to `_churned`, which then excused every file
+        # the disk check compares -- and no test here could see that check fire.
+        self.actions.append(row)
 
     def crash_and_relaunch(self, project=None, between=None, restore_workspace=False) -> None:
         if between is not None:
@@ -152,6 +156,77 @@ class Kill9OracleTests(unittest.TestCase):
             found = oracle.kill9_and_check(random.Random(1), waited=True)
         self.assertEqual(len(found), 1, found)
         self.assertIn("different content", found[0][1])
+
+
+    def test_a_lap_save_through_a_symlinked_folder_is_not_an_unsaved_change(self) -> None:
+        # Soak ce9c3a0386c3: qa-weird/loop links to qa-weird, and a second project
+        # rooted at the link held a dirty buffer of a file the first project had
+        # open clean under its own path. The lap's autosave wrote that buffer, and
+        # the clean tab's file -- the same file -- read as changed by nothing.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "a"
+            root.mkdir()
+            (root / "x.txt").write_text("before\n")
+            (root / "loop").symlink_to(".")
+            clean, alias = root / "x.txt", root / "loop" / "x.txt"
+
+            class _AliasingApp(_RelaunchingApp):
+                ROOTS = (str(root), str(root / "loop"))
+
+                def __init__(self) -> None:
+                    super().__init__()
+                    self.project = self.ROOTS[0]
+                    self.docs = {
+                        0: [{"path": str(clean), "dirty": False, "project": self.ROOTS[0],
+                             "sha256": monkey_oracles._sha256_file(clean)}],
+                        1: [{"path": str(alias), "dirty": True, "sha256": "edited",
+                             "project": self.ROOTS[1]}],
+                    }
+
+                def send_line(self, line, timeout=15.0, record=True):
+                    if line == "project-next" and self.autosave == "on_focus_change":
+                        for doc in self.docs[self.active]:
+                            if doc["dirty"]:
+                                Path(doc["path"]).write_text("edited and saved\n")
+                    return super().send_line(line, timeout, record)
+
+            app = _AliasingApp()
+            app.active = 0  # the buffer's project loads, and is left, through the lap
+            app.autosave = "on_focus_change"
+            oracle = monkey_oracles.DataOracle(app)
+            with mock.patch.object(monkey_oracles, "CRASH_SAFETY_QUIET_S", 0.0), \
+                    mock.patch.object(monkey_oracles.time, "sleep", lambda _s: None):
+                found = oracle.kill9_and_check(random.Random(1), waited=True)
+            self.assertEqual(clean.read_text(), "edited and saved\n", "the lap saved through the link")
+            self.assertEqual(found, [], found)
+
+    def test_a_clean_file_changed_by_no_save_is_still_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "a"
+            root.mkdir()
+            clean = root / "x.txt"
+            clean.write_text("before\n")
+
+            class _ChangingApp(_RelaunchingApp):
+                ROOTS = (str(root), "/p/b")
+
+                def __init__(self) -> None:
+                    super().__init__()
+                    self.project = self.ROOTS[0]
+                    self.docs[0] = [{"path": str(clean), "dirty": False, "project": self.ROOTS[0],
+                                     "sha256": monkey_oracles._sha256_file(clean)}]
+
+                def crash_and_relaunch(self, *args, **kwargs) -> None:
+                    super().crash_and_relaunch(*args, **kwargs)
+                    clean.write_text("changed by the relaunch\n")
+
+            app = _ChangingApp()
+            oracle = monkey_oracles.DataOracle(app)
+            with mock.patch.object(monkey_oracles, "CRASH_SAFETY_QUIET_S", 0.0), \
+                    mock.patch.object(monkey_oracles.time, "sleep", lambda _s: None):
+                found = oracle.kill9_and_check(random.Random(1), waited=True)
+            self.assertEqual([f[1] for f in found],
+                             ["x.txt changed on disk across a kill -9 and relaunch, and nothing saved it"])
 
 
 class IdleEvidenceTests(unittest.TestCase):
