@@ -86,9 +86,12 @@ class RecordingTests(unittest.TestCase):
                 width, height = (int(v) for v in size.split("x"))
                 self.assertLessEqual(width * height, 1440 * 900)
 
-    def test_the_terminal_profile_is_not_recorded(self):
-        drawn = {self.soak.choose_recording(self.job_type("terminal"), random.Random(1)) for _ in range(200)}
+    def test_a_profile_rr_cannot_follow_is_not_recorded(self):
+        with mock.patch.object(self.soak, "UNRECORDED_PROFILES", frozenset({"terminal"})):
+            drawn = {self.soak.choose_recording(self.job_type("terminal"), random.Random(1)) for _ in range(200)}
         self.assertEqual(drawn, {""})
+        drawn = {self.soak.choose_recording(self.job_type("terminal"), random.Random(1)) for _ in range(200)}
+        self.assertIn("1", drawn)
 
     def test_a_run_that_lost_its_recorder_is_counted_not_booked(self):
         job, evidence = self.run_with(DATA)

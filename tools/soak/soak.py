@@ -292,13 +292,14 @@ JOB_TYPES = [
 # The builds whose jobs may run under `rr record` (tools/qa/recording.py): the
 # sanitizer builds are slow enough already and say what they find themselves.
 RECORD_BUILDS = frozenset({"default"})
-# Profiles that are not recorded. rr stops a recording, app and all, at a system
-# call it does not implement, and this machine's coreutils (cat, head, seq, yes)
-# call one: tee(2). The commands the terminal and world monkeys run reach it
-# several times in 500 steps; the other profiles open a terminal now and then,
-# and a run that loses its recorder there is counted (`soak.py health`), not
-# booked. TD-2026-11-16-451 has the two-line rr patch that lifts this.
-UNRECORDED_PROFILES = frozenset({"terminal", "world"})
+# Profiles that are not recorded: none now. rr stops a recording, app and all,
+# at a system call it does not implement, and upstream rr does not implement
+# tee(2), which this machine's coreutils (cat, head, seq, yes) call: the
+# terminal and world monkeys lost their recorder several times in 500 steps.
+# The rr installed here carries tools/soak/rr-tee.patch (TD-2026-11-16-451). On
+# a machine whose rr does not, list "terminal" and "world" here; a run that
+# loses its recorder anyway is counted (`soak.py health`), never booked.
+UNRECORDED_PROFILES: frozenset[str] = frozenset()
 # The share of those jobs that is recorded, and of the recorded ones in rr's
 # chaos mode (randomized scheduling: races show more often, at more cost). Not
 # all of them: rr runs the app's threads one at a time, so a recorded run has

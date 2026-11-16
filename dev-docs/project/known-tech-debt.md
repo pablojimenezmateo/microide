@@ -42,25 +42,27 @@ would pay:
 5. **The fault-injection jobs are not recorded.** rr cannot follow the remote
    server (it runs under the loopback sshd, not under the app).
 
-### TD-2026-11-16-451 — rr does not implement tee(2), and this machine's coreutils call it. [OPEN]
+### TD-2026-11-16-451 — the rr on the soak machine is patched for tee(2); upstream is not. [OPEN]
 
 `rr record` aborts the whole recording -- the app with it -- at a system call
 it does not know ("Expected ENOSYS for 'tee' ... unsupported by rr",
 `src/record_syscall.cc`). Ubuntu's coreutils (`cat`, `head`, `seq`, `yes`)
-call `tee` on pipes, so a recorded soak job loses its recorder the first time a
-terminal command or a task runs one: twice in 500 steps of the `terminal`
+call `tee` on pipes, so a recorded soak job lost its recorder the first time a
+terminal command or a task ran one: twice in 500 steps of the `terminal`
 profile, four times in 240 of `world` (2026-11-16, rr 5.10.0 at a808942).
 
-Contained, not fixed: those two profiles are not recorded
-(`UNRECORDED_PROFILES`), a run that loses its recorder elsewhere reports a
-`recorder` finding the ledger does not book, and `soak.py health` counts them.
+Fixed here, not upstream: `tools/soak/rr-tee.patch` (twelve lines: `tee` writes
+no user memory, so it is an `IrregularEmulatedSyscall` that may switch, beside
+`splice`) is applied to `build/rr-src` and installed to `/usr/local/bin/rr`.
+Rebuilding rr from a fresh checkout loses it: `git apply` the patch first, then
+`cmake --build obj && sudo cmake --install obj`, then `chmod a+rX` the
+installed files (the install runs under umask 0077).
 
-The fix is rr's, two lines: `tee` writes no user memory, so in
-`src/syscalls.py` it is `EmulatedSyscall(x86=315, x64=276, generic=77)` rather
-than `UnsupportedSyscall`, and in `rec_prepare_syscall_arch` it belongs beside
-`splice` with `return ALLOW_SWITCH` (it can block). Rebuild `build/rr-src`,
-reinstall, drop the two profiles from `UNRECORDED_PROFILES`, and send the patch
-upstream.
+Still open: send the patch upstream, and until a release carries it, a machine
+with a stock rr lists `terminal` and `world` in `soak.py`'s
+`UNRECORDED_PROFILES`. A run that loses its recorder to any other system call
+reports a `recorder` finding the ledger does not book; `soak.py health` counts
+them, and that count is the signal to look for the next one.
 
 ### TD-2026-11-13-449 — SDL's X11 clipboard can paste the previous text right after another application copies. [OPEN]
 

@@ -139,8 +139,9 @@ call it fixed -- that is how 35 "verified" findings came back. In order:
 Recorded runs differ where rr does: one thread runs at a time, the app falls
 back to SDL's software renderer (rr cannot record a GPU driver), the window is
 at most 1440x900, and the latency and idle oracles are off. rr also stops at a
-system call it does not implement (`tee`, from coreutils in a terminal); such
-a run is counted in `soak.py health`, and is not a finding.
+system call it does not implement; such a run is counted in `soak.py health`
+and is not a finding (the installed rr is patched for the one met so far,
+`tee`: TD-2026-11-16-451).
 
 ## Not a defect of the app
 

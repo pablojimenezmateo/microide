@@ -1,0 +1,35 @@
+diff --git a/src/record_syscall.cc b/src/record_syscall.cc
+index 3179a34..0b0c1a2 100644
+--- a/src/record_syscall.cc
++++ b/src/record_syscall.cc
+@@ -4250,6 +4250,11 @@ static Switchable rec_prepare_syscall_arch(RecordTask* t,
+       return ALLOW_SWITCH;
+     }
+ 
++    /* ssize_t tee(int fd_in, int fd_out, size_t len, unsigned int flags);
++       Both descriptors are pipes and no user memory is written. */
++    case Arch::tee:
++      return ALLOW_SWITCH;
++
+     /* ssize_t vmsplice(int fd, const struct iovec *iov, unsigned long nr_segs,
+                         unsigned int flags); */
+     case Arch::vmsplice: {
+diff --git a/src/syscalls.py b/src/syscalls.py
+index b72e1ee..843a331 100644
+--- a/src/syscalls.py
++++ b/src/syscalls.py
+@@ -1516,7 +1516,13 @@ get_robust_list = EmulatedSyscall(x86=312, x64=274, generic=100, arg2="typename
+ splice = IrregularEmulatedSyscall(x86=313, x64=275, generic=76)
+ 
+ sync_file_range = IrregularEmulatedSyscall(x86=314, x64=277, generic=84)
+-tee = UnsupportedSyscall(x86=315, x64=276, generic=77)
++
++#  ssize_t tee(int fd_in, int fd_out, size_t len, unsigned int flags);
++#
++# tee() duplicates up to len bytes of data from the pipe referred to by
++# fd_in to the pipe referred to by fd_out.  It writes no user memory, so
++# there is nothing to record but the result; it can block.
++tee = IrregularEmulatedSyscall(x86=315, x64=276, generic=77)
+ 
+ #  ssize_t vmsplice(int fd, const struct iovec *iov, unsigned long nr_segs,
+ #                   unsigned int flags);
