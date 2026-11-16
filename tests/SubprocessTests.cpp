@@ -1,10 +1,13 @@
 #include "TestSupport.h"
 
 #include "platform/AsyncSubprocess.h"
+#include "platform/CrashDiagnostics.h"
 #include "platform/HostPlatform.h"
 #include "platform/OpenFileLimit.h"
 #include "platform/Subprocess.h"
 #include "platform/SubprocessSandbox.h"
+#include "util/CrashPoint.h"
+#include "util/CrashPointControl.h"
 #include "util/PosixFd.h"
 
 #include <algorithm>
@@ -425,6 +428,197 @@ void TestAsyncSubprocessChildGetsDefaultSigpipe() {
          "an async child must see SIGPIPE at its default disposition, got: " + output);
 }
 
+#if MICROIDE_HAS_BACKTRACE && !MICROIDE_SANITIZER_OWNS_SIGNALS
+// Runs `body` in a forked child whose stderr is a pipe; returns what it wrote
+// there and how it ended (waitpid's status).
+template <typename Body>
+std::string StderrOfForkedChild(Body body, int* status) {
+  int fds[2] = {-1, -1};
+  if (::pipe2(fds, O_CLOEXEC) != 0) {
+    return {};
+  }
+  const pid_t child = ::fork();
+  if (child == 0) {
+    ::dup2(fds[1], STDERR_FILENO);
+    body();
+    ::_exit(0);
+  }
+  ::close(fds[1]);
+  std::string output;
+  char buffer[4096];
+  for (;;) {
+    const ssize_t got = ::read(fds[0], buffer, sizeof(buffer));
+    if (got < 0 && errno == EINTR) {
+      continue;
+    }
+    if (got <= 0) {
+      break;
+    }
+    output.append(buffer, static_cast<std::size_t>(got));
+  }
+  ::close(fds[0]);
+  ::waitpid(child, status, 0);
+  return output;
+}
+
+std::size_t CountOf(std::string_view text, std::string_view needle) {
+  std::size_t count = 0;
+  for (std::size_t at = text.find(needle); at != std::string_view::npos;
+       at = text.find(needle, at + needle.size())) {
+    ++count;
+  }
+  return count;
+}
+
+// A crash says where. The soak's `std::clamp` assertion abort (707c77a79c1d) left
+// the assertion's text and an exit status of -6: no stack, no replay, and one
+// signature for every crash of an unsanitized build. The handler prints the
+// crashing thread's return addresses and the process still dies of its signal.
+void TestCrashBacktraceIsPrintedAndTheSignalStillKills() {
+  // The unwinder is loaded in the parent: the child of a threaded process must
+  // not be the first to load it.
+  void* warm[1];
+  (void)::backtrace(warm, 1);
+  int status = 0;
+  const std::string output = StderrOfForkedChild(
+      [] {
+        microide::platform::InstallCrashBacktraceHandler();
+        std::abort();
+      },
+      &status);
+  Expect(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT,
+         "the process still dies of SIGABRT after its backtrace");
+  Expect(output.find("microide crash: signal 6 (SIGABRT) on thread ") != std::string::npos,
+         "the crash is announced with its signal, got: " + output);
+  Expect(output.find("microide crash: end of backtrace") != std::string::npos,
+         "the backtrace is closed, got: " + output);
+  // Frames are `module(+0xoffset) [0xaddress]`, which addr2line resolves.
+  Expect(CountOf(output, "[0x") >= 3, "the backtrace has frames, got: " + output);
+}
+
+// A loop turn that outruns MICROIDE_TRACE_STALL_MS prints where the main thread
+// is and, when it ends, how long it took; the loop's blocking wait is idleness.
+void TestStallWatchdogReportsABusyTurnAndNotAnIdleWait() {
+  void* warm[1];
+  (void)::backtrace(warm, 1);
+  int status = 0;
+  const std::string output = StderrOfForkedChild(
+      [] {
+        ::setenv("MICROIDE_TRACE_STALL_MS", "40", 1);
+        if (!microide::platform::StartStallWatchdogFromEnvironment()) {
+          ::_exit(3);
+        }
+        microide::platform::NoteMainLoopTurn();
+        {
+          const microide::platform::MainLoopIdleScope idle;
+          std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        }
+        microide::platform::NoteMainLoopTurn();
+        const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
+        volatile unsigned long spin = 0;
+        while (std::chrono::steady_clock::now() < until) {
+          spin = spin + 1;
+        }
+        microide::platform::NoteMainLoopTurn();
+      },
+      &status);
+  Expect(WIFEXITED(status) && WEXITSTATUS(status) == 0, "the watchdog starts and the child ends cleanly");
+  Expect(CountOf(output, "microide stall: the main loop has not turned for ") == 1,
+         "exactly the busy turn is reported, not the idle wait, got: " + output);
+  Expect(output.find("the main thread is at:") != std::string::npos && CountOf(output, "[0x") >= 2,
+         "the main thread's stack is printed, got: " + output);
+  Expect(output.find("microide stall: ended after ") != std::string::npos,
+         "the turn's end says how long it took, got: " + output);
+}
+#endif  // MICROIDE_HAS_BACKTRACE && !MICROIDE_SANITIZER_OWNS_SIGNALS
+
+// QA's handle on the crash points: every pass counted by site and by the file it
+// acted on, and one rule armed to stall the process at a pass or kill it there.
+// The soak's lost-buffer findings came from kills that fell between two disk
+// writes and no replay ever killed there again; a rule kills at the same
+// boundary every time.
+void TestCrashPointControlCountsPassesAndFiresItsRule() {
+  using microide::util::CrashPoint;
+  using microide::util::CrashPointControl;
+  CrashPointControl::Install();
+  CrashPoint("test.site-a", "/state/projects/p/session");
+  CrashPoint("test.site-a", "/state/projects/p/.session.microide-staging.41.7");
+  CrashPoint("test.site-a", "/state/projects/p/session.bak");
+  CrashPoint("test.site-b", "/state/recents");
+  const CrashPointControl::Snapshot counted = CrashPointControl::Read();
+  const auto site = [&counted](std::string_view name) -> const CrashPointControl::SitePasses* {
+    for (const CrashPointControl::SitePasses& entry : counted.sites) {
+      if (entry.site == name) {
+        return &entry;
+      }
+    }
+    return nullptr;
+  };
+  const CrashPointControl::SitePasses* a = site("test.site-a");
+  Expect(counted.installed && a != nullptr && a->passes >= 3, "passes are counted by site");
+  const auto has_file = [](const CrashPointControl::SitePasses* entry, std::string_view file) {
+    return entry != nullptr &&
+           std::any_of(entry->files.begin(), entry->files.end(),
+                       [&](const auto& pair) { return pair.first == file; });
+  };
+  Expect(has_file(a, "session") && has_file(a, "session.bak") && has_file(a, "session (staging)"),
+         "a record, its backup and its staging temporary are counted apart");
+
+  std::string error;
+  Expect(!CrashPointControl::Arm("explode:test.site-a", &error) && !error.empty(),
+         "an unknown action is refused with a reason");
+  Expect(!CrashPointControl::Arm("kill:test.site-a#0", &error), "a kill needs a pass to fire at");
+  Expect(!CrashPointControl::Arm("kill:", &error), "a rule names a site");
+
+  // A delay at the second pass of one file's boundary, and at no other.
+  Expect(CrashPointControl::Arm("delay=120:test.site-a@session#2", &error), "a delay rule arms: " + error);
+  const auto timed = [](const char* where, std::string_view detail) {
+    const auto began = std::chrono::steady_clock::now();
+    CrashPoint(where, detail);
+    return std::chrono::steady_clock::now() - began;
+  };
+  Expect(timed("test.site-a", "/state/projects/p/session.bak") < std::chrono::milliseconds(60),
+         "a pass of another file does not match");
+  Expect(timed("test.site-b", "/state/projects/p/session") < std::chrono::milliseconds(60),
+         "a pass of another site does not match");
+  Expect(timed("test.site-a", "/state/projects/p/session") < std::chrono::milliseconds(60),
+         "the first matching pass is not the armed one");
+  Expect(timed("test.site-a", "/state/projects/p/session") >= std::chrono::milliseconds(110),
+         "the second matching pass stalls for the delay");
+  Expect(CrashPointControl::Read().armed.empty(), "a fired rule is disarmed");
+  Expect(timed("test.site-a", "/state/projects/p/session") < std::chrono::milliseconds(60),
+         "and fires once");
+
+  // A kill: the process says where and dies of SIGKILL there.
+  int fds[2] = {-1, -1};
+  Expect(::pipe2(fds, O_CLOEXEC) == 0, "pipe2 should succeed");
+  const pid_t child = ::fork();
+  if (child == 0) {
+    ::dup2(fds[1], STDERR_FILENO);
+    std::string why;
+    if (!CrashPointControl::Arm("kill:test.site-b@recents#1", &why)) {
+      ::_exit(3);
+    }
+    CrashPoint("test.site-b", "/state/recents");
+    ::_exit(0);
+  }
+  ::close(fds[1]);
+  std::string said;
+  char buffer[512];
+  for (ssize_t got = 0; (got = ::read(fds[0], buffer, sizeof(buffer))) > 0;) {
+    said.append(buffer, static_cast<std::size_t>(got));
+  }
+  ::close(fds[0]);
+  int status = 0;
+  ::waitpid(child, &status, 0);
+  Expect(WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL, "the armed pass kills the process");
+  Expect(said.find("microide crash-point: killed at test.site-b (/state/recents), pass 1") != std::string::npos,
+         "and says where first, got: " + said);
+
+  CrashPointControl::Disarm();
+  microide::util::SetCrashPointHook(nullptr);
+}
+
 // The editor raises its own soft RLIMIT_NOFILE to the hard limit: the inherited
 // 1024 ran out under a session of terminals and the session save was the first
 // write to fail (soak c47c6a1f54cf). Its children start with the limit it
@@ -837,6 +1031,14 @@ void RegisterSubprocessTests(std::vector<TestCase>& tests) {
           TestAsyncSubprocessChildGetsDefaultSigpipe);
   AddTest(tests, "Subprocess/OpenFileLimitIsRaisedForTheEditorAndRestoredForItsChildren",
           TestOpenFileLimitIsRaisedForTheEditorAndRestoredForItsChildren);
+  AddTest(tests, "CrashPointControl/CountsPassesAndFiresItsRule",
+          TestCrashPointControlCountsPassesAndFiresItsRule);
+#if MICROIDE_HAS_BACKTRACE && !MICROIDE_SANITIZER_OWNS_SIGNALS
+  AddTest(tests, "CrashDiagnostics/CrashBacktraceIsPrintedAndTheSignalStillKills",
+          TestCrashBacktraceIsPrintedAndTheSignalStillKills);
+  AddTest(tests, "CrashDiagnostics/StallWatchdogReportsABusyTurnAndNotAnIdleWait",
+          TestStallWatchdogReportsABusyTurnAndNotAnIdleWait);
+#endif
   AddTest(tests, "Subprocess/ChildDoesNotInheritIgnoredInterrupts",
           TestSubprocessChildDoesNotInheritIgnoredInterrupts);
   AddTest(tests, "AsyncSubprocess/ChildDoesNotInheritIgnoredInterrupts",

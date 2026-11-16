@@ -164,8 +164,45 @@ Query verbs: `debug-state`, `breakpoints`, `function-breakpoints`,
 `exception-filters`, `tabs`, `projects`, `status`, `launch-configs`, `adapters`,
 `editor`, `commands`, `terminals`, `terminal-output`, `notifications`,
 `keybindings`, `settings`, `ui`, `buffer`, `documents`, `output`, `action-counts`, `hit-test`,
-`surface`, `persistence`, `compare`, `idle`. `ControlQueryVerbs()` is the one list: the dispatcher refuses a verb
+`surface`, `persistence`, `compare`, `idle`, `crash-points`, `invariants`. `ControlQueryVerbs()` is the one list: the dispatcher refuses a verb
 missing from it, and a test asks every listed verb.
+
+**What the structure must hold (`invariants`).** `{ok, violations: [{rule, detail}],
+checked: {groups, tabs, editors, deep}}`: the workspace's own rules, checked from
+the inside (`ControlInvariantsQuery.h`) -- one split-tree leaf per editor group and
+a focused group that exists (`groups`), an active tab that exists and a payload
+for each tab's kind (`tabs`), one Untitled number per unsaved buffer (`untitled`),
+every caret and anchor inside its buffer (`carets`), and with `{"deep": true}` the
+focused editor's derived layout tables against a fresh build (`caches`). Every
+other oracle reads a symptom, often hundreds of actions after the state went
+wrong; the QA monkey asks this every few steps, so a broken rule is found next to
+the action that broke it. Read-only.
+
+**Where a crash would split a write (`crash-points`).** `{installed, armed,
+armedMatches, sites: [{site, passes, files: {<name>: n}}]}`: the durable-write
+boundaries (`util::CrashPoint`) this process has passed, by site and by the file
+each acted on -- a record, its `.bak` and its staging temporary counted apart.
+`{"arm": "kill:<site>[@<file>][#<nth>]"}` makes the process SIGKILL itself at
+the nth matching pass (it logs `microide crash-point: killed at ...` first);
+`delay=<ms>:` stalls there instead, a slow disk or a race's window held open;
+`{"disarm": true}` clears the rule. Installed only when `MICROIDE_QA_CRASH_POINTS`
+is set (`count`, or a rule to arm at startup), so production keeps the bare
+crash point's one atomic load. The QA monkey's kill oracle picks from the
+inventory and kills at the least-tried boundary: the same boundary again in a
+replay, which a signal sent from outside never managed
+(`util/CrashPointControl.h`).
+
+**What the process says when it dies or stalls** (`platform/CrashDiagnostics.h`,
+on stderr with the rest of the log). A fatal signal (SIGSEGV, SIGABRT, SIGBUS,
+SIGFPE, SIGILL) prints `microide crash: signal N (NAME) on thread ...; backtrace:`
+and the crashing thread's return addresses, then dies of the signal as it would
+have (a sanitizer build leaves this to the sanitizer). `addr2line -e microide`
+resolves the `microide(+0x...)` frames; the QA driver does, and keys the crash
+finding on the stack. With `MICROIDE_TRACE_STALL_MS=<n>` a watchdog thread
+prints `microide stall: the main loop has not turned for N ms ...` with the main
+thread's stack when one loop turn runs that long, and `microide stall: ended
+after N ms` when it ends -- where the loop was while an answer was slow. Off
+unless asked: the sampling signal interrupts a blocking system call.
 
 **When the app is done (`idle`).** `{"query":"idle","args":{"wait":true}}` is
 answered `{idle: true}` at the app's next idle point -- the main loop about to

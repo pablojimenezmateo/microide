@@ -624,6 +624,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/control/ControlUiQuery.cpp
   src/workspace/control/ControlBufferQuery.cpp
   src/workspace/control/ControlCompareQuery.cpp
+  src/workspace/control/ControlInvariantsQuery.cpp
   src/workspace/control/ControlSurfaceQuery.cpp
   src/workspace/control/ControlUiShellSources.cpp
   src/workspace/HoverTextWrap.cpp

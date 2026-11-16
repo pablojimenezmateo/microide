@@ -27,6 +27,7 @@
 #include "app/IdleWaitStrategy.h"
 #include "app/SdlWaker.h"
 #include "editor/RuntimeSyntaxRegistry.h"
+#include "platform/CrashDiagnostics.h"
 #include "platform/RuntimePaths.h"
 #include "platform/SubprocessSandbox.h"
 #include "render/RasterDecode.h"
@@ -200,6 +201,9 @@ int Application::Run() {
   }
 
   running_ = true;
+  // MICROIDE_TRACE_STALL_MS: a loop turn that runs that long prints where the
+  // main thread is (platform/CrashDiagnostics.h). Off unless asked.
+  (void)platform::StartStallWatchdogFromEnvironment();
   bool full_redraw_pending = true;
   // A re-present with no damage (an event-time cursor change; see
   // RenderInvalidation::present). Any render presents too, so it only drives a
@@ -210,6 +214,7 @@ int Application::Run() {
   const char* redraw_reason = "startup";
 
   while (running_) {
+    platform::NoteMainLoopTurn();
     if (full_redraw_pending || !dirty_rects.empty()) {
       const bool was_first_frame = !first_render_complete_;
       Render(full_redraw_pending ? std::vector<SDL_FRect>{} : dirty_rects, redraw_reason);
@@ -284,11 +289,13 @@ int Application::Run() {
         break;
       case IdleWaitMode::WaitTimeout: {
         const SdlBlockingWaitScope blocking;
+        const platform::MainLoopIdleScope idle;
         has_event = SDL_WaitEventTimeout(&event, idle_wait.timeout_ms);
         break;
       }
       case IdleWaitMode::Wait: {
         const SdlBlockingWaitScope blocking;
+        const platform::MainLoopIdleScope idle;
         has_event = SDL_WaitEvent(&event);
         break;
       }

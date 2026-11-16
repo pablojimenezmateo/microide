@@ -19,11 +19,13 @@
 
 #include "platform/AppDirectories.h"
 #include "platform/RuntimePaths.h"
+#include "util/CrashPointControl.h"
 #include "util/HeapUsage.h"
 #include "util/Parse.h"
 #include "util/Sha256.h"
 #include "util/StringUtil.h"
 #include "workspace/control/ControlCompareQuery.h"
+#include "workspace/control/ControlInvariantsQuery.h"
 #include "workspace/control/ControlProtocol.h"
 #include "workspace/WorkspaceTerminalSelection.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
@@ -563,6 +565,50 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
   if (verb == "action-counts") {
     return operations_.ui.action_counts ? operations_.ui.action_counts()
                                         : util::JsonValue(util::JsonObject{});
+  }
+  if (verb == "invariants") {
+    // The workspace's structural rules, checked from the inside
+    // (ControlInvariantsQuery.h); {"deep": true} adds the focused editor's
+    // derived layout tables against a fresh build.
+    ControlInvariantsQueryOptions options;
+    options.deep = args.IsObject() && args.HasKey("deep") && args["deep"].AsBool(false);
+    return BuildControlInvariantsJson(context_ != nullptr ? &context_->current_project_state : nullptr,
+                                      options);
+  }
+  if (verb == "crash-points") {
+    // QA's handle on the durable-write boundaries (util/CrashPointControl.h):
+    // which ones this process has passed, by site and file, and one rule to kill
+    // or stall itself at the next pass of one -- {"arm": "kill:<site>@<text>#<n>"},
+    // {"disarm": true}. Installed only under MICROIDE_QA_CRASH_POINTS.
+    if (args.IsObject() && args.HasKey("arm")) {
+      std::string why;
+      if (!util::CrashPointControl::Arm(args["arm"].AsString(), &why)) {
+        *ok = false;
+        *error = "crash-points: " + why;
+        return util::JsonValue(nullptr);
+      }
+    } else if (args.IsObject() && args.HasKey("disarm") && args["disarm"].AsBool(false)) {
+      util::CrashPointControl::Disarm();
+    }
+    const util::CrashPointControl::Snapshot snapshot = util::CrashPointControl::Read();
+    util::JsonObject result;
+    result["installed"] = util::JsonValue(snapshot.installed);
+    result["armed"] = util::JsonValue(snapshot.armed);
+    result["armedMatches"] = util::JsonValue(static_cast<std::int64_t>(snapshot.armed_matches));
+    util::JsonArray sites;
+    for (const util::CrashPointControl::SitePasses& site : snapshot.sites) {
+      util::JsonObject entry;
+      entry["site"] = util::JsonValue(site.site);
+      entry["passes"] = util::JsonValue(static_cast<std::int64_t>(site.passes));
+      util::JsonObject files;
+      for (const auto& [name, count] : site.files) {
+        files[name] = util::JsonValue(static_cast<std::int64_t>(count));
+      }
+      entry["files"] = util::JsonValue(std::move(files));
+      sites.push_back(util::JsonValue(std::move(entry)));
+    }
+    result["sites"] = util::JsonValue(std::move(sites));
+    return util::JsonValue(std::move(result));
   }
   *ok = false;
   *error = "unknown query \"" + verb + "\"";

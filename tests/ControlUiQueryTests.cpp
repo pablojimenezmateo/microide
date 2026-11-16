@@ -12,9 +12,11 @@
 #include "support/RetainedRedraw.h"
 #include "support/SoftwareCanvas.h"
 #include "util/JsonValue.h"
+#include "workspace/control/ControlInvariantsQuery.h"
 #include "workspace/control/ControlProtocol.h"
 #include "workspace/control/ControlUiQuery.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
+#include "workspace/state/WorkspaceProjectState.h"
 
 namespace microide::tests {
 namespace {
@@ -463,6 +465,59 @@ void TestEveryListedQueryVerbIsAnswered() {
   Expect(surface["commands"].AsArray().size() > 200, "the surface lists the command catalogue");
 }
 
+// The `invariants` query holds on a live workspace, and each rule names the
+// state that breaks it: the monkey asks every few steps, so a broken rule is
+// found within a few actions of the one that broke it instead of at the symptom
+// (two unsaved buffers under one Untitled-N name showed as a lost buffer after a
+// kill -9, hundreds of steps on: soak 93ba7c8703e3).
+void TestInvariantsQueryHoldsAndNamesBrokenRules() {
+  UiFixture fixture;
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "split-right should run");
+  const util::JsonValue held = TestAccess::ControlQuery(fixture.shell, "invariants");
+  Expect(held["ok"].AsBool() && held["violations"].AsArray().empty(),
+         "a live workspace breaks no rule: " + util::SerializeJson(held));
+  Expect(held["checked"]["groups"].AsInt() == 2, "the query counts the groups it checked");
+
+  const auto rules = [](const workspace::ProjectWorkspaceState& project) {
+    std::string out;
+    for (const workspace::WorkspaceInvariantViolation& violation :
+         workspace::CheckWorkspaceInvariants(project).violations) {
+      out += violation.rule + ";";
+    }
+    return out;
+  };
+  workspace::ProjectWorkspaceState project;
+  Expect(rules(project).empty(), "a fresh project state breaks no rule, got: " + rules(project));
+
+  project.focused_group_index = 3;
+  Expect(rules(project) == "groups;", "a focused group that does not exist is named, got: " + rules(project));
+  project.focused_group_index = 0;
+
+  project.editor_groups.emplace_back();
+  Expect(rules(project) == "groups;",
+         "a group the split tree has no leaf for is named, got: " + rules(project));
+  project.editor_groups.pop_back();
+
+  for (int i = 0; i < 2; ++i) {
+    workspace::TabEntry tab;
+    tab.title = "Untitled-1";
+    tab.untitled_number = 1;
+    tab.editor_state.emplace();
+    project.editor_groups[0].open_tabs.push_back(std::move(tab));
+  }
+  Expect(rules(project) == "untitled;",
+         "two different buffers under one Untitled number are named, got: " + rules(project));
+  project.editor_groups[0].open_tabs[1].untitled_number = 2;
+  Expect(rules(project).empty(), "two buffers with a number each break no rule, got: " + rules(project));
+
+  project.editor_groups[0].active_tab_index = 9;
+  Expect(rules(project) == "tabs;", "an active tab past the strip's end is named, got: " + rules(project));
+  project.editor_groups[0].active_tab_index = 0;
+
+  project.editor_groups[0].open_tabs[0].kind = workspace::TabEntry::Kind::Compare;
+  Expect(rules(project) == "tabs;", "a compare tab with no compare state is named, got: " + rules(project));
+}
+
 // The list overlays name their rows, and a click at a row's center runs it.
 void TestUiQueryNamesOverlayRows() {
   UiFixture fixture;
@@ -870,6 +925,8 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/KeyCommandTypesPrintableKeys", TestKeyCommandTypesPrintableKeys);
   AddTest(tests, "ControlUiQuery/LargeEditorFontKeepsTheChromeSize", TestLargeEditorFontKeepsTheChromeSize);
   AddTest(tests, "ControlUiQuery/EveryListedQueryVerbIsAnswered", TestEveryListedQueryVerbIsAnswered);
+  AddTest(tests, "ControlUiQuery/InvariantsQueryHoldsAndNamesBrokenRules",
+          TestInvariantsQueryHoldsAndNamesBrokenRules);
   AddTest(tests, "ControlUiQuery/DocumentsQueryHashesWhatASaveWrites", TestDocumentsQueryHashesWhatASaveWrites);
   AddTest(tests, "ControlUiQuery/DocumentsQueryHashesWhatASaveWritesForABufferMadeOpaque",
           TestDocumentsQueryHashesWhatASaveWritesForABufferMadeOpaque);

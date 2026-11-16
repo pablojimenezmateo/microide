@@ -2,8 +2,10 @@
 #include "app/AppStartupOptions.h"
 #include "app/Application.h"
 #include "workspace/persistence/PersistedRecordDump.h"
+#include "platform/CrashDiagnostics.h"
 #include "platform/HostPlatform.h"
 #include "platform/OpenFileLimit.h"
+#include "util/CrashPointControl.h"
 #include "util/DebugTrace.h"
 #include "util/TraceChannel.h"
 #include "workspace/control/ControlChannelService.h"
@@ -35,6 +37,12 @@ int main(int argc, char** argv) {
   // Writing to a subprocess/terminal/LSP pipe whose reader has died must surface as
   // EPIPE, not kill the editor. Install this before any I/O can occur.
   microide::platform::IgnoreBrokenPipeSignal();
+  // A crash says where: the crashing thread's backtrace on stderr, then the
+  // signal's own death (platform/CrashDiagnostics.h).
+  microide::platform::InstallCrashBacktraceHandler();
+  // QA's handle on the durable-write boundaries: counted, and armed to kill the
+  // process at one, only when MICROIDE_QA_CRASH_POINTS asks (util/CrashPointControl.h).
+  (void)microide::util::CrashPointControl::InstallFromEnvironment();
   // The QA driver's stall evidence: lets the driver's gdb attach (a no-op unless asked).
   microide::platform::AllowParentToTraceWhenAskedByQa();
   // Before any thread: Xlib's text conversions (the window title) follow it.
