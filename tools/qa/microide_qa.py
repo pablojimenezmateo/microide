@@ -36,6 +36,7 @@ from __future__ import annotations
 import collections
 import contextlib
 import ctypes
+import gzip
 import importlib.util
 import json
 import re
@@ -55,6 +56,8 @@ from typing import Any, Callable, Iterator
 from PIL import Image
 
 import xtest
+from recording import (RR_MODES, finish_recordings, is_rr_line, rr_failure, rr_mode,  # noqa: F401
+                       rr_unusable_reason)
 
 REPO = Path(__file__).resolve().parents[2]
 CAPTURE = REPO / "tools" / "capture-media"
@@ -103,7 +106,8 @@ FINDING_MARKERS = (
 def is_finding_line(line: str) -> bool:
     """A log line an oracle reports. The input trace echoes what was typed, so a
     typed "Assertion" is not one."""
-    return "microide input: " not in line and any(marker in line for marker in FINDING_MARKERS)
+    return ("microide input: " not in line and not is_rr_line(line)
+            and any(marker in line for marker in FINDING_MARKERS))
 
 # Sanitizer runtime defaults for a QA run (a sanitizer build reads them; others
 # ignore them). halt_on_error so the first report is the one attributable to the
@@ -115,6 +119,28 @@ SANITIZER_ENV = {
     "UBSAN_OPTIONS": "print_stacktrace=1",
     "TSAN_OPTIONS": f"suppressions={REPO / 'tests' / 'tsan.supp'}",
 }
+
+
+def process_children(pid: int) -> list[int]:
+    """The direct children of every thread of `pid` (empty when it is gone)."""
+    out: list[int] = []
+    with contextlib.suppress(OSError, ValueError):
+        for task in Path(f"/proc/{pid}/task").iterdir():
+            with contextlib.suppress(OSError, ValueError):
+                out += [int(child) for child in (task / "children").read_text().split()]
+    return out
+
+
+def machine_pressure() -> str:
+    """The machine's load as a finding sees it: the load averages and the kernel's
+    pressure-stall figures. A latency or timed-out finding from a starved machine
+    is the machine's; without this the two looked the same in the ledger."""
+    lines = [f"cores: {os.cpu_count()}"]
+    for name in ("loadavg", "pressure/cpu", "pressure/io", "pressure/memory"):
+        with contextlib.suppress(OSError):
+            for line in Path(f"/proc/{name}").read_text().splitlines():
+                lines.append(f"{name}: {line}")
+    return "\n".join(lines) + "\n"
 
 
 # The desktop's input-method selection, which the app under test must not inherit
@@ -362,6 +388,12 @@ class App:
     _launches: int = 0
     _reported_bad_utf8: bool = False
     _stall_captured: bool = False
+    # Recording under rr ($MQA_RR, read once per App): the mode, the app's own pid
+    # (rr's child; None until looked up, again after each launch) and the trace
+    # directory of the current launch.
+    _rr_mode: str = field(default_factory=rr_mode)
+    _app_pid: int | None = None
+    _trace_dir: Path | None = None
     _extra_args: list[str] = field(default_factory=list)
     # In-process XTEST input on the run's Xvfb (None on Wayland or without libXtst).
     _xt: Any = None
@@ -604,9 +636,7 @@ class App:
         in the relaunched app at all (soak e946ec9333d7)."""
         self._bank_action_counts()
         if self.alive():
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(self.proc.pid, signal.SIGKILL)
-            self.proc.wait(timeout=5)
+            self._sigkill()
         for line in self.new_log_lines():
             if is_finding_line(line):
                 self.findings.append(Finding("log", line.strip()))
@@ -643,7 +673,8 @@ class App:
         self._keys_sent: list[str] = []  # what the presses were, for a timeout's note
         self._typed_log_offset = 0
         # Absolute: the app starts in its work tree, not the caller's directory.
-        args = [str(Path(self.binary).absolute())]
+        self._app_pid = None
+        args = [*self._recorder_args(), str(Path(self.binary).absolute())]
         if project is not None:
             args.append(str(Path(project).absolute()))
         args += ["--set", "control.enabled", "true", *extra_args]
@@ -673,7 +704,7 @@ class App:
         # resize-overlays flow sent then went nowhere, and only its waits noticed.
         self.window = self._find_window()
         if not self.wayland and self.window is None:
-            raise QaFailure(f"no X window found for microide (pid {self.proc.pid}); log: {self.log_path}")
+            raise QaFailure(f"no X window found for microide (pid {self.pid}); log: {self.log_path}")
         self.origin = self._window_origin()
         self._apply_run_size()
 
@@ -806,8 +837,9 @@ class App:
             if proc is not None and proc.poll() is None:
                 with contextlib.suppress(ProcessLookupError):
                     os.killpg(proc.pid, signal.SIGTERM) if proc is self.proc else proc.terminate()
+                # rr closes its trace on SIGTERM, after its tracees have gone.
                 with contextlib.suppress(subprocess.TimeoutExpired):
-                    proc.wait(timeout=5)
+                    proc.wait(timeout=20 if proc is self.proc and self.recording else 5)
                 if proc.poll() is None:
                     proc.kill()
         kill_run_processes(self.work)
@@ -816,6 +848,87 @@ class App:
 
     def alive(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
+
+    @property
+    def recording(self) -> bool:
+        """This launch runs under `rr record` (MQA_RR)."""
+        return bool(self._rr_mode)
+
+    @property
+    def pid(self) -> int | None:
+        """The app's own pid: what /proc, a signal or a window search is about.
+        Recorded, `self.proc` is rr and the app is the child of it that runs the
+        binary; the oracles read the app's descriptors and threads, not rr's."""
+        if self.proc is None:
+            return None
+        if not self.recording:
+            return self.proc.pid
+        if self._app_pid is None:
+            binary = os.path.realpath(self.binary)
+            for child in process_children(self.proc.pid):
+                with contextlib.suppress(OSError):
+                    if os.path.realpath(f"/proc/{child}/exe") == binary:
+                        self._app_pid = child
+                        break
+        return self._app_pid if self._app_pid is not None else self.proc.pid
+
+    def recording_dir(self) -> Path | None:
+        """Where this run's rr traces go: beside the screenshots, so they outlive
+        the private work tree, else inside it."""
+        if not self.recording:
+            return None
+        return (self.shots if self.shots is not None else self.work) / "rr"
+
+    def _recorder_args(self) -> list[str]:
+        """The `rr record` prefix of this launch's command line, or nothing."""
+        if not self.recording:
+            return []
+        reason = rr_unusable_reason()
+        if reason is not None:
+            raise QaFailure(f"MQA_RR is set but rr cannot record here: {reason}")
+        traces = self.recording_dir()
+        traces.mkdir(parents=True, exist_ok=True)
+        self._trace_dir = traces / f"launch-{self._launches - 1}"
+        shutil.rmtree(self._trace_dir, ignore_errors=True)  # rr refuses an existing one
+        chaos = ["--chaos"] if self._rr_mode == "chaos" else []
+        return ["rr", "record", *chaos, "-o", str(self._trace_dir)]
+
+    def _sigkill(self) -> None:
+        """SIGKILL, the crash path. Recorded, the kill goes to the app alone: rr
+        sees its tracee die, writes the trace's end and exits, and the trace of
+        the killed process replays to the instant of the kill. Killing rr with it
+        left a trace with no end, which `rr replay` refuses."""
+        if self.proc is None:
+            return
+        if self.recording and self.alive():
+            app = self.pid
+            if app is not None and app != self.proc.pid:
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(app, signal.SIGKILL)
+                # rr leaves once every tracee has: the app's terminals hang up and
+                # its servers read end-of-file when it dies. One that lingers is
+                # ended by rr's own SIGTERM handling, which still closes the trace.
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    self.proc.wait(timeout=10 * SLOW_FACTOR)
+                if self.proc.poll() is None:
+                    with contextlib.suppress(ProcessLookupError):
+                        os.kill(self.proc.pid, signal.SIGTERM)
+                    with contextlib.suppress(subprocess.TimeoutExpired):
+                        self.proc.wait(timeout=10 * SLOW_FACTOR)
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(self.proc.pid, signal.SIGKILL)
+        self.proc.wait(timeout=5)
+
+    def save_run_logs(self, destination: Path) -> None:
+        """The whole log of every launch of this run, compressed, into
+        `destination`. A finding keeps the log's last 64 KB -- the last tenth of
+        a 1500-step run -- and the work tree with the rest is deleted at stop();
+        what set a late symptom up (a save 600 actions earlier) was not in it."""
+        destination.mkdir(parents=True, exist_ok=True)
+        for log in sorted(self.work.glob("microide*.log")):
+            with contextlib.suppress(OSError):
+                with open(log, "rb") as source, gzip.open(destination / f"{log.name}.gz", "wb", 6) as out:
+                    shutil.copyfileobj(source, out)
 
     # ---- control channel -------------------------------------------------
 
@@ -907,8 +1020,8 @@ class App:
         if self._stall_captured or self.shots is None or self.proc is None or self.proc.poll() is not None:
             return
         self._stall_captured = True
-        lines = [f"stall: {why}", f"pid {self.proc.pid}", ""]
-        task_dir = Path(f"/proc/{self.proc.pid}/task")
+        lines = [f"stall: {why}", f"pid {self.pid}", ""]
+        task_dir = Path(f"/proc/{self.pid}/task")
         try:
             tids = sorted(task_dir.iterdir(), key=lambda entry: int(entry.name))
         except OSError as error:
@@ -930,11 +1043,13 @@ class App:
         # soak d3f7c53a3cd7 was asleep on a futex, and the states alone cannot say
         # which wait. The app lets its parent's descendants trace it
         # (MICROIDE_QA_PARENT_MAY_TRACE); bounded, and skipped without gdb.
-        gdb = shutil.which("gdb")
+        # Not under rr: a traced process takes no second tracer, and the recording
+        # holds every thread's stack at the stall anyway (`rr replay`, then `bt`).
+        gdb = shutil.which("gdb") if not self.recording else None
         if gdb is not None:
             try:
                 traced = subprocess.run(
-                    [gdb, "-p", str(self.proc.pid), "-batch", "-nx", "-ex", "set pagination off",
+                    [gdb, "-p", str(self.pid), "-batch", "-nx", "-ex", "set pagination off",
                      "-ex", "thread apply all bt 40"],
                     env=self.tool_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60, check=False)
                 (self.shots / "stall-backtrace.txt").write_bytes(traced.stdout[-512 * 1024:])
@@ -1211,7 +1326,7 @@ class App:
         # xdotool, in the C locale, cannot even match a UTF-8 one.
         searches = [["--class", "microide"]]
         if self.proc is not None:
-            searches.insert(0, ["--pid", str(self.proc.pid)])
+            searches.insert(0, ["--pid", str(self.pid)])
         deadline = time.monotonic() + 20.0
         while True:
             for search in searches:
@@ -1916,7 +2031,13 @@ class App:
                 found.append(Finding("log", line.strip()))
         if not self.alive():
             code = self.proc.returncode if self.proc else None
-            found.append(Finding("crash", f"microide exited ({code}) after {label or 'last action'}"))
+            lost = rr_failure(self.log_tail(256 * 1024)) if self.recording else None
+            if lost is not None:
+                # rr stopped, and took the app with it: the recorder's limit, not
+                # the app's crash. Its own kind, which no ledger books.
+                found.append(Finding("recorder", f"rr stopped recording after {label or 'last action'}: {lost}"))
+            else:
+                found.append(Finding("crash", f"microide exited ({code}) after {label or 'last action'}"))
         else:
             for kind, message in self._ui_oracles():
                 found.append(Finding(kind, f"after {label or 'last action'}: {message}"))
@@ -2257,6 +2378,14 @@ class App:
         # The log's tail too: a crash's sanitizer report and stack, the frames
         # before the trace window (the soak runner's FINDING.md reads both).
         (folder / "log-tail.txt").write_text(self.log_tail(64 * 1024))
+        (folder / "machine.txt").write_text(machine_pressure())
+        if self.recording and self._trace_dir is not None:
+            # Which of the run's traces holds this finding, and how far into it.
+            (folder / "recording.txt").write_text(
+                f"trace: rr/{self._trace_dir.name}\n"
+                f"mode: {'chaos' if self._rr_mode == 'chaos' else 'plain'}\n"
+                f"launch: {self._launches} of this run (a kill -9 or a restart starts the next)\n"
+                f"frames logged by this launch: {self._frames_logged()}\n")
         # After a kill -9 the log above is the relaunched process's; what the killed
         # one did last (its flushes, its saves) is in the launch before it.
         previous = self._previous_log_path()

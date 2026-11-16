@@ -7,6 +7,7 @@
     tools/soak/soak.py ledger [list|show SIG|claim SIG|fixed SIG COMMIT|reopen SIG|note SIG TEXT]
     tools/soak/soak.py build                                     update the worktree and build once
     tools/soak/soak.py pause [REASON] [--wait S] / resume         take turns with the fixing agent
+    tools/soak/soak.py health                                    is every cell running, is the ledger honest
 
 It follows `main` in its own worktree (`build/wt-soak`, never the live tree) and
 rebuilds when `main` moves: the default build (assertions on), an optimized
@@ -24,6 +25,14 @@ new one gets a bundle under `build/soak/findings/<sig>/` with FINDING.md; it is
 then replayed for a reproduction rate and, when deterministic, minimized
 (minimize.py). A fixed signature is re-checked on every later build and
 reopened if it comes back. See tools/soak/AGENT.md for the fixing agent's side.
+
+Most severe findings never reproduce from a replay of their actions (a race, a
+kill -9 at the wrong instant). Three things are for those: a share of the jobs
+runs the app under `rr record` and a finding keeps the trace, which replays
+the same execution every time (RECORD_FRACTION); a fix no replay can check is
+verified by the soak it then survives, not by a replay that never showed it
+(exposure.py); and an open finding the soak stopped showing is listed as
+quiet rather than as work to do.
 """
 
 from __future__ import annotations
@@ -31,6 +40,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import math
 import os
 import random
 import re
@@ -47,9 +57,11 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(REPO / "tools" / "qa"))
+import exposure as ex  # noqa: E402
 import ledger as ld  # noqa: E402
 import findings as fnd  # noqa: E402
 import monkey_model as mm  # noqa: E402
+import recording  # noqa: E402
 
 SOAK = Path(os.environ.get("MICROIDE_SOAK_DIR", REPO / "build" / "soak"))
 WORKTREE = Path(os.environ.get("MICROIDE_SOAK_WORKTREE", REPO / "build" / "wt-soak"))
@@ -59,8 +71,13 @@ WORKTREE = Path(os.environ.get("MICROIDE_SOAK_WORKTREE", REPO / "build" / "wt-so
 DRIVERS = SOAK / "driver"
 # What the driver reads from the repository (microide_qa.REPO is two levels up
 # from tools/qa): the driver itself, the fixture script, the soak's own tools
-# (minimize.py) and the plugins a profile loads.
-DRIVER_PATHS = ("tools/qa", "tools/capture-media", "tools/soak", "plugins")
+# (minimize.py), the plugins a profile loads and the sanitizers' suppression
+# files its SANITIZER_ENV names. Without the last, every TSan job died at
+# startup ("failed to read suppressions file") from the day jobs began to run
+# from a snapshot: 23 runs of 0 steps and no finding, for four days
+# (test_snapshot.py holds the list to what the driver names).
+DRIVER_PATHS = ("tools/qa", "tools/capture-media", "tools/soak", "plugins",
+                "tests/lsan.supp", "tests/tsan.supp")
 PAUSE = SOAK / "PAUSE"
 STATE = SOAK / "state.json"
 RUNS = SOAK / "runs"
@@ -87,7 +104,13 @@ class Build:
 
 
 BUILDS = {
-    "default": Build("default", "build", ["-S", ".", "-B", "build"], 1.0),
+    # With debug info (-g changes no code): a recorded job's trace (RECORD_BUILDS)
+    # is debugged with this binary, and without it gdb has names and no lines,
+    # locals or types to watch.
+    # -gz: the sections compressed, 280 MB where plain -g is 600 (the binary is
+    # copied per commit, and every kept trace holds a link to its own).
+    "default": Build("default", "build", ["-S", ".", "-B", "build", "-DCMAKE_CXX_FLAGS=-g -gz",
+                                          "-DCMAKE_C_FLAGS=-g -gz"], 1.0),
     "release": Build("release", "build-release", ["-S", ".", "-B", "build-release",
                                                   "-DCMAKE_BUILD_TYPE=Release"], 1.0),
     "asan": Build("asan", "build/microide-asan", ["--preset", "microide-asan"], 3.0),
@@ -167,12 +190,23 @@ def snapshot_driver(head: str) -> Path:
         staging = DRIVERS / f".{head[:12]}.partial"
         shutil.rmtree(staging, ignore_errors=True)
         for relative in DRIVER_PATHS:
-            source = WORKTREE / relative
-            if source.exists():
-                shutil.copytree(source, staging / relative, symlinks=True,
-                                ignore=shutil.ignore_patterns("__pycache__"))
+            copy_driver_path(WORKTREE / relative, staging / relative)
         staging.rename(target)
+    else:
+        # A snapshot an older runner took of this commit, with a shorter list:
+        # the worktree is still at `head` (both callers), so fill it in.
+        for relative in DRIVER_PATHS:
+            if not (target / relative).exists():
+                copy_driver_path(WORKTREE / relative, target / relative)
     return target
+
+
+def copy_driver_path(source: Path, destination: Path) -> None:
+    if source.is_dir():
+        shutil.copytree(source, destination, symlinks=True, ignore=shutil.ignore_patterns("__pycache__"))
+    elif source.exists():
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
 
 
 def driver_root(state: dict[str, Any]) -> Path:
@@ -247,8 +281,50 @@ JOB_TYPES = [
     JobType("asan", 10, "asan", steps=600, timeout=3600),
     JobType("asan-editing", 4, "asan", "editing", steps=500, timeout=3600),
     JobType("ubsan", 5, "ubsan", steps=800, timeout=3600),
-    JobType("tsan", 2, "tsan", steps=300, timeout=3600, matrix=False),
+    # The one build that names a data race outright, and the open severe findings
+    # are races: it had the lowest weight of all (2) and, dead at startup for
+    # four days, a yield of nothing that the steering then starved further.
+    JobType("tsan", 8, "tsan", steps=300, timeout=3600, matrix=False),
 ]
+
+# ---- recorded jobs -----------------------------------------------------------------
+
+# The builds whose jobs may run under `rr record` (tools/qa/recording.py): the
+# sanitizer builds are slow enough already and say what they find themselves.
+RECORD_BUILDS = frozenset({"default"})
+# Profiles that are not recorded. rr stops a recording, app and all, at a system
+# call it does not implement, and this machine's coreutils (cat, head, seq, yes)
+# call one: tee(2). The commands the terminal and world monkeys run reach it
+# several times in 500 steps; the other profiles open a terminal now and then,
+# and a run that loses its recorder there is counted (`soak.py health`), not
+# booked. TD-2026-11-16-451 has the two-line rr patch that lifts this.
+UNRECORDED_PROFILES = frozenset({"terminal", "world"})
+# The share of those jobs that is recorded, and of the recorded ones in rr's
+# chaos mode (randomized scheduling: races show more often, at more cost). Not
+# all of them: rr runs the app's threads one at a time, so a recorded run has
+# its own timing, and the soak wants both.
+RECORD_FRACTION = 0.3
+RECORD_CHAOS_SHARE = 0.5
+# MQA_SLOW_FACTOR for a recorded job (the build's own, when larger).
+RECORD_SLOW = {"1": 3.0, "chaos": 5.0}
+RECORD_CELL_TAG = {"": "", "1": "+rr", "chaos": "+rr-chaos"}
+# The largest window a recorded job gets, in pixels. rr cannot record a GPU
+# driver, so a recorded app falls back to SDL's software renderer, on the one
+# core rr gives it, with the redraw verifier painting every frame twice: at
+# 2560x1440 single frames took a minute and the driver's queries timed out.
+RECORD_MAX_PIXELS = 1440 * 900
+
+
+def choose_recording(job_type: "JobType", rng: random.Random) -> str:
+    """"" (not recorded), "1" or "chaos" for a job about to start. Nothing is
+    recorded where rr cannot run (`soak.py health` says why)."""
+    if job_type.build not in RECORD_BUILDS or job_type.profile in UNRECORDED_PROFILES \
+            or recording.rr_unusable_reason() is not None:
+        return ""
+    if rng.random() >= RECORD_FRACTION:
+        return ""
+    return "chaos" if rng.random() < RECORD_CHAOS_SHARE else "1"
+
 SIZES = [(1440, 900), (1440, 900), (1280, 720), (1920, 1080), (1024, 700), (800, 600), (2560, 1440), (640, 480)]
 SCALES = ["1", "1", "1", "1.25", "1.5", "1.75", "2"]
 # A cell whose LOGICAL window (pixels / ui.scale) is smaller than this is "tiny":
@@ -275,10 +351,12 @@ def cell_is_tiny(cell: str) -> bool:
         return False
 
 
-def choose_cell(rng: random.Random) -> tuple[tuple[int, int], str]:
+def choose_cell(rng: random.Random, max_pixels: int | None = None) -> tuple[tuple[int, int], str]:
     """A window size and ui.scale, drawn from SIZES x SCALES with tiny cells
-    weighted down to TINY_CELL_WEIGHT."""
-    cells = [(size, scale) for size in SIZES for scale in SCALES]
+    weighted down to TINY_CELL_WEIGHT; with `max_pixels`, from the sizes of at
+    most that many pixels."""
+    cells = [(size, scale) for size in SIZES for scale in SCALES
+             if max_pixels is None or size[0] * size[1] <= max_pixels]
     weights = [TINY_CELL_WEIGHT if is_tiny(size, scale) else 1.0 for size, scale in cells]
     return rng.choices(cells, weights=weights)[0]
 
@@ -290,21 +368,51 @@ def choose_cell(rng: random.Random) -> tuple[tuple[int, int], str]:
 # their work or their session; the sanitizers' log lines are memory and thread
 # bugs whatever they look like on screen.
 TIER_NAMES = ("severe", "behaviour", "layout", "paint")
-_SEVERE_KINDS = frozenset({"crash", "data", "undo", "leak", "build", "containment"})
+_SEVERE_KINDS = frozenset({"crash", "data", "undo", "leak", "build", "containment", "job"})
+# What a new finding of each tier counts for when the rotation follows yield
+# (choose_job). Counted one each, the yield was the stale-paint signatures' --
+# 983 of the ledger's 1336, one defect fanning out into dozens -- and the jobs
+# that find those took the weight from the ones that find lost data.
+TIER_YIELD = (1.0, 0.5, 0.1, 0.05)
 _BEHAVIOUR_KINDS = frozenset({"state", "focus", "expect", "idle", "latency", "liveness"})
 _LAYOUT_KINDS = frozenset({"overlap", "bounds"})
 
 
 def impact_tier(entry: ld.Entry) -> int:
-    if entry.kind == "log":
-        return 3 if "QA-STALE" in entry.label else 0
-    if entry.kind in _SEVERE_KINDS:
+    return tier_of(entry.kind, entry.label)
+
+
+def tier_of(kind: str, label: str) -> int:
+    if kind == "log":
+        return 3 if "QA-STALE" in label else 0
+    if kind in _SEVERE_KINDS:
         return 0
-    if entry.kind in _BEHAVIOUR_KINDS:
+    if kind in _BEHAVIOUR_KINDS:
         return 1
-    if entry.kind in _LAYOUT_KINDS:
+    if kind in _LAYOUT_KINDS:
         return 2
     return 1
+
+
+# ---- families ------------------------------------------------------------------------
+
+_FAMILY_FILE = re.compile(r"\b(buffer of|buffer|text of) (\S.*?) (did not come back|came back|differs|\(<n> ->)")
+_FAMILY_STALE = re.compile(r"^log: (\[[^\]]*\] )?QA-STALE .*?(reason=\S+)")
+
+
+def family(kind: str, label: str) -> str:
+    """A label with what splits one defect into many signatures taken out: the
+    file a data or undo finding names (the kill -9 restore failure is ten
+    signatures, one per fixture file), a leak's budget note, a stale frame's
+    clip count. For reading the ledger, not for deduplication."""
+    if kind in ("data", "undo"):
+        return _FAMILY_FILE.sub(lambda m: f"{m.group(1)} <file> {m.group(3)}", label)
+    if kind == "leak":
+        return label.split(" over the run", 1)[0]
+    stale = _FAMILY_STALE.match(label)
+    if stale:
+        return f"log: {stale.group(1) or ''}QA-STALE {stale.group(2)}"
+    return label
 
 
 def tiny_only(entry: ld.Entry) -> bool:
@@ -313,11 +421,53 @@ def tiny_only(entry: ld.Entry) -> bool:
 
 
 def priority_key(entry: ld.Entry) -> tuple:
-    """Sort key, best first: impact tier; within a tier, a finding a real-size
+    """Sort key, best first: a finding the soak still shows before a quiet one
+    (is_quiet); then the impact tier; within a tier, a finding a real-size
     window shows before one only a tiny window does, then deterministic before
     unchecked before flaky, then the most sightings."""
     det = 0 if entry.deterministic else (2 if entry.deterministic is False else 1)
-    return (impact_tier(entry), tiny_only(entry), det, -entry.count, entry.sig)
+    return (is_quiet(entry), impact_tier(entry), tiny_only(entry), det, -entry.count, entry.sig)
+
+
+# ---- exposure: what the soak's silence says ------------------------------------------
+
+_EXPOSURE: tuple[float, ex.Exposure] | None = None
+
+
+def current_exposure() -> ex.Exposure:
+    """The soak's runs (runs.jsonl), re-read when the file changes."""
+    global _EXPOSURE
+    try:
+        stamp = RUN_LOG.stat().st_mtime
+    except OSError:
+        stamp = 0.0
+    if _EXPOSURE is None or _EXPOSURE[0] != stamp:
+        _EXPOSURE = (stamp, ex.Exposure(run_rows()))
+    return _EXPOSURE[1]
+
+
+def quiet_for(entry: ld.Entry) -> ex.Quiet | None:
+    """The soak since the finding's last sighting (exposure.py)."""
+    return current_exposure().quiet(entry.sightings) if entry.sightings else None
+
+
+def is_quiet(entry: ld.Entry) -> bool:
+    """An open finding the soak has stopped showing: enough runs of the jobs
+    that showed it, since, that its old rate was due QUIET_EXPECTED sightings.
+    Probably fixed by something else, or by a fix nobody booked; it stays in the
+    ledger, and one sighting makes it active again."""
+    if entry.status not in ("new", "reopened"):
+        return False
+    quiet = quiet_for(entry)
+    return quiet is not None and quiet.expected >= ex.QUIET_EXPECTED
+
+
+def fix_exposure(entry: ld.Entry) -> ex.Quiet | None:
+    """The soak on builds that contain the entry's fix."""
+    if not entry.fix_commit or not entry.sightings:
+        return None
+    return current_exposure().quiet(entry.sightings, since=0.0,
+                                    on_build=lambda sha: bool(sha) and has_commit(entry.fix_commit, sha))
 
 
 def priority_tag(entry: ld.Entry) -> str:
@@ -335,6 +485,8 @@ class Job:
     proc: subprocess.Popen
     sha: str
     binary: str
+    record: str = ""    # "" | "1" | "chaos": run under rr (choose_recording)
+    slow: float = 1.0   # the MQA_SLOW_FACTOR it ran with
 
 
 _ANCESTRY: dict[tuple[str, str], bool] = {}
@@ -366,13 +518,24 @@ def choose_job(rng: random.Random, state: dict[str, Any]) -> JobType | None:
     # Yield steering: a job type's weight grows with the distinct findings it
     # produced per CPU hour (W1.6), so effort follows what finds bugs.
     stats = state.get("stats", {})
-    weights = []
-    for job in available:
-        entry = stats.get(job.name, {})
-        hours = max(0.5, entry.get("cpu_hours", 0.0))
-        yield_rate = entry.get("new_findings", 0) / hours
-        weights.append(job.weight * (1 + min(4.0, 4 * yield_rate)))
-    return rng.choices(available, weights=weights)[0]
+    return rng.choices(available, weights=[job_weight(job, stats.get(job.name, {})) for job in available])[0]
+
+
+def job_weight(job: JobType, stats: dict[str, Any]) -> float:
+    """A job type's weight in the rotation: its own, raised up to fivefold by
+    the new findings it brought per hour, each counted by its tier (TIER_YIELD)
+    over the hours since that count began.
+
+    >>> job_weight(JobType("a", 10, "default"), {})
+    10.0
+    >>> job_weight(JobType("a", 10, "default"), {"weighted_hours": 10.0, "new_weighted": 5.0})
+    30.0
+    >>> job_weight(JobType("a", 10, "default"), {"cpu_hours": 99.0, "new_findings": 500})  # the old count: unused
+    10.0
+    """
+    hours = max(0.5, stats.get("weighted_hours", 0.0))
+    yield_rate = stats.get("new_weighted", 0.0) / hours
+    return job.weight * (1 + min(4.0, 4 * yield_rate))
 
 
 def start_job(job_type: JobType, state: dict[str, Any], rng: random.Random) -> Job:
@@ -381,9 +544,12 @@ def start_job(job_type: JobType, state: dict[str, Any], rng: random.Random) -> J
     entry = state["good"][job_type.build]
     out = RUNS / f"{time.strftime('%Y%m%d-%H%M%S')}-{job_type.name}-{seed}"
     out.mkdir(parents=True, exist_ok=True)
-    size, scale = choose_cell(rng) if job_type.matrix else ((1440, 900), "1")
+    record = choose_recording(job_type, rng)
+    size, scale = (choose_cell(rng, RECORD_MAX_PIXELS if record else None) if job_type.matrix
+                   else ((1440, 900), "1"))
     driver = driver_root(state)
     qa = driver / "tools" / "qa" / "run.py"
+    slow = max(build.slow, RECORD_SLOW.get(record, 1.0))
     command = ["nice", "-n", "19", "ionice", "-c3", *build.prefix, sys.executable, str(qa),
                "--binary", entry["binary"], "--out", str(out), "monkey", "--profile", job_type.profile,
                "--seed", str(seed), "--steps", str(job_type.steps), "--time-budget", str(job_type.timeout * 0.8)]
@@ -397,12 +563,16 @@ def start_job(job_type: JobType, state: dict[str, Any], rng: random.Random) -> J
             # A real-size cell stays one: without this a run's own resizes and
             # `ui-scale 999999` took most cells tiny within minutes.
             command += ["--min-logical", f"{TINY_LOGICAL[0]}x{TINY_LOGICAL[1]}"]
-    env = {**os.environ, "MQA_SLOW_FACTOR": str(build.slow), **build.env}
-    cell = f"{job_type.name}/{job_type.build}/{size[0]}x{size[1]}@{scale}"
+    env = {**os.environ, "MQA_SLOW_FACTOR": str(slow), **build.env}
+    env.pop("MQA_RR", None)
+    if record:
+        env["MQA_RR"] = record
+    cell = f"{job_type.name}/{job_type.build}{RECORD_CELL_TAG[record]}/{size[0]}x{size[1]}@{scale}"
     with open(out / "driver.log", "wb") as log:
         proc = subprocess.Popen(command, cwd=driver, env=env, stdout=log, stderr=subprocess.STDOUT,
                                 start_new_session=True)
-    return Job(job_type, seed, out, command, cell, time.time(), proc, entry["sha"], entry["binary"])
+    return Job(job_type, seed, out, command, cell, time.time(), proc, entry["sha"], entry["binary"],
+               record=record, slow=slow)
 
 
 CHECK_JOB = JobType("check", 0, "default", timeout=3 * 3600, matrix=False)
@@ -448,7 +618,48 @@ def start_verify(sig: str, state: dict[str, Any]) -> Job:
     return Job(VERIFY_JOB, 0, out, command, f"verify/{sig}", time.time(), proc, state.get("built_sha", ""), "")
 
 
-def reap_job(job: Job, state: dict[str, Any], log) -> None:
+def record_dead_job(job: Job, timed_out: bool, log) -> str:
+    """A job that ran nothing found nothing, and "no findings" is what a healthy
+    cell reports too: the TSan cell died at startup for four days (23 runs, 0
+    steps) and nothing said so. It is a finding of its own -- the cell's
+    coverage is gone until someone looks. Returns its signature."""
+    what = ("hit its hard timeout before it wrote a result" if timed_out
+            else "ended without a step taken or a result written")
+    recorded = " under rr" if job.record else ""
+    label = f"job: a {job.type.name} job on the {job.type.build} build{recorded} {what}"
+    sig = fnd.signature("job", label)
+    tail = ""
+    logs = [job.out / "driver.log", *sorted(job.out.glob("seed-*/startup/*.log"))]
+    for path in logs:
+        with contextlib.suppress(OSError):
+            tail += f"--- {path.name}\n{path.read_text(errors='replace')[-3000:]}\n"
+    book = ledger()
+    known = sig in book.entries()
+    bundle = FINDINGS / sig
+    if not known:
+        (bundle / "evidence").mkdir(parents=True, exist_ok=True)
+        for path in logs:
+            with contextlib.suppress(OSError):
+                shutil.copy2(path, bundle / "evidence" / path.name)
+        finding = {"signature": sig, "kind": "job", "label": label, "detail": tail[-3000:], "step": 0,
+                   "actions": 0, "state": ""}
+        (bundle / "meta.json").write_text(json.dumps(job_meta(job, finding, {}), indent=1))
+    book.append(sig, "seen" if known else "new", kind="job", label=label, commit=job.sha, cell=job.cell,
+                detail=tail[-3000:], **({} if known else {"bundle": str(bundle)}))
+    if not known:
+        write_finding_md(bundle)
+    log(f"  {'DEAD' if not known else 'dead'} {sig} {label}")
+    return sig
+
+
+def job_meta(job: Job, finding: dict[str, Any], header: dict[str, Any]) -> dict[str, Any]:
+    """A bundle's meta.json: the finding and everything about the run it came from."""
+    return {"finding": finding, "cell": job.cell, "sha": job.sha, "binary": job.binary,
+            "build": job.type.build, "job": job.type.name, "seed": job.seed, "slow": job.slow,
+            "record": job.record, "command": job.command, "header": header}
+
+
+def reap_job(job: Job, state: dict[str, Any], log, timed_out: bool = False) -> None:
     if job.type is CHECK_JOB or job.type is VERIFY_JOB:
         tail = (job.out / "driver.log").read_text(errors="replace")[-400:] if (job.out / "driver.log").exists() else ""
         log(f"  {job.cell} done: {tail.strip().splitlines()[-1] if tail.strip() else ''}")
@@ -458,12 +669,23 @@ def reap_job(job: Job, state: dict[str, Any], log) -> None:
     stats = state.setdefault("stats", {}).setdefault(job.type.name, {})
     stats["runs"] = stats.get("runs", 0) + 1
     stats["cpu_hours"] = stats.get("cpu_hours", 0.0) + elapsed / 3600
+    stats["weighted_hours"] = stats.get("weighted_hours", 0.0) + elapsed / 3600
     new = 0
-    summaries = [json.loads(p.read_text()) for p in job.out.glob("seed-*/findings.json")]
+    summaries = []
+    for path in job.out.glob("seed-*/findings.json"):
+        with contextlib.suppress(OSError, ValueError):
+            summaries.append(json.loads(path.read_text()))
+    if sum(s.get("steps", 0) for s in summaries) == 0:
+        record_dead_job(job, timed_out, log)
     book = ledger()
     known = book.entries()
+    recorder_lost = ""
     for summary in summaries:
         for finding in summary.get("findings", []):
+            if finding["kind"] == "recorder":
+                # rr's limit, not a defect of the app: counted, never booked.
+                recorder_lost = finding.get("detail", "")[-200:]
+                continue
             sig = finding["signature"]
             fields = dict(kind=finding["kind"], label=finding["label"], commit=job.sha, cell=job.cell,
                           count=finding.get("count", 1))
@@ -473,6 +695,8 @@ def reap_job(job: Job, state: dict[str, Any], log) -> None:
                 state.setdefault("pending_checks", []).append(sig)
                 known[sig] = ld.Entry(sig=sig)
                 new += 1
+                stats["new_weighted"] = stats.get("new_weighted", 0.0) + \
+                    TIER_YIELD[tier_of(finding["kind"], finding["label"])]
                 log(f"  NEW {sig} {finding['label']}")
             else:
                 keep_sighting(job, finding, known[sig])
@@ -484,7 +708,7 @@ def reap_job(job: Job, state: dict[str, Any], log) -> None:
                               "steps": sum(s.get("steps", 0) for s in summaries),
                               "new_states": sum(s.get("new_states", 0) for s in summaries),
                               "findings": sum(len(s.get("findings", [])) for s in summaries),
-                              "new": new}) + "\n")
+                              "new": new, **({"recorder_lost": recorder_lost} if recorder_lost else {})}) + "\n")
     # The run's directory is evidence only while a finding points into it.
     shutil.rmtree(job.out, ignore_errors=True)
 
@@ -503,17 +727,53 @@ def make_bundle(job: Job, summary: dict[str, Any], finding: dict[str, Any]) -> P
     evidence = finding_evidence(job, finding)
     if evidence is not None:
         shutil.copytree(evidence, bundle / "evidence", dirs_exist_ok=True)
+        keep_run_evidence(evidence, bundle / "evidence", finding)
     replay_source = bundle / "evidence" / "replay.json"
     if replay_source.exists():
         record = json.loads(replay_source.read_text())
         record["binary_sha"] = job.sha
         (bundle / "replay.json").write_text(json.dumps(record, indent=1))
-    meta = {"finding": finding, "cell": job.cell, "sha": job.sha, "binary": job.binary,
-            "build": job.type.build, "job": job.type.name, "seed": job.seed,
-            "slow": BUILDS[job.type.build].slow, "header": summary.get("header", {})}
-    (bundle / "meta.json").write_text(json.dumps(meta, indent=1))
+    (bundle / "meta.json").write_text(json.dumps(job_meta(job, finding, summary.get("header", {})), indent=1))
     write_finding_md(bundle)
     return bundle
+
+
+# What the driver keeps per RUN, beside its findings' own directories: every
+# launch's whole log (run.py cmd_monkey, App.save_run_logs) and, for a recorded
+# job, the rr traces (App.recording_dir).
+RUN_LOGS = "run-logs"
+RECORDING = "rr"
+# A run's traces above this are not kept: a few hundred MB is the usual size.
+RECORDING_MAX_BYTES = 3 * 2**30
+
+
+def recording_wanted(finding: dict[str, Any]) -> bool:
+    """A trace is kept for what a user loses work or time to. Stale paint and
+    squeezed layouts replay from their actions, and there are hundreds."""
+    return tier_of(finding.get("kind", ""), finding.get("label", "")) <= 1
+
+
+def link_tree(source: Path, destination: Path) -> None:
+    """Copies a tree as hard links (the run's directory is deleted right after;
+    several findings of one run then share one copy of its logs and traces)."""
+    shutil.copytree(source, destination, copy_function=os.link, dirs_exist_ok=True)
+
+
+def keep_run_evidence(evidence: Path, target: Path, finding: dict[str, Any]) -> None:
+    """Adds the run-level evidence of the run `evidence` (a finding's own
+    directory) came from to `target`: the whole logs always, the rr traces for
+    a finding worth one."""
+    run = evidence.parent
+    with contextlib.suppress(OSError):
+        if (run / RUN_LOGS).is_dir():
+            link_tree(run / RUN_LOGS, target / RUN_LOGS)
+        if (run / RECORDING).is_dir() and recording_wanted(finding) \
+                and disk_usage(run / RECORDING) <= RECORDING_MAX_BYTES:
+            link_tree(run / RECORDING, target / RECORDING)
+
+
+def has_recording(bundle: Path) -> bool:
+    return (bundle / "evidence" / RECORDING).is_dir() or any(bundle.glob(f"sightings/*/{RECORDING}"))
 
 
 def finding_evidence(job: Job, finding: dict[str, Any]) -> Path | None:
@@ -542,7 +802,7 @@ MAX_SIGHTINGS = 3
 # sighting carrying one the bundle has nowhere is kept even before any fix --
 # without it, a flaky finding that never replays never gets that evidence.
 DIAGNOSTIC_EVIDENCE = ("mismatch-*.txt", "kill-state.tar.gz", "kill-documents.json", "idle-wakes.txt",
-                       "undecodable-*")
+                       "undecodable-*", "children.txt", "undo-before.txt")
 
 
 def new_build_for(bundle: Path, sha: str) -> bool:
@@ -574,19 +834,39 @@ def keep_sighting(job: Job, finding: dict[str, Any], entry: ld.Entry) -> None:
         any(evidence.glob(pattern)) and not any(bundle.glob(f"evidence/{pattern}"))
         and not any(bundle.glob(f"sightings/*/{pattern}"))
         for pattern in DIAGNOSTIC_EVIDENCE)
-    if not (after_fix or diagnostics_missing or new_build_for(bundle, job.sha)):
+    # The first recorded sighting of a finding with no recording: for one no
+    # replay reproduces, the trace is the reproduction.
+    recorded = (evidence.parent / RECORDING).is_dir() and recording_wanted(finding)
+    first_recording = recorded and not has_recording(bundle)
+    if not (after_fix or diagnostics_missing or first_recording or new_build_for(bundle, job.sha)):
         return
     sightings = bundle / "sightings"
     name = f"{time.strftime('%Y%m%d-%H%M%S')}-{job.sha[:12]}-{job.cell.replace('/', '_')}"
     target = sightings / name
     shutil.copytree(evidence, target, dirs_exist_ok=True)
+    keep_run_evidence(evidence, target, finding)
     (target / "sighting.json").write_text(json.dumps(
         {"cell": job.cell, "sha": job.sha, "binary": job.binary, "build": job.type.build, "seed": job.seed,
+         "record": job.record, "slow": job.slow, "command": job.command,
          "detail": finding.get("detail", ""), "step": finding.get("step"), "state": finding.get("state"),
          "status_before": entry.status}, indent=1))
-    for old in sorted(p for p in sightings.iterdir() if p.is_dir())[:-MAX_SIGHTINGS]:
+    for old in sightings_to_drop(sorted(p for p in sightings.iterdir() if p.is_dir()),
+                                 (bundle / "evidence" / RECORDING).is_dir()):
         shutil.rmtree(old, ignore_errors=True)
     write_finding_md(bundle)
+
+
+def sightings_to_drop(sightings: list[Path], bundle_recorded: bool) -> list[Path]:
+    """Which of a bundle's kept sightings (oldest first) go: all but the newest
+    MAX_SIGHTINGS -- and never the newest recorded one while nothing that stays
+    has a recording: unrecorded sightings arrive ten to one, and would push the
+    only trace of a finding out within a day."""
+    drop = sightings[:-MAX_SIGHTINGS]
+    kept_recorded = bundle_recorded or any((p / RECORDING).is_dir() for p in sightings[-MAX_SIGHTINGS:])
+    if not kept_recorded:
+        newest = next((p for p in reversed(drop) if (p / RECORDING).is_dir()), None)
+        drop = [p for p in drop if p != newest]
+    return drop
 
 
 def suspected_files(text: str) -> list[str]:
@@ -611,6 +891,105 @@ def similar_entries(entry_kind: str, label: str, sig: str) -> list[ld.Entry]:
     return out[:5]
 
 
+# What FINDING.md says of the files a bundle's evidence may hold, in order.
+EVIDENCE_NOTES = (
+    ("trace.txt", "the app's frame and input trace since the previous action"),
+    ("log-tail.txt", "the app log's tail"),
+    ("log-tail-before-relaunch.txt", "the killed process's log tail (its last flushes and saves)"),
+    (RUN_LOGS, "the WHOLE log of every launch of the run, gzipped (`zcat`): what set the symptom up "
+               "hundreds of actions earlier, which the tail does not reach"),
+    ("machine.txt", "the machine's load and pressure when it was found (a timing finding from a starved "
+                    "machine is the machine's)"),
+    ("recording.txt", "which rr trace the finding was reported in, and how far into it"),
+    ("children.txt", "the app's child processes when the leak oracle fired"),
+    ("fds.txt", "what the app's descriptors point at, by kind"),
+    ("undo-before.txt", "the text before the sampled undos (`undo-after.txt`: after the redos)"),
+    ("kill-documents.json", "the documents the app reported before the kill -9"),
+    ("kill-state.tar.gz", "the killed process's state tree: what the relaunch restored from"),
+    ("driver.log", "the job's own output"),
+    ("microide.log", "the app's log of a launch that failed"),
+)
+
+
+def reproduction_text(entry: ld.Entry) -> str:
+    """How a replay of the finding's actions fares, with the number of replays:
+    "0%" of three says little about a finding that shows one run in ten."""
+    if entry.rate is None:
+        return "not measured yet"
+    runs = entry.rate_runs or 3
+    text = (f"{'deterministic' if entry.deterministic else 'flaky'}, {round(entry.rate * runs)} of {runs} "
+            f"replays of its actions showed it")
+    if entry.paced:
+        text += " at the recorded pace (the replays keep the run's timing; `run.py replay` reads it from the record)"
+    if not entry.rate:
+        text += (" -- a replay will not reproduce it: use a recording (below, or the next recorded sighting) "
+                 "or the monkey run itself")
+    return text
+
+
+def monkey_rerun(meta: dict[str, Any]) -> str:
+    """The monkey command of the run that found it, for a binary built at HEAD
+    (the job's own command names the soak's binary, output and corpus)."""
+    command = meta.get("command") or []
+    try:
+        start = command.index("monkey")
+    except ValueError:
+        return ""
+    words, skip = [], False
+    for word in command[start:]:
+        if skip:
+            skip = False
+            continue
+        if word in ("--coverage", "--corpus", "--time-budget"):
+            skip = True  # the soak's own steering and budget
+            continue
+        words.append(word)
+    return "tools/qa/run.py --binary build/microide/microide " + " ".join(words)
+
+
+def recording_section(bundle: Path) -> list[str]:
+    """FINDING.md's section on the rr traces the bundle holds, newest first."""
+    holders = [bundle / "evidence"] + (sorted((p for p in (bundle / "sightings").iterdir() if p.is_dir()),
+                                              reverse=True) if (bundle / "sightings").is_dir() else [])
+    holders = [h for h in holders if (h / RECORDING).is_dir()]
+    if not holders:
+        return []
+    lines = ["## Recording (rr)", "",
+             "This finding was seen in a run recorded under `rr`. A trace replays that run's exact execution "
+             "-- same instructions, same thread interleaving, same kill -- as often as needed and backwards. "
+             "It IS the reproduction; no replay of the actions is needed.", ""]
+    for holder in holders:
+        where = holder.relative_to(bundle)
+        seen_in = ""
+        with contextlib.suppress(OSError):
+            seen_in = next((line.split(": ", 1)[1] for line in (holder / "recording.txt").read_text().splitlines()
+                            if line.startswith("trace: ")), "")
+        traces = sorted(p.name for p in (holder / RECORDING).iterdir() if p.is_dir())
+        lines.append(f"- `{where}/{RECORDING}/`: {', '.join(traces)}"
+                     + (f"; the finding was reported in `{seen_in}`" if seen_in else ""))
+    first = holders[0] / RECORDING
+    with contextlib.suppress(OSError, StopIteration):
+        reported = next(line.split(": ", 1)[1] for line in (holders[0] / "recording.txt").read_text().splitlines()
+                        if line.startswith("trace: "))
+        if (holders[0] / reported).is_dir():
+            first = holders[0] / reported
+    lines += ["",
+              "One trace per launch of the app: after a kill -9, `launch-N` is the killed process up to its last "
+              "instruction and `launch-N+1` the one that restored from what it left.", "",
+              "```bash",
+              f"T={first if first.name.startswith('launch-') else first / 'launch-0'}",
+              "rr replay -a $T                      # run it through: the app's log comes out again",
+              "rr replay -M -a $T 2>&1 | grep -a 'buffer-io'   # -M tags each line [rr <pid> <event>]",
+              "rr replay -g <event> $T              # gdb AT that event; then: reverse-continue, reverse-finish,",
+              "                                     #   watch -l <expr> + reverse-continue (who wrote this last?)",
+              "# without a terminal, the debugger takes its commands from stdin:",
+              "printf 'set pagination off\\nthread apply all bt 12\\nquit\\n' | rr replay -g <event> $T",
+              "```", "",
+              "The trace needs this machine's system libraries as they were; `rr pack <trace>` makes one "
+              "self-contained (about 450 MB) if it must outlive an upgrade.", ""]
+    return lines
+
+
 def write_finding_md(bundle: Path) -> None:
     meta = json.loads((bundle / "meta.json").read_text())
     finding = meta["finding"]
@@ -624,17 +1003,17 @@ def write_finding_md(bundle: Path) -> None:
     run_py = "tools/qa/run.py"
     slow = meta.get("slow", 1)
     env = f"MQA_SLOW_FACTOR={slow} " if slow != 1 else ""
+    quiet = quiet_for(entry) if entry else None
     lines = [
         f"# {finding['label']}",
         "",
         f"- **Signature:** `{finding['signature']}` (oracle `{finding['kind']}`)",
         f"- **Status:** {entry.status if entry else 'new'}; seen {entry.count if entry else 1} time(s) in "
         f"{len(entry.cells) if entry else 1} cell(s)",
-        f"- **Reproduction:** " + (f"{'deterministic' if entry.deterministic else 'flaky'}, rate "
-                                   f"{entry.rate:.0%}" + (" at the recorded pace (the replays keep the run's "
-                                                          "timing; `run.py replay` reads it from the record)"
-                                                          if entry.paced else "")
-                                   if entry and entry.rate is not None else "not measured yet"),
+        f"- **Reproduction:** " + (reproduction_text(entry) if entry else "not measured yet"),
+        *([f"- **Quiet:** {quiet.describe()} -- probably gone; a sighting brings it back"]
+          if quiet is not None and entry.status in ("new", "reopened") and quiet.expected >= ex.QUIET_EXPECTED
+          else []),
         f"- **Commit:** `{meta['sha'][:12]}`; build `{meta['build']}`; cell `{meta['cell']}`",
         f"- **Step:** {finding.get('step')} of the run, {finding.get('actions')} recorded actions; state "
         f"`{finding.get('state')}`",
@@ -653,9 +1032,15 @@ def write_finding_md(bundle: Path) -> None:
         lines += [f"Minimal ({len(minimal.get('actions', []))} actions, from {minimal.get('minimized_from')}):", "",
                   "```bash", f"{env}{run_py} --binary build/microide/microide replay {bundle / 'minimal.json'}",
                   "```", ""]
-    lines += ["Full replay:", "", "```bash",
-              f"{env}{run_py} --binary build/microide/microide replay {bundle / 'replay.json'}", "```", "",
-              f"The binary that found it: `{meta['binary']}`.", ""]
+    if (bundle / "replay.json").exists():
+        lines += ["Full replay:", "", "```bash",
+                  f"{env}{run_py} --binary build/microide/microide replay {bundle / 'replay.json'}", "```", ""]
+    rerun = monkey_rerun(meta)
+    if rerun:
+        lines += ["The monkey run itself (its own queries set the timing; a race a replay loses can show "
+                  "here -- add `--rr` to record it):", "", "```bash", f"{env}{rerun}", "```", ""]
+    lines += [f"The binary that found it: `{meta['binary']}`.", ""]
+    lines += recording_section(bundle)
     if stack:
         lines += ["## Stack (ours)", "", "```", stack.replace(" > ", "\n"), "```", ""]
     if (evidence / "stall-threads.txt").exists():
@@ -685,13 +1070,12 @@ def write_finding_md(bundle: Path) -> None:
     files = suspected_files(log_text)
     if files:
         lines += ["## Suspected files", ""] + [f"- `{f}`" for f in files] + [""]
-    pictures = sorted(p.name for p in evidence.glob("*.png")) if evidence.exists() else []
-    if pictures:
-        lines += ["## Evidence", ""] + [f"- `evidence/{p}`" for p in pictures] + [
-            "- `evidence/trace.txt`: the app's frame and input trace since the previous action",
-            "- `evidence/log-tail.txt`: the app log's tail"] + (
-            ["- `evidence/log-tail-before-relaunch.txt`: the killed process's log tail (its last flushes and saves)"]
-            if (evidence / "log-tail-before-relaunch.txt").exists() else []) + [""]
+    listed = [f"- `evidence/{p.name}`" for p in sorted(evidence.glob("*.png"))] if evidence.exists() else []
+    for name, what in EVIDENCE_NOTES:
+        if (evidence / name).exists():
+            listed.append(f"- `evidence/{name}`: {what}")
+    if listed:
+        lines += ["## Evidence", "", *listed, ""]
     similar = similar_entries(finding["kind"], finding["label"], finding["signature"])
     if similar:
         lines += ["## Similar findings in the ledger", ""]
@@ -699,13 +1083,40 @@ def write_finding_md(bundle: Path) -> None:
             lines.append(f"- `{other.sig}` {other.label} -- {other.status}"
                          + (f", fixed in `{other.fix_commit}`" if other.fix_commit else ""))
         lines.append("")
+    how = ("reproduce from the minimal replay" if entry is None or entry.rate is None or entry.rate
+           else "start from a recording if there is one (no replay reproduces it; `tools/soak/AGENT.md` "
+                "§ A finding no replay reproduces)")
     lines += ["## For the fixing agent", "", "Follow `tools/soak/AGENT.md`: claim it "
-              f"(`tools/soak/soak.py ledger claim {finding['signature']}`), reproduce from the minimal replay, "
+              f"(`tools/soak/soak.py ledger claim {finding['signature']}`), {how}, "
               "write the failing-first test, fix, and mark it fixed with the commit.", ""]
     (bundle / "FINDING.md").write_text("\n".join(lines))
 
 
 # ---- checks: determinism, minimization, verification ------------------------------
+
+# How many replays measure a new finding's rate. Three for paint and layout
+# (hundreds of signatures, most of them deterministic); twelve for what costs a
+# user work or time: three replays miss a finding that shows one run in five
+# half the time, and "0%" then read as "cannot be reproduced" -- the rate every
+# one of the 43 open severe findings had on 2026-11-16.
+CHECK_RUNS = (12, 12, 3, 3)
+
+
+def check_runs(finding: dict[str, Any]) -> int:
+    return CHECK_RUNS[tier_of(finding.get("kind", ""), finding.get("label", ""))]
+
+
+def verify_runs(rate: float) -> int:
+    """Replays that show a defect still there, at its measured replay rate, 19
+    times in 20: three for a deterministic one, more for a flaky one.
+
+    >>> [verify_runs(r) for r in (1.0, 2 / 3, 1 / 3, 1 / 12)]
+    [3, 3, 8, 24]
+    """
+    if rate >= 1.0:
+        return 3
+    return max(3, min(24, math.ceil(math.log(0.05) / math.log(1.0 - rate))))
+
 
 def check_finding(sig: str, state: dict[str, Any], log) -> None:
     """Replays a new finding three times for its rate; minimizes a deterministic
@@ -720,8 +1131,9 @@ def check_finding(sig: str, state: dict[str, Any], log) -> None:
     env = {**os.environ, "MQA_SLOW_FACTOR": str(meta.get("slow", 1))}
     minimize = [sys.executable, str(driver_root(state) / "tools" / "soak" / "minimize.py"), str(replay),
                 "--signature", sig, "--binary", binary, "--out", str(bundle)]
-    result = subprocess.run(["nice", "-n", "19", *minimize, "--check-only", "--runs", "3", "--jobs", "3"],
-                            capture_output=True, text=True, env=env, timeout=3600)
+    runs = check_runs(meta["finding"])
+    result = subprocess.run(["nice", "-n", "19", *minimize, "--check-only", "--runs", str(runs), "--jobs", "3"],
+                            capture_output=True, text=True, env=env, timeout=5400)
     rate, paced = 0.0, False
     for line in result.stdout.splitlines():
         if line.startswith("{"):
@@ -729,8 +1141,9 @@ def check_finding(sig: str, state: dict[str, Any], log) -> None:
             paced = bool(json.loads(line).get("paced", False))
     actions = len(json.loads(replay.read_text()).get("actions", []))
     deterministic = rate >= 2 / 3
-    ledger().append(sig, "checked", rate=rate, deterministic=deterministic, actions=actions, paced=paced)
-    log(f"  checked {sig}: rate {rate:.0%}" + (" at the recorded pace" if paced else ""))
+    ledger().append(sig, "checked", rate=rate, runs=runs, deterministic=deterministic, actions=actions,
+                    paced=paced)
+    log(f"  checked {sig}: {round(rate * runs)} of {runs} replays" + (" at the recorded pace" if paced else ""))
     if paced:
         # Every later replay of it -- the minimizer's, the agent's, the fix's
         # verification -- keeps the recorded pace.
@@ -749,16 +1162,40 @@ def check_finding(sig: str, state: dict[str, Any], log) -> None:
 
 
 def fixes_to_verify(state: dict[str, Any]):
-    """The fixed ledger entries whose fix commit the default build contains, each
-    with that build's record."""
+    """The fixed ledger entries a replay can check -- one has reproduced them
+    (Entry.replay_reproduces) -- whose fix commit the default build contains,
+    each with that build's record. The rest wait for exposure
+    (verify_by_exposure)."""
     good = state.get("good", {}).get("default")
     if not good:
         return
     for entry in ledger().entries().values():
-        if entry.status != "fixed" or not entry.fix_commit:
+        if entry.status != "fixed" or not entry.fix_commit or not entry.replay_reproduces:
             continue
         if has_commit(entry.fix_commit, good["sha"]):
             yield entry, good
+
+
+def verify_by_exposure(log) -> None:
+    """Books `verified` for the fixed findings no replay ever reproduced, once
+    the soak has run long enough on builds with the fix: VERIFIED_EXPECTED
+    sightings due at the finding's old rate and none seen (exposure.py).
+
+    Their verification used to be the same three replays as everyone's. A
+    replay that never showed the defect shows nothing after any commit at all,
+    so every such fix was "verified" within the hour: 141 of the ledger's 173
+    verified findings on 2026-11-16, 35 of which came back. A sighting from a
+    build with the fix still reopens one at once (Ledger.entries)."""
+    for entry in ledger().entries().values():
+        if entry.status != "fixed" or not entry.fix_commit or entry.replay_reproduces:
+            continue
+        quiet = fix_exposure(entry)
+        if quiet is None or quiet.expected < ex.VERIFIED_EXPECTED:
+            continue
+        ledger().append(entry.sig, "verified", by="exposure", runs=quiet.runs, expected=round(quiet.expected, 1),
+                        note=f"by exposure: {quiet.describe()}, on builds with {entry.fix_commit[:12]}")
+        freed = prune_verified_bundle(FINDINGS / entry.sig)
+        log(f"verified {entry.sig} by exposure ({quiet.describe()}); pruned {freed / 1e6:.1f} MB")
 
 
 def verify_fixed(state: dict[str, Any], log) -> None:
@@ -790,17 +1227,18 @@ def verify_one(sig: str, state: dict[str, Any], log) -> None:
     bundle = FINDINGS / entry.sig
     replay = bundle / "minimal.json" if (bundle / "minimal.json").exists() else bundle / "replay.json"
     if not replay.exists():
-        ledger().append(entry.sig, "verified", note="no replay to re-check; trusted the fix")
-        prune_verified_bundle(bundle)
-        log(f"verified {entry.sig}: no replay to re-check; trusted the fix")
+        log(f"{entry.sig}: no replay to re-check; left to exposure")
         return
+    # As often as its rate needs (verify_runs); --check-only tries the default
+    # pace and then the recorded one, so a paced finding is replayed paced.
     result = subprocess.run(["nice", "-n", "19", sys.executable, str(driver_root(state) / "tools/soak/minimize.py"),
                              str(replay), "--signature", entry.sig, "--binary", good["binary"],
-                             "--check-only", "--runs", "3", "--jobs", "3", "--out", str(bundle / "verify")],
+                             "--check-only", "--runs", str(verify_runs(entry.rate or 1.0)), "--jobs", "3",
+                             "--out", str(bundle / "verify")],
                             capture_output=True, text=True, timeout=3600)
     rate = next((json.loads(l)["rate"] for l in result.stdout.splitlines() if l.startswith("{")), 1.0)
     if rate == 0:
-        ledger().append(entry.sig, "verified", commit=good["sha"])
+        ledger().append(entry.sig, "verified", by="replay", commit=good["sha"])
         log(f"verified {entry.sig}; pruned {prune_verified_bundle(bundle) / 1e6:.1f} MB of its evidence")
     else:
         ledger().append(entry.sig, "reopened", commit=good["sha"], rate=rate)
@@ -1123,13 +1561,70 @@ def memory_jobs(available: int, total: int, our_rss: int | None, our_jobs: int) 
 
 
 def disk_usage(path: Path) -> int:
+    """Bytes under `path`, each file once however many names it has: a run's
+    logs and traces are hard-linked into every bundle that keeps them
+    (link_tree), and a trace links the build's binary."""
     total = 0
+    seen: set[tuple[int, int]] = set()
     for root, _, files in os.walk(path):
         for name in files:
             try:
-                total += os.lstat(os.path.join(root, name)).st_size
+                stat = os.lstat(os.path.join(root, name))
             except OSError:
-                pass
+                continue
+            if stat.st_nlink > 1:
+                if (stat.st_dev, stat.st_ino) in seen:
+                    continue
+                seen.add((stat.st_dev, stat.st_ino))
+            total += stat.st_size
+    return total
+
+
+RECORDING_BUDGET_GB = float(os.environ.get("MICROIDE_SOAK_RECORDING_GB", "15"))
+
+
+def enforce_recording_budget(log) -> None:
+    """Keeps the bundles' rr traces within RECORDING_BUDGET_GB: the oldest go
+    first, except that a finding's only recording outlives every finding's
+    second one."""
+    budget = RECORDING_BUDGET_GB * 1e9
+    holders = sorted((p for pattern in (f"*/evidence/{RECORDING}", f"*/sightings/*/{RECORDING}")
+                      for p in FINDINGS.glob(pattern) if p.is_dir()), key=lambda p: p.stat().st_mtime)
+    if not holders or disk_usage_of(holders) <= budget:
+        return
+    def bundle_of(holder: Path) -> Path:
+        return next(parent for parent in holder.parents if parent.parent == FINDINGS)
+    per_bundle: dict[Path, int] = {}
+    for holder in holders:
+        per_bundle[bundle_of(holder)] = per_bundle.get(bundle_of(holder), 0) + 1
+    removed = 0
+    for only_spares in (True, False):
+        for holder in list(holders):
+            if disk_usage_of(holders) <= budget * 0.9:
+                break
+            bundle = bundle_of(holder)
+            if only_spares and per_bundle[bundle] <= 1:
+                continue
+            shutil.rmtree(holder, ignore_errors=True)
+            holders.remove(holder)
+            per_bundle[bundle] -= 1
+            removed += 1
+    if removed:
+        log(f"recording budget: dropped the {removed} oldest rr trace set(s)")
+
+
+def disk_usage_of(paths: list[Path]) -> int:
+    """disk_usage over several trees, a file they share counted once."""
+    total = 0
+    seen: set[tuple[int, int]] = set()
+    for path in paths:
+        for root, _, files in os.walk(path):
+            for name in files:
+                with contextlib.suppress(OSError):
+                    stat = os.lstat(os.path.join(root, name))
+                    if (stat.st_dev, stat.st_ino) not in seen:
+                        seen.add((stat.st_dev, stat.st_ino))
+                        total += stat.st_size
     return total
 
 
@@ -1240,6 +1735,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     deadline = time.time() + args.max_hours * 3600 if args.max_hours else None
     mode = "fixed" if args.fixed else "following the load"
     log(f"soak runner up: up to {ceiling} job(s) at once, {mode} -> {SOAK}")
+    unusable = recording.rr_unusable_reason()
+    log(f"recording: {'OFF -- ' + unusable if unusable else f'{RECORD_FRACTION:.0%} of the default-build jobs run under rr'}")
     last_cap = -1
     last_start = 0.0
     last_containment = 0.0
@@ -1278,12 +1775,13 @@ def cmd_run(args: argparse.Namespace) -> int:
             continue
         for job in list(jobs):
             if job.proc.poll() is not None or now - job.started > job.type.timeout:
-                if job.proc.poll() is None:
+                timed_out = job.proc.poll() is None
+                if timed_out:
                     os.killpg(job.proc.pid, signal.SIGKILL)
                     job.proc.wait()
                     log(f"job {job.type.name} seed {job.seed} hit its timeout")
                 jobs.remove(job)
-                reap_job(job, state, log)
+                reap_job(job, state, log, timed_out)
                 state["current"] = [j.cell for j in jobs]
                 save_state(state)
         pending = state.get("pending_checks", [])
@@ -1332,7 +1830,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             break
         if now - last_housekeeping > 600:
             collect_garbage(log)
+            enforce_recording_budget(log)
             enforce_disk_budget(log)
+            with contextlib.suppress(Exception):  # the ledger's bookkeeping never stops the runner
+                verify_by_exposure(log)
             last_housekeeping = now
         time.sleep(3)
     for job in jobs:
@@ -1358,6 +1859,84 @@ def run_rows(hours: float | None = None) -> list[dict[str, Any]]:
     return rows
 
 
+def exposure_progress(entry: ld.Entry) -> str:
+    """How far a fixed finding is from verified by exposure."""
+    quiet = fix_exposure(entry)
+    if quiet is None:
+        return "no rate to measure against"
+    return f"{quiet.expected:.1f} of {ex.VERIFIED_EXPECTED} due ({quiet.runs} runs)"
+
+
+def open_families(entries) -> list[tuple[str, list[ld.Entry]]]:
+    """The open, still-showing severe and behaviour findings grouped by family
+    (family), most sightings first."""
+    groups: dict[str, list[ld.Entry]] = {}
+    for entry in entries:
+        if entry.status in ("new", "reopened") and impact_tier(entry) <= 1 and not is_quiet(entry):
+            groups.setdefault(family(entry.kind, entry.label), []).append(entry)
+    return sorted(groups.items(), key=lambda item: -sum(e.count for e in item[1]))
+
+
+def cmd_health(args: argparse.Namespace) -> int:
+    """Whether the soak is doing what it says: every cell taking steps, the
+    recorder on, and what each of the ledger's verdicts rests on."""
+    state = load_state()
+    hours = args.hours
+    rows = run_rows(hours)
+    print(f"cells, last {hours:.0f} h (a job type with no steps finds nothing and reports nothing):")
+    by_job: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_job.setdefault(row["job"], []).append(row)
+    problems = 0
+    for job in JOB_TYPES:
+        items = by_job.get(job.name, [])
+        dead = sum(1 for r in items if r.get("steps", 0) <= 0)
+        steps = sum(r.get("steps", 0) for r in items) / max(1, len(items) - dead) if items else 0
+        recorded = sum(1 for r in items if "+rr" in r.get("cell", ""))
+        verdict = "ok"
+        if job.build not in state.get("good", {}):
+            verdict = f"NO BUILD ({job.build})"
+        elif not items:
+            verdict = "did not run"
+        elif dead * 2 > len(items):
+            verdict = "DEAD: most runs took no step"
+        elif dead:
+            verdict = f"{dead} dead run(s)"
+        elif steps < job.steps * 0.5:
+            verdict = f"short runs (asked {job.steps} steps)"
+        problems += verdict not in ("ok", "did not run")
+        print(f"  {job.name:14} {len(items):5} runs  {steps:6.0f} steps/run  {recorded:4} recorded  {verdict}")
+    unusable = recording.rr_unusable_reason()
+    lost = [r["recorder_lost"] for r in rows if r.get("recorder_lost")]
+    print(f"recording: {'OFF -- ' + unusable if unusable else 'rr usable'}; "
+          f"{sum(1 for r in rows if '+rr' in r.get('cell', ''))} of {len(rows)} runs recorded"
+          + (f"; {len(lost)} lost their recorder, e.g. {max(set(lost), key=lost.count)[-140:]}" if lost else ""))
+    problems += unusable is not None
+    entries = ledger().entries()
+    open_entries = [e for e in entries.values() if e.status in ("new", "reopened")]
+    print("open findings (the soak still shows / quiet / with a recording):")
+    for tier, name in enumerate(TIER_NAMES):
+        items = [e for e in open_entries if impact_tier(e) == tier]
+        quiet = sum(is_quiet(e) for e in items)
+        zero = sum(1 for e in items if not is_quiet(e) and e.rate == 0)
+        print(f"  {name:10} {len(items) - quiet:5} / {quiet:5} / {sum(has_recording(FINDINGS / e.sig) for e in items):3}"
+              f"   ({zero} of the active ones no replay reproduces)")
+    verified = [e for e in entries.values() if e.status == "verified"]
+    by_replay = [e for e in verified if e.verified_by != "exposure" and e.replay_reproduces]
+    by_exposure = [e for e in verified if e.verified_by == "exposure"]
+    hollow = [e for e in verified if e.verified_by != "exposure" and not e.replay_reproduces]
+    confirmed = 0
+    for entry in hollow:
+        quiet = fix_exposure(entry)
+        confirmed += quiet is not None and quiet.expected >= ex.VERIFIED_EXPECTED
+    print(f"verified: {len(verified)} -- {len(by_replay)} by a replay that used to reproduce, "
+          f"{len(by_exposure)} by exposure, {len(hollow)} on a replay that never reproduced "
+          f"({confirmed} of those the soak has since borne out, {len(hollow) - confirmed} not yet)")
+    waiting = [e for e in entries.values() if e.status == "fixed" and not e.replay_reproduces]
+    print(f"fixed, waiting for exposure: {len(waiting)}")
+    return 1 if problems else 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     state = load_state()
     entries = ledger().entries()
@@ -1374,10 +1953,26 @@ def cmd_status(args: argparse.Namespace) -> int:
         by_status.setdefault(entry.status, []).append(entry)
     for status in ld.STATES:
         items = by_status.get(status, [])
-        print(f"{status:9} {len(items)}")
+        quiet = sum(is_quiet(entry) for entry in items)
+        print(f"{status:9} {len(items)}" + (f"  ({len(items) - quiet} the soak still shows, {quiet} quiet)" if quiet else ""))
         for entry in sorted(items, key=priority_key)[:8] if status in ("new", "reopened", "claimed") else []:
+            if is_quiet(entry):
+                break  # the quiet ones sort last: `report` lists them
             det = "det" if entry.deterministic else ("flaky" if entry.deterministic is False else "?")
-            print(f"    {entry.sig} x{entry.count:<4} {det:5} {priority_tag(entry):15} {entry.label[:90]}")
+            mark = " [rr]" if has_recording(FINDINGS / entry.sig) else ""
+            print(f"    {entry.sig} x{entry.count:<4} {det:5} {priority_tag(entry):15} {entry.label[:90]}{mark}")
+    waiting = [e for e in by_status.get("fixed", []) if not e.replay_reproduces]
+    if waiting:
+        print(f"fixed, waiting for exposure (no replay reproduces them): {len(waiting)}")
+        for entry in sorted(waiting, key=priority_key)[:8]:
+            print(f"    {entry.sig} {exposure_progress(entry):28} {entry.label[:80]}")
+    families = open_families(entries.values())
+    if families:
+        print("open families the soak still shows (severe and behaviour; one defect is often many signatures):")
+        for name, members in families[:10]:
+            recorded = sum(has_recording(FINDINGS / e.sig) for e in members)
+            print(f"    x{sum(e.count for e in members):<5} {len(members):3} sig(s) {name[:92]}"
+                  + (f" [rr x{recorded}]" if recorded else ""))
     print(f"current: {', '.join(state.get('current', [])) or state.get('waiting', 'idle')}")
     if PAUSE.exists():
         print("PAUSED (remove build/soak/PAUSE)")
@@ -1396,12 +1991,23 @@ def cmd_report(args: argparse.Namespace) -> int:
                          f"[FINDING.md]({FINDINGS / entry.sig / 'FINDING.md'})"
                          + (f", minimal {entry.minimal_actions} actions" if entry.minimal_actions else ""))
         lines.append("")
-    open_entries = [e for e in entries.values() if e.status in ("new", "reopened")]
+    every_open = [e for e in entries.values() if e.status in ("new", "reopened")]
+    open_entries = [e for e in every_open if not is_quiet(e)]
+    lines.extend(["## Families the soak still shows (severe and behaviour)", "",
+                  "One defect is often many signatures (a file name, a budget note); fix the family.", ""])
+    for name, members in open_families(entries.values()):
+        recorded = [e.sig for e in members if has_recording(FINDINGS / e.sig)]
+        lines.append(f"- x{sum(e.count for e in members)} in {len(members)} signature(s): {name}"
+                     + (f" -- recorded (rr): {', '.join(f'`{sig}`' for sig in recorded)}" if recorded else "")
+                     + f" -- e.g. `{max(members, key=lambda e: e.last_seen).sig}`")
+    lines.append("")
     section("New, deterministic", [e for e in open_entries if e.deterministic])
     section("New, flaky", [e for e in open_entries if e.deterministic is False])
     section("New, not yet checked", [e for e in open_entries if e.deterministic is None])
     section("Claimed", [e for e in entries.values() if e.status == "claimed"])
     section("Fixed, awaiting verification", [e for e in entries.values() if e.status == "fixed"])
+    section("Quiet: open, but the soak stopped showing them (probably gone; a sighting brings one back)",
+            [e for e in every_open if is_quiet(e)])
     lines.extend(["## Yield (last 7 days)", "", "| job | runs | hours | steps | new findings | per hour |",
                   "|---|---|---|---|---|---|"])
     by_job: dict[str, list[dict[str, Any]]] = {}
@@ -1552,6 +2158,8 @@ def main() -> int:
     run.add_argument("--max-hours", type=float, default=0)
     run.add_argument("--build-interval", type=float, default=900, help="seconds between main checks")
     sub.add_parser("status")
+    health = sub.add_parser("health", help="is every cell taking steps, is rr on, what the verdicts rest on")
+    health.add_argument("--hours", type=float, default=24)
     sub.add_parser("report")
     sub.add_parser("build")
     sub.add_parser("gc", help="delete verified findings' evidence and unusable corpus prefixes")
@@ -1568,7 +2176,7 @@ def main() -> int:
     led.add_argument("sig", nargs="?")
     led.add_argument("extra", nargs="?")
     args = parser.parse_args()
-    return {"run": cmd_run, "status": cmd_status, "report": cmd_report, "ledger": cmd_ledger,
+    return {"run": cmd_run, "status": cmd_status, "health": cmd_health, "report": cmd_report, "ledger": cmd_ledger,
             "build": cmd_build, "check": cmd_check, "verify": cmd_verify, "gc": cmd_gc,
             "pause": cmd_pause, "resume": cmd_resume}[args.mode](args)
 

@@ -174,6 +174,22 @@ The existing oracles (crash, stale paint, sanitizer reports, state oracle, expec
   - file a TD for anything deferred.
 - **Notifications.** `soak.py report` writes `build/soak/report.md` (new deterministic first,
   then flaky, then yield), and `notify-send` fires on each new deterministic finding.
+- **A finding no replay reproduces** (2026-11-16: all 43 open severe findings, 782 of the
+  1065 measured). Replaying the actions loses the timing a race or a kill -9 needs, so:
+  - *recorded jobs*: about a third of the default-build jobs run the app under `rr record`
+    (half of those in chaos mode), and a severe or behaviour finding keeps the traces --
+    the same execution every time, with reverse execution; the default build carries debug
+    info for them (`tools/qa/recording.py`, `MQA_RR`, `run.py monkey --rr`);
+  - *the whole log* of every launch, and the machine's load at the finding, in every bundle;
+  - *verification by exposure*: a fix no replay can check is `verified` once the soak has
+    run long enough on builds with it that the finding's old rate was due 4.6 sightings and
+    none came (`tools/soak/exposure.py`), never by a replay that showed nothing before the
+    fix either -- 141 of 173 `verified` findings rested on one, and 35 came back;
+  - *quiet*: an open finding the soak stopped showing is listed apart from the work to do;
+  - *twelve replays, not three*, measure a severe finding's rate.
+- **The soak checks itself.** A job that takes no step is a `job` finding (the TSan cell
+  died at startup for four days, silently), and `soak.py health` lists every cell's runs
+  and steps, whether rr records, and what each `verified` rests on.
 
 #### W1.6 Measure the monkey itself
 

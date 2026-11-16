@@ -1422,7 +1422,11 @@ class Monkey:
 
     def _periodic_oracles(self, index: int) -> None:
         label = f"monkey step {index}"
-        self._report(label, self.liveness.check())
+        # Not under rr: it runs the app's threads one at a time, so how long an
+        # answer takes and how often an idle thread wakes are the recorder's.
+        timed = not self.app.recording
+        if timed:
+            self._report(label, self.liveness.check())
         if index % 20 == 19:
             self.app.record_external({"oracle": "data-clean"})
             self._report_data(label, self.data.check_clean())
@@ -1442,7 +1446,7 @@ class Monkey:
         if index % 50 == 0:
             self._report_with_evidence(label, self.resources.check(), self.resources.evidence)
             self.resources.evidence = {}
-        if index % 150 == 149:
+        if index % 150 == 149 and timed:
             before = len(self.app.findings)
             self._report(label, self.idle.check())
             shot = next((f.screenshot for f in self.app.findings[before:] if f.screenshot), None)
@@ -1459,7 +1463,7 @@ class Monkey:
             self.converge.evidence = {}
         self._report_with_evidence(label, self.resources.check(), self.resources.evidence)
         self.resources.evidence = {}
-        pid = self.app.proc.pid if self.app.proc else None
+        pid = self.app.pid
         left = self.data.staging_leftovers(pid)
         if left:
             self._report(label, [("data", f"the app left {len(left)} save temporaries of its own "

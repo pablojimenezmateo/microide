@@ -101,8 +101,10 @@ ctest --test-dir build -R _tests_shard --output-on-failure -j$(nproc)
   suppressions, fuzz corpora) are in the full guide.
 - The QA monkey runs continuously on the dev PC: `tools/soak/soak.py run` (a
   `systemd --user` unit) follows `main`, and `tools/soak/soak.py status` / `report`
-  read its findings ledger (`build/soak`, a `FINDING.md` per finding).
-  `tools/soak/AGENT.md` is the brief for fixing what it finds.
+  read its findings ledger (`build/soak`, a `FINDING.md` per finding); `soak.py
+  health` says whether every cell runs. `tools/soak/AGENT.md` is the brief for
+  fixing what it finds -- for a finding no replay reproduces, from its `rr`
+  recording (`run.py monkey --rr` makes one).
 - Performance work: `dev-docs/performance/perf-harness.md`, then the startup/runtime
   tracing docs.
 

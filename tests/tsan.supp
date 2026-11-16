@@ -12,6 +12,14 @@ deadlock:libdbus-1
 # rather than leaving environment-dependent flakes in the sanitizer matrix.
 race:libgallium
 
+# The same driver's JIT: lavapipe (libvulkan_lvp), the software Vulkan the QA
+# and soak runs render with on Xvfb, compiles shaders in LLVM from its
+# llvmpipe-N threads, and LLVM's own tables race there (StringMapImpl,
+# APInt). Both stacks of each report are inside libLLVM; no frame is ours. The
+# soak's TSan cell reported three in its first minute once it ran again
+# (2026-11-16; it had been dead at startup, so nothing had shown them).
+race:libLLVM
+
 # The LSP/DAP shutdown send path (now the shared
 # StdioJsonRpcClientTransport::SendMessageImmediate) used to need a mutex
 # suppression here: it acquired write_mutex via std::timed_mutex::try_lock_for,

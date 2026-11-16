@@ -348,3 +348,98 @@ class TerminalTabNamesTests(unittest.TestCase):
 
     def test_a_tab_naming_another_program_is_still_reported(self):
         self.assertEqual(len(self._findings(["qa-local · vim · detached"])), 1)
+
+
+class RecordingTests(unittest.TestCase):
+    """MQA_RR: the app runs under rr, so `proc` is the recorder and the app its child."""
+
+    def test_the_mode_is_checked(self):
+        with patch.dict(q.os.environ, {"MQA_RR": "chaos"}):
+            self.assertEqual(q.rr_mode(), "chaos")
+        with patch.dict(q.os.environ, {"MQA_RR": "0"}):
+            self.assertEqual(q.rr_mode(), "")
+        with patch.dict(q.os.environ, {"MQA_RR": "yes"}), self.assertRaises(ValueError):
+            q.rr_mode()
+
+    def test_rrs_own_failure_is_not_the_apps(self):
+        log = ("microide redraw frame: frame=418\n"
+               "[FATAL src/record_syscall.cc:7416:rec_process_syscall_arch()] \n"
+               " (task 1720870 (rec:1720870) at time 192635)\n"
+               " -> Assertion `t->regs().syscall_result_signed() == -syscall_state.expect_errno' failed to hold. "
+               "Expected ENOSYS for 'tee' but got result 1048576; execution of syscall unsupported by rr\n")
+        self.assertFalse(any(q.is_finding_line(line) for line in log.splitlines()))
+        self.assertIn("unsupported by rr", q.rr_failure(log))
+        # The app's own assertion still is a finding, and no recorder failure.
+        own = "microide: src/editor/TextViewport.cpp:12: void f(): Assertion `line < count' failed."
+        self.assertTrue(q.is_finding_line(own))
+        self.assertIsNone(q.rr_failure(own))
+
+    def test_an_app_that_died_with_its_recorder_is_not_a_crash(self):
+        app = SimpleNamespace(new_log_lines=lambda: [], alive=lambda: False, proc=SimpleNamespace(returncode=134),
+                              recording=True, findings=[], recent_log=[],
+                              log_tail=lambda size=0: "[FATAL src/record_syscall.cc:1:f()] \n -> Assertion `x' failed to hold. tee\n",
+                              _write_finding=lambda label, found: None)
+        (finding,) = q.App.check(app, "monkey step 3")
+        self.assertEqual(finding.kind, "recorder")
+        app.recording = False
+        (finding,) = q.App.check(app, "monkey step 3")
+        self.assertEqual(finding.kind, "crash")
+
+    def test_the_apps_pid_is_the_recorders_child_running_the_binary(self):
+        app = SimpleNamespace(proc=SimpleNamespace(pid=100), recording=True, _app_pid=None, binary="/bin/microide")
+        exes = {"/proc/101/exe": "/usr/bin/rr", "/proc/102/exe": "/bin/microide"}
+        with patch.object(q, "process_children", return_value=[101, 102]), \
+             patch.object(q.os.path, "realpath", side_effect=lambda path: exes.get(str(path), str(path))):
+            self.assertEqual(q.App.pid.fget(app), 102)
+        # Unrecorded, the process the driver started IS the app.
+        plain = SimpleNamespace(proc=SimpleNamespace(pid=100), recording=False, _app_pid=None, binary="/bin/microide")
+        self.assertEqual(q.App.pid.fget(plain), 100)
+
+    def test_a_recorded_kill_goes_to_the_app_so_the_trace_is_closed(self):
+        proc = Mock(pid=100)
+        proc.poll.return_value = 0  # rr is gone once its tracee is
+        app = SimpleNamespace(proc=proc, recording=True, pid=102, alive=lambda: True)
+        with patch.object(q.os, "kill") as kill, patch.object(q.os, "killpg") as killpg:
+            q.App._sigkill(app)
+        kill.assert_called_once_with(102, q.signal.SIGKILL)
+        # The group is swept only after rr has had its chance to finish the trace.
+        self.assertEqual(proc.wait.call_count, 2)
+        killpg.assert_called_once_with(100, q.signal.SIGKILL)
+
+    def test_a_recorder_that_lingers_is_asked_to_close_its_trace(self):
+        proc = Mock(pid=100)
+        proc.poll.return_value = None  # a tracee of the app's kept rr alive
+        app = SimpleNamespace(proc=proc, recording=True, pid=102, alive=lambda: True)
+        with patch.object(q.os, "kill") as kill, patch.object(q.os, "killpg"):
+            q.App._sigkill(app)
+        self.assertEqual([call.args for call in kill.call_args_list],
+                         [(102, q.signal.SIGKILL), (100, q.signal.SIGTERM)])
+
+    def test_an_unrecorded_kill_is_the_groups(self):
+        proc = Mock(pid=100)
+        app = SimpleNamespace(proc=proc, recording=False, pid=100, alive=lambda: True)
+        with patch.object(q.os, "kill") as kill, patch.object(q.os, "killpg") as killpg:
+            q.App._sigkill(app)
+        kill.assert_not_called()
+        killpg.assert_called_once_with(100, q.signal.SIGKILL)
+
+    def test_traces_are_kept_only_with_findings(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            traces = Path(scratch) / "rr"
+            for name in ("launch-0", "launch-1"):
+                (traces / name).mkdir(parents=True)
+            self.assertEqual([p.name for p in q.finish_recordings(traces, keep=True)], ["launch-0", "launch-1"])
+            self.assertEqual(q.finish_recordings(traces, keep=False), [])
+            self.assertFalse(traces.exists())
+
+    def test_the_whole_log_of_every_launch_is_kept(self):
+        import gzip
+        with tempfile.TemporaryDirectory() as scratch:
+            work = Path(scratch) / "work"
+            work.mkdir()
+            (work / "microide.log").write_text("first launch\n")
+            (work / "microide-1.log").write_text("second launch\n")
+            q.App.save_run_logs(SimpleNamespace(work=work), Path(scratch) / "logs")
+            self.assertEqual(gzip.open(Path(scratch) / "logs" / "microide-1.log.gz", "rt").read(), "second launch\n")
+            self.assertTrue((Path(scratch) / "logs" / "microide.log.gz").is_file())
+

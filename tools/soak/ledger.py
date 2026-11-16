@@ -5,11 +5,14 @@ An append-only event log, `build/soak/ledger.jsonl`, one JSON object per line:
     {"t": <unix>, "sig": "<signature>", "event": "<event>", ...}
 
 Events: `new` (first sighting; carries kind, label, bundle), `seen` (a later
-sighting: the count rises, no new entry), `checked` (determinism measured: rate,
-deterministic), `minimized` (the minimal replay's length), `claimed` (by an
-agent), `fixed` (with the fix commit), `verified` (the fix's commit is in the
-soak build and the minimal replay no longer reproduces), `reopened` (a fixed or
-verified signature came back: a sighting from a build that has the fix, or the
+sighting: the count rises, no new entry), `checked` (determinism measured: rate
+over `runs` replays, deterministic), `minimized` (the minimal replay's length),
+`claimed` (by an agent), `fixed` (with the fix commit), `verified` (the fix's
+commit is in the soak build and either the replay that used to reproduce no
+longer does, or -- `by: exposure`, for a finding no replay ever reproduced --
+the soak has run long enough on builds with the fix that its old rate was due
+several sightings and none came: exposure.py), `reopened` (a fixed or verified
+signature came back: a sighting from a build that has the fix, or the
 verification replay), `note`.
 
 The state of a signature is the fold of its events; nothing is rewritten, so two
@@ -44,14 +47,25 @@ class Entry:
     bundle: str = ""
     deterministic: bool | None = None
     rate: float | None = None
+    rate_runs: int | None = None  # how many replays `rate` was measured over
     paced: bool = False  # reproduces only at the run's recorded pace
     minimal_actions: int | None = None
     full_actions: int | None = None
     fix_commit: str = ""
+    fixed_at: float = 0.0
+    verified_by: str = ""  # "replay" or "exposure" (exposure.py)
     claimed_by: str = ""
     cells: set[str] = field(default_factory=set)
     commits: set[str] = field(default_factory=set)
     notes: list[str] = field(default_factory=list)
+    # Every run that showed it: (time, cell, commit), in order.
+    sightings: list[tuple[float, str, str]] = field(default_factory=list)
+
+    @property
+    def replay_reproduces(self) -> bool:
+        """A replay of its actions has shown it at least once: only then does a
+        replay that shows nothing after a fix say anything."""
+        return bool(self.rate)
 
     def fixed_in(self, commit: str, contains: Contains | None) -> bool:
         """A sighting at `commit` comes after this entry's fix: it is fixed or
@@ -117,11 +131,13 @@ class Ledger:
                     entry.cells.add(event["cell"])
                 if event.get("commit"):
                     entry.commits.add(event["commit"])
+                entry.sightings.append((when, event.get("cell", ""), event.get("commit", "")))
                 if kind == "seen" and entry.fixed_in(event.get("commit", ""), self.contains):
                     entry.status = "reopened"
             elif kind == "checked":
                 entry.deterministic = bool(event.get("deterministic"))
                 entry.rate = event.get("rate")
+                entry.rate_runs = event.get("runs", 3)
                 entry.paced = bool(event.get("paced", False))
                 entry.full_actions = event.get("actions", entry.full_actions)
             elif kind == "minimized":
@@ -132,8 +148,10 @@ class Ledger:
             elif kind == "fixed":
                 entry.status = "fixed"
                 entry.fix_commit = event.get("commit", "")
+                entry.fixed_at = when
             elif kind == "verified":
                 entry.status = "verified"
+                entry.verified_by = event.get("by", "replay")
             elif kind == "reopened":
                 entry.status = "reopened"
             elif kind == "note":

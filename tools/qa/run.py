@@ -374,8 +374,15 @@ def cmd_monkey(args: argparse.Namespace) -> int:
             seed_dir.mkdir(parents=True, exist_ok=True)
             app.save_actions(seed_dir / "replay.json", **app.replay_header)
             (seed_dir / "findings.json").write_text(json.dumps(summary, indent=1))
+            if summary["findings"]:
+                # The whole log of every launch, while the work tree still has it.
+                app.save_run_logs(seed_dir / "run-logs")
             print(f"        {summary['steps']} steps, {summary['new_states']} new states, "
                   f"{summary['new_transitions']} new transitions, {len(summary['findings'])} distinct finding(s)")
+        # The app is down and rr has closed its traces: keep them with the findings.
+        kept = q.finish_recordings(args.out / f"seed-{seed}" / "rr", keep=bool(summary["findings"]))
+        if kept:
+            print(f"        recorded: {len(kept)} rr trace(s) under {kept[0].parent} (rr replay <trace>)")
         if args.coverage is not None:
             coverage.merge_into(args.coverage)
     print(f"monkey: {len(seeds) - failures}/{len(seeds)} seeds clean")
@@ -422,6 +429,9 @@ def cmd_replay(args: argparse.Namespace) -> int:
     app, signatures = replay_record(record, args.binary, args.out, paced=True if args.paced else None)
     for entry in signatures:
         print(f"        {entry['signature']}  {entry['label']}")
+    kept = q.finish_recordings(args.out / "replay" / "rr", keep=bool(signatures))
+    if kept:
+        print(f"        recorded: {len(kept)} rr trace(s) under {kept[0].parent} (rr replay <trace>)")
     return report(f"replay of {args.file}", app)
 
 
@@ -495,6 +505,10 @@ def main() -> int:
     monkey.add_argument("--no-churn", action="store_true",
                         help="commands/editor profiles: do not rewrite files under the editor")
     replay = sub.add_parser("replay", parents=[common(False)])
+    for recorded in (monkey, replay):
+        recorded.add_argument("--rr", nargs="?", const="1", choices=q.RR_MODES,
+                              help="record the app under rr (`--rr chaos`: rr's chaos mode); the traces "
+                                   "of a run with findings are kept under its output ($MQA_RR)")
     replay.add_argument("file")
     replay.add_argument("--paced", action="store_true",
                         help="keep the recorded gaps between actions (a race the default pace loses)")
@@ -508,6 +522,8 @@ def main() -> int:
     remote = sub.add_parser("remote", parents=[common(False)])
     remote.add_argument("names", nargs="*")
     args = parser.parse_args()
+    if getattr(args, "rr", None):
+        os.environ["MQA_RR"] = args.rr
 
     listing = args.mode == "suite" and args.list
     if args.mode != "remote" and not listing:

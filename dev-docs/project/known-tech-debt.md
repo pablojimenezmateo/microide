@@ -16,6 +16,52 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 
 ## Open items
 
+### TD-2026-11-16-452 — what the soak still cannot say about a finding. [OPEN]
+
+Left by the 2026-11-16 assessment of the soak (`tools/soak`), in the order they
+would pay:
+
+1. **A crash in the default build has no stack.** `crash: microide exited (-6)`
+   with a libstdc++ assertion (`std::clamp`, soak 707c77a79c1d) names no caller:
+   only the sanitizer builds print one. A recorded run now has it (`rr replay`,
+   `bt`), the other two thirds do not. A fatal-signal handler in the assert-armed
+   build that writes `backtrace_symbols_fd` to the log would give every crash one.
+2. **No code coverage of the soak.** Every command, element and setting is
+   reached (`soak.py report` § Command gaps), which says nothing of which lines
+   run: the gcov job of safety-plan W1.6/W1.7 is still unbuilt, so "full
+   coverage" is of the input surface only.
+3. **A replay does not say where it left the run's path.** A replay that does
+   not reproduce may have diverged at action 40 of 900 (a different tab took the
+   click) or have followed the run exactly and missed a race. Recording the
+   monkey's abstract state per action and comparing on replay would tell the two
+   apart; today both read "0%".
+4. **Signatures are not defects.** Data and undo signatures key on the file
+   name, stale-paint ones on the clip count: 1336 signatures for a few dozen
+   defects. `soak.py` now groups them into families for reading; the ledger
+   still books a fix per signature.
+5. **The fault-injection jobs are not recorded.** rr cannot follow the remote
+   server (it runs under the loopback sshd, not under the app).
+
+### TD-2026-11-16-451 — rr does not implement tee(2), and this machine's coreutils call it. [OPEN]
+
+`rr record` aborts the whole recording -- the app with it -- at a system call
+it does not know ("Expected ENOSYS for 'tee' ... unsupported by rr",
+`src/record_syscall.cc`). Ubuntu's coreutils (`cat`, `head`, `seq`, `yes`)
+call `tee` on pipes, so a recorded soak job loses its recorder the first time a
+terminal command or a task runs one: twice in 500 steps of the `terminal`
+profile, four times in 240 of `world` (2026-11-16, rr 5.10.0 at a808942).
+
+Contained, not fixed: those two profiles are not recorded
+(`UNRECORDED_PROFILES`), a run that loses its recorder elsewhere reports a
+`recorder` finding the ledger does not book, and `soak.py health` counts them.
+
+The fix is rr's, two lines: `tee` writes no user memory, so in
+`src/syscalls.py` it is `EmulatedSyscall(x86=315, x64=276, generic=77)` rather
+than `UnsupportedSyscall`, and in `rec_prepare_syscall_arch` it belongs beside
+`splice` with `return ALLOW_SWITCH` (it can block). Rebuild `build/rr-src`,
+reinstall, drop the two profiles from `UNRECORDED_PROFILES`, and send the patch
+upstream.
+
 ### TD-2026-11-13-449 — SDL's X11 clipboard can paste the previous text right after another application copies. [OPEN]
 
 Found standing up the QA driver's foreign clipboard (`App.foreign_clipboard`,

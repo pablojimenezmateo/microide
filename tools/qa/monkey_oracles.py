@@ -582,7 +582,9 @@ class ResourceOracle:
         proc = self.app.proc
         if proc is None or proc.poll() is not None:
             return None
-        pid = proc.pid
+        pid = self.app.pid  # the app's own, not a recorder's (App.pid)
+        if pid is None:
+            return None
         if pid != self.pid:  # a relaunch starts a new baseline
             self.pid, self.baseline = pid, None
         base = Path(f"/proc/{pid}")
@@ -792,7 +794,8 @@ class IdleOracle:
         if proc is None or proc.poll() is not None:
             return None
         try:
-            status = Path(f"/proc/{proc.pid}/task/{proc.pid}/status").read_text()
+            pid = self.app.pid
+            status = Path(f"/proc/{pid}/task/{pid}/status").read_text()
         except OSError:
             return None
         for line in status.splitlines():
@@ -805,7 +808,7 @@ class IdleOracle:
         proc = self.app.proc
         if proc is None:
             return ""
-        base = Path(f"/proc/{proc.pid}/task/{proc.pid}")
+        base = Path(f"/proc/{self.app.pid}/task/{self.app.pid}")
         parts = []
         for name in ("wchan", "syscall"):
             try:

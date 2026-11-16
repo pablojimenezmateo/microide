@@ -113,8 +113,11 @@ The QA monkey also runs continuously on the dev PC: `tools/soak/soak.py run` (a
 `systemd --user` unit, `tools/soak/microide-soak.service`) follows `main` in
 `build/wt-soak`, rotates jobs over builds, profiles, sizes and scales, and keeps a
 findings ledger with a `FINDING.md` per finding. `tools/soak/soak.py status` /
-`report` read it; `tools/soak/AGENT.md` is the brief for fixing what it finds
-(`dev-docs/project/safety-plan.md`).
+`report` read it, `soak.py health` says whether every cell is taking steps, and
+`tools/soak/AGENT.md` is the brief for fixing what it finds
+(`dev-docs/project/safety-plan.md`). A third of its default-build jobs record the
+app under `rr`; any monkey run or replay does with `--rr` (`MQA_RR=1`), and
+`rr replay <out>/seed-N/rr/launch-0` then re-runs that exact execution.
 
 Run focused tests with one or more substring filters:
 

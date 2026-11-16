@@ -20,8 +20,17 @@ only, a failing-first test for every fix, one commit per fix, and a TD entry in
    remote lanes time out and a replay's timing is not the user's. When the
    phase's fixes are pushed (or handed over), `soak.py resume` gives the
    machine back; it never lifts a containment pause.
-1. **Pick.** `tools/soak/soak.py report` (or `status`) lists open findings in
-   fix order, each tagged with its impact tier (`soak.py` `priority_key`):
+1. **Pick.** `tools/soak/soak.py health` first: a cell that takes no steps or a
+   recorder that is off is worth more than any one finding (the TSan cell was
+   dead for four days). Then `tools/soak/soak.py report` (or `status`) lists
+   open findings in fix order. Read the **families** list before the
+   signatures: a data or undo signature keys on the FILE the oracle happened to
+   check, so one defect is ten signatures (the kill -9 restore failure), and a
+   family is what there is to fix. A finding marked **quiet** has had enough
+   soak since its last sighting that its old rate was due three or more and
+   none came -- probably gone; leave it unless you know better. `[rr]` marks a
+   finding with a recording (below). Each is tagged with its impact tier
+   (`soak.py` `priority_key`):
    `severe` (crash, sanitizer report, `data`, `undo`, `leak`), `behaviour`
    (`state`, `focus`, `expect`, timing), `layout` (`overlap`, `bounds`), then
    `paint` (stale frames). Within a tier a finding any real-size window shows
@@ -30,7 +39,8 @@ only, a failing-first test for every fix, one commit per fix, and a TD entry in
    keeps real-size runs out of (`--min-logical`). Work top down; a `paint/tiny`
    finding is worth fixing only as part of a class a bigger window also shows.
    Prefer a deterministic finding with a minimal replay; a flaky one needs its
-   rate read before it is chased. A rate measured "at the recorded pace" means
+   rate read before it is chased ("0 of 12 replays": § A finding no replay
+   reproduces). A rate measured "at the recorded pace" means
    the finding is a race: its replay record carries `"paced": true`, and
    `run.py replay` keeps the run's gaps between actions (`--paced` forces it on
    any record). A replay re-runs the data and undo oracles where the run ran
@@ -67,9 +77,15 @@ only, a failing-first test for every fix, one commit per fix, and a TD entry in
    clean), the inner loop (`CLAUDE.md` § Development Workflow), and the lane the
    area needs (`qa` for paint/hover/focus, `asan` for memory).
 8. **Commit** the test and the fix (one commit, or test then fix), then mark it:
-   `tools/soak/soak.py ledger fixed <sig> <commit>`. The runner replays it once
-   the commit is in its build and marks it `verified`, or `reopened` if it is
-   still there. A later sighting reopens it as well. Verifying deletes the
+   `tools/soak/soak.py ledger fixed <sig> <commit>` -- every signature of the
+   family the fix covers. What happens next depends on whether a replay ever
+   reproduced it. If one did, the runner replays it once the commit is in its
+   build (as many times as its rate needs) and marks it `verified`, or
+   `reopened` if it is still there. If none did, a replay proves nothing, and
+   the finding stays `fixed` until the soak has run long enough on builds with
+   the fix that its old rate was due 4.6 sightings and none came (`verified`,
+   `by: exposure`; `status` shows the progress). A sighting from a build with
+   the fix reopens it either way, at once. Verifying deletes the
    bundle's `evidence/`, `sightings/` and `verify/`; `FINDING.md`, `meta.json`
    and the replays stay. So copy any frame you want to keep before then.
 
@@ -89,6 +105,42 @@ only, a failing-first test for every fix, one commit per fix, and a TD entry in
 9. **Defer honestly.** Anything you cannot finish -- a second defect the fix
    exposed, a lint the class deserves -- goes into
    `dev-docs/project/known-tech-debt.md` as a TD entry, and a `ledger note`.
+
+## A finding no replay reproduces
+
+Most severe findings are these: a race, or a kill -9 that landed at one instant
+in a million. Replaying the ACTIONS loses the timing, and on 2026-11-16 every
+open severe finding measured 0%. Do not infer the mechanism from the code and
+call it fixed -- that is how 35 "verified" findings came back. In order:
+
+1. **A recording.** About a third of the default-build jobs run under
+   [rr](https://rr-project.org) (`+rr` / `+rr-chaos` in the cell), and a severe
+   or behaviour finding keeps the run's traces (`evidence/rr/` or
+   `sightings/*/rr/`; FINDING.md § Recording has the commands). A trace replays
+   that exact execution -- same interleaving, same kill -- every time, and
+   backwards: stop where the symptom is logged (`rr replay -M -a` tags each log
+   line with its event; `rr replay -g <event>`), then `watch -l` the wrong
+   value and `reverse-continue` to whoever wrote it. After a kill -9,
+   `launch-N` is the killed process to its last instruction and `launch-N+1`
+   the restore. The default build carries debug info for this. No recording
+   yet: the finding recurs (its rate is in `status`), and the first recorded
+   sighting is kept -- or make one now, step 2.
+2. **The monkey itself, recorded.** FINDING.md prints the run's own monkey
+   command; `--rr` (or `--rr chaos`, which shakes the scheduling) records it.
+   Run it in a loop until the signature shows, and you hold a trace.
+3. **The whole log.** `evidence/run-logs/` is every launch's complete log, not
+   the last 64 KB: with `MICROIDE_TRACE_BUFFER_IO` it is the file's full
+   history. `evidence/machine.txt` says whether the machine was starved when a
+   timing finding fired.
+4. **More evidence next time.** If none of that explains it, add the trace line
+   or the oracle evidence that would have, and let the soak bring the next
+   sighting.
+
+Recorded runs differ where rr does: one thread runs at a time, the app falls
+back to SDL's software renderer (rr cannot record a GPU driver), the window is
+at most 1440x900, and the latency and idle oracles are off. rr also stops at a
+system call it does not implement (`tee`, from coreutils in a terminal); such
+a run is counted in `soak.py health`, and is not a finding.
 
 ## Not a defect of the app
 
