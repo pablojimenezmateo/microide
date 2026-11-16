@@ -42,6 +42,20 @@
 #define MICROIDE_SANITIZER_OWNS_SIGNALS 0
 #endif
 
+// ThreadSanitizer checks what a signal handler calls and reports an unwinder's
+// frame walk as signal-unsafe: the stall watchdog's sampling handler would make
+// a finding of every stall. Under it the watchdog stays off.
+#if defined(__SANITIZE_THREAD__)
+#define MICROIDE_THREAD_SANITIZER 1
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define MICROIDE_THREAD_SANITIZER 1
+#endif
+#endif
+#ifndef MICROIDE_THREAD_SANITIZER
+#define MICROIDE_THREAD_SANITIZER 0
+#endif
+
 namespace microide::platform {
 
 // What the process says about itself when it dies or stops answering, on stderr
@@ -261,9 +275,9 @@ inline void InstallCrashBacktraceHandler() {
 
 // Starts the main-loop stall watchdog when MICROIDE_TRACE_STALL_MS names a
 // threshold of at least 1 ms. Call once, on the main thread, before the loop.
-// Returns whether it started.
+// Returns whether it started (never under ThreadSanitizer).
 inline bool StartStallWatchdogFromEnvironment() {
-#if MICROIDE_HAS_BACKTRACE
+#if MICROIDE_HAS_BACKTRACE && !MICROIDE_THREAD_SANITIZER
   namespace detail = crash_diagnostics_detail;
   const char* text = std::getenv("MICROIDE_TRACE_STALL_MS");
   const auto threshold_ms = text != nullptr ? util::ParseInt64(text) : std::nullopt;
