@@ -55,6 +55,19 @@ class ReopenTests(unittest.TestCase):
             book.append("s", "seen", commit="old")
             self.assertEqual(book.entries()["s"].status, "reopened")
 
+    def test_a_closed_finding_reopens_on_any_sighting(self) -> None:
+        # Closed by exposure, never by a fix: there is no fix commit to check a
+        # sighting's build against, so every sighting means it is still there.
+        with tempfile.TemporaryDirectory() as work:
+            book = ld.Ledger(Path(work) / "ledger.jsonl", contains=_contains)
+            book.append("s", "new", commit="old")
+            book.append("s", "closed", by="exposure")
+            entry = book.entries()["s"]
+            self.assertEqual(entry.status, "closed")
+            self.assertNotIn(entry, book.open_entries())
+            book.append("s", "seen", commit="old")
+            self.assertEqual(book.entries()["s"].status, "reopened")
+
     def test_fixed_in(self) -> None:
         entry = self._fold()
         self.assertTrue(entry.fixed_in("later", _contains))

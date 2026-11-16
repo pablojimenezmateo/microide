@@ -143,6 +143,32 @@ class LedgerVerdictTests(unittest.TestCase):
         self.sight("gone", 5005.0)
         self.assertFalse(self.soak.is_quiet(self.book.entries()["gone"]))
 
+    def test_an_open_finding_quiet_long_enough_is_closed_and_a_sighting_reopens_it(self):
+        for when in (100.0, 200.0, 300.0, 400.0):
+            self.sight("gone", when)
+        self.sight("claimed", 100.0)
+        self.book.append("claimed", "claimed", by="agent")
+        # One sighting in ten runs, then 31 quiet runs: 3 due -- quiet, not closed.
+        self.write_runs(runs("editing", range(0, 710, 10)))
+        log: list[str] = []
+        self.soak.close_quiet(log.append)
+        self.assertEqual(self.book.entries()["gone"].status, "new", "3 due: quiet, not yet closed")
+        self.write_runs(runs("editing", range(0, 910, 10)))
+        self.soak.close_quiet(log.append)
+        entries = self.book.entries()
+        self.assertEqual(entries["gone"].status, "closed")
+        self.assertIn("closed gone", log[-1])
+        self.assertEqual(entries["claimed"].status, "claimed", "someone is working on it")
+        self.sight("gone", 9500.0)
+        self.assertEqual(self.book.entries()["gone"].status, "reopened")
+
+    def test_a_job_type_the_soak_stopped_running_closes_nothing(self):
+        for when in (100.0, 200.0, 300.0, 400.0):
+            self.sight("gone", when)
+        self.write_runs(runs("editing", range(0, 410, 10)) + runs("layout", range(1000, 9000, 10)))
+        self.soak.close_quiet(lambda _: None)
+        self.assertEqual(self.book.entries()["gone"].status, "new")
+
     def test_the_reproduction_line_says_how_many_replays(self):
         self.sight("flaky", 100.0)
         self.book.append("flaky", "checked", rate=0.0, runs=12, deterministic=False)

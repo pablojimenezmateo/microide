@@ -32,7 +32,7 @@ from typing import Any, Callable, Iterator
 # contains(fix_commit, commit): the build at `commit` has the fix.
 Contains = Callable[[str, str], bool]
 
-STATES = ("new", "claimed", "fixed", "verified", "reopened")
+STATES = ("new", "claimed", "fixed", "verified", "reopened", "closed")
 
 
 @dataclass
@@ -132,7 +132,11 @@ class Ledger:
                 if event.get("commit"):
                     entry.commits.add(event["commit"])
                 entry.sightings.append((when, event.get("cell", ""), event.get("commit", "")))
-                if kind == "seen" and entry.fixed_in(event.get("commit", ""), self.contains):
+                # A closed finding had no fix to check the build against: the
+                # soak stopped showing it (soak.close_quiet), so any sighting
+                # means it is still there.
+                if kind == "seen" and (entry.status == "closed" or
+                                       entry.fixed_in(event.get("commit", ""), self.contains)):
                     entry.status = "reopened"
             elif kind == "checked":
                 entry.deterministic = bool(event.get("deterministic"))
@@ -154,6 +158,8 @@ class Ledger:
                 entry.verified_by = event.get("by", "replay")
             elif kind == "reopened":
                 entry.status = "reopened"
+            elif kind == "closed":
+                entry.status = "closed"
             elif kind == "note":
                 entry.notes.append(str(event.get("text", "")))
         return out

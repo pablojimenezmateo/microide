@@ -32,6 +32,9 @@ from typing import Any, Callable, Iterable
 QUIET_EXPECTED = 3.0
 # ... and before a fix no replay can check is called verified (1%).
 VERIFIED_EXPECTED = 4.6
+# ... and before an open finding nobody fixed is closed: the same 1% bar as a
+# verification, since closing says the same thing -- it is gone.
+CLOSED_EXPECTED = VERIFIED_EXPECTED
 
 
 def job_of(cell: str) -> str:

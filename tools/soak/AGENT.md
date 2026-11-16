@@ -28,7 +28,10 @@ only, a failing-first test for every fix, one commit per fix, and a TD entry in
    check, so one defect is ten signatures (the kill -9 restore failure), and a
    family is what there is to fix. A finding marked **quiet** has had enough
    soak since its last sighting that its old rate was due three or more and
-   none came -- probably gone; leave it unless you know better. `[rr]` marks a
+   none came -- probably gone; leave it unless you know better. At 4.6 due
+   the runner books it `closed` (`close_quiet`) and any later sighting reopens
+   it; close one by hand with `soak.py ledger close SIG REASON` when it was the
+   harness's fault, not the app's. `[rr]` marks a
    finding with a recording (below). Each is tagged with its impact tier
    (`soak.py` `priority_key`):
    `severe` (crash, sanitizer report, `data`, `undo`, `leak`), `behaviour`

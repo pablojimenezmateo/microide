@@ -1199,6 +1199,27 @@ def verify_by_exposure(log) -> None:
         log(f"verified {entry.sig} by exposure ({quiet.describe()}); pruned {freed / 1e6:.1f} MB")
 
 
+def close_quiet(log) -> None:
+    """Books `closed` for the open findings the soak has stopped showing for
+    good: CLOSED_EXPECTED sightings due at the old rate, over runs of the job
+    types that showed them, and none seen (exposure.py) -- fixed by a commit
+    nobody booked against them, or a fault of the harness of the day. Only the
+    job types that showed a finding count, so a cell that stopped running (the
+    TSan cell, dead for four days) closes nothing. A claimed one is someone's
+    work and stays. Any later sighting reopens it (Ledger.entries), and its
+    bundle keeps the replay; the evidence goes, as a verified one's does."""
+    for entry in ledger().entries().values():
+        if entry.status not in ("new", "reopened"):
+            continue
+        quiet = quiet_for(entry)
+        if quiet is None or quiet.expected < ex.CLOSED_EXPECTED:
+            continue
+        ledger().append(entry.sig, "closed", by="exposure", runs=quiet.runs, expected=round(quiet.expected, 1),
+                        note=f"quiet: {quiet.describe()}")
+        freed = prune_verified_bundle(FINDINGS / entry.sig)
+        log(f"closed {entry.sig} ({quiet.describe()}); pruned {freed / 1e6:.1f} MB")
+
+
 def verify_fixed(state: dict[str, Any], log) -> None:
     """Queues every fixed signature whose fix commit is in the current default
     build for a verify job (start_verify, `soak.py verify SIG`), which replays it:
@@ -1835,6 +1856,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             enforce_disk_budget(log)
             with contextlib.suppress(Exception):  # the ledger's bookkeeping never stops the runner
                 verify_by_exposure(log)
+                close_quiet(log)
             last_housekeeping = now
         time.sleep(3)
     for job in jobs:
@@ -2100,6 +2122,12 @@ def cmd_ledger(args: argparse.Namespace) -> int:
         book.append(args.sig, "fixed", commit=git("rev-parse", args.extra))
     elif args.action == "reopen":
         book.append(args.sig, "reopened", note=args.extra or "")
+    elif args.action == "close":
+        # By hand: a harness fault, or a finding the soak can no longer reach.
+        if not args.extra:
+            print("close needs the reason", file=sys.stderr)
+            return 2
+        book.append(args.sig, "closed", by=os.environ.get("USER", "agent"), note=args.extra)
     elif args.action == "note":
         book.append(args.sig, "note", text=args.extra or "")
     return 0
@@ -2173,7 +2201,7 @@ def main() -> int:
     verify = sub.add_parser("verify", help="replay a fixed finding on the current build and book the verdict")
     verify.add_argument("sig")
     led = sub.add_parser("ledger")
-    led.add_argument("action", nargs="?", default="list", choices=("list", "show", "claim", "fixed", "reopen", "note"))
+    led.add_argument("action", nargs="?", default="list", choices=("list", "show", "claim", "fixed", "reopen", "close", "note"))
     led.add_argument("sig", nargs="?")
     led.add_argument("extra", nargs="?")
     args = parser.parse_args()
