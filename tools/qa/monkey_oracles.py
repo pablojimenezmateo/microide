@@ -65,6 +65,7 @@ class DataOracle:
         # {file name: bytes}. The monkey writes them next to FINDING.md, so a
         # mismatch that does not replay still says how the two sides differ.
         self.evidence: dict[str, bytes] = {}
+        self.untitled_evidence: dict[str, bytes] = {}
 
     def documents(self, all_projects: bool = False) -> list[dict[str, Any]]:
         """The open documents: the active project's, or with `all_projects` every
@@ -103,25 +104,42 @@ class DataOracle:
         for doc in docs:
             if not doc.get("path") and doc.get("title"):
                 texts[_doc_key(doc)].add(str(doc.get("sha256", "")))
-        return [("data", f"{len(shas)} different unsaved buffers are all titled {title}")
-                for (_, title), shas in sorted(texts.items()) if len(shas) > 1]
+        found = [("data", f"{len(shas)} different unsaved buffers are all titled {title}")
+                 for (_, title), shas in sorted(texts.items()) if len(shas) > 1]
+        if found:
+            # Which tabs collide: their group, place and the number each holds,
+            # beside every tab of the project (the documents query skips a tab
+            # whose content has not landed, which still holds its number).
+            untitled = [doc for doc in docs if not doc.get("path")]
+            try:
+                tabs = self.app.query("tabs")
+            except Exception:  # noqa: BLE001 - evidence is best effort
+                tabs = None
+            self.untitled_evidence = {
+                "untitled-documents.json": json.dumps(untitled, indent=1).encode(),
+                "tabs.json": json.dumps(tabs, indent=1).encode(),
+            }
+        return found
 
     def check_clean(self, attempts: int = 4, gap: float = 0.3) -> list[tuple[str, str]]:
         """A clean document whose file differs, and keeps differing while the
         file stays the same for `attempts` reads -- an external rewrite the
         watcher has not reloaded yet is not a finding, a stable disagreement is."""
         docs = self.documents()
+        self.untitled_evidence = {}
         names = self.check_untitled_names(docs)
         mismatched = self.clean_mismatches(docs)
         for _ in range(attempts - 1):
             if not mismatched:
+                self.evidence = self.untitled_evidence
                 return names
             time.sleep(gap * q.SLOW_FACTOR)
             again = self.clean_mismatches(self.documents())
             # Only what still differs from the SAME disk bytes.
             mismatched = {path: pair for path, pair in again.items()
                           if path in mismatched and mismatched[path][1] == pair[1]}
-        self.evidence = {}
+        self.evidence = self.untitled_evidence
+        self.untitled_evidence = {}
         for path, pair in mismatched.items():
             self.evidence.update(self._mismatch_evidence(path, pair))
         return names + [("data", f"the clean buffer of {Path(path).name} differs from its file on disk "

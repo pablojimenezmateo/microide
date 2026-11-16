@@ -1011,6 +1011,11 @@ util::JsonValue ControlChannelService::BuildDocuments(const util::JsonValue& arg
         util::JsonObject object;
         object["path"] = util::JsonValue(view.path().generic_string());
         object["title"] = util::JsonValue(tab.title);
+        // Where the tab sits and the number its title claims, so a duplicate
+        // Untitled-N names the two tabs that collide (soak 2ae149191d79).
+        object["group"] = util::JsonValue(static_cast<std::int64_t>(&group - project->editor_groups.data()));
+        object["tab"] = util::JsonValue(static_cast<std::int64_t>(&tab - group.open_tabs.data()));
+        object["untitledNumber"] = util::JsonValue(static_cast<std::int64_t>(tab.untitled_number));
         object["dirty"] = util::JsonValue(view.dirty());
         object["readOnly"] = util::JsonValue(view.read_only());
         object["encoding"] = util::JsonValue(std::string(
