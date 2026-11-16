@@ -7,6 +7,7 @@
     tools/soak/soak.py ledger [list|show SIG|claim SIG|fixed SIG COMMIT|reopen SIG|note SIG TEXT]
     tools/soak/soak.py build                                     update the worktree and build once
     tools/soak/soak.py pause [REASON] [--wait S] / resume         take turns with the fixing agent
+    tools/soak/soak.py hunt [SIG] [--runs N] [--rr chaos|1|off]   replay a finding under rr until it shows
     tools/soak/soak.py health                                    is every cell running, is the ledger honest
 
 It follows `main` in its own worktree (`build/wt-soak`, never the live tree) and
@@ -169,10 +170,11 @@ def build_all(state: dict[str, Any], log) -> None:
                 shutil.copy2(server, target / "microide-server")
             good[build.name] = {"sha": head, "binary": str(target / "microide")}
             log(f"  {build.name}: ok ({time.monotonic() - started:.0f}s)")
+            close_build_finding(build.name, head, log)
         else:
             tail = (result.stdout + result.stderr)[-4000:]
             log(f"  {build.name}: FAILED")
-            signature = fnd.signature("build", f"{build.name} build failed")
+            signature = build_signature(build.name)
             ledger().append(signature, "new" if signature not in ledger().entries() else "seen",
                             kind="build", label=f"build: the {build.name} build fails", commit=head,
                             cell=build.name, detail=tail)
@@ -180,6 +182,76 @@ def build_all(state: dict[str, Any], log) -> None:
     state["driver"] = str(snapshot_driver(head))
     prune_binaries(good)
     prune_drivers(state)
+    refresh_surface(state, log, inventory=True)
+
+
+SURFACE_SUMMARY = SOAK / "surface-summary.json"
+# Between builds the inventory stands and the coverage grows: recounted this often.
+SURFACE_RECOUNT_SECONDS = 6 * 3600.0
+
+
+def refresh_surface(state: dict[str, Any], log, inventory: bool) -> None:
+    """Writes the surface's coverage (tools/soak/surface.py): what the app can do
+    against what the soak has reached, as `surface-gaps.md` and
+    `surface-summary.json`, which `health` and `report` read.
+
+    With `inventory`, from a launch of the new build (a feature shows up as not
+    reached the day it lands); without, from the saved inventory against the
+    coverage as it has grown. It was a tool somebody had to remember to run: the
+    soak's directory had never held a gap list, and "89% reached" was a number
+    from a measure that could not see a pressed key."""
+    driver = driver_root(state)
+    good = state.get("good", {}).get("default")
+    command = [sys.executable, str(driver / "tools" / "soak" / "surface.py"), "--coverage", str(COVERAGE),
+               "--out", str(SOAK), "--extra", str(driver / "tools" / "soak" / "surface-extra.toml")]
+    if inventory:
+        if not good:
+            return
+        command += ["--binary", good["binary"]]
+    elif (SOAK / "surface.json").exists():
+        command += ["--inventory", str(SOAK / "surface.json")]
+    else:
+        return
+    try:
+        result = subprocess.run(["nice", "-n", "19", *command], cwd=driver, capture_output=True, text=True,
+                                timeout=600)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        log(f"surface: {error}")
+        return
+    tail = (result.stdout + result.stderr).strip().splitlines()
+    log(f"surface: {tail[-1][:200] if tail else 'no output'}")
+    state["surface_at"] = time.time()
+
+
+def surface_line() -> str | None:
+    """`health`'s line on the surface, or None before the first count."""
+    try:
+        summary = json.loads(SURFACE_SUMMARY.read_text())
+    except (OSError, ValueError):
+        return None
+    worst = sorted(((len(c["unreached"]), name) for name, c in summary.get("categories", {}).items()
+                    if c["unreached"]), reverse=True)
+    return (f"surface: {summary.get('reached')} of {summary.get('total')} inventoried items reached, "
+            f"{summary.get('excluded')} excluded with a reason, {summary.get('unreached')} NOT REACHED"
+            + (" (" + ", ".join(f"{name} {count}" for count, name in worst[:6]) + ")" if worst else "")
+            + (f"; {len(summary['staleExclusions'])} stale exclusion(s)" if summary.get("staleExclusions") else "")
+            + f" -- {SOAK / 'surface-gaps.md'}")
+
+
+def build_signature(name: str) -> str:
+    return fnd.signature("build", f"{name} build failed")
+
+
+def close_build_finding(name: str, head: str, log) -> None:
+    """A build that fails is a finding; the same build succeeding is its end.
+    Nothing closed one: its rate is one sighting in thousands of the job
+    type's runs, so exposure never would, and "the default build fails" led
+    the severe list for days after the build was green again."""
+    sig = build_signature(name)
+    entry = ledger().entries().get(sig)
+    if entry is not None and entry.status in ("new", "reopened", "claimed"):
+        ledger().append(sig, "closed", by="build", note=f"the {name} build succeeded at {head[:12]}")
+        log(f"  closed {sig}: the {name} build is good again")
 
 
 def snapshot_driver(head: str) -> Path:
@@ -275,6 +347,12 @@ JOB_TYPES = [
     # A remote project over a loopback host of the run's own, with link cuts and
     # server kills: no other job reaches src/project/remote or the server.
     JobType("remote", 6, "default", "remote", steps=800),
+    # Crash safety, a dozen kills a run and half of them at a named durable-write
+    # boundary: what the other jobs do three times in 1500 steps.
+    JobType("crash", 8, "default", "crash", steps=600),
+    # The Lua plugin host: the bundled data-only plugins, their commands and
+    # surfaces. No other job runs a plugin's command.
+    JobType("plugins", 4, "default", "plugins"),
     JobType("commands", 4, "default", "commands", steps=600, project="repo", matrix=False),
     JobType("editor", 3, "default", "editor", steps=600, project="repo", matrix=False),
     JobType("release", 6, "release"),
@@ -369,7 +447,9 @@ def choose_cell(rng: random.Random, max_pixels: int | None = None) -> tuple[tupl
 # their work or their session; the sanitizers' log lines are memory and thread
 # bugs whatever they look like on screen.
 TIER_NAMES = ("severe", "behaviour", "layout", "paint")
-_SEVERE_KINDS = frozenset({"crash", "data", "undo", "leak", "build", "containment", "job"})
+# `invariant`: a structural rule of the workspace broken (the app's `invariants`
+# query) -- the state a lost buffer or a crash is later the symptom of.
+_SEVERE_KINDS = frozenset({"crash", "data", "undo", "leak", "build", "containment", "job", "invariant"})
 # What a new finding of each tier counts for when the rotation follows yield
 # (choose_job). Counted one each, the yield was the stale-paint signatures' --
 # 983 of the ledger's 1336, one defect fanning out into dozens -- and the jobs
@@ -590,6 +670,9 @@ def start_check(sig: str, state: dict[str, Any]) -> Job:
     return Job(CHECK_JOB, 0, out, command, f"check/{sig}", time.time(), proc, state.get("built_sha", ""), "")
 
 
+# The least time between two looks for a finding to hunt (each reads the ledger).
+HUNT_INTERVAL = 120.0
+
 # A check or a verification replays its finding three runs at a time
 # (minimize --runs 3 --jobs 3): three apps, three displays. Counted as one job,
 # five checks were fifteen apps in a budget of five, and the machine ran at a
@@ -608,6 +691,126 @@ def slots(jobs: list["Job"]) -> int:
     7
     """
     return sum(REPLAY_JOB_SLOTS if job.type is CHECK_JOB or job.type is VERIFY_JOB else 1 for job in jobs)
+
+
+# ---- hunts: a recording of a finding no replay of its actions shows ----------------
+
+# A hunt replays one finding's actions at the run's recorded pace under rr's
+# chaos mode, again and again, until it shows -- and then holds a trace of it,
+# which reproduces every time. It is what AGENT.md told the fixing agent to do
+# by hand for every severe finding without a recording; the runner does it with
+# the machine's spare hours instead.
+HUNT_JOB = JobType("hunt", 0, "default", timeout=2 * 3600, matrix=False)
+# Replays a hunt makes before it gives the slot back, and hunts a finding gets
+# before the runner stops trying (a note in the ledger counts them).
+HUNT_RUNS = 6
+HUNT_LIMIT = 4
+HUNT_NOTE = "hunt: "
+
+
+def hunts_made(entry: ld.Entry) -> int:
+    return sum(1 for note in entry.notes if note.startswith(HUNT_NOTE))
+
+
+def hunt_candidates(entries) -> list[ld.Entry]:
+    """The open severe and behaviour findings worth a hunt, best first: the soak
+    still shows them, no replay has, their replays did not leave the run's path
+    (a diverged replay cannot show the finding however often it runs: that is
+    tools/qa's to fix first), they have no recording, and HUNT_LIMIT hunts have
+    not already failed."""
+    out = []
+    for entry in entries:
+        if entry.status not in ("new", "reopened") or impact_tier(entry) > 1 or is_quiet(entry):
+            continue
+        if entry.rate != 0 or entry.replay_verdict in ("diverged", "untested"):
+            continue
+        if entry.kind in fnd.TIMING_KINDS or entry.kind in ("build", "job", "containment"):
+            continue  # a timing finding under rr is the recorder's timing
+        bundle = FINDINGS / entry.sig
+        if has_recording(bundle) or hunts_made(entry) >= HUNT_LIMIT:
+            continue
+        if not ((bundle / "replay.json").exists() or any(bundle.glob("sightings/*/replay.json"))):
+            continue
+        out.append(entry)
+    return sorted(out, key=lambda e: (hunts_made(e), *priority_key(e)))
+
+
+def hunt_replay(bundle: Path) -> Path | None:
+    """The record a hunt replays: the newest kept sighting's (the current
+    build's behaviour, and for a reopened finding the only replay with
+    evidence), else the bundle's own."""
+    sightings = sorted(bundle.glob("sightings/*/replay.json"), reverse=True)
+    if sightings:
+        return sightings[0]
+    return bundle / "replay.json" if (bundle / "replay.json").exists() else None
+
+
+def start_hunt(sig: str, state: dict[str, Any]) -> Job:
+    out = RUNS / f"hunt-{sig}"
+    out.mkdir(parents=True, exist_ok=True)
+    command = [sys.executable, str(HERE / "soak.py"), "hunt", sig]
+    with open(out / "driver.log", "wb") as log:
+        proc = subprocess.Popen(command, cwd=REPO, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    return Job(HUNT_JOB, 0, out, command, f"hunt/{sig}", time.time(), proc, state.get("built_sha", ""), "")
+
+
+def hunt_finding(sig: str, state: dict[str, Any], log, runs: int = HUNT_RUNS, mode: str = "chaos") -> bool:
+    """Replays `sig` up to `runs` times, paced and recorded, on the current
+    default build; keeps the first replay that shows it as a sighting of the
+    bundle, trace and all. True when one did."""
+    bundle = FINDINGS / sig
+    replay = hunt_replay(bundle)
+    good = state.get("good", {}).get("default")
+    if replay is None or not good:
+        log(f"{sig}: nothing to hunt with (no replay, or no default build)")
+        return False
+    driver = driver_root(state)
+    slow = RECORD_SLOW.get(mode, 1.0)
+    scratch = RUNS / f"hunt-{sig}"
+    command: list[str] = []
+    for attempt in range(1, runs + 1):
+        out = scratch / f"attempt-{attempt}"
+        shutil.rmtree(out, ignore_errors=True)
+        command = ["nice", "-n", "19", "ionice", "-c3", sys.executable, str(driver / "tools" / "qa" / "run.py"),
+                   "--binary", good["binary"], "--out", str(out), "replay", str(replay), "--paced",
+                   *(["--rr", mode] if mode in recording.RR_MODES else [])]
+        env = {**os.environ, "MQA_SLOW_FACTOR": str(slow)}
+        env.pop("MQA_RR", None)
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            subprocess.run(command, cwd=driver, env=env, capture_output=True, text=True, timeout=3000)
+        caught = None
+        with contextlib.suppress(OSError, ValueError):
+            report = json.loads((out / "replay" / "findings.json").read_text())
+            caught = next((f for f in report.get("findings", []) if f.get("signature") == sig), None)
+        if caught is None:
+            shutil.rmtree(out, ignore_errors=True)
+            continue
+        target = bundle / "sightings" / f"{time.strftime('%Y%m%d-%H%M%S')}-{good['sha'][:12]}-hunt"
+        evidence = Path(caught.get("evidence") or "")
+        if evidence.is_dir() and out.resolve() in evidence.resolve().parents:
+            shutil.copytree(evidence, target, dirs_exist_ok=True)
+            keep_run_evidence(evidence, target, caught)
+        else:
+            target.mkdir(parents=True, exist_ok=True)
+        (target / "sighting.json").write_text(json.dumps(
+            {"cell": f"hunt/default{RECORD_CELL_TAG.get(mode, '')}", "sha": good["sha"], "binary": good["binary"],
+             "build": "default", "record": mode, "slow": slow, "command": command,
+             "detail": caught.get("detail", ""), "step": caught.get("step"), "state": caught.get("state"),
+             "status_before": "hunted"}, indent=1))
+        ledger().append(sig, "note", text=f"{HUNT_NOTE}caught on replay {attempt} of {runs} "
+                                          f"({'rr ' + mode if mode in recording.RR_MODES else 'unrecorded'}, "
+                                          f"paced) at {good['sha'][:12]}: {target.name}")
+        if (bundle / "meta.json").exists():
+            write_finding_md(bundle)
+        log(f"hunt {sig}: CAUGHT on replay {attempt} of {runs}; kept {target}")
+        shutil.rmtree(scratch, ignore_errors=True)
+        return True
+    ledger().append(sig, "note", text=f"{HUNT_NOTE}{runs} paced replays under "
+                                      f"{'rr ' + mode if mode in recording.RR_MODES else 'no recorder'} at "
+                                      f"{good['sha'][:12]} did not show it")
+    log(f"hunt {sig}: {runs} replays did not show it")
+    shutil.rmtree(scratch, ignore_errors=True)
+    return False
 
 
 def start_verify(sig: str, state: dict[str, Any]) -> Job:
@@ -653,6 +856,26 @@ def record_dead_job(job: Job, timed_out: bool, log) -> str:
     return sig
 
 
+def oracle_counts(summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    """What a run's oracles that can run vacuously did (the monkey's summary):
+    invariant checks the app answered, kills at named crash points by how they
+    ended, slow answers put down to a starved machine. For `soak.py health`:
+    an oracle that never ran found nothing, and that reads like "no defect".
+
+    >>> oracle_counts([{"invariant_checks": 300, "starved": 2, "kill_points": {"hit:durable.renaming": 1, "missed": 1}},
+    ...                {"invariant_checks": 10, "kill_points": {"hit:durable.renaming": 2}}])
+    {'invariants': 310, 'starved': 2, 'kills_hit': 3, 'kills_missed': 1}
+    >>> oracle_counts([{"steps": 4}])
+    {}
+    """
+    out = {"invariants": sum(int(s.get("invariant_checks") or 0) for s in summaries),
+           "starved": sum(int(s.get("starved") or 0) for s in summaries),
+           "kills_hit": sum(n for s in summaries for key, n in (s.get("kill_points") or {}).items()
+                            if key.startswith("hit:")),
+           "kills_missed": sum(int((s.get("kill_points") or {}).get("missed") or 0) for s in summaries)}
+    return {key: value for key, value in out.items() if value}
+
+
 def job_meta(job: Job, finding: dict[str, Any], header: dict[str, Any]) -> dict[str, Any]:
     """A bundle's meta.json: the finding and everything about the run it came from."""
     return {"finding": finding, "cell": job.cell, "sha": job.sha, "binary": job.binary,
@@ -661,7 +884,7 @@ def job_meta(job: Job, finding: dict[str, Any], header: dict[str, Any]) -> dict[
 
 
 def reap_job(job: Job, state: dict[str, Any], log, timed_out: bool = False) -> None:
-    if job.type is CHECK_JOB or job.type is VERIFY_JOB:
+    if job.type is CHECK_JOB or job.type is VERIFY_JOB or job.type is HUNT_JOB:
         tail = (job.out / "driver.log").read_text(errors="replace")[-400:] if (job.out / "driver.log").exists() else ""
         log(f"  {job.cell} done: {tail.strip().splitlines()[-1] if tail.strip() else ''}")
         shutil.rmtree(job.out, ignore_errors=True)
@@ -709,7 +932,8 @@ def reap_job(job: Job, state: dict[str, Any], log, timed_out: bool = False) -> N
                               "steps": sum(s.get("steps", 0) for s in summaries),
                               "new_states": sum(s.get("new_states", 0) for s in summaries),
                               "findings": sum(len(s.get("findings", [])) for s in summaries),
-                              "new": new, **({"recorder_lost": recorder_lost} if recorder_lost else {})}) + "\n")
+                              "new": new, **({"recorder_lost": recorder_lost} if recorder_lost else {}),
+                              **oracle_counts(summaries)}) + "\n")
     # The run's directory is evidence only while a finding points into it.
     shutil.rmtree(job.out, ignore_errors=True)
 
@@ -901,6 +1125,12 @@ EVIDENCE_NOTES = (
                "hundreds of actions earlier, which the tail does not reach"),
     ("machine.txt", "the machine's load and pressure when it was found (a timing finding from a starved "
                     "machine is the machine's)"),
+    ("crash-stack.txt", "the crashing thread's stack, as the app printed it on its way down, resolved"),
+    ("latency.txt", "where a slow answer's time went (on a CPU, waiting for one, blocked) and the main "
+                    "thread's stack from the app's stall watchdog"),
+    ("invariants.json", "the app's own answer on its structural rules (`invariants`), with the tabs, "
+                        "documents and editor state beside it"),
+    ("state.json", "the app's answers to its state queries when the finding was made"),
     ("recording.txt", "which rr trace the finding was reported in, and how far into it"),
     ("children.txt", "the app's child processes when the leak oracle fired"),
     ("fds.txt", "what the app's descriptors point at, by kind"),
@@ -917,14 +1147,33 @@ def reproduction_text(entry: ld.Entry) -> str:
     "0%" of three says little about a finding that shows one run in ten."""
     if entry.rate is None:
         return "not measured yet"
-    runs = entry.rate_runs or 3
+    runs = entry.replays_ran if entry.replays_ran is not None else (entry.rate_runs or 3)
     text = (f"{'deterministic' if entry.deterministic else 'flaky'}, {round(entry.rate * runs)} of {runs} "
             f"replays of its actions showed it")
+    if entry.replays_ran is not None and entry.rate_runs and entry.replays_ran < entry.rate_runs:
+        text += (f" ({entry.rate_runs - entry.replays_ran} more could not run"
+                 + (f": {entry.replay_errors[0]}" if entry.replay_errors else "") + ")")
     if entry.paced:
         text += " at the recorded pace (the replays keep the run's timing; `run.py replay` reads it from the record)"
-    if not entry.rate:
-        text += (" -- a replay will not reproduce it: use a recording (below, or the next recorded sighting) "
-                 "or the monkey run itself")
+    verdict = entry.replay_verdict
+    if verdict == "untested":
+        text += (" -- NOT TESTED: the driver finished none of them, so this says nothing about the finding"
+                 + (f" ({entry.replay_errors[0]})" if entry.replay_errors else ""))
+    elif verdict == "diverged":
+        first = entry.divergence or {}
+        text += (f" -- and {entry.replays_diverged} of them LEFT THE RUN'S PATH, first after action "
+                 f"{first.get('action')} ({first.get('after')}): the run was in `{first.get('run')}`, the replay "
+                 f"in `{first.get('replay')}`. The record does not rebuild the run -- a gap in the harness "
+                 f"(tools/qa), not a property of the defect: look there first")
+    elif verdict == "followed":
+        text += (f" -- and {entry.replays_followed} of them followed the run's states to the end: the actions "
+                 "are not enough (timing, a race). Use a recording (below, or the next recorded sighting), or "
+                 "`soak.py hunt` to replay it under rr until it shows")
+    elif not entry.rate:
+        text += (" -- a replay will not reproduce it: use a recording (below, or the next recorded sighting), "
+                 "or `soak.py hunt` to replay it under rr until it shows")
+    if entry.replay_others and not entry.rate:
+        text += ". The replays showed instead: " + "; ".join(f"`{other}`" for other in entry.replay_others[:4])
     return text
 
 
@@ -997,7 +1246,7 @@ def write_finding_md(bundle: Path) -> None:
     entry = ledger().entries().get(finding["signature"])
     evidence = bundle / "evidence"
     log_text = ""
-    for name in ("log-tail.txt", "trace.txt"):
+    for name in ("crash-stack.txt", "log-tail.txt", "trace.txt"):
         if (evidence / name).exists():
             log_text += (evidence / name).read_text(errors="replace")
     stack = fnd.stack_key(log_text, frames=8)
@@ -1038,8 +1287,11 @@ def write_finding_md(bundle: Path) -> None:
                   f"{env}{run_py} --binary build/microide/microide replay {bundle / 'replay.json'}", "```", ""]
     rerun = monkey_rerun(meta)
     if rerun:
-        lines += ["The monkey run itself (its own queries set the timing; a race a replay loses can show "
-                  "here -- add `--rr` to record it):", "", "```bash", f"{env}{rerun}", "```", ""]
+        lines += ["A fresh monkey run of the same profile, window and seed number. NOT the same walk: the "
+                  "run steered by the soak's coverage and may have started from a corpus prefix, so this "
+                  "explores differently -- it is a way to look for the finding again in its cell (add `--rr` "
+                  "to record it), not a reproduction. The replay above is the run's own actions:", "",
+                  "```bash", f"{env}{rerun}", "```", ""]
     lines += [f"The binary that found it: `{meta['binary']}`.", ""]
     lines += recording_section(bundle)
     if stack:
@@ -1103,6 +1355,11 @@ def write_finding_md(bundle: Path) -> None:
 CHECK_RUNS = (12, 12, 3, 3)
 
 
+# What a check's report (minimize.summarize_runs) adds to the ledger's `checked`
+# event beside the rate.
+CHECK_REPORT_FIELDS = ("ran", "followed", "diverged", "divergence", "errors", "others")
+
+
 def check_runs(finding: dict[str, Any]) -> int:
     return CHECK_RUNS[tier_of(finding.get("kind", ""), finding.get("label", ""))]
 
@@ -1135,16 +1392,23 @@ def check_finding(sig: str, state: dict[str, Any], log) -> None:
     runs = check_runs(meta["finding"])
     result = subprocess.run(["nice", "-n", "19", *minimize, "--check-only", "--runs", str(runs), "--jobs", "3"],
                             capture_output=True, text=True, env=env, timeout=5400)
-    rate, paced = 0.0, False
+    report: dict[str, Any] = {}
     for line in result.stdout.splitlines():
         if line.startswith("{"):
-            rate = json.loads(line).get("rate", 0.0)
-            paced = bool(json.loads(line).get("paced", False))
+            with contextlib.suppress(ValueError):
+                report = json.loads(line)
+    rate, paced = float(report.get("rate", 0.0)), bool(report.get("paced", False))
     actions = len(json.loads(replay.read_text()).get("actions", []))
     deterministic = rate >= 2 / 3
+    if not report:
+        # The check itself died (a timeout, a broken driver): no replay ran.
+        report = {"ran": 0, "errors": [f"the check printed no result: {(result.stderr or result.stdout)[-200:]}"]}
     ledger().append(sig, "checked", rate=rate, runs=runs, deterministic=deterministic, actions=actions,
-                    paced=paced)
-    log(f"  checked {sig}: {round(rate * runs)} of {runs} replays" + (" at the recorded pace" if paced else ""))
+                    paced=paced, **{key: report[key] for key in CHECK_REPORT_FIELDS if key in report})
+    log(f"  checked {sig}: {round(rate * report.get('ran', runs))} of {report.get('ran', runs)} replays"
+        + (" at the recorded pace" if paced else "")
+        + (f"; {report['diverged']} left the run's path" if report.get("diverged") else "")
+        + (f"; {runs - report['ran']} could not run" if report.get("ran", runs) < runs else ""))
     if paced:
         # Every later replay of it -- the minimizer's, the agent's, the fix's
         # verification -- keeps the recorded pace.
@@ -1160,6 +1424,37 @@ def check_finding(sig: str, state: dict[str, Any], log) -> None:
                 ledger().append(sig, "minimized", actions=json.loads(line)["actions"])
                 log(f"  minimized {sig}: {json.loads(line)['actions']} actions")
     write_finding_md(bundle)
+
+
+# The most findings requeue_unmeasured puts back in the check queue at a time: a
+# check is replays, and new findings' checks come first.
+REQUEUE_BATCH = 40
+
+
+def requeue_unmeasured(state: dict[str, Any], log) -> int:
+    """Puts the open findings whose "no replay reproduces it" predates the
+    replays' own fidelity back in the check queue, the most severe first.
+
+    Their rate of 0 was measured by replays that named files of a deleted run
+    directory, dropped a corpus prefix's outside-world steps and did not say
+    whether they followed the run (Entry.replays_ran is None for those): it is
+    not a measurement. Checked again, each gets a rate a replay can be held
+    to and a verdict on its path. Returns how many it queued."""
+    pending = state.setdefault("pending_checks", [])
+    running = set(state.get("current", []))
+    entries = ledger().entries()
+    stale = [e for e in entries.values()
+             if e.status in ("new", "reopened") and e.rate == 0 and e.replays_ran is None
+             and e.sig not in pending and f"check/{e.sig}" not in running
+             and (FINDINGS / e.sig / "replay.json").exists()]
+    room = max(0, REQUEUE_BATCH - len(pending))
+    chosen = sorted(stale, key=priority_key)[:room]
+    for entry in chosen:
+        pending.append(entry.sig)
+    if chosen:
+        log(f"requeued {len(chosen)} finding(s) whose replay rate predates faithful replays "
+            f"({len(stale) - len(chosen)} more wait)")
+    return len(chosen)
 
 
 def fixes_to_verify(state: dict[str, Any]):
@@ -1762,6 +2057,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     last_cap = -1
     last_start = 0.0
     last_containment = 0.0
+    last_hunt = 0.0
     while not stopping:
         now = time.time()
         if deadline and now > deadline:
@@ -1833,6 +2129,16 @@ def cmd_run(args: argparse.Namespace) -> int:
             log(f"verify {sig}")
             state["current"] = [j.cell for j in jobs]
             save_state(state)
+        if not any(job.type is HUNT_JOB for job in jobs) and slots(jobs) < cap and not PAUSE.exists() \
+                and now - last_hunt >= HUNT_INTERVAL and recording.rr_unusable_reason() is None:
+            # One hunt at a time, for the finding most worth a recording.
+            last_hunt = now
+            candidates = hunt_candidates(ledger().entries().values())
+            if candidates:
+                jobs.append(start_hunt(candidates[0].sig, state))
+                log(f"hunt {candidates[0].sig} ({len(candidates)} finding(s) without a recording)")
+                state["current"] = [j.cell for j in jobs]
+                save_state(state)
         reason = busy_reason(our_cores() or CORES_PER_JOB * slots(jobs), job_load.others(os.getloadavg()[0]))
         if reason is None:
             # One per RAMP_SECONDS: the load average needs time to show what the
@@ -1857,6 +2163,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             with contextlib.suppress(Exception):  # the ledger's bookkeeping never stops the runner
                 verify_by_exposure(log)
                 close_quiet(log)
+            with contextlib.suppress(Exception):
+                requeue_unmeasured(state, log)
+            if now - state.get("surface_at", 0) > SURFACE_RECOUNT_SECONDS and not PAUSE.exists():
+                with contextlib.suppress(Exception):
+                    refresh_surface(state, log, inventory=False)
             last_housekeeping = now
         time.sleep(3)
     for job in jobs:
@@ -1935,6 +2246,20 @@ def cmd_health(args: argparse.Namespace) -> int:
           f"{sum(1 for r in rows if '+rr' in r.get('cell', ''))} of {len(rows)} runs recorded"
           + (f"; {len(lost)} lost their recorder, e.g. {max(set(lost), key=lost.count)[-140:]}" if lost else ""))
     problems += unusable is not None
+    if (line := surface_line()) is not None:
+        print(line)
+    else:
+        print("surface: NOT COUNTED yet (tools/soak/surface.py runs with each build)")
+    counted = {key: sum(int(r.get(key) or 0) for r in rows)
+               for key in ("invariants", "starved", "kills_hit", "kills_missed")}
+    print(f"oracles: {counted['invariants']} invariant checks answered; "
+          f"{counted['kills_hit']} kills at a named crash point ({counted['kills_missed']} more passed none); "
+          f"{counted['starved']} slow answers put down to a starved machine and not filed")
+    # Since the driver that counts them: older rows have none, which is not a fault.
+    counting = [r for r in rows if "invariants" in r or "kills_hit" in r]
+    if rows and counting and not counted["invariants"]:
+        print("  NO INVARIANT CHECK was answered: the app's `invariants` query is not reaching the runs")
+        problems += 1
     entries = ledger().entries()
     open_entries = [e for e in entries.values() if e.status in ("new", "reopened")]
     print("open findings (the soak still shows / quiet / with a recording):")
@@ -1944,6 +2269,19 @@ def cmd_health(args: argparse.Namespace) -> int:
         zero = sum(1 for e in items if not is_quiet(e) and e.rate == 0)
         print(f"  {name:10} {len(items) - quiet:5} / {quiet:5} / {sum(has_recording(FINDINGS / e.sig) for e in items):3}"
               f"   ({zero} of the active ones no replay reproduces)")
+    # Why not, which is two different jobs: a replay that left the run's path is
+    # the harness's to fix (it makes every such finding look like a race); one
+    # that followed it needs a recording.
+    unshown = [e for e in open_entries if not is_quiet(e) and e.rate == 0]
+    verdicts: dict[str, int] = {}
+    for entry in unshown:
+        verdicts[entry.replay_verdict] = verdicts.get(entry.replay_verdict, 0) + 1
+    if unshown:
+        print(f"no replay reproduces {len(unshown)} of them: "
+              f"{verdicts.get('diverged', 0)} whose replays LEFT the run's path (a harness gap: tools/qa), "
+              f"{verdicts.get('followed', 0)} whose replays followed it (timing: needs a recording or a hunt), "
+              f"{verdicts.get('untested', 0)} the driver could not replay at all, "
+              f"{verdicts.get('unknown', 0)} checked before replays compared their path")
     verified = [e for e in entries.values() if e.status == "verified"]
     by_replay = [e for e in verified if e.verified_by != "exposure" and e.replay_reproduces]
     by_exposure = [e for e in verified if e.verified_by == "exposure"]
@@ -2143,6 +2481,14 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_hunt(args: argparse.Namespace) -> int:
+    if args.sig is None:
+        for entry in hunt_candidates(ledger().entries().values()):
+            print(f"{entry.sig} {priority_tag(entry):10} x{entry.count:<4} hunts {hunts_made(entry)}  {entry.label[:100]}")
+        return 0
+    return 0 if hunt_finding(args.sig, load_state(), print, runs=args.runs, mode=args.rr) else 1
+
+
 def cmd_build(args: argparse.Namespace) -> int:
     state = load_state()
     build_all(state, print)
@@ -2200,13 +2546,19 @@ def main() -> int:
     check.add_argument("sig")
     verify = sub.add_parser("verify", help="replay a fixed finding on the current build and book the verdict")
     verify.add_argument("sig")
+    hunt = sub.add_parser("hunt", help="replay a finding paced under rr until it shows, and keep the trace; "
+                                       "with no signature, list the findings worth one")
+    hunt.add_argument("sig", nargs="?")
+    hunt.add_argument("--runs", type=int, default=HUNT_RUNS)
+    hunt.add_argument("--rr", default="chaos", choices=(*recording.RR_MODES, "off"),
+                      help="rr mode (default chaos: randomized scheduling), or off")
     led = sub.add_parser("ledger")
     led.add_argument("action", nargs="?", default="list", choices=("list", "show", "claim", "fixed", "reopen", "close", "note"))
     led.add_argument("sig", nargs="?")
     led.add_argument("extra", nargs="?")
     args = parser.parse_args()
     return {"run": cmd_run, "status": cmd_status, "health": cmd_health, "report": cmd_report, "ledger": cmd_ledger,
-            "build": cmd_build, "check": cmd_check, "verify": cmd_verify, "gc": cmd_gc,
+            "build": cmd_build, "check": cmd_check, "verify": cmd_verify, "gc": cmd_gc, "hunt": cmd_hunt,
             "pause": cmd_pause, "resume": cmd_resume}[args.mode](args)
 
 

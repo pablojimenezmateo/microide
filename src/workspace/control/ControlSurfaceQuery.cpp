@@ -127,8 +127,11 @@ util::JsonValue ControlChannelService::BuildSurface() const {
   }
   object["panelContents"] = util::JsonValue(std::move(panel_contents));
   object["tabKinds"] = Strings(std::array<std::string_view, 3>{"editor", "compare", "merge"});
-  object["focusTargets"] = Strings(std::array<std::string_view, 6>{"editor", "sidebar", "panel", "overlay",
-                                                                    "debug-pane", "terminal"});
+  // The names ControlUiFocusName gives FocusTarget's values. "terminal" was listed
+  // and is not one -- a focused terminal is the panel -- so the inventory held an
+  // item no run could ever reach.
+  object["focusTargets"] =
+      Strings(std::array<std::string_view, 5>{"editor", "sidebar", "panel", "overlay", "debug-pane"});
   object["queries"] = Strings(ControlQueryVerbs());
   return util::JsonValue(std::move(object));
 }

@@ -73,6 +73,79 @@ def state_signature(ui: dict[str, Any] | None, buffer: dict[str, Any] | None,
     return " ".join(parts)
 
 
+# In an action row's "s": the state after it is the one the row before said.
+SAME_STATE = "="
+
+
+class StateTrail:
+    """The run's side of a replay's path check: stamps the state the app was in
+    after each step onto the last action the step recorded (its "s"), as the
+    signature when it changed and SAME_STATE when it did not."""
+
+    def __init__(self) -> None:
+        self.last: str | None = None
+
+    def stamp(self, actions: list[dict[str, Any]], state: str) -> None:
+        if not actions or "s" in actions[-1]:
+            return  # the step recorded nothing: its state stays on the row it is on
+        actions[-1]["s"] = SAME_STATE if state == self.last else state
+        self.last = state
+
+
+class Divergence:
+    """Where a replay left the path of the run it replays.
+
+    A replay that does not show its finding has one of two stories. Either it
+    went where the run went and the symptom did not come -- timing, a race --
+    or it went somewhere else: a file the record names that is gone, a fixture
+    that differs, an input the record lacks. The second is the harness's fault
+    and looked exactly like the first ("0 of 12 replays"). The run stamps its
+    state after every step (StateTrail); a replay compares its own at the same
+    points (microide_qa.replay `follow`), and this keeps the count and the
+    first place they part.
+
+    `h=` (a hover popup, which follows the pointer's timing) is left out of the
+    comparison: it flickers between a run and a faithful replay of it."""
+
+    def __init__(self) -> None:
+        self.expected: str | None = None
+        self.compared = 0
+        self.differed = 0
+        self.first: dict[str, Any] | None = None
+
+    @staticmethod
+    def _stable(state: str) -> str:
+        return " ".join(part for part in state.split(" ") if not part.startswith("h="))
+
+    def see(self, index: int, recorded: str, actual: str, action: dict[str, Any] | None = None) -> None:
+        if recorded != SAME_STATE:
+            self.expected = recorded
+        if self.expected is None:
+            return  # a prefix cut before the first full stamp: nothing to hold it against
+        self.compared += 1
+        if self._stable(actual) != self._stable(self.expected):
+            self.differed += 1
+            if self.first is None:
+                brief = {k: v for k, v in (action or {}).items() if k not in ("s", "t")}
+                self.first = {"action": index, "run": self.expected, "replay": actual,
+                              "after": json.dumps(brief)[:160]}
+
+    def verdict(self) -> str:
+        """`followed`: every compared state matched. `wobbled`: under a tenth
+        differed (a transient: a popup, a frame's lag). `diverged`: the replay
+        is somewhere the run never was. `unknown`: nothing to compare (a
+        record from before the run stamped its states)."""
+        if not self.compared:
+            return "unknown"
+        if not self.differed:
+            return "followed"
+        return "wobbled" if self.differed * 10 < self.compared else "diverged"
+
+    def summary(self) -> dict[str, Any]:
+        return {"verdict": self.verdict(), "compared": self.compared, "differed": self.differed,
+                **({"first": self.first} if self.first else {})}
+
+
 def action_key(action: dict[str, Any], element: dict[str, Any] | None = None) -> str:
     """A coarse name for an action, for state x action coverage: what was done
     and to which kind of thing, not where."""
@@ -115,7 +188,9 @@ class Coverage:
     """
 
     FORMAT = 2
-    NAMES = ("states", "transitions", "pairs", "commands", "elements", "settings")
+    # `keys`: chords pressed, by the focus that took them (the keybinding
+    # inventory's coverage); `crashpoints`: durable-write boundaries killed at.
+    NAMES = ("states", "transitions", "pairs", "commands", "elements", "settings", "keys", "crashpoints")
     DIGESTED = ("transitions", "pairs")
 
     def __init__(self) -> None:
@@ -125,6 +200,8 @@ class Coverage:
         self.commands: Counter[str] = Counter()
         self.elements: Counter[str] = Counter()
         self.settings: Counter[str] = Counter()
+        self.keys: Counter[str] = Counter()
+        self.crashpoints: Counter[str] = Counter()
         self.baseline_states: set[str] = set()  # what the loaded file had seen
         # What THIS run added, which is all merge_into writes back: no second
         # copy of the loaded file to subtract.

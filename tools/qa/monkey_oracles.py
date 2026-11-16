@@ -66,6 +66,13 @@ class DataOracle:
         # mismatch that does not replay still says how the two sides differ.
         self.evidence: dict[str, bytes] = {}
         self.untitled_evidence: dict[str, bytes] = {}
+        # How each kill at a named crash point ended, for the run's summary:
+        # `hit:<site>` (the app killed itself there) or `missed` (the trigger
+        # passed no such boundary). An oracle that only ever missed checked
+        # nothing new.
+        self.point_outcomes: collections.Counter[str] = collections.Counter()
+        self.known_points: set[tuple[str, str]] = set()
+        self._opened = 0
 
     def documents(self, all_projects: bool = False) -> list[dict[str, Any]]:
         """The open documents: the active project's, or with `all_projects` every
@@ -216,12 +223,132 @@ class DataOracle:
                     found.append(Path(root) / name)
         return found
 
-    def kill9_and_check(self, rng: random.Random, waited: bool | None = None) -> list[tuple[str, str]]:
+    def crash_points(self) -> list[tuple[str, str]]:
+        """(site, file) for every durable-write boundary the app has passed in
+        this run (the `crash-points` query; each launch starts its count afresh,
+        so they are kept across relaunches); empty from a binary without it."""
+        try:
+            answer = self.app.query("crash-points")
+        except Exception:  # noqa: BLE001 - an older binary, or a dead or busy app
+            answer = {}
+        if answer.get("installed"):
+            for site in answer.get("sites", []):
+                for name in (site.get("files") or {}):
+                    if site.get("site") and name:
+                        self.known_points.add((site["site"], name))
+        return sorted(self.known_points)
+
+    def choose_point(self, rng: random.Random, tried: Any = None) -> str | None:
+        """A crash point to kill at, as a rule with its trigger
+        (`kill:<site>@<file>#1|edit`), the boundaries least tried first; None
+        when the app has passed none (or cannot say).
+
+        `tried(key)` is how often the pair was killed at before (the soak's
+        coverage), so over many runs every boundary of every record is hit."""
+        pairs = self.crash_points()
+        if not pairs:
+            return None
+        weights = [1.0 / (1 + (tried(f"{site}@{name}") if tried is not None else 0)) for site, name in pairs]
+        site, name = rng.choices(pairs, weights=weights)[0]
+        return f"kill:{site}@{name}#1|{self._trigger_for(name)}"
+
+    def _trigger_for(self, name: str) -> str:
+        """What makes the app pass a boundary of the file the inventory calls
+        `name` (`session`, `session.bak`, `recents (staging)`, `main.cpp`):
+
+        edit     an edit arms the crash-safety flush, which rewrites the project's
+                 session record (and syncs its directory)
+        save     the file the focused editor is saved to
+        open     the recents record: a file not opened before
+        project  the workspace's session record: a switch of project"""
+        record = name.removesuffix(" (staging)").removesuffix(".bak")
+        if record == "recents":
+            return "open"
+        if record == "workspace-session":
+            return "project"
+        try:
+            active = self.app.query("buffer")
+        except Exception:  # noqa: BLE001 - a dead or busy app is another oracle's
+            return "edit"
+        if active.get("kind") == "editor" and active.get("path") and not active.get("readOnly") \
+                and Path(active["path"]).name == record:
+            return "save"
+        return "edit"
+
+    def _kill_at(self, point: str) -> tuple[bool, list[dict[str, Any]], str | None]:
+        """Arms `point`'s rule, does its trigger and waits for the app to kill
+        itself there. Returns (it died, the documents after the trigger and
+        before the death, the path the trigger saved)."""
+        app = self.app
+        rule, _, trigger = point.partition("|")
+        try:
+            app.query("crash-points", {"arm": rule})
+        except q.QaFailure:
+            return False, [], None  # a binary without the query (an older build's replay)
+        saved: str | None = None
+        after_trigger: list[dict[str, Any]] = []
+        try:
+            # An edit the flush has not staged: the restore owes the buffer as it
+            # was staged or as it is now, never neither.
+            app.send_line("insert-line-below", record=False)
+            after_trigger = self.documents(all_projects=True)
+            if trigger == "save":
+                active = app.query("buffer")
+                if active.get("kind") == "editor" and active.get("path") and active.get("dirty"):
+                    saved = str(active["path"])
+                    app.send_line("save", record=False)
+            elif trigger == "open" and app.project is not None:
+                # A file the recents list has not held: created, then opened.
+                self._opened += 1
+                fresh = Path(app.project) / f"qa-point-{self._opened}.txt"
+                with contextlib.suppress(OSError):
+                    fresh.write_text(f"{self._opened}\n")
+                app.send_line(f"open {q.quote_arg(str(fresh))}", record=False)
+            elif trigger == "project":
+                app.send_line("project-next", record=False)
+            limit = time.monotonic() + (CRASH_SAFETY_QUIET_S + 8.0) * q.SLOW_FACTOR
+            while app.alive() and not app.dying() and time.monotonic() < limit:
+                # Nothing owed to disk and nothing in flight: the trigger passed
+                # no such boundary (no editor took the edit, the flush wrote
+                # another record), and no later moment will.
+                if app.query("persistence").get("staged"):
+                    break
+                time.sleep(0.05)
+        except q.QaFailure:
+            pass  # the app died under the request: what was asked for
+        if app.dying():
+            app.wait_gone(60.0)
+        died = not app.alive()
+        site = rule.split(":", 1)[-1].split("@", 1)[0].split("#", 1)[0]
+        self.point_outcomes[f"hit:{site}" if died else "missed"] += 1
+        if not died:
+            with contextlib.suppress(q.QaFailure):
+                app.query("crash-points", {"disarm": True})
+        return died, after_trigger, saved
+
+    def kill9_and_check(self, rng: random.Random, waited: bool | None = None, point: str | None = None,
+                        choose: Any = None) -> list[tuple[str, str]]:
         """SIGKILL, relaunch on the same profile, and compare. Waits for the
         crash-safety flush first (most kills), so every dirty buffer is owed back;
         a kill with no wait checks integrity only (an unstaged edit may be lost
-        by design: CrashSafetyFlushSchedule)."""
+        by design: CrashSafetyFlushSchedule).
+
+        With `point` (choose_point) the kill is the app's own, at a named
+        durable-write boundary (util/CrashPointControl.h) instead of wherever a
+        signal from outside happens to land: after the flush has staged
+        everything, the oracle arms the rule, makes one more edit (or saves) so
+        the app passes the boundary, and the app dies there -- between the
+        temporary's write and its rename, between the backup's rename and the
+        record's. What it restores must be each buffer as it was staged or as
+        the edit left it, never neither; a file a killed save was writing holds
+        what it held or what the buffer had. The same rule kills at the same
+        boundary in a replay, which a signal's instant never did.
+
+        `choose()` picks the point instead, once the flush has run -- a launch's
+        inventory of boundaries is empty until it has written something."""
         app = self.app
+        if point is not None or choose is not None:
+            waited = True
         if waited is None:
             waited = rng.random() < 0.7
         out: list[tuple[str, str]] = []
@@ -237,10 +364,12 @@ class DataOracle:
                                     f"answered staged)"))
         # Every project's: the dirty buffers of a second project the monkey had
         # opened come back in that project, which need not be the active one.
+        if point is None and choose is not None:
+            point = choose()
         before = self.documents(all_projects=True)
         disk_before = {doc["path"]: _sha256_file(Path(doc["path"])) for doc in before
                        if doc.get("path") and not doc.get("dirty")}
-        app.record_external({"kill9": True, "waited": waited})
+        app.record_external({"kill9": True, "waited": waited, **({"point": point} if point else {})})
         # The killed process's state tree (its session records, primary and .bak):
         # what the relaunch restored from. Lost buffers whose staging the log shows
         # left no other trace of which record was read or why it lacked them.
@@ -256,6 +385,25 @@ class DataOracle:
                 shutil.copytree(state, self.last_kill_state, symlinks=True,
                                 ignore_dangling_symlinks=True, dirs_exist_ok=True)
 
+        # At a named boundary: the content each buffer may also come back with
+        # (as the trigger's edit left it), the file its save was writing, and the
+        # files of the buffers the trigger changed -- which a save or an autosave
+        # may by then have written, as asked.
+        newer: dict[tuple[str, str], str] = {}
+        saved_path: str | None = None
+        touched: set[str] = set()
+        killed_at = ""
+        if point is not None:
+            died, after_trigger, saved_path = self._kill_at(point)
+            newer = {_doc_key(doc): str(doc.get("sha256", "")) for doc in after_trigger}
+            was = {_doc_key(doc): doc.get("sha256") for doc in before}
+            touched = {str(doc["path"]) for doc in after_trigger
+                       if doc.get("path") and was.get(_doc_key(doc)) != doc.get("sha256")}
+            if saved_path is not None:
+                touched.add(saved_path)
+            killed_at = f" (killed at {point.split('|', 1)[0].split(':', 1)[-1]})" if died else ""
+            for path in touched:
+                disk_before.pop(path, None)
         # With no project on the command line: the app restores its saved
         # workspace, as after a real crash. Naming the run's project opened that
         # project alone, and a second project's buffers, kept in its session
@@ -290,16 +438,31 @@ class DataOracle:
                 back = by_key.get(_doc_key(doc))
                 if back is None:
                     out.append(("data", f"the unsaved buffer {Path(str(key)).name} did not come back after a kill -9 "
-                                        f"(the crash-safety flush had {CRASH_SAFETY_QUIET_S:.1f}s of quiet)"))
+                                        f"(the crash-safety flush had {CRASH_SAFETY_QUIET_S:.1f}s of quiet)"
+                                        f"{killed_at}"))
                 elif not back.get("dirty") and saving and doc.get("project") in saving and \
                         _doc_key(doc) not in by_first:
                     continue  # back, then saved by the lap's own project switch, as configured
-                elif back.get("sha256") != doc.get("sha256"):
+                elif doc.get("path") in touched and not back.get("dirty"):
+                    # A buffer the trigger changed, back clean: a save -- the
+                    # trigger's, or an autosave the edit set off -- wrote it
+                    # before the kill, and then the file holds it.
+                    if _sha256_file(Path(str(doc["path"]))) != back.get("sha256"):
+                        out.append(("data", f"the unsaved buffer {Path(str(key)).name} came back after a kill -9 "
+                                            f"marked saved; its file does not hold it{killed_at}"))
+                elif doc.get("path") and doc.get("path") == saved_path:
+                    # Still unsaved, in the file a killed save was writing: a save
+                    # may change the buffer on its way (trailing whitespace, a
+                    # final newline, a formatter), so its text is not held to the
+                    # staged or the edited one.
+                    continue
+                elif back.get("sha256") not in (doc.get("sha256"), newer.get(_doc_key(doc), doc.get("sha256"))):
                     out.append(("data", f"the unsaved buffer {Path(str(key)).name} came back after a kill -9 with "
-                                        f"different content ({doc.get('bytes')} -> {back.get('bytes')} bytes)"))
+                                        f"different content ({doc.get('bytes')} -> {back.get('bytes')} bytes)"
+                                        f"{killed_at}"))
                 elif not back.get("dirty"):
                     out.append(("data", f"the unsaved buffer {Path(str(key)).name} came back after a kill -9 "
-                                        f"marked saved; its file does not hold it"))
+                                        f"marked saved; its file does not hold it{killed_at}"))
         # The files a restored dirty buffer was saved to (the lap's autosave), by
         # the file they resolve to: a clean tab can reach the same file by another
         # path -- a project rooted at qa-weird/loop, a link to qa-weird -- and the
@@ -638,20 +801,96 @@ class ResourceOracle:
 
 class Liveness:
     """Every control answer within `budget` seconds (stretched by the slow
-    factor). One finding per run per query verb."""
+    factor). One finding per run per query verb.
+
+    Whose seconds they were is read off the app's main thread (App.note_latency:
+    /proc's schedstat around the request). A thread that was runnable and not
+    run was starved by the machine -- the soak fills every core on purpose --
+    and that is not the app's latency: it is counted (`starved`) and not filed.
+    The 764 sightings of "query took Ns to answer" could not be told from that.
+    What is filed says where the time went and carries the stack the app's
+    stall watchdog printed (`evidence`)."""
 
     def __init__(self, app: q.App, budget: float = 2.5):
         self.app = app
         self.budget = budget * q.SLOW_FACTOR
         self.reported: set[str] = set()
+        self.starved = 0
+        self.evidence: dict[str, bytes] = {}
 
     def check(self) -> list[tuple[str, str]]:
         what, seconds = self.app.slowest_answer
+        sched, stall = self.app.slowest_sched, self.app.slowest_stall
         self.app.slowest_answer = ("", 0.0)
-        if seconds > self.budget and what not in self.reported:
-            self.reported.add(what)
-            return [("latency", f"{what} took {seconds:.2f}s to answer (budget {self.budget:.1f}s)")]
-        return []
+        self.app.slowest_sched, self.app.slowest_stall = None, ""
+        self.evidence = {}
+        if seconds <= self.budget or what in self.reported:
+            return []
+        where = ""
+        account = ""
+        if sched is not None:
+            ran, queued = sched
+            if q.is_starved(seconds, queued):
+                self.starved += 1
+                return []
+            account = q.sched_account(seconds, ran, queued)
+            blocked = max(0.0, seconds - ran - queued)
+            where = "; its main thread was mostly " + ("computing" if ran >= blocked else
+                                                       "blocked (I/O, a lock, a child)")
+        self.reported.add(what)
+        self.evidence = {"latency.txt": "\n".join(filter(None, [
+            f"{what} took {seconds:.2f}s (budget {self.budget:.1f}s)", account,
+            "", "the app's stall watchdog during it (MICROIDE_TRACE_STALL_MS):" if stall else
+            "the app's stall watchdog printed nothing during it (no single loop turn ran that long, "
+            "or the binary predates the watchdog)", stall])).encode() + b"\n"}
+        return [("latency", f"{what} took {seconds:.2f}s to answer (budget {self.budget:.1f}s){where}")]
+
+
+class InvariantOracle:
+    """The workspace's structural rules, asked of the app itself (the
+    `invariants` query, ControlInvariantsQuery.h): groups against the split
+    tree, tabs against their payloads, one Untitled number per buffer, every
+    caret inside its buffer, and (deep) the focused editor's layout tables
+    against a fresh build.
+
+    Asked every few steps, so a broken rule is found within a few actions of
+    the one that broke it -- the symptom-reading oracles find it when it shows,
+    which for the duplicated Untitled-N was a kill -9 hundreds of steps later."""
+
+    def __init__(self, app: q.App):
+        self.app = app
+        self.reported: set[str] = set()
+        self.evidence: dict[str, bytes] = {}
+        self.unavailable = False
+        self.checks = 0
+
+    def check(self, deep: bool = False) -> list[tuple[str, str]]:
+        self.evidence = {}
+        if self.unavailable:
+            return []
+        try:
+            answer = self.app.query("invariants", {"deep": deep})
+        except q.AppGone:
+            return []
+        except q.QaFailure as failure:
+            if "unknown query" in str(failure):
+                self.unavailable = True  # a binary from before the query (an old finding's replay)
+            return []
+        self.checks += 1
+        found = []
+        for violation in answer.get("violations") or []:
+            rule, detail = str(violation.get("rule")), str(violation.get("detail"))
+            if rule in self.reported:
+                continue
+            self.reported.add(rule)
+            found.append(("invariant", f"{rule}: {detail}"))
+        if found:
+            self.evidence = {"invariants.json": json.dumps(answer, indent=1).encode()}
+            for name, verb, args in (("tabs.json", "tabs", None), ("documents.json", "documents", {"all": True}),
+                                     ("editor.json", "editor", None)):
+                with contextlib.suppress(Exception):
+                    self.evidence[name] = json.dumps(self.app.query(verb, args), indent=1).encode()
+        return found
 
 
 def _utf8_boundaries(raw: bytes) -> set[int]:

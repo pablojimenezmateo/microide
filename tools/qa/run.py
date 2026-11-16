@@ -351,6 +351,9 @@ def cmd_monkey(args: argparse.Namespace) -> int:
                                  "plugins": list(plugins), "remote": remote}
             edited = open_remote(app, host) if host is not None else project
             app.replay_root = edited
+            # The project the command lines name files of: a replay has its own,
+            # somewhere else (q.rebase_action).
+            app.replay_header["root"] = str(edited)
             app.check("start")
             monkey = m.Monkey(app, seed, args.profile, edited, coverage=coverage,
                               corpus=mm.Corpus(args.corpus), weird=not args.no_weird,
@@ -408,18 +411,53 @@ def replay_record(record: dict, binary: Path, out: Path, actions: list | None = 
         app.replay_header = {**{k: v for k, v in record.items() if k != "actions"}}
         edited = open_remote(app, host) if host is not None else project
         app.replay_root = edited
+        # What this replay records is against its own project, not the run's.
+        app.replay_header["root"] = str(edited)
         app.check("start")
         monkey = m.Monkey(app, int(record.get("seed", 0) or 0), record.get("profile", "default"), edited,
                           weird=bool(record.get("weird", False)), host=host)
-        q.replay(app, actions,
-                 churn=lambda row: m.apply_churn(monkey.world, row["churn"], row["counter"]),
+        divergence = mm.Divergence()
+
+        def follow(index: int, action: dict) -> None:
+            divergence.see(index, action["s"],
+                           mm.state_signature(app.last_ui, app.last_buffer, app.last_editor), action)
+        # Told apart from "ran to the end and showed nothing": a replay the
+        # driver could not finish says nothing about the finding.
+        app.replay_completed = False
+        app.divergence = divergence
+        q.replay(app, actions, churn=monkey.replay_churn,
                  external=monkey.replay_external, check=check, oracle=monkey.replay_oracle,
-                 paced=bool(record.get("paced", False)) if paced is None else paced)
+                 paced=bool(record.get("paced", False)) if paced is None else paced,
+                 root=q.recorded_root({**record, "actions": actions}), follow=follow)
+        app.replay_completed = True
         if not check:
             app.check("end of replay")
         monkey._dedupe(0)
         monkey._final_oracles()
+        if monkey.signatures:
+            # As a monkey run keeps them: every launch's whole log, while the
+            # work tree still has it.
+            app.save_run_logs(out / "replay" / "run-logs")
         return app, list(monkey.signatures.values())
+
+
+def describe_divergence(summary: dict) -> str:
+    """One line on whether a replay followed the run it replays (mm.Divergence).
+
+    >>> describe_divergence({"verdict": "followed", "compared": 40, "differed": 0})
+    'followed the run through all 40 recorded states'
+    >>> describe_divergence({"verdict": "unknown", "compared": 0, "differed": 0})
+    'unknown: the record carries no states to compare (made before the run stamped them)'
+    """
+    verdict, compared, differed = summary.get("verdict"), summary.get("compared", 0), summary.get("differed", 0)
+    if verdict == "unknown":
+        return "unknown: the record carries no states to compare (made before the run stamped them)"
+    if verdict == "followed":
+        return f"followed the run through all {compared} recorded states"
+    first = summary.get("first") or {}
+    return (f"{verdict}: {differed} of {compared} recorded states differ, first after action "
+            f"{first.get('action')} ({first.get('after')}): the run was in `{first.get('run')}`, "
+            f"the replay in `{first.get('replay')}`")
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
@@ -429,6 +467,17 @@ def cmd_replay(args: argparse.Namespace) -> int:
     app, signatures = replay_record(record, args.binary, args.out, paced=True if args.paced else None)
     for entry in signatures:
         print(f"        {entry['signature']}  {entry['label']}")
+    print(f"        path: {describe_divergence(app.divergence.summary())}")
+    # What the replay showed, for a caller that keeps its evidence (the soak's
+    # hunt): each finding with its evidence directory, and the path verdict.
+    (args.out / "replay").mkdir(parents=True, exist_ok=True)
+    (args.out / "replay" / "findings.json").write_text(json.dumps(
+        {"findings": signatures, "path": app.divergence.summary(), "completed": app.replay_completed}, indent=1))
+    if signatures:
+        # As a monkey run keeps them: the whole log of every launch.
+        app_logs = args.out / "replay" / "run-logs"
+        if list(app_logs.glob("*.gz")):
+            print(f"        logs: {app_logs}")
     kept = q.finish_recordings(args.out / "replay" / "rr", keep=bool(signatures))
     if kept:
         print(f"        recorded: {len(kept)} rr trace(s) under {kept[0].parent} (rr replay <trace>)")

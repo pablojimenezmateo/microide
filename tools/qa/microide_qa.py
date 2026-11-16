@@ -114,7 +114,9 @@ def is_finding_line(line: str) -> bool:
 # last action, not the cascade after a corrupted heap; leaks off unless asked
 # (MQA_DETECT_LEAKS=1), since a killed GUI process "leaks" everything it held.
 SANITIZER_ENV = {
-    "ASAN_OPTIONS": "halt_on_error=1:detect_leaks=" + os.environ.get("MQA_DETECT_LEAKS", "0"),
+    # handle_abort: an assertion's abort prints its stack as a segfault does (the
+    # app's own crash handler stands down under a sanitizer).
+    "ASAN_OPTIONS": "halt_on_error=1:handle_abort=1:detect_leaks=" + os.environ.get("MQA_DETECT_LEAKS", "0"),
     "LSAN_OPTIONS": f"suppressions={REPO / 'tests' / 'lsan.supp'}",
     "UBSAN_OPTIONS": "print_stacktrace=1",
     "TSAN_OPTIONS": f"suppressions={REPO / 'tests' / 'tsan.supp'}",
@@ -141,6 +143,12 @@ def machine_pressure() -> str:
             for line in Path(f"/proc/{name}").read_text().splitlines():
                 lines.append(f"{name}: {line}")
     return "\n".join(lines) + "\n"
+
+
+# How long a main-loop turn runs before the app prints where its main thread is
+# (MICROIDE_TRACE_STALL_MS, stretched by the slow factor): under the latency
+# oracle's budget, so a slow answer's stack is in the log by the time it is one.
+STALL_TRACE_SECONDS = 1.0
 
 
 # The desktop's input-method selection, which the app under test must not inherit
@@ -340,6 +348,90 @@ class QaFailure(AssertionError):
     pass
 
 
+class AppGone(QaFailure):
+    """The request failed because the app is dead or dying -- not a refusal, not
+    a stall. The crash oracle (App.check) reports the death with its status and
+    stack; a caller that files failures as findings leaves this one to it."""
+
+
+# ---- what the app prints when it dies or stalls (platform/CrashDiagnostics.h) ----
+
+CRASH_BLOCK = re.compile(r"^microide crash: signal .*?^microide crash: end of backtrace$", re.M | re.S)
+STALL_BLOCK = re.compile(r"^microide stall: the main loop has not turned .*?"
+                         r"^microide stall: (?:end of backtrace|ended after [^\n]*)$", re.M | re.S)
+# A frame as glibc's backtrace_symbols prints it: `module(symbol+0xoff) [0xaddr]`,
+# `module(+0xoff) [0xaddr]` for a function a PIE does not export.
+_RAW_FRAME = re.compile(r"^(?P<module>[^\s(]+)\((?P<symbol>[^+)]*)\+?(?P<offset>0x[0-9a-f]+)?\) \[0x[0-9a-f]+\]$")
+# The handler's own frames and the kernel's signal trampoline above them.
+_DIAGNOSTIC_FRAMES = ("CrashDiagnostics.h", "crash_diagnostics_detail", "__restore_rt")
+
+
+def symbolize_backtrace(block: str, binary: Path, timeout: float = 120.0) -> str:
+    """A crash or stall block of the app's log with its frames resolved: one
+    `#N 0xOFF in function file:line` per frame (the shape findings.stack_key
+    reads), inlined frames included, the handler's own frames dropped.
+
+    Frames of the app's binary are offsets (`microide(+0x1a2b3c)`), resolved with
+    addr2line against `binary` -- the soak keeps each commit's with its debug
+    info; without debug info the function name alone comes from the symbol
+    table. A frame of a shared library keeps the symbol backtrace printed."""
+    lines = block.splitlines()
+    frames = [(index, match) for index, line in enumerate(lines) if (match := _RAW_FRAME.match(line.strip()))]
+    name = Path(binary).name
+    ours = [(index, match) for index, match in frames
+            if Path(match["module"]).name == name and not match["symbol"] and match["offset"]]
+    resolved: dict[int, list[str]] = {}
+    tool = shutil.which("addr2line")
+    if ours and tool is not None:
+        # A return address is the instruction AFTER the call: one byte back is
+        # inside the call, on the caller's line.
+        addresses = [hex(max(0, int(match["offset"], 16) - 1)) for _, match in ours]
+        try:
+            out = subprocess.run([tool, "-e", str(binary), "-f", "-C", "-i", "-a", *addresses],
+                                 capture_output=True, text=True, timeout=timeout, check=False).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            out = ""
+        blocks: list[list[str]] = []
+        for line in out.splitlines():
+            if line.startswith("0x"):
+                blocks.append([])
+            elif blocks:
+                blocks[-1].append(line)
+        for (index, _), parts in zip(ours, blocks):
+            resolved[index] = [f"{parts[i]} {parts[i + 1].split(' (discriminator')[0]}"
+                               for i in range(0, len(parts) - 1, 2)]
+    header = [line for index, line in enumerate(lines) if not any(index == i for i, _ in frames)]
+    out_lines = header[:1]
+    number = 0
+    for index, match in frames:
+        offset = match["offset"] or "0x0"
+        for text in resolved.get(index) or [None]:
+            if text is None:
+                where = match["symbol"] or "??"
+                text = f"{where} ?? [{Path(match['module']).name}+{offset}]"
+            elif text.endswith("??:0") or text.endswith("??:?"):
+                text = f"{text.rsplit(' ', 1)[0]} ?? [{name}+{offset}]"
+            if any(marker in text for marker in _DIAGNOSTIC_FRAMES):
+                continue
+            out_lines.append(f"#{number} {offset} in {text}")
+            number += 1
+    return "\n".join(out_lines) + "\n"
+
+
+def signal_name(code: int | None) -> str:
+    """ "SIGABRT" for an exit status of -6; empty for an ordinary exit.
+
+    >>> signal_name(-6), signal_name(-11), signal_name(1), signal_name(None)
+    ('SIGABRT', 'SIGSEGV', '', '')
+    """
+    if code is None or code >= 0:
+        return ""
+    try:
+        return signal.Signals(-code).name
+    except ValueError:
+        return f"signal {-code}"
+
+
 @dataclass
 class Finding:
     kind: str
@@ -403,6 +495,14 @@ class App:
     outside_change_pending: bool = False
     # The slowest control answer since the monkey last looked: (what, seconds).
     slowest_answer: tuple[str, float] = ("", 0.0)
+    # Where that answer's time went, for the app's main thread: (seconds on a
+    # CPU, seconds runnable and waiting for one) -- None when /proc could not
+    # say -- and what the app's stall watchdog printed meanwhile.
+    slowest_sched: tuple[float, float] | None = None
+    slowest_stall: str = ""
+    # The crashing thread's stack, resolved, once a check has found the app dead
+    # (symbolize_backtrace); empty until then and again after a relaunch.
+    crash_stack: str = ""
     # The answers the last check read (ui, buffer, editor): the monkey's state
     # signature is built from them, so steering costs no extra query.
     last_ui: dict[str, Any] | None = None
@@ -439,6 +539,11 @@ class App:
     # typed newline chose it, and the app quit cleanly: an "exit (0)" filed as a
     # crash (soak 7ab9a5476905, 43 sightings).
     activation_guard: Callable[[], bool] | None = None
+    # A replay's own verdicts (run.py replay_record): whether it ran to the end
+    # of its actions, and where it left the run's path (monkey_model.Divergence).
+    replay_completed: bool = False
+    divergence: Any = None
+    _in_snapshot: bool = False
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -479,6 +584,13 @@ class App:
             # One line per read, write, adopted baseline and undo-to-clean of a
             # buffer: the history a data finding's evidence quotes for its file.
             "MICROIDE_TRACE_BUFFER_IO": "1",
+            # A main-loop turn that runs this long prints the main thread's stack
+            # (platform/CrashDiagnostics.h): where the loop was when an answer
+            # was slow, which the latency oracle and a stall's evidence quote.
+            "MICROIDE_TRACE_STALL_MS": str(round(STALL_TRACE_SECONDS * 1000 * SLOW_FACTOR)),
+            # The durable-write boundaries, counted and armable (the `crash-points`
+            # query, util/CrashPointControl.h): where the kill oracle kills.
+            "MICROIDE_QA_CRASH_POINTS": "count",
             # Lets this driver's gdb attach when the app stops answering: yama's
             # ptrace scope 1 refuses a sibling otherwise (capture_stall).
             "MICROIDE_QA_PARENT_MAY_TRACE": "1",
@@ -674,6 +786,7 @@ class App:
         self._typed_log_offset = 0
         # Absolute: the app starts in its work tree, not the caller's directory.
         self._app_pid = None
+        self.crash_stack = ""
         args = [*self._recorder_args(), str(Path(self.binary).absolute())]
         if project is not None:
             args.append(str(Path(project).absolute()))
@@ -968,14 +1081,29 @@ class App:
             listing = _last_json(self._control(["control-list"]).stdout) or {}
             path = listing.get("socket")
             if not path:
+                # A dead app has no socket, and neither has one the kernel is still
+                # taking apart (its core piped to the crash reporter): that is a
+                # crash, which check() reports with its status and stack. Filed as
+                # "no control socket", it was a second finding per crash that said
+                # nothing of it (soak e02c374fd3ee: the main thread a zombie).
+                if self.dying():
+                    raise AppGone("the app is gone: no control socket to connect to")
                 raise QaFailure("no control socket to connect to")
             self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            self._socket.connect(path)
+            try:
+                self._socket.connect(path)
+            except OSError as error:
+                self._socket = None
+                if self.dying():
+                    raise AppGone(f"the app is gone: {error}") from error
+                raise QaFailure(f"the control socket refused the connection: {error}") from error
         request_id = self._next_id
         self._next_id += 1
         self._socket.settimeout(timeout)
         # From here on the time is the app's: the wait for typed input is not.
         started = time.monotonic()
+        sched_before = self._main_thread_sched()
+        log_before = self._log_size()
         try:
             self._socket.sendall(json.dumps({"id": request_id, **payload}).encode() + b"\n")
             while True:
@@ -983,6 +1111,8 @@ class App:
                 if newline < 0:
                     chunk = self._socket.recv(65536)
                     if not chunk:
+                        if self.dying():
+                            raise AppGone("the app is gone: it closed the control connection")
                         raise QaFailure("the app closed the control connection")
                     self._socket_buffer += chunk
                     continue
@@ -996,10 +1126,16 @@ class App:
                     if isinstance(reply, dict) and reply.get("id") == request_id:
                         if "\ufffd" in text:
                             reply["_replaced"] = True
-                        self.note_latency(what, time.monotonic() - started)
+                        self.note_latency(what, time.monotonic() - started, sched_before, log_before)
                         return reply
         except (OSError, socket.timeout) as error:
-            self.capture_stall(f"{what} got no reply")
+            if self.dying():
+                with contextlib.suppress(OSError):
+                    self._socket.close()
+                self._socket = None
+                self._socket_buffer = b""
+                raise AppGone(f"the app is gone: {what} got no reply: {error}") from error
+            self.capture_stall(f"{what} got no reply", sched_before, time.monotonic() - started)
             # The next request connects afresh. The app may have shed this
             # connection (it logs why), and keeping the dead socket made every
             # later step of the run fail the same way: 155 broken pipes in one
@@ -1011,7 +1147,65 @@ class App:
             self._socket_buffer = b""
             raise QaFailure(f"{what} got no reply: {error}") from error
 
-    def capture_stall(self, why: str) -> None:
+    def dying(self) -> bool:
+        """The app has exited, or is on its way out: its main thread is gone
+        while the process still stands (the kernel writing its core to the crash
+        reporter, threads being torn down). `alive()` says True for those
+        seconds, and nothing answers."""
+        if not self.alive():
+            return True
+        pid = self.pid
+        try:
+            stat = Path(f"/proc/{pid}/task/{pid}/stat").read_text()
+        except OSError:
+            return not self.alive()
+        return stat[stat.rfind(")") + 2:stat.rfind(")") + 3] in ("Z", "X")
+
+    def wait_gone(self, seconds: float) -> bool:
+        """Waits up to `seconds` for a dying app to finish exiting (so its exit
+        status can be read); True when it has."""
+        deadline = time.monotonic() + seconds
+        while self.alive() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        return not self.alive()
+
+    def _main_thread_sched(self) -> tuple[float, float] | None:
+        """The app's main thread's (seconds on a CPU, seconds runnable and waiting
+        for one) so far, from /proc's schedstat."""
+        pid = self.pid if self.proc is not None else None
+        if pid is None:
+            return None
+        try:
+            ran, waited = Path(f"/proc/{pid}/task/{pid}/schedstat").read_text().split()[:2]
+            return int(ran) / 1e9, int(waited) / 1e9
+        except (OSError, ValueError):
+            return None
+
+    def _log_size(self) -> int:
+        try:
+            return self.log_path.stat().st_size if self.log_path is not None else 0
+        except OSError:
+            return 0
+
+    def log_since(self, offset: int, max_bytes: int = 256 * 1024) -> str:
+        """The app's log from byte `offset` on (at most `max_bytes` of it)."""
+        if self.log_path is None:
+            return ""
+        try:
+            with open(self.log_path, "rb") as log:
+                log.seek(offset)
+                return log.read(max_bytes).decode("utf-8", "replace")
+        except OSError:
+            return ""
+
+    def stall_reports(self, text: str) -> str:
+        """The stall watchdog's reports in `text`, their stacks resolved."""
+        blocks = [match.group(0) for match in STALL_BLOCK.finditer(text)]
+        return "\n".join(symbolize_backtrace(block, self.binary) if "the main thread is at:" in block
+                         else block + "\n" for block in blocks[:3])
+
+    def capture_stall(self, why: str, sched_before: tuple[float, float] | None = None,
+                      waited: float = 0.0) -> None:
         """When the app stops answering the control channel, records where each of
         its threads is: name, state, kernel wait channel and current syscall
         (`/proc`, readable for our own child without ptrace, which yama's scope 1
@@ -1021,6 +1215,12 @@ class App:
             return
         self._stall_captured = True
         lines = [f"stall: {why}", f"pid {self.pid}", ""]
+        # Whose time it was: a main thread that was runnable and not run is a
+        # starved machine, one that ran is the app computing, one that did
+        # neither was blocked -- on I/O, a lock, a child.
+        sched_now = self._main_thread_sched()
+        if sched_before is not None and sched_now is not None and waited > 0:
+            lines[2:2] = [sched_account(waited, sched_now[0] - sched_before[0], sched_now[1] - sched_before[1]), ""]
         task_dir = Path(f"/proc/{self.pid}/task")
         try:
             tids = sorted(task_dir.iterdir(), key=lambda entry: int(entry.name))
@@ -1038,6 +1238,12 @@ class App:
                         fields.append(line.split(None, 1)[1])
             lines.append("  ".join(fields))
         self.shots.mkdir(parents=True, exist_ok=True)
+        # What the app's own watchdog printed while it did not answer: the main
+        # thread's stack when the turn passed the threshold (the gdb attach below
+        # comes seconds later, and on a loaded machine after the stall is over).
+        reported = self.stall_reports(self.log_tail(256 * 1024))
+        if reported:
+            lines += ["", "the app's stall watchdog (MICROIDE_TRACE_STALL_MS), newest reports:", reported]
         (self.shots / "stall-threads.txt").write_text("\n".join(lines) + "\n")
         # Where each thread is in the code, not only that it sleeps: every thread of
         # soak d3f7c53a3cd7 was asleep on a futex, and the states alone cannot say
@@ -1070,11 +1276,19 @@ class App:
             self._check_chrome_utf8(result)
         return result
 
-    def note_latency(self, what: str, seconds: float) -> None:
+    def note_latency(self, what: str, seconds: float, sched_before: tuple[float, float] | None = None,
+                     log_before: int | None = None) -> None:
         """The liveness oracle's input: the slowest control answer per step
-        (the monkey reads and resets `slowest_answer`)."""
+        (the monkey reads and resets `slowest_answer`), with where its time went
+        for the main thread and what the stall watchdog printed during it."""
         if seconds > self.slowest_answer[1]:
             self.slowest_answer = (what, seconds)
+            sched_now = self._main_thread_sched() if sched_before is not None else None
+            self.slowest_sched = ((sched_now[0] - sched_before[0], sched_now[1] - sched_before[1])
+                                  if sched_now is not None and sched_before is not None else None)
+            self.slowest_stall = ""
+            if seconds >= STALL_TRACE_SECONDS * SLOW_FACTOR and log_before is not None:
+                self.slowest_stall = self.stall_reports(self.log_since(log_before))
 
     # Element kinds whose labels are chrome the app composes itself (menus, the
     # status bar, buttons, settings), not text copied from a file or typed into a
@@ -2029,15 +2243,28 @@ class App:
         for line in self.recent_log:
             if is_finding_line(line):
                 found.append(Finding("log", line.strip()))
+        if self.alive() and self.dying():
+            # On its way out (its core going to the crash reporter): the exit
+            # status is worth the wait, and "alive" for these seconds is not.
+            self.wait_gone(60.0)
         if not self.alive():
             code = self.proc.returncode if self.proc else None
-            lost = rr_failure(self.log_tail(256 * 1024)) if self.recording else None
+            tail = self.log_tail(256 * 1024)
+            lost = rr_failure(tail) if self.recording else None
             if lost is not None:
                 # rr stopped, and took the app with it: the recorder's limit, not
                 # the app's crash. Its own kind, which no ledger books.
                 found.append(Finding("recorder", f"rr stopped recording after {label or 'last action'}: {lost}"))
             else:
-                found.append(Finding("crash", f"microide exited ({code}) after {label or 'last action'}"))
+                # The crashing thread's stack, as the app printed it on its way
+                # down (platform/CrashDiagnostics.h), resolved: what the finding
+                # is keyed on and what its bundle opens with.
+                blocks = CRASH_BLOCK.findall(tail)
+                if blocks and not self.crash_stack:
+                    self.crash_stack = symbolize_backtrace(blocks[-1], self.binary)
+                name = signal_name(code)
+                found.append(Finding("crash", f"microide exited ({code}{': ' + name if name else ''}) "
+                                              f"after {label or 'last action'}"))
         else:
             for kind, message in self._ui_oracles():
                 found.append(Finding(kind, f"after {label or 'last action'}: {message}"))
@@ -2379,6 +2606,7 @@ class App:
         # before the trace window (the soak runner's FINDING.md reads both).
         (folder / "log-tail.txt").write_text(self.log_tail(64 * 1024))
         (folder / "machine.txt").write_text(machine_pressure())
+        self._write_state_snapshot(folder)
         if self.recording and self._trace_dir is not None:
             # Which of the run's traces holds this finding, and how far into it.
             (folder / "recording.txt").write_text(
@@ -2397,6 +2625,8 @@ class App:
         for name in ("stall-threads.txt", "stall-backtrace.txt"):
             if self.shots is not None and (self.shots / name).exists():
                 shutil.copy2(self.shots / name, folder / name)
+        if self.crash_stack and any(f.kind == "crash" for f in found):
+            (folder / "crash-stack.txt").write_text(self.crash_stack)
         # A persisted record the app read but could not decode: its framing and
         # checksum held, so the file is exactly what the encoder wrote and the
         # decoder refused -- the bytes are the evidence, and the app's next save
@@ -2431,6 +2661,42 @@ class App:
         if self.alive():
             self.grab().save(path)
         return str(path)
+
+    # What the app says of itself when a finding is made, kept beside it: the
+    # screenshot shows the window, these say what is behind it -- which tabs,
+    # which documents and how dirty, what was staged, what async work the
+    # notifications name. A finding no replay reproduces had none of it.
+    _SNAPSHOT_QUERIES = (("status", None), ("tabs", None), ("editor", None), ("documents", {"all": True}),
+                         ("projects", None), ("persistence", None), ("notifications", {"recent": True}),
+                         ("terminals", None), ("debug-state", None), ("invariants", None),
+                         ("crash-points", None))
+
+    def _write_state_snapshot(self, folder: Path) -> None:
+        """state.json: the app's answers to its state queries now. Best effort and
+        bounded: a dead app answers nothing, a stalled one stops the snapshot at
+        its first unanswered query."""
+        if not self.alive() or self.dying() or self._in_snapshot:
+            return
+        self._in_snapshot = True
+        snapshot: dict[str, Any] = {}
+        keep = self.slowest_answer, self.slowest_sched, self.slowest_stall
+        try:
+            for verb, args in self._SNAPSHOT_QUERIES:
+                payload: dict[str, Any] = {"query": verb}
+                if args is not None:
+                    payload["args"] = args
+                try:
+                    reply = self._socket_request(payload, 3.0, f"query {verb!r}")
+                except QaFailure as failure:
+                    snapshot[verb] = {"error": str(failure)}
+                    break
+                snapshot[verb] = reply.get("result") if reply.get("ok") else {"error": reply.get("error")}
+        finally:
+            self._in_snapshot = False
+            # The snapshot's own answers are not the run's latency.
+            self.slowest_answer, self.slowest_sched, self.slowest_stall = keep
+        with contextlib.suppress(OSError, TypeError, ValueError):
+            (folder / "state.json").write_text(json.dumps(snapshot, indent=1)[:2 * 1024 * 1024])
 
     def _previous_log_path(self) -> Path | None:
         """The log of the launch before the current one (a crash_and_relaunch or a
@@ -2576,13 +2842,80 @@ def _surface_and_overlap_findings(ui: dict[str, Any]) -> list[tuple[str, str]]:
 MAX_PACED_GAP = 5.0
 
 
+# A fixture path as records made before the header named its root spell it:
+# `<out>/fixtures/fx-<random>/taskflow` (run.py fixture()).
+_LEGACY_ROOT = re.compile(r"(/[^\s'\"]*?/fixtures/fx-[^/\s'\"]+/(?:taskflow|project))(?=[/\s'\"]|$)")
+# The rows whose text can name a file of the run's project.
+_PATH_ROW_KEYS = ("line", "send")
+
+
+def recorded_root(record: dict[str, Any]) -> str | None:
+    """The project root a replay record's actions were recorded against: its
+    header's `root`, or, for a record from before the header had one, the
+    fixture path its command lines name. None when no line names one."""
+    root = record.get("root")
+    if root:
+        return str(root)
+    for action in record.get("actions", []):
+        for key in _PATH_ROW_KEYS:
+            value = action.get(key)
+            text = " ".join(value) if isinstance(value, list) else value if isinstance(value, str) else ""
+            match = _LEGACY_ROOT.search(text)
+            if match:
+                return match.group(1)
+    return None
+
+
+def rebase_action(action: dict[str, Any], old_root: str | None, new_root: str | None) -> dict[str, Any]:
+    """`action` with the recorded project root in its command line replaced by
+    the replay's own.
+
+    A run's fixture is a fresh directory and is deleted with the run; a line
+    that named a file by its absolute path (`compare-files`, `breakpoint-set`,
+    `debug-run`) named, in every replay, a file that no longer existed. One
+    replay in six was of such a record (204 of the soak's 1187 bundles on
+    2026-11-16: every diff and most tooling findings), each measured "0 of N
+    replays" and filed as a finding no replay reproduces. A corpus prefix has
+    the same lines, and started the run that picked it from nothing.
+
+    >>> rebase_action({"line": "compare-files /r/fx-1/taskflow/a.py /r/fx-1/taskflow/b.py"},
+    ...               "/r/fx-1/taskflow", "/new/taskflow")
+    {'line': 'compare-files /new/taskflow/a.py /new/taskflow/b.py'}
+    >>> rebase_action({"line": "open /r/fx-1/taskflow-origin.git/x"}, "/r/fx-1/taskflow", "/new")["line"]
+    'open /r/fx-1/taskflow-origin.git/x'
+    """
+    if not old_root or not new_root or old_root == new_root:
+        return action
+    pattern = re.compile(re.escape(old_root) + r"(?=[/\s'\"]|$)")
+    out = action
+    for key in _PATH_ROW_KEYS:
+        value = action.get(key)
+        if isinstance(value, str) and old_root in value:
+            out = {**out, key: pattern.sub(lambda _: new_root, value)}
+        elif isinstance(value, list) and any(isinstance(word, str) and old_root in word for word in value):
+            out = {**out, key: [pattern.sub(lambda _: new_root, word) if isinstance(word, str) else word
+                                for word in value]}
+    return out
+
+
 def replay(app: App, actions: list[dict[str, Any]], pause: float = 0.12,
            churn: Callable[[dict[str, Any]], None] | None = None,
            external: Callable[[dict[str, Any]], None] | None = None,
            check: bool = True,
            oracle: Callable[[dict[str, Any]], None] | None = None,
-           paced: bool = False) -> None:
+           paced: bool = False,
+           root: str | None = None,
+           follow: Callable[[int, dict[str, Any]], None] | None = None) -> None:
     """Re-runs a recorded action list (what the monkey saves on a finding).
+
+    `root` is the project root the actions were recorded against
+    (recorded_root): a line naming a file under it is sent naming the same file
+    under this app's `replay_root` (rebase_action).
+
+    `follow(index, action)` is called after the check of every action that
+    carries the state the run was in after it (an "s" field; the monkey records
+    one per step): where a replay stops following the run is the first thing to
+    know about one that does not reproduce (monkey_model.Divergence).
 
     `churn` re-applies a row the monkey's ExternalChurn recorded: a file rewrite
     that landed between two commands, with no settle or check of its own.
@@ -2599,9 +2932,11 @@ def replay(app: App, actions: list[dict[str, Any]], pause: float = 0.12,
     in, which a race needs and the default settle-and-go does not keep."""
     previous_recorded: float | None = None
     previous_sent = time.monotonic()
+    new_root = str(app.replay_root) if getattr(app, "replay_root", None) is not None else None
     for index, action in enumerate(actions):
         if "check" in action or "note" in action or "type-via-control" in action:
             continue
+        action = rebase_action(action, root, new_root)
         if "oracle" in action:
             if oracle is not None:
                 oracle(action)
@@ -2661,6 +2996,27 @@ def replay(app: App, actions: list[dict[str, Any]], pause: float = 0.12,
         app.settle_quiet(most=pause)
         if check:
             app.check(json.dumps(action)[:200])
+            if follow is not None and "s" in action:
+                follow(index, action)
+
+
+def sched_account(seconds: float, ran: float, queued: float) -> str:
+    """Where a thread's `seconds` went, in words: on a CPU, runnable and waiting
+    for one, or neither (blocked).
+
+    >>> sched_account(4.0, 0.5, 3.0)
+    'main thread over 4.00s: 0.50s on a CPU, 3.00s waiting for one (a starved machine), 0.50s blocked'
+    """
+    blocked = max(0.0, seconds - ran - queued)
+    starved = " (a starved machine)" if is_starved(seconds, queued) else ""
+    return (f"main thread over {seconds:.2f}s: {ran:.2f}s on a CPU, {queued:.2f}s waiting for one{starved}, "
+            f"{blocked:.2f}s blocked")
+
+
+def is_starved(seconds: float, queued: float) -> bool:
+    """The time was the machine's, not the app's: the thread was runnable and
+    waiting for a CPU for at least half of it."""
+    return seconds > 0 and queued >= 0.5 * seconds
 
 
 def make_fixture(dest: Path) -> Path:

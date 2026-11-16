@@ -29,6 +29,10 @@ _MASKS = (
 )
 # A stack frame of ours in a sanitizer or glibc report: "#3 0x... in Func(...) /path/src/x.cpp:12".
 _FRAME = re.compile(r"#\d+ 0x[0-9a-f]+ in (\S+?)(\(|\s).*?(src/[\w/.+-]+):\d+")
+# The same frame from a build without debug info, as the driver resolves the
+# app's own crash backtrace (microide_qa.symbolize_backtrace): the function from
+# the symbol table and no file -- "#3 0x1a2b in microide::Foo::Bar() ?? [microide+0x1a2b]".
+_FRAME_NO_FILE = re.compile(r"#\d+ 0x[0-9a-f]+ in (microide::\S+?)(\(|\s).*?\?\? \[[\w.-]+\+0x[0-9a-f]+\]")
 # The "step N:" / "after monkey step N:" prefixes the monkey puts on a message, a
 # flow's "after <label>:", and a replay's "after {<the action as JSON>}:" -- whose
 # colons the label form stops at: kept, it hashed a replayed finding apart from the
@@ -58,8 +62,12 @@ def stack_key(log_text: str, frames: int = 3) -> str:
     """The first `frames` frames under src/ of the first report in `log_text`,
     as "Func@src/file.cpp" joined -- the part of a crash that names the defect."""
     found = []
-    for match in _FRAME.finditer(log_text):
-        found.append(f"{match.group(1)}@{match.group(3)}")
+    for line in log_text.splitlines():
+        match = _FRAME.search(line)
+        if match:
+            found.append(f"{match.group(1)}@{match.group(3)}")
+        elif (bare := _FRAME_NO_FILE.search(line)) is not None:
+            found.append(f"{bare.group(1)}@?")
         if len(found) >= frames:
             break
     return " > ".join(found)

@@ -13,7 +13,7 @@ covered_by = "monkey `external` source (commit, switch, stash, stash pop, a conf
 
 [item."kill -9 and relaunch"]
 kind = "process"
-covered_by = "monkey `kill9` source with the data-loss oracle; crashes relaunch on the same profile"
+covered_by = "monkey `kill9` source with the data-loss oracle, half of them at a named durable-write boundary (the app's `crash-points` query), a dozen a run in the `crash` profile; crashes relaunch on the same profile"
 
 [item."window resize and focus loss"]
 kind = "window system"
@@ -37,7 +37,7 @@ excluded = "needs the scripted fake server of safety-plan W8 (LspSessionFuzz), n
 
 [item."debug adapters"]
 kind = "outside world"
-covered_by = "qa scenarios dbg-* (gdb through plugins/gdb-dap); the monkey excludes debug-* commands (no adapter in its fixture)"
+covered_by = "the monkey's `tooling` profile (gdb through plugins/gdb-dap on the fixture's program: breakpoints, runs, steps, sessions; not under rr, which cannot record a debugger's ptrace); qa scenarios dbg-*"
 
 [item."remote projects"]
 kind = "remote"
@@ -62,3 +62,34 @@ excluded = "not reachable on Xvfb; TD-2026-11-08-435 item 4"
 [item."disk full"]
 kind = "outside world"
 excluded = "needs a size-limited filesystem for the fixture (safety-plan W5); TD-2026-11-08-435 item 3"
+
+# What the `surface` query DOES enumerate and the monkey leaves alone on purpose:
+# `[exclude.<category>]`, item = why, and what covers it instead. An item
+# nothing reached and nothing excludes is a gap (surface.py lists it as "not
+# reached"); an exclusion naming an item the app no longer has is reported stale.
+# Keybindings are named by their id.
+
+[exclude.commands]
+quit = "ends the run; qa scenarios restart-* and session-* quit and relaunch"
+key = "a control-channel primitive the driver steers with (the Wayland backend's input)"
+pointer = "a control-channel primitive the driver steers with (drops, the Wayland backend's input)"
+
+[exclude.keybindings]
+quit = "ends the run; qa scenarios restart-* quit through the command"
+open-file = "opens a native file dialog nobody answers under Xvfb; qa scenario native-dialogs (a stand-in zenity)"
+open-folder = "opens a native folder dialog; qa scenario native-dialogs"
+
+[exclude.settings]
+"control.enabled" = "turning it off ends the channel the monkey drives the app through; qa scenario settings-control"
+"session.restore_on_launch" = "the kill -9 oracle relies on the restore; qa scenario session-restore-off"
+"remote.ssh_command" = "says how a host is reached: a value of the monkey's choosing points the app elsewhere; tools/qa/remote.py"
+"remote.server_command" = "as remote.ssh_command; tools/qa/remote.py"
+"remote.server_install" = "as remote.ssh_command; tools/qa/remote.py"
+"remote.server_socket_dir" = "as remote.ssh_command (the session's own server lives in one); tools/qa/remote.py"
+
+[exclude.menuRows]
+"File/Quit" = "ends the run"
+"File/Open File…" = "native file dialog; qa scenario native-dialogs"
+"File/Open Folder…" = "native folder dialog; qa scenario native-dialogs"
+"File/Save As…" = "native file dialog; qa scenario native-dialogs"
+"Remote/Open Folder on Host…" = "prompts for a host; the remote job opens its host through `remote-open`"

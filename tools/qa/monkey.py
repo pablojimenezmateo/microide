@@ -167,8 +167,13 @@ FORBIDDEN_COMMANDS = {"quit", "project-open", "project-close", "open-file", "ope
                       "set-setting", "key", "pointer", "restart"}
 FORBIDDEN_COMMAND_PREFIXES = ("debug-", "tests-", "remote-", "breakpoint-")
 # `set-setting` never touches these: the control channel, the session restore the
-# kill -9 oracle relies on, and the remote settings (no host here).
-FORBIDDEN_SETTING_PREFIXES = ("control.", "session.restore_on_launch", "remote.")
+# kill -9 oracle relies on, and the remote settings that say how a host is
+# reached -- a command or a socket directory of the monkey's choosing would
+# point the app at whatever is there (this user's own server, once: the session
+# runs inside one). The remote tunables (credits, budgets, prediction) are set
+# like any other setting: nothing reached them while every `remote.` was barred.
+FORBIDDEN_SETTING_PREFIXES = ("control.", "session.restore_on_launch", "remote.ssh_command",
+                              "remote.server_command", "remote.server_install", "remote.server_socket_dir")
 # Settings drawn more often: the ones whose changes reshape layout and painting.
 INTERESTING_SETTINGS = ("ui.scale", "editor.wrap", "editor.font_size", "editor.colorscheme",
                         "editor.fold.sticky_scroll.enabled", "editor.tab_size", "ui.layout_mode",
@@ -547,6 +552,50 @@ _XDOTOOL_KEYS = {
 }
 
 
+def xdotool_sequence(chord: str) -> list[str] | None:
+    """A binding's chord as the xdotool chords to press in order: one for
+    `Ctrl+Shift+F`, two for a sequence like `Ctrl+K Ctrl+O`. None when a stroke
+    has no xdotool spelling.
+
+    The app spells a sequence with a space, which xdotool_chord read as one
+    stroke with an unknown key: no two-stroke binding was ever pressed (22 of
+    them on 2026-11-16 -- the whole Ctrl+K family).
+
+    >>> xdotool_sequence("Ctrl+K Ctrl+O"), xdotool_sequence("Ctrl+K S"), xdotool_sequence("Ctrl+Shift+F")
+    (['ctrl+k', 'ctrl+o'], ['ctrl+k', 's'], ['ctrl+shift+f'])
+    >>> xdotool_sequence("Ctrl++"), xdotool_sequence("Hyper+X")
+    (['ctrl+plus'], None)
+    """
+    strokes = [xdotool_chord(stroke) for stroke in chord.split(" ") if stroke]
+    return strokes if strokes and all(strokes) else None
+
+
+def binding_applies(context: str, ui: dict[str, Any] | None) -> bool:
+    """Whether a binding of `context` (`global`, `editor`, `terminal`: the
+    keybindings query's) is live with the `ui` answer's focus -- pressed
+    elsewhere, its chord is another binding's or nobody's.
+
+    >>> binding_applies("global", None), binding_applies("editor", {"focus": "panel"})
+    (True, False)
+    >>> binding_applies("terminal", {"focus": "panel", "panel": {"visible": True, "content": "terminal"}})
+    True
+    """
+    ui = ui or {}
+    if context == "editor":
+        return ui.get("focus") == "editor"
+    if context == "terminal":
+        return terminal_focused(ui)
+    return True
+
+
+def terminal_focused(ui: dict[str, Any] | None) -> bool:
+    """Keyboard focus is in a terminal: the `ui` answer's focus is the panel
+    (there is no "terminal" focus) and the panel shows one."""
+    ui = ui or {}
+    panel = ui.get("panel") or {}
+    return ui.get("focus") == "panel" and bool(panel.get("visible", True)) and panel.get("content") == "terminal"
+
+
 def xdotool_chord(chord: str) -> str | None:
     """`Ctrl+Shift+F` (the app's spelling) as an xdotool chord, or None."""
     parts = chord.split("+")
@@ -597,6 +646,17 @@ PROFILES: dict[str, dict[str, float]] = {
     # host's server killed; the convergence oracle compares the two trees.
     "remote": {"remote": 8, "external": 8, "type": 14, "text": 8, "chord": 12, "element": 14, "burst": 4,
                "wheel": 4, "command": 6, "file": 6, "terminal": 3},
+    # Crash safety: unsaved work, then a kill -- a dozen a run, half of them at
+    # a named durable-write boundary (DataOracle.choose_point). The other
+    # profiles kill three times in 1500 steps; the restore that loses a buffer
+    # was the soak's largest severe family on a budget of a few kills a day.
+    "crash": {"type": 22, "text": 8, "chord": 12, "file": 8, "command": 5, "element": 8, "burst": 4,
+              "external": 3, "setting": 2, "kill9": 8},
+    # The Lua plugin host: the bundled data-only plugins loaded, their commands
+    # run, their surfaces (a panel tab, inline insets, lenses, highlights) under
+    # the pointer and the keys, and the host reloaded under all of it.
+    "plugins": {"plugin": 14, "element": 18, "type": 10, "text": 8, "chord": 10, "command": 6, "wheel": 4,
+                "setting": 4, "window": 3, "burst": 3, "file": 3, "kill9": 0.4},
     # Diffs: structural refinement over generated code, typed into on the editable side.
     "diff": {"diff": 14, "type": 16, "text": 10, "chord": 12, "element": 14, "burst": 6, "wheel": 6,
              "command": 4, "setting": 2, "window": 2},
@@ -607,7 +667,11 @@ PROFILES: dict[str, dict[str, float]] = {
 # server, a debug adapter or the Lua plugin host behind its commands.
 PROFILE_PLUGINS: dict[str, tuple[str, ...]] = {
     "tooling": ("cpp-lsp", "gdb-dap", "todo-highlight", "eol-annotations", "language-tools", "qa-tests"),
+    # Self-contained: no network, no tool to install (prettier and eslint run npx).
+    "plugins": ("surface-preview", "presentation-demo", "todo-highlight", "eol-annotations", "language-tools"),
 }
+# Settings the plugin source flips: what plugin content is laid out and where.
+PLUGIN_SETTINGS = ("plugins.inline_surfaces", "plugins.code_lens_above")
 # Where the taskflow fixture's code is, for language-server and debugger actions:
 # (file, lines it has) -- breakpoints land on real lines, positions inside them.
 TOOLING_FILES = (("src/scheduler.cpp", 26), ("src/main.cpp", 16), ("include/scheduler.hpp", 26))
@@ -626,6 +690,16 @@ REMOTE_COMMANDS = ("remote-conflicts", "remote-resolve-all local", "remote-resol
                    "remote-reconnect qa-local", "remote-changes", "remote-clear-changes",
                    "remote-apply-deletes", "remote-local-terminal", "remote-forward-port 18080",
                    "remote-stop-server")
+# The share of the kill -9s made at a named crash point (the rest land wherever
+# the signal does: both kinds of crash happen).
+POINT_KILL_SHARE = 0.5
+# Steps between two asks of the app's own invariants.
+INVARIANT_EVERY = 5
+# How many times a run may kill or relaunch the app (a kill costs seconds: the
+# wait for the flush, the relaunch, the restore); three unless the profile is
+# about that.
+PROFILE_RELAUNCHES = {"crash": 12}
+DEFAULT_RELAUNCHES = 3
 COMMAND_PROFILES = ("commands", "editor")
 ALL_PROFILES = tuple(PROFILES) + COMMAND_PROFILES
 
@@ -657,13 +731,14 @@ class Monkey:
         self.corpus = corpus or mm.Corpus(None)
         self.max_findings = max_findings
         self.keep_going = keep_going
-        self._chords: list[str] | None = None
+        self._chords: list[tuple[str, list[str], str, str]] | None = None
         self._commands: list[str] | None = None
         self._settings: list[dict[str, Any]] | None = None
         self.counter = 0
         self.state = "start"
         self.signatures: dict[str, dict[str, Any]] = {}
         self.relaunches = 0
+        self.max_relaunches = PROFILE_RELAUNCHES.get(profile, DEFAULT_RELAUNCHES)
         self.step_index = 0
         self.weights = dict(PROFILES.get(profile, PROFILES["default"]))
         self.reward: dict[str, float] = {name: 0.5 for name in self.weights}
@@ -674,19 +749,24 @@ class Monkey:
             "setting": self.setting_action, "window": self.window_action,
             "terminal": self.terminal_action, "file": self.file_action,
             "external": self.external_action, "kill9": self.kill9_action, "diff": self.diff_action,
-            "tooling": self.tooling_action, "remote": self.remote_action,
+            "tooling": self.tooling_action, "remote": self.remote_action, "plugin": self.plugin_action,
         }
+        self._plugin_commands: list[str] | None = None
         self._tooling_ready = False
         self.data = mo.DataOracle(app)
         self.undo = mo.UndoAlgebra(app, random.Random(seed ^ 0x0DD))
         self.resources = mo.ResourceOracle(app)
         self.liveness = mo.Liveness(app)
+        self.invariants = mo.InvariantOracle(app)
         self.idle = mo.IdleOracle(app)
         self.structural = mo.StructuralDiffOracle(app)
         self.converge = mo.RemoteConvergence(app, project, host.root, host.open_line()) \
             if host is not None and project is not None else None
         self.new_states = 0
         self.new_transitions = 0
+        # The state after each step, stamped on the run's actions: what a replay
+        # checks its own path against (mm.Divergence).
+        self.trail = mm.StateTrail()
 
     # ---- choosing -----------------------------------------------------------
 
@@ -882,26 +962,36 @@ class Monkey:
                for element in self._ui().get("elements", [])):
             self.app.key("Down")
 
-    def _chord_list(self) -> list[str]:
+    def _chord_list(self) -> list[tuple[str, list[str], str, str]]:
+        """What the chord source presses: (action key, strokes, binding id,
+        binding context) -- the app's own bindings, sequences included, and the
+        navigation keys (no binding id)."""
         if self._chords is None:
             self._chords = []
             for binding in self.app.keybindings():
                 if binding.get("id") in FORBIDDEN_BINDINGS or binding.get("plugin"):
                     continue
-                chord = xdotool_chord(binding.get("chord", ""))
-                if chord:
-                    self._chords.append(chord)
-            self._chords += ["Escape", "Return", "Tab", "shift+Tab", "Up", "Down", "Left", "Right",
-                             "Home", "End", "Prior", "Next", "BackSpace", "Delete", "shift+Up", "shift+Down",
-                             "shift+Left", "shift+Right", "ctrl+Left", "ctrl+Right", "shift+End", "shift+Home",
-                             "ctrl+shift+Left", "ctrl+shift+Right", "ctrl+Home", "ctrl+End", "F2", "F3",
-                             "shift+F10", "Menu", "alt+Left", "alt+Right"]
+                strokes = xdotool_sequence(binding.get("chord", ""))
+                if strokes:
+                    self._chords.append((f"key:{' '.join(strokes)}", strokes, str(binding.get("id", "")),
+                                         str(binding.get("context", "global"))))
+            self._chords += [(f"key:{c}", [c], "", "global") for c in (
+                "Escape", "Return", "Tab", "shift+Tab", "Up", "Down", "Left", "Right",
+                "Home", "End", "Prior", "Next", "BackSpace", "Delete", "shift+Up", "shift+Down",
+                "shift+Left", "shift+Right", "ctrl+Left", "ctrl+Right", "shift+End", "shift+Home",
+                "ctrl+shift+Left", "ctrl+shift+Right", "ctrl+Home", "ctrl+End", "F2", "F3",
+                "shift+F10", "Menu", "alt+Left", "alt+Right")]
         return self._chords
 
     def chord_action(self) -> str:
         self._step_off_a_forbidden_setting()
-        key, chord = self._pick([(f"key:{c}", c) for c in self._chord_list()])
-        self.app.key(chord)
+        key, (_, strokes, binding, context) = self._pick([(entry[0], entry) for entry in self._chord_list()])
+        if binding and binding_applies(context, self.app.last_ui):
+            # The binding was pressed where it is live: what the keybinding
+            # inventory's coverage counts (tools/soak/surface.py).
+            self.coverage.note("keys", binding)
+        for stroke in strokes:
+            self.app.key(stroke)
         return key
 
     def _command_list(self) -> list[str]:
@@ -1085,8 +1175,11 @@ class Monkey:
             self._ui()
 
     def terminal_action(self) -> str:
-        ui = self.app.last_ui or {}
-        if ui.get("focus") != "terminal" or self.rng.random() < 0.15:
+        # A new terminal when none has the keyboard, and now and then anyway. The
+        # test was `focus != "terminal"`, a value the ui answer never has (a
+        # focused terminal is the panel), so EVERY terminal action opened one:
+        # two hundred a run, each typed into once.
+        if not terminal_focused(self.app.last_ui) or self.rng.random() < 0.15:
             self.app.send_line("term")
             self.app.settle_quiet(0.3)
         if self.rng.random() < 0.15:
@@ -1222,6 +1315,14 @@ class Monkey:
                 command = "tests-run " + " ".join(ids)
             self.app.send_line(command)
             return f"tooling:{command.split()[0]}"
+        if self.app.recording:
+            # No debugger under rr: gdb traces the program it debugs, and rr
+            # stops the whole recording -- the app with it -- at a ptrace it
+            # cannot record (both recorded tooling runs of the first day lost
+            # their recorder that way). The language server instead.
+            command = self.rng.choice(LSP_COMMANDS[:9])
+            self.app.send_line(command)
+            return f"tooling:{command}"
         if roll < 0.87:
             self.app.send_line(f"debug-run --type gdb {q.quote_arg(str(self.project / 'taskflow'))}")
             return "tooling:debug-run"
@@ -1230,6 +1331,29 @@ class Monkey:
             command += f" {self.rng.randrange(0, 3)}"
         self.app.send_line(command)
         return f"tooling:{command}"
+
+    def plugin_action(self) -> str:
+        """A command a loaded plugin registered (the catalogue's `plugin` rows:
+        the other sources leave them out), a reload of the plugin host, or a
+        setting that moves plugin content."""
+        if self._plugin_commands is None:
+            try:
+                self._plugin_commands = [c["command"] for c in self.app.query("commands")
+                                         if c.get("command") and c.get("plugin")]
+            except (q.QaFailure, TypeError):
+                self._plugin_commands = []
+        roll = self.rng.random()
+        if roll < 0.08 or not self._plugin_commands:
+            self.app.send_line("plugins-reload")
+            self._plugin_commands = None  # a reload may register a different set
+            return "plugin:reload"
+        if roll < 0.2:
+            setting = self.rng.choice(PLUGIN_SETTINGS)
+            self.app.send_line(f"set-setting {setting} {self.rng.choice(('true', 'false'))}")
+            return f"plugin:{setting}"
+        _, command = self._pick([(f"plugin:{c}", c) for c in self._plugin_commands])
+        self.app.send_line(command)
+        return f"plugin:{command}"
 
     def remote_action(self) -> str:
         """The connection under a remote project: the link cut or the host's server
@@ -1270,22 +1394,50 @@ class Monkey:
         self.structural.evidence = {}
 
     def kill9_action(self) -> str:
-        if self.relaunches >= 3:
+        if self.relaunches >= self.max_relaunches:
             return self.chord_action()
         self.relaunches += 1
-        self._report_kill(f"kill -9 at step {self.step_index}", self.data.kill9_and_check(self.rng))
-        return "kill9"
+        # Half of them at a named durable-write boundary the app has passed
+        # (DataOracle.choose_point), the least-tried first: the kill a signal
+        # from outside lands on once in a million, on purpose and replayable.
+        choose = None
+        if self.rng.random() < POINT_KILL_SHARE:
+            def choose() -> str | None:
+                point = self.data.choose_point(self.rng, lambda key: self.coverage.crashpoints.get(key, 0))
+                if point is not None:
+                    self.coverage.note("crashpoints", point.split("|", 1)[0].split(":", 1)[-1].split("#", 1)[0])
+                return point
+        self._report_kill(f"kill -9 at step {self.step_index}", self.data.kill9_and_check(self.rng, choose=choose))
+        return "kill9:point" if choose is not None else "kill9"
 
     # ---- replaying the outside world -------------------------------------------
 
+    def replay_churn(self, row: dict[str, Any]) -> None:
+        """What q.replay calls for a `churn` row: the rewrite again, recorded
+        again (see replay_external)."""
+        if self.world is None:
+            return
+        self.app.record_external({"churn": row["churn"], "counter": row["counter"]})
+        apply_churn(self.world, row["churn"], row["counter"])
+
     def replay_external(self, row: dict[str, Any]) -> None:
-        """What q.replay calls for an `external` or `kill9` row."""
+        """What q.replay calls for an `external` or `kill9` row.
+
+        The row goes into THIS run's record as well, as the monkey's own
+        external_action puts it there. A run that starts from a corpus prefix
+        replays it through here, and the prefix's outside-world rows -- the git
+        steps, the generated diff sources, clangd's compile flags -- were applied
+        and not recorded: half of all runs start from a prefix, and the replay
+        of every finding of such a run opened files nothing had created."""
+        if "kill9" not in row:
+            self.app.record_external({key: row[key] for key in ("external", "target", "counter") if key in row})
         if "kill9" in row:
             # The same kill and the same comparison the run made: a replay that only
             # killed and relaunched could never reproduce a lost buffer, which is why
             # every kill -9 finding measured 0% (soak 48a294e57a19).
             self._report_kill("kill -9 (replayed)",
-                              self.data.kill9_and_check(self.rng, waited=bool(row.get("waited"))))
+                              self.data.kill9_and_check(self.rng, waited=bool(row.get("waited")),
+                                                        point=row.get("point")))
         elif row.get("external") == "remote-fault":
             if self.host is not None:
                 self.host.fault(row.get("target", ""))
@@ -1321,9 +1473,13 @@ class Monkey:
         ui = self.app.last_ui or {}
         for finding in self.app.findings[since:]:
             context = fnd.stale_context(finding.detail, ui.get("surfaces"), ui.get("elements"))
-            signature = fnd.signature(finding.kind, finding.detail,
-                                      self.app.log_tail() if finding.kind in ("crash", "log") else "",
-                                      context)
+            # A crash is keyed on the stack the app printed on its way down
+            # (App.crash_stack, resolved): "microide exited (-6)" was one
+            # signature for every assertion and segfault of an unsanitized build.
+            log_text = self.app.log_tail() if finding.kind in ("crash", "log") else ""
+            if finding.kind == "crash" and self.app.crash_stack:
+                log_text = self.app.crash_stack + "\n" + log_text
+            signature = fnd.signature(finding.kind, finding.detail, log_text, context)
             entry = self.signatures.get(signature)
             evidence = Path(finding.screenshot).parent if finding.screenshot else None
             if entry is not None:
@@ -1361,6 +1517,7 @@ class Monkey:
         reward = 1.0 if new_state else (0.5 if new_transition else 0.0)
         self.reward[source] = 0.9 * self.reward.get(source, 0.5) + 0.1 * reward
         self.state = after
+        self.trail.stamp(self.app.actions, after)
 
     def _start_from_corpus(self, probability: float) -> None:
         if self.corpus.directory is None or self.rng.random() >= probability:
@@ -1371,9 +1528,9 @@ class Monkey:
         self.app.record_external({"corpus": record.get("state", "")})
         actions = [a for a in record.get("actions", []) if "corpus" not in a]
         project = self.project
-        q.replay(self.app, actions, pause=0.12,
-                 churn=(lambda row: apply_churn(project, row["churn"], row["counter"])) if project else None,
-                 external=self.replay_external)
+        # The prefix's lines name files of the run that saved it (q.rebase_action).
+        q.replay(self.app, actions, pause=0.12, churn=self.replay_churn if project else None,
+                 external=self.replay_external, root=q.recorded_root(record))
         # The counter continues past the prefix's, so new external rows differ.
         self.counter = max([int(a.get("counter", 0)) for a in actions if "external" in a] + [self.counter])
 
@@ -1404,7 +1561,9 @@ class Monkey:
         finding compared once, at the end, long after the race it caught."""
         label = "replayed oracle"
         name = row.get("oracle")
-        if name == "data-clean":
+        if name == "invariants":
+            self._report_with_evidence(label, self.invariants.check(deep=True), self.invariants.evidence)
+        elif name == "data-clean":
             self._report_data(label, self.data.check_clean())
         elif name == "structural-diff":
             self._report_with_evidence(label, self.structural.check(), self.structural.evidence)
@@ -1426,7 +1585,14 @@ class Monkey:
         # answer takes and how often an idle thread wakes are the recorder's.
         timed = not self.app.recording
         if timed:
-            self._report(label, self.liveness.check())
+            self._report_with_evidence(label, self.liveness.check(), self.liveness.evidence)
+        if index % INVARIANT_EVERY == INVARIANT_EVERY - 1:
+            # The app's own structural rules, a few actions after whatever broke
+            # one; every fourth time with the layout tables against a fresh build.
+            self.app.record_external({"oracle": "invariants"})
+            self._report_with_evidence(label, self.invariants.check(deep=index % (INVARIANT_EVERY * 4) ==
+                                                                    INVARIANT_EVERY - 1),
+                                       self.invariants.evidence)
         if index % 20 == 19:
             self.app.record_external({"oracle": "data-clean"})
             self._report_data(label, self.data.check_clean())
@@ -1457,6 +1623,7 @@ class Monkey:
         if not self.app.alive():
             return
         label = "end of run"
+        self._report_with_evidence(label, self.invariants.check(deep=True), self.invariants.evidence)
         self._report_data(label, self.data.check_clean())
         if self.converge is not None:
             self._report_with_evidence(label, self.converge.check(), self.converge.evidence)
@@ -1485,6 +1652,8 @@ class Monkey:
             source, key = "chord", "other"
             try:
                 source, key = self.step()
+            except q.AppGone:
+                pass  # the app died under the step: the check below reports the crash
             except q.QaFailure as failure:
                 self.app.expect(False, f"step {index}: {failure}")
             self.app.settle_quiet(most=settle)
@@ -1495,7 +1664,7 @@ class Monkey:
                 self._periodic_oracles(index)
                 self._keep_window_usable()
             if not self.app.alive():
-                if not self.keep_going or self.relaunches >= 3:
+                if not self.keep_going or self.relaunches >= self.max_relaunches:
                     break
                 self.relaunches += 1
                 try:
@@ -1528,4 +1697,9 @@ class Monkey:
                 "commands": commands, "header": self.app.replay_header,
                 "findings": list(self.signatures.values()),
                 "resources": self.resources.samples[-1] if self.resources.samples else {},
+                # What the oracles that can run vacuously did: kills at named
+                # boundaries by how they ended, invariant checks answered, and
+                # slow answers put down to a starved machine instead of filed.
+                "kill_points": dict(self.data.point_outcomes), "invariant_checks": self.invariants.checks,
+                "starved": self.liveness.starved,
                 **({"converge": dict(self.converge.outcomes)} if self.converge is not None else {})}

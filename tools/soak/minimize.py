@@ -73,16 +73,28 @@ class Tester:
             print("  the finding needs the per-action checks' timing; keeping them", flush=True)
 
     def _run(self, actions: list[dict]) -> bool:
+        return self.run_detailed(actions)["hit"]
+
+    def run_detailed(self, actions: list[dict]) -> dict:
+        """One replay of `actions`: whether it showed the signature (`hit`),
+        whether the driver got it to the end (`ran`; else `error`), where it
+        left the run's path (`path`, monkey_model.Divergence) and what else it
+        showed (`others`)."""
         out = Path(tempfile.mkdtemp(prefix="t-", dir=self.scratch))
         try:
             app, signatures = qa_run.replay_record(self.record, self.binary, out, actions=actions,
                                                    check=self.check_each)
             if not self.kind:
                 self.learn_kind(signatures)
-            return any(entry.get("signature") == self.signature for entry in signatures)
+            return {"hit": any(entry.get("signature") == self.signature for entry in signatures),
+                    "ran": bool(getattr(app, "replay_completed", True)),
+                    "path": app.divergence.summary() if getattr(app, "divergence", None) is not None else {},
+                    "others": sorted({f"{entry.get('signature')} {entry.get('label', '')[:80]}"
+                                      for entry in signatures if entry.get("signature") != self.signature})}
         except Exception as error:  # noqa: BLE001 - a candidate that breaks the driver does not reproduce
             print(f"    candidate failed to run: {type(error).__name__}: {error}", flush=True)
-            return False
+            return {"hit": False, "ran": False, "error": f"{type(error).__name__}: {error}"[:300],
+                    "path": {}, "others": []}
         finally:
             import shutil
             shutil.rmtree(out, ignore_errors=True)
@@ -143,25 +155,73 @@ def ddmin(tester: Tester, actions: list[dict], max_tests: int, deadline: float) 
     return current
 
 
-def reproduction_rate(record: dict, signature: str, binary: Path, scratch: Path, runs: int, jobs: int) -> float:
+def reproduction_report(record: dict, signature: str, binary: Path, scratch: Path, runs: int,
+                        jobs: int) -> dict:
+    """`runs` replays of the record, summed up (summarize_runs)."""
     tester = Tester(record, signature, binary, scratch, jobs)
     actions = actions_of(record)
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(jobs, runs))) as pool:
-        hits = list(pool.map(lambda _: tester._run(actions), range(runs)))
-    return sum(hits) / max(1, runs)
+        results = list(pool.map(lambda _: tester.run_detailed(actions), range(runs)))
+    return summarize_runs(results)
+
+
+def summarize_runs(results: list[dict]) -> dict:
+    """What a set of replays says about a finding, beyond how many showed it.
+
+    "0 of 12" used to be the whole answer, and it had three meanings: twelve
+    replays that went where the run went and saw nothing (a race: the actions
+    are not enough), twelve that went somewhere else (the record does not
+    rebuild the run: a harness gap), and twelve the driver could not finish
+    (nothing was tested). `ran` counts the replays that reached the end,
+    `diverged` those that left the run's path, with the first place one did;
+    `others` is what they showed instead.
+
+    >>> r = summarize_runs([{"hit": False, "ran": True, "path": {"verdict": "followed"}, "others": []},
+    ...                     {"hit": True, "ran": True, "path": {"verdict": "diverged", "first": {"action": 7}},
+    ...                      "others": ["abc x"]},
+    ...                     {"hit": False, "ran": False, "error": "QaFailure: no window", "path": {}, "others": []}])
+    >>> r["rate"], r["runs"], r["ran"], r["diverged"], r["followed"], r["divergence"], r["errors"], r["others"]
+    (0.5, 3, 2, 1, 1, {'action': 7}, ['QaFailure: no window'], ['abc x'])
+    """
+    ran = [r for r in results if r.get("ran")]
+    hits = sum(1 for r in results if r.get("hit"))
+    diverged = [r for r in ran if (r.get("path") or {}).get("verdict") == "diverged"]
+    # Over the replays that ran: one the driver could not finish tested nothing.
+    return {"rate": hits / max(1, len(ran)) if ran else 0.0, "runs": len(results), "ran": len(ran),
+            "followed": sum(1 for r in ran if (r.get("path") or {}).get("verdict") in ("followed", "wobbled")),
+            "diverged": len(diverged),
+            "divergence": (diverged[0]["path"].get("first") if diverged else None),
+            "errors": sorted({r["error"] for r in results if r.get("error")})[:3],
+            "others": sorted({other for r in results for other in r.get("others", [])})[:8]}
+
+
+def reproduction_rate(record: dict, signature: str, binary: Path, scratch: Path, runs: int, jobs: int) -> float:
+    return reproduction_report(record, signature, binary, scratch, runs, jobs)["rate"]
 
 
 def rate_and_pace(record: dict, signature: str, binary: Path, scratch: Path, runs: int,
                   jobs: int) -> tuple[float, bool]:
-    """The reproduction rate at the replay's default pace, and, when that never
-    shows the finding, at the run's recorded pace (q.replay `paced`): a race
-    needs the run's timing, which settle-and-go replays lose -- most one-off
-    findings measured 0% that way. Returns (rate, paced)."""
-    rate = reproduction_rate({**record, "paced": False}, signature, binary, scratch, runs, jobs)
-    if rate > 0:
-        return rate, False
-    paced = reproduction_rate({**record, "paced": True}, signature, binary, scratch, runs, jobs)
-    return paced, paced > 0
+    report = report_and_pace(record, signature, binary, scratch, runs, jobs)
+    return report["rate"], report["paced"]
+
+
+def report_and_pace(record: dict, signature: str, binary: Path, scratch: Path, runs: int, jobs: int) -> dict:
+    """The reproduction report at the replay's default pace, and, when that
+    never shows the finding, at the run's recorded pace (q.replay `paced`): a
+    race needs the run's timing, which settle-and-go replays lose -- most
+    one-off findings measured 0% that way. `paced` says which it is."""
+    report = reproduction_report({**record, "paced": False}, signature, binary, scratch, runs, jobs)
+    if report["rate"] > 0:
+        return {**report, "paced": False}
+    paced = reproduction_report({**record, "paced": True}, signature, binary, scratch, runs, jobs)
+    if paced["rate"] > 0:
+        return {**paced, "paced": True}
+    # Neither showed it: both sets are the evidence of that.
+    merged = dict(paced if paced["ran"] >= report["ran"] else report)
+    merged.update(runs=report["runs"], paced=False,
+                  errors=sorted(set(report["errors"]) | set(paced["errors"]))[:3],
+                  others=sorted(set(report["others"]) | set(paced["others"]))[:8])
+    return merged
 
 
 def main() -> int:
@@ -205,8 +265,7 @@ def main() -> int:
             args.signature = max(signatures, key=lambda entry: entry.get("actions", 0))["signature"]
             print(f"  signature: {args.signature}", flush=True)
         if args.check_only:
-            rate, paced = rate_and_pace(record, args.signature, args.binary, scratch, args.runs, args.jobs)
-            print(json.dumps({"rate": rate, "runs": args.runs, "paced": paced}))
+            print(json.dumps(report_and_pace(record, args.signature, args.binary, scratch, args.runs, args.jobs)))
             return 0
         if args.paced:
             record = {**record, "paced": True}

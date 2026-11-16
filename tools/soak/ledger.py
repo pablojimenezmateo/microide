@@ -49,6 +49,16 @@ class Entry:
     rate: float | None = None
     rate_runs: int | None = None  # how many replays `rate` was measured over
     paced: bool = False  # reproduces only at the run's recorded pace
+    # What the replays that measured `rate` did besides (minimize.summarize_runs):
+    # how many the driver got to the end (None: a check from before it was
+    # counted), how many of those left the run's path and where the first did,
+    # why any could not run, and what they showed instead of the finding.
+    replays_ran: int | None = None
+    replays_diverged: int = 0
+    replays_followed: int = 0
+    divergence: dict[str, Any] | None = None
+    replay_errors: list[str] = field(default_factory=list)
+    replay_others: list[str] = field(default_factory=list)
     minimal_actions: int | None = None
     full_actions: int | None = None
     fix_commit: str = ""
@@ -60,6 +70,26 @@ class Entry:
     notes: list[str] = field(default_factory=list)
     # Every run that showed it: (time, cell, commit), in order.
     sightings: list[tuple[float, str, str]] = field(default_factory=list)
+
+    @property
+    def replay_verdict(self) -> str:
+        """What the measured replays say of a finding none of them showed:
+        `untested` (the driver finished none of them), `diverged` (most left the
+        run's path: the record does not rebuild the run -- the harness's gap, not
+        the finding's nature), `followed` (they went where the run went and it
+        did not show: timing), `unknown` (a check from before replays compared
+        their path). Empty for a finding a replay reproduces or none measured."""
+        if self.rate is None or self.rate:
+            return ""
+        if self.replays_ran is None:
+            return "unknown"
+        if self.replays_ran == 0:
+            return "untested"
+        if self.replays_diverged * 2 > self.replays_ran:
+            return "diverged"
+        if self.replays_followed * 2 > self.replays_ran:
+            return "followed"
+        return "unknown"
 
     @property
     def replay_reproduces(self) -> bool:
@@ -144,6 +174,12 @@ class Ledger:
                 entry.rate_runs = event.get("runs", 3)
                 entry.paced = bool(event.get("paced", False))
                 entry.full_actions = event.get("actions", entry.full_actions)
+                entry.replays_ran = event.get("ran")
+                entry.replays_diverged = int(event.get("diverged") or 0)
+                entry.replays_followed = int(event.get("followed") or 0)
+                entry.divergence = event.get("divergence")
+                entry.replay_errors = list(event.get("errors") or [])
+                entry.replay_others = list(event.get("others") or [])
             elif kind == "minimized":
                 entry.minimal_actions = event.get("actions")
             elif kind == "claimed":
