@@ -19,6 +19,12 @@ race:libgallium
 # soak's TSan cell reported three in its first minute once it ran again
 # (2026-11-16; it had been dead at startup, so nothing had shown them).
 race:libLLVM
+# ... and lavapipe itself: its rasterizer threads (created by the driver from
+# inside SDL's renderer setup) race on the driver's own heap blocks -- realloc
+# against realloc, memcpy against memcpy -- with every frame of both stacks in
+# libvulkan_lvp. The soak's TSan cell reported it on its first runs after the
+# LLVM entry (soak 66b06222191b, 2026-11-16).
+race:libvulkan_lvp
 
 # The LSP/DAP shutdown send path (now the shared
 # StdioJsonRpcClientTransport::SendMessageImmediate) used to need a mutex
