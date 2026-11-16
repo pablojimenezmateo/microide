@@ -441,7 +441,15 @@ bool PersistenceCoordinator::RestoreSessionState() {
 
     if (persisted_tab.dirty_snapshot) {
       editor::TextViewport restored_view;
-      const std::string view_key = view_path.generic_string();
+      // The panes of one dirty buffer share it again: a file's by its path, an
+      // untitled buffer's by its number -- it has no path, and keying it by the
+      // empty one restored each pane on a buffer of its own, two texts under one
+      // Untitled-N after the first edit (soak 2ae149191d79). An untitled tab from
+      // an older session has no number and stays on its own.
+      const std::string view_key =
+          !view_path.empty()                    ? view_path.generic_string()
+          : persisted_tab.untitled_number != 0 ? "untitled:" + std::to_string(persisted_tab.untitled_number)
+                                               : std::string{};
       if (const auto shared = restored_dirty_views.find(view_key);
           !view_key.empty() && shared != restored_dirty_views.end()) {
         restored_view = shared->second;  // a second pane on the same dirty buffer

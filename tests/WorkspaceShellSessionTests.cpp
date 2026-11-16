@@ -2072,6 +2072,47 @@ void TestWorkspaceShellRestoreSessionKeepsAnUntitledBuffersNumber() {
   Expect(three_kept_its_name, "the unsaved Untitled-3 comes back as Untitled-3 (" + seen + ")");
 }
 
+// Soak 2ae149191d79: an unsaved buffer split into two panes came back after a
+// kill -9 as two buffers, both Untitled-1 -- the restore rejoins the panes of
+// one dirty buffer by path, and an untitled buffer has none. The first edit in
+// either pane then gave one name two texts, and the next restore kept one.
+void TestWorkspaceShellRestoreSessionRejoinsTheSplitPanesOfAnUntitledBuffer() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "root\n");
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(temp_dir.path() / "home");
+  ScopedEnvVar scoped_home("HOME", (temp_dir.path() / "home").string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+  {
+    WorkspaceShell shell;
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tab"), "a new untitled tab");
+    Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "scratch"), "typing into it");
+    Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+               shell, microide::workspace::EditorSplitOrientation::Vertical),
+           "split");
+    const auto& right = WorkspaceShellTestAccess::ActiveEditor(shell);
+    WorkspaceShellTestAccess::FocusEditorGroup(shell, 0);
+    Expect(WorkspaceShellTestAccess::ActiveEditor(shell).SharesDocumentWith(right),
+           "the split shows the one buffer in both panes");
+    WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell);
+  }
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored), "restore succeeds");
+  WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(restored);
+  WorkspaceShellTestAccess::FocusEditorGroup(restored, 1);
+  const auto& right = WorkspaceShellTestAccess::ActiveEditor(restored);
+  Expect(right.path().empty() && right.dirty(), "the right pane shows the unsaved buffer");
+  WorkspaceShellTestAccess::FocusEditorGroup(restored, 0);
+  const auto& left = WorkspaceShellTestAccess::ActiveEditor(restored);
+  Expect(left.path().empty() && left.dirty(), "the left pane shows the unsaved buffer");
+  Expect(left.SharesDocumentWith(right),
+         "both panes come back on ONE buffer, as they were before the kill");
+}
+
 void TestWorkspaceShellQuitShutdownPersistsDirtyEditorBuffers() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3873,6 +3914,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCrashSafetyRestoresABufferWhoseFolderDoesNotExist);
   AddTest(tests, "WorkspaceShell/RestoreSessionKeepsAnUntitledBuffersNumber",
           TestWorkspaceShellRestoreSessionKeepsAnUntitledBuffersNumber);
+  AddTest(tests, "WorkspaceShell/RestoreSessionRejoinsTheSplitPanesOfAnUntitledBuffer",
+          TestWorkspaceShellRestoreSessionRejoinsTheSplitPanesOfAnUntitledBuffer);
   AddTest(tests, "WorkspaceShell/ACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown",
           TestWorkspaceShellACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown);
   AddTest(tests, "WorkspaceShell/CrashSafetyFlushTimerArmsOnEdit",
