@@ -1013,6 +1013,12 @@ class App:
         left a trace with no end, which `rr replay` refuses."""
         if self.proc is None:
             return
+        if self.alive() and (getattr(self, "env", None) or {}).get("LLVM_PROFILE_FILE"):
+            # A source-coverage build: its counters go with the process unless it
+            # writes them first (the `code-coverage` query, util/CoverageProfile.h).
+            with contextlib.suppress(Exception):
+                self._socket_request({"query": "code-coverage", "args": {"flush": True}}, 10.0,
+                                     "query 'code-coverage'")
         if self.recording and self.alive():
             app = self.pid
             if app is not None and app != self.proc.pid:

@@ -187,6 +187,23 @@ The existing oracles (crash, stale paint, sanitizer reports, state oracle, expec
     fix either -- 141 of 173 `verified` findings rested on one, and 35 came back;
   - *quiet*: an open finding the soak stopped showing is listed apart from the work to do;
   - *twelve replays, not three*, measure a severe finding's rate.
+- **A replay that rebuilds the run, and says so** (2026-11-16, the deep review):
+  - a record carries its project root and a replay rebases onto its own -- a command
+    line that named a file by its absolute path named the run's fixture, deleted with
+    the run (204 of 1187 bundles); a corpus prefix's outside-world rows are recorded
+    by the run that replays it;
+  - the run stamps its state after every step and a replay compares (`Divergence`): a
+    check reports how many replays ran, how many left the run's path and where, and
+    what they showed instead -- "0 of 12" had three meanings;
+  - `soak.py hunt` replays a finding at the run's pace under rr's chaos mode until it
+    shows and keeps the trace; the runner hunts the severe findings without one.
+- **Kills at a named write boundary.** Half of the monkey's kills are the app's own,
+  at a durable-write crash point it has passed (`crash-points` query), the least-tried
+  first, with an old-or-new oracle; the same boundary dies again in a replay. The
+  `crash` profile makes a dozen kills a run.
+- **Oracles that read the cause, not the symptom.** The app's `invariants` query every
+  five steps; a crash keyed on the stack the app prints; a slow answer put down to
+  whoever had the time (the main thread's schedstat), with the stall watchdog's stack.
 - **The soak checks itself.** A job that takes no step is a `job` finding (the TSan cell
   died at startup for four days, silently), and `soak.py health` lists every cell's runs
   and steps, whether rr records, and what each `verified` rests on.
@@ -457,8 +474,8 @@ showed a probe passing for the wrong reason until it was strengthened.
 | W1.2 | Coverage steering, prefix corpus, wider vocabulary | 1 | mostly done | 15 sources, 8 profiles, steering, corpus (e0ebfd31c); menu follow-through (708124f44); driver 5x faster (e5add2866); gaps in TD-435 item 5 |
 | W1.3 | Per-step oracles (liveness, latency, leaks, log, undo algebra) | 2 | partly done | data, undo, leaks, liveness, staging leftovers (e0ebfd31c); frame latency, idle wakes, log levels: TD-435 item 6 |
 | W1.4 | Builds, display, fixtures and profiles matrix | 3 | partly done | default/release/ASan/UBSan/TSan x 8 profiles x sizes x ui.scale in the soak; Wayland and big fixtures: TD-435 item 5 |
-| W1.6 | Monkey coverage and yield measurement | 3 | partly done | coverage file, yield-weighted rotation, `soak.py report`; gcov and plateau: TD-435 item 7 |
-| W1.7 | Surface inventory, 100% reached, pairwise and gcov depth, exclusions | 1-3 | partly done | `surface` query (667c0d529), `surface.py` + `surface-extra.toml` (3436d07a7); pairwise/gcov: TD-435 item 7 |
+| W1.6 | Monkey coverage and yield measurement | 3 | mostly done | coverage file, yield-weighted rotation, `soak.py report`; source coverage: a clang coverage build in the rotation under every profile, `tools/soak/codecov.py`, `soak.py coverage`, a line in `health` (2026-11-16); plateau: TD-435 item 7 |
+| W1.7 | Surface inventory, 100% reached, pairwise and code depth, exclusions | 1-3 | mostly done | `surface` query (667c0d529), `surface.py` + `surface-extra.toml` (3436d07a7); counted with every build, bindings counted where pressed, exclusions with reasons, `health` prints the gaps (2026-11-16); code depth: W1.6; pairwise: TD-435 item 7 |
 | W4 | Data-loss oracle | 1 | done | `documents` query (52319aeb4), oracle (e0ebfd31c), `save-round-trip` (fa28dfc6a); both planted defects caught (a dropped byte on save; a dirty buffer restored empty after kill -9); found the watcher symlink bug (99d4a63a0) |
 | W5 | Save and persistence fault injection | 1 | partly done | `LocalWriteFaultMatrix` + planted non-atomic control (e73173c0a); errno faults, more crash points, inventory: TD-435 item 3 |
 | W2 | Assert-armed QA plus prep invariants | 2 | partly done | the default build is assert-armed (no NDEBUG): `qa` already is the lane; prep invariants: TD-435 item 2 |

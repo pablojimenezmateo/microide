@@ -339,7 +339,19 @@ Latin-1, a BOM, binary, a 300 KB line, Unicode names, symlink loops), `external`
 conflicting merge -- recorded, so a replay redoes them) and `kill9`. A **profile**
 sets the weights: `default`, `editing`, `layout`, `world`, `terminal`, `settings`,
 `diff`, `tooling` (clangd, gdb and the `qa-tests` test provider through their
-plugins), `remote`, and the former command fuzzer's `commands` and `editor`.
+plugins), `remote`, `crash` (a dozen kills a run), `plugins` (the bundled
+data-only plugins: their commands, surfaces and reloads), and the former command
+fuzzer's `commands` and `editor`. The chord source presses two-stroke bindings
+(`Ctrl+K Ctrl+O`) as two strokes.
+
+**Kills at a named boundary.** Half of the `kill9` source's kills are the app's
+own: after the crash-safety flush has staged everything, the oracle picks a
+durable-write boundary the app has passed (the `crash-points` query: by site and
+by file -- a record, its `.bak`, its staging temporary), arms `kill:<site>@<file>#1`,
+and does what makes the app pass it (an edit, a save, a file opened, a project
+switched). The app dies there; what it restores must be each buffer as staged or
+as the edit left it. The row records the rule (`{"kill9": true, "point": ...}`),
+so a replay dies at the same boundary -- which a signal from outside never did.
 
 **The `remote` profile** edits a remote project: the run gets a loopback ssh host
 of its own (`remote_host.py`: an sshd on a free port, state under a short
@@ -370,8 +382,15 @@ holds exactly the bytes a save would write (the `documents` query's SHA-256),
 every 20 steps and at the end; around a kill -9, every dirty buffer comes back
 with its content (after the crash-safety flush's quiet period) and no clean file
 changed; sampled undo^k redo^k is the identity; fd, thread, child and RSS growth
-within budgets; every control answer within 2.5 s (x the slow factor); no save
-temporary of the live process left behind.
+within budgets; every control answer within 2.5 s (x the slow factor) -- unless
+the app's main thread spent the time waiting for a CPU (/proc's schedstat around
+the request: a starved machine is counted, not filed; what is filed says whether
+the thread was computing or blocked and carries the stall watchdog's stack); no
+save temporary of the live process left behind; and the app's own structural
+rules every five steps (the `invariants` query: groups against the split tree,
+a payload for each tab's kind, one Untitled number per buffer, carets inside
+their buffers, and every twentieth step the focused editor's layout tables
+against a fresh build).
 
 **Findings** are recorded and the run goes on (`--stop-at-first` for the old
 behaviour); a crash relaunches on the same profile, which exercises session
@@ -389,6 +408,13 @@ ones (`tools/soak/minimize.py`, parallel ddmin over the replay) and writes a
 `tools/soak/surface.py` reports which of the app's own inventory (the `surface`
 query) nothing has reached.
 
+**A replay follows the run, or says where it stopped.** The run stamps the state
+after each step on its last action (`"s"`), and `run.py replay` compares its own
+at the same points: `path: followed the run through all 412 recorded states`, or
+the first action after which the replay was somewhere else. A record carries the
+project root its command lines name files under (`"root"`), and a replay sends
+them naming its own fixture's.
+
 ## Reading a finding directory
 
 ```
@@ -403,7 +429,12 @@ finding-03-sidebar--click-status-indent/
   after-action-NNNN.png        the window after each of the last three actions
   now.png                      the window when the finding was recorded
   log-tail.txt                 the app log's last 64 KB (a crash's sanitizer report)
-  stall-threads.txt            every thread's state, when the app stopped answering
+  stall-threads.txt            every thread's state, when the app stopped answering, with
+                               whose time it was and the app's own stall reports
+  crash-stack.txt              a crash: the crashing thread's stack, as the app printed it
+                               (platform/CrashDiagnostics.h), resolved with addr2line
+  state.json                   the app's answers to its state queries at the finding
+  latency.txt, invariants.json what a latency or invariant finding rests on
   replay.json                  the actions up to here; `run.py replay` re-runs them on a
                                fresh fixture, file churn included (`churn` rows)
 ```

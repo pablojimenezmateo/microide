@@ -22,7 +22,10 @@ only, a failing-first test for every fix, one commit per fix, and a TD entry in
    machine back; it never lifts a containment pause.
 1. **Pick.** `tools/soak/soak.py health` first: a cell that takes no steps or a
    recorder that is off is worth more than any one finding (the TSan cell was
-   dead for four days). Then `tools/soak/soak.py report` (or `status`) lists
+   dead for four days). It also says what the soak does NOT reach -- the
+   surface's gap list and the source coverage (§ What the soak does not reach)
+   -- and splits the findings no replay reproduces by why. Then
+   `tools/soak/soak.py report` (or `status`) lists
    open findings in fix order. Read the **families** list before the
    signatures: a data or undo signature keys on the FILE the oracle happened to
    check, so one defect is ten signatures (the kill -9 restore failure), and a
@@ -59,7 +62,16 @@ only, a failing-first test for every fix, one commit per fix, and a TD entry in
    (`ledger note <sig> "..."`) and leave it for the runner to re-check.
 4. **Understand.** Read the evidence: for stale paint, the `frame-*-retained.png` /
    `frame-*-reference.png` pair and the frame trace (which surfaces the partial
-   frame repainted); for a crash or sanitizer report, the stack; for a `state`
+   frame repainted); for a crash or sanitizer report, the stack -- every build
+   has one now: `crash-stack.txt` is the crashing thread's backtrace as the app
+   printed it on its way down, resolved, and a crash's signature is keyed on it
+   (two `microide exited (-6)` are two findings when their stacks differ); for an
+   `invariant` finding, `invariants.json` (the rule the app itself says is
+   broken) beside `tabs.json` / `documents.json` / `editor.json`, and the action
+   that broke it is among the last five; for a `latency` finding, `latency.txt`
+   (the main thread's time on a CPU, waiting for one, blocked, and its stack
+   from the app's stall watchdog); `state.json` is the app's answers to its
+   state queries when ANY finding was made; for a `state`
    finding, which label disagrees with which buffer fact; for `data`, which file
    and which bytes (`mismatch-<file>.buffer/.disk/.txt`) and the file's history --
    every read, write, adopted baseline and undo-to-clean the app logged for it
@@ -114,7 +126,28 @@ only, a failing-first test for every fix, one commit per fix, and a TD entry in
 Most severe findings are these: a race, or a kill -9 that landed at one instant
 in a million. Replaying the ACTIONS loses the timing, and on 2026-11-16 every
 open severe finding measured 0%. Do not infer the mechanism from the code and
-call it fixed -- that is how 35 "verified" findings came back. In order:
+call it fixed -- that is how 35 "verified" findings came back.
+
+First read WHICH zero it is (FINDING.md § Reproduction; `health` counts them).
+The run stamps its state after every step and a replay compares its own:
+
+- **the replays LEFT THE RUN'S PATH** -- FINDING.md names the first action after
+  which the replay was somewhere the run was not. The record does not rebuild
+  the run: a gap in the harness (`tools/qa`), and no recording will help until
+  it is closed. Fix that first (a file the record names by a path that is gone,
+  an outside-world step it did not record, a fixture that differs); it makes
+  every finding of that shape replayable at once. Two such gaps were a sixth of
+  all bundles.
+- **NOT TESTED** -- the driver finished none of the replays (the error is
+  quoted). The rate says nothing; fix the driver or `ledger note` why.
+- **the replays followed the run's states to the end** -- the actions are not
+  enough: timing. Then, in order:
+
+0. **A kill at a named boundary.** A data finding whose label ends
+   `(killed at durable.renaming@session#1)` came from the app killing ITSELF at
+   that durable-write boundary (the `crash-points` query); its replay re-arms
+   the same rule and dies at the same place. Those replay. The ones without
+   the suffix are kills a signal landed -- the rest of this list.
 
 1. **A recording.** About a third of the default-build jobs run under
    [rr](https://rr-project.org) (`+rr` / `+rr-chaos` in the cell), and a severe
@@ -128,9 +161,15 @@ call it fixed -- that is how 35 "verified" findings came back. In order:
    the restore. The default build carries debug info for this. No recording
    yet: the finding recurs (its rate is in `status`), and the first recorded
    sighting is kept -- or make one now, step 2.
-2. **The monkey itself, recorded.** FINDING.md prints the run's own monkey
-   command; `--rr` (or `--rr chaos`, which shakes the scheduling) records it.
-   Run it in a loop until the signature shows, and you hold a trace.
+2. **A hunt.** `tools/soak/soak.py hunt SIG` replays the finding at the run's
+   recorded pace under rr's chaos mode, up to `--runs` times, and keeps the
+   first replay that shows it as a sighting of the bundle, trace and all. The
+   runner does this itself for the severe findings without a recording, one at
+   a time (`soak.py hunt` with no signature lists what it would hunt; a
+   `hunt:` note in the ledger says how each ended), so look for a `-hunt`
+   sighting before starting one. The monkey command FINDING.md also prints is
+   NOT the same walk -- the run steered by the soak's coverage -- it looks for
+   the finding again in its cell (`--rr` records it), it does not reproduce it.
 3. **The whole log.** `evidence/run-logs/` is every launch's complete log, not
    the last 64 KB: with `MICROIDE_TRACE_BUFFER_IO` it is the file's full
    history. `evidence/machine.txt` says whether the machine was starved when a
@@ -145,6 +184,31 @@ at most 1440x900, and the latency and idle oracles are off. rr also stops at a
 system call it does not implement; such a run is counted in `soak.py health`
 and is not a finding (the installed rr is patched for the one met so far,
 `tee`: TD-2026-11-16-451).
+
+## What the soak does not reach
+
+A defect in code no job executes is not found, however long the soak runs.
+Two measures, both in `soak.py health`:
+
+- **The surface** (`build/soak/surface-gaps.md`, written with every build): the
+  app's own inventory (the `surface` query: commands, key bindings, settings,
+  menu rows, overlay modes...) against what the runs reached. An item is
+  reached, excluded with a reason and what covers it instead
+  (`tools/soak/surface-extra.toml` `[exclude.*]`), or NOT REACHED -- and that
+  list is work: a new action, profile or fixture in `tools/qa/monkey.py`. A key
+  binding counts when it was pressed where it is live.
+- **The source** (`build/soak/code-coverage.md`): what the jobs executed of
+  `src/`, from a clang coverage build that runs under every profile in turn. By
+  area, the files nothing ever entered, the largest unexecuted parts; `soak.py
+  coverage --functions src/<path>` lists a file's uncalled functions. A whole
+  area in the dark is a missing profile; a dark function inside a covered file
+  is usually a state the monkey cannot get into -- say why in the monkey, or
+  build the way in.
+
+When a fix lands for something the soak found late or by luck, ask what would
+have found it sooner and add that: an invariant to `ControlInvariantsQuery.cpp`
+(the monkey asks it every five steps), a crash point at the write it concerns,
+evidence to the oracle that fired.
 
 ## Not a defect of the app
 

@@ -415,6 +415,25 @@ class RecordingTests(unittest.TestCase):
         self.assertEqual([call.args for call in kill.call_args_list],
                          [(102, q.signal.SIGKILL), (100, q.signal.SIGTERM)])
 
+    def test_a_coverage_builds_counters_are_written_before_the_kill(self):
+        # A source-coverage build writes its counters at exit, and a SIGKILL has
+        # none: the first measured run kept the control clients' counters alone.
+        asked = []
+        proc = Mock(pid=100)
+        app = SimpleNamespace(proc=proc, recording=False, pid=100, alive=lambda: True,
+                              env={"LLVM_PROFILE_FILE": "/out/cov-%4m.profraw"},
+                              _socket_request=lambda payload, timeout, what: asked.append(payload))
+        with patch.object(q.os, "kill"), patch.object(q.os, "killpg") as killpg:
+            q.App._sigkill(app)
+        self.assertEqual(asked, [{"query": "code-coverage", "args": {"flush": True}}])
+        killpg.assert_called_once_with(100, q.signal.SIGKILL)
+        # Any other build is not asked: one query less before every kill.
+        asked.clear()
+        app.env = {}
+        with patch.object(q.os, "kill"), patch.object(q.os, "killpg"):
+            q.App._sigkill(app)
+        self.assertEqual(asked, [])
+
     def test_an_unrecorded_kill_is_the_groups(self):
         proc = Mock(pid=100)
         app = SimpleNamespace(proc=proc, recording=False, pid=100, alive=lambda: True)

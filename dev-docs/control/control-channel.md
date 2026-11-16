@@ -164,7 +164,7 @@ Query verbs: `debug-state`, `breakpoints`, `function-breakpoints`,
 `exception-filters`, `tabs`, `projects`, `status`, `launch-configs`, `adapters`,
 `editor`, `commands`, `terminals`, `terminal-output`, `notifications`,
 `keybindings`, `settings`, `ui`, `buffer`, `documents`, `output`, `action-counts`, `hit-test`,
-`surface`, `persistence`, `compare`, `idle`, `crash-points`, `invariants`. `ControlQueryVerbs()` is the one list: the dispatcher refuses a verb
+`surface`, `persistence`, `compare`, `idle`, `crash-points`, `invariants`, `code-coverage`. `ControlQueryVerbs()` is the one list: the dispatcher refuses a verb
 missing from it, and a test asks every listed verb.
 
 **What the structure must hold (`invariants`).** `{ok, violations: [{rule, detail}],
@@ -191,6 +191,14 @@ crash point's one atomic load. The QA monkey's kill oracle picks from the
 inventory and kills at the least-tried boundary: the same boundary again in a
 replay, which a signal sent from outside never managed
 (`util/CrashPointControl.h`).
+
+**A coverage build's counters (`code-coverage`).** `{instrumented}`, and with
+`{"flush": true}` also `{flushed}`: a clang source-coverage build writes its
+counters from an exit handler the app never runs (it leaves through
+`std::quick_exit`, and a QA kill is a SIGKILL), so the shutdown path, a kill at a
+crash point and this query write them instead (`util/CoverageProfile.h`). The QA
+driver asks before each kill -9 it sends; `tools/soak/codecov.py` merges the
+profiles into what the soak executes of `src/`.
 
 **What the process says when it dies or stalls** (`platform/CrashDiagnostics.h`,
 on stderr with the rest of the log). A fatal signal (SIGSEGV, SIGABRT, SIGBUS,

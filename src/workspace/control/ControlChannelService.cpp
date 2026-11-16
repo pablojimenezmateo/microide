@@ -19,6 +19,7 @@
 
 #include "platform/AppDirectories.h"
 #include "platform/RuntimePaths.h"
+#include "util/CoverageProfile.h"
 #include "util/CrashPointControl.h"
 #include "util/HeapUsage.h"
 #include "util/Parse.h"
@@ -565,6 +566,17 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
   if (verb == "action-counts") {
     return operations_.ui.action_counts ? operations_.ui.action_counts()
                                         : util::JsonValue(util::JsonObject{});
+  }
+  if (verb == "code-coverage") {
+    // A source-coverage build's counters, written on request ({"flush": true}):
+    // the QA driver asks before a kill -9, which would take them with it
+    // (util/CoverageProfile.h). {instrumented: false} in any other build.
+    util::JsonObject result;
+    result["instrumented"] = util::JsonValue(util::CoverageProfileInstrumented());
+    if (args.IsObject() && args.HasKey("flush") && args["flush"].AsBool(false)) {
+      result["flushed"] = util::JsonValue(util::FlushCoverageProfile());
+    }
+    return util::JsonValue(std::move(result));
   }
   if (verb == "invariants") {
     // The workspace's structural rules, checked from the inside

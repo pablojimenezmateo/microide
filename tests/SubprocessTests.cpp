@@ -6,6 +6,7 @@
 #include "platform/OpenFileLimit.h"
 #include "platform/Subprocess.h"
 #include "platform/SubprocessSandbox.h"
+#include "util/CoverageProfile.h"
 #include "util/CrashPoint.h"
 #include "util/CrashPointControl.h"
 #include "util/PosixFd.h"
@@ -532,6 +533,14 @@ void TestStallWatchdogReportsABusyTurnAndNotAnIdleWait() {
 }
 #endif  // MICROIDE_HAS_BACKTRACE && !MICROIDE_SANITIZER_OWNS_SIGNALS
 
+// A source-coverage build writes its counters where the app really ends (it
+// leaves through quick_exit, which runs no exit handler); any other build has no
+// such runtime and the flush is a no-op that says so.
+void TestCoverageProfileFlushMatchesTheBuild() {
+  Expect(microide::util::FlushCoverageProfile() == microide::util::CoverageProfileInstrumented(),
+         "the flush writes exactly when the build carries the coverage runtime");
+}
+
 // QA's handle on the crash points: every pass counted by site and by the file it
 // acted on, and one rule armed to stall the process at a pass or kill it there.
 // The soak's lost-buffer findings came from kills that fell between two disk
@@ -1031,6 +1040,7 @@ void RegisterSubprocessTests(std::vector<TestCase>& tests) {
           TestAsyncSubprocessChildGetsDefaultSigpipe);
   AddTest(tests, "Subprocess/OpenFileLimitIsRaisedForTheEditorAndRestoredForItsChildren",
           TestOpenFileLimitIsRaisedForTheEditorAndRestoredForItsChildren);
+  AddTest(tests, "CoverageProfile/FlushMatchesTheBuild", TestCoverageProfileFlushMatchesTheBuild);
   AddTest(tests, "CrashPointControl/CountsPassesAndFiresItsRule",
           TestCrashPointControlCountsPassesAndFiresItsRule);
 #if MICROIDE_HAS_BACKTRACE && !MICROIDE_SANITIZER_OWNS_SIGNALS

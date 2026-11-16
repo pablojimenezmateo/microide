@@ -15,6 +15,7 @@
 #include <signal.h>
 #include <unistd.h>
 
+#include "util/CoverageProfile.h"
 #include "util/CrashPoint.h"
 #include "util/Parse.h"
 
@@ -277,6 +278,8 @@ class CrashPointControl {
     const std::string line = "microide crash-point: killed at " + std::string(site) + " (" +
                              std::string(detail) + "), pass " + std::to_string(pass) + "\n";
     (void)!::write(STDERR_FILENO, line.data(), line.size());
+    // A source-coverage build's counters, which a SIGKILL would take with it.
+    (void)FlushCoverageProfile();
     ::kill(::getpid(), SIGKILL);
   }
 };

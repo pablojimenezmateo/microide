@@ -33,6 +33,7 @@
 #include "render/RasterDecode.h"
 #include "render/RendererInfo.h"
 #include "workspace/control/ControlSpec.h"
+#include "util/CoverageProfile.h"
 #include "util/StartupTrace.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
@@ -720,6 +721,9 @@ void Application::Shutdown() {
   // they can drive Initialize()/Shutdown() and verify clean teardown under
   // sanitizers.
   if (startup_options_.quick_exit_on_shutdown) {
+    // quick_exit runs no exit handler, which is where a source-coverage build
+    // writes its counters (a no-op in any other build).
+    (void)util::FlushCoverageProfile();
     std::quick_exit(0);
   }
 }

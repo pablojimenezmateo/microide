@@ -102,9 +102,12 @@ ctest --test-dir build -R _tests_shard --output-on-failure -j$(nproc)
 - The QA monkey runs continuously on the dev PC: `tools/soak/soak.py run` (a
   `systemd --user` unit) follows `main`, and `tools/soak/soak.py status` / `report`
   read its findings ledger (`build/soak`, a `FINDING.md` per finding); `soak.py
-  health` says whether every cell runs. `tools/soak/AGENT.md` is the brief for
-  fixing what it finds -- for a finding no replay reproduces, from its `rr`
-  recording (`run.py monkey --rr` makes one).
+  health` says whether every cell runs and what the soak does not reach (the
+  surface's gap list, the source coverage: `soak.py coverage`).
+  `tools/soak/AGENT.md` is the brief for fixing what it finds -- for a finding
+  no replay reproduces, from its `rr` recording (`soak.py hunt SIG` makes one).
+  The app's QA hooks (`invariants`, `crash-points`, the crash backtrace and
+  stall watchdog) are in `dev-docs/control/control-channel.md`.
 - Performance work: `dev-docs/performance/perf-harness.md`, then the startup/runtime
   tracing docs.
 

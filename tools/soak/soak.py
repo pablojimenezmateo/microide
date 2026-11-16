@@ -8,6 +8,7 @@
     tools/soak/soak.py build                                     update the worktree and build once
     tools/soak/soak.py pause [REASON] [--wait S] / resume         take turns with the fixing agent
     tools/soak/soak.py hunt [SIG] [--runs N] [--rr chaos|1|off]   replay a finding under rr until it shows
+    tools/soak/soak.py coverage [--functions SRC...]              what of src/ the soak executes
     tools/soak/soak.py health                                    is every cell running, is the ledger honest
 
 It follows `main` in its own worktree (`build/wt-soak`, never the live tree) and
@@ -58,6 +59,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(REPO / "tools" / "qa"))
+import codecov  # noqa: E402
 import exposure as ex  # noqa: E402
 import ledger as ld  # noqa: E402
 import findings as fnd  # noqa: E402
@@ -99,6 +101,9 @@ class Build:
     slow: float              # MQA_SLOW_FACTOR
     env: dict[str, str] = field(default_factory=dict)
     prefix: list[str] = field(default_factory=list)  # e.g. setarch -R for TSan
+    # A clang source-coverage build: its jobs leave raw profiles, merged into
+    # the soak's profile when each is reaped (codecov.py).
+    coverage: bool = False
 
     def binary(self) -> Path:
         return WORKTREE / self.directory / "microide" / "microide"
@@ -118,7 +123,22 @@ BUILDS = {
     "ubsan": Build("ubsan", "build/microide-ubsan", ["--preset", "microide-ubsan"], 2.0),
     "tsan": Build("tsan", "build/microide-tsan", ["--preset", "microide-tsan"], 5.0,
                   prefix=["setarch", "-R"]),
+    # What the soak executes of src/ at all (codecov.py): the surface inventory
+    # says which commands and keys were reached, this says what they ran. -O1,
+    # so a job is about as fast as the default build's.
+    "coverage": Build("coverage", "build-coverage",
+                      ["-S", ".", "-B", "build-coverage", "-DCMAKE_C_COMPILER=clang", "-DCMAKE_CXX_COMPILER=clang++",
+                       "-DCMAKE_CXX_SCAN_FOR_MODULES=OFF",
+                       "-DCMAKE_CXX_FLAGS=-fprofile-instr-generate -fcoverage-mapping -O1",
+                       "-DCMAKE_C_FLAGS=-fprofile-instr-generate -fcoverage-mapping -O1",
+                       "-DCMAKE_EXE_LINKER_FLAGS=-fprofile-instr-generate"], 1.5, coverage=True),
 }
+# The soak's merged profile, and where a job's raw ones go: `%4m` merges the
+# writers of one binary under a lock into at most four files -- the app, every
+# relaunch of it, and each `control-list` the driver runs are that binary.
+CODE_PROFILE = SOAK / "coverage" / "soak.profdata"
+RAW_PROFILE_PATTERN = "cov-%4m.profraw"
+CODE_REPORT_SECONDS = 3600.0
 
 
 def git(*args: str, cwd: Path = REPO) -> str:
@@ -151,6 +171,8 @@ def build_all(state: dict[str, Any], log) -> None:
     good = state.setdefault("good", {})
     cores = max(2, (os.cpu_count() or 4) // 2)
     for build in BUILDS.values():
+        if build.coverage and codecov.unusable_reason() is not None:
+            continue  # no clang or llvm tools here: `health` says so
         env = {**os.environ, "CCACHE_SLOPPINESS": "pch_defines,time_macros"}
         started = time.monotonic()
         configure = subprocess.run(["nice", "-n", "19", "cmake", *build.configure], cwd=WORKTREE,
@@ -335,6 +357,10 @@ class JobType:
     matrix: bool = True     # randomize window size and ui.scale
 
 
+# A job type whose profile is drawn afresh for each job (job_profile).
+ANY_PROFILE = "*"
+
+
 JOB_TYPES = [
     JobType("default", 26, "default"),
     JobType("editing", 12, "default", "editing"),
@@ -356,6 +382,9 @@ JOB_TYPES = [
     JobType("commands", 4, "default", "commands", steps=600, project="repo", matrix=False),
     JobType("editor", 3, "default", "editor", steps=600, project="repo", matrix=False),
     JobType("release", 6, "release"),
+    # The coverage build under every profile in turn (ANY_PROFILE): the measure is
+    # of the whole soak, not of one profile's walk.
+    JobType("coverage", 6, "coverage", ANY_PROFILE, steps=800, timeout=3600),
     JobType("asan", 10, "asan", steps=600, timeout=3600),
     JobType("asan-editing", 4, "asan", "editing", steps=500, timeout=3600),
     JobType("ubsan", 5, "ubsan", steps=800, timeout=3600),
@@ -619,9 +648,28 @@ def job_weight(job: JobType, stats: dict[str, Any]) -> float:
     return job.weight * (1 + min(4.0, 4 * yield_rate))
 
 
+def job_profile(job_type: JobType, rng: random.Random) -> str:
+    """The monkey profile a job of `job_type` runs: its own, or for ANY_PROFILE
+    one of the window-driving profiles the default-build jobs run, by their
+    weights -- a remote project needs the host's server built the same way,
+    which the coverage build is.
+
+    >>> job_profile(JobType("a", 1, "default", "editing"), random.Random(1))
+    'editing'
+    >>> job_profile(JobType("c", 1, "coverage", ANY_PROFILE), random.Random(1)) in {j.profile for j in JOB_TYPES}
+    True
+    """
+    if job_type.profile != ANY_PROFILE:
+        return job_type.profile
+    pool = [job for job in JOB_TYPES if job.build == "default" and job.profile not in ("commands", "editor")
+            and job.profile != ANY_PROFILE]
+    return rng.choices(pool, weights=[job.weight for job in pool])[0].profile
+
+
 def start_job(job_type: JobType, state: dict[str, Any], rng: random.Random) -> Job:
     seed = rng.randrange(1, 2**31)
     build = BUILDS[job_type.build]
+    profile = job_profile(job_type, rng)
     entry = state["good"][job_type.build]
     out = RUNS / f"{time.strftime('%Y%m%d-%H%M%S')}-{job_type.name}-{seed}"
     out.mkdir(parents=True, exist_ok=True)
@@ -632,9 +680,9 @@ def start_job(job_type: JobType, state: dict[str, Any], rng: random.Random) -> J
     qa = driver / "tools" / "qa" / "run.py"
     slow = max(build.slow, RECORD_SLOW.get(record, 1.0))
     command = ["nice", "-n", "19", "ionice", "-c3", *build.prefix, sys.executable, str(qa),
-               "--binary", entry["binary"], "--out", str(out), "monkey", "--profile", job_type.profile,
+               "--binary", entry["binary"], "--out", str(out), "monkey", "--profile", profile,
                "--seed", str(seed), "--steps", str(job_type.steps), "--time-budget", str(job_type.timeout * 0.8)]
-    if job_type.profile in ("commands", "editor"):
+    if profile in ("commands", "editor"):
         command += ["--rounds", str(job_type.steps), "--project", str(WORKTREE)]
     else:
         command += ["--size", f"{size[0]}x{size[1]}", "--coverage", str(COVERAGE), "--corpus", str(CORPUS)]
@@ -648,6 +696,9 @@ def start_job(job_type: JobType, state: dict[str, Any], rng: random.Random) -> J
     env.pop("MQA_RR", None)
     if record:
         env["MQA_RR"] = record
+    if build.coverage:
+        (out / "profraw").mkdir(parents=True, exist_ok=True)
+        env["LLVM_PROFILE_FILE"] = str(out / "profraw" / RAW_PROFILE_PATTERN)
     cell = f"{job_type.name}/{job_type.build}{RECORD_CELL_TAG[record]}/{size[0]}x{size[1]}@{scale}"
     with open(out / "driver.log", "wb") as log:
         proc = subprocess.Popen(command, cwd=driver, env=env, stdout=log, stderr=subprocess.STDOUT,
@@ -856,6 +907,66 @@ def record_dead_job(job: Job, timed_out: bool, log) -> str:
     return sig
 
 
+def merge_code_profile(job: Job, state: dict[str, Any], log) -> None:
+    """Adds a coverage job's raw profiles to the soak's (CODE_PROFILE), before
+    the job's directory goes."""
+    raws = sorted((job.out / "profraw").glob("*.profraw"))
+    failure = codecov.merge(CODE_PROFILE, raws)
+    if failure is None:
+        state["code_runs"] = state.get("code_runs", 0) + 1
+    else:
+        # A coverage job that leaves no profile measured nothing: said, since
+        # the report would otherwise go stale without a word.
+        state["code_failures"] = state.get("code_failures", 0) + 1
+        log(f"  coverage: no profile from {job.cell} seed {job.seed}: {failure}")
+
+
+def refresh_code_report(state: dict[str, Any], log) -> None:
+    """Writes code-coverage.md / .json from the merged profile against the newest
+    coverage build (codecov.py), when runs have been merged since the last one."""
+    good = state.get("good", {}).get("coverage")
+    runs = state.get("code_runs", 0)
+    if not good or not CODE_PROFILE.is_file() or runs == state.get("code_reported_runs"):
+        return
+    binary = Path(good["binary"])
+    server = binary.parent / "microide-server"
+    command = ["nice", "-n", "19", sys.executable, str(HERE / "codecov.py"), "report", "--binary", str(binary),
+               *(["--object", str(server)] if server.exists() else []), "--profdata", str(CODE_PROFILE),
+               "--out", str(SOAK), "--sha", good["sha"], "--runs", str(runs), "--root", str(WORKTREE / "src")]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=2400)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        log(f"code coverage: {error}")
+        return
+    tail = (result.stdout + result.stderr).strip().splitlines()
+    log(f"code coverage: {tail[-1][:200] if tail else 'no output'}")
+    if result.returncode == 0:
+        state["code_reported_runs"] = runs
+    state["code_report_at"] = time.time()
+
+
+def code_line(state: dict[str, Any]) -> str:
+    """`health`'s line on the source coverage."""
+    reason = codecov.unusable_reason()
+    if reason is not None:
+        return f"code coverage: OFF -- {reason}"
+    try:
+        record = json.loads((SOAK / "code-coverage.json").read_text())
+    except (OSError, ValueError):
+        return ("code coverage: NOT MEASURED yet (the coverage build's jobs, then codecov.py; "
+                f"{state.get('code_runs', 0)} run(s) merged so far)")
+    totals = record.get("totals", {})
+    dark = sum(1 for counts in record.get("files", {}).values()
+               if counts["functions"][1] and not counts["functions"][0])
+    failures = state.get("code_failures", 0)
+    return (f"code coverage: {codecov.percent(totals.get('lines', [0, 0])).strip()} of lines, "
+            f"{codecov.percent(totals.get('functions', [0, 0])).strip()} of functions, "
+            f"{codecov.percent(totals.get('branches', [0, 0])).strip()} of branches executed "
+            f"({record.get('runs')} runs, at {str(record.get('sha'))[:12]}); {dark} files never entered"
+            + (f"; {failures} job(s) left no profile" if failures else "")
+            + f" -- {SOAK / 'code-coverage.md'}")
+
+
 def oracle_counts(summaries: list[dict[str, Any]]) -> dict[str, Any]:
     """What a run's oracles that can run vacuously did (the monkey's summary):
     invariant checks the app answered, kills at named crash points by how they
@@ -890,6 +1001,8 @@ def reap_job(job: Job, state: dict[str, Any], log, timed_out: bool = False) -> N
         shutil.rmtree(job.out, ignore_errors=True)
         return
     elapsed = time.time() - job.started
+    if BUILDS[job.type.build].coverage:
+        merge_code_profile(job, state, log)
     stats = state.setdefault("stats", {}).setdefault(job.type.name, {})
     stats["runs"] = stats.get("runs", 0) + 1
     stats["cpu_hours"] = stats.get("cpu_hours", 0.0) + elapsed / 3600
@@ -2165,6 +2278,9 @@ def cmd_run(args: argparse.Namespace) -> int:
                 close_quiet(log)
             with contextlib.suppress(Exception):
                 requeue_unmeasured(state, log)
+            if now - state.get("code_report_at", 0) > CODE_REPORT_SECONDS and not PAUSE.exists():
+                with contextlib.suppress(Exception):
+                    refresh_code_report(state, log)
             if now - state.get("surface_at", 0) > SURFACE_RECOUNT_SECONDS and not PAUSE.exists():
                 with contextlib.suppress(Exception):
                     refresh_surface(state, log, inventory=False)
@@ -2246,6 +2362,7 @@ def cmd_health(args: argparse.Namespace) -> int:
           f"{sum(1 for r in rows if '+rr' in r.get('cell', ''))} of {len(rows)} runs recorded"
           + (f"; {len(lost)} lost their recorder, e.g. {max(set(lost), key=lost.count)[-140:]}" if lost else ""))
     problems += unusable is not None
+    print(code_line(state))
     if (line := surface_line()) is not None:
         print(line)
     else:
@@ -2481,6 +2598,28 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_coverage(args: argparse.Namespace) -> int:
+    """The source coverage report, refreshed; or the uncalled functions of some sources."""
+    state = load_state()
+    good = state.get("good", {}).get("coverage")
+    if not good or not CODE_PROFILE.is_file():
+        print(code_line(state))
+        return 1
+    binary = Path(good["binary"])
+    server = binary.parent / "microide-server"
+    objects = [server] if server.exists() else []
+    if args.functions:
+        sources = [str((WORKTREE / source).resolve()) for source in args.functions]
+        for source, function in codecov.uncalled_functions(binary, objects, CODE_PROFILE, sources):
+            print(f"{source}\t{function}")
+        return 0
+    state["code_reported_runs"] = None
+    refresh_code_report(state, print)
+    save_state(state)
+    print(SOAK / "code-coverage.md")
+    return 0
+
+
 def cmd_hunt(args: argparse.Namespace) -> int:
     if args.sig is None:
         for entry in hunt_candidates(ledger().entries().values()):
@@ -2552,13 +2691,16 @@ def main() -> int:
     hunt.add_argument("--runs", type=int, default=HUNT_RUNS)
     hunt.add_argument("--rr", default="chaos", choices=(*recording.RR_MODES, "off"),
                       help="rr mode (default chaos: randomized scheduling), or off")
+    coverage = sub.add_parser("coverage", help="the soak's source coverage: refresh code-coverage.md, or list "
+                                               "the functions of some sources no job ever called")
+    coverage.add_argument("--functions", nargs="+", metavar="SOURCE", help="paths under the repository (src/...)")
     led = sub.add_parser("ledger")
     led.add_argument("action", nargs="?", default="list", choices=("list", "show", "claim", "fixed", "reopen", "close", "note"))
     led.add_argument("sig", nargs="?")
     led.add_argument("extra", nargs="?")
     args = parser.parse_args()
     return {"run": cmd_run, "status": cmd_status, "health": cmd_health, "report": cmd_report, "ledger": cmd_ledger,
-            "build": cmd_build, "check": cmd_check, "verify": cmd_verify, "gc": cmd_gc, "hunt": cmd_hunt,
+            "build": cmd_build, "check": cmd_check, "verify": cmd_verify, "gc": cmd_gc, "hunt": cmd_hunt, "coverage": cmd_coverage,
             "pause": cmd_pause, "resume": cmd_resume}[args.mode](args)
 
 

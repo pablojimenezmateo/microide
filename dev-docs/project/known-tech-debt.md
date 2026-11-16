@@ -16,31 +16,56 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 
 ## Open items
 
-### TD-2026-11-16-452 — what the soak still cannot say about a finding. [OPEN]
+### TD-2026-11-16-452 — what the soak still cannot say about a finding, or reach. [OPEN]
 
-Left by the 2026-11-16 assessment of the soak (`tools/soak`), in the order they
-would pay:
+Left by the 2026-11-16 assessment of the soak (`tools/soak`) and the deep review
+that followed it the same day. That review closed the first three items the
+assessment listed -- a crash has a stack (`platform/CrashDiagnostics.h`, resolved
+by the driver and the signature's key), the soak has source coverage (a clang
+coverage build in the rotation, `tools/soak/codecov.py`, `soak.py coverage`), and
+a replay says where it left the run's path (`monkey_model.Divergence`; `health`
+splits "no replay reproduces" by it). Open, in the order they would pay:
 
-1. **A crash in the default build has no stack.** `crash: microide exited (-6)`
-   with a libstdc++ assertion (`std::clamp`, soak 707c77a79c1d) names no caller:
-   only the sanitizer builds print one. A recorded run now has it (`rr replay`,
-   `bt`), the other two thirds do not. A fatal-signal handler in the assert-armed
-   build that writes `backtrace_symbols_fd` to the log would give every crash one.
-2. **No code coverage of the soak.** Every command, element and setting is
-   reached (`soak.py report` § Command gaps), which says nothing of which lines
-   run: the gcov job of safety-plan W1.6/W1.7 is still unbuilt, so "full
-   coverage" is of the input surface only.
-3. **A replay does not say where it left the run's path.** A replay that does
-   not reproduce may have diverged at action 40 of 900 (a different tab took the
-   click) or have followed the run exactly and missed a race. Recording the
-   monkey's abstract state per action and comparing on replay would tell the two
-   apart; today both read "0%".
-4. **Signatures are not defects.** Data and undo signatures key on the file
+1. **Signatures are not defects.** Data and undo signatures key on the file
    name, stale-paint ones on the clip count: 1336 signatures for a few dozen
-   defects. `soak.py` now groups them into families for reading; the ledger
-   still books a fix per signature.
-5. **The fault-injection jobs are not recorded.** rr cannot follow the remote
+   defects. `soak.py` groups them into families for reading; the ledger still
+   books a fix per signature.
+2. **The fault-injection jobs are not recorded.** rr cannot follow the remote
    server (it runs under the loopback sshd, not under the app).
+3. **No write fails on purpose in the running app.** The crash points
+   (`crash-points` query) kill or stall at a durable-write boundary; they cannot
+   make the write FAIL (`CrashPoint` returns nothing), so a full disk -- ENOSPC
+   from the write, the fsync or the rename of a save or a session record -- is
+   still covered only by `LocalWriteFaultMatrix`. Wants a fault seam in
+   `util/DurableFile.cpp` beside the crash points, armed the same way, and an
+   oracle for "a failed save leaves the file and says so".
+4. **A save killed part-way is not held to old-or-new bytes.** The point-kill
+   oracle (`DataOracle.kill9_and_check`) checks what the buffers come back as; for
+   the FILE a killed save was writing it only checks "back clean means the file
+   holds it", because a save may change the buffer on its way (trailing
+   whitespace, a final newline, a formatter) and the bytes it would have written
+   are not known from outside. The `documents` query could report them.
+5. **A kill a signal lands, or a real crash, loses a coverage build's counters.**
+   The app flushes them at shutdown, before a self-kill at a crash point, and
+   when the driver asks before its own kill -9 (`code-coverage` query); a process
+   that dies of its own SIGSEGV writes nothing. Small: crashes are rare.
+6. **The profile is carried across commits.** `codecov.merge` adds each run to
+   one profile; a function that changed is dropped by llvm-cov on its hash, one
+   that was deleted lingers in the file (not in the report). `soak.py coverage`
+   has no reset; delete `build/soak/coverage/soak.profdata` to start over.
+7. **Reach the review listed and did not build:** a scripted language server
+   that answers out of order (safety-plan W8); IME composition (a control-channel
+   hook for SDL's text-editing events); a Wayland cell in the soak's matrix (the
+   driver has the backend, `qa-wayland` runs it, no soak job does); the
+   `project-search` overlay mode, which no run has ever shown (dead, or reachable
+   only from a layout the monkey does not make -- `surface-gaps.md` lists it);
+   timestamps on the app's log lines on the driver's clock, so a trace line can
+   be put beside the replay row that caused it (a prefix would change every log
+   signature: it needs a field on the frame lines instead).
+8. **The stall watchdog's signal can interrupt a system call.** Under
+   `MICROIDE_TRACE_STALL_MS` (every QA run) a main-loop turn of over a second gets
+   a real-time signal for its stack. Code that does not retry `EINTR` would then
+   behave differently under QA than for a user; none is known.
 
 ### TD-2026-11-16-451 — the rr on the soak machine is patched for tee(2); upstream is not. [OPEN]
 
