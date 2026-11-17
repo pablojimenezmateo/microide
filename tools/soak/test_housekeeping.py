@@ -1,5 +1,6 @@
 """What the soak keeps on disk: corpus prefixes it can use, and a fixed
 finding's record without the evidence the fix made moot."""
+import importlib
 import json
 import os
 import random
@@ -7,10 +8,34 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parents[0] / "qa"))
 import monkey_model as mm  # noqa: E402
+import soak  # noqa: E402
+
+
+def scratch_dir(test: unittest.TestCase) -> Path:
+    """A directory of the test's own, gone when it ends (these tests left one in
+    /tmp per run: 1274 of them on the soak machine)."""
+    scratch = tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR"))
+    test.addCleanup(scratch.cleanup)
+    return Path(scratch.name)
+
+
+def scratch_soak(test: unittest.TestCase):
+    """The soak module on a soak directory of the test's own, and back on the
+    other tests' when it ends. Setting MICROIDE_SOAK_DIR for good left every
+    later test in the process on this one's directory -- whose disk the busy
+    gate then read (test_job_load)."""
+    patcher = mock.patch.dict(os.environ, {"MICROIDE_SOAK_DIR": str(scratch_dir(test))})
+    # LIFO: the environment goes back first, then the module is reloaded onto it.
+    test.addCleanup(importlib.reload, soak)
+    patcher.start()
+    test.addCleanup(patcher.stop)
+    return importlib.reload(soak)
 
 HEADER = {"fixture": "readme", "size": [640, 480]}
 
@@ -21,7 +46,7 @@ def actions(n: int) -> list[dict]:
 
 class CorpusTests(unittest.TestCase):
     def setUp(self):
-        self.dir = Path(tempfile.mkdtemp(dir=os.environ.get("TMPDIR")))
+        self.dir = scratch_dir(self)
         self.corpus = mm.Corpus(self.dir)
 
     def test_a_prefix_too_long_to_pick_is_not_saved(self):
@@ -47,11 +72,7 @@ class CorpusTests(unittest.TestCase):
 
 class VerifiedBundleTests(unittest.TestCase):
     def test_a_verified_bundle_keeps_its_record_and_drops_its_evidence(self):
-        os.environ["MICROIDE_SOAK_DIR"] = tempfile.mkdtemp(dir=os.environ.get("TMPDIR"))
-        sys.path.insert(0, str(HERE))
-        import importlib
-        import soak
-        importlib.reload(soak)
+        soak = scratch_soak(self)
         bundle = soak.FINDINGS / "abc123abc123"
         for name in ("evidence/frame.png", "sightings/s1/frame.png", "verify/run0/log.txt"):
             (bundle / name).parent.mkdir(parents=True, exist_ok=True)
@@ -66,12 +87,8 @@ class VerifiedBundleTests(unittest.TestCase):
 
 class SightingTests(unittest.TestCase):
     def setUp(self):
-        os.environ["MICROIDE_SOAK_DIR"] = tempfile.mkdtemp(dir=os.environ.get("TMPDIR"))
-        sys.path.insert(0, str(HERE))
-        import importlib
         import ledger as ld
-        import soak
-        importlib.reload(soak)
+        soak = scratch_soak(self)
         self.soak, self.ld = soak, ld
         self.bundle = soak.FINDINGS / "abc123abc123"
         (self.bundle / "evidence").mkdir(parents=True)
@@ -81,7 +98,7 @@ class SightingTests(unittest.TestCase):
                         "step": 5, "state": "", "actions": 9},
             "cell": "c/d/1x1@1", "sha": "0" * 40, "binary": "", "build": "default", "job": "default",
             "seed": 1, "header": {}}))
-        self.out = Path(tempfile.mkdtemp(dir=os.environ.get("TMPDIR")))
+        self.out = scratch_dir(self)
 
     def sighting(self, *files: str, sha: str = "0" * 40) -> None:
         evidence = self.out / "seed-1" / "finding-01-monkey-step-5"
@@ -120,12 +137,62 @@ class SightingTests(unittest.TestCase):
         self.assertEqual(self.kept(), [])
 
 
+class OrphanRunTests(unittest.TestCase):
+    """build/soak/runs holds a directory per running job and nothing else."""
+
+    def setUp(self):
+        self.soak = scratch_soak(self)
+        self.soak.RUNS.mkdir(parents=True)
+        self.logged: list[str] = []
+        self.now = 1_000_000.0
+
+    def run_dir(self, name: str, age_hours: float, *files: str) -> Path:
+        path = self.soak.RUNS / name
+        stamp = self.now - age_hours * 3600
+        for relative in files or ("driver.log",):
+            (path / relative).parent.mkdir(parents=True, exist_ok=True)
+            (path / relative).write_text("x")
+        for at in [path, *path.rglob("*")]:
+            os.utime(at, (stamp, stamp))
+        return path
+
+    def sweep(self, *running: Path) -> int:
+        return self.soak.sweep_orphan_runs(set(running), self.logged.append, now=self.now)
+
+    def test_a_directory_left_by_a_runner_that_stopped_goes(self):
+        left = self.run_dir("20261114-004407-terminal-1105724772", 80, "driver.log", "fixtures/fx-1/taskflow/a.txt")
+        self.assertEqual(self.sweep(), 1)
+        self.assertFalse(left.exists())
+        self.assertIn("1 run directory no job owns", self.logged[0])
+
+    def test_a_directory_a_later_run_wrote_into_goes_once_it_is_quiet(self):
+        # The run ended a day ago; a replayed corpus prefix had the app save into
+        # it an hour ago.
+        stray = self.run_dir("20261117-053411-diff-1021163423", 1, "fixtures/fx-1/taskflow/qa-diff/v2.right.js")
+        self.assertEqual(self.sweep(), 0)
+        self.now += 5 * 3600
+        self.assertEqual(self.sweep(), 1)
+        self.assertFalse(stray.exists())
+
+    def test_a_running_jobs_directory_stays_however_old(self):
+        # A check minimizes for up to three hours and may write nothing at the top.
+        mine = self.run_dir("check-14cc1f5f0cf0", 6)
+        self.assertEqual(self.sweep(mine), 0)
+        self.assertTrue(mine.exists())
+
+    def test_a_hunt_run_by_hand_is_not_swept_from_under_it(self):
+        hunt = self.run_dir("hunt-abc123abc123", 0.5, "attempt-2/replay/findings.json")
+        self.assertEqual(self.sweep(), 0)
+        self.assertTrue(hunt.exists())
+        self.assertEqual(self.logged, [])
+
+
 class CoverageFileTests(unittest.TestCase):
     """The coverage file every soak job reads at its start and rewrites at its
     end: it must stay small and must count each run's steps exactly once."""
 
     def setUp(self):
-        self.path = Path(tempfile.mkdtemp(dir=os.environ.get("TMPDIR"))) / "coverage.json"
+        self.path = scratch_dir(self) / "coverage.json"
 
     def run_steps(self, steps):
         coverage = mm.Coverage.load(self.path)

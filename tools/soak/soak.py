@@ -2091,6 +2091,49 @@ def prune_verified_bundle(bundle: Path) -> int:
     return freed
 
 
+# A run directory nothing has written to for this long belongs to no running
+# job: the longest one (a check: three hours) ends well before it.
+ORPHAN_RUN_SECONDS = 4 * 3600.0
+
+
+def sweep_orphan_runs(running: set[Path], log, now: float | None = None) -> int:
+    """Removes the run directories under RUNS that no job owns; returns how many.
+
+    A run's directory goes when its job is reaped, and three things left one
+    behind for good -- 219 of them, a week into the soak, in a directory `health`
+    never looked at:
+    - the runner stopped (a restart, a build of its own unit) with jobs running:
+      they die with it and nothing reaps them;
+    - a later run wrote into a directory already deleted. A replayed corpus
+      prefix named the files of the run that saved it by their absolute paths,
+      and the app saved the diff's editable side there, parents and all (110 of
+      the 219 held nothing but a `qa-diff/v2.right.js`, written hours after
+      their run);
+    - a check, hunt or verification whose runner died under it.
+    `running` holds the directories of the jobs this runner has now; the age
+    keeps a hunt or a check somebody runs by hand (`soak.py hunt SIG`)."""
+    now = time.time() if now is None else now
+    removed = 0
+    try:
+        entries = sorted(RUNS.iterdir())
+    except OSError:
+        return 0
+    for entry in entries:
+        if entry in running or not entry.is_dir() or entry.is_symlink():
+            continue
+        try:
+            newest = max([entry.stat().st_mtime] + [child.lstat().st_mtime for child in entry.iterdir()])
+        except OSError:
+            continue  # going as we look
+        if now - newest < ORPHAN_RUN_SECONDS:
+            continue
+        shutil.rmtree(entry, ignore_errors=True)
+        removed += 1
+    if removed:
+        log(f"gc: {removed} run director{'y' if removed == 1 else 'ies'} no job owns")
+    return removed
+
+
 def collect_garbage(log) -> None:
     """Drops what nothing reads any more: verified bundles' evidence and the
     corpus prefixes too long for a run to start from."""
@@ -2288,6 +2331,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             break
         if now - last_housekeeping > 600:
             collect_garbage(log)
+            sweep_orphan_runs({job.out for job in jobs}, log)
             enforce_recording_budget(log)
             enforce_disk_budget(log)
             with contextlib.suppress(Exception):  # the ledger's bookkeeping never stops the runner
