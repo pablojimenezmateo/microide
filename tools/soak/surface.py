@@ -39,11 +39,20 @@ sys.path.insert(0, str(REPO / "tools" / "qa"))
 import microide_qa as q  # noqa: E402
 
 
-def read_surface(binary: Path) -> dict:
-    scratch = Path(tempfile.mkdtemp(prefix="surface-", dir=REPO / "build"))
-    project = q.make_fixture(scratch / "taskflow")
-    with q.App.launch(project=project, binary=binary) as app:
-        return app.query("surface")
+def read_surface(binary: Path, scratch_root: Path) -> dict:
+    """The `surface` answer of a launch of `binary` on a fixture under
+    `scratch_root`, which goes when the answer is in.
+
+    The fixture was made under this file's repository's build/ and left there.
+    The soak runs this from its driver snapshot (build/soak/driver/<sha>), a
+    copy of tools/ with no build/ in it: the inventory raised FileNotFoundError
+    on every build and `health` said "NOT COUNTED" -- found by the first
+    private soak of the change that had the runner take it."""
+    scratch_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="surface-", dir=scratch_root) as scratch:
+        project = q.make_fixture(Path(scratch) / "taskflow")
+        with q.App.launch(project=project, binary=binary) as app:
+            return app.query("surface")
 
 
 def flatten(surface: dict) -> dict[str, set[str]]:
@@ -178,7 +187,7 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     previous_path = args.out / "surface.json"
     previous = flatten(json.loads(previous_path.read_text())) if previous_path.exists() else {}
-    surface = json.loads(args.inventory.read_text()) if args.inventory else read_surface(args.binary)
+    surface = json.loads(args.inventory.read_text()) if args.inventory else read_surface(args.binary, args.out)
     inventory = flatten(surface)
     coverage = json.loads(args.coverage.read_text()) if args.coverage.exists() else {}
     seen = reached(coverage, suite_commands_from(args.suite_coverage))

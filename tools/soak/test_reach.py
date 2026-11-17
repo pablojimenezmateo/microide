@@ -39,6 +39,34 @@ class SoakDirTests(unittest.TestCase):
         (bundle / "replay.json").write_text(json.dumps({"actions": []}))
 
 
+class SurfaceLaunchTests(unittest.TestCase):
+    def test_the_inventory_is_taken_from_a_copy_of_the_tools_with_no_build_directory(self):
+        # The runner runs surface.py from its driver snapshot: tools/ and nothing
+        # else. The fixture went under <repository>/build, which a snapshot has
+        # not, and the inventory failed on every build.
+        import contextlib
+        with tempfile.TemporaryDirectory() as scratch:
+            snapshot, out = Path(scratch) / "driver" / "abc123", Path(scratch) / "soak"
+            made: list[Path] = []
+
+            def make_fixture(path: Path) -> Path:
+                path.mkdir(parents=True)
+                made.append(path)
+                return path
+
+            @contextlib.contextmanager
+            def launch(project, binary):
+                yield mock.Mock(query=lambda verb: {"commands": ["save"], "verb": verb})
+            with mock.patch.object(surface, "REPO", snapshot), \
+                 mock.patch.object(surface.q, "make_fixture", make_fixture), \
+                 mock.patch.object(surface.q.App, "launch", launch):
+                answer = surface.read_surface(Path("/bin/true"), out)
+            self.assertEqual(answer["commands"], ["save"])
+            self.assertEqual(made[0].parent.parent, out, "the fixture is made under the soak's own directory")
+            self.assertEqual(list(out.iterdir()), [], "and is gone when the answer is in")
+            self.assertFalse((snapshot / "build").exists())
+
+
 class HuntTests(SoakDirTests):
     def test_what_is_worth_a_hunt(self):
         self.finding("lost", "data", "data: the unsaved buffer a.txt did not come back", ran=12, followed=12)
