@@ -224,6 +224,27 @@ def report_and_pace(record: dict, signature: str, binary: Path, scratch: Path, r
     return merged
 
 
+def pin_binaries(binary: Path, scratch: Path) -> Path:
+    """A private copy of the binary under `scratch`, and of the microide-server
+    beside it; returns the copy's path.
+
+    A copy, because a rebuild of the tree the binary came from replaces it
+    mid-run, and every candidate after that "did not reproduce" for want of a
+    binary to run (2026-11-08). The server too, because a remote replay installs
+    the one beside its binary on the run's host (run.py server_binary): with
+    the app alone copied, every replay of every finding of the `remote` job
+    stopped at "no microide-server at <scratch>/microide-server" before its
+    first action -- booked as a rate of zero, then as "not tested", for the one
+    job that reaches the remote code at all."""
+    import shutil
+    pinned = scratch / "microide"
+    shutil.copy2(binary, pinned)
+    server = binary.parent / "microide-server"
+    if server.is_file():
+        shutil.copy2(server, scratch / "microide-server")
+    return pinned
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("replay", type=Path)
@@ -244,13 +265,7 @@ def main() -> int:
     out = args.out or args.replay.parent
     out.mkdir(parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix="minimize-", dir=out))
-    # A private copy of the binary: a rebuild of the tree it came from replaces
-    # it mid-run, and every candidate after that "did not reproduce" for want of
-    # a binary to run (2026-11-08).
-    import shutil
-    pinned = scratch / "microide"
-    shutil.copy2(args.binary, pinned)
-    args.binary = pinned
+    args.binary = pin_binaries(args.binary, scratch)
     try:
         actions = actions_of(record)
         if args.signature == "auto":

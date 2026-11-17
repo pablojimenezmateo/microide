@@ -58,6 +58,40 @@ class CheckReportTests(unittest.TestCase):
         self.assertIn("8 more could not run", partly)
 
 
+class PinnedBinaryTests(unittest.TestCase):
+    def test_a_remote_replay_finds_the_server_beside_the_pinned_binary(self):
+        # run.py looks for microide-server beside the binary it is given, and the
+        # minimizer gives it a private copy: without the server copied too, no
+        # replay of a remote finding ever ran.
+        import tempfile
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "qa"))
+        import run as qa_run
+        with tempfile.TemporaryDirectory() as scratch:
+            build, pinned_dir = Path(scratch) / "bin" / "default" / "abc", Path(scratch) / "minimize-x"
+            build.mkdir(parents=True)
+            pinned_dir.mkdir()
+            (build / "microide").write_text("app")
+            (build / "microide-server").write_text("server")
+            pinned = minimize.pin_binaries(build / "microide", pinned_dir)
+            self.assertEqual(pinned.read_text(), "app")
+            from unittest import mock
+            with mock.patch.dict("os.environ"):
+                import os
+                os.environ.pop("MICROIDE_SERVER_BINARY", None)
+                server = qa_run.server_binary(pinned)
+            self.assertEqual(server.read_text(), "server")
+            self.assertEqual(server.parent, pinned_dir.resolve())
+
+    def test_a_build_without_a_server_pins_the_app_alone(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as scratch:
+            (Path(scratch) / "microide").write_text("app")
+            pinned_dir = Path(scratch) / "pin"
+            pinned_dir.mkdir()
+            self.assertEqual(minimize.pin_binaries(Path(scratch) / "microide", pinned_dir).read_text(), "app")
+            self.assertEqual([p.name for p in pinned_dir.iterdir()], ["microide"])
+
+
 class CheckBinaryTests(unittest.TestCase):
     """The binary a check replays a finding with."""
 
