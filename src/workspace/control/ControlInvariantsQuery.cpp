@@ -13,8 +13,11 @@
 namespace microide::workspace {
 namespace {
 
+// The tab a violation is about. Its title goes in quotes: a driver that keys a
+// finding on the detail (tools/qa/findings.py) masks what is quoted, and
+// unquoted the one broken rule was a finding per file it was seen on.
 std::string TabName(std::size_t group, std::size_t tab, const TabEntry& entry) {
-  return "group " + std::to_string(group) + " tab " + std::to_string(tab) + " (" + entry.title + ")";
+  return "group " + std::to_string(group) + " tab " + std::to_string(tab) + " '" + entry.title + "'";
 }
 
 // A position inside `view`'s buffer: an existing line, a column no further than
@@ -25,6 +28,18 @@ bool Inside(const editor::TextViewport& view, std::size_t line, std::size_t colu
 
 std::string At(std::size_t line, std::size_t column) {
   return std::to_string(line + 1) + ":" + std::to_string(column + 1);
+}
+
+// How a position misses `view`'s buffer: no such line, or a column past the end
+// of a line it has. Two different faults (a caret kept across a reload that
+// shortened the file, against one kept across an edit of its line), and "outside
+// its 29-line buffer" for a caret on line 1 said neither.
+std::string Outside(const editor::TextViewport& view, std::size_t line, std::size_t column) {
+  if (line >= view.line_count()) {
+    return At(line, column) + ", past the last of its " + std::to_string(view.line_count()) + " lines";
+  }
+  return At(line, column) + ", past the end of that line (" + std::to_string(view.lines().LineLength(line)) +
+         " long)";
 }
 
 }  // namespace
@@ -118,18 +133,17 @@ WorkspaceInvariantReport CheckWorkspaceInvariants(const ProjectWorkspaceState& p
       }
       if (!Inside(view, view.cursor_line(), view.cursor_column())) {
         violate("carets", TabName(g, t, tab) + " has its caret at " +
-                              At(view.cursor_line(), view.cursor_column()) + ", outside its " +
-                              std::to_string(view.line_count()) + "-line buffer");
+                              Outside(view, view.cursor_line(), view.cursor_column()));
       }
       if (const auto& anchor = view.selection_anchor();
           anchor.has_value() && !Inside(view, anchor->line, anchor->column)) {
         violate("carets", TabName(g, t, tab) + " has its selection anchor at " +
-                              At(anchor->line, anchor->column) + ", outside its buffer");
+                              Outside(view, anchor->line, anchor->column));
       }
       for (const editor::TextPosition& caret : view.secondary_carets()) {
         if (!Inside(view, caret.line, caret.column)) {
-          violate("carets", TabName(g, t, tab) + " has a secondary caret at " + At(caret.line, caret.column) +
-                                ", outside its buffer");
+          violate("carets", TabName(g, t, tab) + " has a secondary caret at " +
+                                Outside(view, caret.line, caret.column));
           break;
         }
       }

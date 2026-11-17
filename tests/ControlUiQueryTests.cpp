@@ -507,6 +507,11 @@ void TestInvariantsQueryHoldsAndNamesBrokenRules() {
   }
   Expect(rules(project) == "untitled;",
          "two different buffers under one Untitled number are named, got: " + rules(project));
+  // The tab's title is quoted: a driver keys a finding on the detail with what
+  // is quoted masked, and unquoted one broken rule was a finding per file.
+  const std::string named = workspace::CheckWorkspaceInvariants(project).violations.front().detail;
+  Expect(named.find("group 0 tab 1 'Untitled-1'") != std::string::npos,
+         "a violation names its tab with the title in quotes, got: " + named);
   project.editor_groups[0].open_tabs[1].untitled_number = 2;
   Expect(rules(project).empty(), "two buffers with a number each break no rule, got: " + rules(project));
 
