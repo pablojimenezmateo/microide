@@ -1308,7 +1308,8 @@ def reproduction_text(entry: ld.Entry) -> str:
     runs = entry.replays_ran if entry.replays_ran is not None else (entry.rate_runs or 3)
     text = (f"{'deterministic' if entry.deterministic else 'flaky'}, {round(entry.rate * runs)} of {runs} "
             f"replays of its actions showed it")
-    if entry.replays_ran is not None and entry.rate_runs and entry.replays_ran < entry.rate_runs:
+    # Not when none ran: the verdict below says that, with the same reason.
+    if entry.replays_ran and entry.rate_runs and entry.replays_ran < entry.rate_runs:
         text += (f" ({entry.rate_runs - entry.replays_ran} more could not run"
                  + (f": {entry.replay_errors[0]}" if entry.replay_errors else "") + ")")
     if entry.paced:

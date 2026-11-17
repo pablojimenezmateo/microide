@@ -52,7 +52,7 @@ class CheckReportTests(unittest.TestCase):
         self.assertIn("followed the run's states to the end", followed)
         untested = soak.reproduction_text(checked(replays_ran=0, replay_errors=["QaFailure: no window"]))
         self.assertIn("NOT TESTED", untested)
-        self.assertIn("QaFailure: no window", untested)
+        self.assertEqual(untested.count("QaFailure: no window"), 1, "the reason is given once")
         partly = soak.reproduction_text(checked(rate=0.5, replays_ran=4, replay_errors=["x"]))
         self.assertIn("2 of 4 replays", partly)
         self.assertIn("8 more could not run", partly)
