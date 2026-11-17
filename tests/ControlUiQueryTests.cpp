@@ -521,6 +521,33 @@ void TestInvariantsQueryHoldsAndNamesBrokenRules() {
 
   project.editor_groups[0].open_tabs[0].kind = workspace::TabEntry::Kind::Compare;
   Expect(rules(project) == "tabs;", "a compare tab with no compare state is named, got: " + rules(project));
+  project.editor_groups[0].open_tabs[0].kind = workspace::TabEntry::Kind::Editor;
+
+  // Two views of one document: the one in front empties a line the other's caret
+  // sits at the end of. The view behind reconciles its carets on its next use (and
+  // reads them reconciled before then), so its stored positions lag the document
+  // without breaking any rule -- the monkey reported it as a caret past the end of
+  // its line (soak 872c8984d39b).
+  workspace::ProjectWorkspaceState shared;
+  shared.editor_groups[0].open_tabs.resize(2);
+  for (std::size_t i = 0; i < 2; ++i) {
+    workspace::TabEntry& tab = shared.editor_groups[0].open_tabs[i];
+    tab.title = "notes.txt";
+    tab.path = "/tmp/notes.txt";
+    tab.editor_state.emplace();
+  }
+  editor::TextViewport& behind = shared.editor_groups[0].open_tabs[1].editor_state->viewport;
+  behind.LoadContent("one\ntwo three\nfour\n", "/tmp/notes.txt");
+  behind.MoveCursorTo(1, 9);
+  editor::TextViewport& front = shared.editor_groups[0].open_tabs[0].editor_state->viewport;
+  front = behind;  // shares the document, as a second view of the file does
+  front.MoveCursorTo(1, 0);
+  front.MoveCursorTo(1, 9, /*extend_selection=*/true);
+  front.Backspace();
+  Expect(rules(shared).empty(),
+         "a view behind another whose edit moved its document breaks no rule, got: " + rules(shared));
+  behind.ReconcileCaretsWithDocument();
+  Expect(rules(shared).empty(), "and none once it reconciled, got: " + rules(shared));
 }
 
 // The list overlays name their rows, and a click at a row's center runs it.

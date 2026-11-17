@@ -253,6 +253,11 @@ class TextViewport {
   // end drew no current-line highlight until an unrelated command clamped it,
   // in a frame that did not repaint the pane (QA monkey, commands profile, seed 8).
   void ReconcileCaretsWithDocument() { SyncCaretsIfDocumentChangedElsewhere(); }
+  // Whether another viewport over this DocumentState edited it since this one
+  // last reconciled its carets (SyncCaretsIfDocumentChangedElsewhere).
+  bool CaretsLagDocument() const {
+    return document_ != nullptr && carets_synced_content_revision_ != document_->content_revision;
+  }
   void SetHorizontalScroll(std::size_t horizontal_scroll);
   // Authoritatively re-applies a previously captured view state: cursor (or
   // selection) first, then scroll LAST so the restored scroll survives even when
@@ -1370,11 +1375,7 @@ class TextViewport {
   // `position` brought into the document the way ClampCaretSetToDocument brings
   // a caret: the last line at most, then a column on a character boundary.
   TextPosition ClampedToDocument(TextPosition position) const;
-  // Whether another viewport over this DocumentState edited it since this one
-  // last reconciled its carets (SyncCaretsIfDocumentChangedElsewhere).
-  bool CaretsLagDocument() const {
-    return document_ != nullptr && carets_synced_content_revision_ != document_->content_revision;
-  }
+
   // A viewport whose DocumentState is shared -- a split clone, or the compare
   // pane over a file an editor tab also has open -- keeps the caret set it had
   // before the OTHER viewport's edit. Those positions can name lines the
