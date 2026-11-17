@@ -245,6 +245,21 @@ run from a driver snapshot at all -- then `health`, then what the jobs found:
 a new oracle that fires in every run is the oracle's to explain before it
 merges. Delete the directory and `git worktree remove` the worktree after.
 
+Once it is on `main`: the jobs run the new driver with the next build (each
+build snapshots `tools/`), but the runner is one long-lived process and runs
+the `tools/soak` it started with. `soak.py health` says `runner: STALE` until
+it is restarted, between jobs:
+
+```bash
+tools/soak/soak.py pause "restart" --wait 3600 && systemctl --user restart microide-soak && tools/soak/soak.py resume
+```
+
+A change to how a finding is keyed (`tools/qa/findings.py`, an oracle's
+message) starts new signatures: the old ones are never seen again, go quiet and
+close by exposure, and their replays can no longer show them -- so they are not
+measured again (`requeue_unmeasured`). Say so in the commit, and do not read
+the wave of "new" findings after it as a regression.
+
 ## A containment breach
 
 Every scratch project lives under `build/`, inside the checkout. A run's git is
