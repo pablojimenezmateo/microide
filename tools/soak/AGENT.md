@@ -89,8 +89,10 @@ only, a failing-first test for every fix, one commit per fix, and a TD entry in
 6. **Fix the cause**, not the symptom. If the bug is a class (the same mistake at
    several sites), fix every site and consider an architecture lint.
 7. **Validate.** The focused tests, `tools/qa/run.py replay <minimal.json>` (now
-   clean), the inner loop (`CLAUDE.md` § Development Workflow), and the lane the
-   area needs (`qa` for paint/hover/focus, `asan` for memory).
+   clean: its last line reads `ok ... no finding` and it exits 0; a replay that
+   still shows a finding lists it, says `FAIL` and exits 1), the inner loop
+   (`CLAUDE.md` § Development Workflow), and the lane the area needs (`qa` for
+   paint/hover/focus, `asan` for memory).
 8. **Commit** the test and the fix (one commit, or test then fix), then mark it:
    `tools/soak/soak.py ledger fixed <sig> <commit>` -- every signature of the
    family the fix covers. What happens next depends on whether a replay ever
@@ -217,6 +219,31 @@ strict for a legitimate state, a driver timing assumption. Fix the monkey or the
 oracle (`tools/qa/`), with a negative control that shows the oracle still fires
 on the real defect it exists for (`validation-traps.md` § vacuous fixtures), and
 mark the finding fixed with that commit.
+
+## A change to the soak itself
+
+The runner, the driver and the oracles are code like any other, and the live
+soak runs them only once they are on `main`. Try a change to them first, in a
+private soak of the branch beside the live one: its own directory and worktree,
+the ref it follows and the builds it makes named in the environment.
+
+```bash
+systemd-run --user --quiet --wait --pipe --collect -p WorkingDirectory=$PWD \
+  --setenv=PATH="$PATH" --setenv=HOME="$HOME" \
+  --setenv=MICROIDE_SOAK_REF=my-branch --setenv=MICROIDE_SOAK_BUILDS=default \
+  --setenv=MICROIDE_SOAK_DIR=$PWD/build/soak-try --setenv=MICROIDE_SOAK_WORKTREE=$PWD/build/wt-soak-try \
+  python3 tools/soak/soak.py run --jobs 6 --max-hours 1
+MICROIDE_SOAK_DIR=build/soak-try tools/soak/soak.py health --hours 2
+```
+
+`systemd-run`, never the shell itself: a shell inside a microide host terminal
+carries that terminal's server in its environment, and a soak started from one
+once shut the developer's own server down (the driver drops those variables
+now; the habit stays). Read its `soak.log` first -- the first private soak of
+a runner change showed, on its first build, an inventory step that could not
+run from a driver snapshot at all -- then `health`, then what the jobs found:
+a new oracle that fires in every run is the oracle's to explain before it
+merges. Delete the directory and `git worktree remove` the worktree after.
 
 ## A containment breach
 
