@@ -673,6 +673,14 @@ check_perf_gate() {
 # screenshots, replay.json) is named in the log. A missing Xvfb/xdotool/xwd fails
 # it too -- not running is not a pass. The remote suite needs a host and runs on
 # demand only (tools/qa/run.py remote).
+# The window the lanes' monkeys keep, in layout units (pixels / ui.scale), as the
+# soak's real-size cells do (tools/soak/soak.py TINY_LOGICAL). A seeded monkey is
+# a gate: any finding fails its lane. Without this a walk that zooms to ui.scale
+# 3 runs the rest of its steps in a 480x300 window, where every panel sits at its
+# minimum and what it finds is the squeezed-layout class the soak ranks last --
+# and which seed does that changes with every change to what the monkey can do.
+QA_MONKEY_MIN_LOGICAL="${MICROIDE_QA_MONKEY_MIN_LOGICAL:-800x500}"
+
 check_qa_driver() {
   run_logged "${LOG_DIR}/microide-qa-driver.log" python3 -m unittest discover -s tools/qa -p "test_*.py"
   # The soak runner's own decisions (what it runs, what it drains for, what it
@@ -703,7 +711,8 @@ check_qa() {
     python3 -m unittest discover -s tools/qa -p "test_*.py" || status=1
     python3 -m unittest discover -s tools/soak -p "test_*.py" || status=1
     python3 tools/qa/run.py --out '"$out"'/suite suite --jobs '"$qa_jobs"' || status=1
-    python3 tools/qa/run.py --out '"$out"'/monkey monkey --seed 1 --steps '"$steps"' || status=1
+    python3 tools/qa/run.py --out '"$out"'/monkey monkey --seed 1 --steps '"$steps"' \
+      --min-logical '"$QA_MONKEY_MIN_LOGICAL"' || status=1
     exit $status
   '
   local rc=$?
@@ -734,7 +743,7 @@ check_qa_asan() {
     python3 tools/qa/run.py --out '"$out"'/suite suite --jobs '"$qa_jobs"' \
       --binary build/microide-asan/microide/microide || status=1
     python3 tools/qa/run.py --out '"$out"'/monkey monkey --seeds '"$seeds"' --steps '"$steps"' \
-      --binary build/microide-asan/microide/microide || status=1
+      --min-logical '"$QA_MONKEY_MIN_LOGICAL"' --binary build/microide-asan/microide/microide || status=1
     exit $status
   '
   local rc=$?
@@ -817,7 +826,7 @@ check_qa_scale() {
         "menu*" "split*" "scroll*" "sticky-scroll" "tab-*" "wb-*" "resize-overlays" "panel-mouse" \
         "chrome*" "sidebar-*" "context-menus" "edit-wrap-scroll" "window-minimum" || status=1
       MQA_UI_SCALE=$scale python3 tools/qa/run.py --out '"$out"'/monkey-$scale monkey --profile layout \
-        --seeds 1-2 --steps '"$steps"' || status=1
+        --seeds 1-2 --steps '"$steps"' --min-logical '"$QA_MONKEY_MIN_LOGICAL"' || status=1
     done
     exit $status
   '
