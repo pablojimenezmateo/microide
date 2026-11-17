@@ -1313,6 +1313,10 @@ def reproduction_text(entry: ld.Entry) -> str:
                  + (f": {entry.replay_errors[0]}" if entry.replay_errors else "") + ")")
     if entry.paced:
         text += " at the recorded pace (the replays keep the run's timing; `run.py replay` reads it from the record)"
+    if entry.checked_on and entry.commits and not any(c.startswith(entry.checked_on[:12]) or
+                                                      entry.checked_on.startswith(c[:12]) for c in entry.commits):
+        text += (f" -- replayed on build `{entry.checked_on[:12]}`, later than any that showed it (the binary of "
+                 "the build that found it was gone): a fix since then also reads as zero")
     verdict = entry.replay_verdict
     if verdict == "untested":
         text += (" -- NOT TESTED: the driver finished none of them, so this says nothing about the finding"
@@ -1534,6 +1538,26 @@ def verify_runs(rate: float) -> int:
     return max(3, min(24, math.ceil(math.log(0.05) / math.log(1.0 - rate))))
 
 
+def check_binary(meta: dict[str, Any], state: dict[str, Any]) -> tuple[str | None, str]:
+    """The binary a finding's replays run, and the commit it was built at: the
+    build that found it while the runner still has it, else the newest good
+    build of the same configuration; (None, "") when there is neither.
+
+    A build's binary goes six hours after the next one (prune_binaries), and a
+    check named the finding's own and nothing else. Every check of a finding
+    older than that -- all of the open ones, the day replays learned to say
+    whether they followed the run and the old rates were queued to be measured
+    again -- copied a file that was not there, printed nothing, and was booked
+    as "NOT TESTED: the driver finished none of them", which nothing requeues."""
+    found = str(meta.get("binary") or "")
+    if found and Path(found).exists():
+        return found, str(meta.get("sha") or "")
+    good = state.get("good", {}).get(str(meta.get("build") or "default"))
+    if good and Path(good.get("binary", "")).exists():
+        return good["binary"], str(good.get("sha") or "")
+    return None, ""
+
+
 def check_finding(sig: str, state: dict[str, Any], log) -> None:
     """Replays a new finding three times for its rate; minimizes a deterministic
     one. Runs as a job of the runner (it holds three displays at once)."""
@@ -1543,7 +1567,12 @@ def check_finding(sig: str, state: dict[str, Any], log) -> None:
     if not replay.exists() or not meta_path.exists():
         return
     meta = json.loads(meta_path.read_text())
-    binary = meta["binary"]
+    binary, checked_on = check_binary(meta, state)
+    if binary is None:
+        # Nothing to replay it with: say so and book no measurement -- a rate of
+        # zero from replays that never ran is not one.
+        log(f"  {sig}: no {meta.get('build', 'default')} binary to replay it with; left unmeasured")
+        return
     env = {**os.environ, "MQA_SLOW_FACTOR": str(meta.get("slow", 1))}
     minimize = [sys.executable, str(driver_root(state) / "tools" / "soak" / "minimize.py"), str(replay),
                 "--signature", sig, "--binary", binary, "--out", str(bundle)]
@@ -1562,7 +1591,7 @@ def check_finding(sig: str, state: dict[str, Any], log) -> None:
         # The check itself died (a timeout, a broken driver): no replay ran.
         report = {"ran": 0, "errors": [f"the check printed no result: {(result.stderr or result.stdout)[-200:]}"]}
     ledger().append(sig, "checked", rate=rate, runs=runs, deterministic=deterministic, actions=actions,
-                    paced=paced, **{key: report[key] for key in CHECK_REPORT_FIELDS if key in report})
+                    paced=paced, on=checked_on, **{key: report[key] for key in CHECK_REPORT_FIELDS if key in report})
     log(f"  checked {sig}: {round(rate * report.get('ran', runs))} of {report.get('ran', runs)} replays"
         + (" at the recorded pace" if paced else "")
         + (f"; {report['diverged']} left the run's path" if report.get("diverged") else "")

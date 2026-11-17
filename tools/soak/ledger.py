@@ -59,6 +59,9 @@ class Entry:
     divergence: dict[str, Any] | None = None
     replay_errors: list[str] = field(default_factory=list)
     replay_others: list[str] = field(default_factory=list)
+    # The commit of the build the check's replays ran (soak.check_binary): the
+    # finding's own, or a later one when that binary was gone.
+    checked_on: str = ""
     minimal_actions: int | None = None
     full_actions: int | None = None
     fix_commit: str = ""
@@ -180,6 +183,7 @@ class Ledger:
                 entry.divergence = event.get("divergence")
                 entry.replay_errors = list(event.get("errors") or [])
                 entry.replay_others = list(event.get("others") or [])
+                entry.checked_on = str(event.get("on") or "")
             elif kind == "minimized":
                 entry.minimal_actions = event.get("actions")
             elif kind == "claimed":

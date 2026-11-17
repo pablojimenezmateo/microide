@@ -58,5 +58,68 @@ class CheckReportTests(unittest.TestCase):
         self.assertIn("8 more could not run", partly)
 
 
+class CheckBinaryTests(unittest.TestCase):
+    """The binary a check replays a finding with."""
+
+    def setUp(self):
+        import tempfile
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.root = Path(self.dir.name)
+
+    def binary(self, name: str) -> str:
+        path = self.root / name / "microide"
+        path.parent.mkdir(parents=True)
+        path.write_text("")
+        return str(path)
+
+    def test_the_build_that_found_it_while_the_runner_has_it(self):
+        found = self.binary("old")
+        state = {"good": {"default": {"sha": "b" * 40, "binary": self.binary("new")}}}
+        self.assertEqual(soak.check_binary({"binary": found, "sha": "a" * 40, "build": "default"}, state),
+                         (found, "a" * 40))
+
+    def test_the_current_build_of_its_configuration_once_its_own_is_pruned(self):
+        # Every open finding older than six hours: its check copied a binary that
+        # was gone and was booked "NOT TESTED", which nothing requeues.
+        asan = self.binary("asan-new")
+        state = {"good": {"default": {"sha": "b" * 40, "binary": self.binary("new")},
+                          "asan": {"sha": "c" * 40, "binary": asan}}}
+        gone = str(self.root / "pruned" / "microide")
+        self.assertEqual(soak.check_binary({"binary": gone, "sha": "a" * 40, "build": "asan"}, state), (asan, "c" * 40))
+        # ... and never another configuration's: an ASan finding is not replayed on the default build.
+        self.assertEqual(soak.check_binary({"binary": gone, "sha": "a" * 40, "build": "tsan"}, state), (None, ""))
+
+    def test_a_check_with_no_binary_books_no_measurement(self):
+        import importlib
+        import json
+        import os
+        from unittest import mock
+        patcher = mock.patch.dict(os.environ, {"MICROIDE_SOAK_DIR": str(self.root / "soak")})
+        self.addCleanup(importlib.reload, soak)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        module = importlib.reload(soak)
+        bundle = module.FINDINGS / "abc123abc123"
+        bundle.mkdir(parents=True)
+        (bundle / "replay.json").write_text(json.dumps({"actions": []}))
+        (bundle / "meta.json").write_text(json.dumps({"binary": str(self.root / "pruned" / "microide"),
+                                                      "build": "default", "sha": "a" * 40,
+                                                      "finding": {"kind": "data", "label": "data: x"}}))
+        module.ledger().append("abc123abc123", "new", kind="data", label="data: x")
+        said: list[str] = []
+        with mock.patch.object(module.subprocess, "run", side_effect=AssertionError("no replay may run")):
+            module.check_finding("abc123abc123", {"good": {}}, said.append)
+        self.assertIsNone(module.ledger().entries()["abc123abc123"].rate, "a rate was booked for replays that never ran")
+        self.assertIn("left unmeasured", said[0])
+
+    def test_finding_md_says_when_the_replays_ran_on_a_later_build(self):
+        entry = checked(replays_ran=12, replays_followed=12, checked_on="c" * 40)
+        entry.commits = {"a" * 40}
+        self.assertIn("replayed on build `cccccccccccc`, later than any that showed it", soak.reproduction_text(entry))
+        entry.commits = {"a" * 40, "c" * 40}
+        self.assertNotIn("later than any", soak.reproduction_text(entry))
+
+
 if __name__ == "__main__":
     unittest.main()
