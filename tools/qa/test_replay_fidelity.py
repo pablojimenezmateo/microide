@@ -8,7 +8,6 @@ import microide_qa as q
 import monkey as m
 import monkey_model as mm
 import monkey_oracles as mo
-import run as qa_run
 
 
 class FakeApp:
