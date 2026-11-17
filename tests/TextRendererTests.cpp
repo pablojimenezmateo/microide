@@ -1021,6 +1021,57 @@ void TestSdlTtfNonAsciiMeasuresAndDrawsOnTheCellGrid() {
   SDL_DestroySurface(pixels);
 }
 
+// A one-cell symbol the fallback font draws wider than its cell keeps the ink
+// that falls on a blank cell after it, and loses only what would land on a
+// neighbour's ink. Claude Code titles its terminal "✳ Claude Code"; the tab drew
+// the ✳ with its right arm sheared off at the cell edge, over a space.
+void TestSdlTtfAWideSymbolOverhangsIntoTheBlankCellAfterIt() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(320, 120);
+  microide::render::TextRenderer renderer;
+  renderer.EnsureInitialized(canvas.renderer());
+  Expect(renderer.BackendName() == "sdl3_ttf", "exercises the SDL_ttf backend");
+  const float cw = renderer.CharWidth();
+  const float x = 16.0f;
+  const float y = 8.0f;
+  // Ink per pixel column of cells [first, last) after drawing `text`.
+  const auto columns = [&](const char* text, std::size_t first, std::size_t last) {
+    SDL_SetRenderDrawColor(canvas.renderer(), 0, 0, 0, 255);
+    SDL_RenderClear(canvas.renderer());
+    renderer.DrawString(canvas.renderer(), x, y, SDL_Color{255, 255, 255, 255}, text);
+    std::vector<int> ink;
+    SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+    if (pixels == nullptr) {
+      return ink;
+    }
+    const int left = static_cast<int>(x + static_cast<float>(first) * cw);
+    const int right = static_cast<int>(x + static_cast<float>(last) * cw);
+    for (int px = left; px < right; ++px) {
+      int column = 0;
+      for (int py = 0; py < pixels->h; ++py) {
+        Uint8 r = 0, g = 0, b = 0, a = 0;
+        SDL_ReadSurfacePixel(pixels, px, py, &r, &g, &b, &a);
+        column += r;
+      }
+      ink.push_back(column);
+    }
+    SDL_DestroySurface(pixels);
+    return ink;
+  };
+  const auto any = [](const std::vector<int>& ink) {
+    return std::any_of(ink.begin(), ink.end(), [](int v) { return v > 64; });
+  };
+  const char* const kStar = "\xE2\x9C\xB3";  // U+2733, one cell wide
+  Expect(any(columns(kStar, 0, 1)), "a font on this machine covers U+2733, or the test proves nothing");
+  // With a blank cell after it, nothing there to protect.
+  const std::vector<int> cell_one = columns((std::string(kStar) + " b").c_str(), 1, 2);
+  Expect(any(cell_one),
+         "the star's right arm reaches into the blank cell after it instead of being cut at its own cell");
+  // A neighbour with ink keeps its cell: `✳b` paints cell 1 exactly as ` b` does.
+  Expect(columns((std::string(kStar) + "b").c_str(), 1, 2) == columns(" b", 1, 2),
+         "a symbol never paints over the ink of the cell after it");
+}
+
 void TestSdlTtfAsciiRepeatedGlyphsMeasureByCharWidth() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(320, 120);
@@ -3605,6 +3656,8 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextRenderer/FontSizeSetBeforeInitializeIsKept", TestSdlTtfFontSizeSetBeforeInitializeIsKept);
   AddTest(tests, "TextRenderer/NonAsciiMeasuresAndDrawsOnTheCellGrid",
           TestSdlTtfNonAsciiMeasuresAndDrawsOnTheCellGrid);
+  AddTest(tests, "TextRenderer/AWideSymbolOverhangsIntoTheBlankCellAfterIt",
+          TestSdlTtfAWideSymbolOverhangsIntoTheBlankCellAfterIt);
   AddTest(tests, "TextRenderer/MeasureWidthDoesNotCacheOversizedStrings",
           TestMeasureWidthDoesNotCacheOversizedStrings);
   AddTest(tests, "TextRenderer/TruncateToWidthEphemeralViewIsInvalidatedByNextCall",

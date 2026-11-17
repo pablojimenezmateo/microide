@@ -222,8 +222,23 @@ void PlanTerminalRow(const terminal::TerminalLine& line,
       plan.text.append(glyph);
     }
     // Trailing blanks draw nothing; leading ones place the text and stay.
+    bool blank_after = false;
     while (plan.text.size() > offset && plan.text.back() == ' ') {
       plan.text.pop_back();
+      blank_after = true;
+    }
+    // Except one after a symbol: a fallback font draws many one-cell symbols
+    // wider than the cell (⏺, ✳), and the text backend lets that ink run into
+    // blank cells of the same string only -- never past its end. A symbol in a
+    // colour of its own (Claude Code's `⏺`) is a run of one, so without the
+    // blank after it the circle was sheared off at its cell edge.
+    if (!blank_after && end < visible && !line.cells[end].style.wide_trailing()) {
+      const std::string_view next = line.cells[end].DisplayText();
+      blank_after = next.empty() || next == " ";
+    }
+    if (blank_after && plan.text.size() > offset &&
+        static_cast<unsigned char>(plan.text.back()) >= 0x80 && !is_wide_lead(end - 1)) {
+      plan.text.push_back(' ');
     }
     if (visible_text) {
       plan.text_runs.push_back({.column = column,

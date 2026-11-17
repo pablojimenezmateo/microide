@@ -646,8 +646,19 @@ SDL_Surface* SdlTtfTextBackend::BuildGridCompositeSurface(std::string_view text,
     }
     const std::string_view cluster = text.substr(offset, end - offset);
     const int dst_x = static_cast<int>(std::lround(static_cast<float>(cell) * cell_width_px));
+    // Where the cluster's ink may go: its own cells, and the blank cells right
+    // after it, up to its own width again. A fallback font draws many one-cell
+    // symbols wider than the cell (✳, ✻ -- the spinner Claude Code puts in its
+    // terminal title), and a blank cell has no ink of its own to protect, so the
+    // glyph keeps the part that falls there instead of being sheared off at its
+    // cell edge. A neighbour WITH ink still clips it.
+    std::size_t blank_after = 0;
+    while (blank_after < width && end + blank_after < text.size() && text[end + blank_after] == ' ') {
+      ++blank_after;
+    }
     const int span_px =
-        static_cast<int>(std::lround(static_cast<float>(cell + width) * cell_width_px)) - dst_x;
+        static_cast<int>(std::lround(static_cast<float>(cell + width + blank_after) * cell_width_px)) -
+        dst_x;
     const bool ascii_cell = cluster.size() == 1 && base >= 0x20 && base <= 0x7E;
     if (!ascii_cell) {
       EnsureCodepointCovered(base);  // before its first raster, so no box is cached

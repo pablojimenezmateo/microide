@@ -322,6 +322,36 @@ void TestTextRunsSplitOnTheFace() {
   Expect(r[4].face == FontStyle::Regular && plan.RunText(r[4]) == "g" && r[4].end == 7, "and regular again");
 }
 
+// A symbol a fallback font draws wider than its cell needs the blank cell after
+// it in its own run: the text backend lets a glyph's ink run into blank cells of
+// the string it draws, and nothing past the string's end. Claude Code prints its
+// `⏺` in a colour of its own, so the run held the circle alone and the circle was
+// sheared off at its cell edge.
+void TestASymbolRunKeepsTheBlankCellAfterIt() {
+  TerminalLine line = MakeLine("  done");
+  line.cells[0].SetUtf8("\xE2\x8F\xBA");  // U+23FA, one cell
+  line.cells[0].style.foreground = Rgba(kRed);
+  TerminalRowPaintPlan plan;
+  PlanTerminalRow(line, 40, TerminalRowEmphasis{}, Palette(), plan);
+  Expect(!plan.text_runs.empty() && plan.RunText(plan.text_runs.front()) == "\xE2\x8F\xBA ",
+         "the circle's run keeps the blank cell after it: [" +
+             (plan.text_runs.empty() ? std::string() : std::string(plan.RunText(plan.text_runs.front()))) + "]");
+
+  // Only one, and only for a symbol: plain text keeps dropping its trailing blanks.
+  TerminalLine ascii = MakeLine("ab    ");
+  TerminalRowPaintPlan ascii_plan;
+  PlanTerminalRow(ascii, 40, TerminalRowEmphasis{}, Palette(), ascii_plan);
+  Expect(ascii_plan.text_runs.size() == 1 && ascii_plan.RunText(ascii_plan.text_runs.front()) == "ab",
+         "ASCII text drops its trailing blanks");
+  TerminalLine trailing = MakeLine("     ");
+  trailing.cells[0].SetUtf8("\xE2\x9C\xB3");  // U+2733 then blanks to the end
+  TerminalRowPaintPlan trailing_plan;
+  PlanTerminalRow(trailing, 40, TerminalRowEmphasis{}, Palette(), trailing_plan);
+  Expect(trailing_plan.text_runs.size() == 1 &&
+             trailing_plan.RunText(trailing_plan.text_runs.front()) == "\xE2\x9C\xB3 ",
+         "a symbol keeps one blank after it, not the whole tail");
+}
+
 void TestRowSelectionEmphasisMatchesContainsCell() {
   std::mt19937 rng(20261105);
   std::uniform_int_distribution<std::size_t> pick_row(0, 6);
@@ -354,6 +384,7 @@ void TestRowSelectionEmphasisMatchesContainsCell() {
 void RegisterTerminalRowPaintTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TerminalRowPaint/SelectedTextKeepsItsOwnColour", TestSelectedTextKeepsItsOwnColour);
   AddTest(tests, "TerminalRowPaint/UnderlinesTakeTheirColourAndShape", TestUnderlinesTakeTheirColourAndShape);
+  AddTest(tests, "TerminalRowPaint/ASymbolRunKeepsTheBlankCellAfterIt", TestASymbolRunKeepsTheBlankCellAfterIt);
   AddTest(tests, "TerminalRowPaint/TextRunsSplitOnTheFace", TestTextRunsSplitOnTheFace);
   AddTest(tests, "TerminalRowPaint/SelectionWashesAColouredBackground",
           TestSelectionWashesAColouredBackground);
