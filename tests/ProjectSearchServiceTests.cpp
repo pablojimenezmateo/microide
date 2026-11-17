@@ -4,6 +4,7 @@
 #include "project/ProjectSearchServiceInternal.h"
 #include "project/ProjectFileScanner.h"
 #include "util/PerformanceCounters.h"
+#include "util/StringUtil.h"
 
 #include <algorithm>
 #include <atomic>
@@ -346,6 +347,67 @@ void TestProjectSearchServiceNormalizesPreviewWhitespace() {
   Expect(indented.results[0].preview.substr(indented.results[0].match_preview_start,
                                             indented.results[0].match_preview_length) == "zeta",
          "match highlight range should account for collapsed leading whitespace");
+}
+
+// A hit's preview is a bounded window around the match, not the whole line. A
+// minified or generated line with many hits on it stored one full copy of the line
+// per hit: a sidebar of such rows painted a 300 KB label each (65-130 ms frames),
+// the control channel's `ui` reply passed its 8 MiB write cap and the app shed the
+// client (soak 1d64e3925f2b, ~1000 sightings), and a remote search rejected every
+// preview over its 4 KiB wire cap.
+void TestProjectSearchServicePreviewIsABoundedWindowAroundTheMatch() {
+  using microide::project::kMaxProjectSearchPreviewBytes;
+  using microide::project::MakeProjectSearchResult;
+  const auto highlighted = [](const ProjectSearchResult& hit) {
+    return hit.preview.substr(hit.match_preview_start, hit.match_preview_length);
+  };
+
+  // Far into a long ASCII line.
+  const std::string ascii = std::string(100000, 'x') + "needle" + std::string(100000, 'y');
+  const ProjectSearchResult far = MakeProjectSearchResult(ascii, 100000, 100006, "long.txt", 0, 0);
+  Expect(far.preview.size() <= kMaxProjectSearchPreviewBytes,
+         "a hit on a 200 KB line keeps a bounded preview (got " + std::to_string(far.preview.size()) +
+             " bytes)");
+  Expect(highlighted(far) == "needle", "the window holds the match and highlights it");
+  Expect(far.match_preview_start > 0, "the window keeps some context before the match");
+  Expect(far.column == 100000, "the column stays the match's offset in the line, not in the window");
+
+  // Multi-byte characters around the match: no character is cut at either edge.
+  std::string emoji;
+  for (int i = 0; i < 50000; ++i) {
+    emoji += "\xF0\x9F\x98\x80";
+  }
+  const std::string wide = emoji + "hit" + emoji;
+  const ProjectSearchResult cut = MakeProjectSearchResult(wide, emoji.size(), emoji.size() + 3, "wide.txt", 0, 0);
+  Expect(cut.preview.size() <= kMaxProjectSearchPreviewBytes, "a hit among emoji keeps a bounded preview");
+  Expect(microide::util::IsValidUtf8(cut.preview), "the window splits no character at either edge");
+  Expect(highlighted(cut) == "hit", "the window around a hit among emoji highlights the hit");
+
+  // A match longer than the window (`.*` on a long line) is clipped with it.
+  const ProjectSearchResult whole = MakeProjectSearchResult(ascii, 0, ascii.size(), "long.txt", 0, 0);
+  Expect(whole.preview.size() <= kMaxProjectSearchPreviewBytes, "a whole-line match keeps a bounded preview");
+  Expect(whole.match_preview_start == 0 && whole.match_preview_length == whole.preview.size(),
+         "a match longer than the window highlights the whole window");
+
+  // A short line is still the whole (collapsed) line.
+  const ProjectSearchResult short_line = MakeProjectSearchResult("  alpha  beta", 2, 7, "short.txt", 0, 0);
+  Expect(short_line.preview == "alpha beta" && highlighted(short_line) == "alpha",
+         "a line that fits keeps its whole collapsed text");
+
+  // End to end: every hit on one long line carries its own bounded window.
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  std::string line;
+  for (int i = 0; i < 200; ++i) {
+    line += std::string(1000, 'z') + "token";
+  }
+  WriteFile(root / "minified.js", line + "\n");
+  const auto run = RunProjectSearch(root, "token");
+  Expect(run.finished && run.results.size() == 200, "every hit on the long line is found");
+  for (const ProjectSearchResult& hit : run.results) {
+    Expect(hit.preview.size() <= kMaxProjectSearchPreviewBytes && highlighted(hit) == "token",
+           "hit at column " + std::to_string(hit.column) + " keeps a bounded preview around its match");
+  }
 }
 
 void TestProjectSearchServiceRegexModeAndInvalidRegex() {
@@ -1010,6 +1072,8 @@ void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ProjectSearchService/SkipsUtf8Bom", TestProjectSearchServiceSkipsUtf8Bom);
   AddTest(tests, "ProjectSearchService/NormalizesPreviewWhitespace",
           TestProjectSearchServiceNormalizesPreviewWhitespace);
+  AddTest(tests, "ProjectSearchService/PreviewIsABoundedWindowAroundTheMatch",
+          TestProjectSearchServicePreviewIsABoundedWindowAroundTheMatch);
   AddTest(tests, "ProjectSearchService/RegexModeAndInvalidRegex",
           TestProjectSearchServiceRegexModeAndInvalidRegex);
   AddTest(tests, "ProjectSearchService/RegexCaseInsensitiveFoldsNonAscii",

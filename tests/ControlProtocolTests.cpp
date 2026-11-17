@@ -20,6 +20,7 @@ using microide::workspace::ControlResponse;
 using microide::workspace::ControlSpecKeys;
 using microide::workspace::ParseControlRequest;
 using microide::workspace::SerializeControlResponse;
+using microide::workspace::SerializeControlResponseWithin;
 using microide::util::JsonValue;
 
 // Property: a response always survives its own wire format, and no input line
@@ -196,6 +197,28 @@ void TestSerializeResponseRoundTrips() {
   Expect(line.find('\n') == std::string::npos, "serialized response must be a single line");
 }
 
+// A reply the channel cannot carry is answered with an error under the same id.
+// The socket layer used to drop it and shed the client as "not reading" -- and
+// every reconnect's next `ui` the same way -- so the client saw only a broken pipe
+// (soak 1d64e3925f2b: a `ui` reply of 9.9 MB against the 8 MiB write cap).
+void TestOversizedResponseBecomesAnErrorReply() {
+  ControlResponse response;
+  response.id = 9800;
+  response.ok = true;
+  response.result = JsonValue(std::string(4096, 'x'));
+  const std::string fits = SerializeControlResponseWithin(response, 1u << 20);
+  Expect(fits == SerializeControlResponse(response), "a reply under the cap is sent as it is");
+
+  const std::string capped = SerializeControlResponseWithin(response, 1024);
+  Expect(capped.size() < 1024, "the replacement fits under the cap");
+  const auto parsed = util::ParseJson(capped);
+  Expect(parsed.has_value() && parsed->IsObject(), "the replacement is a JSON object");
+  Expect((*parsed)["id"].AsInt() == 9800, "the replacement answers the same request id");
+  Expect((*parsed)["ok"].AsBool() == false, "the replacement is an error");
+  Expect((*parsed)["error"].AsString().find("over the control channel's") != std::string::npos,
+         "the error says the reply was too large: " + (*parsed)["error"].AsString());
+}
+
 void TestHelpTextListsVerbsAndSpecKeys() {
   const std::string help = ControlChannelHelpText();
   Expect(!help.empty(), "help text should be non-empty");
@@ -258,6 +281,7 @@ void RegisterControlProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlProtocol/ParseQueryRequest", TestParseQueryRequest);
   AddTest(tests, "ControlProtocol/ParseRejectsMalformed", TestParseRejectsMalformed);
   AddTest(tests, "ControlProtocol/SerializeResponseRoundTrips", TestSerializeResponseRoundTrips);
+  AddTest(tests, "ControlProtocol/OversizedResponseBecomesAnErrorReply", TestOversizedResponseBecomesAnErrorReply);
   AddTest(tests, "ControlProtocol/HelpTextListsVerbsAndSpecKeys",
           TestHelpTextListsVerbsAndSpecKeys);
   AddTest(tests, "ControlProtocol/HelpTextLeadsWithControlSend",

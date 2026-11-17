@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -49,6 +50,10 @@ struct ControlResponse {
 // Serialize to a single compact JSON line (no trailing newline; the socket
 // layer frames with '\n').
 std::string SerializeControlResponse(const ControlResponse& response);
+// The same, for a channel that carries lines of at most `max_line_bytes`: a reply
+// over it becomes an error reply under the same id, so the client learns why
+// instead of losing the reply (and, at the socket layer, the connection).
+std::string SerializeControlResponseWithin(const ControlResponse& response, std::size_t max_line_bytes);
 
 // Async, unsolicited notifications pushed to every connected client. Built as
 // JsonValue objects so callers can attach event-specific bodies; serialized the

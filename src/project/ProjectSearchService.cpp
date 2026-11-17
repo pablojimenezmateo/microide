@@ -149,11 +149,38 @@ ProjectSearchResult MakeProjectSearchResult(std::string_view line,
                                             const std::string& relative_path_string,
                                             std::size_t file_index,
                                             std::size_t line_index) {
-  // Collapse the line for display while mapping this match's byte range into the
-  // collapsed preview so the sidebar can highlight it.
+  match_start = std::min(match_start, line.size());
+  match_end = std::clamp(match_end, match_start, line.size());
+  // The window of the line the preview shows: some context before the match and
+  // the rest of the budget after it, on character boundaries. A whole line when it
+  // fits; otherwise every hit on a long line would hold its own copy of the line.
+  std::size_t window_begin = 0;
+  std::size_t window_end = line.size();
+  if (line.size() > kMaxProjectSearchPreviewBytes) {
+    window_begin = match_start - std::min(match_start, kProjectSearchPreviewContextBytes);
+    window_end = std::min(line.size(), window_begin + kMaxProjectSearchPreviewBytes);
+    if (window_end == line.size()) {
+      // Near the line's end: spend the unused budget on context before the match.
+      window_begin = line.size() - kMaxProjectSearchPreviewBytes;
+    }
+    // A cut inside a multi-byte character moves inwards to its boundary.
+    while (window_begin < window_end && util::IsUtf8ContinuationByte(static_cast<unsigned char>(line[window_begin]))) {
+      ++window_begin;
+    }
+    while (window_end > window_begin && window_end < line.size() &&
+           util::IsUtf8ContinuationByte(static_cast<unsigned char>(line[window_end]))) {
+      --window_end;
+    }
+  }
+  const std::string_view window = line.substr(window_begin, window_end - window_begin);
+  // The match as far as it lies inside the window (a `.*` hit is longer than it).
+  const std::size_t window_match_start = std::clamp(match_start, window_begin, window_end) - window_begin;
+  const std::size_t window_match_end = std::clamp(match_end, window_begin, window_end) - window_begin;
+  // Collapse the window for display while mapping this match's byte range into
+  // the collapsed preview so the sidebar can highlight it.
   std::size_t preview_match_start = 0;
   std::size_t preview_match_length = 0;
-  std::string preview = util::CollapseAsciiWhitespaceTrackingMatch(line, match_start, match_end,
+  std::string preview = util::CollapseAsciiWhitespaceTrackingMatch(window, window_match_start, window_match_end,
                                                                    &preview_match_start, &preview_match_length);
   return ProjectSearchResult{
       .relative_path = std::filesystem::path(relative_path_string),

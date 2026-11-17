@@ -104,7 +104,7 @@ constexpr std::size_t kMaxConnections = 128;
 // debug session streaming stdout via EmitEvent/Broadcast — otherwise grows
 // write_buf without limit once the socket send buffer fills and every send()
 // returns EAGAIN. At the cap we shed the connection, mirroring the read side.
-constexpr std::size_t kMaxWriteBufferBytes = 8u << 20;
+// (ControlSocketServer::kMaxWriteBufferBytes, public so a caller sizes its lines.)
 
 // Threshold above which a fully-consumed write-buffer prefix is reclaimed with a
 // single erase during a partial-send stall, rather than left in place. Below it
@@ -637,7 +637,7 @@ void ControlSocketServer::SendLine(std::uint64_t connection_id, const std::strin
   {
     std::lock_guard<std::mutex> lock(conn->out_mutex);
     const std::size_t pending = conn->write_buf.size() - conn->write_offset;
-    if (pending + line.size() + 1 > kMaxWriteBufferBytes) {
+    if (pending + line.size() + 1 > ControlSocketServer::kMaxWriteBufferBytes) {
       // Reader is stalled; shed rather than grow host memory without bound. Drop
       // this reply and flag the connection for reap on the I/O thread.
       conn->write_overflow.store(true, std::memory_order_release);
@@ -667,7 +667,7 @@ void ControlSocketServer::Broadcast(const std::string& line) {
   for (const std::shared_ptr<Impl::Connection>& conn : snapshot) {
     std::lock_guard<std::mutex> lock(conn->out_mutex);
     const std::size_t pending = conn->write_buf.size() - conn->write_offset;
-    if (pending + line.size() + 1 > kMaxWriteBufferBytes) {
+    if (pending + line.size() + 1 > ControlSocketServer::kMaxWriteBufferBytes) {
       // Slow/stalled reader: drop the event and flag for reap rather than grow
       // host memory. A chatty debug session must not OOM the host on one client.
       conn->write_overflow.store(true, std::memory_order_release);

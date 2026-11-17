@@ -90,6 +90,19 @@ std::string SerializeControlResponse(const ControlResponse& response) {
   return util::SerializeJson(util::JsonValue(std::move(object)));
 }
 
+std::string SerializeControlResponseWithin(const ControlResponse& response, std::size_t max_line_bytes) {
+  std::string line = SerializeControlResponse(response);
+  if (line.size() <= max_line_bytes) {
+    return line;
+  }
+  ControlResponse refused;
+  refused.id = response.id;
+  refused.ok = false;
+  refused.error = "reply of " + std::to_string(line.size()) + " bytes is over the control channel's " +
+                  std::to_string(max_line_bytes) + "-byte cap";
+  return SerializeControlResponse(refused);
+}
+
 std::string SerializeControlEvent(const util::JsonValue& event) {
   return util::SerializeJson(event);
 }

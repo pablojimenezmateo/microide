@@ -54,6 +54,14 @@ ControlRequestLineScan ScanControlRequestLines(std::string_view buffer,
 // touches host state, only this object's mutex-guarded queues.
 class ControlSocketServer {
  public:
+  // Upper bound on one connection's pending write buffer: a client that stops
+  // reading while replies and events keep coming is shed at it.
+  static constexpr std::size_t kMaxWriteBufferBytes = 8u << 20;
+  // The longest line SendLine can ever queue (its '\n' takes the last byte). A
+  // longer one is dropped and sheds the connection, so a caller with a reply that
+  // may run long sizes it to this (SerializeControlResponseWithin).
+  static constexpr std::size_t kMaxLineBytes = kMaxWriteBufferBytes - 1;
+
   ControlSocketServer();
   ~ControlSocketServer();
   ControlSocketServer(const ControlSocketServer&) = delete;

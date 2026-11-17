@@ -409,7 +409,8 @@ void ControlChannelService::ConsumeControlCallbacks() {
         response.error = error;
       }
     }
-    const std::string serialized = SerializeControlResponse(response);
+    const std::string serialized =
+        SerializeControlResponseWithin(response, platform::ControlSocketServer::kMaxLineBytes);
     server_.SendLine(message.connection_id, serialized);
     EmitJsonLine(serialized);
   }

@@ -141,8 +141,16 @@ class ProjectSearchMatcher {
   std::string error_;
 };
 
-// A hit as the search reports it: the line collapsed for display, with the
-// match's span mapped into that preview.
+// The most source bytes of a line a hit's preview holds: a window that keeps
+// kProjectSearchPreviewContextBytes before the match and fills the rest after it.
+// Far wider than a sidebar row, and far below what a long line costs per hit (one
+// copy of the line for every hit on it). Under RemoteSearchWire's 4 KiB preview cap.
+inline constexpr std::size_t kMaxProjectSearchPreviewBytes = 512;
+inline constexpr std::size_t kProjectSearchPreviewContextBytes = 64;
+
+// A hit as the search reports it: a window of the line around the match (all of
+// a line that fits), whitespace-collapsed for display, with the match's span
+// mapped into that preview. `column` stays the match's offset in the line.
 ProjectSearchResult MakeProjectSearchResult(std::string_view line,
                                             std::size_t match_start,
                                             std::size_t match_end,
