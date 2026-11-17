@@ -110,6 +110,32 @@ class ConvergenceTests(unittest.TestCase):
         self.assertEqual(len(found), 1)
         self.assertIn("did not settle", found[0][1])
 
+    def test_a_slow_run_is_given_its_factor_of_the_wait(self) -> None:
+        # Recorded under rr the app runs at a third of its speed: a project that
+        # settles 200 s in is settling, and was reported at 90.
+        import findings as fnd
+        stuck = {"projectRoot": "/m", "remote": {"state": "ready", "filesPending": 5, "unsentPushes": 0}}
+        settled = {"projectRoot": "/m", "remote": {"state": "ready", "filesPending": 0, "unsentPushes": 0}}
+        clock = [0.0]
+
+        def sleep(seconds: float) -> None:
+            clock[0] += seconds
+        answers = lambda: stuck if clock[0] < 200.0 else settled  # noqa: E731
+        with mock.patch.object(mo.time, "sleep", sleep), mock.patch.object(mo.time, "monotonic", lambda: clock[0]), \
+             mock.patch.object(mo.q, "SLOW_FACTOR", 3.0), \
+             mock.patch("remote_host.content_set", return_value=({}, {})):
+            oracle = self._oracle([stuck])
+            oracle.app.query = lambda verb, args=None: answers() if verb == "status" else []
+            self.assertEqual(oracle.check(), [])
+            # ... and one that never does is still reported, with the same signature at any factor.
+            clock[0] = 0.0
+            oracle.app.query = lambda verb, args=None: stuck if verb == "status" else []
+            slow = oracle.check()
+        self.assertIn("did not settle within 270 s", slow[0][1])
+        self.assertEqual(fnd.signature(*slow[0]),
+                         fnd.signature("remote", "the remote project did not settle within 90 s "
+                                                 "(state ready, 5 pending, 0 unsent)"))
+
 
 class HostTerminalCallerTests(unittest.TestCase):
     """local-sshd.sh started from a shell inside a microide host terminal."""

@@ -1241,7 +1241,13 @@ class RemoteConvergence:
         self.evidence = {}
         if not self.app.alive():
             return []
-        deadline = time.monotonic() + self.SETTLE_SECONDS
+        # Stretched like every other wait of the driver's: recorded, the app
+        # runs on one core at a third of its speed (MQA_SLOW_FACTOR 3, chaos 5),
+        # and a reconnect and five pulls that take 30 s then take 90. The plain
+        # 90 s made "did not settle" a finding of the recorded and the
+        # sanitizer cells for a project that was settling.
+        settle_seconds = self.SETTLE_SECONDS * q.SLOW_FACTOR
+        deadline = time.monotonic() + settle_seconds
         remote = self._remote()
         if remote.get("elsewhere"):
             # Not a verdict to skip: reopening it is a path of its own (the
@@ -1267,7 +1273,7 @@ class RemoteConvergence:
             remote = self._remote()
         if remote.get("elsewhere"):
             self.outcomes["elsewhere"] += 1
-            return [("remote", f"the remote project is not in front {self.SETTLE_SECONDS:.0f} s after "
+            return [("remote", f"the remote project is not in front {settle_seconds:.0f} s after "
                                f"`{self.open_line.split()[0]}` asked for it")]
         if not self.settled(remote):
             # What the project says about itself: a refused push or a paused sync
@@ -1279,7 +1285,7 @@ class RemoteConvergence:
             self.outcomes["unsettled"] += 1
             self.evidence = {"remote-status.json": json.dumps(
                 {"remote": remote, "notifications": notices}, indent=1).encode()}
-            return [("remote", f"the remote project did not settle within {self.SETTLE_SECONDS:.0f} s "
+            return [("remote", f"the remote project did not settle within {settle_seconds:.0f} s "
                                f"(state {remote.get('state')}, {remote.get('filesPending')} pending, "
                                f"{remote.get('unsentPushes')} unsent)")]
         if remote.get("conflicts") or remote.get("heldDeletes"):
@@ -1292,7 +1298,7 @@ class RemoteConvergence:
             # Those files differ on purpose until the user chooses.
             self.outcomes["blocked"] += 1
             return []
-        deadline = time.monotonic() + self.AGREE_SECONDS
+        deadline = time.monotonic() + self.AGREE_SECONDS * q.SLOW_FACTOR
         while True:
             host, mirror = remote_host.content_set(self.host_root, self.mirror)
             diff = self.differing(host, mirror)
