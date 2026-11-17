@@ -481,7 +481,29 @@ def cmd_replay(args: argparse.Namespace) -> int:
     kept = q.finish_recordings(args.out / "replay" / "rr", keep=bool(signatures))
     if kept:
         print(f"        recorded: {len(kept)} rr trace(s) under {kept[0].parent} (rr replay <trace>)")
-    return report(f"replay of {args.file}", app)
+    line, code = replay_verdict(f"replay of {args.file}", signatures)
+    print(line)
+    return code
+
+
+def replay_verdict(name: str, signatures: list[dict]) -> tuple[str, int]:
+    """A replay's last line and exit status: FAIL and 1 when it showed a finding.
+
+    It was report()'s, which reads the app's own finding list -- and the
+    replay's last pass over that list drops every finding whose signature an
+    oracle had already booked. A replay that reproduced an oracle's finding (a
+    data, undo or invariant one: the severe kinds) printed its signature and
+    then `ok`, with status 0: a fix was called verified on that line once, and
+    the soak reopened it.
+
+    >>> replay_verdict("replay of r.json", [])
+    ('  ok    replay of r.json: no finding', 0)
+    >>> replay_verdict("replay of r.json", [{"signature": "abc"}, {"signature": "def"}])
+    ('  FAIL  replay of r.json: 2 finding(s), listed above', 1)
+    """
+    if not signatures:
+        return f"  ok    {name}: no finding", 0
+    return f"  FAIL  {name}: {len(signatures)} finding(s), listed above", 1
 
 
 def cmd_remote(args: argparse.Namespace) -> int:
