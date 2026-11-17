@@ -67,6 +67,39 @@ splits "no replay reproduces" by it). Open, in the order they would pay:
    a real-time signal for its stack. Code that does not retry `EINTR` would then
    behave differently under QA than for a user; none is known.
 
+9. **Left by the 2026-11-17 review** (which tried the deep review in a private
+   soak of its branch -- `MICROIDE_SOAK_REF`, `tools/soak/AGENT.md` § A change to
+   the soak itself -- and fixed what that showed: replays that changed a
+   finding's signature or misread their own path, checks that could not run,
+   an inventory that could not either):
+   - **Item 1, for stale paint, was measured and not done.** 703 open paint
+     signatures are 408 distinct (surface, clip relation, shape, element,
+     reason) contexts; the clip COUNT alone is the other 295, and one plugins
+     run booked three signatures that differ in nothing else. Masking it
+     (`findings.normalize`) re-keys every paint finding at once: each loses its
+     minimal replay and is checked again (three replays, and ddmin for the 171
+     deterministic ones). Worth doing together with a wave of paint fixes, not
+     alone.
+   - **The leak findings are unexplained.** Three sightings show 64-171 `bash`
+     children against 8-11 terminal panes the `terminals` query counted, in
+     runs of the monkey that opened a terminal per terminal action; 40 plain
+     `term`s keep shells and panes equal, and a replay of the 171-shell run
+     shows nothing. The monkey no longer opens them by the hundred, so the
+     finding will go quiet with its cause unknown; a finding's `state.json` now
+     holds the `terminals` and `projects` answers for the next sighting.
+   - **A build stops the runner's loop.** `build_all` runs in the scheduling
+     loop: while it builds (minutes with a warm ccache, an hour for six cold
+     configurations) no job is started or reaped and no timeout is enforced.
+   - **Rows of one step are replayed with a settle between them.** The run
+     sends a step's rows back to back unless they are a burst; a replay settles
+     after each. Fixed where it was seen to matter (the window correction);
+     the general answer is for the recorder to mark what was sent without a
+     settle, as it does a burst.
+   - **A lane's seeded monkey is a gate on a moving walk.** Any change to what
+     the monkey can do re-rolls what seed 1 does; the lanes now keep a real-size
+     window, and `qa-scale`'s layout seed 2 at 1.25 still meets a stale 1x8 px
+     line at ui.scale 1.1 (an app paint defect).
+
 ### TD-2026-11-16-451 — the rr on the soak machine is patched for tee(2); upstream is not. [OPEN]
 
 `rr record` aborts the whole recording -- the app with it -- at a system call
