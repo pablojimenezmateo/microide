@@ -1172,6 +1172,15 @@ class App:
         try:
             stat = Path(f"/proc/{pid}/task/{pid}/stat").read_text()
         except OSError:
+            # No such process. Recorded, `self.proc` is rr and the app its child:
+            # when rr gives up (a system call it cannot record) it kills and
+            # reaps the app and is itself still on its way out. The request in
+            # flight then failed against a live `proc`, and was filed as "the
+            # app closed the control connection" -- two of three recent
+            # sightings of that finding were rr's own FATAL, which check()
+            # counts as a lost recorder once it reads the log.
+            if self.recording and self._app_pid is not None and pid == self._app_pid:
+                return True
             return not self.alive()
         return stat[stat.rfind(")") + 2:stat.rfind(")") + 3] in ("Z", "X")
 

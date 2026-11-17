@@ -25,6 +25,38 @@ def _stopped_app(work: str) -> tuple[q.App, list[Path | None]]:
     return app, spawned
 
 
+class DyingTests(unittest.TestCase):
+    """App.dying(): whether a request that just failed failed against a dead app."""
+
+    def app(self, work: str, recorder_pid: int, app_pid: int, recording: bool) -> q.App:
+        import subprocess
+        app = q.App(binary=Path("/bin/true"), work=Path(work), display=":0", size=(800, 600), env={})
+        app.proc = subprocess.Popen.__new__(subprocess.Popen)
+        app.proc.pid, app.proc.returncode = recorder_pid, None
+        app.proc.poll = lambda: None  # type: ignore[method-assign]
+        app._rr_mode = "1" if recording else ""
+        app._app_pid = app_pid if recording else None
+        return app
+
+    def test_an_app_rr_has_reaped_is_gone_while_rr_still_stands(self) -> None:
+        # rr gave up at a system call it cannot record: it kills and reaps the
+        # app and is still exiting. The request in flight was filed as "the app
+        # closed the control connection", an app finding, for the recorder's limit.
+        import os
+        import subprocess
+        gone = subprocess.Popen(["true"])
+        gone.wait()
+        with tempfile.TemporaryDirectory() as work:
+            self.assertTrue(self.app(work, os.getpid(), gone.pid, recording=True).dying())
+            # ... and a live app under a live recorder is not (this process, for both).
+            self.assertFalse(self.app(work, os.getpid(), os.getpid(), recording=True).dying())
+
+    def test_unrecorded_the_process_itself_is_what_counts(self) -> None:
+        import os
+        with tempfile.TemporaryDirectory() as work:
+            self.assertFalse(self.app(work, os.getpid(), 0, recording=False).dying())
+
+
 class RelaunchTests(unittest.TestCase):
     def test_restart_relaunches_on_the_run_project(self) -> None:
         with tempfile.TemporaryDirectory() as work:
