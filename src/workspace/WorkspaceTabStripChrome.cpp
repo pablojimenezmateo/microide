@@ -143,6 +143,11 @@ WorkspaceTabStripChrome::RefreshProjectStripSources() const {
       remote_state = project != nullptr ? editor::WorstRemoteStage(project->remote_status)
                                         : editor::WelcomeStageState::Active;
     }
+    // A project kept for its unsaved buffers after its folder went
+    // (ProjectWorkspaceState::root_missing) says so where the host would go.
+    if (project != nullptr && project->root_missing) {
+      secondary_title = std::string(kHintSeparator) + "folder missing";
+    }
     sources.display_titles.push_back(operations_.project_tab_display_title(i));
     sources.tooltip_labels.push_back(operations_.project_tab_tooltip_label(i));
     sources.widths.push_back(tab_strip_service_->MeasureProjectTabWidth(

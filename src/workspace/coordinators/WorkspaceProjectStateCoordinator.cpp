@@ -59,8 +59,8 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
     perf_label.Field("root", context_.current_project_state.root);
   }
   util::PerformanceTrace::Scope perf_scope(perf_label.View());
-  if (context_.current_project_state.root.empty()) {
-    return false;
+  if (context_.current_project_state.root.empty() || context_.current_project_state.root_missing) {
+    return false;  // a missing folder has nothing to watch (ProjectWorkspaceState::root_missing)
   }
   StopFileIndexWatcher();
   util::AddPerformanceCounter(util::PerfCounterId::FileIndexWatcherStarts);
@@ -401,6 +401,7 @@ bool WorkspaceShell::InitializeCurrentProject(const project::ProjectId& id,
                                               bool restore_persistence,
                                               bool log_feedback,
                                               bool activate_restored_tab,
+                                              bool root_missing,
                                               project::ProjectLocality locality) {
   (void) log_feedback;
   auto& persistence = MakePersistenceCoordinator();
@@ -417,7 +418,15 @@ bool WorkspaceShell::InitializeCurrentProject(const project::ProjectId& id,
   // project's own.
   context_.current_project_state.id = id;
   context_.current_project_state.locality = locality;
-  {
+  context_.current_project_state.root_missing = root_missing;
+  if (root_missing) {
+    // Kept for the unsaved buffers its session holds (RestoreWorkspaceSession):
+    // the root names where the project's state lives and where its buffers came
+    // from, and nothing that needs the folder starts -- no tree, index, watcher,
+    // git, terminal. The session restore below brings the buffers back.
+    context_.current_project_state.root = project_root.lexically_normal();
+    context_.current_project_state.editor_config.SetProjectRoot(context_.current_project_state.root);
+  } else {
     util::StartupTrace::Scope set_root_scope("WorkspaceShell::SetProjectRoot");
     util::PerformanceTrace::Scope perf_set_root_scope(
         "WorkspaceShell::InitializeCurrentProject::SetProjectRoot");
@@ -450,8 +459,19 @@ bool WorkspaceShell::InitializeCurrentProject(const project::ProjectId& id,
         "WorkspaceShell::InitializeCurrentProject::RestoreSessionState");
     restored_session = persistence.RestoreSessionState();
   }
+  if (root_missing) {
+    // Sticky until the project goes: the buffers are the user's to save elsewhere.
+    Notify(NotificationService::Request{
+        .tone = NotificationService::Tone::Warning,
+        .key = "project-root-missing:" + context_.current_project_state.root.generic_string(),
+        .message = "The folder " + context_.current_project_state.root.generic_string() +
+                   " is gone. Its unsaved buffers are open here: Save As each one to keep it, "
+                   "or close the project. It opens as usual once the folder is back.",
+        .sticky = true,
+    });
+  }
   if (restore_persistence && restored_session) {
-    if (context_.current_project_state.terminal_tabs.empty()) {
+    if (context_.current_project_state.terminal_tabs.empty() && !root_missing) {
       util::PerformanceTrace::Scope scope(
           "WorkspaceShell::InitializeCurrentProject::OpenDefaultTerminal");
       MakeTerminalPanelService().OpenTerminalsForProjectInit();
@@ -532,7 +552,7 @@ bool WorkspaceShell::InitializeCurrentProject(const project::ProjectId& id,
       "Use the sidebar to open files.\n");
   ApplyEditorPreferences(context_.current_project_state.focused_group().welcome_surface.viewport);
   context_.current_project_state.surface.focus = FocusTarget::Editor;  // the welcome page, as above
-  if (context_.current_project_state.terminal_tabs.empty()) {
+  if (context_.current_project_state.terminal_tabs.empty() && !root_missing) {
     util::PerformanceTrace::Scope scope(
         "WorkspaceShell::InitializeCurrentProject::OpenDefaultTerminal");
     MakeTerminalPanelService().OpenTerminalsForProjectInit();

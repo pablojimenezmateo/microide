@@ -7,6 +7,23 @@
 #include "workspace/WorkspaceProjectPresentation.h"
 namespace microide::workspace {
 
+namespace {
+
+// Whether a project's saved session holds work that exists nowhere else: a dirty
+// buffer's snapshot. A project whose folder is gone is kept for that alone.
+bool SessionHoldsUnsavedWork(const PersistenceService& persistence, const std::filesystem::path& root) {
+  PersistedProjectSessionState session;
+  if (!persistence.LoadProjectSession(ProjectStateDirectory(root) / "session", &session)) {
+    return false;
+  }
+  return std::any_of(session.groups.begin(), session.groups.end(), [](const PersistedEditorGroupState& group) {
+    return std::any_of(group.tabs.begin(), group.tabs.end(),
+                       [](const PersistedEditorTabState& tab) { return tab.dirty_snapshot; });
+  });
+}
+
+}  // namespace
+
 std::filesystem::path PersistenceCoordinator::WorkspaceSessionStatePath() const {
   const std::filesystem::path state_root =
       platform::ResolveAppDirectory(platform::UserDirectoryKind::State, "microide");
@@ -65,12 +82,22 @@ bool PersistenceCoordinator::RestoreWorkspaceSession() {
       id = project::ProjectId::ForLocal(normalized_root);
     }
     std::error_code error;
+    bool root_missing = false;
     if (normalized_root.empty() || !std::filesystem::exists(normalized_root, error) || error ||
         !std::filesystem::is_directory(normalized_root, error)) {
-      continue;
+      // A local project whose folder is gone (a branch switch deleted it, a drive
+      // is not mounted) is culled -- unless its session holds unsaved buffers,
+      // which exist nowhere else: culling it lost them with no way back (soak
+      // 5508be921fb2). It is kept, marked missing, and opens with them.
+      if (normalized_root.empty() || id.IsRemote() ||
+          !SessionHoldsUnsavedWork(*operations_.persistence_service, normalized_root)) {
+        continue;
+      }
+      root_missing = true;
     }
     auto project_state = std::make_unique<ProjectWorkspaceState>();
     project_state->root = normalized_root;
+    project_state->root_missing = root_missing;
     project_state->id = std::move(id);
     project_state->restore_persistence_on_activate = true;
     if (operations_.persistence_service != nullptr) {

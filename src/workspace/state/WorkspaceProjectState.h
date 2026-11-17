@@ -1093,6 +1093,12 @@ struct ProjectWorkspaceState {
   [[nodiscard]] project::FileWriteGate& write_gate() const { return *locality.write_gate; }
   bool initialized = false;
   bool restore_persistence_on_activate = false;
+  // The project's folder was gone when the workspace was restored, and it was kept
+  // only for the unsaved buffers its session holds (RestoreWorkspaceSession): it
+  // opens with those buffers and nothing that needs the folder -- no tree, index,
+  // watcher, git or terminal -- until the folder is back. Identity like `id`: it
+  // survives the scoped-state reset of InitializeCurrentProject.
+  bool root_missing = false;
   project::DirectoryTree directory_tree;
   // Resolved icons for `directory_tree.entries()`, rebuilt lazily by the sidebar
   // renderer. `mutable` so the const render path can refresh the cache.

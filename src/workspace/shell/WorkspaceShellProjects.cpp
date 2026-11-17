@@ -31,6 +31,7 @@ ProjectCatalogService& WorkspaceShell::MakeProjectCatalogService() {
                      bool restore_persistence,
                      bool log_feedback,
                      bool activate_restored_tab,
+                     bool root_missing,
                      const project::ProjectLocality& locality) {
                 // A remote project gets its host's locality and (re)connects -- read
                 // from its id, fixed when its catalog entry was created, not sniffed
@@ -54,7 +55,7 @@ ProjectCatalogService& WorkspaceShell::MakeProjectCatalogService() {
                   resolved.write_gate = &MakeRemoteHostService().LocalProjectWriteGate();
                 }
                 const bool initialized = InitializeCurrentProject(
-                    id, project_root, restore_persistence, log_feedback, activate_restored_tab, resolved);
+                    id, project_root, restore_persistence, log_feedback, activate_restored_tab, root_missing, resolved);
                 if (initialized && remote_project) {
                   // Reported before this state had its root: what the sync has not
                   // fetched yet is listed, and the connection shown, from the start.

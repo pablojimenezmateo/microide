@@ -712,7 +712,7 @@
   bool InitializeCurrentProject(const project::ProjectId& id, const std::filesystem::path& project_root,
                                 bool restore_persistence,
                                 bool log_feedback,
-                                bool activate_restored_tab, project::ProjectLocality locality);
+                                bool activate_restored_tab, bool root_missing, project::ProjectLocality locality);
   bool OpenProjectTab(const std::filesystem::path& project_root,
                       bool restore_persistence,
                       bool log_feedback, const project::ProjectLocality& locality = {});

@@ -25,6 +25,7 @@ ProjectCatalogCoordinator::Operations ProjectCatalogService::BuildCoordinatorOpe
                                                           restore_persistence,
                                                           log_feedback,
                                                           true,
+                                                          /*root_missing=*/false,
                                                           locality);
           },
       .activate_project_state =
@@ -77,13 +78,19 @@ bool ProjectCatalogService::ActivateProjectState(ProjectWorkspaceState& state,
   }
   util::PerformanceTrace::Scope trace_scope(perf_label.View());
   if (!state.initialized) {
+    // A project restored without its folder opens as missing -- unless the folder
+    // is back by now (the branch switched back, the drive mounted), when it opens
+    // as any other.
+    if (std::error_code error; state.root_missing && std::filesystem::is_directory(state.root, error)) {
+      state.root_missing = false;
+    }
     bool initialized = false;
     {
       util::PerformanceTrace::Scope scope(
           "ProjectCatalogService::ActivateProjectState::InitializeCurrentProject");
       initialized = operations_.initialize_current_project(
           state.id, state.root, state.restore_persistence_on_activate, false, activate_restored_tab,
-          state.locality);
+          state.root_missing, state.locality);
     }
     if (!initialized) {
       return false;

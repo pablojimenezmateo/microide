@@ -467,6 +467,71 @@ void TestWorkspaceShellRestoreRemapsActiveIndexAfterMissingProjectCulled() {
          "beta's remapped active index is 0 after the missing predecessor is culled");
 }
 
+// A project whose folder is gone at restore but whose session holds unsaved work
+// is kept, marked missing, and its unsaved buffers come back when it is opened.
+// A branch switch deleted a project's folder, the app was killed, and the
+// relaunch culled the project with the buffers in it (soak 5508be921fb2 and the
+// "did not come back after a kill -9" family): the text sat in the project's
+// session file with nothing left to read it. A missing project with nothing
+// unsaved is still culled, as before.
+void TestWorkspaceShellRestoreKeepsAMissingProjectWithUnsavedWork() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path first_root = temp_dir.path() / "alpha";
+  const std::filesystem::path second_root = temp_dir.path() / "beta";
+  const std::filesystem::path third_root = temp_dir.path() / "gamma";
+  WriteFile(first_root / "a.txt", "a\n");
+  WriteFile(second_root / "b.txt", "b\n");
+  WriteFile(third_root / "c.txt", "c\n");
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+
+  {
+    WorkspaceShell shell;
+    Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, first_root, false, false), "open alpha");
+    Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, third_root, false, false), "open gamma");
+    WorkspaceShellTestAccess::SaveSessionState(shell);
+    Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, second_root, false, false), "open beta");
+    WorkspaceShellTestAccess::OpenFile(shell, second_root / "b.txt");
+    WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("unsaved ");
+    Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty(), "beta's buffer is unsaved");
+    WorkspaceShellTestAccess::SaveSessionState(shell);
+    Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0, false), "back to alpha");
+    WorkspaceShellTestAccess::SaveSessionState(shell);
+    WorkspaceShellTestAccess::SaveWorkspaceSession(shell);
+  }
+
+  // Both folders vanish between sessions: beta with unsaved work, gamma without.
+  std::filesystem::remove_all(second_root);
+  std::filesystem::remove_all(third_root);
+
+  WorkspaceShell restored;
+  Expect(WorkspaceShellTestAccess::RestoreWorkspaceSession(restored), "restore should succeed");
+  Expect(WorkspaceShellTestAccess::ProjectCount(restored) == 2,
+         "alpha, and beta for its unsaved work; gamma had none and is culled: " +
+             std::to_string(WorkspaceShellTestAccess::ProjectCount(restored)));
+  Expect(WorkspaceShellTestAccess::ProjectRoot(restored) == first_root.lexically_normal(),
+         "the active project stays alpha");
+  Expect(WorkspaceShellTestAccess::SwitchProject(restored, 1, false),
+         "the missing project opens all the same");
+  Expect(WorkspaceShellTestAccess::ProjectRoot(restored) == second_root.lexically_normal(),
+         "and it is beta, at its own root");
+  Expect(WorkspaceShellTestAccess::CurrentProjectState(restored).root_missing,
+         "marked as missing its folder");
+  Expect(WorkspaceShellTestAccess::OpenTabs(restored).size() == 1 &&
+             WorkspaceShellTestAccess::ActiveEditor(restored).dirty() &&
+             WorkspaceShellTestAccess::ActiveEditor(restored).lines().LineView(0) == "unsaved b",
+         "its unsaved buffer is back");
+  WorkspaceShellTestAccess::SetWindowSize(restored, 1400, 900);
+  const auto beta_tab = WorkspaceShellTestAccess::VisibleProjectTab(restored, 1);
+  Expect(beta_tab.has_value() && beta_tab->secondary_title.find("folder missing") != std::string::npos,
+         "its project tab says the folder is missing");
+  Expect(WorkspaceShellTestAccess::SwitchProject(restored, 0, false), "and alpha opens again");
+}
+
 // Soak e946ec9333d7's shape, the app's half: a second project open -- through a
 // symlink, `weird/loop` with `loop -> .` -- active and edited when the app dies
 // after the crash-safety flush. The relaunch brings both projects back, the
@@ -4010,6 +4075,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoreWorkspaceSessionAcrossProjects);
   AddTest(tests, "WorkspaceShell/RestoreRemapsActiveIndexAfterMissingProjectCulled",
           TestWorkspaceShellRestoreRemapsActiveIndexAfterMissingProjectCulled);
+  AddTest(tests, "WorkspaceShell/RestoreKeepsAMissingProjectWithUnsavedWork",
+          TestWorkspaceShellRestoreKeepsAMissingProjectWithUnsavedWork);
   AddTest(tests, "WorkspaceShell/CrashSafetyKeepsASecondProjectAndItsActiveIndex",
           TestWorkspaceShellCrashSafetyKeepsASecondProjectAndItsActiveIndex);
   AddTest(tests, "WorkspaceShell/ARestoredUnsavedBufferIsNotAutosaved",
