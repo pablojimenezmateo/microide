@@ -150,8 +150,9 @@ class CrashTests(unittest.TestCase):
 
 
 class SlowApp:
-    def __init__(self, what, seconds, sched, stall=""):
+    def __init__(self, what, seconds, sched, stall="", waits=""):
         self.slowest_answer, self.slowest_sched, self.slowest_stall = (what, seconds), sched, stall
+        self.slowest_waits = waits
 
 
 class LivenessTests(unittest.TestCase):
@@ -172,6 +173,16 @@ class LivenessTests(unittest.TestCase):
         self.assertIn("mostly blocked", blocked.check()[0][1])
         unknown = mo.Liveness(SlowApp("hit-test", 6.0, None))
         self.assertEqual(unknown.check()[0][1], "hit-test took 6.00s to answer (budget 2.5s)")
+
+    def test_a_blocked_main_threads_waits_are_evidence(self):
+        # 3.01s "mostly blocked" with the watchdog silent said nothing of WHERE
+        # (soak 049ca74b0cee): the samples taken while the answer was late do.
+        oracle = mo.Liveness(SlowApp("query 'ui'", 3.0, (0.0, 0.0), "",
+                                     "  14 x wchan=do_sys_poll syscall=7 0x7ffd"))
+        oracle.check()
+        self.assertIn(b"where the main thread sat", oracle.evidence["latency.txt"])
+        self.assertIn(b"wchan=do_sys_poll", oracle.evidence["latency.txt"])
+        self.assertEqual(oracle.app.slowest_waits, "", "the samples are consumed with the answer")
 
     def test_a_slow_command_is_one_finding_whatever_text_it_carried(self):
         # `type` with a long argument was a signature per text typed, and a run

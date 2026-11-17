@@ -854,8 +854,10 @@ class Liveness:
     def check(self) -> list[tuple[str, str]]:
         what, seconds = self.app.slowest_answer
         sched, stall = self.app.slowest_sched, self.app.slowest_stall
+        waits = getattr(self.app, "slowest_waits", "")
         self.app.slowest_answer = ("", 0.0)
         self.app.slowest_sched, self.app.slowest_stall = None, ""
+        self.app.slowest_waits = ""
         self.evidence = {}
         subject = latency_subject(what)
         if seconds <= self.budget or subject in self.reported:
@@ -877,7 +879,9 @@ class Liveness:
             f"{what} took {seconds:.2f}s (budget {self.budget:.1f}s)", account,
             "", "the app's stall watchdog during it (MICROIDE_TRACE_STALL_MS):" if stall else
             "the app's stall watchdog printed nothing during it (no single loop turn ran that long, "
-            "or the binary predates the watchdog)", stall])).encode() + b"\n"}
+            "or the binary predates the watchdog)", stall,
+            "", "where the main thread sat while the answer was late (wchan, syscall nr and first arg; "
+                "sampled every 0.2s):" if waits else "", waits])).encode() + b"\n"}
         return [("latency", f"{subject} took {seconds:.2f}s to answer (budget {self.budget:.1f}s){where}")]
 
 

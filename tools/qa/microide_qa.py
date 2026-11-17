@@ -149,6 +149,10 @@ def machine_pressure() -> str:
 # (MICROIDE_TRACE_STALL_MS, stretched by the slow factor): under the latency
 # oracle's budget, so a slow answer's stack is in the log by the time it is one.
 STALL_TRACE_SECONDS = 1.0
+# A late reply's wait: after MAIN_THREAD_SAMPLE_AFTER_S the request loop samples
+# the main thread every MAIN_THREAD_SAMPLE_S (App.slowest_waits).
+MAIN_THREAD_SAMPLE_AFTER_S = 1.0
+MAIN_THREAD_SAMPLE_S = 0.2
 
 
 # The desktop's input-method selection, which the app under test must not inherit
@@ -508,6 +512,12 @@ class App:
     # say -- and what the app's stall watchdog printed meanwhile.
     slowest_sched: tuple[float, float] | None = None
     slowest_stall: str = ""
+    # Where the main thread sat while the slowest answer was owed: "wchan syscall"
+    # sampled every MAIN_THREAD_SAMPLE_S once a reply is late, counted. The
+    # stall watchdog sees one long loop turn; this sees a wait spread over many
+    # short ones, or the loop asleep with the request queued (soak 049ca74b0cee:
+    # 3.01 s "mostly blocked", the watchdog silent).
+    slowest_waits: str = ""
     # The crashing thread's stack, resolved, once a check has found the app dead
     # (symbolize_backtrace); empty until then and again after a relaunch.
     crash_stack: str = ""
@@ -1121,12 +1131,27 @@ class App:
         started = time.monotonic()
         sched_before = self._main_thread_sched()
         log_before = self._log_size()
+        waits: collections.Counter[str] = collections.Counter()
+        deadline = started + timeout
         try:
             self._socket.sendall(json.dumps({"id": request_id, **payload}).encode() + b"\n")
             while True:
                 newline = self._socket_buffer.find(b"\n")
                 if newline < 0:
-                    chunk = self._socket.recv(65536)
+                    # Short receives once the reply is late, so the main thread's
+                    # wait can be sampled between them; the deadline is the same.
+                    late = time.monotonic() - started >= MAIN_THREAD_SAMPLE_AFTER_S
+                    if late:
+                        waits[self._main_thread_wait()] += 1
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise socket.timeout("timed out")
+                    self._socket.settimeout(min(remaining, MAIN_THREAD_SAMPLE_S) if late
+                                            else min(remaining, MAIN_THREAD_SAMPLE_AFTER_S))
+                    try:
+                        chunk = self._socket.recv(65536)
+                    except socket.timeout:
+                        continue
                     if not chunk:
                         if self.dying():
                             raise AppGone("the app is gone: it closed the control connection")
@@ -1143,7 +1168,7 @@ class App:
                     if isinstance(reply, dict) and reply.get("id") == request_id:
                         if "\ufffd" in text:
                             reply["_replaced"] = True
-                        self.note_latency(what, time.monotonic() - started, sched_before, log_before)
+                        self.note_latency(what, time.monotonic() - started, sched_before, log_before, waits)
                         return reply
         except (OSError, socket.timeout) as error:
             if self.dying():
@@ -1206,6 +1231,21 @@ class App:
             return int(ran) / 1e9, int(waited) / 1e9
         except (OSError, ValueError):
             return None
+
+    def _main_thread_wait(self) -> str:
+        """Where the app's main thread is right now: its kernel wait channel and
+        the syscall it is in (number, first argument), from /proc."""
+        pid = self.pid if self.proc is not None else None
+        if pid is None:
+            return "?"
+        task = Path(f"/proc/{pid}/task/{pid}")
+        try:
+            wchan = (task / "wchan").read_text().strip() or "-"
+            syscall = (task / "syscall").read_text().split()
+        except OSError:
+            return "?"
+        call = "running" if syscall[:1] == ["running"] else " ".join(syscall[:2])
+        return f"wchan={wchan} syscall={call}"
 
     def _log_size(self) -> int:
         try:
@@ -1303,7 +1343,7 @@ class App:
         return result
 
     def note_latency(self, what: str, seconds: float, sched_before: tuple[float, float] | None = None,
-                     log_before: int | None = None) -> None:
+                     log_before: int | None = None, waits: collections.Counter[str] | None = None) -> None:
         """The liveness oracle's input: the slowest control answer per step
         (the monkey reads and resets `slowest_answer`), with where its time went
         for the main thread and what the stall watchdog printed during it."""
@@ -1313,6 +1353,8 @@ class App:
             self.slowest_sched = ((sched_now[0] - sched_before[0], sched_now[1] - sched_before[1])
                                   if sched_now is not None and sched_before is not None else None)
             self.slowest_stall = ""
+            self.slowest_waits = "\n".join(f"{count:4d} x {where}" for where, count in waits.most_common(8)) \
+                if waits else ""
             if seconds >= STALL_TRACE_SECONDS * SLOW_FACTOR and log_before is not None:
                 self.slowest_stall = self.stall_reports(self.log_since(log_before))
 
@@ -2707,7 +2749,7 @@ class App:
             return
         self._in_snapshot = True
         snapshot: dict[str, Any] = {}
-        keep = self.slowest_answer, self.slowest_sched, self.slowest_stall
+        keep = self.slowest_answer, self.slowest_sched, self.slowest_stall, self.slowest_waits
         try:
             for verb, args in self._SNAPSHOT_QUERIES:
                 payload: dict[str, Any] = {"query": verb}
@@ -2722,7 +2764,7 @@ class App:
         finally:
             self._in_snapshot = False
             # The snapshot's own answers are not the run's latency.
-            self.slowest_answer, self.slowest_sched, self.slowest_stall = keep
+            self.slowest_answer, self.slowest_sched, self.slowest_stall, self.slowest_waits = keep
         with contextlib.suppress(OSError, TypeError, ValueError):
             (folder / "state.json").write_text(json.dumps(snapshot, indent=1)[:2 * 1024 * 1024])
 
