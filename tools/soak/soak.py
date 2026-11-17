@@ -1626,12 +1626,30 @@ def requeue_unmeasured(state: dict[str, Any], log) -> int:
     directory, dropped a corpus prefix's outside-world steps and did not say
     whether they followed the run (Entry.replays_ran is None for those): it is
     not a measurement. Checked again, each gets a rate a replay can be held
-    to and a verdict on its path. Returns how many it queued."""
+    to and a verdict on its path. Returns how many it queued.
+
+    So is a check none of whose replays ran (`untested`: a pruned binary, a
+    remote finding with no server to install): measured again once per build,
+    since the next build may be the one that can.
+
+    Only what this runner has seen. A signature is a function of the driver's
+    rules, and those change (a crash keyed on its stack, a slow answer on its
+    verb): a finding under an older rule is never shown again under its old
+    signature, by the soak or by a replay, so replaying it measures nothing --
+    and there were hundreds, each a dozen replays. They go quiet and close."""
     pending = state.setdefault("pending_checks", [])
     running = set(state.get("current", []))
     entries = ledger().entries()
+    built = str(state.get("built_sha") or "")
+    since = float(state.get("started") or 0.0)
+
+    def unmeasured(entry: ld.Entry) -> bool:
+        if entry.replays_ran is None:
+            return True  # a check from before replays said whether they ran
+        return entry.replays_ran == 0 and bool(built) and entry.checked_on != built
+
     stale = [e for e in entries.values()
-             if e.status in ("new", "reopened") and e.rate == 0 and e.replays_ran is None
+             if e.status in ("new", "reopened") and e.rate == 0 and unmeasured(e) and e.last_seen >= since
              and e.sig not in pending and f"check/{e.sig}" not in running
              and (FINDINGS / e.sig / "replay.json").exists()]
     room = max(0, REQUEUE_BATCH - len(pending))
@@ -2224,6 +2242,30 @@ def enforce_disk_budget(log) -> None:
     log("disk budget: pruned verified evidence and a quarter of the corpus")
 
 
+def runner_code() -> str:
+    """A digest of the runner's own sources as they are on disk now (tools/soak's
+    modules, and tools/qa's findings and model it imports)."""
+    import hashlib
+    digest = hashlib.sha1()
+    for path in sorted([*HERE.glob("*.py"), REPO / "tools" / "qa" / "findings.py",
+                        REPO / "tools" / "qa" / "monkey_model.py", REPO / "tools" / "qa" / "recording.py"]):
+        if path.name.startswith("test_"):
+            continue
+        with contextlib.suppress(OSError):
+            digest.update(path.name.encode() + b"\0" + path.read_bytes())
+    return digest.hexdigest()[:16]
+
+
+def stale_runner(state: dict[str, Any]) -> bool:
+    """The runner is running sources older than the checkout's. Jobs run each
+    build's own driver snapshot, so a change to the driver is live with the next
+    build -- but the runner is one long-lived process, and a change to it (how
+    findings are booked, checked, verified, swept) does nothing until the
+    service is restarted. Nothing said so: `health` does now."""
+    started_with = state.get("runner_code")
+    return bool(started_with) and started_with != runner_code()
+
+
 def load_state() -> dict[str, Any]:
     try:
         return json.loads(STATE.read_text())
@@ -2243,6 +2285,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     rng = random.Random()
     state = load_state()
     state["started"] = time.time()
+    state["runner_code"] = runner_code()
     log_file = open(SOAK / "soak.log", "a")
 
     def log(message: str) -> None:
@@ -2478,6 +2521,17 @@ def cmd_health(args: argparse.Namespace) -> int:
             verdict = f"short runs (asked {job.steps} steps)"
         problems += verdict not in ("ok", "did not run")
         print(f"  {job.name:14} {len(items):5} runs  {steps:6.0f} steps/run  {recorded:4} recorded  {verdict}")
+    if stale_runner(state):
+        print("runner: STALE -- tools/soak has changed since the runner started and it still runs the old code; "
+              "restart it between jobs: `soak.py pause --wait 3600 && systemctl --user restart microide-soak && "
+              "soak.py resume`")
+        problems += 1
+    orphans = sum(1 for entry in RUNS.iterdir() if entry.is_dir()) - len(state.get("current", [])) \
+        if RUNS.is_dir() else 0
+    if orphans > 2 * max_jobs(os.cpu_count() or 4):
+        print(f"runs: {orphans} run directories no running job owns under {RUNS} (housekeeping sweeps them "
+              f"after {ORPHAN_RUN_SECONDS / 3600:.0f} h; this many means it is not running)")
+        problems += 1
     unusable = recording.rr_unusable_reason()
     lost = [r["recorder_lost"] for r in rows if r.get("recorder_lost")]
     print(f"recording: {'OFF -- ' + unusable if unusable else 'rr usable'}; "

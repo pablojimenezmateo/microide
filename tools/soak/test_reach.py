@@ -118,6 +118,28 @@ class RequeueTests(SoakDirTests):
         self.soak.requeue_unmeasured(state, self.log.append)
         self.assertEqual(state["pending_checks"], ["old-paint"])
 
+    def test_a_finding_this_runner_has_not_seen_is_not_replayed(self):
+        # Seen last before the runner came up: for all the runner knows a finding
+        # under a signature rule the driver no longer has, which no replay can
+        # show again. Hundreds of them were queued, a dozen replays each.
+        import time
+        self.finding("before", "data", "data: a.txt")
+        state = {"started": time.time() + 60}
+        self.assertEqual(self.soak.requeue_unmeasured(state, self.log.append), 0)
+        # ... and one it has seen since is.
+        self.soak.ledger().append("before", "seen", kind="data", label="data: a.txt", cell="c", commit="c0ffee")
+        state = {"started": time.time() - 60}
+        self.assertEqual(self.soak.requeue_unmeasured(state, self.log.append), 1)
+
+    def test_a_check_no_replay_of_which_ran_is_tried_again_on_the_next_build(self):
+        self.finding("untested", "remote", "remote: the mirror differs", ran=0, on="a" * 40,
+                     errors=["FileNotFoundError: no microide-server"])
+        self.assertEqual(self.soak.requeue_unmeasured({"built_sha": "a" * 40}, self.log.append), 0,
+                         "the same build would fail the same way")
+        state = {"built_sha": "b" * 40}
+        self.assertEqual(self.soak.requeue_unmeasured(state, self.log.append), 1)
+        self.assertEqual(state["pending_checks"], ["untested"])
+
 
 class BuildFindingTests(SoakDirTests):
     def test_a_build_that_is_good_again_closes_its_finding(self):

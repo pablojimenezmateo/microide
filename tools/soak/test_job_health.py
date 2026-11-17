@@ -81,5 +81,57 @@ class DeadJobTests(unittest.TestCase):
         self.assertEqual(self.soak.current_exposure().runs_until(["tsan"], 1e18), 0)
 
 
+class RunnerHealthTests(unittest.TestCase):
+    """`health` on the runner itself: its code, and what it leaves behind."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR"))
+        self.addCleanup(self.dir.cleanup)
+        import soak
+        self.addCleanup(importlib.reload, soak)
+        patcher = mock.patch.dict(os.environ, {"MICROIDE_SOAK_DIR": self.dir.name})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.soak = importlib.reload(soak)
+
+    def health(self) -> tuple[int, str]:
+        import contextlib
+        import io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), \
+             mock.patch.object(self.soak.recording, "rr_unusable_reason", return_value=None):
+            code = self.soak.cmd_health(SimpleNamespace(hours=24.0))
+        return code, out.getvalue()
+
+    def test_a_runner_on_older_code_than_the_checkout_is_said_so(self):
+        # The runner is one long-lived process: a change to tools/soak does
+        # nothing until the service is restarted, and nothing said it had not been.
+        self.soak.save_state({"runner_code": self.soak.runner_code(), "good": {}})
+        self.assertNotIn("runner: STALE", self.health()[1])
+        self.soak.save_state({"runner_code": "0123456789abcdef", "good": {}})
+        code, text = self.health()
+        self.assertIn("runner: STALE", text)
+        self.assertIn("systemctl --user restart microide-soak", text)
+        self.assertEqual(code, 1)
+
+    def test_a_state_from_before_the_digest_is_not_called_stale(self):
+        self.soak.save_state({"good": {}})
+        self.assertNotIn("runner: STALE", self.health()[1])
+
+    def test_the_digest_follows_the_sources(self):
+        before = self.soak.runner_code()
+        self.assertEqual(before, self.soak.runner_code())
+        with mock.patch.object(self.soak, "HERE", Path(self.dir.name)):
+            self.assertNotEqual(self.soak.runner_code(), before)
+
+    def test_run_directories_nobody_owns_are_counted(self):
+        self.soak.save_state({"good": {}, "current": ["a/default/1x1@1"]})
+        for index in range(2 * self.soak.max_jobs(os.cpu_count() or 4) + 2):
+            (self.soak.RUNS / f"20261114-000000-diff-{index}").mkdir(parents=True)
+        code, text = self.health()
+        self.assertIn("run directories no running job owns", text)
+        self.assertEqual(code, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
