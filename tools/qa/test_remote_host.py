@@ -111,5 +111,37 @@ class ConvergenceTests(unittest.TestCase):
         self.assertIn("did not settle", found[0][1])
 
 
+class HostTerminalCallerTests(unittest.TestCase):
+    """local-sshd.sh started from a shell inside a microide host terminal."""
+
+    def test_stopping_the_host_does_not_reach_the_callers_own_server(self) -> None:
+        # 2026-11-16: a soak run started from an agent's shell ended its remote job,
+        # the job stopped its loopback host, and `microide-server stop` obeyed the
+        # caller's MICROIDE_SERVER_SOCKET_DIR before the sandbox HOME -- it shut down
+        # the server every terminal of the developer's lived in.
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        state = Path(scratch.name) / "s"
+        home = state / "hosthome"
+        seen = state / "stop-call"
+        server = home / ".local/share/microide/server/microide-server"
+        _write(server, "#!/bin/sh\n"
+                       'printf "%s|%s|%s|%s|%s\\n" "$*" "$HOME" "${MICROIDE_SERVER_SOCKET_DIR-}" '
+                       f'"${{MICROIDE_TERMINAL_HANDLE-}}" "${{BROWSER-}}" > "{seen}"\n')
+        server.chmod(0o755)
+        sshd = subprocess.Popen(["sleep", "60"])  # stands for the host's sshd: `stop` ends it
+        self.addCleanup(sshd.wait)
+        self.addCleanup(sshd.kill)
+        (state / "sshd.pid").write_text(f"{sshd.pid}\n")
+        callers = Path(scratch.name) / "callers-server"
+        env = {**os.environ, "MQA_SSHD_DIR": str(state), "MICROIDE_SERVER_SOCKET_DIR": str(callers),
+               "MICROIDE_TERMINAL_HANDLE": "3", "BROWSER": str(callers / "microide-browser")}
+        result = subprocess.run(["bash", str(rh.SCRIPT), "stop"], env=env, capture_output=True, text=True,
+                                timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(seen.read_text(), f"stop|{home}|||\n")
+        self.assertEqual(sshd.wait(timeout=10), -15)
+
+
 if __name__ == "__main__":
     unittest.main()

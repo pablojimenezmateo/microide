@@ -13,6 +13,14 @@
 set -euo pipefail
 umask 077
 
+# Run from a shell in a microide host terminal (an agent's, a developer's), the
+# caller carries that terminal's server: MICROIDE_SERVER_SOCKET_DIR, which every
+# microide-server verb obeys before $HOME. stop() then asked the CALLER's server to
+# shut down where it meant this host's, and every terminal that server held ended
+# with it, the caller's among them (2026-11-16). Nothing of the caller's terminal
+# belongs to this host.
+unset MICROIDE_SERVER_SOCKET_DIR MICROIDE_TERMINAL_HANDLE BROWSER
+
 STATE="${MQA_SSHD_DIR:-$HOME/.cache/microide-qa/sshd}"
 PORT="${MQA_SSHD_PORT:-22220}"
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"

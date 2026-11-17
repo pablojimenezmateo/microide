@@ -159,6 +159,13 @@ STALL_TRACE_SECONDS = 1.0
 # desk it runs at, as its own HOME and XDG tree already say.
 DESKTOP_INPUT_METHOD_ENV = ("XMODIFIERS", "GTK_IM_MODULE", "QT_IM_MODULE", "SDL_IM_MODULE")
 
+# What a microide host terminal gives its shell (RemoteServer::SetShellEnvironment,
+# TerminalTable): the server it belongs to, its handle there, and that server's URL
+# forwarder. A run started from such a shell must not hand them to the app under
+# test -- its shells would open pages on the developer's own client and reach the
+# developer's own server.
+HOST_TERMINAL_ENV = ("MICROIDE_SERVER_SOCKET_DIR", "MICROIDE_TERMINAL_HANDLE", "BROWSER")
+
 
 def git_fence_env(project: Path) -> dict[str, str]:
     """What keeps every git a run starts -- the driver's and the app's -- inside
@@ -174,8 +181,9 @@ def git_fence_env(project: Path) -> dict[str, str]:
 
 def app_base_env(environ: dict[str, str]) -> dict[str, str]:
     """The environment an app under test starts from: the caller's, less what
-    ties the run to the desktop it was started on."""
-    return {key: value for key, value in environ.items() if key not in DESKTOP_INPUT_METHOD_ENV}
+    ties the run to the desktop, or the microide host terminal, it was started on."""
+    dropped = DESKTOP_INPUT_METHOD_ENV + HOST_TERMINAL_ENV
+    return {key: value for key, value in environ.items() if key not in dropped}
 
 
 # util::kMinimumLayoutWidth / kMinimumLayoutHeight: the smallest layout (in layout

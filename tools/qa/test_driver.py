@@ -127,6 +127,17 @@ class AppEnvironmentTests(unittest.TestCase):
                               "LANG": "en_US.UTF-8", "PATH": "/usr/bin"})
         self.assertEqual(env, {"LANG": "en_US.UTF-8", "PATH": "/usr/bin"})
 
+    def test_the_host_terminal_the_run_was_started_from_is_not_inherited(self):
+        # A run started from a shell in a microide host terminal carried that
+        # terminal's server into the app: its shells' $BROWSER opened pages on the
+        # developer's own client, and any microide-server they ran was the
+        # developer's (2026-11-16: one was stopped, with every terminal it held).
+        env = q.app_base_env({"MICROIDE_SERVER_SOCKET_DIR": "/home/dev/.local/state/microide/server",
+                              "MICROIDE_TERMINAL_HANDLE": "3",
+                              "BROWSER": "/home/dev/.local/state/microide/server/microide-browser",
+                              "MICROIDE_BIN": "build/microide/microide", "PATH": "/usr/bin"})
+        self.assertEqual(env, {"MICROIDE_BIN": "build/microide/microide", "PATH": "/usr/bin"})
+
 
 class RegistrySourceTests(unittest.TestCase):
     def test_duplicate_flow_keys_are_detected_before_import_loses_them(self):
