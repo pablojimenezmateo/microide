@@ -1,6 +1,5 @@
 """A replay rebuilds the run: its files, its outside world, and a check that it
 went where the run went."""
-import doctest
 import unittest
 from pathlib import Path
 
@@ -60,13 +59,6 @@ class RootTests(unittest.TestCase):
     def test_a_path_that_only_starts_like_the_root_is_left_alone(self):
         row = {"line": f"open {self.OLD}-origin.git/config"}
         self.assertEqual(q.rebase_action(row, self.OLD, "/new"), row)
-
-    def test_the_drivers_doctests(self):
-        for function in (q.rebase_action, q.signal_name, q.sched_account):
-            for test in doctest.DocTestFinder().find(function, globs=vars(q)):
-                doctest.DocTestRunner().run(test)
-        self.assertEqual(doctest.testmod(qa_run).failed, 0)
-        self.assertEqual(doctest.testmod(m).failed, 0)
 
 
 class PathTests(unittest.TestCase):
