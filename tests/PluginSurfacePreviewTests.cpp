@@ -154,6 +154,21 @@ void TestKeyboardScrollsAndClampsPreview() {
   Expect(state.panel.surface_scroll_y == 0, "Home should land back at the top");
 }
 
+// Keyboard focus leaves a panel the plugin's surface leaves: a plugin that
+// cleared the surface its focused preview showed (a reload, a tick that withdrew
+// it) hid the bottom panel with the keys still going to it (soak c0c5719bdbce,
+// "keyboard focus is on the panel, which is hidden").
+void TestFocusLeavesThePanelAWithdrawnSurfaceHid() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 900, 700);
+  ShowPreviewPanel(shell, TallSurface(500.0f));
+  WorkspaceShellTestAccess::SetFocusPanel(shell);
+  WorkspaceShellTestAccess::ClearPluginSurface(shell, "plug", "chart");
+  auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
+  Expect(state.panel.content == PanelContentKind::None, "the panel stops showing the withdrawn surface");
+  Expect(!WorkspaceShellTestAccess::FocusIsPanel(shell), "and the keyboard leaves the hidden panel");
+}
+
 void TestHitRegionClickDispatchesCommand() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 900, 700);
@@ -296,6 +311,8 @@ void RegisterPluginSurfacePreviewTests(std::vector<TestCase>& tests) {
           TestKeyboardScrollsAndClampsPreview);
   AddTest(tests, "PluginSurfacePreview/WheelScrollsAndClampsPreview",
           TestWheelScrollsAndClampsPreview);
+  AddTest(tests, "PluginSurfacePreview/FocusLeavesThePanelAWithdrawnSurfaceHid",
+          TestFocusLeavesThePanelAWithdrawnSurfaceHid);
   AddTest(tests, "PluginSurfacePreview/HitRegionClickDispatchesCommand",
           TestHitRegionClickDispatchesCommand);
   AddTest(tests, "PluginSurfacePreview/ScrollbarDragScrollsPreview",

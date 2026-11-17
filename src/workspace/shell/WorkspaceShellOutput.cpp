@@ -62,10 +62,7 @@ void WorkspaceShell::CloseOutputChannelTab(std::string_view channel_id) {
     return;
   }
 
-  context_.current_project_state.panel.content = PanelContentKind::None;
-  if (context_.current_project_state.surface.focus == FocusTarget::Panel) {
-    context_.current_project_state.surface.focus = FocusTarget::Editor;
-  }
+  ClearBottomPanelContent(context_.current_project_state);
 }
 
 }  // namespace microide::workspace

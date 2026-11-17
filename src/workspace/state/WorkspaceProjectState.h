@@ -1357,6 +1357,17 @@ struct ProjectWorkspaceState {
   std::vector<EditorBannerState> editor_banners;
 };
 
+// The bottom panel stops showing anything. The keyboard never stays on a hidden
+// panel: it goes back to the editor, where the panel toggle sends it. Two
+// plugin-surface paths cleared the panel and left the focus behind, and every
+// key went to a panel nobody could see (soak c0c5719bdbce).
+inline void ClearBottomPanelContent(ProjectWorkspaceState& state) {
+  state.panel.content = PanelContentKind::None;
+  if (state.surface.focus == FocusTarget::Panel) {
+    state.surface.focus = FocusTarget::Editor;
+  }
+}
+
 // Banner state helpers (free functions; keep WorkspaceShell thin). Defined in
 // WorkspaceShellEditorBanner.cpp.
 const EditorBannerState* ActiveEditorBannerForTab(const ProjectWorkspaceState& state);

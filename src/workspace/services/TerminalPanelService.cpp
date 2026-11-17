@@ -79,10 +79,7 @@ void TerminalPanelService::HidePanel() {
   if (state_.panel.content != PanelContentKind::None) {
     state_.panel.restore_content = state_.panel.content;
   }
-  state_.panel.content = PanelContentKind::None;
-  if (state_.surface.focus == FocusTarget::Panel) {
-    state_.surface.focus = FocusTarget::Editor;
-  }
+  ClearBottomPanelContent(state_);
 }
 
 // --- strip tabs ---------------------------------------------------------------

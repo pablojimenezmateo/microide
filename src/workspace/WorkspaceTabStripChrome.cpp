@@ -394,7 +394,7 @@ bool WorkspaceTabStripChrome::CloseBottomPanelTab(std::size_t model_index) {
       if (state.panel.content == PanelContentKind::PluginSurface &&
           state.panel.surface_owner == tab.surface_owner &&
           state.panel.surface_id == tab.surface_id) {
-        state.panel.content = PanelContentKind::None;
+        ClearBottomPanelContent(state);
         state.panel.surface_owner.clear();
         state.panel.surface_id.clear();
       }

@@ -1201,6 +1201,14 @@
   static void SetFocusPanel(WorkspaceShell& shell) {
     shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Panel;
   }
+  // What the plugin host does when a plugin clears its surface (publish_surface's
+  // clear_surface): drop it from the store, then let the panel follow.
+  static void ClearPluginSurface(WorkspaceShell& shell, std::string_view owner, std::string_view surface_id) {
+    auto& state = shell.context_.current_project_state;
+    if (auto* pres = state.plugin_presentation.get(); pres != nullptr && pres->surfaces.ClearOwnerSurface(owner, surface_id)) {
+      shell.SyncPluginSurfacePreviewClosed();
+    }
+  }
   static void SetFocusDebugPane(WorkspaceShell& shell) {
     shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::DebugPane;
   }

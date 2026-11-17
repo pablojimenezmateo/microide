@@ -1015,7 +1015,7 @@ void WorkspaceShell::SyncPluginSurfacePreviewClosed() {
   const editor::SurfaceContent* content =
       pres != nullptr ? pres->surfaces.Find(panel.surface_owner, panel.surface_id) : nullptr;
   if (content == nullptr || content->preview == editor::SurfacePreviewSlot::None) {
-    panel.content = PanelContentKind::None;
+    ClearBottomPanelContent(context_.current_project_state);
     panel.surface_owner.clear();
     panel.surface_id.clear();
   }
