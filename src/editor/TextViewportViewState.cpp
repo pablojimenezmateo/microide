@@ -976,22 +976,23 @@ void TextViewport::AdvanceCaretHorizontal(TextPosition& caret, int delta) const 
   }
 }
 
+TextPosition TextViewport::ClampedToDocument(TextPosition position) const {
+  if (document_->lines.empty()) {
+    return TextPosition{0, 0};
+  }
+  position.line = std::min(position.line, document_->lines.size() - 1);
+  // ReadCaretNeighborhood, not LineView + ClampTextColumn: this runs on the
+  // undo-entry restore, i.e. on every edit, and `LineView` materializes the
+  // WHOLE line when that line spans pieces -- which every edited line does. On
+  // a file with no line breaks in it that is a copy of the document per
+  // keystroke (TD-2026-08-05-133), which is exactly what
+  // TextViewport/TypingInALongLineCopiesNothing exists to catch, and did.
+  position.column = ReadCaretNeighborhood(position.line, position.column).clamped_column;
+  return position;
+}
+
 void TextViewport::ClampCaretSetToDocument() {
-  const auto clamp_position = [this](TextPosition& position) {
-    if (document_->lines.empty()) {
-      position.line = 0;
-      position.column = 0;
-      return;
-    }
-    position.line = std::min(position.line, document_->lines.size() - 1);
-    // ReadCaretNeighborhood, not LineView + ClampTextColumn: this runs on the
-    // undo-entry restore, i.e. on every edit, and `LineView` materializes the
-    // WHOLE line when that line spans pieces -- which every edited line does. On
-    // a file with no line breaks in it that is a copy of the document per
-    // keystroke (TD-2026-08-05-133), which is exactly what
-    // TextViewport/TypingInALongLineCopiesNothing exists to catch, and did.
-    position.column = ReadCaretNeighborhood(position.line, position.column).clamped_column;
-  };
+  const auto clamp_position = [this](TextPosition& position) { position = ClampedToDocument(position); };
   TextPosition primary{cursor_line_, cursor_column_};
   clamp_position(primary);
   cursor_line_ = primary.line;

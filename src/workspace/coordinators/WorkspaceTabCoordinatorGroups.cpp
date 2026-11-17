@@ -261,6 +261,16 @@ void TabCoordinator::ReconcileActiveCaretsWithDocuments() {
     if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
       tab.editor_state->viewport.ReconcileCaretsWithDocument();
     }
+    // The editable panes too: the compare pane over a file an editor tab also has
+    // open shares that tab's document, and the merge result can share one the
+    // same way (soak e041d436ae59: the tab's edit left the compare pane's caret
+    // past the end of a line it had emptied).
+    if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
+      tab.compare->right_viewport.ReconcileCaretsWithDocument();
+    }
+    if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
+      tab.merge->result_viewport.ReconcileCaretsWithDocument();
+    }
   }
 }
 

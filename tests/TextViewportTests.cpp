@@ -6745,7 +6745,42 @@ void TestFormattedTextIsOneUndoStepAndKeepsHistory() {
          "CRLF output on a CRLF buffer changes only the line that changed");
 }
 
+
+// A viewport over a document another viewport edited reads its selection as the
+// next use of it will see it, reconciled into the document -- not the positions
+// the other viewport's edit left behind. The compare pane over a file an editor
+// tab also has open held a selection on "abcd"; the tab turned that line empty,
+// and the control channel's `buffer` query read the pane's selected text off the
+// stale positions: std::out_of_range from string_view::substr, terminate (soak
+// e041d436ae59).
+void TestSelectedTextOfAViewportAnotherViewportEditedStaysInTheDocument() {
+  TextViewport pane;
+  pane.LoadContent("one\ntwo\nsix\nabcd\nefghi\n", "/tmp/shared-selection.txt");
+  pane.MoveCursorTo(3, 4);
+  pane.MoveCursorTo(4, 5, /*extend_selection=*/true);
+  Expect(pane.SelectedText() == "\nefghi", "the pane selects across lines 4 and 5");
+
+  TextViewport tab = pane;  // shares the DocumentState, as the editor tab does
+  tab.MoveCursorTo(3, 0);
+  tab.MoveCursorTo(4, 5, /*extend_selection=*/true);
+  tab.Backspace();          // line 4 is now "" and line 5 "" ...
+  tab.InsertText("\n\n"); // ... and more lines follow it
+
+  const auto range = pane.selection_range();
+  Expect(!range.has_value() || (range->end.line < pane.line_count() &&
+                                range->end.column <= pane.lines().LineLength(range->end.line) &&
+                                range->start.column <= pane.lines().LineLength(range->start.line)),
+         "the pane's selection lies inside the document the other viewport left");
+  const std::string read = pane.SelectedText();  // threw std::out_of_range
+  pane.ReconcileCaretsWithDocument();
+  Expect(read == pane.SelectedText(),
+         "a read before the pane's next use sees what that use will: '" + read + "' vs '" +
+             pane.SelectedText() + "'");
+}
+
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
+AddTest(tests, "TextViewport/SelectedTextOfAViewportAnotherViewportEditedStaysInTheDocument",
+        TestSelectedTextOfAViewportAnotherViewportEditedStaysInTheDocument);
 AddTest(tests, "TextViewport/AGroupedJoinOverAnEditedLineUndoesAndRedoesExactly",
         TestTextViewportAGroupedJoinOverAnEditedLineUndoesAndRedoesExactly);
 AddTest(tests, "TextViewport/ClangdFormattingEditsUndoAndRedoExactly",

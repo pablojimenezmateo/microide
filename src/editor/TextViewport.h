@@ -1367,6 +1367,14 @@ class TextViewport {
   // document. Does NOT normalise the set; callers pick which of the two
   // normalisers they want afterwards.
   void ClampCaretSetToDocument();
+  // `position` brought into the document the way ClampCaretSetToDocument brings
+  // a caret: the last line at most, then a column on a character boundary.
+  TextPosition ClampedToDocument(TextPosition position) const;
+  // Whether another viewport over this DocumentState edited it since this one
+  // last reconciled its carets (SyncCaretsIfDocumentChangedElsewhere).
+  bool CaretsLagDocument() const {
+    return document_ != nullptr && carets_synced_content_revision_ != document_->content_revision;
+  }
   // A viewport whose DocumentState is shared -- a split clone, or the compare
   // pane over a file an editor tab also has open -- keeps the caret set it had
   // before the OTHER viewport's edit. Those positions can name lines the

@@ -813,15 +813,24 @@ std::optional<SelectionRange> TextViewport::selection_range() const {
     return std::nullopt;
   }
 
-  const TextPosition cursor{cursor_line_, cursor_column_};
-  if (selection_anchor_->line == cursor.line && selection_anchor_->column == cursor.column) {
+  TextPosition cursor{cursor_line_, cursor_column_};
+  TextPosition anchor = *selection_anchor_;
+  // Read as the next use of this viewport will see it: another viewport over the
+  // same document may have edited it since, and the positions it left can name
+  // columns or lines the document no longer has. Text read off them threw out of
+  // the control channel's `buffer` query (soak e041d436ae59).
+  if (CaretsLagDocument()) {
+    cursor = ClampedToDocument(cursor);
+    anchor = ClampedToDocument(anchor);
+  }
+  if (anchor.line == cursor.line && anchor.column == cursor.column) {
     return std::nullopt;
   }
 
-  if (IsBefore(*selection_anchor_, cursor)) {
-    return SelectionRange{*selection_anchor_, cursor};
+  if (IsBefore(anchor, cursor)) {
+    return SelectionRange{anchor, cursor};
   }
-  return SelectionRange{cursor, *selection_anchor_};
+  return SelectionRange{cursor, anchor};
 }
 
 std::string TextViewport::TextInRange(const SelectionRange& range) const {
