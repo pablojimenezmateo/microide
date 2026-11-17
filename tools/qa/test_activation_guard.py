@@ -30,7 +30,8 @@ def _app(guard_answers: list[bool]) -> q.App:
     app._x_keys = Mock()
     app._x_type_ascii = Mock()
     answers = iter(guard_answers)
-    app.activation_guard = lambda: next(answers, False)
+    app.asked = []
+    app.activation_guard = lambda stepping=False: (app.asked.append(stepping), next(answers, False))[1]
     return app
 
 
@@ -50,6 +51,19 @@ class ActivationGuardTests(unittest.TestCase):
         app.key("alt+Up")
         self.assertEqual(app.recorded, [{"key": "alt+Up"}])
 
+    def test_left_and_right_ask_as_a_step(self) -> None:
+        # Left/Right step a selected setting: `control.enabled` stepped off cut the
+        # driver's own channel (soak e02c374fd3ee).
+        app = _app([True])
+        app.key("Right")
+        self.assertEqual(app.recorded, [{"key": "Escape"}, {"key": "Right"}])
+        self.assertEqual(app.asked, [True])
+
+    def test_a_modified_arrow_is_not_a_step(self) -> None:
+        app = _app([True])
+        app.key("ctrl+Right")
+        self.assertEqual(app.recorded, [{"key": "ctrl+Right"}])
+
     def test_a_harmless_selection_is_left_alone(self) -> None:
         app = _app([False])
         app.key("Return")
@@ -62,6 +76,20 @@ class MonkeyGuardTests(unittest.TestCase):
         monkey.app = Mock()
         monkey.app.ui.return_value = ui
         return monkey
+
+    def test_control_enabled_selected_in_settings_is_forbidden_to_step_and_toggle(self) -> None:
+        ui = {"menu": {"open": False}, "elements": [
+            {"kind": "setting", "name": "setting:editor.wrap", "selected": False},
+            {"kind": "setting", "name": "setting:control.enabled", "selected": True}]}
+        monkey = self._monkey(ui)
+        self.assertTrue(monkey._activation_chooses_forbidden(stepping=True))
+        self.assertTrue(monkey._activation_chooses_forbidden())
+
+    def test_another_setting_selected_may_be_stepped(self) -> None:
+        ui = {"menu": {"open": False}, "elements": [
+            {"kind": "setting", "name": "setting:editor.wrap", "selected": True},
+            {"kind": "setting", "name": "setting:control.enabled", "selected": False}]}
+        self.assertFalse(self._monkey(ui)._activation_chooses_forbidden(stepping=True))
 
     def test_quit_selected_in_an_open_menu_is_forbidden(self) -> None:
         ui = {"menu": {"open": True}, "elements": [

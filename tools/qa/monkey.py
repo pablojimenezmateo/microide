@@ -844,13 +844,22 @@ class Monkey:
             return False
         return self._inside(self._forbidden_rects(ui), x, y)
 
-    def _activation_chooses_forbidden(self) -> bool:
+    def _activation_chooses_forbidden(self, stepping: bool = False) -> bool:
         """App.activation_guard while the monkey runs: an open menu (the menu bar's,
         a context menu, the overflow popup) whose keyboard selection is a row the
-        run must not choose."""
+        run must not choose, or a Settings overlay whose selected row is a setting
+        the run must not change (Enter/Space toggle it, Left/Right -- `stepping` --
+        step it: `control.enabled` stepped off cut the driver's own channel, soak
+        e02c374fd3ee, ~1100 sightings)."""
         try:
             ui = self.app.ui()
         except q.QaFailure:
+            return False
+        if any(element.get("kind") == "setting" and element.get("selected")
+               and element.get("name", "").removeprefix("setting:") in FORBIDDEN_SETTINGS
+               for element in ui.get("elements", [])):
+            return True
+        if stepping:
             return False
         menu = ui.get("menu") or {}
         if not (menu.get("open") or menu.get("contextMenu") or menu.get("overflow")):

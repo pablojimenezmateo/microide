@@ -546,7 +546,10 @@ class App:
     # asked to. The pointer never pressed Quit; arrow keys walked onto it and a
     # typed newline chose it, and the app quit cleanly: an "exit (0)" filed as a
     # crash (soak 7ab9a5476905, 43 sightings).
-    activation_guard: Callable[[], bool] | None = None
+    # Asked before a key that would choose the highlighted row of an open menu or
+    # setting (True: send Escape first). Its argument is True for a key that only
+    # STEPS a selected setting (Left/Right), which no menu row reacts to.
+    activation_guard: Callable[[bool], bool] | None = None
     # A replay's own verdicts (run.py replay_record): whether it ran to the end
     # of its actions, and where it left the run's path (monkey_model.Divergence).
     replay_completed: bool = False
@@ -1749,8 +1752,8 @@ class App:
         for key in reversed(modifiers):
             self._x_modifier(key, False)
 
-    def _guard_activation(self) -> None:
-        if self.activation_guard is not None and self.activation_guard():
+    def _guard_activation(self, stepping: bool = False) -> None:
+        if self.activation_guard is not None and self.activation_guard(stepping):
             self.key("Escape")
 
     def key(self, chord: str) -> None:
@@ -1759,6 +1762,8 @@ class App:
         steps = chord.split()
         if any(step.rsplit("+", 1)[-1] in _ACTIVATING_KEYS for step in steps):
             self._guard_activation()
+        elif any(step in _STEPPING_KEYS for step in steps):
+            self._guard_activation(stepping=True)
         self._record({"key": chord})
         if self.wayland:
             for step in steps:
@@ -2796,6 +2801,10 @@ _OVERLAP_KINDS = {"button", "sidebar-view", "debug-tab", "panel-tab"}
 _FLOATING_PREFIX = "button:notification/"
 # The keys that choose an open menu's highlighted row (App.activation_guard).
 _ACTIVATING_KEYS = {"Return", "KP_Enter", "Enter", "space"}
+# The bare keys that step the Settings overlay's selected setting (Left/Right:
+# settings_step_selected): they turned `control.enabled` off and cut the driver's
+# own channel -- "no control socket to connect to", soak e02c374fd3ee.
+_STEPPING_KEYS = {"Left", "Right", "KP_Left", "KP_Right"}
 # Floating cards over the editor's CONTENT, and the content controls they float
 # over: the debug toolbar is a card over the text ("the editor stays usable
 # underneath"), and a code lens is part of that text -- it scrolls under the card
