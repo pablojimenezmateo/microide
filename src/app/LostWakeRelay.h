@@ -47,6 +47,11 @@ class LostWakeRelay {
 
   // Diagnostics and tests: how many nudges the relay has sent.
   std::uint64_t nudges() const { return nudges_.load(std::memory_order_relaxed); }
+  // Diagnostics: how many wakes have been pushed (NotePush) so far.
+  std::uint64_t pushes() const { return pushes_.load(std::memory_order_relaxed); }
+  // Diagnostics: when the first wake pushed during the current (or last) blocking
+  // wait was pushed, in steady-clock milliseconds; 0 when none was.
+  std::uint64_t first_push_in_wait_ms() const { return first_push_in_wait_ms_.load(std::memory_order_relaxed); }
 
  private:
   void Run();
@@ -58,6 +63,7 @@ class LostWakeRelay {
   std::atomic<std::uint64_t> pushes_at_wait_entry_{0};
   std::atomic<bool> in_wait_{false};
   std::atomic<std::uint64_t> nudges_{0};
+  std::atomic<std::uint64_t> first_push_in_wait_ms_{0};
   std::mutex mutex_;
   std::condition_variable wake_;
   bool armed_ = false;

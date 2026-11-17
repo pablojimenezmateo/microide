@@ -27,6 +27,12 @@ void LostWakeRelay::NotePush() {
   if (!in_wait_.load(std::memory_order_seq_cst)) {
     return;
   }
+  std::uint64_t none = 0;
+  (void)first_push_in_wait_ms_.compare_exchange_strong(  // only the first push of this wait
+      none, static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                           std::chrono::steady_clock::now().time_since_epoch())
+                                           .count()),
+      std::memory_order_relaxed);
   {
     std::scoped_lock lock(mutex_);
     armed_ = true;
@@ -35,6 +41,7 @@ void LostWakeRelay::NotePush() {
 }
 
 void LostWakeRelay::EnterBlockingWait() {
+  first_push_in_wait_ms_.store(0, std::memory_order_relaxed);
   pushes_at_wait_entry_.store(pushes_.load(std::memory_order_seq_cst), std::memory_order_seq_cst);
   in_wait_.store(true, std::memory_order_seq_cst);
 }

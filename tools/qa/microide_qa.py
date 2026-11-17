@@ -1356,7 +1356,11 @@ class App:
             self.slowest_waits = "\n".join(f"{count:4d} x {where}" for where, count in waits.most_common(8)) \
                 if waits else ""
             if seconds >= STALL_TRACE_SECONDS * SLOW_FACTOR and log_before is not None:
-                self.slowest_stall = self.stall_reports(self.log_since(log_before))
+                text = self.log_since(log_before)
+                # The app's own account of a wait that slept through a wake
+                # (DescribeLateWake): whether the lost-wake relay nudged.
+                late = [line for line in text.splitlines() if "microide idle-wait:" in line][:4]
+                self.slowest_stall = self.stall_reports(text) + "".join(line + "\n" for line in late)
 
     # Element kinds whose labels are chrome the app composes itself (menus, the
     # status bar, buttons, settings), not text copied from a file or typed into a

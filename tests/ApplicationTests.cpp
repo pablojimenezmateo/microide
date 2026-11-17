@@ -20,6 +20,7 @@
 #include "app/RedrawTraceAccumulator.h"
 #include "app/RedrawVerifier.h"
 #include "app/SceneTexturePresenter.h"
+#include "app/SdlWaker.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 namespace microide::tests {
@@ -125,6 +126,24 @@ void TestChooseIdleWaitMapsHints() {
       ChooseIdleWait(IdleWaitState{.hint = IdleHint::CaretOnly, .caret_remaining_ms = 0});
   Expect(caret_zero.timeout_ms == 1,
          "CaretOnly should clamp a zero timeout to 1ms so the loop never busy-spins");
+}
+
+// A blocking wait that ends late with wakes pushed during it is reported, with
+// whether the relay nudged and what ended it; an ordinary wait is not.
+void TestALateWakeIsDescribed() {
+  using microide::app::DescribeLateWake;
+  using microide::app::SdlWakeCounts;
+  const SdlWakeCounts before{.pushes = 10, .nudges = 2};
+  Expect(!DescribeLateWake(3000, true, 3000, before, before, false, 0).has_value(),
+         "a long wait nothing tried to wake is ordinary");
+  Expect(!DescribeLateWake(4, true, 3000, before, SdlWakeCounts{.pushes = 11, .nudges = 2}, true, 0x8001).has_value(),
+         "a long wait a late wake ended promptly is ordinary: only the time the wake was owed counts");
+  Expect(!DescribeLateWake(5, false, 0, before, SdlWakeCounts{.pushes = 11, .nudges = 2}, true, 0x8001).has_value(),
+         "a wake that ended the wait promptly is ordinary");
+  const auto late = DescribeLateWake(3010, true, 3000, before, SdlWakeCounts{.pushes = 11, .nudges = 3}, false, 0);
+  Expect(late.has_value() && late->find("woke 3010 ms after its first wake (timeout 3000 ms) with 1 wake(s) pushed during it "
+                                        "and 1 relay nudge(s); ended by its timeout") != std::string::npos,
+         "a late wait says how late, how many wakes and nudges, and what ended it: " + late.value_or(""));
 }
 
 // The event-drain budget yields to render ONLY once a redraw is pending and the
@@ -619,7 +638,8 @@ void RegisterApplicationTests(std::vector<TestCase>& tests) {
           TestPresentationCacheReusedWhenUiScaleMatches);
   AddTest(tests, "Application/PresentationCacheInvalidatedWhenUiScaleChanges",
           TestPresentationCacheInvalidatedWhenUiScaleChanges);
-  AddTest(tests, "Application/ChooseIdleWaitMapsHints", TestChooseIdleWaitMapsHints);
+AddTest(tests, "Application/ALateWakeIsDescribed", TestALateWakeIsDescribed);
+    AddTest(tests, "Application/ChooseIdleWaitMapsHints", TestChooseIdleWaitMapsHints);
   AddTest(tests, "Application/EventDrainBudgetYieldsOnlyWithPendingRedraw",
           TestEventDrainBudgetYieldsOnlyWithPendingRedraw);
   AddTest(tests, "Application/RedrawTraceAccumulatorCountsAndFlushes",

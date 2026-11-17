@@ -53,6 +53,12 @@ void InstallSdlWaker() {
 SdlBlockingWaitScope::SdlBlockingWaitScope() { Relay().EnterBlockingWait(); }
 SdlBlockingWaitScope::~SdlBlockingWaitScope() { Relay().LeaveBlockingWait(); }
 
+SdlWakeCounts ReadSdlWakeCounts() {
+  return SdlWakeCounts{.pushes = Relay().pushes(),
+                       .nudges = Relay().nudges(),
+                       .first_push_in_wait_ms = Relay().first_push_in_wait_ms()};
+}
+
 bool IsSdlWakeNudge(std::uint32_t event_type) {
   const std::uint32_t type = g_nudge_type.load(std::memory_order_acquire);
   return type != 0 && event_type == type;

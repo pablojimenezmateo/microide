@@ -7,6 +7,7 @@
 #include "workspace/WorkspaceStartupOptions.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -284,6 +285,7 @@ int Application::Run() {
         workspace_shell_.CurrentIdleWaitState();
     const IdleWaitDecision idle_wait = ChooseIdleWait(idle_wait_state);
     bool has_event = false;
+    const SdlWakeCounts wakes_before = ReadSdlWakeCounts();
     switch (idle_wait.mode) {
       case IdleWaitMode::Poll:
         has_event = SDL_PollEvent(&event);
@@ -299,6 +301,19 @@ int Application::Run() {
         const platform::MainLoopIdleScope idle;
         has_event = SDL_WaitEvent(&event);
         break;
+      }
+    }
+    if (const SdlWakeCounts wakes_after = ReadSdlWakeCounts();
+        idle_wait.mode != IdleWaitMode::Poll && wakes_after.first_push_in_wait_ms != 0) {
+      const auto now_ms = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                         std::chrono::steady_clock::now().time_since_epoch())
+                                                         .count());
+      if (const std::optional<std::string> late = DescribeLateWake(
+              now_ms - std::min(now_ms, wakes_after.first_push_in_wait_ms),
+              idle_wait.mode == IdleWaitMode::WaitTimeout, idle_wait.timeout_ms, wakes_before, wakes_after,
+              has_event, has_event ? event.type : 0);
+          late.has_value()) {
+        SDL_Log("%s", late->c_str());
       }
     }
     // A lost-wake relay nudge only woke the loop; the event it re-delivered is
