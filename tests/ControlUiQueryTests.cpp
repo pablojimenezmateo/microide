@@ -546,7 +546,13 @@ void TestInvariantsQueryHoldsAndNamesBrokenRules() {
   front.Backspace();
   Expect(rules(shared).empty(),
          "a view behind another whose edit moved its document breaks no rule, got: " + rules(shared));
-  behind.ReconcileCaretsWithDocument();
+  // The view that edited closes: the one behind still lags, with no sharer left.
+  shared.editor_groups[0].open_tabs.erase(shared.editor_groups[0].open_tabs.begin());
+  editor::TextViewport& alone = shared.editor_groups[0].open_tabs[0].editor_state->viewport;
+  Expect(alone.CaretsLagDocument(), "the view behind still lags the edit of the closed one");
+  Expect(rules(shared).empty(),
+         "nor once the view that edited has closed (soak 8cc3fd5f5a87), got: " + rules(shared));
+  alone.ReconcileCaretsWithDocument();
   Expect(rules(shared).empty(), "and none once it reconciled, got: " + rules(shared));
 }
 

@@ -43,25 +43,6 @@ std::string Outside(const editor::TextViewport& view, std::size_t line, std::siz
          " long)";
 }
 
-// Whether another editor tab's viewport shows the same document as `view`.
-bool SharesItsDocument(const std::vector<EditorGroup>& groups, std::size_t group, std::size_t tab,
-                       const editor::TextViewport& view) {
-  for (std::size_t g = 0; g < groups.size(); ++g) {
-    for (std::size_t t = 0; t < groups[g].open_tabs.size(); ++t) {
-      const TabEntry& other = groups[g].open_tabs[t];
-      if ((g != group || t != tab) && other.kind == TabEntry::Kind::Editor && other.editor_state.has_value() &&
-          other.editor_state->viewport.SharesDocumentWith(view)) {
-        return true;
-      }
-      if (other.kind == TabEntry::Kind::Compare && other.compare.has_value() &&
-          other.compare->right_viewport.SharesDocumentWith(view)) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
 }  // namespace
 
 WorkspaceInvariantReport CheckWorkspaceInvariants(const ProjectWorkspaceState& project,
@@ -152,14 +133,13 @@ WorkspaceInvariantReport CheckWorkspaceInvariants(const ProjectWorkspaceState& p
         continue;
       }
       if (view.CaretsLagDocument()) {
-        // Another view of this document edited it since this one last ran: its
-        // carets are reconciled on its next use, and every read of them before
-        // that sees them reconciled (TextViewport::SyncCaretsWithSharedDocument),
-        // so the stored positions may name columns the document no longer has.
-        // Only a view that SHARES its document can lag it.
-        if (!SharesItsDocument(groups, g, t, view)) {
-          violate("carets", TabName(g, t, tab) + " lags edits to a document no other view shares");
-        }
+        // The document moved since this view last ran -- another view of it
+        // edited it, and that view may be closed by now: this view's carets are
+        // reconciled on its next use, and every read of them before that sees
+        // them reconciled (TextViewport::SyncCaretsWithSharedDocument), so the
+        // stored positions may name columns the document no longer has. A rule
+        // that lag needs a live sharer fired on every closed sibling (soak
+        // 8cc3fd5f5a87).
       } else if (!Inside(view, view.cursor_line(), view.cursor_column())) {
         violate("carets", TabName(g, t, tab) + " has its caret at " +
                               Outside(view, view.cursor_line(), view.cursor_column()));
