@@ -11,6 +11,14 @@
     tools/soak/soak.py coverage [--functions SRC...]              what of src/ the soak executes
     tools/soak/soak.py health                                    is every cell running, is the ledger honest
 
+A private soak of a branch, beside the live one -- how a change to the runner or
+the driver is tried before it merges (never from a shell inside a microide
+terminal: `systemd-run --user --wait --pipe`, see tools/soak/AGENT.md):
+
+    MICROIDE_SOAK_REF=my-branch MICROIDE_SOAK_BUILDS=default \
+    MICROIDE_SOAK_DIR=build/soak-try MICROIDE_SOAK_WORKTREE=build/wt-soak-try \
+        tools/soak/soak.py run --jobs 4 --max-hours 1
+
 It follows `main` in its own worktree (`build/wt-soak`, never the live tree) and
 rebuilds when `main` moves: the default build (assertions on), an optimized
 release, ASan, UBSan and TSan. A broken build is a finding against that commit;
@@ -68,6 +76,14 @@ import recording  # noqa: E402
 
 SOAK = Path(os.environ.get("MICROIDE_SOAK_DIR", REPO / "build" / "soak"))
 WORKTREE = Path(os.environ.get("MICROIDE_SOAK_WORKTREE", REPO / "build" / "wt-soak"))
+# The ref the runner builds and soaks: `main`, or a branch for a private soak of
+# it (with a soak directory and a worktree of its own, MICROIDE_SOAK_DIR and
+# MICROIDE_SOAK_WORKTREE). A change to the runner or the driver could only be
+# tried by merging it: the runner built `main` and nothing else, so the soak's
+# own tooling was the one part of the tree that went live untested -- and a
+# deep review of it was being tried by hand, from a shell, when that shell's
+# environment took the developer's server down with it (2026-11-16).
+FOLLOW_REF = os.environ.get("MICROIDE_SOAK_REF", "main")
 # The QA driver a build's jobs run, copied out of the worktree at build time
 # (snapshot_driver): jobs and checks run from here, so the worktree can move to
 # the next commit under them and a build needs no drain.
@@ -133,6 +149,15 @@ BUILDS = {
                        "-DCMAKE_C_FLAGS=-fprofile-instr-generate -fcoverage-mapping -O1",
                        "-DCMAKE_EXE_LINKER_FLAGS=-fprofile-instr-generate"], 1.5, coverage=True),
 }
+# A private soak may build fewer: MICROIDE_SOAK_BUILDS=default,asan. Six builds
+# of a branch are an hour of the machine before the first job; the default
+# build alone is what a change to the runner or the driver needs to be tried.
+if os.environ.get("MICROIDE_SOAK_BUILDS"):
+    _wanted = [name.strip() for name in os.environ["MICROIDE_SOAK_BUILDS"].split(",") if name.strip()]
+    _unknown = [name for name in _wanted if name not in BUILDS]
+    if _unknown:
+        raise SystemExit(f"MICROIDE_SOAK_BUILDS names no build: {', '.join(_unknown)} (known: {', '.join(BUILDS)})")
+    BUILDS = {name: BUILDS[name] for name in _wanted}
 # The soak's merged profile, and where a job's raw ones go: `%4m` merges the
 # writers of one binary under a lock into at most four files -- the app, every
 # relaunch of it, and each `control-list` the driver runs are that binary.
@@ -146,10 +171,15 @@ def git(*args: str, cwd: Path = REPO) -> str:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, env=env).stdout.strip()
 
 
+def followed_head() -> str:
+    """The commit FOLLOW_REF is at: what the runner builds next."""
+    return git("rev-parse", "--verify", "--quiet", f"{FOLLOW_REF}^{{commit}}")
+
+
 def ensure_worktree() -> None:
     if not (WORKTREE / ".git").exists():
         WORKTREE.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["git", "worktree", "add", "--detach", str(WORKTREE), "main"], cwd=REPO,
+        subprocess.run(["git", "worktree", "add", "--detach", str(WORKTREE), FOLLOW_REF], cwd=REPO,
                        capture_output=True)
 
 
@@ -157,9 +187,9 @@ def build_all(state: dict[str, Any], log) -> None:
     """Moves the worktree to main's head and builds every configuration. A build
     that fails is recorded (and a ledger finding); its last good binary stays."""
     ensure_worktree()
-    head = git("rev-parse", "main")
+    head = followed_head()
     if git("log", "-1", "--format=%ae", head) == QA_GIT_EMAIL:
-        raise RuntimeError(f"main is at {head[:10]}, a QA monkey commit: not building it")
+        raise RuntimeError(f"{FOLLOW_REF} is at {head[:10]}, a QA monkey commit: not building it")
     if is_built(state, head):
         # Built before this runner had snapshots (or lost it): take it now, from
         # the worktree that is still at `head`.
@@ -348,7 +378,7 @@ def refresh_due(state: dict[str, Any]) -> bool:
     still skips the work when there is none: main has not moved, no binary is
     missing, and no fixed finding waits for its replay.
     """
-    return not is_built(state, git("rev-parse", "main")) or any(True for _ in fixes_to_verify(state))
+    return not is_built(state, followed_head()) or any(True for _ in fixes_to_verify(state))
 
 
 def prune_binaries(good: dict[str, Any]) -> None:
@@ -637,7 +667,7 @@ def ledger() -> ld.Ledger:
 
 def choose_job(rng: random.Random, state: dict[str, Any]) -> JobType | None:
     good = state.get("good", {})
-    available = [job for job in JOB_TYPES if job.build in good]
+    available = [job for job in JOB_TYPES if job.build in good and job.build in BUILDS]
     if not available:
         return None
     # Yield steering: a job type's weight grows with the distinct findings it
@@ -1742,7 +1772,7 @@ def contain_breach(breach: str, jobs: list["Job"], log) -> None:
     signature = fnd.signature("containment", "QA git activity reached the checkout")
     ledger().append(signature, "new" if signature not in ledger().entries() else "seen",
                     kind="containment", label="containment: QA git activity reached the checkout",
-                    commit=git("rev-parse", "main"), cell="runner", detail=message)
+                    commit=followed_head(), cell="runner", detail=message)
 
 
 # The first line of a PAUSE the fixing agent wrote for its phase (`pause`): the
