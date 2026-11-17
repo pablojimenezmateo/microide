@@ -2504,6 +2504,8 @@ def cmd_health(args: argparse.Namespace) -> int:
         by_job.setdefault(row["job"], []).append(row)
     problems = 0
     for job in JOB_TYPES:
+        if job.build not in BUILDS:
+            continue  # a private soak that does not make this build (MICROIDE_SOAK_BUILDS)
         items = by_job.get(job.name, [])
         dead = sum(1 for r in items if r.get("steps", 0) <= 0)
         steps = sum(r.get("steps", 0) for r in items) / max(1, len(items) - dead) if items else 0

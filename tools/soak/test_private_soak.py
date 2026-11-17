@@ -66,6 +66,20 @@ class PrivateSoakTests(unittest.TestCase):
         rng = random.Random(7)
         self.assertEqual({module.choose_job(rng, state).build for _ in range(300)}, {"default"})
 
+    def test_health_does_not_miss_the_builds_it_was_told_not_to_make(self):
+        import contextlib
+        import io
+        from types import SimpleNamespace
+        module = self.reloaded(MICROIDE_SOAK_BUILDS="default")
+        module.save_state({"good": {"default": {}}, "runner_code": module.runner_code()})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), mock.patch.object(module.recording, "rr_unusable_reason",
+                                                                return_value=None):
+            module.cmd_health(SimpleNamespace(hours=1.0))
+        self.assertNotIn("NO BUILD", out.getvalue())
+        self.assertNotIn("asan", out.getvalue())
+        self.assertIn("  default ", out.getvalue())
+
     def test_a_build_that_does_not_exist_is_refused(self):
         with self.assertRaises(SystemExit) as refused:
             self.reloaded(MICROIDE_SOAK_BUILDS="default,asna")
