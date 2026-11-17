@@ -2947,15 +2947,33 @@ def replay(app: App, actions: list[dict[str, Any]], pause: float = 0.12,
     previous_recorded: float | None = None
     previous_sent = time.monotonic()
     new_root = str(app.replay_root) if getattr(app, "replay_root", None) is not None else None
+
+    def observe(index: int, action: dict[str, Any]) -> None:
+        """The path check for a row the replay applies without a check of its
+        own. The run stamps its state on the LAST row a step recorded, whatever
+        that row is: a kill -9, an outside-world change, an oracle's row, a
+        character typed through the control channel. Skipped with its row, a
+        stamp that changed the state left every "same as before" stamp after
+        it compared against the state before -- a replay read as having left
+        the run's path at the first step after each kill -9 (the relaunch
+        moves the focus), and a finding whose replays "diverge" is not hunted."""
+        if check and follow is not None and "s" in action:
+            app.settle_quiet(most=pause)
+            app.check(replay_label(index))
+            follow(index, action)
+
     for index, action in enumerate(actions):
         if "check" in action or "note" in action or "type-via-control" in action:
+            observe(index, action)
             continue
         action = rebase_action(action, root, new_root)
         if "oracle" in action:
             if oracle is not None:
                 oracle(action)
+            observe(index, action)
             continue
         if action.get("o") and oracle is not None:
+            observe(index, action)
             continue
         if paced and isinstance(action.get("t"), (int, float)):
             if previous_recorded is not None:
@@ -2968,10 +2986,12 @@ def replay(app: App, actions: list[dict[str, Any]], pause: float = 0.12,
         if "churn" in action:
             if churn is not None:
                 churn(action)
+            observe(index, action)
             continue
         if "external" in action or "kill9" in action:
             if external is not None:
                 external(action)
+            observe(index, action)
             continue
         if "resize" in action:
             app.resize(*action["resize"])
@@ -3009,9 +3029,27 @@ def replay(app: App, actions: list[dict[str, Any]], pause: float = 0.12,
             continue  # the rest of the burst follows with no settle
         app.settle_quiet(most=pause)
         if check:
-            app.check(json.dumps(action)[:200])
+            app.check(replay_label(index))
             if follow is not None and "s" in action:
                 follow(index, action)
+
+
+def replay_label(index: int) -> str:
+    """What a replayed action's check is labelled: its place in the record.
+
+    It was the action itself as JSON, cut at 200 characters, and a finding's
+    signature is its message less the label (findings.normalize). The cut left
+    a label that did not close for any action over 200 characters -- a long
+    text typed, and since the run stamps its state on its rows most drags and
+    chords too -- and a brace in the text typed broke it at any length. The
+    finding the replay then showed had another signature than the run's: it
+    was booked under "the replays showed instead", and the finding it was a
+    faithful reproduction of as "no replay reproduces it".
+
+    >>> replay_label(37)
+    'step 37'
+    """
+    return f"step {index}"
 
 
 def sched_account(seconds: float, ran: float, queued: float) -> str:
