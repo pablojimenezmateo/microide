@@ -789,6 +789,32 @@ def slots(jobs: list["Job"]) -> int:
     return sum(REPLAY_JOB_SLOTS if job.type is CHECK_JOB or job.type is VERIFY_JOB else 1 for job in jobs)
 
 
+# The most of the budget checks and verifications may hold between them. They
+# came first without a bound ("a new finding's rate is worth more than another
+# fresh run"), and a check is three slots for up to hours when it minimizes: two
+# of them held all six slots of a private soak and no job started for the rest
+# of it; five hold fifteen of the live soak's sixteen. With hundreds of findings
+# queued -- every change to how findings are keyed queues a wave -- the soak
+# stopped soaking to measure what it had already found.
+REPLAY_SHARE = 0.5
+
+
+def replay_room(jobs: list["Job"], cap: int) -> bool:
+    """Whether one more check or verification may start: it fits the budget, and
+    the replays stay within REPLAY_SHARE of it (one always may).
+
+    >>> class J:
+    ...     def __init__(self, t): self.type = t
+    >>> replay_room([], 16), replay_room([J(CHECK_JOB)], 16), replay_room([J(CHECK_JOB), J(VERIFY_JOB)], 16)
+    (True, True, False)
+    >>> replay_room([J(JOB_TYPES[0])] * 14, 16), replay_room([], 6), replay_room([J(CHECK_JOB)], 6), replay_room([], 2)
+    (False, True, False, False)
+    """
+    held = sum(REPLAY_JOB_SLOTS for job in jobs if job.type is CHECK_JOB or job.type is VERIFY_JOB)
+    return slots(jobs) + REPLAY_JOB_SLOTS <= cap and \
+        held + REPLAY_JOB_SLOTS <= max(REPLAY_JOB_SLOTS, int(cap * REPLAY_SHARE))
+
+
 # ---- hunts: a recording of a finding no replay of its actions shows ----------------
 
 # A hunt replays one finding's actions at the run's recorded pace under rr's
@@ -2382,10 +2408,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             log(f"job budget {cap} (load {os.getloadavg()[0]:.1f}, {memory_available()[0] / 2**30:.0f} GB available, "
                 f"{len(jobs)} running, {slots(jobs)} slots)")
             last_cap = cap
-        if pending and slots(jobs) + REPLAY_JOB_SLOTS <= cap and busy_reason(our_cores() or CORES_PER_JOB * slots(jobs), job_load.others(os.getloadavg()[0])) is None:
-            # Checks first: a new finding's rate and minimal replay are worth more
-            # than another fresh run. A check holds three displays, so it counts
-            # as a job of its own.
+        if pending and replay_room(jobs, cap) and busy_reason(our_cores() or CORES_PER_JOB * slots(jobs), job_load.others(os.getloadavg()[0])) is None:
+            # Checks first, up to their share (replay_room): a new finding's rate
+            # and minimal replay are worth more than another fresh run. A check
+            # holds three displays, so it counts as three jobs.
             # The most severe first: a paint finding from a tiny window waits
             # behind everything a user could lose work to.
             known = ledger().entries()
@@ -2395,7 +2421,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             log(f"check {sig}")
             save_state(state)
         verifies = state.get("pending_verifies", [])
-        if verifies and slots(jobs) + REPLAY_JOB_SLOTS <= cap and busy_reason(our_cores() or CORES_PER_JOB * slots(jobs), job_load.others(os.getloadavg()[0])) is None:
+        if verifies and replay_room(jobs, cap) and busy_reason(our_cores() or CORES_PER_JOB * slots(jobs), job_load.others(os.getloadavg()[0])) is None:
             # A fix's verification next, as a job of its own like a check (three
             # displays): it used to run inline here and hold every start behind it.
             sig = verifies.pop(0)
