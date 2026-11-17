@@ -1176,10 +1176,34 @@ class Monkey:
             return
         scale = self.rng.choice(self._scales_that_fit(whole_screen=True) or ["1"])
         self.app.send_line(f"set-setting ui.scale {scale}")
-        self.app.resize(*self.app.size)
+        # The app answers a scale change with a resize of its own, a frame or two
+        # later: the window keeps its size in layout units. Sent before that
+        # lands, the resize below was overridden by it -- a window 400 units high
+        # stayed 400 units high at every scale, the next step found it too small
+        # again and drew another scale, and so on for the rest of the run: a
+        # real-size cell run tiny, its ui.scale re-rolled every step. A replay,
+        # which settles after every row, did get the resize: it left the run's
+        # path right there.
         self.app.settle_quiet(most=0.3)
-        with contextlib.suppress(q.QaFailure):
-            self._ui()
+        self.app.resize(*self.app.size)
+        self._await_usable_window()
+
+    def _await_usable_window(self, seconds: float = 2.0) -> bool:
+        """Waits for the window to be at least min_logical again, reading the
+        `ui` answer afresh (the resize is the window system's to deliver);
+        False when it still is not at the deadline."""
+        deadline = time.monotonic() + seconds * q.SLOW_FACTOR
+        while True:
+            self.app.settle_quiet(most=0.3)
+            with contextlib.suppress(q.QaFailure):
+                ui = self.app.ui()
+                self.app.last_ui, self.app.last_ui_actions = ui, len(self.app.actions)
+                window = ui.get("window") or {}
+                if (window.get("width") or 0) >= self.min_logical[0] and \
+                        (window.get("height") or 0) >= self.min_logical[1]:
+                    return True
+            if time.monotonic() >= deadline:
+                return False
 
     def terminal_action(self) -> str:
         # A new terminal when none has the keyboard, and now and then anyway. The
