@@ -174,6 +174,25 @@ class LivenessTests(unittest.TestCase):
         unknown = mo.Liveness(SlowApp("hit-test", 6.0, None))
         self.assertEqual(unknown.check()[0][1], "hit-test took 6.00s to answer (budget 2.5s)")
 
+    def test_a_slow_command_is_one_finding_whatever_text_it_carried(self):
+        # `type` with a long argument was a signature per text typed, and a run
+        # filed one per text: the finding names the command, the evidence the line.
+        import findings as fnd
+        first, second = repr("type " + "x" * 400), repr('type "word word" ' + "😀" * 300)
+        oracle = mo.Liveness(SlowApp(first, 6.0, None))
+        found = oracle.check()
+        self.assertEqual(found, [("latency", "the type command took 6.00s to answer (budget 2.5s)")])
+        self.assertIn(first.encode(), oracle.evidence["latency.txt"])
+        oracle.app = SlowApp(second, 7.0, None)
+        self.assertEqual(oracle.check(), [], "the same command, slow again in the same run")
+        # ... and another command is another finding, with another signature.
+        oracle.app = SlowApp(repr("format-document"), 7.0, None)
+        other = oracle.check()
+        self.assertEqual(other[0][1], "the format-document command took 7.00s to answer (budget 2.5s)")
+        self.assertNotEqual(fnd.signature(*found[0]), fnd.signature(*other[0]))
+        self.assertNotEqual(fnd.signature("latency", "the ui query took 6.00s to answer (budget 2.5s)"),
+                            fnd.signature("latency", "the buffer query took 6.00s to answer (budget 2.5s)"))
+
 
 class InvariantApp:
     def __init__(self, answers):

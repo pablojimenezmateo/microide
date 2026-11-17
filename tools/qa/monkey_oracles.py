@@ -15,6 +15,8 @@ records them through App.report so they carry the same evidence directory.
 
 from __future__ import annotations
 
+import ast
+
 import collections
 import contextlib
 import hashlib
@@ -799,9 +801,40 @@ class ResourceOracle:
         return out
 
 
+def latency_subject(what: str) -> str:
+    """What a slow answer was to, as its finding names it: a query by its verb, a
+    command line by its command -- never by the line.
+
+    `what` is the request as the driver labels it: `query 'ui'`, `hit-test`, or
+    a command line's repr. The finding quoted that whole, and its signature
+    masks a quoted text only up to 200 characters: `type` with a long argument
+    was a signature per text typed (five of them open at once, for the one
+    defect that a long line types slowly), while every other slow command, of
+    whatever kind, shared the single `<q> took <n>s`.
+
+    >>> latency_subject("query 'ui'"), latency_subject("hit-test")
+    ('the ui query', 'hit-test')
+    >>> latency_subject(repr('type "word word word"')), latency_subject(repr("format-document"))
+    ('the type command', 'the format-document command')
+    >>> latency_subject(repr("it's")), latency_subject("''")
+    ('the it command', 'an empty command')
+    """
+    query = re.fullmatch(r"query '([\w-]+)'", what)
+    if query:
+        return f"the {query.group(1)} query"
+    if what[:1] in "'\"" and what[-1:] == what[:1] and len(what) >= 2:
+        try:
+            line = ast.literal_eval(what)
+        except (ValueError, SyntaxError):
+            line = what[1:-1]
+        verb = re.match(r"[\w-]+", str(line).lstrip())
+        return f"the {verb.group(0)} command" if verb else "an empty command"
+    return what
+
+
 class Liveness:
     """Every control answer within `budget` seconds (stretched by the slow
-    factor). One finding per run per query verb.
+    factor). One finding per run per query verb or command (latency_subject).
 
     Whose seconds they were is read off the app's main thread (App.note_latency:
     /proc's schedstat around the request). A thread that was runnable and not
@@ -824,7 +857,8 @@ class Liveness:
         self.app.slowest_answer = ("", 0.0)
         self.app.slowest_sched, self.app.slowest_stall = None, ""
         self.evidence = {}
-        if seconds <= self.budget or what in self.reported:
+        subject = latency_subject(what)
+        if seconds <= self.budget or subject in self.reported:
             return []
         where = ""
         account = ""
@@ -837,13 +871,14 @@ class Liveness:
             blocked = max(0.0, seconds - ran - queued)
             where = "; its main thread was mostly " + ("computing" if ran >= blocked else
                                                        "blocked (I/O, a lock, a child)")
-        self.reported.add(what)
+        self.reported.add(subject)
+        # The request itself, whole, is evidence: which line, how long a text.
         self.evidence = {"latency.txt": "\n".join(filter(None, [
             f"{what} took {seconds:.2f}s (budget {self.budget:.1f}s)", account,
             "", "the app's stall watchdog during it (MICROIDE_TRACE_STALL_MS):" if stall else
             "the app's stall watchdog printed nothing during it (no single loop turn ran that long, "
             "or the binary predates the watchdog)", stall])).encode() + b"\n"}
-        return [("latency", f"{what} took {seconds:.2f}s to answer (budget {self.budget:.1f}s){where}")]
+        return [("latency", f"{subject} took {seconds:.2f}s to answer (budget {self.budget:.1f}s){where}")]
 
 
 class InvariantOracle:
