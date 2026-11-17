@@ -2701,8 +2701,8 @@ class App:
                     payload["args"] = args
                 try:
                     reply = self._socket_request(payload, 3.0, f"query {verb!r}")
-                except QaFailure as failure:
-                    snapshot[verb] = {"error": str(failure)}
+                except Exception as failure:  # noqa: BLE001 - evidence never costs the finding it is for
+                    snapshot[verb] = {"error": f"{type(failure).__name__}: {failure}"}
                     break
                 snapshot[verb] = reply.get("result") if reply.get("ok") else {"error": reply.get("error")}
         finally:

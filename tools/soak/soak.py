@@ -170,9 +170,11 @@ def build_all(state: dict[str, Any], log) -> None:
     subprocess.run(["git", "checkout", "-q", "--detach", head], cwd=WORKTREE, capture_output=True)
     good = state.setdefault("good", {})
     cores = max(2, (os.cpu_count() or 4) // 2)
+    tried = state.setdefault("tried", {})
     for build in BUILDS.values():
-        if build.coverage and codecov.unusable_reason() is not None:
+        if not buildable(build):
             continue  # no clang or llvm tools here: `health` says so
+        tried[build.name] = head
         env = {**os.environ, "CCACHE_SLOPPINESS": "pch_defines,time_macros"}
         started = time.monotonic()
         configure = subprocess.run(["nice", "-n", "19", "cmake", *build.configure], cwd=WORKTREE,
@@ -319,9 +321,22 @@ def prune_drivers(state: dict[str, Any]) -> None:
             shutil.rmtree(snapshot, ignore_errors=True)
 
 
+def buildable(build: Build) -> bool:
+    """Whether this machine can build it: the coverage build needs clang and the
+    llvm tools (`health` says when they are missing)."""
+    return not build.coverage or codecov.unusable_reason() is None
+
+
 def is_built(state: dict[str, Any], head: str) -> bool:
-    """Whether every configuration's binary for `head` is already in hand."""
-    return state.get("built_sha") == head and all(BUILDS[name].binary().exists() for name in state.get("good", {}))
+    """Whether every configuration was built -- or tried: a failed build is a
+    finding, not a reason to build again every interval -- at `head`, and the
+    binaries are in hand. A configuration added to BUILDS since the commit was
+    built has not been tried: a runner restarted onto a new build type (the
+    coverage build, the day it landed) builds it now, not at the next push."""
+    tried = state.get("tried", {})
+    return (state.get("built_sha") == head
+            and all(BUILDS[name].binary().exists() for name in state.get("good", {}) if name in BUILDS)
+            and all(tried.get(name) == head for name, build in BUILDS.items() if buildable(build)))
 
 
 def refresh_due(state: dict[str, Any]) -> bool:
@@ -854,13 +869,12 @@ def hunt_finding(sig: str, state: dict[str, Any], log, runs: int = HUNT_RUNS, mo
         if (bundle / "meta.json").exists():
             write_finding_md(bundle)
         log(f"hunt {sig}: CAUGHT on replay {attempt} of {runs}; kept {target}")
-        shutil.rmtree(scratch, ignore_errors=True)
+        shutil.rmtree(out, ignore_errors=True)
         return True
     ledger().append(sig, "note", text=f"{HUNT_NOTE}{runs} paced replays under "
                                       f"{'rr ' + mode if mode in recording.RR_MODES else 'no recorder'} at "
                                       f"{good['sha'][:12]} did not show it")
     log(f"hunt {sig}: {runs} replays did not show it")
-    shutil.rmtree(scratch, ignore_errors=True)
     return False
 
 
@@ -1002,7 +1016,8 @@ def reap_job(job: Job, state: dict[str, Any], log, timed_out: bool = False) -> N
         return
     elapsed = time.time() - job.started
     if BUILDS[job.type.build].coverage:
-        merge_code_profile(job, state, log)
+        with contextlib.suppress(Exception):  # a profile that cannot be merged never stops the runner
+            merge_code_profile(job, state, log)
     stats = state.setdefault("stats", {}).setdefault(job.type.name, {})
     stats["runs"] = stats.get("runs", 0) + 1
     stats["cpu_hours"] = stats.get("cpu_hours", 0.0) + elapsed / 3600
@@ -2246,7 +2261,9 @@ def cmd_run(args: argparse.Namespace) -> int:
                 and now - last_hunt >= HUNT_INTERVAL and recording.rr_unusable_reason() is None:
             # One hunt at a time, for the finding most worth a recording.
             last_hunt = now
-            candidates = hunt_candidates(ledger().entries().values())
+            candidates: list[ld.Entry] = []
+            with contextlib.suppress(Exception):  # the ledger's bookkeeping never stops the runner
+                candidates = hunt_candidates(ledger().entries().values())
             if candidates:
                 jobs.append(start_hunt(candidates[0].sig, state))
                 log(f"hunt {candidates[0].sig} ({len(candidates)} finding(s) without a recording)")
@@ -2283,7 +2300,9 @@ def cmd_run(args: argparse.Namespace) -> int:
                     refresh_code_report(state, log)
             if now - state.get("surface_at", 0) > SURFACE_RECOUNT_SECONDS and not PAUSE.exists():
                 with contextlib.suppress(Exception):
-                    refresh_surface(state, log, inventory=False)
+                    # A runner that came up on a commit it had already built has
+                    # no inventory yet: take it now, not at the next push.
+                    refresh_surface(state, log, inventory=not (SOAK / "surface.json").exists())
             last_housekeeping = now
         time.sleep(3)
     for job in jobs:

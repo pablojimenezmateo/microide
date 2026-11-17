@@ -66,6 +66,7 @@ class RootTests(unittest.TestCase):
             for test in doctest.DocTestFinder().find(function, globs=vars(q)):
                 doctest.DocTestRunner().run(test)
         self.assertEqual(doctest.testmod(qa_run).failed, 0)
+        self.assertEqual(doctest.testmod(m).failed, 0)
 
 
 class PathTests(unittest.TestCase):

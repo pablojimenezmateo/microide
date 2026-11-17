@@ -570,22 +570,26 @@ def xdotool_sequence(chord: str) -> list[str] | None:
     return strokes if strokes and all(strokes) else None
 
 
-def binding_applies(context: str, ui: dict[str, Any] | None) -> bool:
-    """Whether a binding of `context` (`global`, `editor`, `terminal`: the
-    keybindings query's) is live with the `ui` answer's focus -- pressed
-    elsewhere, its chord is another binding's or nobody's.
+def binding_applies(context: str, ui: dict[str, Any] | None, skips_terminal: bool = False) -> bool:
+    """Whether a binding of `context` (`global`, `editor`, `sidebar`,
+    `terminal`: the keybindings query's) is live with the `ui` answer's focus
+    -- pressed elsewhere, its chord is another binding's or nobody's. A global
+    binding that `skips_terminal` is the shell's in a focused terminal.
 
     >>> binding_applies("global", None), binding_applies("editor", {"focus": "panel"})
     (True, False)
-    >>> binding_applies("terminal", {"focus": "panel", "panel": {"visible": True, "content": "terminal"}})
-    True
+    >>> term = {"focus": "panel", "panel": {"visible": True, "content": "terminal"}}
+    >>> binding_applies("terminal", term), binding_applies("global", term, skips_terminal=True)
+    (True, False)
+    >>> binding_applies("sidebar", {"focus": "sidebar"}), binding_applies("sidebar", {"focus": "editor"})
+    (True, False)
     """
     ui = ui or {}
-    if context == "editor":
-        return ui.get("focus") == "editor"
+    if context in ("editor", "sidebar"):
+        return ui.get("focus") == context
     if context == "terminal":
         return terminal_focused(ui)
-    return True
+    return not (skips_terminal and terminal_focused(ui))
 
 
 def terminal_focused(ui: dict[str, Any] | None) -> bool:
@@ -731,7 +735,7 @@ class Monkey:
         self.corpus = corpus or mm.Corpus(None)
         self.max_findings = max_findings
         self.keep_going = keep_going
-        self._chords: list[tuple[str, list[str], str, str]] | None = None
+        self._chords: list[tuple[str, list[str], str, str, bool]] | None = None
         self._commands: list[str] | None = None
         self._settings: list[dict[str, Any]] | None = None
         self.counter = 0
@@ -962,10 +966,11 @@ class Monkey:
                for element in self._ui().get("elements", [])):
             self.app.key("Down")
 
-    def _chord_list(self) -> list[tuple[str, list[str], str, str]]:
+    def _chord_list(self) -> list[tuple[str, list[str], str, str, bool]]:
         """What the chord source presses: (action key, strokes, binding id,
-        binding context) -- the app's own bindings, sequences included, and the
-        navigation keys (no binding id)."""
+        binding context, whether a focused terminal takes the chord instead) --
+        the app's own bindings, sequences included, and the navigation keys (no
+        binding id)."""
         if self._chords is None:
             self._chords = []
             for binding in self.app.keybindings():
@@ -974,8 +979,9 @@ class Monkey:
                 strokes = xdotool_sequence(binding.get("chord", ""))
                 if strokes:
                     self._chords.append((f"key:{' '.join(strokes)}", strokes, str(binding.get("id", "")),
-                                         str(binding.get("context", "global"))))
-            self._chords += [(f"key:{c}", [c], "", "global") for c in (
+                                         str(binding.get("context", "global")),
+                                         bool(binding.get("skipsTerminal", False))))
+            self._chords += [(f"key:{c}", [c], "", "global", False) for c in (
                 "Escape", "Return", "Tab", "shift+Tab", "Up", "Down", "Left", "Right",
                 "Home", "End", "Prior", "Next", "BackSpace", "Delete", "shift+Up", "shift+Down",
                 "shift+Left", "shift+Right", "ctrl+Left", "ctrl+Right", "shift+End", "shift+Home",
@@ -985,8 +991,9 @@ class Monkey:
 
     def chord_action(self) -> str:
         self._step_off_a_forbidden_setting()
-        key, (_, strokes, binding, context) = self._pick([(entry[0], entry) for entry in self._chord_list()])
-        if binding and binding_applies(context, self.app.last_ui):
+        key, (_, strokes, binding, context, skips_terminal) = self._pick(
+            [(entry[0], entry) for entry in self._chord_list()])
+        if binding and binding_applies(context, self.app.last_ui, skips_terminal):
             # The binding was pressed where it is live: what the keybinding
             # inventory's coverage counts (tools/soak/surface.py).
             self.coverage.note("keys", binding)
