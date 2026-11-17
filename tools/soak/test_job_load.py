@@ -5,6 +5,7 @@ someone else's, and the runner stopped starting jobs on a machine running only
 the soak."""
 from __future__ import annotations
 
+import contextlib
 import os
 import subprocess
 import sys
@@ -16,6 +17,21 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import soak  # noqa: E402
+
+
+def a_quiet_gate(load: float):
+    """busy_reason's inputs other than the load, held still: no PAUSE file and a
+    disk with room. The gate reads the real disk under the soak's directory, so
+    these tests passed or failed with whatever that was -- a checkout with no
+    build/soak (a fresh worktree, CI) raised FileNotFoundError, and one whose
+    soak directory another test had pointed at a tmpfs with 28 GB free read
+    "only 28 GB free" where it expected the load's verdict."""
+    stack = contextlib.ExitStack()
+    stack.enter_context(mock.patch.object(soak.os, "getloadavg", return_value=(load, load, load)))
+    stack.enter_context(mock.patch.object(soak, "PAUSE", Path("/nonexistent/PAUSE")))
+    stack.enter_context(mock.patch.object(soak.shutil, "disk_usage",
+                                          return_value=mock.Mock(free=soak.MIN_FREE_BYTES * 10)))
+    return stack
 
 
 class JobLoadTests(unittest.TestCase):
@@ -73,8 +89,7 @@ class BusyReasonTests(unittest.TestCase):
         # only the load (a lane's included) keeps new jobs from starting.
         lane = subprocess.Popen(["bash", "-c", "exec -a 'bash tools/run-checks.sh qa' sleep 30"])
         try:
-            with mock.patch.object(soak.os, "getloadavg", return_value=(0.5, 0.5, 0.5)), \
-                 mock.patch.object(soak, "PAUSE", Path("/nonexistent/PAUSE")):
+            with a_quiet_gate(load=0.5):
                 self.assertIsNone(soak.busy_reason(0.0))
         finally:
             lane.kill()
@@ -82,9 +97,13 @@ class BusyReasonTests(unittest.TestCase):
 
     def test_a_busy_machine_still_does(self) -> None:
         cores = os.cpu_count() or 4
-        with mock.patch.object(soak.os, "getloadavg", return_value=(cores * 0.9, 0.0, 0.0)), \
-             mock.patch.object(soak, "PAUSE", Path("/nonexistent/PAUSE")):
+        with a_quiet_gate(load=cores * 0.9):
             self.assertIn("busy", soak.busy_reason(0.0) or "")
+
+    def test_a_full_disk_stops_new_jobs_whatever_the_load(self) -> None:
+        with a_quiet_gate(load=0.0), \
+             mock.patch.object(soak.shutil, "disk_usage", return_value=mock.Mock(free=soak.MIN_FREE_BYTES - 1)):
+            self.assertIn("GB free", soak.busy_reason(0.0) or "")
 
 
 class OthersTests(unittest.TestCase):
@@ -107,8 +126,7 @@ class OthersTests(unittest.TestCase):
 
     def test_a_busy_gate_reads_the_measured_others(self) -> None:
         cores = os.cpu_count() or 4
-        with mock.patch.object(soak.os, "getloadavg", return_value=(cores * 0.9, 0.0, 0.0)), \
-             mock.patch.object(soak, "PAUSE", Path("/nonexistent/PAUSE")):
+        with a_quiet_gate(load=cores * 0.9):
             self.assertIsNone(soak.busy_reason(0.0, others=0.5), "a lagging load average is not a busy machine")
 
 
