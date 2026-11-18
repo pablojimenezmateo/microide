@@ -610,6 +610,10 @@ class App:
             # One line per read, write, adopted baseline and undo-to-clean of a
             # buffer: the history a data finding's evidence quotes for its file.
             "MICROIDE_TRACE_BUFFER_IO": "1",
+            # The first caret a viewport leaves outside its document, with the
+            # stack of the code that left it (TextViewport::TraceCaretBounds): the
+            # invariants query only finds it steps later (soak 872c8984d39b).
+            "MICROIDE_TRACE_CARET_BOUNDS": "1",
             # A main-loop turn that runs this long prints the main thread's stack
             # (platform/CrashDiagnostics.h): where the loop was when an answer
             # was slow, which the latency oracle and a stall's evidence quote.

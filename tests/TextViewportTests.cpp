@@ -6825,7 +6825,26 @@ void TestEveryCutPathLeavesEveryCaretInside() {
   }
 }
 
+
+// The caret-bounds trace's check (MICROIDE_TRACE_CARET_BOUNDS): a position outside
+// the document is described, an inside one is not.
+void TestCaretBoundsFaultNamesTheCaretOutsideTheDocument() {
+  TextViewport behind;
+  behind.LoadContent("one\ntwo three\nfour\n", "/tmp/bounds.txt");
+  behind.MoveCursorTo(1, 9);
+  Expect(behind.CaretBoundsFault().empty(), "a caret inside its line is no fault");
+  TextViewport front = behind;  // shares the document
+  front.MoveCursorTo(1, 0);
+  front.MoveCursorTo(1, 9, /*extend_selection=*/true);
+  front.Backspace();  // line 2 is now empty under the view behind
+  const std::string fault = behind.CaretBoundsFault();
+  Expect(fault == "caret at 2:10 (line length 0, 4 lines)", "the stale caret is described: '" + fault + "'");
+  behind.ReconcileCaretsWithDocument();
+  Expect(behind.CaretBoundsFault().empty(), "and once reconciled it is inside again");
+}
+
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
+AddTest(tests, "TextViewport/CaretBoundsFaultNamesTheCaretOutsideTheDocument", TestCaretBoundsFaultNamesTheCaretOutsideTheDocument);
 AddTest(tests, "TextViewport/EveryCutPathLeavesEveryCaretInside", TestEveryCutPathLeavesEveryCaretInside);
 AddTest(tests, "TextViewport/SelectedTextOfAViewportAnotherViewportEditedStaysInTheDocument",
         TestSelectedTextOfAViewportAnotherViewportEditedStaysInTheDocument);

@@ -2,10 +2,15 @@
 #include "editor/TextViewportInternal.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <limits>
+#include <string>
+
+#include <execinfo.h>
 
 #include "editor/WordBoundary.h"
 #include "util/PerformanceCounters.h"
+#include "util/Log.h"
 #include "util/PerformanceTrace.h"
 
 namespace microide::editor {
@@ -762,8 +767,62 @@ void TextViewport::PlacePrimaryCaret(std::size_t line,
   column_selection_ = ColumnSelectionState{};
 }
 
+std::string TextViewport::CaretBoundsFault() const {
+  if (document_ == nullptr) {
+    return {};
+  }
+  const auto outside = [this](const TextPosition& p) {
+    return p.line >= document_->lines.size() || p.column > document_->lines.LineLength(p.line);
+  };
+  const auto describe = [this](const char* what, const TextPosition& p) {
+    const std::string length = p.line < document_->lines.size() ? std::to_string(document_->lines.LineLength(p.line))
+                                                                : std::string("no such line");
+    return std::string(what) + " at " + std::to_string(p.line + 1) + ":" + std::to_string(p.column + 1) +
+           " (line length " + length + ", " + std::to_string(document_->lines.size()) + " lines)";
+  };
+  if (const TextPosition primary{cursor_line_, cursor_column_}; outside(primary)) {
+    return describe("caret", primary);
+  }
+  if (selection_anchor_.has_value() && outside(*selection_anchor_)) {
+    return describe("selection anchor", *selection_anchor_);
+  }
+  for (const SecondaryCaret& caret : secondary_carets_) {
+    if (outside(caret.position)) {
+      return describe("secondary caret", caret.position);
+    }
+    if (caret.selection_anchor.has_value() && outside(*caret.selection_anchor)) {
+      return describe("secondary anchor", *caret.selection_anchor);
+    }
+  }
+  return {};
+}
+
+void TextViewport::TraceCaretBounds(const char* where) const {
+  static const bool enabled = util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_CARET_BOUNDS");
+  if (!enabled || caret_bounds_reported_ || document_ == nullptr || CaretsLagDocument()) {
+    return;
+  }
+  const std::string fault = CaretBoundsFault();
+  if (fault.empty()) {
+    return;
+  }
+  caret_bounds_reported_ = true;
+  std::string report = "microide caret-bounds: " + std::string(where) + ": " + document_->path.generic_string() +
+                       " has its " + fault + "; the code that left it:\n";
+  void* frames[32];
+  const int count = ::backtrace(frames, 32);
+  if (char** symbols = ::backtrace_symbols(frames, count); symbols != nullptr) {
+    for (int i = 1; i < count; ++i) {  // frame 0 is this function
+      report += "  #" + std::to_string(i) + " " + symbols[i] + "\n";
+    }
+    std::free(symbols);  // NOLINT(cppcoreguidelines-no-malloc): backtrace_symbols' contract
+  }
+  util::Log(report);
+}
+
 void TextViewport::EnsureCursorVisible() {
   util::PerformanceTrace::Scope perf_scope("TextViewport::EnsureCursorVisible");
+  TraceCaretBounds("after a move or an edit");
   const std::size_t cursor_visual_row = CursorVisualRow();
   if (cursor_visual_row < scroll_line_) {
     scroll_line_ = cursor_visual_row;

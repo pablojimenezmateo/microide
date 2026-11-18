@@ -253,6 +253,17 @@ class TextViewport {
   // end drew no current-line highlight until an unrelated command clamped it,
   // in a frame that did not repaint the pane (QA monkey, commands profile, seed 8).
   void ReconcileCaretsWithDocument() { SyncCaretsIfDocumentChangedElsewhere(); }
+  // MICROIDE_TRACE_CARET_BOUNDS: the first time this viewport holds a caret or an
+  // anchor outside its document (and does not lag a foreign edit, which the next
+  // use reconciles), log where and a backtrace of the code that left it there.
+  // EnsureCursorVisible runs it after every move and edit; frame preparation
+  // after each frame as a backstop. The invariants query only samples every few
+  // monkey steps, long after the culprit (soak 872c8984d39b).
+  void TraceCaretBounds(const char* where) const;
+  // The first caret or anchor outside the document, described ("secondary caret
+  // at 7:801 (line length 728, 9 lines)"); empty when every one is inside. Says
+  // nothing of lag: a lagging view's stale positions are reported too.
+  std::string CaretBoundsFault() const;
   // Whether another viewport over this DocumentState edited it since this one
   // last reconciled its carets (SyncCaretsIfDocumentChangedElsewhere).
   bool CaretsLagDocument() const {
@@ -1638,6 +1649,8 @@ class TextViewport {
   mutable std::size_t highlight_state_advances_ = 0;
   mutable std::size_t highlight_checkpoint_advances_ = 0;
   std::optional<TextPosition> selection_anchor_;
+  // TraceCaretBounds has reported this viewport (once is enough per viewport).
+  mutable bool caret_bounds_reported_ = false;
   // The selections Expand Selection grew from, innermost last; valid while the
   // selection is still the one the last expansion made.
   std::vector<SelectionRange> expand_selection_history_;

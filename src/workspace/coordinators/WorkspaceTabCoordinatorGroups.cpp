@@ -260,6 +260,7 @@ void TabCoordinator::ReconcileActiveCaretsWithDocuments() {
     TabEntry& tab = group.active_tab();
     if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
       tab.editor_state->viewport.ReconcileCaretsWithDocument();
+      tab.editor_state->viewport.TraceCaretBounds("at frame preparation");
     }
     // The editable panes too: the compare pane over a file an editor tab also has
     // open shares that tab's document, and the merge result can share one the

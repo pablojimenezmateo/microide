@@ -909,6 +909,25 @@ class Liveness:
         return [("latency", f"{subject} took {seconds:.2f}s to answer (budget {self.budget:.1f}s){where}")]
 
 
+def caret_bounds_reports(log: str) -> str:
+    """Each `microide caret-bounds:` report in `log` with its backtrace lines.
+
+    >>> caret_bounds_reports("x\\nmicroide caret-bounds: here: f has its caret at 2:3\\n  #1 a\\n  #2 b\\ny\\n")
+    'microide caret-bounds: here: f has its caret at 2:3\\n  #1 a\\n  #2 b\\n'
+    """
+    out: list[str] = []
+    taking = False
+    for line in log.splitlines():
+        if "microide caret-bounds:" in line:
+            taking = True
+            out.append(line)
+        elif taking and line.startswith("  #"):
+            out.append(line)
+        else:
+            taking = False
+    return "".join(line + "\n" for line in out)
+
+
 class InvariantOracle:
     """The workspace's structural rules, asked of the app itself (the
     `invariants` query, ControlInvariantsQuery.h): groups against the split
@@ -953,6 +972,12 @@ class InvariantOracle:
                                      ("editor.json", "editor", None)):
                 with contextlib.suppress(Exception):
                     self.evidence[name] = json.dumps(self.app.query(verb, args), indent=1).encode()
+            # The app's own report of the first caret it left outside a document,
+            # with the stack that left it (MICROIDE_TRACE_CARET_BOUNDS) -- likely
+            # steps before this check, and out of the log tail's reach.
+            with contextlib.suppress(Exception):
+                if reports := caret_bounds_reports(self.app.log_since(0, 8 * 1024 * 1024)):
+                    self.evidence["caret-bounds.txt"] = reports.encode()
         return found
 
 
