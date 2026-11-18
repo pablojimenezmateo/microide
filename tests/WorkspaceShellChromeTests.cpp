@@ -6319,6 +6319,45 @@ void TestWorkspaceShellSaveAsRenamesANamedTab() {
   }
 }
 
+// `save <path>` onto a path another tab already holds as a buffer that has no file
+// yet -- a new file, or a dangling symlink -- passed the "already exists" check
+// and bound a second, independent buffer to that file. The two saved over each
+// other, and a kill -9 restored whichever the session listed last: the dangling
+// link's 14 typed bytes came back as the other buffer's 4 (soak 2c342fa52edd).
+void TestWorkspaceShellSaveAsRefusesAPathAnotherTabHolds() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "project";
+  WriteFile(root / "README.md", "readme\n");
+  std::filesystem::create_symlink("missing-target", root / "dangling");
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  for (const std::string target : {"dangling", "fresh.txt"}) {
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "open " + target),
+           "open " + target + " gives it a buffer");
+    WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("typed\n");
+    WorkspaceShellTestAccess::OpenFile(shell, root / "README.md");
+    Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "save " + target),
+           "save " + target + " is refused while another tab holds that file");
+    Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == root / "README.md",
+           "the refused save leaves the buffer named what it was: " +
+               WorkspaceShellTestAccess::ActiveEditor(shell).path().string());
+    const auto& groups = WorkspaceShellTestAccess::CurrentProjectState(shell).editor_groups;
+    std::size_t buffers = 0;
+    for (const auto& group : groups) {
+      for (const auto& tab : group.open_tabs) {
+        if (tab.editor_state.has_value() && tab.editor_state->viewport.path() == root / target) {
+          ++buffers;
+          Expect(tab.editor_state->viewport.dirty(), "the other tab keeps its unsaved text");
+        }
+      }
+    }
+    Expect(buffers == 1, target + " is one buffer, not " + std::to_string(buffers));
+    std::error_code error;
+    Expect(!std::filesystem::exists(root / target, error), "nothing was written to " + target);
+  }
+}
+
 // `sidebar-show` under a maximized panel, with the sidebar already flagged visible,
 // moved the keyboard to the sidebar and requested no frame: the rule that restores
 // a maximized panel when another surface takes focus runs in frame prep, so the
@@ -6977,6 +7016,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/SettingsAndHelpDimTheEditorBehindThem",
           TestWorkspaceShellSettingsAndHelpDimTheEditorBehindThem);
   AddTest(tests, "WorkspaceShell/SaveAsRenamesANamedTab", TestWorkspaceShellSaveAsRenamesANamedTab);
+  AddTest(tests, "WorkspaceShell/SaveAsRefusesAPathAnotherTabHolds",
+          TestWorkspaceShellSaveAsRefusesAPathAnotherTabHolds);
   AddTest(tests, "WorkspaceShell/SaveUnderAMaximizedPanelClearsTheTitleMark",
           TestWorkspaceShellSaveUnderAMaximizedPanelClearsTheTitleMark);
   AddTest(tests, "WorkspaceShell/NewTabUnderAMaximizedPanelRetitlesTheWindow",

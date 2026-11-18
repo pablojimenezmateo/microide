@@ -946,6 +946,31 @@ inline void RenameTabsOnDocument(std::vector<EditorGroup>& groups,
   return nullptr;
 }
 
+// Whether a tab not showing `document` holds `normalized_path` as its buffer: an
+// editor tab, loaded or still pending, or a compare tab's editable side. A file is
+// one buffer, so Save As onto such a path is refused -- the file may not exist yet
+// (a new file, a dangling symlink), so the disk check alone does not catch it, and
+// a second buffer bound to it saves over the first and races it in the session.
+[[nodiscard]] inline bool AnotherBufferHoldsPath(const std::vector<EditorGroup>& groups,
+                                                 const std::filesystem::path& normalized_path,
+                                                 const editor::TextViewport& document) {
+  for (const EditorGroup& group : groups) {
+    for (const TabEntry& tab : group.open_tabs) {
+      if (tab.kind == TabEntry::Kind::Editor && util::SameAsNormalizedPath(tab.path, normalized_path) &&
+          !(tab.editor_state.has_value() && tab.editor_state->viewport.SharesDocumentWith(document))) {
+        return true;
+      }
+      if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+          tab.compare->right_editable &&
+          util::SameAsNormalizedPath(tab.compare->right_viewport.path(), normalized_path) &&
+          !tab.compare->right_viewport.SharesDocumentWith(document)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 // The live viewport of the hydrated EDITOR tab showing `normalized_path` in any
 // pane, or nullptr. Narrower than LiveBufferViewOfPath, which also answers with a
 // compare tab's editable side: the workspace-edit, rename and LSP-document paths
