@@ -2652,16 +2652,26 @@ class App:
                 and not (elements.get("button:find/regex") or {}).get("active")
                 and not (elements.get("button:find/whole-word") or {}).get("active")
                 and isinstance(overlay.get("count"), int) and overlay["count"] < 1000):
-            haystack, needle = (text, query) if (elements.get("button:find/match-case") or {}).get("active") \
-                else (text.lower(), query.lower())
+            haystack: str | None = text
             if scope := overlay.get("scope"):
-                # Find in Selection counts inside the scope (1-based line, byte column).
-                lines = haystack.encode().split(b"\n")
-                def offset(at: list[int]) -> int:
-                    line, column = at[0] - 1, at[1] - 1
-                    return sum(len(lines[i]) + 1 for i in range(min(line, len(lines)))) + column
-                haystack = haystack.encode()[offset(scope["start"]):offset(scope["end"])].decode("utf-8", "replace")
-            want = haystack.count(needle)
+                # Find in Selection counts inside the scope (1-based line, byte column
+                # of the buffer's bytes). A reply decoded lossily (invalid UTF-8 read
+                # as U+FFFD, three bytes for each bad one) no longer has the buffer's
+                # byte geometry, so the scope cannot be cut from it: a binary.bin
+                # selection holding the query once read as holding it none (soak
+                # ccc6cfdc08e4). Cut before case-folding, which can change lengths.
+                if "�" in text:
+                    haystack = None
+                else:
+                    lines = text.encode().split(b"\n")
+                    def offset(at: list[int]) -> int:
+                        line, column = at[0] - 1, at[1] - 1
+                        return sum(len(lines[i]) + 1 for i in range(min(line, len(lines)))) + column
+                    haystack = text.encode()[offset(scope["start"]):offset(scope["end"])].decode("utf-8", "replace")
+            needle = query
+            if haystack is not None and not (elements.get("button:find/match-case") or {}).get("active"):
+                haystack, needle = haystack.lower(), query.lower()
+            want = haystack.count(needle) if haystack is not None else overlay["count"]
             if overlay["count"] != want:
                 out.append(("state", f"the find widget counts {overlay['count']} of {query!r}; the buffer holds {want}"))
         focused = next((pane.get("group") for pane in ui.get("editors", []) if pane.get("focused")), None)

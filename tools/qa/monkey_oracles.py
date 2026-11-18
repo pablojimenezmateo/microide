@@ -443,6 +443,14 @@ class DataOracle:
         after = [by_first.get(_doc_key(d), d) for d in after] + \
                 [d for d in restored if _doc_key(d) not in {_doc_key(a) for a in after}]
         self.last_kill = {"before": before, "after": after}
+        # The files a dirty buffer was saved to before the kill, by the file they
+        # resolve to: back clean, and its file holds what it came back with. An
+        # autosave (`after_delay`, or one the trigger's edit set off) may write every
+        # dirty buffer between the snapshot and the kill -- the buffer was reported
+        # "marked saved; its file does not hold it" without the file being read,
+        # and a link to a file it wrote "changed on disk, and nothing saved it"
+        # (soak 1bee2822b458, fd10a1441e1d).
+        saved_before_kill: set[str] = set()
         if waited:
             by_key = {_doc_key(d): d for d in after}
             for doc in dirty:
@@ -465,7 +473,9 @@ class DataOracle:
                     # A buffer the trigger changed, back clean: a save -- the
                     # trigger's, or an autosave the edit set off -- wrote it
                     # before the kill, and then the file holds it.
-                    if _sha256_file(Path(str(doc["path"]))) != back.get("sha256"):
+                    if _sha256_file(Path(str(doc["path"]))) == back.get("sha256"):
+                        saved_before_kill.add(os.path.realpath(str(doc["path"])))
+                    else:
                         out.append(("data", f"the unsaved buffer {Path(str(key)).name} came back after a kill -9 "
                                             f"marked saved; its file does not hold it{killed_at}"))
                 elif doc.get("path") and doc.get("path") == saved_path:
@@ -479,6 +489,9 @@ class DataOracle:
                                         f"different content ({doc.get('bytes')} -> {back.get('bytes')} bytes)"
                                         f"{killed_at}"))
                 elif not back.get("dirty"):
+                    if doc.get("path") and _sha256_file(Path(str(doc["path"]))) == back.get("sha256"):
+                        saved_before_kill.add(os.path.realpath(str(doc["path"])))
+                        continue
                     out.append(("data", f"the unsaved buffer {Path(str(key)).name} came back after a kill -9 "
                                         f"marked saved; its file does not hold it{killed_at}"))
         # The files a restored dirty buffer was saved to (the lap's autosave), by
@@ -493,7 +506,7 @@ class DataOracle:
                        if doc.get("path") and saving and doc.get("project") in saving
                        and _doc_key(doc) not in by_first
                        and (back := back_by_key.get(_doc_key(doc))) is not None
-                       and not back.get("dirty")}
+                       and not back.get("dirty")} | saved_before_kill
         for path, sha in disk_before.items():
             if os.path.realpath(path) in saved_files:
                 continue

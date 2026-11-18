@@ -251,6 +251,58 @@ class Kill9OracleTests(unittest.TestCase):
             self.assertEqual(clean.read_text(), "edited and saved\n", "the lap saved through the link")
             self.assertEqual(found, [], found)
 
+    def _autosaved_before_the_kill(self, holds: bool) -> list:
+        """`editor.autosave = after_delay` wrote the dirty buffer between the
+        oracle's snapshot and the kill; a clean tab shows the same file through a
+        link. The relaunch brings the buffer back clean; `holds` says whether its
+        file holds what it came back with."""
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "a"
+            root.mkdir()
+            target = root / "names.txt"
+            target.write_text("before\n")
+            link = root / "link0"
+            link.symlink_to("names.txt")
+            edited = b"edited\n"
+
+            class _AutosavingApp(_RelaunchingApp):
+                ROOTS = (str(root), "/p/b")
+
+                def __init__(self) -> None:
+                    super().__init__()
+                    self.project = self.ROOTS[0]
+                    self.active = 0
+                    self.docs = {
+                        0: [{"path": str(target), "dirty": True, "project": self.ROOTS[0],
+                             "sha256": hashlib.sha256(edited).hexdigest()},
+                            {"path": str(link), "dirty": False, "project": self.ROOTS[0],
+                             "sha256": monkey_oracles._sha256_file(link)}],
+                        1: [],
+                    }
+
+                def crash_and_relaunch(self, *args, **kwargs) -> None:
+                    target.write_bytes(edited if holds else b"a different save\n")
+                    self.docs[0][0] = {**self.docs[0][0], "dirty": False}
+                    self.docs[0][1] = {**self.docs[0][1], "sha256": monkey_oracles._sha256_file(link)}
+                    super().crash_and_relaunch(*args, **kwargs)
+
+            oracle = monkey_oracles.DataOracle(_AutosavingApp())
+            with mock.patch.object(monkey_oracles, "CRASH_SAFETY_QUIET_S", 0.0), \
+                    mock.patch.object(monkey_oracles.time, "sleep", lambda _s: None):
+                return oracle.kill9_and_check(random.Random(1), waited=True)
+
+    def test_an_autosave_before_the_kill_is_not_a_lost_save_or_a_changed_link(self) -> None:
+        # Soak 1bee2822b458 / fd10a1441e1d: the buffer was reported "marked saved;
+        # its file does not hold it" without the file being read, and the link to
+        # the file the autosave wrote as "changed on disk, and nothing saved it".
+        self.assertEqual(self._autosaved_before_the_kill(holds=True), [])
+
+    def test_a_buffer_back_clean_whose_file_does_not_hold_it_is_still_reported(self) -> None:
+        found = [f[1] for f in self._autosaved_before_the_kill(holds=False)]
+        self.assertIn("the unsaved buffer names.txt came back after a kill -9 marked saved; "
+                      "its file does not hold it", found)
+
     def test_a_clean_file_changed_by_no_save_is_still_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "a"
