@@ -252,7 +252,8 @@ void RemoteServer::InstallHandlers(Connection& connection) {
                        id, remote::ToJson(remote::HelloReply{
                                .release = config_.release,
                                .daemon_epoch = epoch_,
-                               .capabilities = {"proc", "term", "tree", "watch", std::string(remote::method::kUploadCapability)},
+                               .capabilities = {"proc", "term", "tree", "watch", std::string(remote::method::kUploadCapability),
+                                                std::string(remote::method::kStateCapability)},
                                .session_survival = config_.session_survival,
                                .settings = {.backfill_inflight_bytes = backfill,
                                             .max_manifest_files = remote::EffectiveMaxManifestFiles(

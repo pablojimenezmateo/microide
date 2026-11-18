@@ -47,6 +47,9 @@ class PersistenceCoordinator {
     std::function<bool()> debugger_enabled;
     // The terminal panel as a session saves it (TerminalPanelService::CaptureLayout).
     std::function<TerminalLayoutRecord()> capture_terminal_layout;
+    // The active project's session, as it is about to be written: a remote
+    // project leaves what it has open on its host (RemoteHostService::SessionSaved).
+    std::function<void(const PersistedProjectSessionState&)> session_saved;
     // The Host view's collapsed groups (RemoteHostService), kept with the
     // workspace session.
     std::function<std::vector<std::string>()> host_view_collapsed;

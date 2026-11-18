@@ -73,6 +73,7 @@ void RegisterMergeModelTests(std::vector<TestCase>& tests);
 void RegisterSurfaceTokenWindowTests(std::vector<TestCase>& tests);
 void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests);
 void RegisterReviewTabPlanTests(std::vector<TestCase>& tests);
+void RegisterRoamingSessionTests(std::vector<TestCase>& tests);
 void RegisterWorktreePickTests(std::vector<TestCase>& tests);
 void RegisterReviewSessionTests(std::vector<TestCase>& tests);
 void RegisterPluginHostTests(std::vector<TestCase>& tests);
@@ -331,6 +332,7 @@ void RegisterShellTests(std::vector<TestCase>& tests) {
   RegisterMergeModelTests(tests);
   RegisterSurfaceTokenWindowTests(tests);
   RegisterReviewTabPlanTests(tests);
+  RegisterRoamingSessionTests(tests);
   RegisterWorktreePickTests(tests);
   RegisterReviewSessionTests(tests);
   RegisterMergeConflictResolutionTests(tests);

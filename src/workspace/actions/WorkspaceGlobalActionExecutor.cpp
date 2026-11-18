@@ -222,6 +222,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
     case ActionId::RemoteShowHostChanges:
     case ActionId::RemoteClearHostChanges:
     case ActionId::RemoteFileHistory:
+    case ActionId::RemoteOpenOfferedSession:
     case ActionId::RemoteApplyHeldDeletes:
     case ActionId::RemoteForwardPort:
     case ActionId::RemoteUnforwardPort: {
@@ -468,6 +469,16 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
                                                           : std::filesystem::path(args[0]);
           if (!hosts->ApplyHeldDeletes(root)) {
             return reject("No held deletes in " + root.string());
+          }
+          return DispatchResult::Handled;
+        }
+        case ActionId::RemoteOpenOfferedSession: {
+          std::filesystem::path root;
+          if (std::string refusal = bring_remote_project_forward(root); !refusal.empty()) {
+            return reject(std::move(refusal));
+          }
+          if (!hosts->OpenOfferedSession(root)) {
+            return reject("No other machine has left files open for this project");
           }
           return DispatchResult::Handled;
         }

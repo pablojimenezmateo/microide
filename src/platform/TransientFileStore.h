@@ -17,6 +17,11 @@ namespace microide::platform {
 // directory of theirs: a link planted there does not redirect the write. Entries
 // older than a day are removed on the way in, so the store needs no sweeper. The
 // file's path, or nullopt and *error.
+// `directory`, created if need be, as a place only this user writes: a real
+// directory of theirs (a link planted there is refused), mode 0700. False and
+// *error otherwise.
+bool EnsurePrivateDirectory(const std::filesystem::path& directory, std::string* error);
+
 std::optional<std::filesystem::path> StoreTransientFile(const std::filesystem::path& root,
                                                         const std::string& name, std::string_view content,
                                                         std::string* error);

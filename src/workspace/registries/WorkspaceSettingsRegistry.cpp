@@ -511,6 +511,19 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "Remote",
       },
       SettingSpec{
+          .id = "remote.roam_session",
+          .label = "Offer the Files Open on Another Machine",
+          .description = "Leave the list of a remote project's open files (and their carets) on "
+                         "its host, and on connecting offer to open the ones another machine had "
+                         "open. Nothing here is closed or replaced; unsaved text stays where it is.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Remote",
+      },
+      SettingSpec{
           .id = "remote.object_store_budget",
           .label = "Mirror Object Store (MiB)",
           .description = "How much of a remote project's mirror may hold earlier file versions, "

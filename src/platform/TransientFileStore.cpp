@@ -17,18 +17,26 @@
 
 namespace microide::platform {
 
+bool EnsurePrivateDirectory(const std::filesystem::path& directory, std::string* error) {
+  std::error_code ec;
+  std::filesystem::create_directories(directory, ec);
+  struct stat info {};
+  // Ours and a real directory: a link planted there must not redirect a write.
+  if (::lstat(directory.c_str(), &info) != 0 || !S_ISDIR(info.st_mode) || info.st_uid != ::geteuid()) {
+    *error = "the directory " + directory.string() + " is not usable";
+    return false;
+  }
+  ::chmod(directory.c_str(), 0700);
+  return true;
+}
+
 std::optional<std::filesystem::path> StoreTransientFile(const std::filesystem::path& root,
                                                         const std::string& name, std::string_view content,
                                                         std::string* error) {
-  std::error_code ec;
-  std::filesystem::create_directories(root, ec);
-  struct stat info {};
-  // Ours and a real directory: a link planted there must not redirect the write.
-  if (::lstat(root.c_str(), &info) != 0 || !S_ISDIR(info.st_mode) || info.st_uid != ::geteuid()) {
-    *error = "the directory " + root.string() + " is not usable";
+  if (!EnsurePrivateDirectory(root, error)) {
     return std::nullopt;
   }
-  ::chmod(root.c_str(), 0700);
+  std::error_code ec;
   const auto now = std::filesystem::file_time_type::clock::now();
   for (std::filesystem::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
     std::error_code age_error;

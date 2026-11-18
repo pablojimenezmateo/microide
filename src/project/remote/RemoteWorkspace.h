@@ -140,6 +140,15 @@ class RemoteWorkspace {
   // so here, before anything is sent.
   using UploadDone = std::function<void(std::optional<std::string> host_path, std::string error)>;
   void UploadFile(std::string name, std::string_view content, UploadDone done);
+  // state/put and state/get: a small text left with the workspace on the host
+  // for the next client (a session moving between machines). `done` runs on the
+  // peer's thread. Put: "" on success, else why not. Get: the text, nullopt and
+  // "" when the host holds none, nullopt and why when it could not be asked (not
+  // connected, or a server too old to keep one).
+  using StatePutDone = std::function<void(std::string error)>;
+  using StateGetDone = std::function<void(std::optional<std::string> text, std::string error)>;
+  void PutState(std::string key, std::string text, StatePutDone done);
+  void GetState(std::string key, StateGetDone done);
   WriteResult WriteFileSync(std::string path, std::string_view content, const Precondition& expect,
                             std::optional<std::uint32_t> mode = std::nullopt,
                             std::chrono::milliseconds timeout = std::chrono::seconds(120));

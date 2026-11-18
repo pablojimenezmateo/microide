@@ -92,6 +92,18 @@ inline constexpr std::string_view kFsOp = "fs/op";
 // list the "upload" capability; uploads older than a day are removed.
 inline constexpr std::string_view kFileUpload = "file/upload";
 inline constexpr std::string_view kUploadCapability = "upload";
+// state/put {key, text} -> {} and state/get {key} -> {text} | {missing: true}: a
+// small text a client leaves with the workspace for whichever client connects
+// next -- the session a user moves between machines with. Per workspace root,
+// kept beside the server's socket; `key` is [a-z0-9-]{1,32}, `text` at most
+// kMaxWorkspaceStateBytes, a handful of keys. The server does not read it.
+// Servers that have it list the "state" capability.
+inline constexpr std::string_view kStatePut = "state/put";
+inline constexpr std::string_view kStateGet = "state/get";
+inline constexpr std::string_view kStateCapability = "state";
+inline constexpr std::size_t kMaxWorkspaceStateBytes = 512u * 1024;
+// Whether `key` may name a workspace state entry.
+bool IsWorkspaceStateKey(std::string_view key);
 // watch/subscribe {} -> {native: bool}. From the next tree/manifest on, every change
 // to the content set arrives as WatchDelta frames against what this connection was
 // last sent. Subscribe first, then fetch the manifest: changes in between are in

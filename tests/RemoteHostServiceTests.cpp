@@ -1743,6 +1743,68 @@ void TestOpenFolderOnHostEditsTheHostTree() {
   Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-file-history ffffffffffff"),
          "a version that is not there is refused");
 
+  // Moving between machines. As "laptop-a" this window leaves what it has open on
+  // the host when its session is saved; as "laptop-b", reconnecting with the tab
+  // closed, it is offered that file and opens it at the caret. A machine is not
+  // offered its own.
+  {
+    workspace::RemoteHostService& hosts = WorkspaceShellTestAccess::RemoteHosts(shell);
+    hosts.SetMachineNameForTesting("laptop-a");
+    WorkspaceShellTestAccess::OpenFile(shell, mirror / "agent.c");
+    WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 4);
+    WorkspaceShellTestAccess::SaveSessionState(shell);
+    const auto offered = [&] {
+      for (const auto& note : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+        if (note.key == "remote.session." + mirror.string()) {
+          return std::optional<std::string>(note.message);
+        }
+      }
+      return std::optional<std::string>();
+    };
+    using LinkState = project::remote::RemoteHostSession::State;
+    const auto ready = [&] {
+      const auto snapshot = hosts.SnapshotOf(mirror);
+      return snapshot.has_value() && snapshot->state == LinkState::Ready;
+    };
+    // A new connection, as a machine waking up makes one: the host is asked what
+    // was left once per connection.
+    const auto reconnect = [&] {
+      Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-disconnect " + target), "disconnect");
+      Expect(WaitUntil([&] { Pump(shell); return !ready(); }, std::chrono::seconds(20), std::chrono::milliseconds(5)),
+             "the link is down");
+      Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-reconnect " + target), "reconnect");
+      Expect(WaitUntil([&] { Pump(shell); return ready(); }, std::chrono::seconds(30), std::chrono::milliseconds(10)),
+             "the project is connected again");
+      // The host's answer about what was left comes a round trip after Ready.
+      (void)WaitUntil([&] { Pump(shell); return offered().has_value(); }, std::chrono::seconds(1),
+                      std::chrono::milliseconds(10));
+    };
+    reconnect();
+    Expect(!offered().has_value(), "a machine is not offered what it left itself");
+
+    hosts.SetMachineNameForTesting("laptop-b");
+    Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::CloseAllTabs, {}),
+           "laptop-b has nothing open");
+    reconnect();
+    const std::optional<std::string> offer = offered();
+    Expect(offer.has_value() && offer->find(" open on laptop-a") != std::string::npos,
+           "the other machine's files are offered: " + offer.value_or("(no offer)"));
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open-session " + mirror.string()),
+           "Open Them is accepted");
+    Expect(WaitUntil(
+               [&] {
+                 Pump(shell);
+                 const auto* viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+                 return viewport != nullptr && viewport->path() == mirror / "agent.c" &&
+                        viewport->cursor_column() == 4;
+               },
+               std::chrono::seconds(20), std::chrono::milliseconds(10)),
+           "the file that was in front opens at its caret");
+    Expect(!offered().has_value() &&
+               !WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open-session " + mirror.string()),
+           "the offer is taken once");
+  }
+
   // With another project in front, the row's Show brings ITS project forward
   // rather than opening the front project's view.
   {

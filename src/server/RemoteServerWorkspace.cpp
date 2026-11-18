@@ -28,6 +28,7 @@
 #include "util/ContentHash.h"
 #include "util/DurableFile.h"
 #include "util/HeapUsage.h"
+#include "util/TextFileIO.h"
 #include "util/Zstd.h"
 #include "util/Log.h"
 
@@ -570,6 +571,16 @@ std::filesystem::path RemoteServer::UploadsDirectory() const {
   return std::filesystem::temp_directory_path() / ("microide-uploads-" + std::to_string(::geteuid()));
 }
 
+std::filesystem::path RemoteServer::WorkspaceStateDirectory(const std::filesystem::path& root) const {
+  // Beside the socket, whose directory is the user's own; a server with no socket
+  // (serve-stdio, tests) uses a directory of its own under $TMPDIR, as uploads do.
+  const std::filesystem::path home =
+      !config_.socket_path.empty()
+          ? config_.socket_path.parent_path() / "workspace-state"
+          : std::filesystem::temp_directory_path() / ("microide-state-" + std::to_string(::geteuid()));
+  return home / util::HashContent(root.lexically_normal().string()).Hex().substr(0, 32);
+}
+
 void RemoteServer::InstallFileHandlers(Connection& connection) {
   remote::RemotePeer& peer = connection.peer;
   peer.OnRequest(remote::method::kObjectFetch, [this, &connection](std::uint64_t id,
@@ -802,6 +813,61 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
       });
     });
   });
+
+  // A text one client leaves for the next (remote::method::kStatePut): written
+  // and read on the tree's own queue, like every other file of the workspace.
+  const auto on_state = [this, &connection](bool put) {
+    return [this, &connection, put](std::uint64_t id, const util::JsonValue& params) {
+      const std::shared_ptr<ServedTree> served = TreeOf(connection);
+      const std::string key = params["key"].AsString();
+      const util::JsonValue& text = params["text"];
+      if (!served || !remote::method::IsWorkspaceStateKey(key) ||
+          (put && (!text.IsString() || text.AsString().size() > remote::method::kMaxWorkspaceStateBytes))) {
+        ReplyInvalidParams(connection.peer, id, served != nullptr,
+                           "a workspace state entry needs a key of [a-z0-9-] and a text of at most 512 KiB");
+        return;
+      }
+      ServedTree* tree = served.get();
+      const std::uint64_t connection_id = connection.id;
+      const std::filesystem::path directory = WorkspaceStateDirectory(tree->tree.root());
+      tree->io_queue.Post([this, connection_id, id, put, path = directory / key,
+                           text = put ? text.AsString() : std::string()]() {
+        util::JsonObject reply;
+        std::string error;
+        // The store and the workspace's directory in it are this user's alone, or
+        // nothing is written there and nothing found there is believed.
+        const bool usable = platform::EnsurePrivateDirectory(path.parent_path().parent_path(), &error) &&
+                            platform::EnsurePrivateDirectory(path.parent_path(), &error);
+        if (put) {
+          std::error_code ec;
+          if (!usable) {
+            // `error` says which directory.
+          } else if (!util::WriteTextFileAtomically(path, text, &ec)) {
+            error = "cannot write " + path.string() + ": " + ec.message();
+          } else {
+            ::chmod(path.c_str(), 0600);
+          }
+        } else if (!usable) {
+          error.clear();
+          reply["missing"] = util::JsonValue(true);
+        } else if (std::optional<std::string> held = util::ReadTextFile(path);
+                   held.has_value() && held->size() <= remote::method::kMaxWorkspaceStateBytes) {
+          reply["text"] = util::JsonValue(std::move(*held));
+        } else {
+          reply["missing"] = util::JsonValue(true);
+        }
+        WithPeer(connection_id, [&](remote::RemotePeer& peer) {
+          if (!error.empty()) {
+            peer.ReplyError(id, remote::kErrorInvalidParams, error);
+          } else {
+            peer.Reply(id, util::JsonValue(std::move(reply)));
+          }
+        });
+      });
+    };
+  };
+  peer.OnRequest(remote::method::kStatePut, on_state(/*put=*/true));
+  peer.OnRequest(remote::method::kStateGet, on_state(/*put=*/false));
 
   peer.OnRequest(remote::method::kFsOp, [this, &connection](std::uint64_t id,
                                                             const util::JsonValue& params) {

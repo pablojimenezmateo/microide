@@ -27,6 +27,16 @@ project (see [README](README.md)); versions track meaningful shipped work.
   (`copy-reference`), or typed into the running terminal with the keyboard
   following it there (`term-insert-reference`) -- pointing an agent at code
   without pasting the code.
+- **The files open in a remote project follow you between machines.** A remote
+  project leaves the list of its open files (their carets, and which one was in
+  front) on its host whenever that changes and when its window loses focus. A
+  machine that connects to the project and finds what another one left is
+  offered it once -- "3 files were open on work-laptop, 2 h ago" -- and Open
+  Them opens those files beside its own tabs. Nothing is closed, moved or
+  replaced; unsaved text, the layout and files outside the project stay where
+  they are. The host's terminals already came back on a connect.
+  `remote.roam_session` turns it off; it needs a host server from this release
+  on (an older one simply offers nothing).
 - **Remote: File History…** (`remote-file-history`). The mirror of a remote
   project now remembers every content the host replaced or deleted in a file
   -- sixteen versions a file, with when each was replaced -- and lists them

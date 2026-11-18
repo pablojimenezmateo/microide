@@ -67,3 +67,19 @@ The remote verbs SHALL live in a top-level `Remote` menu between Git and Termina
 #### Scenario: A local shell from a remote-only window
 - **WHEN** the only open project is remote and the user runs `Remote: Open Local Terminal`
 - **THEN** a terminal tab opens whose shell runs on this machine
+
+### Requirement: What a project had open follows the user between machines
+While `remote.roam_session` is on, a client SHALL leave on the host, for each remote project it has connected, the project's files that are open in editor tabs -- paths relative to the root, each with its caret, and which one was in front -- whenever the project's session is saved and that list changed, and SHALL save a remote project's session when its window loses focus. It SHALL NOT leave unsaved text, untitled buffers, compare or merge tabs, files outside the project, or the layout. On each new connection a client SHALL ask the host for what was left and, when another machine left it and it is not what this client already has open or was already offered, SHALL raise one row naming that machine with a button that opens those files beside what is open, the one that was in front last and at its caret; nothing open on this client SHALL be closed, moved or replaced. The text SHALL be kept by the server per workspace root in a directory private to the user (`state/put`, `state/get`, capability `state`), bounded in size and with keys of `[a-z0-9-]`; a server without the capability SHALL leave the feature silent. A client SHALL treat what it reads as untrusted: only relative paths that stay under the root are kept, within a bound on their number. The host's terminals need no such record: a connect already brings back the ones no client holds.
+
+#### Scenario: Leaving one laptop for another
+- **WHEN** a project has three files open on one machine, its window loses focus, and another machine connects to the same project
+- **THEN** the second machine shows one row saying three files were open on the first, and its button opens them, the one that was in front last and at its caret, leaving the second machine's own tabs as they were
+
+#### Scenario: A machine is not offered its own
+- **WHEN** a machine reconnects and the host holds what that same machine left
+- **THEN** no row is raised
+
+#### Scenario: An older host server
+- **WHEN** the host's server does not list the `state` capability
+- **THEN** nothing is left, nothing is offered, and no error is shown
+

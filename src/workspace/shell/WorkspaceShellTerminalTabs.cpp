@@ -328,6 +328,10 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
                 .Execute(ActionId::ShowOutput, {std::string(id)}, ActionSource::Shortcut);
           },
       .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
+      .open_file_at =
+          [this](const std::filesystem::path& path, std::size_t line, std::size_t column) {
+            OpenFileAtLocation(path, line, column);
+          },
       .host_changes_updated =
           [this](const std::filesystem::path& root) {
             if (context_.current_project_state.root == root &&

@@ -78,6 +78,9 @@ enum class ActionId {
   RemoteClearHostChanges,
   // A pick of the active file's earlier versions in the mirror; one opens a compare.
   RemoteFileHistory,
+  // Open the files another machine left open in this remote project (the offer a
+  // connect raises), beside what is open here.
+  RemoteOpenOfferedSession,
   // `remote-apply-deletes [root]`: apply a mass delete the sync held (§ 6.3) -- the
   // Apply button of its "would delete N files" row. The root defaults to the
   // active project.

@@ -65,6 +65,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Remote: Clear Changed on Host", ""},
       ActionSpec{ActionId::RemoteFileHistory, "remote-file-history", "remote-file-history [version]",
                  "Remote: File History\u2026", ""},
+      ActionSpec{ActionId::RemoteOpenOfferedSession, "remote-open-session", "remote-open-session [root]",
+                 "Remote: Open the Files Another Machine Had Open", ""},
       ActionSpec{ActionId::RemoteApplyHeldDeletes, "remote-apply-deletes", "remote-apply-deletes [root]",
                  "Remote: Apply Held Deletes", ""},
       ActionSpec{ActionId::RemoteForwardPort, "remote-forward-port", "remote-forward-port <port> [host]",

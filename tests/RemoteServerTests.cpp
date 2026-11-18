@@ -455,6 +455,90 @@ void TestPollingStatusDoesNotKeepAnOnDemandServerAlive() {
 // the host, privately, under the name it had, and its host path comes back for
 // the terminal to type. Two uploads of one name do not collide; a name that is a
 // path is refused, so nothing escapes the uploads directory.
+// state/put and state/get: a small text one client leaves with the workspace for
+// the next -- what a project had open, moving between machines. Per workspace
+// root, private to the user, kept across connections; a key that is a path and a
+// text past the cap are refused, so nothing is written outside its directory.
+void TestWorkspaceStateIsKeptForTheNextClient() {
+  ShortServerDir dir;
+  StartServer(dir);
+  const std::filesystem::path root = dir.scratch() / "project";
+  const std::filesystem::path other_root = dir.scratch() / "other";
+  std::filesystem::create_directories(root);
+  std::filesystem::create_directories(other_root);
+  const auto connect = [&](const std::filesystem::path& workspace_root) {
+    auto client = remote::RemoteServerClient::Create();
+    const int fd = platform::ConnectUnixSocket(remote::ServerSocketPath(dir.path()));
+    std::string error;
+    Expect(fd >= 0 && client->ConnectFds(fd, fd,
+                                         remote::HelloRequest{.release = "test", .root = workspace_root.string()},
+                                         &error),
+           "connects: " + error);
+    return client;
+  };
+  const auto put = [](remote::RemoteWorkspace& workspace, std::string key, std::string text) {
+    std::promise<std::string> answered;
+    workspace.PutState(std::move(key), std::move(text), [&](std::string why) { answered.set_value(std::move(why)); });
+    return answered.get_future().get();
+  };
+  const auto get = [](remote::RemoteWorkspace& workspace, std::string key) {
+    std::promise<std::pair<std::optional<std::string>, std::string>> answered;
+    workspace.GetState(std::move(key), [&](std::optional<std::string> text, std::string why) {
+      answered.set_value({std::move(text), std::move(why)});
+    });
+    return answered.get_future().get();
+  };
+
+  auto first_client = connect(root);
+  const auto& capabilities = first_client->hello().capabilities;
+  Expect(std::find(capabilities.begin(), capabilities.end(), remote::method::kStateCapability) != capabilities.end(),
+         "the server lists the capability");
+  {
+    remote::RemoteWorkspace first(std::make_shared<remote::RemoteConnection>(first_client));
+    Expect(!get(first, "session").first.has_value() && get(first, "session").second.empty(),
+           "nothing kept yet is not an error");
+    const std::string left = put(first, "session", R"({"files": ["a.cpp"]})");
+    Expect(left.empty(), "a text is kept: " + left);
+    Expect(get(first, "session").first == std::optional<std::string>(R"({"files": ["a.cpp"]})"),
+           "and read back as it was left");
+    Expect(put(first, "session", "replaced").empty() &&
+               get(first, "session").first == std::optional<std::string>("replaced"),
+           "a later one replaces it");
+    for (const char* odd : {"../escape", "a/b", "", "UPPER", "with space"}) {
+      Expect(!put(first, odd, "x").empty() && !get(first, odd).second.empty(),
+             std::string("a key that is not [a-z0-9-] is refused: ") + odd);
+    }
+    Expect(!put(first, "big", std::string(remote::method::kMaxWorkspaceStateBytes + 1, 'x')).empty() &&
+               !get(first, "big").first.has_value(),
+           "a text past the cap is refused and not kept");
+  }
+  first_client.reset();
+
+  // Another machine connects to the same workspace: it reads what was left; a
+  // different workspace on the host has its own.
+  auto second_client = connect(root);
+  remote::RemoteWorkspace second(std::make_shared<remote::RemoteConnection>(second_client));
+  Expect(get(second, "session").first == std::optional<std::string>("replaced"),
+         "the next client reads what the last one left");
+  auto other_client = connect(other_root);
+  remote::RemoteWorkspace other(std::make_shared<remote::RemoteConnection>(other_client));
+  Expect(!get(other, "session").first.has_value(), "another workspace has none of it");
+
+  std::size_t kept = 0;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(dir.path() / "workspace-state")) {
+    if (entry.is_regular_file()) {
+      ++kept;
+      Expect(entry.path().filename() == "session" &&
+                 (entry.status().permissions() & std::filesystem::perms::all) ==
+                     (std::filesystem::perms::owner_read | std::filesystem::perms::owner_write),
+             "kept beside the socket, readable by its owner only: " + entry.path().string());
+    }
+  }
+  Expect(kept == 1 && !std::filesystem::exists(dir.path() / "escape") &&
+             !std::filesystem::exists(dir.scratch() / "escape"),
+         "one file, and nothing escaped: " + std::to_string(kept));
+}
+
 void TestUploadPutsAFileOnTheHostPrivately() {
   ShortServerDir dir;
   StartServer(dir);
@@ -939,6 +1023,7 @@ void RegisterRemoteServerTests(std::vector<TestCase>& tests) {
           TestAttachStartsOnDemandAndTheServerIdlesOut);
   AddTest(tests, "RemoteServer/EphemeralPortRangeIsTheHosts", TestEphemeralPortRangeIsTheHosts);
   AddTest(tests, "RemoteServer/UploadPutsAFileOnTheHostPrivately", TestUploadPutsAFileOnTheHostPrivately);
+  AddTest(tests, "RemoteServer/WorkspaceStateIsKeptForTheNextClient", TestWorkspaceStateIsKeptForTheNextClient);
   AddTest(tests, "RemoteServer/ListeningPortsParseProcNetTcp", TestListeningPortsParseProcNetTcp);
   AddTest(tests, "RemoteServer/ListeningPortsParseSockDiag", TestListeningPortsParseSockDiag);
   AddTest(tests, "RemoteServer/ConcurrentStartsLeaveOneDaemon", TestConcurrentStartsLeaveOneDaemon);

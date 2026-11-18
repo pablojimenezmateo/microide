@@ -389,6 +389,12 @@ ServerStatus ServerStatusFromJson(const util::JsonValue& json) {
   return status;
 }
 
+bool method::IsWorkspaceStateKey(std::string_view key) {
+  return !key.empty() && key.size() <= 32 && std::all_of(key.begin(), key.end(), [](char c) {
+    return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-';
+  });
+}
+
 std::optional<std::string> CheckProtocolCompatibility(std::int64_t local_protocol,
                                                       std::int64_t local_min_protocol,
                                                       std::string_view local_release,

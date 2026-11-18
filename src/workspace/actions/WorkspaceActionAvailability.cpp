@@ -141,6 +141,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::RemoteCloseHostTerminals:
     case ActionId::RemoteCopyCommand:
     case ActionId::RemoteClearHostChanges:
+    case ActionId::RemoteOpenOfferedSession:  // rejects when no machine left anything
     case ActionId::RemoteApplyHeldDeletes:  // rejects outside a remote project
     case ActionId::OpenUrl:                 // rejects a URL the opener will not take
     case ActionId::CancelSaveWait:      // rejects when nothing with that id is waiting

@@ -422,7 +422,17 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
                   shell->UpdateMouseCursor(shell->last_mouse_x_, shell->last_mouse_y_);
                 }
               },
-          .autosave_on_focus_lost = [shell]() { shell->MaybeAutosaveDirtyTabs(true); },
+          .autosave_on_focus_lost =
+              [shell]() {
+                shell->MaybeAutosaveDirtyTabs(true);
+                // Leaving the window is how a machine is left: a remote project's
+                // session is saved now, which leaves what it has open on its host
+                // for the next machine (RemoteHostService::SessionSaved). Nothing
+                // for a local project.
+                if (shell->context_.current_project_state.id.IsRemote()) {
+                  shell->MakePersistenceCoordinator().SaveSessionState();
+                }
+              },
           .end_selection_gesture =
               [shell]() {
                 shell->context_.interaction_state.mouse_selecting = false;

@@ -170,6 +170,12 @@ for what is actually measured, and what is not.
   `~/.local/share/microide/remote/` and reopens from the recents list as the remote project.
   A host file outside the project that a language server or debugger points at (a system
   header, a generated file in an ignored build directory) opens read-only from the host
+- **Working with agents on the host**: `Remote: File History…` lists every version of the
+  active file the host replaced (the mirror keeps them, at no extra disk) and opens one against
+  the file as it is now; each workspace row of the Host view shows the host's free disk space;
+  and the files open in a project follow you between machines — a machine that connects is
+  offered, once, the files another one left open (`remote.roam_session`), and opens them beside
+  its own tabs
 
 ### Debugging
 - Built-in DAP debugger (validated against gdb 17.2): per-language launch configs, line /
@@ -748,6 +754,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `remote-changes [root]`
 - `remote-clear-changes [root]`
 - `remote-file-history [version]`
+- `remote-open-session [root]`
 - `remote-apply-deletes [root]`
 - `remote-forward-port <port> [host]`
 - `remote-unforward-port <port> [host]`

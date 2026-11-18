@@ -23,6 +23,7 @@
 #include "project/remote/MirrorSyncEngine.h"
 #include "project/remote/RemoteHostSession.h"
 #include "project/remote/RemoteProtocol.h"
+#include "workspace/persistence/RoamingSession.h"
 #include "terminal/TerminalHostChannel.h"
 #include "util/MainThreadMailbox.h"
 #include "util/SerialWorkQueue.h"
@@ -127,6 +128,9 @@ class RemoteHostService {
         show_output;
     // Open `path` in an editor tab (Changed on Host's added and deleted rows).
     std::function<void(const std::filesystem::path& path)> open_file;
+    // Open `path` with the caret at (line, column): the file another machine had
+    // in front (OpenOfferedSession).
+    std::function<void(const std::filesystem::path& path, std::size_t line, std::size_t column)> open_file_at;
     // The Changed on Host list of the remote project at `root` changed.
     std::function<void(const std::filesystem::path& root)> host_changes_updated;
     // The Conflicts view's rows for the remote project at `root` changed: a
@@ -297,6 +301,19 @@ class RemoteHostService {
   // deleted opens the version alone. False when there is no such version.
   bool OpenFileVersion(const std::filesystem::path& root, const std::filesystem::path& path,
                        std::string_view hash_prefix);
+  // Moving between machines (workspace/persistence/RoamingSession.h). The
+  // session of the remote project at `root` was saved: what it has open is left on
+  // its host for the next machine, when that changed since it was last left and
+  // `remote.roam_session` is on. A no-op while the project is not connected.
+  void SessionSaved(const std::filesystem::path& root, const PersistedProjectSessionState& session);
+  // Open the files another machine left open in the project at `root` -- what a
+  // connect offered -- beside what is open here, the one that was in front last
+  // and at its caret. False when nothing is on offer.
+  bool OpenOfferedSession(const std::filesystem::path& root);
+  // This machine's name in what it leaves, and whose sessions it is not offered.
+  // A test's one window plays two machines in turn: becoming another one forgets
+  // what the first left and was offered, as a different machine never knew them.
+  void SetMachineNameForTesting(std::string name);
   // The held mass delete of remote project `root`, applied (§ 6.3). False when it
   // is not a remote project or holds none.
   bool ApplyHeldDeletes(const std::filesystem::path& root);
@@ -448,7 +465,21 @@ class RemoteHostService {
     // The host terminals under this project's root nobody is attached to, as the
     // last connect's server/status listed them (Show Status names them).
     std::vector<project::remote::ServerTerminal> unclaimed_terminals;
+    // Moving between machines: the fingerprint of what this machine last left on
+    // the host (the same content is not sent twice), of the last session it was
+    // offered (the same one is not offered twice), and that session until it is
+    // taken or replaced.
+    std::string roaming_left;
+    std::string roaming_offered;
+    std::optional<RoamingSession> roaming_offer;
+    // The connection the host was last asked on for what another machine left.
+    std::weak_ptr<project::remote::RemoteServerClient> roaming_checked;
   };
+  // On a connect: ask the host what another machine left, and offer it.
+  void CheckRoamingSession(const std::filesystem::path& tree, Project& entry);
+  void OnRoamingSession(const std::filesystem::path& tree, const std::string& text);
+  bool RoamingEnabled() const;
+  std::string machine_name_;  // gethostname(), read once
   // The forward job behind ForwardPort and OpenHostLocalUrl; `then_open` (a
   // LoopbackUrl's scheme and rest) opens the forwarded URL once it is up.
   // `owner_root`: the host root of the project whose program opened the port

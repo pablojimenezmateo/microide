@@ -55,7 +55,12 @@ std::shared_ptr<const platform::ProcessLauncher> LocalLauncher() {
 
 }  // namespace
 
-RemoteHostService::RemoteHostService(Operations operations) : operations_(std::move(operations)) {}
+RemoteHostService::RemoteHostService(Operations operations) : operations_(std::move(operations)) {
+  char name[256] = {};
+  if (::gethostname(name, sizeof(name) - 1) == 0) {
+    machine_name_ = name;
+  }
+}
 
 RemoteHostService::~RemoteHostService() {
   work_.Shutdown();
@@ -293,6 +298,15 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
   }
   if (came_back) {
     ListHostTerminals(tree, entry);
+  }
+  // Once per connection, told by its client rather than by the Ready edge: a
+  // reconnect whose reports coalesce shows this thread no edge at all.
+  if (status.state == State::Ready) {
+    const std::shared_ptr<remote::RemoteServerClient> client = project.session().connection()->client();
+    if (client != nullptr && entry.roaming_checked.lock() != client) {
+      entry.roaming_checked = client;
+      CheckRoamingSession(tree, entry);
+    }
   }
   const remote::RemoteProjectRecord record = project.record();
   const std::string label = record.host + ":" + record.host_root;
@@ -831,6 +845,136 @@ void RemoteHostService::ClearHostChanges(const std::filesystem::path& root) {
   if (operations_.dismiss_notification) {
     operations_.dismiss_notification("remote.changes." + root.string());
   }
+}
+
+void RemoteHostService::SetMachineNameForTesting(std::string name) {
+  machine_name_ = std::move(name);
+  for (auto& [root, entry] : projects_) {
+    entry.roaming_left.clear();
+    entry.roaming_offered.clear();
+    entry.roaming_offer.reset();
+  }
+}
+
+bool RemoteHostService::RoamingEnabled() const {
+  return SettingFlagEnabled(operations_.setting ? operations_.setting("remote.roam_session")
+                                                : std::optional<std::string>(),
+                            true);
+}
+
+void RemoteHostService::SessionSaved(const std::filesystem::path& root,
+                                     const PersistedProjectSessionState& session) {
+  const auto it = projects_.find(root);
+  if (it == projects_.end() || it->second.closed || it->second.status.state != State::Ready ||
+      !RoamingEnabled()) {
+    return;
+  }
+  Project& entry = it->second;
+  const std::uint64_t now = static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+          .count());
+  const RoamingSession roaming = CaptureRoamingSession(session, root, machine_name_, now);
+  std::string fingerprint = RoamingSessionFingerprint(roaming);
+  // Nothing open is nothing to pick up, and must not replace what another
+  // machine left; the same files and carets as last time are already there.
+  if (roaming.empty() || fingerprint == entry.roaming_left) {
+    return;
+  }
+  entry.roaming_left = std::move(fingerprint);
+  std::shared_ptr<remote::RemoteConnection> connection = entry.project->session().connection();
+  work_.Post([this, connection, root, text = EncodeRoamingSession(roaming)]() mutable {
+    remote::RemoteWorkspace(connection).PutState("session", std::move(text), [this, root](std::string error) {
+      if (error.empty()) {
+        return;
+      }
+      // Not kept (the link dropped, an older server): the next save tries again.
+      mailbox_.Post([this, root]() {
+        if (const auto failed = projects_.find(root); failed != projects_.end()) {
+          failed->second.roaming_left.clear();
+        }
+      });
+    });
+  });
+}
+
+void RemoteHostService::CheckRoamingSession(const std::filesystem::path& tree, Project& entry) {
+  if (!RoamingEnabled()) {
+    return;
+  }
+  std::shared_ptr<remote::RemoteConnection> connection = entry.project->session().connection();
+  work_.Post([this, connection, tree]() {
+    remote::RemoteWorkspace(connection).GetState("session", [this, tree](std::optional<std::string> text,
+                                                                         std::string) {
+      if (text.has_value()) {  // none kept, or a server that keeps none: nothing to offer
+        mailbox_.Post([this, tree, text = std::move(*text)]() { OnRoamingSession(tree, text); });
+      }
+    });
+  });
+}
+
+void RemoteHostService::OnRoamingSession(const std::filesystem::path& tree, const std::string& text) {
+  const auto it = projects_.find(tree);
+  std::optional<RoamingSession> roaming = DecodeRoamingSession(text);
+  if (it == projects_.end() || it->second.closed || !roaming.has_value() || roaming->empty()) {
+    return;
+  }
+  Project& entry = it->second;
+  std::string fingerprint = RoamingSessionFingerprint(*roaming);
+  if (roaming->client == machine_name_) {
+    // This machine's own, from before a restart: it is already on the host.
+    entry.roaming_left = std::move(fingerprint);
+    return;
+  }
+  if (fingerprint == entry.roaming_offered || fingerprint == entry.roaming_left) {
+    return;  // offered already, or the very files this machine has open
+  }
+  entry.roaming_offered = std::move(fingerprint);
+  const std::uint64_t now = static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+          .count());
+  const std::size_t count = roaming->files.size();
+  std::string message = std::to_string(count) + (count == 1 ? " file was" : " files were") + " open on " +
+                        (roaming->client.empty() ? std::string("another machine") : roaming->client) +
+                        InProject(entry.host, entry.host_root);
+  if (now > roaming->saved_at) {
+    message += ", " + remote::FormatAge(std::chrono::seconds(now - roaming->saved_at)) + " ago";
+  }
+  entry.roaming_offer = std::move(roaming);
+  if (operations_.notify) {
+    operations_.notify(NotificationService::Request{
+        .tone = NotificationService::Tone::Info,
+        .key = "remote.session." + tree.string(),
+        .message = std::move(message),
+        .actions = {NotificationAction{.label = count == 1 ? "Open It" : "Open Them",
+                                       .id = ActionId::RemoteOpenOfferedSession,
+                                       .args = {tree.string()}}},
+    });
+  }
+}
+
+bool RemoteHostService::OpenOfferedSession(const std::filesystem::path& root) {
+  const auto it = projects_.find(root);
+  if (it == projects_.end() || it->second.closed || !it->second.roaming_offer.has_value()) {
+    return false;
+  }
+  const RoamingSession offer = std::move(*it->second.roaming_offer);
+  it->second.roaming_offer.reset();
+  if (operations_.dismiss_notification) {
+    operations_.dismiss_notification("remote.session." + root.string());
+  }
+  // The one that was in front goes last, so it ends in front here too.
+  const RoamingSession::File* front = nullptr;
+  for (const RoamingSession::File& file : offer.files) {
+    if (file.active) {
+      front = &file;
+    } else if (operations_.open_file) {
+      operations_.open_file((root / file.path).lexically_normal());
+    }
+  }
+  if (front != nullptr && operations_.open_file_at) {
+    operations_.open_file_at((root / front->path).lexically_normal(), front->line, front->column);
+  }
+  return true;
 }
 
 bool RemoteHostService::ApplyHeldDeletes(const std::filesystem::path& root) {

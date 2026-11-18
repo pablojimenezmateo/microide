@@ -625,6 +625,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceCommandParsing.cpp
   src/workspace/TerminalAttention.cpp
   src/workspace/WorkspaceFileDrop.cpp
+  src/workspace/persistence/RoamingSession.cpp
   src/workspace/PluginRasterSize.cpp
   src/workspace/control/ControlChannelService.cpp
   src/workspace/control/ControlUiQuery.cpp
@@ -1364,6 +1365,7 @@ add_executable(microide_tests
   tests/MergeConflictResolutionTests.cpp
   tests/GitMergeConflictFixtures.cpp
   tests/ReviewTabPlanTests.cpp
+  tests/RoamingSessionTests.cpp
   tests/WorktreePickTests.cpp
   tests/ReviewSessionTests.cpp
   tests/ExternalRepoChangeTests.cpp

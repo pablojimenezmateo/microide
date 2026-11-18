@@ -716,6 +716,9 @@ void PersistenceCoordinator::SaveSessionState() {
     persisted_session.closed_editors.push_back(std::move(persisted_closed));
   }
 
+  if (operations_.session_saved) {
+    operations_.session_saved(persisted_session);
+  }
   operations_.persistence_service->SaveProjectSession(session_path, std::move(persisted_session));
   state.host_terminals_unrecorded = false;
   SaveDebugState();

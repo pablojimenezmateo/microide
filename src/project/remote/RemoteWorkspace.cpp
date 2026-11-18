@@ -535,6 +535,72 @@ void RemoteWorkspace::UploadFile(std::string name, std::string_view content, Upl
   }
 }
 
+namespace {
+
+// The client when its server keeps workspace state; null and *why otherwise.
+std::shared_ptr<RemoteServerClient> StateClient(std::shared_ptr<RemoteServerClient> client, std::string* why) {
+  if (!client) {
+    *why = "not connected";
+    return nullptr;
+  }
+  const std::vector<std::string>& capabilities = client->hello().capabilities;
+  if (std::find(capabilities.begin(), capabilities.end(), method::kStateCapability) == capabilities.end()) {
+    *why = "the host's server is too old to keep it";
+    return nullptr;
+  }
+  return client;
+}
+
+}  // namespace
+
+void RemoteWorkspace::PutState(std::string key, std::string text, StatePutDone done) {
+  std::string why;
+  const std::shared_ptr<RemoteServerClient> client = StateClient(Client(), &why);
+  if (!client) {
+    done(std::move(why));
+    return;
+  }
+  util::JsonObject params;
+  params["key"] = util::JsonValue(std::move(key));
+  params["text"] = util::JsonValue(std::move(text));
+  const std::uint64_t id = client->peer().Request(
+      method::kStatePut, util::JsonValue(std::move(params)), Lane::Bulk,
+      [done](std::optional<util::JsonValue> result, std::optional<RemotePeer::RpcError> error) {
+        done(result.has_value() ? std::string() : (error.has_value() ? error->message : "the host did not answer"));
+      });
+  if (id == 0) {
+    done("not connected");
+  }
+}
+
+void RemoteWorkspace::GetState(std::string key, StateGetDone done) {
+  std::string why;
+  const std::shared_ptr<RemoteServerClient> client = StateClient(Client(), &why);
+  if (!client) {
+    done(std::nullopt, std::move(why));
+    return;
+  }
+  util::JsonObject params;
+  params["key"] = util::JsonValue(std::move(key));
+  const std::uint64_t id = client->peer().Request(
+      method::kStateGet, util::JsonValue(std::move(params)), Lane::Bulk,
+      [done](std::optional<util::JsonValue> result, std::optional<RemotePeer::RpcError> error) {
+        if (!result.has_value()) {
+          done(std::nullopt, error.has_value() ? error->message : "the host did not answer");
+          return;
+        }
+        const util::JsonValue& text = (*result)["text"];
+        if (!text.IsString() || text.AsString().size() > method::kMaxWorkspaceStateBytes) {
+          done(std::nullopt, {});  // none kept (or nothing usable): not an error
+          return;
+        }
+        done(text.AsString(), {});
+      });
+  if (id == 0) {
+    done(std::nullopt, "not connected");
+  }
+}
+
 RemoteWorkspace::WriteResult RemoteWorkspace::WriteFileSync(std::string path,
                                                             std::string_view content,
                                                             const Precondition& expect,
