@@ -303,6 +303,54 @@ class Kill9OracleTests(unittest.TestCase):
         self.assertIn("the unsaved buffer names.txt came back after a kill -9 marked saved; "
                       "its file does not hold it", found)
 
+    def _transformed_by_the_autosave(self, logged: bytes) -> list:
+        """The autosave wrote the dirty buffer before the kill with a final newline
+        added, and the relaunch reopened its tab clean and deferred (absent from
+        `documents`). The killed process logged writing `logged`."""
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "no-final-newline.txt"
+            path.write_bytes(b"text")
+            app = _RelaunchingApp()
+            app.docs[1] = [{"path": str(path), "dirty": True, "project": "/p/b",
+                            "sha256": hashlib.sha256(b"text edited").hexdigest()}]
+            log = [b""]
+            app._log_size = lambda: len(log[0])
+            app.log_since = lambda offset, max_bytes=0: log[0][offset:].decode()
+            relaunch = app.crash_and_relaunch
+
+            def autosave_then_relaunch(*args, **kwargs):
+                path.write_bytes(b"text edited\n")
+                sha = hashlib.sha256(logged).hexdigest()[:12]
+                log[0] += (f"microide buffer-io: write path={path} doc=0x1 rev=2 dirty=0 bytes={len(logged)} "
+                           f"sha={sha} disk_exists=1 disk_size=12 disk_mtime=1 disk_racy=0\n").encode()
+                relaunch(*args, **kwargs)
+                app.docs[1] = []  # back clean and deferred
+            app.crash_and_relaunch = autosave_then_relaunch
+            oracle = monkey_oracles.DataOracle(app)
+            with mock.patch.object(monkey_oracles, "CRASH_SAFETY_QUIET_S", 0.0), \
+                    mock.patch.object(monkey_oracles.time, "sleep", lambda _s: None), \
+                    mock.patch.object(monkey_oracles.time, "monotonic", side_effect=range(0, 10**6, 100)):
+                return oracle.kill9_and_check(random.Random(1), waited=True)
+
+    def test_a_save_with_transforms_before_the_kill_is_not_a_lost_buffer(self) -> None:
+        # 1bee2822b458's run: autosave wrote rtl.txt, code.py and
+        # no-final-newline.txt -- trailing whitespace trimmed, a final newline
+        # added -- and the relaunch reopened them clean and deferred; the file was
+        # not the snapshot's text, so all three read as "did not come back".
+        self.assertEqual(self._transformed_by_the_autosave(b"text edited\n"), [])
+
+    def test_a_logged_save_the_file_does_not_hold_does_not_excuse_a_lost_buffer(self) -> None:
+        found = self._transformed_by_the_autosave(b"something else\n")
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("did not come back", found[0][1])
+
+    def test_the_write_lines_name_paths_with_spaces(self) -> None:
+        log = ("microide buffer-io: write path=/a/ünï cødé/名前 with spaces.txt doc=0x7 rev=103 dirty=0 "
+               "bytes=16 sha=ce68aabc783e disk_exists=1 disk_size=16 disk_mtime=1 disk_racy=1\n"
+               "microide buffer-io: session-stage path=/a/b.txt doc=0x8 rev=1 dirty=1 bytes=1 sha=aa\n")
+        self.assertEqual(monkey_oracles._writes_logged(log), {"/a/ünï cødé/名前 with spaces.txt": "ce68aabc783e"})
+
     def test_a_clean_file_changed_by_no_save_is_still_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "a"

@@ -52,6 +52,16 @@ def _forget_files_of(disk_before: dict[str, str | None], paths: set[str]) -> Non
         del disk_before[path]
 
 
+_WRITE_LOGGED = re.compile(r"^microide buffer-io: write path=(.+?) doc=\S+ rev=\S+ dirty=\d bytes=\d+ "
+                           r"sha=([0-9a-f]+)", re.MULTILINE)
+
+
+def _writes_logged(log: str) -> dict[str, str]:
+    """The files the app logged saving in `log`, each with the sha256 prefix of
+    what it wrote (the last write of a path wins)."""
+    return {match.group(1): match.group(2) for match in _WRITE_LOGGED.finditer(log)}
+
+
 def _sha256_file(path: Path) -> str | None:
     try:
         if not path.is_file():
@@ -383,6 +393,10 @@ class DataOracle:
         disk_before = {doc["path"]: _sha256_file(Path(doc["path"])) for doc in before
                        if doc.get("path") and not doc.get("dirty")}
         app.record_external({"kill9": True, "waited": waited, **({"point": point} if point else {})})
+        # The saves the killed process made after the snapshot, read from its log
+        # before the relaunch starts another: path -> the sha256 prefix it wrote.
+        log_mark = app._log_size() if hasattr(app, "_log_size") else None
+        written: dict[str, str] = {}
         # The killed process's state tree (its session records, primary and .bak):
         # what the relaunch restored from. Lost buffers whose staging the log shows
         # left no other trace of which record was read or why it lacked them.
@@ -390,6 +404,8 @@ class DataOracle:
         self.last_kill_state = Path(work) / "kill-state" if work else None
 
         def keep_state() -> None:
+            if log_mark is not None:
+                written.update(_writes_logged(app.log_since(log_mark, 16 * 1024 * 1024)))
             if self.last_kill_state is None:
                 return
             shutil.rmtree(self.last_kill_state, ignore_errors=True)
@@ -461,6 +477,15 @@ class DataOracle:
                     # Saved before the kill -- an autosave the kill landed in or after
                     # -- so the relaunch reopened the tab clean from its file and
                     # deferred, and `documents` lists no pending tab (soak 93826423aa06).
+                    continue
+                if back is None and doc.get("path") and \
+                        (sha := written.get(str(doc["path"]))) and \
+                        (_sha256_file(Path(doc["path"])) or "").startswith(sha):
+                    # The same, through the save's transforms: the autosave added a
+                    # final newline or trimmed trailing whitespace, so the file is not
+                    # the snapshot's text -- it is what the app logged writing
+                    # (soak 4e1229a05d76's family, in 1bee2822b458's run).
+                    saved_before_kill.add(os.path.realpath(str(doc["path"])))
                     continue
                 if back is None:
                     out.append(("data", f"the unsaved buffer {Path(str(key)).name} did not come back after a kill -9 "
