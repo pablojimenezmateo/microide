@@ -356,6 +356,23 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       }
       return DispatchResult::Handled;
     }
+    case ActionId::CopyReference:
+    case ActionId::TerminalInsertReference: {
+      const bool into_terminal = id == ActionId::TerminalInsertReference;
+      const std::optional<std::string> reference = context_.ActiveEditorReference(into_terminal);
+      if (!reference.has_value()) {
+        return reject("The active tab has no file to refer to");
+      }
+      if (!into_terminal) {
+        context_.WriteClipboardText(*reference);
+        return DispatchResult::Handled;
+      }
+      // A space after it, as after a dropped path: the prompt goes on from there.
+      if (!context_.TypeIntoActiveTerminal(*reference + " ")) {
+        return reject("No terminal is running to take the reference");
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::CutSelection: {
       context_.CutSelection();
       return DispatchResult::Handled;

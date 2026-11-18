@@ -148,6 +148,8 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::CutSelection),
       MenuItem(ActionId::CopySelection),
       MenuItem(ActionId::CopySelectionWithContext),
+      MenuItem(ActionId::CopyReference),
+      MenuItem(ActionId::TerminalInsertReference),
       MenuItem(ActionId::PasteClipboard),
       MenuItem(ActionId::SelectAll),
       MenuSeparator(),

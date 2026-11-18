@@ -583,6 +583,14 @@ class WorkspaceActionContext {
   void RememberLineClipboardCopy(std::string_view text, bool whole_line);
   std::optional<std::string> LastTerminalCommandText() const;
   std::optional<std::string> SelectionTextWithContext();
+  // The active editor's caret line, or the lines its selection covers, as
+  // `path:line[-line]` (PathLineReference); nullopt when the tab has no file.
+  // The path is the project's relative one. A file outside the project is named
+  // absolutely -- for a terminal, as the terminal's machine names it.
+  std::optional<std::string> ActiveEditorReference(bool for_terminal);
+  // Types `text` into the active terminal pane, showing and focusing the panel.
+  // False when no terminal is running.
+  bool TypeIntoActiveTerminal(std::string text);
   void CutSelection();
   void PasteClipboard();
   // Insert literal text at the caret (replacing any selection), routed through

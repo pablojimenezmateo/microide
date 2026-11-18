@@ -475,6 +475,11 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return TerminalPanelService::HasLastCommand(context_.current_project_state);
     case ActionId::CopySelectionWithContext:
       return active_viewport != nullptr;
+    case ActionId::CopyReference:
+      return active_viewport != nullptr && !active_viewport->path().empty();
+    case ActionId::TerminalInsertReference:
+      return active_viewport != nullptr && !active_viewport->path().empty() &&
+             context_.current_project_state.active_terminal_pane() != nullptr;
     case ActionId::CopySelection:
       return active_viewport != nullptr ||
              active_single_line_selection ||

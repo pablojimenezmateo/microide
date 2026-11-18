@@ -1590,6 +1590,38 @@ std::optional<std::string> WorkspaceActionContext::SelectionTextWithContext() {
   return operations_.selection_text_with_context();
 }
 
+std::optional<std::string> WorkspaceActionContext::ActiveEditorReference(bool for_terminal) {
+  editor::TextViewport* viewport = ActiveNavigableViewport();
+  if (viewport == nullptr || viewport->path().empty()) {
+    return std::nullopt;
+  }
+  std::size_t first_line = viewport->cursor_line();
+  std::size_t last_line = first_line;
+  if (const std::optional<editor::SelectionRange> range = viewport->selection_range();
+      range.has_value() && viewport->has_selection()) {
+    first_line = range->start.line;
+    last_line = range->end.line;
+    // A selection that ends at the start of a line does not cover that line.
+    if (range->end.column == 0 && last_line > first_line) {
+      --last_line;
+    }
+  }
+  const std::filesystem::path path = viewport->path().lexically_normal();
+  std::string label = PathEqualsOrWithin(path, state_.root) ? RelativePathLabel(state_.root, path) : std::string();
+  if (label.empty()) {
+    label = for_terminal ? state_.launcher().ResolveWorkingDirectory(path).string() : path.string();
+  }
+  return PathLineReference(label, first_line, last_line);
+}
+
+bool WorkspaceActionContext::TypeIntoActiveTerminal(std::string text) {
+  const TerminalPaneState* pane = state_.active_terminal_pane();
+  if (pane == nullptr || !pane->session.running()) {
+    return false;
+  }
+  return services_.terminal_panel.RevealTerminal() && services_.text_input.PasteTextIntoTerminal(std::move(text));
+}
+
 void WorkspaceActionContext::CutSelection() {
   if (services_.text_input.CutSelectionAtActiveSingleLineSurface()) {
     operations_.reset_caret_blink();

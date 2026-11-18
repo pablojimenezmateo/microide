@@ -3370,6 +3370,56 @@ void TestWorkspaceShellImagePastedIntoTheTerminalTypesItsPath() {
   Expect(TerminalSessionTestAccess::SentBytes(session).empty(), "and types nothing");
 }
 
+// The place an agent is told to look at: the caret's line or the selection's
+// lines as `path:line[-line]`, copied, or typed into the running terminal with
+// the keyboard following it there. A selection that ends at the start of a line
+// does not count that line; a file outside the project is named absolutely.
+void TestWorkspaceShellReferenceNamesTheCaretOrSelectionLines() {
+  using ActionId = WorkspaceShell::ActionId;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  const std::filesystem::path outside = temp_dir.path() / "elsewhere" / "stray.cpp";
+  WriteFile(source, "int main() {\n  int value = 1;\n  return value;\n}\n");
+  WriteFile(outside, "int stray;\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  std::string clipboard_text;
+  WorkspaceShellTestAccess::SetClipboardTextWriter(shell, [&](std::string_view text) {
+    clipboard_text = std::string(text);
+    return true;
+  });
+
+  Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::TerminalInsertReference),
+         "with no terminal there is nowhere to insert a reference");
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(2, 3);
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::CopyReference, {}), "Copy Reference runs");
+  Expect(clipboard_text == "src/main.cpp:3", "a caret is one line: " + clipboard_text);
+
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 2);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(3, 0, true);
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::CopyReference, {}), "and for a selection");
+  Expect(clipboard_text == "src/main.cpp:2-3",
+         "a selection ending at a line's start does not count that line: " + clipboard_text);
+
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::SetRunning(session, true);
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::TerminalInsertReference, {}),
+         "Terminal: Insert Reference runs");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "src/main.cpp:2-3 ",
+         "the terminal gets the reference and a space: [" + TerminalSessionTestAccess::SentBytes(session) + "]");
+  Expect(WorkspaceShellTestAccess::FocusIsPanel(shell), "and the keyboard, to go on with the prompt");
+
+  WorkspaceShellTestAccess::OpenFile(shell, outside);
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::CopyReference, {}), "outside the project");
+  Expect(clipboard_text == outside.string() + ":1", "the file is named absolutely: " + clipboard_text);
+}
+
 void TestWorkspaceShellTerminalRelaunchRestartsAnExitedPane() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3572,6 +3622,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellFileDroppedOnTheTerminalTypesItsPath);
   AddTest(tests, "WorkspaceShell/ImagePastedIntoTheTerminalTypesItsPath",
           TestWorkspaceShellImagePastedIntoTheTerminalTypesItsPath);
+  AddTest(tests, "WorkspaceShell/ReferenceNamesTheCaretOrSelectionLines",
+          TestWorkspaceShellReferenceNamesTheCaretOrSelectionLines);
   AddTest(tests, "WorkspaceShell/TerminalNotificationToastsFromABackgroundProject",
           TestWorkspaceShellTerminalNotificationToastsFromABackgroundProject);
   AddTest(tests, "WorkspaceShell/TerminalAlertReachesPastAnUnfocusedWindow",

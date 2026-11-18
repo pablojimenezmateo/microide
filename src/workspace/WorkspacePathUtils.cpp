@@ -62,6 +62,17 @@ std::string RelativePathLabel(const std::filesystem::path& root,
   return normalized_path.generic_string();
 }
 
+std::string PathLineReference(std::string_view path_label, std::size_t first_line, std::size_t last_line) {
+  std::string reference(path_label);
+  reference.push_back(':');
+  reference += std::to_string(first_line + 1);
+  if (last_line > first_line) {
+    reference.push_back('-');
+    reference += std::to_string(last_line + 1);
+  }
+  return reference;
+}
+
 bool PathEqualsOrWithin(const std::filesystem::path& candidate,
                         const std::filesystem::path& root) {
   return util::PathEqualsOrWithin(candidate, root);

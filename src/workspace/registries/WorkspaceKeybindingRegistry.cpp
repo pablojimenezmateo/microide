@@ -829,6 +829,16 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
       },
       KeybindingSpec{
+          .id = "term-insert-reference",
+          .action = ActionId::TerminalInsertReference,
+          .key = SDLK_K,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_ALT),
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
           .id = "insert-snippet",
           .action = ActionId::InsertSnippet,
           .key = SDLK_J,

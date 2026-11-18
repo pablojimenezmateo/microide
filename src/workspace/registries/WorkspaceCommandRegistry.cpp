@@ -413,6 +413,11 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       // LLM-driven control), not just via their keyboard accelerators.
       ActionSpec{ActionId::CopySelection, "copy", "copy", "Copy", "Ctrl+C"},
       ActionSpec{ActionId::CopySelectionWithContext, "", "", "Copy with Context", ""},
+      // The caret's place, or the selection's lines, as `path:line` -- what an
+      // agent in a terminal is told to look at, in place of pasting the text.
+      ActionSpec{ActionId::CopyReference, "copy-reference", "copy-reference", "Copy Reference", ""},
+      ActionSpec{ActionId::TerminalInsertReference, "term-insert-reference", "term-insert-reference",
+                 "Terminal: Insert Reference", "Ctrl+Alt+K"},
       ActionSpec{ActionId::CutSelection, "cut", "cut", "Cut", "Ctrl+X"},
       ActionSpec{ActionId::PasteClipboard, "paste", "paste", "Paste", "Ctrl+V"},
       ActionSpec{ActionId::Redo, "redo", "redo", "Redo", "Ctrl+Y / Ctrl+Shift+Z"},

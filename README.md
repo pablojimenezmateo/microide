@@ -703,7 +703,10 @@ Drag and drop: drop a file onto the window to open it as a tab, or a folder to o
 it as the project. Dropping a file when no project is open opens its parent folder
 as the project first, so a drop onto the welcome screen works.
 
-Right-click in editor: **Copy with Context** (copies `relative/path:line` + selection).  
+Right-click in editor: **Copy with Context** (copies `relative/path:line` + selection),
+**Copy Reference** (just `relative/path:line`, or `:first-last` for a selection) and
+**Terminal: Insert Reference** (`Ctrl+Alt+K`: types that reference into the running terminal and
+moves the keyboard there — pointing an agent at code without pasting it).  
 Right-click terminal tab: **Copy Last Command and Output**.
 
 ## Commands
@@ -923,6 +926,8 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `move-group-down`
 - `close-group`
 - `copy`
+- `copy-reference`
+- `term-insert-reference`
 - `cut`
 - `paste`
 - `redo`

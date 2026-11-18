@@ -22,6 +22,11 @@ project (see [README](README.md)); versions track meaningful shipped work.
   the clipboard saves the image and types its path, as dropping the file does;
   on a host terminal the image is sent to the host first. Pasted images are
   kept for a day under the state directory.
+- **Copy Reference and Terminal: Insert Reference** (`Ctrl+Alt+K`). The caret's
+  line, or the selection's lines, as `relative/path:line[-line]`: copied
+  (`copy-reference`), or typed into the running terminal with the keyboard
+  following it there (`term-insert-reference`) -- pointing an agent at code
+  without pasting the code.
 
 - **Structural diffs, after difftastic.** Compare tabs now read each changed
   hunk as syntax -- identifiers, operators, whole strings and comments, and

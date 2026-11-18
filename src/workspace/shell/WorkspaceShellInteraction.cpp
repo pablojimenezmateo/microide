@@ -318,13 +318,7 @@ std::optional<std::string> WorkspaceShell::SelectionTextWithContext() {
     }
   }
 
-  result += path_label;
-  result.push_back(':');
-  result += std::to_string(start_line + 1);
-  if (end_line > start_line) {
-    result.push_back('-');
-    result += std::to_string(end_line + 1);
-  }
+  result += PathLineReference(path_label, start_line, end_line);
   result.push_back('\n');
   result += body;
   return result;

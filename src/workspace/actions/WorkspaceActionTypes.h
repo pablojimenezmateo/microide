@@ -293,6 +293,8 @@ enum class ActionId {
   CopyLastTerminalCommand,
   CopySelection,
   CopySelectionWithContext,
+  CopyReference,
+  TerminalInsertReference,
   CutSelection,
   PasteClipboard,
   Redo,
