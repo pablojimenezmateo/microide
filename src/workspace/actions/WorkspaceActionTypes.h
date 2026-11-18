@@ -153,6 +153,8 @@ enum class ActionId {
   // Git write operations. Each dispatches through GitOperationService onto the
   // project background executor; none of them run on the shell thread.
   GitSwitchBranch,
+  // A pick of the repository's working trees; choosing one opens it as a project.
+  GitWorktrees,
   GitCreateBranch,
   GitFetch,
   GitPull,

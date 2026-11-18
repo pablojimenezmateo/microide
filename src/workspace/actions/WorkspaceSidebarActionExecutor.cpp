@@ -85,6 +85,11 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSidebar(ActionId id,
         context_.RequestGitRefresh();
       }
       return DispatchResult::Handled;
+    case ActionId::GitWorktrees:
+      if (!context_.OpenWorktreePick()) {
+        return reject("No active project");
+      }
+      return DispatchResult::Handled;
     case ActionId::GitSwitchBranch:
     case ActionId::GitCreateBranch:
     case ActionId::GitFetch:

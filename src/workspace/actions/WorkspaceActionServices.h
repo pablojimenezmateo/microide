@@ -141,6 +141,9 @@ class WorkspaceActionContext {
     std::function<bool(std::string*)> discover_tests_for_active_buffer;
     std::function<bool(const std::vector<std::string>&, std::string*)> run_tests;
     std::function<bool(std::string*)> run_all_discovered_tests;
+    // Run `gather` off the shell thread, then `apply` on it -- dropped if the
+    // project changed meanwhile. For a command whose answer is a git call.
+    std::function<void(std::function<void()> gather, std::function<void()> apply)> run_off_shell_thread;
     // Non-git ("plain") comparison of two arbitrary sides (file/buffer/clipboard).
     // Batch review sessions: switch to Source Control and open diff/merge tabs,
     // deduping + cleaning stale review tabs. Return a summary outcome.
@@ -659,6 +662,10 @@ class WorkspaceActionContext {
   // The open remote hosts as a pick titled `title`, each row running
   // `command_line <host>`. False with fewer than two hosts (nothing to ask).
   bool OpenHostPick(std::string_view title, std::string_view command_line);
+  // Git: Switch Worktree…: the repository's working trees as a pick, each row
+  // opening that tree as a project (on the host, for a remote project). The pick
+  // opens loading; git answers off the shell thread. False with no project.
+  bool OpenWorktreePick();
   // Browse Folder…: `folder`'s entries as a pick -- its subfolders browse on,
   // its files open (the active file's folder when empty). Empty on success,
   // else why not.

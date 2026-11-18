@@ -27,6 +27,11 @@ project (see [README](README.md)); versions track meaningful shipped work.
   (`copy-reference`), or typed into the running terminal with the keyboard
   following it there (`term-insert-reference`) -- pointing an agent at code
   without pasting the code.
+- **Git: Switch Worktree…** (`git-worktrees`). A pick of the repository's
+  working trees -- directory, branch or detached commit, where it is, locked or
+  not -- that opens the chosen one as a project, on the host for a remote
+  project. Parallel agents each work in a tree of their own; this is how to get
+  to one.
 - **A host's free disk space** on each workspace row of the Host view and of
   `microide-server status`, reading `low disk:` when under a tenth of the
   filesystem or 10 GB, whichever is less. An older server shows no figure.

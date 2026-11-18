@@ -29,6 +29,7 @@
 #include "workspace/services/RemoteHostService.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
 #include "workspace/WorkspacePathUtils.h"
+#include "workspace/git/WorktreePick.h"
 
 namespace microide::workspace {
 
@@ -611,6 +612,45 @@ bool WorkspaceActionContext::OpenOptionalArgumentPicker(ActionId id) {
     default:
       return false;
   }
+}
+
+bool WorkspaceActionContext::OpenWorktreePick() {
+  if (state_.root.empty() || !operations_.run_off_shell_thread) {
+    return false;
+  }
+  QuickPickState pick = QuickPickService::CommandChoices("Switch Worktree", "worktrees", {});
+  pick.loading = true;
+  services_.quick_pick.Open(std::move(pick));
+  // Git names the trees as its own machine does: a host's are opened on the host.
+  std::string open_command = "project-open";
+  std::string target_prefix;
+  std::string current_root = state_.root.string();
+  if (RemoteHostService* hosts = RemoteHosts(); hosts != nullptr) {
+    if (const std::optional<RemoteHostService::ProjectSnapshot> remote = hosts->SnapshotOf(state_.root)) {
+      open_command = "remote-open";
+      target_prefix = remote->host + ":";
+      current_root = remote->host_root;
+    }
+  }
+  auto worktrees = std::make_shared<std::vector<project::GitWorktree>>();
+  operations_.run_off_shell_thread(
+      [root = state_.root, launcher = &state_.launcher(), worktrees]() {
+        *worktrees = project::ListGitWorktrees(root, *launcher);
+      },
+      [this, opened = services_.quick_pick.open_count(), worktrees, open_command = std::move(open_command),
+       target_prefix = std::move(target_prefix), current_root = std::move(current_root)]() {
+        if (services_.quick_pick.open_count() != opened) {
+          return;  // another pick opened since: these rows are not its
+        }
+        if (worktrees->empty()) {
+          services_.quick_pick.Fail(QuickPickKind::RunCommand, "No working trees: not a git repository");
+          return;
+        }
+        (void)services_.quick_pick.DeliverItems(  // false: the pick was dismissed meanwhile
+            QuickPickKind::RunCommand,
+            BuildWorktreePickItems(*worktrees, current_root, open_command, target_prefix));
+      });
+  return true;
 }
 
 bool WorkspaceActionContext::OpenHostPick(std::string_view title, std::string_view command_line) {

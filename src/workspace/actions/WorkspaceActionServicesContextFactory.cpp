@@ -317,9 +317,27 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
     context_.current_project_state.panel.output.channel_id = channel_id;
     RequestBottomPanelRedraw();
   };
+  // The file reader's thread, with "read nothing": the shape a branch compare's
+  // blob load and a conflict merge's stage read already use. `apply` runs on the
+  // shell thread unless the project changed meanwhile.
+  const auto run_off_shell_thread = [this](std::function<void()> gather, std::function<void()> apply) {
+    const std::filesystem::path root = context_.current_project_state.root;
+    (void)file_read_service_.Begin({
+        .path = root,
+        .on_worker = [gather = std::move(gather)](std::string&) { gather(); },
+        .on_complete =
+            [this, root, apply = std::move(apply)](project::FileReadService::Completion completion) {
+              if (completion.status != project::FileReadService::Status::Cancelled &&
+                  context_.current_project_state.root == root) {
+                apply();
+              }
+            },
+        .read_path = false,
+    });
+  };
   // Builds a fresh review coordinator per verb invocation; it owns no shell
   // access beyond these narrow callbacks (host-owned sidebar + tab lifecycle).
-  const auto make_review = [this]() {
+  const auto make_review = [this, run_off_shell_thread]() {
     return ReviewSessionCoordinator(
         context_.current_project_state, MakeCompareMergeService(),
         ReviewSessionCoordinator::Operations{
@@ -330,26 +348,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 },
             .tab_is_dirty = [this](std::size_t index) { return TabIsDirty(index); },
             .activate_tab = [this](std::size_t index) { ActivateTab(index); },
-            // The file reader's thread, with "read nothing": the shape a branch
-            // compare's blob load and a conflict merge's stage read already use.
-            .run_off_shell_thread =
-                [this](std::function<void()> gather, std::function<void()> apply) {
-                  const std::filesystem::path root = context_.current_project_state.root;
-                  (void)file_read_service_.Begin({
-                      .path = root,
-                      .on_worker = [gather = std::move(gather)](std::string&) { gather(); },
-                      .on_complete =
-                          [this, root, apply = std::move(apply)](
-                              project::FileReadService::Completion completion) {
-                            if (completion.status !=
-                                    project::FileReadService::Status::Cancelled &&
-                                context_.current_project_state.root == root) {
-                              apply();
-                            }
-                          },
-                      .read_path = false,
-                  });
-                },
+            .run_off_shell_thread = run_off_shell_thread,
             .report_outcome =
                 [this](ReviewOpenOutcome outcome) {
                   // As FinishReviewOutcome does for a synchronous one: command
@@ -586,6 +585,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this](std::string* error_message) {
                 return RunAllDiscoveredTests(error_message);
               },
+          .run_off_shell_thread = run_off_shell_thread,
           .open_conflict_review = [make_review]() { return make_review().OpenConflictReview(); },
           .open_branch_review =
               [make_review](const std::string& ref) { return make_review().OpenBranchReview(ref); },

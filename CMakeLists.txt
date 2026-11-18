@@ -417,6 +417,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/GitRepositoryMetadataTracker.cpp
   src/project/GitRepositoryState.cpp
   src/project/GitStatusService.cpp
+  src/project/GitWorktrees.cpp
   src/project/GlobMatch.cpp
   src/project/IgnoreMatcher.cpp
   src/project/PatchApplyTypes.cpp
@@ -606,6 +607,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/render/WorkspaceShellRenderCompare.cpp
   src/workspace/git/ReviewSessionCoordinator.cpp
   src/workspace/git/ReviewTabPlan.cpp
+  src/workspace/git/WorktreePick.cpp
   src/workspace/services/StatusBarModelService.cpp
   src/workspace/services/TabStripService.cpp
   src/workspace/render/TabStripAnimation.cpp
@@ -1360,6 +1362,7 @@ add_executable(microide_tests
   tests/MergeConflictResolutionTests.cpp
   tests/GitMergeConflictFixtures.cpp
   tests/ReviewTabPlanTests.cpp
+  tests/WorktreePickTests.cpp
   tests/ReviewSessionTests.cpp
   tests/ExternalRepoChangeTests.cpp
   tests/ProjectChangeRedrawTests.cpp

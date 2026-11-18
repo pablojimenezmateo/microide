@@ -89,6 +89,9 @@ for what is actually measured, and what is not.
 - Per-file stage, unstage, discard and open from the row's menu (right-click, `Shift+F10`), bulk
   stage-all, confirmed discard-all
 - Sidebar branch row: current branch opens a filterable switch picker; Sync shows ahead/behind counts
+- **Working trees**: Git ▸ Switch Worktree… (`git-worktrees`) lists the repository's working
+  trees with their branches and opens the chosen one as a project — on the host, for a remote
+  project — so each parallel agent's tree is one pick away
 - Conflict files open directly in the three-way merge tab
 - Branch switch/create, fetch, pull, push, publish, sync, and stash push/pop — each run off the
   shell thread with git's failure classified (auth, no upstream, non-fast-forward, dirty tree, conflict)
@@ -779,6 +782,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `goto [line[:col]]`
 - `git-refresh`
 - `git-switch-branch [branch]`
+- `git-worktrees`
 - `git-create-branch <name> [start-point]`
 - `git-fetch`
 - `git-pull`

@@ -374,7 +374,43 @@ void TestReviewCommitTabsCarryTheirOwnReviewFileIndex() {
          "the three tabs occupy three distinct positions, not all of them position 0");
 }
 
+// Git: Switch Worktree…: the pick opens loading, git lists the repository's
+// working trees off the shell thread, and choosing one opens it as a project --
+// where a parallel agent's work is one command away from the tree it is in.
+void TestWorktreePickListsTheTreesAndOpensTheChosenOne() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  const auto agent_path = temp_dir.path() / "repo-agent";
+  WriteFile(repo_path / "a.txt", "a1\n");
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "base", "base commit");
+  RequireGitCommandSuccess(repo_path, {"worktree", "add", "-b", "agent", agent_path.string()},
+                           "add a linked working tree");
+
+  WorkspaceShell shell;
+  TestAccess::SetProjectRoot(shell, repo_path);
+  Expect(TestAccess::ExecuteCommandLine(shell, "git-worktrees"), "git-worktrees is accepted");
+  Expect(TestAccess::QuickPick(shell).loading && TestAccess::QuickPickMatchLabels(shell).empty(),
+         "the pick opens before git has answered");
+  TestAccess::FlushPendingFileReads(shell);  // git's answer arrives off-thread
+  const std::vector<std::string> labels = TestAccess::QuickPickMatchLabels(shell);
+  Expect(labels == std::vector<std::string>({"repo", "repo-agent"}),
+         "both working trees are listed, the main one first: " + std::to_string(labels.size()));
+  if (labels.size() != 2) {
+    return;
+  }
+  Expect(TestAccess::QuickPick(shell).matches[0].secondary_label.ends_with("this project") &&
+             TestAccess::QuickPick(shell).matches[1].secondary_label.starts_with("agent"),
+         "each says its branch, and the open one that it is open");
+
+  TestAccess::SelectAndConfirmLaunchConfig(shell, 1);  // Enter on the second row
+  Expect(TestAccess::ProjectRoot(shell) == agent_path.lexically_normal(),
+         "choosing a tree opens it as the project: " + TestAccess::ProjectRoot(shell).string());
+}
+
 void RegisterReviewSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ReviewSession/WorktreePickListsTheTreesAndOpensTheChosenOne",
+          TestWorktreePickListsTheTreesAndOpensTheChosenOne);
   AddTest(tests, "ReviewSession/ReviewRunsItsGitOffTheShellThread",
           TestReviewRunsItsGitOffTheShellThread);
   AddTest(tests, "ReviewSession/ConflictMergeOpensOffTheShellThread",

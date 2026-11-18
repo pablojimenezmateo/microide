@@ -391,6 +391,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     // the executor reports "not a git repository" precisely on invocation rather
     // than the command silently vanishing from the palette in a non-git project.
     case ActionId::GitSwitchBranch:
+    case ActionId::GitWorktrees:
     case ActionId::GitCreateBranch:
     case ActionId::GitFetch:
     case ActionId::GitPull:
