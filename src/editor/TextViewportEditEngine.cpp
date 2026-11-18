@@ -392,6 +392,40 @@ bool TextViewport::ReplaceLines(std::size_t start_line,
   return ApplyLineEdit(start_line, end_line, std::move(replacement), record_undo);
 }
 
+void TextViewport::CarryCaretsThroughReplacements(const std::vector<SelectionRange>& matches,
+                                                  std::string_view replacement) {
+  // Every caret and anchor rides the replacements, as the text around it does:
+  // left where they were, a replacement that shortened a line left the caret
+  // past its end -- 2:801 on a line now empty (soak 872c8984d39b). Carried from
+  // the last match back to the first, each match's range is still in the
+  // original coordinates when it is applied: only text after it has moved.
+  AppliedEdit each{.range_before = {}, .replacement_text = std::string(replacement)};
+  const auto carry = [&matches, &each](TextPosition position) {
+    for (auto match = matches.rbegin(); match != matches.rend(); ++match) {
+      each.range_before = *match;
+      position = MapPositionThroughEdit(position, each);
+    }
+    return position;
+  };
+  const TextPosition caret = carry(TextPosition{cursor_line_, cursor_column_});
+  cursor_line_ = caret.line;
+  cursor_column_ = caret.column;
+  preferred_column_ = caret.column;
+  if (selection_anchor_.has_value()) {
+    selection_anchor_ = carry(*selection_anchor_);
+  }
+  for (TextViewportUndoHistory::SecondaryCaret& other : secondary_carets_) {
+    other.position = carry(other.position);
+    other.preferred_column = other.position.column;
+    if (other.selection_anchor.has_value()) {
+      other.selection_anchor = carry(*other.selection_anchor);
+    }
+  }
+  // Carets inside different removed runs can land on one spot; they merge, as
+  // VS Code merges cursors that meet.
+  PruneCoincidentSecondaryCarets();
+}
+
 std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view replacement) {
   if (needle.empty() || document_->lines.empty()) {
     return 0;
@@ -421,6 +455,7 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
   // and multi-line replacements splice in as real lines.
   std::string new_line;
   std::string lowered_line;  // reused across lines to avoid a per-line allocation
+  std::vector<SelectionRange> replaced;  // what the carets ride (CarryCaretsThroughReplacements)
   for (std::size_t line_index = 0; line_index < document_->lines.size(); ++line_index) {
     // A view until the line is known to change: this copied EVERY line of the
     // document into a fresh string before looking for the needle, one allocation
@@ -439,6 +474,7 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
       new_line.append(current_line, copy_from, offset - copy_from);
       new_line.append(replacement);
       copy_from = offset + needle.size();
+      replaced.push_back(SelectionRange{{line_index, offset}, {line_index, copy_from}});
       ++replacements;
       // Search the unmodified lowered_line from copy_from so match offsets stay
       // in source-string coordinates (used to index current_line above). Mutating
@@ -474,6 +510,7 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
   }
 
   if (replacements > 0) {
+    CarryCaretsThroughReplacements(replaced, replacement);
     CommitLineRangeEdit(first_changed_line, std::move(before_changed_lines),
                         std::move(after_changed_lines), before_state);
   }
@@ -583,6 +620,8 @@ std::optional<std::size_t> TextViewport::ReplaceAllRanges(
       after_changed_lines.push_back(new_line);
     }
   }
+
+  CarryCaretsThroughReplacements(matches, replacement);
 
   const std::size_t replacements = matches.size();
   CommitLineRangeEdit(first_changed_line, std::move(before_changed_lines),

@@ -1244,6 +1244,12 @@ class TextViewport {
                            LineBlob before_changed_lines,
                            LineBlob after_changed_lines,
                            const ViewState& before_state);
+  // Carries every caret and selection anchor through a replace-all's
+  // replacements (`matches`: single-line, ascending, in the pre-edit text), as
+  // the text around them moves. Runs before CommitLineRangeEdit, so its
+  // EnsureCursorVisible and undo entry see the carried carets.
+  void CarryCaretsThroughReplacements(const std::vector<SelectionRange>& matches,
+                                      std::string_view replacement);
   void FlushActiveUndoGroup();
   void ApplyHistoryEntry(const HistoryEntry& entry, bool forward);
   std::optional<HistoryEntry> BuildRangeHistoryEntry(const SelectionRange& range,

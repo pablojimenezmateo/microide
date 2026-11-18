@@ -1264,6 +1264,48 @@ void TestTextViewportReplaceAllClearsLastAppliedEdit() {
   Expect(!viewport.last_applied_edit().has_value(), "ReplaceAllRanges must not leave the previous edit behind");
 }
 
+// Replace All by ranges left every caret where it was: replacing a long run with
+// nothing left the caret at 2:801 on a line now empty (soak 872c8984d39b). The
+// carets and anchors ride the replacements, as the text around them does.
+void TestTextViewportReplaceAllRangesCarriesTheCarets() {
+  TextViewport viewport;
+  viewport.LoadContent("aaaa bb aaaa\nkeep\naaaa\n", "/tmp/replace-all-carets.txt");
+  viewport.MoveCursorTo(2, 4);                          // the end of line 3's match
+  viewport.AddSecondaryCaret(0, 12);                    // after the second match on line 1
+  viewport.AddSecondaryCaret(0, 6);                     // inside "bb", between the matches
+  const std::optional<std::size_t> replaced = viewport.ReplaceAllRanges(
+      {SelectionRange{{0, 0}, {0, 4}}, SelectionRange{{0, 8}, {0, 12}}, SelectionRange{{2, 0}, {2, 4}}}, "");
+  Expect(replaced == std::optional<std::size_t>{3}, "the three runs are replaced");
+  Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 0,
+         "the caret after line 3's removed run is at its start: " + std::to_string(viewport.cursor_line()) +
+             ":" + std::to_string(viewport.cursor_column()));
+  const std::vector<TextPosition> others = viewport.secondary_carets();
+  Expect(others.size() == 2, "both other carets survive: " + std::to_string(others.size()));
+  bool end_of_line_one = false;
+  bool inside_bb = false;
+  for (const auto& caret : others) {
+    end_of_line_one = end_of_line_one || (caret.line == 0 && caret.column == 4);
+    inside_bb = inside_bb || (caret.line == 0 && caret.column == 2);
+  }
+  Expect(end_of_line_one, "the caret at line 1's end stays at its end, now column 4");
+  Expect(inside_bb, "the caret inside \"bb\" moves left with it, to column 2");
+  Expect(viewport.CaretBoundsFault().empty(), "no caret is left past its line: " + viewport.CaretBoundsFault());
+
+  // Replace All by needle, the same: the caret at the end of a long line of
+  // matches replaced with nothing lands on the emptied line's end.
+  TextViewport by_needle;
+  by_needle.LoadContent("x\nxyxyxyxy\n", "/tmp/replace-all-needle-carets.txt");
+  by_needle.MoveCursorTo(1, 8);
+  by_needle.AddSecondaryCaret(1, 2);
+  by_needle.AddSecondaryCaret(1, 4);  // meets the first once "xy" is gone
+  Expect(by_needle.ReplaceAll("xy", "") == 4, "the four runs are replaced");
+  Expect(by_needle.cursor_line() == 1 && by_needle.cursor_column() == 0,
+         "the caret ends on the emptied line's end: " + std::to_string(by_needle.cursor_line()) + ":" +
+             std::to_string(by_needle.cursor_column()));
+  Expect(by_needle.secondary_carets().empty(), "carets that meet merge into the primary");
+  Expect(by_needle.CaretBoundsFault().empty(), "no caret is left past its line: " + by_needle.CaretBoundsFault());
+}
+
 // Change End of Line Sequence (TD-2026-10-18-361): the line ending changes as an
 // edit -- the buffer is dirty and saves with the new ending, undo puts the old one
 // back and the buffer is clean again at the save point, redo redoes it.
@@ -6973,6 +7015,7 @@ AddTest(tests, "TextViewport/UndoThenRedoIsTheIdentityOverRandomHistories",
   AddTest(tests, "TextViewport/SetLineEndingIsAnUndoableEdit", TestTextViewportSetLineEndingIsAnUndoableEdit);
   AddTest(tests, "TextViewport/ReplaceAllClearsLastAppliedEdit",
           TestTextViewportReplaceAllClearsLastAppliedEdit);
+  AddTest(tests, "TextViewport/ReplaceAllRangesCarriesTheCarets", TestTextViewportReplaceAllRangesCarriesTheCarets);
   AddTest(tests, "TextViewport/MultiCaretDeleteLineClearsLastAppliedEdit",
           TestTextViewportMultiCaretDeleteLineClearsLastAppliedEdit);
   AddTest(tests, "TextViewport/LastAppliedEditTracksMultilineReplacement",
