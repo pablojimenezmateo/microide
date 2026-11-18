@@ -2336,6 +2336,30 @@ the git sidebar already answers the question better, and this view exists for th
 window between commits. It has a **Clear** action and shows the count that the
 aggregated notification (§ 7.6) and the status-bar tooltip report.
 
+**File History (2026-11-18).** Changed on Host answers "what changed"; it keeps
+one earlier version per file and forgets it on Clear and on restart. The mirror
+also keeps an index of every content the host replaced or deleted in a path
+(`FileVersionHistory`, `meta/history`: 16 versions a path, 2,000 paths), and
+`Remote: File History…` lists the active file's and opens one against the file
+as it is now. The index names versions only -- the bytes are `meta/objects`',
+which holds every content the mirror has had until its budget drops the oldest --
+so the history has no disk or retention policy of its own, and a version whose
+bytes are gone is not offered (`openspec/specs/remote-project-mirror`).
+
+**What was open, on the next machine (2026-11-18).** The terminals are the
+host's and were always there for every machine; the open files were each
+client's own. A client now leaves the list of a project's open files (relative
+paths, carets, which was in front) with the server (`state/put`, a small text
+per workspace root kept beside the socket; capability `state`) when the set of
+open files changes and when its window loses focus, and on each new connection
+asks what was left (`state/get`). What another machine left is offered once, as
+a row with a button, and taken additively: the files open beside the client's
+own tabs, nothing is closed or replaced, and unsaved text, the layout and files
+outside the project never travel. The server neither reads nor interprets the
+text; the client decodes it as untrusted. A caret alone is never worth a
+message: sessions are saved at every pause in typing
+(`openspec/specs/remote-connection-lifecycle`).
+
 ### 7.9a The Host view
 
 The answer to "did I leave anything running there?" from the client, in
