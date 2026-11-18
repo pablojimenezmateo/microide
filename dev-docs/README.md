@@ -9,7 +9,7 @@ top-level [`docs/`](../docs/) directory is reserved for the public [GitHub Pages
 |------|----------|
 | [`project/`](project/) | Active work, implementation guide, tech debt, editor essentials, release notes |
 | [`performance/`](performance/) | Perf harness, tracing, profiling, findings; [`investigations/`](performance/investigations/) for historical deep dives |
-| [`platform/`](platform/) | Linux build, host bring-up, platform audit, [Wayland stale-cursor bug](platform/wayland-stale-cursor.md) |
+| [`platform/`](platform/) | Linux build, host bring-up, platform audit, [Wayland stale-cursor bug](platform/wayland-stale-cursor.md), [SDL Vulkan constant-buffer overrun](platform/sdl-vulkan-constant-buffer-overrun.md) (upstream) |
 | [`plugins/`](plugins/) | Plugin runtime research |
 | [`design/`](design/) | Active design contracts (text-surface unification) and explored-but-unstarted designs ([remote projects over ssh](design/remote-projects.md)) |
 | [`archive/`](archive/) | Shipped plans, superseded notes, out-of-scope decisions |
