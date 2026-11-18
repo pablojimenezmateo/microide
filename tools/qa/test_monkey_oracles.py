@@ -345,6 +345,77 @@ class Kill9OracleTests(unittest.TestCase):
         self.assertEqual(len(found), 1, found)
         self.assertIn("did not come back", found[0][1])
 
+    def test_a_buffer_back_clean_through_the_saves_transforms_is_not_changed(self) -> None:
+        # fd10a1441e1d's verify: rtl.txt, dirty at 4103 bytes, came back CLEAN at
+        # 4104 -- the autosave added the final newline -- and read as "came back
+        # with different content", though the app logged writing those 4104 bytes.
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "rtl.txt"
+            path.write_bytes(b"text")
+            saved = b"text edited\n"
+            app = _RelaunchingApp()
+            app.docs[1] = [{"path": str(path), "dirty": True, "project": "/p/b",
+                            "sha256": hashlib.sha256(b"text edited").hexdigest()}]
+            log = [b""]
+            app._log_size = lambda: len(log[0])
+            app.log_since = lambda offset, max_bytes=0: log[0][offset:].decode()
+            relaunch = app.crash_and_relaunch
+
+            def autosave_then_relaunch(*args, **kwargs):
+                path.write_bytes(saved)
+                sha = hashlib.sha256(saved).hexdigest()
+                log[0] += (f"microide buffer-io: write path={path} doc=0x1 rev=2 dirty=0 bytes={len(saved)} "
+                           f"sha={sha[:12]} disk_exists=1 disk_size=12 disk_mtime=1 disk_racy=0\n").encode()
+                relaunch(*args, **kwargs)
+                app.docs[1] = [{**app.docs[1][0], "dirty": False, "sha256": sha}]
+            app.crash_and_relaunch = autosave_then_relaunch
+            with mock.patch.object(monkey_oracles, "CRASH_SAFETY_QUIET_S", 0.0), \
+                    mock.patch.object(monkey_oracles.time, "sleep", lambda _s: None):
+                found = monkey_oracles.DataOracle(app).kill9_and_check(random.Random(1), waited=True)
+            self.assertEqual(found, [], found)
+
+    def test_a_link_to_a_file_the_app_rewrote_unchanged_is_not_reported(self) -> None:
+        # fd10a1441e1d's verify: the autosave rewrote "名前 with spaces.txt" with the
+        # text it already held (its buffer dirty, its content not), so that buffer
+        # took the "file holds the snapshot" branch -- which excused nothing -- and
+        # link0, a link to it whose clean tab predates the save, read as changed.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "a"
+            root.mkdir()
+            target = root / "names.txt"
+            target.write_text("old\n")
+            link = root / "link0"
+            link.symlink_to("names.txt")
+
+            class _App(_RelaunchingApp):
+                ROOTS = (str(root), "/p/b")
+
+                def __init__(self) -> None:
+                    super().__init__()
+                    self.project = self.ROOTS[0]
+                    self.active = 0
+                    self.docs = {0: [{"path": str(link), "dirty": False, "project": self.ROOTS[0],
+                                      "sha256": monkey_oracles._sha256_file(link)}], 1: []}
+
+            app = _App()
+            log = [b""]
+            app._log_size = lambda: len(log[0])
+            app.log_since = lambda offset, max_bytes=0: log[0][offset:].decode()
+            relaunch = app.crash_and_relaunch
+
+            def save_then_relaunch(*args, **kwargs):
+                target.write_text("new\n")
+                sha = monkey_oracles._sha256_file(target)
+                log[0] += (f"microide buffer-io: write path={target} doc=0x1 rev=2 dirty=0 bytes=4 "
+                           f"sha={sha[:12]} disk_exists=1 disk_size=4 disk_mtime=1 disk_racy=0\n").encode()
+                relaunch(*args, **kwargs)
+            app.crash_and_relaunch = save_then_relaunch
+            with mock.patch.object(monkey_oracles, "CRASH_SAFETY_QUIET_S", 0.0), \
+                    mock.patch.object(monkey_oracles.time, "sleep", lambda _s: None):
+                found = monkey_oracles.DataOracle(app).kill9_and_check(random.Random(1), waited=True)
+            self.assertEqual(found, [], found)
+
     def test_the_write_lines_name_paths_with_spaces(self) -> None:
         log = ("microide buffer-io: write path=/a/ünï cødé/名前 with spaces.txt doc=0x7 rev=103 dirty=0 "
                "bytes=16 sha=ce68aabc783e disk_exists=1 disk_size=16 disk_mtime=1 disk_racy=1\n"

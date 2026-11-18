@@ -466,7 +466,12 @@ class DataOracle:
         # "marked saved; its file does not hold it" without the file being read,
         # and a link to a file it wrote "changed on disk, and nothing saved it"
         # (soak 1bee2822b458, fd10a1441e1d).
-        saved_before_kill: set[str] = set()
+        # The app's own record first: every file the killed process logged writing
+        # after the snapshot, and that holds what it wrote, was saved -- whatever its
+        # buffer's text was, and whether or not its content changed.
+        logged_saves = {path: sha for path, sha in written.items()
+                        if (_sha256_file(Path(path)) or "").startswith(sha)}
+        saved_before_kill: set[str] = {os.path.realpath(path) for path in logged_saves}
         if waited:
             by_key = {_doc_key(d): d for d in after}
             for doc in dirty:
@@ -478,14 +483,13 @@ class DataOracle:
                     # -- so the relaunch reopened the tab clean from its file and
                     # deferred, and `documents` lists no pending tab (soak 93826423aa06).
                     continue
-                if back is None and doc.get("path") and \
-                        (sha := written.get(str(doc["path"]))) and \
-                        (_sha256_file(Path(doc["path"])) or "").startswith(sha):
+                if doc.get("path") and (sha := logged_saves.get(str(doc["path"]))) and \
+                        (back is None or (not back.get("dirty") and str(back.get("sha256", "")).startswith(sha))):
                     # The same, through the save's transforms: the autosave added a
-                    # final newline or trimmed trailing whitespace, so the file is not
-                    # the snapshot's text -- it is what the app logged writing
-                    # (soak 4e1229a05d76's family, in 1bee2822b458's run).
-                    saved_before_kill.add(os.path.realpath(str(doc["path"])))
+                    # final newline or trimmed trailing whitespace, so neither the file
+                    # nor the buffer that came back clean is the snapshot's text -- they
+                    # are what the app logged writing (soak 4e1229a05d76's family, in
+                    # 1bee2822b458's run; rtl.txt 4103 -> 4104 bytes in fd10a1441e1d's).
                     continue
                 if back is None:
                     out.append(("data", f"the unsaved buffer {Path(str(key)).name} did not come back after a kill -9 "
