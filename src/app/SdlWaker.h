@@ -18,7 +18,10 @@ namespace microide::app {
 //
 // It also starts the lost-wake relay (app/LostWakeRelay.h, TD-2026-11-07-433): SDL
 // 3.4 can drop a cross-thread push's wake, and the main loop's blocking waits are
-// bracketed with SdlBlockingWaitScope so the relay can re-deliver one.
+// bracketed with SdlBlockingWaitScope so the relay can re-deliver one. Its nudge is
+// a pushed event AND a signal to the main thread (SIGRTMIN + 7, SA_RESTART), which
+// ends SDL's poll whether or not SDL's own wake gets through -- in the soak it did
+// not, the nudge's included. Must run on the main thread.
 void InstallSdlWaker();
 
 // The main loop's bracket around SDL_WaitEvent / SDL_WaitEventTimeout.
