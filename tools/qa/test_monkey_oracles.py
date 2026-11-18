@@ -322,6 +322,19 @@ class ResourceOracleTests(unittest.TestCase):
     run crossed the fixed budgets with nothing leaked (20 opened and closed return
     to the baseline exactly). What the open panes hold is not growth."""
 
+    def test_a_leak_finding_says_which_threads_and_where_the_memory_is(self) -> None:
+        # The counts alone said "threads grew by 70" and "rss grew by 1.6 GB";
+        # the bundle names the threads against the baseline and the mappings.
+        import collections
+        import os
+        oracle = monkey_oracles.ResourceOracle.__new__(monkey_oracles.ResourceOracle)
+        oracle.baseline_threads = collections.Counter({"gone-worker": 3})
+        evidence = oracle._what_it_holds(os.getpid())
+        threads = evidence["threads.txt"].decode()
+        self.assertIn("(   3, -3)  gone-worker", threads)
+        self.assertIn("largest resident mappings (kB):", evidence["memory.txt"].decode())
+
+
     def _oracle(self, samples):
         oracle = monkey_oracles.ResourceOracle(mock.Mock())
         it = iter(samples)
