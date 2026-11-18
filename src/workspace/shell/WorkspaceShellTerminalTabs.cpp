@@ -9,6 +9,9 @@
 #include "workspace/SettingFlags.h"
 #include "workspace/services/SidebarService.h"
 #include "workspace/services/TerminalPanelService.h"
+#include "workspace/NativeDialogTestMode.h"
+#include "workspace/TerminalAttention.h"
+#include "platform/HostIntegration.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 
 namespace microide::workspace {
@@ -456,6 +459,16 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
   // Whether a drained project's host pane holds a terminal its saved session does
   // not name: set by `drain`, read after it.
   bool host_terminal_unrecorded = false;
+  InteractionState& interaction = context_.interaction_state;
+  const auto& front_tabs = context_.current_project_state.terminal_tabs;
+  // Read once, and only by a drain that has an alert to decide.
+  std::optional<bool> alert_setting;
+  const auto alert_when_unfocused = [&]() {
+    if (!alert_setting.has_value()) {
+      alert_setting = SettingFlagEnabled(GetSettingValue("terminal.alert_when_unfocused"), true);
+    }
+    return *alert_setting;
+  };
   const auto drain = [&](std::vector<std::unique_ptr<TerminalTabState>>& tabs,
                          std::optional<std::size_t> on_screen_index, std::string_view project_label) {
     bool marked = false;
@@ -488,35 +501,50 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
           tab->has_unseen_output = true;
           marked = true;
         }
-        // Consumed whether or not the tab is on screen, so a bell rung while the
-        // user was watching does not mark the tab later.
-        if (pane->session.ConsumeBell() && !tab_on_screen && !tab->has_unseen_bell) {
-          tab->has_unseen_bell = true;
-          marked = true;
-        }
-        // A program's desktop notification (OSC 9 / 777): a toast when its terminal
-        // is not on screen — an agent asking for input in a background tab. On
-        // screen the program is already showing it.
-        if (std::optional<terminal::TerminalSession::Notification> notification =
-                pane->session.ConsumeNotification();
-            notification.has_value() && !tab_on_screen) {
-          std::string message;
-          if (!project_label.empty()) {
-            message.append(project_label).append(" \u2014 ");
+        // Both consumed whether or not the tab is on screen, so a bell rung while
+        // the user was watching does not mark the tab later. What they do -- the
+        // tab's mark and a toast for a tab out of sight, the window flagged and a
+        // desktop notification for a window out of focus -- is DecideTerminalAlert's.
+        const bool bell = pane->session.ConsumeBell();
+        const std::optional<terminal::TerminalSession::Notification> notification =
+            pane->session.ConsumeNotification();
+        if (bell || notification.has_value()) {
+          const std::string terminal_label = pane->session.LaunchLabel();
+          TerminalAlertOutcome alert = DecideTerminalAlert(TerminalAlert{
+              .bell = bell,
+              .notification = notification.has_value(),
+              .title = notification.has_value() ? std::string_view(notification->title) : std::string_view(),
+              .body = notification.has_value() ? std::string_view(notification->body) : std::string_view(),
+              .project_label = project_label,
+              .terminal_label = terminal_label,
+              .project_in_front = &tabs == &front_tabs,
+              .tab_on_screen = tab_on_screen,
+              .window_focused = interaction.window_has_input_focus,
+              .alert_when_unfocused = alert_when_unfocused(),
+          });
+          if (!alert.toast.empty()) {
+            Notify(NotificationService::Tone::Info, std::move(alert.toast));
           }
-          message += pane->session.LaunchLabel();
-          message += ": ";
-          if (!notification->title.empty()) {
-            message += notification->title;
-            if (!notification->body.empty()) {
-              message += " — ";
-            }
-          }
-          message += notification->body;
-          Notify(NotificationService::Tone::Info, std::move(message));
-          if (!tab->has_unseen_bell) {
+          if (alert.mark_tab && !tab->has_unseen_bell) {
             tab->has_unseen_bell = true;
             marked = true;
+          }
+          if (alert.flag_window) {
+            ++interaction.window_flags_requested;
+            if (dialog_window_ != nullptr) {
+              SDL_FlashWindow(dialog_window_, SDL_FLASH_UNTIL_FOCUSED);
+            }
+          }
+          if (alert.desktop.has_value() &&
+              AdmitDesktopNotification(SDL_GetTicks(), interaction.last_desktop_notification_ms)) {
+            ++interaction.desktop_notifications_posted;
+            // The test runner's switch for anything that pops on the developer's
+            // desktop; the spawn waits on the tool, so it is the executor's.
+            if (!NativeDialogsDisabledForTesting()) {
+              project_background_executor_.Post([posted = std::move(*alert.desktop)]() {
+                (void)platform::ShowDesktopNotification(posted.summary, posted.body);  // best effort
+              });
+            }
           }
         }
         // A program on the host asked for a URL through the BROWSER its server
@@ -554,7 +582,7 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
   };
   badge_changed = drain(context_.current_project_state.terminal_tabs,
                         terminal_on_screen ? std::optional<std::size_t>(active_index) : std::nullopt,
-                        {});
+                        context_.current_project_state.id.Label());
   if (host_terminal_unrecorded) {
     // Recorded the way unsaved text is: the crash-safety session flush, debounced.
     context_.current_project_state.host_terminals_unrecorded = true;

@@ -6,6 +6,7 @@
 #include "platform/FsOps.h"
 #include "platform/HostIntegration.h"
 #include "platform/Trash.h"
+#include "util/StringUtil.h"
 
 #include <poll.h>
 #include <sys/stat.h>
@@ -22,6 +23,7 @@
 #include <string>
 #include <system_error>
 #include <thread>
+#include <vector>
 
 namespace microide::tests {
 namespace {
@@ -525,6 +527,38 @@ void TestOpenUrlRejectsUnsafeSchemesAndOverlongInput() {
   Expect(!microide::platform::OpenUrl(overlong).ok, "an over-long URL is refused");
 }
 
+// A desktop notification's text comes from a terminal program: what reaches the
+// notification daemon is one bounded line each, with the body's markup inert.
+void TestDesktopNotificationCommandSanitizesTerminalText() {
+  using microide::platform::DesktopNotificationCommand;
+  const std::vector<std::string> plain = DesktopNotificationCommand("alpha \xe2\x80\x94 claude", "needs your input");
+  Expect(plain.size() >= 3 && plain.front() == "notify-send", "the freedesktop tool posts it");
+  Expect(plain[plain.size() - 3] == "--", "options end before the text, so a leading dash is text");
+  Expect(plain[plain.size() - 2] == "alpha \xe2\x80\x94 claude" && plain.back() == "needs your input",
+         "plain text passes through");
+
+  const std::vector<std::string> hostile =
+      DesktopNotificationCommand("-x\x1b[31m\nsecond", "<b>bold</b> & <a href=\"x\">link</a>\x07");
+  Expect(hostile[hostile.size() - 2] == "-x [31m second", "control bytes in the summary become spaces: " +
+                                                              hostile[hostile.size() - 2]);
+  Expect(hostile.back() == "&lt;b&gt;bold&lt;/b&gt; &amp; &lt;a href=\"x\"&gt;link&lt;/a&gt; ",
+         "the body's markup is escaped: " + hostile.back());
+
+  const std::vector<std::string> empty = DesktopNotificationCommand(" \n", "");
+  Expect(empty.back() == "MicroIDE", "an empty summary falls back to the application's name, with no body");
+
+  // Cut on a code-point boundary: 200 two-byte characters against a 160-byte cap.
+  std::string wide;
+  for (int i = 0; i < 200; ++i) {
+    wide += "\xc3\xa9";
+  }
+  const std::vector<std::string> capped = DesktopNotificationCommand(wide, wide + wide + wide);
+  Expect(capped[capped.size() - 2].size() == 160 && capped.back().size() == 480,
+         "both are cut to their byte budgets");
+  Expect(microide::util::IsValidUtf8(capped[capped.size() - 2]) && microide::util::IsValidUtf8(capped.back()),
+         "and never mid-character");
+}
+
 // RetireDescriptorAsync hands a descriptor to a background worker so the caller
 // never blocks in close(2) -- which, for an inotify descriptor, sporadically
 // costs milliseconds. The contract that matters is simply that the close DOES
@@ -560,6 +594,8 @@ void RegisterFilesystemTests(std::vector<TestCase>& tests) {
           TestRetireDescriptorAsyncEventuallyCloses);
   AddTest(tests, "Platform/OpenUrlRejectsUnsafeSchemesAndOverlongInput",
           TestOpenUrlRejectsUnsafeSchemesAndOverlongInput);
+  AddTest(tests, "Platform/DesktopNotificationCommandSanitizesTerminalText",
+          TestDesktopNotificationCommandSanitizesTerminalText);
   AddTest(tests, "Filesystem/CopyPathAcceptsBareFilenameDestination",
           TestCopyPathAcceptsBareFilenameDestination);
   AddTest(tests, "Trash/AcceptsDanglingSymlink", TestTrashAcceptsDanglingSymlink);

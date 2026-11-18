@@ -3206,6 +3206,48 @@ void TestWorkspaceShellTerminalNotificationToastsFromABackgroundTab() {
   Expect(WorkspaceShellTestAccess::TerminalTabHasUnseenBell(shell, 0), "and marks its tab");
 }
 
+// With the window unfocused the user is in another application: nothing inside
+// the window reaches them, and the terminal on screen got neither toast nor mark.
+// The alert now flags the window and posts the notification to the desktop
+// (decision: TerminalAttention/*); a bell flags without posting, a second
+// notification inside the spacing is not posted, and the setting turns it off.
+void TestWorkspaceShellTerminalAlertReachesPastAnUnfocusedWindow() {
+  SplitTerminalFixture fixture;
+  WorkspaceShell& shell = fixture.shell;
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  const auto& interaction = WorkspaceShellTestAccess::InteractionState_(shell);
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]9;focused\x07");
+  WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+  Expect(interaction.window_flags_requested == 0 && interaction.desktop_notifications_posted == 0,
+         "a focused window is not flagged");
+
+  SDL_Event focus_lost{};
+  focus_lost.type = SDL_EVENT_WINDOW_FOCUS_LOST;
+  Expect(shell.HandleEvent(focus_lost).handled, "focus loss is handled");
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]9;needs your input\x07");
+  WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+  Expect(interaction.window_flags_requested == 1, "an unfocused window is flagged");
+  Expect(interaction.desktop_notifications_posted == 1, "and the notification is posted to the desktop");
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x07");
+  WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+  Expect(interaction.window_flags_requested == 2 && interaction.desktop_notifications_posted == 1,
+         "a bell flags the window and posts nothing");
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]9;again at once\x07");
+  WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+  Expect(interaction.window_flags_requested == 3 && interaction.desktop_notifications_posted == 1,
+         "a second notification inside the spacing flags the window and is not posted");
+
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "terminal.alert_when_unfocused", "false"),
+         "the setting is registered");
+  TerminalSessionTestAccess::AppendOutput(session, "\x07");
+  WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+  Expect(interaction.window_flags_requested == 3, "off, nothing leaves the window");
+}
+
 // The same from a terminal in a BACKGROUND PROJECT: it surfaced only once that
 // project came back to the front (TD-2026-11-01-427 item 2) -- an agent asking
 // for input in project A said nothing while the user worked in project B. The
@@ -3483,6 +3525,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellFileDroppedOnTheTerminalTypesItsPath);
   AddTest(tests, "WorkspaceShell/TerminalNotificationToastsFromABackgroundProject",
           TestWorkspaceShellTerminalNotificationToastsFromABackgroundProject);
+  AddTest(tests, "WorkspaceShell/TerminalAlertReachesPastAnUnfocusedWindow",
+          TestWorkspaceShellTerminalAlertReachesPastAnUnfocusedWindow);
   AddTest(tests, "WorkspaceShell/TerminalMouseOwnerShowsAHandOnLitControls",
           TestWorkspaceShellTerminalMouseOwnerShowsAHandOnLitControls);
   AddTest(tests, "WorkspaceShell/TerminalShiftDragSelectsPastAMouseOwner",

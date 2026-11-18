@@ -124,6 +124,11 @@ for what is actually measured, and what is not.
   walk the terminal tabs while one is focused
 - An **activity dot** on a tab whose terminal printed while it was not on screen (an agent
   finishing in another tab, or behind a hidden panel); it clears when the tab is shown
+- **Alerts that reach you in another window**: a bell, or a program's notification (OSC 9 / 777,
+  an agent's "needs your input"), that arrives while the window is unfocused flags the window with
+  the desktop until you come back, and a notification is also posted as a desktop notification
+  naming the project and terminal (`terminal.alert_when_unfocused`, on by default; needs
+  `notify-send`)
 - **Relaunch** an exited terminal in place (`Enter` in the dead pane, or Terminal ▸ Relaunch
   Terminal): same tab, same position, same cwd and command — the dropped-ssh case
 - Alternate-screen support, application cursor-key mode, origin mode, autowrap, bracketed paste

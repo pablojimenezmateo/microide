@@ -670,6 +670,23 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "Terminal",
       },
       SettingSpec{
+          .id = "terminal.alert_when_unfocused",
+          .label = "Alert When Unfocused",
+          .description = "When a terminal program rings the bell or posts a notification (OSC 9 / "
+                         "777) while this window is not focused, flag the window with the desktop "
+                         "until it is focused again; a notification is also posted as a desktop "
+                         "notification. How an agent waiting for input reaches you in another "
+                         "application.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .default_int = 0,
+          .default_float = 0.0f,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Terminal",
+      },
+      SettingSpec{
           .id = "project.follow_out_of_root_symlinks",
           .label = "Follow Out-of-Root Symlinks",
           .description = "Follow directory symlinks whose target is outside the project root when "

@@ -103,6 +103,7 @@ void RegisterWorkspaceShellEditorBlameTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests);
+void RegisterTerminalAttentionTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceFileDropTests(std::vector<TestCase>& tests);
 void RegisterColumnSelectionTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellRenderSurfaceTests(std::vector<TestCase>& tests);
@@ -298,6 +299,7 @@ void RegisterShellTests(std::vector<TestCase>& tests) {
   RegisterWorkspaceShellPluginTests(tests);
   RegisterWorkspaceShellPromptTests(tests);
   RegisterWorkspaceShellCompareTests(tests);
+  RegisterTerminalAttentionTests(tests);
   RegisterWorkspaceFileDropTests(tests);
   RegisterColumnSelectionTests(tests);
   RegisterWorkspaceShellRenderSurfaceTests(tests);

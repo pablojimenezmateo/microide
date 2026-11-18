@@ -170,6 +170,10 @@ DESKTOP_INPUT_METHOD_ENV = ("XMODIFIERS", "GTK_IM_MODULE", "QT_IM_MODULE", "SDL_
 # developer's own server.
 HOST_TERMINAL_ENV = ("MICROIDE_SERVER_SOCKET_DIR", "MICROIDE_TERMINAL_HANDLE", "BROWSER")
 
+# First on every app's PATH: stand-ins for the tools that would reach the desktop
+# of whoever runs the suite (see desktopbin/notify-send).
+DESKTOPBIN = Path(__file__).resolve().parent / "desktopbin"
+
 
 def git_fence_env(project: Path) -> dict[str, str]:
     """What keeps every git a run starts -- the driver's and the app's -- inside
@@ -712,6 +716,7 @@ class App:
             if project is not None:
                 env.update(git_fence_env(project))
         env.update(extra_env or {})
+        env["PATH"] = f"{DESKTOPBIN}:{env.get('PATH', '/usr/bin:/bin')}"
         for sub in ("config", "state", "data", "run", "stale"):
             (work / sub).mkdir(parents=True, exist_ok=True)
         os.chmod(work / "run", 0o700)

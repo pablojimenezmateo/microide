@@ -85,6 +85,23 @@ HostIntegrationResult LaunchDesktopOpener(std::string argument) {
   return Success();
 }
 
+constexpr std::size_t kMaxNotificationSummaryBytes = 160;
+constexpr std::size_t kMaxNotificationBodyBytes = 480;
+
+// Untrusted terminal text as one line of a notification: control bytes (an ESC
+// that would start a sequence in a log, a newline that would fake a second line)
+// become spaces, and the result is cut to `max_bytes` on a code-point boundary.
+std::string NotificationText(std::string_view text, std::size_t max_bytes) {
+  std::string out(text.substr(0, util::Utf8ByteBudgetPrefixLength(text, max_bytes)));
+  for (char& c : out) {
+    const auto u = static_cast<unsigned char>(c);
+    if (u < 0x20 || u == 0x7f) {
+      c = ' ';
+    }
+  }
+  return out;
+}
+
 }  // namespace
 
 bool IsOpenableExternalUrl(std::string_view url) {
@@ -116,6 +133,62 @@ HostIntegrationResult OpenPathInFileManager(const std::filesystem::path& directo
   }
 
   return LaunchDesktopOpener(normalized_directory.string());
+}
+
+std::vector<std::string> DesktopNotificationCommand(std::string_view summary, std::string_view body) {
+  std::string safe_summary = NotificationText(summary, kMaxNotificationSummaryBytes);
+  if (safe_summary.find_first_not_of(' ') == std::string::npos) {
+    safe_summary = "MicroIDE";
+  }
+  std::string safe_body;
+  for (const char c : NotificationText(body, kMaxNotificationBodyBytes)) {
+    switch (c) {
+      case '&':
+        safe_body.append("&amp;");
+        break;
+      case '<':
+        safe_body.append("&lt;");
+        break;
+      case '>':
+        safe_body.append("&gt;");
+        break;
+      default:
+        safe_body.push_back(c);
+    }
+  }
+  // desktop-entry names the installed application, so the daemon shows its icon
+  // and a click on the notification raises this window. `--` ends the options: a
+  // summary that starts with a dash is still a summary.
+  std::vector<std::string> command = {"notify-send", "--app-name=MicroIDE", "--icon=microide",
+                                      "--hint=string:desktop-entry:microide", "--",
+                                      std::move(safe_summary)};
+  if (!safe_body.empty()) {
+    command.push_back(std::move(safe_body));
+  }
+  return command;
+}
+
+HostIntegrationResult ShowDesktopNotification(std::string_view summary, std::string_view body) {
+  // LocalProcessLauncher() for the reason the desktop opener uses it: the
+  // notification belongs on the machine the user is sitting at.
+  const SubprocessResult result =
+      LocalProcessLauncher().Run(DesktopNotificationCommand(summary, body),
+                                 SubprocessOptions{
+                                     .cwd = {},
+                                     .stdin_text = {},
+                                     .environment_overrides = {},
+                                     .capture_stdout = false,
+                                     .capture_stderr = true,
+                                     .silence_stderr = false,
+                                     // notify-send returns once the daemon has the
+                                     // message; the timeout bounds a session bus
+                                     // that does not answer.
+                                     .timeout_ms = 5000,
+                                 });
+  if (!result.success()) {
+    return Failure(result.stderr_text.empty() ? "notify-send failed" : result.stderr_text);
+  }
+  return Success();
 }
 
 }  // namespace microide::platform

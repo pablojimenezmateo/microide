@@ -10,6 +10,15 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Added
 
+- **A terminal that needs you reaches you in another window.** A bell, or a
+  program's notification (OSC 9 / 777 -- an agent's "needs your input"), that
+  arrives while the window is not focused now flags the window with the desktop
+  until it is focused again, and a notification is also posted as a desktop
+  notification naming the project and the terminal. Until now the toast and the
+  tab's mark stayed inside the window, and a terminal that was on screen got
+  neither. `terminal.alert_when_unfocused` (on by default) turns it off; desktop
+  notifications need `notify-send`, at most one a second.
+
 - **Structural diffs, after difftastic.** Compare tabs now read each changed
   hunk as syntax -- identifiers, operators, whole strings and comments, and
   bracketed groups, by the file's language -- and highlight only the tokens that

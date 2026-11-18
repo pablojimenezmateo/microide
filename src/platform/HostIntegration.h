@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace microide::platform {
 
@@ -25,5 +26,18 @@ HostIntegrationResult OpenUrl(std::string_view url);
 // Opens the OS file manager at the given directory (Linux: `xdg-open`). Blocks for
 // the same reason OpenUrl does, with the same rule about the calling thread.
 HostIntegrationResult OpenPathInFileManager(const std::filesystem::path& directory);
+
+// The command ShowDesktopNotification runs, split out so the text it hands the
+// notification daemon is tested without one. `summary` and `body` come from a
+// terminal program, so they are untrusted: control bytes become spaces, both are
+// cut to a byte budget on a code-point boundary, and the body's markup
+// characters are escaped (the daemon renders `<b>` and friends in a body).
+std::vector<std::string> DesktopNotificationCommand(std::string_view summary, std::string_view body);
+
+// Posts a desktop notification through the freedesktop notification service
+// (`notify-send`). Blocks until the tool exits or its timeout fires, with the same
+// rule about the calling thread as OpenUrl. A desktop without the tool or without
+// a notification daemon fails here and nothing else happens.
+HostIntegrationResult ShowDesktopNotification(std::string_view summary, std::string_view body);
 
 }  // namespace microide::platform

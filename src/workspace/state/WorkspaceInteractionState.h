@@ -229,6 +229,12 @@ struct InteractionState {
   };
   CaretHover caret_hover;
   bool window_has_input_focus = true;
+  // Terminal alerts that reached past the window while it was unfocused
+  // (workspace/TerminalAttention.h): when the last desktop notification was posted
+  // (the spacing rule's memory), and how many of each were asked for.
+  std::uint64_t last_desktop_notification_ms = 0;
+  std::uint32_t desktop_notifications_posted = 0;
+  std::uint32_t window_flags_requested = 0;
   // The modifiers held as of the event being dispatched, in queue order: each key
   // event's own `mod`, resynced from SDL when the window gains focus. A pointer
   // handler reads this, never SDL_GetModState(): SDL updates its live state when

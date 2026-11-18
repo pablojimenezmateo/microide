@@ -618,6 +618,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/actions/WorkspaceActionServicesContextFactory.cpp
   src/workspace/actions/WorkspaceActionRequests.cpp
   src/workspace/WorkspaceCommandParsing.cpp
+  src/workspace/TerminalAttention.cpp
   src/workspace/WorkspaceFileDrop.cpp
   src/workspace/PluginRasterSize.cpp
   src/workspace/control/ControlChannelService.cpp
@@ -1469,6 +1470,7 @@ add_executable(microide_tests
   tests/WorkspaceShellPluginTests.cpp
   tests/WorkspaceShellPromptTests.cpp
   tests/WorkspaceShellCompareTests.cpp
+  tests/TerminalAttentionTests.cpp
   tests/WorkspaceFileDropTests.cpp
   tests/ColumnSelectionTests.cpp
   tests/WorkspaceShellRenderSurfaceTests.cpp

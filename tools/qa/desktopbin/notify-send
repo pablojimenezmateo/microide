@@ -1,0 +1,10 @@
+#!/bin/sh
+# A stand-in for notify-send, the tool behind a terminal's desktop notification
+# (`terminal.alert_when_unfocused`). The driver puts this directory first on the
+# PATH of EVERY app under test (microide_qa.DESKTOPBIN): the app inherits the
+# session bus of whoever runs the suite, so the real tool would pop the monkey's
+# notifications on their desktop. Every argument is appended, one per line, to
+# $XDG_RUNTIME_DIR/notify-send-args, which the `terminal-alert-unfocused` flow reads.
+dir="${XDG_RUNTIME_DIR:-/tmp}"
+printf '%s\n' "$@" >> "$dir/notify-send-args"
+exit 0

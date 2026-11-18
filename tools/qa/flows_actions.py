@@ -178,10 +178,39 @@ def flow_desktop_opener(app: q.App) -> None:
         app.expect(handed[:1] == [str(expected)], f"{row_label}: the opener gets {expected} ({handed})")
 
 
+def _notified(app: q.App) -> list[str]:
+    path = app.work / "run" / "notify-send-args"
+    return path.read_text().splitlines() if path.exists() else []
+
+
+def flow_terminal_alert_unfocused(app: q.App) -> None:
+    """A terminal program's notification (OSC 9, an agent's "needs your input")
+    printed while another application has the focus is posted to the desktop
+    (`tools/qa/desktopbin/notify-send` records it) with the project and terminal in
+    its summary; the same notification with the window focused posts nothing."""
+    app.send("term")
+    app.send("focus", "panel")
+    app.wait_until(lambda: bool(terminal_tabs(app)), 5.0, "a terminal")
+    app.type("printf '\\033]9;qa focused\\007'\n")
+    step(app, "notification while focused", 0.5)
+    app.expect(not _notified(app), f"a focused window posts nothing to the desktop ({_notified(app)})")
+
+    app.type("sleep 1; printf '\\033]9;qa needs <input>\\007'\n")
+    app.focus_out()
+    app.wait_until(lambda: any("qa needs" in line for line in _notified(app)), 5.0,
+                   "the desktop notification of an unfocused window")
+    posted = _notified(app)
+    app.expect("qa needs &lt;input&gt;" in posted, f"the body is the program's text, markup escaped ({posted})")
+    assert app.project is not None
+    app.expect(any(line.startswith(app.project.name) for line in posted),
+               f"the summary names the project ({posted})")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "notification-banner-commands": flow_notification_banner_commands,
     "focus-commands": flow_focus_commands,
     "desktop-opener": flow_desktop_opener,
+    "terminal-alert-unfocused": flow_terminal_alert_unfocused,
 }
 PLUGINS: dict[str, tuple[str, ...]] = {"notification-banner-commands": ("qa-broken",)}
 FAKEBIN = Path(__file__).resolve().parent / "fakebin"
