@@ -487,7 +487,8 @@ void TestStatusTableAndFigureWords() {
          "a terminal's place against its root");
   const remote::ServerStatus status = Parse(R"({
     "release": "2.1", "pid": 77, "server": {"uptime_ms": 7200000, "rss_bytes": 8388608, "cpu_permille": 4},
-    "workspaces": [{"root": "/srv/p", "clients": 1, "terminals": 1, "processes": 1, "files": 1520, "watch": "native"}],
+    "workspaces": [{"root": "/srv/p", "clients": 1, "terminals": 1, "processes": 1, "files": 1520, "watch": "native",
+                    "disk_free": 227633266688, "disk_total": 1000000000000}],
     "terminals": [{"handle": 3, "root": "/srv/p", "cwd": "/srv/p/sub", "clients": 2, "pid": 4242,
                    "rss_bytes": 42991616, "cpu_permille": 32}],
     "processes": [{"handle": 9, "root": "/srv/p", "argv": ["clangd"], "pid": 4300, "kept": true, "detached_ms": 720000,
@@ -498,13 +499,30 @@ void TestStatusTableAndFigureWords() {
   const std::string expected =
       "microide-server 2.1 \xc2\xb7 pid 77 \xc2\xb7 up 2 h \xc2\xb7 0.4% \xc2\xb7 8 MB\n"
       "\n"
-      "/srv/p \xc2\xb7 1 client \xc2\xb7 1520 files \xc2\xb7 watch native\n"
+      "/srv/p \xc2\xb7 1 client \xc2\xb7 1520 files \xc2\xb7 watch native \xc2\xb7 212.0 GB free\n"
       "    terminal #3 sub                         pid 4242    2 clients           3.2% \xc2\xb7 41 MB\n"
       "    clangd                                  pid 4300    kept 12 min         0.0% \xc2\xb7 180 MB\n"
       "\n"
       "/srv/gone \xc2\xb7 not open\n"
       "    make -j8                                pid 5000    running             \xe2\x80\xa6 \xc2\xb7 \xe2\x80\xa6\n";
   Expect(table == expected, "the table:\n" + table + "\nexpected:\n" + expected);
+
+  // The disk a workspace is on: low under a tenth of it or 10 GB, whichever is
+  // less; a figure that is missing or absurd is not reported, never zero.
+  const auto disk = [](std::string_view fields) {
+    return Parse("{\"workspaces\": [{\"root\": \"/srv/p\", \"clients\": 1" + std::string(fields) + "}]}")
+        .workspaces.front();
+  };
+  Expect(remote::FormatWorkspaceFigures(disk(R"(, "disk_free": 3328599654, "disk_total": 1000000000000)")) ==
+             "1 client \xc2\xb7 low disk: 3.1 GB free",
+         "under 10 GB of a large disk reads low");
+  Expect(!remote::DiskIsLow(disk(R"(, "disk_free": 3328599654, "disk_total": 21474836480)")),
+         "3 GB of a 20 GB disk is over a tenth of it");
+  Expect(remote::DiskIsLow(disk(R"(, "disk_free": 1073741824, "disk_total": 21474836480)")),
+         "1 GB of a 20 GB disk is not");
+  Expect(remote::FormatWorkspaceFigures(disk("")) == "1 client" &&
+             remote::FormatWorkspaceFigures(disk(R"(, "disk_free": -5, "disk_total": "big")")) == "1 client",
+         "an older server's row, or a hostile one, shows no disk figure");
 }
 
 }  // namespace

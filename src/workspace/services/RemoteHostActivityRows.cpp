@@ -87,13 +87,7 @@ std::vector<Item> BuildHostActivityRows(const HostActivityInput& input) {
 
   if (group("group:workspaces", "Workspaces", std::to_string(status->workspaces.size()))) {
     for (const remote::ServerWorkspace& workspace : status->workspaces) {
-      std::string detail = remote::FormatCount(workspace.clients, "client", "clients");
-      if (workspace.files.has_value()) {
-        detail += std::string(remote::kFieldSeparator) + remote::FormatCount(*workspace.files, "file", "files");
-      }
-      if (!workspace.watch.empty() && workspace.watch != "none") {
-        detail += std::string(remote::kFieldSeparator) + "watch " + workspace.watch;
-      }
+      std::string detail = remote::FormatWorkspaceFigures(workspace);
       if (own(workspace.root)) {
         detail += std::string(remote::kFieldSeparator) + "this window";
       }

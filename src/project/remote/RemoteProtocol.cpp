@@ -315,6 +315,9 @@ ServerStatus ServerStatusFromJson(const util::JsonValue& json) {
                                watch.AsString() == "none")) {
         workspace.watch = watch.AsString();
       }
+      // An exbibyte bounds both: a number past it is not a disk.
+      workspace.disk_free = ReadCount(row["disk_free"], std::int64_t{1} << 60);
+      workspace.disk_total = ReadCount(row["disk_total"], std::int64_t{1} << 60);
       status.workspaces.push_back(std::move(workspace));
     }
   }

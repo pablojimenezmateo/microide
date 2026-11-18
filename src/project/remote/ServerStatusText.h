@@ -34,6 +34,11 @@ std::string ProcessDisplayName(const std::vector<std::string>& argv, std::size_t
 // Where a terminal is, against its workspace root: "." for the root itself, the
 // relative path under it, the absolute path elsewhere, and "" when not reported.
 std::string TerminalPlace(std::string_view cwd, std::string_view root);
+// A workspace's line after its root: "1 client · 1520 files · watch native ·
+// 212.0 GB free". The disk reads "low disk: 3.1 GB free" when under a tenth of
+// the filesystem or 10 GB, whichever is less, and is left out when not reported.
+bool DiskIsLow(const ServerWorkspace& workspace);
+std::string FormatWorkspaceFigures(const ServerWorkspace& workspace);
 // "3.2% · 41 MB", the two figures a row carries.
 std::string FormatFigures(const ActivityFigures& figures);
 

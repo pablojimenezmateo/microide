@@ -27,6 +27,9 @@ project (see [README](README.md)); versions track meaningful shipped work.
   (`copy-reference`), or typed into the running terminal with the keyboard
   following it there (`term-insert-reference`) -- pointing an agent at code
   without pasting the code.
+- **A host's free disk space** on each workspace row of the Host view and of
+  `microide-server status`, reading `low disk:` when under a tenth of the
+  filesystem or 10 GB, whichever is less. An older server shows no figure.
 
 - **Structural diffs, after difftastic.** Compare tabs now read each changed
   hunk as syntax -- identifiers, operators, whole strings and comments, and

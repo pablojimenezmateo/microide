@@ -18,6 +18,7 @@
 
 #include <poll.h>
 #include <sys/socket.h>
+#include <sys/statvfs.h>
 #include <unistd.h>
 
 namespace microide::server {
@@ -678,6 +679,16 @@ util::JsonValue RemoteServer::StatusJson(bool activity) {
     entry["processes"] = util::JsonValue(static_cast<std::int64_t>(std::count_if(
         processes.begin(), processes.end(),
         [&](const ProcessTable::Listing& p) { return !p.exited && under(p.root); })));
+    // The filesystem the workspace is on: what builds and agents' worktrees fill.
+    // One statvfs per workspace per reply, and nothing while nobody asks.
+    struct statvfs disk {};
+    if (::statvfs(workspace.root.c_str(), &disk) == 0) {
+      const auto bytes = [&](std::uint64_t blocks) {
+        return util::JsonValue(static_cast<std::int64_t>(blocks * static_cast<std::uint64_t>(disk.f_frsize)));
+      };
+      entry["disk_free"] = bytes(disk.f_bavail);
+      entry["disk_total"] = bytes(disk.f_blocks);
+    }
     if (workspace.tree) {
       entry["files"] = util::JsonValue(static_cast<std::int64_t>(workspace.tree->tree.manifest_files()));
       entry["hashed"] = util::JsonValue(static_cast<std::int64_t>(workspace.tree->tree.hashed_files()));

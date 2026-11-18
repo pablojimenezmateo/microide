@@ -277,6 +277,10 @@ struct ServerWorkspace {
   std::optional<std::size_t> files;
   std::optional<std::size_t> hashed;
   std::string watch;  // "native", "polling", "none"; "" = not reported
+  // The filesystem the root is on, in bytes; nullopt = not reported (a server
+  // older than the figure).
+  std::optional<std::int64_t> disk_free;
+  std::optional<std::int64_t> disk_total;
   bool operator==(const ServerWorkspace&) const = default;
 };
 struct ServerStatus {

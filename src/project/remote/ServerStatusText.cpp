@@ -48,6 +48,30 @@ std::string FormatBytes(std::optional<std::int64_t> bytes) {
   return text;
 }
 
+bool DiskIsLow(const ServerWorkspace& workspace) {
+  if (!workspace.disk_free.has_value()) {
+    return false;
+  }
+  constexpr std::int64_t kLowBytes = std::int64_t{10} << 30;
+  const std::int64_t tenth = workspace.disk_total.value_or(0) / 10;
+  return *workspace.disk_free < (tenth > 0 ? std::min(kLowBytes, tenth) : kLowBytes);
+}
+
+std::string FormatWorkspaceFigures(const ServerWorkspace& workspace) {
+  std::string out = FormatCount(workspace.clients, "client", "clients");
+  if (workspace.files.has_value()) {
+    out += std::string(kFieldSeparator) + FormatCount(*workspace.files, "file", "files");
+  }
+  if (!workspace.watch.empty() && workspace.watch != "none") {
+    out += std::string(kFieldSeparator) + "watch " + workspace.watch;
+  }
+  if (workspace.disk_free.has_value()) {
+    out += std::string(kFieldSeparator) + (DiskIsLow(workspace) ? "low disk: " : "") +
+           FormatBytes(workspace.disk_free) + " free";
+  }
+  return out;
+}
+
 std::string FormatAge(std::chrono::milliseconds age) {
   const std::int64_t seconds = std::max<std::int64_t>(age.count() / 1000, 0);
   if (seconds < 60) {
@@ -159,13 +183,7 @@ std::string FormatServerStatusTable(const ServerStatus& status) {
     const auto workspace = std::find_if(status.workspaces.begin(), status.workspaces.end(),
                                         [&](const ServerWorkspace& w) { return w.root == root; });
     if (workspace != status.workspaces.end()) {
-      out += std::string(kFieldSeparator) + FormatCount(workspace->clients, "client", "clients");
-      if (workspace->files.has_value()) {
-        out += std::string(kFieldSeparator) + FormatCount(*workspace->files, "file", "files");
-      }
-      if (!workspace->watch.empty() && workspace->watch != "none") {
-        out += std::string(kFieldSeparator) + "watch " + workspace->watch;
-      }
+      out += std::string(kFieldSeparator) + FormatWorkspaceFigures(*workspace);
     } else {
       out += std::string(kFieldSeparator) + "not open";
     }
