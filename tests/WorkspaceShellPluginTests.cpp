@@ -354,6 +354,62 @@ return ide.plugin({
   }
 }
 
+// A modal owns the pointer: nothing beneath it hovers. A command-bound plugin
+// status item lit under the pointer anyway, and the frame-prep hover tracking --
+// which does honour the modal -- damaged nothing for it, so a partial frame kept
+// whatever the item last showed while a full one drew it the other way (soak
+// 87eea326e748: the pointer onto "Indexing" under Rename Symbol).
+void TestWorkspaceShellPluginStatusItemDoesNotHoverUnderAModal() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "README.md";
+  WriteFile(source, "plugin status\n");
+  WritePluginInit(plugins_root, "status",
+                  R"(local ide = require("microide")
+return ide.plugin({
+  id = "status",
+  setup = function(ctx)
+    ctx.commands.add("status.click", function(ctx, args) end)
+    ctx.status.add({ id = "indexer", text = "Indexing", tone = "info",
+                     command = "status.click", alignment = "right" })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false), "the project opens");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  const auto items = WorkspaceShellTestAccess::VisibleStatusItems(shell);
+  const auto item = std::find_if(items.begin(), items.end(),
+                                 [](const auto& candidate) { return candidate.item.plugin_id == "status"; });
+  Expect(item != items.end(), "the status item is shown");
+  if (item == items.end()) {
+    return;
+  }
+  const float x = item->rect.x + item->rect.w * 0.5f;
+  const float y = item->rect.y + item->rect.h * 0.5f;
+  EnsureDummySdlVideoInitialized();
+  SoftwareCanvas canvas{1280, 720};
+  shell.Render(canvas.renderer(), 1280, 720);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  // The pointer onto the item while a modal is up.
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("x");
+  WorkspaceShellTestAccess::RequestCloseTab(shell, 0);
+  auto diff = PaintAndDiffWithFullRepaint(shell, canvas, 1280, 720, shell.ConsumePendingRenderInvalidation());
+  Expect(diff.identical(), "the prompt opening; " + DescribePixelDiff(diff));
+  diff = PaintAndDiffWithFullRepaint(shell, canvas, 1280, 720, DispatchEvents(shell, {MouseMotionEvent(x, y)}));
+  Expect(diff.identical(), "the pointer onto the status item under the prompt; " + DescribePixelDiff(diff));
+  Expect(!WorkspaceShellTestAccess::VisibleStatusItems(shell).front().hovered,
+         "nothing beneath the prompt hovers");
+}
+
 void TestWorkspaceShellSavePipelineRunsParticipantsBeforeFormatter() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -7801,6 +7857,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginKeybindingsDispatchCommands);
   AddTest(tests, "WorkspaceShell/PluginStatusItemsRenderAndRedraw",
           TestWorkspaceShellPluginStatusItemsRenderAndRedraw);
+  AddTest(tests, "WorkspaceShell/PluginStatusItemDoesNotHoverUnderAModal",
+          TestWorkspaceShellPluginStatusItemDoesNotHoverUnderAModal);
   AddTest(tests, "WorkspaceShell/DeferredSaveRunsParticipantsOnceOffThread",
           TestWorkspaceShellDeferredSaveRunsParticipantsOnceOffThread);
   AddTest(tests, "WorkspaceShell/DeferredSaveRefusedByAFailingParticipant",

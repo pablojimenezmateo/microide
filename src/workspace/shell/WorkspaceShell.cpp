@@ -560,10 +560,9 @@ std::vector<WorkspaceShell::VisibleStatusItem> WorkspaceShell::ComputeVisibleSta
         .item = item,
         .rect = MakeRect(next_x, breadcrumb.y + 3.0f, width,
                          std::max(18.0f, breadcrumb.h - 6.0f)),
-        .hovered = last_mouse_position_valid_ &&
-                   Contains(MakeRect(next_x, breadcrumb.y + 3.0f, width,
-                                     std::max(18.0f, breadcrumb.h - 6.0f)),
-                            last_mouse_x_, last_mouse_y_),
+        // As painted: a modal or a card over the pointer owns it (PointerOver).
+        .hovered = PointerOver(MakeRect(next_x, breadcrumb.y + 3.0f, width,
+                                        std::max(18.0f, breadcrumb.h - 6.0f))),
     });
     right_x = next_x - kItemGap;
   }
@@ -582,10 +581,9 @@ std::vector<WorkspaceShell::VisibleStatusItem> WorkspaceShell::ComputeVisibleSta
         .item = item,
         .rect = MakeRect(left_x, breadcrumb.y + 3.0f, width,
                          std::max(18.0f, breadcrumb.h - 6.0f)),
-        .hovered = last_mouse_position_valid_ &&
-                   Contains(MakeRect(left_x, breadcrumb.y + 3.0f, width,
-                                     std::max(18.0f, breadcrumb.h - 6.0f)),
-                            last_mouse_x_, last_mouse_y_),
+        // As painted: a modal or a card over the pointer owns it (PointerOver).
+        .hovered = PointerOver(MakeRect(left_x, breadcrumb.y + 3.0f, width,
+                                        std::max(18.0f, breadcrumb.h - 6.0f))),
     });
     left_x += width + kItemGap;
   }
