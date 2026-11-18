@@ -443,6 +443,8 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       const RemoteHostService* hosts = operations_.remote_hosts ? operations_.remote_hosts() : nullptr;
       return hosts != nullptr && hosts->HasForwardedPort();
     }
+    case ActionId::RemoteFileHistory:
+      return context_.current_project_state.id.IsRemote() && !operations_.active_tab_path().empty();
     case ActionId::RemoteShowHostChanges:
     case ActionId::RemoteShowConflicts:
       return context_.current_project_state.id.IsRemote();
@@ -721,6 +723,8 @@ std::string_view ActionAvailability::PossibleDisabledReason(ActionId id) {
       return "connect to a host first";
     case ActionId::RemoteUnforwardPort:
       return "no port is forwarded";
+    case ActionId::RemoteFileHistory:
+      return "open a file of a remote project";
     case ActionId::RemoteShowHostChanges:
     case ActionId::RemoteShowConflicts:
       return "not a remote project";

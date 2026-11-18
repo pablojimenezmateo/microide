@@ -70,6 +70,21 @@ The sidebar SHALL offer a Changed on Host view (`remote-changes`) listing the fi
 - **WHEN** host processes change 40 files over a minute
 - **THEN** one row reports the count (replaced in place as it grows), Show opens the view with the 40 paths, and opening one compares the before and after
 
+### Requirement: The mirror keeps the versions the host replaced
+The mirror SHALL record, per path, each content the host replaced or deleted after the first sync, newest first with the time it was replaced, bounded to 16 versions per path and 2,000 paths, and SHALL persist that index with the mirror (`meta/history`) so it survives Clear, a reconnect and a restart. The index SHALL name versions only: their bytes are the object store's, and a version whose bytes the store no longer holds SHALL NOT be offered. `Remote: File History…` (`remote-file-history [version]`) SHALL list the active file's versions as a pick, and a chosen version SHALL open read-only against the file as it is now, or alone when the host deleted the file. The index SHALL be decoded as untrusted: a truncated or forged file yields the records before the damage.
+
+#### Scenario: An agent rewrites a file three times
+- **WHEN** the host replaces a mirrored file's content three times
+- **THEN** File History lists the three earlier contents newest first, and opening the oldest compares it against the file as it is now
+
+#### Scenario: The list outlives Changed on Host
+- **WHEN** the user clears Changed on Host, or quits and reopens the project
+- **THEN** File History still lists the versions the mirror recorded
+
+#### Scenario: A version whose bytes are gone
+- **WHEN** the object store's budget has removed a version's bytes
+- **THEN** that version is not listed
+
 ### Requirement: Reopening the mirror reconnects it
 The mirror tree SHALL carry a record of its host and host root beside it, and opening that tree from the recents list, a restored session or the command line SHALL reconnect it as the remote project rather than open it as a local folder. Only the mirror's own tree in its own data directory SHALL be recognized; a copy or a moved directory is a local folder.
 

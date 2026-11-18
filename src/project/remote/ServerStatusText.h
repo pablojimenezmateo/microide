@@ -28,6 +28,9 @@ std::string FormatCpuShare(std::optional<std::int32_t> permille);
 std::string FormatBytes(std::optional<std::int64_t> bytes);
 // "12 s", "12 min", "3 h 5 min", "2 d 4 h".
 std::string FormatAge(std::chrono::milliseconds age);
+// A wall-clock time (seconds since the epoch) in this machine's zone:
+// "2026-11-18 19:32:10".
+std::string FormatLocalTime(std::uint64_t seconds_since_epoch);
 // A process row's name: its argv joined, the program's directory dropped
 // ("clangd --background-index"), cut to `max_bytes` on a UTF-8 boundary.
 std::string ProcessDisplayName(const std::vector<std::string>& argv, std::size_t max_bytes = 64);

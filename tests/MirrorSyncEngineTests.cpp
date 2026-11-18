@@ -144,6 +144,60 @@ void TestMirrorRecordsChangedOnHost() {
          "Clear empties the list");
 }
 
+// File History: every content the host replaced is listed for its path, newest
+// first -- not only the one Changed on Host compares with -- and comes back from
+// the object store; the list survives Clear and a restart of the editor, and a
+// version whose bytes the store no longer holds is not offered.
+void TestMirrorKeepsEveryReplacedVersionOfAFile() {
+  MirrorSession session;
+  WriteFile(session.host / "a.txt", "v1\n");
+  WriteFile(session.host / "doomed.txt", "last words\n");
+  session.Connect();
+  session.Sync();
+  Expect(session.engine->FileVersions("a.txt").empty(), "the first sync replaced nothing");
+
+  WriteFile(session.host / "a.txt", "v2\n");
+  session.Sync();
+  WriteFile(session.host / "a.txt", "v3\n");
+  std::filesystem::remove(session.host / "doomed.txt");
+  session.Sync();
+  auto versions = session.engine->FileVersions("a.txt");
+  Expect(versions.size() == 2 && versions[0].hash == util::HashContent("v2\n") &&
+             versions[1].hash == util::HashContent("v1\n"),
+         "both replaced versions, newest first: " + std::to_string(versions.size()));
+  Expect(!versions.empty() && versions[0].replaced_at > 1'600'000'000, "each with the time it was replaced");
+  const auto doomed = session.engine->FileVersions("doomed.txt");
+  Expect(doomed.size() == 1 && doomed[0].hash == util::HashContent("last words\n"),
+         "a file the host deleted keeps its last version");
+
+  std::optional<std::filesystem::path> copy;
+  session.engine->FetchVersionCopy("a.txt", util::HashContent("v1\n"),
+                                   [&](std::optional<std::filesystem::path> fetched, std::string) {
+                                     copy = std::move(fetched);
+                                   });
+  session.engine->Flush();
+  Expect(copy.has_value() && ReadFile(*copy) == "v1\n", "the oldest version's bytes come back for a compare");
+
+  session.engine->ClearHostChanges();
+  Expect(session.engine->FileVersions("a.txt").size() == 2, "Clear empties Changed on Host, not the history");
+
+  // The editor restarts: a new engine over the same mirror.
+  session.engine->PersistNow();
+  session.Connect();
+  session.Sync();
+  versions = session.engine->FileVersions("a.txt");
+  Expect(versions.size() == 2 && versions[0].hash == util::HashContent("v2\n"),
+         "the history is the mirror's, not the session's: " + std::to_string(versions.size()));
+
+  // Bytes the store dropped: the version is no longer offered.
+  const std::string hex = util::HashContent("v1\n").Hex();
+  Expect(std::filesystem::remove(session.store->meta() / "objects" / hex.substr(0, 2) / hex),
+         "the oldest version's object is where the store keeps it");
+  versions = session.engine->FileVersions("a.txt");
+  Expect(versions.size() == 1 && versions[0].hash == util::HashContent("v2\n"),
+         "a version without bytes is not offered: " + std::to_string(versions.size()));
+}
+
 // A pulled file keeps the host's mtime, so its recorded stat vouches for it at
 // once (no rehash on the next reconcile) — and a same-size rewrite in the mirror
 // still moves the stat and is caught.
@@ -1707,6 +1761,7 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/HoldsAMassDeleteTheRepositoryDidNotExplain",
           TestMirrorHoldsAMassDeleteTheRepositoryDidNotExplain);
   AddTest(tests, "MirrorSyncEngine/RecordsChangedOnHost", TestMirrorRecordsChangedOnHost);
+  AddTest(tests, "MirrorSyncEngine/KeepsEveryReplacedVersionOfAFile", TestMirrorKeepsEveryReplacedVersionOfAFile);
   AddTest(tests, "MirrorSyncEngine/ListsWhatItHasNotFetched", TestMirrorListsWhatItHasNotFetched);
   AddTest(tests, "MirrorSyncEngine/CarriesNonUtf8Names", TestMirrorCarriesNonUtf8Names);
   AddTest(tests, "MirrorSyncEngine/SkipsAnUnreadableHostFile", TestMirrorSkipsAnUnreadableHostFile);

@@ -81,6 +81,7 @@ void RegisterRemoteFrameTests(std::vector<TestCase>& tests);
 void RegisterRemoteManifestTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceTreeTests(std::vector<TestCase>& tests);
 void RegisterTreeFilesTests(std::vector<TestCase>& tests);
+void RegisterFileVersionHistoryTests(std::vector<TestCase>& tests);
 void RegisterMirrorStoreTests(std::vector<TestCase>& tests);
 void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests);
 void RegisterMirrorSyncMatrixTests(std::vector<TestCase>& tests);
@@ -106,6 +107,7 @@ void RegisterKernelTests(std::vector<TestCase>& tests) {
   RegisterRemoteManifestTests(tests);
   RegisterWorkspaceTreeTests(tests);
   RegisterTreeFilesTests(tests);
+  RegisterFileVersionHistoryTests(tests);
   RegisterMirrorStoreTests(tests);
   RegisterMirrorSyncEngineTests(tests);
   RegisterMirrorSyncMatrixTests(tests);

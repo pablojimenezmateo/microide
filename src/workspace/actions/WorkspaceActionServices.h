@@ -10,6 +10,7 @@
 #include <string_view>
 #include <vector>
 
+#include "project/remote/FileVersionHistory.h"
 #include "workspace/services/NotificationService.h"
 #include "workspace/actions/WorkspaceActionRequests.h"
 #include "workspace/CompareInput.h"
@@ -666,6 +667,11 @@ class WorkspaceActionContext {
   // The open remote hosts as a pick titled `title`, each row running
   // `command_line <host>`. False with fewer than two hosts (nothing to ask).
   bool OpenHostPick(std::string_view title, std::string_view command_line);
+  // Remote: File History…: `versions` (newest first) as a pick titled with
+  // `file_name`, each row opening that version against the file as it is now.
+  // False when there are none.
+  bool OpenFileHistoryPick(const std::vector<project::remote::FileVersionHistory::Version>& versions,
+                           std::string_view file_name);
   // Git: Switch Worktree…: the repository's working trees as a pick, each row
   // opening that tree as a project (on the host, for a remote project). The pick
   // opens loading; git answers off the shell thread. False with no project.

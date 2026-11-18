@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "project/PendingPaths.h"
+#include "project/remote/FileVersionHistory.h"
 #include "project/remote/MirrorObjects.h"
 #include "project/remote/MirrorStore.h"
 #include "project/remote/RemoteWorkspace.h"
@@ -229,6 +230,14 @@ class MirrorSyncEngine {
   // a before/after compare. `done` runs on the engine thread; nullopt and why when
   // the change has no earlier version or its bytes are no longer held.
   void FetchPreviousCopy(std::string path, HostCopyDone done);
+  // File History: the contents `path` had before the host replaced or deleted
+  // them, newest first -- every one since the mirror was made, not only the one
+  // Changed on Host compares with -- less those whose bytes meta/objects no
+  // longer holds.
+  std::vector<FileVersionHistory::Version> FileVersions(std::string_view path) const;
+  // One of them, written to a read-only copy (meta/host-copies/.history/<path>).
+  // `done` runs on the engine thread; nullopt and why when its bytes are gone.
+  void FetchVersionCopy(std::string path, util::ContentHash hash, HostCopyDone done);
 
   Status status() const;
   ContentState StateOf(std::string_view path) const;
@@ -384,6 +393,10 @@ class MirrorSyncEngine {
   // Path -> its latest host change (§ 7.9); `host_change_sequence_` orders them.
   std::unordered_map<std::string, HostChange> host_changes_;
   std::uint64_t host_change_sequence_ = 0;
+  // Every content a path had before the host replaced it (meta/history), written
+  // with the state when it changed.
+  FileVersionHistory history_;
+  bool history_unsaved_ = false;
   bool state_save_queued_ = false;
   // Work that will save the state again when it is done -- pull pipelines not yet
   // drained, host watch deltas queued -- and a state save it held back (mutex_).

@@ -287,6 +287,16 @@ class RemoteHostService {
   // click), an added one opens, a deleted one opens its last version read-only.
   bool OpenHostChange(const std::filesystem::path& root, const std::string& relative);
   void ClearHostChanges(const std::filesystem::path& root);
+  // File History for `path` in the remote project at `root`: the contents it had
+  // before the host replaced them that the mirror still holds, newest first
+  // (MirrorSyncEngine::FileVersions). Empty for any other root or path.
+  std::vector<project::remote::FileVersionHistory::Version> FileVersions(const std::filesystem::path& root,
+                                                                         const std::filesystem::path& path) const;
+  // Open the version of `path` whose hash starts with `hash_prefix` (hex) against
+  // the file as it is now, the version read-only on the left; a file the host
+  // deleted opens the version alone. False when there is no such version.
+  bool OpenFileVersion(const std::filesystem::path& root, const std::filesystem::path& path,
+                       std::string_view hash_prefix);
   // The held mass delete of remote project `root`, applied (§ 6.3). False when it
   // is not a remote project or holds none.
   bool ApplyHeldDeletes(const std::filesystem::path& root);

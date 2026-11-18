@@ -439,6 +439,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/remote/RemoteSearchWire.cpp
   src/project/remote/LinkHeartbeat.cpp
   src/project/remote/MirrorStore.cpp
+  src/project/remote/FileVersionHistory.cpp
   src/project/remote/MirrorObjects.cpp
   src/project/remote/MirrorSyncEngine.cpp
   src/project/remote/MirrorRoutingWriteGate.cpp
@@ -1614,6 +1615,7 @@ add_executable(microide_kernel_tests
   tests/WorkspaceTreeTests.cpp
   tests/RemoteWorkspaceTests.cpp
   tests/TreeFilesTests.cpp
+  tests/FileVersionHistoryTests.cpp
   tests/MirrorStoreTests.cpp
   tests/MirrorSyncEngineTests.cpp
   tests/MirrorSyncMatrixTests.cpp

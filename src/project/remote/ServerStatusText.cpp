@@ -1,6 +1,7 @@
 #include "project/remote/ServerStatusText.h"
 
 #include <algorithm>
+#include <ctime>
 #include <cstdio>
 
 namespace microide::project::remote {
@@ -44,6 +45,17 @@ std::string FormatBytes(std::optional<std::int64_t> bytes) {
     std::snprintf(text, sizeof(text), "%.0f MB", value / (kKilo * kKilo));
   } else {
     std::snprintf(text, sizeof(text), "%.0f KB", value / kKilo);
+  }
+  return text;
+}
+
+std::string FormatLocalTime(std::uint64_t seconds_since_epoch) {
+  const std::time_t time = static_cast<std::time_t>(seconds_since_epoch);
+  std::tm local {};
+  char text[32];
+  if (::localtime_r(&time, &local) == nullptr ||
+      std::strftime(text, sizeof(text), "%Y-%m-%d %H:%M:%S", &local) == 0) {
+    return std::string(kNotReported);
   }
   return text;
 }

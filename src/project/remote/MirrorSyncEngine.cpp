@@ -79,6 +79,13 @@ MirrorSyncEngine::MirrorSyncEngine(RemoteWorkspace& workspace, MirrorStore& stor
   queue_.Post([this]() {
     std::error_code ignored;
     std::filesystem::remove_all(SetAsideDirectory(), ignored);
+    // The index of earlier versions, as the last run left it. First on the
+    // queue: nothing has recorded a version yet.
+    if (const std::optional<std::string> saved = util::ReadTextFile(store_.meta() / "history")) {
+      FileVersionHistory loaded = FileVersionHistory::Decode(*saved);
+      std::lock_guard lock(mutex_);
+      history_ = std::move(loaded);
+    }
   });
 }
 
@@ -771,6 +778,10 @@ void MirrorSyncEngine::ApproveHeldDeletes() {
 
 void MirrorSyncEngine::RecordHostChangeLocked(const std::string& path, HostChange::Kind kind,
                                               std::optional<util::ContentHash> previous) {
+  if (previous.has_value()) {
+    history_.Record(path, *previous, static_cast<std::uint64_t>(WallClockNowNs() / 1'000'000'000));
+    history_unsaved_ = true;
+  }
   auto [it, inserted] = host_changes_.try_emplace(path);
   HostChange& change = it->second;
   if (inserted) {
@@ -853,6 +864,33 @@ void MirrorSyncEngine::FetchPreviousCopy(std::string path, HostCopyDone done) {
     }
     std::string error;
     std::optional<std::filesystem::path> copy = WriteCopy(".before", path, *bytes, &error);
+    done(std::move(copy), std::move(error));
+  });
+}
+
+std::vector<FileVersionHistory::Version> MirrorSyncEngine::FileVersions(std::string_view path) const {
+  std::vector<FileVersionHistory::Version> versions;
+  {
+    std::lock_guard lock(mutex_);
+    versions = history_.VersionsOf(path);
+  }
+  std::erase_if(versions, [this](const FileVersionHistory::Version& version) { return !objects_.Has(version.hash); });
+  return versions;
+}
+
+void MirrorSyncEngine::FetchVersionCopy(std::string path, util::ContentHash hash, HostCopyDone done) {
+  if (!IsSafeRelativePath(path)) {
+    done(std::nullopt, "not a path in the project");
+    return;
+  }
+  queue_.PostFront([this, path = std::move(path), hash, done = std::move(done)]() {
+    const std::optional<std::string> bytes = objects_.Get(hash);
+    if (!bytes.has_value()) {
+      done(std::nullopt, "that version of " + path + " is no longer kept");
+      return;
+    }
+    std::string error;
+    std::optional<std::filesystem::path> copy = WriteCopy(".history", path, *bytes, &error);
     done(std::move(copy), std::move(error));
   });
 }
@@ -998,6 +1036,12 @@ void MirrorSyncEngine::SaveNowLocked() {
   }
   if (!store_.Save(&error)) {
     status_.error = error;
+  }
+  // The index of earlier versions: its loss costs the list, never a file.
+  if (history_unsaved_ &&
+      util::WriteTextFileAtomically(store_.meta() / "history", history_.Encode(), nullptr,
+                                    util::WriteTarget::Replace, store_.staging())) {
+    history_unsaved_ = false;
   }
 }
 

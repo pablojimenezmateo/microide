@@ -253,6 +253,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuSeparator(),
       MenuItem(ActionId::RemoteShowStatus, "Show Status"),
       MenuItem(ActionId::RemoteShowHostChanges, "Show Changed on Host"),
+      MenuItem(ActionId::RemoteFileHistory, "File History…"),
       MenuItem(ActionId::RemoteShowConflicts, "Show Conflicts"),
       MenuItem(ActionId::RemoteShowLog, "Show Host Server Log"),
       MenuSeparator(),

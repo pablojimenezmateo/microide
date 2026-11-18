@@ -221,6 +221,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
     case ActionId::RemoteCopyCommand:
     case ActionId::RemoteShowHostChanges:
     case ActionId::RemoteClearHostChanges:
+    case ActionId::RemoteFileHistory:
     case ActionId::RemoteApplyHeldDeletes:
     case ActionId::RemoteForwardPort:
     case ActionId::RemoteUnforwardPort: {
@@ -467,6 +468,26 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
                                                           : std::filesystem::path(args[0]);
           if (!hosts->ApplyHeldDeletes(root)) {
             return reject("No held deletes in " + root.string());
+          }
+          return DispatchResult::Handled;
+        }
+        case ActionId::RemoteFileHistory: {
+          // The active file's earlier versions; `[version]` is the start of one's
+          // hash, which is what a row of the pick runs.
+          const std::filesystem::path root = context_.ProjectRoot();
+          const std::filesystem::path path = context_.ActiveTabPath();
+          if (!hosts->IsRemoteProject(root) || path.empty()) {
+            return reject("File History is for a file of a remote project");
+          }
+          if (!args.empty()) {
+            if (!hosts->OpenFileVersion(root, path, args[0])) {
+              return reject("No such earlier version of " + path.filename().string());
+            }
+            return DispatchResult::Handled;
+          }
+          if (!context_.OpenFileHistoryPick(hosts->FileVersions(root, path), path.filename().string())) {
+            return reject("No earlier version of " + path.filename().string() +
+                          " is kept here: the host has not replaced it since this mirror was made");
           }
           return DispatchResult::Handled;
         }

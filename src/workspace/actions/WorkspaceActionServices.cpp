@@ -3,6 +3,7 @@
 
 #include "workspace/services/AssistService.h"
 
+#include <chrono>
 #include <algorithm>
 #include <string>
 #include <utility>
@@ -28,6 +29,7 @@
 #include "workspace/services/QuickPickService.h"
 #include "workspace/services/RemoteHostService.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
+#include "project/remote/ServerStatusText.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/git/WorktreePick.h"
 
@@ -612,6 +614,29 @@ bool WorkspaceActionContext::OpenOptionalArgumentPicker(ActionId id) {
     default:
       return false;
   }
+}
+
+bool WorkspaceActionContext::OpenFileHistoryPick(
+    const std::vector<project::remote::FileVersionHistory::Version>& versions, std::string_view file_name) {
+  if (versions.empty()) {
+    return false;
+  }
+  const std::uint64_t now = static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+          .count());
+  std::vector<QuickPickItem> items;
+  items.reserve(versions.size());
+  for (const project::remote::FileVersionHistory::Version& version : versions) {
+    const std::uint64_t age = now > version.replaced_at ? now - version.replaced_at : 0;
+    items.push_back(QuickPickItem{
+        // Twelve hex digits name one of sixteen versions with room to spare.
+        .value = "remote-file-history " + version.hash.Hex().substr(0, 12),
+        .primary_label = project::remote::FormatLocalTime(version.replaced_at),
+        .secondary_label = "replaced " + project::remote::FormatAge(std::chrono::seconds(age)) + " ago"});
+  }
+  services_.quick_pick.Open(QuickPickService::CommandChoices("File History: " + std::string(file_name), "versions",
+                                                             std::move(items)));
+  return true;
 }
 
 bool WorkspaceActionContext::OpenWorktreePick() {

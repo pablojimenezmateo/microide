@@ -27,6 +27,15 @@ project (see [README](README.md)); versions track meaningful shipped work.
   (`copy-reference`), or typed into the running terminal with the keyboard
   following it there (`term-insert-reference`) -- pointing an agent at code
   without pasting the code.
+- **Remote: File History…** (`remote-file-history`). The mirror of a remote
+  project now remembers every content the host replaced or deleted in a file
+  -- sixteen versions a file, with when each was replaced -- and lists them
+  for the active file; a version opens read-only against the file as it is
+  now, so an agent's overwrite of uncommitted work can be read back and
+  copied over. Changed on Host kept only the version before the first change
+  and forgot it on Clear or restart; this list survives both. It costs no disk
+  of its own: the bytes are the mirror's object store's, and a version the
+  store's budget has dropped is no longer offered.
 - **Review since a checkpoint.** Mark Review Checkpoint
   (`review-checkpoint-mark`) records the working tree as it is now -- every
   tracked file and every untracked one `.gitignore` does not exclude -- without

@@ -1713,6 +1713,36 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              std::chrono::seconds(10), std::chrono::milliseconds(10)),
          "and the cleared view is empty");
 
+  // File History: Clear emptied the list above, not what the mirror keeps. The
+  // file's earlier versions are a pick, and one opens against the file as it is.
+  WorkspaceShellTestAccess::OpenFile(shell, mirror / "main.c");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-file-history"), "File History is accepted");
+  {
+    const auto& pick = WorkspaceShellTestAccess::QuickPick(shell);
+    Expect(pick.title == "File History: main.c" && !pick.matches.empty() &&
+               pick.matches[0].secondary_label.starts_with("replaced "),
+           "the versions the host replaced are listed: " + pick.title + ", " + std::to_string(pick.matches.size()));
+  }
+  {
+    SDL_Event enter{};
+    enter.type = SDL_EVENT_KEY_DOWN;
+    enter.key.key = SDLK_RETURN;
+    Expect(shell.HandleEvent(enter).handled, "Enter on the newest");
+  }
+  Expect(!WorkspaceShellTestAccess::OverlayVisible(shell), "the pick closes");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return WorkspaceShellTestAccess::ActiveTabIsCompare(shell) &&
+                      WorkspaceShellTestAccess::ActiveCompare(shell).right_label == "main.c (now)";
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+         "the chosen version opens as a compare against the file as it is now");
+  Expect(WorkspaceShellTestAccess::ActiveCompare(shell).left_label.starts_with("main.c (20"),
+         "the version's side says when it was replaced: " + WorkspaceShellTestAccess::ActiveCompare(shell).left_label);
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-file-history ffffffffffff"),
+         "a version that is not there is refused");
+
   // With another project in front, the row's Show brings ITS project forward
   // rather than opening the front project's view.
   {

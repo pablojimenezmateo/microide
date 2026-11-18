@@ -770,6 +770,58 @@ bool RemoteHostService::OpenHostChange(const std::filesystem::path& root, const 
   return true;
 }
 
+std::vector<remote::FileVersionHistory::Version> RemoteHostService::FileVersions(
+    const std::filesystem::path& root, const std::filesystem::path& path) const {
+  const auto it = projects_.find(root);
+  const std::string relative = path.lexically_relative(root).generic_string();
+  if (it == projects_.end() || relative.empty() || util::RelativeTextClimbsOut(relative)) {
+    return {};
+  }
+  return it->second.project->engine().FileVersions(relative);
+}
+
+bool RemoteHostService::OpenFileVersion(const std::filesystem::path& root, const std::filesystem::path& path,
+                                        std::string_view hash_prefix) {
+  const auto it = projects_.find(root);
+  if (it == projects_.end() || hash_prefix.empty()) {
+    return false;
+  }
+  const std::string relative = path.lexically_relative(root).generic_string();
+  std::optional<remote::FileVersionHistory::Version> wanted;
+  for (const remote::FileVersionHistory::Version& version : FileVersions(root, path)) {
+    if (version.hash.Hex().starts_with(hash_prefix)) {
+      wanted = version;
+      break;
+    }
+  }
+  if (!wanted.has_value()) {
+    return false;
+  }
+  it->second.project->engine().FetchVersionCopy(
+      relative, wanted->hash,
+      [this, path, when = wanted->replaced_at](std::optional<std::filesystem::path> copy, std::string error) {
+        mailbox_.Post([this, path, when, copy = std::move(copy), error = std::move(error)]() {
+          std::string why = error;
+          std::error_code ignored;
+          if (copy.has_value() && !std::filesystem::exists(path, ignored)) {
+            if (operations_.open_file) {
+              operations_.open_file(*copy);  // deleted on the host: the version alone
+            }
+          } else if (copy.has_value() && operations_.compare_files) {
+            const std::string name = path.filename().string();
+            why = operations_.compare_files(*copy, name + " (" + remote::FormatLocalTime(when) + ")", path,
+                                            name + " (now)");
+          }
+          if (!why.empty() && operations_.notify) {
+            operations_.notify(NotificationService::Request{
+                .tone = NotificationService::Tone::Info,
+                .message = "Cannot show that version: " + why});
+          }
+        });
+      });
+  return true;
+}
+
 void RemoteHostService::ClearHostChanges(const std::filesystem::path& root) {
   const auto it = projects_.find(root);
   if (it == projects_.end()) {
