@@ -527,6 +527,12 @@ std::vector<WorkspaceShell::VisibleStatusItem> WorkspaceShell::ComputeVisibleSta
   if (items.empty()) {
     return visible;  // No plugin status items: skip all layout/measurement work.
   }
+  // A band with no area (the editor column collapsed under a maximized panel)
+  // shows none: the items kept an 18-unit row at its top, and a full frame
+  // painted them over the panel's header (soak 1513ea75bbf9).
+  if (breadcrumb.w <= 0.0f || breadcrumb.h <= 0.0f) {
+    return visible;
+  }
   visible.reserve(items.size());
 
   // Item width = text + padding, plus a fixed slot for a leading icon and/or a

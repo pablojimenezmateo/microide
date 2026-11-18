@@ -410,6 +410,48 @@ return ide.plugin({
          "nothing beneath the prompt hovers");
 }
 
+// A maximized panel collapses the editor column, its header band to no height,
+// but the plugin status items kept an 18-unit row at the band's top and a full
+// frame painted "Indexing" over the panel's header buttons, where no partial
+// frame put it (soak 1513ea75bbf9). A band with no area shows no items.
+void TestWorkspaceShellPluginStatusItemsHideUnderAMaximizedPanel() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "README.md";
+  WriteFile(source, "plugin status\n");
+  WritePluginInit(plugins_root, "status",
+                  R"(local ide = require("microide")
+return ide.plugin({
+  id = "status",
+  setup = function(ctx)
+    ctx.status.add({ id = "indexer", text = "Indexing", tone = "info", alignment = "right" })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false), "the project opens");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(!WorkspaceShellTestAccess::VisibleStatusItems(shell).empty(), "the status item is shown");
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  EnsureDummySdlVideoInitialized();
+  SoftwareCanvas canvas{1280, 720};
+  shell.Render(canvas.renderer(), 1280, 720);
+  (void)shell.ConsumePendingRenderInvalidation();
+  WorkspaceShellTestAccess::TogglePanelMaximizedForTest(shell);
+  Expect(WorkspaceShellTestAccess::VisibleStatusItems(shell).empty(),
+         "under a maximized panel the header band has no room for the items");
+  const auto diff =
+      PaintAndDiffWithFullRepaint(shell, canvas, 1280, 720, shell.ConsumePendingRenderInvalidation());
+  Expect(diff.identical(), "maximizing the panel; " + DescribePixelDiff(diff));
+}
+
 void TestWorkspaceShellSavePipelineRunsParticipantsBeforeFormatter() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -7859,6 +7901,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginStatusItemsRenderAndRedraw);
   AddTest(tests, "WorkspaceShell/PluginStatusItemDoesNotHoverUnderAModal",
           TestWorkspaceShellPluginStatusItemDoesNotHoverUnderAModal);
+  AddTest(tests, "WorkspaceShell/PluginStatusItemsHideUnderAMaximizedPanel",
+          TestWorkspaceShellPluginStatusItemsHideUnderAMaximizedPanel);
   AddTest(tests, "WorkspaceShell/DeferredSaveRunsParticipantsOnceOffThread",
           TestWorkspaceShellDeferredSaveRunsParticipantsOnceOffThread);
   AddTest(tests, "WorkspaceShell/DeferredSaveRefusedByAFailingParticipant",
