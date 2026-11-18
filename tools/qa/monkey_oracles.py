@@ -871,6 +871,8 @@ class Liveness:
         what, seconds = self.app.slowest_answer
         sched, stall = self.app.slowest_sched, self.app.slowest_stall
         waits = getattr(self.app, "slowest_waits", "")
+        helpers = getattr(self.app, "slowest_helpers", None)
+        self.app.slowest_helpers = None
         self.app.slowest_answer = ("", 0.0)
         self.app.slowest_sched, self.app.slowest_stall = None, ""
         self.app.slowest_waits = ""
@@ -887,6 +889,12 @@ class Liveness:
                 return []
             account = q.sched_account(seconds, ran, queued)
             blocked = max(0.0, seconds - ran - queued)
+            if blocked > ran and q.helpers_starved(helpers):
+                # Blocked on the app's own threads, which the machine starved: the
+                # soak's CPU renderer under full load (soak 049ca74b0cee, after the
+                # lost-wake fix: every remaining sighting in libvulkan_lvp).
+                self.starved += 1
+                return []
             where = "; its main thread was mostly " + ("computing" if ran >= blocked else
                                                        "blocked (I/O, a lock, a child)")
         self.reported.add(subject)

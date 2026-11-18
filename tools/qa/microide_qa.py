@@ -518,6 +518,11 @@ class App:
     # short ones, or the loop asleep with the request queued (soak 049ca74b0cee:
     # 3.01 s "mostly blocked", the watchdog silent).
     slowest_waits: str = ""
+    # The app's OTHER threads while the slowest answer was late: (seconds they spent
+    # runnable and waiting for a CPU, summed, over a window of seconds). A main
+    # thread blocked on a renderer whose rasterizer threads the machine starved
+    # (lavapipe, the soak's CPU Vulkan, under a load of 25) was not slow itself.
+    slowest_helpers: tuple[float, float] | None = None
     # The crashing thread's stack, resolved, once a check has found the app dead
     # (symbolize_backtrace); empty until then and again after a relaunch.
     crash_stack: str = ""
@@ -1132,6 +1137,7 @@ class App:
         sched_before = self._main_thread_sched()
         log_before = self._log_size()
         waits: collections.Counter[str] = collections.Counter()
+        helpers_from: tuple[float, float] | None = None  # (their queued seconds, when) once late
         deadline = started + timeout
         try:
             self._socket.sendall(json.dumps({"id": request_id, **payload}).encode() + b"\n")
@@ -1143,6 +1149,8 @@ class App:
                     late = time.monotonic() - started >= MAIN_THREAD_SAMPLE_AFTER_S
                     if late:
                         waits[self._main_thread_wait()] += 1
+                        if helpers_from is None:
+                            helpers_from = (self._helper_threads_queued(), time.monotonic())
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         raise socket.timeout("timed out")
@@ -1168,7 +1176,12 @@ class App:
                     if isinstance(reply, dict) and reply.get("id") == request_id:
                         if "\ufffd" in text:
                             reply["_replaced"] = True
-                        self.note_latency(what, time.monotonic() - started, sched_before, log_before, waits)
+                        helpers = None
+                        if helpers_from is not None:
+                            helpers = (max(0.0, self._helper_threads_queued() - helpers_from[0]),
+                                       time.monotonic() - helpers_from[1])
+                        self.note_latency(what, time.monotonic() - started, sched_before, log_before, waits,
+                                          helpers)
                         return reply
         except (OSError, socket.timeout) as error:
             if self.dying():
@@ -1231,6 +1244,24 @@ class App:
             return int(ran) / 1e9, int(waited) / 1e9
         except (OSError, ValueError):
             return None
+
+    def _helper_threads_queued(self) -> float:
+        """Seconds the app's threads other than the main one have spent runnable and
+        waiting for a CPU, summed (/proc schedstat's second field)."""
+        pid = self.pid if self.proc is not None else None
+        if pid is None:
+            return 0.0
+        total = 0
+        try:
+            tasks = list(Path(f"/proc/{pid}/task").iterdir())
+        except OSError:
+            return 0.0
+        for task in tasks:
+            if task.name == str(pid):
+                continue
+            with contextlib.suppress(OSError, ValueError, IndexError):
+                total += int((task / "schedstat").read_text().split()[1])
+        return total / 1e9
 
     def _main_thread_wait(self) -> str:
         """Where the app's main thread is right now: its kernel wait channel and
@@ -1343,7 +1374,8 @@ class App:
         return result
 
     def note_latency(self, what: str, seconds: float, sched_before: tuple[float, float] | None = None,
-                     log_before: int | None = None, waits: collections.Counter[str] | None = None) -> None:
+                     log_before: int | None = None, waits: collections.Counter[str] | None = None,
+                     helpers: tuple[float, float] | None = None) -> None:
         """The liveness oracle's input: the slowest control answer per step
         (the monkey reads and resets `slowest_answer`), with where its time went
         for the main thread and what the stall watchdog printed during it."""
@@ -1353,6 +1385,7 @@ class App:
             self.slowest_sched = ((sched_now[0] - sched_before[0], sched_now[1] - sched_before[1])
                                   if sched_now is not None and sched_before is not None else None)
             self.slowest_stall = ""
+            self.slowest_helpers = helpers
             self.slowest_waits = "\n".join(f"{count:4d} x {where}" for where, count in waits.most_common(8)) \
                 if waits else ""
             if seconds >= STALL_TRACE_SECONDS * SLOW_FACTOR and log_before is not None:
@@ -2753,7 +2786,7 @@ class App:
             return
         self._in_snapshot = True
         snapshot: dict[str, Any] = {}
-        keep = self.slowest_answer, self.slowest_sched, self.slowest_stall, self.slowest_waits
+        keep = self.slowest_answer, self.slowest_sched, self.slowest_stall, self.slowest_waits, self.slowest_helpers
         try:
             for verb, args in self._SNAPSHOT_QUERIES:
                 payload: dict[str, Any] = {"query": verb}
@@ -2768,7 +2801,7 @@ class App:
         finally:
             self._in_snapshot = False
             # The snapshot's own answers are not the run's latency.
-            self.slowest_answer, self.slowest_sched, self.slowest_stall, self.slowest_waits = keep
+            self.slowest_answer, self.slowest_sched, self.slowest_stall, self.slowest_waits, self.slowest_helpers = keep
         with contextlib.suppress(OSError, TypeError, ValueError):
             (folder / "state.json").write_text(json.dumps(snapshot, indent=1)[:2 * 1024 * 1024])
 
@@ -3127,6 +3160,18 @@ def sched_account(seconds: float, ran: float, queued: float) -> str:
     starved = " (a starved machine)" if is_starved(seconds, queued) else ""
     return (f"main thread over {seconds:.2f}s: {ran:.2f}s on a CPU, {queued:.2f}s waiting for one{starved}, "
             f"{blocked:.2f}s blocked")
+
+
+def helpers_starved(helpers: tuple[float, float] | None) -> bool:
+    """The main thread's wait was on threads the machine starved: over the late
+    window the app's other threads spent, together, at least half of it runnable
+    and waiting for a CPU -- a renderer's rasterizer threads (lavapipe) under the
+    soak's load, which a real GPU does not have.
+
+    >>> helpers_starved((2.4, 4.0)), helpers_starved((0.3, 4.0)), helpers_starved(None)
+    (True, False, False)
+    """
+    return helpers is not None and helpers[1] > 0 and helpers[0] >= 0.5 * helpers[1]
 
 
 def is_starved(seconds: float, queued: float) -> bool:

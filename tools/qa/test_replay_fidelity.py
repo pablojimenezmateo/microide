@@ -150,9 +150,10 @@ class CrashTests(unittest.TestCase):
 
 
 class SlowApp:
-    def __init__(self, what, seconds, sched, stall="", waits=""):
+    def __init__(self, what, seconds, sched, stall="", waits="", helpers=None):
         self.slowest_answer, self.slowest_sched, self.slowest_stall = (what, seconds), sched, stall
         self.slowest_waits = waits
+        self.slowest_helpers = helpers
 
 
 class LivenessTests(unittest.TestCase):
@@ -173,6 +174,16 @@ class LivenessTests(unittest.TestCase):
         self.assertIn("mostly blocked", blocked.check()[0][1])
         unknown = mo.Liveness(SlowApp("hit-test", 6.0, None))
         self.assertEqual(unknown.check()[0][1], "hit-test took 6.00s to answer (budget 2.5s)")
+
+    def test_a_main_thread_blocked_on_threads_the_machine_starved_is_counted_not_filed(self):
+        # Soak 049ca74b0cee after the lost-wake fix: the main thread in a futex in
+        # libvulkan_lvp, the CPU renderer's rasterizer threads runnable and unrun.
+        oracle = mo.Liveness(SlowApp("query 'ui'", 3.3, (0.06, 0.08), helpers=(2.5, 2.3)))
+        self.assertEqual(oracle.check(), [])
+        self.assertEqual(oracle.starved, 1)
+        # Its negative control: the same block with the other threads idle is filed.
+        oracle.app = SlowApp("query 'ui'", 3.3, (0.06, 0.08), helpers=(0.1, 2.3))
+        self.assertIn("mostly blocked", oracle.check()[0][1])
 
     def test_a_blocked_main_threads_waits_are_evidence(self):
         # 3.01s "mostly blocked" with the watchdog silent said nothing of WHERE
