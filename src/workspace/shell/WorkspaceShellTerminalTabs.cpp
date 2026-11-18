@@ -514,14 +514,18 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
             pane->session.ConsumeNotification();
         if (bell || notification.has_value()) {
           const std::string terminal_label = pane->session.LaunchLabel();
+          // The front project's name is asked for only here, where an alert needs
+          // it: the drain runs at every terminal wake, and a label is a string.
+          const bool in_front = &tabs == &front_tabs;
+          const std::string front_label = in_front ? context_.current_project_state.id.Label() : std::string();
           TerminalAlertOutcome alert = DecideTerminalAlert(TerminalAlert{
               .bell = bell,
               .notification = notification.has_value(),
               .title = notification.has_value() ? std::string_view(notification->title) : std::string_view(),
               .body = notification.has_value() ? std::string_view(notification->body) : std::string_view(),
-              .project_label = project_label,
+              .project_label = in_front ? std::string_view(front_label) : project_label,
               .terminal_label = terminal_label,
-              .project_in_front = &tabs == &front_tabs,
+              .project_in_front = in_front,
               .tab_on_screen = tab_on_screen,
               .window_focused = interaction.window_has_input_focus,
               .alert_when_unfocused = alert_when_unfocused(),
@@ -586,7 +590,7 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
   };
   badge_changed = drain(context_.current_project_state.terminal_tabs,
                         terminal_on_screen ? std::optional<std::size_t>(active_index) : std::nullopt,
-                        context_.current_project_state.id.Label());
+                        {});
   if (host_terminal_unrecorded) {
     // Recorded the way unsaved text is: the crash-safety session flush, debounced.
     context_.current_project_state.host_terminals_unrecorded = true;
