@@ -115,6 +115,8 @@ enum class ActionId {
   ReviewConflicts,  // a merge tab per conflicted working-tree file
   ReviewBranch,     // a compare tab (worktree vs <ref>) per differing file
   ReviewCommit,     // a compare tab (<ref>~1 vs <ref>) per file changed by <ref>, default HEAD
+  ReviewCheckpoint,      // a compare tab (checkpoint vs worktree) per file changed since the checkpoint
+  ReviewCheckpointMark,  // record the working tree as it is now as that checkpoint
   CopyAbsolutePath,
   CopyRelativePath,
   CreateDirectory,

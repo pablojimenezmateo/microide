@@ -54,6 +54,14 @@ class ReviewSessionCoordinator {
   ReviewOpenOutcome OpenConflictReview();
   ReviewOpenOutcome OpenBranchReview(const std::string& ref);
   ReviewOpenOutcome OpenCommitReview(const std::string& ref);
+  // review-checkpoint: a compare tab (checkpoint vs working tree) per file that
+  // differs between the marked checkpoint and the working tree as it is now --
+  // whatever was committed, amended or left untracked in between
+  // (project::SnapshotGitWorkingTree).
+  ReviewOpenOutcome OpenCheckpointReview();
+  // review-checkpoint-mark: record the working tree as it is now as the
+  // checkpoint the next review-checkpoint compares against.
+  ReviewOpenOutcome MarkCheckpoint();
 
  private:
   ReviewOpenOutcome RunReviewSession(

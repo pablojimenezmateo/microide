@@ -150,6 +150,8 @@ class WorkspaceActionContext {
     std::function<ReviewOpenOutcome()> open_conflict_review;
     std::function<ReviewOpenOutcome(const std::string&)> open_branch_review;
     std::function<ReviewOpenOutcome(const std::string&)> open_commit_review;
+    std::function<ReviewOpenOutcome()> open_checkpoint_review;
+    std::function<ReviewOpenOutcome()> mark_review_checkpoint;
     std::function<editor::FoldingModel*()> ensure_active_folding_model_fresh;
     std::function<bool(const editor::TextViewport&)> replace_active_editor_view;
     // A view of the path for a new pane: shares the live buffer when the file is
@@ -526,6 +528,8 @@ class WorkspaceActionContext {
   ReviewOpenOutcome ReviewConflicts();
   ReviewOpenOutcome ReviewBranch(const std::string& ref);
   ReviewOpenOutcome ReviewCommit(const std::string& ref);
+  ReviewOpenOutcome ReviewCheckpoint();
+  ReviewOpenOutcome MarkReviewCheckpoint();
 
   bool OpenPath(const std::filesystem::path& path, std::string* error_message);
   bool OpenPathInNewTab(const std::filesystem::path& path);

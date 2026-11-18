@@ -287,6 +287,18 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
       }
       return DispatchResult::Handled;
     }
+    case ActionId::ReviewCheckpoint:
+    case ActionId::ReviewCheckpointMark: {
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      const ReviewOpenOutcome outcome =
+          id == ActionId::ReviewCheckpoint ? context_.ReviewCheckpoint() : context_.MarkReviewCheckpoint();
+      if (!outcome.ok) {
+        return reject(outcome.message);
+      }
+      return DispatchResult::Handled;
+    }
     default:
       return DispatchResult::Unhandled;
   }

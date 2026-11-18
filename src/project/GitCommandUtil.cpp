@@ -282,12 +282,14 @@ CommandResult ReadGitCommandOutput(const platform::ProcessLauncher& launcher,
                                        timeout_ms);
 }
 
-CommandResult ReadGitCommandOutputWithStdin(const platform::ProcessLauncher& launcher,
-                                            const std::filesystem::path& root,
-                                            std::vector<std::string> arguments,
-                                            std::string stdin_text,
-                                            bool silence_stderr,
-                                            int timeout_ms) {
+CommandResult ReadGitCommandOutputWithStdin(
+    const platform::ProcessLauncher& launcher,
+    const std::filesystem::path& root,
+    std::vector<std::string> arguments,
+    std::string stdin_text,
+    bool silence_stderr,
+    int timeout_ms,
+    std::vector<platform::SubprocessEnvironmentOverride> environment) {
   // Label by subcommand only. This is the single choke point every git call in
   // the app funnels through, so `git.status` vs `git.blame` vs `git.diff` is the
   // breakdown worth having; the operands (paths, revs, sha1s) would mint a fresh
@@ -325,6 +327,7 @@ CommandResult ReadGitCommandOutputWithStdin(const platform::ProcessLauncher& lau
   // it (300 s for write ops). With this, git fails immediately and reports why,
   // which the caller can surface. A configured GUI askpass still works — only the
   // terminal prompt is disabled.
+  options.environment_overrides = std::move(environment);
   options.environment_overrides.push_back({"GIT_TERMINAL_PROMPT", "0"});
   options.environment_overrides.push_back({"GCM_INTERACTIVE", "never"});
   // The repository is the one AT the root, never one above it. The app decides a

@@ -76,6 +76,14 @@ GitRepository::CommandResult GitRepository::ExecuteWithStdin(
                                                std::move(stdin_text), silence_stderr, timeout_ms);
 }
 
+GitRepository::CommandResult GitRepository::ExecuteWithEnvironment(
+    const std::vector<std::string>& arguments,
+    std::vector<platform::SubprocessEnvironmentOverride> environment,
+    int timeout_ms) const {
+  return gitutil::ReadGitCommandOutputWithStdin(*launcher_, root_, std::vector<std::string>(arguments), {},
+                                               /*silence_stderr=*/true, timeout_ms, std::move(environment));
+}
+
 bool GitRepository::ExecuteSucceeds(std::initializer_list<std::string_view> arguments,
                                     bool silence_stderr) const {
   return Execute(arguments, silence_stderr).success();

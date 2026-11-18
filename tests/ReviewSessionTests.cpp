@@ -3,6 +3,9 @@
 #include "support/RetainedRedraw.h"
 #include "support/SoftwareCanvas.h"
 
+#include "platform/ProcessLauncher.h"
+#include "project/GitRepository.h"
+#include "project/GitWorkingTreeSnapshot.h"
 #include "workspace/git/ReviewSessionCoordinator.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
@@ -408,7 +411,74 @@ void TestWorktreePickListsTheTreesAndOpensTheChosenOne() {
          "choosing a tree opens it as the project: " + TestAccess::ProjectRoot(shell).string());
 }
 
+// "Since I last looked": review-checkpoint-mark records the working tree as it
+// is -- untracked files included -- and review-checkpoint opens one compare tab
+// per file that differs from it now, whatever was committed in between. A file
+// that was untracked then and is unchanged is NOT listed, and one created since
+// is: the two answers a diff against a commit gets wrong. Nothing in the index or
+// the tree is touched.
+void TestReviewCheckpointShowsWhatChangedSinceItWasMarked() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  WriteFile(repo_path / "committed.txt", "c1\n");
+  WriteFile(repo_path / "edited.txt", "e1\n");
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "base", "base commit");
+  WriteFile(repo_path / "untracked-same.txt", "same\n");
+  WriteFile(repo_path / "untracked-edited.txt", "u1\n");
+
+  WorkspaceShell shell;
+  TestAccess::SetProjectRoot(shell, repo_path);
+  Expect(TestAccess::ExecuteCommandLine(shell, "review-checkpoint"), "the command is accepted");
+  TestAccess::FlushPendingFileReads(shell);
+  Expect(TestAccess::CommandFeedbackText(shell).find("no checkpoint marked") != std::string::npos,
+         "with no checkpoint it says so: " + TestAccess::CommandFeedbackText(shell));
+
+  Expect(TestAccess::ExecuteCommandLine(shell, "review-checkpoint-mark"), "marking is accepted");
+  TestAccess::FlushPendingFileReads(shell);
+  Expect(TestAccess::CommandFeedbackText(shell).find("Review checkpoint marked") != std::string::npos,
+         "and reports the mark: " + TestAccess::CommandFeedbackText(shell));
+  Expect(microide::project::ResolveGitReviewCheckpoint(repo_path, microide::platform::LocalProcessLauncher())
+             .has_value(),
+         "the checkpoint is a ref of this working tree");
+
+  Expect(TestAccess::ExecuteCommandLine(shell, "review-checkpoint"), "a review straight after the mark");
+  TestAccess::FlushPendingFileReads(shell);
+  Expect(CountTabsOfKind(shell, TabEntry::Kind::Compare) == 0 &&
+             TestAccess::CommandFeedbackText(shell).find("no changes since the checkpoint") != std::string::npos,
+         "finds nothing changed: " + TestAccess::CommandFeedbackText(shell));
+
+  // An agent's afternoon: a commit, an uncommitted edit, a new file, an edit to a
+  // file git never tracked.
+  WriteFile(repo_path / "committed.txt", "c2\n");
+  RequireGitCommandSuccess(repo_path, {"commit", "-m", "agent", "--", "committed.txt"}, "the agent's commit");
+  WriteFile(repo_path / "edited.txt", "e2\n");
+  WriteFile(repo_path / "created.txt", "new\n");
+  WriteFile(repo_path / "untracked-edited.txt", "u2\n");
+
+  Expect(TestAccess::ExecuteCommandLine(shell, "review-checkpoint"), "the review is accepted");
+  TestAccess::FlushPendingFileReads(shell);
+  Expect(HasCompareTabFor(shell, repo_path / "committed.txt"), "a change that was committed since");
+  Expect(HasCompareTabFor(shell, repo_path / "edited.txt"), "an uncommitted edit");
+  Expect(HasCompareTabFor(shell, repo_path / "created.txt"), "a file created since, never tracked");
+  Expect(HasCompareTabFor(shell, repo_path / "untracked-edited.txt"), "an edit to an untracked file");
+  Expect(!HasCompareTabFor(shell, repo_path / "untracked-same.txt") &&
+             CountTabsOfKind(shell, TabEntry::Kind::Compare) == 4,
+         "and not the untracked file that did not change");
+
+  const std::string status =
+      microide::project::GitRepository(repo_path, microide::platform::LocalProcessLauncher())
+          .Execute({"status", "--porcelain"})
+          .output;
+  Expect(status.find("?? created.txt") != std::string::npos && status.find("?? untracked-same.txt") != std::string::npos &&
+             status.find("?? untracked-edited.txt") != std::string::npos &&
+             status.find(" M edited.txt") != std::string::npos,
+         "the repository's own index is as it was: untracked files are still untracked\n" + status);
+}
+
 void RegisterReviewSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ReviewSession/CheckpointShowsWhatChangedSinceItWasMarked",
+          TestReviewCheckpointShowsWhatChangedSinceItWasMarked);
   AddTest(tests, "ReviewSession/WorktreePickListsTheTreesAndOpensTheChosenOne",
           TestWorktreePickListsTheTreesAndOpensTheChosenOne);
   AddTest(tests, "ReviewSession/ReviewRunsItsGitOffTheShellThread",

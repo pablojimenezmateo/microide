@@ -405,6 +405,8 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::ReviewConflicts:
     case ActionId::ReviewBranch:
     case ActionId::ReviewCommit:
+    case ActionId::ReviewCheckpoint:
+    case ActionId::ReviewCheckpointMark:
     case ActionId::Open:
     case ActionId::ProjectClose:
     case ActionId::ProjectCopyAbsolutePath:

@@ -27,6 +27,15 @@ project (see [README](README.md)); versions track meaningful shipped work.
   (`copy-reference`), or typed into the running terminal with the keyboard
   following it there (`term-insert-reference`) -- pointing an agent at code
   without pasting the code.
+- **Review since a checkpoint.** Mark Review Checkpoint
+  (`review-checkpoint-mark`) records the working tree as it is now -- every
+  tracked file and every untracked one `.gitignore` does not exclude -- without
+  touching the index, the tree or HEAD. Review Changes Since Checkpoint
+  (`review-checkpoint`) then opens a compare tab per file that differs from it,
+  whatever was committed, amended, rebased or left untracked in between: a file
+  created since is listed, an untracked file that did not change is not. The
+  checkpoint is a ref of the working tree (`refs/worktree/microide/review-checkpoint`),
+  so each linked tree has its own, and it works the same on a host.
 - **Git: Switch Worktree…** (`git-worktrees`). A pick of the repository's
   working trees -- directory, branch or detached commit, where it is, locked or
   not -- that opens the chosen one as a project, on the host for a remote

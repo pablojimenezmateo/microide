@@ -591,6 +591,8 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [make_review](const std::string& ref) { return make_review().OpenBranchReview(ref); },
           .open_commit_review =
               [make_review](const std::string& ref) { return make_review().OpenCommitReview(ref); },
+          .open_checkpoint_review = [make_review]() { return make_review().OpenCheckpointReview(); },
+          .mark_review_checkpoint = [make_review]() { return make_review().MarkCheckpoint(); },
           .ensure_active_folding_model_fresh =
               [this]() { return EnsureActiveFoldingModelFresh(); },
           .replace_active_editor_view =

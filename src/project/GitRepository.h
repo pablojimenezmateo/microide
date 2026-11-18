@@ -51,6 +51,11 @@ class GitRepository {
                                  std::string stdin_text,
                                  bool silence_stderr = true,
                                  int timeout_ms = internal::kGitReadTimeoutMs) const;
+  // Runs git with `environment` added to its own: GIT_INDEX_FILE, for a command
+  // that reads the working tree through an index that is not the repository's.
+  CommandResult ExecuteWithEnvironment(const std::vector<std::string>& arguments,
+                                       std::vector<platform::SubprocessEnvironmentOverride> environment,
+                                       int timeout_ms = internal::kGitReadTimeoutMs) const;
   bool ExecuteSucceeds(std::initializer_list<std::string_view> arguments,
                        bool silence_stderr = true) const;
   bool ExecuteSucceeds(const std::vector<std::string>& arguments,

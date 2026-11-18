@@ -1,5 +1,7 @@
 #include "workspace/git/ReviewSessionCoordinator.h"
 
+#include "project/GitWorkingTreeSnapshot.h"
+
 #include <algorithm>
 #include <cstddef>
 #include <memory>
@@ -330,6 +332,72 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenCommitReview(const std::string& 
                   &gathered->review_files);
             },
             "no changes in commit");
+      });
+}
+
+ReviewOpenOutcome ReviewSessionCoordinator::OpenCheckpointReview() {
+  const std::filesystem::path root = state_.root;
+  const platform::ProcessLauncher* launcher = &state_.launcher();
+  auto gathered = std::make_shared<Gathered>();
+  return Dispatch(
+      [root, launcher, gathered] {
+        const std::optional<std::string> checkpoint = project::ResolveGitReviewCheckpoint(root, *launcher);
+        if (!checkpoint.has_value()) {
+          gathered->error = "review-checkpoint: no checkpoint marked yet (review-checkpoint-mark marks one)";
+          return;
+        }
+        // Tree against tree: a diff against the commit alone would miss every file
+        // that is new and untracked, and report as deleted the ones that were
+        // untracked when the checkpoint was marked.
+        const project::GitSnapshotResult now = project::SnapshotGitWorkingTree(root, *launcher);
+        if (!now.ok()) {
+          gathered->error = "review-checkpoint: " + now.error;
+          return;
+        }
+        gathered->ref = *checkpoint;
+        std::vector<std::filesystem::path> targets;
+        for (const project::GitBranchFileEntry& entry :
+             project::CollectGitTreeDiffFiles(root, *launcher, *checkpoint, now.commit)) {
+          targets.push_back((root / entry.relative_path).lexically_normal());
+        }
+        gathered->prefetched.Prefetch(root, *launcher, {gathered->ref}, PrefetchSet(targets));
+        gathered->targets = std::move(targets);
+      },
+      [gathered](ReviewSessionCoordinator& self) -> ReviewOpenOutcome {
+        if (!gathered->error.empty()) {
+          return ReviewOpenOutcome{.ok = false, .message = gathered->error};
+        }
+        const std::string ref = gathered->ref;
+        return self.RunReviewSession(
+            "review-checkpoint", gathered->targets.value_or(std::vector<std::filesystem::path>{}),
+            [ref](const TabEntry& tab) -> std::optional<std::filesystem::path> {
+              if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+                  tab.compare->commit_hash == ref && tab.compare->right_ref == "WORKTREE") {
+                return tab.compare->path;
+              }
+              return std::nullopt;
+            },
+            [&self, gathered, ref](const std::filesystem::path& path) {
+              return self.compare_merge_.OpenWorkingTreeComparison(path, ref, "checkpoint",
+                                                                   &gathered->prefetched);
+            },
+            "no changes since the checkpoint");
+      });
+}
+
+ReviewOpenOutcome ReviewSessionCoordinator::MarkCheckpoint() {
+  const std::filesystem::path root = state_.root;
+  const platform::ProcessLauncher* launcher = &state_.launcher();
+  auto marked = std::make_shared<project::GitSnapshotResult>();
+  return Dispatch(
+      [root, launcher, marked] { *marked = project::MarkGitReviewCheckpoint(root, *launcher); },
+      [marked](ReviewSessionCoordinator&) -> ReviewOpenOutcome {
+        if (!marked->ok()) {
+          return ReviewOpenOutcome{.ok = false, .message = "review-checkpoint-mark: " + marked->error};
+        }
+        return ReviewOpenOutcome{
+            .ok = true,
+            .message = "Review checkpoint marked: review-checkpoint shows what changes from here"};
       });
 }
 

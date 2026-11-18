@@ -1208,6 +1208,20 @@ ReviewOpenOutcome WorkspaceActionContext::ReviewBranch(const std::string& ref) {
   return FinishReviewOutcome(state_, operations_, operations_.open_branch_review(ref));
 }
 
+ReviewOpenOutcome WorkspaceActionContext::ReviewCheckpoint() {
+  if (!operations_.open_checkpoint_review) {
+    return {false, "review-checkpoint: unavailable"};
+  }
+  return FinishReviewOutcome(state_, operations_, operations_.open_checkpoint_review());
+}
+
+ReviewOpenOutcome WorkspaceActionContext::MarkReviewCheckpoint() {
+  if (!operations_.mark_review_checkpoint) {
+    return {false, "review-checkpoint-mark: unavailable"};
+  }
+  return FinishReviewOutcome(state_, operations_, operations_.mark_review_checkpoint());
+}
+
 ReviewOpenOutcome WorkspaceActionContext::ReviewCommit(const std::string& ref) {
   if (!operations_.open_commit_review) {
     return {false, "review-commit: unavailable"};

@@ -417,6 +417,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/GitRepositoryMetadataTracker.cpp
   src/project/GitRepositoryState.cpp
   src/project/GitStatusService.cpp
+  src/project/GitWorkingTreeSnapshot.cpp
   src/project/GitWorktrees.cpp
   src/project/GlobMatch.cpp
   src/project/IgnoreMatcher.cpp

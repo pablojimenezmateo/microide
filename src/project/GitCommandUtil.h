@@ -112,12 +112,16 @@ CommandResult ReadGitCommandOutput(const platform::ProcessLauncher& launcher,
                                    std::vector<std::string> arguments,
                                    bool silence_stderr = true,
                                    int timeout_ms = kGitReadTimeoutMs);
-CommandResult ReadGitCommandOutputWithStdin(const platform::ProcessLauncher& launcher,
-                                            const std::filesystem::path& root,
-                                            std::vector<std::string> arguments,
-                                            std::string stdin_text,
-                                            bool silence_stderr = true,
-                                            int timeout_ms = kGitReadTimeoutMs);
+// `environment` is added to git's own (GIT_INDEX_FILE for a command that must not
+// touch the repository's index).
+CommandResult ReadGitCommandOutputWithStdin(
+    const platform::ProcessLauncher& launcher,
+    const std::filesystem::path& root,
+    std::vector<std::string> arguments,
+    std::string stdin_text,
+    bool silence_stderr = true,
+    int timeout_ms = kGitReadTimeoutMs,
+    std::vector<platform::SubprocessEnvironmentOverride> environment = {});
 bool GitCommandSucceeds(const platform::ProcessLauncher& launcher,
                         const std::filesystem::path& root,
                         std::vector<std::string> arguments,

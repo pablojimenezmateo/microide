@@ -92,6 +92,10 @@ for what is actually measured, and what is not.
 - **Working trees**: Git ▸ Switch Worktree… (`git-worktrees`) lists the repository's working
   trees with their branches and opens the chosen one as a project — on the host, for a remote
   project — so each parallel agent's tree is one pick away
+- **Review since a checkpoint**: `review-checkpoint-mark` records the working tree as it is —
+  untracked files included, nothing staged or moved — and `review-checkpoint` opens a compare
+  tab per file that differs from it now, whatever was committed, amended or rebased in between:
+  what the agents did since you last looked
 - Conflict files open directly in the three-way merge tab
 - Branch switch/create, fetch, pull, push, publish, sync, and stash push/pop — each run off the
   shell thread with git's failure classified (auth, no upstream, non-fast-forward, dirty tree, conflict)
@@ -760,6 +764,8 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `review-conflicts`
 - `review-branch [ref]`
 - `review-commit [commit]`
+- `review-checkpoint`
+- `review-checkpoint-mark`
 - `reveal-in-tree`
 - `files [query]`
 - `find-references`
