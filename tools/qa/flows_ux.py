@@ -1600,7 +1600,8 @@ def flow_chrome_segments(app: q.App) -> None:
 
 # ---- the Remote menu --------------------------------------------------------
 
-REMOTE_MENU_ROWS = ("Open Folder on Host…", "Show Status", "Show Changed on Host", "Show Conflicts", "Show Host Server Log",
+REMOTE_MENU_ROWS = ("Open Folder on Host…", "Show Status", "Show Changed on Host", "File History…", "Show Conflicts",
+                    "Show Host Server Log",
                     "Forward a Port…", "Stop Forwarding a Port…", "Reconnect", "Disconnect",
                     "Stop Host Server", "Remove Mirror…")
 
