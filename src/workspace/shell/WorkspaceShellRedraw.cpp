@@ -14,6 +14,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "util/BackgroundTaskCounter.h"
@@ -21,6 +22,7 @@
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/Waker.h"
+#include "workspace/coordinators/EditorPointerHit.h"
 #include "workspace/coordinators/SelectionAutoscroll.h"
 #include "workspace/coordinators/WorkspaceCompareMouseCoordinator.h"
 #include "workspace/coordinators/WorkspaceEditorMouseCoordinator.h"
@@ -875,6 +877,22 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentEditorLineRangeRect(std::size_t 
   }
   const std::size_t clipped_start = std::max(start_row, visible_start_row);
   const std::size_t clipped_end = std::min(end_row, visible_end_row);
+  // Inset gaps (a code lens above its line, an inline surface) push the rows below
+  // them down, as the paint and the pointer place them: on the plain grid a
+  // keystroke on a line under a lens repainted the lens strip and left the line
+  // (soak a25ecf6e5ab9, 7776ee909316).
+  if (context_.current_project_state.plugin_presentation_if_present() != nullptr) {
+    std::vector<float> row_tops;
+    VisibleRowTops(context_.current_project_state, *viewport, metrics,
+                   [this](std::string_view id) { return GetSettingValue(id); }, row_tops);
+    const std::size_t first = clipped_start - visible_start_row;
+    const std::size_t last = clipped_end - 1 - visible_start_row;
+    if (last < row_tops.size()) {
+      const float top = row_tops[first];
+      return DirtyRectWithHalo(
+          MakeRect(pane_rect.x, top, pane_rect.w, row_tops[last] + metrics.line_height - top));
+    }
+  }
   return DirtyRectWithHalo(MakeRect(
       pane_rect.x,
       metrics.first_line_y +

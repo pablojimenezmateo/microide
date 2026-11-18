@@ -4966,6 +4966,27 @@ void TestRightClicksUnderAStickyBandActOnTheClickedLine() {
   }
 }
 
+// The inset-gap family of TypingUnderAStickyBandRepaintsTheTypedRow: with a code
+// lens drawn above line 1 (plugins.code_lens_above), the keystroke's damage was
+// laid on the plain grid -- the lens strip's rows -- and the typed line under it
+// kept its old text on a partial frame (soak a25ecf6e5ab9, 7776ee909316).
+void TestTypingUnderACodeLensStripRepaintsTheTypedLine() {
+  FlowFixture fixture("lensed.cpp", "int greet();\nint second();\nint third();\n");
+  Expect(TestAccess::SetSettingValueTransient(fixture.shell, "plugins.code_lens_above", "true"),
+         "lenses should draw above their lines");
+  editor::PluginDecorationData lenses;
+  lenses.code_lenses.push_back(editor::CodeLensDecoration{.line = 0, .text = "greet (2)", .command = "refs.show"});
+  lenses.code_lenses.push_back(editor::CodeLensDecoration{.line = 2, .text = "third (1)", .command = "refs.show"});
+  Expect(TestAccess::CurrentProjectState(fixture.shell).EnsurePluginPresentation().decorations.ReplaceForOwnerFile(
+             "lens-test", fixture.file, std::move(lenses)),
+         "publishing the lenses should change the store");
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the lenses painted");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("//")}), "typing on the first lensed line");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN), KeyDownEvent(SDLK_DOWN)});
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the caret on line 3");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("//")}), "typing under the second lens");
+}
+
 // TD-2026-11-08-434 item 1 (QA monkey, seed 602): at a 1.75x UI scale a partial
 // frame left the device column at a split divider's edge unlike a full frame. The
 // unit harness never painted at a fractional scale, so nothing could see that
@@ -6003,6 +6024,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestTypingUnderAStickyBandRepaintsTheTypedRow);
   AddTest(tests, "QaFlowRegression/ACommitFieldUnderAModalPromptTakesNoClickAndPaintsNoCaret",
           TestACommitFieldUnderAModalPromptTakesNoClickAndPaintsNoCaret);
+  AddTest(tests, "QaFlowRegression/TypingUnderACodeLensStripRepaintsTheTypedLine",
+          TestTypingUnderACodeLensStripRepaintsTheTypedLine);
   AddTest(tests, "QaFlowRegression/RightClicksUnderAStickyBandActOnTheClickedLine",
           TestRightClicksUnderAStickyBandActOnTheClickedLine);
   AddTest(tests, "QaFlowRegression/PartialFramesAtAFractionalScaleMatchFullOnesAcrossASplit",
