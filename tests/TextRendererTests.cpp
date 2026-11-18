@@ -1063,9 +1063,15 @@ void TestSdlTtfAWideSymbolOverhangsIntoTheBlankCellAfterIt() {
   };
   const char* const kStar = "\xE2\x9C\xB3";  // U+2733, one cell wide
   Expect(any(columns(kStar, 0, 1)), "a font on this machine covers U+2733, or the test proves nothing");
-  // With a blank cell after it, nothing there to protect.
+  // With a blank cell after it, nothing there to protect: the star is drawn
+  // whole. Where the fallback font draws it wider than the cell (this machine's)
+  // its right arm reaches into the blank cell; where it fits (CI's fonts) it
+  // never touches its own cell's right edge. Ink AT that edge and none past it
+  // is the one shape that means it was cut.
   const std::vector<int> cell_one = columns((std::string(kStar) + " b").c_str(), 1, 2);
-  Expect(any(cell_one),
+  const std::vector<int> cell_zero = columns((std::string(kStar) + " b").c_str(), 0, 1);
+  const bool reaches_edge = !cell_zero.empty() && cell_zero.back() > 64;
+  Expect(any(cell_one) || !reaches_edge,
          "the star's right arm reaches into the blank cell after it instead of being cut at its own cell");
   // A neighbour with ink keeps its cell: `✳b` paints cell 1 exactly as ` b` does.
   Expect(columns((std::string(kStar) + "b").c_str(), 1, 2) == columns(" b", 1, 2),

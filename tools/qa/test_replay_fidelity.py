@@ -1,6 +1,7 @@
 """A replay rebuilds the run: its files, its outside world, and a check that it
 went where the run went."""
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import findings as fnd
@@ -157,6 +158,14 @@ class SlowApp:
 
 
 class LivenessTests(unittest.TestCase):
+    def setUp(self):
+        # The budget is 2.5 s stretched by MQA_SLOW_FACTOR, which an instrumented
+        # lane exports (qa-asan: 3): every answer below read as within budget
+        # there, and the lane failed on these tests, not on the app.
+        patcher = mock.patch.object(mo.q, "SLOW_FACTOR", 1.0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_a_slow_answer_from_a_starved_machine_is_counted_and_not_filed(self):
         oracle = mo.Liveness(SlowApp("query 'ui'", 6.0, (0.4, 5.0)))
         self.assertEqual(oracle.check(), [])
