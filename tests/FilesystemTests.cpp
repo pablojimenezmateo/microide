@@ -5,6 +5,7 @@
 #include "platform/Filesystem.h"
 #include "platform/FsOps.h"
 #include "platform/HostIntegration.h"
+#include "platform/TransientFileStore.h"
 #include "platform/Trash.h"
 #include "util/StringUtil.h"
 
@@ -559,6 +560,40 @@ void TestDesktopNotificationCommandSanitizesTerminalText() {
          "and never mid-character");
 }
 
+// The transient store behind a host upload and a pasted clipboard image: each file
+// in its own directory under a private root, old entries swept on the way in, and
+// a root that is a planted link refused.
+void TestTransientFileStoreKeepsFilesApartAndPrivate() {
+  namespace fs = std::filesystem;
+  using microide::platform::StoreTransientFile;
+  TemporaryDirectory temp;
+  const fs::path root = temp.path() / "store";
+  std::string error;
+  const std::optional<fs::path> first = StoreTransientFile(root, "shot.png", "one", &error);
+  const std::optional<fs::path> second = StoreTransientFile(root, "shot.png", "two", &error);
+  Expect(first.has_value() && second.has_value(), "both are stored: " + error);
+  if (!first.has_value() || !second.has_value()) {
+    return;
+  }
+  Expect(*first != *second && first->filename() == "shot.png" && second->filename() == "shot.png",
+         "two files of one name keep the name and do not overwrite each other");
+  Expect(ReadFile(*first) == "one" && ReadFile(*second) == "two", "each holds its own bytes");
+  struct stat info {};
+  Expect(::stat(root.c_str(), &info) == 0 && (info.st_mode & 0777) == 0700, "the root is private");
+  Expect(::stat(first->c_str(), &info) == 0 && (info.st_mode & 0777) == 0600, "and so is the file");
+
+  // An entry older than a day goes with the next store.
+  std::error_code ec;
+  fs::last_write_time(first->parent_path(), fs::file_time_type::clock::now() - std::chrono::hours(25), ec);
+  Expect(!ec && StoreTransientFile(root, "new.png", "three", &error).has_value(), "a later store succeeds");
+  Expect(!fs::exists(*first) && fs::exists(*second), "the day-old entry is swept, the fresh one kept");
+
+  const fs::path planted = temp.path() / "planted";
+  fs::create_directory_symlink(root, planted, ec);
+  Expect(!ec && !StoreTransientFile(planted, "x.png", "x", &error).has_value(),
+         "a root that is a link is refused");
+}
+
 // RetireDescriptorAsync hands a descriptor to a background worker so the caller
 // never blocks in close(2) -- which, for an inotify descriptor, sporadically
 // costs milliseconds. The contract that matters is simply that the close DOES
@@ -596,6 +631,8 @@ void RegisterFilesystemTests(std::vector<TestCase>& tests) {
           TestOpenUrlRejectsUnsafeSchemesAndOverlongInput);
   AddTest(tests, "Platform/DesktopNotificationCommandSanitizesTerminalText",
           TestDesktopNotificationCommandSanitizesTerminalText);
+  AddTest(tests, "Platform/TransientFileStoreKeepsFilesApartAndPrivate",
+          TestTransientFileStoreKeepsFilesApartAndPrivate);
   AddTest(tests, "Filesystem/CopyPathAcceptsBareFilenameDestination",
           TestCopyPathAcceptsBareFilenameDestination);
   AddTest(tests, "Trash/AcceptsDanglingSymlink", TestTrashAcceptsDanglingSymlink);

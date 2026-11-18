@@ -386,6 +386,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/platform/RuntimePaths.cpp
   src/platform/ShellProcess.cpp
   src/platform/Subprocess.cpp
+  src/platform/TransientFileStore.cpp
   src/platform/SubprocessSandbox.cpp
   src/platform/TerminalBackend.cpp
   src/platform/Trash.cpp

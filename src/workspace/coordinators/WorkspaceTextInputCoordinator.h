@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <functional>
 #include <optional>
 #include <string>
@@ -59,6 +60,17 @@ class TextInputCoordinator {
     std::function<bool(std::string_view)> write_clipboard_text;
     std::function<bool(std::string_view)> write_primary_selection_text;
     std::function<std::optional<std::string>()> read_clipboard_text;
+    // The clipboard's image saved as a file for a terminal program to read
+    // (SystemClipboard::ReadPng, platform::StoreTransientFile): its path, or
+    // nullopt when the clipboard holds no image or it could not be saved (the
+    // operation says why).
+    std::function<std::optional<std::filesystem::path>()> store_clipboard_image;
+    // A host terminal and a file the host has no copy of: send it there and type
+    // the path it gets (RemoteHostService::UploadDroppedFile). False when `pane`
+    // is not such a terminal or the host already names the file.
+    std::function<bool(TerminalPaneState&, const std::filesystem::path&)> upload_file_to_host_terminal;
+    // TerminalPanelService::DroppedPathText.
+    std::function<std::string(const TerminalPaneState&, const std::filesystem::path&)> dropped_path_text;
     std::function<void()> submit_terminal_pending_input;
     std::function<void()> erase_last_terminal_pending_input_codepoint;
     std::function<char(SDL_Keycode, SDL_Keymod)> keycode_to_ascii;
@@ -85,6 +97,10 @@ class TextInputCoordinator {
   bool HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool PasteClipboardIntoTerminal();
   bool PasteTextIntoTerminal(std::string text);
+  // A file on this machine given to the active terminal `pane` -- dropped on it,
+  // or the clipboard's image pasted into it: its path is typed there as the
+  // pane's machine names it, after the file is sent to a host that has no copy.
+  bool TypeFileIntoTerminal(TerminalPaneState& pane, const std::filesystem::path& local_path);
   // `distribute_across_carets` is the paste rule: a multi-line payload with one
   // line per caret goes one line to each (TextViewport::PasteText); typed and
   // composed text always goes whole to every caret.

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <functional>
 #include <optional>
 #include <string>
@@ -22,6 +23,8 @@ class SystemClipboard {
   struct Backend {
     std::function<bool(std::string_view)> set;
     std::function<std::optional<std::string>()> get;
+    // The bytes the clipboard offers as image/png; nullopt when it offers none.
+    std::function<std::optional<std::string>()> get_png;
   };
 
   // The SDL clipboard.
@@ -35,11 +38,19 @@ class SystemClipboard {
   void SetWriterForTesting(std::function<bool(std::string_view)> set) {
     backend_.set = std::move(set);
   }
+  void SetPngReaderForTesting(std::function<std::optional<std::string>()> get_png) {
+    backend_.get_png = std::move(get_png);
+  }
 
   // True when the text is on the clipboard -- the system's, or held here for the
   // app's own paste.
   bool Write(std::string_view text);
   std::optional<std::string> Read();
+  // The PNG image on the system clipboard -- a screenshot, an image copied in a
+  // browser -- as its file bytes. nullopt when the clipboard offers no PNG, or
+  // offers something under that name that is not one or is over kMaxPngBytes.
+  std::optional<std::string> ReadPng();
+  static constexpr std::size_t kMaxPngBytes = 64u * 1024 * 1024;
 
  private:
   Backend backend_;

@@ -18,6 +18,10 @@ project (see [README](README.md)); versions track meaningful shipped work.
   tab's mark stayed inside the window, and a terminal that was on screen got
   neither. `terminal.alert_when_unfocused` (on by default) turns it off; desktop
   notifications need `notify-send`, at most one a second.
+- **Paste a screenshot into a terminal.** Pasting with an image and no text on
+  the clipboard saves the image and types its path, as dropping the file does;
+  on a host terminal the image is sent to the host first. Pasted images are
+  kept for a day under the state directory.
 
 - **Structural diffs, after difftastic.** Compare tabs now read each changed
   hunk as syntax -- identifiers, operators, whole strings and comments, and

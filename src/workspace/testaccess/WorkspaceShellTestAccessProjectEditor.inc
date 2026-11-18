@@ -650,6 +650,13 @@
       std::function<std::optional<std::string>()> reader) {
     shell.clipboard_.SetReaderForTesting(std::move(reader));
   }
+  static bool PasteClipboardIntoTerminal(WorkspaceShell& shell) {
+    return shell.MakeTextInputCoordinator().PasteClipboardIntoTerminal();
+  }
+  static void SetClipboardPngReader(WorkspaceShell& shell,
+                                    std::function<std::optional<std::string>()> reader) {
+    shell.clipboard_.SetPngReaderForTesting(std::move(reader));
+  }
   static void SetClipboardTextWriter(WorkspaceShell& shell,
                                      std::function<bool(std::string_view)> writer) {
     shell.clipboard_.SetWriterForTesting(std::move(writer));

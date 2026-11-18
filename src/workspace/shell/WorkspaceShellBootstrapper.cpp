@@ -480,19 +480,8 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
                       pane != nullptr && pane->session.running()) {
                     (void)terminals.ActivatePaneAt(*layout, x, y);
                     shell->context_.current_project_state.surface.focus = FocusTarget::Panel;
-                    const std::filesystem::path local(dropped_path);
-                    // A host terminal and a file the host has no copy of (outside the
-                    // mirror): its local path means nothing there, so the file goes to
-                    // the host first and that path is typed (TD-2026-11-02-428 item 5).
-                    const ProjectWorkspaceState& state = shell->context_.current_project_state;
-                    if (pane->launcher == nullptr && pane->session.is_host_terminal() &&
-                        state.launcher().ResolveWorkingDirectory(local) == local &&
-                        shell->MakeRemoteHostService().UploadDroppedFile(state.root, pane->session.host_identity(),
-                                                                         local)) {
-                      return true;
-                    }
-                    return shell->MakeTextInputCoordinator().PasteTextIntoTerminal(
-                        terminals.DroppedPathText(pane, local));
+                    return shell->MakeTextInputCoordinator().TypeFileIntoTerminal(
+                        *pane, std::filesystem::path(dropped_path));
                   }
                 }
                 // What a drop means is decided in WorkspaceFileDrop.h and executed

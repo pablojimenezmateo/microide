@@ -2,15 +2,19 @@
 
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
+#include "platform/AppDirectories.h"
+#include "platform/TransientFileStore.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 #include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
 #include "workspace/shell/WorkspaceShell.h"
+#include "workspace/services/RemoteHostService.h"
 #include "workspace/services/TerminalPanelService.h"
 #include "util/StringUtil.h"
 
@@ -192,11 +196,27 @@ bool TextInputCoordinator::HandleTerminalKeyDown(const SDL_KeyboardEvent& event,
 
 bool TextInputCoordinator::PasteClipboardIntoTerminal() {
   std::optional<std::string> clipboard_text = operations_.read_clipboard_text();
-  if (!clipboard_text.has_value()) {
+  if (clipboard_text.has_value() && !clipboard_text->empty()) {
+    return PasteTextIntoTerminal(std::move(*clipboard_text));
+  }
+  // No text: a screenshot or a copied image is pasted as a file, the way a
+  // dropped one is -- a terminal program takes an image by its path.
+  if (TerminalPaneState* pane = operations_.active_terminal_pane();
+      pane != nullptr && pane->session.running() && operations_.store_clipboard_image) {
+    if (const std::optional<std::filesystem::path> image = operations_.store_clipboard_image();
+        image.has_value()) {
+      (void)TypeFileIntoTerminal(*pane, *image);  // an upload reports its own failure
+    }
+  }
+  return true;
+}
+
+bool TextInputCoordinator::TypeFileIntoTerminal(TerminalPaneState& pane,
+                                                const std::filesystem::path& local_path) {
+  if (operations_.upload_file_to_host_terminal && operations_.upload_file_to_host_terminal(pane, local_path)) {
     return true;
   }
-
-  return PasteTextIntoTerminal(std::move(*clipboard_text));
+  return PasteTextIntoTerminal(operations_.dropped_path_text(pane, local_path));
 }
 
 bool TextInputCoordinator::PasteTextIntoTerminal(std::string text) {
@@ -422,6 +442,33 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
           .write_primary_selection_text =
               [this](std::string_view text) { return WritePrimarySelectionText(text); },
           .read_clipboard_text = [this]() { return ReadClipboardText(); },
+          .store_clipboard_image = [this]() -> std::optional<std::filesystem::path> {
+            const std::optional<std::string> png = clipboard_.ReadPng();
+            if (!png.has_value()) {
+              return std::nullopt;
+            }
+            std::string error;
+            std::optional<std::filesystem::path> stored = platform::StoreTransientFile(
+                platform::ResolveAppDirectory(platform::UserDirectoryKind::State, "microide") / "pasted",
+                "pasted-image.png", *png, &error);
+            if (!stored.has_value()) {
+              Notify(NotificationService::Tone::Warning, "The clipboard's image could not be pasted: " + error);
+            }
+            return stored;
+          },
+          .upload_file_to_host_terminal =
+              [this](TerminalPaneState& pane, const std::filesystem::path& local) {
+                // Outside the mirror, the host has no name for the file
+                // (TD-2026-11-02-428 item 5).
+                const ProjectWorkspaceState& state = context_.current_project_state;
+                return pane.launcher == nullptr && pane.session.is_host_terminal() &&
+                       state.launcher().ResolveWorkingDirectory(local) == local &&
+                       MakeRemoteHostService().UploadDroppedFile(state.root, pane.session.host_identity(), local);
+              },
+          .dropped_path_text =
+              [this](const TerminalPaneState& pane, const std::filesystem::path& local) {
+                return MakeTerminalPanelService().DroppedPathText(&pane, local);
+              },
           .submit_terminal_pending_input = [this]() { SubmitTerminalPendingInput(); },
           .erase_last_terminal_pending_input_codepoint =
               [this]() { EraseLastTerminalPendingInputCodepoint(); },

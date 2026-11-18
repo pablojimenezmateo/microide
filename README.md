@@ -129,6 +129,8 @@ for what is actually measured, and what is not.
   the desktop until you come back, and a notification is also posted as a desktop notification
   naming the project and terminal (`terminal.alert_when_unfocused`, on by default; needs
   `notify-send`)
+- **Paste a screenshot**: with an image and no text on the clipboard, paste saves the image and
+  types its path, as dropping the file does — on a host terminal the image is sent to the host first
 - **Relaunch** an exited terminal in place (`Enter` in the dead pane, or Terminal ▸ Relaunch
   Terminal): same tab, same position, same cwd and command — the dropped-ssh case
 - Alternate-screen support, application cursor-key mode, origin mode, autowrap, bracketed paste

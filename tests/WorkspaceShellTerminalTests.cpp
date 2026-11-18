@@ -3323,6 +3323,53 @@ void TestWorkspaceShellFileDroppedOnTheTerminalTypesItsPath() {
   Expect(WorkspaceShellTestAccess::FocusIsPanel(shell), "and the keyboard, to go on typing");
 }
 
+// A screenshot on the clipboard pasted into a terminal: there is no text to
+// paste, and nothing happened. The image is saved as a file and its path typed,
+// as a dropped file's is -- how it gets into an agent's prompt. Text on the
+// clipboard still pastes as text, and bytes that are not a PNG paste nothing.
+void TestWorkspaceShellImagePastedIntoTheTerminalTypesItsPath() {
+  TemporaryDirectory temp_dir;
+  const ScopedEnvVar state_home("XDG_STATE_HOME", (temp_dir.path() / "state").string());
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "root\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::SetRunning(session, true);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const std::string png = std::string("\x89PNG\r\n\x1a\n") + "image bytes";
+  std::optional<std::string> clipboard_text;
+  std::optional<std::string> clipboard_png = png;
+  WorkspaceShellTestAccess::SetClipboardTextReader(shell, [&]() { return clipboard_text; });
+  WorkspaceShellTestAccess::SetClipboardPngReader(shell, [&]() { return clipboard_png; });
+
+  Expect(WorkspaceShellTestAccess::PasteClipboardIntoTerminal(shell), "the paste is handled");
+  std::string typed = TerminalSessionTestAccess::SentBytes(session);
+  const std::string pasted_root = (temp_dir.path() / "state" / "microide" / "pasted").string();
+  Expect(typed.starts_with(pasted_root) && typed.ends_with("/pasted-image.png "),
+         "the terminal gets the saved image's path: [" + typed + "]");
+  if (!typed.empty()) {
+    typed.pop_back();
+    Expect(ReadFile(typed) == png, "and the file holds the clipboard's bytes");
+  }
+
+  TerminalSessionTestAccess::ClearSentBytes(session);
+  clipboard_text = "plain text";
+  Expect(WorkspaceShellTestAccess::PasteClipboardIntoTerminal(shell), "a text paste is handled");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "plain text",
+         "text on the clipboard pastes as text even beside an image: [" +
+             TerminalSessionTestAccess::SentBytes(session) + "]");
+
+  TerminalSessionTestAccess::ClearSentBytes(session);
+  clipboard_text.reset();
+  clipboard_png = "<html>not an image</html>";
+  Expect(WorkspaceShellTestAccess::PasteClipboardIntoTerminal(shell), "an unusable clipboard is handled");
+  Expect(TerminalSessionTestAccess::SentBytes(session).empty(), "and types nothing");
+}
+
 void TestWorkspaceShellTerminalRelaunchRestartsAnExitedPane() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3523,6 +3570,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalLinkUnderlineTakesTheLinksColour);
   AddTest(tests, "WorkspaceShell/FileDroppedOnTheTerminalTypesItsPath",
           TestWorkspaceShellFileDroppedOnTheTerminalTypesItsPath);
+  AddTest(tests, "WorkspaceShell/ImagePastedIntoTheTerminalTypesItsPath",
+          TestWorkspaceShellImagePastedIntoTheTerminalTypesItsPath);
   AddTest(tests, "WorkspaceShell/TerminalNotificationToastsFromABackgroundProject",
           TestWorkspaceShellTerminalNotificationToastsFromABackgroundProject);
   AddTest(tests, "WorkspaceShell/TerminalAlertReachesPastAnUnfocusedWindow",

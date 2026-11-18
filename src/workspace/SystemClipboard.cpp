@@ -16,6 +16,19 @@ SystemClipboard::SystemClipboard()
             SDL_free(text);
             return copied;
           },
+      .get_png = []() -> std::optional<std::string> {
+            if (!SDL_HasClipboardData("image/png")) {
+              return std::nullopt;
+            }
+            std::size_t size = 0;
+            void* data = SDL_GetClipboardData("image/png", &size);
+            if (data == nullptr) {
+              return std::nullopt;
+            }
+            std::string bytes(static_cast<const char*>(data), size);
+            SDL_free(data);
+            return bytes;
+          },
       } {}
 
 bool SystemClipboard::Write(std::string_view text) {
@@ -42,6 +55,17 @@ std::optional<std::string> SystemClipboard::Read() {
     system_at_hold_.reset();
   }
   return system;
+}
+
+std::optional<std::string> SystemClipboard::ReadPng() {
+  std::optional<std::string> bytes = backend_.get_png ? backend_.get_png() : std::nullopt;
+  // The name is whatever the clipboard's owner chose to call its data: only
+  // bytes that start as a PNG file does are handed on as one.
+  constexpr std::string_view kPngSignature = "\x89PNG\r\n\x1a\n";
+  if (!bytes.has_value() || bytes->size() > kMaxPngBytes || !bytes->starts_with(kPngSignature)) {
+    return std::nullopt;
+  }
+  return bytes;
 }
 
 }  // namespace microide::workspace
