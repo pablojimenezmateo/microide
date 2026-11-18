@@ -41,6 +41,17 @@ CRASH_SAFETY_QUIET_S = 3.5
 CRASH_SAFETY_STAGED_LIMIT_S = 20.0
 
 
+def _forget_files_of(disk_before: dict[str, str | None], paths: set[str]) -> None:
+    """Drops from `disk_before` every path that reaches the same file as one of
+    `paths` (by the file it resolves to): a save through a link changes the file
+    behind it, which a clean tab can show under its own name -- the crash point's
+    edit, autosaved through link-to-crlf.txt, read as crlf.txt "changed on disk,
+    and nothing saved it" (soak be74f3e72707)."""
+    files = {os.path.realpath(path) for path in paths}
+    for path in [path for path in disk_before if os.path.realpath(path) in files]:
+        del disk_before[path]
+
+
 def _sha256_file(path: Path) -> str | None:
     try:
         if not path.is_file():
@@ -404,8 +415,7 @@ class DataOracle:
             if saved_path is not None:
                 touched.add(saved_path)
             killed_at = f" (killed at {point.split('|', 1)[0].split(':', 1)[-1]})" if died else ""
-            for path in touched:
-                disk_before.pop(path, None)
+            _forget_files_of(disk_before, touched)
         # With no project on the command line: the app restores its saved
         # workspace, as after a real crash. Naming the run's project opened that
         # project alone, and a second project's buffers, kept in its session
@@ -438,6 +448,12 @@ class DataOracle:
             for doc in dirty:
                 key = doc.get("path") or doc.get("title")
                 back = by_key.get(_doc_key(doc))
+                if back is None and doc.get("path") and doc.get("sha256") and \
+                        _sha256_file(Path(doc["path"])) == doc["sha256"]:
+                    # Saved before the kill -- an autosave the kill landed in or after
+                    # -- so the relaunch reopened the tab clean from its file and
+                    # deferred, and `documents` lists no pending tab (soak 93826423aa06).
+                    continue
                 if back is None:
                     out.append(("data", f"the unsaved buffer {Path(str(key)).name} did not come back after a kill -9 "
                                         f"(the crash-safety flush had {CRASH_SAFETY_QUIET_S:.1f}s of quiet)"

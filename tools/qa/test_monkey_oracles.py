@@ -88,6 +88,21 @@ class _RelaunchingApp:
             self.loaded = {p: p == self.active for p in (0, 1)}
 
 
+class ForgetFilesOfTests(unittest.TestCase):
+    def test_a_file_reached_through_a_link_is_forgotten_with_the_link(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "crlf.txt"
+            target.write_text("x\r\n")
+            link = Path(folder) / "link-to-crlf.txt"
+            link.symlink_to("crlf.txt")
+            other = Path(folder) / "other.txt"
+            other.write_text("y\n")
+            disk = {str(target): "a", str(link): "a", str(other): "b"}
+            monkey_oracles._forget_files_of(disk, {str(link)})
+            self.assertEqual(disk, {str(other): "b"},
+                             "crlf.txt is the file the save through its link wrote; other.txt is not")
+
+
 class Kill9OracleTests(unittest.TestCase):
     def test_the_first_wait_is_for_the_active_projects_buffers_alone(self) -> None:
         # A background project's buffer can only come back through the lap; the
@@ -126,6 +141,42 @@ class Kill9OracleTests(unittest.TestCase):
         self.assertEqual(found, [], found)
         self.assertEqual([app.ROOTS[p] for p in app.catalog], ["/p/a", "/p/b"])
 
+
+    def _deferred_after_a_save(self, disk: bytes) -> list:
+        """The unsaved buffer was written by an autosave just before the kill, so
+        the relaunch reopens its tab clean and deferred -- not read until shown,
+        and so absent from `documents` -- with `disk` in its file."""
+        import hashlib
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "README.md"
+            path.write_bytes(disk)
+            app = _RelaunchingApp()
+            app.active = 1
+            app.docs[1] = [{"path": str(path), "dirty": True, "project": "/p/b",
+                            "sha256": hashlib.sha256(b"unsaved text").hexdigest()}]
+            relaunch = app.crash_and_relaunch
+
+            def relaunch_deferred(*args, **kwargs):
+                relaunch(*args, **kwargs)
+                app.docs[1] = []  # the tab is back, its content still pending
+            app.crash_and_relaunch = relaunch_deferred
+            oracle = monkey_oracles.DataOracle(app)
+            with mock.patch.object(monkey_oracles, "CRASH_SAFETY_QUIET_S", 0.0), \
+                    mock.patch.object(monkey_oracles.time, "sleep", lambda _s: None), \
+                    mock.patch.object(monkey_oracles.time, "monotonic", side_effect=range(0, 10**6, 100)):
+                return oracle.kill9_and_check(random.Random(1), waited=True)
+
+    def test_a_buffer_saved_before_the_kill_is_not_lost_though_its_tab_is_deferred(self) -> None:
+        # Soak 93826423aa06: autosave wrote README.md, the kill landed in that
+        # write's durable sequence, and the relaunch reopened the tab clean and
+        # deferred -- the file holds the buffer -- which `documents` does not list.
+        self.assertEqual(self._deferred_after_a_save(b"unsaved text"), [])
+
+    def test_a_buffer_absent_after_the_kill_whose_file_does_not_hold_it_is_lost(self) -> None:
+        # The negative control: the file has other bytes, so the buffer is gone.
+        found = self._deferred_after_a_save(b"older text")
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("did not come back", found[0][1])
 
     def test_a_save_the_oracles_own_lap_made_is_not_a_changed_buffer(self) -> None:
         # Soak 0afa15c55c0f: with autosave on focus change, the lap that loads the
