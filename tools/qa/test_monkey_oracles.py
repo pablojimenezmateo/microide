@@ -451,6 +451,28 @@ class Kill9OracleTests(unittest.TestCase):
                              ["x.txt changed on disk across a kill -9 and relaunch, and nothing saved it"])
 
 
+class CaretBoundsReportTests(unittest.TestCase):
+    LOG = ("microide redraw frame: frame=1\n"
+           "microide caret-bounds: after a move or an edit: /p/bom.txt has its caret at 2:801 "
+           "(line length 0, 3 lines); the code that left it:\n"
+           "  #1 /soak/bin/microide(+0xc4ccdc) [0x629b2a4b4cdc]\n"
+           "  #2 /usr/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x88) [0x700eee22a718]\n"
+           "microide input: key=Return\n")
+
+    def test_without_a_binary_the_report_is_kept_as_logged(self) -> None:
+        self.assertEqual(monkey_oracles.caret_bounds_reports(self.LOG), "".join(self.LOG.splitlines(True)[1:4]))
+
+    def test_with_a_binary_the_frames_go_through_the_crash_stack_resolver(self) -> None:
+        # Soak 872c8984d39b: the raw offsets cost a hand addr2line run. With no
+        # such binary the resolver keeps the offsets, numbered in the crash-stack
+        # shape; with the soak's binary they name the function and line.
+        text = monkey_oracles.caret_bounds_reports(self.LOG, Path("/nonexistent/microide"))
+        lines = text.splitlines()
+        self.assertTrue(lines[0].startswith("microide caret-bounds: after a move or an edit"))
+        self.assertEqual(lines[1], "#0 0xc4ccdc in ?? ?? [microide+0xc4ccdc]")
+        self.assertEqual(lines[2], "#1 0x88 in __libc_start_main ?? [libc.so.6+0x88]")
+
+
 class IdleEvidenceTests(unittest.TestCase):
     """Soak a64655101a5a: an idle app redrawing 60 times a second, and the evidence
     could not say what it redrew. The frames' dirty bounds name the surface."""

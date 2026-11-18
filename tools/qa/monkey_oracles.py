@@ -995,23 +995,32 @@ class Liveness:
         return [("latency", f"{subject} took {seconds:.2f}s to answer (budget {self.budget:.1f}s){where}")]
 
 
-def caret_bounds_reports(log: str) -> str:
-    """Each `microide caret-bounds:` report in `log` with its backtrace lines.
+def caret_bounds_reports(log: str, binary: Path | None = None) -> str:
+    """Each `microide caret-bounds:` report in `log` with its backtrace lines;
+    with `binary`, the frames resolved to function and file:line as a crash
+    stack's are (the raw `microide(+0x...)` offsets cost a hand addr2line run to
+    name ReplaceAllRanges in soak 872c8984d39b).
 
     >>> caret_bounds_reports("x\\nmicroide caret-bounds: here: f has its caret at 2:3\\n  #1 a\\n  #2 b\\ny\\n")
     'microide caret-bounds: here: f has its caret at 2:3\\n  #1 a\\n  #2 b\\n'
     """
-    out: list[str] = []
+    reports: list[list[str]] = []
     taking = False
     for line in log.splitlines():
         if "microide caret-bounds:" in line:
             taking = True
-            out.append(line)
+            reports.append([line])
         elif taking and line.startswith("  #"):
-            out.append(line)
+            reports[-1].append(line)
         else:
             taking = False
-    return "".join(line + "\n" for line in out)
+    if binary is None:
+        return "".join(line + "\n" for report in reports for line in report)
+    # The app numbers its frames ("  #1 module(+0x...) [0x...]"); the resolver
+    # reads bare backtrace_symbols lines.
+    return "".join(q.symbolize_backtrace("\n".join([report[0], *(re.sub(r"^\s*#\d+\s+", "", line)
+                                                                   for line in report[1:])]), binary)
+                   for report in reports)
 
 
 class InvariantOracle:
@@ -1062,7 +1071,8 @@ class InvariantOracle:
             # with the stack that left it (MICROIDE_TRACE_CARET_BOUNDS) -- likely
             # steps before this check, and out of the log tail's reach.
             with contextlib.suppress(Exception):
-                if reports := caret_bounds_reports(self.app.log_since(0, 8 * 1024 * 1024)):
+                if reports := caret_bounds_reports(self.app.log_since(0, 8 * 1024 * 1024),
+                                                   getattr(self.app, "binary", None)):
                     self.evidence["caret-bounds.txt"] = reports.encode()
         return found
 
