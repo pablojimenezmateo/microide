@@ -2,6 +2,7 @@
 // tab's close, a rename/delete, a project close, a quit. See SaveContinuationState.h
 // for why they are data and keyed by stable tab ids; this TU is the one place that
 // runs or cancels them (TD-2026-09-28-304).
+#include "util/Log.h"
 #include "workspace/coordinators/WorkspaceDirtyPromptCoordinator.h"
 
 #include <filesystem>
@@ -288,6 +289,7 @@ void DirtyPromptCoordinator::ContinueQuit(SaveContinuation step) {
     operations_.dismiss_notification(kQuitWaitKey);
   }
   ReturnTo(step.return_root);
+  util::Log("microide quit: the unsaved-changes prompt, after Save All");
   quit_requested_ = true;
 }
 

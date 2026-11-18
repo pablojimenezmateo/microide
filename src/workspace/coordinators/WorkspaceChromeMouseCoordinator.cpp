@@ -1,6 +1,7 @@
 #include <memory>
 
 #include "workspace/coordinators/WorkspaceChromeMouseCoordinator.h"
+#include "util/Log.h"
 
 #include <algorithm>
 #include <cmath>
@@ -678,7 +679,11 @@ ChromeMouseCoordinator& WorkspaceShell::MakeChromeMouseCoordinator() {
               [this](const SDL_FRect& rect) { return ComputeVisibleWindowControlButtons(rect); },
           .set_pending_window_action =
               [this](WorkspaceShell::WindowAction action) { pending_window_action_ = action; },
-          .request_quit = [this]() { RequestQuit(); },
+          .request_quit =
+              [this]() {
+                util::Log("microide quit: the title bar's close button");
+                RequestQuit();
+              },
           .open_menu_bar_menu = [this](MenuId id) { MakeMenuCoordinator().OpenMenuBarMenu(id); },
           .active_submenu_rect = [this](const SDL_FRect& rect) { return ActiveSubmenuRect(rect); },
           .hit_test_popup_row =

@@ -756,6 +756,7 @@ workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event&
   }
   switch (event.type) {
     case SDL_EVENT_QUIT:
+      SDL_Log("microide quit: SDL_EVENT_QUIT (the window manager closed the window)");
       workspace_shell_.RequestQuit();
       if (workspace_shell_.ConsumeQuitRequested()) {
         running_ = false;
@@ -828,6 +829,7 @@ workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event&
   auto result = workspace_shell_.HandleEvent(converted_event);
   ConsumeWindowActions();
   if (workspace_shell_.ConsumeQuitRequested()) {
+    SDL_Log("microide quit: the main loop ends after event 0x%x", static_cast<unsigned>(event.type));
     running_ = false;
     return workspace::WorkspaceShell::EventResult{
         .handled = true,

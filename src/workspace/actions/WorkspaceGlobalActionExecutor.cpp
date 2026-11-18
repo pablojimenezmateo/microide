@@ -1,4 +1,5 @@
 #include "workspace/actions/WorkspaceActionCoordinator.h"
+#include "util/Log.h"
 #include "workspace/debug/DebugService.h"
 
 #include <filesystem>
@@ -800,6 +801,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       return DispatchResult::Handled;
     }
     case ActionId::Quit:
+      // Every quit says what asked for it: an unrequested clean exit was a soak
+      // "crash" with nothing to say why (soak 7ab9a5476905).
+      util::Log("microide quit: the Quit action");
       context_.RequestQuit();
       return DispatchResult::Handled;
     case ActionId::SetSetting: {

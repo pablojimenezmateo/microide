@@ -1,4 +1,5 @@
 #include "workspace/coordinators/WorkspaceDirtyPromptCoordinator.h"
+#include "util/Log.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -284,6 +285,7 @@ void DirtyPromptCoordinator::ConfirmCloseProject(const DirtyPromptState& prompt)
 void DirtyPromptCoordinator::ConfirmQuit(const DirtyPromptState& prompt) {
   prompt_surfaces_.DismissDirtyPrompt(false);
   if (prompt.selected_action != 0) {
+    util::Log("microide quit: the unsaved-changes prompt, without saving");
     quit_requested_ = true;
     return;
   }
