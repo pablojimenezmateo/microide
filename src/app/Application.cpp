@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <utility>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -383,6 +384,9 @@ int Application::Run() {
           dirty_rects.insert(dirty_rects.end(), result.redraw.rects.begin(), result.redraw.rects.end());
         }
         redraw_reason = result.redraw.full ? "event-full" : "event-partial";
+        if (result.redraw.full || !result.redraw.rects.empty()) {
+          frame_event_type_ = event.type;
+        }
       }
       // Once a redraw is pending, yield to render after the drain budget so a
       // sustained event flood cannot starve the frame. Remaining queued events are
@@ -435,7 +439,7 @@ bool Application::Initialize() {
     }
   }
   if (startup_options_.handle_termination_signals && termination_signals_ == nullptr) {
-    termination_event_type_ = RegisterSdlWakeChannel();
+    termination_event_type_ = RegisterSdlWakeChannel("termination-signal");
     termination_signals_ = std::make_unique<TerminationSignalWatcher>(termination_event_type_);
     if (!termination_signals_->installed()) {
       termination_event_type_ = 0;
@@ -1041,7 +1045,8 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
                                           .frame_index = frame_index_,
                                           .reason = reason,
                                           .elapsed_ns = SDL_GetTicksNS() - render_start,
-                                          .dirty_bounds = dirty_bounds});
+                                          .dirty_bounds = dirty_bounds,
+                                          .event_type = std::exchange(frame_event_type_, 0)});
   } else {
     render_fallback_full();
   }

@@ -22,6 +22,10 @@ struct RedrawFrameStats {
   // surface that keeps asking (soak a64655101a5a: 60 scheduled partial frames a
   // second on an idle app, and the log said only "dirty=1").
   SDL_FRect dirty_bounds{};
+  // The last event that asked for this frame (an event-* reason), 0 for none:
+  // logged by name (SdlEventName), so an idle app repainting at 60 fps says which
+  // wake channel or input keeps asking (soak a64655101a5a).
+  std::uint32_t event_type = 0;
 };
 
 // Accumulates redraw timing/coverage statistics and logs a rolling summary

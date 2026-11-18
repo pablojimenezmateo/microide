@@ -68,6 +68,8 @@ class Application {
   bool running_ = false;
   // SIGTERM / SIGINT / SIGHUP as an SDL event (0: not handled), and its watcher.
   std::uint32_t termination_event_type_ = 0;
+  // The last event that asked for the frame being prepared (RedrawFrameStats::event_type).
+  std::uint32_t frame_event_type_ = 0;
   std::unique_ptr<TerminationSignalWatcher> termination_signals_;
   bool first_render_complete_ = false;
   bool presentation_state_dirty_ = true;

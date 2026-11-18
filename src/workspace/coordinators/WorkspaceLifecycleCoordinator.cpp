@@ -191,8 +191,8 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   // back to a bounded poll so pending work is not stranded until unrelated input
   // arrives. (TD-2026-07-16-56.)
   bool any_registration_failed = false;
-  const auto register_wake = [&]() -> util::WakeChannel {
-    const util::WakeChannel channel = app::RegisterSdlWakeChannel();
+  const auto register_wake = [&](const char* name) -> util::WakeChannel {
+    const util::WakeChannel channel = app::RegisterSdlWakeChannel(name);
     if (channel == 0) {
       any_registration_failed = true;
     }
@@ -202,14 +202,14 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   // Dedicated neutral wake for background-task completion: a registered channel is
   // claimed by no dispatch branch, so it reaches the neutral default rather than
   // aliasing whichever subsystem registered first (project search today).
-  util::SetBackgroundTaskWakeChannel(register_wake());
+  util::SetBackgroundTaskWakeChannel(register_wake("background-task"));
 
-  plugin_runtime_.SetWakeChannel(register_wake());
+  plugin_runtime_.SetWakeChannel(register_wake("plugin-runtime"));
 
-  git_blame_event_type_ = register_wake();
+  git_blame_event_type_ = register_wake("git-blame");
   git_blame_service_.SetWakeChannel(git_blame_event_type_);
 
-  git_sidebar_event_type_ = register_wake();
+  git_sidebar_event_type_ = register_wake("git-sidebar");
   // Reuse the git-sidebar wake for commit completions: a commit result is
   // marshaled back to the main thread and drained in ConsumeGitSidebarRefresh
   // (a successful commit refreshes the sidebar anyway).
@@ -264,9 +264,9 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
           [this]() { return util::PushWake(git_sidebar_event_type_); },
   });
 
-  terminal_event_type_ = register_wake();
+  terminal_event_type_ = register_wake("terminal");
 
-  project_file_event_type_ = register_wake();
+  project_file_event_type_ = register_wake("project-files");
   // Off-thread forced-rescan and project-replace-all results wake and drain on the
   // same project-file path.
   // The deferred save's formatter completion rides the project-file wake: it ends
@@ -278,9 +278,9 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   file_read_service_.SetWakeChannel(project_file_event_type_);
   file_index_refresh_mailbox_.SetWakeChannel(project_file_event_type_);
   project_replace_mailbox_.SetWakeChannel(project_file_event_type_);
-  project_open_dialog_event_type_ = register_wake();
+  project_open_dialog_event_type_ = register_wake("open-dialog");
 
-  lsp_event_type_ = register_wake();
+  lsp_event_type_ = register_wake("lsp");
   lsp_service_.SetWakeChannel(lsp_event_type_);
   EnsureProjectLspManager(context_.current_project_state).SetWakeChannel(lsp_event_type_);
   for (const auto& entry : context_.project_catalog.entries) {
@@ -289,7 +289,7 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
     }
   }
 
-  dap_event_type_ = register_wake();
+  dap_event_type_ = register_wake("dap");
   debug_service_.SetWakeChannel(dap_event_type_);
   EnsureProjectDapManager(context_.current_project_state).SetWakeChannel(dap_event_type_);
   for (const auto& entry : context_.project_catalog.entries) {
@@ -298,7 +298,7 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
     }
   }
 
-  plugin_thread_event_type_ = register_wake();
+  plugin_thread_event_type_ = register_wake("plugin-thread");
   plugin_runtime_.SetPluginThreadEventType(plugin_thread_event_type_);
   // Hand the host the worker so every plugin Lua call routes off the UI thread.
   // The worker itself stays unspawned until the first Reload that loads a plugin.
@@ -306,9 +306,9 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
 
   // A decoded plugin raster wakes the loop with its size, so the surface is laid
   // out and painted at it without waiting for unrelated input (TD-2026-07-16-39).
-  surface_texture_cache_.SetWakeChannel(register_wake());
+  surface_texture_cache_.SetWakeChannel(register_wake("surface-textures"));
 
-  highlight_prefetch_event_type_ = register_wake();
+  highlight_prefetch_event_type_ = register_wake("highlight-prefetch");
   // The worker fires this from its own thread once a result is queued; the wake
   // only nudges the main loop to drain (the event carries no payload).
   highlight_prefetch_service_.SetWakeCallback([event_type = highlight_prefetch_event_type_]() {
@@ -321,7 +321,7 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   // Control channel. Always allocate the wake event + bind it so the marshaling
   // path is ready; only the socket listener is gated on `control.enabled`, which
   // is what lets the channel be toggled on at runtime without a restart.
-  control_event_type_ = register_wake();
+  control_event_type_ = register_wake("control");
   control_channel_service_.SetWakeChannel(control_event_type_);
   MaybeStartControlChannel();
 

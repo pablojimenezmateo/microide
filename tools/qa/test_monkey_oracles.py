@@ -299,6 +299,18 @@ class IdleEvidenceTests(unittest.TestCase):
         self.assertIn("5  120,16,200,18  under: tab:README.md", lines[1])
         self.assertNotIn("status:line-column", lines[1])
 
+    def test_the_frames_are_counted_by_the_event_that_asked_for_them(self) -> None:
+        # Soak a64655101a5a: 60 event-partial frames a second, and nothing said
+        # which event kept asking.
+        app = mock.Mock()
+        app.ui.return_value = {"elements": []}
+        oracle = monkey_oracles.IdleOracle(app)
+        frames = [f"microide redraw frame: frame={i} reason=event-partial bounds=0,86,515,1198 event=plugin-thread"
+                  for i in range(4)]
+        frames.append("microide redraw frame: frame=9 reason=event-partial bounds=0,86,515,1198 event=0x400")
+        lines = oracle._repainted_regions(frames)
+        self.assertEqual(lines[0], "frames by the event that asked for them: 4 x plugin-thread, 1 x 0x400")
+
     def test_frames_without_bounds_add_nothing(self) -> None:
         oracle = monkey_oracles.IdleOracle(mock.Mock())
         self.assertEqual(oracle._repainted_regions(["microide redraw frame: frame=1 dirty=1"]), [])

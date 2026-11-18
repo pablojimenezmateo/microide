@@ -1207,7 +1207,15 @@ class IdleOracle:
             elements = (self.app.ui() or {}).get("elements", [])
         except Exception:  # noqa: BLE001 - evidence only
             elements = []
-        out = ["repainted bounds (x,y,w,h), most common first:"]
+        out = []
+        # Which event asked for each frame (the frame trace's `event=`: a wake
+        # channel's name or SDL's event type), most common first: the requester
+        # that keeps an idle app repainting.
+        events = collections.Counter(line.split(" event=", 1)[1].split()[0] for line in frames if " event=" in line)
+        if events:
+            out.append("frames by the event that asked for them: " +
+                       ", ".join(f"{count} x {name}" for name, count in events.most_common(5)))
+        out.append("repainted bounds (x,y,w,h), most common first:")
         for text, count in bounds.most_common(3):
             try:
                 x, y, w, h = (int(v) for v in text.split(","))

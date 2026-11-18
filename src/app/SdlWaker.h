@@ -79,6 +79,12 @@ void InstallSdlLogSink();
 // Allocate a wake channel from SDL's custom event range. Returns 0 when SDL cannot
 // allocate one; callers treat 0 as "waking disabled" and the shell records the
 // degraded state via util::SetWakeRegistrationDegraded.
-std::uint32_t RegisterSdlWakeChannel();
+// `name` (a string literal: it is kept, not copied) names the channel in the
+// frame trace (SdlEventName).
+std::uint32_t RegisterSdlWakeChannel(const char* name);
+
+// What a frame's event was, for the frame trace: a wake channel's registered
+// name, else SDL's event type in hex ("0x400" for a key down).
+std::string SdlEventName(std::uint32_t event_type);
 
 }  // namespace microide::app

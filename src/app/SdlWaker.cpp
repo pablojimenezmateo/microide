@@ -6,6 +6,9 @@
 #include <string_view>
 
 #include <atomic>
+#include <cstdio>
+#include <mutex>
+#include <unordered_map>
 #include <chrono>
 
 #include <pthread.h>
@@ -67,7 +70,7 @@ LostWakeRelay& Relay() {
 }  // namespace
 
 void InstallSdlWaker() {
-  g_nudge_type.store(RegisterSdlWakeChannel(), std::memory_order_release);
+  g_nudge_type.store(RegisterSdlWakeChannel("wake-nudge"), std::memory_order_release);
   InstallWakeSignal();  // InstallSdlWaker runs on the main thread, before any producer
   (void)Relay();
   util::SetWakePusher([](util::WakeChannel channel) {
@@ -103,8 +106,36 @@ void InstallSdlLogSink() {
   });
 }
 
-std::uint32_t RegisterSdlWakeChannel() {
+namespace {
+
+// Registered wake channels' names, by event type. Written once each at startup on
+// the main thread, before any producer runs; read by the main loop's trace.
+std::mutex g_channel_names_mutex;
+std::unordered_map<std::uint32_t, const char*>& ChannelNames() {
+  static std::unordered_map<std::uint32_t, const char*> names;
+  return names;
+}
+
+}  // namespace
+
+std::string SdlEventName(std::uint32_t event_type) {
+  {
+    std::scoped_lock lock(g_channel_names_mutex);
+    if (const auto found = ChannelNames().find(event_type); found != ChannelNames().end()) {
+      return found->second;
+    }
+  }
+  char hex[16];
+  (void)std::snprintf(hex, sizeof(hex), "0x%x", event_type);
+  return hex;
+}
+
+std::uint32_t RegisterSdlWakeChannel(const char* name) {
   const Uint32 type = SDL_RegisterEvents(1);
+  if (type != static_cast<Uint32>(-1)) {
+    std::scoped_lock lock(g_channel_names_mutex);
+    ChannelNames()[type] = name;
+  }
   // SDL returns (Uint32)-1 when the custom-event range is exhausted. Map that onto
   // the "waking disabled" channel so no producer ever pushes onto event id 0xFFFFFFFF.
   return type == static_cast<Uint32>(-1) ? 0u : static_cast<std::uint32_t>(type);
