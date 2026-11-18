@@ -86,6 +86,15 @@ void TestRoamingSessionTextRoundTripsAndIsNotTrusted() {
          "the same files and carets are the same session, whoever left it and whenever");
   later.files[0].line = 5;
   Expect(RoamingSessionFingerprint(later) != RoamingSessionFingerprint(roaming), "a moved caret is not");
+  // The list of files alone does not move with the caret: it is what decides
+  // whether a save is worth sending at once.
+  using microide::workspace::RoamingSessionFileList;
+  Expect(RoamingSessionFileList(later) == RoamingSessionFileList(roaming), "the same files are the same list");
+  later.files[0].active = true;
+  later.files[1].active = false;
+  Expect(RoamingSessionFileList(later) != RoamingSessionFileList(roaming), "another tab in front is not");
+  later.files.pop_back();
+  Expect(RoamingSessionFileList(later) != RoamingSessionFileList(roaming), "nor is a closed tab");
 
   Expect(!DecodeRoamingSession("").has_value() && !DecodeRoamingSession("not json").has_value() &&
              !DecodeRoamingSession("[]").has_value() &&

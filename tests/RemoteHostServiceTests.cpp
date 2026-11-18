@@ -23,6 +23,7 @@
 #include <iterator>
 #include <fstream>
 #include <string>
+#include <thread>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -1779,6 +1780,42 @@ void TestOpenFolderOnHostEditsTheHostTree() {
       (void)WaitUntil([&] { Pump(shell); return offered().has_value(); }, std::chrono::seconds(1),
                       std::chrono::milliseconds(10));
     };
+    // What the host holds: found under the fake host's home, wherever its server
+    // keeps it.
+    const auto left_on_host = [&]() -> std::string {
+      std::error_code ec;
+      for (std::filesystem::recursive_directory_iterator it(host.home, ec), end; !ec && it != end; it.increment(ec)) {
+        if (it->path().filename() == "session" &&
+            it->path().parent_path().parent_path().filename() == "workspace-state") {
+          return ReadFile(it->path());
+        }
+      }
+      return {};
+    };
+    Expect(WaitUntil([&] { Pump(shell); return left_on_host().find("\"column\":4") != std::string::npos; },
+                     std::chrono::seconds(20), std::chrono::milliseconds(10)),
+           [&] { return "an opened file is left on the host at once, with its caret: " + left_on_host(); });
+    // A caret that moves is not worth a message at every pause in typing: it goes
+    // when the window loses focus -- when the machine is left.
+    WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 2);
+    WorkspaceShellTestAccess::SaveSessionState(shell);
+    for (int i = 0; i < 30; ++i) {
+      Pump(shell);
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    Expect(left_on_host().find("\"column\":4") != std::string::npos,
+           "a save with only the caret moved sends nothing: " + left_on_host());
+    {
+      SDL_Event focus_lost{};
+      focus_lost.type = SDL_EVENT_WINDOW_FOCUS_LOST;
+      (void)shell.HandleEvent(focus_lost);
+      SDL_Event focus_gained{};
+      focus_gained.type = SDL_EVENT_WINDOW_FOCUS_GAINED;
+      (void)shell.HandleEvent(focus_gained);
+    }
+    Expect(WaitUntil([&] { Pump(shell); return left_on_host().find("\"column\":2") != std::string::npos; },
+                     std::chrono::seconds(20), std::chrono::milliseconds(10)),
+           [&] { return "leaving the window leaves the caret where it now is: " + left_on_host(); });
     reconnect();
     Expect(!offered().has_value(), "a machine is not offered what it left itself");
 
@@ -1796,7 +1833,7 @@ void TestOpenFolderOnHostEditsTheHostTree() {
                  Pump(shell);
                  const auto* viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
                  return viewport != nullptr && viewport->path() == mirror / "agent.c" &&
-                        viewport->cursor_column() == 4;
+                        viewport->cursor_column() == 2;
                },
                std::chrono::seconds(20), std::chrono::milliseconds(10)),
            "the file that was in front opens at its caret");

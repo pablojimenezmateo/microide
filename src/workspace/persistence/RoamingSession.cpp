@@ -120,6 +120,14 @@ std::string RoamingSessionFingerprint(const RoamingSession& roaming) {
   return util::SerializeJson(FilesJson(roaming));
 }
 
+std::string RoamingSessionFileList(const RoamingSession& roaming) {
+  std::string list;
+  for (const RoamingSession::File& file : roaming.files) {
+    list.append(file.active ? "*" : " ").append(file.path).push_back('\n');
+  }
+  return list;
+}
+
 std::optional<RoamingSession> DecodeRoamingSession(std::string_view text) {
   const std::optional<util::JsonValue> parsed = util::ParseJson(text);
   if (!parsed.has_value() || !parsed->IsObject() || !(*parsed)["version"].IsInt() ||

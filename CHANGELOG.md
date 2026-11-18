@@ -29,7 +29,8 @@ project (see [README](README.md)); versions track meaningful shipped work.
   without pasting the code.
 - **The files open in a remote project follow you between machines.** A remote
   project leaves the list of its open files (their carets, and which one was in
-  front) on its host whenever that changes and when its window loses focus. A
+  front) on its host when a tab opens or closes and when its window loses focus
+  -- never for a caret that merely moved while you type. A
   machine that connects to the project and finds what another one left is
   offered it once -- "3 files were open on work-laptop, 2 h ago" -- and Open
   Them opens those files beside its own tabs. Nothing is closed, moved or

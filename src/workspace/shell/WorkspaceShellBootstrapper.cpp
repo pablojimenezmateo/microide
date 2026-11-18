@@ -425,12 +425,15 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
           .autosave_on_focus_lost =
               [shell]() {
                 shell->MaybeAutosaveDirtyTabs(true);
-                // Leaving the window is how a machine is left: a remote project's
-                // session is saved now, which leaves what it has open on its host
-                // for the next machine (RemoteHostService::SessionSaved). Nothing
-                // for a local project.
+                // Leaving the window is how a machine is left: the remote project
+                // in front saves its session, and every remote project's is left
+                // on its host as it is now, carets included, for the next machine
+                // (RemoteHostService::LeaveSessions). Nothing for local projects.
                 if (shell->context_.current_project_state.id.IsRemote()) {
                   shell->MakePersistenceCoordinator().SaveSessionState();
+                }
+                if (shell->glue_->remote_host_service != nullptr) {
+                  shell->glue_->remote_host_service->LeaveSessions();
                 }
               },
           .end_selection_gesture =

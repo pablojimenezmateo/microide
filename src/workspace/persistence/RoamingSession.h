@@ -64,5 +64,8 @@ std::optional<RoamingSession> DecodeRoamingSession(std::string_view text);
 // What identifies the content, whoever left it and whenever: two sessions with
 // the same fingerprint have the same files and carets.
 std::string RoamingSessionFingerprint(const RoamingSession& roaming);
+// The same without the carets: which files, in which order, and which in front.
+// A caret moves with every keystroke; this changes when a tab opens or closes.
+std::string RoamingSessionFileList(const RoamingSession& roaming);
 
 }  // namespace microide::workspace

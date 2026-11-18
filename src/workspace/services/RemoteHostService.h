@@ -303,9 +303,15 @@ class RemoteHostService {
                        std::string_view hash_prefix);
   // Moving between machines (workspace/persistence/RoamingSession.h). The
   // session of the remote project at `root` was saved: what it has open is left on
-  // its host for the next machine, when that changed since it was last left and
-  // `remote.roam_session` is on. A no-op while the project is not connected.
+  // its host for the next machine when the SET of open files changed since it was
+  // last left, and `remote.roam_session` is on. A caret that moved is not sent on
+  // its own -- sessions are saved at every pause in typing -- until
+  // LeaveSessions. A no-op while the project is not connected.
   void SessionSaved(const std::filesystem::path& root, const PersistedProjectSessionState& session);
+  // The window lost focus -- how a machine is left: every open project's session
+  // as last saved is left on its host, carets and all, when it differs from what
+  // is there.
+  void LeaveSessions();
   // Open the files another machine left open in the project at `root` -- what a
   // connect offered -- beside what is open here, the one that was in front last
   // and at its caret. False when nothing is on offer.
@@ -470,11 +476,16 @@ class RemoteHostService {
     // offered (the same one is not offered twice), and that session until it is
     // taken or replaced.
     std::string roaming_left;
+    std::string roaming_left_files;  // its RoamingSessionFileList
     std::string roaming_offered;
     std::optional<RoamingSession> roaming_offer;
+    // The session as last saved, not yet left on the host as it is.
+    std::optional<RoamingSession> roaming_pending;
     // The connection the host was last asked on for what another machine left.
     std::weak_ptr<project::remote::RemoteServerClient> roaming_checked;
   };
+  // Leave `entry`'s pending session on its host.
+  void LeaveSession(const std::filesystem::path& root, Project& entry);
   // On a connect: ask the host what another machine left, and offer it.
   void CheckRoamingSession(const std::filesystem::path& tree, Project& entry);
   void OnRoamingSession(const std::filesystem::path& tree, const std::string& text);

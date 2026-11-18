@@ -851,6 +851,7 @@ void RemoteHostService::SetMachineNameForTesting(std::string name) {
   machine_name_ = std::move(name);
   for (auto& [root, entry] : projects_) {
     entry.roaming_left.clear();
+    entry.roaming_left_files.clear();
     entry.roaming_offered.clear();
     entry.roaming_offer.reset();
   }
@@ -873,14 +874,33 @@ void RemoteHostService::SessionSaved(const std::filesystem::path& root,
   const std::uint64_t now = static_cast<std::uint64_t>(
       std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
           .count());
-  const RoamingSession roaming = CaptureRoamingSession(session, root, machine_name_, now);
-  std::string fingerprint = RoamingSessionFingerprint(roaming);
+  RoamingSession roaming = CaptureRoamingSession(session, root, machine_name_, now);
   // Nothing open is nothing to pick up, and must not replace what another
-  // machine left; the same files and carets as last time are already there.
-  if (roaming.empty() || fingerprint == entry.roaming_left) {
+  // machine left.
+  if (roaming.empty()) {
+    entry.roaming_pending.reset();
     return;
   }
-  entry.roaming_left = std::move(fingerprint);
+  const bool files_changed = RoamingSessionFileList(roaming) != entry.roaming_left_files;
+  entry.roaming_pending = std::move(roaming);
+  if (files_changed) {
+    LeaveSession(root, entry);
+  }
+}
+
+void RemoteHostService::LeaveSessions() {
+  for (auto& [root, entry] : projects_) {
+    if (!entry.closed && entry.status.state == State::Ready && entry.roaming_pending.has_value() &&
+        RoamingSessionFingerprint(*entry.roaming_pending) != entry.roaming_left) {
+      LeaveSession(root, entry);
+    }
+  }
+}
+
+void RemoteHostService::LeaveSession(const std::filesystem::path& root, Project& entry) {
+  const RoamingSession& roaming = *entry.roaming_pending;
+  entry.roaming_left = RoamingSessionFingerprint(roaming);
+  entry.roaming_left_files = RoamingSessionFileList(roaming);
   std::shared_ptr<remote::RemoteConnection> connection = entry.project->session().connection();
   work_.Post([this, connection, root, text = EncodeRoamingSession(roaming)]() mutable {
     remote::RemoteWorkspace(connection).PutState("session", std::move(text), [this, root](std::string error) {
@@ -891,6 +911,7 @@ void RemoteHostService::SessionSaved(const std::filesystem::path& root,
       mailbox_.Post([this, root]() {
         if (const auto failed = projects_.find(root); failed != projects_.end()) {
           failed->second.roaming_left.clear();
+          failed->second.roaming_left_files.clear();
         }
       });
     });
@@ -923,6 +944,7 @@ void RemoteHostService::OnRoamingSession(const std::filesystem::path& tree, cons
   if (roaming->client == machine_name_) {
     // This machine's own, from before a restart: it is already on the host.
     entry.roaming_left = std::move(fingerprint);
+    entry.roaming_left_files = RoamingSessionFileList(*roaming);
     return;
   }
   if (fingerprint == entry.roaming_offered || fingerprint == entry.roaming_left) {
