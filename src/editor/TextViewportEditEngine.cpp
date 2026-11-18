@@ -653,7 +653,30 @@ bool TextViewport::DeleteSelection() {
   if (!range.has_value()) {
     return false;
   }
-  return ApplyRangeEdit(*range, "", true);
+  if (secondary_carets_.empty()) {
+    return ApplyRangeEdit(*range, "", true);
+  }
+  // Other carets up beside the primary's selection (a cut with only the primary
+  // selecting): the selection goes, and every other caret rides the edit with the
+  // text it sat in, as VS Code keeps a cut's empty cursors. ApplyRangeEdit is a
+  // one-range edit that left them where they were -- a secondary at 7:801 on a
+  // line the cut had shortened to 728 (soak 00b41f141357). They are set aside so
+  // the edit records the primary alone, then carried through it.
+  std::vector<TextViewportUndoHistory::SecondaryCaret> others = std::move(secondary_carets_);
+  secondary_carets_.clear();
+  if (!ApplyRangeEdit(*range, "", true) || !last_applied_edit_.has_value()) {
+    secondary_carets_ = std::move(others);
+    return false;
+  }
+  for (TextViewportUndoHistory::SecondaryCaret& caret : others) {
+    caret.position = MapPositionThroughEdit(caret.position, *last_applied_edit_);
+    if (caret.selection_anchor.has_value()) {
+      caret.selection_anchor = MapPositionThroughEdit(*caret.selection_anchor, *last_applied_edit_);
+    }
+  }
+  secondary_carets_ = std::move(others);
+  DedupeSecondaryCaretsAgainstPrimary();
+  return true;
 }
 
 TextViewport::ViewState TextViewport::CaptureViewStateImpl(bool with_secondary_carets) const {

@@ -6778,7 +6778,55 @@ void TestSelectedTextOfAViewportAnotherViewportEditedStaysInTheDocument() {
              pane.SelectedText() + "'");
 }
 
+
+// Every way a cut can delete with several carets up leaves every caret inside the
+// document: the selections (DeleteMultiCaretSelections), the primary's selection
+// alone (DeleteSelectedText), or every caret's line (DeleteCurrentLine). A cut in
+// the soak left a secondary caret at 7:801 on a line 728 long (soak 00b41f141357).
+void TestEveryCutPathLeavesEveryCaretInside() {
+  const std::string long_line(800, 'x');
+  const std::string text = "a\n" + long_line + "\nshort\n" + long_line + "\nend\n";
+  const auto inside = [](const TextViewport& view, const std::string& what) {
+    const auto legal = [&](std::size_t line, std::size_t column) {
+      return line < view.line_count() && column <= view.lines().LineLength(line);
+    };
+    Expect(legal(view.cursor_line(), view.cursor_column()), what + ": the primary caret is inside");
+    for (const auto& caret : view.secondary_carets()) {
+      Expect(legal(caret.line, caret.column),
+             what + ": a secondary caret at " + std::to_string(caret.line + 1) + ":" +
+                 std::to_string(caret.column + 1) + " is inside (" + std::to_string(view.line_count()) + " lines)");
+    }
+  };
+  {
+    TextViewport view;
+    view.LoadContent(text, "/tmp/cut-lines.txt");
+    view.MoveCursorTo(1, 800);
+    view.AddSecondaryCaret(3, 800);
+    view.DeleteCurrentLine();
+    inside(view, "every caret's line cut");
+  }
+  {
+    TextViewport view;
+    view.LoadContent(text, "/tmp/cut-primary.txt");
+    view.MoveCursorTo(0, 0);
+    view.MoveCursorTo(2, 3, /*extend_selection=*/true);
+    view.AddSecondaryCaret(3, 800);
+    view.DeleteSelectedText();
+    inside(view, "the primary's selection cut with a bare secondary caret below it");
+  }
+  {
+    TextViewport view;
+    view.LoadContent(text, "/tmp/cut-multi.txt");
+    view.MoveCursorTo(0, 0);
+    view.MoveCursorTo(1, 800, /*extend_selection=*/true);
+    view.AddSecondaryCaretWithRange(editor::SelectionRange{{3, 0}, {3, 800}});
+    view.DeleteMultiCaretSelections();
+    inside(view, "every caret's selection cut");
+  }
+}
+
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
+AddTest(tests, "TextViewport/EveryCutPathLeavesEveryCaretInside", TestEveryCutPathLeavesEveryCaretInside);
 AddTest(tests, "TextViewport/SelectedTextOfAViewportAnotherViewportEditedStaysInTheDocument",
         TestSelectedTextOfAViewportAnotherViewportEditedStaysInTheDocument);
 AddTest(tests, "TextViewport/AGroupedJoinOverAnEditedLineUndoesAndRedoesExactly",
