@@ -330,6 +330,19 @@ Nothing on the remote side is open beyond what the soak's remote job finds; the
 two follow-ups this section used to list (TD-2026-10-08-325, -326) were resolved
 in October.
 
+The agent-shaped workflow -- agents running on the host, the user supervising from
+one machine or another -- got its own pass on 2026-11-18 (`CHANGELOG.md`
+§ Unreleased): terminal alerts that reach past an unfocused window, a pasted
+screenshot and a `path:line` reference handed to a terminal, the host's free disk
+in the Host view, a worktree pick, review since a marked checkpoint, File History
+from the mirror's object store, and the files open in a project offered to the
+next machine that connects. Deliberately left out: rendered markdown or image
+views, and anything that would make the editor an agent harness
+(`openspec/specs/non-ai-product-scope`). Not done, and worth doing only when
+asked for: branch-review marks and notes do not travel between machines (they
+are still each client's own), and File History exists for remote projects only
+(a local project has no mirror holding earlier contents).
+
 > Decisions already made with the user — do not re-ask:
 > - Notification actions are **VS Code-style inline buttons**; each is an
 >   `ActionId` + args, never a closure.
@@ -388,9 +401,6 @@ Not current work unless deliberately promoted into its own phase.
   plugin loading, Micro-plugin compatibility.** Ships `--disable-plugins` /
   `--safe-mode` only.
 - **Cloud and collaboration features.**
-- **Remote projects (opening a tree that lives on another machine).** The FEATURE
-  is out of scope until a phase is committed to; its *groundwork* is active work
-  (§ 7 above), because every one of those ten changes stands on its own.
 - **AI/LLM runtime surfaces.** Retired from product scope; the
   authentication-provider and secret-storage surfaces went with them.
 - **Settings overlay follow-ups.** Section subtitles are a static table keyed by
@@ -431,5 +441,5 @@ file's remote-projects groundwork and phase history
 - `dev-docs/performance/startup-tracing.md`, `runtime-profiling.md` — profiling workflows
 - `dev-docs/plugins/plugin-runtime-research.md` — plugin architecture notes
 - `dev-docs/design/text-surface-unification.md` — text-input interaction contract
-- `dev-docs/design/remote-projects.md` — remote-project design (groundwork shipping, feature not started; revised 2026-10-07)
+- `dev-docs/design/remote-projects.md` — remote-project design (shipped; see § 7 and `openspec/specs/remote-*`)
 - `SECURITY.md` — trust model, safe mode, reporting
