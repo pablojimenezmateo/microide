@@ -572,11 +572,11 @@ Outcome RunInProcess(Scenario scenario, Fault fault, std::size_t step, const Tim
     ApplyOperation(scenario, client, layout);
     disk_steps = count.counted();
   }
-  client.relay().WaitForFault();
-  return Outcome{.fired = client.relay().fired(),
+  const bool fired = client.relay().Disarm();
+  return Outcome{.fired = fired,
                  .counted = client.relay().counted(),
                  .disk_steps = disk_steps,
-                 .killed_server = client.relay().fired() ? daemon : 0};
+                 .killed_server = fired ? daemon : 0};
 }
 
 // The operation in a helper process that SIGKILLs itself at `step`: a wire frame,

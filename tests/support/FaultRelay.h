@@ -111,11 +111,19 @@ class FaultRelay {
     std::lock_guard lock(count_mutex_);
     return fired_;
   }
-  // Once fired(), until the fault itself has run (a delayed one runs later): what
-  // follows a fault must not start before it, or the fault lands on the recovery.
-  void WaitForFault() {
+  // Ends the arming once the operation is over, and says whether the fault fired --
+  // after it has run, if it did (a delayed one runs later): what follows a fault
+  // must not start before it, or the fault lands on the recovery. No frame fires it
+  // after this. Left armed, a frame still in flight on a slow link (the watch
+  // delta's, after the mirror already held the change) ran the server kill in the
+  // middle of the recovery: on the restarted daemon, or under the fresh link -- "no
+  // error after recovering (error 'not connected')" and "reconnects: connection
+  // closed" (MirrorFaultMatrix/Slow/WatchPull/KillServer, CI and 16-way stress).
+  bool Disarm() {
     std::unique_lock lock(count_mutex_);
+    armed_ = false;
     fault_cv_.wait(lock, [this] { return !fired_ || fault_ran_; });
+    return fired_;
   }
 
  private:
