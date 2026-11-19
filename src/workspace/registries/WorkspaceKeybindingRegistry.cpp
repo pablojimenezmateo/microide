@@ -1589,6 +1589,19 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
+      // Global, and past a focused terminal's shell: the alert is usually another
+      // terminal's, raised while this one has the keyboard.
+      KeybindingSpec{
+          .id = "terminal-next-alert",
+          .action = ActionId::TerminalNextAlert,
+          .key = SDLK_N,
+          .modifiers = SDL_KMOD_CTRL | SDL_KMOD_SHIFT,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .skips_terminal = true,
+      },
       KeybindingSpec{
           .id = "terminal-next",
           .action = ActionId::TerminalNext,

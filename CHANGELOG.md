@@ -10,6 +10,12 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Added
 
+- **Go to Next Terminal Alert** (`Ctrl+Shift+N`, `term-next-alert`). Brings
+  forward the next terminal that rang its bell or sent a notification while
+  nobody was looking -- an agent waiting for input -- starting after the active
+  terminal tab, then through the other open projects, switching project when it
+  has to. A terminal that merely printed is not an alert. With several agents
+  across tabs and projects, the one that needs you is one key away.
 - **A host program's `$EDITOR` is a tab.** In a remote project's terminal,
   `git commit`, `git rebase -i`, an agent CLI's "edit the prompt in your editor"
   and anything else that runs `$EDITOR` on a file opens that file in an editor

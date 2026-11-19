@@ -284,6 +284,36 @@ bool TerminalPanelService::HasUnseenTerminalActivity(const ProjectWorkspaceState
   });
 }
 
+std::optional<TerminalAlertTarget> TerminalPanelService::NextAlert(
+    std::span<const ProjectWorkspaceState* const> projects, std::size_t active) {
+  if (active >= projects.size() || projects[active] == nullptr) {
+    return std::nullopt;
+  }
+  const auto rang = [&](std::size_t project, std::size_t first, std::size_t last) -> std::optional<TerminalAlertTarget> {
+    const auto& tabs = projects[project]->terminal_tabs;
+    for (std::size_t tab = first; tab < std::min(last, tabs.size()); ++tab) {
+      if (tabs[tab] != nullptr && tabs[tab]->has_unseen_bell) {
+        return TerminalAlertTarget{.project = project, .tab = tab};
+      }
+    }
+    return std::nullopt;
+  };
+  const std::size_t all = static_cast<std::size_t>(-1);
+  const std::size_t after = projects[active]->active_terminal_tab_index + 1;
+  if (const auto found = rang(active, after, all)) {
+    return found;
+  }
+  for (std::size_t step = 1; step < projects.size(); ++step) {
+    const std::size_t project = (active + step) % projects.size();
+    if (projects[project] != nullptr) {
+      if (const auto found = rang(project, 0, all)) {
+        return found;
+      }
+    }
+  }
+  return rang(active, 0, after);
+}
+
 bool TerminalPanelService::HasHostOpenInFlight(const ProjectWorkspaceState& state) {
   for (const std::unique_ptr<TerminalTabState>& tab : state.terminal_tabs) {
     for (const std::unique_ptr<TerminalPaneState>& pane : tab->panes) {

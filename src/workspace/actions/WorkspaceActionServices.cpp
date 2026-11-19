@@ -90,6 +90,16 @@ std::size_t WorkspaceActionContext::ActiveProjectIndex() const {
   return project_catalog_.active_index;
 }
 
+std::optional<TerminalAlertTarget> WorkspaceActionContext::NextTerminalAlert() const {
+  // The active project's live state is `state_`; its catalog entry is the stored one.
+  std::vector<const ProjectWorkspaceState*> projects;
+  projects.reserve(project_catalog_.entries.size());
+  for (std::size_t i = 0; i < project_catalog_.entries.size(); ++i) {
+    projects.push_back(i == project_catalog_.active_index ? &state_ : project_catalog_.entries[i].get());
+  }
+  return TerminalPanelService::NextAlert(projects, project_catalog_.active_index);
+}
+
 std::filesystem::path WorkspaceActionContext::ProjectRoot() const {
   return state_.root;
 }

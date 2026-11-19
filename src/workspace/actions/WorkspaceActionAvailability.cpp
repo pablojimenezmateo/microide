@@ -1,6 +1,7 @@
 #include "workspace/services/TerminalPanelService.h"
 #include "workspace/actions/WorkspaceActionAvailability.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -467,6 +468,20 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::TerminalNext:
     case ActionId::TerminalPrev:
       return context_.current_project_state.terminal_tabs.size() > 1;
+    case ActionId::TerminalNextAlert: {
+      // Asked per painted menu row: a walk over the tabs, no string and no lock.
+      const auto rang = [](const ProjectWorkspaceState& state) {
+        return std::ranges::any_of(state.terminal_tabs,
+                                   [](const auto& tab) { return tab != nullptr && tab->has_unseen_bell; });
+      };
+      const auto& catalog = context_.project_catalog;
+      for (std::size_t i = 0; i < catalog.entries.size(); ++i) {
+        if (i != catalog.active_index && catalog.entries[i] != nullptr && rang(*catalog.entries[i])) {
+          return true;
+        }
+      }
+      return rang(context_.current_project_state);
+    }
     case ActionId::TerminalRelaunch:
       // Only a pane the host launched and whose process has since gone can be
       // brought back; a live shell has nothing to relaunch.

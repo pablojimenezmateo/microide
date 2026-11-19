@@ -27,6 +27,7 @@ namespace microide::workspace {
 class AssistService;
 class DebugService;
 class TerminalPanelService;
+struct TerminalAlertTarget;
 class EditorTabService;
 class TextInputCoordinator;
 class QuickPickService;
@@ -385,6 +386,9 @@ class WorkspaceActionContext {
   bool HasActiveProject() const;
   std::size_t ProjectCount() const;
   std::size_t ActiveProjectIndex() const;
+  // The next terminal tab with an alert nobody has seen, across the open
+  // projects (TerminalPanelService::NextAlert).
+  std::optional<TerminalAlertTarget> NextTerminalAlert() const;
   std::filesystem::path ProjectRoot() const;
   bool OpenProject(const std::filesystem::path& project_root,
                    bool restore_persistence,

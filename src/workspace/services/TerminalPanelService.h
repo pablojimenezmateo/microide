@@ -4,6 +4,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -12,6 +13,13 @@
 #include "workspace/state/WorkspaceProjectState.h"
 
 namespace microide::workspace {
+
+// A terminal tab to bring forward: which open project, which tab of its strip.
+struct TerminalAlertTarget {
+  std::size_t project = 0;
+  std::size_t tab = 0;
+  bool operator==(const TerminalAlertTarget&) const = default;
+};
 
 // Host-owned boundary for the bottom panel's terminals: the strip tabs, the
 // panes inside a tab, the panel's visibility and its maximized ("immersive")
@@ -148,6 +156,14 @@ class TerminalPanelService {
   // A terminal tab of `state` with output or a bell nobody has seen: what a
   // background project's tab marks (TD-2026-11-02-428 item 3).
   static bool HasUnseenTerminalActivity(const ProjectWorkspaceState& state);
+  // The next terminal tab that rang or notified with nobody looking
+  // (has_unseen_bell; output alone does not count -- a working agent prints all
+  // the time, a waiting one rings): after the active tab of project `active`,
+  // on through the other projects in strip order, and round to the active
+  // project's tabs up to its active one. `projects[active]` is that project's
+  // live state; a null entry is skipped. nullopt when none waits.
+  static std::optional<TerminalAlertTarget> NextAlert(std::span<const ProjectWorkspaceState* const> projects,
+                                                      std::size_t active);
   // Start every pending host pane of `state` (its connection is up now): each
   // opens, or reattaches to the terminal it recorded. Returns how many started.
   static std::size_t StartPendingHostPanes(ProjectWorkspaceState& state);

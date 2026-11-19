@@ -264,6 +264,9 @@ enum class ActionId {
   TerminalFocusPaneRight,
   TerminalNext,
   TerminalPrev,
+  // `term-next-alert`: the next terminal tab that rang or notified unseen (an
+  // agent waiting for input), in this project or another, brought forward.
+  TerminalNextAlert,
   TerminalRelaunch,
   // Select the active pane's whole transcript (Ctrl+Shift+A, the context menu).
   TerminalSelectAll,

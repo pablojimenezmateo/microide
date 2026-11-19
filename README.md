@@ -685,6 +685,7 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `Ctrl+Shift+\` in terminal | Split the terminal into a pane to the right (up to six per tab) |
 | `Alt+Left` / `Alt+Right` in terminal | Focus the pane to the left / right (with one pane the chord reaches the shell) |
 | `Ctrl+PageUp` / `Ctrl+PageDown` in terminal | Previous / next terminal tab |
+| `Ctrl+Shift+N` | Go to the next terminal that rang or notified unseen, in any open project |
 | `Enter` in an exited terminal | Relaunch it in place with the same cwd and command |
 | `F2` / `Delete` in the file tree | Rename / delete the selected entry (Delete asks first) |
 | Drag a file-tree row | Onto an editor pane: open it there (on a pane's edge, in a new pane carved from it); onto a folder: move it there (`Ctrl` held: copy); onto the terminal: type its quoted path |
@@ -918,6 +919,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `term-pane-right`
 - `term-next`
 - `term-prev`
+- `term-next-alert`
 - `term-relaunch`
 - `term-select-all`
 - `term-toggle`

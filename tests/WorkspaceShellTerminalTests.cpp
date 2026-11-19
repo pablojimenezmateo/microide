@@ -3292,6 +3292,82 @@ void TestWorkspaceShellTerminalNotificationToastsFromABackgroundProject() {
          "its terminal tab carries the mark back to the front");
 }
 
+// Several agents, several terminals, several projects: Go to Next Terminal Alert
+// (`term-next-alert`, Ctrl+Shift+N) brings forward the next terminal that RANG or
+// notified with nobody looking -- the tabs after the active one first, then the
+// other projects', then round again -- so the one waiting for input is a
+// keystroke away rather than a hunt through dots. Output alone is not an alert:
+// a working agent prints all the time.
+void TestWorkspaceShellNextTerminalAlertCrossesTabsAndProjects() {
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path alpha = temp_dir.path() / "alpha";
+  const std::filesystem::path beta = temp_dir.path() / "beta";
+  WriteFile(alpha / "a.txt", "a\n");
+  WriteFile(beta / "b.txt", "b\n");
+  WorkspaceShell shell;
+  SoftwareCanvas canvas{1280, 720};
+  const auto paint = [&] { WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer()); };
+  const auto ring = [&](std::size_t tab) {
+    TerminalSessionTestAccess::AppendOutput(WorkspaceShellTestAccess::TerminalTabSession(shell, tab), "\x07");
+    WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+  };
+  const WorkspaceShell::ActionId next = WorkspaceShell::ActionId::TerminalNextAlert;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, alpha), "project alpha opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::AddTerminalTab(shell);
+  WorkspaceShellTestAccess::AddTerminalTab(shell);
+  for (std::size_t tab = 0; tab < 3; ++tab) {
+    TerminalSessionTestAccess::Reset(WorkspaceShellTestAccess::TerminalTabSession(shell, tab), 24, 80);
+  }
+  Expect(WorkspaceShellTestAccess::ActivateTerminalTab(shell, 1), "alpha's middle terminal is in front");
+  paint();
+  Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, next) &&
+             !WorkspaceShellTestAccess::ExecuteCommandLine(shell, "term-next-alert"),
+         "with nothing waiting the command is dimmed and says so");
+
+  // Output alone does not count.
+  TerminalSessionTestAccess::AppendOutput(WorkspaceShellTestAccess::TerminalTabSession(shell, 0), "working...\r\n");
+  TerminalSessionTestAccess::MarkOutputArrived(WorkspaceShellTestAccess::TerminalTabSession(shell, 0));
+  WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+  Expect(WorkspaceShellTestAccess::TerminalTabHasUnseenOutput(shell, 0) &&
+             !WorkspaceShellTestAccess::IsActionEnabled(shell, next),
+         "a terminal that merely printed is not waiting for anyone");
+
+  // Within a project: the tabs after the active one come first, then round.
+  ring(0);
+  ring(2);
+  Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, next), "two terminals rang");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "term-next-alert") &&
+             WorkspaceShellTestAccess::ActiveTerminalTabIndex(shell) == 2,
+         "the next one after the active tab comes forward");
+  paint();
+  Expect(!WorkspaceShellTestAccess::TerminalTabHasUnseenBell(shell, 2), "and showing it clears its mark");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "term-next-alert") &&
+             WorkspaceShellTestAccess::ActiveTerminalTabIndex(shell) == 0,
+         "then the walk wraps to the earlier tab");
+  paint();
+  Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, next), "and nothing is left");
+
+  // Across projects: alpha's terminal rings while beta is in front, with the
+  // panel hidden and the keyboard in the editor.
+  auto& agent = WorkspaceShellTestAccess::TerminalTabSession(shell, 1);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, beta), "project beta opens in front");
+  TerminalSessionTestAccess::AppendOutput(agent, "\x1b]9;needs your input\x07");
+  WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+  Expect(WorkspaceShellTestAccess::ActiveProjectIndex(shell) == 1 &&
+             WorkspaceShellTestAccess::IsActionEnabled(shell, next),
+         "from beta, alpha's waiting terminal is offered");
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, next, {}), "Go to Next Terminal Alert");
+  Expect(WorkspaceShellTestAccess::ActiveProjectIndex(shell) == 0 &&
+             WorkspaceShellTestAccess::ActiveTerminalTabIndex(shell) == 1 &&
+             WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::Terminal,
+         "alpha comes forward with that terminal shown");
+  paint();
+  Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, next), "and its mark is cleared by being seen");
+}
+
 // A file dropped onto a running terminal is typed into it (shell-quoted), as in
 // gnome-terminal and VS Code -- how a screenshot reaches Claude Code's prompt.
 // It used to open in an editor tab whatever was under the pointer. Off the
@@ -3626,6 +3702,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellReferenceNamesTheCaretOrSelectionLines);
   AddTest(tests, "WorkspaceShell/TerminalNotificationToastsFromABackgroundProject",
           TestWorkspaceShellTerminalNotificationToastsFromABackgroundProject);
+  AddTest(tests, "WorkspaceShell/NextTerminalAlertCrossesTabsAndProjects",
+          TestWorkspaceShellNextTerminalAlertCrossesTabsAndProjects);
   AddTest(tests, "WorkspaceShell/TerminalAlertReachesPastAnUnfocusedWindow",
           TestWorkspaceShellTerminalAlertReachesPastAnUnfocusedWindow);
   AddTest(tests, "WorkspaceShell/TerminalMouseOwnerShowsAHandOnLitControls",

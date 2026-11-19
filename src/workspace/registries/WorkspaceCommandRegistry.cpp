@@ -363,6 +363,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Ctrl+PageDown"},
       ActionSpec{ActionId::TerminalPrev, "term-prev", "term-prev", "Previous Terminal",
                  "Ctrl+PageUp"},
+      ActionSpec{ActionId::TerminalNextAlert, "term-next-alert", "term-next-alert",
+                 "Go to Next Terminal Alert", "Ctrl+Shift+N"},
       ActionSpec{ActionId::TerminalRelaunch, "term-relaunch", "term-relaunch",
                  "Relaunch Terminal", ""},
       ActionSpec{ActionId::TerminalSelectAll, "term-select-all", "term-select-all",

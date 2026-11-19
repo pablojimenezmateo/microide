@@ -276,6 +276,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::TerminalFocusPaneRight, {}, "Ctrl+Shift+Right"),
       MenuItem(ActionId::TerminalPrev, {}, "Ctrl+PageUp"),
       MenuItem(ActionId::TerminalNext, {}, "Ctrl+PageDown"),
+      MenuItem(ActionId::TerminalNextAlert, {}, "Ctrl+Shift+N"),
       MenuSeparator(),
       MenuItem(ActionId::TerminalToggle, {}, "Ctrl+`"),
       MenuItem(ActionId::PanelToggleMaximized, {}, "Ctrl+Shift+J", {}, 0, true),

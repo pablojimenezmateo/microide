@@ -57,6 +57,20 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
         return reject("No other terminal");
       }
       return DispatchResult::Handled;
+    case ActionId::TerminalNextAlert: {
+      const std::optional<TerminalAlertTarget> target = context_.NextTerminalAlert();
+      if (!target.has_value()) {
+        return reject("No terminal is waiting for you");
+      }
+      if (target->project != context_.ActiveProjectIndex() &&
+          (!context_.SwitchProject(target->project, false) ||
+           context_.ActiveProjectIndex() != target->project)) {
+        return reject("The project with the waiting terminal could not be brought forward");
+      }
+      // Showing the tab is what clears its mark (NoteActiveTabShown).
+      return context_.terminal_panel().ActivateTerminalTab(target->tab) ? DispatchResult::Handled
+                                                                         : reject("No terminal");
+    }
     case ActionId::TerminalSelectAll:
       if (!context_.terminal_panel().SelectAll()) {
         return reject(context_.HasActiveTerminalPane() ? "The terminal shows nothing to select"
