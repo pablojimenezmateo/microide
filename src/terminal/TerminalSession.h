@@ -184,11 +184,12 @@ class TerminalSession {
     std::string body;
   };
   std::optional<Notification> ConsumeNotification();
-  // A URL a program on this host terminal's machine asked to have opened, through
-  // the BROWSER its server sets (TerminalHostFrame::open_url) -- opened by the
-  // editor on THIS machine, the way VS Code's remote terminals do. Local shells
-  // never raise one: their programs reach the desktop's opener themselves.
-  std::optional<std::string> ConsumeOpenUrlRequest();
+  // What programs on this host terminal's machine asked of the editor: a URL to
+  // open, through the BROWSER its server sets (TerminalHostFrame::open_url) --
+  // opened on THIS machine, the way VS Code's remote terminals do -- and a file
+  // to edit, through its EDITOR (TerminalHostFrame::edit). Local shells never
+  // raise either: their programs reach the desktop and their own editor.
+  TerminalHostRequests ConsumeHostRequests();
   // The URI of the OSC 8 hyperlink a cell carries (TerminalCell::extra); empty
   // for 0, an id the session no longer holds, or an underline colour alone.
   std::string LinkUri(std::uint16_t extra) const;

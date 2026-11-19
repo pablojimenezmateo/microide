@@ -25,6 +25,7 @@
 #include "project/remote/RemoteProtocol.h"
 #include "workspace/persistence/RoamingSession.h"
 #include "terminal/TerminalHostChannel.h"
+#include "terminal/TerminalHostWire.h"
 #include "util/MainThreadMailbox.h"
 #include "util/SerialWorkQueue.h"
 #include "workspace/services/NotificationService.h"
@@ -269,6 +270,17 @@ class RemoteHostService {
   // False when nothing was started (no such project, not a regular file).
   bool UploadDroppedFile(const std::filesystem::path& root, const terminal::HostIdentity& terminal,
                          const std::filesystem::path& local_path);
+  // A program in a host terminal of the remote project at `root` ran its $EDITOR
+  // on a file (the server's EDITOR helper, term/edit: git's commit message, a
+  // rebase list, an agent CLI's prompt). Its text opens in a tab on a private
+  // copy, and the program waits on the host until that tab closes
+  // (FinishTerminalEdit). `epoch` is the terminal's server process, which the
+  // request's token belongs to.
+  void BeginTerminalEdit(const std::filesystem::path& root, std::string epoch, terminal::TerminalHostEdit edit);
+  // The last tab on `path` closed. When `path` is such a copy, what was saved in
+  // it goes back to the waiting program -- again on the next connect when the
+  // link is down, since the program outlives it. False for any other path.
+  bool FinishTerminalEdit(const std::filesystem::path& path);
   // Past this a drop is refused rather than read into memory and sent.
   static constexpr std::uint64_t kMaxDroppedUploadBytes = 64u * 1024 * 1024;
   // Whether `line` names `port` on this machine's loopback or any-address
@@ -484,6 +496,21 @@ class RemoteHostService {
     // The connection the host was last asked on for what another machine left.
     std::weak_ptr<project::remote::RemoteServerClient> roaming_checked;
   };
+  // A host program's file open here for editing (BeginTerminalEdit).
+  struct TerminalEdit {
+    std::filesystem::path root;
+    std::string epoch;
+    std::uint64_t token = 0;
+    std::filesystem::path copy;
+    bool closed = false;   // its tab closed: the host is owed the text
+    bool sending = false;  // ...and was sent it, with no answer yet
+  };
+  std::vector<TerminalEdit> terminal_edits_;
+  // Send a closed edit's text to its host, unless that is under way.
+  void SendTerminalEdit(TerminalEdit& edit);
+  void OnTerminalEditAnswered(std::uint64_t token, const std::string& epoch, std::optional<bool> delivered);
+  // On a connect: the edits of `root` whose tab closed while the link was down.
+  void ResendTerminalEdits(const std::filesystem::path& root);
   // Leave `entry`'s pending session on its host.
   void LeaveSession(const std::filesystem::path& root, Project& entry);
   // On a connect: ask the host what another machine left, and offer it.

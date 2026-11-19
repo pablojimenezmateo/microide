@@ -207,6 +207,30 @@ bool TerminalTable::RequestOpenUrl(std::uint64_t handle, std::string url) {
   return true;
 }
 
+std::uint64_t TerminalTable::RequestEdit(std::uint64_t handle, terminal::TerminalHostEdit edit) {
+  std::uint64_t connection = 0;
+  {
+    std::lock_guard lock(mutex_);
+    const auto it = terminals_.find(handle);
+    if (it == terminals_.end()) {
+      return 0;
+    }
+    Client* target = nullptr;
+    for (Client& client : it->second->clients) {
+      if (client.wire.edit && (target == nullptr || client.written_at > target->written_at)) {
+        target = &client;
+      }
+    }
+    if (target == nullptr) {
+      return 0;
+    }
+    target->edit = std::move(edit);
+    connection = target->connection;
+  }
+  Notify();
+  return connection;
+}
+
 bool TerminalTable::Attach(std::uint64_t connection, std::uint64_t handle,
                            terminal::TerminalHostWireOptions wire, std::optional<Resume> resume) {
   {
@@ -571,6 +595,8 @@ void TerminalTable::Run() {
       frame.notification = std::move(client->notification);
       frame.open_url = std::move(client->open_url);
       client->open_url.reset();
+      frame.edit = std::move(client->edit);
+      client->edit.reset();
       client->bell = false;
       client->clipboard.reset();
       client->notification.reset();

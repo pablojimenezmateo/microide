@@ -28,6 +28,8 @@ constexpr std::uint8_t kHasOpenUrl = 1u << 5;
 // underline colour. A section of its own, after everything version 3 sends, so
 // the extras list keeps its version-3 shape.
 constexpr std::uint8_t kHasUnderlineColors = 1u << 6;
+// Wire version 5: a file to edit, after everything version 4 sends.
+constexpr std::uint8_t kHasEdit = 1u << 7;
 
 void PutRgba(std::string& out, const util::Rgba8& color) {
   out.push_back(static_cast<char>(color.r));
@@ -198,6 +200,7 @@ void EncodeTerminalHostFrame(std::string& out, const TerminalHostFrame& frame,
       colored += extra.underline_color.has_value() ? 1 : 0;
     }
   }
+  const TerminalHostEdit* edit = options.edit && frame.edit.has_value() ? &*frame.edit : nullptr;
   PutVarint(out, frame.rows);
   PutVarint(out, frame.columns);
   PutVarint(out, frame.flags);
@@ -232,7 +235,8 @@ void EncodeTerminalHostFrame(std::string& out, const TerminalHostFrame& frame,
                                   (frame.notification ? kHasNotification : 0) |
                                   (frame.extras.empty() ? 0 : kHasExtras) |
                                   (frame.open_url ? kHasOpenUrl : 0) |
-                                  (colored != 0 ? kHasUnderlineColors : 0)));
+                                  (colored != 0 ? kHasUnderlineColors : 0) |
+                                  (edit != nullptr ? kHasEdit : 0)));
   for (const auto* field : {&frame.title, &frame.working_directory, &frame.clipboard}) {
     if (*field) {
       PutBytes(out, **field);
@@ -260,6 +264,12 @@ void EncodeTerminalHostFrame(std::string& out, const TerminalHostFrame& frame,
         PutRgba(out, *extra.underline_color);
       }
     }
+  }
+  if (edit != nullptr) {
+    PutVarint(out, edit->token);
+    PutBytes(out, edit->path);
+    PutVarint(out, edit->line);
+    PutBytes(out, edit->text);
   }
 }
 
@@ -392,6 +402,18 @@ std::optional<TerminalHostFrame> DecodeTerminalHostFrame(std::string_view bytes)
       }
       found->underline_color = GetRgba(in);
     }
+  }
+  if ((present & kHasEdit) != 0) {
+    TerminalHostEdit edit;
+    edit.token = in.Varint();
+    edit.path = std::string(in.Bytes(kMaxHostEditPathBytes));
+    const std::uint64_t line = in.Varint();
+    edit.text = std::string(in.Bytes(kMaxHostEditBytes));
+    if (in.failed() || edit.token == 0 || edit.path.empty() || line > 0xffffffffu) {
+      return std::nullopt;
+    }
+    edit.line = static_cast<std::uint32_t>(line);
+    frame.edit = std::move(edit);
   }
   if (in.failed() || !in.at_end()) {
     return std::nullopt;

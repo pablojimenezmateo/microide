@@ -148,7 +148,7 @@ RuleResult CheckTerminalSessionHeaderSize(const std::filesystem::path& repo_root
   // make room for the latter), and the mode reset RIS shares with a restart (see
   // the Locked-helper cap's 45).
   // 311: +2, API not helpers -- StartArgv's `environment` (the remote server's
-  // shells get their BROWSER forwarder through it) and ConsumeOpenUrlRequest (a
+  // shells get their BROWSER forwarder through it) and ConsumeHostRequests (a
   // host program's URL to open on the client). The pending URL itself lives in
   // TerminalHostMode, not here.
   // 314: +3, state not helpers -- the pen's extended attributes

@@ -66,7 +66,11 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
                 RequestWindowRedraw();
               },
           .notify_lsp_buffer_close =
-              [this](const std::filesystem::path& path) { NotifyLspBufferClose(path); },
+              [this](const std::filesystem::path& path) {
+                NotifyLspBufferClose(path);
+                // The last view of a file a host program waits on ($EDITOR).
+                (void)MakeRemoteHostService().FinishTerminalEdit(path);
+              },
           .notify_lsp_buffer_reloaded =
               [this](const editor::TextViewport& viewport, std::size_t before_line_count,
                      std::size_t first_changed_line) {

@@ -130,6 +130,8 @@ void TestHostFrameRoundTripsEveryField() {
   frame.screen_lines[0].cells[2].extra = 9;
   frame.extras = {{.id = 7, .uri = "https://example.com/x"},
                   {.id = 9, .uri = "", .underline_color = util::Rgba8{200, 10, 20, 255}}};
+  frame.edit = terminal::TerminalHostEdit{
+      .token = 41, .path = "/srv/p/.git/COMMIT_EDITMSG", .line = 3, .text = std::string("msg\n\0tail", 9)};
 
   std::string wire;
   EncodeTerminalHostFrame(wire, frame);
@@ -163,11 +165,20 @@ void TestHostFrameRoundTripsEveryField() {
              back->extras[1].underline_color == frame.extras[1].underline_color &&
              terminal::SameLine(back->screen_lines[0], frame.screen_lines[0]),
          "a cell's extra id and the extras (link, underline colour) round-trip");
+  Expect(back->edit == frame.edit, "the file to edit round-trips, bytes and all");
+
+  // A version-4 peer is sent no edit: its decoder would refuse the frame.
+  std::string v4_wire;
+  EncodeTerminalHostFrame(v4_wire, frame, terminal::TerminalHostWireOptions{.edit = false});
+  const std::optional<TerminalHostFrame> v4 = DecodeTerminalHostFrame(v4_wire);
+  Expect(v4.has_value() && !v4->edit.has_value() && v4->extras[1].underline_color.has_value(),
+         "a version-4 peer's frame leaves the edit out and keeps the colours");
 
   // A version-3 peer gets the frame without the colour section, and that frame
   // is exactly what version 3 sent: the extras list is unchanged by version 4.
   std::string v3_wire;
-  EncodeTerminalHostFrame(v3_wire, frame, terminal::TerminalHostWireOptions{.underline_colors = false});
+  EncodeTerminalHostFrame(v3_wire, frame,
+                          terminal::TerminalHostWireOptions{.underline_colors = false, .edit = false});
   const std::optional<TerminalHostFrame> v3 = DecodeTerminalHostFrame(v3_wire);
   Expect(v3_wire.size() < wire.size() && v3.has_value() && v3->extras.size() == 2 &&
              v3->extras[0].uri == "https://example.com/x" && !v3->extras[1].underline_color.has_value(),

@@ -296,6 +296,9 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
   if (status.state == State::Ready && operations_.start_host_terminals) {
     operations_.start_host_terminals(tree);
   }
+  if (status.state == State::Ready) {
+    ResendTerminalEdits(tree);
+  }
   if (came_back) {
     ListHostTerminals(tree, entry);
   }
@@ -1560,6 +1563,9 @@ void RemoteHostService::ProjectClosed(const std::filesystem::path& root) {
   }
   it->second.closed = true;
   ++open_generation_;
+  // The close detaches its terminals, which is what tells the host that the
+  // files its programs had open here are not coming back (term/detach).
+  std::erase_if(terminal_edits_, [&](const TerminalEdit& edit) { return edit.root == root; });
   it->second.project->session().Disconnect();
   it->second.announced_sync = false;
   // Not a state any reopen should compare against: a reopen's Ready is a connect

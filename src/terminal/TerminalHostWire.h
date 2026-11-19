@@ -55,6 +55,17 @@ struct TerminalHostNotification {
   std::string body;
 };
 
+// A file a program on the host runs its $EDITOR on (term/edit): its absolute host
+// path, the line to start at (1-based, 0 = none) and its bytes. `token` names the
+// request in the client's term/edit-done.
+struct TerminalHostEdit {
+  std::uint64_t token = 0;
+  std::string path;
+  std::uint32_t line = 0;
+  std::string text;
+  bool operator==(const TerminalHostEdit&) const = default;
+};
+
 struct TerminalHostFrame {
   // Flag bits.
   static constexpr std::uint16_t kAlternateScreen = 1u << 0;
@@ -114,6 +125,10 @@ struct TerminalHostFrame {
   // the server gives its terminals (TerminalTable::RequestOpenUrl), never through
   // the byte stream, so printed text cannot raise one. Sent to ONE client.
   std::optional<std::string> open_url;
+  // A program on the host asked for this file to be edited -- through the EDITOR
+  // the server gives its terminals (TerminalTable::RequestEdit), out of band as
+  // open_url is. Sent to ONE client, and only to one whose wire carries it.
+  std::optional<TerminalHostEdit> edit;
   // Every non-zero TerminalCell::extra the frame's lines carry, sorted by id.
   std::vector<TerminalHostCellExtra> extras;
 
@@ -126,6 +141,10 @@ inline constexpr std::size_t kMaxHostTerminalLineCells = 65536;
 inline constexpr std::size_t kMaxHostTerminalTextBytes = 64u << 20;
 // The opener's own cap (platform::IsOpenableExternalUrl).
 inline constexpr std::size_t kMaxHostOpenUrlBytes = 8192;
+// A file handed to the editor through $EDITOR: a commit message, a rebase list, a
+// prompt. Past this the helper runs a terminal editor instead.
+inline constexpr std::size_t kMaxHostEditBytes = 1u << 20;
+inline constexpr std::size_t kMaxHostEditPathBytes = 4096;
 
 // What the receiving peer's wire version decodes beyond the floor's frame. The
 // server builds one per connection from its hello; a field a peer cannot read
@@ -134,6 +153,8 @@ inline constexpr std::size_t kMaxHostOpenUrlBytes = 8192;
 struct TerminalHostWireOptions {
   // Version 4: the extras' SGR 58 underline colours, in their own section.
   bool underline_colors = true;
+  // Version 5: a frame's `edit`.
+  bool edit = true;
 };
 
 void EncodeTerminalLine(std::string& out, const TerminalLine& line);

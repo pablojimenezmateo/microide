@@ -473,7 +473,7 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
     }
     return *alert_setting;
   };
-  const auto drain = [&](std::vector<std::unique_ptr<TerminalTabState>>& tabs,
+  const auto drain = [&](const std::filesystem::path& root, std::vector<std::unique_ptr<TerminalTabState>>& tabs,
                          std::optional<std::size_t> on_screen_index, std::string_view project_label) {
     bool marked = false;
     host_terminal_unrecorded = false;
@@ -558,9 +558,16 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
         // A program on the host asked for a URL through the BROWSER its server
         // gives it (claude's login, `gh auth login --web`): open it here, where
         // the user is, as a click on the printed link would -- whichever project
-        // the terminal belongs to (the pane carries its own launcher).
-        if (std::optional<std::string> url = pane->session.ConsumeOpenUrlRequest(); url.has_value()) {
-          (void)MakeTerminalPanelService().OpenUrlForPane(pane.get(), *url);
+        // the terminal belongs to (the pane carries its own launcher). Or it ran
+        // its $EDITOR on a file (git's commit message, an agent CLI's prompt):
+        // edited here in a tab, and the program goes on when that closes.
+        terminal::TerminalHostRequests requests = pane->session.ConsumeHostRequests();
+        if (requests.open_url.has_value()) {
+          (void)MakeTerminalPanelService().OpenUrlForPane(pane.get(), *requests.open_url);
+        }
+        if (requests.edit.has_value()) {
+          MakeRemoteHostService().BeginTerminalEdit(root, pane->session.host_identity().epoch,
+                                                    std::move(*requests.edit));
         }
         if (pane->session.ConsumeOversizedOsc52Dropped()) {
           // An OSC 52 clipboard write that overran the escape-sequence buffer was
@@ -588,7 +595,7 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
     }
     return marked;
   };
-  badge_changed = drain(context_.current_project_state.terminal_tabs,
+  badge_changed = drain(context_.current_project_state.root, context_.current_project_state.terminal_tabs,
                         terminal_on_screen ? std::optional<std::size_t>(active_index) : std::nullopt,
                         {});
   if (host_terminal_unrecorded) {
@@ -600,7 +607,7 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
   for (std::size_t i = 0; i < catalog.entries.size(); ++i) {
     if (ProjectWorkspaceState* background = catalog.entries[i].get();
         background != nullptr && i != catalog.active_index && background != &context_.current_project_state) {
-      (void)drain(background->terminal_tabs, std::nullopt, background->id.Label());
+      (void)drain(background->root, background->terminal_tabs, std::nullopt, background->id.Label());
       // Quit re-records it (record_inactive_host_terminals), even when a switch
       // wrote this project's session before the handle was known.
       background->host_terminals_unrecorded = background->host_terminals_unrecorded || host_terminal_unrecorded;

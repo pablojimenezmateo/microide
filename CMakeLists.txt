@@ -753,6 +753,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceOutputChannels.cpp
   src/workspace/services/RemoteHostService.cpp
   src/workspace/services/RemoteHostServiceActivity.cpp
+  src/workspace/services/RemoteHostServiceTerminalEdit.cpp
   src/workspace/services/RemoteHostActivityRows.cpp
   src/workspace/services/TerminalPanelService.cpp
   src/workspace/services/QuickPickService.cpp

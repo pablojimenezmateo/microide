@@ -12,6 +12,7 @@
 #include "terminal/TerminalCell.h"
 #include "terminal/TerminalHostChannel.h"
 #include "terminal/TerminalHostHistory.h"
+#include "terminal/TerminalHostWire.h"
 
 namespace microide::terminal {
 
@@ -21,6 +22,14 @@ namespace microide::terminal {
 // states around a host terminal's life -- pending before the connection is up,
 // detached after quit or close-project. One struct so the session's header stays
 // its public surface. Guarded by the session's mutex.
+// What programs on the host asked of the editor out of band, each in one frame
+// (TerminalHostFrame::open_url and ::edit) and each until
+// TerminalSession::ConsumeHostRequests takes it.
+struct TerminalHostRequests {
+  std::optional<std::string> open_url;
+  std::optional<TerminalHostEdit> edit;
+};
+
 struct TerminalHostMode {
   std::shared_ptr<TerminalHostChannel> channel;
   std::uint64_t next_input_seq = 1;
@@ -46,8 +55,7 @@ struct TerminalHostMode {
   std::optional<PendingStart> pending;
   HostIdentity detached_identity;  // DetachFromHost's, until Stop or a new start
   bool link_down = false;          // HostEnded(LinkLost), until a reattach or a frame
-  // A frame's open_url, until TerminalSession::ConsumeOpenUrlRequest takes it.
-  std::optional<std::string> open_url;
+  TerminalHostRequests requests;
   bool announce_reattach = false;  // the next cold frame draws the reattached rule
 };
 

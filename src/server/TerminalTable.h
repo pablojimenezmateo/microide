@@ -127,6 +127,11 @@ class TerminalTable {
   // False when there is no such terminal or nobody is attached, so the program
   // falls back to printing the URL.
   bool RequestOpenUrl(std::uint64_t handle, std::string url);
+  // A program in terminal `handle` runs its $EDITOR on a file (term/edit): handed
+  // the same way to the client that typed last AMONG those whose wire carries an
+  // edit. That client's connection, or 0 when there is none, so the helper runs
+  // a terminal editor.
+  std::uint64_t RequestEdit(std::uint64_t handle, terminal::TerminalHostEdit edit);
   // `KEY=VALUE` entries every shell opened from now on gets, plus
   // MICROIDE_TERMINAL_HANDLE=<its handle> (what the BROWSER helper names).
   void SetShellEnvironment(std::vector<std::string> environment);
@@ -177,7 +182,8 @@ class TerminalTable {
     std::optional<std::string> clipboard;
     std::optional<terminal::TerminalHostNotification> notification;
     std::optional<std::string> open_url;  // for THIS client only (RequestOpenUrl)
-    bool signal_pending() const { return bell || clipboard || notification || open_url; }
+    std::optional<terminal::TerminalHostEdit> edit;  // likewise (RequestEdit)
+    bool signal_pending() const { return bell || clipboard || notification || open_url || edit; }
   };
 
   struct Terminal {

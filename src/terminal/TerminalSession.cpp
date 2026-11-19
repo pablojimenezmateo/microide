@@ -645,6 +645,11 @@ bool TerminalSession::ConsumeBell() {
   return rang;
 }
 
+TerminalHostRequests TerminalSession::ConsumeHostRequests() {
+  std::scoped_lock lock(mutex_);
+  return std::exchange(host_.requests, {});
+}
+
 bool TerminalSession::ConsumeOversizedOsc52Dropped() {
   std::scoped_lock lock(mutex_);
   const bool dropped = oversized_osc52_dropped_;

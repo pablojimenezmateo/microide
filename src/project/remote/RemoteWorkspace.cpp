@@ -573,6 +573,39 @@ void RemoteWorkspace::PutState(std::string key, std::string text, StatePutDone d
   }
 }
 
+void RemoteWorkspace::FinishTerminalEdit(std::string_view epoch, std::uint64_t token,
+                                         std::optional<std::string> text, EditDone done) {
+  const std::shared_ptr<RemoteServerClient> client = Client();
+  if (!client) {
+    done(std::nullopt);
+    return;
+  }
+  // A token means nothing to another server process, and may be one of its own.
+  if (client->hello().daemon_epoch != epoch) {
+    done(false);
+    return;
+  }
+  util::JsonObject params;
+  params["token"] = util::JsonValue(static_cast<std::int64_t>(token));
+  if (text.has_value()) {
+    params["text"] = util::JsonValue(std::move(*text));
+  }
+  const std::uint64_t id = client->peer().Request(
+      method::kTermEditDone, util::JsonValue(std::move(params)), Lane::Interactive,
+      [done](std::optional<util::JsonValue> result, std::optional<RemotePeer::RpcError> error) {
+        // A reply of either kind is the host's answer; only a connection that
+        // closed first (kErrorCancelled) leaves the program waiting.
+        if (result.has_value()) {
+          done((*result)["delivered"].AsBool());
+        } else {
+          done(error.has_value() && error->code != kErrorCancelled ? std::optional<bool>(false) : std::nullopt);
+        }
+      });
+  if (id == 0) {
+    done(std::nullopt);
+  }
+}
+
 void RemoteWorkspace::GetState(std::string key, StateGetDone done) {
   std::string why;
   const std::shared_ptr<RemoteServerClient> client = StateClient(Client(), &why);

@@ -7,6 +7,7 @@
 #include "util/JsonValue.h"
 #include "util/Parse.h"
 #include "util/Sha256.h"
+#include "util/TextFileIO.h"
 #include "workspace/services/RemoteHostService.h"
 #include "workspace/FileUri.h"
 #include "workspace/WorkspaceUiText.h"
@@ -201,6 +202,56 @@ void TestRemoteProjectTerminalsSayWhereTheyRun() {
                },
                std::chrono::seconds(15), std::chrono::milliseconds(5)),
            "and the program is told it opened");
+  }
+  // A program there that runs its $EDITOR on a file (git's commit message, an
+  // agent CLI's prompt) gets a TAB here, not a vi drawn into the pane: the tab
+  // holds the file's text under its own name, the program waits while it is
+  // open, and closing it leaves what was saved in the host's file.
+  {
+    WriteFile(host_root / "COMMIT_EDITMSG", "subject\n\nbody\n");
+    host_session.SendBytes("\"$EDITOR\" +3 COMMIT_EDITMSG; echo EDITOR-$?-DONE\n");
+    const auto editing = [&] {
+      return WorkspaceShellTestAccess::ActiveEditor(shell).path().filename() == "COMMIT_EDITMSG";
+    };
+    Expect(WaitUntil(
+               [&] {
+                 Pump(shell);
+                 return editing();
+               },
+               std::chrono::seconds(15), std::chrono::milliseconds(5)),
+           [&] { return "the host program's file opens in a tab:\n" + ScreenText(host_session); });
+    if (editing()) {
+      editor::TextViewport& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+      const std::filesystem::path copy = viewport.path();
+      Expect(util::ReadTextFile(copy) == "subject\n\nbody\n" && viewport.cursor_line() == 2,
+             "with the host file's text, at the line the program named");
+      Expect(!copy.string().starts_with(host.home.string()), "as a copy on this machine");
+      viewport.MoveCursorTo(0, 0);
+      viewport.InsertText("new ");
+      Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "save"), "saved");
+      Pump(shell);
+      Expect(util::ReadTextFile(host_root / "COMMIT_EDITMSG") == "subject\n\nbody\n" &&
+                 ScreenText(host_session).find("EDITOR-0-DONE") == std::string::npos,
+             "a save alone neither writes the host file nor releases the program");
+      Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::CloseActiveTab, {}),
+             "the tab closes");
+      Expect(WaitUntil(
+                 [&] {
+                   Pump(shell);
+                   return ScreenText(host_session).find("EDITOR-0-DONE") != std::string::npos;
+                 },
+                 std::chrono::seconds(15), std::chrono::milliseconds(5)),
+             [&] { return "closing it releases the program:\n" + ScreenText(host_session); });
+      Expect(util::ReadTextFile(host_root / "COMMIT_EDITMSG") == "new subject\n\nbody\n",
+             "with what was saved, in the host's file");
+      Expect(WaitUntil(
+                 [&] {
+                   Pump(shell);
+                   return !std::filesystem::exists(copy);
+                 },
+                 std::chrono::seconds(10), std::chrono::milliseconds(5)),
+             "and the copy is gone once the host has it");
+    }
   }
 
   // Remote: Open Local Terminal: a shell on this machine, and its title says so.

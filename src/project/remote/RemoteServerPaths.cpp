@@ -58,6 +58,10 @@ std::filesystem::path BrowserHelperPath(const std::filesystem::path& dir) {
   return dir / std::string(kBrowserHelperName);
 }
 
+std::filesystem::path EditorHelperPath(const std::filesystem::path& dir) {
+  return dir / std::string(kEditorHelperName);
+}
+
 std::filesystem::path ServerLogPath(const std::filesystem::path& dir) {
   return dir / "server.log";
 }

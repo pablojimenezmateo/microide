@@ -297,6 +297,27 @@ this document's § 7, what a user still missed:
   automatic forward, which binds the same port here when it is free. Every
   terminal also says `TERM_PROGRAM=microide` and `FORCE_HYPERLINK=1`, so such tools
   print their URLs as OSC 8 links that click whole however they wrap.
+- **Host programs edit files on the client** (`term/edit`, wire version 5): the
+  shells also get `EDITOR=<socket dir>/microide-edit`, the same link acting as
+  `microide-server edit [+LINE] FILE`. The helper reads the file (UTF-8 text of at
+  most 1 MiB) and asks the server with its bytes; they reach the client that
+  typed last, among those whose wire carries it, as the frame's `edit`, and the
+  request stays unanswered. The editor writes the bytes to a private copy under
+  its state directory (kept under the file's own name, so `COMMIT_EDITMSG` reads
+  and highlights as one) and opens it in a tab; when the last view of that copy
+  closes it sends `term/edit-done` with what is saved there, the server answers
+  the helper, and the helper writes the host file in place and exits -- `code
+  --wait`. The file is the helper's to read and write, so this needs no file
+  access beyond the terminal's own and works outside the project
+  (`.git/COMMIT_EDITMSG`, a prompt in `/tmp`). A link that drops loses nothing:
+  the request waits on the host, and a tab closed meanwhile is answered on the
+  next connect. A client that LEAVES the terminal (`term/detach`, `term/close`: a
+  quit, a closed project) ends the requests it holds there, and the helper fails;
+  Ctrl+C on the helper withdraws its own. What the forwarder cannot serve -- no
+  such client attached, several files, an unknown option, a file that is not
+  such text -- runs the terminal's own editor (`sensible-editor`, `editor`, `vi`,
+  `nano`) with the same arguments. Only `EDITOR` is set, never `VISUAL`, so a
+  shell profile that names an editor in either keeps it.
 - **Project home status block** (§ 7.3): the link, the server and the sync as
   stages, a failure's reason with the reproducing ssh command, and Retry.
 - Left: see TD-2026-10-12-336 (a shell-level test of the stale pull-on-open

@@ -12,10 +12,12 @@
 #include "project/remote/RemoteTerminalChannel.h"
 #include "terminal/TerminalSession.h"
 #include "util/JsonValue.h"
+#include "util/TextFileIO.h"
 
 #include <chrono>
 #include <csignal>
 #include <filesystem>
+#include <future>
 #include <memory>
 #include <optional>
 #include <string>
@@ -157,7 +159,7 @@ void TestHostTerminalBrowserOpensOnTheClient() {
   TypeLine(session, "\"$BROWSER\" 'https://example.com/login?code=1&x=y'; echo OPENED=$?");
   Expect(WaitForText(session, "OPENED=0"), [&] { return "the helper reports delivery:\n" + ScreenText(session); });
   std::optional<std::string> requested;
-  Expect(WaitUntil([&] { return (requested = session.ConsumeOpenUrlRequest()).has_value(); },
+  Expect(WaitUntil([&] { return (requested = session.ConsumeHostRequests().open_url).has_value(); },
                    std::chrono::seconds(10), std::chrono::milliseconds(5)),
          "the client receives the request");
   Expect(requested == "https://example.com/login?code=1&x=y", "exactly the URL: " + requested.value_or(""));
@@ -167,8 +169,169 @@ void TestHostTerminalBrowserOpensOnTheClient() {
   TypeLine(session, "printf 'https://example.com/printed\\n'; echo PRINTED");
   Expect(WaitForText(session, "PRINTED"), "printed text arrives");
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
-  Expect(!session.ConsumeOpenUrlRequest().has_value(), "neither the refusal nor printed text opens anything");
+  Expect(!session.ConsumeHostRequests().open_url.has_value(), "neither the refusal nor printed text opens anything");
   session.Stop();
+}
+
+// Answers the edit `token` over `client` with `text` (none: leave the file), and
+// says whether a program took it.
+bool AnswerEdit(remote::RemoteServerClient& client, std::uint64_t token, std::optional<std::string> text) {
+  util::JsonObject params;
+  params["token"] = util::JsonValue(static_cast<std::int64_t>(token));
+  if (text.has_value()) {
+    params["text"] = util::JsonValue(std::move(*text));
+  }
+  std::promise<bool> answered;
+  client.peer().Request(remote::method::kTermEditDone, util::JsonValue(std::move(params)), remote::Lane::Interactive,
+                        [&](std::optional<util::JsonValue> result, std::optional<remote::RemotePeer::RpcError>) {
+                          answered.set_value(result.has_value() && (*result)["delivered"].AsBool());
+                        });
+  std::future<bool> future = answered.get_future();
+  return future.wait_for(std::chrono::seconds(10)) == std::future_status::ready && future.get();
+}
+
+std::optional<terminal::TerminalHostEdit> WaitForEdit(TerminalSession& session) {
+  std::optional<terminal::TerminalHostEdit> edit;
+  (void)WaitUntil([&] { return (edit = session.ConsumeHostRequests().edit).has_value(); }, std::chrono::seconds(10),
+                  std::chrono::milliseconds(5));
+  return edit;
+}
+
+// A program in a host terminal that runs its $EDITOR on a file (git's commit
+// message, an agent CLI's prompt) reaches the EDITOR instead of a vi drawn into
+// the pane: the server gives its shells an EDITOR that hands the file's text to
+// the client attached to that terminal and waits. The client's answer -- its tab
+// closed -- is written to the file and the program goes on; an answer with no
+// text leaves the file alone; and a helper that was interrupted waits for
+// nothing, so a late answer is told so.
+void TestHostTerminalEditorEditsOnTheClient() {
+  ShortServerDir dir;
+  StartServer(dir);
+  const std::filesystem::path host = dir.scratch() / "host" / "project";
+  const std::filesystem::path mirror = dir.scratch() / "mirror" / "project";
+  std::filesystem::create_directories(host);
+  std::filesystem::create_directories(mirror);
+  WriteFile(host / "COMMIT_EDITMSG", "first line\n# a comment\n");
+  auto client = Connect(dir);
+  const remote::RemoteProcessLauncher launcher(client, remote::RemotePathMap(mirror, host),
+                                               {.host_paths_readable_locally = true});
+  TerminalSession session;
+  Expect(session.Start(launcher, mirror, {}, "sh"), "the host terminal starts");
+
+  TypeLine(session, "\"$EDITOR\" +2 COMMIT_EDITMSG; echo EDITED=$?");
+  std::optional<terminal::TerminalHostEdit> edit = WaitForEdit(session);
+  Expect(edit.has_value(), [&] { return "the client receives the file:\n" + ScreenText(session); });
+  if (!edit.has_value()) {
+    session.Stop();
+    return;
+  }
+  Expect(edit->path == (host / "COMMIT_EDITMSG").string() && edit->line == 2 &&
+             edit->text == "first line\n# a comment\n",
+         "its host path, line and bytes: " + edit->path + ":" + std::to_string(edit->line));
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  Expect(ScreenText(session).find("EDITED=0") == std::string::npos && ScreenText(session).find("EDITED=1") == std::string::npos,
+         "and the program waits meanwhile");
+  Expect(AnswerEdit(*client, edit->token, "the message\n"), "the answer reaches the program");
+  Expect(WaitForText(session, "EDITED=0"), [&] { return "which then goes on:\n" + ScreenText(session); });
+  Expect(util::ReadTextFile(host / "COMMIT_EDITMSG") == "the message\n", "with what was saved in the file");
+  Expect(!AnswerEdit(*client, edit->token, "again\n"), "a second answer finds nothing waiting");
+
+  // A file that does not exist yet is created by a save, not by a closed tab.
+  TypeLine(session, "\"$EDITOR\" new.txt; echo NEW=$?");
+  edit = WaitForEdit(session);
+  Expect(edit.has_value() && edit->text.empty() && edit->line == 0, "a missing file arrives empty");
+  Expect(edit.has_value() && AnswerEdit(*client, edit->token, std::nullopt), "closed with nothing saved");
+  Expect(WaitForText(session, "NEW=0"), "the program goes on");
+  Expect(!std::filesystem::exists(host / "new.txt"), "and no file was made");
+
+  // Interrupted: the request is withdrawn with the helper.
+  TypeLine(session, "\"$EDITOR\" COMMIT_EDITMSG");
+  edit = WaitForEdit(session);
+  Expect(edit.has_value(), "a third edit arrives");
+  TerminalSession::KeyPress interrupt;
+  interrupt.key = TerminalSession::KeyPress::Key::Char;
+  interrupt.codepoint = 'c';
+  interrupt.ctrl = true;
+  (void)session.SendKeyPress(interrupt);
+  TypeLine(session, "echo GONE-$((6*7))");
+  Expect(WaitForText(session, "GONE-42"), [&] { return "Ctrl+C ends the helper:\n" + ScreenText(session); });
+  Expect(edit.has_value() && WaitUntil([&] { return !AnswerEdit(*client, edit->token, "late\n"); },
+                                       std::chrono::seconds(5)),
+         "and its answer is told that nothing waits");
+  Expect(util::ReadTextFile(host / "COMMIT_EDITMSG") == "the message\n", "the file is as the last save left it");
+  session.Stop();
+}
+
+// What the forwarder cannot serve runs the terminal's own editor, as if EDITOR
+// had not been set: a client older than the request (wire version 4), several
+// files, an option it does not know. And a client that leaves the terminal on
+// purpose ends the requests it holds there, so a closed project does not leave a
+// `git commit` waiting on the host for a tab nobody has.
+void TestHostTerminalEditorFallsBackAndIsAbandoned() {
+  ShortServerDir dir;
+  StartServer(dir);
+  const std::filesystem::path root = dir.scratch() / "project";
+  const std::filesystem::path bin = dir.scratch() / "bin";
+  std::filesystem::create_directories(root);
+  std::filesystem::create_directories(bin);
+  // A stand-in for the host's terminal editor: it records what it was run on.
+  WriteFile(bin / "sensible-editor", "#!/bin/sh\necho \"terminal-editor $*\" > \"$EDIT_MARK\"\n");
+  std::filesystem::permissions(bin / "sensible-editor", std::filesystem::perms::owner_all);
+  const std::string mark = (dir.scratch() / "ran").string();
+  const std::string prefix = "EDIT_MARK='" + mark + "' PATH='" + bin.string() + "':$PATH ";
+  const auto identity = [](const std::filesystem::path& path) { return path; };
+  WriteFile(root / "note.txt", "note\n");
+
+  {
+    auto old_client = remote::RemoteServerClient::Create();
+    const int fd = platform::ConnectUnixSocket(remote::ServerSocketPath(dir.path()));
+    std::string error;
+    Expect(fd >= 0 && old_client->ConnectFds(fd, fd, remote::HelloRequest{.protocol = 4, .release = "old"}, &error),
+           "a version 4 client connects: " + error);
+    TerminalSession session;
+    TerminalSessionTestAccess::Reset(session, 24, 80);
+    auto channel = remote::RemoteTerminalChannel::Open(
+        old_client, terminal::HostTerminalSource::OpenRequest{.working_directory = root, .shell = {"sh"}}, session,
+        identity);
+    Expect(channel != nullptr, "its terminal opens");
+    TerminalSessionTestAccess::EnterHostMode(session, channel);
+    TypeLine(session, prefix + "\"$EDITOR\" note.txt; echo OLD=$?");
+    Expect(WaitForText(session, "OLD=0"), [&] { return "the helper runs the terminal editor:\n" + ScreenText(session); });
+    Expect(util::ReadTextFile(mark) == "terminal-editor note.txt\n",
+           "with its own arguments: " + util::ReadTextFile(mark).value_or("<nothing>"));
+    Expect(!session.ConsumeHostRequests().edit.has_value(), "and the old client is sent nothing it cannot decode");
+    channel->Close();
+    TerminalSessionTestAccess::EnterHostMode(session, nullptr);
+  }
+
+  auto client = Connect(dir);
+  TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  auto channel = remote::RemoteTerminalChannel::Open(
+      client, terminal::HostTerminalSource::OpenRequest{.working_directory = root, .shell = {"sh"}}, session,
+      identity);
+  Expect(channel != nullptr, "the terminal opens");
+  TerminalSessionTestAccess::EnterHostMode(session, channel);
+  TypeLine(session, prefix + "\"$EDITOR\" note.txt other.txt; echo TWO=$?");
+  Expect(WaitForText(session, "TWO=0"), [&] { return "two files go to the terminal editor:\n" + ScreenText(session); });
+  Expect(util::ReadTextFile(mark) == "terminal-editor note.txt other.txt\n", "both of them");
+
+  TypeLine(session, "\"$EDITOR\" note.txt; echo LEFT=$?");
+  const std::optional<terminal::TerminalHostEdit> edit = WaitForEdit(session);
+  Expect(edit.has_value(), "an edit arrives");
+  channel->Detach();  // a quit, a closed project
+  TerminalSessionTestAccess::EnterHostMode(session, nullptr);
+
+  TerminalSession again;
+  TerminalSessionTestAccess::Reset(again, 24, 80);
+  auto reattached = remote::RemoteTerminalChannel::Attach(client, channel->handle(), again, identity);
+  Expect(reattached != nullptr, "the terminal is attached again");
+  TerminalSessionTestAccess::EnterHostMode(again, reattached);
+  Expect(WaitForText(again, "LEFT=1"), [&] { return "the program stopped waiting, and failed:\n" + ScreenText(again); });
+  Expect(util::ReadTextFile(root / "note.txt") == "note\n", "leaving the file alone");
+  Expect(edit.has_value() && !AnswerEdit(*client, edit->token, "late\n"), "its answer finds nothing waiting");
+  reattached->Close();
+  TerminalSessionTestAccess::EnterHostMode(again, nullptr);
 }
 
 // The pty belongs to the server, not to the connection: a dropped link signals
@@ -1020,6 +1183,9 @@ void RegisterRemoteTerminalTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteTerminal/APendingHostTerminalStartsOnceConnected",
           TestAPendingHostTerminalStartsOnceConnected);
   AddTest(tests, "RemoteTerminal/HostTerminalBrowserOpensOnTheClient", TestHostTerminalBrowserOpensOnTheClient);
+  AddTest(tests, "RemoteTerminal/HostTerminalEditorEditsOnTheClient", TestHostTerminalEditorEditsOnTheClient);
+  AddTest(tests, "RemoteTerminal/HostTerminalEditorFallsBackAndIsAbandoned",
+          TestHostTerminalEditorFallsBackAndIsAbandoned);
   AddTest(tests, "RemoteTerminal/HostTerminalRunsTheShellOnTheHost",
           TestHostTerminalRunsTheShellOnTheHost);
   AddTest(tests, "RemoteTerminal/ALiveTerminalWhoseServerRestartedEndsAndSaysWhy",

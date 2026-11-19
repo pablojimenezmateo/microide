@@ -23,7 +23,9 @@ namespace microide::project::remote {
 // 4 (2026-11-06): a terminal frame may end with the SGR 58 underline colours of
 // its cell extras (TerminalHostWireOptions::underline_colors). Additive: the
 // server sends them only to a client whose hello said 4, so the floor stays.
-inline constexpr std::int64_t kProtocolVersion = 4;
+// 5 (2026-11-19): a terminal frame may carry a file a host program asked to have
+// edited (TerminalHostWireOptions::edit, term/edit). Additive, as 4 was.
+inline constexpr std::int64_t kProtocolVersion = 5;
 inline constexpr std::int64_t kMinProtocolVersion = 3;
 
 // Method names. A method not listed here is answered with kErrorUnknownMethod.
@@ -70,6 +72,19 @@ inline constexpr std::string_view kTermAck = "term/ack";
 // {handle, url}: a program in host terminal `handle` asks the client to open
 // `url` (the BROWSER helper, `microide-server open-url`). Answers {delivered}.
 inline constexpr std::string_view kTermOpenUrl = "term/open-url";
+// term/edit {handle, path, line, text}: a program in host terminal `handle` runs
+// its $EDITOR on `path` (the EDITOR helper, `microide-server edit`), whose bytes
+// are `text`. Answers {delivered: false} at once when no attached client can
+// take it, and otherwise only when that client's tab closes: {delivered: true,
+// text} with the bytes to leave in the file. The helper closing its connection
+// (Ctrl+C) withdraws the request.
+// term/edit-done {token, text?}: the client's tab on the edit a frame announced
+// (TerminalHostFrame::edit) closed with `text` saved (none: leave the file as it
+// is). Answers {delivered}, false when nothing waits for `token` any more. A
+// client that leaves the terminal on purpose (term/detach, term/close) ends the
+// requests it holds there with an error instead.
+inline constexpr std::string_view kTermEdit = "term/edit";
+inline constexpr std::string_view kTermEditDone = "term/edit-done";
 // The workspace tree (Phase 2b, § 6.2). tree/manifest {} -> TreeRows content frames
 // (id = the request) on the bulk lane, then, on the same lane so it cannot overtake
 // them, {manifest_id, rows, git}. Needs a hello with a root.

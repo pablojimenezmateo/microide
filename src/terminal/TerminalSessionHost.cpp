@@ -61,11 +61,6 @@ const HostTerminalSource* HostTerminalsFor(const platform::ProcessLauncher& laun
   return dynamic_cast<const HostTerminalSource*>(&launcher);
 }
 
-std::optional<std::string> TerminalSession::ConsumeOpenUrlRequest() {
-  std::scoped_lock lock(mutex_);
-  return std::exchange(host_.open_url, std::nullopt);
-}
-
 bool TerminalSession::is_host_terminal() const {
   std::scoped_lock lock(mutex_);
   return host_.channel != nullptr;
@@ -547,7 +542,10 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
       pending_clipboard_text_ = std::move(*frame.clipboard);
     }
     if (frame.open_url) {
-      host_.open_url = std::move(*frame.open_url);
+      host_.requests.open_url = std::move(*frame.open_url);
+    }
+    if (frame.edit) {
+      host_.requests.edit = std::move(*frame.edit);
     }
     if (frame.notification) {
       pending_notification_ = Notification{.title = std::move(frame.notification->title),

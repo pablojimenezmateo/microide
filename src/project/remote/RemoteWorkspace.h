@@ -148,6 +148,15 @@ class RemoteWorkspace {
   using StatePutDone = std::function<void(std::string error)>;
   using StateGetDone = std::function<void(std::optional<std::string> text, std::string error)>;
   void PutState(std::string key, std::string text, StatePutDone done);
+  // term/edit-done: the tab on the file a host program ran its $EDITOR on
+  // (TerminalHostFrame::edit, `token` of server process `epoch`) closed with
+  // `text` saved; no text leaves the file as it is. `done` (the peer's thread):
+  // true when the program took it, false when it no longer waits (Ctrl+C, or
+  // another server process answers), nullopt when the host could not be asked --
+  // to be sent again once the connection is back, since the program still waits.
+  using EditDone = std::function<void(std::optional<bool> delivered)>;
+  void FinishTerminalEdit(std::string_view epoch, std::uint64_t token, std::optional<std::string> text,
+                          EditDone done);
   void GetState(std::string key, StateGetDone done);
   WriteResult WriteFileSync(std::string path, std::string_view content, const Precondition& expect,
                             std::optional<std::uint32_t> mode = std::nullopt,

@@ -70,7 +70,7 @@ class TerminalPanelService {
   bool OpenExternalUrl(std::string_view url) const;
   // Open `url` on behalf of terminal `pane` (null = the project's own launcher):
   // a clicked link, or a URL a host program asked for through $BROWSER
-  // (TerminalSession::ConsumeOpenUrlRequest). A loopback URL from a host
+  // (TerminalSession::ConsumeHostRequests). A loopback URL from a host
   // terminal is forwarded first; anything else goes to the desktop opener.
   bool OpenUrlForPane(const TerminalPaneState* pane, std::string_view url) const;
   // What dropping `local_path` onto terminal `pane` types (null = the project's

@@ -32,6 +32,10 @@ std::filesystem::path ServerLogPath(const std::filesystem::path& dir);
 // named `microide-browser`, which acts as `microide-server open-url`.
 std::filesystem::path BrowserHelperPath(const std::filesystem::path& dir);
 inline constexpr std::string_view kBrowserHelperName = "microide-browser";
+// The EDITOR it gives them, the same way: `microide-edit`, which acts as
+// `microide-server edit`.
+std::filesystem::path EditorHelperPath(const std::filesystem::path& dir);
+inline constexpr std::string_view kEditorHelperName = "microide-edit";
 
 // Create `dir` (and missing parents, mode 0700) and verify it the way tmux verifies
 // its socket directory, on every bind: every component is checked WITHOUT following

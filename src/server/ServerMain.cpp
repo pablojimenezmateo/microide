@@ -14,6 +14,11 @@
 //                                                                  URL (also: run as the
 //                                                                  `microide-browser` link,
 //                                                                  the shells' $BROWSER)
+//   edit [+LINE] FILE                                              have that editor edit
+//                                                                  FILE, and wait for its
+//                                                                  tab to close (also: the
+//                                                                  `microide-edit` link,
+//                                                                  the shells' $EDITOR)
 //
 // Links microide_kernel only: no SDL, no shell, no fonts (CheckServerStaysFreeOf…).
 #include <cerrno>
@@ -38,11 +43,14 @@
 #include "project/remote/RemoteServerPaths.h"
 #include "project/remote/ServerStatusText.h"
 #include "server/RemoteServer.h"
+#include "terminal/TerminalHostWire.h"
 #include "util/JsonFormat.h"
 #include "util/JsonValue.h"
 #include "util/Log.h"
 #include "util/Parse.h"
 #include "util/PosixFd.h"
+#include "util/StringUtil.h"
+#include "util/TextFileIO.h"
 
 #include <fcntl.h>
 #include <poll.h>
@@ -272,10 +280,12 @@ int Start(const Options& options) {
   return 1;
 }
 
-// One request to the running server, synchronously; for status and stop.
+// One request to the running server, synchronously; for status and stop. A zero
+// `limit` waits for as long as the server takes (term/edit: a person is typing).
 std::optional<microide::util::JsonValue> Ask(const Options& options, std::string_view method,
                                              std::string* error,
-                                             microide::util::JsonValue params = microide::util::JsonValue(nullptr)) {
+                                             microide::util::JsonValue params = microide::util::JsonValue(nullptr),
+                                             std::chrono::seconds limit = std::chrono::seconds(10)) {
   const std::filesystem::path socket = remote::ServerSocketPath(options.socket_dir);
   const int fd = microide::platform::ConnectUnixSocket(socket);
   if (fd < 0) {
@@ -303,7 +313,9 @@ std::optional<microide::util::JsonValue> Ask(const Options& options, std::string
                  done.notify_all();
                });
   std::unique_lock lock(mutex);
-  if (!done.wait_for(lock, std::chrono::seconds(10), [&]() { return finished; })) {
+  if (limit.count() == 0) {
+    done.wait(lock, [&]() { return finished; });
+  } else if (!done.wait_for(lock, limit, [&]() { return finished; })) {
     *error = "the server did not answer";
   }
   lock.unlock();
@@ -481,6 +493,120 @@ static int OpenUrl(std::string_view url) {
   return 0;
 }
 
+// The terminal's own editor, with the helper's arguments (`arguments[0]` is
+// replaced by its name): what the program would have run had the server not set
+// EDITOR. Never returns.
+[[noreturn]] static void RunTerminalEditor(char** arguments) {
+  // sensible-editor reads these, and would run this helper again.
+  for (const char* variable : {"VISUAL", "EDITOR"}) {
+    if (const char* value = std::getenv(variable);
+        value != nullptr && std::filesystem::path(value).filename() == remote::kEditorHelperName) {
+      ::unsetenv(variable);
+    }
+  }
+  for (const char* editor : {"sensible-editor", "editor", "vi", "nano"}) {
+    arguments[0] = const_cast<char*>(editor);
+    ::execvp(editor, arguments);
+  }
+  std::cerr << "microide-edit: no editor is attached to this terminal, and it has no editor of its own\n";
+  ::_exit(127);
+}
+
+// The EDITOR of the server's terminals (RemoteServer::InstallTerminalForwarders):
+// hand the file to the editor attached to the terminal this runs in, wait for its
+// tab to close and leave what was saved there in the file -- `code --wait`, for a
+// commit message, a rebase list or an agent CLI's prompt. `arguments` are the
+// program's (`[+LINE] FILE`), after a slot for the editor's name. Anything this
+// cannot serve -- no editor attached, an older one, several files, a file that is
+// not UTF-8 text of at most 1 MiB -- runs the terminal's own editor instead.
+static int EditFile(char** arguments) {
+  std::int64_t line = 0;
+  const char* file = nullptr;
+  bool options_ended = false;
+  for (char** argument = arguments + 1; *argument != nullptr; ++argument) {
+    const std::string_view text(*argument);
+    if (!options_ended && text.size() > 1 && text.front() == '+') {
+      line = microide::util::ParseInt64(text.substr(1)).value_or(0);
+    } else if (!options_ended && (text == "--wait" || text == "-w")) {
+      // What this does anyway.
+    } else if (!options_ended && text == "--") {
+      options_ended = true;
+    } else if (file == nullptr && (options_ended || text.empty() || text.front() != '-')) {
+      file = *argument;
+    } else {
+      RunTerminalEditor(arguments);
+    }
+  }
+  const char* handle_text = std::getenv("MICROIDE_TERMINAL_HANDLE");
+  const std::optional<std::int64_t> handle =
+      handle_text != nullptr ? microide::util::ParseInt64(handle_text) : std::nullopt;
+  if (file == nullptr || !handle.has_value() || *handle <= 0) {
+    RunTerminalEditor(arguments);
+  }
+  std::error_code status_error;
+  const std::filesystem::path path = std::filesystem::absolute(file, status_error).lexically_normal();
+  const std::filesystem::file_status status = std::filesystem::status(path, status_error);
+  const bool exists = std::filesystem::exists(status);
+  std::string original;
+  if (exists) {
+    std::error_code size_error;
+    std::optional<std::string> read;
+    if (std::filesystem::is_regular_file(status) &&
+        std::filesystem::file_size(path, size_error) <= microide::terminal::kMaxHostEditBytes && !size_error) {
+      read = microide::util::ReadTextFile(path);
+    }
+    if (!read.has_value() || read->size() > microide::terminal::kMaxHostEditBytes || !microide::util::IsValidUtf8(*read)) {
+      RunTerminalEditor(arguments);
+    }
+    original = std::move(*read);
+  }
+  Options options;
+  if (const char* dir = std::getenv("MICROIDE_SERVER_SOCKET_DIR"); dir != nullptr && *dir != '\0') {
+    options.socket_dir = dir;
+  } else if (const auto home = HomeDirectory(); !home.empty()) {
+    options.socket_dir = remote::DefaultServerSocketDir(home);
+  }
+  microide::util::JsonObject params;
+  params["handle"] = microide::util::JsonValue(*handle);
+  params["path"] = microide::util::JsonValue(path.string());
+  params["line"] = microide::util::JsonValue(std::max<std::int64_t>(line, 0));
+  params["text"] = microide::util::JsonValue(original);
+  std::string error;
+  const auto answer = Ask(options, remote::method::kTermEdit, &error,
+                          microide::util::JsonValue(std::move(params)), std::chrono::seconds(0));
+  if (!answer.has_value()) {
+    std::cerr << "microide-edit: " << path.string() << " was not edited: "
+              << (error.empty() ? std::string("the server went away") : error) << '\n';
+    return 1;
+  }
+  if (!(*answer)["delivered"].AsBool()) {
+    RunTerminalEditor(arguments);
+  }
+  const microide::util::JsonValue& text = (*answer)["text"];
+  if (!text.IsString() || (exists && text.AsString() == original) || (!exists && text.AsString().empty())) {
+    return 0;  // closed as it was: nothing to write, as leaving vi with :q
+  }
+  // In place, as an editor writes: the file keeps its inode, mode and links.
+  const microide::util::UniqueFd out(::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0666));
+  const std::string& bytes = text.AsString();
+  std::size_t written = 0;
+  while (out.IsValid() && written < bytes.size()) {
+    const ssize_t count = ::write(out.Get(), bytes.data() + written, bytes.size() - written);
+    if (count < 0 && errno == EINTR) {
+      continue;
+    }
+    if (count <= 0) {
+      break;
+    }
+    written += static_cast<std::size_t>(count);
+  }
+  if (!out.IsValid() || written != bytes.size()) {
+    std::cerr << "microide-edit: cannot write " << path.string() << ": " << std::strerror(errno) << '\n';
+    return 1;
+  }
+  return 0;
+}
+
 int main(int argc, char** argv) {
   // Before any descriptor exists: a closed 0/1/2 would be handed to the first pipe
   // or socket (and the daemon's own stdio detach below assumes they are open).
@@ -494,6 +620,12 @@ int main(int argc, char** argv) {
   }
   if (argc == 3 && std::string_view(argv[1]) == "open-url") {
     return OpenUrl(argv[2]);
+  }
+  if (argc >= 1 && std::filesystem::path(argv[0]).filename() == remote::kEditorHelperName) {
+    return EditFile(argv);
+  }
+  if (argc >= 2 && std::string_view(argv[1]) == "edit") {
+    return EditFile(argv + 1);
   }
   const std::optional<Options> options = ParseOptions(argc, argv);
   if (!options.has_value()) {

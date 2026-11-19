@@ -153,9 +153,9 @@ class RemoteServer {
   Connection& Accept(int read_fd, int write_fd);
   void InstallProcessHandlers(Connection& connection);
   void InstallTerminalHandlers(Connection& connection);
-  // Link the BROWSER helper beside the socket and give the shells its path
-  // (term/open-url, remote-projects § 6.5).
-  void InstallBrowserForwarder();
+  // Link the BROWSER and EDITOR helpers beside the socket and give the shells
+  // their paths (term/open-url and term/edit, remote-projects § 6.5).
+  void InstallTerminalForwarders();
   void InstallTreeHandlers(Connection& connection);
   void InstallFileHandlers(Connection& connection);
   // file/upload's home: private to the user, beside the socket (whose directory
@@ -232,6 +232,22 @@ class RemoteServer {
   // Last: their threads send through connections_, so they must stop first.
   std::unique_ptr<ProcessTable> processes_;
   std::unique_ptr<TerminalTable> terminals_;
+  // term/edit requests waiting for a client's term/edit-done, by token: the
+  // helper's connection and its request there, and the client that has the file
+  // open, for which terminal.
+  struct PendingEdit {
+    std::uint64_t connection = 0;
+    std::uint64_t request = 0;
+    std::uint64_t client = 0;
+    std::uint64_t handle = 0;
+  };
+  // `client` left terminal `handle` on purpose (term/detach or term/close: a
+  // closed tab or project, a quit) -- unlike a link that dropped, it will not be
+  // back to finish the edits it holds there, so their programs stop waiting.
+  void AbandonEdits(std::uint64_t client, std::uint64_t handle);
+  std::mutex edits_mutex_;
+  std::uint64_t next_edit_token_ = 1;              // guarded by edits_mutex_
+  std::map<std::uint64_t, PendingEdit> pending_edits_;  // guarded by edits_mutex_
   // search/run: its own workers, so a long search never queues a manifest, a read
   // or a write behind it. Last of all: its jobs send through connections_.
   util::TaskExecutor search_executor_{2};

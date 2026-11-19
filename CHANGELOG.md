@@ -10,6 +10,16 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Added
 
+- **A host program's `$EDITOR` is a tab.** In a remote project's terminal,
+  `git commit`, `git rebase -i`, an agent CLI's "edit the prompt in your editor"
+  and anything else that runs `$EDITOR` on a file opens that file in an editor
+  tab on your machine and waits; closing the tab hands back what you saved and
+  the program goes on (`code --wait`). It works for files outside the project
+  (`.git/COMMIT_EDITMSG`, a prompt in `/tmp`), survives a dropped link, and ends
+  cleanly when you close the project or press Ctrl+C in the terminal. A shell
+  profile that sets `EDITOR` or `VISUAL` keeps its editor; several files, a file
+  over 1 MiB or not UTF-8, and an older editor attached get the terminal's own
+  editor as before. It needs a host server from this release on.
 - **A terminal that needs you reaches you in another window.** A bell, or a
   program's notification (OSC 9 / 777 -- an agent's "needs your input"), that
   arrives while the window is not focused now flags the window with the desktop

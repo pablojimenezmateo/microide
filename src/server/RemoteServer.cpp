@@ -28,7 +28,7 @@ namespace {
 // What a connection's terminal frames may carry, from the wire version its
 // hello said it speaks (remote::kProtocolVersion's history).
 terminal::TerminalHostWireOptions TerminalWireOptionsFor(std::int64_t protocol) {
-  return terminal::TerminalHostWireOptions{.underline_colors = protocol >= 4};
+  return terminal::TerminalHostWireOptions{.underline_colors = protocol >= 4, .edit = protocol >= 5};
 }
 
 }  // namespace
@@ -83,35 +83,60 @@ RemoteServer::RemoteServer(Config config)
             });
           },
   });
-  InstallBrowserForwarder();
+  InstallTerminalForwarders();
 }
 
-void RemoteServer::InstallBrowserForwarder() {
+void RemoteServer::InstallTerminalForwarders() {
   // Only a daemon with a socket can be reached by the helper; serve-stdio (one
   // connection, the tests) has nothing for it to connect to.
   if (config_.socket_path.empty()) {
     return;
   }
   const std::filesystem::path dir = config_.socket_path.parent_path();
-  const std::filesystem::path helper = remote::BrowserHelperPath(dir);
-  // A link to this executable, named so `main` knows to act as the helper: BROWSER
+  // Links to this executable, named so `main` knows to act as the helper: BROWSER
   // is ONE program path that is given the URL (Claude Code spawns it with no
   // shell, xdg-open's generic mode runs it as `$BROWSER "$url"`), so neither a
-  // subcommand nor a quoted script line fits it. Re-made at every start: an
-  // upgraded server is at another path.
+  // subcommand nor a quoted script line fits it -- and EDITOR, which git does
+  // run through a shell, is spawned bare by other programs. Re-made at every
+  // start: an upgraded server is at another path.
   std::error_code error;
   const std::filesystem::path self = std::filesystem::read_symlink("/proc/self/exe", error);
   if (error || self.empty()) {
     return;
   }
-  std::filesystem::remove(helper, error);
-  std::filesystem::create_symlink(self, helper, error);
-  if (error) {
-    util::Log("microide-server: cannot link the browser helper at " + helper.string() + ": " +
-                     error.message());
-    return;
+  std::vector<std::string> environment{"MICROIDE_SERVER_SOCKET_DIR=" + dir.string()};
+  // EDITOR and not VISUAL: a shell profile that names an editor in either keeps
+  // it (a program asks VISUAL first, and a profile's EDITOR replaces this one).
+  for (const auto& [variable, helper] : {std::pair{"BROWSER", remote::BrowserHelperPath(dir)},
+                                         std::pair{"EDITOR", remote::EditorHelperPath(dir)}}) {
+    std::filesystem::remove(helper, error);
+    std::filesystem::create_symlink(self, helper, error);
+    if (error) {
+      util::Log("microide-server: cannot link " + helper.string() + ": " + error.message());
+      continue;
+    }
+    environment.push_back(std::string(variable) + "=" + helper.string());
   }
-  terminals_->SetShellEnvironment({"BROWSER=" + helper.string(), "MICROIDE_SERVER_SOCKET_DIR=" + dir.string()});
+  terminals_->SetShellEnvironment(std::move(environment));
+}
+
+void RemoteServer::AbandonEdits(std::uint64_t client, std::uint64_t handle) {
+  std::vector<PendingEdit> abandoned;
+  {
+    std::lock_guard lock(edits_mutex_);
+    std::erase_if(pending_edits_, [&](const auto& edit) {
+      if (edit.second.client != client || edit.second.handle != handle) {
+        return false;
+      }
+      abandoned.push_back(edit.second);
+      return true;
+    });
+  }
+  for (const PendingEdit& edit : abandoned) {
+    WithPeer(edit.connection, [&](remote::RemotePeer& helper) {
+      helper.ReplyError(edit.request, remote::kErrorCancelled, "the editor that had it open left the terminal");
+    });
+  }
 }
 
 void RemoteServer::WithPeer(std::uint64_t connection_id,
@@ -190,7 +215,8 @@ RemoteServer::Connection& RemoteServer::Accept(int read_fd, int write_fd) {
   ref.peer.OnDispatch([this, &ref](std::string_view method) {
     served_any_.store(true, std::memory_order_relaxed);
     if (method != remote::method::kServerHello && method != remote::method::kServerStatus &&
-        method != remote::method::kServerLog && method != remote::method::kTermOpenUrl) {
+        method != remote::method::kServerLog && method != remote::method::kTermOpenUrl &&
+        method != remote::method::kTermEdit) {
       ref.active.store(true, std::memory_order_relaxed);
     }
   });
@@ -313,6 +339,12 @@ void RemoteServer::InstallHandlers(Connection& connection) {
     DropActivitySubscriber(connection.id);
     processes_->Detach(connection.id);
     terminals_->Detach(connection.id);
+    {
+      // A helper that went away (Ctrl+C) waits for nothing: its client's
+      // term/edit-done is then answered "not delivered".
+      std::lock_guard lock(edits_mutex_);
+      std::erase_if(pending_edits_, [&](const auto& edit) { return edit.second.connection == connection.id; });
+    }
     connection.closed = true;
     wake_.Wake();
   });
@@ -460,6 +492,74 @@ void RemoteServer::InstallTerminalHandlers(Connection& connection) {
                        terminals_->RequestOpenUrl(static_cast<std::uint64_t>(handle), url));
                    connection.peer.Reply(id, util::JsonValue(std::move(result)));
                  });
+  peer.OnRequest(remote::method::kTermEdit,
+                 [this, &connection](std::uint64_t id, const util::JsonValue& params) {
+                   const std::int64_t handle = params["handle"].AsInt(0);
+                   const std::int64_t line = params["line"].AsInt(0);
+                   terminal::TerminalHostEdit edit;
+                   edit.path = params["path"].IsString() ? params["path"].AsString() : std::string();
+                   edit.text = params["text"].IsString() ? params["text"].AsString() : std::string();
+                   edit.line = static_cast<std::uint32_t>(std::clamp<std::int64_t>(line, 0, 0x7fffffff));
+                   if (handle <= 0 || edit.path.empty() || edit.path.front() != '/' ||
+                       edit.path.size() > terminal::kMaxHostEditPathBytes ||
+                       edit.text.size() > terminal::kMaxHostEditBytes) {
+                     connection.peer.ReplyError(id, remote::kErrorInvalidParams,
+                                                "not a terminal and an absolute path with at most 1 MiB of text");
+                     return;
+                   }
+                   {
+                     // Under the lock across the hand-over, so the client's
+                     // answer cannot arrive before the request is recorded.
+                     std::lock_guard lock(edits_mutex_);
+                     edit.token = next_edit_token_++;
+                     const std::uint64_t token = edit.token;
+                     const std::uint64_t client =
+                         terminals_->RequestEdit(static_cast<std::uint64_t>(handle), std::move(edit));
+                     if (client != 0) {
+                       pending_edits_[token] = PendingEdit{.connection = connection.id,
+                                                           .request = id,
+                                                           .client = client,
+                                                           .handle = static_cast<std::uint64_t>(handle)};
+                       return;  // answered by term/edit-done, or by AbandonEdits
+                     }
+                   }
+                   util::JsonObject result;
+                   result["delivered"] = util::JsonValue(false);
+                   connection.peer.Reply(id, util::JsonValue(std::move(result)));
+                 });
+  peer.OnRequest(remote::method::kTermEditDone,
+                 [this, &connection](std::uint64_t id, const util::JsonValue& params) {
+                   const std::int64_t token = params["token"].AsInt(0);
+                   if (token <= 0) {
+                     connection.peer.ReplyError(id, remote::kErrorInvalidParams, "a token");
+                     return;
+                   }
+                   std::optional<PendingEdit> waiting;
+                   {
+                     std::lock_guard lock(edits_mutex_);
+                     if (const auto it = pending_edits_.find(static_cast<std::uint64_t>(token));
+                         it != pending_edits_.end()) {
+                       waiting = it->second;
+                       pending_edits_.erase(it);
+                     }
+                   }
+                   bool delivered = false;
+                   if (waiting.has_value()) {
+                     util::JsonObject answer;
+                     answer["delivered"] = util::JsonValue(true);
+                     // No text: the tab closed with nothing to write back.
+                     if (params["text"].IsString() &&
+                         params["text"].AsString().size() <= terminal::kMaxHostEditBytes) {
+                       answer["text"] = util::JsonValue(params["text"].AsString());
+                     }
+                     WithPeer(waiting->connection, [&](remote::RemotePeer& helper) {
+                       delivered = helper.Reply(waiting->request, util::JsonValue(std::move(answer)));
+                     });
+                   }
+                   util::JsonObject result;
+                   result["delivered"] = util::JsonValue(delivered);
+                   connection.peer.Reply(id, util::JsonValue(std::move(result)));
+                 });
   peer.OnRequest(remote::method::kTermAttach,
                  [this, &connection](std::uint64_t id, const util::JsonValue& params) {
                    const std::int64_t handle = params["handle"].AsInt(0);
@@ -517,10 +617,12 @@ void RemoteServer::InstallTerminalHandlers(Connection& connection) {
   peer.OnNotification(remote::method::kTermClose,
                       [this, &connection, handle_of](std::uint64_t, const util::JsonValue& params) {
                         terminals_->Close(connection.id, handle_of(params));
+                        AbandonEdits(connection.id, handle_of(params));
                       });
   peer.OnNotification(remote::method::kTermDetach,
                       [this, &connection, handle_of](std::uint64_t, const util::JsonValue& params) {
                         terminals_->Detach(connection.id, handle_of(params));
+                        AbandonEdits(connection.id, handle_of(params));
                       });
   peer.OnNotification(remote::method::kTermAck,
                       [this, &connection, handle_of](std::uint64_t, const util::JsonValue& params) {

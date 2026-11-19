@@ -33,6 +33,25 @@ The host SHALL send `term/screen` deltas of the visible screen, coalesced to at 
 - **WHEN** a program in a host terminal sets the title with OSC 0
 - **THEN** the client's terminal tab shows that title
 
+### Requirement: A host program's editor is the client's
+The server SHALL give its shells an `EDITOR` that hands the file a program runs it on to the client attached to that terminal: `term/edit {handle, path, line, text}` from the helper, delivered as one frame's `edit` to the client that typed last among those whose wire version carries it, and left unanswered until that client's `term/edit-done {token, text?}`. The client SHALL open the text in an editor tab on a private copy named as the file is, and SHALL send what is saved there when the last view of the copy closes; the helper SHALL then write the host file in place only when the text differs, and exit 0. A save alone SHALL NOT release the program. The request SHALL survive a dropped link, the client answering on its next connect; it SHALL end with a failing helper when that client leaves the terminal deliberately (`term/detach`, `term/close`), and SHALL be withdrawn when the helper exits. Whatever the forwarder cannot serve -- no capable client attached, more than one file, an option it does not know, a file that is not UTF-8 text of at most 1 MiB -- SHALL run the terminal's own editor with the same arguments. The server SHALL set `EDITOR` only, so a shell profile's `EDITOR` or `VISUAL` wins.
+
+#### Scenario: A commit message is written in a tab
+- **WHEN** `git commit` runs in a host terminal with a client attached
+- **THEN** `COMMIT_EDITMSG` opens in an editor tab on the client, `git` waits, and closing the tab after a save completes the commit with that message
+
+#### Scenario: An older client is attached
+- **WHEN** the only attached client speaks wire version 4
+- **THEN** it is sent no edit and the program gets the terminal's own editor in its pane
+
+#### Scenario: The laptop lid closes mid-edit
+- **WHEN** the link drops while the tab is open, the tab is closed offline, and the client reconnects
+- **THEN** the program receives the saved text then and goes on
+
+#### Scenario: The project is closed mid-edit
+- **WHEN** the client that holds the edit closes the project or quits
+- **THEN** the helper exits non-zero, the host file is unchanged and nothing on the host waits for a tab nobody has
+
 ### Requirement: Echo is predicted locally and validated by echo_ack
 `TerminalPredictionOverlay` SHALL be a pure value type over the rendered lines, the typed events with their `input_seq`, the confirmed screens with their `echo_ack`, and the RTT estimate. It SHALL predict a printable character at the cursor and a backspace, draw pending predictions underlined, confirm a prediction when a frame with `echo_ack >= seq` shows the predicted cell, and drop a contradicted prediction and stop predicting until a confirmed frame agrees again. It SHALL predict nothing for control keys, at the right margin, while the cursor is hidden, or on the alternate screen until the program has shown it echoes. `remote.predict` SHALL be `adaptive` (predict only while the RTT estimate exceeds 30 ms) by default, with `always` and `never`. The host SHALL set `echo_ack` to the latest input written to the pty once the pty has produced output since that write, or after 50 ms otherwise.
 
