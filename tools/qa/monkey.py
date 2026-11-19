@@ -1684,7 +1684,16 @@ class Monkey:
         self.app.press_guard = self._press_lands_on_forbidden
         self.app.activation_guard = self._activation_chooses_forbidden
         self.resources.sample()
-        self._start_from_corpus(corpus_probability)
+        try:
+            self._start_from_corpus(corpus_probability)
+        except q.AppGone:
+            # The app died under the corpus prefix that starts the run: a crash like
+            # any step's, reported and relaunched as one. Uncaught, it ended the
+            # driver with a traceback and no result (soak 63db46df221a).
+            self.app.check("the corpus prefix")
+            if not self.app.alive() and not self._relaunch_after_crash():
+                self._final_oracles()
+                return not self.app.findings
         self._keep_window_usable()
         for index in range(steps):
             self.step_index = index
@@ -1704,14 +1713,7 @@ class Monkey:
                 self._periodic_oracles(index)
                 self._keep_window_usable()
             if not self.app.alive():
-                if not self.keep_going or self.relaunches >= self.max_relaunches:
-                    break
-                self.relaunches += 1
-                try:
-                    self.app.crash_and_relaunch()
-                    self.state = "relaunched"
-                except Exception as error:  # noqa: BLE001 - a relaunch that fails ends the run
-                    self.app.expect(False, f"relaunch after the crash failed: {error}")
+                if not self._relaunch_after_crash():
                     break
             elif self.app.findings and not self.keep_going:
                 break
@@ -1721,6 +1723,20 @@ class Monkey:
                 break
         self._final_oracles()
         return not self.app.findings
+
+    def _relaunch_after_crash(self) -> bool:
+        """Starts the app again after it died, when the run keeps going and has
+        relaunches left. False ends the run."""
+        if not self.keep_going or self.relaunches >= self.max_relaunches:
+            return False
+        self.relaunches += 1
+        try:
+            self.app.crash_and_relaunch()
+            self.state = "relaunched"
+        except Exception as error:  # noqa: BLE001 - a relaunch that fails ends the run
+            self.app.expect(False, f"relaunch after the crash failed: {error}")
+            return False
+        return True
 
     def summary(self) -> dict[str, Any]:
         """What the run did and found: the soak runner reads it (findings.json)."""
