@@ -407,6 +407,12 @@
   static bool SaveTab(WorkspaceShell& shell, std::size_t index) {
     return shell.SaveTab(index, SaveMode::Blocking);
   }
+  // Save As on a tab of the focused group, as the `save <path>` command reaches it.
+  static bool SaveTabAs(WorkspaceShell& shell, std::size_t index, const std::filesystem::path& path,
+                        std::string* error) {
+    return shell.MakeEditorTabService().SaveGroupTabAs(
+        shell.context_.current_project_state.clamped_focused_group_index(), index, path, error);
+  }
   // The LSP half of every keystroke: shift stored diagnostics, drop edit-stale
   // overlays, sync the open document. Exposed to pin its per-key cost.
   static void SyncLspForActiveEditableLastChange(WorkspaceShell& shell) {

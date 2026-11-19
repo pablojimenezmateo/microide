@@ -33,6 +33,17 @@ bool TabCoordinator::SaveGroupTabAs(std::size_t group_index, std::size_t index,
   if (path.native().find('\0') != std::string::npos) {
     return fail("a file name cannot contain a NUL character");  // the write would cut it short
   }
+  // A tab whose bytes have not arrived -- or never will -- shows an empty read-only
+  // stand-in, not the file. Save As bound that stand-in to the new name, the save
+  // under it was the loading tab's no-op, and the command reported a save: no file
+  // written, and once the read landed a tab named after one file over the buffer
+  // of another (soak 993fa989aee6). Plain Save stays a silent no-op there; Save As
+  // was asked for a file, so it says why there is none.
+  if (tab.editor_state->content_pending()) {
+    return fail(tab.title + (tab.editor_state->content == EditorTabState::Content::Failed
+                                 ? " could not be read"
+                                 : " is still loading"));
+  }
   editor::TextViewport& viewport = tab.editor_state->viewport;
   const std::filesystem::path normalized = path.lexically_normal();
   if (normalized == viewport.path().lexically_normal()) {
