@@ -18,6 +18,9 @@
 //                names; stable ids are unique; the recent-tab list has no id twice
 //   untitled     every loaded untitled buffer has a number, and one number names
 //                one buffer (two panes of one buffer share it)
+//   buffers      a file is one buffer: every loaded editor tab and editable
+//                compare side on one path shows the same document (two that do
+//                not diverge on the first edit and save over each other)
 //   carets       every caret, selection anchor and secondary caret of a loaded
 //                editor is inside its buffer
 //   caches       with {"deep": true}: the focused editor's derived layout tables

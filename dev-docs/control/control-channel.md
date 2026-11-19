@@ -172,6 +172,7 @@ checked: {groups, tabs, editors, deep}}`: the workspace's own rules, checked fro
 the inside (`ControlInvariantsQuery.h`) -- one split-tree leaf per editor group and
 a focused group that exists (`groups`), an active tab that exists and a payload
 for each tab's kind (`tabs`), one Untitled number per unsaved buffer (`untitled`),
+one buffer per file however many tabs and editable compare sides show it (`buffers`),
 every caret and anchor inside its buffer (`carets`), and with `{"deep": true}` the
 focused editor's derived layout tables against a fresh build (`caches`). Every
 other oracle reads a symptom, often hundreds of actions after the state went

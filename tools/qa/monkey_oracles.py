@@ -1031,9 +1031,9 @@ def caret_bounds_reports(log: str, binary: Path | None = None) -> str:
 class InvariantOracle:
     """The workspace's structural rules, asked of the app itself (the
     `invariants` query, ControlInvariantsQuery.h): groups against the split
-    tree, tabs against their payloads, one Untitled number per buffer, every
-    caret inside its buffer, and (deep) the focused editor's layout tables
-    against a fresh build.
+    tree, tabs against their payloads, one Untitled number per buffer, one
+    buffer per file, every caret inside its buffer, and (deep) the focused
+    editor's layout tables against a fresh build.
 
     Asked every few steps, so a broken rule is found within a few actions of
     the one that broke it -- the symptom-reading oracles find it when it shows,

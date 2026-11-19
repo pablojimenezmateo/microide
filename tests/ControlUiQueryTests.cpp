@@ -554,6 +554,42 @@ void TestInvariantsQueryHoldsAndNamesBrokenRules() {
          "nor once the view that edited has closed (soak 8cc3fd5f5a87), got: " + rules(shared));
   alone.ReconcileCaretsWithDocument();
   Expect(rules(shared).empty(), "and none once it reconciled, got: " + rules(shared));
+
+  // A file is one buffer. Two tabs that each read it hold two: the first edit
+  // parts them, each saves over the other, and a kill -9 restores whichever the
+  // session listed last (soak 8d52e6176b32: README.md was open dirty at 707
+  // bytes in one pane and clean at 705 in another, hundreds of steps before the
+  // kill that reported it).
+  workspace::ProjectWorkspaceState twice;
+  twice.editor_groups[0].open_tabs.resize(2);
+  for (workspace::TabEntry& tab : twice.editor_groups[0].open_tabs) {
+    tab.title = "notes.txt";
+    tab.path = "/tmp/notes.txt";
+    tab.editor_state.emplace();
+    tab.editor_state->viewport.LoadContent("one\n", "/tmp/notes.txt");
+  }
+  Expect(rules(twice) == "buffers;",
+         "two buffers of one file are named, got: " + rules(twice));
+  const std::string second = workspace::CheckWorkspaceInvariants(twice).violations.front().detail;
+  Expect(second.find("group 0 tab 1 'notes.txt' is a second buffer of the file group 0 tab 0 'notes.txt' holds") !=
+             std::string::npos,
+         "the violation names both tabs, got: " + second);
+  // A view still loading is not the file yet, and neither is a read-only compare
+  // side; an editable compare side is.
+  twice.editor_groups[0].open_tabs[1].editor_state->content =
+      workspace::TabEntry::EditorTabState::Content::Loading;
+  Expect(rules(twice).empty(), "a tab still loading holds no buffer, got: " + rules(twice));
+  workspace::TabEntry& other = twice.editor_groups[0].open_tabs[1];
+  other.kind = workspace::TabEntry::Kind::Compare;
+  other.editor_state.reset();
+  other.compare.emplace();
+  other.compare->right_viewport.LoadContent("one\n", "/tmp/notes.txt");
+  Expect(rules(twice).empty(), "a read-only compare side holds no buffer, got: " + rules(twice));
+  other.compare->right_editable = true;
+  Expect(rules(twice) == "buffers;",
+         "an editable compare side that is not the tab's buffer is named, got: " + rules(twice));
+  other.compare->right_viewport = twice.editor_groups[0].open_tabs[0].editor_state->viewport;
+  Expect(rules(twice).empty(), "and one that shares it breaks no rule, got: " + rules(twice));
 }
 
 // The list overlays name their rows, and a click at a row's center runs it.

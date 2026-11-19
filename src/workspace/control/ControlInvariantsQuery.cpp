@@ -72,6 +72,21 @@ WorkspaceInvariantReport CheckWorkspaceInvariants(const ProjectWorkspaceState& p
   std::set<std::uint64_t> stable_ids;
   // Untitled number -> the buffer the first tab with it shows.
   std::map<std::uint32_t, const editor::TextViewport*> untitled;
+  // File -> the first tab holding it as a live buffer, and that tab's name.
+  std::map<std::string, std::pair<const editor::TextViewport*, std::string>> files;
+  // The domain is LiveBufferViewOfPath's: a loaded editor tab and a compare tab's
+  // editable side ARE the file; a view still loading, a read-only compare side and
+  // a merge result are not.
+  const auto one_buffer = [&files, &violate](const editor::TextViewport& view, std::string name) {
+    if (view.path().empty()) {
+      return;
+    }
+    const auto [first, inserted] =
+        files.try_emplace(view.path().lexically_normal().string(), &view, name);
+    if (!inserted && !first->second.first->SharesDocumentWith(view)) {
+      violate("buffers", name + " is a second buffer of the file " + first->second.second + " holds");
+    }
+  };
   for (std::size_t g = 0; g < groups.size(); ++g) {
     const EditorGroup& group = groups[g];
     if (!group.open_tabs.empty() && group.active_tab_index >= group.open_tabs.size()) {
@@ -97,6 +112,8 @@ WorkspaceInvariantReport CheckWorkspaceInvariants(const ProjectWorkspaceState& p
         case TabEntry::Kind::Compare:
           if (!tab.compare.has_value()) {
             violate("tabs", TabName(g, t, tab) + " is a compare tab with no compare state");
+          } else if (tab.compare->right_editable && !tab.compare->load_pending) {
+            one_buffer(tab.compare->right_viewport, TabName(g, t, tab));
           }
           continue;
         case TabEntry::Kind::Merge:
@@ -119,6 +136,7 @@ WorkspaceInvariantReport CheckWorkspaceInvariants(const ProjectWorkspaceState& p
       }
       const editor::TextViewport& view = state.viewport;
       ++report.editors;
+      one_buffer(view, TabName(g, t, tab));
       if (tab.path.empty()) {
         if (tab.untitled_number == 0) {
           violate("untitled", TabName(g, t, tab) + " is an unsaved buffer with no Untitled number");
