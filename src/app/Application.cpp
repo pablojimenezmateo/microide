@@ -215,6 +215,32 @@ int Application::Run() {
   bool window_shown = false;
   std::vector<SDL_FRect> dirty_rects;
   const char* redraw_reason = "startup";
+  // A timed wait an event cut short keeps its deadline (OwedWakeDeadline): past it,
+  // the scheduled wake runs whether or not the next wait times out.
+  std::optional<Uint64> owed_wake_deadline;
+  const auto apply_scheduled_wake = [&] {
+    owed_wake_deadline.reset();
+    const auto scheduled = workspace_shell_.HandleScheduledWake();
+    if (!scheduled.handled) {
+      return;
+    }
+    present_pending = present_pending || scheduled.redraw.present;
+    if (scheduled.redraw.full) {
+      // A full-redraw repaints the whole scene, so any cursor surface may have
+      // moved underneath a stationary pointer (tree refresh, plugin/outline
+      // population, asset reload). These EventResult literals bypass the
+      // Request* helpers, so bump the cursor hit-generation here — the single
+      // universal seam where async full redraws are applied — so the next
+      // frame's UpdateMouseCursor re-runs the hit-test instead of skipping it.
+      workspace_shell_.InvalidateCursorKindFingerprint();
+      full_redraw_pending = true;
+      dirty_rects.clear();
+      redraw_reason = "scheduled-full";
+    } else if (!full_redraw_pending) {
+      dirty_rects.insert(dirty_rects.end(), scheduled.redraw.rects.begin(), scheduled.redraw.rects.end());
+      redraw_reason = "scheduled-partial";
+    }
+  };
 
   while (running_) {
     platform::NoteMainLoopTurn();
@@ -281,10 +307,18 @@ int Application::Run() {
       }
     }
 
+    if (owed_wake_deadline.has_value() && SDL_GetTicks() >= *owed_wake_deadline) {
+      apply_scheduled_wake();
+      if (full_redraw_pending || !dirty_rects.empty()) {
+        continue;
+      }
+    }
+
     SDL_Event event;
     const workspace::WorkspaceShell::IdleWaitState idle_wait_state =
         workspace_shell_.CurrentIdleWaitState();
     const IdleWaitDecision idle_wait = ChooseIdleWait(idle_wait_state);
+    const Uint64 wait_started_ms = SDL_GetTicks();
     bool has_event = false;
     const SdlWakeCounts wakes_before = ReadSdlWakeCounts();
     switch (idle_wait.mode) {
@@ -317,6 +351,7 @@ int Application::Run() {
         SDL_Log("%s", late->c_str());
       }
     }
+    owed_wake_deadline = OwedWakeDeadline(owed_wake_deadline, idle_wait, wait_started_ms, has_event);
     // A lost-wake relay nudge only woke the loop; the event it re-delivered is
     // next in the queue.
     if (has_event && IsSdlWakeNudge(event.type)) {
@@ -327,26 +362,7 @@ int Application::Run() {
         SDL_Log("SDL_WaitEvent failed: %s", SDL_GetError());
         break;
       }
-      const auto scheduled = workspace_shell_.HandleScheduledWake();
-      if (scheduled.handled) {
-        present_pending = present_pending || scheduled.redraw.present;
-        if (scheduled.redraw.full) {
-          // A full-redraw repaints the whole scene, so any cursor surface may have
-          // moved underneath a stationary pointer (tree refresh, plugin/outline
-          // population, asset reload). These EventResult literals bypass the
-          // Request* helpers, so bump the cursor hit-generation here — the single
-          // universal seam where async full redraws are applied — so the next
-          // frame's UpdateMouseCursor re-runs the hit-test instead of skipping it.
-          workspace_shell_.InvalidateCursorKindFingerprint();
-          full_redraw_pending = true;
-          dirty_rects.clear();
-          redraw_reason = "scheduled-full";
-        } else {
-          full_redraw_pending = false;
-          dirty_rects.assign(scheduled.redraw.rects.begin(), scheduled.redraw.rects.end());
-          redraw_reason = "scheduled-partial";
-        }
-      }
+      apply_scheduled_wake();
       continue;
     }
 

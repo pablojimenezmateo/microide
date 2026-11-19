@@ -128,6 +128,32 @@ void TestChooseIdleWaitMapsHints() {
          "CaretOnly should clamp a zero timeout to 1ms so the loop never busy-spins");
 }
 
+// The scheduled wake runs when a timed wait times out. A stream of events -- a
+// large file's highlight prefetch posts one after every frame -- ended every wait
+// before its timeout, and the crash-safety flush owed within 10 s of an edit did
+// not run while the stream lasted (soak 5fae008f5eb2). A timed wait an event ends
+// keeps its deadline; the loop runs the wake once that deadline has passed.
+void TestATimedWaitAnEventEndsKeepsItsDeadline() {
+  using microide::app::IdleWaitDecision;
+  using microide::app::OwedWakeDeadline;
+  const IdleWaitDecision timed{.mode = IdleWaitMode::WaitTimeout, .timeout_ms = 40};
+  Expect(OwedWakeDeadline(std::nullopt, timed, 1000, true) == std::optional<Uint64>{1040},
+         "an event that ends a timed wait leaves its deadline owed");
+  Expect(!OwedWakeDeadline(std::nullopt, timed, 1000, false).has_value(),
+         "a wait that timed out ran the wake: nothing is owed");
+  Expect(OwedWakeDeadline(std::optional<Uint64>{1010}, timed, 1000, true) == std::optional<Uint64>{1010},
+         "an earlier owed deadline stays: a later wait does not push it back");
+  Expect(OwedWakeDeadline(std::optional<Uint64>{1010}, timed, 1000, false) == std::nullopt,
+         "a timed-out wait settles an owed deadline too");
+  Expect(!OwedWakeDeadline(std::nullopt, IdleWaitDecision{.mode = IdleWaitMode::Wait}, 1000, true).has_value(),
+         "an untimed wait owes no wake");
+  Expect(!OwedWakeDeadline(std::nullopt, IdleWaitDecision{.mode = IdleWaitMode::Poll}, 1000, true).has_value(),
+         "a poll (a redraw pending) owes no wake");
+  Expect(OwedWakeDeadline(std::optional<Uint64>{1010}, IdleWaitDecision{.mode = IdleWaitMode::Poll}, 1000, true) ==
+             std::optional<Uint64>{1010},
+         "a poll an event ends keeps a deadline already owed");
+}
+
 // A blocking wait that ends late with wakes pushed during it is reported, with
 // whether the relay nudged and what ended it; an ordinary wait is not.
 void TestALateWakeIsDescribed() {
@@ -640,6 +666,8 @@ void RegisterApplicationTests(std::vector<TestCase>& tests) {
           TestPresentationCacheInvalidatedWhenUiScaleChanges);
 AddTest(tests, "Application/ALateWakeIsDescribed", TestALateWakeIsDescribed);
     AddTest(tests, "Application/ChooseIdleWaitMapsHints", TestChooseIdleWaitMapsHints);
+    AddTest(tests, "Application/ATimedWaitAnEventEndsKeepsItsDeadline",
+            TestATimedWaitAnEventEndsKeepsItsDeadline);
   AddTest(tests, "Application/EventDrainBudgetYieldsOnlyWithPendingRedraw",
           TestEventDrainBudgetYieldsOnlyWithPendingRedraw);
   AddTest(tests, "Application/RedrawTraceAccumulatorCountsAndFlushes",
