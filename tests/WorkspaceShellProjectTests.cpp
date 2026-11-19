@@ -2176,6 +2176,24 @@ void TestWorkspaceShellSplitStopsAtTheGroupCap() {
   Expect(WorkspaceShellTestAccess::EditorSplit(shell).leaf_count() ==
              WorkspaceShellTestAccess::EditorGroupCount(shell),
          "the split tree's leaves should stay in step with the editor groups");
+
+  // A full editor area refuses another split, and nothing else: Find, Replace,
+  // Go to Line and Reopen shared the split's availability rule, so with eight
+  // panes open their keys resolved to nothing and their menu rows greyed out.
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1600, 900);
+  using microide::workspace::ActionId;
+  for (const ActionId action : {ActionId::Search, ActionId::ReplaceInBuffer, ActionId::Jump, ActionId::Reopen}) {
+    Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, action),
+           "an action on the active editor stays available at the group cap (action " +
+               std::to_string(static_cast<int>(action)) + ")");
+  }
+  for (const ActionId action : {ActionId::SplitEditorRight, ActionId::SplitEditorDown}) {
+    Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, action), "the splits are what the cap disables");
+  }
+  Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL), "Ctrl+F is handled with the editor area full");
+  Expect(WorkspaceShellTestAccess::OverlayVisible(shell) &&
+             WorkspaceShellTestAccess::ActiveOverlayMode(shell) == WorkspaceShell::OverlayMode::BufferSearch,
+         "and opens the find widget");
 }
 
 void TestWorkspaceShellGotoAndJumpCommandsUseTypedNavigationRequests() {

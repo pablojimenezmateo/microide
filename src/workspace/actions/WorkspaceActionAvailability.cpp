@@ -549,6 +549,10 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::ReplaceInBuffer:
     case ActionId::Reopen:
     case ActionId::Search:
+      // These act on the active editor's buffer, however many panes there are.
+      // They shared the splits' rule below, so a full editor area disabled them
+      // too: Ctrl+F and Ctrl+H resolved to nothing with eight panes open.
+      return operations_.active_tab_is_editor();
     case ActionId::SplitEditorRight:
     case ActionId::SplitEditorDown:
       // Available with an editor to split from, until the editor area is full.
