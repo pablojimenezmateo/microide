@@ -823,7 +823,20 @@ class Suite:
         # Open files: left on the host when the window is left ...
         app.send("open", EDIT_FILE); app.send("goto", "3"); app.settle(0.3)
         app.focus_out()
-        left, dt = wait_for(lambda: (lambda held: held if EDIT_FILE in held[1] else None)(self.left_session()), 20, 0.5)
+
+        # The record the focus-out leaves, not an earlier one: the file was
+        # already open, so a record naming it -- at another caret, with another
+        # tab in front -- is on the host before this one lands (a slow link took
+        # that one, and Open Them then put the other tab in front).
+        def left_now(held):
+            try:
+                files = json.loads(held[1]).get("files", [])
+            except ValueError:
+                return None
+            return held if any(f.get("path") == EDIT_FILE and f.get("active") and f.get("line") == 2
+                               for f in files) else None
+
+        left, dt = wait_for(lambda: left_now(self.left_session()), 20, 0.5)
         self.record("S.open-files-left-on-the-host", bool(left), f"{dt:.1f}s {left}")
         if not left:
             app.check("S")
