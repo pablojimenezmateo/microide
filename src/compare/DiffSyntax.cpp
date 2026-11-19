@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <functional>
 
+#include "util/StringUtil.h"
+
 
 namespace microide::compare {
 
@@ -21,6 +23,30 @@ namespace {
 bool IsWordByte(unsigned char byte) {
   return (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
          (byte >= '0' && byte <= '9') || byte == '_' || byte == '$' || byte >= 0x80;
+}
+
+// The end of the word token at `column`: ASCII word bytes and non-ASCII
+// identifier code points (`café`, `変数`); `column` itself when none starts
+// there. A non-ASCII symbol is not a word: every byte >= 0x80 counted as one, so
+// `—the` was a single token and a whitespace-only edit after an em dash marked
+// `— the` novel (soak 96055d2c8eec).
+std::size_t WordTokenEnd(std::string_view text, std::size_t column) {
+  while (column < text.size()) {
+    const auto byte = static_cast<unsigned char>(text[column]);
+    if (byte < 0x80) {
+      if (!IsWordByte(byte)) {
+        break;
+      }
+      ++column;
+      continue;
+    }
+    std::size_t length = 0;
+    if (!util::Utf8IdentifierCodepointAt(text, column, &length) || length == 0) {
+      break;
+    }
+    column += length;
+  }
+  return column;
 }
 
 bool IsSpaceByte(unsigned char byte) {
@@ -507,15 +533,21 @@ class Lexer {
         continue;
       }
       const std::size_t start = column;
-      if (IsWordByte(byte)) {
-        while (column < text.size() && IsWordByte(static_cast<unsigned char>(text[column]))) {
-          ++column;
-        }
+      if (const std::size_t word_end = WordTokenEnd(text, column); word_end > start) {
+        column = word_end;
         Emit(Position{line, start}, Position{line, column}, DiffTokenKind::Word);
         continue;
       }
       // A run of operator bytes is one atom (`->`, `+=`, `!==`), except that a
-      // separator stands alone so a list's commas line up one to one.
+      // separator stands alone so a list's commas line up one to one. A non-ASCII
+      // symbol (an em dash, a curly quote) is one atom of its whole scalar.
+      if (byte >= 0x80) {
+        column += std::max<std::size_t>(1, util::Utf8SequenceLength(text, column));
+        if (!scanning) {
+          Emit(Position{line, start}, Position{line, column}, DiffTokenKind::Punctuation);
+        }
+        continue;
+      }
       ++column;
       if (scanning) {
         continue;

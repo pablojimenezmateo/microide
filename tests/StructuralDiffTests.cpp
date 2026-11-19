@@ -241,6 +241,26 @@ void TestEditedCommentMarksOnlyChangedWords() {
          "an edited comment should be diffed word by word");
 }
 
+// Every byte >= 0x80 used to be a word byte, so an em dash fused with the word
+// after it: deleting the space in "scheduler — the" changed the token "—" + "the"
+// into "—the", and the whitespace-only edit marked "— the" novel (soak
+// 96055d2c8eec). A non-ASCII symbol is a token of its own; non-ASCII letters
+// stay inside their word.
+void TestANonAsciiSymbolIsNotPartOfAWord() {
+  const auto tokens = Tokens("scheduler \xE2\x80\x94the caf\xC3\xA9 \xE2\x80\x9Cq\xE2\x80\x9D");
+  const std::vector<std::string> expected = {"scheduler", "\xE2\x80\x94", "the", "caf\xC3\xA9",
+                                             "\xE2\x80\x9C", "q", "\xE2\x80\x9D"};
+  Expect(tokens == expected, "an em dash and curly quotes are tokens of their own; caf\xC3\xA9 is one word");
+  const auto model = Build("A tiny task scheduler \xE2\x80\x94 the demo project\n",
+                           "A tiny task scheduler \xE2\x80\x94the demo project\n");
+  for (const auto& row : model.rows) {
+    Expect(row.left_changed_spans.empty() && row.right_changed_spans.empty(),
+           "a space removed after an em dash marks no token novel: left '" +
+               Novel(row.left_text, row.left_changed_spans) + "', right '" +
+               Novel(row.right_text, row.right_changed_spans) + "'");
+  }
+}
+
 void TestReindentedCommentIsLayoutOnly() {
   const auto model = Build("/* a long\n   comment */\nx;\n", "  /* a long\n     comment */\nx;\n");
   for (const auto& row : model.rows) {
@@ -842,6 +862,7 @@ void RegisterStructuralDiffTests(std::vector<TestCase>& tests) {
           TestEditedCommentMarksOnlyChangedWords);
   AddTest(tests, "StructuralDiff/ReindentedCommentIsLayoutOnly",
           TestReindentedCommentIsLayoutOnly);
+  AddTest(tests, "StructuralDiff/ANonAsciiSymbolIsNotPartOfAWord", TestANonAsciiSymbolIsNotPartOfAWord);
   AddTest(tests, "StructuralDiff/FlatFallbackMatchesEqualTokensInOrder",
           TestFlatFallbackMatchesEqualTokensInOrder);
   AddTest(tests, "StructuralDiff/AtomOnlyGapNeedsNoSearch", TestAtomOnlyGapNeedsNoSearch);
