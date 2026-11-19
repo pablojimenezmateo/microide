@@ -149,6 +149,9 @@ void WorkspaceShell::RenderFindWidget(SDL_Renderer* renderer,
   render::DrawCardFrame(renderer, theme_, fw.widget, render::CardStyle::Overlay);
 
   const auto draw_field = [&](const SDL_FRect& field, bool focused, std::string_view text) {
+    if (field.w <= 0.0f || field.h <= 0.0f) {
+      return;  // not laid out: the card had no room for it (ComputeFindWidgetLayout)
+    }
     DrawTextFieldFrame(renderer, theme_, field, focused);
     const float text_y = field.y + std::floor((field.h - text_renderer_.LineHeight()) * 0.5f);
     DrawSingleLineTextTail(renderer, field.x + 6.0f, text_y, std::max(1.0f, field.w - 12.0f),

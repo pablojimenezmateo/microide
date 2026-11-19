@@ -1810,6 +1810,19 @@ void TestFindWidgetStaysInsideAShortOrNarrowArea() {
   const auto narrow_fw = ComputeFindWidgetLayout(narrow, false, 2);
   Expect(inside(narrow_fw.widget, narrow) && narrow_fw.close_button.x >= narrow.x,
          "a find widget must not run off the left of a narrow area");
+  // A pane a few units wide at the window's right edge: no room for the fields.
+  // They kept their origin past the card -- [1027, 347, 0, 24] in a 1024-wide
+  // window (soak 938ea521923b) -- where every control that does not fit is left
+  // empty: so are the fields.
+  const SDL_FRect sliver{1018.0f, 300.0f, 6.0f, 300.0f};
+  for (const bool replace : {false, true}) {
+    const auto sliver_fw = ComputeFindWidgetLayout(sliver, replace, 4);
+    for (const SDL_FRect& field : {sliver_fw.search_field, sliver_fw.replace_field}) {
+      Expect(field.w > 0.0f ? inside(field, sliver_fw.widget)
+                            : field.x == 0.0f && field.y == 0.0f && field.h == 0.0f,
+             "a find field with no room is not laid out, not placed past its card");
+    }
+  }
 }
 
 }  // namespace

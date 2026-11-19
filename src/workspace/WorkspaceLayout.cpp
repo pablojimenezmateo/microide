@@ -1400,9 +1400,15 @@ FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area,
   for (std::size_t index = layout.toggle_count; index-- > 0;) {
     keep(layout.toggle_buttons[index]);
   }
-  layout.search_field = MakeRect(field_x, row1_y,
-                                 std::max(0.0f, row_start - kFindWidgetButtonGap - field_x),
-                                 kFindWidgetRowHeight);
+  // The fields fill what is left, and like every control that does not fit, one
+  // with no room is not laid out: kept at its origin with no width, it sat past a
+  // card a few units wide -- [1027, 347, 0, 24] in a 1024-wide window (soak
+  // 938ea521923b).
+  const auto field_rect = [field_x](float y, float right) {
+    const float width = right - kFindWidgetButtonGap - field_x;
+    return width > 0.0f ? MakeRect(field_x, y, width, kFindWidgetRowHeight) : SDL_FRect{};
+  };
+  layout.search_field = field_rect(row1_y, row_start);
 
   if (replace_mode) {
     const float row2_y = row1_y + kFindWidgetRowHeight + kFindWidgetRowGap;
@@ -1418,9 +1424,7 @@ FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area,
     row_start = r.x + r.w - kFindWidgetPad;
     keep(layout.replace_all_button);
     keep(layout.replace_button);
-    layout.replace_field =
-        MakeRect(field_x, row2_y, std::max(0.0f, row_start - kFindWidgetButtonGap - field_x),
-                 kFindWidgetRowHeight);
+    layout.replace_field = field_rect(row2_y, row_start);
   }
   return layout;
 }
