@@ -51,7 +51,11 @@ credentials fails fast instead of blocking on an invisible prompt.
 Branch review against a base is supported, and reviewed-file / reviewed-hunk markers
 **are** persisted per repository and base ref (`mark-branch-file-reviewed`,
 `mark-branch-hunk-reviewed`, `branch-review-note`, `clear-branch-review-state`),
-bounded per repository so the state file cannot grow without limit.
+bounded per repository so the state file cannot grow without limit. The notes of
+a review leave it as text: `copy-review-notes` and `term-insert-review-notes`
+give every note of the active tab's review as a `path:line[-line]: note` line
+(a file's note as `path: note`), by path and line, to the clipboard or to the
+running terminal.
 
 ## Unsupported (explicit non-goals)
 

@@ -611,6 +611,26 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       }
       return DispatchResult::Handled;
     }
+    case ActionId::CopyBranchReviewNotes:
+    case ActionId::TerminalInsertBranchReviewNotes: {
+      if (!context_.ActiveTabIsBranchReview()) {
+        return reject(std::string(kNotABranchReview));
+      }
+      std::string notes = context_.ActiveBranchReviewNotes();
+      if (notes.empty()) {
+        return reject("This review has no notes (branch-review-note <text> adds one)");
+      }
+      if (id == ActionId::CopyBranchReviewNotes) {
+        context_.WriteClipboardText(notes);
+        return DispatchResult::Handled;
+      }
+      // As a paste, so a program that brackets pastes (an agent's prompt) takes
+      // the lines as one block instead of running the first.
+      if (!context_.TypeIntoActiveTerminal(std::move(notes))) {
+        return reject("No terminal is running to take the notes");
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::EditBranchReviewNote: {
       if (!context_.ActiveTabIsBranchReview()) {
         return reject(std::string(kNotABranchReview));

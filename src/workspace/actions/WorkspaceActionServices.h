@@ -479,6 +479,10 @@ class WorkspaceActionContext {
   // A diff opened from the git view's Outgoing list: the only tabs the branch-review
   // marks and notes apply to.
   bool ActiveTabIsBranchReview() const;
+  // The notes of the review the active tab belongs to, as `path:line: note`
+  // lines (BranchReviewStateService::NotesAsReferences); empty when the tab is
+  // not a review's or the review has none.
+  std::string ActiveBranchReviewNotes() const;
   bool ActiveTabIsMerge() const;
   void OpenBufferSearch(std::string query);
   // F3 / Shift+F3: step to the next/previous match of the current find term,

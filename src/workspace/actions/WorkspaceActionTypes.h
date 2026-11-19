@@ -393,6 +393,11 @@ enum class ActionId {
   UnmarkBranchHunkReviewed,
   ClearBranchReviewState,
   EditBranchReviewNote,
+  // `copy-review-notes` / `term-insert-review-notes`: every note of the active
+  // review as `path:line: note` lines -- copied, or typed into the running
+  // terminal for the agent there to act on.
+  CopyBranchReviewNotes,
+  TerminalInsertBranchReviewNotes,
   // The active diff's own verbs. Implemented from the start on CompareMergeService
   // but reachable from no key, menu or command until the commands-run QA sweep
   // looked for them.

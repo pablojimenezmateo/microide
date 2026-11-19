@@ -97,6 +97,13 @@ class BranchReviewStateService {
   bool HasNote(const BranchReviewStateQueryInput& input, BranchReviewNoteScope scope) const;
   std::optional<std::string> NoteText(const BranchReviewStateQueryInput& input,
                                       BranchReviewNoteScope scope) const;
+  // Every note of `target` as a line someone can act on -- an agent in a
+  // terminal, a commit message: `src/a.cpp:12-18: text` for a hunk's note (its
+  // lines in the new file), `src/a.cpp (removed lines 4-6): text` for a hunk
+  // that only removes, `src/a.cpp: text` for a file's. One per note, by path and
+  // then line, newline-separated with no trailing newline; empty when it has
+  // none. Paths are as stored: relative to the repository.
+  std::string NotesAsReferences(const BranchReviewTargetIdentity& target) const;
 
  private:
   static std::uint64_t NowUnixMs();

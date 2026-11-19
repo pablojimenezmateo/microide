@@ -818,6 +818,8 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `mark-branch-hunk-reviewed`
 - `unmark-branch-hunk-reviewed`
 - `clear-branch-review-state`
+- `copy-review-notes`
+- `term-insert-review-notes`
 - `branch-review-note <text>`
 - `diff-ignore-whitespace`
 - `diff-show-whitespace`

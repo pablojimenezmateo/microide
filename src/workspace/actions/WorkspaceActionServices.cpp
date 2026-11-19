@@ -815,6 +815,13 @@ bool WorkspaceActionContext::ActiveTabIsBranchReview() const {
   return tab != nullptr && CompareTabTakesReviewMarks(*tab);
 }
 
+std::string WorkspaceActionContext::ActiveBranchReviewNotes() const {
+  const CompareTabState* tab =
+      operations_.active_compare_tab != nullptr ? operations_.active_compare_tab() : nullptr;
+  return tab != nullptr && CompareTabTakesReviewMarks(*tab) ? state_.branch_review.NotesAsReferences(tab->branch_target)
+                                                             : std::string();
+}
+
 bool WorkspaceActionContext::ActiveTabIsMerge() const {
   return state_.focused_group().active_tab_index < state_.focused_group().open_tabs.size() &&
          state_.focused_group().active_tab().kind == TabEntry::Kind::Merge;

@@ -480,7 +480,67 @@ void TestReviewCheckpointShowsWhatChangedSinceItWasMarked() {
          "the repository's own index is as it was: untracked files are still untracked\n" + status);
 }
 
+// What a review found goes back to the agent that wrote the code: the notes of
+// the review the active tab belongs to -- every file's, not just this tab's --
+// are copied as `path:line: note` lines, or typed into the running terminal.
+void TestReviewNotesAreHandedOverAsReferences() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  WriteFile(repo_path / "one.txt", "a\nb\nc\n");
+  WriteFile(repo_path / "two.txt", "x\n");
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "base", "base commit");
+  WorkspaceShell shell;
+  TestAccess::SetProjectRoot(shell, repo_path);
+  std::string copied;
+  TestAccess::SetClipboardTextWriter(shell, [&](std::string_view text) {
+    copied = std::string(text);
+    return true;
+  });
+  Expect(TestAccess::ExecuteCommandLine(shell, "review-checkpoint-mark"), "a checkpoint is marked");
+  TestAccess::FlushPendingFileReads(shell);
+  WriteFile(repo_path / "one.txt", "a\nB\nc\n");
+  WriteFile(repo_path / "two.txt", "y\n");
+  Expect(TestAccess::ExecuteCommandLine(shell, "review-checkpoint"), "the review opens");
+  TestAccess::FlushPendingFileReads(shell);
+  Expect(CountTabsOfKind(shell, TabEntry::Kind::Compare) == 2, "one tab per changed file");
+  Expect(!TestAccess::IsActionEnabled(shell, WorkspaceShell::ActionId::CopyBranchReviewNotes) &&
+             !TestAccess::ExecuteCommandLine(shell, "copy-review-notes"),
+         "with no notes there is nothing to copy, and the command says so");
+
+  // A note on each file's change, whichever tab is in front first.
+  const auto note_on_active_tab = [&](std::string_view text) {
+    Expect(TestAccess::ExecuteCommandLine(shell, "branch-review-note " + std::string(text)), "a note is taken");
+  };
+  std::vector<std::size_t> review_tabs;
+  for (std::size_t i = 0; i < TestAccess::OpenTabs(shell).size(); ++i) {
+    if (TestAccess::OpenTabs(shell)[i].kind == TabEntry::Kind::Compare) {
+      review_tabs.push_back(i);
+    }
+  }
+  if (review_tabs.size() != 2) {
+    return;
+  }
+  TestAccess::ActivateTab(shell, review_tabs[0]);
+  note_on_active_tab("first note");
+  TestAccess::ActivateTab(shell, review_tabs[1]);
+  note_on_active_tab("second note");
+
+  Expect(TestAccess::IsActionEnabled(shell, WorkspaceShell::ActionId::CopyBranchReviewNotes) &&
+             TestAccess::ExecuteCommandLine(shell, "copy-review-notes"),
+         "Copy Review Notes");
+  const bool one_first = copied.find("first note") < copied.find("second note");
+  Expect(copied == (one_first ? "one.txt:2: first note\ntwo.txt:1: second note"
+                              : "one.txt:2: second note\ntwo.txt:1: first note"),
+         "both files' notes, by path, each at its hunk's line:\n" + copied);
+
+  Expect(!TestAccess::IsActionEnabled(shell, WorkspaceShell::ActionId::TerminalInsertBranchReviewNotes) &&
+             !TestAccess::ExecuteCommandLine(shell, "term-insert-review-notes"),
+         "with no terminal there is nowhere to type them");
+}
+
 void RegisterReviewSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ReviewSession/NotesAreHandedOverAsReferences", TestReviewNotesAreHandedOverAsReferences);
   AddTest(tests, "ReviewSession/CheckpointShowsWhatChangedSinceItWasMarked",
           TestReviewCheckpointShowsWhatChangedSinceItWasMarked);
   AddTest(tests, "ReviewSession/WorktreePickListsTheTreesAndOpensTheChosenOne",

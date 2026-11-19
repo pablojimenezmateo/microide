@@ -10,6 +10,13 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Added
 
+- **Copy Review Notes and Terminal: Insert Review Notes** (`copy-review-notes`,
+  `term-insert-review-notes`). The notes taken while reviewing
+  (`branch-review-note`, on a branch review or a review since a checkpoint) --
+  every file's, not only the tab in front -- as one line each,
+  `src/a.cpp:41-45: this loop leaks the handle`, by path and line: copied, or
+  typed into the running terminal as one paste, so what a review found goes
+  straight back to the agent that wrote the code.
 - **Go to Next Terminal Alert** (`Ctrl+Shift+N`, `term-next-alert`). Brings
   forward the next terminal that rang its bell or sent a notification while
   nobody was looking -- an agent waiting for input -- starting after the active

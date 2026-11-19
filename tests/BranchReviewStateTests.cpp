@@ -560,6 +560,43 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                      Expect(note.has_value() && *note == "needs follow-up",
                             "note text should be queryable for hunk scope");
                    }});
+
+  // The notes of a review as lines to hand to whoever acts on them: by path,
+  // then line, each naming the hunk's lines in the new file.
+  tests.push_back({"BranchReviewState/NotesAsReferences",
+                   [] {
+                     const BranchReviewTargetIdentity target =
+                         MakeBranchReviewTargetIdentity("/repo", "base", "HEAD", "base", 4);
+                     BranchReviewStateService service;
+                     Expect(service.NotesAsReferences(target).empty(), "no notes, no text");
+                     const auto hunk = [](std::string_view path, int old_start, int old_count, int new_start,
+                                          int new_count) {
+                       return microide::compare::BranchReviewHunkIdentity{.path = std::filesystem::path(path),
+                                                                          .old_start = old_start,
+                                                                          .old_count = old_count,
+                                                                          .new_start = new_start,
+                                                                          .new_count = new_count,
+                                                                          .content_hash = static_cast<std::uint64_t>(new_start + 1)};
+                     };
+                     service.SetNote(target, BranchReviewNoteScope::Hunk, "src/b.cpp", hunk("src/b.cpp", 40, 2, 41, 5),
+                                     "this loop leaks\nthe handle");
+                     service.SetNote(target, BranchReviewNoteScope::Hunk, "src/b.cpp", hunk("src/b.cpp", 7, 1, 7, 1),
+                                     "rename this");
+                     service.SetNote(target, BranchReviewNoteScope::Hunk, "src/b.cpp", hunk("src/b.cpp", 90, 3, 0, 0),
+                                     "why is this gone?");
+                     service.SetNote(target, BranchReviewNoteScope::File, "src/b.cpp", std::nullopt, "needs a test");
+                     service.SetNote(target, BranchReviewNoteScope::File, "/repo/a.txt", std::nullopt, "typo in the title");
+                     const std::string text = service.NotesAsReferences(target);
+                     Expect(text == "a.txt: typo in the title\n"
+                                    "src/b.cpp: needs a test\n"
+                                    "src/b.cpp:7: rename this\n"
+                                    "src/b.cpp:41-45: this loop leaks the handle\n"
+                                    "src/b.cpp (removed lines 90-92): why is this gone?",
+                            "by path then line, one line a note, repository-relative:\n" + text);
+                     const BranchReviewTargetIdentity other =
+                         MakeBranchReviewTargetIdentity("/repo", "other", "HEAD", "other", 4);
+                     Expect(service.NotesAsReferences(other).empty(), "another review's notes are not this one's");
+                   }});
 }
 
 }  // namespace microide::tests

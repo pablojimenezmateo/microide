@@ -689,6 +689,19 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
           operations_.active_compare_tab != nullptr ? operations_.active_compare_tab() : nullptr;
       return tab != nullptr && CompareTabTakesReviewMarks(*tab);
     }
+    case ActionId::CopyBranchReviewNotes:
+    case ActionId::TerminalInsertBranchReviewNotes: {
+      const CompareTabState* tab =
+          operations_.active_compare_tab != nullptr ? operations_.active_compare_tab() : nullptr;
+      if (tab == nullptr || !CompareTabTakesReviewMarks(*tab) ||
+          (id == ActionId::TerminalInsertBranchReviewNotes &&
+           context_.current_project_state.active_terminal_pane() == nullptr)) {
+        return false;
+      }
+      const compare::BranchReviewTargetState* target =
+          context_.current_project_state.branch_review.FindTarget(tab->branch_target);
+      return target != nullptr && !target->notes.empty();
+    }
     case ActionId::ClearBranchReviewState:
     case ActionId::GitStageSelectedRanges:
     case ActionId::GitUnstageSelectedRanges:

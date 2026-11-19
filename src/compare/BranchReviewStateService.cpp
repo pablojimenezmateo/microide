@@ -593,6 +593,57 @@ bool BranchReviewStateService::HasNote(const BranchReviewStateQueryInput& input,
   return NoteText(input, scope).has_value();
 }
 
+std::string BranchReviewStateService::NotesAsReferences(const BranchReviewTargetIdentity& target) const {
+  const BranchReviewTargetState* target_state = FindTarget(target);
+  if (target_state == nullptr || target_state->notes.empty()) {
+    return {};
+  }
+  // Where a note points: 0 for a file's, else its hunk's first line (the new
+  // file's, or the old file's for a hunk that only removes).
+  const auto line_of = [](const BranchReviewNote& note) {
+    if (note.scope != BranchReviewNoteScope::Hunk || !note.hunk_identity.has_value()) {
+      return 0;
+    }
+    return note.hunk_identity->new_count > 0 ? note.hunk_identity->new_start : note.hunk_identity->old_start;
+  };
+  std::vector<const BranchReviewNote*> notes;
+  notes.reserve(target_state->notes.size());
+  for (const BranchReviewNote& note : target_state->notes) {
+    notes.push_back(&note);
+  }
+  std::ranges::stable_sort(notes, [&](const BranchReviewNote* left, const BranchReviewNote* right) {
+    if (left->path != right->path) {
+      return left->path.native() < right->path.native();
+    }
+    return line_of(*left) < line_of(*right);
+  });
+  const auto span = [](int start, int count) {
+    return count > 1 ? std::to_string(start) + "-" + std::to_string(start + count - 1) : std::to_string(start);
+  };
+  std::string text;
+  for (const BranchReviewNote* note : notes) {
+    if (!text.empty()) {
+      text.push_back('\n');
+    }
+    text += note->path.generic_string();
+    if (note->scope == BranchReviewNoteScope::Hunk && note->hunk_identity.has_value()) {
+      const BranchReviewHunkIdentity& hunk = *note->hunk_identity;
+      if (hunk.new_count > 0) {
+        text += ":" + span(hunk.new_start, hunk.new_count);
+      } else if (hunk.old_count > 0) {
+        text += " (removed " + std::string(hunk.old_count > 1 ? "lines " : "line ") +
+                span(hunk.old_start, hunk.old_count) + ")";
+      }
+    }
+    text += ": ";
+    // One line a note, whatever it was typed as.
+    for (const char c : note->text) {
+      text.push_back(c == '\n' || c == '\r' ? ' ' : c);
+    }
+  }
+  return text;
+}
+
 std::optional<std::string> BranchReviewStateService::NoteText(
     const BranchReviewStateQueryInput& input,
     const BranchReviewNoteScope scope) const {

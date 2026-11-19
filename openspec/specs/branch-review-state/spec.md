@@ -26,6 +26,13 @@ Branch review state SHALL be local project data. MicroIDE SHALL NOT require host
 - **WHEN** the user reviews a local branch without network access
 - **THEN** reviewed markers and notes SHALL continue to work
 
+### Requirement: Review Notes Leave The Review As References
+MicroIDE SHALL offer the notes of the review the active compare tab belongs to as text, one line per note ordered by path and then line: `path:start[-end]: text` for a hunk's note, naming the hunk's lines in the new file; `path (removed line[s] start[-end]): text` for a hunk that only removes lines; `path: text` for a file's note. Paths SHALL be relative to the repository, and a note's line breaks SHALL be flattened to spaces. `copy-review-notes` SHALL put that text on the clipboard and `term-insert-review-notes` SHALL type it into the running terminal as one paste. Both SHALL cover every file of the review, not only the active tab's, and SHALL be unavailable when the review has no notes.
+
+#### Scenario: Notes on two files go back to the agent
+- **WHEN** the user notes a hunk in each of two files of a review and runs `term-insert-review-notes`
+- **THEN** the terminal receives two lines, each `path:line: note`, in path order, as one paste
+
 ### Requirement: Review Notes Attach To File Or Hunk Identity
 MicroIDE SHALL allow optional local notes attached to reviewed files or hunks. Notes SHALL be associated with the same repository/base/head/path/hunk identity used for reviewed markers.
 
