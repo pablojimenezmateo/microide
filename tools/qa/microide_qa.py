@@ -1987,10 +1987,22 @@ class App:
         until something else takes it. X only -- Wayland's clipboard has no
         stand-in here, so the row is recorded and nothing is sent."""
         self._record({"foreign-clipboard": text})
+        self._own_clipboard(text, [])
+
+    def foreign_clipboard_image(self, kind: str) -> None:
+        """Puts an image and no text on the X CLIPBOARD, as a screenshot tool
+        does: the bytes of x_clipboard.image_bytes(kind), offered as image/png.
+        A terminal's paste stores such an image and types its path. X only, as
+        foreign_clipboard."""
+        self._record({"foreign-clipboard-image": kind})
+        self._own_clipboard("", ["--image", kind])
+
+    def _own_clipboard(self, text: str, arguments: list[str]) -> None:
         if self.wayland:
             return
         self._end_clipboard_owner()
-        owner = subprocess.Popen([sys.executable, str(Path(__file__).resolve().parent / "x_clipboard.py")], env=self.tool_env,
+        owner = subprocess.Popen([sys.executable, str(Path(__file__).resolve().parent / "x_clipboard.py"), *arguments],
+                                 env=self.tool_env,
                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                  text=True, preexec_fn=self._dies_with_driver())
         assert owner.stdin is not None and owner.stdout is not None
@@ -3195,6 +3207,8 @@ def replay(app: App, actions: list[dict[str, Any]], pause: float = 0.12,
             app.focus_out()
         elif "foreign-clipboard" in action:
             app.foreign_clipboard(action["foreign-clipboard"])
+        elif "foreign-clipboard-image" in action:
+            app.foreign_clipboard_image(action["foreign-clipboard-image"])
         elif "drop" in action:
             path = action["path"]
             if "projectPath" in action and app.replay_root is not None:

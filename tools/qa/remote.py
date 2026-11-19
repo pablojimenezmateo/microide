@@ -95,6 +95,13 @@ What it checks, each as the user would see it, with the measured latencies:
                                 first sync, of four host agents churning for 15 s, and of a
                                 host terminal printing a million lines (INFO: the numbers a
                                 change to the sync, watch or terminal path moves)
+  S  what follows the user      the Host view's workspace row says how much disk the
+                                host has free; File History lists the version a host
+                                edit replaced, and Enter opens it against the file;
+                                the open files are left on the host when the window is
+                                left, and the same record under another machine's
+                                name is offered on the next connect -- Open It opens
+                                the file at that machine's line
   V  the Host view              (remote-host-activity) Remote > Show Status opens it;
                                 the project's terminal is listed (with its pid on
                                 the host); `yes` in it raises its CPU figure; Delete
@@ -772,6 +779,84 @@ class Suite:
         self.record("V.hidden-unsubscribes", bool(quiet) and still == 0, f"{dt:.1f}s then {still}")
         self.close_all_terminals()
         app.check("V")
+
+    # ---- group S: what follows the user between machines and over time ----
+    def left_session(self) -> tuple[str, str]:
+        """(path, text) of the open-files record this workspace's server holds
+        (`state/put`, key `session`); ("", "") while it holds none."""
+        out = self.host.ssh('f=$(find "$HOME/.local/state/microide/server/workspace-state" -name session '
+                            '2>/dev/null | head -1); [ -n "$f" ] && echo "$f" && cat "$f"')
+        path, _, text = out.partition("\n")
+        return path.strip(), text
+
+    def run_handoff(self) -> None:
+        app, host, tok = self.app, self.host, self.token
+        app.send("remote-status")
+        row, dt = wait_for(lambda: next((r for r in self.host_rows() if " free" in r.get("label", "")), None), 10, 0.3)
+        self.record("S.disk-on-the-workspace-row", row is not None,
+                    f"{dt:.1f}s rows={[r.get('label') for r in self.host_rows()]}")
+        app.send("sidebar-show", "tree"); app.settle(0.3)
+
+        # File History: the version a host edit replaced.
+        app.send("open", EDIT_FILE); app.settle(0.5)
+        before = host.file(EDIT_FILE)
+        host.ssh(f"cd {host.root} && sed -i '1i HOST-HISTORY-{tok}' {EDIT_FILE}")
+        self.mirror_has(EDIT_FILE, f"HOST-HISTORY-{tok}")
+        app.settle(0.5)
+        reply = app.send("remote-file-history")
+        rows, dt = wait_for(lambda: app.elements("overlay-row") or None, 10, 0.2)
+        self.record("S.history-lists-the-replaced-version", bool(reply.get("ok")) and bool(rows),
+                    f"{reply} after {dt:.1f}s rows={[r.get('label') for r in rows or []]}")
+        app.screenshot("S-history")
+        app.key("Return")
+        compare, dt = wait_for(lambda: next((t for t in app.query("tabs") if t.get("kind") == "compare"), None), 10, 0.3)
+        self.record("S.history-opens-the-version-against-the-file", compare is not None,
+                    f"{dt:.1f}s tabs={[(t.get('kind'), t.get('title')) for t in app.query('tabs')]}")
+        copy = next(iter(sorted((self.mirror.parent / "meta" / "host-copies" / ".history").rglob(EDIT_FILE))), None) \
+            if self.mirror is not None and (self.mirror.parent / "meta").is_dir() else None
+        if copy is not None:
+            self.record("S.history-version-is-the-old-content", copy.read_text(errors="replace") == before,
+                        f"{copy}")
+        if compare is not None:
+            app.key("ctrl+w"); app.settle(0.3)
+
+        # Open files: left on the host when the window is left ...
+        app.send("open", EDIT_FILE); app.send("goto", "3"); app.settle(0.3)
+        app.focus_out()
+        left, dt = wait_for(lambda: (lambda held: held if EDIT_FILE in held[1] else None)(self.left_session()), 20, 0.5)
+        self.record("S.open-files-left-on-the-host", bool(left), f"{dt:.1f}s {left}")
+        if not left:
+            app.check("S")
+            return
+        path, text = left
+        # ... and another machine's are offered on the next connect. One machine
+        # here: the record itself under another name, its caret two lines further
+        # down (the very files this machine left, at the very carets, would be an
+        # echo of its own until its session is saved without them), with this
+        # one's tab closed.
+        app.send("open", EDIT_FILE); app.settle(0.3); app.key("ctrl+w")
+        closed, _ = wait_for(lambda: not any(t.get("title") == EDIT_FILE for t in app.query("tabs")), 10, 0.2)
+        self.record("S.the-file-is-closed-here", bool(closed), f"tabs={[t.get('title') for t in app.query('tabs')]}")
+        other = json.loads(text)
+        other["client"] = "qa-other-machine"
+        other["files"][0]["line"] += 2
+        subprocess.run(ssh_cmd(CHECK_HOST or host.name, f"cat > '{path}'"), check=True, input=json.dumps(other),
+                       text=True)
+        app.send("remote-disconnect")
+        app.send("remote-reconnect")
+        msg, dt, ready = self.wait_ready(120)
+        offer, dt2 = wait_for(lambda: next((n for n in self.notifs() if n["key"].startswith("remote.session.")), None),
+                              20, 0.3)
+        self.record("S.another-machines-files-are-offered",
+                    ready and offer is not None and "qa-other-machine" in offer.get("message", ""),
+                    f"{msg} after {dt:.1f}s; offer after {dt2:.1f}s: {offer}; recent={[(n['key'], n.get('message')) for n in self.recent_notifs()]}")
+        app.screenshot("S-offer")
+        reply = app.send("remote-open-session")
+        tab, dt = wait_for(lambda: (lambda t: t if t and t["path"].endswith(EDIT_FILE) else None)(self.active_tab()),
+                           15, 0.3)
+        self.record("S.open-it-opens-the-file-at-its-line", tab is not None and tab.get("cursorLine") == 5,
+                    f"{reply} after {dt:.1f}s tab={tab}")
+        app.check("S")
 
     def conflict_rows(self) -> list[dict]:
         return self.app.elements("row", prefix="row:conflicts/")
@@ -1597,6 +1682,8 @@ class Suite:
             self.run_terminal_restore()
         if self.runs("V"):
             self.run_host_view()
+        if self.runs("S"):
+            self.run_handoff()
         if self.runs("P"):
             # The remote commands no other scenario runs, each with what it answers
             # and, where one is cheap, a receipt: Remove Mirror stays out (L relaunches

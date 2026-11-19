@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Callable
 
 import microide_qa as q
-from flows_common import active_root, dismiss, open_file, read, step, terminal_tabs, write
+import x_clipboard as xc
+from flows_common import active_root, dismiss, git_run, open_file, read, step, terminal_tabs, write
 
 
 def _banner(app: q.App) -> list[str]:
@@ -206,11 +207,69 @@ def flow_terminal_alert_unfocused(app: q.App) -> None:
                f"the summary names the project ({posted})")
 
 
+def flow_terminal_paste_image(app: q.App) -> None:
+    """A screenshot on the clipboard -- an image and no text, as another
+    application leaves it (x_clipboard.py --image) -- pasted into a terminal is
+    stored as a file of the user's own and its path typed at the prompt; bytes
+    labelled image/png that are not a PNG paste nothing."""
+    app.send("term")
+    app.send("focus", "panel")
+    app.wait_until(lambda: bool(terminal_tabs(app)), 5.0, "a terminal")
+    step(app, "terminal", 0.4)
+    stored_under = app.work / "state" / "microide" / "pasted"
+
+    def stored() -> list[Path]:
+        return sorted(stored_under.glob("*/pasted-image.png"))
+
+    app.foreign_clipboard_image("not-png")
+    app.key("ctrl+shift+v")
+    step(app, "not a png", 0.6)
+    app.expect(not stored(), f"what is not a PNG is not stored ({stored()})")
+
+    app.foreign_clipboard_image("png")
+    app.key("ctrl+shift+v")
+    if not app.wait_until(lambda: bool(stored()), 5.0, "the pasted image's file"):
+        return
+    path = stored()[0]
+    app.expect(path.read_bytes() == xc.image_bytes("png"), f"the file holds the clipboard's bytes ({path})")
+    app.expect(path.stat().st_mode & 0o077 == 0 and path.parent.stat().st_mode & 0o077 == 0,
+               f"the file and its directory are the user's alone ({oct(path.stat().st_mode)})")
+    app.wait_until(lambda: str(path) in app.query("terminal-output").get("text", "").replace("\n", ""), 5.0,
+                   "the image's path typed at the prompt")
+    app.key("ctrl+c")
+
+
+def flow_git_worktree_switch(app: q.App) -> None:
+    """Git: Switch Worktree… lists the repository's working trees -- this
+    project marked, a second tree on its branch -- and choosing the second opens
+    it as a project."""
+    assert app.project is not None
+    other = app.project.parent / "other-tree"
+    added = git_run(app, "worktree", "add", "-q", "-B", "qa-tree", str(other))
+    if not app.expect(added.returncode == 0, f"git worktree add ({added.stderr.strip()})"):
+        return
+    app.send("git-worktrees")
+    app.wait_until(lambda: any(r.get("label") == other.name for r in app.elements("overlay-row")), 5.0,
+                   "the worktree pick lists the second tree")
+    step(app, "worktree pick", 0.3)
+    labels = [r.get("label") for r in app.elements("overlay-row")]
+    app.expect(labels == [app.project.name, other.name], f"one row per working tree ({labels})")
+    row = next((r for r in app.elements("overlay-row") if r.get("label") == other.name), None)
+    if row is None:
+        return
+    app.click_named(row["name"])
+    app.wait_until(lambda: active_root(app) == str(other), 8.0, "the second tree opened as the project")
+    step(app, "second tree", 0.4)
+    app.expect(not app.ui()["overlay"]["visible"], "the pick closed")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "notification-banner-commands": flow_notification_banner_commands,
     "focus-commands": flow_focus_commands,
     "desktop-opener": flow_desktop_opener,
     "terminal-alert-unfocused": flow_terminal_alert_unfocused,
+    "terminal-paste-image": flow_terminal_paste_image,
+    "git-worktree-switch": flow_git_worktree_switch,
 }
 PLUGINS: dict[str, tuple[str, ...]] = {"notification-banner-commands": ("qa-broken",)}
 FAKEBIN = Path(__file__).resolve().parent / "fakebin"
