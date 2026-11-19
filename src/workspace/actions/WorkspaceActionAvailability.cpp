@@ -394,6 +394,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     // than the command silently vanishing from the palette in a non-git project.
     case ActionId::GitSwitchBranch:
     case ActionId::GitWorktrees:
+    case ActionId::GitCommits:
     case ActionId::GitCreateBranch:
     case ActionId::GitFetch:
     case ActionId::GitPull:

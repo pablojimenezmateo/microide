@@ -31,6 +31,7 @@
 #include "workspace/registries/WorkspaceCommandRegistry.h"
 #include "project/remote/ServerStatusText.h"
 #include "workspace/WorkspacePathUtils.h"
+#include "workspace/git/CommitPick.h"
 #include "workspace/git/WorktreePick.h"
 
 namespace microide::workspace {
@@ -670,7 +671,7 @@ bool WorkspaceActionContext::OpenWorktreePick() {
   auto worktrees = std::make_shared<std::vector<project::GitWorktree>>();
   operations_.run_off_shell_thread(
       [root = state_.root, launcher = &state_.launcher(), worktrees]() {
-        *worktrees = project::ListGitWorktrees(root, *launcher);
+        *worktrees = project::ListGitWorktreesWithState(root, *launcher);
       },
       [this, opened = services_.quick_pick.open_count(), worktrees, open_command = std::move(open_command),
        target_prefix = std::move(target_prefix), current_root = std::move(current_root)]() {
@@ -684,6 +685,33 @@ bool WorkspaceActionContext::OpenWorktreePick() {
         (void)services_.quick_pick.DeliverItems(  // false: the pick was dismissed meanwhile
             QuickPickKind::RunCommand,
             BuildWorktreePickItems(*worktrees, current_root, open_command, target_prefix));
+      });
+  return true;
+}
+
+bool WorkspaceActionContext::OpenCommitPick() {
+  if (state_.root.empty() || !operations_.run_off_shell_thread) {
+    return false;
+  }
+  QuickPickState pick = QuickPickService::CommandChoices("Review Commit", "commits", {});
+  pick.loading = true;
+  services_.quick_pick.Open(std::move(pick));
+  auto commits = std::make_shared<std::vector<project::GitCommitEntry>>();
+  operations_.run_off_shell_thread(
+      [root = state_.root, launcher = &state_.launcher(), commits]() {
+        // What a pick can show and a person scan; an older commit is named.
+        *commits = project::CollectGitRecentCommits(root, *launcher, 100);
+      },
+      [this, opened = services_.quick_pick.open_count(), commits]() {
+        if (services_.quick_pick.open_count() != opened) {
+          return;  // another pick opened since: these rows are not its
+        }
+        if (commits->empty()) {
+          services_.quick_pick.Fail(QuickPickKind::RunCommand, "No commits: not a git repository, or no commit yet");
+          return;
+        }
+        (void)services_.quick_pick.DeliverItems(  // false: the pick was dismissed meanwhile
+            QuickPickKind::RunCommand, BuildCommitPickItems(*commits));
       });
   return true;
 }

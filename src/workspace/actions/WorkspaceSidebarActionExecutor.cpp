@@ -90,6 +90,11 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSidebar(ActionId id,
         return reject("No active project");
       }
       return DispatchResult::Handled;
+    case ActionId::GitCommits:
+      if (!context_.OpenCommitPick()) {
+        return reject("No active project");
+      }
+      return DispatchResult::Handled;
     case ActionId::GitSwitchBranch:
     case ActionId::GitCreateBranch:
     case ActionId::GitFetch:

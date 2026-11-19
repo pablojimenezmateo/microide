@@ -389,6 +389,9 @@ void TestWorktreePickListsTheTreesAndOpensTheChosenOne() {
   CommitAll(repo_path, "base", "base commit");
   RequireGitCommandSuccess(repo_path, {"worktree", "add", "-b", "agent", agent_path.string()},
                            "add a linked working tree");
+  // What an agent left in its tree: an edit and a new file.
+  WriteFile(agent_path / "a.txt", "a2\n");
+  WriteFile(agent_path / "new.txt", "n\n");
 
   WorkspaceShell shell;
   TestAccess::SetProjectRoot(shell, repo_path);
@@ -405,6 +408,10 @@ void TestWorktreePickListsTheTreesAndOpensTheChosenOne() {
   Expect(TestAccess::QuickPick(shell).matches[0].secondary_label.ends_with("this project") &&
              TestAccess::QuickPick(shell).matches[1].secondary_label.starts_with("agent"),
          "each says its branch, and the open one that it is open");
+  Expect(TestAccess::QuickPick(shell).matches[1].secondary_label.find("2 changed") != std::string::npos &&
+             TestAccess::QuickPick(shell).matches[0].secondary_label.find("changed") == std::string::npos,
+         "and the tree an agent left work in says how much: " +
+             TestAccess::QuickPick(shell).matches[1].secondary_label);
 
   TestAccess::SelectAndConfirmLaunchConfig(shell, 1);  // Enter on the second row
   Expect(TestAccess::ProjectRoot(shell) == agent_path.lexically_normal(),
@@ -539,7 +546,42 @@ void TestReviewNotesAreHandedOverAsReferences() {
          "with no terminal there is nowhere to type them");
 }
 
+// Git: Review Commit…: the branch's recent commits, newest first, and Enter on
+// one opens that commit's review -- what an agent committed overnight is read
+// without typing a hash.
+void TestCommitPickListsRecentCommitsAndReviewsTheChosenOne() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  WriteFile(repo_path / "a.txt", "a1\n");
+  WriteFile(repo_path / "b.txt", "b1\n");
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "base", "base commit");
+  WriteFile(repo_path / "a.txt", "a2\n");
+  CommitAll(repo_path, "the agent's first commit", "second commit");
+  WriteFile(repo_path / "b.txt", "b2\n");
+  CommitAll(repo_path, "the agent's second commit", "third commit");
+
+  WorkspaceShell shell;
+  TestAccess::SetProjectRoot(shell, repo_path);
+  Expect(TestAccess::ExecuteCommandLine(shell, "git-commits"), "git-commits is accepted");
+  Expect(TestAccess::QuickPick(shell).loading, "the pick opens before git has answered");
+  TestAccess::FlushPendingFileReads(shell);
+  const std::vector<std::string> labels = TestAccess::QuickPickMatchLabels(shell);
+  Expect(labels.size() == 3 && labels[0] == "the agent's second commit" && labels[2] == "base",
+         "the commits are listed newest first: " + std::to_string(labels.size()));
+  if (labels.size() != 3) {
+    return;
+  }
+  TestAccess::SelectAndConfirmLaunchConfig(shell, 1);  // Enter on the middle commit
+  TestAccess::FlushPendingFileReads(shell);
+  Expect(HasCompareTabFor(shell, repo_path / "a.txt") && !HasCompareTabFor(shell, repo_path / "b.txt") &&
+             CountTabsOfKind(shell, TabEntry::Kind::Compare) == 1,
+         "choosing one reviews exactly what that commit changed");
+}
+
 void RegisterReviewSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ReviewSession/CommitPickListsRecentCommitsAndReviewsTheChosenOne",
+          TestCommitPickListsRecentCommitsAndReviewsTheChosenOne);
   AddTest(tests, "ReviewSession/NotesAreHandedOverAsReferences", TestReviewNotesAreHandedOverAsReferences);
   AddTest(tests, "ReviewSession/CheckpointShowsWhatChangedSinceItWasMarked",
           TestReviewCheckpointShowsWhatChangedSinceItWasMarked);

@@ -610,6 +610,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/git/ReviewSessionCoordinator.cpp
   src/workspace/git/ReviewTabPlan.cpp
   src/workspace/git/WorktreePick.cpp
+  src/workspace/git/CommitPick.cpp
   src/workspace/services/StatusBarModelService.cpp
   src/workspace/services/TabStripService.cpp
   src/workspace/render/TabStripAnimation.cpp

@@ -10,6 +10,15 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Added
 
+- **Git: Review Commit…** (`git-commits`). A pick of the branch's last hundred
+  commits -- subject, short hash, age, author -- and Enter opens the review of
+  the chosen one (`review-commit <hash>`): what an agent committed while you
+  were away is read without copying a hash out of a terminal.
+- **Switch Worktree says what waits in each tree.** A row of Git ▸ Switch
+  Worktree… now shows how many files the tree has changed and how many commits
+  its branch is ahead of and behind its upstream (`3 changed · 2↑ · 1↓`), asked
+  of git when the pick opens -- on the host, for a remote project -- so the
+  tree an agent left work in is the one you open.
 - **Copy Review Notes and Terminal: Insert Review Notes** (`copy-review-notes`,
   `term-insert-review-notes`). The notes taken while reviewing
   (`branch-review-note`, on a branch review or a review since a checkpoint) --

@@ -22,7 +22,8 @@ scenarios — not comparisons to other editors.
 | Switch / create branches | Filterable branch picker, sidebar branch row, `git-switch-branch` / `git-create-branch` |
 | Fetch, pull, push, publish, sync | Git menu, sidebar Sync button (with ahead/behind counts), `git-fetch` / `git-pull` / `git-push` / `git-publish-branch` / `git-sync` |
 | Review what changed since a marked point | `review-checkpoint-mark` snapshots the working tree (untracked files included, index untouched) under `refs/worktree/microide/review-checkpoint`; `review-checkpoint` opens a compare tab per file that differs from it now, across whatever was committed in between |
-| Move between working trees | `git-worktrees` (Git ▸ Switch Worktree…): a pick of `git worktree list`, opening the chosen tree as a project (on the host for a remote project) |
+| Move between working trees | `git-worktrees` (Git ▸ Switch Worktree…): a pick of `git worktree list`, each tree with its changed-file count and its distance from its upstream (one `git status` a tree, asked when the pick opens), opening the chosen tree as a project (on the host for a remote project) |
+| Review a recent commit | `git-commits` (Git ▸ Review Commit…): a pick of the branch's last hundred commits; a row runs `review-commit <hash>` |
 | Stash and restore work in progress | `git-stash [message]` (includes untracked) / `git-stash-pop` |
 
 Write operations run off the shell thread, one at a time, and report a classified

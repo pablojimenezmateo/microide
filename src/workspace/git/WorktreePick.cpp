@@ -34,6 +34,19 @@ std::vector<QuickPickItem> BuildWorktreePickItems(std::span<const project::GitWo
     }
     item.secondary_label =
         !worktree.branch.empty() ? worktree.branch : "detached " + worktree.head.substr(0, 7);
+    if (worktree.state.has_value()) {
+      // What is waiting in it, before where it is: the reason to open one tree
+      // rather than another.
+      if (worktree.state->changed > 0) {
+        AppendHintSegment(item.secondary_label, std::to_string(worktree.state->changed) + " changed");
+      }
+      if (worktree.state->ahead > 0) {
+        AppendHintSegment(item.secondary_label, std::to_string(worktree.state->ahead) + "\xe2\x86\x91");
+      }
+      if (worktree.state->behind > 0) {
+        AppendHintSegment(item.secondary_label, std::to_string(worktree.state->behind) + "\xe2\x86\x93");
+      }
+    }
     AppendHintSegment(item.secondary_label, path.parent_path().string());
     if (worktree.locked) {
       AppendHintSegment(item.secondary_label, "locked");

@@ -684,6 +684,9 @@ class WorkspaceActionContext {
   // opening that tree as a project (on the host, for a remote project). The pick
   // opens loading; git answers off the shell thread. False with no project.
   bool OpenWorktreePick();
+  // Git: Review Commit…: the branch's recent commits, asked of git off the shell
+  // thread; a row runs `review-commit <hash>`. False with no project.
+  bool OpenCommitPick();
   // Browse Folder…: `folder`'s entries as a pick -- its subfolders browse on,
   // its files open (the active file's folder when empty). Empty on success,
   // else why not.

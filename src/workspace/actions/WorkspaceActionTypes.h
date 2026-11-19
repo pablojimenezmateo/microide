@@ -162,6 +162,9 @@ enum class ActionId {
   GitSwitchBranch,
   // A pick of the repository's working trees; choosing one opens it as a project.
   GitWorktrees,
+  // `git-commits`: a pick of the branch's recent commits, each opening its
+  // review (`review-commit <hash>`).
+  GitCommits,
   GitCreateBranch,
   GitFetch,
   GitPull,

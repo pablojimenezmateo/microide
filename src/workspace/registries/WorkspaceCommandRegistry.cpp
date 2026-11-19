@@ -161,6 +161,7 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::GitSwitchBranch, "git-switch-branch", "git-switch-branch [branch]",
                  "Git: Switch Branch…", ""},
       ActionSpec{ActionId::GitWorktrees, "git-worktrees", "git-worktrees", "Git: Switch Worktree…", ""},
+      ActionSpec{ActionId::GitCommits, "git-commits", "git-commits", "Git: Review Commit…", ""},
       ActionSpec{ActionId::GitCreateBranch, "git-create-branch",
                  "git-create-branch <name> [start-point]", "Git: Create Branch…", ""},
       ActionSpec{ActionId::GitFetch, "git-fetch", "git-fetch", "Git: Fetch", ""},

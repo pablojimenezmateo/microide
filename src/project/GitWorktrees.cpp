@@ -3,6 +3,7 @@
 #include <utility>
 
 #include "project/GitRepository.h"
+#include "util/Parse.h"
 
 namespace microide::project {
 namespace {
@@ -67,6 +68,75 @@ std::vector<GitWorktree> ListGitWorktrees(const std::filesystem::path& repositor
     return {};
   }
   return ParseGitWorktreeList(result.output);
+}
+
+GitWorktreeState ParseGitWorktreeState(std::string_view porcelain_v2_z) {
+  GitWorktreeState state;
+  while (!porcelain_v2_z.empty()) {
+    const std::size_t end = porcelain_v2_z.find('\0');
+    const std::string_view record = porcelain_v2_z.substr(0, end);
+    porcelain_v2_z.remove_prefix(end == std::string_view::npos ? porcelain_v2_z.size() : end + 1);
+    constexpr std::string_view kAheadBehind = "# branch.ab ";
+    if (record.starts_with(kAheadBehind)) {
+      // "+<ahead> -<behind>": present only when the branch has an upstream.
+      const std::string_view counts = record.substr(kAheadBehind.size());
+      const std::size_t space = counts.find(' ');
+      const auto count = [](std::string_view text, char sign) {
+        return !text.empty() && text.front() == sign ? util::ParseInt(text.substr(1)) : std::nullopt;
+      };
+      const std::optional<int> ahead = count(counts.substr(0, space), '+');
+      const std::optional<int> behind =
+          space == std::string_view::npos ? std::nullopt : count(counts.substr(space + 1), '-');
+      if (ahead.has_value() && behind.has_value()) {
+        state.has_upstream = true;
+        state.ahead = *ahead;
+        state.behind = *behind;
+      }
+      continue;
+    }
+    if (record.size() < 2 || record[1] != ' ') {
+      continue;
+    }
+    switch (record.front()) {
+      case '2': {
+        // A rename or copy carries its original path as a record of its own.
+        const std::size_t original_end = porcelain_v2_z.find('\0');
+        porcelain_v2_z.remove_prefix(original_end == std::string_view::npos ? porcelain_v2_z.size()
+                                                                            : original_end + 1);
+        [[fallthrough]];
+      }
+      case '1':
+      case 'u':
+      case '?':
+        ++state.changed;
+        break;
+      default:
+        break;  // a header, or an ignored path
+    }
+  }
+  return state;
+}
+
+std::vector<GitWorktree> ListGitWorktreesWithState(const std::filesystem::path& repository_root,
+                                                   const platform::ProcessLauncher& launcher) {
+  std::vector<GitWorktree> worktrees = ListGitWorktrees(repository_root, launcher);
+  const GitRepository repo(repository_root, launcher);
+  std::size_t asked = 0;
+  for (GitWorktree& worktree : worktrees) {
+    if (worktree.bare || worktree.prunable || worktree.path.empty()) {
+      continue;
+    }
+    if (asked++ == kMaxWorktreeStates) {
+      break;
+    }
+    // By its own path, which is git's machine's: the same for a host's tree.
+    const auto status = repo.Execute(
+        std::vector<std::string>{"-C", worktree.path, "status", "--porcelain=v2", "--branch", "-z"});
+    if (status.success()) {
+      worktree.state = ParseGitWorktreeState(status.output);
+    }
+  }
+  return worktrees;
 }
 
 }  // namespace microide::project
