@@ -129,7 +129,13 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       if (Contains(buttons[i], event.button.x, event.button.y)) {
         context_.prompts.dirty.selected_action = static_cast<int>(i);
         ConfirmDirtyPrompt();
-        EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
+        // As the key path: a confirm that leaves the prompt up damaged the saved
+        // tab's pane, not the prompt it re-selected (soak e93ce81f04ac).
+        if (context_.prompts.dirty_visible) {
+          RequestPromptRedraw();
+        } else {
+          EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
+        }
         return true;
       }
     }

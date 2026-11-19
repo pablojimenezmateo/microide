@@ -71,7 +71,14 @@ bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
 
   if (prompts_.dirty_visible) {
     const bool handled = HandleDirtyPromptKeyDown(event, modifiers);
-    if (handled) {
+    if (handled && prompts_.dirty_visible) {
+      // A key the prompt took changed it (its selection) or confirmed it; a confirm
+      // that leaves it up -- a save that defers the close -- queued damage of its
+      // own, the saved tab's pane, which is not where the prompt is drawn (soak
+      // e93ce81f04ac: Discard kept its selected fill beside that pane). So the
+      // prompt is repainted whatever else the key damaged.
+      operations_.request_prompt_redraw();
+    } else if (handled) {
       EnsureRedraw([this]() { operations_.request_prompt_redraw(); });
     }
     return handled;
