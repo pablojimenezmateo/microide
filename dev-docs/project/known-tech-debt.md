@@ -16,6 +16,38 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 
 ## Open items
 
+### TD-2026-11-19-453 — three findings read to the bottom of their evidence and no further. [OPEN]
+
+Left by the 2026-11-19 bug-hunting pass (commits bbb153be3..fce5319d2). Each has
+a ledger note with the detail; none has a fix, and each names what it needs.
+
+1. **What splits one file into two buffers is not known** (soak 8d52e6176b32).
+   Before a kill -9 the project held README.md as two documents, dirty at 707
+   bytes in one pane and clean at 705 in another; the kill oracle keys a
+   document by (project, path) and compared one with the other, which is all
+   its "came back with different content" was. The record predates the run's
+   state stamps and a replay on today's build does not split the file. The
+   `invariants` query now has the rule (`buffers`: every loaded editor tab and
+   editable compare side on one path shows one document), asked every few
+   steps, so the next occurrence is a finding next to the action. Six monkey
+   walks of 1500 steps with the rule: no hit, no false positive.
+2. **The mirror engine logs no decision per path**, so a `remote:` finding
+   cannot be explained after the fact (soak 37ec61829b08: the host's
+   unreadable.txt was renamed away by the run, a blocked save of the mirror's
+   copy was parked on it, the link was reconnecting, and the oracle then read
+   settled, nothing blocked, the file only in the mirror). Wants one trace line
+   per `ReconcileDeleteLocked` / `PushNow` outcome (path, flags before and
+   after, the host's answer), behind the same switch as
+   `MICROIDE_TRACE_BUFFER_IO`, in the app log the soak already keeps.
+3. **`RemoteServer/PortsSubscribePushesANewListener` failed once in CI's ubsan
+   job** (run 44556917266, d3034cc03: "the spawned process's port is pushed
+   with an owner") and never locally. 381bd7bad fixes one way there -- the
+   sampler compared port numbers, so a number taken over inside a sample period
+   was never attributed -- without showing it is the way CI took; 76b802be0
+   makes the failure print the last push. (381bd7bad's message names 63acfda9c
+   for that run. It was d3034cc03.) Read the message of the next failure before
+   anything else.
+
 ### TD-2026-11-16-452 — what the soak still cannot say about a finding, or reach. [OPEN]
 
 Left by the 2026-11-16 assessment of the soak (`tools/soak`) and the deep review
