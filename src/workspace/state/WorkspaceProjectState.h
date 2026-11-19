@@ -1045,6 +1045,35 @@ inline void RepointCompareRightSideToReloadedBuffer(CompareTabState& compare_tab
   compare_tab.derived_fingerprint_valid = false;
 }
 
+// After a session restore: every editable compare side joins the buffer its file
+// has in another tab. The restore rebuilds each tab on its own -- an editor tab
+// from its unsaved snapshot, a compare from the file on disk -- and before the
+// groups exist there is nothing for AdoptLiveBufferForCompareRightSide to find,
+// so a file open dirty in an editor tab and in a diff came back as two buffers
+// (soak 72acd73823bd). An editor tab's buffer first: it is the one a snapshot
+// restored. A tab still to load (deferred, or a compare's off-thread read) joins
+// when it lands, as it always has.
+inline void RejoinRestoredCompareSides(std::vector<EditorGroup>& groups) {
+  for (EditorGroup& group : groups) {
+    for (TabEntry& tab : group.open_tabs) {
+      if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
+          !tab.compare->right_editable || tab.compare->load_pending) {
+        continue;
+      }
+      const editor::TextViewport& right = tab.compare->right_viewport;
+      const std::filesystem::path path = right.path().lexically_normal();
+      const editor::TextViewport* live = OpenEditorViewOfPath(std::as_const(groups), path);
+      if (live == nullptr) {
+        live = LiveBufferViewOfPath(groups, path, &right);
+      }
+      if (live == nullptr || live == &right || live->SharesDocumentWith(right)) {
+        continue;
+      }
+      RepointCompareRightSideToReloadedBuffer(*tab.compare, *live);
+    }
+  }
+}
+
 // A tab addressed by (group, tab) across ALL editor groups of one project. Used
 // by the all-groups dirty enumerators and the group-aware save primitive so
 // autosave / save-on-quit flush a buffer dirtied in the non-focused split group

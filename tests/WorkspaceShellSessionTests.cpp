@@ -2178,6 +2178,100 @@ void TestWorkspaceShellRestoreSessionRejoinsTheSplitPanesOfAnUntitledBuffer() {
          "both panes come back on ONE buffer, as they were before the kill");
 }
 
+// Soak 72acd73823bd (and what 8d52e6176b32 was): a file open dirty in an editor
+// tab and in a working-tree diff is ONE buffer. A relaunch rebuilt each on its
+// own -- the editor tab from its unsaved snapshot, the diff's editable side from
+// the file on disk -- so the diff showed the file without the unsaved edit, an
+// edit in either no longer reached the other, and each saved over the other.
+void TestWorkspaceShellRestoreSessionRejoinsADiffWithItsEditorTabsBuffer() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(temp_dir.path() / "home");
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", (temp_dir.path() / "home").string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+  InitializeGitRepo(root);
+  CommitAll(root, "Add the fixture", "fixture");
+  WriteFile(source, "int beta() {\n  return 2;\n}\n");
+  {
+    WorkspaceShell shell;
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+    WorkspaceShellTestAccess::OpenFile(shell, source);
+    WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
+    Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "// unsaved\n"), "an unsaved edit in the editor tab");
+    Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+           "the working-tree diff opens beside it");
+    Expect(WorkspaceShellTestAccess::ActiveCompare(shell).right_viewport.SharesDocumentWith(
+               WorkspaceShellTestAccess::FocusedGroupTabEditor(shell, 0)),
+           "before the relaunch the diff's editable side is the editor tab's buffer");
+    WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell);
+  }
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  WorkspaceShellTestAccess::SetWindowSize(restored, 1280, 720);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored), "restore succeeds");
+  WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(restored);
+  Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(restored) == 2 &&
+             WorkspaceShellTestAccess::ActiveTabIsCompare(restored),
+         "both tabs come back, the diff in front");
+  const editor::TextViewport& editor = WorkspaceShellTestAccess::FocusedGroupTabEditor(restored, 0);
+  const auto& compare = WorkspaceShellTestAccess::ActiveCompare(restored);
+  Expect(editor.dirty() && editor.lines().LineView(0) == "// unsaved",
+         "the editor tab comes back with its unsaved edit");
+  Expect(compare.right_editable, "the diff's working-tree side is editable again");
+  Expect(compare.right_viewport.SharesDocumentWith(editor),
+         "and is the editor tab's buffer again, not a second one read from disk");
+  Expect(compare.right_viewport.lines().LineView(0) == "// unsaved",
+         "so the diff shows the unsaved edit, got " + std::string(compare.right_viewport.lines().LineView(0)));
+  const util::JsonValue held = WorkspaceShellTestAccess::ControlQuery(restored, "invariants");
+  Expect(held["ok"].AsBool(), "and the workspace's own rules hold: " + util::SerializeJson(held));
+
+  // Two diffs of the one file, in two panes and with no editor tab on it, are
+  // one buffer too (the same finding's second sighting).
+  const std::filesystem::path other = root / "notes.txt";
+  WriteFile(other, "notes\n");
+  {
+    WorkspaceShell shell;
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+    WorkspaceShellTestAccess::OpenFile(shell, other);
+    Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+               shell, microide::workspace::EditorSplitOrientation::Vertical),
+           "a second pane");
+    Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+           "the diff opens in the second pane");
+    const editor::TextViewport* second = &WorkspaceShellTestAccess::ActiveCompare(shell).right_viewport;
+    WorkspaceShellTestAccess::FocusEditorGroup(shell, 0);
+    Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+           "and again in the first");
+    WorkspaceShellTestAccess::FocusEditorGroup(shell, 1);
+    second = &WorkspaceShellTestAccess::ActiveCompare(shell).right_viewport;
+    WorkspaceShellTestAccess::FocusEditorGroup(shell, 0);
+    Expect(WorkspaceShellTestAccess::ActiveCompare(shell).right_viewport.SharesDocumentWith(*second),
+           "before the relaunch the two diffs edit one buffer");
+    WorkspaceShellTestAccess::SaveSessionState(shell);
+  }
+  WorkspaceShell again;
+  WorkspaceShellTestAccess::SetProjectRoot(again, root);
+  WorkspaceShellTestAccess::SetWindowSize(again, 1280, 720);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(again), "the second restore succeeds");
+  WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(again);
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(again) == 2, "both panes come back");
+  WorkspaceShellTestAccess::FocusEditorGroup(again, 1);
+  Expect(WorkspaceShellTestAccess::ActiveTabIsCompare(again), "the second pane's diff is in front");
+  const editor::TextViewport* second = &WorkspaceShellTestAccess::ActiveCompare(again).right_viewport;
+  WorkspaceShellTestAccess::FocusEditorGroup(again, 0);
+  Expect(WorkspaceShellTestAccess::ActiveTabIsCompare(again), "and the first pane's");
+  Expect(WorkspaceShellTestAccess::ActiveCompare(again).right_viewport.SharesDocumentWith(*second),
+         "the two diffs come back on one buffer");
+}
+
 void TestWorkspaceShellQuitShutdownPersistsDirtyEditorBuffers() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3981,6 +4075,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoreSessionKeepsAnUntitledBuffersNumber);
   AddTest(tests, "WorkspaceShell/RestoreSessionRejoinsTheSplitPanesOfAnUntitledBuffer",
           TestWorkspaceShellRestoreSessionRejoinsTheSplitPanesOfAnUntitledBuffer);
+  AddTest(tests, "WorkspaceShell/RestoreSessionRejoinsADiffWithItsEditorTabsBuffer",
+          TestWorkspaceShellRestoreSessionRejoinsADiffWithItsEditorTabsBuffer);
   AddTest(tests, "WorkspaceShell/ACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown",
           TestWorkspaceShellACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown);
   AddTest(tests, "WorkspaceShell/CrashSafetyFlushTimerArmsOnEdit",

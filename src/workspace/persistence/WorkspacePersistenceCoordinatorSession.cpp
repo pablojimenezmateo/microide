@@ -547,6 +547,8 @@ bool PersistenceCoordinator::RestoreSessionState() {
     }
     // Restored untitled buffers (hot exit) take their numbers in tab order.
     NumberUntitledTabs(state.editor_groups);
+    // One file, one buffer: a diff's editable side and the editor tab on its file.
+    RejoinRestoredCompareSides(state.editor_groups);
     // The tree's leaves ARE the groups, so a record that does not describe exactly
     // the groups that survived the restore (missing, corrupt, or written before a
     // group was dropped for an unreadable path) is replaced by an even row rather

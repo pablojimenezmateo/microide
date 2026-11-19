@@ -16,21 +16,27 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 
 ## Open items
 
-### TD-2026-11-19-453 — three findings read to the bottom of their evidence and no further. [OPEN]
+### TD-2026-11-19-453 — a data loss found and two findings read to the bottom of their evidence. [OPEN]
 
-Left by the 2026-11-19 bug-hunting pass (commits bbb153be3..fce5319d2). Each has
-a ledger note with the detail; none has a fix, and each names what it needs.
+Left by the 2026-11-19 bug-hunting pass (commits bbb153be3 onwards). None has a
+fix, and each names what it needs; the first is the one that loses a user's work.
 
-1. **What splits one file into two buffers is not known** (soak 8d52e6176b32).
-   Before a kill -9 the project held README.md as two documents, dirty at 707
-   bytes in one pane and clean at 705 in another; the kill oracle keys a
-   document by (project, path) and compared one with the other, which is all
-   its "came back with different content" was. The record predates the run's
-   state stamps and a replay on today's build does not split the file. The
-   `invariants` query now has the rule (`buffers`: every loaded editor tab and
-   editable compare side on one path shows one document), asked every few
-   steps, so the next occurrence is a finding next to the action. Six monkey
-   walks of 1500 steps with the rule: no hit, no false positive.
+1. **Unsaved edits made only in a diff are lost by a crash.** The crash-safety
+   session stages the dirty buffer of every EDITOR tab; a compare tab's record
+   carries no buffer. Edits typed into a working-tree diff's editable side, with
+   no editor tab open on that file, are gone after a kill -9 and a relaunch: the
+   diff comes back clean, showing the file on disk (shown 2026-11-20 with a
+   probe: open the working-tree diff of a modified file, type a line into its
+   right side, flush the session, restore -- `dirty=0`, the typed line gone).
+   The kill oracle cannot see it: `documents` lists editor tabs only. Wants the
+   compare record to carry the dirty snapshot an editor record does (the struct
+   is shared; `persisted-state-format/spec.md` has to say so), the restore to
+   apply it through the same per-path map (`restored_dirty_views`), the
+   off-thread compare load to leave a restored dirty side alone, and
+   `documents` to list editable compare sides so the oracle holds them to it.
+   Found while fixing soak 72acd73823bd / 8d52e6176b32 (a file open dirty in
+   an editor tab AND a diff came back as two buffers: fixed, the `buffers`
+   invariant found it within two hours of landing).
 2. **The mirror engine logs no decision per path**, so a `remote:` finding
    cannot be explained after the fact (soak 37ec61829b08: the host's
    unreadable.txt was renamed away by the run, a blocked save of the mirror's
