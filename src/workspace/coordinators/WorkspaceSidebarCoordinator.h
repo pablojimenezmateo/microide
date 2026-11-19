@@ -59,9 +59,11 @@ class SidebarCoordinator {
                        const std::string&,
                        const std::string&)>
         open_branch_head_comparison;
+    // The last argument is the prompt's message, fixed when it opens.
     std::function<void(PromptSurfaceState::Action,
                        PromptSurfaceState::Kind,
                        const std::filesystem::path&,
+                       std::string,
                        std::string)>
         open_prompt_surface;
     std::function<bool(const std::filesystem::path&, std::string*)> has_dirty_editor_tabs_for_path;

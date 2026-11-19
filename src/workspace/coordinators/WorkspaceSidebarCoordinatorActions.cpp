@@ -16,6 +16,7 @@
 #include "util/PathMatch.h"
 #include "workspace/SelectionMovement.h"
 #include "workspace/actions/WorkspaceActionTypes.h"
+#include "workspace/git/GitSidebarCommandCenter.h"
 
 namespace microide::workspace {
 
@@ -529,7 +530,7 @@ void SidebarCoordinator::OpenDiscardAllGitPrompt() {
     return;
   }
   operations_.open_prompt_surface(PromptSurfaceState::Action::DiscardGitChanges,
-                                  PromptSurfaceState::Kind::Confirm, project_root_, {});
+                                  PromptSurfaceState::Kind::Confirm, project_root_, {}, {});
 }
 
 void SidebarCoordinator::OpenDiscardGitEntryPrompt(const std::size_t entry_index) {
@@ -537,9 +538,13 @@ void SidebarCoordinator::OpenDiscardGitEntryPrompt(const std::size_t entry_index
   if (entry == nullptr) {
     return;
   }
+  // The question is composed now: a git refresh before the confirm can put another
+  // file at `entry_index`, and the prompt must keep naming the one the confirm checks
+  // for (soak 5ec45751b332).
   operations_.open_prompt_surface(PromptSurfaceState::Action::DiscardGitEntry,
                                   PromptSurfaceState::Kind::Confirm, entry->path,
-                                  std::to_string(entry_index));
+                                  std::to_string(entry_index),
+                                  BuildGitDiscardPreviewSummary(*entry, {}));
 }
 
 bool SidebarCoordinator::DiscardAllGitEntries() {

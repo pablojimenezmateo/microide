@@ -707,6 +707,45 @@ void TestWorkspaceShellGitSidebarDiscardRequiresConfirmation() {
          "confirmed discard should restore the committed file contents");
 }
 
+// The discard prompt names the file it was opened for, whatever the sidebar does
+// under it. It kept only the row's index and composed its message from the live
+// entry at that index, so a git refresh that slid another file into the slot
+// renamed the question while the confirm (which re-checks the path) still acted on
+// the first file -- and only the frames that repainted the dialog showed the new
+// name (soak 5ec45751b332: QA-STALE over the prompt's message line).
+void TestWorkspaceShellGitSidebarDiscardPromptKeepsTheFileItWasOpenedFor() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  WriteFile(root / "tracked.cpp", "int main() { return 0; }\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  WriteFile(root / "b.txt", "b\n");
+  WriteFile(root / "c.txt", "c\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 2), "two untracked rows");
+  const auto& entries = WorkspaceShellTestAccess::GitSidebarEntries(shell);
+  Expect(entries.size() == 2 && entries[1].relative_path == "c.txt", "c.txt is the second row");
+
+  WorkspaceShellTestAccess::RevealGitSidebarEntry(shell, 1);
+  WorkspaceShellTestAccess::SetFocusSidebar(shell);
+  Expect(ChooseFromGitRowMenu(shell, "Discard…"), "Shift+F10, Discard… runs on c.txt's row");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceMessage(shell).find("c.txt") != std::string::npos,
+         "the prompt asks about c.txt");
+
+  // a.txt sorts first: after the refresh b.txt holds the prompt's old index.
+  WriteFile(root / "a.txt", "a\n");
+  WorkspaceShellTestAccess::RefreshGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 3), "the refresh lists a.txt");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell), "the prompt is still up");
+  const std::string message = WorkspaceShellTestAccess::PromptSurfaceMessage(shell);
+  Expect(message.find("c.txt") != std::string::npos && message.find("b.txt") == std::string::npos,
+         "the prompt still asks about c.txt, not the row now at its index: " + message);
+}
+
 // Regression (data loss): discarding an UNTRACKED file from the git sidebar must honor
 // the confirm prompt's promise ("Existing file-operation policy applies (trash when
 // configured)") and route through the same trash the file tree's Delete uses — NOT
@@ -1860,6 +1899,8 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitSidebarHidesEmptySections);
   AddTest(tests, "WorkspaceShell/GitSidebarDiscardRequiresConfirmation",
           TestWorkspaceShellGitSidebarDiscardRequiresConfirmation);
+  AddTest(tests, "WorkspaceShell/GitSidebarDiscardPromptKeepsTheFileItWasOpenedFor",
+          TestWorkspaceShellGitSidebarDiscardPromptKeepsTheFileItWasOpenedFor);
   AddTest(tests, "WorkspaceShell/GitSidebarDiscardUntrackedFileTrashesNotDeletes",
           TestWorkspaceShellGitSidebarDiscardUntrackedFileTrashesNotDeletes);
   AddTest(tests, "WorkspaceShell/GitSidebarDiscardStagedNewFileTrashesNotDeletes",

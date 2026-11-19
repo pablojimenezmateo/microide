@@ -353,8 +353,10 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
               [this](PromptSurfaceState::Action action,
                      PromptSurfaceState::Kind kind,
                      const std::filesystem::path& path,
-                     std::string input) {
+                     std::string input,
+                     std::string detail) {
                 OpenPromptSurface(action, kind, path, std::move(input));
+                context_.prompts.surface.detail = std::move(detail);
               },
           .has_dirty_editor_tabs_for_path =
               [this](const std::filesystem::path& path, std::string* blocking_label) {

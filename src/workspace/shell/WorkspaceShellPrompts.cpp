@@ -6,10 +6,8 @@
 #include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
 
 #include "editor/BreakpointStore.h"
-#include "util/Parse.h"
 #include "workspace/services/EditorTabService.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
-#include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/WorkspaceUiText.h"
 #include "workspace/services/PromptSurfaceService.h"
 #include "workspace/coordinators/WorkspaceDirtyPromptCoordinator.h"
@@ -294,15 +292,11 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
       return "Move " + label + " to trash?";
     case PromptSurfaceState::Action::DiscardGitChanges:
       return "Discard all tracked, untracked, and conflicted changes in " + ProjectLabel() + "?";
-    case PromptSurfaceState::Action::DiscardGitEntry: {
-      const auto entry_index = util::ParseSize(context_.prompts.surface.input.text());
-      if (!entry_index.has_value() ||
-          *entry_index >= context_.current_project_state.sidebar.git.entries.size()) {
-        return "Discard changes for the selected Git sidebar row?";
-      }
-      return BuildGitDiscardPreviewSummary(
-          context_.current_project_state.sidebar.git.entries[*entry_index], ProjectLabel());
-    }
+    case PromptSurfaceState::Action::DiscardGitEntry:
+      // Composed when the prompt opened, from the row it was opened for.
+      return context_.prompts.surface.detail.empty()
+                 ? "Discard changes for the selected Git sidebar row?"
+                 : context_.prompts.surface.detail;
     case PromptSurfaceState::Action::DiscardPatchPreview:
       return context_.prompts.surface.detail.empty()
                  ? "Discard the selected changes from the working tree?"
