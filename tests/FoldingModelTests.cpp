@@ -452,6 +452,53 @@ void TestRandomisedSplicesMatchReference() {
   }
 }
 
+// Lines deleted near the top of a file whose brackets are cached to its end.
+// The cache used to be cut back to the new line count BEFORE the deletion was
+// spliced out of it, which dropped the brackets of the document's last lines --
+// lines of later blocks, whose event totals the splice does not recompute -- and
+// the rescan of those lines then added them to the totals a second time. Every
+// block after one counted twice starts reading the flat event array too far in:
+// wrong folds below, and past the array's end an abort under the standard
+// library's bounds checks (soak fe3e0094d24a). Three blocks and a deletion longer
+// than the last one, so the cut reaches into the second block.
+void TestDeletingLinesAboveCachedBlocksKeepsTheirEventsInStep() {
+  std::vector<std::string> lines;
+  for (int function = 0; lines.size() < 2200; ++function) {
+    lines.push_back("void f" + std::to_string(function) + "() {");
+    lines.push_back("  if (x) {");
+    lines.push_back("    body(a[0], (b));");
+    lines.push_back("  }");
+    lines.push_back("}");
+  }
+  const auto options = DefaultCStyleOptions();
+  FoldingModel model;
+  Expect(model.Compute(lines, options), "the seed resolve covers the whole document");
+
+  const std::size_t start = 10;
+  const std::size_t removed = 200;
+  lines.erase(lines.begin() + static_cast<std::ptrdiff_t>(start),
+              lines.begin() + static_cast<std::ptrdiff_t>(start + removed));
+  LineEditSpan span;
+  span.NoteSplice(start, removed, /*inserted=*/0);
+  Expect(model.Refresh(lines, options, 0, 40, /*max_lines=*/0, span),
+         "the resolve after the deletion completes");
+  ExpectMatchesReference(model, lines, options, "at the top, after deleting 200 lines there");
+
+  // The last block is reached through the totals of the two before it.
+  const std::size_t top = lines.size() - 60;
+  Expect(model.Refresh(lines, options, top, lines.size() - 1, /*max_lines=*/0, LineEditSpan{}),
+         "the resolve at the end of the document completes");
+  ExpectMatchesReference(model, lines, options, "in the last block, after deleting 200 lines above it");
+
+  // And an edit there is spliced at the right place in the event array.
+  lines[top + 7] = "  while (y) { step(); }";
+  LineEditSpan edited;
+  edited.NoteSplice(top + 7, /*removed=*/1, /*inserted=*/1);
+  Expect(model.Refresh(lines, options, top, lines.size() - 1, /*max_lines=*/0, edited),
+         "the resolve after an edit in the last block completes");
+  ExpectMatchesReference(model, lines, options, "after an edit in the last block");
+}
+
 // A windowed resolve must produce, for the lines it covers, exactly what a
 // whole-document resolve produces -- including the ancestors of its first line,
 // which are what sticky scroll paints.
@@ -1070,6 +1117,8 @@ void RegisterFoldingModelTests(std::vector<TestCase>& tests) {
           TestIncrementalRefreshMatchesReference);
   AddTest(tests, "EditorFolding/Incremental/RandomisedSplicesMatchReference",
           TestRandomisedSplicesMatchReference);
+  AddTest(tests, "EditorFolding/Incremental/DeletingLinesAboveCachedBlocksKeepsTheirEventsInStep",
+          TestDeletingLinesAboveCachedBlocksKeepsTheirEventsInStep);
   AddTest(tests, "EditorFolding/Window/MatchesWholeDocumentInsideWindow",
           TestWindowedResolveMatchesWholeDocumentInsideItsWindow);
   AddTest(tests, "EditorFolding/Incremental/CollapsedFoldSurvivesInsertionAbove",

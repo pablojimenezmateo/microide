@@ -476,6 +476,10 @@ class FoldingModel {
   void SyncLineBracketCache(LineSpan lines, const BracketTable& table,
                             const std::vector<std::pair<char, char>>& pairs,
                             const LineEditSpan& edit_span, bool pairs_changed);
+  // The edit's own lines, rescanned and spliced into the cache (or the cache cut
+  // back to the edit's first line when its extent cannot be carried across).
+  void SpliceLineBracketCache(LineSpan lines, const BracketTable& table,
+                              const LineEditSpan& edit_span);
   bool ExtendBracketCache(LineSpan lines, const BracketTable& table, std::size_t needed_end,
                           WorkBudget& budget);
   std::uint32_t IndentAt(LineSpan lines, std::size_t line, std::size_t tab_size,

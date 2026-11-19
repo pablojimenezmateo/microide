@@ -354,8 +354,20 @@ void FoldingModel::SyncLineBracketCache(LineSpan lines, const BracketTable& tabl
     bracket_cache_valid_through_ = 0;
     return;
   }
+  SpliceLineBracketCache(lines, table, edit_span);
   if (bracket_cache_valid_through_ > line_count) {
-    // The document shrank past the cached prefix: keep only what it still covers.
+    // Still cached past the document's end: the line count moved with no extent
+    // that says where (or one that does not add up), and SyncBlocks repartitions
+    // for exactly those. Keep what the document still covers.
+    //
+    // AFTER the splice, never before it. A deletion the extent describes takes
+    // its own lines out of the cache, and the cache then ends where the document
+    // does. Cutting to the new line count first dropped the document's LAST
+    // lines instead -- lines of later blocks, whose event totals an incremental
+    // SyncBlocks keeps -- and rescanning them added their brackets to those
+    // totals a second time: every block after one counted twice read the event
+    // array too far in (wrong folds, and an index past its end: soak
+    // fe3e0094d24a).
     const std::size_t keep = line_count;
     std::size_t events = 0;
     for (std::size_t i = 0; i < keep; ++i) {
@@ -365,7 +377,11 @@ void FoldingModel::SyncLineBracketCache(LineSpan lines, const BracketTable& tabl
     line_brackets_.resize(events);
     bracket_cache_valid_through_ = keep;
   }
+}
 
+void FoldingModel::SpliceLineBracketCache(LineSpan lines, const BracketTable& table,
+                                          const LineEditSpan& edit_span) {
+  const std::size_t line_count = lines.size();
   const std::size_t begin = edit_span.begin();
   if (edit_span.empty() || begin >= bracket_cache_valid_through_) {
     return;
