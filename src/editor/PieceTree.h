@@ -3,6 +3,7 @@
 #include "editor/DocumentSnapshot.h"
 #include "editor/LineBlob.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -188,6 +189,9 @@ class PieceTree {
   // is the "how much dead history is retained" number the compaction tests read.
   std::size_t AddBufferSizeForTesting() const noexcept { return add_total_bytes_; }
   std::size_t AddChunkCountForTesting() const noexcept { return add_chunks_.size(); }
+  // The treap's height: every lookup is a descent, so an edit pattern that leaves it
+  // as deep as the piece count makes every read linear (PieceTreeTests).
+  std::size_t DepthForTesting() const { return DepthOf(root_); }
 
   // Testing seam: byte-level mid-line insertion (the shape TextViewport character
   // editing produces) so a single line's content can be forced to span multiple
@@ -327,6 +331,9 @@ class PieceTree {
   std::uint32_t NextPriority();
 
   std::uint32_t TreeLength(NodeId id) const { return id == kNull ? 0 : nodes_[id].subtree_length; }
+  std::size_t DepthOf(NodeId id) const {
+    return id == kNull ? 0 : 1 + std::max(DepthOf(nodes_[id].left), DepthOf(nodes_[id].right));
+  }
   std::uint32_t TreeNewlines(NodeId id) const {
     return id == kNull ? 0 : nodes_[id].subtree_newlines;
   }

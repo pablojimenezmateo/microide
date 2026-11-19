@@ -208,21 +208,25 @@ void PieceTree::Split(NodeId t, std::uint32_t pos, NodeId& left, NodeId& right) 
     return;
   }
   const std::uint32_t left_len = TreeLength(nodes_[t].left);
+  // A half split out of a subtree is MERGED back beside this node, not hung under it
+  // as its child: a piece cut in two below gives its tail a priority of its own (the
+  // branch below), which may outrank this node, and only Merge puts it where the heap
+  // order says it goes.
   if (pos <= left_len) {
     NodeId ll = kNull;
     NodeId lr = kNull;
     Split(nodes_[t].left, pos, ll, lr);
-    nodes_[t].left = lr;
+    nodes_[t].left = kNull;
     Update(t);
     left = ll;
-    right = t;
+    right = Merge(lr, t);
   } else if (pos >= left_len + nodes_[t].length) {
     NodeId rl = kNull;
     NodeId rr = kNull;
     Split(nodes_[t].right, pos - left_len - nodes_[t].length, rl, rr);
-    nodes_[t].right = rl;
+    nodes_[t].right = kNull;
     Update(t);
-    left = t;
+    left = Merge(t, rl);
     right = rr;
   } else {
     // Split this node's piece at byte `within`.
@@ -231,19 +235,21 @@ void PieceTree::Split(NodeId t, std::uint32_t pos, NodeId& left, NodeId& right) 
     const BufferId buffer = nodes_[t].buffer;
     const std::uint32_t piece_start = nodes_[t].start;
     const std::uint32_t piece_len = nodes_[t].length;
-    const std::uint32_t priority = nodes_[t].priority;
+    // The tail is a new node with a priority of its own (Allocate draws one), merged
+    // with the former right subtree. It used to copy this node's priority, so every
+    // fragment cut from one piece shared it; Merge stacks equal priorities into a
+    // single spine, and a file loaded whole then edited at a caret per line became a
+    // chain as deep as its piece count -- every lookup linear, a multi-caret
+    // Backspace quadratic (16,000 carets: 15 s; soak c28cd895c095).
     const NodeId nr = Allocate(buffer, piece_start + within, piece_len - within);
     // Allocate may have reallocated nodes_; index by id below.
     nodes_[t].length = within;
     nodes_[t].self_newlines = CountNewlines(buffer, piece_start, piece_start + within);
     nodes_[t].right = kNull;
-    nodes_[nr].priority = priority;  // preserve heap order vs the former right child
-    nodes_[nr].left = kNull;
-    nodes_[nr].right = right_child;
     Update(nr);
     Update(t);
     left = t;
-    right = nr;
+    right = Merge(nr, right_child);
   }
 }
 

@@ -1205,7 +1205,54 @@ void TestPieceTreeSnapshotIsReadableWhileTheTreeIsEdited() {
   Expect(same.load(), "the snapshot read the same text on every pass");
 }
 
+// One piece cut at every line -- a file loaded whole, then edited at a caret per
+// line, the last line first as a multi-caret edit applies them -- left the tree a
+// chain as long as the piece count: Split gave each cut-off tail its parent's
+// priority, and Merge stacks equal priorities into one spine. Every lookup became
+// linear, so one Backspace at 16,000 carets took 15 s and the app stopped
+// answering for minutes (soak c28cd895c095). Deletes, inserts, either order.
+void TestPieceTreeStaysShallowUnderAnEditAtEveryLine() {
+  constexpr std::size_t kLines = 4000;
+  std::string text;
+  for (std::size_t i = 0; i < kLines; ++i) {
+    text += "line " + std::to_string(i) + " the quick brown fox\n";
+  }
+  const auto expect_shallow = [](const PieceTree& tree, const std::string& what) {
+    Expect(tree.DepthForTesting() <= 64,
+           what + ": the tree stays shallow, depth " + std::to_string(tree.DepthForTesting()));
+  };
+  {
+    PieceTree tree;
+    tree.ResetFromText(text);
+    for (std::size_t i = kLines; i-- > 0;) {
+      tree.ReplaceTextRange(i, 2, i, 3, "");
+    }
+    expect_shallow(tree, "a delete on every line, last line first");
+    Expect(tree.LineView(0) == "lie 0 the quick brown fox" &&
+               tree.LineView(kLines - 1) == "lie " + std::to_string(kLines - 1) + " the quick brown fox",
+           "each line lost its one byte");
+  }
+  {
+    PieceTree tree;
+    tree.ResetFromText(text);
+    for (std::size_t i = 0; i < kLines; ++i) {
+      tree.ReplaceTextRange(i, 2, i, 3, "");
+    }
+    expect_shallow(tree, "a delete on every line, first line first");
+  }
+  {
+    PieceTree tree;
+    tree.ResetFromText(text);
+    for (std::size_t i = kLines; i-- > 0;) {
+      tree.ReplaceTextRange(i, 4, i, 4, "x");
+    }
+    expect_shallow(tree, "an insert on every line, last line first");
+    Expect(tree.LineView(7) == "linex 7 the quick brown fox", "each line took its byte");
+  }
+}
+
 void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PieceTree/StaysShallowUnderAnEditAtEveryLine", TestPieceTreeStaysShallowUnderAnEditAtEveryLine);
   AddTest(tests, "PieceTree/LineStartMemoInvalidation", TestPieceTreeLineStartMemoInvalidation);
   AddTest(tests, "PieceTree/LiveDocumentByteCeiling", TestPieceTreeLiveDocumentByteCeiling);
   AddTest(tests, "PieceTree/BasicSemantics", TestPieceTreeBasicSemantics);
