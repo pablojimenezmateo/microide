@@ -329,6 +329,24 @@ std::string Describe(const Files& files) {
   return text + " }";
 }
 
+// The mirror's record of each path: the journal a relaunch starts from. For a
+// failing cell's message -- Slow/PushCreate/KillClient lost a saved new file on
+// both sides twice in CI and never locally, and the trees alone could not say
+// whether the relaunch found it unsent, sent, or listed by the host.
+std::string DescribeStore(const remote::MirrorStore& store) {
+  std::string text = "{";
+  for (const auto& [path, entry] : store.entries()) {
+    text += " " + path + "[";
+    text += entry.has_remote ? "remote" : "-";
+    text += entry.push_pending ? ",pending" : "";
+    text += entry.local_only ? ",local-only" : "";
+    text += entry.conflict ? ",conflict" : "";
+    text += entry.base.has_value() ? ",base" : "";
+    text += "]";
+  }
+  return text + " }";
+}
+
 struct Layout {
   std::filesystem::path socket_dir;
   std::filesystem::path host;
@@ -640,7 +658,14 @@ void RecoverAndCheck(Scenario scenario, Fault fault, const Outcome& outcome, con
     Expect(fresh != nullptr, label + ": reconnects: " + error);
     client.connection->Replace(fresh);
   }
+  // What the relaunch found, and what its first sync made of it: the failure's
+  // message carries both (see DescribeStore).
+  const std::string store_at_relaunch = DescribeStore(*client.store);
   client.Sync();
+  const std::string after_first_sync = " (after the first recovery sync: store " + DescribeStore(*client.store) +
+                                       ", host " + Describe(ReadTree(layout.host)) + ", mirror " +
+                                       Describe(ReadTree(layout.mirror / "tree")) + "; store at the relaunch " +
+                                       store_at_relaunch + ")";
   bool conflicted = false;
   std::string conflicts_seen;
   for (int round = 0; round < 3; ++round) {
@@ -679,8 +704,8 @@ void RecoverAndCheck(Scenario scenario, Fault fault, const Outcome& outcome, con
       StartsWithALocalChange(scenario) && mirror == before) {
     expected = before;  // the crash undid the local change before it landed
   }
-  Expect(host == expected, label + ": the host holds exactly " + Describe(expected) + state);
-  Expect(mirror == expected, label + ": the mirror holds exactly " + Describe(expected) + state);
+  Expect(host == expected, label + ": the host holds exactly " + Describe(expected) + state + after_first_sync);
+  Expect(mirror == expected, label + ": the mirror holds exactly " + Describe(expected) + state + after_first_sync);
 }
 
 // One cell, on a fresh host, mirror and daemon. Returns the frames counted.
