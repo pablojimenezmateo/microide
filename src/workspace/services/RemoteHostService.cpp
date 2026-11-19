@@ -876,9 +876,12 @@ void RemoteHostService::SessionSaved(const std::filesystem::path& root,
           .count());
   RoamingSession roaming = CaptureRoamingSession(session, root, machine_name_, now);
   // Nothing open is nothing to pick up, and must not replace what another
-  // machine left.
+  // machine left. It is also no longer "what this machine has open": the same
+  // files left by another machine are then an offer, not an echo of this one's.
   if (roaming.empty()) {
     entry.roaming_pending.reset();
+    entry.roaming_left.clear();
+    entry.roaming_left_files.clear();
     return;
   }
   const bool files_changed = RoamingSessionFileList(roaming) != entry.roaming_left_files;

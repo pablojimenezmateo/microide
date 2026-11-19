@@ -1840,6 +1840,36 @@ void TestOpenFolderOnHostEditsTheHostTree() {
     Expect(!offered().has_value() &&
                !WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open-session " + mirror.string()),
            "the offer is taken once");
+
+    // The same files at the same carets, left by a third machine after this one
+    // closed them, are an offer: what this machine left stops standing for "what
+    // it has open" once it has nothing open. It was compared with the last upload
+    // for good, and the files were never offered.
+    WorkspaceShellTestAccess::SaveSessionState(shell);
+    Expect(WaitUntil([&] { Pump(shell); return left_on_host().find("\"laptop-b\"") != std::string::npos; },
+                     std::chrono::seconds(20), std::chrono::milliseconds(10)),
+           [&] { return "laptop-b leaves the file it opened: " + left_on_host(); });
+    Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::CloseAllTabs, {}),
+           "laptop-b closes it");
+    WorkspaceShellTestAccess::SaveSessionState(shell);
+    std::string theirs = left_on_host();
+    const std::size_t name = theirs.find("\"laptop-b\"");
+    Expect(name != std::string::npos, "the record on the host is still laptop-b's: " + theirs);
+    if (name != std::string::npos) {
+      theirs.replace(name, std::string_view("\"laptop-b\"").size(), "\"desktop-c\"");
+      std::error_code ec;
+      for (std::filesystem::recursive_directory_iterator it(host.home, ec), end; !ec && it != end; it.increment(ec)) {
+        if (it->path().filename() == "session" &&
+            it->path().parent_path().parent_path().filename() == "workspace-state") {
+          WriteFile(it->path(), theirs);
+        }
+      }
+      reconnect();
+      const std::optional<std::string> third = offered();
+      Expect(third.has_value() && third->find(" open on desktop-c") != std::string::npos,
+             "the files this machine closed are offered when another machine has them: " +
+                 third.value_or("(no offer)"));
+    }
   }
 
   // With another project in front, the row's Show brings ITS project forward
