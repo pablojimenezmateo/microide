@@ -331,19 +331,29 @@ std::string Describe(const Files& files) {
   return text + " }";
 }
 
-// The mirror's record of each path: the journal a relaunch starts from. For a
-// failing cell's message -- Slow/PushCreate/KillClient lost a saved new file on
-// both sides twice in CI and never locally, and the trees alone could not say
-// whether the relaunch found it unsent, sent, or listed by the host.
-std::string DescribeStore(const remote::MirrorStore& store) {
+// The mirror's record of each path the matrix touches, as the engine reports it:
+// what a relaunch starts from. For a failing cell's message -- Slow/PushCreate/
+// KillClient lost a saved new file on both sides in CI and never locally, and the
+// trees alone could not say whether the relaunch found it unsent (dirty), sent
+// (local-only) or listed by the host (current).
+// Asked of the engine, which takes its lock: this used to walk the store's map
+// from the test's thread, while the engine's thread applied a watch delta to it
+// (ThreadSanitizer, Slow/WatchPull/DropLink in CI).
+std::string DescribeStore(const remote::MirrorSyncEngine& engine) {
+  using State = remote::MirrorSyncEngine::ContentState;
   std::string text = "{";
-  for (const auto& [path, entry] : store.entries()) {
-    text += " " + path + "[";
-    text += entry.has_remote ? "remote" : "-";
-    text += entry.push_pending ? ",pending" : "";
-    text += entry.local_only ? ",local-only" : "";
-    text += entry.conflict ? ",conflict" : "";
-    text += entry.base.has_value() ? ",base" : "";
+  for (const std::string_view path : {"a.txt", "b.txt", "big.bin", "n.txt", "r.txt"}) {
+    const State state = engine.StateOf(path);
+    if (state == State::Unknown) {
+      continue;
+    }
+    text += " " + std::string(path) + "[";
+    text += state == State::Current     ? "current"
+            : state == State::Stale     ? "stale"
+            : state == State::Absent    ? "absent"
+            : state == State::Dirty     ? "dirty"
+            : state == State::Conflict  ? "conflict"
+                                        : "local-only";
     text += "]";
   }
   return text + " }";
@@ -665,9 +675,9 @@ void RecoverAndCheck(Scenario scenario, Fault fault, const Outcome& outcome, con
   }
   // What the relaunch found, and what its first sync made of it: the failure's
   // message carries both (see DescribeStore).
-  const std::string store_at_relaunch = DescribeStore(*client.store);
+  const std::string store_at_relaunch = DescribeStore(*client.engine);
   client.Sync();
-  const std::string after_first_sync = " (after the first recovery sync: store " + DescribeStore(*client.store) +
+  const std::string after_first_sync = " (after the first recovery sync: store " + DescribeStore(*client.engine) +
                                        ", host " + Describe(ReadTree(layout.host)) + ", mirror " +
                                        Describe(ReadTree(layout.mirror / "tree")) + "; store at the relaunch " +
                                        store_at_relaunch + ")";
