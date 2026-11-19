@@ -1,5 +1,6 @@
 #pragma once
 
+#include "render/ClipStableLine.h"
 #include "render/ScopedRenderClip.h"
 #include "render/SurfacePrimitives.h"
 #include "workspace/StatusTone.h"
@@ -368,13 +369,13 @@ inline void DrawChevron(SDL_Renderer* renderer,
                         SDL_Color color) {
   render::SetDrawColor(renderer, color);
   if (expanded) {
-    SDL_RenderLine(renderer, x, center_y - 2.0f, x + 4.0f, center_y + 2.0f);
-    SDL_RenderLine(renderer, x + 8.0f, center_y - 2.0f, x + 4.0f, center_y + 2.0f);
+    render::RenderClipStableLine(renderer, x, center_y - 2.0f, x + 4.0f, center_y + 2.0f);
+    render::RenderClipStableLine(renderer, x + 8.0f, center_y - 2.0f, x + 4.0f, center_y + 2.0f);
     return;
   }
 
-  SDL_RenderLine(renderer, x + 2.0f, center_y - 4.0f, x + 6.0f, center_y);
-  SDL_RenderLine(renderer, x + 2.0f, center_y + 4.0f, x + 6.0f, center_y);
+  render::RenderClipStableLine(renderer, x + 2.0f, center_y - 4.0f, x + 6.0f, center_y);
+  render::RenderClipStableLine(renderer, x + 2.0f, center_y + 4.0f, x + 6.0f, center_y);
 }
 
 inline void DrawCloseGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
@@ -385,8 +386,8 @@ inline void DrawCloseGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Co
   render::SetDrawColor(renderer, color);
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float cy = std::floor(rect.y + rect.h * 0.5f);
-  SDL_RenderLine(renderer, cx - 3.0f, cy - 3.0f, cx + 3.0f, cy + 3.0f);
-  SDL_RenderLine(renderer, cx + 3.0f, cy - 3.0f, cx - 3.0f, cy + 3.0f);
+  render::RenderClipStableLine(renderer, cx - 3.0f, cy - 3.0f, cx + 3.0f, cy + 3.0f);
+  render::RenderClipStableLine(renderer, cx + 3.0f, cy - 3.0f, cx - 3.0f, cy + 3.0f);
 }
 
 inline void DrawArrowGlyph(SDL_Renderer* renderer,
@@ -401,11 +402,11 @@ inline void DrawArrowGlyph(SDL_Renderer* renderer,
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float cy = std::floor(rect.y + rect.h * 0.5f);
   if (up) {
-    SDL_RenderLine(renderer, cx - 3.0f, cy + 2.0f, cx, cy - 2.0f);
-    SDL_RenderLine(renderer, cx + 3.0f, cy + 2.0f, cx, cy - 2.0f);
+    render::RenderClipStableLine(renderer, cx - 3.0f, cy + 2.0f, cx, cy - 2.0f);
+    render::RenderClipStableLine(renderer, cx + 3.0f, cy + 2.0f, cx, cy - 2.0f);
   } else {
-    SDL_RenderLine(renderer, cx - 3.0f, cy - 2.0f, cx, cy + 2.0f);
-    SDL_RenderLine(renderer, cx + 3.0f, cy - 2.0f, cx, cy + 2.0f);
+    render::RenderClipStableLine(renderer, cx - 3.0f, cy - 2.0f, cx, cy + 2.0f);
+    render::RenderClipStableLine(renderer, cx + 3.0f, cy - 2.0f, cx, cy + 2.0f);
   }
 }
 
@@ -518,8 +519,8 @@ inline void DrawStepOverGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL
   DrawArcStroke(renderer, cx, cy, r, kPi, 2.0f * kPi, color);
   const float tip_x = std::floor(cx + r);
   render::SetDrawColor(renderer, color);
-  SDL_RenderLine(renderer, tip_x - 3.0f, cy - 3.0f, tip_x, cy);
-  SDL_RenderLine(renderer, tip_x + 3.0f, cy - 3.0f, tip_x, cy);
+  render::RenderClipStableLine(renderer, tip_x - 3.0f, cy - 3.0f, tip_x, cy);
+  render::RenderClipStableLine(renderer, tip_x + 3.0f, cy - 3.0f, tip_x, cy);
   DrawGlyphDot(renderer, cx, cy + 4.0f, color);
 }
 
@@ -532,9 +533,9 @@ inline void DrawStepIntoGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float top = std::floor(rect.y + rect.h * 0.30f);
   const float tip = std::floor(rect.y + rect.h * 0.58f);
-  SDL_RenderLine(renderer, cx, top, cx, tip);
-  SDL_RenderLine(renderer, cx - 3.0f, tip - 3.0f, cx, tip);
-  SDL_RenderLine(renderer, cx + 3.0f, tip - 3.0f, cx, tip);
+  render::RenderClipStableLine(renderer, cx, top, cx, tip);
+  render::RenderClipStableLine(renderer, cx - 3.0f, tip - 3.0f, cx, tip);
+  render::RenderClipStableLine(renderer, cx + 3.0f, tip - 3.0f, cx, tip);
   DrawGlyphDot(renderer, cx, std::floor(rect.y + rect.h * 0.76f), color);
 }
 
@@ -547,9 +548,9 @@ inline void DrawStepOutGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float bottom = std::floor(rect.y + rect.h * 0.56f);
   const float tip = std::floor(rect.y + rect.h * 0.28f);
-  SDL_RenderLine(renderer, cx, bottom, cx, tip);
-  SDL_RenderLine(renderer, cx - 3.0f, tip + 3.0f, cx, tip);
-  SDL_RenderLine(renderer, cx + 3.0f, tip + 3.0f, cx, tip);
+  render::RenderClipStableLine(renderer, cx, bottom, cx, tip);
+  render::RenderClipStableLine(renderer, cx - 3.0f, tip + 3.0f, cx, tip);
+  render::RenderClipStableLine(renderer, cx + 3.0f, tip + 3.0f, cx, tip);
   DrawGlyphDot(renderer, cx, std::floor(rect.y + rect.h * 0.76f), color);
 }
 
@@ -570,8 +571,8 @@ inline void DrawRestartGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_
   const float hx = std::floor(cx + r * std::cos(kStart));
   const float hy = std::floor(cy + r * std::sin(kStart));
   render::SetDrawColor(renderer, color);
-  SDL_RenderLine(renderer, hx, hy, hx - 4.0f, hy - 1.0f);
-  SDL_RenderLine(renderer, hx, hy, hx - 1.0f, hy + 4.0f);
+  render::RenderClipStableLine(renderer, hx, hy, hx - 4.0f, hy - 1.0f);
+  render::RenderClipStableLine(renderer, hx, hy, hx - 1.0f, hy + 4.0f);
 }
 
 // Left-pointing filled triangle (Reverse Continue) — the mirror of DrawPlayGlyph.
@@ -610,8 +611,8 @@ inline void DrawStepBackGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL
   DrawArcStroke(renderer, cx, cy, r, kPi, 2.0f * kPi, color);
   const float tip_x = std::floor(cx - r);
   render::SetDrawColor(renderer, color);
-  SDL_RenderLine(renderer, tip_x - 3.0f, cy - 3.0f, tip_x, cy);
-  SDL_RenderLine(renderer, tip_x + 3.0f, cy - 3.0f, tip_x, cy);
+  render::RenderClipStableLine(renderer, tip_x - 3.0f, cy - 3.0f, tip_x, cy);
+  render::RenderClipStableLine(renderer, tip_x + 3.0f, cy - 3.0f, tip_x, cy);
   DrawGlyphDot(renderer, cx, cy + 4.0f, color);
 }
 
@@ -630,8 +631,8 @@ inline void DrawCheckGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Co
   const float mid_y = std::floor(rect.y + rect.h * 0.50f);
   const float low_y = std::floor(rect.y + rect.h * 0.70f);
   const float top_y = std::floor(rect.y + rect.h * 0.30f);
-  SDL_RenderLine(renderer, left, mid_y, mid_x, low_y);
-  SDL_RenderLine(renderer, mid_x, low_y, right, top_y);
+  render::RenderClipStableLine(renderer, left, mid_y, mid_x, low_y);
+  render::RenderClipStableLine(renderer, mid_x, low_y, right, top_y);
 }
 
 inline void DrawPlusGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
@@ -642,8 +643,8 @@ inline void DrawPlusGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Col
   render::SetDrawColor(renderer, color);
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float cy = std::floor(rect.y + rect.h * 0.5f);
-  SDL_RenderLine(renderer, cx - 4.0f, cy, cx + 4.0f, cy);
-  SDL_RenderLine(renderer, cx, cy - 4.0f, cx, cy + 4.0f);
+  render::RenderClipStableLine(renderer, cx - 4.0f, cy, cx + 4.0f, cy);
+  render::RenderClipStableLine(renderer, cx, cy - 4.0f, cx, cy + 4.0f);
 }
 
 inline void DrawGlyphDot(SDL_Renderer* renderer, float cx, float cy, SDL_Color color) {
@@ -663,9 +664,9 @@ inline void DrawFolderGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_C
   const SDL_FRect body{cx - 5.0f, cy - 2.0f, 10.0f, 7.0f};
   SDL_RenderRect(renderer, &body);
   // Folder tab on the top-left edge.
-  SDL_RenderLine(renderer, cx - 5.0f, cy - 2.0f, cx - 3.0f, cy - 4.0f);
-  SDL_RenderLine(renderer, cx - 3.0f, cy - 4.0f, cx, cy - 4.0f);
-  SDL_RenderLine(renderer, cx, cy - 4.0f, cx, cy - 2.0f);
+  render::RenderClipStableLine(renderer, cx - 5.0f, cy - 2.0f, cx - 3.0f, cy - 4.0f);
+  render::RenderClipStableLine(renderer, cx - 3.0f, cy - 4.0f, cx, cy - 4.0f);
+  render::RenderClipStableLine(renderer, cx, cy - 4.0f, cx, cy - 2.0f);
 }
 
 inline void DrawSearchGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
@@ -678,11 +679,11 @@ inline void DrawSearchGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_C
   // Diamond lens (rounder than a square) plus a diagonal handle.
   const float lx = cx - 1.0f;
   const float ly = cy - 1.0f;
-  SDL_RenderLine(renderer, lx, ly - 4.0f, lx + 4.0f, ly);
-  SDL_RenderLine(renderer, lx + 4.0f, ly, lx, ly + 4.0f);
-  SDL_RenderLine(renderer, lx, ly + 4.0f, lx - 4.0f, ly);
-  SDL_RenderLine(renderer, lx - 4.0f, ly, lx, ly - 4.0f);
-  SDL_RenderLine(renderer, lx + 2.0f, ly + 2.0f, cx + 5.0f, cy + 5.0f);
+  render::RenderClipStableLine(renderer, lx, ly - 4.0f, lx + 4.0f, ly);
+  render::RenderClipStableLine(renderer, lx + 4.0f, ly, lx, ly + 4.0f);
+  render::RenderClipStableLine(renderer, lx, ly + 4.0f, lx - 4.0f, ly);
+  render::RenderClipStableLine(renderer, lx - 4.0f, ly, lx, ly - 4.0f);
+  render::RenderClipStableLine(renderer, lx + 2.0f, ly + 2.0f, cx + 5.0f, cy + 5.0f);
 }
 
 inline void DrawBranchGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
@@ -694,8 +695,8 @@ inline void DrawBranchGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_C
   const float cy = std::floor(rect.y + rect.h * 0.5f);
   const float trunk_x = cx - 3.0f;
   // Trunk with two nodes, and a branch that forks up to a third node.
-  SDL_RenderLine(renderer, trunk_x, cy - 5.0f, trunk_x, cy + 5.0f);
-  SDL_RenderLine(renderer, trunk_x, cy + 1.0f, cx + 3.0f, cy - 3.0f);
+  render::RenderClipStableLine(renderer, trunk_x, cy - 5.0f, trunk_x, cy + 5.0f);
+  render::RenderClipStableLine(renderer, trunk_x, cy + 1.0f, cx + 3.0f, cy - 3.0f);
   DrawGlyphDot(renderer, trunk_x, cy - 5.0f, color);
   DrawGlyphDot(renderer, trunk_x, cy + 5.0f, color);
   DrawGlyphDot(renderer, cx + 3.0f, cy - 4.0f, color);
@@ -738,7 +739,7 @@ inline void DrawWindowControlGlyph(SDL_Renderer* renderer,
 
   switch (id) {
     case WorkspaceShell::WindowControlButtonId::Minimize:
-      SDL_RenderLine(renderer, left, center_y + 2.0f, right, center_y + 2.0f);
+      render::RenderClipStableLine(renderer, left, center_y + 2.0f, right, center_y + 2.0f);
       return;
     case WorkspaceShell::WindowControlButtonId::Maximize:
       if (expanded) {
@@ -752,8 +753,8 @@ inline void DrawWindowControlGlyph(SDL_Renderer* renderer,
       }
       return;
     case WorkspaceShell::WindowControlButtonId::Close:
-      SDL_RenderLine(renderer, left, top, right, bottom);
-      SDL_RenderLine(renderer, right, top, left, bottom);
+      render::RenderClipStableLine(renderer, left, top, right, bottom);
+      render::RenderClipStableLine(renderer, right, top, left, bottom);
       return;
   }
 }
@@ -1040,7 +1041,7 @@ inline void DrawStripTab(const render::TextRenderer& text_renderer,
     const float x = std::floor(rect.x);
     const float y = std::floor(rect.y + (accent_on_top ? kAccentThickness : 0.0f));
     for (int row = 0; row < kCorner; ++row) {
-      SDL_RenderLine(renderer, x, y + static_cast<float>(row),
+      render::RenderClipStableLine(renderer, x, y + static_cast<float>(row),
                      x + static_cast<float>(kCorner - 1 - row), y + static_cast<float>(row));
     }
   }
@@ -1070,11 +1071,11 @@ inline void DrawTabStripOverflowButton(const render::TextRenderer& text_renderer
   const float arm = std::max(3.0f, rect.h * 0.22f);
   render::SetDrawColor(renderer, foreground);
   if (point_right) {
-    SDL_RenderLine(renderer, cx - arm * 0.5f, cy - arm, cx + arm * 0.5f, cy);
-    SDL_RenderLine(renderer, cx + arm * 0.5f, cy, cx - arm * 0.5f, cy + arm);
+    render::RenderClipStableLine(renderer, cx - arm * 0.5f, cy - arm, cx + arm * 0.5f, cy);
+    render::RenderClipStableLine(renderer, cx + arm * 0.5f, cy, cx - arm * 0.5f, cy + arm);
   } else {
-    SDL_RenderLine(renderer, cx + arm * 0.5f, cy - arm, cx - arm * 0.5f, cy);
-    SDL_RenderLine(renderer, cx - arm * 0.5f, cy, cx + arm * 0.5f, cy + arm);
+    render::RenderClipStableLine(renderer, cx + arm * 0.5f, cy - arm, cx - arm * 0.5f, cy);
+    render::RenderClipStableLine(renderer, cx - arm * 0.5f, cy, cx + arm * 0.5f, cy + arm);
   }
 
   if (hidden_count > 0) {

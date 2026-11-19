@@ -5,6 +5,8 @@
 #include <string_view>
 #include <vector>
 
+#include "render/ClipStableLine.h"
+
 #include "render/PluginDisplayList.h"
 #include "render/ScopedRenderClip.h"
 #include "render/SurfacePrimitives.h"
@@ -81,7 +83,7 @@ void ReplayDisplayList(SDL_Renderer* renderer, TextRenderer& text_renderer,
         break;
       case DrawOp::Line:
         SetDrawColor(renderer, op.color);
-        SDL_RenderLine(renderer, ox + op.rect.x, oy + op.rect.y, ox + op.rect.w,
+        render::RenderClipStableLine(renderer, ox + op.rect.x, oy + op.rect.y, ox + op.rect.w,
                        oy + op.rect.h);
         break;
       case DrawOp::Polyline: {

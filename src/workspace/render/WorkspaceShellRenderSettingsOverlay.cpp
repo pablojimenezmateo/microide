@@ -24,11 +24,11 @@ void DrawStepperArrow(SDL_Renderer* renderer, const SDL_FRect& rect, bool left, 
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float cy = std::floor(rect.y + rect.h * 0.5f);
   if (left) {
-    SDL_RenderLine(renderer, cx + 3.0f, cy - 4.0f, cx - 3.0f, cy);
-    SDL_RenderLine(renderer, cx - 3.0f, cy, cx + 3.0f, cy + 4.0f);
+    render::RenderClipStableLine(renderer, cx + 3.0f, cy - 4.0f, cx - 3.0f, cy);
+    render::RenderClipStableLine(renderer, cx - 3.0f, cy, cx + 3.0f, cy + 4.0f);
   } else {
-    SDL_RenderLine(renderer, cx - 3.0f, cy - 4.0f, cx + 3.0f, cy);
-    SDL_RenderLine(renderer, cx + 3.0f, cy, cx - 3.0f, cy + 4.0f);
+    render::RenderClipStableLine(renderer, cx - 3.0f, cy - 4.0f, cx + 3.0f, cy);
+    render::RenderClipStableLine(renderer, cx + 3.0f, cy, cx - 3.0f, cy + 4.0f);
   }
 }
 
@@ -40,11 +40,11 @@ void DrawResetGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color col
   render::SetDrawColor(renderer, color);
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float cy = std::floor(rect.y + rect.h * 0.5f);
-  SDL_RenderLine(renderer, cx - 3.0f, cy - 3.0f, cx + 3.0f, cy - 3.0f);
-  SDL_RenderLine(renderer, cx + 3.0f, cy - 3.0f, cx + 3.0f, cy + 3.0f);
-  SDL_RenderLine(renderer, cx + 3.0f, cy + 3.0f, cx - 2.0f, cy + 3.0f);
-  SDL_RenderLine(renderer, cx - 3.0f, cy - 3.0f, cx - 1.0f, cy - 5.0f);
-  SDL_RenderLine(renderer, cx - 3.0f, cy - 3.0f, cx, cy - 1.0f);
+  render::RenderClipStableLine(renderer, cx - 3.0f, cy - 3.0f, cx + 3.0f, cy - 3.0f);
+  render::RenderClipStableLine(renderer, cx + 3.0f, cy - 3.0f, cx + 3.0f, cy + 3.0f);
+  render::RenderClipStableLine(renderer, cx + 3.0f, cy + 3.0f, cx - 2.0f, cy + 3.0f);
+  render::RenderClipStableLine(renderer, cx - 3.0f, cy - 3.0f, cx - 1.0f, cy - 5.0f);
+  render::RenderClipStableLine(renderer, cx - 3.0f, cy - 3.0f, cx, cy - 1.0f);
 }
 
 void DrawFocusRing(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
@@ -147,7 +147,7 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
     if (focused) {
       const float caret_x = text_x + vm.query_caret_x;
       render::SetDrawColor(renderer, theme_.accent);
-      SDL_RenderLine(renderer, caret_x, vm.filter_rect.y + 4.0f, caret_x,
+      render::RenderClipStableLine(renderer, caret_x, vm.filter_rect.y + 4.0f, caret_x,
                      vm.filter_rect.y + vm.filter_rect.h - 4.0f);
     }
   }

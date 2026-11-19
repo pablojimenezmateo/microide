@@ -19,6 +19,7 @@
 #include <type_traits>
 
 #include "render/AsciiGlyphAtlas.h"
+#include "render/ClipStableLine.h"
 #include "render/DebugTextBackend.h"
 #include "render/GlyphClusterAtlas.h"
 #include "render/SurfaceTextureCache.h"
@@ -3654,9 +3655,60 @@ void TestMeasureWidthDoesNotCacheOversizedStrings() {
   Expect(first == second, "clipped-width measurement is deterministic");
 }
 
+
+// SDL's software renderer clips a line BEFORE rasterizing it, so a clip through
+// a diagonal moved its pixels: the overflow chevron beside an open menu came out
+// a pixel off on the partial frame the redraw verifier compared with a full one
+// (CI qa-asan, monkey seed 4). RenderClipStableLine draws SDL's own pixels for
+// the whole line, whatever the clip.
+void TestClipStableLineKeepsItsPixelsUnderAClip() {
+  constexpr int kSize = 24;
+  const auto paint = [&](bool stable, std::optional<SDL_Rect> clip) {
+    SoftwareCanvas canvas(kSize, kSize);
+    SDL_SetRenderDrawColor(canvas.renderer(), 0, 0, 0, 255);
+    SDL_RenderClear(canvas.renderer());
+    SDL_SetRenderClipRect(canvas.renderer(), clip ? &*clip : nullptr);
+    SDL_SetRenderDrawColor(canvas.renderer(), 255, 255, 255, 255);
+    for (const auto& [x1, y1, x2, y2] : {std::array<float, 4>{2.0f, 3.0f, 21.0f, 11.0f},
+                                         std::array<float, 4>{18.5f, 2.0f, 9.0f, 20.7f},
+                                         std::array<float, 4>{3.0f, 20.0f, 20.0f, 20.0f}}) {
+      if (stable) {
+        render::RenderClipStableLine(canvas.renderer(), x1, y1, x2, y2);
+      } else {
+        SDL_RenderLine(canvas.renderer(), x1, y1, x2, y2);
+      }
+    }
+    std::vector<std::uint8_t> lit(kSize * kSize);
+    for (int y = 0; y < kSize; ++y) {
+      for (int x = 0; x < kSize; ++x) {
+        lit[static_cast<std::size_t>(y * kSize + x)] = canvas.PixelAt(x, y).r;
+      }
+    }
+    return lit;
+  };
+  const SDL_Rect clip{11, 5, 9, 13};
+  const auto inside = [&](const std::vector<std::uint8_t>& a, const std::vector<std::uint8_t>& b) {
+    for (int y = clip.y; y < clip.y + clip.h; ++y) {
+      for (int x = clip.x; x < clip.x + clip.w; ++x) {
+        if (a[static_cast<std::size_t>(y * kSize + x)] != b[static_cast<std::size_t>(y * kSize + x)]) {
+          return false;
+        }
+      }
+    }
+    return true;
+  };
+  Expect(paint(true, std::nullopt) == paint(false, std::nullopt),
+         "unclipped, the stable line draws exactly SDL's own pixels");
+  Expect(!inside(paint(false, clip), paint(false, std::nullopt)),
+         "the negative control: SDL's software line moves under a clip through it");
+  Expect(inside(paint(true, clip), paint(true, std::nullopt)),
+         "under a clip, the stable line keeps the pixels it has unclipped");
+}
 }  // namespace
 
 void RegisterTextRendererTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TextRenderer clip-stable line keeps its pixels under a clip",
+          TestClipStableLineKeepsItsPixelsUnderAClip);
   AddTest(tests, "TextRenderer/AGlyphNoFallbackHasIsFoundWithFontconfig", TestAGlyphNoFallbackHasIsFoundWithFontconfig);
   AddTest(tests, "TextRenderer/AFallbackQueryIsAskedOncePerCodepoint", TestAFallbackQueryIsAskedOncePerCodepoint);
   AddTest(tests, "TextRenderer/FontSizeSetBeforeInitializeIsKept", TestSdlTtfFontSizeSetBeforeInitializeIsKept);

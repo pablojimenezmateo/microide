@@ -171,7 +171,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
             for (float px = run_x; px < run_x + run_w; px += half, up = !up) {
               const float next = std::min(px + half, run_x + run_w);
               for (float row = 0.0f; row < thickness; row += 1.0f) {
-                SDL_RenderLine(renderer, px, (up ? top + amplitude : top) + row, next,
+                render::RenderClipStableLine(renderer, px, (up ? top + amplitude : top) + row, next,
                                (up ? top : top + amplitude) + row);
               }
             }
@@ -303,11 +303,11 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     const float arm = 3.0f;
     render::SetDrawColor(renderer, glyph);
     if (layout.panel_maximized) {
-      SDL_RenderLine(renderer, cx - arm, cy - 1.0f, cx, cy + arm - 1.0f);
-      SDL_RenderLine(renderer, cx, cy + arm - 1.0f, cx + arm, cy - 1.0f);
+      render::RenderClipStableLine(renderer, cx - arm, cy - 1.0f, cx, cy + arm - 1.0f);
+      render::RenderClipStableLine(renderer, cx, cy + arm - 1.0f, cx + arm, cy - 1.0f);
     } else {
-      SDL_RenderLine(renderer, cx - arm, cy + 1.0f, cx, cy - arm + 1.0f);
-      SDL_RenderLine(renderer, cx, cy - arm + 1.0f, cx + arm, cy + 1.0f);
+      render::RenderClipStableLine(renderer, cx - arm, cy + 1.0f, cx, cy - arm + 1.0f);
+      render::RenderClipStableLine(renderer, cx, cy - arm + 1.0f, cx + arm, cy + 1.0f);
     }
   }
 
