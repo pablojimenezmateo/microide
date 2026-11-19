@@ -958,7 +958,9 @@ class Liveness:
         sched, stall = self.app.slowest_sched, self.app.slowest_stall
         waits = getattr(self.app, "slowest_waits", "")
         helpers = getattr(self.app, "slowest_helpers", None)
+        profile = getattr(self.app, "slowest_profile", "")
         self.app.slowest_helpers = None
+        self.app.slowest_profile = ""
         self.app.slowest_answer = ("", 0.0)
         self.app.slowest_sched, self.app.slowest_stall = None, ""
         self.app.slowest_waits = ""
@@ -992,6 +994,9 @@ class Liveness:
             "or the binary predates the watchdog)", stall,
             "", "where the main thread sat while the answer was late (wchan, syscall nr and first arg; "
                 "sampled every 0.2s):" if waits else "", waits])).encode() + b"\n"}
+        if profile:
+            # perf of the main thread while the answer was late: what it computed.
+            self.evidence["latency-profile.txt"] = profile.encode()
         return [("latency", f"{subject} took {seconds:.2f}s to answer (budget {self.budget:.1f}s){where}")]
 
 

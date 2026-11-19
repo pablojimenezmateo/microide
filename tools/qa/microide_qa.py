@@ -451,6 +451,67 @@ class Finding:
     screenshot: str | None = None
 
 
+class MainThreadProfiler:
+    """`perf record` of the app's main thread while a control reply is late, and
+    the report of where its CPU went. Not under rr (the recorder owns the
+    tracee's counters, and the recording replays the turn anyway), not without
+    perf, and never a failure of the request it watches."""
+
+    REPORT_BYTES = 48 * 1024
+
+    def __init__(self, process: subprocess.Popen[bytes], data: Path, binary: Path) -> None:
+        self.process, self.data, self.binary = process, data, binary
+
+    @classmethod
+    def start(cls, app: "App") -> "MainThreadProfiler | None":
+        perf = shutil.which("perf")
+        work = getattr(app, "work", None)
+        if perf is None or work is None or getattr(app, "recording", False) or app.proc is None:
+            return None
+        data = Path(work) / "latency.perf.data"
+        try:
+            process = subprocess.Popen(
+                [perf, "record", "--quiet", "-F", "497", "--call-graph", "dwarf,16384",
+                 "-t", str(app.pid), "-o", str(data)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            return None
+        return cls(process, data, app.binary)
+
+    def _stop(self) -> bool:
+        with contextlib.suppress(ProcessLookupError):
+            self.process.send_signal(signal.SIGINT)
+        try:
+            self.process.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait()
+            return False
+        return self.data.exists()
+
+    def discard(self) -> None:
+        self._stop()
+        with contextlib.suppress(OSError):
+            self.data.unlink()
+
+    def finish(self) -> str:
+        """The main thread's hottest functions (self time) and their callers."""
+        try:
+            if not self._stop():
+                return ""
+            report = subprocess.run(
+                ["perf", "report", "-i", str(self.data), "--stdio", "--no-children", "--sort", "dso,symbol",
+                 "--percent-limit", "2", "-g", "caller,2,callee,function,percent", "--max-stack", "16"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=120, check=False)
+            text = report.stdout.decode("utf-8", "replace")
+            return text[:self.REPORT_BYTES]
+        except (OSError, subprocess.TimeoutExpired):
+            return ""
+        finally:
+            with contextlib.suppress(OSError):
+                self.data.unlink()
+
+
 @dataclass
 class App:
     binary: Path
@@ -523,6 +584,12 @@ class App:
     # thread blocked on a renderer whose rasterizer threads the machine starved
     # (lavapipe, the soak's CPU Vulkan, under a load of 25) was not slow itself.
     slowest_helpers: tuple[float, float] | None = None
+    # Where the main thread's CPU went while the slowest answer was late: a `perf`
+    # profile of that thread alone, started once the reply is MAIN_THREAD_SAMPLE_AFTER_S
+    # late and stopped when it lands. The waits above say "running" and no more;
+    # the watchdog sees only a single long turn (soak 32325094bfef: 7.76 s on a CPU
+    # over many short turns, nothing to say what it computed).
+    slowest_profile: str = ""
     # The crashing thread's stack, resolved, once a check has found the app dead
     # (symbolize_backtrace); empty until then and again after a relaunch.
     crash_stack: str = ""
@@ -1142,6 +1209,7 @@ class App:
         log_before = self._log_size()
         waits: collections.Counter[str] = collections.Counter()
         helpers_from: tuple[float, float] | None = None  # (their queued seconds, when) once late
+        profiler: MainThreadProfiler | None = None
         deadline = started + timeout
         try:
             self._socket.sendall(json.dumps({"id": request_id, **payload}).encode() + b"\n")
@@ -1155,6 +1223,7 @@ class App:
                         waits[self._main_thread_wait()] += 1
                         if helpers_from is None:
                             helpers_from = (self._helper_threads_queued(), time.monotonic())
+                            profiler = MainThreadProfiler.start(self)
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         raise socket.timeout("timed out")
@@ -1184,16 +1253,24 @@ class App:
                         if helpers_from is not None:
                             helpers = (max(0.0, self._helper_threads_queued() - helpers_from[0]),
                                        time.monotonic() - helpers_from[1])
-                        self.note_latency(what, time.monotonic() - started, sched_before, log_before, waits,
-                                          helpers)
+                        seconds = time.monotonic() - started
+                        profile = profiler.finish() if profiler is not None else ""
+                        profiler = None
+                        self.note_latency(what, seconds, sched_before, log_before, waits, helpers, profile)
                         return reply
         except (OSError, socket.timeout) as error:
             if self.dying():
+                if profiler is not None:
+                    profiler.discard()
+                    profiler = None
                 with contextlib.suppress(OSError):
                     self._socket.close()
                 self._socket = None
                 self._socket_buffer = b""
                 raise AppGone(f"the app is gone: {what} got no reply: {error}") from error
+            if profiler is not None:
+                profiler.discard()
+                profiler = None
             self.capture_stall(f"{what} got no reply", sched_before, time.monotonic() - started)
             # The next request connects afresh. The app may have shed this
             # connection (it logs why), and keeping the dead socket made every
@@ -1379,7 +1456,7 @@ class App:
 
     def note_latency(self, what: str, seconds: float, sched_before: tuple[float, float] | None = None,
                      log_before: int | None = None, waits: collections.Counter[str] | None = None,
-                     helpers: tuple[float, float] | None = None) -> None:
+                     helpers: tuple[float, float] | None = None, profile: str = "") -> None:
         """The liveness oracle's input: the slowest control answer per step
         (the monkey reads and resets `slowest_answer`), with where its time went
         for the main thread and what the stall watchdog printed during it."""
@@ -1390,6 +1467,7 @@ class App:
                                   if sched_now is not None and sched_before is not None else None)
             self.slowest_stall = ""
             self.slowest_helpers = helpers
+            self.slowest_profile = profile
             self.slowest_waits = "\n".join(f"{count:4d} x {where}" for where, count in waits.most_common(8)) \
                 if waits else ""
             if seconds >= STALL_TRACE_SECONDS * SLOW_FACTOR and log_before is not None:
@@ -2800,7 +2878,8 @@ class App:
             return
         self._in_snapshot = True
         snapshot: dict[str, Any] = {}
-        keep = self.slowest_answer, self.slowest_sched, self.slowest_stall, self.slowest_waits, self.slowest_helpers
+        keep = (self.slowest_answer, self.slowest_sched, self.slowest_stall, self.slowest_waits, self.slowest_helpers,
+                self.slowest_profile)
         try:
             for verb, args in self._SNAPSHOT_QUERIES:
                 payload: dict[str, Any] = {"query": verb}
@@ -2815,7 +2894,8 @@ class App:
         finally:
             self._in_snapshot = False
             # The snapshot's own answers are not the run's latency.
-            self.slowest_answer, self.slowest_sched, self.slowest_stall, self.slowest_waits, self.slowest_helpers = keep
+            (self.slowest_answer, self.slowest_sched, self.slowest_stall, self.slowest_waits, self.slowest_helpers,
+             self.slowest_profile) = keep
         with contextlib.suppress(OSError, TypeError, ValueError):
             (folder / "state.json").write_text(json.dumps(snapshot, indent=1)[:2 * 1024 * 1024])
 
