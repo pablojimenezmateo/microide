@@ -6,6 +6,7 @@
 #include "platform/Subprocess.h"
 #include "platform/UnixSocket.h"
 #include "project/FileWriteGate.h"
+#include "project/remote/LinkHeartbeat.h"
 #include "project/remote/MirrorStore.h"
 #include "project/remote/MirrorSyncEngine.h"
 #include "project/remote/MirrorWriteGate.h"
@@ -37,6 +38,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 extern char** environ;
@@ -598,9 +600,11 @@ Outcome RunInProcess(Scenario scenario, Fault fault, std::size_t step, const Tim
 }
 
 // The operation in a helper process that SIGKILLs itself at `step`: a wire frame,
-// or with `at_disk_step` a crash point.
+// or with `at_disk_step` a crash point. `stall`: how long the armed helper waits
+// before it starts the operation (a machine that gave it no CPU for that long).
 Outcome RunCrashingClient(Scenario scenario, std::size_t step, const Timing& timing,
-                          std::chrono::milliseconds one_way, const Layout& layout, Fault fault) {
+                          std::chrono::milliseconds one_way, const Layout& layout, Fault fault,
+                          std::chrono::milliseconds stall) {
   const std::vector<std::string> args = {"/proc/self/exe",
                                          std::string(kHelperFlag),
                                          fault == Fault::PowerCutAtDiskStep     ? "power"
@@ -612,7 +616,8 @@ Outcome RunCrashingClient(Scenario scenario, std::size_t step, const Timing& tim
                                          std::to_string(one_way.count()),
                                          layout.socket_dir.string(),
                                          layout.host.string(),
-                                         layout.mirror.string()};
+                                         layout.mirror.string(),
+                                         std::to_string(stall.count())};
   std::vector<char*> argv;
   for (const std::string& arg : args) {
     argv.push_back(const_cast<char*>(arg.c_str()));
@@ -710,7 +715,8 @@ void RecoverAndCheck(Scenario scenario, Fault fault, const Outcome& outcome, con
 
 // One cell, on a fresh host, mirror and daemon. Returns the frames counted.
 Outcome RunCell(Scenario scenario, Fault fault, std::size_t step, const Timing& timing,
-                std::chrono::milliseconds one_way) {
+                std::chrono::milliseconds one_way,
+                std::chrono::milliseconds helper_stall = std::chrono::milliseconds(0)) {
   const std::string label = std::string(Name(scenario)) + ", " + Name(fault) +
                             (fault == Fault::None ? std::string()
                              : fault == Fault::KillClientAtDiskStep || fault == Fault::PowerCutAtDiskStep
@@ -725,7 +731,7 @@ Outcome RunCell(Scenario scenario, Fault fault, std::size_t step, const Timing& 
   Client client;
   Outcome outcome;
   if (fault == Fault::KillClient || fault == Fault::KillClientAtDiskStep || fault == Fault::PowerCutAtDiskStep) {
-    outcome = RunCrashingClient(scenario, step, timing, one_way, layout, fault);
+    outcome = RunCrashingClient(scenario, step, timing, one_way, layout, fault, helper_stall);
     if (fault == Fault::PowerCutAtDiskStep && outcome.fired) {
       ApplyPowerCut(PowerLogDir(layout));
     }
@@ -783,6 +789,25 @@ void RunDiskMatrix(Scenario scenario, Fault fault) {
                                  std::to_string(steps) + " crashes fired");
 }
 
+constexpr int kSlowOneWayMs = 30;
+
+// The link's heartbeat is not a step of the operation. The client pings a quarter
+// interval after it connects and every interval after that (LinkHeartbeat), and
+// the relay counted those frames like any other: a helper the machine starved
+// past its first ping, between arming and its save, was killed "at step 0" on the
+// ping -- before it had written anything. Nothing was lost, there was nothing
+// yet; the cell read it as a saved new file gone from both sides
+// (Slow/PushCreate/KillClient, CI only: "the host holds exactly { a.txt b.txt
+// n.txt } (host { a.txt b.txt }, mirror { a.txt b.txt }, dirty 0 ...)"). The
+// stall here is that starvation, made certain.
+void TestTheHeartbeatIsNotAStep() {
+  const std::chrono::milliseconds past_the_first_ping(
+      remote::LinkHeartbeat::Config{}.interval_ms / 4 + 250);
+  const Outcome outcome = RunCell(Scenario::PushCreate, Fault::KillClient, 0, std::nullopt,
+                                  std::chrono::milliseconds(kSlowOneWayMs), past_the_first_ping);
+  Expect(outcome.fired, "the fault still fires, on the operation's first frame");
+}
+
 template <Scenario kScenario, Fault kFault, int kOneWayMs>
 void TestMatrix() {
   RunMatrix(kScenario, kFault, std::chrono::milliseconds(kOneWayMs));
@@ -792,8 +817,6 @@ template <Scenario kScenario, Fault kFault>
 void TestDiskMatrix() {
   RunDiskMatrix(kScenario, kFault);
 }
-
-constexpr int kSlowOneWayMs = 30;
 
 template <Scenario kScenario>
 void AddScenario(std::vector<TestCase>& tests, const std::string& name) {
@@ -811,12 +834,13 @@ void AddScenario(std::vector<TestCase>& tests, const std::string& name) {
 }  // namespace
 
 // The helper: argv = flag mode scenario step after_us one_way_ms socket_dir host
-// mirror (mode `frame` or `disk`; after_us -1: before the frame arrives). Runs the
+// mirror stall_ms (mode `frame` or `disk`; after_us -1: before the frame arrives;
+// stall_ms: a wait between arming the relay and starting the operation). Runs the
 // operation and SIGKILLs this process at `step` -- the relay's frame, or the
 // crash point; exits 0 when the operation finished first.
 int RunMirrorFaultClient(int argc, char** argv) {
-  if (argc != 10) {
-    std::fprintf(stderr, "%s: expected 8 arguments\n", argv[1]);
+  if (argc != 11) {
+    std::fprintf(stderr, "%s: expected 9 arguments\n", argv[1]);
     return 2;
   }
   try {
@@ -825,8 +849,9 @@ int RunMirrorFaultClient(int argc, char** argv) {
     const auto step = util::ParseSize(argv[4]);
     const auto after_us = util::ParseInt64(argv[5]);
     const auto one_way = util::ParseInt(argv[6]);
+    const auto stall_ms = util::ParseInt(argv[10]);
     if ((mode != "frame" && mode != "disk" && mode != "power") || !scenario.has_value() || !step.has_value() ||
-        !after_us.has_value() || !one_way.has_value()) {
+        !after_us.has_value() || !one_way.has_value() || !stall_ms.has_value() || *stall_ms < 0) {
       return 2;
     }
     const Layout layout{.socket_dir = argv[7], .host = argv[8], .mirror = argv[9]};
@@ -838,6 +863,7 @@ int RunMirrorFaultClient(int argc, char** argv) {
     }
     if (mode == "frame") {
       client.relay().Arm(*step, [] { ::raise(SIGKILL); }, false, timing);
+      std::this_thread::sleep_for(std::chrono::milliseconds(*stall_ms));
       ApplyOperation(static_cast<Scenario>(*scenario), client, layout);
     } else {
       if (mode == "power") {
@@ -857,6 +883,7 @@ int RunMirrorFaultClient(int argc, char** argv) {
 bool IsMirrorFaultClient(int argc, char** argv) { return argc >= 2 && std::string_view(argv[1]) == kHelperFlag; }
 
 void RegisterMirrorFaultMatrixTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "MirrorFaultMatrix/TheHeartbeatIsNotAStep", TestTheHeartbeatIsNotAStep);
   AddScenario<Scenario::PushEdit>(tests, "PushEdit");
   AddScenario<Scenario::PushCreate>(tests, "PushCreate");
   AddScenario<Scenario::PushLarge>(tests, "PushLarge");

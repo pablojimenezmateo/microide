@@ -10,7 +10,13 @@
 // frames an operation exchanges.
 //
 // Ack frames are the transport's own flow control, not a step of any operation,
-// and are forwarded uncounted. A cut drops the frame that triggered it and
+// and are forwarded uncounted. So is the link's heartbeat -- a link/ping request
+// and its answer (LinkHeartbeat: a quarter interval after the client connects,
+// then every interval): it runs on the client's clock, not the operation's, so a
+// client the machine starved past a ping had that ping counted as its "step 0"
+// and was killed before it had done anything (MirrorFaultMatrix/Slow/PushCreate/
+// KillClient in CI: a new file "lost" from both sides that was never written).
+// A cut drops the frame that triggered it and
 // everything after, in both directions, and shuts both sockets: the client sees
 // the link close, the daemon sees its connection end (and, like over a dead ssh
 // link, carries on with whatever it had already received).
@@ -30,8 +36,13 @@
 #include <limits>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
+#include <string_view>
 #include <thread>
+
+#include "project/remote/RemoteProtocol.h"
+#include "util/JsonValue.h"
 
 namespace microide::tests {
 
@@ -48,6 +59,8 @@ class FaultRelay {
     to_server_.to = upstream_fd_;
     to_client_.from = upstream_fd_;
     to_client_.to = relay_fd_;
+    to_server_.back = &to_client_;
+    to_client_.back = &to_server_;
     Start(to_server_);
     Start(to_client_);
   }
@@ -128,6 +141,8 @@ class FaultRelay {
 
  private:
   static constexpr std::size_t kHeader = 4 + 2 + 1 + 8;
+  static constexpr std::uint16_t kRequestType = 1;
+  static constexpr std::uint16_t kResponseType = 2;
   static constexpr std::uint16_t kAckType = 4;
 
   struct Chunk {
@@ -143,6 +158,10 @@ class FaultRelay {
     std::condition_variable wake;
     std::deque<Chunk> queue;
     bool eof = false;  // the reader saw the end of stream (mutex)
+    // The link/ping requests read on this direction whose answers have not come
+    // back on the other one yet, by request id (count_mutex_).
+    std::set<std::uint64_t> pings;
+    Direction* back = nullptr;  // the opposite direction
     std::thread reader;
     std::thread writer;
   };
@@ -160,10 +179,29 @@ class FaultRelay {
     }
   }
 
+  // The link's own liveness: a link/ping request, or the answer to one.
+  bool IsHeartbeat(Direction& d, std::uint16_t type, std::uint64_t id, std::string_view payload) {
+    if (type == kRequestType) {
+      const std::optional<util::JsonValue> body = util::ParseJson(payload);
+      if (!body.has_value() || !body->IsObject() || !(*body)["method"].IsString() ||
+          (*body)["method"].AsString() != project::remote::method::kLinkPing) {
+        return false;
+      }
+      std::lock_guard lock(count_mutex_);
+      d.pings.insert(id);
+      return true;
+    }
+    if (type != kResponseType) {
+      return false;
+    }
+    std::lock_guard lock(count_mutex_);
+    return d.back->pings.erase(id) > 0;
+  }
+
   // Counts the frame and runs the fault on its step.
-  Verdict Count(std::uint16_t type) {
+  Verdict Count(Direction& d, std::uint16_t type, std::uint64_t id, std::string_view payload) {
     const Verdict pass = cut_ ? Verdict::Drop : Verdict::Forward;
-    if (type == kAckType) {
+    if (type == kAckType || IsHeartbeat(d, type, id, payload)) {
       return pass;
     }
     std::function<void()> fault;
@@ -254,13 +292,15 @@ class FaultRelay {
         std::uint16_t type = 0;
         std::memcpy(&length, pending.data(), 4);  // little-endian hosts only, like the tests
         std::memcpy(&type, pending.data() + 4, 2);
+        std::uint64_t id = 0;
+        std::memcpy(&id, pending.data() + 7, 8);
         const std::size_t total = kHeader + length;
         if (pending.size() < total) {
           break;
         }
         std::string frame = pending.substr(0, total);
         pending.erase(0, total);
-        const Verdict verdict = Count(type);
+        const Verdict verdict = Count(d, type, id, std::string_view(frame).substr(kHeader));
         if (verdict == Verdict::Drop) {
           continue;
         }
