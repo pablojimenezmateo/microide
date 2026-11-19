@@ -88,10 +88,22 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
       (compare_tab.left_path.empty() ? normalized_path : compare_tab.left_path).lexically_normal();
   const std::filesystem::path right_source_path =
       (compare_tab.right_path.empty() ? normalized_path : compare_tab.right_path).lexically_normal();
-  const auto left_content =
-      project::ReadGitFileAtCommit(context_.current_project_state.root,
-                                   context_.current_project_state.launcher(), left_source_path,
-                                   compare_tab.commit_hash);
+  // A side named by a full object id is content nothing can change, and the tab
+  // already holds it: re-reading it spawned a blocking git per side, per tab, on
+  // every change to the file -- seconds of the shell thread with a few dozen
+  // compares of one file open (soak eee6ac0a5e0b, 32325094bfef).
+  std::optional<project::GitFileContentAtCommit> left_content;
+  if (project::IsFullGitObjectId(compare_tab.commit_hash) && compare_tab.left_content &&
+      compare_tab.build_options.left_exists.has_value()) {
+    const bool exists = *compare_tab.build_options.left_exists;
+    left_content = project::GitFileContentAtCommit{
+        .exists = exists, .content = exists ? *compare_tab.left_content : std::string{}};
+  }
+  if (!left_content.has_value()) {
+    left_content = project::ReadGitFileAtCommit(context_.current_project_state.root,
+                                                context_.current_project_state.launcher(), left_source_path,
+                                                compare_tab.commit_hash);
+  }
   if (!left_content.has_value() || left_content->truncated) {
     return std::nullopt;
   }

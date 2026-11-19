@@ -585,6 +585,12 @@ void WorkspaceShell::RefreshOpenCompareTabsForPath(const std::filesystem::path& 
         }
         continue;
       }
+      // Two committed sides, each named by a full object id: nothing a change to
+      // the file can touch, so nothing to rebuild (and no git to spawn for it).
+      if (project::IsFullGitObjectId(tab.compare->commit_hash) &&
+          project::IsFullGitObjectId(tab.compare->right_ref)) {
+        continue;
+      }
       auto rebuilt = BuildCompareTabEntry(normalized_path, tab.compare.value());
       if (!rebuilt.has_value() || !rebuilt->compare.has_value()) {
         continue;

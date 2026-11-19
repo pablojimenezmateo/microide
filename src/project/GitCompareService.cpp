@@ -274,6 +274,13 @@ const GitFileContentAtCommit* GitRevisionBlobCache::Find(
   return found == entries_.end() ? nullptr : &found->second;
 }
 
+bool IsFullGitObjectId(std::string_view ref) {
+  return (ref.size() == 40 || ref.size() == 64) &&
+         std::all_of(ref.begin(), ref.end(), [](char c) {
+           return util::IsAsciiHexDigit(static_cast<unsigned char>(c));
+         });
+}
+
 std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem::path& root,
                                                           const platform::ProcessLauncher& launcher,
                                                           const std::filesystem::path& absolute_path,

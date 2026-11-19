@@ -44,6 +44,11 @@ std::vector<GitCommitEntry> CollectGitRecentCommits(const std::filesystem::path&
                                                     const platform::ProcessLauncher& launcher,
                                                     std::size_t limit);
 
+// Whether `ref` is a full object id (40 hex digits for SHA-1, 64 for SHA-256): a
+// name for content no later commit, checkout or worktree edit can change, unlike
+// HEAD, a branch or the index.
+[[nodiscard]] bool IsFullGitObjectId(std::string_view ref);
+
 struct GitFileContentAtCommit {
   bool exists = false;
   std::string content;

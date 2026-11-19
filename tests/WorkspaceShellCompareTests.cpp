@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "project/GitRepository.h"
+#include "util/PerformanceCounters.h"
 
 #include "support/RetainedRedraw.h"
 #include "support/SoftwareCanvas.h"
@@ -762,6 +763,48 @@ void TestWorkspaceShellExternalChangeRefreshesACompareInAnUnfocusedPane() {
     saw_new_text = saw_new_text || row.right_text == "THREE";
   }
   Expect(saw_new_text, "the unfocused pane's compare was rebuilt from the changed file");
+}
+
+// A change to a compared file re-read the compare's committed side with a
+// blocking git per tab, though a full object id names content nothing can
+// change and the tab already holds it: with a few dozen compares of one file
+// open, every change held the shell thread for seconds (soak eee6ac0a5e0b,
+// 32325094bfef). The worktree side is re-read; the committed one is not.
+void TestWorkspaceShellExternalChangeReadsNoCommittedSideAgain() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "a.txt";
+  WriteFile(source, "one\ntwo\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  WriteFile(source, "one\nTWO\n");
+  const microide::project::GitRepository repo(root, microide::platform::LocalProcessLauncher());
+  std::string head = repo.Execute({"rev-parse", "HEAD"}).output;
+  head.erase(head.find_last_not_of(" \n\r") + 1);
+  Expect(head.size() == 40, "HEAD resolves to a full object id: " + head);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  for (int tab = 0; tab < 3; ++tab) {
+    Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, head, head.substr(0, 7)),
+           "the comparison against the commit opens");
+  }
+  WriteFile(source, "one\nTHREE\n");
+  const std::uint64_t reads_before = util::ReadPerformanceCounter(util::PerfCounterId::GitDiffLoads);
+  WorkspaceShellTestAccess::MarkCompareTabsStaleForPath(shell, source);
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::GitDiffLoads) == reads_before,
+         "the committed side is not read from git again");
+  const auto* compare = WorkspaceShellTestAccess::GroupActiveCompareOrNull(
+      shell, WorkspaceShellTestAccess::FocusedGroupIndex(shell));
+  Expect(compare != nullptr, "the compare is still open");
+  bool left_kept = false;
+  bool right_new = false;
+  for (const auto& row : compare->model.rows) {
+    left_kept = left_kept || row.left_text == "two";
+    right_new = right_new || row.right_text == "THREE";
+  }
+  Expect(left_kept && right_new, "the committed side is kept and the worktree side is the changed file");
 }
 
 // The compare's editable side IS the file, so it is one buffer with an editor
@@ -4018,6 +4061,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareLeftSideIsRecognizedByIdentity);
   AddTest(tests, "WorkspaceShell/ExternalChangeRefreshesACompareInAnUnfocusedPane",
           TestWorkspaceShellExternalChangeRefreshesACompareInAnUnfocusedPane);
+  AddTest(tests, "WorkspaceShell/ExternalChangeReadsNoCommittedSideAgain",
+          TestWorkspaceShellExternalChangeReadsNoCommittedSideAgain);
   AddTest(tests, "WorkspaceShell/CompareEditablePaneTakesMultipleCarets",
           TestWorkspaceShellCompareEditablePaneTakesMultipleCarets);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareIsEditableAndSaves",
