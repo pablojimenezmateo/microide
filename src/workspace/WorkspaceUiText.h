@@ -56,6 +56,11 @@ inline void ComposeWindowTitle(std::string& out, std::string_view editor_title, 
     out.append(project_label).append(" \u2014 ");
   }
   out.append("microide");
+  // A tab's title comes from a file name, and a file name is any bytes: SDL
+  // refuses a title that is not UTF-8 whole, so the platform window kept the
+  // previous one while the title bar showed the new name with a U+FFFD for the
+  // bad byte (soak c568d28b7719). Both now carry the same valid text.
+  (void)util::ReplaceInvalidUtf8WithReplacementCharacter(out);
 }
 
 // A path for a message, with the home directory spelled "~" (as a shell prompt

@@ -394,6 +394,30 @@ bool ReplaceInvalidUtf8Bytes(std::string& text, char replacement) {
   return replaced;
 }
 
+bool ReplaceInvalidUtf8WithReplacementCharacter(std::string& text) {
+  if (IsValidUtf8(text)) {
+    return false;
+  }
+  std::string out;
+  out.reserve(text.size() + 8);
+  for (std::size_t offset = 0; offset < text.size();) {
+    if (static_cast<unsigned char>(text[offset]) <= 0x7F) {
+      out.push_back(text[offset++]);
+      continue;
+    }
+    const std::size_t length = Utf8SequenceLength(text, offset);
+    if (length <= 1) {
+      out.append("\xEF\xBF\xBD");
+      ++offset;
+      continue;
+    }
+    out.append(text, offset, length);
+    offset += length;
+  }
+  text = std::move(out);
+  return true;
+}
+
 bool IsValidUtf8(std::string_view content) {
   for (std::size_t offset = 0; offset < content.size();) {
     const std::size_t sequence_length = Utf8SequenceLength(content, offset);

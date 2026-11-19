@@ -14,6 +14,7 @@
 #include "workspace/persistence/RecentsService.h"
 #include "workspace/render/RenderViewModelBuilder.h"
 #include "workspace/render/SingleLineViewMetrics.h"
+#include "util/StringUtil.h"
 #include "workspace/WorkspaceUiText.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 #include "workspace/services/SettingsOverlayService.h"
@@ -1757,7 +1758,21 @@ void TestSingleLineViewMetricsCaretWindow() {
   }
 }
 
+// A tab titled after a file whose name is not UTF-8 (a file name is any bytes):
+// SDL_SetWindowTitle refuses such a title whole, so the platform window kept the
+// previous name while the title bar showed the new one (soak c568d28b7719). The
+// composed title is valid UTF-8, a bad byte reading U+FFFD as the title bar draws it.
+void TestWindowTitleIsValidUtf8ForAnyFileName() {
+  std::string title;
+  microide::workspace::ComposeWindowTitle(title, "compare: .git\xF0\x9F\x98\x80\xF0\x9F", true, "taskflow");
+  Expect(microide::util::IsValidUtf8(title), "the window title is valid UTF-8: " + title);
+  Expect(title == "\u25CF compare: .git\xF0\x9F\x98\x80\xEF\xBF\xBD\xEF\xBF\xBD \u2014 taskflow \u2014 microide",
+         "the cut emoji's bytes read U+FFFD, the rest as before: " + title);
+}
+
 void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RenderViewModelBuilder/WindowTitleIsValidUtf8ForAnyFileName",
+          TestWindowTitleIsValidUtf8ForAnyFileName);
   AddTest(tests, "RenderViewModelBuilder/PickerChromeFitsANarrowOverlay", TestPickerChromeFitsANarrowOverlay);
   AddTest(tests, "RenderViewModelBuilder/SidebarSurfaceResolvesPluginViews", TestSidebarSurfaceResolvesPluginViews);
   AddTest(tests, "RenderViewModelBuilder/SingleLineViewMetricsCaretWindow",

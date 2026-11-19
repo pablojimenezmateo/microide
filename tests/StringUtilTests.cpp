@@ -1036,7 +1036,22 @@ void TestUtilSha256MatchesReferenceVectors() {
          "sha256 of one million 'a' matches FIPS 180-2");
 }
 
+// For an API that refuses invalid UTF-8 whole (SDL_SetWindowTitle): each bad
+// byte becomes U+FFFD, valid sequences stay, and valid text is left alone.
+void TestReplaceInvalidUtf8WithReplacementCharacter() {
+  std::string cut = "compare: .git\xF0\x9F\x98\x80\xF0\x9F x\xFF";
+  Expect(microide::util::ReplaceInvalidUtf8WithReplacementCharacter(cut), "the bad bytes are replaced");
+  Expect(cut == "compare: .git\xF0\x9F\x98\x80\xEF\xBF\xBD\xEF\xBF\xBD x\xEF\xBF\xBD",
+         "each bad byte is one U+FFFD, the emoji kept: " + cut);
+  Expect(microide::util::IsValidUtf8(cut), "the result is valid UTF-8");
+  std::string clean = "caf\xC3\xA9 \xE2\x80\x94 ok";
+  Expect(!microide::util::ReplaceInvalidUtf8WithReplacementCharacter(clean) && clean == "caf\xC3\xA9 \xE2\x80\x94 ok",
+         "valid text is left as it is");
+}
+
 void RegisterStringUtilTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "StringUtil/ReplaceInvalidUtf8WithReplacementCharacter",
+          TestReplaceInvalidUtf8WithReplacementCharacter);
   AddTest(tests, "StringUtil/ReplaceInvalidUtf8BytesKeepsColumns", TestReplaceInvalidUtf8BytesKeepsColumns);
   AddTest(tests, "Util/Sha256MatchesReferenceVectors", TestUtilSha256MatchesReferenceVectors);
   AddTest(tests, "StringUtil/AsciiClassifiersAreLocaleIndependent",

@@ -246,6 +246,11 @@ bool IsValidUtf8(std::string_view content);
 // means the same code-unit offset before and after. Returns whether it replaced
 // anything. For text sent where JSON must be valid UTF-8 (an LSP document).
 bool ReplaceInvalidUtf8Bytes(std::string& text, char replacement = '?');
+// Replaces each byte that is not part of a valid UTF-8 sequence with U+FFFD, in
+// place -- the length changes, unlike ReplaceInvalidUtf8Bytes. For text handed
+// to an API that refuses invalid UTF-8 whole (SDL_SetWindowTitle) and shown as
+// the app's own text renderer shows a bad byte. Returns whether it replaced anything.
+bool ReplaceInvalidUtf8WithReplacementCharacter(std::string& text);
 std::string NormalizeLineEndings(std::string_view text);
 void TrimTrailingLineEndings(std::string* text);
 // Trim leading and trailing ASCII whitespace (`std::isspace` semantics on the
