@@ -426,6 +426,10 @@ void TestReviewCheckpointShowsWhatChangedSinceItWasMarked() {
   CommitAll(repo_path, "base", "base commit");
   WriteFile(repo_path / "untracked-same.txt", "same\n");
   WriteFile(repo_path / "untracked-edited.txt", "u1\n");
+  // A file git cannot read is left out of the snapshot: `git add` stopped at it,
+  // and one such file anywhere in the tree failed every checkpoint.
+  WriteFile(repo_path / "unreadable.bin", "no permission\n");
+  std::filesystem::permissions(repo_path / "unreadable.bin", std::filesystem::perms::none);
 
   WorkspaceShell shell;
   TestAccess::SetProjectRoot(shell, repo_path);

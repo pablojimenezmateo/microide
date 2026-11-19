@@ -48,8 +48,14 @@ GitSnapshotResult SnapshotGitWorkingTree(const std::filesystem::path& repository
                                                  .timeout_ms = internal::kGitReadTimeoutMs});
   const std::vector<platform::SubprocessEnvironmentOverride> snapshot_index = {{"GIT_INDEX_FILE", index}};
   // Hashing a large tree's changes can take a while: the write cap, not the read one.
-  const auto added = repo.ExecuteWithEnvironment({"add", "--all"}, snapshot_index, internal::kGitWriteTimeoutMs);
-  if (!added.success()) {
+  // `--ignore-errors`: a file git cannot read (no permission, gone under the walk)
+  // is left out of the snapshot instead of failing it. Such a file cannot be
+  // reviewed either way, and one of them anywhere in the tree would otherwise cost
+  // the checkpoint of every other file. git then exits 1 with the rest added;
+  // anything it could not go on from is another status.
+  const auto added = repo.ExecuteWithEnvironment({"add", "--all", "--ignore-errors"}, snapshot_index,
+                                                 internal::kGitWriteTimeoutMs);
+  if (!added.success() && (added.exit_code != 1 || added.timed_out)) {
     return Failed("git could not read the working tree");
   }
   const auto tree = repo.ExecuteWithEnvironment({"write-tree"}, snapshot_index, internal::kGitWriteTimeoutMs);
