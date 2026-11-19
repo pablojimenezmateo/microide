@@ -14,6 +14,7 @@ convergence oracle reads both trees without an ssh round trip.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import signal
@@ -118,6 +119,51 @@ def content_set(host_root: Path, mirror: Path) -> tuple[dict[str, str], dict[str
     return host, mirror_side
 
 
+def roaming_session_text(files: list[str], counter: int, own_name: str = "") -> str:
+    """What another machine left on the host as its open files (the editor's
+    `state/put`, key `session`; RoamingSession.cpp is the format), by `counter`:
+    files the project has, files it does not, paths no client may be sent to,
+    more files than one hand-off carries, text that is not a session at all, this
+    machine's own name (nothing to offer) and a text past the server's cap.
+
+    >>> import json
+    >>> json.loads(roaming_session_text(["a.txt", "b.txt"], 0))["files"][0]
+    {'path': 'a.txt', 'line': 1, 'column': 0, 'active': True}
+    >>> [f["path"] for f in json.loads(roaming_session_text(["a.txt"], 2))["files"]][:2]
+    ['../../etc/passwd', '/etc/passwd']
+    >>> len(json.loads(roaming_session_text([], 3))["files"])
+    300
+    >>> roaming_session_text([], 4)
+    '{"version": 1, "client": "qa-oth'
+    >>> json.loads(roaming_session_text(["a.txt"], 5, own_name="here"))["client"]
+    'here'
+    >>> len(roaming_session_text([], 6)) > 512 * 1024
+    True
+    """
+    named = [name for name in files if name]
+    kind = counter % 7
+
+    def session(paths: list[str], client: str = "qa-other-machine") -> dict:
+        return {"version": 1, "client": client, "saved_at": 1_700_000_000 + counter,
+                "files": [{"path": path, "line": 1 + (counter + index * 7) % 40, "column": index % 5,
+                           **({"active": True} if index == counter % max(1, len(paths)) else {})}
+                          for index, path in enumerate(paths)]}
+
+    if kind == 1:
+        return json.dumps(session(["does/not/exist.txt", "src", "gone.md"]))
+    if kind == 2:
+        return json.dumps(session(["../../etc/passwd", "/etc/passwd", "a/../b.txt", "", *named[:1]]))
+    if kind == 3:
+        return json.dumps(session([f"gen/file{index}.txt" for index in range(300)]))
+    if kind == 4:
+        return json.dumps(session(named[:3]))[:32]
+    if kind == 5:
+        return json.dumps(session(named[:3], client=own_name or socket.gethostname()))
+    if kind == 6:
+        return json.dumps({**session(named[:3]), "padding": "x" * (600 * 1024)})
+    return json.dumps(session(named[:3]))
+
+
 class LoopbackHost:
     """Start with `start()`, end with `stop()` (or use it as a context manager)."""
 
@@ -165,6 +211,22 @@ class LoopbackHost:
 
     def open_line(self) -> str:
         return f"remote-open {self.name}:{self.root}"
+
+    def leave_session(self, files: list[str], counter: int) -> int:
+        """Another machine was here: its open files (roaming_session_text) put
+        where the host's server keeps each workspace's, for the editor's next
+        connection to be offered. How many were written -- none before the
+        editor has left its own, which is what makes the workspace's directory
+        (named by the server, after a hash of the root)."""
+        text = roaming_session_text(files, counter)
+        written = 0
+        for held in self.home.rglob("workspace-state/*/session"):
+            try:
+                held.write_text(text)
+                written += 1
+            except OSError:
+                pass
+        return written
 
     def fault(self, kind: str) -> int:
         """Cuts the link or kills the host's server; how many processes it killed."""

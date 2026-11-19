@@ -332,11 +332,15 @@ arguments), `type` (words, Unicode, tabs; long text through the paste path),
 `burst` (key repeat, or several actions with no settle: input faster than frames),
 `drag`, `wheel` (with Ctrl and Shift), `point`, `setting` (`set-setting` over the
 live catalogue: ui.scale, theme, wrap...), `window` (resize within the window's size
-hints, focus loss), `terminal` (floods, alternate screen, titles, a pager, Ctrl+C),
+hints, focus loss), `terminal` (floods, alternate screen, titles, a pager, Ctrl+C;
+bells and OSC 9/777 notifications, some printed after the focus left for another
+application; an image-only clipboard pasted in),
 `file` (open or drop the odd files seeded under `qa-weird/`: CRLF, mixed endings,
 Latin-1, a BOM, binary, a 300 KB line, Unicode names, symlink loops), `external`
 (rewrites, renames, deletes, chmods, symlinks, git commit/switch/stash/a
-conflicting merge -- recorded, so a replay redoes them) and `kill9`. A **profile**
+conflicting merge, working trees added, locked and deleted beside the project --
+recorded, so a replay redoes them; one change in twelve is made between
+`review-checkpoint-mark` and `review-checkpoint`) and `kill9`. A **profile**
 sets the weights: `default`, `editing`, `layout`, `world`, `terminal`, `settings`,
 `diff`, `tooling` (clangd, gdb and the `qa-tests` test provider through their
 plugins), `remote`, `crash` (a dozen kills a run), `plugins` (the bundled
@@ -359,14 +363,27 @@ of its own (`remote_host.py`: an sshd on a free port, state under a short
 so a qa-remote lane's restart never cuts it), the fixture copied there and
 opened with `remote-open`; the editor works on the mirror while the `external`
 source changes the host's directory, and the `remote` source cuts the link,
-kills the host's server (both recorded, so a replay does too) or runs the
-remote commands. The convergence oracle (`RemoteConvergence`) waits for the
+kills the host's server (both recorded, so a replay does too), runs the
+remote commands (File History among them: the host's rewrites are its
+versions), leaves the window for another application (which uploads the open
+files) or plays a second machine: `LoopbackHost.leave_session` puts another
+client's open files -- valid, missing, unportable, too many, garbage,
+oversized -- in the server's store and the editor connects again to be
+offered them. The convergence oracle (`RemoteConvergence`) waits for the
 project to settle and compares the mirror with the host's content set as the
 sync defines it (tracked plus untracked-not-ignored, read through symlinks),
 every 60 steps and at the end; a replay header's `"remote": true` sets the host
 up again. The app installs the `microide-server` beside its binary
 (`$MICROIDE_SERVER_BINARY` overrides). A host whose driver died is stopped by
 the next one to start.
+
+**What the run never chooses.** Quit, the native dialogs, the window's own
+buttons, `control.enabled` -- and a row of the worktree pick that is another
+working tree (`WORKTREE_PREFIX`): choosing it opens that tree as the project
+and the run leaves its scratch copy, as `project-open` would. The pointer is
+kept off those rows (`FORBIDDEN_LABELS`) and a key that would choose one closes
+the pick first (`_activation_chooses_forbidden`); scenario `git-worktree-switch`
+opens one.
 
 **Steering.** A coarse state signature per step (focus, overlay, sidebar, panel,
 menu, modal, split count, tab kind, wrap, selection: `monkey_model.py`) feeds a
@@ -480,7 +497,7 @@ assumptions (a column off by one, a key a focused terminal owns).
 | `monkey.py` | the monkey: sources, profiles, steering, the outside world, the run loop |
 | `monkey_model.py` | state signatures, the coverage model and the prefix corpus |
 | `monkey_oracles.py` | the data-loss, undo, leak, liveness, structural-diff, idle and remote-convergence oracles |
-| `remote_host.py` | a loopback ssh host of a monkey run's own (the `remote` profile), its faults and the content-set comparison |
+| `remote_host.py` | a loopback ssh host of a monkey run's own (the `remote` profile), its faults, the content-set comparison and another machine's open files left on it |
 | `findings.py` | finding signatures (shared with tools/soak) |
 | `stress/` | the SDL lost-wake probe and its lane driver (`wake_race.py`) |
 | `invariants.py` | the editor-invariants sweep (formerly `tools/sweep-editor-invariants.py`) |

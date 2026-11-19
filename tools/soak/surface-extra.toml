@@ -9,7 +9,11 @@ covered_by = "monkey `external` source (rewrite, append, truncate, CRLF, binary,
 
 [item."git from outside"]
 kind = "outside world"
-covered_by = "monkey `external` source (commit, switch, stash, stash pop, a conflicting merge and its abort, checkout of a file)"
+covered_by = "monkey `external` source (commit, switch, stash, stash pop, a conflicting merge and its abort, checkout of a file; one change in twelve between `review-checkpoint-mark` and `review-checkpoint`)"
+
+[item."git working trees"]
+kind = "outside world"
+covered_by = "monkey `external` source (`git-worktree`: three trees beside the project, added on a branch or detached, locked, deleted under git) followed by `git-worktrees`; the pick lists them and the run never chooses one (it would leave the scratch project, as `project-open` would) -- qa scenario git-worktree-switch opens one"
 
 [item."kill -9 and relaunch"]
 kind = "process"
@@ -26,6 +30,10 @@ covered_by = "monkey `file` source through the control channel's `pointer drop` 
 [item."terminal programs"]
 kind = "process"
 covered_by = "monkey `terminal` source (floods, alternate screen, titles, a pager, Ctrl+C/Ctrl+D/Ctrl+Z)"
+
+[item."terminal bells and notifications while another application has the focus"]
+kind = "window system"
+covered_by = "monkey `terminal` source (BEL, OSC 9 and OSC 777 -- markup, an over-long body, a loop -- printed after the focus left; the desktop notification goes to tools/qa/desktopbin/notify-send, never the session's daemon); qa scenario terminal-alert-unfocused checks what is posted. X only"
 
 [item."plugin APIs"]
 kind = "plugins"
@@ -54,6 +62,18 @@ excluded = "Xvfb has no input method; needs a control-channel composition hook (
 [item."clipboard set by other applications"]
 kind = "window system"
 covered_by = "monkey `external` source puts foreign text on the X CLIPBOARD (App.foreign_clipboard, tools/qa/x_clipboard.py); qa scenario edit-foreign-clipboard. X only; SDL's paste race: TD-2026-11-13-449"
+
+[item."images on the clipboard"]
+kind = "window system"
+covered_by = "monkey `terminal` source pastes an image-only clipboard into a terminal (App.foreign_clipboard_image: a PNG, a large one, and bytes that are not one), in the `remote` job into a host's terminal (the upload); the `external` source leaves one for every other paste. qa scenario terminal-paste-image checks the stored file and the typed path. X only"
+
+[item."another machine's open files on a remote host"]
+kind = "remote"
+covered_by = "the `remote` job's `remote:roam` (remote_host.LoopbackHost.leave_session: another client's session, with files the project lacks, unportable paths, too many, garbage, an oversized text, then a disconnect and a reconnect) and `remote:leave` (focus loss, which uploads this machine's); the offer's Open button and `remote-open-session` are pressed like any other. One machine, so what the other client would have written is planted in the server's store"
+
+[item."a remote host short of disk"]
+kind = "remote"
+excluded = "the Host view's `low disk:` row needs a nearly full filesystem under the host's project (as \"disk full\"); RemoteHostActivityTests cover the threshold and the row"
 
 [item."suspend/resume and display hotplug"]
 kind = "window system"

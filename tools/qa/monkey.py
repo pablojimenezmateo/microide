@@ -25,12 +25,15 @@ algebra, leaks, control latency). See dev-docs/project/safety-plan.md W1.
   setting   `set-setting` over the live catalogue (ui.scale, theme, wrap, ...)
   window    resize from tiny to the screen, focus loss
   terminal  shell commands in the panel's terminal (output floods, alternate
-            screen, titles, a pager, Ctrl+C)
+            screen, titles, a pager, Ctrl+C), bells and desktop notifications
+            (OSC 9/777) -- some while another application has the focus -- and
+            an image on the clipboard pasted in
   file      open or drop the odd files seeded under qa-weird/ (CRLF, mixed,
             Latin-1, binary, a long line, Unicode names)
   external  the outside world: rewrites, creates, renames, deletes, chmods,
             symlinks (loops, dangling) and git (commit, branch switch, stash,
-            a conflicting merge), recorded so a replay redoes them
+            a conflicting merge, working trees added, locked and deleted),
+            recorded so a replay redoes them
   kill9     SIGKILL and relaunch on the same profile (the data-loss oracle)
 
 **Steering.** A state signature per step (monkey_model.state_signature) feeds a
@@ -69,6 +72,7 @@ import monkey_model as mm
 import diff_variants as dv
 import monkey_oracles as mo
 import remote_host as rh
+import x_clipboard as xc
 
 # Every command name the palette registers, so the sweep cannot silently stop
 # covering a verb that was added after it was written. Regenerate with:
@@ -154,7 +158,14 @@ FOREIGN_CLIPBOARD_TEXTS = [
 FORBIDDEN_MARGIN = 2
 FORBIDDEN_ELEMENTS = ("button:window/close", "button:window/minimize", "button:window/maximize")
 FORBIDDEN_LABELS = ("Quit", "Exit", "Open File", "Open Folder", "Save As", "Close Window",
-                    "Open Font", "Choose Font")
+                    "Open Font", "Choose Font", "qa-worktree")
+# The directories of the working trees the external source adds beside the
+# project (apply_external "git-worktree"). Git: Switch Worktree… lists them, and
+# choosing one opens it as a project: the run would leave its scratch copy, as
+# `project-open` would. The rows are listed, filtered and painted; they are never
+# chosen (FORBIDDEN_LABELS for the pointer, _activation_chooses_forbidden for the
+# keys). The row of the project itself is. qa scenario git-worktree-switch opens one.
+WORKTREE_PREFIX = "qa-worktree"
 FORBIDDEN_BINDINGS = ("quit", "open-file", "open-folder", "project-open", "save-as")
 # Settings whose rows (and their checkboxes) the pointer must not press: turning
 # `control.enabled` off in the Settings overlay stops the very channel the monkey
@@ -193,6 +204,21 @@ TERMINAL_LINES = [
     "printf 'no newline at the end'\n", "for i in $(seq 1 30); do echo $i; sleep 0.01; done\n",
     "git status\n", "git log --oneline | head\n", "printf '\\t|\\ttabs\\n'\n", "echo $COLUMNS\n",
 ]
+# What a program rings or announces (BEL, OSC 9, OSC 777): a tab mark and a toast
+# inside the window, the window flagged and a desktop notification (the
+# notify-send stand-in, microide_qa.DESKTOPBIN) when another application has the
+# focus. Markup, a body past the length cap, text past ASCII, empty fields and a
+# loop faster than the one-a-second limit.
+TERMINAL_ALERTS = [
+    "printf '\\a'",
+    "printf '\\033]9;qa: the build finished\\007'",
+    "printf '\\033]777;notify;qa title;qa body\\007'",
+    "printf '\\033]777;notify;<b>bold & co</b>;%s\\007' \"$(printf 'x%.0s' $(seq 1 700))\"",
+    "printf '\\033]9;h\\303\\251llo \\344\\275\\240\\345\\245\\275 \\360\\237\\230\\200\\007'",
+    "printf '\\033]777;notify;;\\007'",
+    "for i in 1 2 3 4 5 6; do printf '\\033]9;loop %s\\007' $i; sleep 0.05; done",
+]
+TERMINAL_LINES += [alert + "\n" for alert in TERMINAL_ALERTS]
 
 
 def project_files(root: Path) -> list[str]:
@@ -447,7 +473,8 @@ def apply_churn(project: Path, relative: str, counter: int) -> None:
 EXTERNAL_OPS = ("rewrite", "append", "truncate", "crlf", "create-tree", "delete-tree", "rename-file",
                 "rename-back", "chmod-ro", "chmod-none", "chmod-restore", "symlink", "symlink-loop",
                 "binary", "git-commit", "git-switch", "git-switch-back", "git-stash", "git-stash-pop",
-                "git-merge-conflict", "git-merge-abort", "git-checkout-file", "delete-file", "restore-file")
+                "git-merge-conflict", "git-merge-abort", "git-checkout-file", "delete-file", "restore-file",
+                "git-worktree")
 
 
 def apply_external(project: Path, op: str, target: str, counter: int) -> None:
@@ -539,6 +566,26 @@ def apply_external(project: Path, op: str, target: str, counter: int) -> None:
             git("merge", "--abort")
         elif op == "git-checkout-file" and path.is_file():
             git("checkout", "-q", "--", target)
+        elif op == "git-worktree":
+            # Another working tree of the repository, beside the project: three
+            # slots, each added (on a branch of its own or detached), then locked,
+            # then its directory deleted under git (a prunable entry, which the
+            # next add prunes) -- every kind `git worktree list` reports. Unlocked
+            # before it is deleted: git never prunes a locked tree, and the slot
+            # could not be added again.
+            tree = project.parent / f"{WORKTREE_PREFIX}-{counter % 3}"
+            stage = (counter // 3) % 3
+            if not tree.exists():
+                git("worktree", "prune")
+                if stage == 0:
+                    git("worktree", "add", "-q", "--detach", str(tree))
+                else:
+                    git("worktree", "add", "-q", "-B", f"qa-wt-{counter % 3}", str(tree))
+            elif stage == 1:
+                git("worktree", "lock", str(tree))
+            else:
+                git("worktree", "unlock", str(tree))
+                shutil.rmtree(tree, ignore_errors=True)
     except (OSError, subprocess.SubprocessError, ValueError):
         pass
 
@@ -693,7 +740,8 @@ REMOTE_COMMANDS = ("remote-conflicts", "remote-resolve-all local", "remote-resol
                    "remote-show-log", "remote-status", "remote-disconnect", "remote-reconnect",
                    "remote-reconnect qa-local", "remote-changes", "remote-clear-changes",
                    "remote-apply-deletes", "remote-local-terminal", "remote-forward-port 18080",
-                   "remote-stop-server")
+                   "remote-stop-server", "remote-file-history", "remote-file-history 0",
+                   "remote-open-session")
 # The share of the kill -9s made at a named crash point (the rest land wherever
 # the signal does: both kinds of crash happen).
 POINT_KILL_SHARE = 0.5
@@ -847,10 +895,11 @@ class Monkey:
     def _activation_chooses_forbidden(self, stepping: bool = False) -> bool:
         """App.activation_guard while the monkey runs: an open menu (the menu bar's,
         a context menu, the overflow popup) whose keyboard selection is a row the
-        run must not choose, or a Settings overlay whose selected row is a setting
+        run must not choose, a Settings overlay whose selected row is a setting
         the run must not change (Enter/Space toggle it, Left/Right -- `stepping` --
         step it: `control.enabled` stepped off cut the driver's own channel, soak
-        e02c374fd3ee, ~1100 sightings)."""
+        e02c374fd3ee, ~1100 sightings), or the worktree pick with another working
+        tree selected (WORKTREE_PREFIX: choosing it leaves the scratch project)."""
         try:
             ui = self.app.ui()
         except q.QaFailure:
@@ -861,6 +910,10 @@ class Monkey:
             return True
         if stepping:
             return False
+        if any(element.get("kind") == "overlay-row" and element.get("selected")
+               and str(element.get("label", "")).startswith(WORKTREE_PREFIX)
+               for element in ui.get("elements", [])):
+            return True
         menu = ui.get("menu") or {}
         if not (menu.get("open") or menu.get("contextMenu") or menu.get("overflow")):
             return False
@@ -1225,6 +1278,23 @@ class Monkey:
         if self.rng.random() < 0.15:
             self.app.key(self.rng.choice(["ctrl+c", "ctrl+d", "ctrl+l", "ctrl+z", "q", "Up", "Prior"]))
             return "terminal:key"
+        roll = self.rng.random()
+        if roll < 0.1 and not self.app.wayland:
+            # The program announces while another application has the focus: the
+            # sleep outlasts the focus change, and the wait the announcement.
+            # Nothing inside the window reaches a user who is elsewhere -- the
+            # window is flagged and the notification posted to the desktop.
+            self.app.type(f"sleep 0.3; {self.rng.choice(TERMINAL_ALERTS)}\n")
+            self.app.focus_out()
+            time.sleep(0.7)
+            return "terminal:alert-unfocused"
+        if roll < 0.17 and not self.app.wayland:
+            # A screenshot on the clipboard and no text: the paste stores the
+            # image and types its path (uploading it first to a host's terminal),
+            # or pastes nothing when what is labelled image/png is not one.
+            self.app.foreign_clipboard_image(self.rng.choice(xc.IMAGE_KINDS))
+            self.app.key("ctrl+shift+v")
+            return "terminal:paste-image"
         _, line = self._pick([(f"terminal:{line[:12]}", line) for line in TERMINAL_LINES])
         self.app.type(line)
         return "terminal:line"
@@ -1250,9 +1320,20 @@ class Monkey:
             # Another application's clipboard: the app's paste reads text it never
             # copied (CRLF, an enormous line, wide characters), and its own next
             # copy takes the selection back (App.foreign_clipboard).
+            if self.rng.random() < 0.15:
+                # ... or an image and no text, which every paste then meets.
+                self.app.foreign_clipboard_image(self.rng.choice(xc.IMAGE_KINDS))
+                return "ext:foreign-clipboard-image"
             self.app.foreign_clipboard(self.rng.choice(PASTE_TEXTS + FOREIGN_CLIPBOARD_TEXTS))
             return "ext:foreign-clipboard"
         op = self.rng.choice(EXTERNAL_OPS)
+        # One change in twelve is made between a marked checkpoint and its review
+        # (what an agent did since the user last looked): drawn apart, the two
+        # commands rarely meet a change between them.
+        reviewed = self.rng.random() < 0.08
+        if reviewed:
+            self.app.send_line("review-checkpoint-mark")
+            self.app.settle_quiet(0.6)
         candidates = [name for name in self.files + self.weird
                       if name and not name.endswith(("loop", "dangling")) and "." in Path(name).name]
         target = self.rng.choice(candidates) if candidates else "README.md"
@@ -1260,6 +1341,12 @@ class Monkey:
         apply_external(self.world, op, target, self.counter)
         if op.startswith("git-"):
             self.app.outside_change_pending = True
+        if op == "git-worktree":
+            # The pick over the trees as they now are.
+            self.app.send_line("git-worktrees")
+        elif reviewed:
+            self.app.send_line("review-checkpoint")
+            return "ext:checkpoint-review"
         return f"ext:{op}"
 
     def diff_action(self) -> str:
@@ -1408,6 +1495,21 @@ class Monkey:
             self.app.record_external({"external": "remote-fault", "target": kind, "counter": self.counter})
             self.host.fault(kind)
             return f"remote:fault-{kind}"
+        roll = self.rng.random()
+        if roll < 0.08:
+            # Another machine left its open files on the host; this one connects
+            # again and is offered them (recorded, so a replay leaves the same).
+            self.counter += 1
+            self.app.record_external({"external": "remote-roam", "target": "", "counter": self.counter})
+            self.host.leave_session(self.files, self.counter)
+            self.app.send_line("remote-disconnect")
+            self.app.send_line("remote-reconnect")
+            return "remote:roam"
+        if roll < 0.14 and not self.app.wayland:
+            # The user leaves for another application: this machine's open files
+            # and carets are left on the host for the next one.
+            self.app.focus_out()
+            return "remote:leave"
         named = [name for name in self.files if name]
         if self.rng.random() < 0.15 and self.project is not None:
             # Blocked saves (a dangling link or an unreadable file where the save
@@ -1481,6 +1583,9 @@ class Monkey:
         elif row.get("external") == "remote-fault":
             if self.host is not None:
                 self.host.fault(row.get("target", ""))
+        elif row.get("external") == "remote-roam":
+            if self.host is not None:
+                self.host.leave_session(self.files, int(row.get("counter", 0)))
         elif self.world is not None:
             apply_external(self.world, row["external"], row.get("target", ""), int(row.get("counter", 0)))
 
