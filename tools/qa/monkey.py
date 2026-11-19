@@ -898,8 +898,9 @@ class Monkey:
         run must not choose, a Settings overlay whose selected row is a setting
         the run must not change (Enter/Space toggle it, Left/Right -- `stepping` --
         step it: `control.enabled` stepped off cut the driver's own channel, soak
-        e02c374fd3ee, ~1100 sightings), or the worktree pick with another working
-        tree selected (WORKTREE_PREFIX: choosing it leaves the scratch project)."""
+        e02c374fd3ee, ~1100 sightings), or a pick -- the command palette, the
+        worktree pick -- whose selected row is one (FORBIDDEN_LABELS: Quit, another
+        working tree, which would leave the scratch project)."""
         try:
             ui = self.app.ui()
         except q.QaFailure:
@@ -910,8 +911,11 @@ class Monkey:
             return True
         if stepping:
             return False
+        # A pick's selected row (the command palette's, the worktree pick's): `q`
+        # typed into the palette left Quit selected, and the newlines typed next
+        # chose it (soak 7ab9a5476905). WORKTREE_PREFIX is one of FORBIDDEN_LABELS.
         if any(element.get("kind") == "overlay-row" and element.get("selected")
-               and str(element.get("label", "")).startswith(WORKTREE_PREFIX)
+               and str(element.get("label", "")).startswith(FORBIDDEN_LABELS)
                for element in ui.get("elements", [])):
             return True
         menu = ui.get("menu") or {}

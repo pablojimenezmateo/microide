@@ -103,6 +103,20 @@ class MonkeyGuardTests(unittest.TestCase):
             {"kind": "menu-item", "name": "menu/File/Quit", "label": "Quit", "active": False}]}
         self.assertFalse(self._monkey(ui)._activation_chooses_forbidden())
 
+    def test_quit_selected_in_the_command_palette_is_forbidden(self) -> None:
+        # Soak 7ab9a5476905 (2026-11-19): `q` typed into the command palette left
+        # Quit its selected row, and the typed newlines that followed chose it.
+        ui = {"menu": {"open": False}, "elements": [
+            {"kind": "overlay-row", "label": "Quit", "selected": True},
+            {"kind": "overlay-row", "label": "Cancel Saving Before Quit/Close", "selected": False}]}
+        self.assertTrue(self._monkey(ui)._activation_chooses_forbidden())
+
+    def test_another_palette_row_selected_is_not(self) -> None:
+        ui = {"menu": {"open": False}, "elements": [
+            {"kind": "overlay-row", "label": "Quit", "selected": False},
+            {"kind": "overlay-row", "label": "Cancel Saving Before Quit/Close", "selected": True}]}
+        self.assertFalse(self._monkey(ui)._activation_chooses_forbidden())
+
     def test_no_menu_open_is_not(self) -> None:
         ui = {"menu": {"open": False}, "elements": [
             {"kind": "menu-item", "name": "menu/File/Quit", "label": "Quit", "active": True}]}
