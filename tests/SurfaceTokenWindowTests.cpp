@@ -7,6 +7,7 @@
 #include "perf/AllocationCounter.h"
 #endif
 
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <string>
@@ -208,6 +209,33 @@ void TestSurfaceTokenWindowAnEmptyRangeStillWalksTheFrontierToIt() {
          "the frontier reaches the end of an empty range: it stopped at " + std::to_string(window.frontier()));
 }
 
+// A walk with time left keeps going past its row step: the compare render walked
+// 256 rows a frame and repainted its pane after each, so a diff scrolled to row
+// 30,000 of a 60,000-line file took ~117 frames of a pane nobody saw change (soak
+// a64655101a5a: 306 wakes a second, every one a repaint of the compare pane). One
+// with no time left still takes its step, so a walk always progresses.
+void TestSurfaceTokenWindowAWalkWithTimeLeftKeepsGoing() {
+  const Pane pane = MakePane(5000);
+  const std::size_t lines = pane.lines.size();
+  const auto line_at = [&](std::size_t row) -> std::string_view { return pane.lines[row]; };
+
+  SurfaceTokenWindow timed;
+  timed.Reset(lines, SyntaxHighlighter::InitialState(pane.path, pane.lines));
+  timed.EnsureWindow(lines - 40, lines, pane.path,
+                     SurfaceTokenWindow::WalkBudget{256, std::chrono::steady_clock::now() + std::chrono::seconds(10)},
+                     line_at);
+  Expect(timed.frontier() == lines,
+         "a walk with time left reaches the window in one step: it stopped at " + std::to_string(timed.frontier()));
+
+  SurfaceTokenWindow spent;
+  spent.Reset(lines, SyntaxHighlighter::InitialState(pane.path, pane.lines));
+  spent.EnsureWindow(lines - 40, lines, pane.path,
+                     SurfaceTokenWindow::WalkBudget{256, std::chrono::steady_clock::now()},
+                     line_at);
+  Expect(spent.frontier() == 256,
+         "a walk out of time still takes its row step: it stopped at " + std::to_string(spent.frontier()));
+}
+
 }  // namespace
 
 void RegisterSurfaceTokenWindowTests(std::vector<TestCase>& tests) {
@@ -219,6 +247,7 @@ void RegisterSurfaceTokenWindowTests(std::vector<TestCase>& tests) {
           TestSurfaceTokenWindowScrollBackRetokenizesCorrectly);
   AddTest(tests, "SurfaceTokenWindow/BudgetedWalkConvergesWithoutWrongTokens",
           TestSurfaceTokenWindowBudgetedWalkConvergesWithoutWrongTokens);
+  AddTest(tests, "SurfaceTokenWindow/AWalkWithTimeLeftKeepsGoing", TestSurfaceTokenWindowAWalkWithTimeLeftKeepsGoing);
   AddTest(tests, "SurfaceTokenWindow/SteadyScrollDoesNotAllocate",
           TestSurfaceTokenWindowSteadyScrollDoesNotAllocate);
 }

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <charconv>
 #include <cmath>
 #include <functional>
@@ -12,6 +13,7 @@
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
+#include "workspace/state/SurfaceTokenWindow.h"
 #include "workspace/git/CompareTabLoad.h"
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/render/CompareVisibleLayoutCache.h"
@@ -487,17 +489,22 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
   // per-row form did: it left that side's tokens empty and carried the side's
   // syntax state forward untouched, and `AdvanceState`/`HighlightLineInto` both
   // do that for an empty line.
+  // 256 rows a step, and more steps while the frame's walk time lasts: a plain
+  // file's walk to row 30,000 then takes a frame or two, not ~117 repaints of the
+  // pane (soak a64655101a5a), and a costly syntax's still stops at its budget.
   constexpr std::size_t kCompareSyntaxRowsPerFrame = 256;
+  const SurfaceTokenWindow::WalkBudget walk_budget{
+      kCompareSyntaxRowsPerFrame, std::chrono::steady_clock::now() + kSyntaxWalkTimePerFrame};
   const std::size_t left_before = compare_tab.left_token_window.frontier();
   const std::size_t right_before = compare_tab.right_token_window.frontier();
   compare_tab.left_token_window.EnsureWindow(
-      window_start, window_end, compare_tab.path, kCompareSyntaxRowsPerFrame,
+      window_start, window_end, compare_tab.path, walk_budget,
       [&](std::size_t row) -> std::string_view {
         const compare::CompareRow& compare_row = compare_tab.model.rows[row];
         return compare_row.left_line > 0 ? compare_row.left_text : std::string_view{};
       });
   compare_tab.right_token_window.EnsureWindow(
-      window_start, window_end, compare_tab.path, kCompareSyntaxRowsPerFrame,
+      window_start, window_end, compare_tab.path, walk_budget,
       [&](std::size_t row) -> std::string_view {
         const compare::CompareRow& compare_row = compare_tab.model.rows[row];
         return compare_row.right_line > 0 ? compare_row.right_text : std::string_view{};

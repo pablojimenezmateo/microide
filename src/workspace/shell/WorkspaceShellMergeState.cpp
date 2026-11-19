@@ -2,6 +2,7 @@
 #include "workspace/shell/WorkspaceShell.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <span>
 #include <string_view>
@@ -12,6 +13,7 @@
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
 #include "workspace/git/MergeResolverContext.h"
+#include "workspace/state/SurfaceTokenWindow.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspaceTextSearch.h"
 
@@ -540,14 +542,17 @@ void WorkspaceShell::PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab
   // `AdvanceState` (which allocates nothing) and keeps token buffers only for a
   // bounded window around the viewport, recycled as it slides -- where this used
   // to keep one heap buffer per line of the file forever (TD-2026-08-15-242).
+  // As the compare panes': 256-row steps while the frame's walk time lasts.
   constexpr std::size_t kMergeSyntaxRowsPerFrame = 256;
+  const SurfaceTokenWindow::WalkBudget walk_budget{
+      kMergeSyntaxRowsPerFrame, std::chrono::steady_clock::now() + kSyntaxWalkTimePerFrame};
   const std::size_t incoming_before = merge_tab.incoming_token_window.frontier();
   const std::size_t current_before = merge_tab.current_token_window.frontier();
   merge_tab.incoming_token_window.EnsureWindow(
-      visible_start_row, visible_end_row, merge_tab.output_path, kMergeSyntaxRowsPerFrame,
+      visible_start_row, visible_end_row, merge_tab.output_path, walk_budget,
       [&](std::size_t row) -> std::string_view { return merge_tab.model.incoming_lines[row]; });
   merge_tab.current_token_window.EnsureWindow(
-      visible_start_row, visible_end_row, merge_tab.output_path, kMergeSyntaxRowsPerFrame,
+      visible_start_row, visible_end_row, merge_tab.output_path, walk_budget,
       [&](std::size_t row) -> std::string_view { return merge_tab.model.current_lines[row]; });
   // Rows this step reached are painted in this frame.
   if (merge_tab.incoming_token_window.frontier() != incoming_before ||

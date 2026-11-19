@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <utility>
@@ -37,6 +38,10 @@ namespace microide::workspace {
 // Rows are addressed in the pane's own line space. `Tokens(row)` returns an empty
 // vector for a row outside the window or past the frontier, which is exactly what
 // the renderers already do with a row that has not been tokenized yet.
+// The time one frame gives a compare or merge pane's syntax-state walk (both of
+// a surface's panes share it). A walk takes at least its row step whatever is left.
+inline constexpr std::chrono::milliseconds kSyntaxWalkTimePerFrame{4};
+
 class SurfaceTokenWindow {
  public:
   // Rows kept on each side of the requested window. Absorbs a scroll of up to
@@ -61,6 +66,21 @@ class SurfaceTokenWindow {
     window_end_ = 0;
   }
 
+  // How far one EnsureWindow walks the state frontier: `rows` at least, then on in
+  // steps of `rows` while `until` has not passed. A row budget alone was sized for
+  // the worst syntax, so a plain file a jump of 30,000 rows down took ~117 frames,
+  // each a repaint of a pane that did not change (soak a64655101a5a); the clock
+  // lets a cheap walk finish in a frame and still bounds an expensive one. A
+  // default `until` (the epoch) never extends the walk.
+  struct WalkBudget {
+    std::size_t rows = 0;
+    std::chrono::steady_clock::time_point until{};
+    WalkBudget() = default;
+    WalkBudget(std::size_t walk_rows) : rows(walk_rows) {}  // NOLINT(google-explicit-constructor): a row count is a budget
+    WalkBudget(std::size_t walk_rows, std::chrono::steady_clock::time_point walk_until)
+        : rows(walk_rows), until(walk_until) {}
+  };
+
   std::size_t line_count() const { return end_states_.size(); }
   std::size_t frontier() const { return frontier_; }
 
@@ -74,8 +94,8 @@ class SurfaceTokenWindow {
     return row == 0 ? initial_state_ : end_states_[row - 1];
   }
 
-  // Advances the frontier toward `end` — by at most `walk_budget` rows, so a jump
-  // to the bottom of a large file does not stall one frame — and tokenizes the
+  // Advances the frontier toward `end` — within `walk_budget` (WalkBudget), so a
+  // jump to the bottom of a large file does not stall one frame — and tokenizes the
   // rows of [start, end) that the frontier has reached.
   //
   // `line_at(row)` yields the row's text. The walk below the window uses
@@ -91,7 +111,7 @@ class SurfaceTokenWindow {
   void EnsureWindow(std::size_t start,
                     std::size_t end,
                     const std::filesystem::path& path,
-                    std::size_t walk_budget,
+                    WalkBudget walk_budget,
                     LineAt&& line_at,
                     FillFilter&& should_fill) {
     const std::size_t rows = end_states_.size();
@@ -106,8 +126,11 @@ class SurfaceTokenWindow {
     // compare render asked for a catch-up frame forever (soak a64655101a5a).
 
     // 1. Walk the state frontier up to `end`, budgeted. Nothing is tokenized here.
-    if (frontier_ < end) {
-      const std::size_t target = std::min(end, frontier_ + walk_budget);
+    const std::size_t step = walk_budget.rows;
+    for (bool first_step = true;
+         step > 0 && frontier_ < end && (first_step || std::chrono::steady_clock::now() < walk_budget.until);
+         first_step = false) {
+      const std::size_t target = std::min(end, frontier_ + step);
       while (frontier_ < target) {
         end_states_[frontier_] =
             editor::SyntaxHighlighter::AdvanceState(line_at(frontier_), path,
@@ -157,7 +180,7 @@ class SurfaceTokenWindow {
   void EnsureWindow(std::size_t start,
                     std::size_t end,
                     const std::filesystem::path& path,
-                    std::size_t walk_budget,
+                    WalkBudget walk_budget,
                     LineAt&& line_at) {
     EnsureWindow(start, end, path, walk_budget, std::forward<LineAt>(line_at),
                  [](std::size_t) { return true; });
