@@ -955,19 +955,36 @@ void TestPortsSubscribePushesANewListener() {
       root.path(), {}, /*keep_on_detach=*/false, {});
   Expect(listener.handle != 0, "the listener spawns: " + listener.error);
   std::string owned_root;
-  Expect(WaitUntil(
-             [&] {
-               std::lock_guard lock(mutex);
-               for (const auto& [owned, owner] : pushed_roots) {
-                 if (owned != port) {
-                   owned_root = owner;
-                   return true;
-                 }
-               }
-               return false;
-             },
-             std::chrono::seconds(20), std::chrono::milliseconds(20)),
-         "the spawned process's port is pushed with an owner");
+  const bool owned_pushed = WaitUntil(
+      [&] {
+        std::lock_guard lock(mutex);
+        for (const auto& [owned, owner] : pushed_roots) {
+          if (owned != port) {
+            owned_root = owner;
+            return true;
+          }
+        }
+        return false;
+      },
+      std::chrono::seconds(20), std::chrono::milliseconds(20));
+  // What the host did push, for the run where this fails (CI, ubsan, never here):
+  // the ports say whether the process listened at all, the owners whether any
+  // was attributed, and the first listener's port whether the kernel gave the
+  // spawned one the same number.
+  std::string last_push;
+  {
+    std::lock_guard lock(mutex);
+    last_push = " (the test's own listener was on " + std::to_string(port) + "; last push: ports";
+    for (const std::uint16_t listening : pushed) {
+      last_push += " " + std::to_string(listening);
+    }
+    last_push += "; owners";
+    for (const auto& [owned, owner] : pushed_roots) {
+      last_push += " " + std::to_string(owned) + "=" + owner;
+    }
+    last_push += "; spawned pid " + std::to_string(listener.pid) + ")";
+  }
+  Expect(owned_pushed, "the spawned process's port is pushed with an owner" + last_push);
   Expect(owned_root == root.path().string(), "its owner is the spawning workspace: " + owned_root);
   client->Signal(listener.handle, "KILL");
 }
