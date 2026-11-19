@@ -1485,9 +1485,16 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
       std::min(highlight_checkpoints_valid_through_, checkpoint_start);
   if (!highlight_checkpoints_.empty()) {
     EnsureInitialHighlightState();
-    highlight_checkpoints_.front() = *initial_highlight_state_;
-    if (highlight_checkpoints_valid_through_ < 1) {
-      highlight_checkpoints_valid_through_ = 1;
+    // A buffer with highlighting off (a placeholder: Undo can put one back) has
+    // no initial state, so no checkpoint chains from it (soak f6a4d30a66f4: the
+    // empty optional was dereferenced).
+    if (initial_highlight_state_.has_value()) {
+      highlight_checkpoints_.front() = *initial_highlight_state_;
+      if (highlight_checkpoints_valid_through_ < 1) {
+        highlight_checkpoints_valid_through_ = 1;
+      }
+    } else {
+      highlight_checkpoints_valid_through_ = 0;
     }
   }
   highlight_state_content_revision_ = document_->content_revision;

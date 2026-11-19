@@ -1306,6 +1306,25 @@ void TestTextViewportReplaceAllRangesCarriesTheCarets() {
   Expect(by_needle.CaretBoundsFault().empty(), "no caret is left past its line: " + by_needle.CaretBoundsFault());
 }
 
+// Undo back onto a placeholder buffer (welcome / empty-pane text) re-flagged it
+// a placeholder, which turns highlighting off, and the invalidation that follows
+// re-seeded the highlight checkpoints from the initial state that "off" had just
+// reset: an empty optional dereferenced (soak f6a4d30a66f4, an abort under
+// _GLIBCXX_ASSERTIONS; undefined behaviour without them). No highlighting, no
+// checkpoints to seed.
+void TestTextViewportUndoOntoAPlaceholderBufferKeepsNoHighlightState() {
+  TextViewport viewport;
+  viewport.SetPlaceholderText("Welcome\nOpen a file to start\nor create one\n");
+  Expect(viewport.is_placeholder(), "the buffer starts as a placeholder");
+  viewport.MoveCursorTo(1, 0);
+  viewport.InsertText("typed ");
+  Expect(viewport.Undo(), "the edit can be undone");
+  viewport.MoveCursorTo(2, 0);
+  viewport.InsertText("again ");
+  Expect(viewport.Undo(), "and undone again");
+  Expect(viewport.lines()[1] == "Open a file to start", "the text is back as it was");
+}
+
 // Change End of Line Sequence (TD-2026-10-18-361): the line ending changes as an
 // edit -- the buffer is dirty and saves with the new ending, undo puts the old one
 // back and the buffer is clean again at the save point, redo redoes it.
@@ -7016,6 +7035,8 @@ AddTest(tests, "TextViewport/UndoThenRedoIsTheIdentityOverRandomHistories",
   AddTest(tests, "TextViewport/ReplaceAllClearsLastAppliedEdit",
           TestTextViewportReplaceAllClearsLastAppliedEdit);
   AddTest(tests, "TextViewport/ReplaceAllRangesCarriesTheCarets", TestTextViewportReplaceAllRangesCarriesTheCarets);
+  AddTest(tests, "TextViewport/UndoOntoAPlaceholderBufferKeepsNoHighlightState",
+          TestTextViewportUndoOntoAPlaceholderBufferKeepsNoHighlightState);
   AddTest(tests, "TextViewport/MultiCaretDeleteLineClearsLastAppliedEdit",
           TestTextViewportMultiCaretDeleteLineClearsLastAppliedEdit);
   AddTest(tests, "TextViewport/LastAppliedEditTracksMultilineReplacement",
