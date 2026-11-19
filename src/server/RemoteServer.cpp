@@ -907,7 +907,7 @@ void RemoteServer::InstallPortHandlers(Connection& connection) {
                               {
                                 std::lock_guard lock(ports_mutex_);
                                 port_subscribers_.insert(connection.id);
-                                ports_last_ = ports;
+                                listeners_last_ = listeners;
                                 port_roots_ = roots;
                                 if (port_sampler_ == nullptr) {
                                   port_sampler_ = std::make_unique<PeriodicSampler>(
@@ -920,32 +920,55 @@ void RemoteServer::InstallPortHandlers(Connection& connection) {
 
 void RemoteServer::SamplePorts() {
   const std::vector<Listener> listeners = ListeningSockets();
-  std::vector<std::uint16_t> ports = PortsOf(listeners);
-  std::vector<Listener> fresh;
+  // The sockets of every port that gained one since the last sample. Compared by
+  // socket, not by port number: a listener that closed and another process that
+  // bound the same port before this sample leave the set of ports as it was, and
+  // by ports alone the newcomer was never attributed -- a workspace's dev server
+  // on a port something else had just left stayed nobody's (and a port a
+  // workspace's process left kept its owner for whatever took it). Only those
+  // ports are walked: the owner of a socket already announced does not change,
+  // and the fd walk is the costly part.
+  std::vector<Listener> changed;
   {
     std::lock_guard lock(ports_mutex_);
-    if (ports == ports_last_) {
+    if (listeners == listeners_last_) {
       return;
     }
-    // Only a port that just started listening is attributed: the owner of one
-    // already announced does not change, and the fd walk is the costly part.
+    std::vector<std::uint16_t> gained;
     for (const Listener& listener : listeners) {
-      if (!std::binary_search(ports_last_.begin(), ports_last_.end(), listener.port)) {
-        fresh.push_back(listener);
+      if (!std::binary_search(listeners_last_.begin(), listeners_last_.end(), listener) &&
+          (gained.empty() || gained.back() != listener.port)) {
+        gained.push_back(listener.port);  // sorted: `listeners` is, by port first
+      }
+    }
+    for (const Listener& listener : listeners) {
+      if (std::binary_search(gained.begin(), gained.end(), listener.port)) {
+        changed.push_back(listener);
       }
     }
   }
   // The walk runs with no lock held: the table listings take their own.
-  std::map<std::uint16_t, std::string> found = AttributeListeners(fresh, PortOwnerRoots());
+  std::map<std::uint16_t, std::string> found = AttributeListeners(changed, PortOwnerRoots());
+  const std::vector<std::uint16_t> ports = PortsOf(listeners);
   std::vector<std::uint64_t> subscribers;
   util::JsonValue message;
   {
     std::lock_guard lock(ports_mutex_);
-    for (auto it = port_roots_.begin(); it != port_roots_.end();) {
-      it = std::binary_search(ports.begin(), ports.end(), it->first) ? std::next(it) : port_roots_.erase(it);
+    const std::vector<std::uint16_t> ports_before = PortsOf(listeners_last_);
+    std::map<std::uint16_t, std::string> roots = port_roots_;
+    for (auto it = roots.begin(); it != roots.end();) {
+      // Gone, or re-attributed just now (`found` has it again if it is still a
+      // workspace's).
+      const bool walked = std::any_of(changed.begin(), changed.end(),
+                                      [&](const Listener& listener) { return listener.port == it->first; });
+      it = !walked && std::binary_search(ports.begin(), ports.end(), it->first) ? std::next(it) : roots.erase(it);
     }
-    port_roots_.merge(found);
-    ports_last_ = ports;
+    roots.merge(found);
+    listeners_last_ = listeners;
+    if (ports == ports_before && roots == port_roots_) {
+      return;  // a socket changed and nothing a client is shown did
+    }
+    port_roots_ = std::move(roots);
     subscribers.assign(port_subscribers_.begin(), port_subscribers_.end());
     message = PortsJson(ports, port_roots_);
   }

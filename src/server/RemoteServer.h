@@ -255,8 +255,10 @@ class RemoteServer {
   // runs while anyone asked. After everything its thread sends through.
   std::mutex ports_mutex_;
   std::set<std::uint64_t> port_subscribers_;     // guarded by ports_mutex_
-  std::vector<std::uint16_t> ports_last_;        // guarded by ports_mutex_
-  std::map<std::uint16_t, std::string> port_roots_;  // of ports_last_; guarded by ports_mutex_
+  // The listening sockets of the last sample, sorted: a port AND the inode of the
+  // socket on it, since a port can change hands between two samples.
+  std::vector<Listener> listeners_last_;         // guarded by ports_mutex_
+  std::map<std::uint16_t, std::string> port_roots_;  // of listeners_last_; guarded by ports_mutex_
   std::unique_ptr<PeriodicSampler> port_sampler_;  // guarded by ports_mutex_
   // activity/subscribe: the same shape. The sampler reads /proc only while a
   // connection is subscribed; a status that asks for activity samples once.

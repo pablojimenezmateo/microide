@@ -972,6 +972,72 @@ void TestPortsSubscribePushesANewListener() {
   client->Signal(listener.handle, "KILL");
 }
 
+// A port number is not a listener. One closes and a workspace's process binds
+// the same number before the next 2 s sample: the set of PORTS is what it was,
+// so the sampler saw no change, attributed nothing, and the port stayed nobody's
+// for as long as the process listened (the reverse leaves a dead owner on a
+// port something else took). The sampler compares sockets -- port and inode.
+void TestAPortTakenOverBetweenSamplesGetsItsOwner() {
+  TemporaryDirectory root;
+  auto client = remote::RemoteServerClient::Create();
+  std::string error;
+  Expect(client->ConnectCommand({Server(), "serve-stdio"},
+                                remote::HelloRequest{.release = "test", .root = root.path().string()}, &error),
+         "connects: " + error);
+  std::mutex mutex;
+  std::vector<std::uint16_t> pushed;
+  std::map<std::uint16_t, std::string> pushed_roots;
+  const auto now = client->SubscribePorts(
+      [&](const remote::RemoteServerClient::HostPorts& ports) {
+        std::lock_guard lock(mutex);
+        pushed = ports.ports;
+        pushed_roots = ports.roots;
+      },
+      &error);
+  Expect(now.has_value(), "subscribed: " + error);
+  const int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  sockaddr_in address{};
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  socklen_t length = sizeof(address);
+  Expect(fd >= 0 && ::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0 &&
+             ::listen(fd, 1) == 0 &&
+             ::getsockname(fd, reinterpret_cast<sockaddr*>(&address), &length) == 0,
+         "a listener of the test's own on the host's loopback");
+  const std::uint16_t port = ntohs(address.sin_port);
+  Expect(WaitUntil(
+             [&] {
+               std::lock_guard lock(mutex);
+               return std::find(pushed.begin(), pushed.end(), port) != pushed.end();
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(5)),
+         "the listener is pushed");
+  {
+    std::lock_guard lock(mutex);
+    Expect(!pushed_roots.contains(port), "and is nobody's project's");
+  }
+  // A sample just ran, so the next is two seconds away: the port changes hands
+  // well inside that.
+  ::close(fd);
+  const remote::RemoteServerClient::Spawned listener = client->Spawn(
+      {"python3", "-c",
+       "import socket,time\ns=socket.socket()\ns.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\n"
+       "s.bind(('127.0.0.1'," + std::to_string(port) + "))\ns.listen()\ntime.sleep(60)"},
+      root.path(), {}, /*keep_on_detach=*/false, {});
+  Expect(listener.handle != 0, "the workspace's listener spawns: " + listener.error);
+  std::string seen;
+  const bool owned = WaitUntil(
+      [&] {
+        std::lock_guard lock(mutex);
+        const auto owner = pushed_roots.find(port);
+        seen = owner != pushed_roots.end() ? owner->second : std::string("nobody");
+        return owner != pushed_roots.end() && owner->second == root.path().string();
+      },
+      std::chrono::seconds(20), std::chrono::milliseconds(20));
+  Expect(owned, "the port the workspace's process took over is pushed as that workspace's, got " + seen);
+  client->Signal(listener.handle, "KILL");
+}
+
 }  // namespace
 
 // The last reference to a client can be released inside one of its own I/O-thread
@@ -1036,6 +1102,8 @@ void RegisterRemoteServerTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteServer/ListeningPortsSourcesAgreeOnTheLiveHost",
           TestListeningPortsSourcesAgreeOnTheLiveHost);
   AddTest(tests, "RemoteServer/PortsSubscribePushesANewListener", TestPortsSubscribePushesANewListener);
+  AddTest(tests, "RemoteServer/APortTakenOverBetweenSamplesGetsItsOwner",
+          TestAPortTakenOverBetweenSamplesGetsItsOwner);
   AddTest(tests, "RemoteServer/AClientReleasedOnItsOwnThreadIsDestroyedElsewhere",
           TestAClientReleasedOnItsOwnThreadIsDestroyedElsewhere);
 }
