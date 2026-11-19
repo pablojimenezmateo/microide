@@ -321,15 +321,21 @@ WorkspaceShell::MergeInteractionLayout WorkspaceShell::BuildMergeInteractionLayo
                                     ? (kWorkspaceScrollbarThickness +
                                        kWorkspaceScrollbarInset)
                                     : 0.0f;
-  const MergeResultInteractionLayout result =
-      BuildMergeResultInteractionLayout(rect, surface, merge_tab);
+  MergeResultInteractionLayout result = BuildMergeResultInteractionLayout(rect, surface, merge_tab);
   // The layout builder is const now, because the cursor path asks for the same
   // layout from a const tab and was maintaining its own copy of it rather than
   // const_casting -- which is how that copy came to disagree with this one about
   // the grid's row total. The one side effect it used to carry stays here, at the
   // caller that owns a mutable tab.
+  const std::size_t scroll_before_sizing = merge_tab.result_viewport.scroll_line();
   merge_tab.result_viewport.SetViewportSize(result.metrics.visible_rows,
                                             result.metrics.visible_columns);
+  // Sizing re-clamps the scroll to the pane's rows: the layout read the scroll
+  // before, and placed the conflict boxes a row off the text the paint draws at
+  // the clamped one (soak 4c6d45903600, the CI half of it).
+  if (merge_tab.result_viewport.scroll_line() != scroll_before_sizing) {
+    result = BuildMergeResultInteractionLayout(rect, surface, merge_tab);
+  }
   return MergeInteractionLayout{
       .content_bottom = rect.y + std::max(0.0f, rect.h - bottom_reserved),
       .result = result,

@@ -331,7 +331,7 @@ void TestMergeColumnsPaintAtOneRowPastTheEnd() {
   WriteFile(root / "current.cpp", lines("2"));
   std::size_t mismatched_heights = 0;
   std::string first_mismatch;
-  for (int height = 360; height <= 720; height += 3) {
+  for (int height = 300; height <= 900; height += 2) {
     WorkspaceShell shell;
     WorkspaceShellTestAccess::SetProjectRoot(shell, root);
     WorkspaceShellTestAccess::SetWindowSize(shell, kWindowWidth, height);
