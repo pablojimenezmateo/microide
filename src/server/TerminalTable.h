@@ -199,7 +199,8 @@ class TerminalTable {
     Client* FindClient(std::uint64_t connection);
   };
 
-  // The pty takes the smallest pane any attached client reported. Table lock held.
+  // The pty takes the pane of the attached client that typed last, and the
+  // smallest pane any of them reported while none has. Table lock held.
   void ApplySharedSizeLocked(Terminal& terminal);
   // Drops `connection`'s client of `terminal` and resizes to the rest; false if
   // it was not attached.

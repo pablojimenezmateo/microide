@@ -78,12 +78,20 @@ Each host terminal SHALL keep its scrollback on the host, sized by `terminal.scr
 - **WHEN** a client that already holds lines up to offset N reattaches
 - **THEN** it receives lines from N onward only
 
-### Requirement: Two clients share one pty at the smaller size
-When two clients are attached to one terminal, the pty SHALL take the smaller of their sizes in each dimension, and each client SHALL draw the unused margin as such.
+### Requirement: Two clients share one pty at the size of the one typing
+When two or more clients are attached to one terminal, the pty SHALL take the size of the attached client that most recently sent input, and SHALL change to another client's size when that client sends input. While no attached client has sent input, the pty SHALL take the smaller of their sizes in each dimension. A client whose pane is larger than the pty SHALL draw the unused margin as such; one whose pane is smaller SHALL show the last rows and first columns that fit. Attaching and resizing SHALL NOT by themselves take the size from the client that typed last.
 
-#### Scenario: A second client with a smaller window
-- **WHEN** a second client attaches with fewer columns than the first
+#### Scenario: A second client with a smaller window, before anyone types
+- **WHEN** a second client attaches with fewer columns than the first and neither has typed
 - **THEN** the pty is resized to the smaller width and both clients see the same output
+
+#### Scenario: A machine left attached does not hold the one in use
+- **WHEN** a small client stays attached and idle while the user types in a larger client
+- **THEN** the pty takes the larger client's size, and the idle client mirrors a screen larger than its pane
+
+#### Scenario: The size follows the keyboard
+- **WHEN** the user then types in the small client
+- **THEN** the pty is resized to the small client's pane before that input reaches the program
 
 ### Requirement: A host terminal requested before the connection is ready waits for it
 A terminal requested in a remote project while that project's connection is not `Ready` SHALL be created at once as a pending pane in the terminal strip, showing the connection's state as one status line in its body, rewritten only when that state changes. The pane SHALL NOT be dropped, and input to it SHALL be dropped rather than queued. When the connection first reaches `Ready`, every pending pane of that connection in the active project SHALL start its shell (or reattach, per "Reopening reattaches each terminal to its host shell") in its recorded directory; a pending pane of an inactive project SHALL start when that project is next activated with its connection `Ready`. If the connection fails for good (`Disconnected`, `Offline`), the pending panes SHALL show that and relaunch with Enter, as an exited pane does. This applies to the project's default terminal, to revived terminals and to terminals the user opens from the `+`, the menu or the palette.

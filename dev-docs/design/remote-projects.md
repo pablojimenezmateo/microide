@@ -1416,10 +1416,18 @@ manifest hash. So:
   and channels are the scarce resource on a stock `sshd` (§ 1).
 
   **Two attached clients and one pty** (§ 6.12) can disagree about size. The pty
-  takes the **smaller** of the attached sizes in each dimension, as tmux does, and
-  each client draws the unused margin as such; the alternative, resizing on every
-  client's whim, makes full-screen programs redraw every time either user touches
-  a window edge.
+  takes the pane of the client that **typed last** (tmux's `window-size latest`),
+  and the smaller of the attached sizes in each dimension only while none of them
+  has typed. A client whose pane is larger draws the unused margin as such; one
+  whose pane is smaller shows the screen's last rows and first columns, and has
+  the whole of it back with its first keystroke. It was the smaller size outright
+  until 2026-11-19: the one person this is for moves between machines, and the
+  one left attached -- a suspended laptop whose link takes hours to time out --
+  held the one in use to its window. Typing is the signal because nothing else
+  says a person is there: an attach or a resize also comes from a link that
+  reconnected by itself or a monitor that went to sleep. Resizing on every
+  client's whim, the other alternative, makes full-screen programs redraw every
+  time either user touches a window edge.
 
   `remote.shell` (project scope) overrides the remote login shell. A dropped link
   no longer ends the session; see § 6.12.
@@ -1928,7 +1936,7 @@ a process spawned as a child of ssh does not: it dies with the connection.
   only to a client whose hello said 4, so the floor stays at 3.)
 - **Two clients may attach at once**, which is what "open it from the other
   machine" means. Both get the same events; terminal handles are shared, their
-  output fans out to both, and the pty takes the smaller of the two sizes
+  output fans out to both, and the pty takes the size of the one that typed last
   (§ 6.5). This is a deliberate small amount of collaboration falling out of the
   daemon model, not a collaboration feature — there is no shared cursor and no
   shared buffer state, because each client has its own mirror.

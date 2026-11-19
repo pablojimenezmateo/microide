@@ -635,6 +635,14 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Changed
 
+- **A host terminal open on two machines is the size of the one you type in.**
+  The terminal used to take the smaller of the two windows for as long as both
+  were attached, so a laptop left connected (and suspended) kept every agent's
+  screen squeezed on the machine in use until its link timed out. Now the
+  terminal takes the pane of whichever machine typed last, and the smaller of
+  the two only until one has; the other machine shows the part that fits. It
+  needs a host server from this release on.
+
 - **The sidebar widens as far as you drag it.** It stopped at 520 px whatever the
   window's size, so a deep tree or a long search hit could not be read whole; it
   now takes everything but the editor's minimum width.

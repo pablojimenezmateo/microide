@@ -499,12 +499,14 @@ void TestWarmReattachKeepsTheMirrorAndDuplicatesNothing() {
   channel.reset();
 }
 
-// Two clients on one host terminal SHARE it (tmux's rule, spec "Two clients
-// share one pty at the smaller size"): the pty takes the smaller pane, both see
-// every byte and both can type, a one-shot signal (the bell) reaches each of
-// them, and when the smaller one leaves the other gets its room back. A second
-// attach used to take the terminal over from the first.
-void TestTwoClientsShareAHostTerminalAtTheSmallerSize() {
+// Two clients on one host terminal SHARE it (spec "Two clients share one pty at
+// the size of the one typing"): both see every byte and both can type, and the
+// pty is the pane of whoever typed last -- the smaller of the two only until one
+// of them has. A machine left attached elsewhere (a suspended laptop) used to
+// hold the other to its window for as long as its link took to time out. A
+// one-shot signal (the bell) reaches each of them, and when one leaves the other
+// has its own size. A second attach used to take the terminal over from the first.
+void TestTwoClientsShareAHostTerminalAtTheSizeOfTheOneTyping() {
   ShortServerDir dir;
   StartServer(dir);
   const std::filesystem::path root = dir.scratch() / "project";
@@ -520,13 +522,7 @@ void TestTwoClientsShareAHostTerminalAtTheSmallerSize() {
   Expect(channel_a != nullptr, "the terminal opens");
   TerminalSessionTestAccess::EnterHostMode(a, channel_a);
   a.Resize(20, 80);
-  TypeLine(a, "echo ready-$((1+1))");
-  // On a blank screen, whether any frame arrived at all (TD-2026-10-27-406): the
-  // server's log is printed with the failure (ShortServerDir).
-  Expect(WaitForText(a, "ready-2"), [&] { return std::string("the first client sees its shell (handle " +
-                                        std::to_string(channel_a->handle()) + ", " +
-                                        std::to_string(channel_a->received_bytes()) + " frame bytes):\n" +
-                                        ScreenText(a)); });
+  Expect(WaitUntil([&] { return channel_a->handle() != 0; }, std::chrono::seconds(10)), "the open is answered");
   const std::uint64_t handle = channel_a->handle();
 
   auto second = Connect(dir);
@@ -536,12 +532,29 @@ void TestTwoClientsShareAHostTerminalAtTheSmallerSize() {
   Expect(channel_b != nullptr, "the second client attaches");
   TerminalSessionTestAccess::EnterHostMode(b, channel_b);
   b.Resize(10, 40);
-  Expect(WaitForText(b, "ready-2"), [&] { return std::string("the second client sees the same screen:\n" + ScreenText(b)); });
+  // Nobody has typed: the smaller pane, so each sees the whole screen.
+  Expect(WaitUntil([&] { return a.rows() == 10 && a.columns() == 40; }, std::chrono::seconds(10)),
+         "until someone types, the pty is the smaller pane and the larger client mirrors it");
 
+  // The first client types: the pty is its pane now, and the smaller client
+  // mirrors a screen larger than its own.
+  TypeLine(a, "echo ready-$((1+1)); stty size");
+  // On a blank screen, whether any frame arrived at all (TD-2026-10-27-406): the
+  // server's log is printed with the failure (ShortServerDir).
+  Expect(WaitForText(a, "ready-2"), [&] { return std::string("the first client sees its shell (handle " +
+                                        std::to_string(channel_a->handle()) + ", " +
+                                        std::to_string(channel_a->received_bytes()) + " frame bytes):\n" +
+                                        ScreenText(a)); });
+  Expect(WaitForText(a, "20 80") && WaitForText(b, "ready-2"),
+         [&] { return std::string("typing takes the pty to the typist's pane, and both see it:\n" + ScreenText(a)); });
+  Expect(WaitUntil([&] { return b.rows() == 20 && b.columns() == 80; }, std::chrono::seconds(5)),
+         "the smaller client mirrors the typist's size");
+
+  // The second client types: the size follows it.
   TypeLine(b, "stty size");
-  Expect(WaitForText(b, "10 40") && WaitForText(a, "10 40"), [&] { return std::string("the pty takes the smaller pane, and both see it:\n" + ScreenText(a)); });
+  Expect(WaitForText(b, "10 40") && WaitForText(a, "10 40"), [&] { return std::string("the pty follows whoever typed last:\n" + ScreenText(a)); });
   Expect(WaitUntil([&] { return a.rows() == 10 && a.columns() == 40; }, std::chrono::seconds(5)),
-         "the larger client mirrors the shared size");
+         "and the larger client mirrors it");
   TypeLine(a, "echo from-a-$((2+3))");
   Expect(WaitForText(b, "from-a-5"), [&] { return std::string("what one client types, the other sees:\n" + ScreenText(b)); });
   (void)a.ConsumeBell();
@@ -1198,8 +1211,8 @@ void RegisterRemoteTerminalTests(std::vector<TestCase>& tests) {
           TestWarmReattachKeepsTheMirrorAndDuplicatesNothing);
   AddTest(tests, "RemoteTerminal/ScrollingUpFetchesOlderHostHistory",
           TestScrollingUpFetchesOlderHostHistory);
-  AddTest(tests, "RemoteTerminal/TwoClientsShareAHostTerminalAtTheSmallerSize",
-          TestTwoClientsShareAHostTerminalAtTheSmallerSize);
+  AddTest(tests, "RemoteTerminal/TwoClientsShareAHostTerminalAtTheSizeOfTheOneTyping",
+          TestTwoClientsShareAHostTerminalAtTheSizeOfTheOneTyping);
 }
 
 }  // namespace microide::tests

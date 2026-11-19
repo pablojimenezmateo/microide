@@ -119,12 +119,26 @@ TerminalTable::Client* TerminalTable::Terminal::FindClient(std::uint64_t connect
 void TerminalTable::ApplySharedSizeLocked(Terminal& terminal) {
   std::size_t rows = 0;
   std::size_t columns = 0;
+  // The client that typed last is the person at the keyboard: the pty is their
+  // pane's size (tmux's `window-size latest`). The smallest pane held everyone
+  // to a machine left attached elsewhere -- a suspended laptop, whose link takes
+  // hours to time out -- for as long as it stayed attached.
+  const Client* typist = nullptr;
   for (const Client& client : terminal.clients) {
     if (client.rows == 0 || client.columns == 0) {
       continue;
     }
+    if (client.written_at != std::chrono::steady_clock::time_point{} &&
+        (typist == nullptr || client.written_at > typist->written_at)) {
+      typist = &client;
+    }
+    // Until one of them types, the smallest: every client sees the whole screen.
     rows = rows == 0 ? client.rows : std::min(rows, client.rows);
     columns = columns == 0 ? client.columns : std::min(columns, client.columns);
+  }
+  if (typist != nullptr) {
+    rows = typist->rows;
+    columns = typist->columns;
   }
   // Nobody attached, or nobody has said: keep the size it has.
   if (rows == 0 || (rows == terminal.session.rows() && columns == terminal.session.columns())) {
@@ -287,6 +301,10 @@ void TerminalTable::Input(std::uint64_t connection, std::uint64_t handle,
     if (Client* client = terminal->FindClient(connection)) {
       client->written_seq = std::max(client->written_seq, events.back().seq);
       client->written_at = std::chrono::steady_clock::now();
+      // Typing takes the pty's size from whoever had it, before the input lands.
+      if (terminal->clients.size() > 1) {
+        ApplySharedSizeLocked(*terminal);
+      }
       client->written_generation = terminal->output_generation.load(std::memory_order_acquire);
       client->written_output = session.OutputCount();
     }
