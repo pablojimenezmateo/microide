@@ -354,6 +354,15 @@ class Suite:
         return host, mirror, diff
 
     # ---- group T: host terminals across quit, crash and close-project ----------
+    def git_output(self) -> list[str]:
+        """The last lines of every output channel that is git's: what a failed
+        git action wrote, which its row only points at."""
+        lines: list[str] = []
+        for channel in self.app.query("output").get("channels", []):
+            if "git" in (channel.get("id", "") + channel.get("label", "")).lower():
+                lines += self.app.query("output", {"channel": channel["id"]}).get("text", [])[-12:]
+        return lines
+
     def host_terminals(self) -> list[dict]:
         """The host server's terminals under this project's root, from the host's
         own `microide-server status --json` (the server/status reply; the bare
@@ -1646,7 +1655,14 @@ class Suite:
                 app.click(*app.center(stage))
                 status, dt = wait_for(lambda: (lambda o: o if o.startswith("M ") else None)(
                     host.ssh(f"cd {host.root} && git status --porcelain -- {EDIT_FILE}")), 20, 0.5)
-                self.record("K.stage-on-host", status is not None, f"{dt:.1f}s porcelain={status!r}")
+                # A failure names git's own words (the row says only "see git
+                # output"): on 2026-11-19 one slow-link pass in three failed here
+                # and left nothing to tell a held index.lock from anything else.
+                why = "" if status is not None else (
+                    f"; said={[n['message'] for n in self.recent_notifs()][-3:]}"
+                    f"; git output={self.git_output()}; host locks="
+                    + host.ssh(f"cd {host.root} && ls .git/*.lock 2>/dev/null; true").split().__repr__())
+                self.record("K.stage-on-host", status is not None, f"{dt:.1f}s porcelain={status!r}{why}")
                 # Commit is enabled once the git view has the staged state back,
                 # a round trip later over a slow link.
                 wait_for(lambda: app.element("button:git/commit").get("enabled", True) or None, 20, 0.3)
