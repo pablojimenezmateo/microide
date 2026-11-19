@@ -2389,6 +2389,20 @@ text; the client decodes it as untrusted. A caret alone is never worth a
 message: sessions are saved at every pause in typing
 (`openspec/specs/remote-connection-lifecycle`).
 
+**A review, on the next machine (2026-11-19).** Under a second key (`review`)
+a client leaves the review targets of the repository at the project's root --
+the files and hunks marked reviewed, the notes -- with paths relative to the
+repository and no root of its own, since the other machine's mirror is
+elsewhere (`workspace/persistence/RoamingReview`). It is sent when the window
+loses focus after a mark changed, never when a mark is made, and on a connect
+that finds the host holding something else. A connect merges what the host
+holds without asking -- marks are not a layout -- one target at a time, the
+copy changed last winning; a cleared review is kept as an empty target with the
+time of the clear, so it is the newer copy rather than an absence the other
+machine would fill back in. Two machines that both changed one review between
+connects keep the later one's copy of it whole: there is one user, and merging
+mark by mark would need a record of every unmark.
+
 ### 7.9a The Host view
 
 The answer to "did I leave anything running there?" from the client, in

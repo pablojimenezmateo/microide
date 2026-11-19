@@ -688,6 +688,10 @@ void WorkspaceShell::MarkMergeResolved() {
 
 void WorkspaceShell::PersistBranchReviewState() {
   MakePersistenceCoordinator().SaveConfigState();
+  // A remote project's marks follow the user to their other machine.
+  if (context_.current_project_state.id.IsRemote()) {
+    MakeRemoteHostService().ReviewChanged(context_.current_project_state.root);
+  }
 }
 
 // Mark/unmark share everything but the one service call, so they are one method

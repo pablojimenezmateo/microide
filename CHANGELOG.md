@@ -10,6 +10,13 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Added
 
+- **A review follows you between machines.** The files and hunks marked
+  reviewed and the notes taken in a remote project -- a branch review, a review
+  since a checkpoint -- are left on its host when you leave the window, and are
+  there on the machine that connects next, merged without asking: of each
+  review the copy changed last wins, so a review cleared on one machine stays
+  cleared on the other. Marking sends nothing by itself. `remote.roam_session`
+  turns it off with the open files' list.
 - **Git: Review Commit…** (`git-commits`). A pick of the branch's last hundred
   commits -- subject, short hash, age, author -- and Enter opens the review of
   the chosen one (`review-commit <hash>`): what an agent committed while you

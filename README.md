@@ -178,7 +178,8 @@ for what is actually measured, and what is not.
   the file as it is now; each workspace row of the Host view shows the host's free disk space;
   and the files open in a project follow you between machines — a machine that connects is
   offered, once, the files another one left open (`remote.roam_session`), and opens them beside
-  its own tabs
+  its own tabs. A review moves with you too: the files and hunks you marked reviewed and the
+  notes you took are on the other machine when it connects
 
 ### Debugging
 - Built-in DAP debugger (validated against gdb 17.2): per-language launch configs, line /

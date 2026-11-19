@@ -1,5 +1,9 @@
 #include "workspace/git/BranchReviewStateBridge.h"
 
+#include "workspace/git/CompareTabReview.h"
+#include "workspace/persistence/RoamingReview.h"
+#include "workspace/state/WorkspaceProjectState.h"
+
 namespace microide::workspace {
 
 namespace {
@@ -140,6 +144,33 @@ void LoadBranchReviewStateFromPersisted(const PersistedBranchReviewState& persis
   for (const PersistedBranchReviewTarget& target : persisted.targets) {
     service->targets().push_back(FromPersistedTarget(target));
   }
+}
+
+std::string RoamingReviewText(const ProjectWorkspaceState& state) {
+  return EncodeRoamingReview(ToPersistedBranchReviewState(state.branch_review), state.root);
+}
+
+bool TakeRoamingReview(std::string_view text, ProjectWorkspaceState* state) {
+  std::optional<std::vector<PersistedBranchReviewTarget>> theirs = DecodeRoamingReview(text, state->root);
+  if (!theirs.has_value() || theirs->empty()) {
+    return false;
+  }
+  PersistedBranchReviewState mine = ToPersistedBranchReviewState(state->branch_review);
+  if (!MergeRoamingReview(std::move(*theirs), &mine)) {
+    return false;
+  }
+  LoadBranchReviewStateFromPersisted(mine, &state->branch_review);
+  // The repository's cap on targets, and the revision the git view's markers
+  // are cached on.
+  state->branch_review.PruneForRepository(state->root, nullptr);
+  for (EditorGroup& group : state->editor_groups) {
+    for (TabEntry& tab : group.open_tabs) {
+      if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
+        ApplyBranchReviewPresentationMarkers(*tab.compare, state->branch_review);
+      }
+    }
+  }
+  return true;
 }
 
 std::optional<compare::BranchReviewTargetIdentity> OutgoingBranchReviewTarget(

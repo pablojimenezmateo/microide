@@ -336,12 +336,19 @@ one machine or another -- got its own pass on 2026-11-18 (`CHANGELOG.md`
 screenshot and a `path:line` reference handed to a terminal, the host's free disk
 in the Host view, a worktree pick, review since a marked checkpoint, File History
 from the mirror's object store, and the files open in a project offered to the
-next machine that connects. Deliberately left out: rendered markdown or image
-views, and anything that would make the editor an agent harness
-(`openspec/specs/non-ai-product-scope`). Not done, and worth doing only when
-asked for: branch-review marks and notes do not travel between machines (they
-are still each client's own), and File History exists for remote projects only
-(a local project has no mirror holding earlier contents).
+next machine that connects. A second pass on 2026-11-19 closed what daily use
+of that workflow still tripped on: a host program's `$EDITOR` opens a tab
+(`git commit`, an agent CLI's prompt editor), `Ctrl+Shift+N` goes to the next
+terminal that rang, a review's notes are copied or typed into a terminal as
+`path:line: note` lines, Git: Review Commit… lists recent commits, Switch
+Worktree says what waits in each tree, a terminal attached from two machines is
+the size of the one typing, and review marks and notes travel between machines.
+Deliberately left out: rendered markdown or image views, and anything that would
+make the editor an agent harness (`openspec/specs/non-ai-product-scope`). Not
+done, and worth doing only when asked for: File History exists for remote
+projects only (a local project has no mirror holding earlier contents), and a
+local project's terminals take neither `$EDITOR` nor `$BROWSER` requests (their
+programs reach the desktop and their own editor themselves).
 
 > Decisions already made with the user — do not re-ask:
 > - Notification actions are **VS Code-style inline buttons**; each is an

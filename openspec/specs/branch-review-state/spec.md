@@ -2,9 +2,11 @@
 
 ## Purpose
 
-Define local-only branch review memory: reviewed files and hunks, optional notes, and
-changed-since-reviewed markers for branch compare workflows. State is project-scoped and
-rendered from prebuilt view-model fields.
+Define branch review memory: reviewed files and hunks, optional notes, and
+changed-since-reviewed markers for branch compare workflows. State is project-scoped,
+kept on the machine that made it, and rendered from prebuilt view-model fields; a remote
+project's also follows the user to their other machine (remote-connection-lifecycle,
+"A review follows the user between machines").
 
 ## Requirements
 

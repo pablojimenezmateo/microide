@@ -627,6 +627,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/TerminalAttention.cpp
   src/workspace/WorkspaceFileDrop.cpp
   src/workspace/persistence/RoamingSession.cpp
+  src/workspace/persistence/RoamingReview.cpp
   src/workspace/PluginRasterSize.cpp
   src/workspace/control/ControlChannelService.cpp
   src/workspace/control/ControlUiQuery.cpp

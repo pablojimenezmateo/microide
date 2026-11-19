@@ -896,10 +896,67 @@ void RemoteHostService::SessionSaved(const std::filesystem::path& root,
 
 void RemoteHostService::LeaveSessions() {
   for (auto& [root, entry] : projects_) {
-    if (!entry.closed && entry.status.state == State::Ready && entry.roaming_pending.has_value() &&
+    if (entry.closed || entry.status.state != State::Ready) {
+      continue;
+    }
+    if (entry.roaming_pending.has_value() &&
         RoamingSessionFingerprint(*entry.roaming_pending) != entry.roaming_left) {
       LeaveSession(root, entry);
     }
+    if (entry.review_changed) {
+      LeaveReview(root, entry);
+    }
+  }
+}
+
+void RemoteHostService::ReviewChanged(const std::filesystem::path& root) {
+  if (const auto it = projects_.find(root); it != projects_.end() && !it->second.closed) {
+    it->second.review_changed = true;
+  }
+}
+
+void RemoteHostService::LeaveReview(const std::filesystem::path& root, Project& entry) {
+  if (!RoamingEnabled() || !operations_.review_text) {
+    return;
+  }
+  std::string text = operations_.review_text(root);
+  entry.review_changed = false;
+  // Nothing to say is not a reason to replace what another machine left.
+  if (text.empty() || text == entry.review_on_host) {
+    return;
+  }
+  entry.review_on_host = text;
+  std::shared_ptr<remote::RemoteConnection> connection = entry.project->session().connection();
+  work_.Post([this, connection, root, text = std::move(text)]() mutable {
+    remote::RemoteWorkspace(connection).PutState("review", std::move(text), [this, root](std::string error) {
+      if (error.empty()) {
+        return;
+      }
+      // Not kept (the link dropped, an older server): the next leave tries again.
+      mailbox_.Post([this, root]() {
+        if (const auto failed = projects_.find(root); failed != projects_.end()) {
+          failed->second.review_on_host.clear();
+          failed->second.review_changed = true;
+        }
+      });
+    });
+  });
+}
+
+void RemoteHostService::OnRoamingReview(const std::filesystem::path& tree, const std::optional<std::string>& text) {
+  const auto it = projects_.find(tree);
+  if (it == projects_.end() || it->second.closed) {
+    return;
+  }
+  Project& entry = it->second;
+  entry.review_on_host = text.value_or(std::string());
+  if (text.has_value() && operations_.take_review) {
+    operations_.take_review(tree, *text);
+  }
+  // What this machine holds beyond the host's copy -- marks made while the link
+  // was down, or before a quit that left nothing -- goes there now.
+  if (operations_.review_text && operations_.review_text(tree) != entry.review_on_host) {
+    LeaveReview(tree, entry);
   }
 }
 
@@ -934,6 +991,15 @@ void RemoteHostService::CheckRoamingSession(const std::filesystem::path& tree, P
                                                                          std::string) {
       if (text.has_value()) {  // none kept, or a server that keeps none: nothing to offer
         mailbox_.Post([this, tree, text = std::move(*text)]() { OnRoamingSession(tree, text); });
+      }
+    });
+    // The review marks another machine left, merged without asking. An answer of
+    // "none kept" still matters (this machine's are then left); a host that
+    // could not be asked -- an older server -- is left alone.
+    remote::RemoteWorkspace(connection).GetState("review", [this, tree](std::optional<std::string> text,
+                                                                        std::string error) {
+      if (text.has_value() || error.empty()) {
+        mailbox_.Post([this, tree, text = std::move(text)]() { OnRoamingReview(tree, text); });
       }
     });
   });

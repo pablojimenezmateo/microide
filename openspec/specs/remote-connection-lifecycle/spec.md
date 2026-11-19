@@ -83,6 +83,21 @@ While `remote.roam_session` is on, a client SHALL leave on the host, for each re
 - **WHEN** a machine reconnects and the host holds what that same machine left
 - **THEN** no row is raised
 
+### Requirement: A review follows the user between machines
+While `remote.roam_session` is on, a client SHALL leave on the host, for each remote project it has connected, the review targets of the repository at the project's root -- reviewed files and hunks and notes, with every path relative to the repository and without the client's own root -- when its window loses focus after any of them changed, and on a connect when what it holds differs from what the host holds. A mark or a note SHALL NOT be sent when it is made. On each new connection a client SHALL ask the host for what was left and merge it without asking, one target (base, head and merge base) at a time: a target it does not hold is added, and one it holds is replaced when the host's copy was changed later. Clearing a review SHALL leave its target empty with the time of the clear, so that the clear is the newer copy and the marks do not return from a machine that still holds them. The text is untrusted: a path that leaves the repository, a malformed entry or a list past the review state's caps SHALL be dropped, and text that is not the format SHALL change nothing. Past 384 KiB the least recently changed targets SHALL be left out whole.
+
+#### Scenario: A review begun at work goes on at home
+- **WHEN** the user marks files reviewed and notes a hunk on one machine, leaves its window, and connects to the project from another
+- **THEN** the second machine shows those marks and that note on the same review, with nothing asked
+
+#### Scenario: Marking costs the link nothing
+- **WHEN** the user marks forty hunks reviewed without leaving the window
+- **THEN** nothing about the review is sent to the host until the window loses focus
+
+#### Scenario: A cleared review stays cleared
+- **WHEN** a review is cleared on one machine and another machine that still holds its marks connects later
+- **THEN** that machine's marks for the review are gone, and they are not sent back
+
 #### Scenario: An older host server
 - **WHEN** the host's server does not list the `state` capability
 - **THEN** nothing is left, nothing is offered, and no error is shown

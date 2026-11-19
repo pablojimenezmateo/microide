@@ -9,6 +9,9 @@
 #include "util/Sha256.h"
 #include "util/TextFileIO.h"
 #include "workspace/services/RemoteHostService.h"
+#include "compare/BranchReviewStateService.h"
+#include "workspace/git/BranchReviewStateBridge.h"
+#include "workspace/persistence/RoamingReview.h"
 #include "workspace/FileUri.h"
 #include "workspace/WorkspaceUiText.h"
 #include "workspace/services/AssistService.h"
@@ -1920,6 +1923,72 @@ void TestOpenFolderOnHostEditsTheHostTree() {
       Expect(third.has_value() && third->find(" open on desktop-c") != std::string::npos,
              "the files this machine closed are offered when another machine has them: " +
                  third.value_or("(no offer)"));
+    }
+
+    // Review marks and notes move the same way, without an offer: what this
+    // machine notes is left on the host when its window is left, and what another
+    // machine left there -- changed later -- is this machine's on its next connect.
+    {
+      const auto review_file = [&]() -> std::filesystem::path {
+        std::error_code ec;
+        for (std::filesystem::recursive_directory_iterator it(host.home, ec), end; !ec && it != end; it.increment(ec)) {
+          if (it->path().filename() == "review" &&
+              it->path().parent_path().parent_path().filename() == "workspace-state") {
+            return it->path();
+          }
+        }
+        return {};
+      };
+      const auto review_on_host = [&] { return review_file().empty() ? std::string() : ReadFile(review_file()); };
+      const auto leave_the_window = [&] {
+        SDL_Event focus_lost{};
+        focus_lost.type = SDL_EVENT_WINDOW_FOCUS_LOST;
+        (void)shell.HandleEvent(focus_lost);
+        SDL_Event focus_gained{};
+        focus_gained.type = SDL_EVENT_WINDOW_FOCUS_GAINED;
+        (void)shell.HandleEvent(focus_gained);
+      };
+      compare::BranchReviewStateService& review = WorkspaceShellTestAccess::CurrentProjectState(shell).branch_review;
+      const compare::BranchReviewTargetIdentity target =
+          compare::MakeBranchReviewTargetIdentity(mirror, "origin/main", "HEAD", "origin/main", 1);
+      review.SetNote(target, compare::BranchReviewNoteScope::File, mirror / "agent.c", std::nullopt, "noted on this machine");
+      hosts.ReviewChanged(mirror);
+      for (int i = 0; i < 20; ++i) {
+        Pump(shell);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      }
+      Expect(review_on_host().empty(), "a note alone sends nothing: " + review_on_host());
+      leave_the_window();
+      Expect(WaitUntil([&] { Pump(shell); return review_on_host().find("noted on this machine") != std::string::npos; },
+                       std::chrono::seconds(20), std::chrono::milliseconds(10)),
+             [&] { return "leaving the window leaves the review's notes on the host: " + review_on_host(); });
+      Expect(review_on_host().find(mirror.string()) == std::string::npos, "without this machine's paths");
+
+      // The other machine went on with the review: its copy of the target is newer.
+      compare::BranchReviewStateService theirs;
+      const std::filesystem::path their_mirror = "/home/other/mirror";
+      const compare::BranchReviewTargetIdentity their_target =
+          compare::MakeBranchReviewTargetIdentity(their_mirror, "origin/main", "HEAD", "origin/main", 5);
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      theirs.SetNote(their_target, compare::BranchReviewNoteScope::File, "agent.c", std::nullopt, "noted on the other machine");
+      theirs.MarkFileReviewed(their_target, "main.c", 42);
+      WriteFile(review_file(), workspace::EncodeRoamingReview(workspace::ToPersistedBranchReviewState(theirs), their_mirror));
+      reconnect();
+      Expect(WaitUntil([&] { Pump(shell); return review.NotesAsReferences(target) == "agent.c: noted on the other machine"; },
+                       std::chrono::seconds(20), std::chrono::milliseconds(10)),
+             [&] { return "the newer copy is this machine's after a connect: " + review.NotesAsReferences(target); });
+      const compare::BranchReviewTargetState* merged = review.FindTarget(target);
+      Expect(merged != nullptr && merged->reviewed_files.size() == 1 && merged->reviewed_files[0].path == "main.c",
+             "with the files it marked reviewed");
+
+      // What this machine does next is the newer copy in turn, and replaces it.
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      review.SetNote(target, compare::BranchReviewNoteScope::File, mirror / "agent.c", std::nullopt, "and answered here");
+      hosts.ReviewChanged(mirror);
+      leave_the_window();
+      Expect(WaitUntil([&] { Pump(shell); return review_on_host().find("and answered here") != std::string::npos; },
+                       std::chrono::seconds(20), std::chrono::milliseconds(10)),
+             [&] { return "this machine's later note goes back: " + review_on_host(); });
     }
   }
 

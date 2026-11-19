@@ -515,7 +515,8 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .label = "Offer the Files Open on Another Machine",
           .description = "Leave the list of a remote project's open files (and their carets) on "
                          "its host, and on connecting offer to open the ones another machine had "
-                         "open. Nothing here is closed or replaced; unsaved text stays where it is.",
+                         "open. Nothing here is closed or replaced; unsaved text stays where it is. "
+                         "A review's marks and notes move the same way, merged without asking.",
           .type = SettingType::Bool,
           .scope = SettingScope::User,
           .default_bool = true,

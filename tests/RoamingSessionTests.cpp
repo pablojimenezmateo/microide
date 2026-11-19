@@ -3,6 +3,12 @@
 // that text is trusted.
 
 #include "TestSupport.h"
+#include "compare/BranchReviewStateService.h"
+#include "workspace/git/BranchReviewStateBridge.h"
+#include "workspace/persistence/RoamingReview.h"
+
+#include <chrono>
+#include <thread>
 
 #include "workspace/persistence/RoamingSession.h"
 
@@ -127,9 +133,126 @@ void TestRoamingSessionTextRoundTripsAndIsNotTrusted() {
          "a list past the cap is cut at it");
 }
 
+// Review marks and notes follow the user between machines the same way: the
+// targets of the repository at the project's root are left as text, without the
+// root (each machine's mirror is its own), and merged target by target on the
+// machine that reads them -- the copy changed last wins, so a review cleared on
+// one machine stays cleared on the other.
+void TestRoamingReviewMergesTheNewerCopyOfEachTarget() {
+  using microide::compare::BranchReviewNoteScope;
+  using microide::compare::BranchReviewStateService;
+  using microide::compare::MakeBranchReviewTargetIdentity;
+  using microide::workspace::DecodeRoamingReview;
+  using microide::workspace::EncodeRoamingReview;
+  using microide::workspace::MergeRoamingReview;
+  using microide::workspace::PersistedBranchReviewState;
+  using microide::workspace::PersistedBranchReviewTarget;
+  using microide::workspace::ToPersistedBranchReviewState;
+  const std::filesystem::path work_mirror = "/home/work/.local/share/microide/remote/build/src/repo";
+  const std::filesystem::path home_mirror = "/home/me/.local/share/microide/remote/build/src/repo";
+
+  BranchReviewStateService work;
+  const auto main_review = MakeBranchReviewTargetIdentity(work_mirror, "origin/main", "HEAD", "origin/main", 3);
+  const auto checkpoint = MakeBranchReviewTargetIdentity(work_mirror, "refs/worktree/microide/review-checkpoint",
+                                                         "WORKTREE", "", 9);
+  const auto elsewhere = MakeBranchReviewTargetIdentity("/somewhere/else", "main", "HEAD", "main", 1);
+  work.MarkFileReviewed(main_review, work_mirror / "src/a.cpp", 0xfeedfacecafebeefULL);
+  work.MarkHunkReviewed(main_review, {.path = "src/b.cpp", .old_start = 4, .old_count = 2, .new_start = 4,
+                                      .new_count = 5, .content_hash = 0xffffffffffffffffULL});
+  work.SetNote(main_review, BranchReviewNoteScope::Hunk, "src/b.cpp",
+               microide::compare::BranchReviewHunkIdentity{.path = "src/b.cpp", .old_start = 4, .old_count = 2,
+                                                          .new_start = 4, .new_count = 5, .content_hash = 77},
+               "this leaks \"the\" handle");
+  work.SetNote(checkpoint, BranchReviewNoteScope::File, "docs/plan.md", std::nullopt, "tighten this");
+  work.MarkFileReviewed(elsewhere, "x.cpp");
+
+  const std::string left = EncodeRoamingReview(ToPersistedBranchReviewState(work), work_mirror);
+  Expect(!left.empty() && left.find("/home/work") == std::string::npos && left.find("x.cpp") == std::string::npos,
+         "the repository's own targets, and no path of the machine that left them: " + left);
+  Expect(EncodeRoamingReview(ToPersistedBranchReviewState(work), "/no/such/project").empty(),
+         "a project with no review leaves nothing");
+
+  // The other machine: its own mirror, no marks yet.
+  std::optional<std::vector<PersistedBranchReviewTarget>> theirs = DecodeRoamingReview(left, home_mirror);
+  Expect(theirs.has_value() && theirs->size() == 2, "both targets arrive");
+  PersistedBranchReviewState home_state;
+  Expect(theirs.has_value() && MergeRoamingReview(*theirs, &home_state), "a machine with none takes them");
+  BranchReviewStateService home;
+  microide::workspace::LoadBranchReviewStateFromPersisted(home_state, &home);
+  const auto home_main = MakeBranchReviewTargetIdentity(home_mirror, "origin/main", "HEAD", "origin/main", 0);
+  const auto home_checkpoint = MakeBranchReviewTargetIdentity(home_mirror, "refs/worktree/microide/review-checkpoint",
+                                                              "WORKTREE", "", 0);
+  Expect(home.NotesAsReferences(home_main) == "src/b.cpp:4-8: this leaks \"the\" handle" &&
+             home.NotesAsReferences(home_checkpoint) == "docs/plan.md: tighten this",
+         "as targets of its own mirror, notes and all: " + home.NotesAsReferences(home_main));
+  const auto* taken = home.FindTarget(home_main);
+  Expect(taken != nullptr && taken->reviewed_files.size() == 1 &&
+             taken->reviewed_files[0].path == "src/a.cpp" &&
+             taken->reviewed_files[0].reviewed_diff_fingerprint == 0xfeedfacecafebeefULL &&
+             taken->reviewed_hunks.size() == 1 && taken->reviewed_hunks[0].identity.content_hash == 0xffffffffffffffffULL,
+         "marks keep their 64-bit fingerprints");
+  Expect(EncodeRoamingReview(ToPersistedBranchReviewState(home), home_mirror) == left,
+         "the same marks are the same text on either machine");
+  Expect(!MergeRoamingReview(*DecodeRoamingReview(left, home_mirror), &home_state), "and merging them again changes nothing");
+
+  // At home the review is cleared: an emptied target, changed later, which the
+  // work machine takes instead of bringing its marks back.
+  std::this_thread::sleep_for(std::chrono::milliseconds(3));
+  home.ClearTarget(home_main);
+  const std::string cleared = EncodeRoamingReview(ToPersistedBranchReviewState(home), home_mirror);
+  PersistedBranchReviewState work_state = ToPersistedBranchReviewState(work);
+  Expect(MergeRoamingReview(*DecodeRoamingReview(cleared, work_mirror), &work_state), "the newer copy is taken");
+  microide::workspace::LoadBranchReviewStateFromPersisted(work_state, &work);
+  Expect(work.NotesAsReferences(main_review).empty() && work.FindTarget(main_review) != nullptr &&
+             work.FindTarget(main_review)->reviewed_files.empty(),
+         "a review cleared on one machine is cleared on the other");
+  Expect(work.NotesAsReferences(checkpoint) == "docs/plan.md: tighten this" && work.FindTarget(elsewhere) != nullptr,
+         "the target that did not change, and another repository's, are as they were");
+  // ...and the older copy does not come back over the newer one.
+  Expect(!MergeRoamingReview(*DecodeRoamingReview(left, work_mirror), &work_state), "an older copy changes nothing");
+
+  // Untrusted: anything on the host could have written it.
+  Expect(!DecodeRoamingReview("", home_mirror).has_value() && !DecodeRoamingReview("[]", home_mirror).has_value() &&
+             !DecodeRoamingReview(R"({"version": 2, "targets": []})", home_mirror).has_value(),
+         "anything but that form is no review");
+  const auto hostile = DecodeRoamingReview(R"({"version": 1, "targets": [
+      {"base": "main", "head": "HEAD", "merge_base": "", "changed_at": -5,
+       "files": [{"path": "../../etc/passwd", "diff": "1"}, {"path": "/etc/passwd", "diff": "1"},
+                 {"path": "ok.cpp", "diff": "18446744073709551616"}, {"path": "ok.cpp", "diff": -3},
+                 {"path": "kept.cpp", "diff": "12", "at": 4}, "nonsense"],
+       "hunks": [{"path": "kept.cpp", "hunk": {"lines": [1, 2, 3], "hash": "5"}},
+                 {"path": "kept.cpp", "hunk": {"lines": [1, 2, 3, -4], "hash": "5"}},
+                 {"path": "kept.cpp", "hunk": {"lines": [1, 2, 3, 4], "hash": "5"}}],
+       "notes": [{"path": "a/../../b", "text": "x"}, {"path": "kept.cpp", "text": ""},
+                 {"path": "kept.cpp", "text": "a hunk's", "hunk": {"lines": "no"}},
+                 {"path": "kept.cpp", "text": "a file's"}]},
+      {"base": "", "head": "HEAD", "merge_base": ""},
+      {"base": "main\n--upload-pack=x", "head": "HEAD", "merge_base": ""},
+      {"base": "main", "head": "HEAD", "merge_base": "", "files": [{"path": "second.cpp", "diff": "1"}]},
+      7]})", home_mirror);
+  Expect(hostile.has_value() && hostile->size() == 1, "one target survives: the nameless, the hostile and the repeated do not");
+  if (hostile.has_value() && hostile->size() == 1) {
+    const PersistedBranchReviewTarget& target = hostile->front();
+    Expect(target.repository_root == home_mirror && target.last_accessed_unix_ms == 0,
+           "it is this machine's repository's, and a time that is none reads as the oldest");
+    Expect(target.reviewed_files.size() == 1 && target.reviewed_files[0].path == "kept.cpp" &&
+               target.reviewed_files[0].reviewed_diff_fingerprint == 12,
+           "only a path inside the repository with a real fingerprint is a mark");
+    Expect(target.reviewed_hunks.size() == 1 && target.reviewed_hunks[0].identity.new_count == 4,
+           "a hunk is four counts and a hash");
+    Expect(target.notes.size() == 1 && target.notes[0].text == "a file's" && target.notes[0].scope == "file",
+           "a note needs a place and a text, and a hunk's note its hunk");
+  }
+  // Past the budget the oldest reviews stay behind, whole.
+  const std::string one = EncodeRoamingReview(ToPersistedBranchReviewState(home), home_mirror, cleared.size() - 1);
+  Expect(!one.empty() && one.size() < cleared.size() && DecodeRoamingReview(one, home_mirror).value().size() == 1,
+         "a budget too small for both targets carries the one changed last");
+}
+
 }  // namespace
 
 void RegisterRoamingSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RoamingSession/ReviewMergesTheNewerCopyOfEachTarget", TestRoamingReviewMergesTheNewerCopyOfEachTarget);
   AddTest(tests, "RoamingSession/CapturesTheProjectsOpenFiles", TestRoamingSessionCapturesTheProjectsOpenFiles);
   AddTest(tests, "RoamingSession/TextRoundTripsAndIsNotTrusted", TestRoamingSessionTextRoundTripsAndIsNotTrusted);
 }

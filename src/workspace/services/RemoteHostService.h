@@ -132,6 +132,12 @@ class RemoteHostService {
     // Open `path` with the caret at (line, column): the file another machine had
     // in front (OpenOfferedSession).
     std::function<void(const std::filesystem::path& path, std::size_t line, std::size_t column)> open_file_at;
+    // The review marks and notes of the project at `root`, as the text another
+    // machine reads (RoamingReviewText); empty for none.
+    std::function<std::string(const std::filesystem::path& root)> review_text;
+    // Take the review marks another machine left for the project at `root`
+    // (TakeRoamingReview): merged into its own, shown and saved.
+    std::function<void(const std::filesystem::path& root, std::string_view text)> take_review;
     // The Changed on Host list of the remote project at `root` changed.
     std::function<void(const std::filesystem::path& root)> host_changes_updated;
     // The Conflicts view's rows for the remote project at `root` changed: a
@@ -324,6 +330,11 @@ class RemoteHostService {
   // as last saved is left on its host, carets and all, when it differs from what
   // is there.
   void LeaveSessions();
+  // The review marks or notes of the remote project at `root` changed: left on
+  // its host for the user's other machine the next time the window is left
+  // (LeaveSessions) -- a mark costs nothing when it is made. Under
+  // `remote.roam_session`, as the session is.
+  void ReviewChanged(const std::filesystem::path& root);
   // Open the files another machine left open in the project at `root` -- what a
   // connect offered -- beside what is open here, the one that was in front last
   // and at its caret. False when nothing is on offer.
@@ -495,6 +506,10 @@ class RemoteHostService {
     std::optional<RoamingSession> roaming_pending;
     // The connection the host was last asked on for what another machine left.
     std::weak_ptr<project::remote::RemoteServerClient> roaming_checked;
+    // Review marks: changed here since they were last left on the host, and the
+    // text the host is known to hold (left by this machine, or read from it).
+    bool review_changed = false;
+    std::string review_on_host;
   };
   // A host program's file open here for editing (BeginTerminalEdit).
   struct TerminalEdit {
@@ -516,6 +531,10 @@ class RemoteHostService {
   // On a connect: ask the host what another machine left, and offer it.
   void CheckRoamingSession(const std::filesystem::path& tree, Project& entry);
   void OnRoamingSession(const std::filesystem::path& tree, const std::string& text);
+  // Leave `entry`'s review marks on its host, unless it holds them already.
+  void LeaveReview(const std::filesystem::path& root, Project& entry);
+  // The host's answer to "which review marks were left": nullopt for none.
+  void OnRoamingReview(const std::filesystem::path& tree, const std::optional<std::string>& text);
   bool RoamingEnabled() const;
   std::string machine_name_;  // gethostname(), read once
   // The forward job behind ForwardPort and OpenHostLocalUrl; `then_open` (a

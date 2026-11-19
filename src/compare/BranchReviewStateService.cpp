@@ -346,11 +346,17 @@ void BranchReviewStateService::DeleteNote(const BranchReviewTargetIdentity& targ
 
 void BranchReviewStateService::ClearTarget(const BranchReviewTargetIdentity& target) {
   ++revision_;
-  targets_.erase(std::remove_if(targets_.begin(), targets_.end(),
-                                [&](const BranchReviewTargetState& existing) {
-                                  return existing.target == target;
-                                }),
-                     targets_.end());
+  // Emptied, not forgotten: a remote project's review state is merged between
+  // the user's machines, the copy of a target changed last winning
+  // (workspace/persistence/RoamingReview.h). A target that was simply gone here
+  // would come back, marks and all, from the machine that still held it; emptied
+  // at this time it is the newer copy. It ages out like any other target.
+  if (BranchReviewTargetState* existing = FindMutableTarget(target)) {
+    existing->reviewed_files.clear();
+    existing->reviewed_hunks.clear();
+    existing->notes.clear();
+    TouchTarget(*existing);
+  }
 }
 
 void BranchReviewStateService::PruneForRepository(

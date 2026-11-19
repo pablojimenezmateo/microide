@@ -2,6 +2,8 @@
 #include "workspace/services/CompareMergeService.h"
 #include "workspace/CompareInput.h"
 #include "workspace/services/RemoteHostService.h"
+#include "workspace/git/BranchReviewStateBridge.h"
+#include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 
 #include <algorithm>
 
@@ -331,6 +333,25 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
       .open_file_at =
           [this](const std::filesystem::path& path, std::size_t line, std::size_t column) {
             OpenFileAtLocation(path, line, column);
+          },
+      .review_text =
+          [this](const std::filesystem::path& root) {
+            const ProjectWorkspaceState* state = context_.ProjectStateForRoot(root);
+            return state != nullptr ? RoamingReviewText(*state) : std::string();
+          },
+      .take_review =
+          [this](const std::filesystem::path& root, std::string_view text) {
+            ProjectWorkspaceState* state = context_.ProjectStateForRoot(root);
+            if (state == nullptr || !TakeRoamingReview(text, state)) {
+              return;
+            }
+            // Kept as this machine's own from here on. A project in the
+            // background writes its configuration when it next comes forward.
+            if (state == &context_.current_project_state) {
+              MakePersistenceCoordinator().SaveConfigState();
+              RequestActiveTabRedraw(true);
+              RequestSidebarRedraw();
+            }
           },
       .host_changes_updated =
           [this](const std::filesystem::path& root) {
