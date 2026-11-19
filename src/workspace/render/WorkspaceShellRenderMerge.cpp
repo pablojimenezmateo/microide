@@ -202,6 +202,12 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   const float content_height = std::max(0.0f, rect.h - bottom_reserved);
   // Syntax tokens were produced in frame prep (PopulateMergeSyntaxTokensForWindow).
   const MergeInteractionLayout interaction = BuildMergeInteractionLayout(rect, surface, *merge_tab);
+  // Sizing the result viewport to its pane re-clamps its scroll against the pane's
+  // own rows, which can be fewer than the surface's: every column reads the row
+  // from here, or the sources paint at the surface's clamp and the result at its
+  // own, and the next paint of the same frame disagrees (soak 4c6d45903600).
+  merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
+  merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
   const std::size_t selected_hunk =
       merge_tab->conflicts.empty() ? 0 : std::min(merge_tab->selected_hunk, merge_tab->conflicts.size() - 1);
 

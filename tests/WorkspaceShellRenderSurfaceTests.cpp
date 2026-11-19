@@ -306,10 +306,68 @@ void TestMergePaintsOfOneFrameAgree() {
                              std::to_string(differing) + " differ");
 }
 
+// A merge tab scrolled past its end paints its three columns at one row. The
+// paint clamped `scroll_row` to the merge surface's row count, then sized the
+// result viewport to its own (an editor pane's rows, not the surface's), which
+// clamped the result's scroll further -- and drew the Remote and Local columns
+// at the first clamp, the result at the second. The next frame painted all
+// three at the second, so one frame's two paints disagreed (soak 4c6d45903600:
+// QA-STALE over every row of the merge, under a whole-window clip).
+void TestMergeColumnsPaintAtOneRowPastTheEnd() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const auto lines = [](const std::string& marker) {
+    std::string text;
+    for (int i = 0; i < 60; ++i) {
+      text += "int v" + std::to_string(i) + " = " + (i == 30 ? marker : std::string("0")) + ";\n";
+    }
+    return text;
+  };
+  WriteFile(root / "base.cpp", lines("0"));
+  WriteFile(root / "incoming.cpp", lines("1"));
+  WriteFile(root / "current.cpp", lines("2"));
+  std::size_t mismatched_heights = 0;
+  std::string first_mismatch;
+  for (int height = 360; height <= 720; height += 3) {
+    WorkspaceShell shell;
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::SetWindowSize(shell, kWindowWidth, height);
+    Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, root / "base.cpp", root / "incoming.cpp",
+                                                     root / "current.cpp", root / "current.cpp"),
+           "merge editor should open");
+    WorkspaceShellTestAccess::ActiveMerge(shell).scroll_row = 1 << 20;
+
+    SoftwareCanvas canvas(kWindowWidth, height);
+    const WorkspaceShell::FrameToken token = shell.PrepareFrameOnce(canvas.renderer(), kWindowWidth, height);
+    (void)shell.ConsumePendingRenderInvalidation();
+    shell.RenderClip(token, canvas.renderer(), kWindowWidth, height);
+    SDL_FlushRenderer(canvas.renderer());
+    SDL_Surface* first = SDL_DuplicateSurface(canvas.surface());
+    shell.RenderClip(token, canvas.renderer(), kWindowWidth, height);
+    SDL_FlushRenderer(canvas.renderer());
+    const std::size_t differing = CountPixelDifferences(first, canvas.surface());
+    SDL_DestroySurface(first);
+    if (differing != 0) {
+      ++mismatched_heights;
+      if (first_mismatch.empty()) {
+        first_mismatch = "height " + std::to_string(height) + ": " + std::to_string(differing) + " pixels";
+      }
+    }
+  }
+  Expect(mismatched_heights == 0, "two paints of one frame of a merge scrolled past its end agree; " +
+                                      std::to_string(mismatched_heights) + " heights differ, first " +
+                                      first_mismatch);
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellRenderSurfaceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShellRenderSurface/MergePaintsOfOneFrameAgree", TestMergePaintsOfOneFrameAgree);
+  AddTest(tests, "WorkspaceShellRenderSurface/MergeColumnsPaintAtOneRowPastTheEnd",
+          TestMergeColumnsPaintAtOneRowPastTheEnd);
   AddTest(tests, "WorkspaceShellRenderSurface/MergePaintsWithRealRenderer",
           TestMergeSurfacePaintsWithARealRenderer);
   AddTest(tests, "WorkspaceShellRenderSurface/MergePaintsScrolledAndAfterChoices",
