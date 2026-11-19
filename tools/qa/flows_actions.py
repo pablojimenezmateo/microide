@@ -188,7 +188,11 @@ def flow_terminal_alert_unfocused(app: q.App) -> None:
     """A terminal program's notification (OSC 9, an agent's "needs your input")
     printed while another application has the focus is posted to the desktop
     (`tools/qa/desktopbin/notify-send` records it) with the project and terminal in
-    its summary; the same notification with the window focused posts nothing."""
+    its summary; the same notification with the window focused posts nothing.
+    X only: on Wayland the driver cannot take the focus away (App.focus_out), so
+    the window never stops being focused and the flow checks nothing."""
+    if app.wayland:
+        return
     app.send("term")
     app.send("focus", "panel")
     app.wait_until(lambda: bool(terminal_tabs(app)), 5.0, "a terminal")
@@ -211,7 +215,11 @@ def flow_terminal_paste_image(app: q.App) -> None:
     """A screenshot on the clipboard -- an image and no text, as another
     application leaves it (x_clipboard.py --image) -- pasted into a terminal is
     stored as a file of the user's own and its path typed at the prompt; bytes
-    labelled image/png that are not a PNG paste nothing."""
+    labelled image/png that are not a PNG paste nothing. X only: on Wayland the
+    driver has no stand-in clipboard owner (App.foreign_clipboard_image), and the
+    flow checks nothing."""
+    if app.wayland:
+        return
     app.send("term")
     app.send("focus", "panel")
     app.wait_until(lambda: bool(terminal_tabs(app)), 5.0, "a terminal")
