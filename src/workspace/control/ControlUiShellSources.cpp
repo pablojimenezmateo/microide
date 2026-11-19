@@ -15,6 +15,7 @@
 #include <tuple>
 #include <variant>
 
+#include "util/PerformanceCounters.h"
 #include "workspace/PluginSurfacePreview.h"
 #include "workspace/ProjectSearchPanelLayout.h"
 #include "workspace/WorkspaceProjectSearchPresentation.h"
@@ -1154,6 +1155,19 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               } else if (state.overlay.mode == OverlayMode::FileFinder &&
                          !state.overlay.workflow.file_finder_compare_title.empty()) {
                 overlay["title"] = util::JsonValue(state.overlay.workflow.file_finder_compare_title);
+              }
+              // What the file finder ranks over: an empty or stale index reads the
+              // same as "No matching files" on screen. CI's big-repo flow timed
+              // out on Go to File with nothing to say which (qa-asan, twice).
+              if (state.overlay.mode == OverlayMode::FileFinder) {
+                util::JsonObject index;
+                index["files"] = util::JsonValue(static_cast<std::int64_t>(state.file_finder.indexed_file_count()));
+                index["version"] = util::JsonValue(static_cast<std::int64_t>(state.file_index.version()));
+                index["truncated"] = util::JsonValue(state.file_index.truncated());
+                index["root"] = util::JsonValue(state.file_index.root().string());
+                index["scansSuperseded"] = util::JsonValue(static_cast<std::int64_t>(
+                    util::ReadPerformanceCounter(util::PerfCounterId::FileIndexScanSupersededByBatch)));
+                overlay["index"] = util::JsonValue(std::move(index));
               }
               if (const editor::SingleLineEditor* query = OverlayQueryEditor(state); query != nullptr) {
                 overlay["query"] = util::JsonValue(query->text());

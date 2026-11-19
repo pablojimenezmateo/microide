@@ -564,6 +564,12 @@ void TestUiQueryNamesOverlayRows() {
   util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
   Expect(ui["overlay"]["query"].AsString() == "gamma", "the ui query should report the overlay query");
   Expect(ui["overlay"]["count"].AsInt() == 1, "one file should match gamma");
+  // What the finder ranks over, so "No matching files" can be told apart from an
+  // empty, truncated or elsewhere-rooted index (CI qa-asan, big-repo).
+  const util::JsonValue& index = ui["overlay"]["index"];
+  Expect(index["files"].AsInt() == 3 && !index["truncated"].AsBool() &&
+             index["root"].AsString() == fixture.root.string() && index["version"].AsInt() > 0,
+         "the ui query should report the finder's index: " + util::SerializeJson(index));
   const auto row = Find(ui, "overlay-row:src/gamma.cpp");
   Expect(row.has_value() && row->selected == true, "the match should be a selected overlay row");
   fixture.ClickCenter(*row);

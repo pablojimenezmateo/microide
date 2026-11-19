@@ -142,7 +142,12 @@ def flow_big_repo(app: q.App) -> None:
     app.key("ctrl+p")
     step(app, "ctrl+p", 0.2)
     app.type("RemoteHostSession.cpp")
-    _timed(app, lambda: (app.ui()["overlay"].get("count") or 0) > 0, 2.0, "Go to File to find a deep file")
+    if _timed(app, lambda: (app.ui()["overlay"].get("count") or 0) > 0, 2.0,
+              "Go to File to find a deep file") is None:
+        # What the finder ranked over: an empty index, a truncated one, one rooted
+        # elsewhere, or scans superseded by watcher batches all read "No matching
+        # files" on screen (CI qa-asan, twice, with nothing to tell them apart).
+        app.expect(False, f"Go to File's index when it found nothing: {app.ui()['overlay'].get('index')}")
     app.key("Return")
     _timed(app, lambda: (app.active_tab() or {}).get("title") == "RemoteHostSession.cpp", 2.0,
            "the deep file to open")
