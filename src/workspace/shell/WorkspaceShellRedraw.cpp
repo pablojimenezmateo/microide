@@ -3,12 +3,17 @@
 
 #include "workspace/services/SidebarService.h"
 #include "util/InlineVector.h"
+#include "util/Log.h"
 #include "workspace/services/RemoteHostService.h"
 #include "workspace/services/TerminalPanelService.h"
 
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 
+#include <execinfo.h>
+
 #include <algorithm>
+#include <cstdlib>
+#include <format>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -195,7 +200,40 @@ WorkspaceShell::RenderInvalidation WorkspaceShell::ConsumePendingRenderInvalidat
   return result;
 }
 
+namespace {
+
+// One line per repaint request, with the code that asked (MICROIDE_TRACE_DAMAGE,
+// on in QA runs): a stale frame is damage that missed a change, and which call
+// asked for the damage that DID come -- a prompt's key path, a frame prep, a save's
+// pane -- is the first question, answered twice by temporary backtraces in the app
+// (soak e93ce81f04ac, 2026-11-20). Raw frames, as the caret-bounds report prints
+// them; tools/qa symbolizes the ones before a stale frame into its evidence.
+void TraceDamageRequest(const SDL_FRect* rect) {
+  static const bool enabled = util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_DAMAGE");
+  if (!enabled) {
+    return;
+  }
+  std::string report = rect == nullptr
+                           ? std::string("microide damage: full\n")
+                           : std::format("microide damage: {:.0f},{:.0f},{:.0f},{:.0f}\n", rect->x, rect->y,
+                                         rect->w, rect->h);
+  constexpr int kFrames = 10;
+  void* frames[kFrames];
+  const int count = ::backtrace(frames, kFrames);
+  if (char** symbols = ::backtrace_symbols(frames, count); symbols != nullptr) {
+    for (int i = 1; i < count; ++i) {  // frame 0 is this function
+      report += "  #" + std::to_string(i) + " " + symbols[i] + "\n";
+    }
+    std::free(symbols);  // NOLINT(cppcoreguidelines-no-malloc): backtrace_symbols' contract
+  }
+  report.pop_back();
+  util::Log(report);
+}
+
+}  // namespace
+
 void WorkspaceShell::RequestFullRedraw() {
+  TraceDamageRequest(nullptr);
   util::AddPerformanceCounter(util::PerfCounterId::WorkspaceFullRedrawRequests);
   InvalidateCursorKindFingerprint();
   ++damage_generation_;
@@ -223,6 +261,7 @@ void WorkspaceShell::RequestRedrawRect(const SDL_FRect& rect) {
   if (rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
+  TraceDamageRequest(&rect);
   // Counted even when a pending full redraw absorbs the rect: the caller asked.
   ++damage_generation_;
   if (pending_render_invalidation_.full) {

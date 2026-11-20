@@ -61,8 +61,10 @@ only, a failing-first test for every fix, one commit per fix, and a TD entry in
    commit) and mark it fixed with that commit, or add a note
    (`ledger note <sig> "..."`) and leave it for the runner to re-check.
 4. **Understand.** Read the evidence: for stale paint, the `frame-*-retained.png` /
-   `frame-*-reference.png` pair and the frame trace (which surfaces the partial
-   frame repainted); for a crash or sanitizer report, the stack -- every build
+   `frame-*-reference.png` pair, the frame trace (which surfaces the partial
+   frame repainted) and `damage-requests.txt` -- every repaint request made for
+   the stale frame with the code that asked, symbolized (`MICROIDE_TRACE_DAMAGE`):
+   the damage that came instead of the damage that was owed; for a crash or sanitizer report, the stack -- every build
    has one now: `crash-stack.txt` is the crashing thread's backtrace as the app
    printed it on its way down, resolved, and a crash's signature is keyed on it
    (two `microide exited (-6)` are two findings when their stacks differ); for an

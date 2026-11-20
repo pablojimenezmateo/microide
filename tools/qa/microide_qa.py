@@ -382,6 +382,40 @@ _RAW_FRAME = re.compile(r"^(?P<module>[^\s(]+)\((?P<symbol>[^+)]*)\+?(?P<offset>
 _DIAGNOSTIC_FRAMES = ("CrashDiagnostics.h", "crash_diagnostics_detail", "__restore_rt")
 
 
+def damage_requests_before(log: str, frame: int) -> list[str]:
+    """The repaint requests the app logged for frame `frame` (MICROIDE_TRACE_DAMAGE):
+    each `microide damage:` block between the previous frame's line and the
+    `QA-STALE frame=<frame>` line, frames included.
+
+    >>> log = "\\n".join(["microide redraw frame: frame=6 x", "microide damage: 1,2,3,4", "  #1 a(+0x1) [0x9]",
+    ...                    "noise", "microide damage: full", "  #1 b(+0x2) [0x8]", "QA-STALE frame=7 y"])
+    >>> damage_requests_before(log, 7)
+    ['microide damage: 1,2,3,4\\n  #1 a(+0x1) [0x9]', 'microide damage: full\\n  #1 b(+0x2) [0x8]']
+    >>> damage_requests_before(log, 8)
+    []
+    """
+    lines = log.splitlines()
+    stale = next((i for i, line in enumerate(lines) if f"QA-STALE frame={frame} " in line + " "), None)
+    if stale is None:
+        return []
+    start = 0
+    for i in range(stale - 1, -1, -1):
+        if "microide redraw frame: frame=" in lines[i]:
+            start = i + 1
+            break
+    blocks: list[list[str]] = []
+    taking = False
+    for line in lines[start:stale]:
+        if line.startswith("microide damage:"):
+            blocks.append([line])
+            taking = True
+        elif taking and line.startswith("  #"):
+            blocks[-1].append(line)
+        else:
+            taking = False
+    return ["\n".join(block) for block in blocks]
+
+
 def symbolize_backtrace(block: str, binary: Path, timeout: float = 120.0) -> str:
     """A crash or stall block of the app's log with its frames resolved: one
     `#N 0xOFF in function file:line` per frame (the shape findings.stack_key
@@ -685,6 +719,11 @@ class App:
             # stack of the code that left it (TextViewport::TraceCaretBounds): the
             # invariants query only finds it steps later (soak 872c8984d39b).
             "MICROIDE_TRACE_CARET_BOUNDS": "1",
+            # One line per repaint request with the stack that asked for it
+            # (WorkspaceShell::RequestRedrawRect / RequestFullRedraw): a stale
+            # frame's evidence names the code whose damage came instead of the
+            # damage that was owed (damage_requests_before).
+            "MICROIDE_TRACE_DAMAGE": "1",
             # A main-loop turn that runs this long prints the main thread's stack
             # (platform/CrashDiagnostics.h): where the loop was when an answer
             # was slow, which the latency oracle and a stall's evidence quote.
@@ -2843,6 +2882,7 @@ class App:
                 shutil.copy2(self.shots / name, folder / name)
         if self.crash_stack and any(f.kind == "crash" for f in found):
             (folder / "crash-stack.txt").write_text(self.crash_stack)
+        self._write_damage_requests(folder, found)
         # A persisted record the app read but could not decode: its framing and
         # checksum held, so the file is exactly what the encoder wrote and the
         # decoder refused -- the bytes are the evidence, and the app's next save
@@ -2886,6 +2926,27 @@ class App:
                          ("projects", None), ("persistence", None), ("notifications", {"recent": True}),
                          ("terminals", None), ("debug-state", None), ("invariants", None),
                          ("crash-points", None))
+
+    def _write_damage_requests(self, folder: Path, found: list[Finding]) -> None:
+        """For a stale frame (QA-STALE frame=N): the repaint requests made for that
+        frame, each with the code that asked, symbolized -- what painted instead
+        of the damage that was owed (damage_requests_before)."""
+        frames = sorted({int(m.group(1)) for f in found if (m := re.search(r"QA-STALE frame=(\d+)", f.detail))})
+        if not frames:
+            return
+        log = self.log_tail(4 * 1024 * 1024)
+        out: list[str] = []
+        for frame in frames[:3]:
+            requests = damage_requests_before(log, frame)
+            out.append(f"== frame {frame}: {len(requests)} repaint request(s)" +
+                       ("" if requests else " (none logged: the damage came from an event's own result, "
+                                            "or the build predates MICROIDE_TRACE_DAMAGE)"))
+            for block in requests:
+                head, *stack = block.splitlines()
+                out.append(symbolize_backtrace("\n".join([head, *(re.sub(r"^\s*#\d+\s+", "", line)
+                                                                 for line in stack)]), Path(self.binary))
+                           if self.binary else block)
+        (folder / "damage-requests.txt").write_text("\n".join(out) + "\n")
 
     def _write_state_snapshot(self, folder: Path) -> None:
         """state.json: the app's answers to its state queries now. Best effort and
