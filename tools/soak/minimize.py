@@ -110,11 +110,107 @@ class Tester:
         return [self.cache[tuple(c)] for c in candidates]
 
 
-def ddmin(tester: Tester, actions: list[dict], max_tests: int, deadline: float) -> list[int]:
+_META = ("t", "s", "b")
+
+
+def kinds_of(action: dict) -> tuple[str, str]:
+    """An action's kind, coarse and fine: what the by-kind pass drops together.
+
+    >>> kinds_of({"key": "ctrl+s", "t": 1.0, "s": "="})
+    ('key', 'key:ctrl+s')
+    >>> kinds_of({"line": "set-setting editor.wrap word", "t": 2.0})
+    ('line:set-setting', 'line:set-setting editor.wrap')
+    >>> kinds_of({"external": "diff-variant", "target": "", "counter": 3})
+    ('external:diff-variant', 'external:diff-variant')
+    >>> kinds_of({"kill9": True, "waited": True})
+    ('kill9', 'kill9')
+    """
+    keys = [key for key in action if key not in _META]
+    first = keys[0] if keys else "?"
+    if first == "line":
+        words = str(action["line"]).split()
+        coarse = "line:" + (words[0] if words else "")
+        return coarse, "line:" + " ".join(words[:2])
+    if first in ("external", "oracle", "churn"):
+        coarse = f"{first}:{action.get(first)}"
+        return coarse, coarse
+    detail = action.get(first)
+    if isinstance(detail, str):
+        return first, f"{first}:{detail}"
+    return first, first
+
+
+def kind_groups(actions: list[dict], current: list[int],
+                skip: frozenset[str] = frozenset()) -> list[tuple[str, list[int]]]:
+    """`current`'s indices grouped by kind, coarse and fine, two or more to a
+    group, largest first -- each one candidate to drop whole -- as (kind,
+    indices), leaving out the kinds in `skip`.
+
+    >>> acts = [{"key": "a"}, {"move": [1, 2]}, {"key": "a"}, {"move": [3, 4]}, {"key": "b"}]
+    >>> kind_groups(acts, [0, 1, 2, 3, 4])
+    [('key', [0, 2, 4]), ('key:a', [0, 2]), ('move', [1, 3])]
+    >>> kind_groups(acts, [0, 1, 2, 3, 4], skip=frozenset({"key"}))
+    [('key:a', [0, 2]), ('move', [1, 3])]
+    """
+    groups: dict[str, list[int]] = {}
+    for index in current:
+        coarse, fine = kinds_of(actions[index])
+        groups.setdefault(coarse, []).append(index)
+        if fine != coarse:
+            groups.setdefault(fine, []).append(index)
+    unique: dict[tuple[int, ...], tuple[str, list[int]]] = {}
+    for kind, members in groups.items():
+        if kind not in skip and 2 <= len(members) < len(current):
+            unique.setdefault(tuple(members), (kind, members))
+    return sorted(unique.values(), key=lambda entry: len(entry[1]), reverse=True)
+
+
+def reduce_by_kind(tester: Tester, actions: list[dict], current: list[int], max_tests: int,
+                   deadline: float, width: int = 24) -> list[int]:
+    """Drop whole kinds of action -- every pointer move, every wheel notch, every
+    `set-setting` of one key, every kill -- before ddmin cuts by position.
+
+    ddmin cuts contiguous chunks, and a run's incidental actions are spread
+    evenly through it: a chunk always holds something the finding needs, so
+    the complements fail until the chunks are a few actions wide, and by then
+    the test budget is spent (minimal replays of 924 and 1829 actions, a median
+    of 420 over 289 findings, 2026-11-20). One test per kind removes a kind
+    wherever it is.
+
+    Each round tests the `width` largest groups at once. When several drops
+    hold, their union is tried too (one more test): kinds are mostly
+    independent, and taking one drop a round cost a round per kind. A kind
+    whose drop lost the finding is not tried again -- it was needed in a larger
+    list, and a smaller one rarely needs it less."""
+    needed: set[str] = set()
+    while tester.tests < max_tests and time.monotonic() < deadline:
+        groups = kind_groups(actions, current, frozenset(needed))[:min(width, max_tests - tester.tests)]
+        if not groups:
+            break
+        candidates = [[i for i in current if i not in set(members)] for _, members in groups]
+        results = tester.test_many(candidates, lambda idx: [actions[i] for i in idx])
+        held = [(kind, candidate) for (kind, _), candidate, ok in zip(groups, candidates, results)
+                if ok and candidate]
+        needed.update(kind for (kind, _), ok in zip(groups, results) if not ok)
+        if not held:
+            break
+        best = min((candidate for _, candidate in held), key=len)
+        if len(held) > 1:
+            dropped = set(current).difference(*[set(candidate) for _, candidate in held])
+            union = [i for i in current if i not in dropped]
+            if union and len(union) < len(best) and tester.test_many([union], lambda idx: [actions[i] for i in idx])[0]:
+                best = union
+        current = best
+        print(f"  by kind: {len(current)} actions ({tester.tests} tests)", flush=True)
+    return current
+
+
+def ddmin(tester: Tester, actions: list[dict], max_tests: int, deadline: float,
+          start: list[int] | None = None) -> list[int]:
     def to_actions(indices: list[int]) -> list[dict]:
         return [actions[i] for i in indices]
 
-    current = list(range(len(actions)))
+    current = list(range(len(actions))) if start is None else list(start)
     n = 2
     while len(current) >= 2 and tester.tests < max_tests and time.monotonic() < deadline:
         size = len(current)
@@ -289,7 +385,11 @@ def main() -> int:
             print(json.dumps({"reproduced": False, "actions": len(actions)}))
             return 2
         tester.try_skipping_checks(actions)
-        kept = ddmin(tester, actions, args.max_tests, time.monotonic() + args.time_budget)
+        deadline = time.monotonic() + args.time_budget
+        # A third of the budget at most: ddmin and the one-minimal pass need the rest.
+        by_kind = reduce_by_kind(tester, actions, list(range(len(actions))),
+                                 tester.tests + max(1, args.max_tests // 3), deadline)
+        kept = ddmin(tester, actions, args.max_tests, deadline, start=by_kind)
         minimal = {k: v for k, v in record.items() if k != "actions"}
         minimal["actions"] = [actions[i] for i in kept]
         minimal["minimized_from"] = len(actions)
