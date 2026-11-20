@@ -47,6 +47,10 @@ A project session SHALL carry the unsaved text of every loaded file buffer, whic
 - **WHEN** a compare record carries an unsaved buffer and the compare tab cannot be rebuilt
 - **THEN** the restore SHALL open an editor tab on the buffer's file holding the unsaved text, and SHALL NOT drop it
 
+#### Scenario: A diff the session does not keep
+- **WHEN** a compare tab the session does not persist (a compare of two files) holds unsaved text in its editable side
+- **THEN** the session SHALL carry that text in an editor record for the file -- the record of an editor tab already open on it, or one written in the compare tab's place -- and the restore SHALL bring it back in exactly one editor tab
+
 ### Requirement: A restored unsaved buffer keeps its disk baseline
 
 A session's snapshot of a dirty buffer (an editor tab's, or a compare tab's editable side) SHALL record the file's stat (existence, modification time, size) as the buffer last saw it, and restoring the snapshot SHALL restore that baseline, so that the save-time check that refuses to overwrite a file changed on disk applies across a crash or restart exactly as within one run.

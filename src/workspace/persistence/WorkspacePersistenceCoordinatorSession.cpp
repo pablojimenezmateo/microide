@@ -767,6 +767,37 @@ void PersistenceCoordinator::SaveSessionState() {
     persisted_session.terminal_layout = operations_.capture_terminal_layout();
   }
 
+  // The diffs whose editable side holds unsaved text that fits a snapshot: almost
+  // always none. A persistable diff's own record carries its side. These are for
+  // the two records that otherwise would not: an editor tab on the same file that
+  // has not loaded (it holds no buffer, the diff holds the file's), and a diff the
+  // session does not keep at all -- a compare of two files -- whose text then comes
+  // back in an editor tab on the file.
+  std::vector<const editor::TextViewport*> unsaved_diff_sides;
+  for (const EditorGroup& group : state.editor_groups) {
+    for (const TabEntry& tab : group.open_tabs) {
+      if (tab.kind != TabEntry::Kind::Compare) {
+        continue;
+      }
+      if (const editor::TextViewport* side = LoadedBufferViewOf(tab);
+          side != nullptr && side->dirty() && !side->path().empty() && FitsDirtySnapshotBudget(*side)) {
+        unsaved_diff_sides.push_back(side);
+      }
+    }
+  }
+  const auto editor_tab_is_on = [&state](const std::filesystem::path& path) {
+    for (const EditorGroup& group : state.editor_groups) {
+      for (const TabEntry& tab : group.open_tabs) {
+        if (tab.kind == TabEntry::Kind::Editor && util::SameAsNormalizedPath(tab.path, path)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  // The documents already staged in an editor record that stands in for a diff.
+  std::vector<const editor::TextViewport*> stood_in;
+
   for (auto& group : state.editor_groups) {
     PersistedEditorGroupState persisted_group;
     for (std::size_t tab_index = 0; tab_index < group.open_tabs.size(); ++tab_index) {
@@ -774,10 +805,32 @@ void PersistenceCoordinator::SaveSessionState() {
       std::optional<PersistedEditorTabState> persisted_tab;
       if (tab.kind == TabEntry::Kind::Compare) {
         persisted_tab = BuildPersistedCompareTabState(tab);
+        const editor::TextViewport* side = persisted_tab.has_value() ? nullptr : LoadedBufferViewOf(tab);
+        if (side != nullptr &&
+            std::find(unsaved_diff_sides.begin(), unsaved_diff_sides.end(), side) != unsaved_diff_sides.end() &&
+            std::none_of(stood_in.begin(), stood_in.end(),
+                         [side](const editor::TextViewport* other) { return other->SharesDocumentWith(*side); })) {
+          const std::filesystem::path path = side->path().lexically_normal();
+          if (!editor_tab_is_on(path)) {
+            persisted_tab.emplace();
+            persisted_tab->kind = "editor";
+            persisted_tab->path = path;
+            StageDirtyBuffer(*side, path, *persisted_tab);
+            stood_in.push_back(side);
+          }
+        }
       } else if (tab.kind == TabEntry::Kind::Merge) {
         persisted_tab = BuildPersistedMergeTabState(tab);
       } else {
         persisted_tab = BuildPersistedEditorTabState(tab_index, tab);
+        if (persisted_tab.has_value() && !persisted_tab->dirty_snapshot && !persisted_tab->path.empty()) {
+          for (const editor::TextViewport* side : unsaved_diff_sides) {
+            if (util::SameAsNormalizedPath(side->path(), persisted_tab->path)) {
+              StageDirtyBuffer(*side, persisted_tab->path, *persisted_tab);
+              break;
+            }
+          }
+        }
       }
       if (!persisted_tab.has_value()) {
         continue;

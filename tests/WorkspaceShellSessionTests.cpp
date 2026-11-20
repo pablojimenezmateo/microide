@@ -2354,6 +2354,79 @@ void TestWorkspaceShellRestoreSessionKeepsUnsavedEditsMadeOnlyInADiff() {
   }
 }
 
+// A compare of two files is not kept in the session at all, but its editable side
+// is still the right-hand file's buffer: text typed into it comes back, in an
+// editor tab on that file. And when an editor tab on the file is already open but
+// has not loaded -- it holds no buffer; the diff holds the file's -- that tab is
+// the one that brings the text back, not a second tab beside it.
+void TestWorkspaceShellRestoreSessionKeepsUnsavedEditsMadeInAFileCompare() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path left = root / "left.txt";
+  const std::filesystem::path right = root / "right.txt";
+  const std::filesystem::path other = root / "other.txt";
+  WriteFile(left, "one\n");
+  WriteFile(right, "two\n");
+  WriteFile(other, "other\n");
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(temp_dir.path() / "home");
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", (temp_dir.path() / "home").string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+  const std::string compare_files = "compare-files " + left.string() + " " + right.string();
+  {
+    WorkspaceShell shell;
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, compare_files), "compare-files opens the diff");
+    WorkspaceShellTestAccess::ActiveCompare(shell).right_viewport.MoveCursorTo(0, 0);
+    Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "unsaved "), "an edit in its editable side");
+    WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell);
+  }
+  {
+    WorkspaceShell restored;
+    WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+    WorkspaceShellTestAccess::SetWindowSize(restored, 1280, 720);
+    Expect(WorkspaceShellTestAccess::RestoreSessionState(restored), "restore after the crash");
+    WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(restored);
+    Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(restored) == 1 &&
+               !WorkspaceShellTestAccess::ActiveTabIsCompare(restored),
+           "one tab comes back, an editor tab");
+    const editor::TextViewport& editor = WorkspaceShellTestAccess::ActiveEditor(restored);
+    Expect(editor.path() == right && editor.dirty() && editor.lines().LineView(0) == "unsaved two",
+           "on the right-hand file, holding the unsaved text");
+    // Leave a session with right.txt in a background tab for the second half.
+    Expect(WorkspaceShellTestAccess::ExecuteControlCommand(restored, "save").ok, "the restored text saves");
+    WorkspaceShellTestAccess::OpenFile(restored, other);
+    WorkspaceShellTestAccess::SaveSessionState(restored);
+  }
+  {
+    WorkspaceShell shell;
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+    Expect(WorkspaceShellTestAccess::RestoreSessionState(shell), "the session with right.txt in the background");
+    WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(shell);
+    Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == 2, "right.txt and other.txt");
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, compare_files), "compare-files opens the diff");
+    WorkspaceShellTestAccess::ActiveCompare(shell).right_viewport.MoveCursorTo(0, 0);
+    Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "again "), "an edit in its editable side");
+    WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell);
+  }
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  WorkspaceShellTestAccess::SetWindowSize(restored, 1280, 720);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored), "restore after the second crash");
+  WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(restored);
+  Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(restored) == 2,
+         "the two editor tabs come back, and no third on right.txt (" +
+             std::to_string(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(restored)) + ")");
+  const editor::TextViewport& editor = WorkspaceShellTestAccess::FocusedGroupTabEditor(restored, 0);
+  Expect(editor.path() == right && editor.dirty() && editor.lines().LineView(0) == "again unsaved two",
+         "right.txt's tab holds the unsaved text, got " + std::string(editor.lines().LineView(0)));
+}
+
 // When the diff itself cannot come back, the unsaved text it held comes back in
 // an editor tab on the file. Nothing a user does today leaves such a record (a
 // revision git no longer has reads as a file that did not exist then), so the
@@ -4215,6 +4288,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoreSessionRejoinsADiffWithItsEditorTabsBuffer);
   AddTest(tests, "WorkspaceShell/RestoreSessionKeepsUnsavedEditsMadeOnlyInADiff",
           TestWorkspaceShellRestoreSessionKeepsUnsavedEditsMadeOnlyInADiff);
+  AddTest(tests, "WorkspaceShell/RestoreSessionKeepsUnsavedEditsMadeInAFileCompare",
+          TestWorkspaceShellRestoreSessionKeepsUnsavedEditsMadeInAFileCompare);
   AddTest(tests, "WorkspaceShell/RestoreSessionKeepsADiffsUnsavedTextWhenTheDiffIsGone",
           TestWorkspaceShellRestoreSessionKeepsADiffsUnsavedTextWhenTheDiffIsGone);
   AddTest(tests, "WorkspaceShell/ACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown",
