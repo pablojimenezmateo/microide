@@ -58,6 +58,18 @@ struct DebugPaneRowHit {
   bool in_content = false;  // the point fell inside the content rect (even if no row)
 };
 
+// The band a visible row occupies: what the render lifts on hover or selection,
+// what a click or the pointer maps to that row, and what the ui query names. The
+// row's text sits a pixel inside the band's top (`kDebugPaneRowBandLift`), so the
+// band starts that far above `text_y + visible_row * line_height`. The render
+// lifted it and the hit test and the hover damage did not: a pointer on a row's
+// last pixel lit the row below, and leaving repainted the row above it, so the
+// lit band stayed on screen (soak cf0bab62508c).
+inline constexpr float kDebugPaneRowBandLift = 1.0f;
+[[nodiscard]] inline float DebugPaneRowBandTop(float text_y, float line_height, int visible_row) {
+  return text_y - kDebugPaneRowBandLift + static_cast<float>(visible_row) * line_height;
+}
+
 // Map a point to an absolute debug-pane row index. Unlike BottomPanelLineIndexAtY,
 // the top text inset (between content_rect.y and text_y) folds into the first visible
 // row instead of being a dead-zone that rejects the click. Returns row_index == -1

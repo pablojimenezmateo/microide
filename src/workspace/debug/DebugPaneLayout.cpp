@@ -54,8 +54,9 @@ DebugPaneRowHit DebugPaneRowAtPoint(const SDL_FRect& content_rect, float text_y,
   // The top text inset (content_rect.y .. text_y) belongs to the first visible row
   // rather than rejecting the click — this is the dead-zone fix.
   int relative = 0;
-  if (y > text_y) {
-    relative = static_cast<int>(std::floor((y - text_y) / line_height));
+  const float band_top = DebugPaneRowBandTop(text_y, line_height, 0);
+  if (y > band_top) {
+    relative = static_cast<int>(std::floor((y - band_top) / line_height));
   }
   if (relative < 0 || relative >= visible_rows) {
     return hit;  // inside content but below the last visible row

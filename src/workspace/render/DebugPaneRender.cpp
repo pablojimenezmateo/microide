@@ -173,7 +173,7 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
     }
     const DebugVariableRowView& var_row = rows[row_index];
     const bool selected = row_index == model.SelectedRow();
-    const SDL_FRect row_band = MakeRect(panel_layout.content_rect.x, line_y - 1.0f,
+    const SDL_FRect row_band = MakeRect(panel_layout.content_rect.x, line_y - kDebugPaneRowBandLift,
                                         panel_layout.content_rect.w, panel_layout.line_height);
     SDL_Color background = theme_.surface_background;
     if (selected || PointerOver(row_band)) {
@@ -229,7 +229,7 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
                                metrics.selection_bytes->second - metrics.selection_bytes->first));
           if (sel_w > 0.0f) {
             DrawFilledRect(renderer,
-                           MakeRect(sel_x, line_y - 1.0f, sel_w, panel_layout.line_height),
+                           MakeRect(sel_x, line_y - kDebugPaneRowBandLift, sel_w, panel_layout.line_height),
                            theme_.selection_fill);
           }
         }
@@ -237,7 +237,7 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
         if (context_.interaction_state.window_has_input_focus &&
             context_.text_input.composition.text.empty()) {
           DrawFilledRect(renderer,
-                         MakeRect(field_text_x + metrics.cursor_x, line_y - 1.0f, 1.5f,
+                         MakeRect(field_text_x + metrics.cursor_x, line_y - kDebugPaneRowBandLift, 1.5f,
                                   text_renderer_.LineHeight()),
                          theme_.cursor);
         }
@@ -293,7 +293,7 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
       constexpr float kIndentStep = 16.0f;
       const auto row_ref = debug_view->PanelRowAt(static_cast<std::size_t>(index));
       const auto fill_row_background = [&](bool focused) -> SDL_Color {
-        const SDL_FRect row_band = MakeRect(panel_layout.content_rect.x, line_y - 1.0f,
+        const SDL_FRect row_band = MakeRect(panel_layout.content_rect.x, line_y - kDebugPaneRowBandLift,
                                             panel_layout.content_rect.w, panel_layout.line_height);
         SDL_Color background = theme_.surface_background;
         if (focused || PointerOver(row_band)) {
@@ -364,7 +364,7 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
       // hover and use that as the text background for the whole row. The keyboard
       // selection lifts it the same way, matching the value trees one mode over —
       // without it the Breakpoints surface would navigate invisibly.
-      const SDL_FRect bp_band = MakeRect(panel_layout.content_rect.x, line_y - 1.0f,
+      const SDL_FRect bp_band = MakeRect(panel_layout.content_rect.x, line_y - kDebugPaneRowBandLift,
                                          panel_layout.content_rect.w, panel_layout.line_height);
       SDL_Color bp_bg = theme_.surface_background;
       if (bp_selected_row == index || PointerOver(bp_band)) {

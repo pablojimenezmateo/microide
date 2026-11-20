@@ -20,6 +20,7 @@
 #include "workspace/WorkspaceOutputReference.h"
 #include "util/StringUtil.h"
 #include "workspace/render/NotificationLayout.h"
+#include "workspace/debug/DebugPaneRegistry.h"
 
 namespace microide::workspace {
 
@@ -1426,11 +1427,11 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
     }
     const std::size_t row_count = DebugPaneActiveRowCount();
     const auto panel_layout = ComputeDebugPaneListLayout(layout, row_count);
-    if (panel_layout.line_height > 0.0f && Contains(panel_layout.content_rect, x, y) &&
-        y >= panel_layout.text_y) {
-      const int visible_row = static_cast<int>((y - panel_layout.text_y) / panel_layout.line_height);
+    const float band_top = DebugPaneRowBandTop(panel_layout.text_y, panel_layout.line_height, 0);
+    if (panel_layout.line_height > 0.0f && Contains(panel_layout.content_rect, x, y) && y >= band_top) {
+      const int visible_row = static_cast<int>((y - band_top) / panel_layout.line_height);
       return MakeRect(panel_layout.content_rect.x,
-                      panel_layout.text_y + static_cast<float>(visible_row) * panel_layout.line_height,
+                      DebugPaneRowBandTop(panel_layout.text_y, panel_layout.line_height, visible_row),
                       panel_layout.content_rect.w, panel_layout.line_height);
     }
   }

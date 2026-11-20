@@ -1110,7 +1110,7 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                   }
                   break;
               }
-              const float y = list.text_y + static_cast<float>(r) * list.line_height;
+              const float y = DebugPaneRowBandTop(list.text_y, list.line_height, r);
               AddControlUiElement(out, kDebugRow, mode_id + "/" + std::to_string(index),
                                   MakeRect(list.content_rect.x, y, list.content_rect.w,
                                            list.line_height),

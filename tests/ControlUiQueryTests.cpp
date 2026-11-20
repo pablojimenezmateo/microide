@@ -527,6 +527,49 @@ void TestDocumentsQueryListsATypedMergeResult() {
          "a typed one is, with the digest of its text");
 }
 
+// The debug pane lifts a row's band a pixel above its text (line_y - 1, in
+// every mode), and the hover damage and the click hit test took the band from
+// the text line itself. A pointer on the last pixel of a row by the hit test's
+// band was already inside the NEXT row's painted band: that row lit up, and
+// leaving repainted the row the hit test named, so the lit band stayed on
+// screen (soak cf0bab62508c, 26 sightings in 11 cells). Each row is hovered at
+// both edges of the band the ui query reports for it, then left; every frame
+// must be what a full repaint paints.
+void TestDebugPaneRowHoverRepaintsTheRowItLights() {
+  UiFixture fixture;
+  TestAccess::SetSettingValue(fixture.shell, "debug.enabled", "true");
+  TestAccess::ToggleBreakpointForTest(fixture.shell, fixture.root / "alpha.cpp", 0);
+  TestAccess::ToggleBreakpointForTest(fixture.shell, fixture.root / "beta.cpp", 0);
+  TestAccess::FocusDebugPaneBreakpoints(fixture.shell);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  fixture.shell.Render(fixture.canvas.renderer(), UiFixture::kWidth, UiFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  std::vector<UiElement> rows;
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    if (entry["name"].AsString().starts_with("debug-row:breakpoints/")) {
+      if (const auto row = Find(ui, entry["name"].AsString()); row.has_value()) {
+        rows.push_back(*row);
+      }
+    }
+  }
+  Expect(rows.size() >= 2, "two breakpoint rows are listed (" + std::to_string(rows.size()) + ")");
+  const auto expect_fresh = [&](float x, float y, const std::string& what) {
+    const auto diff = PaintAndDiffWithFullRepaint(fixture.shell, fixture.canvas, UiFixture::kWidth,
+                                                  UiFixture::kHeight,
+                                                  DispatchEvents(fixture.shell, {MouseMotionEvent(x, y)}));
+    Expect(diff.identical(), what + " paints what a full repaint paints; " + DescribePixelDiff(diff));
+  };
+  for (const UiElement& row : rows) {
+    const float x = row.rect.x + row.rect.w / 2.0f;
+    for (const float y : {row.rect.y + 0.5f, row.rect.y + row.rect.h - 0.5f}) {
+      expect_fresh(x, y, "the pointer at y " + std::to_string(y) + " on " + row.name);
+      // Off the pane, to the editor: whatever the hover lit must go.
+      expect_fresh(200.0f, 300.0f, "the pointer leaving " + row.name);
+    }
+  }
+}
+
 // The `surface` query lists every query verb; each must be answered, so the
 // inventory the QA monkey's coverage is measured against cannot name a verb the
 // channel does not have (or miss one it grew). It also lists the menus, the
@@ -1092,6 +1135,8 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/DocumentsQueryHashesWhatASaveWrites", TestDocumentsQueryHashesWhatASaveWrites);
   AddTest(tests, "ControlUiQuery/DocumentsQueryListsAFileOpenOnlyInADiff", TestDocumentsQueryListsAFileOpenOnlyInADiff);
   AddTest(tests, "ControlUiQuery/DocumentsQueryListsATypedMergeResult", TestDocumentsQueryListsATypedMergeResult);
+  AddTest(tests, "ControlUiQuery/DebugPaneRowHoverRepaintsTheRowItLights",
+          TestDebugPaneRowHoverRepaintsTheRowItLights);
   AddTest(tests, "ControlUiQuery/DocumentsQueryHashesWhatASaveWritesForABufferMadeOpaque",
           TestDocumentsQueryHashesWhatASaveWritesForABufferMadeOpaque);
   AddTest(tests, "ControlUiQuery/InjectedInputRepaintsWhatItChanged", TestInjectedInputRepaintsWhatItChanged);
