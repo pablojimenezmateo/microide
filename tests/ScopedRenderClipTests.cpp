@@ -12,6 +12,7 @@
 #include "support/SoftwareCanvas.h"
 
 #include <string>
+#include <cmath>
 #include <vector>
 
 namespace microide::tests {
@@ -166,12 +167,69 @@ void TestPartialAndFullFramesClipASurfaceAlikeAt125() {
   }
 }
 
+// The same at the scales whose device grid is wider than 8 logical pixels: at
+// 1.1x it is 10 (11 device pixels), at 1.65x 20. DevicePixelAlignment looked no
+// further than 8 and left such a scale unaligned, and a surface's clip narrowed
+// under a partial frame's damage clip then reached one device column past where
+// the same surface's clip stops in a full frame -- `ceil(w * s)` jumps from 0 to 2
+// device pixels at 1.1x -- so the sidebar painted a pixel of the editor's
+// background in partial frames only (soak d213837376ca at ui.scale 1.1).
+void TestPartialAndFullFramesClipASurfaceAlikeAtWideGrids() {
+  EnsureDummySdlVideoInitialized();
+  for (const float scale : {1.1f, 1.65f, 1.3f}) {
+    const int device_w = static_cast<int>(std::lround(200.0f * scale));
+    const int device_h = static_cast<int>(std::lround(100.0f * scale));
+    SoftwareCanvas canvas(device_w, device_h);
+    SDL_Renderer* renderer = canvas.renderer();
+    Expect(SDL_SetRenderLogicalPresentation(renderer, 200, 100, SDL_LOGICAL_PRESENTATION_STRETCH),
+           "the canvas takes a logical presentation");
+    for (const int edge : {41, 87, 174 / 2}) {
+      const SDL_Rect sidebar{0, 10, edge, 80};
+      const auto paint = [&](const SDL_Rect* damage) {
+        SDL_SetRenderClipRect(renderer, nullptr);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        if (damage != nullptr) {
+          const SDL_Rect aligned = render::AlignClipToDevicePixels(renderer, *damage);
+          SDL_SetRenderClipRect(renderer, &aligned);
+        }
+        {
+          const render::ScopedRenderClip scope(renderer, sidebar);
+          SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
+          const SDL_FRect all{0.0f, 0.0f, 200.0f, 100.0f};
+          SDL_RenderFillRect(renderer, &all);
+        }
+        SDL_SetRenderClipRect(renderer, nullptr);
+      };
+      paint(nullptr);
+      std::vector<bool> full;
+      for (int x = 0; x < device_w; ++x) {
+        full.push_back(canvas.PixelAt(x, device_h / 2).r == 255);
+      }
+      const SDL_Rect damage{edge, 20, 100, 50};
+      paint(&damage);
+      const SDL_Rect aligned = render::AlignClipToDevicePixels(renderer, damage);
+      for (int x = 0; x < device_w; ++x) {
+        const bool in_damage = static_cast<float>(x) >= std::floor(static_cast<float>(aligned.x) * scale) &&
+                               static_cast<float>(x) < static_cast<float>(aligned.x + aligned.w) * scale;
+        if (in_damage) {
+          Expect((canvas.PixelAt(x, device_h / 2).r == 255) == full[static_cast<std::size_t>(x)],
+                 "at " + std::to_string(scale) + "x, a sidebar ending at " + std::to_string(edge) +
+                     ": device column " + std::to_string(x) + " is painted as the full frame paints it");
+        }
+      }
+    }
+  }
+}
+
 }  // namespace
 
 void RegisterScopedRenderClipTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ScopedRenderClip/NarrowsToTheOuterClip", TestNarrowsToTheOuterClip);
   AddTest(tests, "ScopedRenderClip/NarrowsInDevicePixelsAtAFractionalScale",
           TestNarrowsInDevicePixelsAtAFractionalScale);
+  AddTest(tests, "ScopedRenderClip/PartialAndFullFramesClipASurfaceAlikeAtWideGrids",
+          TestPartialAndFullFramesClipASurfaceAlikeAtWideGrids);
   AddTest(tests, "ScopedRenderClip/PartialAndFullFramesClipASurfaceAlikeAt125",
           TestPartialAndFullFramesClipASurfaceAlikeAt125);
 }

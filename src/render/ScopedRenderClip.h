@@ -53,11 +53,21 @@ struct Span {
 };
 
 // The smallest k for which k logical pixels are a whole number of device pixels
-// at `scale` (1 at 1x and 2x, 2 at 1.5x, 4 at 1.25x and 1.75x; 1 when nothing
-// up to 8 fits). A clip whose edges are multiples of k maps to the device with
-// no rounding, so two such clips intersect exactly (TD-2026-10-22-376).
+// at `scale` (1 at 1x and 2x, 2 at 1.5x, 4 at 1.25x and 1.75x, 10 at 1.1x and
+// 1.3x, 20 at 1.65x; 1 when nothing up to kMaxDevicePixelAlignment fits). A clip
+// whose edges are multiples of k maps to the device with no rounding, so two
+// such clips intersect exactly (TD-2026-10-22-376).
+//
+// The search stopped at 8, and `ui.scale` takes any value (the presets are
+// quarters; the setting is a float, and the display's own scale multiplies it):
+// at 1.1x nothing up to 8 fits, the clips went unaligned, and a surface's clip
+// narrowed under a partial frame's reached a device column past where its
+// full-frame clip stops -- the sidebar painted a pixel of the editor in partial
+// frames only (soak d213837376ca). 20 covers every scale in steps of 0.05; a clip
+// then grows by up to 19 logical pixels a side, still a partial frame.
+inline constexpr int kMaxDevicePixelAlignment = 20;
 inline int DevicePixelAlignment(float scale) {
-  for (int k = 1; k <= 8; ++k) {
+  for (int k = 1; k <= kMaxDevicePixelAlignment; ++k) {
     const float device = static_cast<float>(k) * scale;
     if (std::fabs(device - std::round(device)) < 1e-3f) {
       return k;
