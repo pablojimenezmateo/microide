@@ -191,18 +191,22 @@ def _seconds(value: float | None) -> str:
     return "skipped" if value is None else f"{value:.3f}s"
 
 
-def superlinear(small: float, large: float) -> bool:
+def superlinear(small: float, large: float, slow_factor: float | None = None) -> bool:
     """Whether t(2N) = `large` against t(N) = `small` grew clearly faster than
-    linear.
+    linear. `slow_factor` stretches the floor (default: the run's, q.SLOW_FACTOR;
+    the examples fix it, or a sanitizer lane's factor would change them).
 
-    >>> superlinear(0.10, 0.21)    # linear
+    >>> superlinear(0.10, 0.21, slow_factor=1)    # linear
     False
-    >>> superlinear(0.10, 0.45)    # quadratic, and slow enough to trust
+    >>> superlinear(0.10, 0.45, slow_factor=1)    # quadratic, and slow enough to trust
     True
-    >>> superlinear(0.01, 0.05)    # quadratic, but in the noise
+    >>> superlinear(0.01, 0.05, slow_factor=1)    # quadratic, but in the noise
+    False
+    >>> superlinear(0.10, 0.45, slow_factor=2)    # under a sanitizer, the floor is 0.6 s
     False
     """
-    return large >= MIN_SECONDS * q.SLOW_FACTOR and large >= RATIO * max(small, 1e-3)
+    slow = q.SLOW_FACTOR if slow_factor is None else slow_factor
+    return large >= MIN_SECONDS * slow and large >= RATIO * max(small, 1e-3)
 
 
 def check(app: q.App, root: Path, probe: Probe) -> list[tuple[str, str]]:
