@@ -124,6 +124,10 @@ namespace microide::util {
   /* with nothing to point at (TD-2026-08-06-138). Exactly one reason counter is bumped   */      \
   /* per build, so the four sum to table_builds.                                           */     \
   X(EditorLineWidthTableBuilds, "editor.line_width_table_builds")                                \
+  /* Secondary carets copied into or out of an undo entry's view state. An edit at N  */        \
+  /* carets owes O(N) of these; a per-caret history entry that carries the whole set  */        \
+  /* is O(N^2) per keystroke (TD-2026-09-20-300; the typing path, TD-2026-11-20-454). */        \
+  X(EditorHistoryCaretCopies, "editor.history_caret_copies")                                     \
   /* No table at all: first build for this tab, or the first after an invalidation. */           \
   X(EditorLineWidthRebuildCold, "editor.line_width_rebuild_cold")                                \
   /* A table existed and described the same document, but at a different tab size. */            \

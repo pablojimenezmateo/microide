@@ -8,6 +8,7 @@
 #include "editor/TextBuffer.h"
 #include "editor/TextLayout.h"
 #include "editor/TextViewport.h"
+#include "util/PerformanceCounters.h"
 
 namespace microide::tests {
 namespace {
@@ -1374,6 +1375,46 @@ void TestAddCaretAboveLeadsUpward() {
          "and the original stays as a secondary");
 }
 
+// A key typed at N carets owes O(N) caret copies into history view states. The
+// typing path (TryMultiCaretPairInsert) built one history entry per caret, and
+// each captured the whole caret set and restored it: O(N^2) per keystroke, 4.5 s
+// for one letter at 6,000 carets in the app (found by the scaling oracle,
+// tools/qa/scaling.py). The general path (ApplyMultiCaretEdit) had been through
+// the same fix (TD-2026-09-20-300). Counted rather than timed: the count is exact.
+void TestTypingAtManyCaretsCopiesTheCaretSetLinearly() {
+  constexpr std::size_t kCarets = 2000;
+  std::string text;
+  for (std::size_t i = 0; i < kCarets; ++i) {
+    text += "line " + std::to_string(i) + "\n";
+  }
+  for (const char typed : {'x', '('}) {  // a plain letter, and an auto-closing pair
+    TextViewport viewport;
+    viewport.LoadContent(text, "/tmp/mc-typing.cpp");
+    viewport.SetViewportSize(40, 80);
+    viewport.SelectAll();
+    Expect(viewport.AddCaretsAtSelectedLineEnds(), "a caret at every line's end");
+    Expect(viewport.secondary_carets().size() + 1 >= kCarets, "about one caret per line");
+    const std::uint64_t before = util::ReadPerformanceCounter(util::PerfCounterId::EditorHistoryCaretCopies);
+    viewport.InsertText(std::string(1, typed));
+    const std::uint64_t copies =
+        util::ReadPerformanceCounter(util::PerfCounterId::EditorHistoryCaretCopies) - before;
+    Expect(copies <= 8 * kCarets, std::string("typing '") + typed + "' at " + std::to_string(kCarets) +
+                                      " carets copied the caret set " + std::to_string(copies) +
+                                      " carets' worth (linear is a few times the carets)");
+    std::size_t edited = 0;
+    for (std::size_t line = 0; line < viewport.lines().size(); ++line) {
+      const std::string_view row = viewport.lines().LineView(line);
+      // A '(' may close itself, depending on the language behaviour in force.
+      edited += row.find(typed) != std::string_view::npos;
+    }
+    Expect(edited + 1 >= kCarets, "and every line got it: " + std::to_string(edited));
+    Expect(viewport.secondary_carets().size() + 1 >= kCarets, "every caret is still there");
+    viewport.Undo();
+    Expect(viewport.SerializeDocumentText() == text, "one undo takes the whole keystroke back");
+    Expect(viewport.secondary_carets().size() + 1 >= kCarets, "with every caret");
+  }
+}
+
 // VS Code's Shift+Alt+I: a caret at the end of every line the selection touches.
 void TestAddCaretsAtSelectedLineEnds() {
   TextViewport viewport;
@@ -1541,6 +1582,8 @@ void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
           TestAddCaretBelowStepsOneWrappedRow);
   AddTest(tests, "EditorMultiCaret/AddCaretAboveLeadsUpward", TestAddCaretAboveLeadsUpward);
   AddTest(tests, "EditorMultiCaret/AddCaretsAtSelectedLineEnds", TestAddCaretsAtSelectedLineEnds);
+  AddTest(tests, "EditorMultiCaret/TypingAtManyCaretsCopiesTheCaretSetLinearly",
+          TestTypingAtManyCaretsCopiesTheCaretSetLinearly);
   AddTest(tests, "EditorMultiCaret/AddCaretsAtLineEndsIgnoresTheTrailingLineStart",
           TestAddCaretsAtLineEndsIgnoresTheTrailingLineStart);
   AddTest(tests, "EditorMultiCaret/AddSecondaryCaretKeepsSortedOrderAndDedupes",

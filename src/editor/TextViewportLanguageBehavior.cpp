@@ -592,6 +592,17 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
   detail::DisjointEditCapture capture(document_->lines);
 
   const ViewState before_state = CaptureViewState();
+  // Every per-caret entry below is folded into ONE aggregate (capture.Build) and
+  // the caret set is rebuilt from `sites`, so the entries' caret vectors are
+  // written and never read -- and each one copied the whole set in and out:
+  // O(carets^2) per keystroke, 4.5 s for one letter at 6,000 carets
+  // (TD-2026-11-20-454; ApplyMultiCaretEdit's TD-2026-09-20-300 is the same
+  // shape). The set the loop reads is this snapshot, because each
+  // ApplyHistoryEntry restores a caret-less state; the guard closes before the
+  // aggregate's own state is captured, which must be complete.
+  const std::vector<SecondaryCaret> carets_before = secondary_carets_;
+  std::optional<SuppressEntryCaretCapture> suppress_dead_caret_copies;
+  suppress_dead_caret_copies.emplace(*this);
 
   // Record each slot's post-edit caret (and selection anchor) plus its edit
   // footprint, indexed by ascending slot order. Edits are applied high-to-low so
@@ -638,8 +649,8 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
         sites[slot_index] = detail::MultiCaretRemapSite{
             .landed = TextPosition{line, column},
             .anchor = slot.is_primary
-                          ? selection_anchor_
-                          : secondary_carets_[slot.secondary_index].selection_anchor};
+                          ? before_state.selection_anchor
+                          : carets_before[slot.secondary_index].selection_anchor};
         continue;
       }
 
@@ -727,6 +738,7 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
                                     .shape = detail::ComputeReplacementShape(replacement)};
   }
 
+  suppress_dead_caret_copies.reset();
   if (!text_changed && !caret_changed) {
     return false;
   }
@@ -736,7 +748,7 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
 
   TextPosition primary_after{cursor_line_, cursor_column_};
   std::optional<TextPosition> new_primary_anchor = selection_anchor_;
-  std::vector<SecondaryCaret> new_secondaries = secondary_carets_;
+  std::vector<SecondaryCaret> new_secondaries = carets_before;
   for (std::size_t i = 0; i < slots.size(); ++i) {
     const detail::MultiCaretRemapSite& site = sites[i];
     if (slots[i].is_primary) {

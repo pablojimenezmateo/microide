@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "editor/TextLayout.h"
+#include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 
@@ -735,6 +736,7 @@ TextViewport::ViewState TextViewport::CaptureViewStateImpl(bool with_secondary_c
   // be the same copy-then-discard shape it exists to remove.
   if (with_secondary_carets) {
     state.secondary_carets = secondary_carets_;
+    util::AddPerformanceCounter(util::PerfCounterId::EditorHistoryCaretCopies, secondary_carets_.size());
   }
   return state;
 }
@@ -758,6 +760,7 @@ void TextViewport::RestoreViewState(const ViewState& state) {
   horizontal_scroll_ = state.horizontal_scroll;
   selection_anchor_ = state.selection_anchor;
   secondary_carets_ = state.secondary_carets;
+  util::AddPerformanceCounter(util::PerfCounterId::EditorHistoryCaretCopies, state.secondary_carets.size());
   document_->placeholder = state.placeholder;
   document_->dirty = state.dirty;
   // NO reconciliation here. The restored set owes the same clamp+normalise every
