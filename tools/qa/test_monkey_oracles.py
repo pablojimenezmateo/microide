@@ -564,7 +564,8 @@ class _UndoEditor:
     hook may rewrite the file under the buffer between two commands, as the
     monkey's ExternalChurn thread does, and the buffer then reloads it."""
 
-    def __init__(self, history: list[str], at: int, redo_drops: bool = False) -> None:
+    def __init__(self, history: list[str], at: int, redo_drops: bool = False, kind: str = "editor") -> None:
+        self.kind = kind
         self.project = "/w"
         self.actions: list[dict] = []
         self.last_ui = {"focus": "editor"}
@@ -577,7 +578,7 @@ class _UndoEditor:
 
     def query(self, verb, args=None):
         assert verb == "buffer", verb
-        return {"kind": "editor", "path": "/w/CHANGELOG.md", "text": self.text,
+        return {"kind": self.kind, "path": "/w/CHANGELOG.md", "text": self.text,
                 "revision": self.revision}
 
     def churn(self, counter: int) -> None:
@@ -651,6 +652,20 @@ class UndoAlgebraTests(unittest.TestCase):
         found = oracle.check(asked=2)
         self.assertEqual(len(found), 1)
         self.assertIn("2 undo(s) then 2 redo(s) changed the text of CHANGELOG.md", found[0][1])
+
+
+class UndoAlgebraSurfaceTests(unittest.TestCase):
+    def test_a_diff_side_and_a_merge_result_are_held_to_the_rule(self) -> None:
+        # The rule was asked of editor buffers alone; a diff's editable side and
+        # a merge's result have histories of their own.
+        for kind in ("compare", "merge"):
+            app = _UndoEditor(["v0", "v1", "v12"], at=2, redo_drops=True, kind=kind)
+            found = monkey_oracles.UndoAlgebra(app, random.Random(0)).check(asked=2)
+            self.assertEqual(len(found), 1, kind)
+
+    def test_a_terminal_or_an_overlay_is_not(self) -> None:
+        app = _UndoEditor(["v0", "v1"], at=1, redo_drops=True, kind="terminal")
+        self.assertEqual(monkey_oracles.UndoAlgebra(app, random.Random(0)).check(asked=1), [])
 
 
 class _DocumentsApp:

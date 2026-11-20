@@ -647,6 +647,14 @@ def _project_relative(app: q.App, path: str) -> str:
 CHURN_RELOAD_GRACE_S = 1.5
 
 
+# The buffers whose history the undo rule holds for: an editor's, a diff's
+# editable side and a merge's result (the `buffer` query's kinds). It was asked of
+# editor buffers alone, so the two histories that interleave edits with model
+# rebuilds -- a diff re-derived per keystroke, a merge choice patched into typed
+# text -- were the ones it never saw.
+UNDO_KINDS = frozenset({"editor", "compare", "merge"})
+
+
 class UndoAlgebra:
     """k undos then k redos are the identity on the text (the editing invariants'
     rule, sampled mid-run on whatever state the monkey reached)."""
@@ -673,7 +681,7 @@ class UndoAlgebra:
             before = app.query("buffer")
         except q.QaFailure:
             return []
-        if before.get("kind") != "editor" or before.get("readOnly") or "text" not in before:
+        if before.get("kind") not in UNDO_KINDS or before.get("readOnly") or "text" not in before:
             return []
         # Only the undos that undid something are owed a redo: at the bottom of the
         # history an undo does nothing, and the k redos then replayed edits the run
@@ -690,7 +698,7 @@ class UndoAlgebra:
                 now = app.query("buffer")
             except q.QaFailure:
                 return []
-            if now.get("path") != before.get("path") or now.get("kind") != "editor":
+            if now.get("path") != before.get("path") or now.get("kind") != before.get("kind"):
                 return []
             if revision is None or now.get("revision") != revision:
                 k += 1
@@ -704,7 +712,7 @@ class UndoAlgebra:
             after = app.query("buffer")
         except q.QaFailure:
             return []
-        if after.get("path") != before.get("path") or after.get("kind") != "editor":
+        if after.get("path") != before.get("path") or after.get("kind") != before.get("kind"):
             return []  # the commands moved focus somewhere else: not this rule's case
         if after.get("text") != before.get("text"):
             if self._churned_during_check(str(before.get("path") or ""), started):
