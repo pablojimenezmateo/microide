@@ -857,6 +857,13 @@ struct FileIndexWatcher::Impl {
             // vanishes on a full rescan -- an inconsistent, confusing state.
             std::error_code type_error;
             if (!std::filesystem::is_regular_file(abs_path, type_error)) {
+              // "Gone" is the entry itself, not what it names: following a link
+              // made dangling fails like a missing path, and the link was
+              // dropped as gone -- the remote server never learned of it, nor
+              // listed it once its file came back (soak 20f30956197f).
+              std::error_code link_error;
+              const bool present =
+                  std::filesystem::exists(std::filesystem::symlink_status(abs_path, link_error));
               // Not a regular file, but it IS a new entry in a watched
               // directory: a symlink to a directory, a fifo, a socket. The
               // index cannot hold it, the sidebar tree shows it, so report
@@ -864,7 +871,7 @@ struct FileIndexWatcher::Impl {
               // the ignore filter so a build writing ignored artifacts does
               // not turn into a refresh storm. Gone already (a temporary
               // renamed away): nothing to report.
-              if (!type_error && batch_filter.Includes(abs_path, platform::PathType::Other)) {
+              if (present && batch_filter.Includes(abs_path, platform::PathType::Other)) {
                 structure_changed = true;
               }
               continue;

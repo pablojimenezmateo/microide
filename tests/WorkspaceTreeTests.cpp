@@ -188,6 +188,41 @@ void TestWorkspaceTreeAnAbsoluteLinkFollowsTheChainItNames() {
          "and from then on the new end of the chain is followed");
 }
 
+// Soak 20f30956197f (remote profile): in a repository, the file an absolute link
+// names was deleted, the link was made -- dangling, in a directory new to the
+// tree -- and the file came back. The mirror never got the link.
+void TestWorkspaceTreeALinkMadeDanglingByAnUpdateIsListedWhenItsFileReturns() {
+  for (const bool dir_reported : {false, true}) {
+    TemporaryDirectory temp;
+    const std::filesystem::path root = temp.path() / "repo";
+    InitializeGitRepo(root);
+    WriteFile(root / "qa-weird/mixed.txt", "mixed\n");
+    CommitAll(root, "init", "dangling link");
+    WorkspaceTree tree(root, WorkspaceTree::Options{.racy_window_ns = 0});
+    std::string error;
+    Expect(tree.BuildManifest(&error).has_value(), "the walk builds: " + error);
+
+    std::filesystem::remove(root / "qa-weird/mixed.txt");
+    Expect(tree.UpdateManifest(WorkspaceTree::Changes{.touched = {"qa-weird/mixed.txt"}}, &error).has_value(),
+           "the deletion updates: " + error);
+    std::filesystem::create_directories(root / "qa-ext");
+    std::filesystem::create_symlink(root / "qa-weird/mixed.txt", root / "qa-ext/link1");
+    WorkspaceTree::Changes made;
+    made.touched = dir_reported ? std::vector<std::string>{"qa-ext"} : std::vector<std::string>{"qa-ext/link1"};
+    auto updated = tree.UpdateManifest(made, &error);
+    Expect(updated.has_value(), "the link's creation updates: " + error);
+    Expect(Find(*updated, "qa-ext/link1") == nullptr, "the dangling link is not listed");
+
+    WriteFile(root / "qa-weird/mixed.txt", "back again\n");
+    updated = tree.UpdateManifest(WorkspaceTree::Changes{.touched = {"qa-weird/mixed.txt"}}, &error);
+    Expect(updated.has_value(), "the return updates: " + error);
+    const ManifestRow* link = Find(*updated, "qa-ext/link1");
+    Expect(link != nullptr && link->hash == util::HashContent("back again\n"),
+           std::string("the link is listed, as the file, once it returns (directory reported: ") +
+               (dir_reported ? "yes" : "no") + ")");
+  }
+}
+
 void TestWorkspaceTreeHashCache() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "plain";
@@ -442,6 +477,8 @@ void RegisterWorkspaceTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceTree/GitContentSet", TestWorkspaceTreeGitContentSet);
   AddTest(tests, "WorkspaceTree/WalksWithoutGit", TestWorkspaceTreeWalksWithoutGit);
   AddTest(tests, "WorkspaceTree/HashCache", TestWorkspaceTreeHashCache);
+  AddTest(tests, "WorkspaceTree/ALinkMadeDanglingByAnUpdateIsListedWhenItsFileReturns",
+          TestWorkspaceTreeALinkMadeDanglingByAnUpdateIsListedWhenItsFileReturns);
   AddTest(tests, "WorkspaceTree/AnAbsoluteLinkFollowsTheFileItNames",
           TestWorkspaceTreeAnAbsoluteLinkFollowsTheFileItNames);
   AddTest(tests, "WorkspaceTree/AnAbsoluteLinkFollowsTheChainItNames",

@@ -419,6 +419,49 @@ void TestFileIndexWatcherASymlinkLoopDoesNotRelabelTheRoot() {
   watcher.Unwatch();
 }
 
+// Soak 20f30956197f (remote profile): a link made DANGLING in a watched directory
+// -- `qa-ext/link1 -> /root/qa-weird/mixed.txt`, the file deleted -- reported
+// nothing, so the remote server never learned the link followed that file and
+// never listed it once the file came back. A new entry the index cannot hold is
+// a shape change, dangling or not.
+void TestFileIndexWatcherReportsADanglingLinkMadeInAWatchedDirectory() {
+  for (const bool loop_beside : {false, true}) {
+    TemporaryDirectory temp_dir;
+    const std::filesystem::path root = temp_dir.path() / "watch_dangling";
+    std::filesystem::create_directories(root / "qa-ext");
+    WriteFile(root / "README.md", "readme\n");
+    if (loop_beside) {
+      std::filesystem::create_directory_symlink("..", root / "qa-ext" / "loop2");
+    }
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool structure_changed = false;
+    std::vector<std::filesystem::path> changed;
+    FileIndexWatcher watcher;
+    watcher.SetCallback([&](IndexUpdateBatch batch) {
+      if (batch.is_initial) {
+        return;
+      }
+      std::lock_guard lock(mutex);
+      structure_changed = structure_changed || batch.tree_structure_changed;
+      for (const auto& change : batch.changes) {
+        changed.push_back(change.entry.relative_path);
+      }
+      cv.notify_all();
+    });
+    Expect(watcher.Watch(root), "Watch should succeed");
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    std::filesystem::create_symlink(root / "qa-weird" / "mixed.txt", root / "qa-ext" / "link1");
+    const bool notified = WaitFor(mutex, cv, [&] {
+      return structure_changed ||
+             std::find(changed.begin(), changed.end(), std::filesystem::path("qa-ext/link1")) != changed.end();
+    }, std::chrono::milliseconds(1500));
+    Expect(notified, std::string("a dangling link made in a watched directory is reported (loop beside it: ") +
+                         (loop_beside ? "yes" : "no") + ")");
+    watcher.Unwatch();
+  }
+}
+
 void TestFileIndexWatcherSkipsGitMetadataInInitialBatch() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1076,6 +1119,8 @@ void RegisterFileIndexWatcherTests(std::vector<TestCase>& tests) {
           TestFileIndexWatcherExcludesDefaultsAndFileLevelIgnore);
   AddTest(tests, "FileIndexWatcher/ASymlinkLoopDoesNotRelabelTheRoot",
           TestFileIndexWatcherASymlinkLoopDoesNotRelabelTheRoot);
+  AddTest(tests, "FileIndexWatcher/ReportsADanglingLinkMadeInAWatchedDirectory",
+          TestFileIndexWatcherReportsADanglingLinkMadeInAWatchedDirectory);
   AddTest(tests, "FileIndexWatcher/HonorsUserExcludeGlobs",
           TestFileIndexWatcherHonorsUserExcludeGlobs);
   AddTest(tests, "FileIndexWatcher/InitialBatchRespectsEntryBudget",
