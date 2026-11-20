@@ -187,7 +187,10 @@ struct PreparedFrameState {
     const void* tab = nullptr;
     std::optional<SDL_FRect> horizontal_track;
     SDL_FRect horizontal_thumb{};
-    std::optional<SDL_FRect> vertical_lane;  // the overview lane, track included
+    // The overview lane sits LEFT of the vertical track; the thumb is in the
+    // track, so a moved thumb repaints the track, a changed marker the lane.
+    std::optional<SDL_FRect> vertical_lane;
+    SDL_FRect vertical_track{};
     SDL_FRect vertical_thumb{};
     std::uint64_t vertical_markers = 0;
   };

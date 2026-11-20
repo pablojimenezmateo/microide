@@ -1115,6 +1115,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       }
       if (scroll.vertical_scrollbar.has_value()) {
         bars.vertical_lane = overview::LaneRect(scroll.vertical_scrollbar->track, ActiveTabSurface(layout).x);
+        bars.vertical_track = scroll.vertical_scrollbar->track;
         bars.vertical_thumb = scroll.vertical_scrollbar->thumb;
         const std::vector<overview::Marker>& markers = build_markers(overview::LaneInnerRect(*bars.vertical_lane));
         std::uint64_t hash = util::kFnv1aOffsetBasis;
@@ -1160,6 +1161,12 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       diff_bar(painted.horizontal_track, painted.horizontal_thumb, bars.horizontal_track,
                bars.horizontal_thumb);
       diff_bar(painted.vertical_lane, painted.vertical_thumb, bars.vertical_lane, bars.vertical_thumb);
+      // The vertical thumb lives in the track, right of the overview lane: a
+      // moved thumb repaints the track too, not only the lane (soak 0cee9c7fa46e).
+      const auto vertical_track = [](const PreparedFrameState::DiffSurfaceBars& b) {
+        return b.vertical_lane.has_value() ? std::optional<SDL_FRect>(b.vertical_track) : std::nullopt;
+      };
+      diff_bar(vertical_track(painted), painted.vertical_thumb, vertical_track(bars), bars.vertical_thumb);
       if (bars.vertical_lane.has_value() && painted.vertical_lane.has_value() &&
           same_rect(*bars.vertical_lane, *painted.vertical_lane) &&
           bars.vertical_markers != painted.vertical_markers) {

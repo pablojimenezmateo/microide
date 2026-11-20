@@ -2565,6 +2565,40 @@ void TestACaretMoveThatScrollsTheMergePanesRepaintsThemAll() {
          "Down moves the shared row (the case under test)");
 }
 
+// Soak 0cee9c7fa46e: Return in the merge result adds a row to every pane's
+// shared extent, so the vertical thumb at the surface's right edge shrinks.
+// Frame prep saw the thumb move but repainted only the overview lane beside
+// the track -- the lane does not include the track -- so the thumb kept its
+// old length.
+void TestANewLineInTheMergeResultRepaintsTheVerticalThumb() {
+  FlowFixture fixture("notes.txt", "notes\n");
+  std::string side;
+  for (int i = 1; i <= 80; ++i) {
+    side += "line " + std::to_string(i) + "\n";
+  }
+  WriteFile(fixture.root / "base.txt", side);
+  WriteFile(fixture.root / "incoming.txt", "line 0 incoming\n" + side);
+  WriteFile(fixture.root / "current.txt", "line 0 current\n" + side);
+  WriteFile(fixture.root / "result.txt",
+            "<<<<<<< HEAD\nline 0 current\n=======\nline 0 incoming\n>>>>>>> in\n" + side);
+  Expect(TestAccess::OpenMergeEditor(fixture.shell, fixture.root / "base.txt", fixture.root / "incoming.txt",
+                                     fixture.root / "current.txt", fixture.root / "result.txt"),
+         "the merge editor opens");
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  const auto thumb_before = TestAccess::ActiveMergeScrollLayout(fixture.shell).vertical_scrollbar;
+  Expect(thumb_before.has_value(), "the fixture is long enough for a vertical scrollbar");
+  for (int i = 0; i < 3; ++i) {
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RETURN)}),
+                        "Return in the merge result");
+  }
+  const auto thumb_after = TestAccess::ActiveMergeScrollLayout(fixture.shell).vertical_scrollbar;
+  Expect(thumb_after.has_value() && thumb_after->thumb.h != thumb_before->thumb.h,
+         "the new rows shrink the vertical thumb (the case under test)");
+  Expect(TestAccess::ActiveMerge(fixture.shell).scroll_row == 0,
+         "the panes must NOT scroll, or the surface repaints for that instead");
+}
+
 // Soak 538a455016ef (1.75 replay): a tree row indented past the sidebar's width
 // still drew its label at least 20 px wide -- out of the row, over the scrollbar
 // beside it. Hovering the row repaints the row, not what its label spilled onto,
@@ -5931,6 +5965,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestADeeplyIndentedTreeRowKeepsItsLabelInsideTheRow);
   AddTest(tests, "QaFlowRegression/ACaretMoveThatScrollsTheMergePanesRepaintsThemAll",
           TestACaretMoveThatScrollsTheMergePanesRepaintsThemAll);
+  AddTest(tests, "QaFlowRegression/ANewLineInTheMergeResultRepaintsTheVerticalThumb",
+          TestANewLineInTheMergeResultRepaintsTheVerticalThumb);
   AddTest(tests, "QaFlowRegression/MovingOntoATabsCloseButtonLightsIt", TestMovingOntoATabsCloseButtonLightsIt);
   AddTest(tests, "QaFlowRegression/ATabStaysInsideItsNarrowStrip", TestATabStaysInsideItsNarrowStrip);
   AddTest(tests, "QaFlowRegression/MovingATabKeepsEveryFrameFresh", TestMovingATabKeepsEveryFrameFresh);
