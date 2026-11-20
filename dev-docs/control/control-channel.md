@@ -344,12 +344,14 @@ run), which is how `tools/qa`'s `keys` and `context-menus` sweeps press everythi
 
 **What is open, and what a save would write (`documents`).** One row per open
 file buffer in the current project, however many tabs show it: `{path, title,
-surface (editor|compare), dirty, readOnly, encoding (ascii|utf8|bytes),
+surface (editor|compare|merge), dirty, readOnly, encoding (ascii|utf8|bytes),
 mixedLineEndings, bytes, sha256}`, where `sha256` is the digest of the bytes a
 save writes now (the BOM, the lines joined with the document's ending; LF for a
 binary buffer). A diff's editable side is the file's buffer as an editor tab's
 viewport is (`surface: compare` when no editor tab holds the file; the row then
-names the compare tab). A view whose content has not loaded yet is not listed. The QA monkey's data-loss oracle reads it: a
+names the compare tab). A merge's result is listed (`surface: merge`) only while
+it holds unsaved text: its clean text need not be its file's. A view whose
+content has not loaded yet is not listed. The QA monkey's data-loss oracle reads it: a
 clean document's file has that digest, and a dirty one comes back with it after
 a kill -9 and a relaunch (`dev-docs/project/safety-plan.md` W4).
 

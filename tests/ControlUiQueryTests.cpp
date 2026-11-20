@@ -492,6 +492,41 @@ void TestDocumentsQueryListsAFileOpenOnlyInADiff() {
          "the editor tab's, holding the same unsaved text");
 }
 
+// A merge's typed result is unsaved text a kill -9 must bring back, so the kill
+// oracle has to see it: `documents` lists it while it is dirty, and not while it
+// is clean (its clean text is not its file's).
+void TestDocumentsQueryListsATypedMergeResult() {
+  UiFixture fixture;
+  const std::filesystem::path base = fixture.root / "base.txt";
+  const std::filesystem::path incoming = fixture.root / "incoming.txt";
+  const std::filesystem::path current = fixture.root / "current.txt";
+  const std::filesystem::path output = fixture.root / "result.txt";
+  WriteFile(base, "zero\none\ntwo\n");
+  WriteFile(incoming, "zero\none incoming\ntwo\n");
+  WriteFile(current, "zero\none current\ntwo\n");
+  WriteFile(output, "zero\none\ntwo\n");
+  Expect(TestAccess::OpenMergeEditor(fixture.shell, base, incoming, current, output), "the merge opens");
+  const auto rows = [&] {
+    std::vector<util::JsonValue> found;
+    const util::JsonValue documents = TestAccess::ControlQuery(fixture.shell, "documents");
+    for (const util::JsonValue& doc : documents.AsArray()) {
+      if (doc["path"].AsString().ends_with("result.txt")) {
+        found.push_back(doc);
+      }
+    }
+    return found;
+  };
+  TestAccess::ActiveMerge(fixture.shell).result_viewport.SetDirty(false);
+  Expect(rows().empty(), "a clean merge result is not listed");
+  TestAccess::ActiveMerge(fixture.shell).result_viewport.MoveCursorTo(0, 0);
+  Expect(TestAccess::HandleTextInput(fixture.shell, "typed "), "typing into the result");
+  const auto listed = rows();
+  Expect(listed.size() == 1 && listed[0]["surface"].AsString() == "merge" && listed[0]["dirty"].AsBool() &&
+             listed[0]["sha256"].AsString() ==
+                 util::Sha256Hex(TestAccess::ActiveMerge(fixture.shell).result_viewport.SerializeDocumentText()),
+         "a typed one is, with the digest of its text");
+}
+
 // The `surface` query lists every query verb; each must be answered, so the
 // inventory the QA monkey's coverage is measured against cannot name a verb the
 // channel does not have (or miss one it grew). It also lists the menus, the
@@ -1056,6 +1091,7 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
           TestInvariantsQueryHoldsAndNamesBrokenRules);
   AddTest(tests, "ControlUiQuery/DocumentsQueryHashesWhatASaveWrites", TestDocumentsQueryHashesWhatASaveWrites);
   AddTest(tests, "ControlUiQuery/DocumentsQueryListsAFileOpenOnlyInADiff", TestDocumentsQueryListsAFileOpenOnlyInADiff);
+  AddTest(tests, "ControlUiQuery/DocumentsQueryListsATypedMergeResult", TestDocumentsQueryListsATypedMergeResult);
   AddTest(tests, "ControlUiQuery/DocumentsQueryHashesWhatASaveWritesForABufferMadeOpaque",
           TestDocumentsQueryHashesWhatASaveWritesForABufferMadeOpaque);
   AddTest(tests, "ControlUiQuery/InjectedInputRepaintsWhatItChanged", TestInjectedInputRepaintsWhatItChanged);

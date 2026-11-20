@@ -1051,11 +1051,18 @@ util::JsonValue ControlChannelService::BuildDocuments(const util::JsonValue& arg
   std::vector<const void*> seen;
   for (const auto& [project, active] : projects) {
     // Editor tabs first: a document an editor tab and a diff share is listed as
-    // the editor tab's, wherever the two sit.
-    for (const TabEntry::Kind surface : {TabEntry::Kind::Editor, TabEntry::Kind::Compare}) {
+    // the editor tab's, wherever the two sit. A merge's result only while it
+    // holds typed text: it is no file's buffer, and its clean text is not its
+    // file's (a conflicted file opens with its markers resolved), but its unsaved
+    // text is what a kill -9 must bring back (TD-2026-11-19-453).
+    for (const TabEntry::Kind surface : {TabEntry::Kind::Editor, TabEntry::Kind::Compare, TabEntry::Kind::Merge}) {
     for (const EditorGroup& group : project->editor_groups) {
       for (const TabEntry& tab : group.open_tabs) {
-        const editor::TextViewport* loaded = tab.kind == surface ? LoadedBufferViewOf(tab) : nullptr;
+        const editor::TextViewport* loaded =
+            tab.kind != surface                 ? nullptr
+            : surface != TabEntry::Kind::Merge ? LoadedBufferViewOf(tab)
+            : tab.merge.has_value() && tab.merge->result_viewport.dirty() ? &tab.merge->result_viewport
+                                                                           : nullptr;
         if (loaded == nullptr) {
           continue;
         }
@@ -1074,7 +1081,9 @@ util::JsonValue ControlChannelService::BuildDocuments(const util::JsonValue& arg
         util::JsonObject object;
         object["path"] = util::JsonValue(view.path().generic_string());
         object["title"] = util::JsonValue(tab.title);
-        object["surface"] = util::JsonValue(std::string(surface == TabEntry::Kind::Editor ? "editor" : "compare"));
+        object["surface"] = util::JsonValue(std::string(surface == TabEntry::Kind::Editor    ? "editor"
+                                                        : surface == TabEntry::Kind::Compare ? "compare"
+                                                                                             : "merge"));
         // Where the tab sits and the number its title claims, so a duplicate
         // Untitled-N names the two tabs that collide (soak 2ae149191d79).
         object["group"] = util::JsonValue(static_cast<std::int64_t>(&group - project->editor_groups.data()));
