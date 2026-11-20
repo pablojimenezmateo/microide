@@ -437,6 +437,9 @@ JOB_TYPES = [
     # are races: it had the lowest weight of all (2) and, dead at startup for
     # four days, a yield of nothing that the steering then starved further.
     JobType("tsan", 8, "tsan", steps=300, timeout=3600, matrix=False),
+    # The scaling oracle (tools/qa/scaling.py): each step times one operation at N
+    # and 2N. Eight steps are every probe once; the window does not matter.
+    JobType("scaling", 2, "default", "scaling", steps=8, timeout=1800, matrix=False),
 ]
 
 # ---- recorded jobs -----------------------------------------------------------------
