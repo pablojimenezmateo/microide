@@ -1022,12 +1022,19 @@ class ListOverlayBuilder {
     // An empty summary stays empty. This used to substitute a literal "0 of 0",
     // which a picker showing no rows then printed directly above its own "No
     // matching …" line -- the same sentence twice, in the old count wording.
+    // The summary shares its row with the key hint and can be a failed pick's
+    // reason, as long as any message: it fits beside the hint, or the hint goes
+    // and it is truncated to the box (soak 5ec45751b332).
+    const float summary_width = summary_line.empty() ? 0.0f : tr_.MeasureWidth(summary_line);
+    const float hint_width = tr_.MeasureWidth(kPickerHint);
+    const bool show_hint = summary_line.empty()
+                               ? hint_width <= inner_width
+                               : summary_width + kOverlayInset + hint_width <= inner_width;
     if (!summary_line.empty()) {
-      summary_ref_ = summary_stable ? OverlayLabelRef::Direct(summary_line)
-                                    : OverlayLabelRef::Owned(blob_, summary_line);
+      summary_ref_ = AddTruncatedLabel(tr_, blob_, summary_line, inner_width, summary_stable);
     }
     out_.summary_y = overlay_rect_.y + OverlaySummaryRowOffset(overlay_.mode);
-    if (tr_.MeasureWidth(kPickerHint) <= inner_width) {
+    if (show_hint) {
       out_.hint = kPickerHint;
       out_.hint_x = RightAlignedX(kPickerHint);
     }

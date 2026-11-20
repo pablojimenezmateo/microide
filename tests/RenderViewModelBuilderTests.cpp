@@ -121,6 +121,38 @@ void TestPickerChromeFitsANarrowOverlay() {
   Expect(left + 18.0f + width(vm.title) <= right + 0.5f, "the title fits the box: \"" + std::string(vm.title) + "\"");
 }
 
+// Soak 5ec45751b332 (Git: Switch Worktree outside a repository): a pick that
+// fails shows its reason on the summary row -- "No working trees: not a git
+// repository" -- and that line was the one the chrome did not truncate. It ran
+// past the box's right edge in full frames, so partial frames clipped to the box
+// disagreed. The summary fits the box, and never runs under the key hint.
+void TestAPickersSummaryLineFitsItsBox() {
+  for (const float anchor_width : {340.0f, 700.0f}) {
+    WorkspaceContext context;
+    auto& pick = context.current_project_state.overlay.workflow.quick_pick;
+    pick.title = "Switch Worktree";
+    pick.summary_line = "No working trees: not a git repository (and a longer reason than the box can hold)";
+    context.current_project_state.overlay.visible = true;
+    context.current_project_state.overlay.mode = microide::workspace::OverlayMode::QuickPick;
+    RenderViewModelBuilder builder(context);
+    TextRenderer text_renderer;  // no-backend: deterministic 8px/char
+    const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 280.0f, 160.0f, LayoutModeInputs{}, true);
+    const SDL_FRect anchor{300.0f, 60.0f, anchor_width, 320.0f};
+    microide::workspace::OverlaySurfaceViewModel vm;
+    builder.BuildOverlaySurfaceInto(vm, layout, anchor, text_renderer);
+    Expect(vm.visible, "the quick pick is up");
+    const float left = vm.overlay_rect.x;
+    const float right = vm.overlay_rect.x + vm.overlay_rect.w;
+    const float summary_right = left + 18.0f + text_renderer.MeasureWidth(vm.summary_line);
+    Expect(!vm.summary_line.empty(), "the reason still shows");
+    Expect(summary_right <= right + 0.5f,
+           "the summary fits the box: \"" + std::string(vm.summary_line) + "\" ends at " +
+               std::to_string(summary_right) + ", box to " + std::to_string(right));
+    Expect(vm.hint.empty() || summary_right <= vm.hint_x,
+           "the summary does not run under the key hint: \"" + std::string(vm.summary_line) + "\"");
+  }
+}
+
 // TD-2026-07-17-084: the overlay view model is fully owned/precomputed — labels
 // composed and truncated in the builder, geometry included, no live
 // OverlayState/ProjectWorkspaceState pointers for the render TU to chase.
@@ -1774,6 +1806,7 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RenderViewModelBuilder/WindowTitleIsValidUtf8ForAnyFileName",
           TestWindowTitleIsValidUtf8ForAnyFileName);
   AddTest(tests, "RenderViewModelBuilder/PickerChromeFitsANarrowOverlay", TestPickerChromeFitsANarrowOverlay);
+  AddTest(tests, "RenderViewModelBuilder/APickersSummaryLineFitsItsBox", TestAPickersSummaryLineFitsItsBox);
   AddTest(tests, "RenderViewModelBuilder/SidebarSurfaceResolvesPluginViews", TestSidebarSurfaceResolvesPluginViews);
   AddTest(tests, "RenderViewModelBuilder/SingleLineViewMetricsCaretWindow",
           TestSingleLineViewMetricsCaretWindow);
