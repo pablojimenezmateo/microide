@@ -59,9 +59,13 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
     perf_label.Field("root", context_.current_project_state.root);
   }
   util::PerformanceTrace::Scope perf_scope(perf_label.View());
-  if (context_.current_project_state.root.empty() || context_.current_project_state.root_missing) {
-    return false;  // a missing folder has nothing to watch (ProjectWorkspaceState::root_missing)
-  }
+  // No folder -- the workspace with no project open, or one whose folder is
+  // missing (ProjectWorkspaceState::root_missing) -- has no tree to watch, but
+  // the documents open in it are files all the same. With no watcher at all, a
+  // diff opened after the last project was closed kept its file's old text as a
+  // clean buffer through every rewrite (soak 3fe0951ba184). The watcher starts
+  // for them alone.
+  const bool has_tree = !context_.current_project_state.root.empty() && !context_.current_project_state.root_missing;
   StopFileIndexWatcher();
   util::AddPerformanceCounter(util::PerfCounterId::FileIndexWatcherStarts);
   const std::uint64_t watcher_generation =
@@ -134,9 +138,12 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
     }
   });
 
-  util::IncrementBackgroundTaskCount();
-  file_index_initial_build_in_flight_.store(true, std::memory_order_release);
-  const bool watching_tree = file_index_watcher_->Watch(context_.current_project_state.root);
+  bool watching_tree = false;
+  if (has_tree) {
+    util::IncrementBackgroundTaskCount();
+    file_index_initial_build_in_flight_.store(true, std::memory_order_release);
+    watching_tree = file_index_watcher_->Watch(context_.current_project_state.root);
+  }
   if (!watching_tree) {
     // Guard the decrement with the same exchange used by the batch callback and
     // StopFileIndexWatcher: if the initial-build batch already fired and consumed

@@ -159,6 +159,9 @@ void WorkspaceShell::ResetProjectCatalogToWelcomeState() {
   context_.project_catalog.active_index = 0;
   context_.project_catalog.tab_scroll_index = 0;
   ResetProjectScopedState(true);
+  // The documents opened with no project open are watched too (it starts for
+  // them alone: StartFileIndexWatcherForCurrentProject).
+  (void)StartFileIndexWatcherForCurrentProject();
   ReloadPluginsForCurrentProject();
   RequestWindowRedraw();
 }

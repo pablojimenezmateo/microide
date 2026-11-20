@@ -233,6 +233,49 @@ void DrainProjectChangesBeforeTheWrite(WorkspaceShell& shell) {
   }
 }
 
+// With no project open -- the last one closed -- the shell started no file
+// watcher at all, so a document open then never heard of a change to its file:
+// a diff of two files kept the right-hand file's old text as a clean buffer
+// through every rewrite after it (soak 3fe0951ba184, seen once `documents`
+// listed a diff's side). The watcher runs for the open documents alone.
+void TestWorkspaceShellAChangeReachesADiffOpenWithNoProject() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path left = temp_dir.path() / "loose" / "v2.left.js";
+  const std::filesystem::path right = temp_dir.path() / "loose" / "v2.right.js";
+  WriteFile(root / "a.txt", "a\n");
+  WriteFile(left, "one\n");
+  WriteFile(right, "two\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "open the project");
+  WorkspaceShellTestAccess::CloseProject(shell, 0);
+  Expect(WorkspaceShellTestAccess::CurrentProjectState(shell).root.empty(), "and close it: no project is open");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "compare-files " + left.string() + " " + right.string()),
+         "compare-files opens the diff with no project");
+  SoftwareCanvas canvas(1280, 720);
+  WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());  // hands the watcher its files
+  DrainProjectChangesBeforeTheWrite(shell);
+
+  WriteFile(right, "three\n");
+  const auto line = [&shell]() -> std::string {
+    if (!WorkspaceShellTestAccess::ActiveTabIsCompare(shell)) {
+      return "<no diff>";
+    }
+    const auto& lines = WorkspaceShellTestAccess::ActiveCompare(shell).right_viewport.lines();
+    return lines.empty() ? std::string() : std::string(lines[0]);
+  };
+  (void)WaitUntil([&]() { return line() == "three"; }, std::chrono::seconds(10), std::chrono::milliseconds(10),
+                  [&]() {
+                    (void)WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false);
+                    WorkspaceShellTestAccess::FlushPendingFileReads(shell);
+                  });
+  Expect(line() == "three", "the diff's side shows the file as it now is (" + line() + ")");
+}
+
+
 // Soak 8c7737a346f4: a project whose root is gone -- here a symlink to its parent,
 // deleted while another project was in front -- comes back to the front with no
 // tree to watch. The shell dropped the whole watcher then, its open-file watch
@@ -1538,6 +1581,8 @@ void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellExternalChangeReloadsCleanBuffer);
   AddTest(tests, "ExternalRepoChange/ReloadsAnOpenFileTheProjectDoesNotTrack",
           TestWorkspaceShellExternalChangeReloadsAnOpenFileTheProjectDoesNotTrack);
+  AddTest(tests, "ExternalRepoChange/AChangeReachesADiffOpenWithNoProject",
+          TestWorkspaceShellAChangeReachesADiffOpenWithNoProject);
   AddTest(tests, "ExternalRepoChange/AChangeKeepsAFileCompareAFileCompare",
           TestWorkspaceShellAChangeKeepsAFileCompareAFileCompare);
   AddTest(tests, "ExternalRepoChange/ReachesAFileOpenOnlyInADiff",
