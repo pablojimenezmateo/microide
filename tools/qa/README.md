@@ -322,6 +322,58 @@ A new popup surface (a context menu, a picker) gets the same treatment: a receip
 in `ui` for what a click ran, and a scenario that clicks every row in more than one
 layout. Hovering alone does not find a press routed elsewhere.
 
+## What each oracle cannot see
+
+A green run says only what its oracles can see. Each one, with its blind spots
+as of 2026-11-20 -- keep this list current when an oracle changes, and read it
+before trusting a clean cell. "Closed" names the change that removed a gap.
+
+- **Data, clean buffers** (`DataOracle.check_clean`, every 20 steps and at the
+  end). Sees every file buffer the `documents` query lists: an editor tab's, a
+  diff's editable side (closed: 7474f6ef0 -- a diff-only file was invisible, and
+  soak 3fe0951ba184 hid behind it), a merge result only while it holds typed
+  text. Cannot see: the projects not in front (their buffers are stale by
+  design until reactivated); a buffer with mixed line endings or read-only; a
+  tab whose content has not loaded; an untitled buffer (no file); a mismatch
+  that heals within 20 steps; a merge result's clean text (it need not be its
+  file's).
+- **Data, kill -9** (`kill9_and_check`). Sees every dirty buffer of every
+  project, as `documents` lists them -- now including a diff's editable side
+  and a typed merge result (closed: 7474f6ef0, 5dba7dd08; their staging,
+  52e960935, 88b15f93f) -- and the clean files that changed across the kill.
+  Cannot see: what else the session should bring back (the tab set, splits,
+  carets, folds, scroll, terminals, a clean tab lost); a buffer over the 64 MiB
+  snapshot budget (dropped by design); a kill with no wait for the crash-safety
+  flush checks integrity only.
+- **Undo algebra** (`UndoAlgebra`, every 40 steps). k undos then k redos are the
+  identity on the focused buffer, k <= 4: an editor buffer, a diff's editable
+  side or a merge result (closed: the diff and merge kinds, 00dafa161). Cannot
+  see: a buffer not in front; a history deeper than four steps; a redo stack an
+  unrelated action dropped; undo of a non-text change (folds, carets alone).
+- **Workspace invariants** (`InvariantOracle`, every 5 steps, deep every 20).
+  Exactly the rules ControlInvariantsQuery checks; anything else -- terminal
+  state, overlays, the git sidebar's model -- is outside it.
+- **Structural diff** (`StructuralDiffOracle`, every 5 steps while a diff is in
+  front). The front compare tab's refinement only; not a background diff, not a
+  merge's panes, not rows the query cut.
+- **Redraw verifier** (in the app). A partial frame against a full render of the
+  SAME prepared state: a full render that is itself wrong, or a label derived
+  from stale state, passes it (the chrome checks above cover the labels); a state
+  change that requests no frame at all compares nothing. Scale and GPU paths
+  differ: a cell's scale is what it checked.
+- **Latency** (`Liveness`). Every control answer within 2.5 s. Typed and clicked
+  input is not timed itself, but the next query waits behind it on the main
+  thread, so a slow keystroke shows as that query's answer. Cannot see: work
+  posted off the main thread (a slow background read stalls nothing it times); a
+  starved main thread (counted, not filed); anything under rr.
+- **Idle** (`IdleOracle`, every 150 steps). The MAIN thread's wakes over a quiet
+  second. Cannot see: a helper thread spinning (open gap: per-thread CPU over the
+  same second would see it); anything under rr.
+- **Resources** (`ResourceOracle`, every 50 steps). Growth past generous budgets
+  of fds, threads, children and RSS: a slow leak inside a run's budget passes.
+- **Scaling** (`scaling.py`, the `scaling` profile). Only its probes, on the
+  default build: an operation it does not list can still be quadratic.
+
 ## The monkey
 
 `monkey.py` (safety-plan W1). Each step draws an action from a weighted **source**
