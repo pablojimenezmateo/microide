@@ -2195,19 +2195,9 @@ void TestDraggingTheSidebarShutKeepsEveryFrameFresh() {
 // the panel's, the debug pane's, an editor split's -- dragged to both of its
 // extremes, a scheduled frame after each motion, each against a full repaint.
 // A surface that paints past its own rect once it is small shows up here.
-void TestEveryDividerDraggedToItsExtremesKeepsEveryFrameFresh() {
-#if !MICROIDE_HAS_SDL3_TTF
-  return;
-#endif
-  FlowFixture fixture("main.txt", "alpha beta gamma delta\n");
-  WriteFile(fixture.root / "other.txt", "other\n");
-  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right other.txt"), "split-right should run");
-  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting debug.enabled true"), "debug on");
-  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-pane-toggle"), "the debug pane opens");
-  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "term"), "a terminal panel opens");
-  workspace::RenderInvalidation full;
-  full.full = true;
-  fixture.ExpectFresh(full, "sidebar, split, debug pane, panel");
+// Drags every divider the ui names to both extremes, step by step, holding every
+// frame against a full repaint.
+void DragEveryDividerToItsExtremes(FlowFixture& fixture) {
   std::vector<std::string> dividers;
   {
     const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
@@ -2249,6 +2239,52 @@ void TestEveryDividerDraggedToItsExtremesKeepsEveryFrameFresh() {
       fixture.ExpectFresh(TestAccess::HandleScheduledWake(fixture.shell).redraw, "a scheduled frame after " + what);
     }
   }
+}
+
+void TestEveryDividerDraggedToItsExtremesKeepsEveryFrameFresh() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("main.txt", "alpha beta gamma delta\n");
+  WriteFile(fixture.root / "other.txt", "other\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right other.txt"), "split-right should run");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting debug.enabled true"), "debug on");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-pane-toggle"), "the debug pane opens");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "term"), "a terminal panel opens");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "sidebar, split, debug pane, panel");
+  DragEveryDividerToItsExtremes(fixture);
+}
+
+// The same in a narrow editor column (a wide sidebar, the debug pane open): a
+// pane squeezed until no tab fits its strip shows the "Welcome" placeholder,
+// whose width has a floor, and the placeholder was not clipped to the strip as
+// the tabs are -- it painted over the debug pane's mode tabs, in every frame
+// alike, until a drag widened the pane and nothing repainted the debug pane
+// under it (soak 8830ce9c51b8, a 280-px editor column at ui.scale 1.1).
+void TestDividersDraggedInANarrowEditorColumnKeepEveryFrameFresh() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("main.txt", "alpha beta gamma delta\n");
+  WriteFile(fixture.root / "other.txt", "other\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right other.txt"), "split-right should run");
+  // Enough tabs in the new pane that a narrow strip fits none of them beside its
+  // overflow chevrons: the strip then shows the placeholder.
+  for (int i = 0; i < 6; ++i) {
+    const std::filesystem::path more = fixture.root / ("more-" + std::to_string(i) + ".txt");
+    WriteFile(more, "more\n");
+    TestAccess::OpenFileInNewTab(fixture.shell, more);
+  }
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting debug.enabled true"), "debug on");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-pane-toggle"), "the debug pane opens");
+  TestAccess::SetSidebarWidth(fixture.shell, 700.0f);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "a wide sidebar, a split, the debug pane");
+  DragEveryDividerToItsExtremes(fixture);
 }
 
 // Two controls that partly cover each other: a hover lights one while a click
@@ -5954,6 +5990,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestOpeningAModalUnderThePointerDropsTheHoverItTakes);
   AddTest(tests, "QaFlowRegression/DraggingTheSidebarShutKeepsEveryFrameFresh",
           TestDraggingTheSidebarShutKeepsEveryFrameFresh);
+  AddTest(tests, "QaFlowRegression/DividersDraggedInANarrowEditorColumnKeepEveryFrameFresh",
+          TestDividersDraggedInANarrowEditorColumnKeepEveryFrameFresh);
   AddTest(tests, "QaFlowRegression/EveryDividerDraggedToItsExtremesKeepsEveryFrameFresh",
           TestEveryDividerDraggedToItsExtremesKeepsEveryFrameFresh);
   AddTest(tests, "QaFlowRegression/TogglingTheMergeBasePaneKeepsTheToolbarAndEveryFrameFresh",

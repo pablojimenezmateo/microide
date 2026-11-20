@@ -260,6 +260,16 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
             ? tab_strip_chrome_.ComputeVisibleTabsForGroup(gi, group_tab_strip)
             : TabStripService::EmptyVisibleTabs();
     if (HasActiveProjectCatalogEntry() && visible_tabs.empty()) {
+      // Inside the strip, as the tabs are: the placeholder is 220 wide whatever
+      // the strip, and a pane squeezed narrower -- or one whose tabs no longer fit
+      // beside its overflow chevrons -- painted it over the debug pane, in full and
+      // partial frames alike, until the pane widened and nothing repainted what it
+      // had covered (soak 8830ce9c51b8).
+      const render::ScopedRenderClip placeholder_clip(
+          renderer, SDL_Rect{static_cast<int>(std::floor(group_tab_strip.x)),
+                             static_cast<int>(std::floor(group_tab_strip.y)),
+                             static_cast<int>(std::ceil(group_tab_strip.w)),
+                             static_cast<int>(std::ceil(group_tab_strip.h))});
       const SDL_FRect placeholder_tab = EmptyTabStripPlaceholderRect(group_tab_strip);
       DrawStripTab(text_renderer_, renderer, theme_, placeholder_tab, "Welcome", {}, {}, false, true,
                    StripTabStyle{
