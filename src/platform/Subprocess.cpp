@@ -363,7 +363,7 @@ SubprocessResult RunSubprocessUninstrumented(const std::vector<std::string>& arg
   // work is done. Measured, not sampled: these are recorded from the PARENT only,
   // because the forked child must not touch the trace channel's mutex/allocator.
   const auto fork_start = std::chrono::steady_clock::now();
-  const pid_t pid = fork();
+  const pid_t pid = ForkWithSignalsBlocked();
   if (pid < 0) {
     return result;
   }

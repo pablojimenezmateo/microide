@@ -139,7 +139,7 @@ bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::str
   }
   raw_argv.push_back(nullptr);
 
-  const pid_t pid = fork();
+  const pid_t pid = ForkWithSignalsBlocked();
   if (pid < 0) {
     close(stdin_pipe[0]);
     close(stdin_pipe[1]);

@@ -1,6 +1,9 @@
 #pragma once
 
+#include <pthread.h>
 #include <signal.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 namespace microide::platform {
 
@@ -33,6 +36,34 @@ inline void RestoreDefaultSignalsInChild() {
   sigset_t unblocked;
   sigemptyset(&unblocked);
   sigprocmask(SIG_SETMASK, &unblocked, nullptr);
+}
+
+// fork() for a child that will exec: every signal is blocked across the fork, so
+// the child starts with none deliverable and stays so until
+// RestoreDefaultSignalsInChild resets every disposition and only THEN unblocks.
+// A signal that reaches the child before that is delivered with its default
+// action, as after exec.
+//
+// Without it the child ran the editor's own handlers until the reset. Ctrl+C in
+// a terminal opened a moment earlier reached its child (the pty's foreground
+// group once TIOCSCTTY ran) while the editor's SIGINT handler was still
+// installed there, and that handler wrote "signal 2" into the self-pipe the
+// child had inherited: the EDITOR saved its session and quit (soak
+// 7ab9a5476905, `term` then ctrl+c). The parent's mask is restored at once; a
+// signal it gets meanwhile stays pending and arrives then.
+//
+// Every child path must reach RestoreDefaultSignalsInChild before exec (or
+// _exit): the child's mask is otherwise everything.
+inline pid_t ForkWithSignalsBlocked() {
+  sigset_t all;
+  sigset_t previous;
+  sigfillset(&all);
+  pthread_sigmask(SIG_SETMASK, &all, &previous);
+  const pid_t pid = fork();
+  if (pid != 0) {
+    pthread_sigmask(SIG_SETMASK, &previous, nullptr);
+  }
+  return pid;
 }
 
 }  // namespace microide::platform

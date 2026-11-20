@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "platform/AsyncSubprocess.h"
+#include "platform/ChildSignals.h"
 #include "platform/CrashDiagnostics.h"
 #include "platform/HostPlatform.h"
 #include "platform/OpenFileLimit.h"
@@ -1010,9 +1011,78 @@ void TestAClosedStdinIsReopenedBeforeTheFirstPipe() {
 }
 
 
+// Soak 7ab9a5476905: `term` then ctrl+c quit the editor. The Ctrl+C reached the
+// terminal's child before it had reset its signals, ran the editor's own SIGINT
+// handler there, and that handler wrote into the self-pipe the child had
+// inherited -- so the PARENT saw "signal 2" and quit. A child forked with
+// ForkWithSignalsBlocked runs no handler of the parent's: a signal it gets
+// before RestoreDefaultSignalsInChild takes its default action after it.
+int g_child_signal_pipe = -1;
+
+void WriteMarkOnSignal(int) {
+  const char mark = 'x';
+  (void)!::write(g_child_signal_pipe, &mark, 1);
+}
+
+// Forks with `fork_fn`, raises SIGUSR1 in the child before the reset, then
+// resets and exits 0. Returns whether the parent's handler ran (in the child).
+template <typename ForkFn>
+bool ParentHandlerRanInChild(ForkFn fork_fn, int* child_status) {
+  int fds[2] = {-1, -1};
+  Expect(::pipe2(fds, O_CLOEXEC | O_NONBLOCK) == 0, "the pipe opens");
+  g_child_signal_pipe = fds[1];
+  struct sigaction handler {};
+  struct sigaction previous {};
+  handler.sa_handler = WriteMarkOnSignal;
+  sigemptyset(&handler.sa_mask);
+  ::sigaction(SIGUSR1, &handler, &previous);
+  const pid_t pid = fork_fn();
+  if (pid == 0) {
+    ::raise(SIGUSR1);
+    microide::platform::RestoreDefaultSignalsInChild();
+    ::_exit(0);
+  }
+  ::waitpid(pid, child_status, 0);
+  ::sigaction(SIGUSR1, &previous, nullptr);
+  char mark = 0;
+  const bool ran = ::read(fds[0], &mark, 1) == 1;
+  ::close(fds[0]);
+  ::close(fds[1]);
+  g_child_signal_pipe = -1;
+  return ran;
+}
+
+void TestAForkedChildRunsNoHandlerOfTheParents() {
+  int status = 0;
+  // The negative control: a plain fork runs the parent's handler in the child.
+  // Not under TSan, which defers an asynchronous handler to its own safe points,
+  // so the reset in the child gets there first.
+  bool under_tsan = false;
+#if defined(__SANITIZE_THREAD__)
+  under_tsan = true;
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+  under_tsan = true;
+#endif
+#endif
+  if (!under_tsan) {
+    Expect(ParentHandlerRanInChild([] { return ::fork(); }, &status),
+           "a plain fork runs the parent's handler in the child (the defect this guards)");
+  }
+  Expect(!ParentHandlerRanInChild([] { return microide::platform::ForkWithSignalsBlocked(); }, &status),
+         "a child forked with signals blocked runs no handler of the parent's");
+  Expect(WIFSIGNALED(status) && WTERMSIG(status) == SIGUSR1,
+         "the signal it got before the reset takes its default action after it");
+  sigset_t mask;
+  ::pthread_sigmask(SIG_SETMASK, nullptr, &mask);
+  Expect(::sigismember(&mask, SIGUSR1) == 0 && ::sigismember(&mask, SIGINT) == 0,
+         "the parent's mask is restored after the fork");
+}
+
 }  // namespace
 
 void RegisterSubprocessTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Subprocess/AForkedChildRunsNoHandlerOfTheParents", TestAForkedChildRunsNoHandlerOfTheParents);
   AddTest(tests, "Subprocess/AClosedStdinIsReopenedBeforeTheFirstPipe",
           TestAClosedStdinIsReopenedBeforeTheFirstPipe);
   AddTest(tests, "Subprocess/AllowUserToolchainsGrantsPerUserInstallsOnly",

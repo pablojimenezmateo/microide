@@ -248,7 +248,7 @@ ProcessTable::SpawnResult ProcessTable::Spawn(std::uint64_t connection, SpawnReq
     return SpawnResult{.error = std::string("pipe: ") + std::strerror(errno)};
   }
   const char* cwd = request.cwd.empty() ? nullptr : request.cwd.c_str();
-  const pid_t pid = ::fork();
+  const pid_t pid = platform::ForkWithSignalsBlocked();
   if (pid == 0) {
     ::setpgid(0, 0);  // its own group: a signal reaches its children too
     ::dup2(in_pipe[0], 0);

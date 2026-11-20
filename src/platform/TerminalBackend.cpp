@@ -185,7 +185,7 @@ class PosixTerminalBackend final : public TerminalBackend {
     }
     env_pointers.push_back(nullptr);
 
-    const pid_t child_pid = fork();
+    const pid_t child_pid = ForkWithSignalsBlocked();
     if (child_pid < 0) {
       close(master_fd);
       close(slave_fd);
