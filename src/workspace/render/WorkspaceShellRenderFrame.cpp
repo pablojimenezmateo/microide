@@ -1186,8 +1186,18 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   // A project tab's label follows state no input touches -- its dirty marker is
   // "any editor tab in that project is dirty" -- so typing into or saving a file
   // changed it with no damage on the strip (remote QA suite).
+  // What the strip shows is also where it is scrolled to, which project is the
+  // active one and how wide it is: an overflow arrow scrolled it and damaged the
+  // arrow alone, and the strip kept the projects it had painted (soak
+  // b3797205c752, 713b09d7b62e, aa044991c495).
   if (layout.project_tab_strip.h > 0.0f) {
-    const std::uint64_t version = tab_strip_chrome_.ProjectStripSourceVersion();
+    const ProjectCatalogState& catalog = context_.project_catalog;
+    std::uint64_t version = tab_strip_chrome_.ProjectStripSourceVersion();
+    for (const std::uint64_t part : {static_cast<std::uint64_t>(catalog.active_index),
+                                     static_cast<std::uint64_t>(catalog.tab_scroll_index),
+                                     static_cast<std::uint64_t>(std::lround(layout.project_tab_strip.w * 4.0f))}) {
+      version = (version ^ part) * 0x100000001B3ull;
+    }
     if (version != frame_state_.painted_project_strip_version) {
       RequestRedrawRect(layout.project_tab_strip);
       frame_state_.painted_project_strip_version = version;

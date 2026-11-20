@@ -259,6 +259,11 @@
   static void SetTreeContextMenuTargetForTest(WorkspaceShell& shell, TreeContextTargetKind target) {
     shell.context_.menu_state.tree_context_menu.target = target;
   }
+  // Scrolls the project strip, requesting no repaint (as its overflow arrows'
+  // click path did).
+  static void SetProjectStripScrollForTest(WorkspaceShell& shell, int first_visible) {
+    shell.context_.project_catalog.tab_scroll_index = first_visible;
+  }
   static editor::BreakpointStore& BreakpointStore(WorkspaceShell& shell) {
     return shell.context_.current_project_state.breakpoint_store;
   }

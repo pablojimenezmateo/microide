@@ -203,7 +203,8 @@ struct PreparedFrameState {
   // divider that moved -- the split's shares changed -- moves every pane beside
   // it; the change is repainted whatever damage the next frame carries.
   std::uint64_t painted_split_dividers = 0;
-  // The project strip's source version as painted (WorkspaceTabStripChrome).
+  // The project strip as painted: its source version (WorkspaceTabStripChrome)
+  // folded with its scroll position, active project and width.
   std::uint64_t painted_project_strip_version = 0;
   // Which editor tabs painted a dirty marker (a hash of (group, tab) per dirty
   // tab). Many paths change a buffer's dirty state -- typing, but also Replace

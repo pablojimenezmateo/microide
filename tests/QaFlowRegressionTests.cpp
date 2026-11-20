@@ -5826,7 +5826,32 @@ void TestAContextMenuClosesOverTheRowsItPainted() {
                       "Escape closes the menu whose list got shorter");
 }
 
+// The project strip shows the projects from its scroll position on, and frame
+// prep repainted it only when a project's label changed. A click on its overflow
+// arrow scrolled it and damaged the arrow alone: the strip kept the projects it
+// had painted (soak b3797205c752, 713b09d7b62e, aa044991c495; 2x and 2.25x).
+void TestScrollingTheProjectStripRepaintsIt() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("notes.txt", "one\n", 360, 300);
+  for (const char* name : {"second-project-with-a-long-name", "third-project-with-a-long-name"}) {
+    const std::filesystem::path other = fixture.temp_dir.path() / name;
+    WriteFile(other / "a.txt", "a\n");
+    Expect(TestAccess::OpenProjectTab(fixture.shell, other, false, false), std::string("opens ") + name);
+  }
+  Expect(TestAccess::ProjectCount(fixture.shell) == 3, "three projects");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "three projects in a narrow strip");
+  TestAccess::SetProjectStripScrollForTest(fixture.shell, 0);
+  workspace::RenderInvalidation arrow_only;
+  arrow_only.Add(SDL_FRect{2.0f, 28.0f, 10.0f, 10.0f});
+  fixture.ExpectFresh(arrow_only, "the strip scrolled back to its first project");
+}
+
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "QaFlowRegression/ScrollingTheProjectStripRepaintsIt", TestScrollingTheProjectStripRepaintsIt);
   AddTest(tests, "QaFlowRegression/AContextMenuClosesOverTheRowsItPainted", TestAContextMenuClosesOverTheRowsItPainted);
   AddTest(tests, "QaFlowRegression/ABreadcrumbLabelChangeRepaintsTheBand", TestABreadcrumbLabelChangeRepaintsTheBand);
   AddTest(tests, "QaFlowRegression/TabInANarrowDirtyPromptRepaintsEveryButton",
