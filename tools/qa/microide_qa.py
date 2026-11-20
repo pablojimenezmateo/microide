@@ -1815,11 +1815,14 @@ class App:
     def _input(self, *words: str) -> dict[str, Any]:
         """One input command (`key`, `pointer`, `type`) over the persistent control
         connection: a process per keystroke made typing slow enough on the Wayland
-        backend for a toast to expire between two words of a palette query."""
-        try:
-            return self.send_line(" ".join(quote_arg(w) for w in words), record=False)
-        except QaFailure as failure:
-            return {"ok": False, "error": str(failure)}
+        backend for a toast to expire between two words of a palette query.
+
+        The app's answer, which says whether it took the input. A request it never
+        answered -- a stalled main thread, a dead process -- raises, as any other
+        request does, rather than reading as an input it refused: every sighting
+        of "pointer drop ... was refused" (soak 8a6169d5fde8) was an app that had
+        stopped answering, filed under the wrong oracle with the wrong cause."""
+        return self.send_line(" ".join(quote_arg(w) for w in words), record=False)
 
     def _pointer(self, verb: str, x: float, y: float, *rest: Any, modifiers: tuple[str, ...] = ()) -> None:
         """The Wayland backend's mouse: the control channel's `pointer`, in the
