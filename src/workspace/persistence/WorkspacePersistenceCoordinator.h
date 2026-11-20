@@ -108,8 +108,11 @@ class PersistenceCoordinator {
   void RestoreDebugState();
 
   // Rebuild one persisted compare / merge tab; nullopt when its inputs are gone.
+  // `unsaved_right`: the restored unsaved buffer the compare's record carried for
+  // its editable side, which the tab then holds -- or nullopt when it cannot.
   std::optional<TabEntry> RestoreCompareTab(const PersistedEditorTabState& persisted_tab,
-                                            const std::filesystem::path& root);
+                                            const std::filesystem::path& root,
+                                            const editor::TextViewport* unsaved_right);
   std::optional<TabEntry> RestoreMergeTab(const PersistedEditorTabState& persisted_tab,
                                           const std::filesystem::path& root);
   std::optional<PersistedEditorTabState> BuildPersistedCompareTabState(

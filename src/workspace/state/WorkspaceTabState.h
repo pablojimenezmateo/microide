@@ -616,6 +616,28 @@ inline bool TabEntryIsDirty(const TabEntry& tab) {
 }
 static_assert(std::is_default_constructible_v<TabEntry::DeferredTabHandle>);
 
+// The file buffer a tab holds, once it is loaded: an editor tab's viewport, or a
+// compare tab's editable side -- both ARE the file, and share one document when
+// both are open on it. nullptr for a tab still to load (a stand-in is not the
+// file) and for one that holds no file's buffer: a read-only compare, a merge,
+// whose result is its own synthesized text.
+//
+// The one definition of "an open document" for whatever must reach every one of
+// them. The crash-safety flush, its session records and the `documents` query
+// each walked the EDITOR tabs alone, so text typed into a diff with no editor tab
+// on its file was never staged, and a crash lost it (TD-2026-11-19-453).
+[[nodiscard]] inline const editor::TextViewport* LoadedBufferViewOf(const TabEntry& tab) {
+  if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
+      !tab.editor_state->content_pending()) {
+    return &tab.editor_state->viewport;
+  }
+  if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() && tab.compare->right_editable &&
+      !tab.compare->load_pending) {
+    return &tab.compare->right_viewport;
+  }
+  return nullptr;
+}
+
 // A link in a terminal pane: what it opens and where it sits, from
 // (`row`, `begin_column`) to (`end_row`, `end_column`) exclusive, rows absolute.
 // A link the terminal soft-wrapped spans several rows (`end_row` > `row`); every

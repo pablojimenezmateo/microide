@@ -585,12 +585,14 @@ void WorkspaceShell::MaybeArmAutosaveTimer() {
 void WorkspaceShell::MaybeArmSessionFlushTimer() {
   // Always-on crash-safety debounce (no editor.autosave gate), covering untitled dirty
   // buffers too. A real buffer mutation is detected from a fingerprint of EVERY open
-  // editor document's (identity, content revision), not the active viewport's: that
+  // document's (identity, content revision), not the active viewport's: that
   // sample re-baselined on a tab switch, so an edit followed by a switch in the same
   // input batch -- or an edit to a buffer that was never active (a command, a replace
   // across files) -- never armed the flush, and a kill -9 after it lost the buffer
-  // (soak 4fb82d32fe19). A switch, a focus change or navigation leaves the
-  // fingerprint as it was. A walk over the open tabs, no allocation.
+  // (soak 4fb82d32fe19). A diff's editable side is such a document too: typing into
+  // one with no editor tab on its file armed nothing (TD-2026-11-19-453). A switch,
+  // a focus change or navigation leaves the fingerprint as it was. A walk over the
+  // open tabs, no allocation.
   std::uint64_t fingerprint = 1469598103934665603ull;  // FNV-1a offset basis
   bool any_dirty = false;
   const auto mix = [&fingerprint](std::uint64_t value) {
@@ -598,14 +600,13 @@ void WorkspaceShell::MaybeArmSessionFlushTimer() {
   };
   for (const EditorGroup& group : context_.current_project_state.editor_groups) {
     for (const TabEntry& tab : group.open_tabs) {
-      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
-          tab.editor_state->content_pending()) {
+      const editor::TextViewport* viewport = LoadedBufferViewOf(tab);
+      if (viewport == nullptr) {
         continue;
       }
-      const editor::TextViewport& viewport = tab.editor_state->viewport;
-      mix(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(viewport.document_identity())));
-      mix(viewport.content_revision());
-      any_dirty = any_dirty || viewport.dirty();
+      mix(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(viewport->document_identity())));
+      mix(viewport->content_revision());
+      any_dirty = any_dirty || viewport->dirty();
     }
   }
   if (fingerprint == session_flush_content_fingerprint_) {

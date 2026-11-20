@@ -27,9 +27,29 @@ Persisted files SHALL be written atomically and SHALL include an integrity check
 - **WHEN** any persisted artifact is saved
 - **THEN** the writer SHALL write to a sibling temporary file, call `fsync` (or platform equivalent), rename it over the destination, `fsync` the destination's directory so the rename itself survives a power cut, and SHALL NOT leave the destination in a partially-written state on crash
 
+### Requirement: Every unsaved file buffer is staged in the session
+
+A project session SHALL carry the unsaved text of every loaded file buffer, whichever kind of tab holds it: an editor tab's record, and a compare tab's record for its editable side. The crash-safety flush SHALL arm for an edit to any such buffer.
+
+#### Scenario: A compare record that carries a buffer
+- **WHEN** a compare tab's editable side is unsaved at a session save
+- **THEN** its record SHALL name the buffer's file in the record's path field and SHALL use the snapshot fields an editor record uses (buffer lines, line ending, byte-order mark, disk baseline), with no record tag specific to the kind of tab
+
+#### Scenario: Text typed only into a diff
+- **WHEN** the user types into the editable side of a working-tree diff, no editor tab is open on that file, and the editor is killed after the crash-safety flush
+- **THEN** the relaunch SHALL restore the diff with the unsaved text in its editable side, marked unsaved
+
+#### Scenario: One file in a diff and in an editor tab
+- **WHEN** the session holds the same unsaved file in an editor record and in a compare record
+- **THEN** the restore SHALL give both tabs one shared buffer
+
+#### Scenario: A diff that cannot be rebuilt
+- **WHEN** a compare record carries an unsaved buffer and the compare tab cannot be rebuilt
+- **THEN** the restore SHALL open an editor tab on the buffer's file holding the unsaved text, and SHALL NOT drop it
+
 ### Requirement: A restored unsaved buffer keeps its disk baseline
 
-A session's snapshot of a dirty editor buffer SHALL record the file's stat (existence, modification time, size) as the buffer last saw it, and restoring the snapshot SHALL restore that baseline, so that the save-time check that refuses to overwrite a file changed on disk applies across a crash or restart exactly as within one run.
+A session's snapshot of a dirty buffer (an editor tab's, or a compare tab's editable side) SHALL record the file's stat (existence, modification time, size) as the buffer last saw it, and restoring the snapshot SHALL restore that baseline, so that the save-time check that refuses to overwrite a file changed on disk applies across a crash or restart exactly as within one run.
 
 #### Scenario: A file changed while the editor was down
 - **WHEN** the editor crashed with unsaved edits to a file, the file was changed by another program before the relaunch, and the user saves the restored buffer

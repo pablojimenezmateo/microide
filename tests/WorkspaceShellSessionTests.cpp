@@ -11,6 +11,7 @@
 #include "workspace/render/DiffDividerGeometry.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
+#include "workspace/persistence/PersistenceService.h"
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 #include "workspace/persistence/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceProjectPresentation.h"
@@ -2272,6 +2273,141 @@ void TestWorkspaceShellRestoreSessionRejoinsADiffWithItsEditorTabsBuffer() {
          "the two diffs come back on one buffer");
 }
 
+// Text typed into a working-tree diff's editable side, with no editor tab on the
+// file, was gone after a crash: the session staged the unsaved buffer of every
+// EDITOR tab, a compare record carried none, and the crash-safety flush did not
+// even arm for the edit (TD-2026-11-19-453 item 1). The diff comes back with the
+// unsaved text, its line ending, and the baseline that keeps its save honest.
+void TestWorkspaceShellRestoreSessionKeepsUnsavedEditsMadeOnlyInADiff() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  const std::filesystem::path changed = root / "changed.txt";
+  WriteFile(source, "int alpha() {\r\n  return 1;\r\n}\r\n");
+  WriteFile(changed, "one\n");
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(temp_dir.path() / "home");
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", (temp_dir.path() / "home").string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+  InitializeGitRepo(root);
+  CommitAll(root, "Add the fixture", "fixture");
+  WriteFile(source, "int beta() {\r\n  return 2;\r\n}\r\n");
+  WriteFile(changed, "two\n");
+  {
+    WorkspaceShell shell;
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+    WorkspaceShellTestAccess::ArmSessionFlushTimer(shell);
+    for (const auto& path : {changed, source}) {
+      Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, path, "HEAD", "HEAD"),
+             "the working-tree diff opens, no editor tab on the file");
+      WorkspaceShellTestAccess::ActiveCompare(shell).right_viewport.MoveCursorTo(0, 0);
+      Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "// unsaved\n"), "a line typed into its editable side");
+      Expect(WorkspaceShellTestAccess::ActiveCompare(shell).right_viewport.dirty(), "which is now unsaved");
+    }
+    WorkspaceShellTestAccess::ArmSessionFlushTimer(shell);
+    Expect(WorkspaceShellTestAccess::SessionFlushArmed(shell),
+           "an edit in a diff arms the crash-safety flush as one in an editor tab does");
+    WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell);
+    // ... and the crash: no clean shutdown writes anything after this.
+  }
+  // Someone else changes one of the files while microide is down.
+  WriteFile(changed, "two, edited elsewhere\n");
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  WorkspaceShellTestAccess::SetWindowSize(restored, 1280, 720);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored), "restore after the crash");
+  WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(restored);
+  Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(restored) == 2 &&
+             WorkspaceShellTestAccess::ActiveTabIsCompare(restored),
+         "both diffs come back, the last in front");
+  {
+    auto& compare = WorkspaceShellTestAccess::ActiveCompare(restored);
+    Expect(compare.right_editable && compare.right_viewport.path() == source, "the diff of main.cpp, editable again");
+    Expect(compare.right_viewport.dirty(), "its side comes back unsaved");
+    Expect(compare.right_viewport.SerializeDocumentText() == "// unsaved\r\nint beta() {\r\n  return 2;\r\n}\r\n",
+           "with the typed line and the file's own line ending, got " +
+               compare.right_viewport.SerializeDocumentText());
+    WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(restored);
+    Expect(compare.model.right_source->find("// unsaved") != std::string::npos,
+           "and the diff is of that text, not of the file on disk");
+    const util::JsonValue held = WorkspaceShellTestAccess::ControlQuery(restored, "invariants");
+    Expect(held["ok"].AsBool(), "the workspace's own rules hold: " + util::SerializeJson(held));
+    const auto outcome = WorkspaceShellTestAccess::ExecuteControlCommand(restored, "save");
+    Expect(outcome.ok && ReadFile(source) == "// unsaved\r\nint beta() {\r\n  return 2;\r\n}\r\n",
+           "a file nobody touched saves: " + outcome.error);
+  }
+  WorkspaceShellTestAccess::ActivateTab(restored, 0);
+  {
+    auto& compare = WorkspaceShellTestAccess::ActiveCompare(restored);
+    Expect(compare.right_viewport.path() == changed && compare.right_viewport.dirty() &&
+               compare.right_viewport.lines().LineView(0) == "// unsaved",
+           "the other diff's unsaved line is back too");
+    const auto outcome = WorkspaceShellTestAccess::ExecuteControlCommand(restored, "save");
+    Expect(!outcome.ok, "its save is refused: the file changed while microide was down");
+    Expect(ReadFile(changed) == "two, edited elsewhere\n", "the other edit is still on disk");
+    Expect(compare.right_viewport.dirty(), "and the restored text is kept, unsaved");
+  }
+}
+
+// When the diff itself cannot come back, the unsaved text it held comes back in
+// an editor tab on the file. Nothing a user does today leaves such a record (a
+// revision git no longer has reads as a file that did not exist then), so the
+// test writes one: a compare record that names no revision.
+void TestWorkspaceShellRestoreSessionKeepsADiffsUnsavedTextWhenTheDiffIsGone() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "one\n");
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(temp_dir.path() / "home");
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", (temp_dir.path() / "home").string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+  InitializeGitRepo(root);
+  CommitAll(root, "Add the fixture", "fixture");
+  WriteFile(source, "two\n");
+  {
+    WorkspaceShell shell;
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+    Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"), "the diff opens");
+    WorkspaceShellTestAccess::ActiveCompare(shell).right_viewport.MoveCursorTo(0, 0);
+    Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "unsaved "), "an edit in its editable side");
+    WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell);
+  }
+  {
+    const std::filesystem::path session_path = microide::workspace::ProjectStateDirectory(root) / "session";
+    microide::workspace::PersistenceService persistence;
+    microide::workspace::PersistedProjectSessionState session;
+    Expect(persistence.LoadProjectSession(session_path, &session) && session.groups.size() == 1 &&
+               session.groups[0].tabs.size() == 1 && session.groups[0].tabs[0].kind == "compare",
+           "the session holds the one compare record");
+    Expect(session.groups[0].tabs[0].dirty_snapshot, "which carries the unsaved text");
+    session.groups[0].tabs[0].compare_commit_hash.clear();
+    Expect(persistence.SaveProjectSession(session_path, std::move(session)), "the doctored record is written");
+    persistence.FlushPendingWrites();
+  }
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  WorkspaceShellTestAccess::SetWindowSize(restored, 1280, 720);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored), "restore after the crash");
+  WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(restored);
+  Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(restored) == 1 &&
+             !WorkspaceShellTestAccess::ActiveTabIsCompare(restored),
+         "one tab comes back, and it is not a diff");
+  const editor::TextViewport& editor = WorkspaceShellTestAccess::ActiveEditor(restored);
+  Expect(editor.path() == source && editor.dirty() && editor.lines().LineView(0) == "unsaved two",
+         "an editor tab on the file, holding the unsaved text");
+}
+
 void TestWorkspaceShellQuitShutdownPersistsDirtyEditorBuffers() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -4077,6 +4213,10 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoreSessionRejoinsTheSplitPanesOfAnUntitledBuffer);
   AddTest(tests, "WorkspaceShell/RestoreSessionRejoinsADiffWithItsEditorTabsBuffer",
           TestWorkspaceShellRestoreSessionRejoinsADiffWithItsEditorTabsBuffer);
+  AddTest(tests, "WorkspaceShell/RestoreSessionKeepsUnsavedEditsMadeOnlyInADiff",
+          TestWorkspaceShellRestoreSessionKeepsUnsavedEditsMadeOnlyInADiff);
+  AddTest(tests, "WorkspaceShell/RestoreSessionKeepsADiffsUnsavedTextWhenTheDiffIsGone",
+          TestWorkspaceShellRestoreSessionKeepsADiffsUnsavedTextWhenTheDiffIsGone);
   AddTest(tests, "WorkspaceShell/ACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown",
           TestWorkspaceShellACrashRestoredBufferDoesNotOverwriteAChangeMadeWhileDown);
   AddTest(tests, "WorkspaceShell/CrashSafetyFlushTimerArmsOnEdit",
