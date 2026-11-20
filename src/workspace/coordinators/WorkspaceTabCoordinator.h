@@ -86,6 +86,9 @@ class TabCoordinator {
     // user is looking at. Empty when the host has no window yet.
     std::function<EditorGroupRectsLayout()> editor_group_rects;
     std::function<void()> request_automatic_git_sidebar_refresh;
+    // A tab left its group for good (closed, in any group), by its stable id: a
+    // prompt asking about it has nothing left to ask.
+    std::function<void(std::uint64_t stable_id)> tab_closed;
     // Raised when a save is refused because the file changed on disk since the
     // buffer was loaded/last saved. The host surfaces the external-change banner
     // so the user can Reload / Overwrite / Keep instead of silently clobbering.

@@ -973,8 +973,12 @@ void TabCoordinator::Close(std::size_t index) {
   MaybeNotifyLspClose(closing_tab);
   CancelPendingAsyncRead(closing_tab);
   RememberClosedEditor(closing_tab);
+  const std::uint64_t closed_id = closing_tab.stable_id;
 
   state_.focused_group().open_tabs.erase(state_.focused_group().open_tabs.begin() + static_cast<std::ptrdiff_t>(index));
+  if (operations_.tab_closed) {
+    operations_.tab_closed(closed_id);
+  }
 
   if (state_.focused_group().open_tabs.empty()) {
     // Closing the last tab of a split group collapses that group; the surviving

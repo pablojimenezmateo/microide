@@ -35,6 +35,9 @@ class PromptSurfaceService {
                            std::size_t dirty_count,
                            const std::filesystem::path& path);
   void DismissDirtyPrompt(bool restore_focus);
+  // A tab closed: a tab prompt asking about it has nothing left to ask, and
+  // closes. The prompt's own Confirm dismisses before it closes its tabs.
+  void OnTabClosed(std::uint64_t stable_id);
   // Where focus goes when a prompt closes: whatever is still on top (the other
   // prompt, an overlay), else `previous` while it is still shown.
   FocusTarget FocusAfterPrompt(FocusTarget previous) const;

@@ -118,6 +118,7 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
               },
           .request_automatic_git_sidebar_refresh =
               [this]() { RequestAutomaticGitSidebarRefresh(); },
+          .tab_closed = [this](std::uint64_t stable_id) { MakePromptSurfaceService().OnTabClosed(stable_id); },
           .request_external_change_banner =
               [this](const std::filesystem::path& path) {
                 SetEditorBanner(context_.current_project_state,

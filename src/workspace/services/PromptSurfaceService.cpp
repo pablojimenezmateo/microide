@@ -1,5 +1,6 @@
 #include "workspace/services/PromptSurfaceService.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <utility>
 #include <vector>
@@ -157,6 +158,23 @@ FocusTarget PromptSurfaceService::FocusAfterPrompt(FocusTarget previous) const {
     return FocusTarget::Overlay;
   }
   return previous == FocusTarget::Overlay ? FocusAfterOverlay(state_) : FocusBackTo(state_, previous);
+}
+
+void PromptSurfaceService::OnTabClosed(std::uint64_t stable_id) {
+  if (!prompts_.dirty_visible || stable_id == 0) {
+    return;
+  }
+  const DirtyPromptState& prompt = prompts_.dirty;
+  if (prompt.kind != DirtyPromptState::Kind::CloseTab && prompt.kind != DirtyPromptState::Kind::CloseTabs) {
+    return;  // project, quit and path prompts re-read the live set when confirmed
+  }
+  // A tab closed behind its prompt (a git refresh retiring a compare tab): the
+  // prompt went on asking about "this tab", one that no longer existed (soak
+  // 5ec45751b332). The set it asked about is gone, so the question is too.
+  if (std::find(prompt.target_tab_ids.begin(), prompt.target_tab_ids.end(), stable_id) !=
+      prompt.target_tab_ids.end()) {
+    DismissDirtyPrompt(/*restore_focus=*/true);
+  }
 }
 
 void PromptSurfaceService::DismissDirtyPrompt(bool restore_focus) {

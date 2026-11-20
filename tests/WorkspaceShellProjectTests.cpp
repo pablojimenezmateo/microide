@@ -231,6 +231,37 @@ void TestWorkspaceShellDirtyPromptSurvivesTabShiftWhileOpen() {
          "tab b's unsaved edit should have been saved to disk before closing");
 }
 
+// Soak 5ec45751b332 (a git refresh closed a compare tab behind its Unsaved
+// changes prompt): the prompt stayed up asking about "this tab", a tab that no
+// longer existed, and its text changed with no repaint. A tab prompt closes with
+// the tab it asks about -- in its own group or another -- and stays up when an
+// unrelated tab closes.
+void TestWorkspaceShellDirtyPromptClosesWithItsTab() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path a = root / "a.txt";
+  const std::filesystem::path b = root / "b.txt";
+  WriteFile(a, "a\n");
+  WriteFile(b, "b\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, a);  // tab 0 (clean)
+  WorkspaceShellTestAccess::OpenFile(shell, b);  // tab 1 (dirtied)
+  WorkspaceShellTestAccess::FocusedGroupTabEditor(shell, 1).InsertText("!");
+  WorkspaceShellTestAccess::RequestCloseTab(shell, 1);
+  Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell), "closing a dirty tab opens the prompt");
+
+  WorkspaceShellTestAccess::CloseTab(shell, 0);  // an unrelated tab closes
+  Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "the prompt stays up when a tab it does not ask about closes");
+
+  WorkspaceShellTestAccess::CloseTab(shell, 0);  // the tab it asks about closes behind it
+  Expect(!WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "the prompt closes with the tab it asks about");
+  Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == 0, "both tabs are gone");
+}
+
 // TD-2026-07-17-081/082: the forced full rescan (manual refresh / exclude edit)
 // runs its whole-tree scan + per-file stat off the shell thread and applies the
 // result back on the main thread. Adding a file on disk and forcing a refresh must
@@ -9733,6 +9764,7 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellForcedFileIndexRefreshRunsOffThreadAndPicksUpNewFiles);
   AddTest(tests, "WorkspaceShell/DirtyPromptSurvivesTabShiftWhileOpen",
           TestWorkspaceShellDirtyPromptSurvivesTabShiftWhileOpen);
+  AddTest(tests, "WorkspaceShell/DirtyPromptClosesWithItsTab", TestWorkspaceShellDirtyPromptClosesWithItsTab);
 }
 
 }  // namespace microide::tests

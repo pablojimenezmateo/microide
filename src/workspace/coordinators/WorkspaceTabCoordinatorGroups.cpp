@@ -400,7 +400,11 @@ void TabCoordinator::CloseGroupTab(std::size_t group_index, std::size_t index) {
   CancelPendingAsyncRead(group.open_tabs[index]);
   RememberClosedEditor(group.open_tabs[index]);
   const bool closing_active = index == group.active_tab_index;
+  const std::uint64_t closed_id = group.open_tabs[index].stable_id;
   group.open_tabs.erase(group.open_tabs.begin() + static_cast<std::ptrdiff_t>(index));
+  if (operations_.tab_closed) {
+    operations_.tab_closed(closed_id);
+  }
   if (group.active_tab_index > index) {
     --group.active_tab_index;
   } else if (!group.open_tabs.empty() && group.active_tab_index >= group.open_tabs.size()) {
