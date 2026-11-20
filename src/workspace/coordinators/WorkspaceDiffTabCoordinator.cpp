@@ -407,7 +407,11 @@ void DiffTabCoordinator::RefreshCompareTabsForPath(const std::filesystem::path& 
     EditorGroup& group = state_.editor_groups[group_index];
     for (std::size_t index = 0; index < group.open_tabs.size(); ++index) {
       TabEntry& tab = group.open_tabs[index];
-      if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
+      // A compare of two files is no git diff: its "refs" are the left file's
+      // name and "PLAIN", and rebuilding it as one made it a read-only diff of
+      // nothing, retitled. Its editable side is the file's buffer, which the
+      // reload keeps current, and its diff follows that buffer.
+      if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() || tab.compare->plain_compare ||
           tab.compare->path != normalized_path) {
         continue;
       }

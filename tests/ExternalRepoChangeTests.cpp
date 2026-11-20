@@ -165,6 +165,65 @@ void TestWorkspaceShellExternalChangeReachesAFileOpenOnlyInADiff() {
          "and an editor tab opened on it holds what the file holds");
 }
 
+// A compare of two files (compare-files) is not a git diff: its "refs" are the
+// left file's name and "PLAIN". In a repository, a change to its right-hand file
+// rebuilt it as a git diff of those names -- git answered "no such file" for
+// both -- and the tab became a read-only diff of an empty right side, retitled
+// as a working-tree diff, the file's own text gone from it (found by the diff
+// monkey, 2026-11-20, as a window title that no longer matched the tab). Its
+// editable side is the file's buffer and the reload keeps it current; the diff
+// follows the buffer.
+void TestWorkspaceShellAChangeKeepsAFileCompareAFileCompare() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path left = root / "v1.left.py";
+  const std::filesystem::path right = root / "v1.right.py";
+  WriteFile(left, "a\nb\n");
+  WriteFile(right, "a\nB\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "open the project");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "compare-files " + left.string() + " " + right.string()),
+         "compare-files opens the diff");
+  const std::string title = WorkspaceShellTestAccess::ActiveCompare(shell).title;
+  SoftwareCanvas canvas(1280, 720);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
+  for (int attempt = 0; attempt < 20 && WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false); ++attempt) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
+  WriteFile(right, "a\nC\n");
+  const auto right_line = [&shell]() -> std::string {
+    if (!WorkspaceShellTestAccess::ActiveTabIsCompare(shell)) {
+      return "<no diff>";
+    }
+    const auto& lines = WorkspaceShellTestAccess::ActiveCompare(shell).right_viewport.lines();
+    return lines.size() < 2 ? std::string("<") + std::to_string(lines.size()) + " lines>" : std::string(lines[1]);
+  };
+  (void)WaitUntil([&]() { return right_line() == "C"; }, std::chrono::seconds(10), std::chrono::milliseconds(10),
+                  [&]() {
+                    (void)WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false);
+                    WorkspaceShellTestAccess::FlushPendingFileReads(shell);
+                  });
+  WorkspaceShellTestAccess::FlushPendingFileReads(shell);
+  WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
+  Expect(WorkspaceShellTestAccess::ActiveTabIsCompare(shell), "the diff is still in front");
+  const auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(compare.plain_compare && compare.title == title,
+         "still a compare of the two files, titled '" + title + "', got '" + compare.title + "'");
+  Expect(compare.right_editable && right_line() == "C",
+         "its editable side shows the file as it now is (" + right_line() + ")");
+  bool row_seen = false;
+  for (const auto& row : compare.model.rows) {
+    row_seen = row_seen || (row.left_text == "b" && row.right_text == "C");
+  }
+  Expect(row_seen, "and the diff is of the left file against it");
+}
+
 void DrainProjectChangesBeforeTheWrite(WorkspaceShell& shell) {
   for (int attempt = 0; attempt < 20; ++attempt) {
     if (!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false)) {
@@ -1442,6 +1501,8 @@ void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellExternalChangeReloadsCleanBuffer);
   AddTest(tests, "ExternalRepoChange/ReloadsAnOpenFileTheProjectDoesNotTrack",
           TestWorkspaceShellExternalChangeReloadsAnOpenFileTheProjectDoesNotTrack);
+  AddTest(tests, "ExternalRepoChange/AChangeKeepsAFileCompareAFileCompare",
+          TestWorkspaceShellAChangeKeepsAFileCompareAFileCompare);
   AddTest(tests, "ExternalRepoChange/ReachesAFileOpenOnlyInADiff",
           TestWorkspaceShellExternalChangeReachesAFileOpenOnlyInADiff);
   AddTest(tests, "ExternalRepoChange/AProjectWhoseRootIsGoneStillWatchesItsOpenFiles",
