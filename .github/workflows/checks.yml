@@ -18,8 +18,12 @@ on:
 
 concurrency:
   # A new push to the same ref supersedes the in-flight run. main is excluded so
-  # the record of what passed on the release branch is never cancelled away.
-  group: checks-${{ github.ref }}
+  # the record of what passed on the release branch is never cancelled away -- and
+  # gets a group per commit: a group holds one running and ONE pending run, so a
+  # third push replaced the queued second even with cancel-in-progress off, and a
+  # commit pushed between two others was never checked (2026-11-19/20, two agents
+  # pushing to main).
+  group: checks-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:

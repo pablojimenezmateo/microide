@@ -22,7 +22,9 @@ on:
         required: false
 
 concurrency:
-  group: qa-deep-${{ github.ref }}
+  # One group per commit on main, as in checks.yml: a group keeps only one pending
+  # run, so pushes in quick succession replaced queued runs of earlier commits.
+  group: qa-deep-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
