@@ -92,6 +92,22 @@ class HuntTests(SoakDirTests):
         (self.soak.FINDINGS / "traced" / "sightings" / "x-hunt" / "rr").mkdir(parents=True)
         self.assertEqual(self.soak.hunt_candidates(self.soak.ledger().entries().values()), [])
 
+    def test_a_hunt_keeps_the_trace_it_was_asked_for(self):
+        # A stale paint is hunted only on request (`soak.py hunt SIG`), and the tier
+        # rule dropped the one trace that showed it (e93ce81f04ac). The run's own
+        # recording rule still applies to a finding outside a hunt.
+        run = Path(self.dir.name) / "run"
+        evidence = run / "finding-01"
+        evidence.mkdir(parents=True)
+        (run / self.soak.RECORDING / "launch-0").mkdir(parents=True)
+        (run / self.soak.RECORDING / "launch-0" / "trace").write_text("x")
+        paint = {"kind": "log", "label": "log: [x] QA-STALE frame=1"}
+        plain, hunted = Path(self.dir.name) / "plain", Path(self.dir.name) / "hunted"
+        self.soak.keep_run_evidence(evidence, plain, paint)
+        self.soak.keep_run_evidence(evidence, hunted, paint, recording=True)
+        self.assertFalse((plain / self.soak.RECORDING).exists(), "a stale paint's run keeps no trace by default")
+        self.assertTrue((hunted / self.soak.RECORDING / "launch-0" / "trace").exists(), "a hunt keeps it")
+
     def test_a_hunt_replays_the_newest_sightings_record(self):
         self.finding("lost", "data", "data: a.txt")
         bundle = self.soak.FINDINGS / "lost"

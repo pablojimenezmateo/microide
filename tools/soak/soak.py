@@ -911,7 +911,11 @@ def hunt_finding(sig: str, state: dict[str, Any], log, runs: int = HUNT_RUNS, mo
         evidence = Path(caught.get("evidence") or "")
         if evidence.is_dir() and out.resolve() in evidence.resolve().parents:
             shutil.copytree(evidence, target, dirs_exist_ok=True)
-            keep_run_evidence(evidence, target, caught)
+            # A hunt's whole point is the trace. The runner hunts only severe and
+            # behaviour findings, so a stale paint is hunted because someone asked
+            # (`soak.py hunt SIG`); recording_wanted's tier rule dropped its trace and
+            # the one replay that showed it kept nothing to rewind (e93ce81f04ac).
+            keep_run_evidence(evidence, target, caught, recording=True)
         else:
             target.mkdir(parents=True, exist_ok=True)
         (target / "sighting.json").write_text(json.dumps(
@@ -1168,15 +1172,18 @@ def link_tree(source: Path, destination: Path) -> None:
     shutil.copytree(source, destination, copy_function=os.link, dirs_exist_ok=True)
 
 
-def keep_run_evidence(evidence: Path, target: Path, finding: dict[str, Any]) -> None:
+def keep_run_evidence(evidence: Path, target: Path, finding: dict[str, Any], *,
+                      recording: bool | None = None) -> None:
     """Adds the run-level evidence of the run `evidence` (a finding's own
     directory) came from to `target`: the whole logs always, the rr traces for
-    a finding worth one."""
+    a finding worth one -- `recording` overrides that choice (a hunt keeps the
+    trace it was asked for)."""
     run = evidence.parent
+    wanted = recording_wanted(finding) if recording is None else recording
     with contextlib.suppress(OSError):
         if (run / RUN_LOGS).is_dir():
             link_tree(run / RUN_LOGS, target / RUN_LOGS)
-        if (run / RECORDING).is_dir() and recording_wanted(finding) \
+        if (run / RECORDING).is_dir() and wanted \
                 and disk_usage(run / RECORDING) <= RECORDING_MAX_BYTES:
             link_tree(run / RECORDING, target / RECORDING)
 
