@@ -570,6 +570,41 @@ void TestDebugPaneRowHoverRepaintsTheRowItLights() {
   }
 }
 
+// A confirmation dialog (no text field of its own: Delete, Discard All) is as
+// modal as a text prompt, but the field hit test stopped only at a prompt with
+// an input, so a click on the terminal find bar behind "Discard All Changes"
+// focused it -- the bar redrew outlined and scrolled to its caret in a full
+// repaint, while the click damaged only the dialog (soak 750ae3401299,
+// 7bc2fd77b535). Behind any prompt, no field takes the click.
+void TestAFieldBehindAConfirmationDialogTakesNoClick() {
+  UiFixture fixture;
+  TestAccess::EnsureTerminalTab(fixture.shell);
+  TestAccess::SetFocusPanel(fixture.shell);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "terminal-find a long query to scroll"),
+         "the terminal's find bar opens");
+  TestAccess::TerminalFind(fixture.shell).SetFocused(false);
+  fixture.shell.Render(fixture.canvas.renderer(), UiFixture::kWidth, UiFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  const auto field = Find(TestAccess::ControlUi(fixture.shell), "field:terminal-find/query");
+  Expect(field.has_value(), "the find bar's query field is on screen");
+  if (!field.has_value()) {
+    return;
+  }
+  TestAccess::PrepareDeletePrompt(fixture.shell, fixture.root / "alpha.cpp");
+  fixture.shell.Render(fixture.canvas.renderer(), UiFixture::kWidth, UiFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  const float x = field->rect.x + field->rect.w / 2.0f;
+  const float y = field->rect.y + field->rect.h / 2.0f;
+  const auto diff = PaintAndDiffWithFullRepaint(
+      fixture.shell, fixture.canvas, UiFixture::kWidth, UiFixture::kHeight,
+      DispatchEvents(fixture.shell, {MouseMotionEvent(x, y),
+                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
+                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)}));
+  Expect(!TestAccess::TerminalFind(fixture.shell).focused(),
+         "the find bar behind the dialog is not focused by the click");
+  Expect(diff.identical(), "and the frame is what a full repaint paints; " + DescribePixelDiff(diff));
+}
+
 // The `surface` query lists every query verb; each must be answered, so the
 // inventory the QA monkey's coverage is measured against cannot name a verb the
 // channel does not have (or miss one it grew). It also lists the menus, the
@@ -1135,6 +1170,8 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/DocumentsQueryHashesWhatASaveWrites", TestDocumentsQueryHashesWhatASaveWrites);
   AddTest(tests, "ControlUiQuery/DocumentsQueryListsAFileOpenOnlyInADiff", TestDocumentsQueryListsAFileOpenOnlyInADiff);
   AddTest(tests, "ControlUiQuery/DocumentsQueryListsATypedMergeResult", TestDocumentsQueryListsATypedMergeResult);
+  AddTest(tests, "ControlUiQuery/AFieldBehindAConfirmationDialogTakesNoClick",
+          TestAFieldBehindAConfirmationDialogTakesNoClick);
   AddTest(tests, "ControlUiQuery/DebugPaneRowHoverRepaintsTheRowItLights",
           TestDebugPaneRowHoverRepaintsTheRowItLights);
   AddTest(tests, "ControlUiQuery/DocumentsQueryHashesWhatASaveWritesForABufferMadeOpaque",

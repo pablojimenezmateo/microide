@@ -142,14 +142,22 @@ std::optional<WorkspaceShell::SingleLineInputHit> FilledHit(
 
 std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLineInputHit(
     const WorkspaceLayout& layout, float x, float y) {
-  // Modal prompt (rename / create file / etc).
-  if (context_.prompts.surface_visible &&
-      context_.prompts.surface.kind == PromptSurfaceState::Kind::TextInput) {
-    const SDL_FRect dialog = ComputePromptSurfaceRect(layout.full);
-    const SDL_FRect input_rect = ComputePromptSurfaceInputRect(dialog);
-    if (Contains(input_rect, x, y)) {
-      return FilledHit(TextInputSurface::PromptInput, input_rect, "",
-                       &context_.prompts.surface.input);
+  // A modal prompt: its own input, when it has one (rename, create file), and
+  // nothing behind it. A confirmation (Delete, Discard All) is as modal as a text
+  // prompt; stopping only at one with an input let a click on the terminal find
+  // bar behind "Discard All Changes" focus it, under a dialog that kept the
+  // keyboard, with only the dialog repainted (soak 750ae3401299).
+  if (context_.prompts.dirty_visible) {
+    return std::nullopt;
+  }
+  if (context_.prompts.surface_visible) {
+    if (context_.prompts.surface.kind == PromptSurfaceState::Kind::TextInput) {
+      const SDL_FRect dialog = ComputePromptSurfaceRect(layout.full);
+      const SDL_FRect input_rect = ComputePromptSurfaceInputRect(dialog);
+      if (Contains(input_rect, x, y)) {
+        return FilledHit(TextInputSurface::PromptInput, input_rect, "",
+                         &context_.prompts.surface.input);
+      }
     }
     return std::nullopt;
   }
