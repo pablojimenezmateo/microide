@@ -487,6 +487,10 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       }
       continue;
     }
+    // A refresh whose read was cancelled (a project closed or switched under it).
+    if (compare_tab.refresh_owed && !compare_tab.pending_refresh.armed()) {
+      (void)MakeDiffTabCoordinator().StartCompareTabRefresh(compare_tab);
+    }
     if (compare_tab.right_editable &&
         (!compare_tab.derived_fingerprint_valid ||
          compare_tab.derived_right_content_revision !=

@@ -77,9 +77,12 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
   return compare_tab;
 }
 
+// `sides`: the ref-named sides already read (off the shell thread, for a refresh);
+// a side it does not hold is read here, as an open or a reopen does.
 std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
     const std::filesystem::path& path,
-    const CompareTabState& compare_tab) const {
+    const CompareTabState& compare_tab,
+    const CompareRevisionSides* sides) const {
   // A stand-in still owes its asynchronous load; rebuilding it here would be the
   // very synchronous read the load exists to avoid. Its load reads the file fresh.
   if (compare_tab.load_pending) {
@@ -95,8 +98,9 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
   // every change to the file -- seconds of the shell thread with a few dozen
   // compares of one file open (soak eee6ac0a5e0b, 32325094bfef).
   std::optional<project::GitFileContentAtCommit> left_content;
-  if (project::IsFullGitObjectId(compare_tab.commit_hash) && compare_tab.left_content &&
-      compare_tab.build_options.left_exists.has_value()) {
+  if (sides != nullptr && sides->left.has_value()) {
+    left_content = sides->left;
+  } else if (CompareLeftSideIsHeld(compare_tab)) {
     const bool exists = *compare_tab.build_options.left_exists;
     left_content = project::GitFileContentAtCommit{
         .exists = exists, .content = exists ? *compare_tab.left_content : std::string{}};
@@ -127,9 +131,11 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
     }
   } else {
     const auto right_commit_content =
-        project::ReadGitFileAtCommit(context_.current_project_state.root,
-                                     context_.current_project_state.launcher(), right_source_path,
-                                     compare_tab.right_ref);
+        sides != nullptr && sides->right.has_value()
+            ? sides->right
+            : project::ReadGitFileAtCommit(context_.current_project_state.root,
+                                           context_.current_project_state.launcher(), right_source_path,
+                                           compare_tab.right_ref);
     if (!right_commit_content.has_value() || right_commit_content->truncated) {
       return std::nullopt;
     }

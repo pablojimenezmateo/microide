@@ -67,6 +67,25 @@ struct CompareTabLoadResult {
 void RunCompareTabLoad(const CompareTabLoadRequest& request, std::string right_bytes,
                        CompareTabLoadResult& result);
 
+// A loaded compare tab's ref-named sides, to be read again off the shell thread
+// (CompareTabState::pending_refresh). `path` names the tab, as a load's does.
+struct CompareTabRefreshRequest {
+  std::filesystem::path path;
+  std::filesystem::path root;
+  // The project's. Must outlive the read; see ProjectWorkspaceState::launcher().
+  const platform::ProcessLauncher* launcher = &platform::LocalProcessLauncher();
+  std::filesystem::path left_path;
+  std::string left_ref;
+  // A full object id the tab already holds: not read.
+  bool left_held = false;
+  std::filesystem::path right_path;
+  // "WORKTREE" (the working file, which the rebuild reads itself) or a revision.
+  std::string right_ref;
+};
+
+// Worker: read what the request's refs name now. Safe on any thread.
+CompareRevisionSides ReadCompareRevisionSides(const CompareTabRefreshRequest& request);
+
 // The left side's line count as the compare gutter sizes it.
 std::size_t CountCompareTextLines(std::string_view text);
 

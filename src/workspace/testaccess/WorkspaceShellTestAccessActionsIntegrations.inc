@@ -468,6 +468,12 @@
     shell.MakeDiffTabCoordinator().ApplyCompareTabLoad(id, /*cancelled=*/true,
                                                         /*read_ok=*/false, empty);
   }
+  // The same for a compare tab's off-thread refresh (DiffTabCoordinator::
+  // StartCompareTabRefresh).
+  static void DeliverCancelledCompareRefresh(WorkspaceShell& shell, std::uint64_t id) {
+    (void)shell.MakeDiffTabCoordinator().ApplyCompareTabRefresh(id, /*cancelled=*/true,
+                                                                 microide::workspace::CompareRevisionSides{});
+  }
   static bool OpenGitConflictMerge(WorkspaceShell& shell, const std::filesystem::path& path) {
     return shell.OpenGitConflictMerge(path);
   }

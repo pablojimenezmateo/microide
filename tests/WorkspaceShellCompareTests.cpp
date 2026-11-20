@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "platform/ProcessLauncher.h"
 #include "project/GitRepository.h"
 #include "util/PerformanceCounters.h"
 
@@ -755,6 +756,9 @@ void TestWorkspaceShellExternalChangeRefreshesACompareInAnUnfocusedPane() {
 
   WriteFile(source, "one\nTHREE\n");
   WorkspaceShellTestAccess::MarkCompareTabsStaleForPath(shell, source);
+  // The refs are re-read off the shell thread (soak a509a3f35fe0): what lands is
+  // the rebuilt diff.
+  WorkspaceShellTestAccess::FlushPendingFileReads(shell);
 
   const auto* compare = WorkspaceShellTestAccess::GroupActiveCompareOrNull(shell, compare_group);
   Expect(compare != nullptr, "the unfocused pane still shows the compare");
@@ -770,6 +774,105 @@ void TestWorkspaceShellExternalChangeRefreshesACompareInAnUnfocusedPane() {
 // change and the tab already holds it: with a few dozen compares of one file
 // open, every change held the shell thread for seconds (soak eee6ac0a5e0b,
 // 32325094bfef). The worktree side is re-read; the committed one is not.
+// The local launcher, counting the spawns made on the thread that built it -- the
+// shell thread, in a test -- so a test can tell a git read the shell waited for
+// from one a worker made.
+class ShellThreadSpawnCounter final : public microide::platform::ProcessLauncher {
+ public:
+  std::vector<std::string> ResolveArgv(std::vector<std::string> argv) const override {
+    return local().ResolveArgv(std::move(argv));
+  }
+  std::filesystem::path ResolveWorkingDirectory(std::filesystem::path cwd) const override {
+    return local().ResolveWorkingDirectory(std::move(cwd));
+  }
+  std::filesystem::path LocalPathFromHost(std::filesystem::path host_path) const override {
+    return local().LocalPathFromHost(std::move(host_path));
+  }
+  microide::platform::SubprocessResult Run(std::vector<std::string> argv,
+                                           microide::platform::SubprocessOptions options) const override {
+    if (std::this_thread::get_id() == shell_thread_) {
+      shell_thread_spawns_.fetch_add(1);
+    }
+    return local().Run(std::move(argv), std::move(options));
+  }
+  bool is_local() const override { return true; }
+  std::string_view description() const override { return "local (shell spawns counted)"; }
+  int shell_thread_spawns() const { return shell_thread_spawns_.load(); }
+
+ private:
+  static const microide::platform::ProcessLauncher& local() {
+    return microide::platform::LocalProcessLauncher();
+  }
+  std::thread::id shell_thread_ = std::this_thread::get_id();
+  mutable std::atomic<int> shell_thread_spawns_{0};
+};
+
+// A change to a compared file re-read every ref-named side (HEAD, a branch, the
+// index) with a blocking `git cat-file` on the shell thread, per open diff of
+// the file: seconds under load, and a synchronous subprocess in workspace code
+// (soak a509a3f35fe0; a32ae2855 spared only sides named by a full object id).
+// The re-read runs off the shell thread, the diff it had stays on screen until
+// it lands -- and what lands is what the refs name NOW, since a ref can move
+// with the change (a commit, a checkout, a stage).
+void TestWorkspaceShellExternalChangeReadsNoRefOnTheShellThread() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "a.txt";
+  WriteFile(source, "one\ntwo\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  const microide::project::GitRepository repo(root, microide::platform::LocalProcessLauncher());
+  Expect(repo.Execute({"branch", "side"}).exit_code == 0, "a second branch at the base");
+  WriteFile(source, "one\nTWO\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenBranchHeadComparison(shell, source, "side", "side", "HEAD", "HEAD"),
+         "the branch comparison opens");
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "the working-tree comparison against HEAD opens");
+  ShellThreadSpawnCounter counter;
+  const microide::platform::ProcessLauncher* real_launcher =
+      WorkspaceShellTestAccess::CurrentProjectState(shell).locality.launcher;
+  WorkspaceShellTestAccess::CurrentProjectState(shell).locality.launcher = &counter;
+
+  // The change is committed, so HEAD moves with it: both diffs' ref sides change.
+  WriteFile(source, "one\nTHREE\n");
+  CommitAll(root, "three", "three");
+  WorkspaceShellTestAccess::MarkCompareTabsStaleForPath(shell, source);
+  Expect(counter.shell_thread_spawns() == 0,
+         "no git ran on the shell thread for the change (" + std::to_string(counter.shell_thread_spawns()) + ")");
+  const auto* compare = WorkspaceShellTestAccess::GroupActiveCompareOrNull(
+      shell, WorkspaceShellTestAccess::FocusedGroupIndex(shell));
+  Expect(compare != nullptr && compare->right_viewport.lines().LineView(1) == "TWO",
+         "until the read lands, the diff on screen is the one it had");
+
+  WorkspaceShellTestAccess::FlushPendingFileReads(shell);
+  Expect(counter.shell_thread_spawns() == 0, "and none ran when it landed");
+  const auto row_texts = [](const microide::workspace::CompareTabState& tab, bool left) {
+    std::string out;
+    for (const auto& row : tab.model.rows) {
+      out += std::string(left ? row.left_text : row.right_text) + "|";
+    }
+    return out;
+  };
+  compare = WorkspaceShellTestAccess::GroupActiveCompareOrNull(shell, WorkspaceShellTestAccess::FocusedGroupIndex(shell));
+  Expect(compare != nullptr && compare->right_ref == "WORKTREE", "the working-tree diff is in front");
+  Expect(compare != nullptr && row_texts(*compare, true).find("THREE") != std::string::npos &&
+             row_texts(*compare, false).find("THREE") != std::string::npos && compare->model.hunks.empty(),
+         "its HEAD side is the new commit and it shows no change: " +
+             (compare != nullptr ? row_texts(*compare, true) : std::string{}));
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
+  compare = WorkspaceShellTestAccess::GroupActiveCompareOrNull(shell, WorkspaceShellTestAccess::FocusedGroupIndex(shell));
+  Expect(compare != nullptr && compare->right_ref == "HEAD", "the branch diff");
+  Expect(compare != nullptr && row_texts(*compare, false).find("THREE") != std::string::npos &&
+             row_texts(*compare, true).find("two") != std::string::npos,
+         "its HEAD side moved with the commit, its branch side did not: " +
+             (compare != nullptr ? row_texts(*compare, true) + " / " + row_texts(*compare, false) : std::string{}));
+  WorkspaceShellTestAccess::CurrentProjectState(shell).locality.launcher = real_launcher;
+}
+
 void TestWorkspaceShellExternalChangeReadsNoCommittedSideAgain() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -4063,6 +4166,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellExternalChangeRefreshesACompareInAnUnfocusedPane);
   AddTest(tests, "WorkspaceShell/ExternalChangeReadsNoCommittedSideAgain",
           TestWorkspaceShellExternalChangeReadsNoCommittedSideAgain);
+  AddTest(tests, "WorkspaceShell/ExternalChangeReadsNoRefOnTheShellThread",
+          TestWorkspaceShellExternalChangeReadsNoRefOnTheShellThread);
   AddTest(tests, "WorkspaceShell/CompareEditablePaneTakesMultipleCarets",
           TestWorkspaceShellCompareEditablePaneTakesMultipleCarets);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareIsEditableAndSaves",

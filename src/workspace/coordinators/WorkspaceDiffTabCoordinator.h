@@ -27,7 +27,11 @@ class DiffTabCoordinator {
                                           const project::GitCommitEntry&,
                                           std::size_t)>
         build_compare_tab_entry;
-    std::function<std::optional<TabEntry>(const std::filesystem::path&, const CompareTabState&)>
+    // A compare tab rebuilt from its state; the third argument, when not null,
+    // holds its ref-named sides already read (a refresh's), which it then does not
+    // read again.
+    std::function<std::optional<TabEntry>(const std::filesystem::path&, const CompareTabState&,
+                                          const CompareRevisionSides*)>
         rebuild_compare_tab_entry;
     std::function<std::optional<TabEntry>(const std::filesystem::path&,
                                           const std::string&,
@@ -69,6 +73,15 @@ class DiffTabCoordinator {
     std::function<void(const std::filesystem::path& path)> begin_git_conflict_prefetch;
     std::function<void(editor::TextViewport&)> apply_editor_preferences;
     std::function<void(std::string)> report_compare_load_failure;
+    // Read a loaded compare tab's ref-named sides off the shell thread. Returns the
+    // id the completion will carry, which must reach ApplyCompareTabRefresh
+    // whatever its outcome; 0 when no reader is wired, and then the refresh reads
+    // them inline, as it always did.
+    std::function<std::uint64_t(CompareTabRefreshRequest)> begin_compare_tab_refresh;
+    // Drop an off-thread read whose answer is no longer wanted (its completion
+    // still arrives, cancelled).
+    std::function<void(std::uint64_t)> cancel_file_read;
+    std::function<void()> request_editor_surface_redraw;
   };
 
   // A working-tree compare at least this large opens as a stand-in and loads off
@@ -122,6 +135,19 @@ class DiffTabCoordinator {
   // a tab loads when it is first shown and again after a cancelled load. Returns
   // whether a load was posted.
   bool StartPendingCompareLoad(CompareTabState& compare_tab);
+  // Every open compare of `normalized_path`, brought up to date with the file and
+  // with what its refs name now: after the file changed, or a stage, commit or
+  // checkout moved a ref. A tab whose sides git must answer for keeps the diff it
+  // has, editable, until the off-thread read lands (soak a509a3f35fe0).
+  void RefreshCompareTabsForPath(const std::filesystem::path& normalized_path);
+  // Post the re-read a compare tab owes (`refresh_owed`), if none is in flight.
+  // Called by the refresh and, for a read cancelled under it, by the next frame
+  // that shows the tab. Returns whether a read was posted.
+  bool StartCompareTabRefresh(CompareTabState& compare_tab);
+  // Shell thread: the completion of a re-read StartCompareTabRefresh posted.
+  // False when no tab of this project holds the id (closed, retargeted, or in a
+  // project no longer in front).
+  bool ApplyCompareTabRefresh(std::uint64_t id, bool cancelled, const CompareRevisionSides& sides);
   // Shell thread: the completion of a load posted by StartPendingCompareLoad.
   // `cancelled` leaves the tab owing its load; `read_ok` is the working file's read.
   void ApplyCompareTabLoad(std::uint64_t id, bool cancelled, bool read_ok,

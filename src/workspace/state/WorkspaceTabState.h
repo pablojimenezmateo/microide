@@ -11,6 +11,7 @@
 
 #include "compare/BranchReviewStateTypes.h"
 #include "platform/ProcessLauncher.h"
+#include "project/GitCompareService.h"
 #include "compare/CompareModel.h"
 #include "compare/ComparePresentationModel.h"
 #include "compare/CompareReviewTypes.h"
@@ -127,6 +128,14 @@ struct SharedPaneScrollMark {
     valid = true;
     return moved;
   }
+};
+
+// A compare's ref-named sides as git answered for them, read OFF the shell thread
+// for a rebuild (see CompareTabState::pending_refresh). A side left nullopt was not
+// read: the tab already holds it (a full object id), or it is the working file.
+struct CompareRevisionSides {
+  std::optional<project::GitFileContentAtCommit> left;
+  std::optional<project::GitFileContentAtCommit> right;
 };
 
 struct CompareTabState {
@@ -257,6 +266,15 @@ struct CompareTabState {
   // tab is shown, because cancelling disarms the slot and leaves this set.
   bool load_pending = false;
   editor::AsyncBufferWork pending_load;
+  // A loaded tab whose ref-named sides must be read again: its file changed, or
+  // a stage, a commit or a checkout moved what a ref names. The re-read runs off
+  // the shell thread (a blocking `git cat-file` per open diff of the file, per
+  // change, held the window for seconds: soak a509a3f35fe0), and the diff on
+  // screen stays, editable, until it lands. `refresh_owed` stays set until a read
+  // posted after the latest change has landed; a cancelled one (a project closed
+  // or switched under it) is posted again by the next frame that shows the tab.
+  bool refresh_owed = false;
+  editor::AsyncBufferWork pending_refresh;
   std::optional<CompareHoverState> hover_state;
   std::size_t selected_row = 0;
   int scroll_row = 0;
@@ -590,6 +608,14 @@ inline std::uint64_t EnsureTabStableId(TabEntry& tab) {
     tab.stable_id = next_stable_id++;
   }
   return tab.stable_id;
+}
+
+// Whether a compare's left side is content nothing can change and the tab already
+// holds: named by a full object id. Re-reading it spawned a blocking git per side,
+// per tab, on every change to the file (soak eee6ac0a5e0b, 32325094bfef).
+[[nodiscard]] inline bool CompareLeftSideIsHeld(const CompareTabState& compare_tab) {
+  return project::IsFullGitObjectId(compare_tab.commit_hash) && compare_tab.left_content &&
+         compare_tab.build_options.left_exists.has_value();
 }
 
 // The trait clang caches as `false` when the optional's element type is nested in

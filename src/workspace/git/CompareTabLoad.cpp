@@ -52,6 +52,18 @@ void RunCompareTabLoad(const CompareTabLoadRequest& request, std::string right_b
       result.built_options);
 }
 
+CompareRevisionSides ReadCompareRevisionSides(const CompareTabRefreshRequest& request) {
+  CompareRevisionSides sides;
+  if (!request.left_held) {
+    sides.left = project::ReadGitFileAtCommit(request.root, *request.launcher, request.left_path, request.left_ref);
+  }
+  if (!request.right_ref.empty() && request.right_ref != "WORKTREE") {
+    sides.right =
+        project::ReadGitFileAtCommit(request.root, *request.launcher, request.right_path, request.right_ref);
+  }
+  return sides;
+}
+
 void MarkCompareModelBuilt(CompareTabState& compare_tab, const compare::CompareBuildOptions& built,
                            const std::size_t left_line_count) {
   ++compare_tab.model_revision;

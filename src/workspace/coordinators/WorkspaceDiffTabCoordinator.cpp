@@ -208,8 +208,8 @@ void DiffTabCoordinator::RefreshExistingCompareTab(std::size_t index,
   if (only_when_clean && state_.focused_group().open_tabs[index].compare->right_viewport.dirty()) {
     return;
   }
-  auto rebuilt = operations_.rebuild_compare_tab_entry(normalized_path,
-                                                       state_.focused_group().open_tabs[index].compare.value());
+  auto rebuilt = operations_.rebuild_compare_tab_entry(
+      normalized_path, state_.focused_group().open_tabs[index].compare.value(), nullptr);
   if (rebuilt.has_value() && rebuilt->compare.has_value()) {
     state_.focused_group().open_tabs[index] = std::move(*rebuilt);
   }
@@ -397,6 +397,128 @@ bool DiffTabCoordinator::OpenWorkingTreeComparison(
   }
 
   return AddCompareTab(std::move(*compare_tab), load_off_thread);
+}
+
+void DiffTabCoordinator::RefreshCompareTabsForPath(const std::filesystem::path& normalized_path) {
+  // EVERY group, not just the focused one. This walked only the focused group, so a
+  // compare in the other split kept painting the pre-change diff after its file
+  // changed on disk or a hunk was staged from elsewhere.
+  for (std::size_t group_index = 0; group_index < state_.editor_groups.size(); ++group_index) {
+    EditorGroup& group = state_.editor_groups[group_index];
+    for (std::size_t index = 0; index < group.open_tabs.size(); ++index) {
+      TabEntry& tab = group.open_tabs[index];
+      if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
+          tab.compare->path != normalized_path) {
+        continue;
+      }
+      CompareTabState& compare = *tab.compare;
+      if (compare.load_pending) {
+        // Still a stand-in. A load in flight read the file BEFORE this change, so
+        // drop it; the tab still owes a load and the next frame that shows it
+        // reads the file as it is now.
+        if (compare.pending_load.armed()) {
+          operations_.cancel_file_read(compare.pending_load.id());
+          compare.pending_load.Disarm();
+        }
+        continue;
+      }
+      // Two committed sides, each named by a full object id: nothing a change to
+      // the file can touch, so nothing to rebuild (and no git to spawn for it).
+      if (project::IsFullGitObjectId(compare.commit_hash) && project::IsFullGitObjectId(compare.right_ref)) {
+        continue;
+      }
+      const bool reads_git = !CompareLeftSideIsHeld(compare) || compare.right_ref != "WORKTREE";
+      if (reads_git && operations_.begin_compare_tab_refresh) {
+        // A read posted before this change may have read the refs before they
+        // moved: abandon it (its answer then claims nothing) and post another.
+        if (compare.pending_refresh.armed()) {
+          operations_.cancel_file_read(compare.pending_refresh.id());
+          compare.pending_refresh.Disarm();
+        }
+        compare.refresh_owed = true;
+        (void)StartCompareTabRefresh(compare);
+        continue;
+      }
+      // Nothing for git to answer (or no reader wired): the rebuild reads only
+      // the working file, here.
+      auto rebuilt = operations_.rebuild_compare_tab_entry(normalized_path, compare, nullptr);
+      if (!rebuilt.has_value() || !rebuilt->compare.has_value()) {
+        continue;
+      }
+      group.open_tabs[index] = std::move(*rebuilt);
+      if (index == group.active_tab_index) {
+        // Only the focused group's front tab owns the selection reveal; any
+        // visible pane's front tab needs repainting.
+        if (group_index == state_.focused_group_index) {
+          operations_.reveal_active_compare_selection();
+        }
+        operations_.request_editor_surface_redraw();
+      }
+    }
+  }
+}
+
+bool DiffTabCoordinator::StartCompareTabRefresh(CompareTabState& compare_tab) {
+  if (!compare_tab.refresh_owed || compare_tab.pending_refresh.armed() || compare_tab.load_pending ||
+      !operations_.begin_compare_tab_refresh) {
+    return false;
+  }
+  const auto side_path = [&](const std::filesystem::path& path) {
+    return (path.empty() ? compare_tab.path : path).lexically_normal();
+  };
+  const std::uint64_t id = operations_.begin_compare_tab_refresh(CompareTabRefreshRequest{
+      .path = compare_tab.path,
+      .root = state_.root,
+      .launcher = &state_.launcher(),
+      .left_path = side_path(compare_tab.left_path),
+      .left_ref = compare_tab.commit_hash,
+      .left_held = CompareLeftSideIsHeld(compare_tab),
+      .right_path = side_path(compare_tab.right_path),
+      .right_ref = compare_tab.right_ref,
+  });
+  if (id == 0) {
+    return false;
+  }
+  // Armed against no buffer revision: what it reads is the refs', which no edit
+  // of the right side changes. A newer change re-arms it, abandoning this one.
+  compare_tab.pending_refresh.Arm(id, 0);
+  return true;
+}
+
+bool DiffTabCoordinator::ApplyCompareTabRefresh(const std::uint64_t id, const bool cancelled,
+                                                const CompareRevisionSides& sides) {
+  for (std::size_t group_index = 0; group_index < state_.editor_groups.size(); ++group_index) {
+    EditorGroup& group = state_.editor_groups[group_index];
+    for (std::size_t index = 0; index < group.open_tabs.size(); ++index) {
+      TabEntry& tab = group.open_tabs[index];
+      if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
+          !tab.compare->pending_refresh.Holds(id)) {
+        continue;
+      }
+      CompareTabState& compare = *tab.compare;
+      if (compare.pending_refresh.Resolve(id, 0) != editor::AsyncBufferWork::Claim::Current || cancelled) {
+        // Cancelled: the tab still owes its refresh, and the next frame that shows
+        // it posts it again.
+        return true;
+      }
+      compare.refresh_owed = false;
+      // A side git could not answer leaves the diff as it was, as a synchronous
+      // rebuild that failed always has.
+      auto rebuilt = operations_.rebuild_compare_tab_entry(compare.path, compare, &sides);
+      if (!rebuilt.has_value() || !rebuilt->compare.has_value()) {
+        return true;
+      }
+      group.open_tabs[index] = std::move(*rebuilt);
+      if (index == group.active_tab_index) {
+        if (group_index == state_.focused_group_index) {
+          operations_.reveal_active_compare_selection();
+        }
+        operations_.request_editor_surface_redraw();
+      }
+      return true;
+    }
+  }
+  return false;
 }
 
 bool DiffTabCoordinator::StartPendingCompareLoad(CompareTabState& compare_tab) {

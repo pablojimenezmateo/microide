@@ -925,8 +925,8 @@
   std::optional<TabEntry> BuildCompareTabEntry(const std::filesystem::path& path,
                                                const project::GitCommitEntry& commit,
                                                std::size_t selected_row = 0) const;
-  std::optional<TabEntry> BuildCompareTabEntry(const std::filesystem::path& path,
-                                               const CompareTabState& compare_tab) const;
+  std::optional<TabEntry> BuildCompareTabEntry(const std::filesystem::path& path, const CompareTabState& compare_tab,
+                                               const CompareRevisionSides* sides = nullptr) const;
   void RefreshCompareTabDerivedState(CompareTabState& compare_tab) const;
   std::size_t CompareRowIndexForRightLine(const CompareTabState& compare_tab,
                                           std::size_t line_index) const;

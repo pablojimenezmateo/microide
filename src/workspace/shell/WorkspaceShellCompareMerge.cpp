@@ -37,8 +37,9 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
                 return BuildCompareTabEntry(path, commit, selected_row);
               },
           .rebuild_compare_tab_entry =
-              [this](const std::filesystem::path& path, const CompareTabState& compare_state) {
-                return BuildCompareTabEntry(path, compare_state);
+              [this](const std::filesystem::path& path, const CompareTabState& compare_state,
+                     const CompareRevisionSides* sides) {
+                return BuildCompareTabEntry(path, compare_state, sides);
               },
           .build_compare_tab_from_buffers =
               [this](const std::filesystem::path& path,
@@ -195,6 +196,43 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
               [this](std::string message) {
                 Notify(NotificationService::Tone::Error, std::move(message));
               },
+          // The re-read runs on the reader's thread too: one git spawn per side, and
+          // a cancellation that is real. Its completion finds the tab by its id.
+          .begin_compare_tab_refresh =
+              [this](CompareTabRefreshRequest request) -> std::uint64_t {
+                auto shared_request = std::make_shared<const CompareTabRefreshRequest>(std::move(request));
+                auto sides = std::make_shared<CompareRevisionSides>();
+                return file_read_service_.Begin({
+                    .path = shared_request->path,
+                    .on_worker = [shared_request, sides](std::string&) { *sides = ReadCompareRevisionSides(*shared_request); },
+                    // The tab is in the project in front, or in one switched away
+                    // from meanwhile; there the slot is only released, so the tab
+                    // posts its read again when next shown, against that project.
+                    .on_complete =
+                        [this, sides](project::FileReadService::Completion completion) {
+                          if (MakeDiffTabCoordinator().ApplyCompareTabRefresh(
+                                  completion.id,
+                                  completion.status == project::FileReadService::Status::Cancelled, *sides)) {
+                            return;
+                          }
+                          for (const auto& project : context_.project_catalog.entries) {
+                            if (project == nullptr) {
+                              continue;
+                            }
+                            for (EditorGroup& group : project->editor_groups) {
+                              for (TabEntry& tab : group.open_tabs) {
+                                if (tab.compare.has_value() && tab.compare->pending_refresh.Holds(completion.id)) {
+                                  tab.compare->pending_refresh.Disarm();
+                                }
+                              }
+                            }
+                          }
+                        },
+                    .read_path = false,
+                });
+              },
+          .cancel_file_read = [this](std::uint64_t id) { file_read_service_.Cancel(id); },
+          .request_editor_surface_redraw = [this]() { RequestEditorSurfaceRedraw(); },
       });
 }
 
@@ -561,51 +599,7 @@ void WorkspaceShell::JumpCompareHunk(int delta) {
 }
 
 void WorkspaceShell::RefreshOpenCompareTabsForPath(const std::filesystem::path& path) {
-  const std::filesystem::path normalized_path = path.lexically_normal();
-  // EVERY group, not just the focused one. This walked only the focused group, so a
-  // compare in the other split kept painting the pre-change diff after its file
-  // changed on disk or a hunk was staged from elsewhere — which is exactly what
-  // MarkCompareTabsStaleForPath's own comment said it was there to prevent.
-  ProjectWorkspaceState& project = context_.current_project_state;
-  for (std::size_t group_index = 0; group_index < project.editor_groups.size(); ++group_index) {
-    EditorGroup& group = project.editor_groups[group_index];
-    for (std::size_t index = 0; index < group.open_tabs.size(); ++index) {
-      auto& tab = group.open_tabs[index];
-      if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
-          tab.compare->path != normalized_path) {
-        continue;
-      }
-      if (tab.compare->load_pending) {
-        // Still a stand-in. A load in flight read the file BEFORE this change, so
-        // drop it; the tab still owes a load and the next frame that shows it
-        // reads the file as it is now.
-        if (tab.compare->pending_load.armed()) {
-          file_read_service_.Cancel(tab.compare->pending_load.id());
-          tab.compare->pending_load.Disarm();
-        }
-        continue;
-      }
-      // Two committed sides, each named by a full object id: nothing a change to
-      // the file can touch, so nothing to rebuild (and no git to spawn for it).
-      if (project::IsFullGitObjectId(tab.compare->commit_hash) &&
-          project::IsFullGitObjectId(tab.compare->right_ref)) {
-        continue;
-      }
-      auto rebuilt = BuildCompareTabEntry(normalized_path, tab.compare.value());
-      if (!rebuilt.has_value() || !rebuilt->compare.has_value()) {
-        continue;
-      }
-      group.open_tabs[index] = std::move(*rebuilt);
-      if (index == group.active_tab_index) {
-        // Only the focused group's front tab owns the selection reveal; any
-        // visible pane's front tab needs repainting.
-        if (group_index == project.focused_group_index) {
-          RevealActiveCompareSelection();
-        }
-        RequestEditorSurfaceRedraw();
-      }
-    }
-  }
+  MakeDiffTabCoordinator().RefreshCompareTabsForPath(path.lexically_normal());
 }
 
 void WorkspaceShell::StageCompareHunk() {
