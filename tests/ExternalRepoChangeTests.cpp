@@ -106,6 +106,65 @@ void TestWorkspaceShellExternalChangeReloadsAnOpenFileTheProjectDoesNotTrack() {
          "an open file outside the root reloads after a write (" + line_of(outside) + ")");
 }
 
+// A diff's editable side is the file too, and it was not among the open
+// documents the watcher is handed -- only editor tabs were. Where the tree's
+// watch does not reach (outside the root, `.git`, or a tree too big to watch
+// whole: soak b8f2d54da0f1, after symlink loops had spent the watch budget), a
+// file open ONLY in a diff never heard of a change to it: the diff kept the old
+// text as that file's live buffer, and the editor tab opened on the file next
+// was handed that buffer -- clean, and not what the file holds.
+void TestWorkspaceShellExternalChangeReachesAFileOpenOnlyInADiff() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path inside = root / "notes.txt";
+  const std::filesystem::path outside = temp_dir.path() / "outside.txt";
+  WriteFile(inside, "notes\n");
+  WriteFile(outside, "before\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "open the project");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(
+             shell, "compare-files " + inside.string() + " " + outside.string()),
+         "compare-files opens the diff");
+  Expect(WorkspaceShellTestAccess::ActiveTabIsCompare(shell) &&
+             WorkspaceShellTestAccess::ActiveCompare(shell).right_editable &&
+             WorkspaceShellTestAccess::ActiveCompare(shell).right_viewport.path() == outside,
+         "its editable side is the file outside the root");
+  Expect(WorkspaceShellTestAccess::EditorViewportForPath(shell, outside) == nullptr,
+         "and no editor tab has that file open");
+  // Frame prep is what hands the open documents to the watcher.
+  SoftwareCanvas canvas(1280, 720);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
+  for (int attempt = 0; attempt < 20; ++attempt) {
+    if (!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false)) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
+  WriteFile(outside, "after\n");
+  const auto diff_line = [&shell]() -> std::string {
+    if (!WorkspaceShellTestAccess::ActiveTabIsCompare(shell)) {
+      return "<no diff>";
+    }
+    const auto& lines = WorkspaceShellTestAccess::ActiveCompare(shell).right_viewport.lines();
+    return lines.empty() ? std::string() : std::string(lines[0]);
+  };
+  (void)WaitUntil([&]() { return diff_line() == "after"; }, std::chrono::seconds(10),
+                  std::chrono::milliseconds(10), [&]() {
+                    (void)WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false);
+                    WorkspaceShellTestAccess::FlushPendingFileReads(shell);
+                  });
+  Expect(diff_line() == "after", "the diff's side shows the file as it now is (" + diff_line() + ")");
+
+  WorkspaceShellTestAccess::OpenFile(shell, outside);
+  const editor::TextViewport* editor = WorkspaceShellTestAccess::EditorViewportForPath(shell, outside);
+  Expect(editor != nullptr && !editor->dirty() && !editor->lines().empty() && editor->lines()[0] == "after",
+         "and an editor tab opened on it holds what the file holds");
+}
+
 void DrainProjectChangesBeforeTheWrite(WorkspaceShell& shell) {
   for (int attempt = 0; attempt < 20; ++attempt) {
     if (!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false)) {
@@ -309,6 +368,62 @@ void TestWorkspaceShellUndoAfterADiskChangeInTheBackgroundDoesNotReadClean() {
   Expect(editor.lines()[0] == "original", "the undo should restore the content as read");
   Expect(editor.dirty(),
          "a buffer undone to content the file no longer holds must not read clean");
+}
+
+// Soak b8f2d54da0f1: a file open only in diffs, changed on disk while its
+// project was in the background. A project catches up when it comes back by
+// re-reading its open buffers -- its EDITOR tabs' -- and then rebuilding its
+// diffs; a diff that cannot be rebuilt (the file is binary now) or that rejoins
+// its file's other diff (two diffs of one file, each handed the other's old
+// buffer) kept the text from before the change as that file's live buffer, and
+// the editor tab opened on the file next was handed it: clean, and not the file.
+void TestWorkspaceShellABackgroundChangeReachesAFileOpenOnlyInDiffs() {
+  TemporaryDirectory temp_dir;
+  ScopedAppHomes homes(temp_dir.path() / "state", temp_dir.path() / "config");
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path other = temp_dir.path() / "other";
+  const std::filesystem::path binary = root / "blob.txt";
+  const std::filesystem::path text = root / "notes.txt";
+  WriteFile(root / "left.txt", "left\n");
+  WriteFile(root / "third.txt", "third\n");
+  WriteFile(binary, "");
+  WriteFile(text, "before\n");
+  WriteFile(other / "b.txt", "b\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, true, false), "the first project opens");
+  const auto diff = [&](const std::filesystem::path& left, const std::filesystem::path& right) {
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "compare-files " + left.string() + " " + right.string()),
+           "compare-files opens a diff of " + right.filename().string());
+    Expect(WorkspaceShellTestAccess::ActiveTabIsCompare(shell) &&
+               WorkspaceShellTestAccess::ActiveCompare(shell).right_editable,
+           "with an editable side");
+  };
+  diff(root / "left.txt", binary);
+  diff(root / "left.txt", text);
+  diff(root / "third.txt", text);  // a second diff of notes.txt
+  DrainProjectChanges(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, other, true, false), "the second project opens in front");
+
+  const std::string bytes("\x7f\x80\x81\x00\xfe\xff binary", 13);
+  WriteFile(binary, bytes);
+  WriteFile(text, "after\n");
+  DrainProjectChanges(shell);
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0), "the first project comes back");
+  DrainProjectChanges(shell);
+
+  WorkspaceShellTestAccess::OpenFile(shell, text);
+  const editor::TextViewport* notes = WorkspaceShellTestAccess::EditorViewportForPath(shell, text);
+  Expect(notes != nullptr && !notes->dirty() && notes->SerializeDocumentText() == "after\n",
+         "an editor tab on the file two diffs held shows the file, got '" +
+             (notes != nullptr ? notes->SerializeDocumentText() : std::string("<none>")) + "'");
+  WorkspaceShellTestAccess::OpenFile(shell, binary);
+  const editor::TextViewport* blob = WorkspaceShellTestAccess::EditorViewportForPath(shell, binary);
+  Expect(blob != nullptr && !blob->dirty() && blob->SerializeDocumentText() == bytes,
+         "and one on the file that became binary holds its bytes, got " +
+             std::to_string(blob != nullptr ? blob->SerializeDocumentText().size() : 0) + " of " +
+             std::to_string(bytes.size()));
 }
 
 void TestWorkspaceShellSelfWriteDoesNotRaiseBanner() {
@@ -1327,6 +1442,8 @@ void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellExternalChangeReloadsCleanBuffer);
   AddTest(tests, "ExternalRepoChange/ReloadsAnOpenFileTheProjectDoesNotTrack",
           TestWorkspaceShellExternalChangeReloadsAnOpenFileTheProjectDoesNotTrack);
+  AddTest(tests, "ExternalRepoChange/ReachesAFileOpenOnlyInADiff",
+          TestWorkspaceShellExternalChangeReachesAFileOpenOnlyInADiff);
   AddTest(tests, "ExternalRepoChange/AProjectWhoseRootIsGoneStillWatchesItsOpenFiles",
           TestWorkspaceShellAProjectWhoseRootIsGoneStillWatchesItsOpenFiles);
   AddTest(tests, "ExternalRepoChange/CleanReloadDoesNotSnapshotBuffers",
@@ -1339,6 +1456,8 @@ void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellUndoAfterADiskChangeDoesNotReadClean);
 AddTest(tests, "ExternalRepoChange/UndoAfterADiskChangeInTheBackgroundDoesNotReadClean",
           TestWorkspaceShellUndoAfterADiskChangeInTheBackgroundDoesNotReadClean);
+AddTest(tests, "ExternalRepoChange/ABackgroundChangeReachesAFileOpenOnlyInDiffs",
+        TestWorkspaceShellABackgroundChangeReachesAFileOpenOnlyInDiffs);
   AddTest(tests, "ExternalRepoChange/SelfWriteDoesNotRaiseBanner",
           TestWorkspaceShellSelfWriteDoesNotRaiseBanner);
   AddTest(tests, "ExternalRepoChange/AutosaveFlushRespectsDiskConflict",

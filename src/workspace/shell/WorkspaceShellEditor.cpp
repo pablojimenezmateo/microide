@@ -556,6 +556,17 @@ void WorkspaceShell::ReloadCleanOpenBuffersFromDisk() {
   // reloaded (ReloadCleanEditorTabsForPath itself reloads all groups per path).
   for (const EditorGroup& group : context_.current_project_state.editor_groups) {
     for (const auto& tab : group.open_tabs) {
+      // A diff's editable side is its file's buffer as much as an editor tab's is
+      // (the reload repoints both): passed over here, a file open only in diffs
+      // kept its old text across a change this sweep stands in for -- a diff that
+      // could not be rebuilt (the file binary now), or two diffs of one file each
+      // rejoining the other's old buffer -- and the editor tab opened on the file
+      // next was handed that text as the file (soak b8f2d54da0f1).
+      if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() && tab.compare->right_editable &&
+          !tab.compare->load_pending && !tab.compare->right_viewport.path().empty()) {
+        paths.push_back(tab.compare->right_viewport.path().lexically_normal());
+        continue;
+      }
       if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
         continue;
       }

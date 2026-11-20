@@ -8,7 +8,8 @@ namespace microide::workspace {
 
 struct ProjectWorkspaceState;
 
-// Hands the project's open documents to its watcher's open-file watch
+// Hands the project's open documents -- every editor tab's file and every diff's
+// editable side -- to its watcher's open-file watch
 // (FileIndexWatcher::WatchOpenFiles), whenever the set differs from what it last
 // handed over. Called once per prepared frame: a fingerprint of the open paths
 // costs no allocation, and the list is built only when that fingerprint moves --
