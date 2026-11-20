@@ -226,6 +226,6 @@ def describe(kind: str, detail: str, context: str = "") -> str:
 
 # Kinds whose findings say nothing about the app if the machine was overloaded:
 # the soak runner re-checks them before calling them deterministic.
-TIMING_KINDS = frozenset({"latency", "liveness", "idle"})  # re-checked before trusted
+TIMING_KINDS = frozenset({"latency", "liveness", "idle", "scaling"})  # re-checked before trusted
 # Kinds after which the monkey cannot go on with the same process.
 FATAL_KINDS = frozenset({"crash"})

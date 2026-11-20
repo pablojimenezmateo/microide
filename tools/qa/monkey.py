@@ -72,6 +72,7 @@ import monkey_model as mm
 import diff_variants as dv
 import monkey_oracles as mo
 import remote_host as rh
+import scaling as sc
 import x_clipboard as xc
 
 # Every command name the palette registers, so the sweep cannot silently stop
@@ -713,6 +714,9 @@ PROFILES: dict[str, dict[str, float]] = {
     # profile both typed into one and killed (TD-2026-11-19-453).
     "diff": {"diff": 14, "type": 16, "text": 10, "chord": 12, "element": 14, "burst": 6, "wheel": 6,
              "command": 4, "setting": 2, "window": 2, "kill9": 1.5},
+    # The scaling oracle alone (scaling.py): each step times one operation at N
+    # and 2N. A dozen steps is every probe once and then some.
+    "scaling": {"scale": 1},
 }
 # Plugins a profile's runs load (tools/qa/microide_qa.py App.launch copies them
 # in; the replay header records them, so a replay loads the same). Every other
@@ -804,6 +808,7 @@ class Monkey:
             "terminal": self.terminal_action, "file": self.file_action,
             "external": self.external_action, "kill9": self.kill9_action, "diff": self.diff_action,
             "tooling": self.tooling_action, "remote": self.remote_action, "plugin": self.plugin_action,
+            "scale": self.scale_action,
         }
         self._plugin_commands: list[str] | None = None
         self._tooling_ready = False
@@ -1540,6 +1545,16 @@ class Monkey:
         self.app.record_external({"oracle": "structural-diff"})
         self._report_with_evidence(label, self.structural.check(), self.structural.evidence)
         self.structural.evidence = {}
+
+    def scale_action(self) -> str:
+        """One probe of the scaling oracle, in turn: an operation timed at N and
+        at 2N, reported when it grew clearly faster than linear (scaling.py)."""
+        if self.project is None:
+            return self.command_action()
+        probe = sc.PROBES[self.counter % len(sc.PROBES)]
+        self.counter += 1
+        self.app.report(f"monkey step {self.step_index}", sc.check(self.app, self.project, probe))
+        return f"scale:{probe.name}"
 
     def kill9_action(self) -> str:
         if self.relaunches >= self.max_relaunches:

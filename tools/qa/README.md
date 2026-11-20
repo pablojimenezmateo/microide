@@ -342,7 +342,7 @@ conflicting merge, working trees added, locked and deleted beside the project --
 recorded, so a replay redoes them; one change in twelve is made between
 `review-checkpoint-mark` and `review-checkpoint`) and `kill9`. A **profile**
 sets the weights: `default`, `editing`, `layout`, `world`, `terminal`, `settings`,
-`diff` (diffs typed into on the editable side, and killed there), `tooling` (clangd, gdb and the `qa-tests` test provider through their
+`diff` (diffs typed into on the editable side, and killed there), `scaling` (the scaling oracle alone), `tooling` (clangd, gdb and the `qa-tests` test provider through their
 plugins), `remote`, `crash` (a dozen kills a run), `plugins` (the bundled
 data-only plugins: their commands, surfaces and reloads), and the former command
 fuzzer's `commands` and `editor`. The chord source presses two-stroke bindings
@@ -409,6 +409,19 @@ rules every five steps (the `invariants` query: groups against the split tree,
 a payload for each tab's kind, one Untitled number per buffer, carets inside
 their buffers, and every twentieth step the focused editor's layout tables
 against a fresh build).
+
+**Scaling** (`scaling.py`, the `scaling` profile: `run.py monkey --profile scaling
+--steps 8`): each step times one operation -- typing and Backspace at a caret per
+line, an edit in a long file, a sort, a search with a match per line, an open
+beside many tabs, a diff of two long files -- at a size N and at 2N, from the
+command to the app's next idle point, the fastest of two each. It files a
+`scaling` finding when t(2N) is at least 3x t(N) and at least 0.3 s (x the slow
+factor), confirmed on a second pair: a cost that grows faster than its input,
+found before the input is large enough to hit the latency budget (a Backspace at
+16,000 carets took 15 s before f1c8498ed, and only the 2.5 s budget saw it). Every
+probe's two timings are printed (`scaling: <probe> N: t, 2N: t`), so a run's log
+holds the curves. A probe whose setup is refused is skipped: this oracle measures
+time, the others own correctness.
 
 **Findings** are recorded and the run goes on (`--stop-at-first` for the old
 behaviour); a crash relaunches on the same profile, which exercises session
