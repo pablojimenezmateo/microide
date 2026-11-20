@@ -172,6 +172,7 @@ TextViewport::ClassifiedContent TextViewport::ClassifyContent(std::string bytes)
   // produces these bytes, so this is what a later conflict check compares
   // against, and this is the one moment they exist.
   classified.raw_content_hash = util::QuickContentHash(bytes);
+  classified.raw_size = bytes.size();
 
   LineEndingMetadata metadata;
   {
@@ -210,7 +211,7 @@ bool TextViewport::AdoptClassifiedContent(const std::filesystem::path& path,
     ResetState(SplitOnLineFeedOnly(content.text), path, LineEnding::LF,
                /*mixed_line_endings=*/false, content.encoding, /*placeholder=*/false,
                /*dirty=*/false);
-    RecordOpenedContentHash(content.raw_content_hash);
+    RecordOpenedContentHash(content.raw_content_hash, content.raw_size);
     return true;
   }
   {
@@ -219,19 +220,32 @@ bool TextViewport::AdoptClassifiedContent(const std::filesystem::path& path,
                        content.mixed_line_endings, content.encoding, false, false);
   }
   document_->utf8_bom = content.utf8_bom;
-  RecordOpenedContentHash(content.raw_content_hash);
+  RecordOpenedContentHash(content.raw_content_hash, content.raw_size);
   return true;
 }
 
 // ResetState records the signature from a bare stat, which cannot know the bytes.
 // OpenFile does know them, so it attaches their hash to the signature ResetState
 // just recorded.
-void TextViewport::RecordOpenedContentHash(std::size_t raw_content_hash) {
+//
+// That stat comes AFTER the read. A file still being written when it was read --
+// another program streaming it out -- is longer by then, and a baseline taking the
+// stat's size and mtime vouched for the whole file while holding a prefix: past the
+// racy window every later check matched it, the watcher's events read as this
+// buffer's own echo, and the buffer stayed a prefix for good, clean (soak
+// adbdbecb317b: 1,449,984 of 1,620,018 bytes, 49 sightings). Such a baseline records
+// the size that was read, and as racy, so no stat can vouch for it: the next check
+// finds the file changed and reloads it.
+void TextViewport::RecordOpenedContentHash(std::size_t raw_content_hash, std::size_t raw_size) {
   if (!document_->disk_signature.exists || document_->disk_signature.error) {
     return;
   }
   document_->disk_signature.has_content_hash = true;
   document_->disk_signature.content_hash = raw_content_hash;
+  if (document_->disk_signature.size != raw_size) {
+    document_->disk_signature.size = raw_size;
+    document_->disk_signature.racy = true;
+  }
 }
 
 void TextViewport::TraceBufferIo(std::string_view event) const {

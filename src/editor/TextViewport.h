@@ -137,6 +137,9 @@ class TextViewport {
     // canonicalization. This is the one moment they exist, so it is where a
     // later conflict check's comparison value comes from.
     std::size_t raw_content_hash = 0;
+    // How many bytes that was. A file still being written when it was read is
+    // longer by the time the baseline is stat'ed; the size says so.
+    std::size_t raw_size = 0;
   };
 
   bool OpenFile(const std::filesystem::path& path);
@@ -1505,7 +1508,7 @@ class TextViewport {
   LineEditSpan fold_edit_span_;
   // OpenFile knows the raw bytes it read; ResetState, which records the signature,
   // does not. This attaches their hash to the signature ResetState just wrote.
-  void RecordOpenedContentHash(std::size_t raw_content_hash);
+  void RecordOpenedContentHash(std::size_t raw_content_hash, std::size_t raw_size);
 
   detail::SharedOnMove<DocumentState> document_;
   std::size_t cursor_line_ = 0;

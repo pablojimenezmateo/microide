@@ -5,6 +5,7 @@
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 #include "project/FileWriteGate.h"
 
+#include <chrono>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -161,6 +162,27 @@ void TestSameTickRewriteIsStillADiskConflict() {
          "the fixture leaves the stat exactly as it was, or this test proves nothing");
   Expect(viewport.DetectDiskConflict() == editor::TextViewport::DiskConflict::Changed,
          "a same-tick, same-size rewrite is still a conflict");
+}
+
+// A file read while another program was still writing it: the read took a prefix,
+// and the baseline's stat -- taken after the read -- saw the whole file. Matching it,
+// every later check (and the watcher, which calls such a match this buffer's own
+// echo) left the prefix in place for good, clean (soak adbdbecb317b). The baseline
+// must not vouch for bytes the buffer does not hold.
+void TestAReadThatRacedAWriterIsNotTheFile() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path file = temp_dir.path() / "streamed.txt";
+  std::string whole;
+  for (int i = 0; i < 2000; ++i) {
+    whole += std::to_string(i) + " the quick brown fox\n";
+  }
+  WriteFile(file, whole);
+  // Old enough that the stat is not racy: only the size can tell.
+  std::filesystem::last_write_time(file, std::filesystem::last_write_time(file) - std::chrono::seconds(30));
+  editor::TextViewport viewport;
+  Expect(viewport.AdoptFileContent(file, whole.substr(0, whole.size() / 2)), "the prefix the read got loads");
+  Expect(viewport.DetectDiskConflict() == editor::TextViewport::DiskConflict::Changed,
+         "the file on disk is not what the buffer read: it changed");
 }
 
 // The other half: a real change must still be caught. Same size, different bytes —
@@ -359,6 +381,7 @@ void TestFileWriteGateRefusesANameWithANul() {
 
 void RegisterFileWriteGateTests(std::vector<TestCase>& tests) {
   AddTest(tests, "FileWriteGate/RefusesANameWithANul", TestFileWriteGateRefusesANameWithANul);
+  AddTest(tests, "FileWriteGate/AReadThatRacedAWriterIsNotTheFile", TestAReadThatRacedAWriterIsNotTheFile);
   AddTest(tests, "FileWriteGate/SameTickRewriteIsStillADiskConflict",
           TestSameTickRewriteIsStillADiskConflict);
   AddTest(tests, "FileWriteGate/LocalGateWritesAndReportsTheSignature",
