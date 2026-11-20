@@ -1264,6 +1264,21 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       }
       frame_state_.painted_menu_rows_signature = signature;
     }
+    // A popup that moved or changed size -- a row came or went -- repaints where it
+    // was as well as where it is (PreparedFrameState::painted_menu_popup_rect).
+    const auto track = [this](std::optional<SDL_FRect>& painted, const std::optional<SDL_FRect>& now) {
+      if (painted.has_value() == now.has_value() && (!now.has_value() || RectsEqual(*painted, *now))) {
+        return;
+      }
+      for (const std::optional<SDL_FRect>& rect : {painted, now}) {
+        if (rect.has_value() && rect->w > 0.0f && rect->h > 0.0f) {
+          RequestRedrawRect(*rect);
+        }
+      }
+      painted = now;
+    };
+    track(frame_state_.painted_menu_popup_rect, popup_rect);
+    track(frame_state_.painted_submenu_rect, submenu_rect);
   }
   // The merge header's status (see PreparedFrameState::painted_merge_status).
   {
@@ -1381,6 +1396,41 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         RequestBreadcrumbRedraw();
       }
       frame_state_.painted_status_items = items_hash;
+    }
+  }
+  // The context menu (see PreparedFrameState::painted_context_menu_rect).
+  if (const std::optional<SDL_FRect> menu = ComputeTreeContextMenuRect();
+      menu.has_value() != frame_state_.painted_context_menu_rect.has_value() ||
+      (menu.has_value() && !RectsEqual(*menu, *frame_state_.painted_context_menu_rect))) {
+    for (const std::optional<SDL_FRect>& rect : {frame_state_.painted_context_menu_rect, menu}) {
+      if (rect.has_value() && rect->w > 0.0f && rect->h > 0.0f) {
+        RequestRedrawRect(*rect);
+      }
+    }
+    frame_state_.painted_context_menu_rect = menu;
+  }
+  // Each pane's breadcrumb label (see PreparedFrameState::painted_breadcrumb_labels).
+  {
+    const std::size_t groups = std::min(project_state.editor_groups.size(), kMaxEditorGroups);
+    std::optional<EditorGroupRectsLayout> group_rects;
+    for (std::size_t gi = 0; gi < kMaxEditorGroups; ++gi) {
+      const std::size_t label = gi < groups ? std::hash<std::string>{}(BreadcrumbLabel(gi)) | 1u : 0;
+      std::size_t& painted = frame_state_.painted_breadcrumb_labels[gi];
+      if (label == painted) {
+        continue;
+      }
+      if (painted != 0 && label != 0) {
+        if (!group_rects.has_value()) {
+          group_rects = ComputeEditorGroupRectsForState(layout);
+        }
+        const SDL_FRect band = gi < group_rects->groups.size() ? group_rects->groups[gi].breadcrumb : SDL_FRect{};
+        if (band.w > 0.0f && band.h > 0.0f) {
+          RequestRedrawRect(band);
+        } else {
+          RequestBreadcrumbRedraw();
+        }
+      }
+      painted = label;
     }
   }
   // The focused editor group: every group's strip and breadcrumb (see

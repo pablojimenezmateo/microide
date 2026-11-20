@@ -63,6 +63,14 @@ struct PreparedFrameState {
   // flags follow app state -- a terminal started, a language server ready -- and
   // that state changes under an open menu with nothing repainting it.
   std::uint64_t painted_menu_rows_signature = 0;
+  // The open menu-bar popup's and submenu's rects as prep laid them out (nullopt:
+  // none open). Paint draws them from here. Their height follows rows that come and
+  // go with the language server's readiness, which another thread moves: prep and
+  // paint laid them out separately and could disagree, and a popup that shrank was
+  // repainted at its new size only, its old lower rows left on screen (soak
+  // e4353c8cb483: an editor's context menu over a file that lost its server).
+  std::optional<SDL_FRect> painted_menu_popup_rect;
+  std::optional<SDL_FRect> painted_submenu_rect;
   // The same flags per item index (bit 0 enabled, bit 1 checked), for the open
   // popup and its submenu: paint draws them from here, not from live state. A
   // flag read twice in one frame could differ -- a terminal's exit lands on its
@@ -83,6 +91,11 @@ struct PreparedFrameState {
   // card it had hidden brought the card back in a full render while the partial
   // frame's clips -- the menu's -- never reached it (QA monkey, tooling seed 7).
   std::optional<SDL_FRect> painted_signature_help_rect;
+  // The context menu's rect as painted (nullopt: none open). Its rows depend on
+  // what it was opened over, and that can change under it; closing it damaged the
+  // rect recomputed from the new rows, so a list that got shorter left its lower
+  // rows on screen (soak e4353c8cb483). Prep repaints old and new when they differ.
+  std::optional<SDL_FRect> painted_context_menu_rect;
   std::size_t painted_signature_help_hash = 0;
   // Per editor pane, the (viewport, content revision) painted.
   std::array<std::uint64_t, kMaxEditorGroups> painted_pane_content{};
@@ -113,6 +126,11 @@ struct PreparedFrameState {
   // plugin re-added, or one a plugin updated from its thread, changed the row's
   // text in a frame that did not repaint it (QA plugins-reload, Wayland lane).
   std::uint64_t painted_status_items = 0;
+  // Each pane's breadcrumb label as painted (a hash; 0 = never painted). The band
+  // names the active document, and a change to what it names repaints it whoever
+  // made the change: a paste into the Welcome page made it an untitled buffer and
+  // damaged the editor alone, and the band kept "Welcome" (soak 7d8ebd1d38c6).
+  std::array<std::size_t, kMaxEditorGroups> painted_breadcrumb_labels{};
   // The editor group that was focused when the strips were painted: each strip
   // draws its group's active tab as focused or not, and a click in a group's
   // empty strip moved the focus with no strip repainted (QA monkey, seed 9).

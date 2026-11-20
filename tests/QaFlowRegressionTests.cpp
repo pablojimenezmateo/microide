@@ -5786,7 +5786,49 @@ void TestTabInANarrowDirtyPromptRepaintsEveryButton() {
   }
 }
 
+// The breadcrumb names the active document, and a change to what it names repaints
+// it whatever made the change. A middle-click paste into the Welcome page turned it
+// into an untitled buffer and damaged the editor alone: the band kept "Welcome"
+// (soak 7d8ebd1d38c6, 4 actions, scale 1.25). Frame prep compares each pane's
+// label with the one it painted (PreparedFrameState::painted_breadcrumb_labels).
+void TestABreadcrumbLabelChangeRepaintsTheBand() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("notes.txt", "one\ntwo\n");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the file in its tab");
+  TestAccess::ActiveEditor(fixture.shell).SetPath(fixture.root / "renamed.txt");
+  workspace::RenderInvalidation editor_only;
+  editor_only.Add(SDL_FRect{400.0f, 300.0f, 20.0f, 20.0f});
+  fixture.ExpectFresh(editor_only, "the document renamed, the editor alone damaged");
+}
+
+// A context menu whose list changed while it was open closes over the rows it
+// painted. The close damaged the menu's rect as recomputed from the NEW list: an
+// editor menu opened on a C++ file and closed by opening a text file -- fewer
+// rows -- left its lower rows painted over the bottom panel (soak e4353c8cb483).
+// Frame prep compares the menu's rect with the one it painted
+// (PreparedFrameState::painted_context_menu_rect).
+void TestAContextMenuClosesOverTheRowsItPainted() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("notes.txt", "one\ntwo\n");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the file in its tab");
+  TestAccess::OpenTreeContextMenuForPath(fixture.shell, workspace::TreeContextTargetKind::File, fixture.file);
+  fixture.ExpectFresh(full, "the file's context menu, the long list");
+  TestAccess::SetTreeContextMenuTargetForTest(fixture.shell, workspace::TreeContextTargetKind::Directory);
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE, SDL_KMOD_NONE)}),
+                      "Escape closes the menu whose list got shorter");
+}
+
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "QaFlowRegression/AContextMenuClosesOverTheRowsItPainted", TestAContextMenuClosesOverTheRowsItPainted);
+  AddTest(tests, "QaFlowRegression/ABreadcrumbLabelChangeRepaintsTheBand", TestABreadcrumbLabelChangeRepaintsTheBand);
   AddTest(tests, "QaFlowRegression/TabInANarrowDirtyPromptRepaintsEveryButton",
           TestTabInANarrowDirtyPromptRepaintsEveryButton);
   AddTest(tests, "QaFlowRegression/ClosingTheLastTabWhenZoomedInRepaintsTheStrip",

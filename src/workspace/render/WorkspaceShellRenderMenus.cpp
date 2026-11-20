@@ -49,9 +49,10 @@ void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer,
             return;
           }
           const auto items = MenuItems(menu_id);
-          const auto popup_rect =
-              anchor_rect.has_value() ? ActiveSubmenuRect(layout.menu_bar)
-                                      : ComputePopupMenuRect(layout.menu_bar, menu_id);
+          // As prep laid them out (PreparedFrameState::painted_menu_popup_rect).
+          const std::optional<SDL_FRect>& popup_rect = anchor_rect.has_value()
+                                                           ? frame_state_.painted_submenu_rect
+                                                           : frame_state_.painted_menu_popup_rect;
           if (!popup_rect.has_value()) {
             return;
           }
@@ -94,7 +95,11 @@ void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer,
   }
 
   const auto items = TreeContextMenuItems(context_.menu_state.tree_context_menu.target);
-  const auto popup_rect = ComputeTreeContextMenuRect();
+  // The rect frame prep laid out and damaged for, not a fresh one: its height comes
+  // from a cache keyed on the language server's readiness, which another thread
+  // moves, so a paint that laid it out again could draw rows past the rect prep
+  // repainted and the close later damaged (soak e4353c8cb483).
+  const std::optional<SDL_FRect>& popup_rect = frame_state_.painted_context_menu_rect;
   if (items.empty() || !popup_rect.has_value()) {
     return;
   }

@@ -254,6 +254,11 @@
                                          const std::filesystem::path& path) {
     shell.MakeMenuCoordinator().OpenTreeContextMenu(target, path, SDL_FRect{0, 0, 0, 0});
   }
+  // Changes what the open context menu lists, requesting no repaint: the state a
+  // menu whose rows depend on the active editor is in once a command switched it.
+  static void SetTreeContextMenuTargetForTest(WorkspaceShell& shell, TreeContextTargetKind target) {
+    shell.context_.menu_state.tree_context_menu.target = target;
+  }
   static editor::BreakpointStore& BreakpointStore(WorkspaceShell& shell) {
     return shell.context_.current_project_state.breakpoint_store;
   }
