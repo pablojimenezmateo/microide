@@ -445,6 +445,53 @@ void TestDocumentsQueryHashesWhatASaveWrites() {
   }
 }
 
+// A diff's editable side is the file's buffer too. With no editor tab on the file
+// `documents` listed nothing of it, so the kill -9 oracle could not see text typed
+// into a diff be lost (TD-2026-11-19-453), nor the clean-buffer oracle a diff
+// left showing a file's old text. It is listed as an editor tab's document is --
+// once, with the digest of what its save writes -- and names its surface.
+void TestDocumentsQueryListsAFileOpenOnlyInADiff() {
+  UiFixture fixture;
+  const std::filesystem::path path = fixture.root / "crlf.txt";
+  const std::string crlf = "\xEF\xBB\xBFone\r\ntwo\r\n";
+  WriteFile(path, "\xEF\xBB\xBFone\r\n");
+  InitializeGitRepo(fixture.root);
+  CommitAll(fixture.root, "Add the fixture", "fixture");
+  WriteFile(path, crlf);
+  Expect(TestAccess::OpenWorkingTreeComparison(fixture.shell, path, "HEAD", "HEAD"), "the working-tree diff opens");
+  const auto rows = [&] {
+    std::vector<util::JsonValue> found;
+    const util::JsonValue documents = TestAccess::ControlQuery(fixture.shell, "documents");
+    for (const util::JsonValue& doc : documents.AsArray()) {
+      if (doc["path"].AsString().ends_with("crlf.txt")) {
+        found.push_back(doc);
+      }
+    }
+    return found;
+  };
+  std::vector<util::JsonValue> listed = rows();
+  Expect(listed.size() == 1, "the diff's file is a document (" + std::to_string(listed.size()) + " rows)");
+  if (listed.size() != 1) {
+    return;
+  }
+  Expect(listed[0]["surface"].AsString() == "compare", "listed as a diff's side");
+  Expect(!listed[0]["dirty"].AsBool() && listed[0]["sha256"].AsString() == util::Sha256Hex(crlf),
+         "clean, and its digest is the file's: the BOM and the CRLF endings included");
+  TestAccess::ActiveCompare(fixture.shell).right_viewport.MoveCursorTo(0, 0);
+  Expect(TestAccess::HandleTextInput(fixture.shell, "x"), "a letter typed into the editable side");
+  listed = rows();
+  Expect(listed.size() == 1 && listed[0]["dirty"].AsBool() &&
+             listed[0]["sha256"].AsString() == util::Sha256Hex("\xEF\xBB\xBFxone\r\ntwo\r\n"),
+         "typing makes it dirty, and the digest follows the edit");
+  // One file, one document: an editor tab on it is the same buffer, listed once,
+  // and as the editor tab.
+  TestAccess::OpenFileInNewTab(fixture.shell, path);
+  listed = rows();
+  Expect(listed.size() == 1, "still one row with an editor tab on the file (" + std::to_string(listed.size()) + ")");
+  Expect(listed.size() == 1 && listed[0]["surface"].AsString() == "editor" && listed[0]["dirty"].AsBool(),
+         "the editor tab's, holding the same unsaved text");
+}
+
 // The `surface` query lists every query verb; each must be answered, so the
 // inventory the QA monkey's coverage is measured against cannot name a verb the
 // channel does not have (or miss one it grew). It also lists the menus, the
@@ -1008,6 +1055,7 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/InvariantsQueryHoldsAndNamesBrokenRules",
           TestInvariantsQueryHoldsAndNamesBrokenRules);
   AddTest(tests, "ControlUiQuery/DocumentsQueryHashesWhatASaveWrites", TestDocumentsQueryHashesWhatASaveWrites);
+  AddTest(tests, "ControlUiQuery/DocumentsQueryListsAFileOpenOnlyInADiff", TestDocumentsQueryListsAFileOpenOnlyInADiff);
   AddTest(tests, "ControlUiQuery/DocumentsQueryHashesWhatASaveWritesForABufferMadeOpaque",
           TestDocumentsQueryHashesWhatASaveWritesForABufferMadeOpaque);
   AddTest(tests, "ControlUiQuery/InjectedInputRepaintsWhatItChanged", TestInjectedInputRepaintsWhatItChanged);

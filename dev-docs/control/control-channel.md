@@ -343,11 +343,13 @@ pointer-driven action records its receipt and runs nothing (control commands sti
 run), which is how `tools/qa`'s `keys` and `context-menus` sweeps press everything.
 
 **What is open, and what a save would write (`documents`).** One row per open
-editor document in the current project, however many panes show it: `{path, title,
-dirty, readOnly, encoding (ascii|utf8|bytes), mixedLineEndings, bytes, sha256}`,
-where `sha256` is the digest of the bytes a save writes now (the BOM, the lines
-joined with the document's ending; LF for a binary buffer). A view whose content
-has not loaded yet is not listed. The QA monkey's data-loss oracle reads it: a
+file buffer in the current project, however many tabs show it: `{path, title,
+surface (editor|compare), dirty, readOnly, encoding (ascii|utf8|bytes),
+mixedLineEndings, bytes, sha256}`, where `sha256` is the digest of the bytes a
+save writes now (the BOM, the lines joined with the document's ending; LF for a
+binary buffer). A diff's editable side is the file's buffer as an editor tab's
+viewport is (`surface: compare` when no editor tab holds the file; the row then
+names the compare tab). A view whose content has not loaded yet is not listed. The QA monkey's data-loss oracle reads it: a
 clean document's file has that digest, and a dirty one comes back with it after
 a kill -9 and a relaunch (`dev-docs/project/safety-plan.md` W4).
 

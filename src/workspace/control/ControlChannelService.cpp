@@ -1012,8 +1012,9 @@ util::JsonValue ControlChannelService::BuildEditor() const {
   return util::JsonValue(std::move(root));
 }
 
-// `documents`: every editor document open in the current project, once each
-// however many views show it -- its path, whether it is unsaved, and the SHA-256
+// `documents`: every file buffer open in the current project (an editor tab's, a
+// diff's editable side: LoadedBufferViewOf), once each however many views show
+// it -- its path, the surface listed for it, whether it is unsaved, and the SHA-256
 // of the bytes a save would write now (the BOM, the lines joined with the
 // document's ending). The QA monkey's data-loss oracle reads it: a clean
 // document's file holds exactly those bytes, and a dirty one comes back with the
@@ -1049,13 +1050,16 @@ util::JsonValue ControlChannelService::BuildDocuments(const util::JsonValue& arg
   }
   std::vector<const void*> seen;
   for (const auto& [project, active] : projects) {
+    // Editor tabs first: a document an editor tab and a diff share is listed as
+    // the editor tab's, wherever the two sit.
+    for (const TabEntry::Kind surface : {TabEntry::Kind::Editor, TabEntry::Kind::Compare}) {
     for (const EditorGroup& group : project->editor_groups) {
       for (const TabEntry& tab : group.open_tabs) {
-        if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
-            tab.editor_state->content_pending()) {
+        const editor::TextViewport* loaded = tab.kind == surface ? LoadedBufferViewOf(tab) : nullptr;
+        if (loaded == nullptr) {
           continue;
         }
-        const editor::TextViewport& view = tab.editor_state->viewport;
+        const editor::TextViewport& view = *loaded;
         if (std::find(seen.begin(), seen.end(), view.document_identity()) != seen.end()) {
           continue;
         }
@@ -1070,6 +1074,7 @@ util::JsonValue ControlChannelService::BuildDocuments(const util::JsonValue& arg
         util::JsonObject object;
         object["path"] = util::JsonValue(view.path().generic_string());
         object["title"] = util::JsonValue(tab.title);
+        object["surface"] = util::JsonValue(std::string(surface == TabEntry::Kind::Editor ? "editor" : "compare"));
         // Where the tab sits and the number its title claims, so a duplicate
         // Untitled-N names the two tabs that collide (soak 2ae149191d79).
         object["group"] = util::JsonValue(static_cast<std::int64_t>(&group - project->editor_groups.data()));
@@ -1098,6 +1103,7 @@ util::JsonValue ControlChannelService::BuildDocuments(const util::JsonValue& arg
         }
         documents.push_back(util::JsonValue(std::move(object)));
       }
+    }
     }
   }
   return util::JsonValue(std::move(documents));
