@@ -21,22 +21,24 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 Left by the 2026-11-19 bug-hunting pass (commits bbb153be3 onwards). None has a
 fix, and each names what it needs; the first is the one that loses a user's work.
 
-1. **Unsaved edits made only in a diff are lost by a crash.** The crash-safety
-   session stages the dirty buffer of every EDITOR tab; a compare tab's record
-   carries no buffer. Edits typed into a working-tree diff's editable side, with
-   no editor tab open on that file, are gone after a kill -9 and a relaunch: the
-   diff comes back clean, showing the file on disk (shown 2026-11-20 with a
-   probe: open the working-tree diff of a modified file, type a line into its
-   right side, flush the session, restore -- `dirty=0`, the typed line gone).
-   The kill oracle cannot see it: `documents` lists editor tabs only. Wants the
-   compare record to carry the dirty snapshot an editor record does (the struct
-   is shared; `persisted-state-format/spec.md` has to say so), the restore to
-   apply it through the same per-path map (`restored_dirty_views`), the
-   off-thread compare load to leave a restored dirty side alone, and
-   `documents` to list editable compare sides so the oracle holds them to it.
-   Found while fixing soak 72acd73823bd / 8d52e6176b32 (a file open dirty in
-   an editor tab AND a diff came back as two buffers: fixed, the `buffers`
-   invariant found it within two hours of landing).
+1. **Text typed by hand into a merge result is lost by a crash.** The sibling of
+   what this item first recorded -- unsaved edits made only in a diff, fixed
+   2026-11-20 (52e960935, bc0f32527: a compare record carries its editable side's
+   buffer, a compare of two files leaves an editor record, and `documents` lists
+   both so the kill oracle holds them to it, 7474f6ef0). A merge tab's record
+   still carries the conflict choices and nothing of the result's text, and an
+   edit in the result does not arm the crash-safety flush (`LoadedBufferViewOf`
+   leaves a merge out on purpose: its result is synthesized text, not a file's
+   buffer). Shown 2026-11-20 with a probe: open a merge, type "edited " into
+   line 2 of the result, flush, restore -- the flush was not armed, the tab came
+   back `dirty=0` and line 2 read "two". The choices survive; the typing does
+   not. It is not the diff's fix again: the result's text and the model's
+   conflict spans move together (`MergeTabState::conflicts`), so a snapshot of
+   the text alone restores a result whose conflicts point at the wrong lines.
+   Wants the merge record to carry the result buffer WITH the spans as the tab
+   tracked them (new record fields; `persisted-state-format/spec.md` has to say
+   so), the flush to arm for a merge edit, and the kill oracle to see a merge
+   result (`documents` does not list one).
 2. **The mirror engine logs no decision per path**, so a `remote:` finding
    cannot be explained after the fact (soak 37ec61829b08: the host's
    unreadable.txt was renamed away by the run, a blocked save of the mirror's

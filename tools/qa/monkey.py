@@ -708,9 +708,11 @@ PROFILES: dict[str, dict[str, float]] = {
     # the pointer and the keys, and the host reloaded under all of it.
     "plugins": {"plugin": 14, "element": 18, "type": 10, "text": 8, "chord": 10, "command": 6, "wheel": 4,
                 "setting": 4, "window": 3, "burst": 3, "file": 3, "kill9": 0.4},
-    # Diffs: structural refinement over generated code, typed into on the editable side.
+    # Diffs: structural refinement over generated code, typed into on the editable side
+    # -- and killed there: text typed only into a diff was staged nowhere, and no
+    # profile both typed into one and killed (TD-2026-11-19-453).
     "diff": {"diff": 14, "type": 16, "text": 10, "chord": 12, "element": 14, "burst": 6, "wheel": 6,
-             "command": 4, "setting": 2, "window": 2},
+             "command": 4, "setting": 2, "window": 2, "kill9": 1.5},
 }
 # Plugins a profile's runs load (tools/qa/microide_qa.py App.launch copies them
 # in; the replay header records them, so a replay loads the same). Every other

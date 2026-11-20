@@ -342,7 +342,7 @@ conflicting merge, working trees added, locked and deleted beside the project --
 recorded, so a replay redoes them; one change in twelve is made between
 `review-checkpoint-mark` and `review-checkpoint`) and `kill9`. A **profile**
 sets the weights: `default`, `editing`, `layout`, `world`, `terminal`, `settings`,
-`diff`, `tooling` (clangd, gdb and the `qa-tests` test provider through their
+`diff` (diffs typed into on the editable side, and killed there), `tooling` (clangd, gdb and the `qa-tests` test provider through their
 plugins), `remote`, `crash` (a dozen kills a run), `plugins` (the bundled
 data-only plugins: their commands, surfaces and reloads), and the former command
 fuzzer's `commands` and `editor`. The chord source presses two-stroke bindings
@@ -396,7 +396,8 @@ replaying one (rarest states first, `--corpus-probability`).
 
 **Oracles** on top of the App's: `monkey_oracles.py` -- every clean document's file
 holds exactly the bytes a save would write (the `documents` query's SHA-256),
-every 20 steps and at the end; around a kill -9, every dirty buffer comes back
+every 20 steps and at the end -- a document being an editor tab's buffer or a
+diff's editable side; around a kill -9, every dirty buffer comes back
 with its content (after the crash-safety flush's quiet period) and no clean file
 changed; sampled undo^k redo^k is the identity; fd, thread, child and RSS growth
 within budgets; every control answer within 2.5 s (x the slow factor) -- unless
