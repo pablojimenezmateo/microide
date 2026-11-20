@@ -2251,11 +2251,6 @@
   CrashSafetyFlushSchedule session_flush_;
   // What MaybeArmSessionFlushTimer last saw of every open editor document.
   std::uint64_t session_flush_content_fingerprint_ = 0;
-  // Set only while MaybeAutosaveDirtyTabs is writing dirty buffers, so the shared save
-  // path skips the synchronous format-on-save subprocess. Autosave (focus change /
-  // after delay) must never block the UI thread on an external formatter — explicit
-  // saves (Ctrl+S) still format.
-  bool autosave_suppress_format_on_save_ = false;
   RenderInvalidation pending_render_invalidation_;
   // Bumped by every damage request, including one a pending full redraw absorbs;
   // see MarkDamage.

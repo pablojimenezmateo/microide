@@ -52,6 +52,13 @@ enum class SaveMode {
   // has their answer. (It skipped only the formatter once, so a save with both
   // ran its participants twice: before the formatter, and again on its output.)
   SkipTransforms,
+  // An autosave (editor.autosave on focus change or after a delay): the buffer is
+  // written exactly as it is -- no participant, no formatter, and none of the
+  // editor's own save transforms (trailing whitespace, final newline). Those are the
+  // explicit save's, as in VS Code: applied as an edit to the buffer by a save the
+  // user did not ask for, one fired between two Ctrl+Z wiped the redo history
+  // (soak a1e5cc0de9e5), and a formatter must not stall the UI on a focus change.
+  Autosave,
 };
 
 }  // namespace microide::workspace

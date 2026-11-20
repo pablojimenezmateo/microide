@@ -23,6 +23,17 @@ namespace microide::workspace {
 
 namespace {
 
+// The editor's own save transforms for a save of this mode: an autosave writes the
+// buffer as it is (SaveMode::Autosave).
+editor::TextViewport::SaveTransforms SaveTransformsFor(SaveMode mode) {
+  return mode == SaveMode::Autosave ? editor::TextViewport::SaveTransforms::Skip
+                                    : editor::TextViewport::SaveTransforms::Apply;
+}
+
+}  // namespace
+
+namespace {
+
 std::string EditorTabLabel(const editor::TextViewport& viewport, std::uint32_t untitled_number) {
   if (viewport.path().empty() && viewport.is_placeholder()) {
     return "Welcome";
@@ -105,7 +116,7 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
                           /*banner_shows=*/false)) {
       return false;
     }
-    if (std::error_code why; !compare_tab.right_viewport.Save(state_.write_gate(), &why)) {
+    if (std::error_code why; !compare_tab.right_viewport.Save(state_.write_gate(), &why, SaveTransformsFor(mode))) {
       if (operations_.notify_save_failed) {
         operations_.notify_save_failed(compare_tab.right_viewport.path(), util::DescribeWriteError(why));
       }
@@ -152,7 +163,7 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
                           /*banner_shows=*/false)) {
       return false;
     }
-    if (std::error_code why; !merge_tab.result_viewport.Save(state_.write_gate(), &why)) {
+    if (std::error_code why; !merge_tab.result_viewport.Save(state_.write_gate(), &why, SaveTransformsFor(mode))) {
       if (operations_.notify_save_failed) {
         operations_.notify_save_failed(merge_tab.result_viewport.path(), util::DescribeWriteError(why));
       }
@@ -239,7 +250,7 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
     }
   }
   editor_state->pending_format_save.Disarm();
-  if (std::error_code why; !candidate->Save(state_.write_gate(), &why)) {
+  if (std::error_code why; !candidate->Save(state_.write_gate(), &why, SaveTransformsFor(mode))) {
     if (operations_.notify_save_failed) {
       operations_.notify_save_failed(candidate->path(), util::DescribeWriteError(why));
     }

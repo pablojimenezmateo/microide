@@ -212,7 +212,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
       SettingSpec{
           .id = "editor.autosave",
           .label = "Autosave",
-          .description = "When to save dirty buffers automatically.",
+          .description = "When to save dirty buffers automatically. An autosave writes the buffer as it is: formatting and the save-time whitespace and newline fixes apply to explicit saves only.",
           .type = SettingType::Enum,
           .scope = SettingScope::Project,
           .default_bool = false,
@@ -1104,7 +1104,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
       SettingSpec{
           .id = "editor.save.trim_trailing_whitespace",
           .label = "Trim Trailing Whitespace on Save",
-          .description = "Remove trailing spaces and tabs on every line when saving.",
+          .description = "Remove trailing spaces and tabs on every line when you save (not on autosave).",
           .type = SettingType::Bool,
           .scope = SettingScope::Project,
           .default_bool = false,
@@ -1115,7 +1115,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
       SettingSpec{
           .id = "editor.save.ensure_final_newline",
           .label = "Ensure Final Newline on Save",
-          .description = "Make the saved file end with exactly one newline.",
+          .description = "Make the saved file end with exactly one newline when you save (not on autosave).",
           .type = SettingType::Bool,
           .scope = SettingScope::Project,
           .default_bool = true,

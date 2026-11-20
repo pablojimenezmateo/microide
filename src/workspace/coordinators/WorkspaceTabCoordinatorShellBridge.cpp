@@ -529,16 +529,14 @@ void WorkspaceShell::MaybeAutosaveDirtyTabs(bool on_focus_change) {
   }
   // TabCoordinator::Save refuses untitled buffers and surfaces the external-change
   // banner on a disk conflict, so autosave never pops a dialog or clobbers a file
-  // changed on disk. Suppress the synchronous format-on-save subprocess for the
-  // duration: an autosave (focus change / after delay) must not stall the UI thread
-  // on an external formatter — most visibly during window blur / alt-tab.
-  autosave_suppress_format_on_save_ = true;
+  // changed on disk. SaveMode::Autosave writes each buffer as it is: no formatter
+  // subprocess to stall the UI thread (most visibly during window blur / alt-tab),
+  // and no save transform rewriting the buffer under the user.
   // Flush every dirty tab across ALL editor groups, not just the focused one, so a
   // buffer dirtied in the non-focused split group is autosaved too (VSCode parity).
   for (const GroupTabRef& ref : MakeEditorTabService().DirtyGroupTabs()) {
-    SaveGroupTab(ref.group_index, ref.tab_index, SaveMode::Blocking);  // formatter suppressed
+    SaveGroupTab(ref.group_index, ref.tab_index, SaveMode::Autosave);
   }
-  autosave_suppress_format_on_save_ = false;
 }
 
 Uint64 WorkspaceShell::AutosaveDelayMs() const {
@@ -646,8 +644,9 @@ SavePreparation WorkspaceShell::PrepareEditorViewportForSave(const std::filesyst
     return SavePreparation::Ready();
   }
 
-  // The save a deferred completion re-enters already has every transform's answer.
-  if (mode == SaveMode::SkipTransforms) {
+  // The save a deferred completion re-enters already has every transform's answer;
+  // an autosave runs none (SaveMode::Autosave).
+  if (mode == SaveMode::SkipTransforms || mode == SaveMode::Autosave) {
     return SavePreparation::Ready();
   }
   // Fast-return BEFORE serializing the whole buffer when no save transform can run:
@@ -669,10 +668,9 @@ SavePreparation WorkspaceShell::PrepareEditorViewportForSave(const std::filesyst
   const std::string_view filetype = path == viewport.path()
                                         ? std::string_view(viewport.language_id())
                                         : std::string_view(destination_filetype);
-  // Autosave suppresses the formatter so a background write never blocks the UI thread
-  // on an external subprocess; explicit saves still format.
-  const bool format_on_save = !autosave_suppress_format_on_save_ &&
-                              SettingFlagEnabled(GetSettingValue("editor.format_on_save"), true);
+  // An autosave returned above, so a background write never blocks the UI thread on
+  // an external subprocess; explicit saves format.
+  const bool format_on_save = SettingFlagEnabled(GetSettingValue("editor.format_on_save"), true);
   const FormatterSpec* formatter =
       (format_on_save && !filetype.empty()) ? FindFormatter(formatter_registry_, filetype)
                                             : nullptr;

@@ -159,7 +159,12 @@ class TextViewport {
   // that replaces a viewport wholesale (a reload, the LSP's scratch view), then
   // wrote the wrong place while reporting success (TD-2026-09-29-308).
   // On failure `*error` (when given) is the gate's reason.
-  [[nodiscard]] bool Save(project::FileWriteGate& gate, std::error_code* error = nullptr);
+  // Whether a save applies the save-time transforms (trailing whitespace, final
+  // newline) to the text it writes -- and so to the buffer, as an undoable edit.
+  // An autosave skips them (SaveMode::Autosave).
+  enum class SaveTransforms { Apply, Skip };
+  [[nodiscard]] bool Save(project::FileWriteGate& gate, std::error_code* error = nullptr,
+                          SaveTransforms transforms = SaveTransforms::Apply);
   // Save-time normalization knobs. When set, `Save()` applies these transforms
   // to the in-memory line buffer (recorded as undo) before the file is
   // serialized. Defaults are off; callers should configure them from

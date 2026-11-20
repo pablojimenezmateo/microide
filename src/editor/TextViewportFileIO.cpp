@@ -267,7 +267,7 @@ void TextViewport::TraceBufferIo(std::string_view event) const {
       disk.exists ? 1 : 0, disk.size, disk.mtime_ticks, disk.racy ? 1 : 0));
 }
 
-bool TextViewport::Save(project::FileWriteGate& gate, std::error_code* error) {
+bool TextViewport::Save(project::FileWriteGate& gate, std::error_code* error, SaveTransforms transforms) {
   EnsureDocument();
   if (document_->path.empty()) {
     return false;
@@ -292,8 +292,8 @@ bool TextViewport::Save(project::FileWriteGate& gate, std::error_code* error) {
   // enabled. A clean save with transforms off (or an opaque/binary buffer) skips the
   // O(line count) ToVector pass entirely and serializes straight from the snapshot —
   // the transform check is cheap and the common case is no transform. (TD-2026-07-16-12.)
-  const bool wants_transform =
-      !opaque && (save_trim_trailing_whitespace_ || save_ensure_final_newline_);
+  const bool wants_transform = transforms == SaveTransforms::Apply && !opaque &&
+                               (save_trim_trailing_whitespace_ || save_ensure_final_newline_);
   std::vector<std::string> normalized;
   bool changed = false;
   if (wants_transform) {

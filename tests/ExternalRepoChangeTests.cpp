@@ -1492,9 +1492,46 @@ void TestWorkspaceShellAutosaveFlushesNonFocusedGroupDirtyTab() {
          "the flushed non-focused tab should be clean afterwards");
 }
 
+// An autosave writes the buffer as it is. It applied the save-time transforms (here
+// the final newline) as an edit to the buffer, so one fired in the middle of an undo
+// -- a focus change between two Ctrl+Z -- wiped the redo history and left an undo
+// entry whose caret sat past its line (soak a1e5cc0de9e5). The transforms are the
+// explicit save's; an autosave neither applies them to the file nor to the buffer.
+void TestWorkspaceShellAnAutosaveWritesTheBufferAsItIs() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file = root / "notes.txt";
+  WriteFile(file, "abc");  // no final newline
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+  DrainProjectChanges(shell);
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.autosave", "on_focus_change"),
+         "on_focus_change autosave is settable");
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.InsertText("1");
+  viewport.MoveCursorTo(0, 4);  // elsewhere: a second undo step, not one typing run
+  viewport.InsertText("2");
+  const std::string with_both = viewport.SerializeText();
+  viewport.Undo();
+  const std::string with_one = viewport.SerializeText();
+  Expect(viewport.dirty(), "mid-undo the buffer is dirty");
+
+  WorkspaceShellTestAccess::MaybeAutosaveDirtyTabs(shell, /*on_focus_change=*/true);
+
+  Expect(ReadFile(file) == with_one, "the autosave wrote the buffer as it is: '" + ReadFile(file) + "'");
+  Expect(viewport.SerializeText() == with_one, "the autosave left the buffer's text alone");
+  Expect(!viewport.dirty(), "the autosaved buffer is clean");
+  viewport.Redo();
+  Expect(viewport.SerializeText() == with_both, "the redo history survived the autosave");
+}
+
 }  // namespace
 
 void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ExternalRepoChange/AnAutosaveWritesTheBufferAsItIs", TestWorkspaceShellAnAutosaveWritesTheBufferAsItIs);
   AddTest(tests, "ExternalRepoChange/AutosaveFlushesNonFocusedGroupDirtyTab",
           TestWorkspaceShellAutosaveFlushesNonFocusedGroupDirtyTab);
   AddTest(tests, "ExternalRepoChange/ReloadsCleanBuffer",
