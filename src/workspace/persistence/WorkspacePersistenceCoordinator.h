@@ -35,6 +35,11 @@ class PersistenceCoordinator {
                                           const std::filesystem::path&)>
         build_merge_tab_entry;
     std::function<void(MergeTabState&)> refresh_merge_tab_derived_state;
+    // A merge's conflicts placed by matching its model against a result text (as a
+    // result read from disk is): for a restored typed result whose recorded spans
+    // no longer fit the rebuilt model.
+    std::function<std::vector<MergeTrackedConflict>(compare::MergeModel&, const std::vector<std::string>&)>
+        merge_conflicts_for_result;
     std::function<std::filesystem::path(const TabEntry::EditorTabState&)> editor_view_path;
     std::function<void()> sync_active_editor_tab;
     std::function<std::filesystem::path(const std::filesystem::path&)> resolve_project_root_input;
@@ -115,6 +120,8 @@ class PersistenceCoordinator {
                                             const editor::TextViewport* unsaved_right);
   std::optional<TabEntry> RestoreMergeTab(const PersistedEditorTabState& persisted_tab,
                                           const std::filesystem::path& root);
+  void RestoreTypedMergeResult(const PersistedEditorTabState& persisted_tab,
+                               const std::filesystem::path& output_path, MergeTabState& merge);
   std::optional<PersistedEditorTabState> BuildPersistedCompareTabState(
       const TabEntry& tab) const;
   std::optional<PersistedEditorTabState> BuildPersistedMergeTabState(

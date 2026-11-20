@@ -51,6 +51,26 @@ A project session SHALL carry the unsaved text of every loaded file buffer, whic
 - **WHEN** a compare tab the session does not persist (a compare of two files) holds unsaved text in its editable side
 - **THEN** the session SHALL carry that text in an editor record for the file -- the record of an editor tab already open on it, or one written in the compare tab's place -- and the restore SHALL bring it back in exactly one editor tab
 
+### Requirement: A merge's typed result is staged with its conflicts
+
+A project session SHALL carry the unsaved text of a merge tab's result, and the crash-safety flush SHALL arm for an edit to it. The record SHALL carry the text with the same snapshot fields an editor record uses, and one conflict-span record per tracked conflict (hunk index, first and end line in that text, last choice, valid, resolved), because a line typed above a conflict moves it.
+
+#### Scenario: A typed result after a crash
+- **WHEN** the user types into a merge result and the editor is killed after the crash-safety flush
+- **THEN** the relaunch SHALL restore the merge with the typed text, unsaved, and each conflict at the lines the tab tracked it on, so a later side choice replaces that conflict's lines and no typed ones
+
+#### Scenario: Spans that no longer fit
+- **WHEN** a merge's inputs changed while the editor was down and the recorded spans do not match the conflicts the rebuilt merge has
+- **THEN** the restore SHALL keep the typed text and SHALL place the conflicts by matching the rebuilt merge against that text
+
+#### Scenario: A merge the session does not keep
+- **WHEN** a merge the session does not persist (a git conflict's) holds typed text in its result
+- **THEN** the session SHALL carry that text in an editor record for the conflicted file, and the restore SHALL bring it back in an editor tab
+
+#### Scenario: The result file changed while the editor was down
+- **WHEN** the result file changed after the merge last read or saved it, and the user saves the restored typed result
+- **THEN** the save SHALL be refused and the file's content SHALL stay on disk
+
 ### Requirement: A restored unsaved buffer keeps its disk baseline
 
 A session's snapshot of a dirty buffer (an editor tab's, or a compare tab's editable side) SHALL record the file's stat (existence, modification time, size) as the buffer last saw it, and restoring the snapshot SHALL restore that baseline, so that the save-time check that refuses to overwrite a file changed on disk applies across a crash or restart exactly as within one run.

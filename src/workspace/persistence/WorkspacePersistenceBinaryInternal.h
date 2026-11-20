@@ -192,6 +192,9 @@ enum class EditorTabTag : std::uint16_t {
   DiskBaseline = 35,   // bool exists, u64 mtime ticks, u64 size: a dirty snapshot's baseline
   DiskBaselineContent = 36,  // u64 content hash, u64 hash probe: after DiskBaseline, when known
   UntitledNumber = 37,       // u32: an untitled buffer's "Untitled-N"
+  // Repeated, with a merge result's dirty snapshot: size hunk, size start line,
+  // size end line, string choice label, bool valid, bool resolved.
+  MergeConflictSpan = 38,
 };
 
 enum class WorkspaceSessionTag : std::uint16_t {
@@ -504,6 +507,17 @@ bool ReadStringRecord(EnumTag expected_tag,
       return false;
     }
   }
+  for (const PersistedMergeConflictSpan& span : tab.merge_conflict_spans) {
+    if (!AppendRecord(EditorTabTag::MergeConflictSpan,
+                      [&](PrimitiveWriter& w) {
+                        return WriteSize(w, span.hunk_index) && WriteSize(w, span.start_line) &&
+                               WriteSize(w, span.end_line) && w.WriteString(span.last_choice) &&
+                               w.WriteBool(span.valid) && w.WriteBool(span.resolved);
+                      },
+                      out)) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -669,6 +683,19 @@ inline constexpr std::size_t kMaxSessionClosedEditors = kMaxPersistedClosedEdito
               return false;
             }
             tab->merge_hunk_choices.push_back(std::move(choice));
+            return true;
+          }
+          case EditorTabTag::MergeConflictSpan: {
+            PersistedMergeConflictSpan span;
+            if (!ReadSize(reader, &span.hunk_index) || !ReadSize(reader, &span.start_line) ||
+                !ReadSize(reader, &span.end_line) || !reader.ReadString(&span.last_choice) ||
+                !reader.ReadBool(&span.valid) || !reader.ReadBool(&span.resolved) || reader.remaining() != 0) {
+              return false;
+            }
+            if (tab->merge_conflict_spans.size() >= kMaxPersistedMergeConflictSpans) {
+              return false;
+            }
+            tab->merge_conflict_spans.push_back(std::move(span));
             return true;
           }
         }

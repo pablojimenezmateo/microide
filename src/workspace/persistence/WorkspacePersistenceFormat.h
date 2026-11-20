@@ -27,6 +27,23 @@ namespace microide::workspace {
 // most this many closed editors and collapsed folds per editor.
 inline constexpr std::size_t kMaxPersistedClosedEditors = 64;
 inline constexpr std::size_t kMaxPersistedCollapsedFolds = 100'000;
+// One span per conflict, and a merge has at most one conflict per hunk: the
+// hunk-choice cap.
+inline constexpr std::size_t kMaxPersistedMergeConflictSpans = 200'000;
+
+// One conflict of a merge result whose text the record carries (a typed result,
+// staged for crash safety): where the tab tracked it in that text. The text and
+// the spans move together -- a line typed above a conflict moves it -- so they are
+// persisted together; a restore that took the text alone would place every later
+// conflict by the choices, on the wrong lines.
+struct PersistedMergeConflictSpan {
+  std::size_t hunk_index = 0;
+  std::size_t start_line = 0;
+  std::size_t end_line = 0;
+  std::string last_choice;  // compare::MergeChoiceLabel
+  bool valid = true;
+  bool resolved = false;
+};
 
 struct PersistedEditorTabState {
   std::string kind = "editor";
@@ -94,6 +111,8 @@ struct PersistedEditorTabState {
   float merge_left_divider_fraction = kWorkspaceDefaultMergeLeftDividerFraction;
   float merge_right_divider_fraction = kWorkspaceDefaultMergeRightDividerFraction;
   std::vector<std::string> merge_hunk_choices;
+  // With a dirty snapshot of a merge's result: its conflicts, in order.
+  std::vector<PersistedMergeConflictSpan> merge_conflict_spans;
 };
 
 struct PersistedUserConfigState {

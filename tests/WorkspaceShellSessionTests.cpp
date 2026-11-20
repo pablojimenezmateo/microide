@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "GitMergeConflictFixtures.h"
 
 #include "editor/TextBuffer.h"
 #include "util/PerformanceCounters.h"
@@ -2960,6 +2961,140 @@ void TestWorkspaceShellMarkResolvedAsksAboutUnresolvedConflicts() {
          "the second Mark Resolved keeps the result as shown, not '" + merge.status_message + "'");
 }
 
+// Text typed by hand into a merge result was lost by a crash: the merge record
+// carried the conflict choices and nothing of the result, and an edit there did
+// not arm the crash-safety flush (TD-2026-11-19-453 item 1). The result comes
+// back unsaved, as typed, with its conflicts where the tab tracked them -- the
+// spans move with the text, so a result rebuilt from the choices and a text laid
+// over it would disagree -- and a file changed while microide was down is not
+// written over.
+void TestWorkspaceShellRestoreSessionKeepsATypedMergeResult() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "result.txt";
+  WriteFile(base, "zero\none\ntwo\nthree\nfour\n");
+  WriteFile(incoming, "zero\none incoming\ntwo\nthree incoming\nfour\n");
+  WriteFile(current, "zero\none current\ntwo\nthree current\nfour\n");
+  WriteFile(output, "zero\none\ntwo\nthree\nfour\n");
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(temp_dir.path() / "home");
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", (temp_dir.path() / "home").string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+  std::string typed;
+  std::vector<microide::workspace::MergeTrackedConflict> spans;
+  {
+    WorkspaceShell shell;
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+    WorkspaceShellTestAccess::ArmSessionFlushTimer(shell);
+    Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output), "the merge opens");
+    auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+    merge.selected_hunk = 1;
+    WorkspaceShellTestAccess::ApplyMergeChoice(shell, MergeChoice::Incoming);
+    // Lines typed above the second conflict move it down by two.
+    merge.result_viewport.MoveCursorTo(2, 0);
+    Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "added\nadded\n"), "typing two lines into the result");
+    typed = merge.result_viewport.SerializeDocumentText();
+    spans = merge.conflicts;
+    Expect(spans.size() == 2 && spans[1].start_line == 5, "the second conflict moved with the typing to line 5, got " +
+                                                              std::to_string(spans.size() > 1 ? spans[1].start_line : 0));
+    WorkspaceShellTestAccess::ArmSessionFlushTimer(shell);
+    Expect(WorkspaceShellTestAccess::SessionFlushArmed(shell),
+           "an edit in a merge result arms the crash-safety flush as one in an editor tab does");
+    WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell);
+  }
+
+  const auto restore = [&](WorkspaceShell& restored) -> microide::workspace::MergeTabState& {
+    WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+    WorkspaceShellTestAccess::SetWindowSize(restored, 1280, 720);
+    Expect(WorkspaceShellTestAccess::RestoreSessionState(restored), "restore after the crash");
+    WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(restored);
+    return WorkspaceShellTestAccess::ActiveMerge(restored);
+  };
+  {
+    WorkspaceShell restored;
+    auto& merge = restore(restored);
+    Expect(merge.result_viewport.dirty(), "the result comes back unsaved");
+    Expect(merge.result_viewport.SerializeDocumentText() == typed,
+           "as typed, got '" + merge.result_viewport.SerializeDocumentText() + "'");
+    Expect(merge.conflicts.size() == spans.size(), "with its conflicts");
+    for (std::size_t i = 0; i < std::min(merge.conflicts.size(), spans.size()); ++i) {
+      const auto& back = merge.conflicts[i];
+      Expect(back.start_line == spans[i].start_line && back.end_line == spans[i].end_line &&
+                 back.last_choice == spans[i].last_choice && back.resolved == spans[i].resolved &&
+                 back.hunk_index == spans[i].hunk_index,
+             "conflict " + std::to_string(i) + " where the tab tracked it: lines " + std::to_string(back.start_line) +
+                 "-" + std::to_string(back.end_line) + ", expected " + std::to_string(spans[i].start_line) + "-" +
+                 std::to_string(spans[i].end_line));
+    }
+    // Choosing a side of the moved conflict replaces ITS lines, not the typed ones.
+    merge.selected_hunk = 1;
+    WorkspaceShellTestAccess::ApplyMergeChoice(restored, MergeChoice::Current);
+    const auto lines = merge.result_viewport.lines().Snapshot();
+    Expect(lines.size() > 5 && lines[2] == "added" && lines[3] == "added" && lines[4] == "two" &&
+               lines[5] == "three current",
+           "a choice on the restored result patches the conflict where it is: '" +
+               merge.result_viewport.SerializeDocumentText() + "'");
+  }
+  // The result file changes while microide is down (the restore above saved
+  // nothing; the session still holds the typed result).
+  WriteFile(output, "zero\nwritten elsewhere\n");
+  {
+    WorkspaceShell restored;
+    auto& merge = restore(restored);
+    Expect(merge.result_viewport.SerializeDocumentText() == typed, "the typed result comes back again");
+    const auto outcome = WorkspaceShellTestAccess::ExecuteControlCommand(restored, "save");
+    Expect(!outcome.ok, "its save is refused: the result file changed while microide was down");
+    Expect(ReadFile(output) == "zero\nwritten elsewhere\n", "the other edit is still on disk");
+    Expect(merge.result_viewport.dirty(), "and the typed result is kept, unsaved");
+  }
+}
+
+// A git conflict's merge is not kept in the session at all (it reopens from the
+// index), so the text typed into its result had nowhere to go and a crash lost
+// it. It comes back in an editor tab on the conflicted file, as typed and unsaved.
+void TestWorkspaceShellRestoreSessionKeepsATypedGitConflictResult() {
+  const microide::tests::GitMergeConflictFixture fixture = microide::tests::CreateBothModifiedConflictRepo();
+  const std::filesystem::path home = fixture.root.parent_path() / "session-home";
+  std::filesystem::create_directories(home / "home");
+  std::filesystem::create_directories(home / "state");
+  std::filesystem::create_directories(home / "config");
+  ScopedEnvVar scoped_home("HOME", (home / "home").string());
+  ScopedSessionAppHomes scoped_app_homes(home / "state", home / "config");
+  std::string typed;
+  {
+    WorkspaceShell shell;
+    WorkspaceShellTestAccess::SetProjectRoot(shell, fixture.root);
+    WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+    Expect(WorkspaceShellTestAccess::OpenGitConflictMerge(shell, fixture.output), "the conflict's merge opens");
+    WorkspaceShellTestAccess::FlushPendingFileReads(shell);  // its index stages are read off-thread
+    Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == 1, "the merge tab is open");
+    auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+    Expect(!merge.persistable, "a git conflict's merge is not kept in the session");
+    merge.result_viewport.MoveCursorTo(0, 0);
+    Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "typed by hand\n"), "typing into the result");
+    typed = merge.result_viewport.SerializeDocumentText();
+    WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell);
+  }
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, fixture.root);
+  WorkspaceShellTestAccess::SetWindowSize(restored, 1280, 720);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored), "restore after the crash");
+  WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(restored);
+  Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(restored) == 1 &&
+             !WorkspaceShellTestAccess::ActiveTabIsCompare(restored),
+         "one tab comes back");
+  const editor::TextViewport& editor = WorkspaceShellTestAccess::ActiveEditor(restored);
+  Expect(editor.path() == fixture.output && editor.dirty() && editor.SerializeDocumentText() == typed,
+         "an editor tab on the conflicted file, holding the typed result: '" + editor.SerializeDocumentText() + "'");
+}
+
 void TestWorkspaceShellMergeChoicePreservesManualEditsAroundConflicts() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -4336,6 +4471,10 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMergeResetConflictFromTheKeyAndTheCommand);
   AddTest(tests, "WorkspaceShell/MarkResolvedAsksAboutUnresolvedConflicts",
           TestWorkspaceShellMarkResolvedAsksAboutUnresolvedConflicts);
+  AddTest(tests, "WorkspaceShell/RestoreSessionKeepsATypedGitConflictResult",
+          TestWorkspaceShellRestoreSessionKeepsATypedGitConflictResult);
+  AddTest(tests, "WorkspaceShell/RestoreSessionKeepsATypedMergeResult",
+          TestWorkspaceShellRestoreSessionKeepsATypedMergeResult);
   AddTest(tests, "WorkspaceShell/MergeChoicePreservesManualEditsAroundConflicts",
           TestWorkspaceShellMergeChoicePreservesManualEditsAroundConflicts);
   AddTest(tests, "WorkspaceShell/MergeConflictTrackingShiftsAfterInsertion",

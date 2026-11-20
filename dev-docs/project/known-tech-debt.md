@@ -21,24 +21,13 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 Left by the 2026-11-19 bug-hunting pass (commits bbb153be3 onwards). None has a
 fix, and each names what it needs; the first is the one that loses a user's work.
 
-1. **Text typed by hand into a merge result is lost by a crash.** The sibling of
-   what this item first recorded -- unsaved edits made only in a diff, fixed
-   2026-11-20 (52e960935, bc0f32527: a compare record carries its editable side's
-   buffer, a compare of two files leaves an editor record, and `documents` lists
-   both so the kill oracle holds them to it, 7474f6ef0). A merge tab's record
-   still carries the conflict choices and nothing of the result's text, and an
-   edit in the result does not arm the crash-safety flush (`LoadedBufferViewOf`
-   leaves a merge out on purpose: its result is synthesized text, not a file's
-   buffer). Shown 2026-11-20 with a probe: open a merge, type "edited " into
-   line 2 of the result, flush, restore -- the flush was not armed, the tab came
-   back `dirty=0` and line 2 read "two". The choices survive; the typing does
-   not. It is not the diff's fix again: the result's text and the model's
-   conflict spans move together (`MergeTabState::conflicts`), so a snapshot of
-   the text alone restores a result whose conflicts point at the wrong lines.
-   Wants the merge record to carry the result buffer WITH the spans as the tab
-   tracked them (new record fields; `persisted-state-format/spec.md` has to say
-   so), the flush to arm for a merge edit, and the kill oracle to see a merge
-   result (`documents` does not list one).
+1. **Unsaved text in a diff or a merge result lost by a crash: FIXED
+   2026-11-20.** A diff's editable side (52e960935, bc0f32527) and a merge's
+   typed result (this pass: the record carries the text and its conflict spans;
+   a git conflict's merge, which the session does not keep, leaves an editor
+   record) are staged and restored, and `documents` lists both so the kill
+   oracle holds them to it. Left as the item's history until the entry moves to
+   the archive with its other two items.
 2. **The mirror engine logs no decision per path**, so a `remote:` finding
    cannot be explained after the fact (soak 37ec61829b08: the host's
    unreadable.txt was renamed away by the run, a blocked save of the mirror's

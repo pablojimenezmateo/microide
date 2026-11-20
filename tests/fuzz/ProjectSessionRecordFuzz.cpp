@@ -8,8 +8,8 @@
 
 // Fuzz the session decoders in WorkspacePersistenceBinaryFormatSessions: the
 // per-project session (editor groups, split tree, sidebar and tree state, the
-// terminal layout to revive, the closed editors and each editor's collapsed
-// folds), and the workspace session (the open projects, as project-identity
+// terminal layout to revive, the closed editors, each editor's collapsed folds,
+// and a typed merge result's conflict spans), and the workspace session (the open projects, as project-identity
 // records and legacy root paths, and the Host view's collapsed groups). Neither may crash on arbitrary bytes, and what
 // they accept must stay inside the caps a restore trusts.
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size) {
@@ -61,6 +61,9 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     for (const auto& group : state.groups) {
       for (const auto& tab : group.tabs) {
         if (tab.collapsed_fold_openers.size() > microide::workspace::kMaxPersistedCollapsedFolds) {
+          __builtin_trap();
+        }
+        if (tab.merge_conflict_spans.size() > microide::workspace::kMaxPersistedMergeConflictSpans) {
           __builtin_trap();
         }
       }

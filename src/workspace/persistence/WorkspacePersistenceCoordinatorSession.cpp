@@ -13,7 +13,9 @@
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "util/StartupTrace.h"
+#include "util/TextFileIO.h"
 #include "editor/RuntimeSyntaxRegistry.h"
+#include "workspace/git/MergeResultValidation.h"
 #include "workspace/persistence/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 #include "workspace/WorkspaceTextSearch.h"
@@ -113,6 +115,57 @@ void StageDirtyBuffer(const editor::TextViewport& view, const std::filesystem::p
       out.disk_baseline->content_hash = static_cast<std::uint64_t>(seen.content_hash);
       out.disk_baseline->hash_probe = util::QuickContentHashProbe();
     }
+  }
+}
+
+// The result file as a merge's result buffer last saw it, for a staged typed
+// result -- what a save after a restore compares the file against. The buffer's
+// own stat once it has saved; before that, the file now, when it still holds
+// what the merge read (MergeResultChangedOnDisk); and when it does not, a
+// baseline no file matches, so the restored result's save asks rather than
+// writing over the change it never saw.
+std::optional<PersistedEditorTabState::DiskBaseline> MergeResultDiskBaseline(const MergeTabState& merge) {
+  const util::FileSignature& seen = merge.result_viewport.disk_signature();
+  if (!seen.exists && MergeResultChangedOnDisk(merge)) {
+    return PersistedEditorTabState::DiskBaseline{
+        .exists = true, .mtime_ticks = 0, .size = static_cast<std::uint64_t>(-1)};
+  }
+  const util::FileSignature signature = seen.exists ? seen : util::StatFileSignature(merge.output_path);
+  PersistedEditorTabState::DiskBaseline baseline{.exists = signature.exists,
+                                                 .mtime_ticks = signature.mtime_ticks,
+                                                 .size = static_cast<std::uint64_t>(signature.size)};
+  if (signature.exists && signature.has_content_hash) {
+    baseline.content_hash = static_cast<std::uint64_t>(signature.content_hash);
+    baseline.hash_probe = util::QuickContentHashProbe();
+  }
+  return baseline;
+}
+
+// A merge's typed result, staged in its record with the conflicts where the tab
+// tracks them in that text (TD-2026-11-19-453): an edit to a merge result was
+// staged nowhere, and a crash lost it.
+void StageTypedMergeResult(const MergeTabState& merge, PersistedEditorTabState& out) {
+  const editor::TextViewport& result = merge.result_viewport;
+  if (!result.dirty() || merge.output_path.empty()) {
+    return;
+  }
+  if (!FitsDirtySnapshotBudget(result)) {
+    result.TraceBufferIo("session-stage-skipped-over-budget");
+    return;
+  }
+  out.path = merge.output_path.lexically_normal();
+  StageDirtyBuffer(result, out.path, out);
+  out.disk_baseline = MergeResultDiskBaseline(merge);
+  out.merge_conflict_spans.reserve(merge.conflicts.size());
+  for (const MergeTrackedConflict& conflict : merge.conflicts) {
+    out.merge_conflict_spans.push_back(PersistedMergeConflictSpan{
+        .hunk_index = conflict.hunk_index,
+        .start_line = conflict.start_line,
+        .end_line = conflict.end_line,
+        .last_choice = compare::MergeChoiceLabel(conflict.last_choice),
+        .valid = conflict.valid,
+        .resolved = conflict.resolved,
+    });
   }
 }
 
@@ -394,6 +447,49 @@ std::optional<TabEntry> PersistenceCoordinator::RestoreCompareTab(
   return compare_tab;
 }
 
+// A typed result the record staged, laid over the merge the restore rebuilt from
+// its inputs and choices: the text as typed, unsaved, with the file's baseline,
+// and the conflicts where the tab tracked them in it. Spans that no longer fit
+// the rebuilt model (an input changed while microide was down) are placed again
+// by matching the model against the text, as a result read from disk is.
+void PersistenceCoordinator::RestoreTypedMergeResult(const PersistedEditorTabState& persisted_tab,
+                                                     const std::filesystem::path& output_path,
+                                                     MergeTabState& merge) {
+  editor::TextViewport result;
+  result.LoadLines(persisted_tab.buffer.ToLines(), output_path, persisted_tab.line_ending);
+  result.SetUtf8Bom(persisted_tab.utf8_bom);
+  if (persisted_tab.disk_baseline.has_value()) {
+    result.RebindToPath(output_path, RestoredDiskBaseline(*persisted_tab.disk_baseline, output_path));
+  }
+  operations_.apply_editor_preferences(result);
+  merge.result_line_ending = persisted_tab.line_ending;
+  merge.result_viewport = std::move(result);
+  const std::vector<PersistedMergeConflictSpan>& spans = persisted_tab.merge_conflict_spans;
+  const std::size_t line_count = merge.result_viewport.line_count();
+  const bool spans_fit =
+      spans.size() == merge.conflicts.size() &&
+      std::equal(spans.begin(), spans.end(), merge.conflicts.begin(),
+                 [line_count](const PersistedMergeConflictSpan& span, const MergeTrackedConflict& rebuilt) {
+                   return span.hunk_index == rebuilt.hunk_index && span.start_line <= span.end_line &&
+                          span.end_line <= line_count;
+                 });
+  if (spans_fit) {
+    for (std::size_t i = 0; i < spans.size(); ++i) {
+      MergeTrackedConflict& conflict = merge.conflicts[i];
+      conflict.start_line = spans[i].start_line;
+      conflict.end_line = spans[i].end_line;
+      conflict.last_choice = compare::ParseMergeChoice(spans[i].last_choice);
+      conflict.valid = spans[i].valid;
+      conflict.resolved = spans[i].resolved;
+    }
+  } else if (operations_.merge_conflicts_for_result) {
+    merge.conflicts = operations_.merge_conflicts_for_result(merge.model, merge.result_viewport.lines().Snapshot());
+  }
+  merge.visual_conflicts_valid = false;
+  ++merge.model_revision;
+  merge.max_visual_columns = std::max(merge.max_visual_columns, merge.result_viewport.max_visual_columns());
+}
+
 std::optional<TabEntry> PersistenceCoordinator::RestoreMergeTab(
     const PersistedEditorTabState& persisted_tab, const std::filesystem::path& root) {
   const std::filesystem::path merge_base = ResolveSessionPath(root, persisted_tab.merge_base_path);
@@ -424,6 +520,9 @@ std::optional<TabEntry> PersistenceCoordinator::RestoreMergeTab(
   merge_state.left_divider_fraction = persisted_tab.merge_left_divider_fraction;
   merge_state.right_divider_fraction = persisted_tab.merge_right_divider_fraction;
   operations_.refresh_merge_tab_derived_state(merge_state);
+  if (persisted_tab.dirty_snapshot) {
+    RestoreTypedMergeResult(persisted_tab, merge_output, merge_state);
+  }
   merge_state.selected_hunk =
       merge_state.conflicts.empty()
           ? 0
@@ -767,24 +866,39 @@ void PersistenceCoordinator::SaveSessionState() {
     persisted_session.terminal_layout = operations_.capture_terminal_layout();
   }
 
-  // The diffs whose editable side holds unsaved text that fits a snapshot: almost
-  // always none. A persistable diff's own record carries its side. These are for
-  // the two records that otherwise would not: an editor tab on the same file that
-  // has not loaded (it holds no buffer, the diff holds the file's), and a diff the
-  // session does not keep at all -- a compare of two files -- whose text then comes
-  // back in an editor tab on the file.
-  std::vector<const editor::TextViewport*> unsaved_diff_sides;
+  // The diffs whose editable side holds unsaved text that fits a snapshot, and the
+  // merges the session does not keep whose result does: almost always none. A
+  // persistable diff's own record carries its side, a persistable merge's its
+  // result. These are for the records that otherwise would not: an editor tab on
+  // the same file that has not loaded (it holds no buffer, the diff holds the
+  // file's), and a diff or merge the session does not keep at all -- a compare of
+  // two files, a git conflict's merge -- whose text then comes back in an editor
+  // tab on the file.
+  struct UnkeptText {
+    const editor::TextViewport* view = nullptr;
+    const MergeTabState* merge = nullptr;  // a merge's result, else a diff's side
+  };
+  std::vector<UnkeptText> unsaved_diff_sides;
   for (const EditorGroup& group : state.editor_groups) {
     for (const TabEntry& tab : group.open_tabs) {
-      if (tab.kind != TabEntry::Kind::Compare) {
+      const bool unkept_merge = tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() && !tab.merge->persistable &&
+                                !tab.merge->output_path.empty();
+      if (tab.kind != TabEntry::Kind::Compare && !unkept_merge) {
         continue;
       }
-      if (const editor::TextViewport* side = LoadedBufferViewOf(tab);
-          side != nullptr && side->dirty() && !side->path().empty() && FitsDirtySnapshotBudget(*side)) {
-        unsaved_diff_sides.push_back(side);
+      const editor::TextViewport* side = unkept_merge ? &tab.merge->result_viewport : LoadedBufferViewOf(tab);
+      if (side != nullptr && side->dirty() && !side->path().empty() && FitsDirtySnapshotBudget(*side)) {
+        unsaved_diff_sides.push_back(UnkeptText{.view = side, .merge = unkept_merge ? &*tab.merge : nullptr});
       }
     }
   }
+  const auto stage_unkept = [](const UnkeptText& text, const std::filesystem::path& path,
+                               PersistedEditorTabState& record) {
+    StageDirtyBuffer(*text.view, path, record);
+    if (text.merge != nullptr) {
+      record.disk_baseline = MergeResultDiskBaseline(*text.merge);
+    }
+  };
   const auto editor_tab_is_on = [&state](const std::filesystem::path& path) {
     for (const EditorGroup& group : state.editor_groups) {
       for (const TabEntry& tab : group.open_tabs) {
@@ -803,11 +917,17 @@ void PersistenceCoordinator::SaveSessionState() {
     for (std::size_t tab_index = 0; tab_index < group.open_tabs.size(); ++tab_index) {
       auto& tab = group.open_tabs[tab_index];
       std::optional<PersistedEditorTabState> persisted_tab;
-      if (tab.kind == TabEntry::Kind::Compare) {
-        persisted_tab = BuildPersistedCompareTabState(tab);
-        const editor::TextViewport* side = persisted_tab.has_value() ? nullptr : LoadedBufferViewOf(tab);
-        if (side != nullptr &&
-            std::find(unsaved_diff_sides.begin(), unsaved_diff_sides.end(), side) != unsaved_diff_sides.end() &&
+      if (tab.kind == TabEntry::Kind::Compare || tab.kind == TabEntry::Kind::Merge) {
+        persisted_tab =
+            tab.kind == TabEntry::Kind::Compare ? BuildPersistedCompareTabState(tab) : BuildPersistedMergeTabState(tab);
+        const editor::TextViewport* side =
+            persisted_tab.has_value()                ? nullptr
+            : tab.kind == TabEntry::Kind::Compare    ? LoadedBufferViewOf(tab)
+            : tab.merge.has_value()                  ? &tab.merge->result_viewport
+                                                     : nullptr;
+        const auto unkept = std::find_if(unsaved_diff_sides.begin(), unsaved_diff_sides.end(),
+                                         [side](const UnkeptText& text) { return text.view == side; });
+        if (side != nullptr && unkept != unsaved_diff_sides.end() &&
             std::none_of(stood_in.begin(), stood_in.end(),
                          [side](const editor::TextViewport* other) { return other->SharesDocumentWith(*side); })) {
           const std::filesystem::path path = side->path().lexically_normal();
@@ -815,18 +935,16 @@ void PersistenceCoordinator::SaveSessionState() {
             persisted_tab.emplace();
             persisted_tab->kind = "editor";
             persisted_tab->path = path;
-            StageDirtyBuffer(*side, path, *persisted_tab);
+            stage_unkept(*unkept, path, *persisted_tab);
             stood_in.push_back(side);
           }
         }
-      } else if (tab.kind == TabEntry::Kind::Merge) {
-        persisted_tab = BuildPersistedMergeTabState(tab);
       } else {
         persisted_tab = BuildPersistedEditorTabState(tab_index, tab);
         if (persisted_tab.has_value() && !persisted_tab->dirty_snapshot && !persisted_tab->path.empty()) {
-          for (const editor::TextViewport* side : unsaved_diff_sides) {
-            if (util::SameAsNormalizedPath(side->path(), persisted_tab->path)) {
-              StageDirtyBuffer(*side, persisted_tab->path, *persisted_tab);
+          for (const UnkeptText& text : unsaved_diff_sides) {
+            if (util::SameAsNormalizedPath(text.view->path(), persisted_tab->path)) {
+              stage_unkept(text, persisted_tab->path, *persisted_tab);
               break;
             }
           }
@@ -951,6 +1069,7 @@ PersistenceCoordinator::BuildPersistedMergeTabState(
   for (std::size_t i = 0; i < bounded; ++i) {
     persisted_tab.merge_hunk_choices.emplace_back(compare::MergeChoiceLabel(hunks[i].choice));
   }
+  StageTypedMergeResult(*tab.merge, persisted_tab);
   return persisted_tab;
 }
 

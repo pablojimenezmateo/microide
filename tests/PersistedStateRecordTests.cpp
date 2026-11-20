@@ -882,7 +882,14 @@ void TestPersistedStateProjectSessionRoundTripsRandomContent() {
            a.merge_horizontal_scroll == b.merge_horizontal_scroll &&
            a.merge_left_divider_fraction == b.merge_left_divider_fraction &&
            a.merge_right_divider_fraction == b.merge_right_divider_fraction &&
-           a.merge_hunk_choices == b.merge_hunk_choices;
+           a.merge_hunk_choices == b.merge_hunk_choices &&
+           a.merge_conflict_spans.size() == b.merge_conflict_spans.size() &&
+           std::equal(a.merge_conflict_spans.begin(), a.merge_conflict_spans.end(), b.merge_conflict_spans.begin(),
+                      [](const auto& x, const auto& y) {
+                        return x.hunk_index == y.hunk_index && x.start_line == y.start_line &&
+                               x.end_line == y.end_line && x.last_choice == y.last_choice && x.valid == y.valid &&
+                               x.resolved == y.resolved;
+                      });
   };
   const auto dump = [](const std::string& value) {
     std::string out;
@@ -963,6 +970,21 @@ void TestPersistedStateProjectSessionRoundTripsRandomContent() {
             tab.merge_left_divider_fraction = random_float();
             tab.merge_right_divider_fraction = random_float();
             tab.merge_hunk_choices = random_lines(5);
+            if (next(2) == 0) {  // a typed result: its text and its conflicts (tag 38)
+              tab.dirty_snapshot = true;
+              tab.path = tab.merge_output_path;
+              tab.buffer = microide::editor::DocumentSnapshot::FromLines(random_lines(6));
+              for (std::size_t span = next(4); span > 0; --span) {
+                tab.merge_conflict_spans.push_back(microide::workspace::PersistedMergeConflictSpan{
+                    .hunk_index = random_size(),
+                    .start_line = random_size(),
+                    .end_line = random_size(),
+                    .last_choice = random_string(3),
+                    .valid = next(2) == 0,
+                    .resolved = next(2) == 0,
+                });
+              }
+            }
             break;
         }
         group.tabs.push_back(std::move(tab));

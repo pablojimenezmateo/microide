@@ -598,7 +598,10 @@ void WorkspaceShell::MaybeArmSessionFlushTimer() {
   };
   for (const EditorGroup& group : context_.current_project_state.editor_groups) {
     for (const TabEntry& tab : group.open_tabs) {
-      const editor::TextViewport* viewport = LoadedBufferViewOf(tab);
+      // A merge's result too: no file's buffer, but typed text the session stages.
+      const editor::TextViewport* viewport =
+          tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() ? &tab.merge->result_viewport
+                                                                      : LoadedBufferViewOf(tab);
       if (viewport == nullptr) {
         continue;
       }
