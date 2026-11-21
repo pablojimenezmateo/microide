@@ -385,13 +385,26 @@ void ScenarioContext::PumpPartialFrame(
   partial_dirty_rects_.assign(event_damage.rects.begin(), event_damage.rects.end());
   partial_dirty_rects_.insert(partial_dirty_rects_.end(), pending.rects.begin(),
                               pending.rects.end());
-  const app::DirtyRegionAnalysis analysis = app::AnalyzeDirtyRegions(
-      partial_dirty_rects_, shell_.PartialRedrawClipPadding(), 1920, 1080);
-  const bool promoted = app::ShouldPromotePartialFrameToFull(analysis);
-  const bool full_frame = event_damage.full || pending.full ||
-                          analysis.merged_clip_rects.empty() || promoted;
+  bool requested_full = event_damage.full || pending.full || partial_dirty_rects_.empty();
   const workspace::WorkspaceShell::FrameToken frame_token =
       shell_.PrepareFrameOnce(renderer_, 1920, 1080);
+  // Damage requested while PREPARING the frame belongs to it, as in
+  // Application::Render: prep settles state and derives its surfaces' damage
+  // (openspec derived-damage). Deciding the frame before prep, as this did,
+  // painted that damage a frame late, and a frame no event damaged went full.
+  if (const workspace::WorkspaceShell::RenderInvalidation prepared =
+          shell_.ConsumePendingRenderInvalidation();
+      !requested_full) {
+    if (prepared.full) {
+      requested_full = true;
+    } else {
+      partial_dirty_rects_.insert(partial_dirty_rects_.end(), prepared.rects.begin(), prepared.rects.end());
+    }
+  }
+  const app::DirtyRegionAnalysis analysis = app::AnalyzeDirtyRegions(
+      partial_dirty_rects_, shell_.PartialRedrawClipPadding(), 1920, 1080);
+  const bool promoted = !requested_full && app::ShouldPromotePartialFrameToFull(analysis);
+  const bool full_frame = requested_full || analysis.merged_clip_rects.empty() || promoted;
   if (full_frame) {
     if (promoted) {
       util::AddPerformanceCounter(util::PerfCounterId::RenderPromotedFullFrames);
