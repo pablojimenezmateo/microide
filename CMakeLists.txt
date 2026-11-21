@@ -1963,6 +1963,7 @@ if(MICROIDE_FUZZ)
   src/terminal/TerminalSessionCsi.cpp
   src/terminal/TerminalSessionHost.cpp
   src/platform/TerminalLifeTrace.cpp
+  src/util/Log.cpp  # TerminalLifeTrace's line (TerminalBackend calls it)
     src/terminal/TerminalSessionSgr.cpp
     src/terminal/TerminalSessionOsc.cpp
     src/terminal/TerminalCellExtraTable.cpp
