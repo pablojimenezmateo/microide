@@ -15,8 +15,8 @@
 
 ## 2. Editor rows
 
-- [ ] 2.1 Spike: build and fingerprint every visible row's paint inputs at prep behind a debug toggle; measure base vs spike per 0.1. Verify: numbers in `notes.md` and the D5 decision (eager records or lazy fallback) recorded.
-- [ ] 2.2 Introduce per-row paint records built at prep (reused scratch, no steady-state allocation) per the decision. Verify: `perf-tests` allocation counters unchanged; unit tests compare records with what paint drew.
+- [x] 2.1 Spike: build and fingerprint every visible row's paint inputs at prep behind a debug toggle; measure base vs spike per 0.1. Verify: numbers in `notes.md` and the D5 decision (eager records or lazy fallback) recorded.
+- [ ] 2.2 Introduce per-row paint keys folded at prep (lazy fallback, per notes.md: no allocation, no tokenizing) and the differential property test (random state transitions, damage only from row keys, partial vs full render). Verify: `perf-tests` allocation counters unchanged; unit tests compare records with what paint drew.
 - [ ] 2.3 Switch editor paint to draw rows from the records; remove input gathering from `EditorViewRenderer::Render`. Verify: redraw tests and the QA lane green; editor paint tests unchanged.
 - [ ] 2.4 Derive editor-row damage from row fingerprints (caret kept as its own unit); delete the editor `painted_*` comparisons subsumed (occurrences, bracket pair, fold markers, language, decorations, pane content/scroll where covered). Verify: a test changing each former input with no damage request stays fresh; soak editorSurface `outside` sightings tracked for a week drop.
 - [ ] 2.5 Same for compare and merge panes. Verify: compare/merge redraw tests green; `painted_compare_*` fields removed where covered.

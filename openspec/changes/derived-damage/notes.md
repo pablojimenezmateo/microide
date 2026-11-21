@@ -26,3 +26,26 @@ typing_small_file                                                          2.664
 ```
 
 editor_typing_paint per-run p50: base [177.75, 172.41, 171.85], head [177.10, 184.72, 174.42] -- overlapping; deterministic counters (one in-process run each, 3 iterations): redraw_rect_pixels 764,119,272 -> 738,953,032 (-3.3%), redraw_rects_queued 2038 -> 2049, derived_damage_units 5251, derived_damage_changed 650. Verdict: within budget (no p50 > +5% beyond noise, no new allocations), and it paints less.
+
+## Stage 2.1 spike: what a row costs (2026-11-21, perf binary at ffa52e79c)
+
+Per-scope summary (`MICROIDE_PERF_SUMMARY=1 microide_perf --no-isolate`, 5 iterations):
+
+| scenario | renders | rows built+drawn | RowLayout | HighlightedLineTokens (total) | BuildDecoratedRow | DecoratedRow (draw) | Rows total |
+|---|---|---|---|---|---|---|---|
+| editor_typing_paint | 820 | 32,820 (~40/render) | 0.0008 ms/row | 0.0034 ms/row (incl. retokenize) | 0.0003 ms/row | 0.0008 ms/row | 0.247 ms/render |
+| scroll_large_file | 300 | 1,200 (~4/render) | 0.0001 | 0.0003 | 0.0001 | 0.0002 | 0.006 ms/render |
+
+Gathering a row (layout + tokens + fills + build) costs several times drawing it on the software
+renderer. An eager pass that gathers every visible row at prep (D4 as written) adds ~40-60 rows x
+~0.002-0.005 ms = 0.1-0.25 ms per prepared frame, against ~0.26 ms of editor paint per render in
+the typing scenario: far past the 5% budget.
+
+**Decision (D5): the lazy fallback.** A row's fingerprint is folded at prep from cheap per-row
+keys -- the row's line content/layout revision, the token cache generation, the caret, selection,
+search/occurrence/bracket spans clipped to the row, diagnostics and decorations revisions for the
+line, fold mark, gutter number, inline blame -- with no allocation and no tokenizing; the full
+row is built only when it is damaged (as today). Because the keys are an enumerated list again,
+the guard is a **differential property test**: random editor state transitions (typing, undo,
+selection, find, folds, diagnostics, decorations, scroll, theme) with damage taken ONLY from the
+row fingerprints, each partial frame compared with a full render; a key left out fails it.
