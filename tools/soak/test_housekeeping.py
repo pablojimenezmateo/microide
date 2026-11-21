@@ -6,6 +6,7 @@ import os
 import random
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -238,3 +239,49 @@ class CoverageFileTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BinaryPruneTests(unittest.TestCase):
+    """Soak 15d0bae54bb7 / 6a8bab5043ad / 89a4437078a2 / ab3bacbd4195 /
+    eb4768093ac2: a binary that served for more than six hours went the moment
+    the next build replaced it, dated by when it was MADE, under the jobs still
+    running it."""
+
+    def _old_binary(self, soak, sha: str) -> Path:
+        binary = soak.SOAK / "bin" / "default" / sha / "microide"
+        binary.parent.mkdir(parents=True)
+        binary.write_text("")
+        old = time.time() - 7 * 3600
+        os.utime(binary.parent, (old, old))
+        return binary
+
+    def test_a_binary_a_job_started_on_lately_is_kept(self):
+        soak = scratch_soak(self)
+        used = self._old_binary(soak, "aaaaaaaaaaaa")
+        unused = self._old_binary(soak, "bbbbbbbbbbbb")
+        # A job starts on the old binary just before the next build replaces it.
+        state = {"good": {"default": {"sha": "a" * 40, "binary": str(used)}}}
+        job_type = next(t for t in soak.JOB_TYPES if t.build == "default")
+        with mock.patch.object(soak, "choose_recording", return_value=""), \
+                mock.patch.object(soak.subprocess, "Popen") as popen:
+            soak.start_job(job_type, state, random.Random(1))
+        env = popen.call_args.kwargs["env"]
+        self.assertEqual((env["PYTHONUNBUFFERED"], env["PYTHONFAULTHANDLER"]), ("1", "1"),
+                         "driver.log keeps what was printed before a kill, and the abort's stack")
+        current = {"default": {"sha": "c" * 40, "binary": str(soak.SOAK / "bin" / "default" / "cccccccccccc" / "microide")}}
+        soak.prune_binaries(current)
+        self.assertTrue(used.exists(), "a job is running it")
+        self.assertFalse(unused.parent.exists(), "nothing started on it for six hours")
+
+
+class DeadJobEvidenceTests(unittest.TestCase):
+    def test_a_dead_job_says_how_it_ended_and_how_loaded_the_machine_was(self):
+        # Soak dd0052b5e422: hard timeout, driver.log empty, nothing to act on.
+        soak = scratch_soak(self)
+        proc = mock.Mock(returncode=-6)
+        job = soak.Job(soak.JOB_TYPES[0], 1, scratch_dir(self), ["python3", "run.py", "monkey"], "editing/default",
+                       time.time() - 100, proc, "f" * 40, "/bin/true")
+        report = soak.exit_report(job, timed_out=True)
+        self.assertIn("ended: killed by signal 6 (SIGABRT) after the hard timeout", report)
+        self.assertIn("load (1/5/15 min):", report)
+        self.assertIn("command: python3 run.py monkey", report)

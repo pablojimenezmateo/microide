@@ -342,9 +342,22 @@ def driver_root(state: dict[str, Any]) -> Path:
     return path if (path / "tools" / "qa" / "run.py").exists() else WORKTREE
 
 
+def mark_in_use(path: Path) -> None:
+    """Dates `path` -- a binary's directory or a driver snapshot -- to now: a job
+    starts on it. The prunes below keep anything used in the last six hours. They
+    went by the directory's own date, which is when it was MADE, so a binary that
+    served past six hours went the moment the next build replaced it, under the
+    jobs still running it: they died at their next relaunch with "No such file"
+    and a driver whose sources had gone too (soak 15d0bae54bb7, 6a8bab5043ad,
+    89a4437078a2, ab3bacbd4195, eb4768093ac2)."""
+    with contextlib.suppress(OSError):
+        os.utime(path)
+
+
 def prune_drivers(state: dict[str, Any]) -> None:
-    """Snapshots older than the longest job (checks: three hours), but never the
-    current one: a job started on an older snapshot finishes on it."""
+    """Snapshots no job has started on for longer than the longest job (checks:
+    three hours), and never the current one: a job started on an older snapshot
+    finishes on it (mark_in_use)."""
     keep = Path(state.get("driver") or "")
     for snapshot in DRIVERS.glob("*"):
         if snapshot != keep and time.time() - snapshot.stat().st_mtime > 6 * 3600:
@@ -382,6 +395,8 @@ def refresh_due(state: dict[str, Any]) -> bool:
 
 
 def prune_binaries(good: dict[str, Any]) -> None:
+    """Binaries no job has started on for six hours (mark_in_use), never the
+    current ones."""
     keep = {Path(entry["binary"]).parent for entry in good.values()}
     for build_dir in (SOAK / "bin").glob("*/*"):
         if build_dir not in keep and time.time() - build_dir.stat().st_mtime > 6 * 3600:
@@ -740,13 +755,24 @@ def start_job(job_type: JobType, state: dict[str, Any], rng: random.Random) -> J
             # A real-size cell stays one: without this a run's own resizes and
             # `ui-scale 999999` took most cells tiny within minutes.
             command += ["--min-logical", f"{TINY_LOGICAL[0]}x{TINY_LOGICAL[1]}"]
-    env = {**os.environ, "MQA_SLOW_FACTOR": str(slow), **build.env}
+    env = {**os.environ, "MQA_SLOW_FACTOR": str(slow), **build.env,
+           # driver.log as it stands when the job dies: block-buffered, a job the
+           # hard timeout killed left it empty -- even its first line -- and
+           # its finding said nothing (soak dd0052b5e422, fe426d7e7bf9, a4d46bd5fdb4).
+           "PYTHONUNBUFFERED": "1",
+           # The driver's Python stack on the SIGABRT the timeout sends it before
+           # the kill (reap_timed_out): where it was stuck.
+           "PYTHONFAULTHANDLER": "1"}
     env.pop("MQA_RR", None)
     if record:
         env["MQA_RR"] = record
     if build.coverage:
         (out / "profraw").mkdir(parents=True, exist_ok=True)
         env["LLVM_PROFILE_FILE"] = str(out / "profraw" / RAW_PROFILE_PATTERN)
+    # Used from now on: the prunes keep what a job started on in the last six
+    # hours (mark_in_use).
+    mark_in_use(Path(entry["binary"]).parent)
+    mark_in_use(driver)
     cell = f"{job_type.name}/{job_type.build}{RECORD_CELL_TAG[record]}/{size[0]}x{size[1]}@{scale}"
     with open(out / "driver.log", "wb") as log:
         proc = subprocess.Popen(command, cwd=driver, env=env, stdout=log, stderr=subprocess.STDOUT,
@@ -950,6 +976,41 @@ def start_verify(sig: str, state: dict[str, Any]) -> Job:
     return Job(VERIFY_JOB, 0, out, command, f"verify/{sig}", time.time(), proc, state.get("built_sha", ""), "")
 
 
+def stop_timed_out(job: Job) -> None:
+    """Ends a job past its hard timeout: SIGABRT to the driver alone first, so
+    faulthandler (PYTHONFAULTHANDLER, start_job) writes where it was stuck into
+    driver.log, then the whole group. The kill alone left nothing to read."""
+    with contextlib.suppress(OSError):
+        os.kill(job.proc.pid, signal.SIGABRT)
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        job.proc.wait(timeout=5)
+    with contextlib.suppress(OSError):
+        os.killpg(job.proc.pid, signal.SIGKILL)
+    job.proc.wait()
+
+
+def exit_report(job: Job, timed_out: bool) -> str:
+    """How a job ended, for its dead-job finding: the status or signal, how long
+    it ran against its budget, and how loaded the machine was then."""
+    code = job.proc.returncode
+    if code is None:
+        how = "still running"
+    elif code < 0:
+        try:
+            name = signal.Signals(-code).name
+        except ValueError:
+            name = "unknown"
+        how = f"killed by signal {-code} ({name})"
+    else:
+        how = f"exit status {code}"
+    load = " ".join(f"{value:.1f}" for value in os.getloadavg())
+    available = memory_available()[0] / 2**30
+    return (f"ended: {how}{' after the hard timeout (SIGABRT, then the group killed)' if timed_out else ''}\n"
+            f"ran: {time.time() - job.started:.0f}s of a {job.type.timeout:.0f}s budget\n"
+            f"load (1/5/15 min): {load} on {os.cpu_count()} CPUs; {available:.1f} GB available\n"
+            f"command: {' '.join(job.command)}\n")
+
+
 def record_dead_job(job: Job, timed_out: bool, log) -> str:
     """A job that ran nothing found nothing, and "no findings" is what a healthy
     cell reports too: the TSan cell died at startup for four days (23 runs, 0
@@ -960,8 +1021,11 @@ def record_dead_job(job: Job, timed_out: bool, log) -> str:
     recorded = " under rr" if job.record else ""
     label = f"job: a {job.type.name} job on the {job.type.build} build{recorded} {what}"
     sig = fnd.signature("job", label)
-    tail = ""
-    logs = [job.out / "driver.log", *sorted(job.out.glob("seed-*/startup/*.log"))]
+    ended = exit_report(job, timed_out)
+    with contextlib.suppress(OSError):
+        (job.out / "exit.txt").write_text(ended)
+    tail = f"--- exit.txt\n{ended}"
+    logs = [job.out / "exit.txt", job.out / "driver.log", *sorted(job.out.glob("seed-*/startup/*.log"))]
     for path in logs:
         with contextlib.suppress(OSError):
             tail += f"--- {path.name}\n{path.read_text(errors='replace')[-3000:]}\n"
@@ -2405,8 +2469,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             if job.proc.poll() is not None or now - job.started > job.type.timeout:
                 timed_out = job.proc.poll() is None
                 if timed_out:
-                    os.killpg(job.proc.pid, signal.SIGKILL)
-                    job.proc.wait()
+                    stop_timed_out(job)
                     log(f"job {job.type.name} seed {job.seed} hit its timeout")
                 jobs.remove(job)
                 reap_job(job, state, log, timed_out)
