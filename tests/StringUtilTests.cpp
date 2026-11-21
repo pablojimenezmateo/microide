@@ -553,6 +553,15 @@ void TestStringUtilUnicodeCaseFold() {
   Expect(Utf8IsIdentifierCodepoint(0x53D8), "CJK 变 is identifier content");
   Expect(!Utf8IsIdentifierCodepoint(U' '), "space is not identifier content");
   Expect(!Utf8IsIdentifierCodepoint(0x2013), "en-dash is not identifier content");
+  // Pictographs are symbols (UAX #31 leaves them out of identifiers): a run of
+  // emoji is not one word -- a tab typed into one split it, and the diff marked
+  // the whole line novel (soak 96055d2c8eec).
+  Expect(!Utf8IsIdentifierCodepoint(0x1F600), "😀 is not identifier content");
+  Expect(!Utf8IsIdentifierCodepoint(0x1F468), "👨 is not identifier content");
+  Expect(!Utf8IsIdentifierCodepoint(0x1F1E9), "a regional indicator is not identifier content");
+  Expect(!Utf8IsIdentifierCodepoint(0x1F3FB), "a skin-tone modifier is not identifier content");
+  Expect(!Utf8IsIdentifierCodepoint(0x1FAE0), "a newer pictograph is not identifier content");
+  Expect(Utf8IsIdentifierCodepoint(0x1D49C), "a mathematical letter (𝒜) is still identifier content");
 
   // Identifier runs walk codepoints, not bytes: every byte of `größe` belongs to
   // one run, a continuation byte snaps to its lead, and a symbol bounds the run.

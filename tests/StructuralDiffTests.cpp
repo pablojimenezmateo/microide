@@ -261,6 +261,26 @@ void TestANonAsciiSymbolIsNotPartOfAWord() {
   }
 }
 
+// Soak 96055d2c8eec (again, at d91efe213; world, editing and plugins profiles): a
+// tab typed into a line of 80 emoji marked the WHOLE line novel on both sides,
+// though only whitespace changed. An emoji counted as an identifier character, so
+// the line was one "word" and the tab split it in two. An emoji is a symbol: each
+// is a token of its own, and the tab between two of them changes no token.
+void TestATabTypedIntoARunOfSymbolsMarksNoTokenNovel() {
+  std::string smiles;
+  for (int i = 0; i < 80; ++i) {
+    smiles += "\xF0\x9F\x98\x80";
+  }
+  const std::string typed = smiles.substr(0, 15 * 4) + "\t" + smiles.substr(15 * 4);
+  const auto model = Build("x\n" + smiles + "\ny\n", "x\n" + typed + "\ny\n");
+  for (const auto& row : model.rows) {
+    Expect(row.left_changed_spans.empty() && row.right_changed_spans.empty(),
+           "a tab typed between symbols marks no token novel: left " +
+               std::to_string(Novel(row.left_text, row.left_changed_spans).size()) + " bytes, right " +
+               std::to_string(Novel(row.right_text, row.right_changed_spans).size()) + " bytes");
+  }
+}
+
 void TestReindentedCommentIsLayoutOnly() {
   const auto model = Build("/* a long\n   comment */\nx;\n", "  /* a long\n     comment */\nx;\n");
   for (const auto& row : model.rows) {
@@ -860,6 +880,8 @@ void RegisterStructuralDiffTests(std::vector<TestCase>& tests) {
           TestChangedArgumentIsTheOnlyNovelToken);
   AddTest(tests, "StructuralDiff/EditedCommentMarksOnlyChangedWords",
           TestEditedCommentMarksOnlyChangedWords);
+  AddTest(tests, "StructuralDiff/ATabTypedIntoARunOfSymbolsMarksNoTokenNovel",
+          TestATabTypedIntoARunOfSymbolsMarksNoTokenNovel);
   AddTest(tests, "StructuralDiff/ReindentedCommentIsLayoutOnly",
           TestReindentedCommentIsLayoutOnly);
   AddTest(tests, "StructuralDiff/ANonAsciiSymbolIsNotPartOfAWord", TestANonAsciiSymbolIsNotPartOfAWord);

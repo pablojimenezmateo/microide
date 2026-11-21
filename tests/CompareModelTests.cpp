@@ -181,12 +181,14 @@ void TestCompareUtf8ChangedSpans() {
   Expect(IsUtf8Boundary(row.right_text, right_span.start) &&
              IsUtf8Boundary(row.right_text, right_span.end),
          "utf8 right span should stay on codepoint boundaries");
-  // Non-ASCII bytes are word bytes, so each side is ONE token and the novel span
-  // is that whole token -- the structural diff never splits an atom.
-  Expect(SpanText(row.left_text, left_span) == "a😀x",
-         "utf8 left changed span should cover the original token");
-  Expect(SpanText(row.right_text, right_span) == "a😃x",
-         "utf8 right changed span should cover the replacement token");
+  // An emoji is a symbol, a token of its own (not part of the word around it):
+  // the novel span is the changed emoji alone, whole -- never a split scalar.
+  Expect(SpanText(row.left_text, left_span) == "😀",
+         "utf8 left changed span should cover the original emoji, got '" +
+             std::string(SpanText(row.left_text, left_span)) + "'");
+  Expect(SpanText(row.right_text, right_span) == "😃",
+         "utf8 right changed span should cover the replacement emoji, got '" +
+             std::string(SpanText(row.right_text, right_span)) + "'");
 }
 
 void TestCompareCodeTokenChangedSpans() {

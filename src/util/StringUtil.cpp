@@ -666,6 +666,11 @@ bool Utf8IsIdentifierCodepoint(char32_t cp) {
   if (cp >= 0x2000 && cp <= 0x206F) return false;   // general punctuation
   if (cp >= 0x2190 && cp <= 0x2BFF) return false;   // arrows / symbols / dingbats
   if (cp >= 0x3000 && cp <= 0x303F) return false;   // CJK symbols & punctuation
+  // Pictographs: emoji, their modifiers and regional indicators, mahjong and
+  // playing cards, legacy computing symbols. A symbol, not a letter -- a run of
+  // emoji was one "word", so a tab typed into it changed a token and the diff
+  // marked the whole line novel (soak 96055d2c8eec).
+  if (cp >= 0x1F000 && cp <= 0x1FBFF) return false;
   if (cp == 0xA0 || cp == 0x3000) return false;     // no-break / ideographic space
   return true;
 }
