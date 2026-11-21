@@ -79,18 +79,24 @@ layout function asserts (in tests) that its elements tile it.
 - Draw entry points (inventory, 2026-11-21). Direct `SDL_Render*` draw calls
   live only in: the primitives (`WorkspaceShellRenderPrimitives.h`,
   `render/SurfacePrimitives.h`, `render/ClipStableLine.h`), the text backends
-  (`SdlTtfTextBackend`, `DebugTextBackend`, `AsciiGlyphAtlas`, behind
-  `TextRenderer`), `DecoratedTextGridRenderer`, `PluginDisplayListRenderer`, the
+  (`SdlTtfTextBackend.cpp`, `DebugTextBackend.cpp`, behind `TextRenderer`),
+  `DecoratedTextGridRenderer.cpp`, `PluginDisplayListRenderer.cpp`, the
   editor path (`EditorViewRenderer`, `GutterIconRegistry`, `BreakpointRender`,
   `DiagnosticsRender`, `ExecutionLineRender` -- derived-damage's owner takes them
   off the allowlist as the editor stage lands), and four workspace render TUs
   (`OverviewRuler`, `RenderBottomPanel`, `RenderFrame`, `RenderSettingsOverlay`),
-  whose calls move into primitives as their stages come. The recorder hooks
+  whose calls move into primitives as their stages come, and `Application.cpp`
+  presenting the scene texture. (The lint, code-masked, showed four headers on the
+  first grep-based inventory only mention the calls in comments.) The recorder hooks
   `render::FillRect`, `render::OutlineRect`, `RenderClipStableLine` and
   `TextRenderer::DrawString(On)`; a lint rejects any `SDL_Render(FillRect|Rect|
   Line|Lines|Point|Points|Texture|Geometry|DebugText)` call outside the
   allowlist, so the allowlist is exactly what the recorder must instrument and
   nothing draws unseen.
+- The allowlist lint is `CheckSdlDrawCallsStayInTheAllowlist` (hard): a direct
+  SDL draw call outside the list fails, and so does a listed file that no longer
+  draws. Entries not yet hooked by the recorder (the text grid, plugin display
+  lists, the editor path, the four workspace TUs) are the stages still to come.
 - Lint: in a migrated render TU, draw calls (`FillRect`, `DrawText`, line and
   border helpers) must sit lexically inside a `PaintElement` scope. Feasible as a
   brace-depth scan like the existing render lints; it cannot follow helpers across

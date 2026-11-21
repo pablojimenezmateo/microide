@@ -1,6 +1,7 @@
 #include "architecture/WorkspaceShellArchitectureRules.h"
 
 #include "architecture/ArchitectureFileScanner.h"
+#include "architecture/ArchitectureRuleHelpers.h"
 
 #include <array>
 #include <filesystem>
@@ -70,6 +71,72 @@ RuleResult CheckCoordinatorShellConstructors(const std::filesystem::path& repo_r
     const std::string text = ReadText(entry.path());
     AppendViolations(result, entry.path(), text, pattern,
                      "coordinator constructors should not take WorkspaceShell");
+  }
+  return result;
+}
+
+// openspec clip-discipline D5: every direct SDL draw call lives in a file on this
+// list, so the list is exactly the set of entry points the paint-overrun recorder
+// (render::PaintElement) must instrument -- nothing draws unseen by it. A render
+// TU that called SDL_Render* itself would paint past its element with no report.
+// Each entry is a primitive, a text backend, or code a later stage of the change
+// moves into the primitives; an entry that no longer draws (or no longer exists)
+// fails, so the list cannot go stale.
+namespace {
+constexpr std::array<std::string_view, 17> kSdlDrawAllowlist = {
+    // Hooked primitives (NotePaint) and the text front end's backends.
+    "src/workspace/render/WorkspaceShellRenderPrimitives.h",
+    "src/render/SurfacePrimitives.h",
+    "src/render/ClipStableLine.h",
+    "src/render/SdlTtfTextBackend.cpp",
+    "src/render/DebugTextBackend.cpp",
+    "src/render/PluginDisplayListRenderer.cpp",
+    "src/editor/DecoratedTextGridRenderer.cpp",
+    // The editor path: derived-damage's owner takes these off with its editor stage.
+    "src/editor/EditorViewRenderer.cpp",
+    "src/editor/GutterIconRegistry.cpp",
+    "src/editor/BreakpointRender.cpp",
+    "src/editor/DiagnosticsRender.cpp",
+    "src/editor/ExecutionLineRender.cpp",
+    // Workspace render TUs whose calls move into primitives as their stages land.
+    "src/workspace/render/OverviewRuler.cpp",
+    "src/workspace/render/WorkspaceShellRenderBottomPanel.cpp",
+    "src/workspace/render/WorkspaceShellRenderFrame.cpp",
+    "src/workspace/render/WorkspaceShellRenderSettingsOverlay.cpp",
+    // Presenting the finished scene texture: not an element's paint.
+    "src/app/Application.cpp",
+};
+}  // namespace
+
+std::span<const std::string_view> SdlDrawAllowlist() { return kSdlDrawAllowlist; }
+
+RuleResult CheckSdlDrawCallsStayInTheAllowlist(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "direct SDL draw calls only in the paint-recorded allowlist";
+  result.hard_fail = true;
+  const std::regex draw_call(
+      R"(\bSDL_Render(FillRects?|Rects?|Lines?|Points?|Texture|TextureRotated|TextureTiled|Texture9Grid|Geometry|GeometryRaw|DebugText|DebugTextFormat)\s*\()");
+  std::set<std::string> allowed;
+  for (const std::string_view entry : kSdlDrawAllowlist) {
+    allowed.insert(std::string(entry));
+    const std::filesystem::path target = repo_root / entry;
+    if (!RequireRuleTarget(result, target)) {
+      continue;
+    }
+    if (!CodeMaskedPatternAppears(ReadText(target), draw_call)) {
+      result.violations.push_back(Violation{
+          .path = target, .line = 1, .message = "allowlisted for direct SDL draw calls but makes none: remove it"});
+    }
+  }
+  constexpr std::array<std::string_view, 3> kExtensions = {".cpp", ".h", ".inc"};
+  for (const std::filesystem::path& path : SourceFilesUnder(repo_root / "src", kExtensions)) {
+    const std::string relative = path.lexically_relative(repo_root).generic_string();
+    if (allowed.contains(relative)) {
+      continue;
+    }
+    AppendCodeMaskRegexViolations(result, path, ReadText(path), draw_call,
+                                  "draw through the primitives (render::FillRect, TextRenderer, ...), "
+                                  "which the paint-overrun recorder sees, not SDL_Render* directly");
   }
   return result;
 }

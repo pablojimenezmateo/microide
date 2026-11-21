@@ -10,8 +10,8 @@
 
 - [x] 1.1 `SnapToDevicePixels` in `src/render/ScopedRenderClip.h`; clips, damage requests and scoped fills use it. Verify: unit test -- at scales 1, 1.25, 1.5, 1.75, 2 and the soak's 0.75/3, a damage rect and the fill of the same logical rect cover the same device pixels.
 - [x] 1.2 `PaintElement` scope (clip, opaque fill, overrun recorder behind the verifier flag) and the recorder in `RetainedRedraw`. Verify: a test element drawing one pixel past its rect fails `PaintAndDiffWithFullRepaint` naming the element (negative control recorded).
-- [ ] 1.3 Migrate the editor and project tab strips: each tab, its separator and the overflow chips are elements tiling the strip; labels fitted before drawing. Verify: the tab-gap regression (053365e38e57, dfaecf57f6db) as a failing-first `RetainedRedraw` test; a tiling assertion in the strip layout test.
-- [ ] 1.4 Lint: draw calls in the migrated TU only inside a `PaintElement` scope. Verify: fixtures both ways in `ArchitectureRuleFixtures.cpp`; `RequireRuleTarget` on the TU.
+- [x] 1.3 Migrate the editor and project tab strips: each tab, its separator and the overflow chips are elements tiling the strip; labels fitted before drawing. Verify: the tab-gap regression (053365e38e57, dfaecf57f6db) as a failing-first `RetainedRedraw` test; a tiling assertion in the strip layout test.
+- [x] 1.4 Lint (`CheckSdlDrawCallsStayInTheAllowlist`; the per-scope lexical lint follows the first TU fully migrated): draw calls in the migrated TU only inside a `PaintElement` scope. Verify: fixtures both ways in `ArchitectureRuleFixtures.cpp`; `RequireRuleTarget` on the TU.
 - [x] 1.5 `tools/qa`: an overrun line becomes a `paint-overrun` finding with the element. Verify: a test in `test_findings.py`.
 - [ ] 1.6 Perf A/B for stage 1; the per-row clip cost spike (Open Question 1). Verify: numbers in `notes.md`, the D1 fallback decision recorded.
 

@@ -1333,8 +1333,40 @@ void RunTextViewportDefaultedSpecialMembersRuleFixtures() {
          "a header without the four defaulted declarations must be flagged for each");
 }
 
+void RunSdlDrawAllowlistRuleFixtures() {
+  // clip-discipline D5: a direct SDL draw call outside the allowlist is flagged, the
+  // allowlisted files are not, a call in a comment or string is not code, and an
+  // allowlisted file that stopped drawing (or is gone) fails rather than going stale.
+  TemporaryDirectory dir;
+  const std::filesystem::path& root = dir.path();
+  for (const std::string_view entry : SdlDrawAllowlist()) {
+    std::filesystem::create_directories((root / entry).parent_path());
+    WriteFile(root / entry, "void Draw(SDL_Renderer* r, const SDL_FRect* f) { SDL_RenderFillRect(r, f); }\n");
+  }
+  std::filesystem::create_directories(root / "src/workspace/render");
+  WriteFile(root / "src/workspace/render/WorkspaceShellRenderNew.cpp",
+            "void A(SDL_Renderer* r, const SDL_FRect* f) { SDL_RenderFillRect(r, f); }\n"
+            "void B(SDL_Renderer* r) { SDL_RenderLine(r, 0, 0, 1, 1); }\n"
+            "void C(SDL_Renderer* r, SDL_Texture* t) { SDL_RenderTexture(r, t, nullptr, nullptr); }\n");
+  Expect(CheckSdlDrawCallsStayInTheAllowlist(root).violations.size() == 3,
+         "every direct SDL draw call outside the allowlist must be flagged");
+
+  WriteFile(root / "src/workspace/render/WorkspaceShellRenderNew.cpp",
+            "void A(SDL_Renderer* r, const SDL_FRect& f) { render::FillRect(r, f, {}); }\n"
+            "// SDL_RenderFillRect(r, f) is what this file must not do\n"
+            "const char* kNote = \"SDL_RenderLine(r, 0, 0, 1, 1)\";\n"
+            "void B(SDL_Renderer* r) { SDL_SetRenderClipRect(r, nullptr); }\n");
+  Expect(CheckSdlDrawCallsStayInTheAllowlist(root).violations.empty(),
+         "primitives, comments, strings and non-draw SDL calls are not violations");
+
+  WriteFile(root / SdlDrawAllowlist().front(), "void Draw() {}\n");
+  Expect(!CheckSdlDrawCallsStayInTheAllowlist(root).violations.empty(),
+         "an allowlisted file that no longer draws must fail: the list cannot go stale");
+}
+
 void RunAllRuleFixtures() {
   RunDescriptorCloseOnExecRuleFixtures();
+  RunSdlDrawAllowlistRuleFixtures();
   RunTerminalExtractedImplRuleFixtures();
   RunDirectGitRepositoryRuleFixtures();
   RunActionIdReachabilityRuleFixtures();
