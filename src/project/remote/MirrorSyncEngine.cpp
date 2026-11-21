@@ -3,12 +3,14 @@
 #include <unordered_set>
 #include "util/HeapUsage.h"
 #include "util/ContentHash.h"
+#include "util/Log.h"
 #include "util/PerformanceTrace.h"
 #include "util/DurableFile.h"
 #include "util/TextFileIO.h"
 #include "util/Zstd.h"
 
 #include <algorithm>
+#include <format>
 #include <utility>
 
 #include "project/remote/TreeFiles.h"
@@ -17,6 +19,58 @@ namespace microide::project::remote {
 namespace {
 
 using LocalState = MirrorStore::LocalState;
+
+// One line per decision the engine makes about a path whose state is the user's
+// (a save, a blocked save, a conflict, a file only here), with MICROIDE_TRACE_MIRROR_SYNC:
+// what it decided and the entry after. A remote finding said only "only in the
+// mirror" -- the host side absent and the mirror settled -- and nothing said
+// which push, delete or resolution put the two sides apart (soak 37ec61829b08).
+bool MirrorTraceEnabled() {
+  static const bool enabled = util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_MIRROR_SYNC");
+  return enabled;
+}
+
+std::string_view HashPrefix(const std::optional<util::ContentHash>& hash, std::string& scratch) {
+  scratch = hash.has_value() ? hash->Hex().substr(0, 12) : "-";
+  return scratch;
+}
+
+void TraceMirror(std::string_view event, std::string_view path, const MirrorStore::Entry* entry,
+                 std::string_view detail = {}) {
+  if (!MirrorTraceEnabled()) {
+    return;
+  }
+  if (entry == nullptr) {
+    util::Log(std::format("microide mirror-sync: {} path={} entry=none {}", event, path, detail));
+    return;
+  }
+  std::string base;
+  std::string remote;
+  util::Log(std::format(
+      "microide mirror-sync: {} path={} base={} remote={} has_remote={} local_only={} push_pending={} "
+      "conflict={} blocked={} pushed_manifest={} {}",
+      event, path, HashPrefix(entry->base, base),
+      HashPrefix(entry->has_remote ? std::optional(entry->remote.hash) : std::nullopt, remote),
+      entry->has_remote ? 1 : 0, entry->local_only ? 1 : 0, entry->push_pending ? 1 : 0, entry->conflict ? 1 : 0,
+      entry->blocked.empty() ? "-" : "\"" + entry->blocked + "\"", entry->pushed_manifest, detail));
+}
+
+// Whether the entry holds something of the user's the host may not: the paths
+// a trace line is worth its cost for.
+bool UsersState(const MirrorStore::Entry& entry) {
+  return entry.push_pending || entry.conflict || entry.local_only || !entry.blocked.empty();
+}
+
+std::string WriteOutcome(const RemoteWorkspace::WriteResult& result) {
+  using Status = RemoteWorkspace::WriteResult::Status;
+  std::string hash;
+  return std::format("status={} hash={} unreachable={} may_have_applied={} refused={} manifest={} error=\"{}\"",
+                     result.status == Status::Ok         ? "ok"
+                     : result.status == Status::Conflict ? "conflict"
+                                                         : "error",
+                     HashPrefix(result.hash, hash), result.unreachable ? 1 : 0, result.may_have_applied ? 1 : 0,
+                     result.blocked ? 1 : 0, result.manifest_id, result.error);
+}
 
 // Backfill fetches on the wire at once (§ 6.3's pull concurrency).
 constexpr std::size_t kMaxPullsInFlight = 4;
@@ -230,6 +284,7 @@ void MirrorSyncEngine::NotifyLocalWrite(std::string path) {
       std::lock_guard lock(mutex_);
       // Journaled before it is attempted: a crash or a dropped link loses nothing.
       store_.entries()[path].push_pending = true;
+      TraceMirror("local-write", path, &store_.entries()[path]);
       SaveLocked();
       RecountLocked();
     }
@@ -571,6 +626,7 @@ void MirrorSyncEngine::RetryBlocked(std::string path) {
         return;
       }
       entry->blocked.clear();
+      TraceMirror("retry-blocked", path, entry);
       RecountLocked();
     }
     Changed();
@@ -662,6 +718,7 @@ void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution
     if (entry == nullptr) {
       return;
     }
+    TraceMirror(local_exists ? "keep-local" : "keep-local-delete", path, entry, WriteOutcome(result));
     if (result.status != Status::Ok) {
       if (result.blocked && !entry->blocked.empty()) {
         entry->blocked = result.error;  // still refused, now for this reason
@@ -732,6 +789,8 @@ void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution
     if (entry == nullptr) {
       return;
     }
+    TraceMirror(object.missing ? "take-remote-gone" : "take-remote", path, entry,
+                written.ok() ? std::string_view{} : std::string_view{written.error});
     if (!written.ok()) {
       status_.error = written.error;
       return;
@@ -1057,6 +1116,11 @@ void MirrorSyncEngine::ReconcileRowLocked(ManifestRow row, Plan& plan, std::uint
   auto [it, inserted] = store_.entries().try_emplace(std::move(row.path));
   MirrorStore::Entry& entry = it->second;
   const std::string& path = it->first;
+  if (!inserted && UsersState(entry)) {
+    std::string hash;
+    TraceMirror("host-row", path, &entry,
+                std::format("before: row={} manifest={}", HashPrefix(row.hash, hash), manifest_id));
+  }
   // Built before the host acknowledged a push to this path, so older than what
   // that push wrote: the echo of an earlier push, typically. The host sends watch
   // deltas on the bulk lane and answers on the interactive one, and the serial
@@ -1164,9 +1228,13 @@ bool MirrorSyncEngine::ReconcileDeleteLocked(std::map<std::string, MirrorStore::
   if (status_.synced_once && entry.has_remote && entry.remote.kind == ManifestEntryKind::File) {
     RecordHostChangeLocked(it->first, HostChange::Kind::Deleted, entry.remote.hash);
   }
+  if (UsersState(entry)) {
+    TraceMirror("host-delete", it->first, &entry, "before");
+  }
   if (entry.local_only || entry.push_pending || entry.conflict) {
     if (!entry.blocked.empty()) {
       if (!entry.has_remote) {
+        TraceMirror("host-delete", it->first, &entry, "kept: blocked and never listed");
         return false;  // refused, never listed, still not: nothing changed there
       }
       entry.blocked.clear();  // the host removed what refused it: try again
@@ -1185,6 +1253,7 @@ bool MirrorSyncEngine::ReconcileDeleteLocked(std::map<std::string, MirrorStore::
       // Left out of the plan, it stayed "unsent" forever with no row (TD-421).
       plan.pushes.push_back(it->first);
     }
+    TraceMirror("host-delete", it->first, &entry, entry.push_pending ? "kept: push planned" : "kept");
     return false;
   }
   if (!entry.has_remote) {
@@ -1201,6 +1270,7 @@ bool MirrorSyncEngine::ReconcileDeleteLocked(std::map<std::string, MirrorStore::
   if (local == LocalState::Differs) {
     entry.has_remote = false;
     entry.conflict = true;
+    TraceMirror("host-delete", it->first, &entry, "conflict: changed here");
     return false;
   }
   plan.deletes.push_back(it->first);
@@ -1904,6 +1974,7 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
     if (!read.ok()) {
       // Deleted locally since: a tree operation, not a content push (§ 6.3).
       entry->push_pending = false;
+      TraceMirror("push-skipped-unreadable-here", path, entry, read.error);
       if (read.status == FileOpResult::Status::Error) {
         status_.error = read.error;
       }
@@ -1998,6 +2069,7 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
           status_.error = result.error;
         }
       }
+      TraceMirror("push", path, entry, WriteOutcome(result));
       RecountLocked();
       SaveLocked();
     }

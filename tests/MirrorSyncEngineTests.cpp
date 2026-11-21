@@ -836,6 +836,43 @@ void TestMirrorASaveTheHostRefusesIsBlockedNotUnsent() {
          "nothing is left blocked or unsent");
 }
 
+// The shape of soak 37ec61829b08's sightings: a save to a file the host cannot
+// read is refused (blocked); the host then renames that file away, and the user
+// chooses Replace on Host. The mirror must not settle with the user's file on
+// its side only. This sequence holds without faults (the file lands on the host);
+// the soak's sightings add link cuts and server kills between the steps, and
+// MICROIDE_TRACE_MIRROR_SYNC now records each decision about the path.
+void TestMirrorARefusedSaveWhoseHostFileIsRenamedAwayIsNotLeftBehind() {
+  MirrorSession session;
+  WriteFile(session.host / "ok.txt", "ok\n");
+  WriteFile(session.host / "unreadable.txt", "host\n");
+  std::filesystem::permissions(session.host / "unreadable.txt", std::filesystem::perms::none);
+  if (::access((session.host / "unreadable.txt").c_str(), R_OK) == 0) {
+    return;  // running as root: nothing is unreadable
+  }
+  session.Connect();
+  session.Sync();
+  WriteFile(session.Tree("unreadable.txt"), "mine\n");
+  session.engine->NotifyLocalWrite("unreadable.txt");
+  session.engine->Flush();
+  auto status = session.engine->status();
+  const std::string before = "blocked=" + std::to_string(status.blocked) + " dirty=" + std::to_string(status.dirty) +
+                             " conflicts=" + std::to_string(session.engine->Conflicts().size());
+  std::filesystem::rename(session.host / "unreadable.txt", session.host / "unreadable.txt.renamed");
+  session.Sync();
+  session.engine->ResolveConflict("unreadable.txt", remote::MirrorSyncEngine::Resolution::KeepLocal);
+  session.engine->Flush();
+  session.Sync();
+  status = session.engine->status();
+  const bool on_host = std::filesystem::exists(session.host / "unreadable.txt");
+  const bool reported = status.blocked > 0 || status.dirty > 0 || !session.engine->Conflicts().empty();
+  Expect(on_host || reported,
+         "the user's file reaches the host or the mirror says it has not: before rename " + before +
+             "; after blocked=" + std::to_string(status.blocked) + " dirty=" + std::to_string(status.dirty) +
+             " conflicts=" + std::to_string(session.engine->Conflicts().size()) + " error=" + status.error);
+  std::filesystem::permissions(session.host / "unreadable.txt.renamed", std::filesystem::perms::owner_all);
+}
+
 // Nothing is settled automatically; the user's choice is: keep mine (the one
 // unconditional write) or take the host's.
 void TestMirrorResolvesConflictsTheUsersWay() {
@@ -1788,6 +1825,8 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
           TestMirrorASaveThroughALinkPushesTheFileItNames);
   AddTest(tests, "MirrorSyncEngine/ASaveTheHostRefusesIsBlockedNotUnsent",
           TestMirrorASaveTheHostRefusesIsBlockedNotUnsent);
+  AddTest(tests, "MirrorSyncEngine/ARefusedSaveWhoseHostFileIsRenamedAwayIsNotLeftBehind",
+          TestMirrorARefusedSaveWhoseHostFileIsRenamedAwayIsNotLeftBehind);
   AddTest(tests, "MirrorSyncEngine/MergesAConflictThreeWays", TestMirrorMergesAConflictThreeWays);
   AddTest(tests, "MirrorSyncEngine/JournalSurvivesARestart", TestMirrorJournalSurvivesARestart);
   AddTest(tests, "MirrorSyncEngine/ACrashBeforeTheJournalLosesNothing", TestMirrorACrashBeforeTheJournalLosesNothing);

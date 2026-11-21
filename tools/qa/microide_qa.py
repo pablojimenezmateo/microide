@@ -715,6 +715,10 @@ class App:
             # One line per read, write, adopted baseline and undo-to-clean of a
             # buffer: the history a data finding's evidence quotes for its file.
             "MICROIDE_TRACE_BUFFER_IO": "1",
+            # One line per sync-engine decision about a path holding something of
+            # the user's (a save, a blocked save, a conflict): the history a remote
+            # finding's evidence quotes for its file (diff-<file>.sync.txt).
+            "MICROIDE_TRACE_MIRROR_SYNC": "1",
             # The first caret a viewport leaves outside its document, with the
             # stack of the code that left it (TextViewport::TraceCaretBounds): the
             # invariants query only finds it steps later (soak 872c8984d39b).

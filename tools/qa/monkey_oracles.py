@@ -78,6 +78,22 @@ def _doc_key(doc: dict[str, Any]) -> tuple[str, str]:
     within its project, since each project numbers its own Untitled-N."""
     return (str(doc.get("project") or ""), str(doc.get("path") or doc.get("title")))
 
+def _logged_history(app: Any, prefix: str, path: str, keep: int = 200) -> list[str]:
+    """The app log's `prefix` lines about `path` (a ` path=<path> ` field), across
+    the run's launches, newest last: what a trace flag recorded for one file."""
+    marker = f" path={path} "
+    work = getattr(app, "work", None)
+    logs = sorted(Path(work).glob("microide*.log"), key=lambda p: p.stat().st_mtime) if work else []
+    found: list[str] = []
+    for log in logs:
+        try:
+            text = log.read_text(errors="replace")
+        except OSError:
+            continue
+        found += [f"{log.name}: {line}" for line in text.splitlines() if prefix in line and marker in line]
+    return found[-keep:]
+
+
 def _result_beside_its_files_buffer(doc: dict[str, Any], docs: list[dict[str, Any]]) -> bool:
     """Whether `doc` is a merge's unsaved result for a file whose own buffer (an
     editor's, a diff's side) also holds unsaved text. The session keeps the
@@ -229,18 +245,7 @@ class DataOracle:
         last. The bytes say THAT the buffer and the file disagree; this says which
         moment put them apart, and it is gone from the log tail by the time a
         long run's oracle fires."""
-        marker = f" path={path} "
-        work = getattr(self.app, "work", None)
-        logs = sorted(Path(work).glob("microide*.log"), key=lambda p: p.stat().st_mtime) if work else []
-        found: list[str] = []
-        for log in logs:
-            try:
-                text = log.read_text(errors="replace")
-            except OSError:
-                continue
-            found += [f"{log.name}: {line}" for line in text.splitlines()
-                      if "microide buffer-io:" in line and marker in line]
-        return found[-keep:]
+        return _logged_history(self.app, "microide buffer-io:", path, keep)
 
     def staging_leftovers(self, pid: int | None) -> list[Path]:
         """Save temporaries of process `pid` under the project (its own saves
@@ -1441,6 +1446,12 @@ class RemoteConvergence:
             except OSError as error:
                 stamps.append(f"{side}: {error.strerror}")
         out[f"diff-{name}.txt"] = ("\n".join(stamps) + "\n").encode()
+        # What the sync engine decided about the path (MICROIDE_TRACE_MIRROR_SYNC):
+        # the sides say THAT they differ, this which push, delete or resolution
+        # left them so (soak 37ec61829b08 said only "only in the mirror").
+        history = _logged_history(self.app, "microide mirror-sync:", path)
+        if history:
+            out[f"diff-{name}.sync.txt"] = ("\n".join(history) + "\n").encode()
         return out
 
     @staticmethod

@@ -103,6 +103,34 @@ class ForgetFilesOfTests(unittest.TestCase):
                              "crlf.txt is the file the save through its link wrote; other.txt is not")
 
 
+class RemoteSideEvidenceTests(unittest.TestCase):
+    def test_a_differing_file_carries_what_the_sync_engine_decided_about_it(self) -> None:
+        # Soak 37ec61829b08: the evidence said "host: No such file or directory"
+        # and the mirror's bytes, and nothing of which push, delete or resolution
+        # left the user's file on one side only.
+        with tempfile.TemporaryDirectory() as tmp:
+            work, host, mirror = Path(tmp) / "work", Path(tmp) / "host", Path(tmp) / "mirror"
+            for folder in (work, host / "qa-weird", mirror / "qa-weird"):
+                folder.mkdir(parents=True)
+            (mirror / "qa-weird" / "unreadable.txt").write_text("mine\n")
+            (work / "microide.log").write_text(
+                "microide mirror-sync: push path=qa-weird/unreadable.txt base=- status=error refused=1\n"
+                "microide mirror-sync: push path=qa-weird/other.txt base=- status=ok\n"
+                "microide buffer-io: write path=qa-weird/unreadable.txt bytes=5\n"
+                "microide mirror-sync: host-delete path=qa-weird/unreadable.txt before\n")
+
+            class _App:
+                pass
+            app = _App()
+            app.work = str(work)
+            oracle = monkey_oracles.RemoteConvergence(app, mirror, host, "remote-open qa-local:/h")
+            evidence = oracle._side_evidence("qa-weird/unreadable.txt")
+            self.assertEqual(evidence["diff-qa-weird__unreadable.txt.sync.txt"].decode().splitlines(), [
+                "microide.log: microide mirror-sync: push path=qa-weird/unreadable.txt base=- status=error refused=1",
+                "microide.log: microide mirror-sync: host-delete path=qa-weird/unreadable.txt before",
+            ])
+
+
 class Kill9OracleTests(unittest.TestCase):
     def test_the_first_wait_is_for_the_active_projects_buffers_alone(self) -> None:
         # A background project's buffer can only come back through the lap; the

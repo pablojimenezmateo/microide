@@ -79,7 +79,11 @@ only, a failing-first test for every fix, one commit per fix, and a TD entry in
    every read, write, adopted baseline and undo-to-clean the app logged for it
    (`mismatch-<file>.io.txt`, from `MICROIDE_TRACE_BUFFER_IO`). A `data`
    signature keys on the file's NAME only, so one signature holds every way that
-   file has gone wrong: read the history before assuming the old mechanism; for `undo`, the action list before the sampled undo.
+   file has gone wrong: read the history before assuming the old mechanism; for `undo`, the action list before the sampled undo;
+   for `remote`, each side's bytes (`diff-<file>.host/.mirror/.txt`) and every
+   sync-engine decision about the path -- local writes, pushes and the host's
+   answers, host rows and deletes, Retry and Replace on Host, with the entry's
+   state after each (`diff-<file>.sync.txt`, from `MICROIDE_TRACE_MIRROR_SYNC`).
 5. **Test first.** Write the failing test at the lowest level that shows the
    defect:
    - paint: `tests/support/RetainedRedraw.h` (`DispatchEvents`,
