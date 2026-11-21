@@ -2,16 +2,16 @@
 
 ## 0. Baseline and instrumentation
 
-- [ ] 0.1 Record base numbers: `tools/run-checks.sh perf-tests` and the perf harness paint scenarios (`editor_typing_paint`, caret blink, `scroll_large_file`, a 2560x1440 variant), interleaved base runs on the main checkout's disk; save the table in this change's `notes.md`. Verify: the table exists with p50/p95 and allocation counts per scenario.
-- [ ] 0.2 Add perf counters for units fingerprinted and units damaged by derivation per frame, reported by the perf harness. Verify: counters show 0 on base scenarios and appear in the harness output.
+- [x] 0.1 Record base numbers: `tools/run-checks.sh perf-tests` and the perf harness paint scenarios (`editor_typing_paint`, caret blink, `scroll_large_file`, a 2560x1440 variant), interleaved base runs on the main checkout's disk; save the table in this change's `notes.md`. Verify: the table exists with p50/p95 and allocation counts per scenario.
+- [x] 0.2 Add perf counters for units fingerprinted and units damaged by derivation per frame, reported by the perf harness. Verify: counters show 0 on base scenarios and appear in the harness output.
 
 ## 1. Framework and whole-surface pilot
 
-- [ ] 1.1 Add the derived-damage unit table to frame prep (per unit: last painted fingerprint and rect; damage old and new rect on change). Verify: a unit test drives prep with a changed fingerprint and sees exactly that unit damaged, and none when unchanged.
+- [x] 1.1 Add the derived-damage unit table to frame prep (per unit: last painted fingerprint and rect; damage old and new rect on change). Verify: a unit test drives prep with a changed fingerprint and sees exactly that unit damaged, and none when unchanged.
 - [ ] 1.2 Migrate the status bar and the breadcrumb row: their view models become complete snapshots, fingerprinted by the builder; delete the `painted_status_items` / `painted_breadcrumb_labels` comparisons they subsume. Verify: `RetainedRedraw` tests that change status-bar and breadcrumb state with no damage request stay fresh; QA lane green.
-- [ ] 1.3 Field-completeness test per migrated view model (every field changes the fingerprint). Verify: the test fails when a field is left out of the hash (negative control recorded).
-- [ ] 1.4 Extend the render-surface lint so migrated TUs read only their view-model parameters and immutable resources. Verify: fixtures both ways in `ArchitectureRuleFixtures.cpp`; a seeded violation fails the lint.
-- [ ] 1.5 Perf A/B for stage 1. Verify: within budget (no p50 > +5%, no new steady-state allocations), numbers appended to `notes.md`.
+- [x] 1.3 Field-completeness test per migrated view model (every field changes the fingerprint). Verify: the test fails when a field is left out of the hash (negative control recorded).
+- [x] 1.4 Extend the render-surface lint so migrated TUs read only their view-model parameters and immutable resources. Verify: fixtures both ways in `ArchitectureRuleFixtures.cpp`; a seeded violation fails the lint.
+- [x] 1.5 Perf A/B for stage 1. Verify: within budget (no p50 > +5%, no new steady-state allocations), numbers appended to `notes.md`.
 
 ## 2. Editor rows
 
