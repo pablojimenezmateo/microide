@@ -77,3 +77,30 @@ it on the real paint.
 window's origin -- for a tab too narrow for a close button
 (`QaFlowRegression/APaneNarrowedToItsMinimumPaintsNothingOutsideIt`); the strip
 clip had hidden it.
+
+## 1.6 Stage 1 perf A/B (2026-11-21)
+
+Protocol: base 5684bd2c5 (snap only, before paint elements), head 1263bd2c2
+(paint elements, recorder hooks, tab strips, lint); `microide_perf` built in two
+worktrees under `build/` with the `microide-perf` preset; soak paused for the runs
+(`soak.py pause`, resumed by the script's exit trap); 3 rounds, 10 iterations,
+each scenario run base/head alternately with the order flipped per round. Table =
+median of the three rounds' p50 wall time. Allocations are deterministic.
+
+```
+scenario                                  base p50  head p50     d%  alloc b  alloc h
+editor_tab_drag_burst                        8.119     8.139    0.2    10263    10263
+editor_typing_paint                        173.305   174.658    0.8     1644     1644
+menu_hover_paint                            89.232    88.906   -0.4      327      327
+multi_tab_cycle                            133.674   133.982    0.2     4364     4364
+project_tab_strip_layout_hittest             5.058     4.952   -2.1      187      187
+scroll_large_file                           61.146    61.288    0.2      146      146
+```
+
+Per-round p50: editor_typing_paint base [175.38, 172.73, 173.31] head [174.66,
+174.75, 174.16]; multi_tab_cycle base [136.90, 133.67, 133.30] head [134.98,
+133.97, 133.98] -- overlapping. `scroll_large_file` fails its committed
+allocation gate (146 vs 129) on BOTH binaries: pre-existing, not this change.
+
+Verdict: within budget -- no p50 beyond noise, no allocation added (the recorder
+and the per-tab clips cost nothing measurable with recording off).

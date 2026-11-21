@@ -13,7 +13,7 @@
 - [x] 1.3 Migrate the editor and project tab strips: each tab, its separator and the overflow chips are elements tiling the strip; labels fitted before drawing. Verify: the tab-gap regression (053365e38e57, dfaecf57f6db) as a failing-first `RetainedRedraw` test; a tiling assertion in the strip layout test.
 - [x] 1.4 Lint (`CheckSdlDrawCallsStayInTheAllowlist`; the per-scope lexical lint follows the first TU fully migrated): draw calls in the migrated TU only inside a `PaintElement` scope. Verify: fixtures both ways in `ArchitectureRuleFixtures.cpp`; `RequireRuleTarget` on the TU.
 - [x] 1.5 `tools/qa`: an overrun line becomes a `paint-overrun` finding with the element. Verify: a test in `test_findings.py`.
-- [ ] 1.6 Perf A/B for stage 1; the per-row clip cost spike (Open Question 1). Verify: numbers in `notes.md`, the D1 fallback decision recorded.
+- [x] 1.6 Perf A/B for stage 1; the per-row clip cost spike (Open Question 1). Verify: numbers in `notes.md`, the D1 fallback decision recorded.
 
 ## 2. Editor surface (after derived-damage stage 2)
 
