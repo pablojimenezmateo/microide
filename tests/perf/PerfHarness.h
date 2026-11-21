@@ -425,6 +425,11 @@ class ScenarioContext {
   // is the ONLY way a terminal scenario gets content — and unlike waiting on a
   // child process it is byte-for-byte reproducible.
   void FeedTerminalOutput(std::string_view bytes);
+  // Show output channel `id` in the bottom panel, following its tail.
+  void ShowOutputChannel(std::string_view id);
+  // A line into output channel `id`, as a debug adapter, a language server's log
+  // or a plugin appends one: nothing asks for a repaint.
+  void AppendOutputLine(std::string_view id, std::string line);
   // Close every terminal tab. The driver is shared across a scenario's iterations,
   // so a scenario that opens terminals must close them or each iteration inherits
   // every earlier one.

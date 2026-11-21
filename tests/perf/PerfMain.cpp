@@ -1007,6 +1007,41 @@ void RegisterBuiltInScenarios() {
             context.CloseAllTerminals();
           },
   });
+  // The bottom panel's Output channel taking lines while a frame is painted per
+  // burst, the way a debug adapter's or a language server's log streams in: the
+  // derived-damage Output body (openspec derived-damage 3.1) against the
+  // whole-panel repaint it replaced. Then the same stream into a channel the
+  // panel does not show, which should repaint nothing there. Each frame carries
+  // only a 1x1 damage rect -- what made it run -- so the panel's repaint is
+  // whatever prep derives, as in the app.
+  //
+  // Advisory until a baseline is recorded on the reference runner.
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "output_channel_stream_paint",
+      .smoke = false,
+      .baseline_gated = false,
+      .warmup_iterations = 1,
+      .run =
+          [](ScenarioContext& context) {
+            (void)context.Open("tests/perf/fixtures/small_project");
+            context.AppendOutputLine("perf.output", "perf output");
+            context.ShowOutputChannel("perf.output");
+            context.PumpFrames(2);
+            const workspace::WorkspaceShell::RenderInvalidation frame_trigger{
+                .full = false, .rects = {SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f}}};
+            const auto stream = [&](std::string_view channel) {
+              for (int burst = 0; burst < 40; ++burst) {
+                for (int line = 0; line < 8; ++line) {
+                  context.AppendOutputLine(channel, "perf-output-line " + std::to_string(burst * 8 + line) +
+                                                        " src/main.cpp:12:5: note: streamed by the scenario");
+                }
+                context.PumpPartialFrame(frame_trigger);
+              }
+            };
+            context.Measure("output.stream_shown", [&]() { stream("perf.output"); });
+            context.Measure("output.stream_hidden", [&]() { stream("perf.hidden"); });
+          },
+  });
   // Pointer travel over a program that owns the mouse (Claude Code's fullscreen
   // TUI: alternate screen, DECSET 1003 + SGR): every move resolves the cursor --
   // which asks the session whether the program lit the cell under it

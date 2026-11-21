@@ -865,6 +865,16 @@ void ScenarioContext::OpenTerminal(std::string_view command) {
   (void)ExecuteCommand(command_line);
 }
 
+void ScenarioContext::ShowOutputChannel(std::string_view id) {
+  using TA = workspace::WorkspaceShell::TestAccess;
+  TA::SetOutputChannelTabs(shell_, {std::string(id)}, std::string(id));
+  TA::CurrentProjectState(shell_).panel.output.follow_tail = true;
+}
+
+void ScenarioContext::AppendOutputLine(std::string_view id, std::string line) {
+  workspace::WorkspaceShell::TestAccess::AppendOutputLine(shell_, id, "Perf Output", std::move(line));
+}
+
 void ScenarioContext::FeedTerminalOutput(std::string_view bytes) {
   // The harness runs with placeholder terminals (no shell is spawned), so a
   // scenario cannot get output by launching a command and sleeping — that
