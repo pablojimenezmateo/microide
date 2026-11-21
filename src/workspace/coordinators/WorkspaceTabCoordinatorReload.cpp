@@ -68,6 +68,10 @@ bool TabCoordinator::RevertEditorTabsForPath(const std::filesystem::path& path) 
   return false;
 }
 
+// Every loaded buffer of the path, an editor tab's or a diff's editable side
+// (LoadedBufferViewOf). Editor tabs alone left a diff open on a file with no
+// editor tab unmarked: its typing undone after the file changed read clean, a
+// clean buffer the file no longer held (soak 5c9620f457e8, 3fe0951ba184).
 void TabCoordinator::NoteDiskChangedUnderEditsForPath(const std::filesystem::path& path) {
   const std::filesystem::path normalized_path = path.lexically_normal();
   for (EditorGroup& group : state_.editor_groups) {
@@ -75,6 +79,9 @@ void TabCoordinator::NoteDiskChangedUnderEditsForPath(const std::filesystem::pat
       if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
           util::SameAsNormalizedPath(tab.editor_state->viewport.path(), normalized_path)) {
         tab.editor_state->viewport.NoteDiskChangedUnderEdits();
+      } else if (tab.kind == TabEntry::Kind::Compare && LoadedBufferViewOf(tab) != nullptr &&
+                 util::SameAsNormalizedPath(tab.compare->right_viewport.path(), normalized_path)) {
+        tab.compare->right_viewport.NoteDiskChangedUnderEdits();
       }
     }
   }
@@ -89,6 +96,11 @@ bool TabCoordinator::NoteMissedDiskChangeUnderEdits(const std::filesystem::path&
           tab.editor_state->content == EditorTabState::Content::Ready &&
           EditorViewPathIs(*tab.editor_state, normalized_path) &&
           tab.editor_state->viewport.DirtyWithACleanPosition()) {
+        could_read_clean = true;
+      }
+      if (tab.kind == TabEntry::Kind::Compare && LoadedBufferViewOf(tab) != nullptr &&
+          util::SameAsNormalizedPath(tab.compare->right_viewport.path(), normalized_path) &&
+          tab.compare->right_viewport.DirtyWithACleanPosition()) {
         could_read_clean = true;
       }
     }

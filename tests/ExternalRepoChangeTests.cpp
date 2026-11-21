@@ -1571,6 +1571,43 @@ void TestWorkspaceShellAnAutosaveWritesTheBufferAsItIs() {
   Expect(viewport.SerializeText() == with_both, "the redo history survived the autosave");
 }
 
+
+// Soak 5c9620f457e8 / 3fe0951ba184 (diff profile): text typed into a compare of two
+// files, the right-hand file rewritten on disk, the typing undone. The undo landed
+// on the content the side was read with, which read clean -- a clean buffer that
+// differs from its file. The editor-tab case was fixed long ago (1359f8ef3); the
+// note that a change landed under edits reached editor tabs only, never a diff's
+// editable side.
+void TestWorkspaceShellUndoInADiffAfterADiskChangeDoesNotReadClean() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path left = root / "v1.left.py";
+  const std::filesystem::path right = root / "v1.right.py";
+  WriteFile(left, "left\n");
+  WriteFile(right, "original\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "open the project");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "compare-files " + left.string() + " " + right.string()),
+         "compare-files opens the diff");
+  Expect(WorkspaceShellTestAccess::ActiveTabIsCompare(shell) &&
+             WorkspaceShellTestAccess::ActiveCompare(shell).right_editable &&
+             WorkspaceShellTestAccess::EditorViewportForPath(shell, right) == nullptr,
+         "the file is open only as the diff's editable side");
+  auto& side = WorkspaceShellTestAccess::ActiveCompare(shell).right_viewport;
+  side.InsertText("//");
+  DrainProjectChangesBeforeTheWrite(shell);
+
+  WriteFile(right, "changed on disk\noriginal\n");
+  (void)WaitUntil([&]() { return false; }, std::chrono::milliseconds(600), std::chrono::milliseconds(10),
+                  [&]() { (void)WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true); });
+  Expect(side.dirty(), "the typing is kept under the change on disk");
+  Expect(side.Undo(), "the typed edit undoes");
+  Expect(!side.lines().empty() && side.lines()[0] == "original", "the undo restores the content as read");
+  Expect(side.dirty(), "a diff side undone to content the file no longer holds must not read clean");
+}
+
 }  // namespace
 
 void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
@@ -1597,6 +1634,8 @@ void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellExternalChangeBannerForDirtyBuffer);
   AddTest(tests, "ExternalRepoChange/UndoAfterADiskChangeDoesNotReadClean",
           TestWorkspaceShellUndoAfterADiskChangeDoesNotReadClean);
+  AddTest(tests, "ExternalRepoChange/UndoInADiffAfterADiskChangeDoesNotReadClean",
+          TestWorkspaceShellUndoInADiffAfterADiskChangeDoesNotReadClean);
 AddTest(tests, "ExternalRepoChange/UndoAfterADiskChangeInTheBackgroundDoesNotReadClean",
           TestWorkspaceShellUndoAfterADiskChangeInTheBackgroundDoesNotReadClean);
 AddTest(tests, "ExternalRepoChange/ABackgroundChangeReachesAFileOpenOnlyInDiffs",
