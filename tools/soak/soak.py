@@ -1839,11 +1839,85 @@ def verify_fixed(state: dict[str, Any], log) -> None:
             log(f"  queued {entry.sig} to verify")
 
 
+# Open findings a replay has reproduced are replayed again on newer builds: a
+# fix elsewhere often cures one nobody booked it against (the ui.scale 1.1 clip
+# fix closed 11 of 37 such findings when they were replayed by hand), and
+# otherwise it stays open until its rate's worth of runs has passed without it
+# -- weeks for a rare one. At most RECHECK_BATCH a build, each at most once
+# every RECHECK_INTERVAL, the most severe first; a claimed one is someone's.
+RECHECK_BATCH = 8
+RECHECK_INTERVAL = 24 * 3600.0
+
+
+def open_to_recheck(state: dict[str, Any], now: float | None = None) -> list[ld.Entry]:
+    good = state.get("good", {}).get("default")
+    if not good:
+        return []
+    now = time.time() if now is None else now
+    queued = set(state.get("pending_verifies", []))
+    running = set(state.get("current", []))
+    out = []
+    for entry in ledger().entries().values():
+        if entry.status not in ("new", "reopened") or not entry.replay_reproduces:
+            continue
+        if entry.rechecked_on == good["sha"] or now - entry.rechecked_at < RECHECK_INTERVAL:
+            continue
+        if entry.sig in queued or f"verify/{entry.sig}" in running:
+            continue
+        bundle = FINDINGS / entry.sig
+        if not ((bundle / "minimal.json").exists() or (bundle / "replay.json").exists()):
+            continue
+        out.append(entry)
+    return sorted(out, key=priority_key)
+
+
+def recheck_open(state: dict[str, Any], log) -> None:
+    """Queues up to RECHECK_BATCH reproducing open findings to be replayed on the
+    current default build, through the verify queue (`soak.py verify SIG`)."""
+    queued = state.setdefault("pending_verifies", [])
+    for entry in open_to_recheck(state)[:RECHECK_BATCH]:
+        queued.append(entry.sig)
+        log(f"  queued {entry.sig} to re-check on the new build")
+
+
+def recheck_one(entry: ld.Entry, good: dict[str, Any], state: dict[str, Any], log) -> None:
+    """Replays an open finding on `good`: gone -> closed (a later sighting
+    reopens it, and the bundle keeps its replays), still there -> rechecked."""
+    bundle = FINDINGS / entry.sig
+    replay = bundle / "minimal.json" if (bundle / "minimal.json").exists() else bundle / "replay.json"
+    runs = verify_runs(entry.rate or 1.0)
+    result = subprocess.run(["nice", "-n", "19", sys.executable, str(driver_root(state) / "tools/soak/minimize.py"),
+                             str(replay), "--signature", entry.sig, "--binary", good["binary"],
+                             "--check-only", "--runs", str(runs), "--jobs", "3",
+                             "--out", str(bundle / "verify")],
+                            capture_output=True, text=True, timeout=3600)
+    report = next((json.loads(l) for l in result.stdout.splitlines() if l.startswith("{")), None)
+    if report is None or not report.get("ran", runs):
+        ledger().append(entry.sig, "rechecked", on=good["sha"], rate=None, note="no replay ran")
+        log(f"re-check of {entry.sig}: no replay ran; left open")
+        return
+    rate = float(report.get("rate", 1.0))
+    if rate == 0:
+        ledger().append(entry.sig, "closed", by="recheck", commit=good["sha"],
+                        note=f"no longer reproduces on {good['sha'][:10]}: 0 of {report.get('ran', runs)} replays "
+                             f"(it used to, at {entry.rate:.0%})")
+        log(f"closed {entry.sig}: no longer reproduces on {good['sha'][:10]}; "
+            f"pruned {prune_verified_bundle(bundle) / 1e6:.1f} MB")
+    else:
+        ledger().append(entry.sig, "rechecked", on=good["sha"], rate=rate)
+        log(f"re-checked {entry.sig}: still there on {good['sha'][:10]} ({rate:.0%})")
+
+
 def verify_one(sig: str, state: dict[str, Any], log) -> None:
     """Replays one fixed signature on the current default build (its minimal
     replay, else the full one) and books the verdict."""
     match = next(((entry, good) for entry, good in fixes_to_verify(state) if entry.sig == sig), None)
     if match is None:
+        entry = ledger().entries().get(sig)
+        good = state.get("good", {}).get("default")
+        if entry is not None and good and entry.status in ("new", "reopened") and entry.replay_reproduces:
+            recheck_one(entry, good, state, log)
+            return
         log(f"{sig}: not a fixed signature the current build contains; nothing to verify")
         return
     entry, good = match
@@ -2258,14 +2332,67 @@ def disk_usage_of(paths: list[Path]) -> int:
 VERIFIED_PRUNED = ("evidence", "sightings", "verify")
 
 
-def prune_verified_bundle(bundle: Path) -> int:
-    """Deletes a verified bundle's evidence; returns the bytes freed."""
+# Where a severe finding's evidence goes when its bundle is pruned, and how
+# much of it is kept (oldest first out). Deleting it outright lost the one rr
+# trace that could say what produced a crash's bad state: the fix was right, the
+# finding verified, and the question its cause left open had nothing left to
+# walk back (e041d436ae59, 2026-11-21).
+ARCHIVE = SOAK / "archive"
+ARCHIVE_MAX_BYTES = int(float(os.environ.get("MICROIDE_SOAK_ARCHIVE_GB", "20")) * 1e9)
+
+
+def bundle_tier(bundle: Path) -> int:
+    """The impact tier of the finding a bundle holds (meta.json), paint when
+    unreadable: an unreadable bundle's evidence is not worth keeping."""
+    try:
+        finding = json.loads((bundle / "meta.json").read_text()).get("finding", {})
+    except (OSError, ValueError):
+        return len(TIER_NAMES) - 1
+    return tier_of(str(finding.get("kind", "")), str(finding.get("label", "")))
+
+
+def trim_archive(limit: int = ARCHIVE_MAX_BYTES) -> int:
+    """Removes the oldest archived bundles until the archive fits `limit`;
+    returns the bytes freed."""
+    if not ARCHIVE.is_dir():
+        return 0
+    held = sorted((p for p in ARCHIVE.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime)
+    sizes = {p: disk_usage(p) for p in held}
+    total = sum(sizes.values())
     freed = 0
+    for path in held:
+        if total <= limit:
+            break
+        shutil.rmtree(path, ignore_errors=True)
+        total -= sizes[path]
+        freed += sizes[path]
+    return freed
+
+
+def prune_verified_bundle(bundle: Path) -> int:
+    """Clears a verified or closed bundle's evidence; returns the bytes freed
+    from the bundle. A severe finding's (a crash, a sanitizer report, data, undo,
+    a leak) is MOVED to ARCHIVE/<sig>, its recording included, so a question the
+    fix left open -- what produced the state it now survives -- can still be
+    walked back; the archive keeps the newest ARCHIVE_MAX_BYTES of them."""
+    freed = 0
+    keep = bundle_tier(bundle) == 0
     for name in VERIFIED_PRUNED:
         path = bundle / name
-        if path.is_dir():
-            freed += disk_usage(path)
+        if not path.is_dir():
+            continue
+        size = disk_usage(path)
+        freed += size
+        if keep:
+            target = ARCHIVE / bundle.name / name
+            shutil.rmtree(target, ignore_errors=True)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(path), str(target))
+            os.utime(target.parent)  # its age in the archive is the move's
+        else:
             shutil.rmtree(path, ignore_errors=True)
+    if keep and freed:
+        trim_archive()
     return freed
 
 
@@ -2462,6 +2589,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 except Exception as error:  # noqa: BLE001 - a broken build never stops the runner
                     log(f"build step failed: {error}")
                 verify_fixed(state, log)
+                recheck_open(state, log)
                 save_state(state)
             last_build = time.time()
             continue

@@ -64,6 +64,11 @@ class Entry:
     checked_on: str = ""
     minimal_actions: int | None = None
     full_actions: int | None = None
+    # The last re-check of an open finding on a newer build (soak.recheck_open):
+    # the build's commit and when, so each finding is replayed once per build and
+    # at most once a day.
+    rechecked_on: str = ""
+    rechecked_at: float = 0.0
     fix_commit: str = ""
     fixed_at: float = 0.0
     verified_by: str = ""  # "replay" or "exposure" (exposure.py)
@@ -171,6 +176,9 @@ class Ledger:
                 if kind == "seen" and (entry.status == "closed" or
                                        entry.fixed_in(event.get("commit", ""), self.contains)):
                     entry.status = "reopened"
+            elif kind == "rechecked":
+                entry.rechecked_on = str(event.get("on", ""))
+                entry.rechecked_at = when
             elif kind == "checked":
                 entry.deterministic = bool(event.get("deterministic"))
                 entry.rate = event.get("rate")
