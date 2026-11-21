@@ -252,8 +252,12 @@ EditorGroupRectsLayout ComputeEditorGroupRects(const WorkspaceLayout& layout,
     const bool vertical = node.orientation == EditorSplitOrientation::Vertical;
     const std::size_t count = node.children.size();
     const float span = vertical ? frame.rect.w : frame.rect.h;
-    const float avail = std::max(
-        0.0f, span - kEditorSplitDividerThickness * static_cast<float>(count - 1));
+    // A span narrower than its dividers (seven groups beside a wide one, a tiny
+    // window) shares itself among them: at full thickness the panes shrank to
+    // nothing and the dividers ran on past the window (soak 52518545bf6d).
+    const float divider = std::min(kEditorSplitDividerThickness,
+                                   std::max(0.0f, span) / static_cast<float>(count - 1));
+    const float avail = std::max(0.0f, span - divider * static_cast<float>(count - 1));
     // Extents first: the divider between children i and i+1 needs both, and the
     // last child absorbs the rounding so the panes always tile the span exactly.
     util::InlineVector<float, kMaxEditorGroups> extents;
@@ -276,18 +280,15 @@ EditorGroupRectsLayout ComputeEditorGroupRects(const WorkspaceLayout& layout,
       cursor += extents[i];
       if (i + 1 < count && result.dividers.size() < result.dividers.capacity()) {
         result.dividers.push_back(EditorSplitDividerRect{
-            .rect = vertical
-                        ? MakeRect(cursor, frame.rect.y, kEditorSplitDividerThickness,
-                                   frame.rect.h)
-                        : MakeRect(frame.rect.x, cursor, frame.rect.w,
-                                   kEditorSplitDividerThickness),
+            .rect = vertical ? MakeRect(cursor, frame.rect.y, divider, frame.rect.h)
+                             : MakeRect(frame.rect.x, cursor, frame.rect.w, divider),
             .node = frame.node,
             .boundary = static_cast<std::uint8_t>(i),
             .vertical = vertical,
             .pair_start = cursor - extents[i],
             .pair_extent = extents[i] + extents[i + 1],
         });
-        cursor += kEditorSplitDividerThickness;
+        cursor += divider;
       }
     }
     for (std::size_t i = children.size(); i > 0; --i) {

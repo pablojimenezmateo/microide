@@ -980,6 +980,37 @@ void TestWorkspaceLayoutInputsStructMatchesPositionalForm() {
   expect_field("project_tab_strip_visible", v);
 }
 
+// Soak 52518545bf6d (x91): seven groups side by side, one of them squeezed to a
+// span narrower than its dividers. The panes shrank to nothing but every divider
+// kept its full thickness, so the last one ended past the window
+// (divider:editor/5 [1437, 59, 6, 339] in a 1440-wide window).
+void TestWorkspaceEditorGroupDividersStayInsideAnAreaTooNarrowForThem() {
+  using microide::workspace::EditorSplitOrientation;
+  using microide::workspace::EditorSplitTree;
+  const auto layout = microide::workspace::ComputeLayout(400.0f, 300.0f, /*sidebar_visible=*/false,
+                                                         /*bottom_panel_visible=*/false, 0.0f, 0.0f);
+  EditorSplitTree tree;
+  for (std::size_t i = 0; i + 1 < microide::workspace::kMaxEditorGroups; ++i) {
+    tree.InsertLeaf(i, EditorSplitOrientation::Vertical, false);
+  }
+  for (const float width : {layout.editor_area.w, 30.0f, 10.0f, 3.0f}) {
+    microide::workspace::WorkspaceLayout narrow = layout;
+    narrow.editor_area.w = width;
+    const auto rects = microide::workspace::ComputeEditorGroupRects(narrow, tree);
+    const float right = narrow.editor_area.x + narrow.editor_area.w;
+    Expect(rects.dividers.size() + 1 == rects.groups.size(), "a divider between each pair of groups");
+    for (std::size_t i = 0; i < rects.dividers.size(); ++i) {
+      const SDL_FRect& divider = rects.dividers[i].rect;
+      Expect(divider.x >= narrow.editor_area.x && divider.x + divider.w <= right + 0.001f,
+             "divider " + std::to_string(i) + " at " + std::to_string(divider.x) + "+" +
+                 std::to_string(divider.w) + " stays inside an editor area " + std::to_string(width) +
+                 " wide");
+    }
+    const SDL_FRect& last = rects.groups.back().editor_surface;
+    Expect(last.x + last.w <= right + 0.001f, "the last group ends inside the editor area too");
+  }
+}
+
 void TestWorkspaceEditorGroupRects() {
   using microide::workspace::EditorSplitOrientation;
   using microide::workspace::EditorSplitTree;
@@ -2007,6 +2038,8 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
           TestWorkspaceSharedChromeTabRenderItems);
   AddTest(tests, "WorkspaceShared/EditorSplitLayout", TestWorkspaceSharedEditorSplitLayout);
   AddTest(tests, "WorkspaceShared/EditorGroupRects", TestWorkspaceEditorGroupRects);
+  AddTest(tests, "WorkspaceShared/EditorGroupDividersStayInsideAnAreaTooNarrowForThem",
+          TestWorkspaceEditorGroupDividersStayInsideAnAreaTooNarrowForThem);
   AddTest(tests, "WorkspaceShared/MergeHoverClassifier",
           TestWorkspaceSharedMergeHoverClassifier);
   AddTest(tests, "WorkspaceShared/MergeInteractionGeometry",

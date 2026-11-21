@@ -224,7 +224,8 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
         // `pair_extent` is the two panes' shares; the divider between them is not
         // in it, so the span they tile is that plus one divider (without it the
         // second pane's far edge went unrepainted).
-        const float pair_span = divider.pair_extent + kWorkspaceEditorSplitDividerThickness;
+        // (Its own thickness: a span too narrow for full-width dividers thins them.)
+        const float pair_span = divider.pair_extent + (divider.vertical ? divider.rect.w : divider.rect.h);
         SDL_FRect damage =
             divider.vertical
                 ? MakeRect(divider.pair_start, editor_area.y, pair_span, editor_area.h)
