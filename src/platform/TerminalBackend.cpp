@@ -3,6 +3,7 @@
 #include "platform/ChildSignals.h"
 #include "platform/OpenFileLimit.h"
 #include "platform/ShellProcess.h"
+#include "platform/TerminalLifeTrace.h"
 
 #include <atomic>
 #include <algorithm>
@@ -266,6 +267,7 @@ class PosixTerminalBackend final : public TerminalBackend {
     stop_requested_ = false;
     reader_thread_ =
         std::thread(&PosixTerminalBackend::ReaderMain, this, master_fd, wake_pipe[0], child_pid);
+    TraceTerminalLife("start", static_cast<int>(child_pid), /*with_stack=*/true);
 
     return TerminalStartResult{
         .started = true,
@@ -283,6 +285,9 @@ class PosixTerminalBackend final : public TerminalBackend {
     const int wake_read_fd = wake_read_fd_;
     stop_requested_.store(true, std::memory_order_release);
     child_pid_ = -1;
+    if (child_pid > 0) {
+      TraceTerminalLife("stop", child_pid, /*with_stack=*/false);
+    }
 
     // Wake the reader's poll() via the self-pipe, then reap the child, then
     // join. Only once the reader has fully stopped touching master_fd is it

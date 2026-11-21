@@ -719,6 +719,10 @@ class App:
             # the user's (a save, a blocked save, a conflict): the history a remote
             # finding's evidence quotes for its file (diff-<file>.sync.txt).
             "MICROIDE_TRACE_MIRROR_SYNC": "1",
+            # One line per terminal session start (with the shell's pid and the
+            # code that started it), stop and end: which path made a leaked shell
+            # (children-origin.txt in a leak finding).
+            "MICROIDE_TRACE_TERMINAL_LIFE": "1",
             # The first caret a viewport leaves outside its document, with the
             # stack of the code that left it (TextViewport::TraceCaretBounds): the
             # invariants query only finds it steps later (soak 872c8984d39b).

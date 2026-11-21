@@ -83,7 +83,10 @@ only, a failing-first test for every fix, one commit per fix, and a TD entry in
    for `remote`, each side's bytes (`diff-<file>.host/.mirror/.txt`) and every
    sync-engine decision about the path -- local writes, pushes and the host's
    answers, host rows and deletes, Retry and Replace on Host, with the entry's
-   state after each (`diff-<file>.sync.txt`, from `MICROIDE_TRACE_MIRROR_SYNC`).
+   state after each (`diff-<file>.sync.txt`, from `MICROIDE_TRACE_MIRROR_SYNC`);
+   for `leak`, the children, fds, threads and memory against the baseline, and for
+   each terminal shell still alive the stack that started its pty and whether it
+   was ever stopped (`children-origin.txt`, from `MICROIDE_TRACE_TERMINAL_LIFE`).
 5. **Test first.** Write the failing test at the lowest level that shows the
    defect:
    - paint: `tests/support/RetainedRedraw.h` (`DispatchEvents`,

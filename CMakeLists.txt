@@ -470,6 +470,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/terminal/TerminalPredictionOverlay.cpp
   src/terminal/TerminalSessionCsi.cpp
   src/terminal/TerminalSessionHost.cpp
+  src/platform/TerminalLifeTrace.cpp
   src/terminal/TerminalSessionInput.cpp
   src/terminal/TerminalSessionInputEncoding.cpp
   src/terminal/TerminalSessionModes.cpp
@@ -1960,6 +1961,7 @@ if(MICROIDE_FUZZ)
   src/terminal/TerminalHostWire.cpp
   src/terminal/TerminalSessionCsi.cpp
   src/terminal/TerminalSessionHost.cpp
+  src/platform/TerminalLifeTrace.cpp
     src/terminal/TerminalSessionSgr.cpp
     src/terminal/TerminalSessionOsc.cpp
     src/terminal/TerminalCellExtraTable.cpp

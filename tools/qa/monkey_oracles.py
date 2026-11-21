@@ -94,6 +94,49 @@ def _logged_history(app: Any, prefix: str, path: str, keep: int = 200) -> list[s
     return found[-keep:]
 
 
+def terminal_origins(log_text: str, alive: set[int], binary: Path | None = None) -> str:
+    """Which code started each terminal shell still alive, from the app log's
+    MICROIDE_TRACE_TERMINAL_LIFE lines: the alive pids grouped by the stack of
+    their pty backend's start, each saying whether that backend was ever
+    stopped. A leak finding counted the shells; this names the path that made
+    the backends nobody stopped (soak 2d33d0bc377e)."""
+    starts: dict[int, list[str]] = {}  # pid -> stack lines
+    stopped: set[int] = set()
+    current: list[str] | None = None
+    for line in log_text.splitlines():
+        if current is not None and line.startswith("  #"):
+            current.append(line)
+            continue
+        current = None
+        match = re.match(r"microide terminal-life: (\S+) pid=(-?\d+)", line)
+        if match is None:
+            continue
+        event, pid = match.group(1), int(match.group(2))
+        if event == "start":
+            current = []
+            starts[pid] = current
+            stopped.discard(pid)
+        elif event == "stop":
+            stopped.add(pid)
+    groups: dict[tuple[str, ...], list[str]] = collections.defaultdict(list)
+    unknown = sorted(pid for pid in alive if pid not in starts)
+    for pid in sorted(alive & starts.keys()):
+        fate = "stopped, still alive" if pid in stopped else "never stopped"
+        groups[tuple(starts[pid])].append(f"{pid} ({fate})")
+    out = []
+    for stack, pids in sorted(groups.items(), key=lambda item: -len(item[1])):
+        out.append(f"{len(pids)} alive shell(s) started here: {' '.join(pids[:20])}"
+                   + (" ..." if len(pids) > 20 else ""))
+        if binary is not None:
+            block = "\n".join(["microide terminal-life: start", *(re.sub(r"^\s*#\d+\s+", "", line) for line in stack)])
+            out.append(q.symbolize_backtrace(block, binary).rstrip())
+        else:
+            out += list(stack)
+    if unknown:
+        out.append(f"{len(unknown)} alive child(ren) with no traced start: {' '.join(map(str, unknown[:20]))}")
+    return "\n".join(out) + "\n" if out else ""
+
+
 def _result_beside_its_files_buffer(doc: dict[str, Any], docs: list[dict[str, Any]]) -> bool:
     """Whether `doc` is a merge's unsaved result for a file whose own buffer (an
     editor's, a diff's side) also holds unsaved text. The session keeps the
@@ -898,10 +941,20 @@ class ResourceOracle:
         for thread, was in self.baseline_threads.items():
             if thread not in threads:
                 thread_lines.append(f"     0  ({was:4d}, {-was:+d})  {thread}")
-        return {"children.txt": ("\n".join(lines) + "\n").encode(),
-                "fds.txt": ("\n".join(f"{n:5d}  {k}" for k, n in fd_kinds.most_common()) + "\n").encode(),
-                "threads.txt": ("\n".join(thread_lines) + "\n").encode(),
-                "memory.txt": self._memory(pid).encode()}
+        out = {"children.txt": ("\n".join(lines) + "\n").encode(),
+               "fds.txt": ("\n".join(f"{n:5d}  {k}" for k, n in fd_kinds.most_common()) + "\n").encode(),
+               "threads.txt": ("\n".join(thread_lines) + "\n").encode(),
+               "memory.txt": self._memory(pid).encode()}
+        work = getattr(self.app, "work", None)
+        log_text = ""
+        for log in sorted(Path(work).glob("microide*.log"), key=lambda p: p.stat().st_mtime) if work else []:
+            with contextlib.suppress(OSError):
+                log_text += log.read_text(errors="replace")
+        binary = getattr(self.app, "binary", None)
+        origins = terminal_origins(log_text, set(children), Path(binary) if binary else None)
+        if origins:
+            out["children-origin.txt"] = origins.encode()
+        return out
 
     def sample(self) -> dict[str, int] | None:
         proc = self.app.proc

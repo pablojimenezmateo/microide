@@ -103,6 +103,38 @@ class ForgetFilesOfTests(unittest.TestCase):
                              "crlf.txt is the file the save through its link wrote; other.txt is not")
 
 
+class TerminalOriginsTests(unittest.TestCase):
+    def test_alive_shells_are_grouped_by_the_code_that_started_them(self) -> None:
+        # Soak 2d33d0bc377e: 70 interactive shells alive under five panes, and the
+        # evidence counted them without saying which path made them or whether
+        # their sessions were ever stopped.
+        log = "\n".join([
+            "microide terminal-life: start pid=10",
+            "  #1 microide(+0x10) [0x1]",
+            "  #2 microide(+0x20) [0x2]",
+            "microide terminal-life: start pid=11",
+            "  #1 microide(+0x10) [0x1]",
+            "  #2 microide(+0x20) [0x2]",
+            "microide terminal-life: start pid=12",
+            "  #1 microide(+0x30) [0x3]",
+            "microide terminal-life: stop pid=12",
+            "microide terminal-life: start pid=13",
+            "  #1 microide(+0x30) [0x3]",
+            "microide terminal-life: stop pid=13",
+            "microide redraw frame: frame=1",
+        ])
+        text = monkey_oracles.terminal_origins(log, {10, 11, 12, 99})
+        lines = text.splitlines()
+        self.assertEqual(lines[0], "2 alive shell(s) started here: 10 (never stopped) 11 (never stopped)")
+        self.assertEqual(lines[1:3], ["  #1 microide(+0x10) [0x1]", "  #2 microide(+0x20) [0x2]"])
+        self.assertEqual(lines[3], "1 alive shell(s) started here: 12 (stopped, still alive)")
+        self.assertEqual(lines[-1], "1 alive child(ren) with no traced start: 99")
+
+    def test_no_trace_says_nothing(self) -> None:
+        self.assertEqual(monkey_oracles.terminal_origins("microide redraw frame: frame=1\n", {5}),
+                         "1 alive child(ren) with no traced start: 5\n")
+
+
 class RemoteSideEvidenceTests(unittest.TestCase):
     def test_a_differing_file_carries_what_the_sync_engine_decided_about_it(self) -> None:
         # Soak 37ec61829b08: the evidence said "host: No such file or directory"
@@ -585,6 +617,7 @@ class ResourceOracleTests(unittest.TestCase):
         import os
         oracle = monkey_oracles.ResourceOracle.__new__(monkey_oracles.ResourceOracle)
         oracle.baseline_threads = collections.Counter({"gone-worker": 3})
+        oracle.app = None  # no run: no log to read terminal starts from
         evidence = oracle._what_it_holds(os.getpid())
         threads = evidence["threads.txt"].decode()
         self.assertIn("(   3, -3)  gone-worker", threads)
