@@ -738,6 +738,9 @@ class TextViewport {
   // underneath). The synchronous HighlightedLineTokens path remains the
   // source of truth; prefetch only pre-populates the LRU so misses are rarer.
   bool HasHighlightPrefetchGap(std::size_t start_line, std::size_t count) const;
+  // Lines the highlight cache holds at once. A prefetch window larger than this
+  // evicts its own first lines while installing its last, so its gap never closes.
+  static std::size_t HighlightCacheCapacity();
   HighlightPrefetchRequest BuildHighlightPrefetchRequest(std::size_t start_line,
                                                          std::size_t count) const;
   void InstallPrefetchedHighlights(HighlightPrefetchResult result);

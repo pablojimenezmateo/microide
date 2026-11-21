@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 #include "editor/HighlightPrefetch.h"
@@ -31,6 +32,29 @@ class HighlightPrefetchService {
   // Queues a prefetch request. Requests are deduplicated per originating
   // viewport, so rapid scroll/edit supersedes an unstarted request.
   void Request(HighlightPrefetchRequest request);
+
+  // What a prefetch would cover: the buffer, its revisions and the line window.
+  struct WindowKey {
+    const void* viewport = nullptr;
+    std::uint64_t content_revision = 0;
+    std::uint64_t syntax_revision = 0;
+    std::size_t start_line = 0;
+    std::size_t count = 0;
+    bool operator==(const WindowKey&) const = default;
+  };
+  // Main thread, before building a request: false when `key` is the window the
+  // last admitted request already asked for. Its answer has come back or is on
+  // its way, so a gap left in that window is one asking again cannot close --
+  // and every answer repaints the editor, which asks again: an idle app woke
+  // hundreds of times a second (soak a64655101a5a). A different window (a scroll,
+  // an edit) is admitted, and so is the first one again after it.
+  bool Admit(const WindowKey& key) {
+    if (last_admitted_.has_value() && *last_admitted_ == key) {
+      return false;
+    }
+    last_admitted_ = key;
+    return true;
+  }
 
   // Queues an off-thread checkpoint-chain backfill (deep first-paint catch-up).
   // Deduplicated per originating viewport like Request.
@@ -61,6 +85,7 @@ class HighlightPrefetchService {
   void Shutdown();
 
  private:
+  std::optional<WindowKey> last_admitted_;
   // Post `compute(request)` to the worker under `key_prefix` + the request's
   // viewport (a newer request for the same buffer supersedes an unstarted one),
   // append its result under `mutex`, and wake the shell.

@@ -5144,6 +5144,50 @@ void TestHighlightPrefetchInstallPopulatesCacheAndRespectsStaleness() {
          "a stale-revision prefetch result should be dropped, leaving the gap intact");
 }
 
+// Soak a64655101a5a: an idle editor woke hundreds of times a second. A pane tall
+// enough that three screens of lines outgrew the highlight cache prefetched a
+// window the cache could not hold -- installing its last lines evicted its first,
+// the gap never closed, the next frame asked again, and every answer repainted
+// the editor. The window is capped to the cache, and the service admits the same
+// window only once in a row.
+void TestAHighlightPrefetchWindowFitsTheCacheAndIsNotAskedTwice() {
+  const std::size_t capacity = TextViewport::HighlightCacheCapacity();
+  std::string content;
+  for (std::size_t i = 0; i < capacity * 2; ++i) {
+    content += "int value" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  TextViewport viewport;
+  viewport.LoadContent(content, "/tmp/prefetch-tall.cpp");
+
+  // The premise: a window past the capacity cannot be closed by installing it.
+  const std::size_t too_many = capacity + capacity / 2;
+  viewport.InstallPrefetchedHighlights(
+      microide::editor::ComputeHighlightPrefetch(viewport.BuildHighlightPrefetchRequest(0, too_many)));
+  Expect(viewport.HasHighlightPrefetchGap(0, too_many),
+         "a window larger than the cache keeps a gap after it is installed (the loop's cause)");
+  // A window of the capacity closes.
+  TextViewport fits;
+  fits.LoadContent(content, "/tmp/prefetch-fits.cpp");
+  fits.InstallPrefetchedHighlights(
+      microide::editor::ComputeHighlightPrefetch(fits.BuildHighlightPrefetchRequest(0, capacity)));
+  Expect(!fits.HasHighlightPrefetchGap(0, capacity), "a window the cache can hold closes once installed");
+
+  // The same window twice in a row is admitted once; another window, then the
+  // first again, are admitted.
+  microide::editor::HighlightPrefetchService service;
+  using Key = microide::editor::HighlightPrefetchService::WindowKey;
+  const Key first{.viewport = &viewport, .content_revision = 1, .syntax_revision = 1, .start_line = 0, .count = 50};
+  Key scrolled = first;
+  scrolled.start_line = 40;
+  Expect(service.Admit(first), "a first window is admitted");
+  Expect(!service.Admit(first), "the same window again is not: its answer is already on its way");
+  Expect(service.Admit(scrolled), "a scrolled window is admitted");
+  Expect(service.Admit(first), "and the first again after it");
+  Key edited = first;
+  edited.content_revision = 2;
+  Expect(service.Admit(edited), "an edit makes it a new window");
+}
+
 void TestHighlightPrefetchServiceTokenizesOnWorkerThread() {
   std::string content;
   for (int i = 0; i < 40; ++i) {
@@ -7269,6 +7313,8 @@ AddTest(tests, "TextViewport/UndoThenRedoIsTheIdentityOverRandomHistories",
           TestRuntimeSyntaxLazyCompileSweepsCommonLanguages);
   AddTest(tests, "TextViewport/HighlightPrefetchInstallPopulatesCacheAndRespectsStaleness",
           TestHighlightPrefetchInstallPopulatesCacheAndRespectsStaleness);
+  AddTest(tests, "TextViewport/AHighlightPrefetchWindowFitsTheCacheAndIsNotAskedTwice",
+          TestAHighlightPrefetchWindowFitsTheCacheAndIsNotAskedTwice);
   AddTest(tests, "TextViewport/HighlightPrefetchServiceTokenizesOnWorkerThread",
           TestHighlightPrefetchServiceTokenizesOnWorkerThread);
   AddTest(tests, "TextViewport/HighlightCheckpointBackfillServiceRunsOnWorkerThread",

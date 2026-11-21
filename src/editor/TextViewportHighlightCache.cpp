@@ -374,6 +374,10 @@ void TextViewport::EnsureHighlightCheckpoint(std::size_t checkpoint_index) const
   }
 }
 
+std::size_t TextViewport::HighlightCacheCapacity() {
+  return kHighlightCacheLimit;
+}
+
 bool TextViewport::HasHighlightPrefetchGap(std::size_t start_line, std::size_t count) const {
   if (!syntax_highlighting_enabled() || document_->lines.empty() || count == 0) {
     return false;

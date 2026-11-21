@@ -368,9 +368,23 @@ void WorkspaceShell::RequestActiveHighlightPrefetch() {
   // down lands on already-tokenized lines instead of stalling the render path.
   const std::size_t top =
       std::min(viewport->VisualRowLineIndex(viewport->scroll_line()), line_count - 1);
+  // No more than the cache holds: a window past its capacity evicted its own top
+  // (the visible rows) while installing its bottom, so the gap never closed and
+  // the request came back every frame (soak a64655101a5a).
   const std::size_t visible = std::max<std::size_t>(viewport->visible_lines(), 1);
-  const std::size_t count = std::min(visible * 3, line_count - top);
+  const std::size_t count =
+      std::min({visible * 3, line_count - top, editor::TextViewport::HighlightCacheCapacity()});
   if (!viewport->HasHighlightPrefetchGap(top, count)) {
+    return;
+  }
+  // And never the same window twice in a row: whatever its answer left uncached,
+  // asking again would not fill, and each answer schedules the next frame.
+  if (!highlight_prefetch_service_.Admit(editor::HighlightPrefetchService::WindowKey{
+          .viewport = viewport,
+          .content_revision = viewport->content_revision(),
+          .syntax_revision = viewport->syntax_revision(),
+          .start_line = top,
+          .count = count})) {
     return;
   }
   highlight_prefetch_service_.Request(viewport->BuildHighlightPrefetchRequest(top, count));
