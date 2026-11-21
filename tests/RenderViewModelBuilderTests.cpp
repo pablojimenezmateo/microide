@@ -1440,6 +1440,44 @@ void TestSettingsOverlayFontPickerBuildsScrollbarOnOverflow() {
          "a scroll offset of 3 starts the window at the fourth family");
 }
 
+// Soak 5ee820946d92: in a short window the font picker fitted neither below the
+// field nor above it, and then went below anyway -- "Choose file…" ended past the
+// window ([548, 536, 220, 22] in an 898x546 one). It stays inside the overlay.
+void TestSettingsOverlayFontPickerStaysInsideAShortOverlay() {
+  WorkspaceContext context;
+  RenderViewModelBuilder builder(context);
+  TextRenderer text_renderer;
+  SettingsOverlayService service;
+  service.OpenSettings();
+  SettingsOverlayRow font_row;
+  font_row.id = "editor.font_family";
+  font_row.label = "Font Family";
+  font_row.control_kind = microide::workspace::SettingsControlKind::TextEdit;
+  font_row.editable = true;
+  font_row.suggests_fonts = true;
+  service.RebuildSettingsRows({}, {}, {}, {font_row});
+  service.SetSelectedCategory(0);
+  std::vector<std::string> families;
+  for (int i = 0; i < SettingsOverlayService::kPickerVisibleFamilies + 3; ++i) {
+    families.push_back("Family " + std::to_string(i));
+  }
+  service.BeginFontValueEdit("editor.font_family", families);
+  for (const float height : {300.0f, 340.0f, 380.0f, 420.0f, 546.0f, 720.0f}) {
+    const auto layout = ComputeLayout(898.0f, height, true, false, 240.0f, 0.0f, LayoutModeInputs{}, true);
+    const auto vm = builder.BuildSettingsOverlay(layout, service, text_renderer);
+    if (!vm.value_picker.visible || vm.value_picker.rect.h > vm.rect.h) {
+      continue;  // a card taller than the overlay itself: the tiny-window case
+    }
+    const SDL_FRect& card = vm.value_picker.rect;
+    const SDL_FRect& last = vm.value_picker.items.back().rect;
+    Expect(card.y >= vm.rect.y && card.y + card.h <= vm.rect.y + vm.rect.h + 0.5f,
+           "the picker stays inside a " + std::to_string(static_cast<int>(height)) + " px overlay: card " +
+               std::to_string(card.y) + "+" + std::to_string(card.h) + ", overlay " + std::to_string(vm.rect.y) +
+               "+" + std::to_string(vm.rect.h));
+    Expect(last.y + last.h <= vm.rect.y + vm.rect.h + 0.5f, "and so does its Choose file… row");
+  }
+}
+
 // TD-2026-07-17A-007: the render TU consumes precomputed control fields — the
 // truncated/placeholder value string and the caret offset — instead of building
 // "(default)" and truncating/measuring per paint.
@@ -1821,6 +1859,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestSettingsOverlaySectionHeaderAndSubsections);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayFontPickerBuildsScrollbarOnOverflow",
           TestSettingsOverlayFontPickerBuildsScrollbarOnOverflow);
+  AddTest(tests, "RenderViewModelBuilder/SettingsOverlayFontPickerStaysInsideAShortOverlay",
+          TestSettingsOverlayFontPickerStaysInsideAShortOverlay);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayFooterReportsCountsAndKeys",
           TestSettingsOverlayFooterReportsCountsAndKeys);
   AddTest(tests, "RenderViewModelBuilder/HelpAboutLabelColumnOnANarrowCardStaysWithinItsCap",

@@ -2678,11 +2678,16 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     const float card_w = std::max(editing_value_rect.w, 220.0f);
     const float card_h = static_cast<float>(total_rows) * kPickerRowH + kPickerPad * 2.0f;
     // Prefer below the field; flip above when it would overflow the overlay bottom.
+    // When it fits on neither side it overlaps the field, pinned inside the
+    // overlay: it went below regardless and ran past the window (soak
+    // 5ee820946d92, "Choose file…" at y 536 in a 546-high window).
+    const float top = vm.rect.y + 4.0f;
+    const float bottom = vm.rect.y + vm.rect.h - 4.0f;
     const float below_y = editing_value_rect.y + editing_value_rect.h + 2.0f;
     const float above_y = editing_value_rect.y - 2.0f - card_h;
-    const float card_y =
-        (below_y + card_h <= vm.rect.y + vm.rect.h - 4.0f || above_y < vm.rect.y) ? below_y
-                                                                                  : above_y;
+    const float card_y = below_y + card_h <= bottom ? below_y
+                         : above_y >= top           ? above_y
+                                                    : std::max(top, bottom - card_h);
     // A card wider than the overlay pins to its left edge rather than handing
     // std::clamp an inverted range.
     const float card_min_x = vm.rect.x + 4.0f;
