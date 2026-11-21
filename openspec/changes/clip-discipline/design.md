@@ -49,6 +49,14 @@ device pixels for clips, fills under a scope, and damage requests. Edge rounding
 (cause 2) is a clip and a fill disagreeing by one pixel; with one function they
 cannot. A fill at fractional coordinates outside any scope is the lint's concern.
 
+One rect per element across both changes: when a surface is on both
+`derived-damage` and this change, the unit rect it reports to derived damage is
+the `SnapToDevicePixels` rect its `PaintElement` clips to -- taken from the same
+call where the scope is built -- or the two would disagree by the pixel this
+decision exists to remove. The damage funnel (`app::AnalyzeDirtyRegions`) snaps
+each damage rect through the same function before it becomes a clip
+(5684bd2c5), so a unit's damage and its clip are one computation.
+
 ### D3. Overhang is decided at layout
 
 Text is fitted to its element before drawing (`TruncateLabelView` and the
@@ -68,6 +76,21 @@ layout function asserts (in tests) that its elements tile it.
 - Runtime: the overrun recorder above; `RetainedRedraw::PaintAndDiffWithFullRepaint`
   fails a test on any recorded overrun, and `tools/qa` turns an overrun line into a
   `paint-overrun` finding keyed on the element kind.
+- Draw entry points (inventory, 2026-11-21). Direct `SDL_Render*` draw calls
+  live only in: the primitives (`WorkspaceShellRenderPrimitives.h`,
+  `render/SurfacePrimitives.h`, `render/ClipStableLine.h`), the text backends
+  (`SdlTtfTextBackend`, `DebugTextBackend`, `AsciiGlyphAtlas`, behind
+  `TextRenderer`), `DecoratedTextGridRenderer`, `PluginDisplayListRenderer`, the
+  editor path (`EditorViewRenderer`, `GutterIconRegistry`, `BreakpointRender`,
+  `DiagnosticsRender`, `ExecutionLineRender` -- derived-damage's owner takes them
+  off the allowlist as the editor stage lands), and four workspace render TUs
+  (`OverviewRuler`, `RenderBottomPanel`, `RenderFrame`, `RenderSettingsOverlay`),
+  whose calls move into primitives as their stages come. The recorder hooks
+  `render::FillRect`, `render::OutlineRect`, `RenderClipStableLine` and
+  `TextRenderer::DrawString(On)`; a lint rejects any `SDL_Render(FillRect|Rect|
+  Line|Lines|Point|Points|Texture|Geometry|DebugText)` call outside the
+  allowlist, so the allowlist is exactly what the recorder must instrument and
+  nothing draws unseen.
 - Lint: in a migrated render TU, draw calls (`FillRect`, `DrawText`, line and
   border helpers) must sit lexically inside a `PaintElement` scope. Feasible as a
   brace-depth scan like the existing render lints; it cannot follow helpers across
@@ -106,6 +129,8 @@ measuring that surface's clip-edge and in-clip sightings.
 ## Open Questions
 
 - Does SDL's software renderer clip cost enough per row to matter (D1's fallback)?
-  Answered by the stage-1 spike.
+  Answered (notes.md, 2026-11-21): a clip push and pop per row costs -1.9 to
+  +1.7 us per row on SDL3's software renderer, centred on zero -- in the noise.
+  No fallback: every element clips.
 - Should `paint-overrun` findings be severe? Proposed: no -- they are the cause
   of stale frames, not user-visible on their own.

@@ -76,6 +76,7 @@ _XWD = _load_xwd2png()
 # Log lines that are a finding whatever the scenario was doing.
 FINDING_MARKERS = (
     "QA-STALE",                  # the redraw verifier: a partial frame left stale pixels
+    "QA-OVERRUN",                # a draw outside its element (render::PaintElement)
     "ERROR: AddressSanitizer",
     "ERROR: LeakSanitizer",
     "runtime error:",            # UBSan

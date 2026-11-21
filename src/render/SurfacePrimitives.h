@@ -1,5 +1,6 @@
 #pragma once
 
+#include "render/PaintElement.h"
 #include "render/Theme.h"
 
 #include <algorithm>
@@ -34,6 +35,7 @@ inline void FillRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color co
   if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
+  NotePaint(renderer, rect);
   SetDrawColor(renderer, color);
   SDL_RenderFillRect(renderer, &rect);
 }
@@ -42,6 +44,7 @@ inline void OutlineRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color
   if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
+  NotePaint(renderer, rect);
   SetDrawColor(renderer, color);
   SDL_RenderRect(renderer, &rect);
 }

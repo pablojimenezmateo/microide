@@ -1,5 +1,7 @@
 #include "render/TextRenderer.h"
 
+#include "render/PaintElement.h"
+
 #include <algorithm>
 #include <optional>
 #include <vector>
@@ -249,6 +251,10 @@ void TextRenderer::DrawString(SDL_Renderer* renderer,
     return;
   }
   ValidateCaches();
+  if (PaintOverrunRecordingEnabled()) {
+    // The run's box, measured only while overruns are recorded (PaintElement).
+    NotePaint(renderer, SDL_FRect{x, y, MeasureWidth(text), LineHeight()});
+  }
   backend_->DrawString(renderer, texture_cache_, x, y, color, text);
 }
 
@@ -280,6 +286,10 @@ void TextRenderer::DrawStringOn(SDL_Renderer* renderer,
     return;
   }
   ValidateCaches();
+  if (PaintOverrunRecordingEnabled()) {
+    // The run's box, measured only while overruns are recorded (PaintElement).
+    NotePaint(renderer, SDL_FRect{x, y, MeasureWidth(text), LineHeight()});
+  }
   backend_->DrawStringOn(renderer, texture_cache_, x, y, color, background, text);
 }
 

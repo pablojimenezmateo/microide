@@ -1,5 +1,6 @@
 #pragma once
 
+#include "render/PaintElement.h"
 #include "render/ClipStableLine.h"
 #include "render/ScopedRenderClip.h"
 #include "render/SurfacePrimitives.h"
@@ -379,7 +380,10 @@ inline void DrawChevron(SDL_Renderer* renderer,
 }
 
 inline void DrawCloseGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
-  if (renderer == nullptr) {
+  // A tab too narrow for its close button has an empty close rect at the origin;
+  // the glyph centred on it landed at the window's top-left, hidden only by the
+  // strip's clip (found by the paint-overrun recorder, clip-discipline 1.3).
+  if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
 
@@ -1013,8 +1017,13 @@ inline void DrawStripTab(const render::TextRenderer& text_renderer,
   // Every visible tab in the project, editor and panel strips passes through here on
   // every frame, and most tab labels fit — so an owned truncation was a per-tab
   // per-frame std::string copy for nothing. The view is consumed by this one call.
-  const float label_width =
-      std::max(8.0f, rect.w - style.close_right_reserve - (text_left_padding - style.text_left_padding));
+  // What is left of the tab after the label's left padding (badge included) and
+  // the close button's reserve. It left out the base padding and floored at 8 px,
+  // so a label could run up to its padding past the tab's right edge -- the Welcome
+  // placeholder, reserve 0, by the whole 10 px -- into the next tab or the gap
+  // beside it, which a partial frame clipped to the tab did not repaint (soak
+  // 053365e38e57, clip-discipline 1.3).
+  const float label_width = std::max(0.0f, rect.w - text_left_padding - style.close_right_reserve);
   const std::string_view title = text_renderer.TruncateToWidthEphemeralView(label, label_width);
   DrawVCenteredTextOn(text_renderer, renderer, rect, text_left_padding,
                       remote.dimmed ? theme.chrome_text_secondary
@@ -1061,6 +1070,8 @@ inline void DrawTabStripOverflowButton(const render::TextRenderer& text_renderer
   if (rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
+  // An element of its own beside the tabs (clip-discipline 1.3).
+  const render::PaintElement element(renderer, rect, "tab-overflow");
   const SDL_Color background = hovered ? theme.row_highlight : theme.surface_raised;
   const SDL_Color foreground = hovered ? theme.text_primary : theme.text_secondary;
   FillRect(renderer, rect, background);

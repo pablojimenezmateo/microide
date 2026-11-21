@@ -9,7 +9,10 @@
 #include "editor/WelcomeView.h"
 
 #include <algorithm>
+#include "render/PaintElement.h"
 #include "render/TextRenderer.h"
+#include "TestSupportSdl.h"
+#include "support/SoftwareCanvas.h"
 #include "workspace/debug/DebugViewModel.h"
 #include "workspace/persistence/RecentsService.h"
 #include "workspace/render/RenderViewModelBuilder.h"
@@ -1478,6 +1481,48 @@ void TestSettingsOverlayFontPickerStaysInsideAShortOverlay() {
   }
 }
 
+
+// clip-discipline 1.3 / soak 053365e38e57 (153 sightings, tab strips): a strip
+// tab's label never draws outside the tab. The label width left out the tab's
+// own left padding -- a label could run up to that padding past the tab's right
+// edge (the Welcome placeholder, reserve 0, by the whole 10 px) -- and an 8 px
+// floor let it pass any tab narrower than its padding. Every width, every style
+// the strips use: the paint recorder reports any draw past the tab.
+void TestAStripTabNeverDrawsOutsideItself() {
+  using namespace microide::workspace::detail;
+  EnsureDummySdlVideoInitialized();
+  SoftwareCanvas canvas(400, 60);
+  TextRenderer text_renderer;  // no-backend: deterministic 8px/char
+  const render::Theme theme{};
+  const StripTabPalette palette{};
+  const bool was = render::PaintOverrunRecordingEnabled();
+  render::SetPaintOverrunRecording(true);
+  (void)render::TakePaintOverruns();
+  const StripTabStyle styles[] = {
+      StripTabStyle{.text_left_padding = 10.0f, .close_right_reserve = 46.0f},  // editor and project tabs
+      StripTabStyle{.text_left_padding = 10.0f, .close_right_reserve = 0.0f},   // the Welcome placeholder
+      StripTabStyle{.text_left_padding = 8.0f, .close_right_reserve = 40.0f},   // panel tabs
+  };
+  std::string failures;
+  for (const StripTabStyle& style : styles) {
+    for (float width = 10.0f; width <= 130.0f; width += 1.0f) {
+      const SDL_FRect rect{20.0f, 10.0f, width, 30.0f};
+      {
+        const render::PaintElement tab(canvas.renderer(), rect, "tab");
+        DrawStripTab(text_renderer, canvas.renderer(), theme, rect, "Terminal", {}, {}, false, true, style, palette);
+      }
+      if (const auto overruns = render::TakePaintOverruns(); !overruns.empty() && failures.size() < 400) {
+        failures += " [padding " + std::to_string(static_cast<int>(style.text_left_padding)) + " reserve " +
+                    std::to_string(static_cast<int>(style.close_right_reserve)) + " width " +
+                    std::to_string(static_cast<int>(width)) + ": drew to x " +
+                    std::to_string(overruns.front().draw_rect.x + overruns.front().draw_rect.w) + "]";
+      }
+    }
+  }
+  render::SetPaintOverrunRecording(was);
+  Expect(failures.empty(), "a strip tab drew outside itself:" + failures);
+}
+
 // TD-2026-07-17A-007: the render TU consumes precomputed control fields — the
 // truncated/placeholder value string and the caret offset — instead of building
 // "(default)" and truncating/measuring per paint.
@@ -1861,6 +1906,7 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestSettingsOverlayFontPickerBuildsScrollbarOnOverflow);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayFontPickerStaysInsideAShortOverlay",
           TestSettingsOverlayFontPickerStaysInsideAShortOverlay);
+  AddTest(tests, "RenderViewModelBuilder/AStripTabNeverDrawsOutsideItself", TestAStripTabNeverDrawsOutsideItself);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayFooterReportsCountsAndKeys",
           TestSettingsOverlayFooterReportsCountsAndKeys);
   AddTest(tests, "RenderViewModelBuilder/HelpAboutLabelColumnOnANarrowCardStaysWithinItsCap",

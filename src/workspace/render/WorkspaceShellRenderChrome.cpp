@@ -1,4 +1,5 @@
 #include <optional>
+#include "render/PaintElement.h"
 #include "render/ScopedRenderClip.h"
 #include "workspace/BreadcrumbLayout.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
@@ -158,6 +159,8 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
       SDL_FRect close_rect = tab.close_rect;
       rect.x += dx;
       close_rect.x += dx;
+      // The tab paints inside itself, its close button included (clip-discipline 1.3).
+      const render::PaintElement element(renderer, rect, "project-tab");
       DrawStripTab(text_renderer_, renderer, theme_, rect, tab.display_title, tab.badge_text,
                    tab.badge_color, tab.show_badge, tab.active,
                    StripTabStyle{
@@ -299,6 +302,8 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
         SDL_FRect close_rect = tab.close_rect;
         rect.x += dx;
         close_rect.x += dx;
+        // The tab paints inside itself, its close button included (clip-discipline 1.3).
+        const render::PaintElement element(renderer, rect, "tab");
         DrawStripTab(text_renderer_, renderer, theme_, rect, tab.display_title, tab.badge_text,
                      tab.badge_color, tab.show_badge, tab.active,
                      StripTabStyle{

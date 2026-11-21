@@ -10,6 +10,7 @@
 // the pixel diff) lived as private copies in three test files; the diff is now
 // the app's own (render/PixelDiff), shared with the QA redraw verifier.
 
+#include "render/PaintElement.h"
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -151,6 +152,12 @@ inline render::PixelDiffResult PaintAndDiffWithFullRepaint(
     int height,
     const workspace::RenderInvalidation& redraw,
     const std::function<void()>& before_paint = {}) {
+  // Every draw is checked against its element's rect while the two paints run
+  // (clip-discipline D5): a draw outside its element fails the test by name,
+  // whether or not it produced a stale pixel this time.
+  const bool was_recording = render::PaintOverrunRecordingEnabled();
+  render::SetPaintOverrunRecording(true);
+  (void)render::TakePaintOverruns();
   if (before_paint) {
     before_paint();
   }
@@ -164,6 +171,14 @@ inline render::PixelDiffResult PaintAndDiffWithFullRepaint(
   shell.Render(canvas.renderer(), width, height);
   (void)shell.ConsumePendingRenderInvalidation();
   SDL_FlushRenderer(canvas.renderer());
+  render::SetPaintOverrunRecording(was_recording);
+  for (const render::PaintOverrun& overrun : render::TakePaintOverruns()) {
+    Expect(false, "element " + overrun.element + " at " + std::to_string(overrun.element_rect.x) + "," +
+                      std::to_string(overrun.element_rect.y) + " " + std::to_string(overrun.element_rect.w) + "x" +
+                      std::to_string(overrun.element_rect.h) + " drew outside it: " +
+                      std::to_string(overrun.draw_rect.x) + "," + std::to_string(overrun.draw_rect.y) + " " +
+                      std::to_string(overrun.draw_rect.w) + "x" + std::to_string(overrun.draw_rect.h));
+  }
   const render::PixelDiffResult diff = DiffSurfaces(retained, canvas.surface());
   // MICROIDE_TEST_DUMP_DIFF=<dir>: the two images of a differing pair, for reading
   // a failure by eye (the QA harness keeps the same pair per stale frame).

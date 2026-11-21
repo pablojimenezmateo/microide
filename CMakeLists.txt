@@ -594,6 +594,7 @@ set(MICROIDE_CORE_SOURCES
   src/render/StringTextureCache.cpp
   src/render/TextBackendPool.cpp
   src/render/TextRenderer.cpp
+  src/render/PaintElement.cpp
   src/render/TextRendererBackend.cpp
   src/render/Theme.cpp
   src/render/ColorMath.cpp
@@ -2222,6 +2223,7 @@ add_executable(microide_diff_bench
   src/render/StringTextureCache.cpp
   src/render/TextBackendPool.cpp
   src/render/TextRenderer.cpp
+  src/render/PaintElement.cpp
   src/render/TextRendererBackend.cpp
   src/render/Theme.cpp
   src/util/AnsiPalette.cpp

@@ -46,8 +46,14 @@ _ELEMENT_NAME = re.compile(r"\b([a-z][a-z-]*):([^\s\[\]]+)")
 _LAYOUT_KINDS = frozenset({"overlap", "bounds"})
 
 
+# A paint overrun (render::PaintElement, clip-discipline D5) is one defect per
+# element: its frame, rects and their signs say where it was this time.
+_OVERRUN = re.compile(r"(QA-OVERRUN) frame=\S+ (element=\S+).*")
+
+
 def normalize(message: str, kind: str = "") -> str:
     text = _STEP_PREFIX.sub("", message.strip())
+    text = _OVERRUN.sub(r"\1 \2", text)
     if kind in _LAYOUT_KINDS:
         # The elements by their stable part (element_key): a tab's close button
         # overlapping the panel tabs is one defect whichever file the tab holds,

@@ -1,5 +1,6 @@
 #include "app/Application.h"
 
+#include "render/PaintElement.h"
 #include "render/ScopedRenderClip.h"
 
 #include <SDL3/SDL.h>
@@ -1041,6 +1042,17 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
                             .frame_index = frame_index_,
                             .scale = RenderPresentationOf(*presentation).scale_x},
           [&] { workspace_shell_.RenderClip(frame_token, renderer_, width, height); });
+    }
+    // A draw outside its element (render::PaintElement), named where it happened:
+    // the cause of a stale clip-edge frame, whether or not this frame showed one
+    // (clip-discipline D5). Recording is on exactly when the verifier is.
+    if (redraw_verifier_.enabled()) {
+      for (const render::PaintOverrun& overrun : render::TakePaintOverruns()) {
+        SDL_Log("QA-OVERRUN frame=%llu element=%s rect=%d,%d,%d,%d draw=%d,%d,%d,%d",
+                static_cast<unsigned long long>(frame_index_), overrun.element.c_str(), overrun.element_rect.x,
+                overrun.element_rect.y, overrun.element_rect.w, overrun.element_rect.h, overrun.draw_rect.x,
+                overrun.draw_rect.y, overrun.draw_rect.w, overrun.draw_rect.h);
+      }
     }
     SDL_SetRenderTarget(renderer_, nullptr);
     {

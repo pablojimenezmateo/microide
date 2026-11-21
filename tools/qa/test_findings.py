@@ -29,6 +29,17 @@ class ReplayPrefixTests(unittest.TestCase):
         self.assertEqual(fnd.signature("data", run), fnd.signature("data", replay))
 
 
+class OverrunSignatureTests(unittest.TestCase):
+    def test_an_overrun_keys_on_its_element_not_its_coordinates(self):
+        # clip-discipline D5: one element drawing past itself is one defect
+        # wherever its tab sat; another element is another.
+        a = fnd.signature("log", "QA-OVERRUN frame=12 element=tab rect=121,27,9,32 draw=-3,-3,7,7")
+        b = fnd.signature("log", "QA-OVERRUN frame=907 element=tab rect=400,27,60,32 draw=455,30,9,20")
+        c = fnd.signature("log", "QA-OVERRUN frame=12 element=tab-overflow rect=121,27,9,32 draw=-3,-3,7,7")
+        self.assertEqual(a, b)
+        self.assertNotEqual(a, c)
+
+
 class StaleSignatureTests(unittest.TestCase):
     def test_clip_relation(self):
         # The soak's 49a23ffecdf7 held all three of these under one signature.

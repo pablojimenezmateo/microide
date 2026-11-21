@@ -9,6 +9,8 @@
 #include "TestSupport.h"
 #include "TestSupportSdl.h"
 #include "render/DevicePixelSnap.h"
+#include "render/PaintElement.h"
+#include "render/SurfacePrimitives.h"
 #include "render/ScopedRenderClip.h"
 #include "support/SoftwareCanvas.h"
 
@@ -261,6 +263,38 @@ void TestSnapToDevicePixelsIsWholeIdempotentAndKeepsEmptyEmpty() {
     }
   }
 }
+
+// openspec clip-discipline D1/D5: an element paints inside its own scope. A draw
+// past its rect is clipped -- a full frame shows what a partial one can -- and,
+// while recording, reported by the element's name; a draw inside is not.
+void TestAPaintElementClipsAndReportsADrawPastItsRect() {
+  EnsureDummySdlVideoInitialized();
+  SoftwareCanvas canvas(100, 60);
+  SDL_Renderer* renderer = canvas.renderer();
+  const bool was = render::PaintOverrunRecordingEnabled();
+  render::SetPaintOverrunRecording(true);
+  (void)render::TakePaintOverruns();
+  {
+    const render::PaintElement tab(renderer, SDL_FRect{10.0f, 10.0f, 20.0f, 20.0f}, "tab:0/main.cpp",
+                                   SDL_Color{0, 0, 255, 255});
+    render::FillRect(renderer, SDL_FRect{12.0f, 12.0f, 10.0f, 10.0f}, SDL_Color{0, 255, 0, 255});
+  }
+  Expect(render::TakePaintOverruns().empty(), "a draw inside its element is no overrun");
+  {
+    const render::PaintElement tab(renderer, SDL_FRect{10.0f, 10.0f, 20.0f, 20.0f}, "tab:0/main.cpp");
+    render::FillRect(renderer, SDL_FRect{10.0f, 10.0f, 21.0f, 20.0f}, SDL_Color{255, 0, 0, 255});
+  }
+  SDL_FlushRenderer(renderer);
+  const std::vector<render::PaintOverrun> overruns = render::TakePaintOverruns();
+  render::SetPaintOverrunRecording(was);
+  Expect(overruns.size() == 1 && overruns.front().element == "tab:0/main.cpp" &&
+             overruns.front().draw_rect.w == 21 && overruns.front().element_rect.w == 20,
+         "a fill one pixel past its element is reported, naming it");
+  Expect(canvas.PixelAt(30, 15).r != 255, "and clipped: the pixel past the element is not drawn");
+  Expect(canvas.PixelAt(29, 15).r == 255, "while the element's own last column is");
+  Expect(canvas.PixelAt(25, 25).b == 255 || canvas.PixelAt(25, 25).r == 255,
+         "an opaque element fills its rect first");
+}
 }  // namespace
 
 void RegisterScopedRenderClipTests(std::vector<TestCase>& tests) {
@@ -273,6 +307,8 @@ void RegisterScopedRenderClipTests(std::vector<TestCase>& tests) {
           TestPartialAndFullFramesClipASurfaceAlikeAt125);
   AddTest(tests, "ScopedRenderClip/SnapToDevicePixelsIsWholeIdempotentAndKeepsEmptyEmpty",
           TestSnapToDevicePixelsIsWholeIdempotentAndKeepsEmptyEmpty);
+  AddTest(tests, "ScopedRenderClip/APaintElementClipsAndReportsADrawPastItsRect",
+          TestAPaintElementClipsAndReportsADrawPastItsRect);
 }
 
 }  // namespace microide::tests

@@ -55,3 +55,25 @@ session scratchpad; task 0.2 moves it under `tools/qa`).
 19 `ScopedRenderClip` scopes in `src/`. Render TUs with many draw calls and none:
 `DebugPaneRender.cpp`, `WorkspaceShellRenderOverlay.cpp`, `EditorViewRenderer.cpp`,
 `WorkspaceShellRenderPrompts.cpp`, `WorkspaceShellRenderCompare.cpp`.
+
+## 1.6 spike: a clip per element on the software renderer (2026-11-21)
+
+Standalone SDL3 program, offscreen software renderer, 1440 wide; per row a fill
+and a 40-character `SDL_RenderDebugText` run; 5 rounds of 400 frames (45 rows) and
+2000 frames (12 rows), with and without `SDL_SetRenderClipRect` around each row
+under a frame clip.
+
+| rows | per-round delta (us/row) |
+|---|---|
+| 45 | -0.27, +0.10, +1.71, +0.23, -0.05 |
+| 12 | -1.15, -0.42, -1.93, -0.52, -0.56 |
+
+In the noise: no fallback for D1. The in-app A/B of the tab-strip stage confirms
+it on the real paint.
+
+## Found by the recorder on its first run
+
+`DrawCloseGlyph` drew its 7x7 glyph centred on a tab's empty close rect -- at the
+window's origin -- for a tab too narrow for a close button
+(`QaFlowRegression/APaneNarrowedToItsMinimumPaintsNothingOutsideIt`); the strip
+clip had hidden it.

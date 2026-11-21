@@ -2,9 +2,11 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 
+#include "render/PaintElement.h"
 #include "render/RendererInfo.h"
 
 namespace microide::render {
@@ -27,6 +29,8 @@ namespace microide::render {
 // scaled or logical view, where SDL draws lines as geometry -- is already
 // clip-stable and draws through SDL_RenderLine unchanged.
 inline void RenderClipStableLine(SDL_Renderer* renderer, float x1, float y1, float x2, float y2) {
+  NotePaint(renderer, SDL_FRect{std::min(x1, x2), std::min(y1, y2), std::abs(x2 - x1) + 1.0f,
+                                std::abs(y2 - y1) + 1.0f});
   float scale_x = 1.0f;
   float scale_y = 1.0f;
   SDL_RendererLogicalPresentation mode = SDL_LOGICAL_PRESENTATION_DISABLED;
