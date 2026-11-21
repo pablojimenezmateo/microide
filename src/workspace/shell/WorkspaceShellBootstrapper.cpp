@@ -187,6 +187,13 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
       }
     }
   }
+  // A modal overlay the input took the focus away from ends, the focus staying
+  // where the input put it (ModalOverlayLostFocus).
+  if (ModalOverlayLostFocus(context_.current_project_state)) {
+    const FocusTarget kept = context_.current_project_state.surface.focus;
+    DismissOverlay();
+    context_.current_project_state.surface.focus = kept;
+  }
   // Clear any live ghost text the moment the caret/content/focus no longer matches
   // its anchor, before sampling reactive events. No-op (one null check) unless a
   // suggestion is showing, so it stays off the hot path.

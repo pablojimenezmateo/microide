@@ -353,6 +353,32 @@ void TestBufferQueryReportsTextCaretsAndFolds() {
          "fold-all should leave the query reporting the fold at line 1");
 }
 
+// Soak 7ab9a5476905: `command-palette` opened the palette, and an `open <file>`
+// run while it was up moved the focus to the editor and left the palette shown.
+// The next Escape in the editor only took the focus back to the palette, and the
+// Return after it ran the palette's selected row -- Quit. An overlay is modal: a
+// command that sends the focus elsewhere dismisses it, and a shown overlay always
+// holds the focus.
+void TestOpeningAFileUnderTheCommandPaletteDismissesIt() {
+  UiFixture fixture;
+  WriteFile(fixture.root / "other.cpp", "int other;\n");
+  Expect(TestAccess::ExecuteControlCommand(fixture.shell, "command-palette list").ok, "the palette opens");
+  util::JsonValue ui = TestAccess::ControlQuery(fixture.shell, "ui");
+  Expect(ui["overlay"]["visible"].AsBool() && ui["focus"].AsString() == "overlay",
+         "the palette is shown and has the focus: " + ui["focus"].AsString());
+  // A line the palette's own input takes leaves it up.
+  Expect(TestAccess::ExecuteControlCommand(fixture.shell, "type x").ok, "typing into the palette");
+  ui = TestAccess::ControlQuery(fixture.shell, "ui");
+  Expect(ui["overlay"]["visible"].AsBool() && ui["focus"].AsString() == "overlay", "typing keeps it up");
+  Expect(TestAccess::ExecuteControlCommand(fixture.shell, "open other.cpp").ok, "a file opens under it");
+  ui = TestAccess::ControlQuery(fixture.shell, "ui");
+  Expect(!ui["overlay"]["visible"].AsBool() || ui["focus"].AsString() == "overlay",
+         "a shown overlay keeps the focus; focus=" + ui["focus"].AsString() +
+             " overlay visible=" + (ui["overlay"]["visible"].AsBool() ? "yes" : "no"));
+  Expect(ui["focus"].AsString() == "editor" && !ui["overlay"]["visible"].AsBool(),
+         "the opened file has the focus and the palette is gone");
+}
+
 // Soak 76e3925879dc: a format-document's edits landed after tools/qa's undo
 // rule had read the text, so its undos and redos ran over a formatting it had
 // not seen. `status` says how many language-server requests are outstanding, so
@@ -1168,6 +1194,8 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/NamesAreMadeUnique", TestUiNamesAreMadeUnique);
   AddTest(tests, "ControlUiQuery/BufferReportsTextCaretsAndFolds",
           TestBufferQueryReportsTextCaretsAndFolds);
+  AddTest(tests, "ControlUiQuery/OpeningAFileUnderTheCommandPaletteDismissesIt",
+          TestOpeningAFileUnderTheCommandPaletteDismissesIt);
   AddTest(tests, "ControlUiQuery/StatusCountsOutstandingLspRequests",
           TestStatusQueryCountsOutstandingLspRequests);
   AddTest(tests, "ControlUiQuery/NamesOverlayRows", TestUiQueryNamesOverlayRows);

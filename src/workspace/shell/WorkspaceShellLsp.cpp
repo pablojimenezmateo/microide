@@ -331,6 +331,13 @@ ControlChannelService::CommandOutcome WorkspaceShell::ExecuteControlCommand(
   std::string& feedback = context_.current_project_state.panel.feedback.text;
   feedback.clear();
   outcome.ok = MakeCommandLineCoordinator().ExecuteCommandLine(command_line);
+  // As after an input event (HandleEvent): a modal overlay the command took the
+  // focus from ends (soak 7ab9a5476905: `open` under the palette).
+  if (ModalOverlayLostFocus(context_.current_project_state)) {
+    const FocusTarget kept = context_.current_project_state.surface.focus;
+    DismissOverlay();
+    context_.current_project_state.surface.focus = kept;
+  }
   // As after an input event (HandleEvent): a command may have shown or hidden the
   // Host view, and its subscription follows.
   if (glue_->remote_host_service != nullptr) {

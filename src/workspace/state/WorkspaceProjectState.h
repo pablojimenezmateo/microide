@@ -1496,6 +1496,29 @@ inline FocusTarget FocusAfterOverlay(const ProjectWorkspaceState& state) {
                                                            : FocusBackTo(state, state.overlay.opened_from);
 }
 
+// Whether a modal overlay is shown without the keyboard: something sent the
+// focus elsewhere while it was up (an `open` from the control channel, a tab
+// switch). ShowOverlay always gives the overlay the focus, so this is an overlay
+// the user left, and it ends as VS Code's quick input does when it loses focus.
+// Left up, it took the focus back on the next Escape and ran its selected row on
+// the Return after it -- Quit, from a palette nobody was looking at (soak
+// 7ab9a5476905). The find/replace widget, completion and code actions float over
+// the editor that keeps the keys; they are not modal.
+inline bool ModalOverlayLostFocus(const ProjectWorkspaceState& state) {
+  if (!state.overlay.visible || state.surface.focus == FocusTarget::Overlay) {
+    return false;
+  }
+  switch (state.overlay.mode) {
+    case OverlayMode::BufferSearch:
+    case OverlayMode::BufferReplace:
+    case OverlayMode::Completion:
+    case OverlayMode::CodeActions:
+      return false;
+    default:
+      return true;
+  }
+}
+
 // Hide the overlay and ensure keyboard focus never strands on the now-hidden
 // surface (the root cause of several "dead input" bugs). Shell-level dismissal
 // (fold-reveal cleanup, redraw requests, cursor-kind invalidation) lives in
