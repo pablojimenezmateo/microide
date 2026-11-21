@@ -240,12 +240,17 @@ std::optional<SDL_FRect> WorkspaceShell::TerminalCaretRectIn(
   if (cursor_x > panel_layout.content_rect.x + panel_layout.content_rect.w - char_width) {
     return std::nullopt;
   }
+  // On a wide glyph's lead cell the caret covers both cells, as far as the pane has
+  // room (TerminalCursorSnapshot::wide).
+  const float caret_width =
+      cursor.wide ? std::min(2.0f * char_width, panel_layout.content_rect.x + panel_layout.content_rect.w - cursor_x)
+                  : char_width;
   const float cursor_y =
       panel_layout.text_y +
       static_cast<float>(cursor.row -
                          static_cast<std::size_t>(panel_layout.scroll.vertical_scroll)) *
           panel_layout.line_height;
-  return MakeRect(cursor_x, cursor_y - 1.0f, char_width, panel_layout.line_height);
+  return MakeRect(cursor_x, cursor_y - 1.0f, caret_width, panel_layout.line_height);
 }
 
 }  // namespace microide::workspace

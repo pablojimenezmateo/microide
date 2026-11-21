@@ -807,6 +807,16 @@ void WorkspaceShell::PrepareTerminalPanesForFrame(TerminalTabState& tab,
                                                  &pane->visible_lines_snapshot, &pane->frame_cursor)) {
       RequestRedrawRect(rects.panes[pane_index]);
     }
+    // A caret on a wide glyph's lead cell covers both its cells: one cell wide, its
+    // blink damaged half the glyph it draws over, and the other half kept the
+    // other phase in partial frames (soak bfa3565938ee, clip-discipline D3).
+    {
+      terminal::TerminalCursorSnapshot& cursor = pane->frame_cursor;
+      const auto& lines = pane->visible_lines_snapshot.lines;
+      const std::size_t snapshot_row = cursor.row >= first_row ? cursor.row - first_row : lines.size();
+      cursor.wide = snapshot_row < lines.size() && cursor.column + 1 < lines[snapshot_row].cells.size() &&
+                    lines[snapshot_row].cells[cursor.column + 1].style.wide_trailing();
+    }
     pane->visible_lines_first_row = first_row;
     pane->visible_lines_max_rows = visible_rows;
     pane->frame_line_count = line_count;

@@ -299,6 +299,33 @@ void TestWorkspaceShellScheduledWakeSkipsCaretAfterIdleStop() {
          "scheduled wake after blink freeze should not request any redraw");
 }
 
+// Soak bfa3565938ee (clip-discipline D3): the caret on a wide glyph covered one
+// cell, and its blink damaged one cell, while the glyph it draws over is two
+// wide -- the half past the damage kept the other blink phase in partial frames.
+// A caret on a wide glyph's lead cell covers both cells, for the paint and for
+// the blink's damage alike (both are TerminalCaretRectIn).
+void TestWorkspaceShellTerminalCaretCoversAWideGlyphWhole() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(1280, 720);
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  // An emoji (two columns), then the cursor back onto its lead cell.
+  TerminalSessionTestAccess::AppendOutput(session, "\xF0\x9F\x98\x86\x1b[2D");
+  shell.Render(canvas.renderer(), 1280, 720);
+  const std::optional<SDL_FRect> on_wide = shell.CurrentCaretDirtyRect();
+  // Past it, onto a blank cell.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[2C");
+  shell.Render(canvas.renderer(), 1280, 720);
+  const std::optional<SDL_FRect> on_narrow = shell.CurrentCaretDirtyRect();
+  Expect(on_wide.has_value() && on_narrow.has_value(), "the caret is on screen both times");
+  Expect(on_wide->w == 2.0f * on_narrow->w,
+         "a caret on a wide glyph covers both its cells: " + std::to_string(on_wide->w) + " vs one cell " +
+             std::to_string(on_narrow->w));
+}
+
 void TestWorkspaceShellTerminalCaretDirtyRectTracksVisibleCursor() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -3625,6 +3652,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellScheduledWakeSkipsCaretAfterIdleStop);
   AddTest(tests, "WorkspaceShell/TerminalCaretDirtyRectTracksVisibleCursor",
           TestWorkspaceShellTerminalCaretDirtyRectTracksVisibleCursor);
+  AddTest(tests, "WorkspaceShell/TerminalCaretCoversAWideGlyphWhole",
+          TestWorkspaceShellTerminalCaretCoversAWideGlyphWhole);
   AddTest(tests, "WorkspaceShell/TerminalKeysReturnPartialPanelInvalidation",
           TestWorkspaceShellTerminalKeysReturnPartialPanelInvalidation);
   AddTest(tests, "WorkspaceShell/TerminalAsciiPromptMatchesDirectStringRendering",

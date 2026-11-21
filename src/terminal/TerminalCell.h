@@ -233,6 +233,10 @@ struct TerminalCursorSnapshot {
   TerminalCursorShape shape = TerminalCursorShape::Block;
   // False for DECSCUSR's steady shapes (2, 4, 6) and with DEC mode 12 reset.
   bool blinking = true;
+  // The cursor is on the lead cell of a wide glyph, so its caret covers two cells.
+  // The session does not set it; the workspace derives it from the lines it
+  // samples with the cursor (PrepareTerminalPanesForFrame).
+  bool wide = false;
   friend bool operator==(const TerminalCursorSnapshot&, const TerminalCursorSnapshot&) = default;
 };
 
