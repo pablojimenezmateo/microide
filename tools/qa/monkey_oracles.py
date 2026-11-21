@@ -654,6 +654,13 @@ CHURN_RELOAD_GRACE_S = 1.5
 # text -- were the ones it never saw.
 UNDO_KINDS = frozenset({"editor", "compare", "merge"})
 
+# How long the undo rule waits for the language server's outstanding answers
+# before it reads the text (scaled by the slow factor). A format or a rename
+# answered after that read lands as an edit of its own, which the undos then
+# take back and the redos put back: the text comes out as format(before), from a
+# history that was exact (soak 76e3925879dc).
+LSP_ANSWER_WAIT_S = 3.0
+
 
 class UndoAlgebra:
     """k undos then k redos are the identity on the text (the editing invariants'
@@ -677,6 +684,8 @@ class UndoAlgebra:
         if ui.get("focus") != "editor" or (ui.get("overlay") or {}).get("visible") or ui.get("modal") \
                 or (ui.get("menu") or {}).get("open"):
             return []
+        if not self._lsp_answers_landed():
+            return []  # an edit may still be on its way: not this rule's case
         try:
             before = app.query("buffer")
         except q.QaFailure:
@@ -728,6 +737,23 @@ class UndoAlgebra:
                              f"({len(before['text'])} -> {len(after.get('text') or '')} chars)")]
         return []
 
+    def _lsp_answers_landed(self) -> bool:
+        """Whether the app has no language-server request outstanding (the
+        `status` query's `lspRequestsInFlight`), waiting up to LSP_ANSWER_WAIT_S.
+        A request counts until its answer has been applied or dropped, so a
+        format-document's edits are in the buffer once this is true. A binary
+        without the field -- an old finding's replay -- reads as none."""
+        deadline = time.monotonic() + LSP_ANSWER_WAIT_S * q.SLOW_FACTOR
+        while True:
+            try:
+                in_flight = int(self.app.query("status").get("lspRequestsInFlight") or 0)
+            except q.QaFailure:
+                return False
+            if in_flight == 0:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.02)
 
     def _churned_during_check(self, path: str, started: float) -> bool:
         """A churn row for `path` from the reload grace before the check began

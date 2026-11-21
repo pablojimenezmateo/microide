@@ -406,6 +406,12 @@ action executor, dismisses a transient row afterwards unless the action keeps it
 open, and leaves a sticky row to its owner. `focus-notifications` is the keyboard
 route (arrows, Enter, Delete, Escape) a person uses for the same buttons.
 
+**Outstanding language-server requests.** `status` carries `lspRequestsInFlight`:
+the tracked requests (format, rename, navigation, completion, hover) whose answer
+the app has neither applied nor dropped yet. A format-document answers
+asynchronously and lands as an edit of its own, so a driver that reads a buffer to
+compare it later (tools/qa's undo rule) waits for zero first.
+
 **Remote projects.** For a remote active project `status` carries
 `remote: {host, hostRoot, state, files, filesPending, unsentPushes, conflicts,
 blocked, heldDeletes}` (`blocked`: saves the host refused for the path itself --

@@ -575,8 +575,25 @@ class _UndoEditor:
         self.revision = 1
         self.redo_drops = redo_drops
         self.on_line = None  # called with each line sent, before it applies
+        # A language server's edit (a format-document) asked for and not yet
+        # answered: it lands on the buffer as one new history entry when the
+        # app next processes its answer.
+        self.pending_edit: str | None = None
+
+    def land_pending_edit(self) -> None:
+        if self.pending_edit is not None:
+            self.history = self.history[:self.at + 1] + [self.pending_edit]
+            self.at += 1
+            self.text = self.pending_edit
+            self.revision += 1
+            self.pending_edit = None
 
     def query(self, verb, args=None):
+        if verb == "status":
+            in_flight = int(self.pending_edit is not None)
+            # The answer arrives while the caller waits for it.
+            self.land_pending_edit()
+            return {"lspRequestsInFlight": in_flight}
         assert verb == "buffer", verb
         return {"kind": self.kind, "path": "/w/CHANGELOG.md", "text": self.text,
                 "revision": self.revision}
@@ -642,6 +659,23 @@ class UndoAlgebraTests(unittest.TestCase):
         app.on_line = late_reload
         oracle = monkey_oracles.UndoAlgebra(app, random.Random(0))
         self.assertEqual(oracle.check(asked=1), [])
+
+    def test_a_format_answered_during_the_check_is_not_an_undo_bug(self) -> None:
+        # Soak 76e3925879dc: format-document went out, the check read the
+        # buffer, and clangd's 199 edits landed before the first undo. Four
+        # undos took back the formatting and three edits, four redos put them
+        # all back, and the text was format(before) byte for byte: an exact
+        # history, compared with a text read before the formatting landed.
+        app = _UndoEditor(["v0", "v1", "v12"], at=2)
+        app.pending_edit = "v12 formatted"
+
+        def answer_before_the_first_undo(line: str) -> None:
+            app.land_pending_edit()
+
+        app.on_line = answer_before_the_first_undo
+        oracle = monkey_oracles.UndoAlgebra(app, random.Random(0))
+        self.assertEqual(oracle.check(asked=3), [])
+        self.assertEqual(app.text, "v12 formatted")
 
     def test_a_redo_that_loses_text_is_still_reported(self) -> None:
         app = _UndoEditor(["v0", "v1", "v12"], at=2, redo_drops=True)

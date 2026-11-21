@@ -353,6 +353,23 @@ void TestBufferQueryReportsTextCaretsAndFolds() {
          "fold-all should leave the query reporting the fold at line 1");
 }
 
+// Soak 76e3925879dc: a format-document's edits landed after tools/qa's undo
+// rule had read the text, so its undos and redos ran over a formatting it had
+// not seen. `status` says how many language-server requests are outstanding, so
+// a driver can wait for their answers before it reads.
+void TestStatusQueryCountsOutstandingLspRequests() {
+  UiFixture fixture;
+  util::JsonValue status = TestAccess::ControlQuery(fixture.shell, "status");
+  Expect(status["lspRequestsInFlight"].IsInt() && status["lspRequestsInFlight"].AsInt() == 0,
+         "status should report no outstanding language-server request");
+  auto& lsp = TestAccess::CurrentProjectState(fixture.shell).lsp;
+  lsp.request_in_flight_count = 2;
+  status = TestAccess::ControlQuery(fixture.shell, "status");
+  Expect(status["lspRequestsInFlight"].IsInt() && status["lspRequestsInFlight"].AsInt() == 2,
+         "status should count the outstanding language-server requests");
+  lsp.request_in_flight_count = 0;
+}
+
 // Soak a7e72d7d3c4c, cb7d46af163b, 58b38cf6a12c: a CRLF file that an edit made
 // opaque (bytes that are not UTF-8) saves with its CRLF endings since b84babbed,
 // but the query still joined an opaque buffer with LF -- the digest it gave was
@@ -1151,6 +1168,8 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/NamesAreMadeUnique", TestUiNamesAreMadeUnique);
   AddTest(tests, "ControlUiQuery/BufferReportsTextCaretsAndFolds",
           TestBufferQueryReportsTextCaretsAndFolds);
+  AddTest(tests, "ControlUiQuery/StatusCountsOutstandingLspRequests",
+          TestStatusQueryCountsOutstandingLspRequests);
   AddTest(tests, "ControlUiQuery/NamesOverlayRows", TestUiQueryNamesOverlayRows);
   AddTest(tests, "ControlUiQuery/NamesPromptButtons", TestUiQueryNamesPromptButtons);
   AddTest(tests, "ControlUiQuery/NamesSettingsRows", TestUiQueryNamesSettingsRows);

@@ -1528,6 +1528,10 @@ util::JsonValue ControlChannelService::BuildStatus() const {
   }
   object["tabCount"] = util::JsonValue(static_cast<std::int64_t>(total_tabs));
   object["debugStopped"] = util::JsonValue(state.debug_execution.stopped);
+  // Requests whose answer has been neither applied nor dropped: a driver waits
+  // for zero before it reads a buffer a format or a rename may still edit.
+  object["lspRequestsInFlight"] =
+      util::JsonValue(static_cast<std::int64_t>(state.lsp.request_in_flight_count));
   object["connections"] = util::JsonValue(static_cast<std::int64_t>(server_.ConnectionCount()));
   object["renderer"] = util::JsonValue(context_->render_driver_name);
   // The allocator's view: what is live versus freed-but-kept (TD-2026-10-28-418).
