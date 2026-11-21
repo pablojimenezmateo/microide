@@ -3095,6 +3095,65 @@ void TestWorkspaceShellRestoreSessionKeepsATypedGitConflictResult() {
          "an editor tab on the conflicted file, holding the typed result: '" + editor.SerializeDocumentText() + "'");
 }
 
+// Soak 02922e8eed90: a git conflict's merge held a typed result while a diff of
+// the same file held other unsaved text in the file's own buffer. The result
+// stood in as an editor record on the file, the diff's record carried the file's
+// buffer, and the restore -- one buffer per file -- gave both tabs the first
+// record's text: the file's 910 unsaved bytes came back as the merge's 669. The
+// file's buffer keeps its path; the result, which is not the file's until it is
+// kept, comes back beside it in an Untitled tab.
+void TestWorkspaceShellRestoreSessionKeepsAConflictResultBesideTheFilesUnsavedBuffer() {
+  const microide::tests::GitMergeConflictFixture fixture = microide::tests::CreateBothModifiedConflictRepo();
+  const std::filesystem::path home = fixture.root.parent_path() / "session-home-beside";
+  std::filesystem::create_directories(home / "home");
+  std::filesystem::create_directories(home / "state");
+  std::filesystem::create_directories(home / "config");
+  ScopedEnvVar scoped_home("HOME", (home / "home").string());
+  ScopedSessionAppHomes scoped_app_homes(home / "state", home / "config");
+  std::string result_text;
+  std::string file_text;
+  {
+    WorkspaceShell shell;
+    WorkspaceShellTestAccess::SetProjectRoot(shell, fixture.root);
+    WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+    Expect(WorkspaceShellTestAccess::OpenGitConflictMerge(shell, fixture.output), "the conflict's merge opens");
+    WorkspaceShellTestAccess::FlushPendingFileReads(shell);
+    auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+    merge.result_viewport.MoveCursorTo(0, 0);
+    Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "typed into the result\n"), "typing into the result");
+    result_text = merge.result_viewport.SerializeDocumentText();
+    Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, fixture.output, "HEAD", "HEAD"),
+           "a diff of the conflicted file opens");
+    WorkspaceShellTestAccess::ActiveCompare(shell).right_viewport.MoveCursorTo(0, 0);
+    Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "typed into the file\n"), "typing into the diff's side");
+    file_text = WorkspaceShellTestAccess::ActiveCompare(shell).right_viewport.SerializeDocumentText();
+    Expect(file_text != result_text, "two different unsaved texts for one file");
+    WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell);
+  }
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, fixture.root);
+  WorkspaceShellTestAccess::SetWindowSize(restored, 1280, 720);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored), "restore after the crash");
+  WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(restored);
+  bool file_back = false;
+  bool result_back = false;
+  std::string seen;
+  for (std::size_t i = 0; i < WorkspaceShellTestAccess::FocusedGroupOpenTabCount(restored); ++i) {
+    WorkspaceShellTestAccess::ActivateTab(restored, i);
+    const editor::TextViewport& view = WorkspaceShellTestAccess::ActiveTabIsCompare(restored)
+                                           ? WorkspaceShellTestAccess::ActiveCompare(restored).right_viewport
+                                           : WorkspaceShellTestAccess::ActiveEditor(restored);
+    const std::string text = view.SerializeDocumentText();
+    seen += " [" + view.path().filename().string() + (view.dirty() ? " dirty" : "") + "] " + text;
+    file_back = file_back || (view.path() == fixture.output && view.dirty() && text == file_text);
+    result_back = result_back || (view.path().empty() && view.dirty() && text == result_text);
+  }
+  Expect(file_back, "the file's unsaved buffer comes back on the file:" + seen);
+  Expect(result_back, "the typed result comes back too, in an Untitled tab:" + seen);
+  const util::JsonValue held = WorkspaceShellTestAccess::ControlQuery(restored, "invariants");
+  Expect(held["ok"].AsBool(), "the workspace's own rules hold: " + util::SerializeJson(held));
+}
+
 void TestWorkspaceShellMergeChoicePreservesManualEditsAroundConflicts() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -4473,6 +4532,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMarkResolvedAsksAboutUnresolvedConflicts);
   AddTest(tests, "WorkspaceShell/RestoreSessionKeepsATypedGitConflictResult",
           TestWorkspaceShellRestoreSessionKeepsATypedGitConflictResult);
+  AddTest(tests, "WorkspaceShell/RestoreSessionKeepsAConflictResultBesideTheFilesUnsavedBuffer",
+          TestWorkspaceShellRestoreSessionKeepsAConflictResultBesideTheFilesUnsavedBuffer);
   AddTest(tests, "WorkspaceShell/RestoreSessionKeepsATypedMergeResult",
           TestWorkspaceShellRestoreSessionKeepsATypedMergeResult);
   AddTest(tests, "WorkspaceShell/MergeChoicePreservesManualEditsAroundConflicts",

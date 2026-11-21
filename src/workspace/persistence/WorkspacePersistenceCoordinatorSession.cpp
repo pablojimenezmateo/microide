@@ -909,6 +909,23 @@ void PersistenceCoordinator::SaveSessionState() {
     }
     return false;
   };
+  // Whether the file's own buffer -- an editor tab's or a diff's editable side --
+  // holds unsaved text. That buffer is the file's in the session: the restore
+  // gives every record of one path one buffer, so a merge result staged on the
+  // same path took its place and the file's text was gone (soak 02922e8eed90).
+  // A result is not the file's until it is kept; it then comes back in an
+  // Untitled tab of its own.
+  const auto file_buffer_is_unsaved = [&state](const std::filesystem::path& path) {
+    for (const EditorGroup& group : state.editor_groups) {
+      for (const TabEntry& tab : group.open_tabs) {
+        const editor::TextViewport* buffer = tab.kind == TabEntry::Kind::Merge ? nullptr : LoadedBufferViewOf(tab);
+        if (buffer != nullptr && buffer->dirty() && util::SameAsNormalizedPath(buffer->path(), path)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
   // The documents already staged in an editor record that stands in for a diff.
   std::vector<const editor::TextViewport*> stood_in;
 
@@ -931,7 +948,13 @@ void PersistenceCoordinator::SaveSessionState() {
             std::none_of(stood_in.begin(), stood_in.end(),
                          [side](const editor::TextViewport* other) { return other->SharesDocumentWith(*side); })) {
           const std::filesystem::path path = side->path().lexically_normal();
-          if (!editor_tab_is_on(path)) {
+          if (unkept->merge != nullptr && file_buffer_is_unsaved(path)) {
+            // Untitled: no path, and no number -- the restore gives it the next free one.
+            persisted_tab.emplace();
+            persisted_tab->kind = "editor";
+            StageDirtyBuffer(*side, {}, *persisted_tab);
+            stood_in.push_back(side);
+          } else if (!editor_tab_is_on(path)) {
             persisted_tab.emplace();
             persisted_tab->kind = "editor";
             persisted_tab->path = path;
@@ -942,11 +965,17 @@ void PersistenceCoordinator::SaveSessionState() {
       } else {
         persisted_tab = BuildPersistedEditorTabState(tab_index, tab);
         if (persisted_tab.has_value() && !persisted_tab->dirty_snapshot && !persisted_tab->path.empty()) {
+          // A diff's side is the file's buffer and goes first; a merge's result
+          // only when the file's buffer has nothing unsaved (above).
+          const UnkeptText* staged = nullptr;
           for (const UnkeptText& text : unsaved_diff_sides) {
-            if (util::SameAsNormalizedPath(text.view->path(), persisted_tab->path)) {
-              stage_unkept(text, persisted_tab->path, *persisted_tab);
-              break;
+            if (util::SameAsNormalizedPath(text.view->path(), persisted_tab->path) &&
+                (staged == nullptr || (staged->merge != nullptr && text.merge == nullptr))) {
+              staged = &text;
             }
+          }
+          if (staged != nullptr && (staged->merge == nullptr || !file_buffer_is_unsaved(persisted_tab->path))) {
+            stage_unkept(*staged, persisted_tab->path, *persisted_tab);
           }
         }
       }

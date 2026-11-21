@@ -78,6 +78,16 @@ def _doc_key(doc: dict[str, Any]) -> tuple[str, str]:
     within its project, since each project numbers its own Untitled-N."""
     return (str(doc.get("project") or ""), str(doc.get("path") or doc.get("title")))
 
+def _result_beside_its_files_buffer(doc: dict[str, Any], docs: list[dict[str, Any]]) -> bool:
+    """Whether `doc` is a merge's unsaved result for a file whose own buffer (an
+    editor's, a diff's side) also holds unsaved text. The session keeps the
+    file's buffer on the file and brings the result back in an Untitled tab
+    (soak 02922e8eed90): one path, two texts, and one buffer per path."""
+    return doc.get("surface") == "merge" and any(
+        other.get("surface") != "merge" and other.get("dirty") and _doc_key(other) == _doc_key(doc)
+        for other in docs)
+
+
 class DataOracle:
     """The data-loss oracle. Stateless between checks except for the snapshot a
     kill -9 compares against."""
@@ -476,6 +486,16 @@ class DataOracle:
             by_key = {_doc_key(d): d for d in after}
             for doc in dirty:
                 key = doc.get("path") or doc.get("title")
+                if _result_beside_its_files_buffer(doc, dirty):
+                    # Not the file's text until it is kept: it comes back in an
+                    # Untitled tab, and the file's own buffer on the file.
+                    shas = {doc.get("sha256"), newer.get(_doc_key(doc), doc.get("sha256"))}
+                    if not any(not d.get("path") and d.get("dirty") and d.get("sha256") in shas and
+                               d.get("project") == doc.get("project") for d in after):
+                        out.append(("data", f"the unsaved merge result for {Path(str(key)).name} did not come back "
+                                            f"after a kill -9 (its file's own buffer holds other unsaved text)"
+                                            f"{killed_at}"))
+                    continue
                 back = by_key.get(_doc_key(doc))
                 if back is None and doc.get("path") and doc.get("sha256") and \
                         _sha256_file(Path(doc["path"])) == doc["sha256"]:

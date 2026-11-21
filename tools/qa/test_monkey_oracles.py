@@ -118,6 +118,41 @@ class Kill9OracleTests(unittest.TestCase):
         self.assertEqual(found, [], found)
         self.assertLess(time.monotonic() - started, 3.0, "no wait for a buffer the lap has not loaded")
 
+    def _merge_result_beside_the_files_buffer(self, result_back: bool) -> list:
+        """A merge's typed result and the file's own unsaved buffer (a diff's
+        side), one path, two texts. The relaunch brings the file's buffer back on
+        the file and, when `result_back`, the result in an Untitled tab."""
+        app = _RelaunchingApp()
+        path = "/p/b/scheduler.cpp"
+        app.docs[1] = [{"path": path, "dirty": True, "sha256": "file", "bytes": 910, "project": "/p/b",
+                        "title": "compare: scheduler.cpp", "surface": "compare"},
+                       {"path": path, "dirty": True, "sha256": "result", "bytes": 669, "project": "/p/b",
+                        "title": "merge: scheduler.cpp", "surface": "merge"}]
+        relaunch = app.crash_and_relaunch
+
+        def restore(*args, **kwargs):
+            relaunch(*args, **kwargs)
+            app.docs[1] = [{"path": path, "dirty": True, "sha256": "file", "bytes": 910, "project": "/p/b",
+                            "title": "compare: scheduler.cpp", "surface": "compare"}]
+            if result_back:
+                app.docs[1].append({"path": "", "dirty": True, "sha256": "result", "bytes": 669,
+                                    "project": "/p/b", "title": "Untitled-1", "surface": "editor"})
+        app.crash_and_relaunch = restore
+        oracle = monkey_oracles.DataOracle(app)
+        with mock.patch.object(monkey_oracles, "CRASH_SAFETY_QUIET_S", 0.0), \
+                mock.patch.object(monkey_oracles.time, "sleep", lambda _s: None):
+            return [f[1] for f in oracle.kill9_and_check(random.Random(1), waited=True)]
+
+    def test_a_merge_result_beside_the_files_unsaved_buffer_comes_back_untitled(self) -> None:
+        # Soak 02922e8eed90: both texts were keyed by the one path; the result
+        # now comes back in an Untitled tab, and the file's buffer on the file.
+        self.assertEqual(self._merge_result_beside_the_files_buffer(result_back=True), [])
+
+    def test_a_merge_result_beside_the_files_buffer_that_is_lost_is_reported(self) -> None:
+        found = self._merge_result_beside_the_files_buffer(result_back=False)
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("the unsaved merge result for scheduler.cpp did not come back", found[0])
+
     def test_a_restored_project_that_has_not_loaded_is_loaded_before_the_compare(self) -> None:
         app = _RelaunchingApp()
         app.active = 0  # the buffer's project is a background one at the kill

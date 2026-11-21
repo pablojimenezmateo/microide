@@ -67,6 +67,10 @@ A project session SHALL carry the unsaved text of a merge tab's result, and the 
 - **WHEN** a merge the session does not persist (a git conflict's) holds typed text in its result
 - **THEN** the session SHALL carry that text in an editor record for the conflicted file, and the restore SHALL bring it back in an editor tab
 
+#### Scenario: A merge result beside the file's own unsaved buffer
+- **WHEN** a merge the session does not persist holds typed text in its result, and the conflicted file's own buffer (an editor tab's, or a diff's editable side) holds other unsaved text
+- **THEN** the session SHALL keep the file's buffer on the file and SHALL carry the result in an untitled editor record, so the restore brings back both texts: the file's on the file, the result in an Untitled tab
+
 #### Scenario: The result file changed while the editor was down
 - **WHEN** the result file changed after the merge last read or saved it, and the user saves the restored typed result
 - **THEN** the save SHALL be refused and the file's content SHALL stay on disk
