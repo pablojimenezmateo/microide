@@ -1275,7 +1275,15 @@ class StructuralDiffOracle:
     checked only up to the cut, hunk by complete hunk."""
 
     _QUOTES_OR_COMMENTS = ('"', "'", "//", "/*", "#")
-    _TOKEN = re.compile(r"\w+|[^\w\s]")
+    # The diff's own token rule (src/compare/DiffSyntax.cpp): a word, a run of
+    # ASCII operator characters as ONE token (`->`, `+=`, `.-`), or any other
+    # single non-space character -- a bracket, a quote, `,` or `;`, a non-ASCII
+    # symbol. Splitting every operator character, as this did, called deleting
+    # the space in `-S . -B` layout only, though it fused `.` and `-` into the
+    # operator `.-`: a real change of token, rightly marked (soak 96055d2c8eec,
+    # 2026-11-21). Comments and strings, whose lexing differs by language, are
+    # skipped below anyway.
+    _TOKEN = re.compile(r"\w+|[!#%&*+\-./:<=>?@\\^|~]+|[^\w\s]")
 
     @classmethod
     def _tokens(cls, text: str) -> list[str]:

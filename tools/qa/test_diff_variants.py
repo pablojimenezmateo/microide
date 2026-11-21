@@ -61,6 +61,20 @@ class StructuralOracleTests(unittest.TestCase):
                      [(0, 22)], [(0, 17)])]
         self.assertEqual(_check(rows), [])
 
+    def test_a_space_removed_between_two_operators_is_a_real_change(self) -> None:
+        # Soak 96055d2c8eec, 2026-11-21: "-S . -B" -> "-S .-B". The space went,
+        # and with it the boundary: `.` and `-` are one operator token now, as the
+        # diff lexes them, so marking it is right.
+        rows = [_row("modified", 0, "    cmake -S . -B build", "    cmake -S .-B build", [(13, 16)], [(13, 15)])]
+        self.assertEqual(_check(rows), [])
+
+    def test_a_space_removed_inside_an_operator_run_marks_nothing_novel(self) -> None:
+        # The rule cuts both ways: "a -> b" to "a ->b" keeps the token `->`, so
+        # a mark there is still reported.
+        found = _check([_row("modified", 0, "a -> b;", "a ->b;", [(2, 4)], [(2, 4)])])
+        self.assertEqual(len(found), 1)
+        self.assertIn("only whitespace", found[0][1])
+
     def test_rewrapping_between_tokens_still_is_layout_only(self) -> None:
         rows = [_row("modified", 0, "foo(a, b);", "foo(a,", right_spans=[(0, 3)]),
                 _row("added", 0, right="    b);")]
