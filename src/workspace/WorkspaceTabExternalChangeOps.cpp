@@ -228,11 +228,16 @@ void TabCoordinator::RefreshRealPathsOf(const std::filesystem::path& normalized_
   const editor::TextViewport* refreshed = nullptr;
   for (EditorGroup& group : state_.editor_groups) {
     for (TabEntry& tab : group.open_tabs) {
-      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
-          !util::SameAsNormalizedPath(tab.editor_state->viewport.path(), normalized_path)) {
+      // Every loaded buffer of the path: an editor tab's view, or a diff's
+      // editable side (LoadedBufferViewOf; see OpenSymlinkAliasesOf below).
+      if (LoadedBufferViewOf(tab) == nullptr) {
         continue;
       }
-      editor::TextViewport& viewport = tab.editor_state->viewport;
+      editor::TextViewport& viewport =
+          tab.kind == TabEntry::Kind::Compare ? tab.compare->right_viewport : tab.editor_state->viewport;
+      if (!util::SameAsNormalizedPath(viewport.path(), normalized_path)) {
+        continue;
+      }
       if (refreshed == nullptr || !viewport.SharesDocumentWith(*refreshed)) {
         viewport.RefreshRealPath();
         refreshed = &viewport;
@@ -249,10 +254,15 @@ std::vector<std::filesystem::path> TabCoordinator::OpenSymlinkAliasesOf(
   std::optional<std::filesystem::path> real_target;
   for (const EditorGroup& group : state_.editor_groups) {
     for (const auto& tab : group.open_tabs) {
-      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+      // A diff's editable side is a buffer of its file like an editor tab's view.
+      // Editor tabs alone left a diff opened on a link (dangling then, its file
+      // made later) deaf to the file it names: its clean side stayed empty while
+      // the file filled (soak 77fa58de2a44, the world profile's qa-ext/link2).
+      const editor::TextViewport* loaded = LoadedBufferViewOf(tab);
+      if (loaded == nullptr) {
         continue;
       }
-      const editor::TextViewport& viewport = tab.editor_state->viewport;
+      const editor::TextViewport& viewport = *loaded;
       if (viewport.real_path().empty() ||
           util::SameAsNormalizedPath(viewport.path(), normalized_target)) {
         continue;  // not opened through a link, or already routed by its own name

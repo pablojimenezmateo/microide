@@ -1608,6 +1608,53 @@ void TestWorkspaceShellUndoInADiffAfterADiskChangeDoesNotReadClean() {
   Expect(side.dirty(), "a diff side undone to content the file no longer holds must not read clean");
 }
 
+
+// Soak 77fa58de2a44 (world profile): a diff opened on a DANGLING link -- qa-ext/link2,
+// its file not there yet -- never heard of the file appearing. The
+// watcher names the file written, and the views reached through a link were found
+// among EDITOR tabs only, so the diff's side kept its old text, clean.
+void TestWorkspaceShellAChangeReachesADiffOpenThroughALink() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path left = root / "left.txt";
+  const std::filesystem::path target = root / "target.txt";
+  const std::filesystem::path link = root / "qa-ext" / "link2";
+  WriteFile(left, "left\n");
+  // Dangling when the diff opens, as the soak's link2 was: its file comes later.
+  std::filesystem::create_directories(link.parent_path());
+  std::filesystem::create_symlink(target, link);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "open the project");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "compare-files " + left.string() + " " + link.string()),
+         "compare-files opens the diff");
+  Expect(WorkspaceShellTestAccess::ActiveTabIsCompare(shell) &&
+             WorkspaceShellTestAccess::ActiveCompare(shell).right_editable &&
+             WorkspaceShellTestAccess::EditorViewportForPath(shell, link) == nullptr,
+         "the link is open only as the diff's editable side");
+  SoftwareCanvas canvas(1280, 720);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
+  DrainProjectChangesBeforeTheWrite(shell);
+
+  WriteFile(target, "after\n");  // the file the link names appears
+  const auto side_line = [&shell]() -> std::string {
+    if (!WorkspaceShellTestAccess::ActiveTabIsCompare(shell)) {
+      return "<no diff>";
+    }
+    const auto& lines = WorkspaceShellTestAccess::ActiveCompare(shell).right_viewport.lines();
+    return lines.empty() ? std::string() : std::string(lines[0]);
+  };
+  (void)WaitUntil([&]() { return side_line() == "after"; }, std::chrono::seconds(10),
+                  std::chrono::milliseconds(10), [&]() {
+                    (void)WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false);
+                    WorkspaceShellTestAccess::FlushPendingFileReads(shell);
+                  });
+  Expect(side_line() == "after", "the diff's side reached through the link shows the file as it now is (" +
+                                     side_line() + ")");
+}
+
 }  // namespace
 
 void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
@@ -1624,6 +1671,8 @@ void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellAChangeKeepsAFileCompareAFileCompare);
   AddTest(tests, "ExternalRepoChange/ReachesAFileOpenOnlyInADiff",
           TestWorkspaceShellExternalChangeReachesAFileOpenOnlyInADiff);
+  AddTest(tests, "ExternalRepoChange/AChangeReachesADiffOpenThroughALink",
+          TestWorkspaceShellAChangeReachesADiffOpenThroughALink);
   AddTest(tests, "ExternalRepoChange/AProjectWhoseRootIsGoneStillWatchesItsOpenFiles",
           TestWorkspaceShellAProjectWhoseRootIsGoneStillWatchesItsOpenFiles);
   AddTest(tests, "ExternalRepoChange/CleanReloadDoesNotSnapshotBuffers",
