@@ -33,6 +33,7 @@ namespace microide::workspace {
 // The surfaces whose damage is derived; one unit table each.
 enum class DerivedSurface : std::uint8_t {
   StatusBar,
+  BottomPanelHeader,
   Count,
 };
 

@@ -1,6 +1,7 @@
 #include "workspace/services/SidebarService.h"
 
 #include "workspace/OpenDocumentWatch.h"
+#include "workspace/render/BottomPanelHeaderPaint.h"
 #include "workspace/render/HoverCardLimits.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
@@ -305,8 +306,8 @@ void WorkspaceShell::ResizeTerminalToPanel(const WorkspaceLayout& layout) {
 void WorkspaceShell::DrawFilledRect(SDL_Renderer* renderer,
                                     const SDL_FRect& rect,
                                     SDL_Color color) const {
-  render::SetDrawColor(renderer, color);
-  SDL_RenderFillRect(renderer, &rect);
+  // Through the primitive the paint-overrun recorder sees (clip-discipline D5).
+  render::FillRect(renderer, rect, color);
 }
 
 void WorkspaceShell::DrawSurfaceFocusRing(SDL_Renderer* renderer, const SDL_FRect& region) const {
@@ -1349,17 +1350,6 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       }
       frame_state_.painted_output_revision = revision;
     }
-    // The strip's tabs (terminals' and channels'): a label changes with nothing
-    // else drawn there -- a results tab takes its first line's label, a shell's
-    // OSC title renames its tab while only the terminal's body repaints.
-    const bool panel_shown = layout.bottom_panel.h > 0.0f && panel_vm.content != PanelContentKind::None;
-    const std::uint64_t tabs = panel_shown ? tab_strip_service_.BottomPanelTabsFingerprint() + 1 : 0;
-    if (tabs != frame_state_.painted_bottom_panel_tabs) {
-      if (panel_shown) {
-        RequestBottomPanelRedraw();
-      }
-      frame_state_.painted_bottom_panel_tabs = tabs;
-    }
   }
   // The debug toolbar's run state (see PreparedFrameState::painted_debug_toolbar).
   {
@@ -1620,6 +1610,43 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   // Derived-damage surfaces settle here: after the pointer occluder, which their
   // hover reads (openspec derived-damage).
   PrepareStatusBarFrame(layout);
+  {
+    // The bottom panel's header, the same way (derived-damage 3.1): its label is
+    // "Terminal", "Output", or the shown output channel's name when it has no tabs.
+    // A strip label changes with nothing else drawn there -- a results tab takes
+    // its first line's label, a shell's OSC title renames its tab while only the
+    // terminal's body repaints -- and each tab is a unit of its own, so that is
+    // repainted; this replaced the whole-panel repaint on the tab models'
+    // fingerprint (painted_bottom_panel_tabs).
+    const BottomPanelSurfaceViewModel& panel = *prepare_cached_bottom_panel_vm_;
+    std::string_view label = "Terminal";
+    if (panel.content == PanelContentKind::Output) {
+      label = "Output";
+      for (const auto& channel : output_channels_.Channels()) {
+        if (channel.id == panel.output_channel_id) {
+          label = channel.label.empty() ? std::string_view(channel.id) : std::string_view(channel.label);
+          break;
+        }
+      }
+    }
+    const SDL_FRect panel_header = MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
+                                            kWorkspaceBottomPanelHeaderHeight);
+    PrepareBottomPanelHeaderFrame(
+        frame_state_,
+        BottomPanelHeaderInputs{
+            .renderer = renderer,
+            .layout = &layout,
+            .panel = &panel,
+            .theme = &theme_,
+            .label = label,
+            .new_terminal_rect =
+                tab_strip_service_.BottomPanelTerminalNewTabRect(layout_mode_service_.CurrentMode(), panel_header),
+            .maximize_rect =
+                tab_strip_service_.BottomPanelMaximizeButtonRect(layout_mode_service_.CurrentMode(), panel_header),
+            .pointer_over = [this](const SDL_FRect& rect) { return PointerOver(rect); },
+            .damage = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); },
+        });
+  }
   // Before any hover is resolved against the blame overlay or its card's damage is
   // decided: an overlay the active buffer has moved away from is this frame's
   // paint's to rebuild, not prep's to lay a card out of.

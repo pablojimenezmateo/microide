@@ -2615,6 +2615,25 @@ void TestTheStatusBarRepaintsWhatChangedWithNoDamageRequest() {
   fixture.ExpectFresh(nothing_announced, "a status-bar segment set with no damage request");
 }
 
+// derived-damage 3.1 / clip-discipline stage 3: the bottom panel's header is a
+// derived surface. A bell in a background terminal marks its tab whoever set it
+// -- here state changed with no damage request at all -- and the next partial
+// frame shows the mark as a full one does.
+void TestThePanelHeaderRepaintsWhatChangedWithNoDamageRequest() {
+  FlowFixture fixture("notes.txt", "one\ntwo\n");
+  TestAccess::EnsureTerminalTab(fixture.shell);
+  TestAccess::EnsureTerminalTab(fixture.shell);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "term"), "a second terminal opens");
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  auto& tabs = TestAccess::CurrentProjectState(fixture.shell).terminal_tabs;
+  Expect(tabs.size() >= 2 && tabs.front() != nullptr, "two terminal tabs, the first in the background");
+  tabs.front()->has_unseen_bell = true;
+  workspace::RenderInvalidation nothing_announced;
+  nothing_announced.rects.push_back(SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f});
+  fixture.ExpectFresh(nothing_announced, "a bell marked on a background terminal tab with no damage request");
+}
+
 // Soak 0cee9c7fa46e: Return in the merge result adds a row to every pane's
 // shared extent, so the vertical thumb at the surface's right edge shrinks.
 // Frame prep saw the thumb move but repainted only the overview lane beside
@@ -6019,6 +6038,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestACaretMoveThatScrollsTheMergePanesRepaintsThemAll);
   AddTest(tests, "QaFlowRegression/TheStatusBarRepaintsWhatChangedWithNoDamageRequest",
           TestTheStatusBarRepaintsWhatChangedWithNoDamageRequest);
+  AddTest(tests, "QaFlowRegression/ThePanelHeaderRepaintsWhatChangedWithNoDamageRequest",
+          TestThePanelHeaderRepaintsWhatChangedWithNoDamageRequest);
   AddTest(tests, "QaFlowRegression/ANewLineInTheMergeResultRepaintsTheVerticalThumb",
           TestANewLineInTheMergeResultRepaintsTheVerticalThumb);
   AddTest(tests, "QaFlowRegression/MovingOntoATabsCloseButtonLightsIt", TestMovingOntoATabsCloseButtonLightsIt);

@@ -16,6 +16,7 @@
 #include "editor/PluginSurfaceStore.h"
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "render/PluginDisplayList.h"
+#include "render/PaintElement.h"
 #include "render/PluginDisplayListRenderer.h"
 #include "render/ScopedRenderClip.h"
 #include "render/SdlConvert.h"
@@ -23,6 +24,7 @@
 #include "util/PerformanceTrace.h"
 #include "workspace/PluginSurfacePreview.h"
 #include "workspace/WorkspaceTextSearch.h"
+#include "workspace/render/BottomPanelHeaderPaint.h"
 #include "workspace/render/TerminalRowPaint.h"
 
 namespace microide::workspace {
@@ -57,6 +59,207 @@ void RenderRasterSurfaceInto(SDL_Renderer* renderer, const SDL_FRect& rect,
   SDL_RenderTexture(renderer, entry->texture, nullptr, &dest);
 }
 
+// The panel strip's tab colours: one definition for prep's fingerprint and paint.
+StripTabPalette PanelTabPalette(const render::Theme& theme) {
+  return StripTabPalette{
+      .active_fill = render::BlendColors(theme.chrome_active, theme.surface_background, 0.42f),
+      .inactive_fill = render::BlendColors(theme.surface_raised, theme.surface_background, 0.66f),
+      .hover_fill = theme.row_highlight,
+      .active_text = theme.chrome_active_text,
+      .inactive_text = theme.text_secondary,
+      .active_glyph = theme.chrome_active_text,
+      .inactive_glyph = theme.text_secondary,
+  };
+}
+
+constexpr StripTabStyle kPanelTabStyle{
+    .text_left_padding = 8.0f,
+    .close_right_reserve = 40.0f,
+    .accent_edge = StripAccentEdge::Top,
+};
+
+// A unit's rect: the element's, snapped as its PaintElement clips (clip-discipline D2).
+SDL_FRect UnitRect(SDL_Renderer* renderer, const SDL_FRect& rect) {
+  const SDL_Rect snapped = render::SnapToDevicePixels(renderer, rect);
+  return SDL_FRect{static_cast<float>(snapped.x), static_cast<float>(snapped.y), static_cast<float>(snapped.w),
+                   static_cast<float>(snapped.h)};
+}
+
+}  // namespace
+
+void PrepareBottomPanelHeaderFrame(PreparedFrameState& frame, const BottomPanelHeaderInputs& inputs) {
+  PreparedFrameState::PanelHeaderPaint& header = frame.panel_header;
+  header.tabs.clear();
+  header.visible = false;
+  header.drag_tabs = nullptr;
+  header.dragging = false;
+  std::vector<DerivedDamage::Unit>& units = frame.derived_damage.Begin(DerivedSurface::BottomPanelHeader);
+  const BottomPanelSurfaceViewModel& panel = *inputs.panel;
+  const render::Theme& theme = *inputs.theme;
+  if (panel.content != PanelContentKind::None && inputs.layout->bottom_panel.h > 0.0f) {
+    header.visible = true;
+    header.header = MakeRect(inputs.layout->bottom_panel.x, inputs.layout->bottom_panel.y,
+                             inputs.layout->bottom_panel.w, kWorkspaceBottomPanelHeaderHeight);
+    const StripTabPalette palette = PanelTabPalette(theme);
+    const std::uint64_t palette_key = PaintFingerprint()
+                                          .Add(palette.active_fill)
+                                          .Add(palette.inactive_fill)
+                                          .Add(palette.hover_fill)
+                                          .Add(palette.active_text)
+                                          .Add(palette.inactive_text)
+                                          .Add(palette.active_glyph)
+                                          .Add(palette.inactive_glyph)
+                                          .Add(theme.accent)
+                                          .Add(theme.diagnostic_warning)
+                                          .Add(theme.chrome_text)
+                                          .Add(theme.chrome_text_secondary)
+                                          .Add(theme.text_primary)
+                                          .Add(theme.text_secondary)
+                                          .Add(theme.row_highlight)
+                                          .Add(theme.surface_raised)
+                                          .Add(theme.border)
+                                          .value();
+    // No hover while the strip slides (soak 38f44bf79ca8): the tabs are drawn at
+    // their slid rects, which overlap the resting ones the hover probe tracks.
+    const bool still = !panel.tab_drag.active && !panel.tab_drag.sliding;
+    const std::vector<VisibleStripTab>& tabs =
+        panel.tabs != nullptr ? *panel.tabs : TabStripService::EmptyVisibleTabs();
+    for (const VisibleStripTab& tab : tabs) {
+      if (panel.tab_drag.active && tab.index == panel.tab_drag.source_index) {
+        continue;  // lifted; drawn as the floating ghost
+      }
+      const float dx = panel.tab_drag.sliding && tab.index < panel.tab_drag.offsets.size()
+                           ? panel.tab_drag.offsets[tab.index]
+                           : 0.0f;
+      SDL_FRect rect = tab.rect;
+      SDL_FRect close_rect = tab.close_rect;
+      rect.x += dx;
+      close_rect.x += dx;
+      const PreparedFrameState::PanelTabPaint& painted = header.tabs.emplace_back(PreparedFrameState::PanelTabPaint{
+          .rect = rect,
+          .close_rect = close_rect,
+          .title = tab.display_title,
+          .badge_text = tab.badge_text,
+          .badge_color = tab.badge_color,
+          .secondary_title = tab.secondary_title,
+          .remote_state = tab.remote_state,
+          .show_badge = tab.show_badge,
+          .active = tab.active,
+          .hovered = still && inputs.pointer_over(rect),
+          .close_hovered = still && inputs.pointer_over(close_rect),
+          .dimmed = tab.dimmed,
+          .activity_dot = tab.activity_dot,
+          .bell_mark = tab.bell_mark,
+      });
+      units.push_back(DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, rect),
+                                          .fingerprint = FingerprintOf(painted, palette_key)});
+    }
+    header.label = tabs.empty() ? inputs.label : std::string_view{};
+    // The label, when it shows: the header's left part up to the buttons.
+    units.push_back(DerivedDamage::Unit{
+        .rect = UnitRect(inputs.renderer, header.header),
+        .fingerprint = PaintFingerprint().Add(header.header).Add(header.label).Add(palette_key).value()});
+    const auto button = [&](PreparedFrameState::PanelButtonPaint& slot, const SDL_FRect& rect, std::size_t hidden) {
+      slot = PreparedFrameState::PanelButtonPaint{.rect = rect, .hovered = inputs.pointer_over(rect), .hidden = hidden};
+      units.push_back(DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, rect),
+                                          .fingerprint = FingerprintOf(slot, palette_key)});
+    };
+    button(header.overflow_left, panel.tab_overflow.left_button, panel.tab_overflow.hidden_left);
+    button(header.overflow_right, panel.tab_overflow.right_button, panel.tab_overflow.hidden_right);
+    button(header.new_terminal, inputs.new_terminal_rect, 0);
+    header.maximized = inputs.layout->panel_maximized;
+    button(header.maximize, inputs.maximize_rect, header.maximized ? 1 : 0);
+    if (panel.tab_drag.active) {
+      header.drag_tabs = &tabs;
+      header.dragging = true;
+      header.drag_source = panel.tab_drag.source_index;
+      header.drag_pointer_x = panel.tab_drag.pointer_x;
+      header.drag_grab_offset_x = panel.tab_drag.grab_offset_x;
+    }
+    // The drag ghost follows the pointer anywhere over the strip.
+    units.push_back(DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, header.header),
+                                        .fingerprint = PaintFingerprint()
+                                                           .Add(header.dragging)
+                                                           .Add(header.drag_source)
+                                                           .Add(header.drag_pointer_x)
+                                                           .Add(header.drag_grab_offset_x)
+                                                           .value()});
+  }
+  frame.derived_damage.Commit(DerivedSurface::BottomPanelHeader, inputs.damage);
+}
+
+void PaintBottomPanelHeader(SDL_Renderer* renderer, const PreparedFrameState& frame, const render::Theme& theme,
+                            const render::TextRenderer& text_renderer) {
+  const PreparedFrameState::PanelHeaderPaint& header = frame.panel_header;
+  if (!header.visible) {
+    return;
+  }
+  const StripTabPalette palette = PanelTabPalette(theme);
+  for (const PreparedFrameState::PanelTabPaint& tab : header.tabs) {
+    const render::PaintElement element(renderer, tab.rect, "panel-tab");
+    DrawStripTab(text_renderer, renderer, theme, tab.rect, tab.title, tab.badge_text, tab.badge_color,
+                 tab.show_badge, tab.active, kPanelTabStyle, palette, tab.hovered,
+                 StripTabRemoteMark{
+                     .secondary_label = tab.secondary_title, .state = tab.remote_state, .dimmed = tab.dimmed});
+    DrawHoverableCloseGlyph(renderer, tab.close_rect, tab.close_hovered,
+                            tab.active ? palette.active_glyph : palette.inactive_glyph, palette.active_text);
+    if (tab.activity_dot || tab.bell_mark) {
+      // Unseen output in a background terminal: a small accent square just left of
+      // the close glyph, where the eye already goes for tab state. A bell is the
+      // same place, larger and in the warning colour.
+      const float dot = tab.bell_mark ? 8.0f : 6.0f;
+      FillRect(renderer,
+               MakeRect(tab.close_rect.x - dot - 6.0f, std::floor(tab.rect.y + (tab.rect.h - dot) * 0.5f), dot,
+                        dot),
+               tab.bell_mark ? theme.diagnostic_warning : theme.accent);
+    }
+  }
+  if (!header.label.empty()) {
+    const render::PaintElement element(renderer, header.header, "panel-label");
+    DrawVCenteredTextOn(text_renderer, renderer, header.header, 12.0f, theme.chrome_text, theme.chrome_background,
+                        header.label);
+  }
+  DrawTabStripOverflowButton(text_renderer, renderer, theme, header.overflow_left.rect, /*point_right=*/false,
+                             header.overflow_left.hidden, header.overflow_left.hovered);
+  DrawTabStripOverflowButton(text_renderer, renderer, theme, header.overflow_right.rect, /*point_right=*/true,
+                             header.overflow_right.hidden, header.overflow_right.hovered);
+  if (header.dragging && header.drag_tabs != nullptr) {
+    DrawTabDragFeedback(text_renderer, renderer, theme, header.header, *header.drag_tabs, header.header,
+                        header.drag_source, header.drag_pointer_x, header.drag_grab_offset_x, kPanelTabStyle,
+                        palette);
+  }
+  // New terminal, for every content kind: a click there opens one whether or not
+  // a tab exists, and the empty panel's own hint points at it.
+  {
+    const PreparedFrameState::PanelButtonPaint& button = header.new_terminal;
+    const render::PaintElement element(renderer, button.rect, "panel-new-terminal");
+    DrawButtonCentered(text_renderer, renderer, theme, button.rect, "", ButtonTone::Neutral,
+                       ButtonVisualState{.enabled = true, .hovered = button.hovered, .active = false});
+    DrawPlusGlyph(renderer, button.rect, button.hovered ? theme.text_primary : theme.text_secondary);
+  }
+  // Maximize / restore at the header's right edge: an up chevron offers the
+  // immersive panel, a down chevron the way back (VS Code's pair).
+  {
+    const PreparedFrameState::PanelButtonPaint& button = header.maximize;
+    const render::PaintElement element(renderer, button.rect, "panel-maximize");
+    DrawButtonCentered(text_renderer, renderer, theme, button.rect, "", ButtonTone::Neutral,
+                       ButtonVisualState{.enabled = true, .hovered = button.hovered, .active = false});
+    const SDL_Color glyph = button.hovered ? theme.text_primary : theme.text_secondary;
+    const float cx = std::floor(button.rect.x + button.rect.w * 0.5f);
+    const float cy = std::floor(button.rect.y + button.rect.h * 0.5f);
+    const float arm = 3.0f;
+    render::SetDrawColor(renderer, glyph);
+    if (header.maximized) {
+      render::RenderClipStableLine(renderer, cx - arm, cy - 1.0f, cx, cy + arm - 1.0f);
+      render::RenderClipStableLine(renderer, cx, cy + arm - 1.0f, cx + arm, cy - 1.0f);
+    } else {
+      render::RenderClipStableLine(renderer, cx - arm, cy + 1.0f, cx, cy - arm + 1.0f);
+      render::RenderClipStableLine(renderer, cx, cy - arm + 1.0f, cx + arm, cy + 1.0f);
+    }
+  }
+}
+
+namespace {
 }  // namespace
 
 void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
@@ -67,37 +270,8 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   }
 
   util::PerformanceTrace::Scope bottom_panel_scope("WorkspaceShell::RenderBottomPanel");
-  const SDL_FRect panel_header =
-      MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
-               kWorkspaceBottomPanelHeaderHeight);
   const bool terminal_panel = panel_vm.content == PanelContentKind::Terminal;
   const bool output_panel = panel_vm.content == PanelContentKind::Output;
-  // Prebuilt by PrepareFrameOnce (which owns the state read + strip geometry).
-  const std::vector<VisibleStripTab>& visible_panel_tabs =
-      panel_vm.tabs != nullptr ? *panel_vm.tabs : TabStripService::EmptyVisibleTabs();
-
-  // No tab or close-button hover while the strip slides: paint draws the tabs at
-  // their slid rects, which overlap one another and the resting rects the hover
-  // probe repaints a pointer's leave from, so a tab lit mid-slide stayed lit when
-  // the pointer left for the menu bar (soak 38f44bf79ca8). The slide repaints the
-  // strip every frame until it lands; hover returns with the tabs at rest.
-  const bool panel_strip_still = !panel_vm.tab_drag.active && !panel_vm.tab_drag.sliding;
-  const auto draw_tab_close_button = [&](const SDL_FRect& rect,
-                                         SDL_Color color,
-                                         SDL_Color hover_color) {
-    DrawHoverableCloseGlyph(renderer, rect,
-                            panel_strip_still && PointerOver(rect),
-                            color, hover_color);
-  };
-  const StripTabPalette panel_tab_palette{
-      .active_fill = render::BlendColors(theme_.chrome_active, theme_.surface_background, 0.42f),
-      .inactive_fill = render::BlendColors(theme_.surface_raised, theme_.surface_background, 0.66f),
-      .hover_fill = theme_.row_highlight,
-      .active_text = theme_.chrome_active_text,
-      .inactive_text = theme_.text_secondary,
-      .active_glyph = theme_.chrome_active_text,
-      .inactive_glyph = theme_.text_secondary,
-  };
 
   // Each pane sets its DECSCNM flag and selection strength before its rows paint;
   // TerminalRowPaint resolves every cell against this once per row.
@@ -198,118 +372,8 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     }
   };
 
-  if (!visible_panel_tabs.empty()) {
-    const auto& panel_slide = panel_vm.tab_drag;
-    const auto panel_slide_dx = [&](std::size_t index) -> float {
-      return panel_slide.sliding && index < panel_slide.offsets.size() ? panel_slide.offsets[index]
-                                                                       : 0.0f;
-    };
-    for (const VisibleStripTab& tab : visible_panel_tabs) {
-      if (panel_slide.active && tab.index == panel_slide.source_index) {
-        continue;  // lifted; rendered as the floating ghost below
-      }
-      const float dx = panel_slide_dx(tab.index);
-      SDL_FRect rect = tab.rect;
-      SDL_FRect close_rect = tab.close_rect;
-      rect.x += dx;
-      close_rect.x += dx;
-      DrawStripTab(text_renderer_, renderer, theme_, rect, tab.display_title, tab.badge_text,
-                   tab.badge_color, tab.show_badge, tab.active,
-                   StripTabStyle{
-                       .text_left_padding = 8.0f,
-                       .close_right_reserve = 40.0f,
-                       .accent_edge = StripAccentEdge::Top,
-                   },
-                   panel_tab_palette, panel_strip_still && PointerOver(rect), RemoteMarkOf(tab));
-      draw_tab_close_button(close_rect,
-                            tab.active ? panel_tab_palette.active_glyph
-                                       : panel_tab_palette.inactive_glyph,
-                            panel_tab_palette.active_text);
-      if (tab.activity_dot || tab.bell_mark) {
-        // Unseen output in a background terminal: a small accent square just
-        // left of the close glyph, where the eye already goes for tab state. A
-        // bell is the same place, larger and in the warning colour.
-        const float dot = tab.bell_mark ? 8.0f : 6.0f;
-        DrawFilledRect(renderer,
-                       MakeRect(close_rect.x - dot - 6.0f,
-                                std::floor(rect.y + (rect.h - dot) * 0.5f), dot, dot),
-                       tab.bell_mark ? theme_.diagnostic_warning : theme_.accent);
-      }
-    }
-    const TabStripOverflowControls& panel_overflow = panel_vm.tab_overflow;
-    DrawTabStripOverflowButton(
-        text_renderer_, renderer, theme_, panel_overflow.left_button, /*point_right=*/false,
-        panel_overflow.hidden_left,
-        PointerOver(panel_overflow.left_button));
-    DrawTabStripOverflowButton(
-        text_renderer_, renderer, theme_, panel_overflow.right_button, /*point_right=*/true,
-        panel_overflow.hidden_right,
-        PointerOver(panel_overflow.right_button));
-    if (panel_vm.tab_drag.active) {
-      DrawTabDragFeedback(text_renderer_, renderer, theme_, panel_header, visible_panel_tabs, panel_header,
-                          panel_vm.tab_drag.source_index,
-                          panel_vm.tab_drag.pointer_x, panel_vm.tab_drag.grab_offset_x,
-                          StripTabStyle{
-                              .text_left_padding = 8.0f,
-                              .close_right_reserve = 40.0f,
-                              .accent_edge = StripAccentEdge::Top,
-                          },
-                          panel_tab_palette);
-    }
-  } else {
-    // Header label is one of: "Terminal" (default — a Terminal panel with no live tabs),
-    // "Output" (no channel match), or the channel's label/id. Hold via string_view so the
-    // constant case allocates nothing per frame.
-    std::string_view header_label = "Terminal";
-    if (output_panel) {
-      header_label = "Output";
-      for (const auto& channel : output_channels_.Channels()) {
-        if (channel.id == panel_vm.output_channel_id) {
-          header_label = channel.label.empty() ? std::string_view(channel.id)
-                                                : std::string_view(channel.label);
-          break;
-        }
-      }
-    }
-    DrawVCenteredTextOn(text_renderer_, renderer, panel_header, 12.0f, theme_.chrome_text,
-                        theme_.chrome_background, header_label);
-  }
-
-  // New terminal, for every content kind too: a click there opens one whether or
-  // not a tab exists, and the empty panel's own hint points at it. Drawn only
-  // beside a tab, it was missing exactly when there was no terminal to begin with.
-  {
-    const SDL_FRect new_tab_rect = tab_strip_service_.BottomPanelTerminalNewTabRect(
-        layout_mode_service_.CurrentMode(), panel_header);
-    const bool hovered = PointerOver(new_tab_rect);
-    DrawButtonCentered(text_renderer_, renderer, theme_, new_tab_rect, "", ButtonTone::Neutral,
-                       ButtonVisualState{.enabled = true, .hovered = hovered, .active = false});
-    DrawPlusGlyph(renderer, new_tab_rect, hovered ? theme_.text_primary : theme_.text_secondary);
-  }
-
-  // Maximize / restore, at the header's right edge for every content kind. An
-  // up chevron offers the immersive panel, a down chevron offers the way back —
-  // VS Code's pair, so the glyph never needs a label.
-  {
-    const SDL_FRect maximize_rect = tab_strip_service_.BottomPanelMaximizeButtonRect(
-        layout_mode_service_.CurrentMode(), panel_header);
-    const bool hovered =
-        PointerOver(maximize_rect);
-    DrawButtonCentered(text_renderer_, renderer, theme_, maximize_rect, "", ButtonTone::Neutral,
-                       ButtonVisualState{.enabled = true, .hovered = hovered, .active = false});
-    const SDL_Color glyph = hovered ? theme_.text_primary : theme_.text_secondary;
-    const float cx = std::floor(maximize_rect.x + maximize_rect.w * 0.5f);
-    const float cy = std::floor(maximize_rect.y + maximize_rect.h * 0.5f);
-    const float arm = 3.0f;
-    render::SetDrawColor(renderer, glyph);
-    if (layout.panel_maximized) {
-      render::RenderClipStableLine(renderer, cx - arm, cy - 1.0f, cx, cy + arm - 1.0f);
-      render::RenderClipStableLine(renderer, cx, cy + arm - 1.0f, cx + arm, cy - 1.0f);
-    } else {
-      render::RenderClipStableLine(renderer, cx - arm, cy + 1.0f, cx, cy - arm + 1.0f);
-      render::RenderClipStableLine(renderer, cx, cy - arm + 1.0f, cx + arm, cy + 1.0f);
-    }
-  }
+  // The header -- tabs, chevrons, label, buttons -- as prep settled it.
+  PaintBottomPanelHeader(renderer, frame_state_, theme_, text_renderer_);
 
   // Phase E0: a plugin content surface replaces the terminal/output body. The
   // host owns scroll + clipping; the plugin only supplied data (display list or

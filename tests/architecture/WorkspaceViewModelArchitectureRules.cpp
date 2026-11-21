@@ -750,6 +750,7 @@ RuleResult CheckDerivedSurfacePaintReadsOnlyItsSnapshot(const std::filesystem::p
   };
   static constexpr Migrated kMigrated[] = {
       {"src/workspace/render/WorkspaceShellRenderStatusBar.cpp", "void WorkspaceShell::RenderStatusBar("},
+      {"src/workspace/render/WorkspaceShellRenderBottomPanel.cpp", "void PaintBottomPanelHeader("},
   };
   const std::regex forbidden(
       R"(\bcontext_\b|\b[a-z_]+_service_\b|\bPointerOver\s*\(|\bRenderViewModelBuilder\b|)"

@@ -283,11 +283,6 @@ struct PreparedFrameState {
   // The output channels' content revision the output panel was painted at
   // (WorkspaceOutputChannels::ContentRevision); 0 while it shows something else.
   std::uint64_t painted_output_revision = 0;
-  // The bottom panel's tab models as painted (TabStripService::
-  // BottomPanelTabsFingerprint); 0 while the panel is hidden. A strip label
-  // changes with nothing else on screen: a results channel's first line, a
-  // shell's OSC title -- whose output repaints only the terminal's body.
-  std::uint64_t painted_bottom_panel_tabs = 0;
   // The active merge tab's status as painted (result state, conflicts left, the
   // selected one): a git refresh or the file watcher marks a merge result stale
   // or saved asynchronously, and the header kept reading the old state.
@@ -323,6 +318,52 @@ struct PreparedFrameState {
   };
   StatusBarViewModel status_bar;
   std::vector<StatusBarSegmentPaint> status_bar_segments;
+
+  // ---- bottom panel header (derived-damage 3.1, clip-discipline stage 3) ----
+  // The header's tabs, chevrons and buttons as this frame paints them, settled at
+  // prep (PrepareBottomPanelHeaderFrame). PaintBottomPanelHeader draws these and
+  // nothing else, each inside its own render::PaintElement, so the fingerprint of
+  // each is everything that element shows and its unit rect is the element's.
+  struct PanelTabPaint {
+    SDL_FRect rect{};
+    SDL_FRect close_rect{};
+    std::string_view title;
+    std::string_view badge_text;
+    SDL_Color badge_color{};
+    std::string_view secondary_title;
+    std::optional<editor::WelcomeStageState> remote_state;
+    bool show_badge = false;
+    bool active = false;
+    bool hovered = false;
+    bool close_hovered = false;
+    bool dimmed = false;
+    bool activity_dot = false;
+    bool bell_mark = false;
+  };
+  struct PanelButtonPaint {
+    SDL_FRect rect{};
+    bool hovered = false;
+    std::size_t hidden = 0;  // an overflow chevron's count of tabs out of view
+  };
+  struct PanelHeaderPaint {
+    bool visible = false;
+    SDL_FRect header{};
+    std::vector<PanelTabPaint> tabs;
+    std::string_view label;  // what the header says when it has no tabs
+    PanelButtonPaint overflow_left;
+    PanelButtonPaint overflow_right;
+    PanelButtonPaint new_terminal;
+    PanelButtonPaint maximize;
+    bool maximized = false;
+    // A tab being dragged: the feedback draws over the strip from the visible
+    // tabs (the panel view model's list, alive for the frame).
+    const std::vector<VisibleStripTab>* drag_tabs = nullptr;
+    bool dragging = false;
+    std::size_t drag_source = 0;
+    float drag_pointer_x = 0.0f;
+    float drag_grab_offset_x = 0.0f;
+  };
+  PanelHeaderPaint panel_header;
 };
 
 // The fingerprint of everything a status-bar segment paints. The structured
@@ -332,6 +373,36 @@ inline std::uint64_t FingerprintOf(const PreparedFrameState::StatusBarSegmentPai
                                    const SDL_Color& background) {
   const auto& [row, text, color, hovered] = segment;
   return PaintFingerprint().Add(row).Add(text).Add(color).Add(hovered).Add(background).value();
+}
+
+// The fingerprint of everything a panel tab paints, its palette's colours given
+// by the caller. The structured binding names every field, as for the status bar.
+inline std::uint64_t FingerprintOf(const PreparedFrameState::PanelTabPaint& tab, std::uint64_t palette) {
+  const auto& [rect, close_rect, title, badge_text, badge_color, secondary_title, remote_state, show_badge, active,
+               hovered, close_hovered, dimmed, activity_dot, bell_mark] = tab;
+  return PaintFingerprint()
+      .Add(rect)
+      .Add(close_rect)
+      .Add(title)
+      .Add(badge_text)
+      .Add(badge_color)
+      .Add(secondary_title)
+      .Add(remote_state.has_value())
+      .Add(remote_state.value_or(editor::WelcomeStageState::Done))
+      .Add(show_badge)
+      .Add(active)
+      .Add(hovered)
+      .Add(close_hovered)
+      .Add(dimmed)
+      .Add(activity_dot)
+      .Add(bell_mark)
+      .Add(palette)
+      .value();
+}
+
+inline std::uint64_t FingerprintOf(const PreparedFrameState::PanelButtonPaint& button, std::uint64_t palette) {
+  const auto& [rect, hovered, hidden] = button;
+  return PaintFingerprint().Add(rect).Add(hovered).Add(hidden).Add(palette).value();
 }
 
 }  // namespace microide::workspace
