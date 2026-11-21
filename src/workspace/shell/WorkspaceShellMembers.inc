@@ -1623,7 +1623,6 @@
   void RenderMenuPopups(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RenderStatusBar(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void PrepareStatusBarFrame(const WorkspaceLayout& layout);
-  void RenderNotifications(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RefreshStatusBar();
   // The viewport the status bar describes: whatever the caret is actually in,
   // which on a compare/merge tab is not the group's active editor viewport.

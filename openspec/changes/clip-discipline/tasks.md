@@ -25,7 +25,8 @@
 - [ ] 3.1 Panel tab row, terminal cells (a wide glyph's cell and cursor), output rows, notifications, the panel divider. Verify: bfa3565938ee's shape as a failing-first test; QA lane green.
   - Panel header (tabs, chevrons, label, buttons) and the wide-glyph cursor (bfa3565938ee): done.
   - Output rows, empty hint and scrollbar: done, each a `PaintElement`.
-  - Terminal chrome (pane hints, scrollbars, pane dividers): done. Notifications and the panel divider next.
+  - Terminal chrome (pane hints, scrollbars, pane dividers): done.
+  - The panel divider (it never showed: the header's fill covered it) and the notification toasts: done. The perf A/B (3.2) next.
 - [ ] 3.2 Perf A/B. Verify: within budget.
 
 ## 4. Sidebar and right pane

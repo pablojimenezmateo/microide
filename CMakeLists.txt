@@ -702,6 +702,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/render/WorkspaceShellRenderPrompts.cpp
   src/workspace/render/WorkspaceShellRenderChrome.cpp
   src/workspace/render/WorkspaceShellRenderStatusBar.cpp
+  src/workspace/render/NotificationToastPaint.cpp
   src/workspace/render/WorkspaceShellRenderSettingsOverlay.cpp
   src/workspace/render/WorkspaceShellRenderTextInput.cpp
   src/workspace/render/SingleLineViewMetrics.cpp

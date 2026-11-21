@@ -1,3 +1,4 @@
+#include "workspace/render/NotificationToastPaint.h"
 #include "workspace/shell/WorkspaceShell.h"
 
 #include "workspace/ProjectSearchPanelLayout.h"
@@ -45,15 +46,17 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       !notification_service_.Empty()) {
     const float x = static_cast<float>(event.motion.x);
     const float y = static_cast<float>(event.motion.y);
-    const std::optional<NotificationHit> hit =
-        NotificationHitAt(RenderViewModelBuilder(context_).BuildNotifications(
-                              notification_service_, layout.status_bar, text_renderer_),
-                          x, y);
+    const NotificationsViewModel toasts =
+        RenderViewModelBuilder(context_).BuildNotifications(notification_service_, layout.status_bar, text_renderer_);
+    const std::optional<NotificationHit> hit = NotificationHitAt(toasts, x, y);
     const bool changed = notification_service_.SetHovered(
         hit.has_value() ? std::optional<std::size_t>(hit->index) : std::nullopt,
         hit.has_value() ? hit->action : std::nullopt, SDL_GetTicks());
     if (changed) {
-      EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
+      // The toasts are a derived surface: prep repaints the ones whose hover
+      // changed. This only asks for the frame, over the stack (hovering does not
+      // move it), not the whole window it used to.
+      EnsureRedraw(mark, [this, bounds = NotificationToastsBounds(toasts)]() { RequestRedrawRect(bounds); });
     }
     if (hit.has_value()) {
       UpdateMouseCursor(x, y, false);

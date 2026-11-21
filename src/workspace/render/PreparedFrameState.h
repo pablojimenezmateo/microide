@@ -426,6 +426,12 @@ struct PreparedFrameState {
     util::InlineVector<TerminalDividerPaint, kMaxTerminalPanes> dividers;
   };
   TerminalChromePaint terminal_chrome;
+
+  // ---- the notification toasts (derived-damage 3.1, clip-discipline stage 3) ----
+  // The builder's view model, composed once at prep (PrepareNotificationToastsFrame)
+  // instead of in paint; its views point into the service's rows, alive for the
+  // frame. PaintNotificationToasts draws only this.
+  NotificationsViewModel notification_toasts;
 };
 
 // The fingerprint of everything a status-bar segment paints. The structured

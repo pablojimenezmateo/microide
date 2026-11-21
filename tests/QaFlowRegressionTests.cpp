@@ -2743,6 +2743,28 @@ void TestThePanelDividerShowsAndLightsWhileDragged() {
   Expect(same(divider_pixel(), theme.border), "and goes back to the border");
 }
 
+// derived-damage 3.1 / clip-discipline stage 3: the notification toasts are a
+// derived surface. A progress row moves on whoever updated it -- here the service
+// itself, with no damage request, as a publisher outside the event loop does --
+// and the partial frame shows the new fill as a full one does.
+void TestTheNotificationToastsRepaintWhatChangedWithNoDamageRequest() {
+  FlowFixture fixture("notes.txt", "one\ntwo\n");
+  const auto post = [&](float progress) {
+    TestAccess::ShowNotificationRequest(
+        fixture.shell, workspace::NotificationService::Request{.key = "qa.progress",
+                                                               .message = "Indexing the project",
+                                                               .progress = progress});
+  };
+  post(0.2f);
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  Expect(TestAccess::ActiveNotifications(fixture.shell).size() == 1, "the progress toast shows");
+  post(0.7f);
+  workspace::RenderInvalidation nothing_announced;
+  nothing_announced.rects.push_back(SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f});
+  fixture.ExpectFresh(nothing_announced, "a progress toast updated with no damage request");
+}
+
 // Soak 0cee9c7fa46e: Return in the merge result adds a row to every pane's
 // shared extent, so the vertical thumb at the surface's right edge shrinks.
 // Frame prep saw the thumb move but repainted only the overview lane beside
@@ -6157,6 +6179,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestTheTerminalChromeRepaintsWhatChangedWithNoDamageRequest);
   AddTest(tests, "QaFlowRegression/ThePanelDividerShowsAndLightsWhileDragged",
           TestThePanelDividerShowsAndLightsWhileDragged);
+  AddTest(tests, "QaFlowRegression/TheNotificationToastsRepaintWhatChangedWithNoDamageRequest",
+          TestTheNotificationToastsRepaintWhatChangedWithNoDamageRequest);
   AddTest(tests, "QaFlowRegression/ANewLineInTheMergeResultRepaintsTheVerticalThumb",
           TestANewLineInTheMergeResultRepaintsTheVerticalThumb);
   AddTest(tests, "QaFlowRegression/MovingOntoATabsCloseButtonLightsIt", TestMovingOntoATabsCloseButtonLightsIt);

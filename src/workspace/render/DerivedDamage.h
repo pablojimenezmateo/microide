@@ -36,6 +36,7 @@ enum class DerivedSurface : std::uint8_t {
   BottomPanelHeader,
   BottomPanelOutput,
   BottomPanelTerminalChrome,
+  NotificationToasts,
   Count,
 };
 

@@ -1,3 +1,4 @@
+#include "workspace/render/NotificationToastPaint.h"
 #include "workspace/shell/WorkspaceShell.h"
 
 #include <SDL3/SDL.h>
@@ -225,7 +226,7 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
     RenderTextComposition(renderer, active_text_input_visual);
     UpdateTextInputArea(renderer, render_window, active_text_input_visual);
     RenderDirtyPromptSurface(renderer, layout);
-    RenderNotifications(renderer, layout);
+    PaintNotificationToasts(renderer, frame_state_, theme_, text_renderer_);
   }
 
   if (menu_hover_trace && context_.menu_state.menu_bar_open) {

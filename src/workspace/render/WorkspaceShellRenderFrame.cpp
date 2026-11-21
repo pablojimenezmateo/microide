@@ -4,6 +4,7 @@
 #include "workspace/render/BottomPanelHeaderPaint.h"
 #include "workspace/render/BottomPanelOutputPaint.h"
 #include "workspace/render/BottomPanelTerminalChromePaint.h"
+#include "workspace/render/NotificationToastPaint.h"
 #include "workspace/render/HoverCardLimits.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
@@ -1720,6 +1721,15 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     }
     PrepareTerminalChromeFrame(frame_state_, inputs);
   }
+  // The notification toasts, the same way: each toast is a unit, so a row a
+  // publisher updates -- its progress, its text -- repaints whoever updated it.
+  PrepareNotificationToastsFrame(
+      frame_state_, renderer,
+      notification_service_.Empty()
+          ? NotificationsViewModel{}
+          : RenderViewModelBuilder(context_).BuildNotifications(notification_service_, layout.status_bar,
+                                                                text_renderer_),
+      theme_, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
   // Before any hover is resolved against the blame overlay or its card's damage is
   // decided: an overlay the active buffer has moved away from is this frame's
   // paint's to rebuild, not prep's to lay a card out of.
