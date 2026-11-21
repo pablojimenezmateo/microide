@@ -1355,6 +1355,7 @@ void RunAllRuleFixtures() {
   RunFactoryCaptureRuleFixtures();
   RunHintSeparatorRuleFixtures();
   RunSideNameRuleFixtures();
+  RunDerivedSurfacePaintRuleFixtures();
   RunKernelWindowingLibraryRuleFixtures();
   RunProcessLauncherRuleFixtures();
   RunWorkerDeclarationOrderRuleFixtures();

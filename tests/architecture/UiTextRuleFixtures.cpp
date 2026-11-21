@@ -53,6 +53,35 @@ void RunSideNameRuleFixtures() {
          "the side rule must report its anchor moved");
 }
 
+// Derived damage: a migrated paint function reading past its snapshot is flagged;
+// one reading only the prepared frame, the theme and the text renderer passes; a
+// function the rule cannot find is a violation, not a silent pass.
+void RunDerivedSurfacePaintRuleFixtures() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path();
+  const std::filesystem::path file = root / "src/workspace/render/WorkspaceShellRenderStatusBar.cpp";
+  std::filesystem::create_directories(file.parent_path());
+  const auto flags = [&](const std::string& body) {
+    WriteFile(file, "void WorkspaceShell::RenderStatusBar(SDL_Renderer* r, const WorkspaceLayout& l) const {\n" +
+                        body + "\n}\nvoid Other() { context_.x(); }\n");
+    return !CheckDerivedSurfacePaintReadsOnlyItsSnapshot(root).violations.empty();
+  };
+  Expect(flags("  auto vm = RenderViewModelBuilder(context_).BuildStatusBar(l, status_bar_service_);"),
+         "the derived-paint rule must flag a view model built in paint");
+  Expect(flags("  if (PointerOver(rect)) {}"), "the derived-paint rule must flag the live pointer");
+  Expect(flags("  const auto t = SDL_GetTicks();"), "the derived-paint rule must flag the clock");
+  Expect(flags("  MakeEditorTabService().Active();"), "the derived-paint rule must flag a service");
+  Expect(!flags("  const PreparedFrameState& frame = frame_state_;  // not context_ here\n"
+                "  DrawFilledRect(r, frame.status_bar.rect, theme_.chrome_background);"),
+         "the derived-paint rule must pass a paint that reads only the prepared frame");
+  WriteFile(file, "void WorkspaceShell::RenderSomethingElse() {}\n");
+  Expect(!CheckDerivedSurfacePaintReadsOnlyItsSnapshot(root).violations.empty(),
+         "the derived-paint rule must report a migrated function it cannot find");
+  std::filesystem::remove(file);
+  const RuleResult gone = CheckDerivedSurfacePaintReadsOnlyItsSnapshot(root);
+  Expect(!gone.missing_targets.empty(), "the derived-paint rule must report a missing file");
+}
+
 void RunHintSeparatorRuleFixtures() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path();

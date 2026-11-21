@@ -15,5 +15,6 @@ RuleResult CheckRenderViewModelsOwnProjectState(const std::filesystem::path& rep
 RuleResult CheckEditorViewModelStickyAndOccurrenceAreSpans(const std::filesystem::path& repo_root);
 RuleResult CheckHintSegmentsUseTheSharedSeparator(const std::filesystem::path& repo_root);
 RuleResult CheckSideNamesAreLocalAndRemote(const std::filesystem::path& repo_root);
+RuleResult CheckDerivedSurfacePaintReadsOnlyItsSnapshot(const std::filesystem::path& repo_root);
 
 }  // namespace microide::tests::architecture

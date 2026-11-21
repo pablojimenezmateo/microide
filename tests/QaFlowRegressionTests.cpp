@@ -2601,6 +2601,20 @@ void TestACaretMoveThatScrollsTheMergePanesRepaintsThemAll() {
          "Down moves the shared row (the case under test)");
 }
 
+// Derived damage, the status bar (openspec derived-damage, stage 1): what the strip
+// shows is set by code that asks to repaint nothing there -- here a segment as a
+// publisher outside the frame sets it (the remote hosts' state), with no event and
+// no damage request. It is repainted because prep compares each segment with what
+// it painted; the old flag on the service is gone.
+void TestTheStatusBarRepaintsWhatChangedWithNoDamageRequest() {
+  FlowFixture fixture("notes.txt", "one\ntwo\nthree\nfour\n");
+  TestAccess::SetStatusBarSegment(fixture.shell, workspace::StatusBarSegmentId::Remote,
+                                  workspace::StatusBarSegmentValue{.text = "worky", .visible = true});
+  workspace::RenderInvalidation nothing_announced;
+  nothing_announced.rects.push_back(SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f});
+  fixture.ExpectFresh(nothing_announced, "a status-bar segment set with no damage request");
+}
+
 // Soak 0cee9c7fa46e: Return in the merge result adds a row to every pane's
 // shared extent, so the vertical thumb at the surface's right edge shrinks.
 // Frame prep saw the thumb move but repainted only the overview lane beside
@@ -6003,6 +6017,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestADeeplyIndentedTreeRowKeepsItsLabelInsideTheRow);
   AddTest(tests, "QaFlowRegression/ACaretMoveThatScrollsTheMergePanesRepaintsThemAll",
           TestACaretMoveThatScrollsTheMergePanesRepaintsThemAll);
+  AddTest(tests, "QaFlowRegression/TheStatusBarRepaintsWhatChangedWithNoDamageRequest",
+          TestTheStatusBarRepaintsWhatChangedWithNoDamageRequest);
   AddTest(tests, "QaFlowRegression/ANewLineInTheMergeResultRepaintsTheVerticalThumb",
           TestANewLineInTheMergeResultRepaintsTheVerticalThumb);
   AddTest(tests, "QaFlowRegression/MovingOntoATabsCloseButtonLightsIt", TestMovingOntoATabsCloseButtonLightsIt);

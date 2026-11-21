@@ -24,6 +24,8 @@
 #include <vector>
 
 #include "editor/EditorViewRenderer.h"
+#include "workspace/render/DerivedDamage.h"
+#include "workspace/render/RenderViewModelBuilder.h"
 #include "workspace/EditorHoverTypes.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/state/WorkspaceInteractionState.h"
@@ -305,6 +307,31 @@ struct PreparedFrameState {
   // The sidebar list selection painted (view and row): the tree follows the
   // active editor's file, and that selection change damaged nothing.
   std::uint64_t painted_sidebar_selection = 0;
+
+  // ---- derived damage (openspec derived-damage) -------------------------
+  // Each migrated surface's units as last painted; prep compares and damages.
+  DerivedDamage derived_damage;
+  // The status bar this frame paints, settled at prep: its view model, and per
+  // segment the row, text, colour and hover it is drawn with. Paint draws these
+  // and nothing else, so the fingerprint of each is everything that segment
+  // shows (WorkspaceShell::PrepareStatusBarFrame).
+  struct StatusBarSegmentPaint {
+    SDL_FRect row{};
+    std::string_view text;
+    SDL_Color color{};
+    bool hovered = false;
+  };
+  StatusBarViewModel status_bar;
+  std::vector<StatusBarSegmentPaint> status_bar_segments;
 };
+
+// The fingerprint of everything a status-bar segment paints. The structured
+// binding names every field: one added to StatusBarSegmentPaint stops this from
+// compiling until it is folded in too, so paint and fingerprint cannot drift.
+inline std::uint64_t FingerprintOf(const PreparedFrameState::StatusBarSegmentPaint& segment,
+                                   const SDL_Color& background) {
+  const auto& [row, text, color, hovered] = segment;
+  return PaintFingerprint().Add(row).Add(text).Add(color).Add(hovered).Add(background).value();
+}
 
 }  // namespace microide::workspace

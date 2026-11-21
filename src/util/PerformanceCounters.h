@@ -334,6 +334,12 @@ namespace microide::util {
   /* distinguishable rather than summing into one number.                          */          \
   X(WorkspaceRedrawRectPixels, "workspace.redraw_rect_pixels")                                  \
   X(WorkspaceFullRedrawRequests, "workspace.full_redraw_requests")                              \
+  /* Derived damage (openspec derived-damage): paint-snapshot units fingerprinted */             \
+  /* at frame prep, and the ones whose fingerprint or rect changed and were       */             \
+  /* damaged for it. The first is the per-frame cost the stages are budgeted on;  */             \
+  /* the second, set against redraw_rects_queued, shows over-damage.              */             \
+  X(WorkspaceDerivedDamageUnits, "workspace.derived_damage_units")                              \
+  X(WorkspaceDerivedDamageChanged, "workspace.derived_damage_changed")                          \
   /* How many times the menu bar was laid out, and how many label widths that     */             \
   /* actually measured. The layout runs from at least three independent chains    */             \
   /* per pointer motion (hit test, cursor kind, chrome redraw rect) -- about ten  */             \

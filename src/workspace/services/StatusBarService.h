@@ -80,7 +80,6 @@ class StatusBarService {
     // are hover/click state, not pixels, so a change to either must not schedule
     // a repaint.
     const bool painted = slot.text != value.text || slot.visible != value.visible || slot.tone != value.tone;
-    painted_state_changed_ = painted_state_changed_ || painted;
     slot = std::move(value);
     return painted;
   }
@@ -105,9 +104,6 @@ class StatusBarService {
   // buffers. Assigning reuses them, so a steady frame allocates nothing here.
   void SetSegment(StatusBarSegmentId id, const StatusBarSegmentUpdate& update) {
     StatusBarSegmentValue& slot = segments_[static_cast<std::size_t>(id)];
-    if (slot.text != update.text || slot.visible != update.visible || slot.tone != update.tone) {
-      painted_state_changed_ = true;
-    }
     slot.text.assign(update.text);
     slot.tooltip.assign(update.tooltip);
     slot.command.assign(update.command);
@@ -122,21 +118,11 @@ class StatusBarService {
     return segments_[static_cast<std::size_t>(id)];
   }
 
-  // True once since the last call if any segment's *painted* value changed.
-  //
-  // The status bar is the one shell surface no Request*Redraw helper covers: its
-  // content is derived from state that lives elsewhere (caret position, language,
-  // indent, encoding, git, LSP, diagnostics), so the event that changes it asks
-  // for the editor — or the sidebar, or nothing — to be repainted and the strip
-  // keeps its old pixels. On a partial-redraw frame that meant moving the caret
-  // never updated "Ln 1, Col 1", and opening a second file left the first one's
-  // language and indent on screen. Refreshing the model already runs once per
-  // frame; this is how the frame learns it has to repaint the strip.
-  bool TakePaintedStateChanged() {
-    const bool changed = painted_state_changed_;
-    painted_state_changed_ = false;
-    return changed;
-  }
+  // What the frame repaints is derived from the strip as painted (openspec
+  // derived-damage, WorkspaceShell::PrepareStatusBarFrame): its content is other
+  // surfaces' state -- caret, language, indent, git, LSP -- that the event changing
+  // it never asked to repaint here, and a flag set here missed what changed
+  // without a SetSegment (the hover, the layout, the theme).
 
   const std::array<StatusBarSegmentValue, static_cast<std::size_t>(StatusBarSegmentId::Count)>&
   Snapshot() const {
@@ -146,7 +132,6 @@ class StatusBarService {
  private:
   std::array<StatusBarSegmentValue, static_cast<std::size_t>(StatusBarSegmentId::Count)>
       segments_{};
-  bool painted_state_changed_ = false;
 };
 
 }  // namespace microide::workspace

@@ -1376,6 +1376,7 @@ add_executable(microide_tests
   tests/ScopedRenderClipTests.cpp
   tests/MainThreadMailboxTests.cpp
   tests/RenderViewModelBuilderTests.cpp
+  tests/DerivedDamageTests.cpp
   tests/TerminalWordSelectionTests.cpp
   tests/TerminalRowPaintTests.cpp
   tests/ThemeTests.cpp

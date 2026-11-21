@@ -110,6 +110,7 @@ void RunWriteGateRuleFixtures();
 // halves) and CheckSideNamesAreLocalAndRemote (UiTextRuleFixtures.cpp).
 void RunHintSeparatorRuleFixtures();
 void RunSideNameRuleFixtures();
+void RunDerivedSurfacePaintRuleFixtures();
 
 void RunAllRuleFixtures();
 

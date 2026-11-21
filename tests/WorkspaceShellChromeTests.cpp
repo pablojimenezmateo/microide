@@ -1447,8 +1447,14 @@ void TestWorkspaceShellStatusBarRepaintsWhenItsValuesChange() {
   Expect(shell.CurrentIdleWaitState().hint != WorkspaceShell::IdleHint::Idle,
          "the event loop must not block while a render-requested redraw is owed");
   const auto after_move = shell.ConsumePendingRenderInvalidation();
-  Expect(after_move.full || AnyRectCovers(after_move.rects, layout.status_bar),
-         "a caret move should repaint the status bar so Ln/Col follows it");
+  // Derived damage repaints the segment that changed, not the strip: Ln/Col.
+  const std::optional<SDL_FRect> line_column =
+      WorkspaceShellTestAccess::StatusBarSegmentRect(shell, microide::workspace::StatusBarSegmentId::LineColumn);
+  Expect(line_column.has_value(), "the fixture shows an Ln/Col segment");
+  Expect(after_move.full || (line_column.has_value() && AnyRectCovers(after_move.rects, *line_column)),
+         "a caret move should repaint the status bar's Ln/Col segment so it follows the caret");
+  Expect(after_move.full || !AnyRectCovers(after_move.rects, layout.status_bar),
+         "and only the segment that changed, not the whole strip");
 }
 
 // Settings and Help/About take the keyboard entirely, but they were the only two

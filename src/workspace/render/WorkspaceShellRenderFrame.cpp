@@ -571,15 +571,6 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::RefreshStatusBar");
     RefreshStatusBar();
   }
-  // Nothing else asks for the status-bar strip: its content is derived from state
-  // owned by other surfaces, so the event that changed it repaints the editor (or
-  // the sidebar, or nothing) and the bar keeps stale pixels on a partial frame.
-  // Ask for it here, and only when a painted value actually moved — so this costs
-  // one thin extra clip on the frames that need it and nothing on the rest.
-  // Self-terminating: the repaint does not change the model.
-  if (status_bar_service_.TakePaintedStateChanged()) {
-    RequestRedrawRect(layout.status_bar);
-  }
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::RefreshSettingsOverlayCatalog");
     RefreshSettingsOverlayCatalog();
@@ -1626,6 +1617,9 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       }
     }
   }
+  // Derived-damage surfaces settle here: after the pointer occluder, which their
+  // hover reads (openspec derived-damage).
+  PrepareStatusBarFrame(layout);
   // Before any hover is resolved against the blame overlay or its card's damage is
   // decided: an overlay the active buffer has moved away from is this frame's
   // paint's to rebuild, not prep's to lay a card out of.

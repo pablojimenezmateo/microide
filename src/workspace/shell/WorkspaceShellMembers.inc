@@ -1622,6 +1622,7 @@
   void SetDebugPaneScrollRow(int scroll_row, std::size_t line_count, int visible_rows);
   void RenderMenuPopups(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RenderStatusBar(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
+  void PrepareStatusBarFrame(const WorkspaceLayout& layout);
   void RenderNotifications(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RefreshStatusBar();
   // The viewport the status bar describes: whatever the caret is actually in,

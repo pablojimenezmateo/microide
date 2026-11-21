@@ -731,4 +731,66 @@ RuleResult CheckViewportFiletypeGoesThroughTheViewportMemo(const std::filesystem
   return result;
 }
 
+
+// Derived damage (openspec derived-damage): a migrated surface's damage is the
+// diff of a fingerprint prep folds from the values its paint draws, so paint
+// must draw nothing else. Each migrated paint function is listed here with the
+// file it lives in; its body may read the prepared frame (`frame_state_`), the
+// theme and the text renderer -- not workspace state, a service, the live
+// pointer, the clock or a freshly built view model. A function the rule cannot
+// find is a violation, not a pass: a rename would otherwise leave it scanning
+// nothing.
+RuleResult CheckDerivedSurfacePaintReadsOnlyItsSnapshot(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "derived-damage surface paint reads only its snapshot";
+  result.hard_fail = true;
+  struct Migrated {
+    const char* file;
+    const char* function;
+  };
+  static constexpr Migrated kMigrated[] = {
+      {"src/workspace/render/WorkspaceShellRenderStatusBar.cpp", "void WorkspaceShell::RenderStatusBar("},
+  };
+  const std::regex forbidden(
+      R"(\bcontext_\b|\b[a-z_]+_service_\b|\bPointerOver\s*\(|\bRenderViewModelBuilder\b|)"
+      R"(\bMake[A-Z][A-Za-z]*Service\s*\(|\bSDL_GetTicks|\blast_mouse_[a-z_]*)");
+  for (const Migrated& migrated : kMigrated) {
+    const std::filesystem::path path = repo_root / migrated.file;
+    const std::string text = ReadRuleTarget(result, path);
+    if (text.empty()) {
+      continue;
+    }
+    const std::size_t start = text.find(migrated.function);
+    const std::size_t open = start == std::string::npos ? std::string::npos : text.find('{', start);
+    if (open == std::string::npos) {
+      result.violations.push_back(Violation{
+          .path = path,
+          .line = 1,
+          .message = std::string("migrated paint function not found: ") + migrated.function +
+                     " -- update CheckDerivedSurfacePaintReadsOnlyItsSnapshot"});
+      continue;
+    }
+    std::size_t depth = 1;
+    std::size_t cursor = open + 1;
+    while (cursor < text.size() && depth > 0) {
+      depth += text[cursor] == '{' ? 1 : text[cursor] == '}' ? -1 : 0;
+      ++cursor;
+    }
+    const std::vector<bool> mask = BuildCodeMask(text);
+    const std::string body = text.substr(open, cursor - open);
+    for (std::sregex_iterator it(body.begin(), body.end(), forbidden), end; it != end; ++it) {
+      const std::size_t at = open + static_cast<std::size_t>(it->position());
+      if (at < mask.size() && !mask[at]) {
+        continue;  // a comment or a string
+      }
+      result.violations.push_back(Violation{
+          .path = path,
+          .line = LineNumberAt(text, at),
+          .message = std::string(migrated.function) + " reads " + it->str() +
+                     " -- a derived-damage surface paints only what prep fingerprinted (frame_state_)"});
+    }
+  }
+  return result;
+}
+
 }  // namespace microide::tests::architecture

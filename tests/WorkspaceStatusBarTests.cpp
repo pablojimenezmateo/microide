@@ -42,18 +42,16 @@ void SetSegment(StatusBarService& service,
 }
 
 // SetSegment says whether a painted aspect changed, so a publisher outside the
-// frame (the remote service, on sync ticks) asks for a frame only then -- and the
-// frame still learns to repaint the strip through TakePaintedStateChanged.
+// frame (the remote service, on sync ticks) asks for a frame only then. What that
+// frame repaints is derived from the strip as painted (derived damage).
 void TestStatusBarSetSegmentReportsPaintedChanges() {
   StatusBarService service;
   const auto value = [](std::string text, std::string tooltip) {
     return StatusBarSegmentValue{.text = std::move(text), .tooltip = std::move(tooltip), .visible = true};
   };
   Expect(service.SetSegment(StatusBarSegmentId::Remote, value("worky", "a")), "new text paints");
-  Expect(service.TakePaintedStateChanged(), "and the frame repaints the strip");
   Expect(!service.SetSegment(StatusBarSegmentId::Remote, value("worky", "b")),
          "a tooltip-only change paints nothing");
-  Expect(!service.TakePaintedStateChanged(), "so the strip is not repainted");
   Expect(service.SetSegment(StatusBarSegmentId::Remote, value("worky · 1 port", "b")), "new text paints");
 }
 

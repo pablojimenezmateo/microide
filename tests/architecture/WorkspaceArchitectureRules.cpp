@@ -84,6 +84,7 @@ const std::vector<NamedRule>& WorkspaceArchitectureRuleList() {
       {"CheckSidebarSurfaceFallbackUsesStringView", CheckSidebarSurfaceFallbackUsesStringView},
       {"CheckHintSegmentsUseTheSharedSeparator", CheckHintSegmentsUseTheSharedSeparator},
       {"CheckSideNamesAreLocalAndRemote", CheckSideNamesAreLocalAndRemote},
+      {"CheckDerivedSurfacePaintReadsOnlyItsSnapshot", CheckDerivedSurfacePaintReadsOnlyItsSnapshot},
       {"CheckMenuItemTextResolutionIsAllocationFree",
        CheckMenuItemTextResolutionIsAllocationFree},
       {"CheckRenderViewModelsOwnProjectState", CheckRenderViewModelsOwnProjectState},
