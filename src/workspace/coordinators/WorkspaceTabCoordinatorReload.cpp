@@ -184,6 +184,37 @@ bool TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, 
   bool reloaded_any = false;
 
   const std::size_t focused_index = state_.clamped_focused_group_index();
+  // Tabs of the path that hold no buffer yet (deferred, still reading, failed):
+  // they take one after the loaded views are settled (below).
+  std::vector<std::pair<std::size_t, std::size_t>> not_loaded;
+  // Makes a tab a view of `source` (sharing its document) at the given caret and
+  // scroll.
+  const auto install = [&](EditorTabState& editor_state, const editor::TextViewport& source,
+                           std::size_t cursor_line, std::size_t cursor_column,
+                           std::size_t scroll_line, std::size_t horizontal_scroll,
+                           bool active_in_focused_group) {
+    editor::TextViewport restored_view = source;
+    restored_view.SetViewportSize(editor_state.viewport.visible_lines(),
+                                  editor_state.viewport.visible_columns());
+    restored_view.ApplyRestoredViewState(cursor_line, cursor_column, scroll_line, horizontal_scroll);
+    // Moved, not copied: `restored_view` is dead after this and its layout
+    // cache now survives a move, so copying would deep-copy a per-line width
+    // table (one machine word per line of the document) to throw it away one
+    // statement later. Read the restored fields back off the tab's own
+    // viewport, which is where they live now.
+    editor_state.viewport = std::move(restored_view);
+    editor_state.restore.path = normalized_path;
+    editor_state.restore.cursor_line = editor_state.viewport.cursor_line();
+    editor_state.restore.cursor_column = editor_state.viewport.cursor_column();
+    editor_state.restore.scroll_line = editor_state.viewport.scroll_line();
+    editor_state.restore.horizontal_scroll = editor_state.viewport.horizontal_scroll();
+    editor_state.content = EditorTabState::Content::Ready;
+    editor_state.folding_model->Clear();
+    if (active_in_focused_group) {
+      SyncActiveEditorTabMetadata();
+      operations_.request_editor_surface_redraw();
+    }
+  };
   for (std::size_t g = 0; g < state_.editor_groups.size(); ++g) {
     EditorGroup& group = state_.editor_groups[g];
     const bool is_focused_group = g == focused_index;
@@ -204,14 +235,17 @@ bool TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, 
         continue;
       }
       auto& editor_state = *tab.editor_state;
+      if (editor_state.content_pending()) {
+        not_loaded.emplace_back(g, i);
+        continue;
+      }
       // The file holds exactly what this buffer holds -- typically the echo of the
       // editor's own save, reported after it (a watcher verdict computed before the
       // save landed, a rescan sweep while a deferred save's signature is still in
       // flight). Swapping in the freshly read document would throw away the undo
       // AND redo history for nothing, which is what the editor-invariants sweep
       // caught; VS Code keeps the buffer. Take the new on-disk identity and move on.
-      if (editor_state.content == EditorTabState::Content::Ready &&
-          editor_state.viewport.HoldsSameFileContentAs(reopened_view)) {
+      if (editor_state.viewport.HoldsSameFileContentAs(reopened_view)) {
         editor_state.viewport.AdoptDiskBaselineOf(reopened_view);
         continue;
       }
@@ -228,29 +262,28 @@ bool TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, 
         }
         captured_lsp_before = true;
       }
-      const editor::TextViewport* current_view = &editor_state.viewport;
-      editor::TextViewport restored_view = reopened_view;
-      restored_view.SetViewportSize(current_view->visible_lines(), current_view->visible_columns());
-      restored_view.ApplyRestoredViewState(current_view->cursor_line(), current_view->cursor_column(),
-                                           current_view->scroll_line(),
-                                           current_view->horizontal_scroll());
-      // Moved, not copied: `restored_view` is dead after this and its layout
-      // cache now survives a move, so copying would deep-copy a per-line width
-      // table (one machine word per line of the document) to throw it away one
-      // statement later. Read the restored fields back off the tab's own
-      // viewport, which is where they live now.
-      editor_state.viewport = std::move(restored_view);
-      editor_state.restore.path = normalized_path;
-      editor_state.restore.cursor_line = editor_state.viewport.cursor_line();
-      editor_state.restore.cursor_column = editor_state.viewport.cursor_column();
-      editor_state.restore.scroll_line = editor_state.viewport.scroll_line();
-      editor_state.restore.horizontal_scroll = editor_state.viewport.horizontal_scroll();
-      editor_state.content = EditorTabState::Content::Ready;
-      editor_state.folding_model->Clear();
-      if (is_focused_group && i == group.active_tab_index) {
-        SyncActiveEditorTabMetadata();
-        operations_.request_editor_surface_redraw();
-      }
+      const editor::TextViewport& current_view = editor_state.viewport;
+      install(editor_state, reopened_view, current_view.cursor_line(), current_view.cursor_column(),
+              current_view.scroll_line(), current_view.horizontal_scroll(),
+              is_focused_group && i == group.active_tab_index);
+    }
+  }
+
+  // A tab not loaded yet is brought in as a view of the file's ONE buffer: the
+  // loaded views above, if any is left holding it, else the file as just read.
+  // It took a document of its own from disk before -- after a save's echo, the
+  // loaded tab kept its buffer (same content) and a pending tab of the file in
+  // another pane got a second one (soak 72acd73823bd).
+  if (!not_loaded.empty()) {
+    const editor::TextViewport* live = LiveBufferViewOfPath(state_.editor_groups, normalized_path);
+    const editor::TextViewport& source = live != nullptr ? *live : reopened_view;
+    for (const auto& [g, i] : not_loaded) {
+      EditorGroup& group = state_.editor_groups[g];
+      EditorTabState& editor_state = *group.open_tabs[i].editor_state;
+      const auto restore = editor_state.restore;
+      install(editor_state, source, restore.cursor_line, restore.cursor_column, restore.scroll_line,
+              restore.horizontal_scroll, g == focused_index && i == group.active_tab_index);
+      reloaded_any = true;
     }
   }
 
