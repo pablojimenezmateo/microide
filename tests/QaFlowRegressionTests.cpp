@@ -2715,6 +2715,34 @@ void TestTheTerminalChromeRepaintsWhatChangedWithNoDamageRequest() {
   fixture.ExpectFresh(nothing_announced, "the drag ended with no damage request");
 }
 
+// The bottom panel's divider -- its top edge, the line a drag resizes it by --
+// lights in the accent while dragged, as the sidebar's does. The header's fill
+// started on the same row and was drawn after it, so the line never showed, lit
+// or not. It is a unit of the header now, drawn last, and a drag set with no
+// damage request repaints it.
+void TestThePanelDividerShowsAndLightsWhileDragged() {
+  FlowFixture fixture("notes.txt", "one\ntwo\n");
+  TestAccess::ShowOutputChannelWithLines(fixture.shell, "qa.rows", 3);
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  const microide::render::Theme& theme = TestAccess::PaintTheme(fixture.shell);
+  const auto divider_pixel = [&]() {
+    const SDL_FRect panel = TestAccess::CurrentLayout(fixture.shell).bottom_panel;
+    return fixture.canvas.PixelAt(static_cast<int>(panel.x + panel.w * 0.5f), static_cast<int>(panel.y));
+  };
+  const auto same = [](SDL_Color a, SDL_Color b) { return a.r == b.r && a.g == b.g && a.b == b.b; };
+  Expect(same(divider_pixel(), theme.border), "the panel's top edge is the divider line");
+  auto& interaction = TestAccess::InteractionState_(fixture.shell);
+  workspace::RenderInvalidation nothing_announced;
+  nothing_announced.rects.push_back(SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f});
+  interaction.drag_target = workspace::DragTarget::BottomPanelDivider;
+  fixture.ExpectFresh(nothing_announced, "the panel divider's drag set with no damage request");
+  Expect(same(divider_pixel(), theme.accent), "the dragged divider is lit");
+  interaction.drag_target = workspace::DragTarget::None;
+  fixture.ExpectFresh(nothing_announced, "the panel divider's drag ended with no damage request");
+  Expect(same(divider_pixel(), theme.border), "and goes back to the border");
+}
+
 // Soak 0cee9c7fa46e: Return in the merge result adds a row to every pane's
 // shared extent, so the vertical thumb at the surface's right edge shrinks.
 // Frame prep saw the thumb move but repainted only the overview lane beside
@@ -6127,6 +6155,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestAnAppendToAHiddenOutputChannelRepaintsNothingInThePanel);
   AddTest(tests, "QaFlowRegression/TheTerminalChromeRepaintsWhatChangedWithNoDamageRequest",
           TestTheTerminalChromeRepaintsWhatChangedWithNoDamageRequest);
+  AddTest(tests, "QaFlowRegression/ThePanelDividerShowsAndLightsWhileDragged",
+          TestThePanelDividerShowsAndLightsWhileDragged);
   AddTest(tests, "QaFlowRegression/ANewLineInTheMergeResultRepaintsTheVerticalThumb",
           TestANewLineInTheMergeResultRepaintsTheVerticalThumb);
   AddTest(tests, "QaFlowRegression/MovingOntoATabsCloseButtonLightsIt", TestMovingOntoATabsCloseButtonLightsIt);

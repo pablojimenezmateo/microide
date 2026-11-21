@@ -26,6 +26,7 @@ struct BottomPanelHeaderInputs {
   std::string_view label;  // the header's text when it has no tabs
   SDL_FRect new_terminal_rect{};
   SDL_FRect maximize_rect{};
+  bool divider_dragged = false;  // the panel's divider is being dragged
   std::function<bool(const SDL_FRect&)> pointer_over;
   std::function<void(const SDL_FRect&)> damage;
 };

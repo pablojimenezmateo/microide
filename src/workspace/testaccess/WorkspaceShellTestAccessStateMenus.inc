@@ -1167,6 +1167,8 @@
   static InteractionState& InteractionState_(WorkspaceShell& shell) {
     return shell.context_.interaction_state;
   }
+  // The theme the shell paints with (settings may have changed it from the default).
+  static const render::Theme& PaintTheme(const WorkspaceShell& shell) { return shell.theme_; }
   static bool TransientTextDragIsIdle(const WorkspaceShell& shell) {
     return shell.context_.interaction_state.text_drag == InteractionState::TextDragState::None &&
            !shell.context_.interaction_state.text_drag_has_drop;

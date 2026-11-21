@@ -510,8 +510,10 @@ std::optional<SDL_FRect> DragTargetHighlightRect(const WorkspaceLayout& layout, 
       }
       return surface(rect);
     }
+    // The panel's divider is a derived-damage unit of its header: prep repaints
+    // it when its drag highlight changes, whoever changed it.
     case DragTarget::BottomPanelDivider:
-      return surface(BottomPanelResizeCursorRect(layout));
+      return std::nullopt;
     case DragTarget::SidebarScrollbar:
       return surface(layout.sidebar);
     // The Output and terminal scrollbars are derived-damage units that carry

@@ -178,6 +178,11 @@ void PrepareBottomPanelHeaderFrame(PreparedFrameState& frame, const BottomPanelH
       header.drag_pointer_x = panel.tab_drag.pointer_x;
       header.drag_grab_offset_x = panel.tab_drag.grab_offset_x;
     }
+    header.divider = MakeRect(header.header.x, header.header.y, header.header.w, kWorkspaceDividerThickness);
+    header.divider_active = inputs.divider_dragged;
+    units.push_back(DerivedDamage::Unit{
+        .rect = UnitRect(inputs.renderer, header.divider),
+        .fingerprint = PaintFingerprint().Add(header.divider).Add(header.divider_active).Add(palette_key).value()});
     // The drag ghost follows the pointer anywhere over the strip.
     units.push_back(DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, header.header),
                                         .fingerprint = PaintFingerprint()
@@ -258,6 +263,12 @@ void PaintBottomPanelHeader(SDL_Renderer* renderer, const PreparedFrameState& fr
       render::RenderClipStableLine(renderer, cx - arm, cy + 1.0f, cx, cy - arm + 1.0f);
       render::RenderClipStableLine(renderer, cx, cy - arm + 1.0f, cx + arm, cy + 1.0f);
     }
+  }
+  // The divider last: the header's fill and its tabs start on the same row, and
+  // drawn before them the line never showed, lit or not.
+  {
+    const render::PaintElement element(renderer, header.divider, "panel-divider");
+    FillRect(renderer, header.divider, header.divider_active ? theme.accent : theme.border);
   }
 }
 

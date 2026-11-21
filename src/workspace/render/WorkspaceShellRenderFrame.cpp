@@ -1633,6 +1633,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
                 tab_strip_service_.BottomPanelTerminalNewTabRect(layout_mode_service_.CurrentMode(), panel_header),
             .maximize_rect =
                 tab_strip_service_.BottomPanelMaximizeButtonRect(layout_mode_service_.CurrentMode(), panel_header),
+            .divider_dragged = context_.interaction_state.drag_target == DragTarget::BottomPanelDivider,
             .pointer_over = [this](const SDL_FRect& rect) { return PointerOver(rect); },
             .damage = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); },
         });
@@ -1948,11 +1949,7 @@ void WorkspaceShell::RenderFrameBase(SDL_Renderer* renderer,
 
   if (frame_vm.bottom_panel_visible) {
     DrawFilledRect(renderer, layout.bottom_panel, theme_.surface_background);
-    DrawFilledRect(renderer,
-                   MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
-                            kWorkspaceDividerThickness),
-                   context_.interaction_state.drag_target == DragTarget::BottomPanelDivider ? theme_.accent
-                                                                          : theme_.border);
+    // The panel's divider is drawn by the header (PaintBottomPanelHeader), over it.
     const SDL_FRect panel_header = MakeRect(layout.bottom_panel.x, layout.bottom_panel.y,
                                             layout.bottom_panel.w,
                                             kWorkspaceBottomPanelHeaderHeight);

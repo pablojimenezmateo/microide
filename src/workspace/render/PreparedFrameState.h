@@ -369,6 +369,10 @@ struct PreparedFrameState {
     PanelButtonPaint new_terminal;
     PanelButtonPaint maximize;
     bool maximized = false;
+    // The panel's top edge, the line a drag resizes it by: drawn last, over the
+    // header's top row, in the accent while dragged.
+    SDL_FRect divider{};
+    bool divider_active = false;
     // A tab being dragged: the feedback draws over the strip from the visible
     // tabs (the panel view model's list, alive for the frame).
     const std::vector<VisibleStripTab>* drag_tabs = nullptr;
