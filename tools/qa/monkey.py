@@ -1747,6 +1747,7 @@ class Monkey:
 
     def _periodic_oracles(self, index: int) -> None:
         label = f"monkey step {index}"
+        self.resources.note_step(index)
         # Not under rr: it runs the app's threads one at a time, so how long an
         # answer takes and how often an idle thread wakes are the recorder's.
         timed = not self.app.recording

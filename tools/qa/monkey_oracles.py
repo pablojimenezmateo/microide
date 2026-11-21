@@ -866,6 +866,47 @@ class ResourceOracle:
         # The app's thread names at the baseline, so a thread finding says which
         # kind of thread there are more of (`threads.txt`).
         self.baseline_threads: collections.Counter[str] = collections.Counter()
+        # (monkey step, length of the action list, rss_kb) after every step, for the
+        # finding's rss-timeline.txt: the samples every 50 steps said THAT 3.5 GB
+        # were held after 150 steps, and nothing said which action took them
+        # (soak e53948e728c8). One /proc read per step.
+        self.rss_steps: list[tuple[int, int, int]] = []
+        self.rss_pid: int | None = None
+
+    def note_step(self, step: int) -> None:
+        pid = self.app.pid if self.app.proc is not None and self.app.proc.poll() is None else None
+        if pid is None:
+            return
+        if pid != self.rss_pid:
+            self.rss_pid = pid
+            self.rss_steps.clear()  # a relaunch: the new process starts afresh
+        with contextlib.suppress(OSError, ValueError, IndexError):
+            for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+                if line.startswith("VmRSS:"):
+                    self.rss_steps.append((step, len(self.app.actions), int(line.split()[1])))
+                    break
+
+    def rss_timeline(self, jumps: int = 5, around: int = 3) -> str:
+        """The run's rss after each step, thinned to 40 rows, then the steps with
+        the largest growth, each with the actions recorded since the step before:
+        which action took the memory."""
+        if len(self.rss_steps) < 2:
+            return ""
+        stride = max(1, len(self.rss_steps) // 40)
+        out = ["step  actions  rss_kb"]
+        out += [f"{step:5d}  {actions:7d}  {rss}" for step, actions, rss in self.rss_steps[::stride]]
+        deltas = sorted(((self.rss_steps[i][2] - self.rss_steps[i - 1][2], i) for i in range(1, len(self.rss_steps))),
+                        reverse=True)[:jumps]
+        actions = getattr(self.app, "actions", [])
+        for delta, i in deltas:
+            if delta <= 0:
+                break
+            (step0, from_action, _), (step1, to_action, _) = self.rss_steps[i - 1], self.rss_steps[i]
+            out.append(f"\n+{delta} kB between step {step0} and step {step1} (actions {from_action}..{to_action}):")
+            for row in actions[max(0, from_action - around):to_action]:
+                text = json.dumps(row, ensure_ascii=False)
+                out.append("  " + (text if len(text) <= 300 else text[:300] + f"... ({len(text)} chars)"))
+        return "\n".join(out) + "\n"
 
     @staticmethod
     def _thread_names(pid: int) -> collections.Counter[str]:
@@ -954,6 +995,8 @@ class ResourceOracle:
         origins = terminal_origins(log_text, set(children), Path(binary) if binary else None)
         if origins:
             out["children-origin.txt"] = origins.encode()
+        if timeline := self.rss_timeline():
+            out["rss-timeline.txt"] = timeline.encode()
         return out
 
     def sample(self) -> dict[str, int] | None:

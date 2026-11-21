@@ -86,7 +86,9 @@ only, a failing-first test for every fix, one commit per fix, and a TD entry in
    state after each (`diff-<file>.sync.txt`, from `MICROIDE_TRACE_MIRROR_SYNC`);
    for `leak`, the children, fds, threads and memory against the baseline, and for
    each terminal shell still alive the stack that started its pty and whether it
-   was ever stopped (`children-origin.txt`, from `MICROIDE_TRACE_TERMINAL_LIFE`).
+   was ever stopped (`children-origin.txt`, from `MICROIDE_TRACE_TERMINAL_LIFE`),
+   and the rss after every step with the actions behind its largest jumps
+   (`rss-timeline.txt`).
 5. **Test first.** Write the failing test at the lowest level that shows the
    defect:
    - paint: `tests/support/RetainedRedraw.h` (`DispatchEvents`,

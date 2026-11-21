@@ -618,11 +618,24 @@ class ResourceOracleTests(unittest.TestCase):
         oracle = monkey_oracles.ResourceOracle.__new__(monkey_oracles.ResourceOracle)
         oracle.baseline_threads = collections.Counter({"gone-worker": 3})
         oracle.app = None  # no run: no log to read terminal starts from
+        oracle.rss_steps = []
         evidence = oracle._what_it_holds(os.getpid())
         threads = evidence["threads.txt"].decode()
         self.assertIn("(   3, -3)  gone-worker", threads)
         self.assertIn("largest resident mappings (kB):", evidence["memory.txt"].decode())
 
+
+    def test_the_rss_timeline_names_the_actions_of_the_largest_growth(self) -> None:
+        # Soak e53948e728c8: 3.5 GB held after 150 steps, sampled every 50, and
+        # nothing said which action took it.
+        app = mock.Mock()
+        app.actions = [{"key": "a"}, {"key": "b"}, {"foreign-clipboard": "x" * 1000}, {"key": "c"}]
+        oracle = monkey_oracles.ResourceOracle(app)
+        oracle.rss_steps = [(0, 1, 100), (1, 2, 110), (2, 3, 900_000), (3, 4, 900_010)]
+        timeline = oracle.rss_timeline(jumps=1, around=0)
+        self.assertIn("+899890 kB between step 1 and step 2 (actions 2..3):", timeline)
+        self.assertIn('"foreign-clipboard": "xxxx', timeline)
+        self.assertIn("(1025 chars)", timeline)
 
     def _oracle(self, samples):
         oracle = monkey_oracles.ResourceOracle(mock.Mock())
