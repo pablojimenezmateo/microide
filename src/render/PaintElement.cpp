@@ -46,7 +46,8 @@ void NotePaint(SDL_Renderer* renderer, const SDL_FRect& logical) {
   const std::string_view name = t_innermost->name();
   if (std::none_of(t_overruns.begin(), t_overruns.end(),
                    [name](const PaintOverrun& seen) { return seen.element == name; })) {
-    t_overruns.push_back(PaintOverrun{std::string(name), t_innermost->snapped(), drawn});
+    t_overruns.push_back(PaintOverrun{std::string(name), t_innermost->snapped(), drawn, t_innermost->logical(), logical,
+                                      device_pixel_snap_detail::DeviceScale(renderer)});
   }
 }
 
@@ -58,7 +59,7 @@ std::vector<PaintOverrun> TakePaintOverruns() {
 
 PaintElement::PaintElement(SDL_Renderer* renderer, const SDL_FRect& rect, std::string_view name,
                            std::optional<SDL_Color> opaque_background)
-    : snapped_(SnapToDevicePixels(renderer, rect)), name_(name), parent_(t_innermost) {
+    : logical_(rect), snapped_(SnapToDevicePixels(renderer, rect)), name_(name), parent_(t_innermost) {
   clip_.emplace(renderer, snapped_);
   t_innermost = this;
   if (opaque_background.has_value()) {

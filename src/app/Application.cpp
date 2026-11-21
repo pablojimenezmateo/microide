@@ -1048,10 +1048,14 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
     // (clip-discipline D5). Recording is on exactly when the verifier is.
     if (redraw_verifier_.enabled()) {
       for (const render::PaintOverrun& overrun : render::TakePaintOverruns()) {
-        SDL_Log("QA-OVERRUN frame=%llu element=%s rect=%d,%d,%d,%d draw=%d,%d,%d,%d",
+        SDL_Log("QA-OVERRUN frame=%llu element=%s rect=%d,%d,%d,%d draw=%d,%d,%d,%d logical=%.3f,%.3f,%.3f,%.3f "
+                "draw-logical=%.3f,%.3f,%.3f,%.3f scale=%.3f,%.3f",
                 static_cast<unsigned long long>(frame_index_), overrun.element.c_str(), overrun.element_rect.x,
                 overrun.element_rect.y, overrun.element_rect.w, overrun.element_rect.h, overrun.draw_rect.x,
-                overrun.draw_rect.y, overrun.draw_rect.w, overrun.draw_rect.h);
+                overrun.draw_rect.y, overrun.draw_rect.w, overrun.draw_rect.h, overrun.element_logical.x,
+                overrun.element_logical.y, overrun.element_logical.w, overrun.element_logical.h,
+                overrun.draw_logical.x, overrun.draw_logical.y, overrun.draw_logical.w, overrun.draw_logical.h,
+                overrun.scale.x, overrun.scale.y);
       }
     }
     SDL_SetRenderTarget(renderer_, nullptr);

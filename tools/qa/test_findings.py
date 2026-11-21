@@ -38,6 +38,11 @@ class OverrunSignatureTests(unittest.TestCase):
         c = fnd.signature("log", "QA-OVERRUN frame=12 element=tab-overflow rect=121,27,9,32 draw=-3,-3,7,7")
         self.assertEqual(a, b)
         self.assertNotEqual(a, c)
+        # The logical rects and scale the line carries for diagnosis do not split it.
+        d = fnd.signature("log", "QA-OVERRUN frame=5 element=tab rect=1,2,3,4 draw=5,6,7,8 "
+                                 "logical=1.000,2.000,3.000,4.000 draw-logical=5.000,6.000,7.000,8.000 "
+                                 "scale=1.250,1.250")
+        self.assertEqual(a, d)
 
 
 class StaleSignatureTests(unittest.TestCase):

@@ -22,6 +22,11 @@ struct PaintOverrun {
   std::string element;
   SDL_Rect element_rect{};  // device-snapped
   SDL_Rect draw_rect{};     // device-snapped
+  // The same two as the paint code gave them, and the device scale they were
+  // snapped at: an overrun no replay reproduces is diagnosed from its log line.
+  SDL_FRect element_logical{};
+  SDL_FRect draw_logical{};
+  SDL_FPoint scale{1.0f, 1.0f};
 };
 
 // Whether draws are checked against their element (MICROIDE_QA_VERIFY_REDRAW, or a
@@ -45,9 +50,11 @@ class PaintElement {
   PaintElement& operator=(const PaintElement&) = delete;
 
   const SDL_Rect& snapped() const { return snapped_; }
+  const SDL_FRect& logical() const { return logical_; }
   std::string_view name() const { return name_; }
 
  private:
+  SDL_FRect logical_{};
   SDL_Rect snapped_{};
   std::string_view name_;
   PaintElement* parent_ = nullptr;
