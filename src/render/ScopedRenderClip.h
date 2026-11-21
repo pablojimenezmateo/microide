@@ -2,6 +2,8 @@
 
 #include <SDL3/SDL.h>
 
+#include "render/DevicePixelSnap.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -9,30 +11,11 @@ namespace microide::render {
 
 namespace scoped_render_clip_detail {
 
-// The scale SDL maps this view's logical coordinates to device pixels with: the
-// logical presentation's (the window's, or the scene texture's own) times the
-// user scale.
-inline SDL_FPoint DeviceScale(SDL_Renderer* renderer) {
-  SDL_FPoint scale{1.0f, 1.0f};
-  int logical_w = 0;
-  int logical_h = 0;
-  SDL_RendererLogicalPresentation mode = SDL_LOGICAL_PRESENTATION_DISABLED;
-  if (SDL_GetRenderLogicalPresentation(renderer, &logical_w, &logical_h, &mode) &&
-      mode != SDL_LOGICAL_PRESENTATION_DISABLED && logical_w > 0 && logical_h > 0) {
-    SDL_FRect device{};
-    if (SDL_GetRenderLogicalPresentationRect(renderer, &device) && device.w > 0.0f && device.h > 0.0f) {
-      scale = SDL_FPoint{device.w / static_cast<float>(logical_w),
-                         device.h / static_cast<float>(logical_h)};
-    }
-  }
-  float user_x = 1.0f;
-  float user_y = 1.0f;
-  if (SDL_GetRenderScale(renderer, &user_x, &user_y)) {
-    scale.x *= user_x;
-    scale.y *= user_y;
-  }
-  return scale;
-}
+using device_pixel_snap_detail::DeviceScale;
+using device_pixel_snap_detail::DevicePixelAlignment;
+using device_pixel_snap_detail::kMaxDevicePixelAlignment;
+using device_pixel_snap_detail::SnapOutward;
+using device_pixel_snap_detail::Span;
 
 // One axis of the narrowing. SDL maps a clip's [start, start + length) to the
 // device as [floor(start*s), floor(start*s) + ceil(length*s)) -- SDL 3.2's
@@ -47,45 +30,6 @@ inline SDL_FPoint DeviceScale(SDL_Renderer* renderer) {
 // inside the outer clip, it starts a little earlier, still inside it; the outer
 // span itself always fits. What is left: the end may pass the requested edge
 // by a device row inside the outer clip (TD-2026-10-22-376).
-struct Span {
-  int start = 0;
-  int length = 0;
-};
-
-// The smallest k for which k logical pixels are a whole number of device pixels
-// at `scale` (1 at 1x and 2x, 2 at 1.5x, 4 at 1.25x and 1.75x, 10 at 1.1x and
-// 1.3x, 20 at 1.65x; 1 when nothing up to kMaxDevicePixelAlignment fits). A clip
-// whose edges are multiples of k maps to the device with no rounding, so two
-// such clips intersect exactly (TD-2026-10-22-376).
-//
-// The search stopped at 8, and `ui.scale` takes any value (the presets are
-// quarters; the setting is a float, and the display's own scale multiplies it):
-// at 1.1x nothing up to 8 fits, the clips went unaligned, and a surface's clip
-// narrowed under a partial frame's reached a device column past where its
-// full-frame clip stops -- the sidebar painted a pixel of the editor in partial
-// frames only (soak d213837376ca). 20 covers every scale in steps of 0.05; a clip
-// then grows by up to 19 logical pixels a side, still a partial frame.
-inline constexpr int kMaxDevicePixelAlignment = 20;
-inline int DevicePixelAlignment(float scale) {
-  for (int k = 1; k <= kMaxDevicePixelAlignment; ++k) {
-    const float device = static_cast<float>(k) * scale;
-    if (std::fabs(device - std::round(device)) < 1e-3f) {
-      return k;
-    }
-  }
-  return 1;
-}
-
-inline Span SnapOutward(int start, int length, int k) {
-  if (k <= 1 || length <= 0) {
-    return Span{start, length};
-  }
-  const auto floor_to = [k](int value) { return value >= 0 ? value / k * k : -((-value + k - 1) / k * k); };
-  const int snapped_start = floor_to(start);
-  const int end = start + length;
-  const int snapped_end = floor_to(end) == end ? end : floor_to(end) + k;
-  return Span{snapped_start, snapped_end - snapped_start};
-}
 
 inline Span NarrowAxis(int outer_start, int outer_length, int start, int length, float scale) {
   const auto device_start = [scale](int value) {
@@ -138,12 +82,8 @@ inline Span NarrowAxis(int outer_start, int outer_length, int start, int length,
 // differ by a row at a surface's edge (TD-2026-10-22-376). A surface may then
 // paint up to k-1 logical pixels past its edge, the same in both frames.
 inline SDL_Rect AlignClipToDevicePixels(SDL_Renderer* renderer, const SDL_Rect& rect) {
-  const SDL_FPoint scale = scoped_render_clip_detail::DeviceScale(renderer);
-  const auto x = scoped_render_clip_detail::SnapOutward(
-      rect.x, rect.w, scoped_render_clip_detail::DevicePixelAlignment(scale.x));
-  const auto y = scoped_render_clip_detail::SnapOutward(
-      rect.y, rect.h, scoped_render_clip_detail::DevicePixelAlignment(scale.y));
-  return SDL_Rect{x.start, y.start, x.length, y.length};
+  return SnapToDevicePixels(renderer, SDL_FRect{static_cast<float>(rect.x), static_cast<float>(rect.y),
+                                                static_cast<float>(rect.w), static_cast<float>(rect.h)});
 }
 
 inline SDL_Rect NarrowToCurrentClip(SDL_Renderer* renderer, const SDL_Rect& requested) {

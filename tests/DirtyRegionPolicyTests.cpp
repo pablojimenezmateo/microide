@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "app/DirtyRegionPolicy.h"
+#include "render/DevicePixelSnap.h"
 
 namespace microide::tests {
 namespace {
@@ -271,6 +272,26 @@ void TestTheDirtyHintIsTheClipsDeviceExtent() {
   Expect(doubled.x == 0.0f && doubled.w == 289.0f && doubled.h == 389.0f, "at scale 2 the hint is the clip");
 }
 
+
+// openspec clip-discipline D2: a damage rect and the clip it becomes are one
+// computation -- the shared device-pixel snap of the padded rect -- so the clip
+// covers what a fill of the same rect touches, at every scale.
+void TestADamageClipIsTheSharedSnapOfItsRect() {
+  const microide::render::TextClipPadding padding{};
+  for (const float scale : {1.25f, 1.5f, 1.75f}) {
+    const SDL_FRect damaged{101.3f, 37.6f, 40.2f, 18.9f};
+    const DirtyRegionAnalysis analysis =
+        AnalyzeDirtyRegions({damaged}, padding, 2000, 2000, SDL_FPoint{scale, scale});
+    const SDL_Rect expected = microide::render::SnapToDevicePixels(damaged, SDL_FPoint{scale, scale});
+    Expect(analysis.merged_clip_rects.size() == 1, "one clip");
+    const SDL_Rect& clip = analysis.merged_clip_rects.front();
+    Expect(clip.x == expected.x && clip.y == expected.y && clip.w == expected.w && clip.h == expected.h,
+           "the damage clip at scale " + std::to_string(scale) + " is " + std::to_string(clip.x) + "," +
+               std::to_string(clip.y) + "," + std::to_string(clip.w) + "," + std::to_string(clip.h) +
+               ", the shared snap is " + std::to_string(expected.x) + "," + std::to_string(expected.y) + "," +
+               std::to_string(expected.w) + "," + std::to_string(expected.h));
+  }
+}
 }  // namespace
 
 void RegisterDirtyRegionPolicyTests(std::vector<TestCase>& tests) {
@@ -290,6 +311,7 @@ void RegisterDirtyRegionPolicyTests(std::vector<TestCase>& tests) {
           TestClipsCoverTheirDevicePixelsAtFractionalScales);
   AddTest(tests, "DirtyRegionPolicy/MergeCoversEveryDamagedPixel",
           TestDirtyRegionMergeCoversEveryDamagedPixel);
+  AddTest(tests, "DirtyRegionPolicy/ADamageClipIsTheSharedSnapOfItsRect", TestADamageClipIsTheSharedSnapOfItsRect);
 }
 
 }  // namespace microide::tests

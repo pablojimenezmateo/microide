@@ -8,6 +8,7 @@
 
 #include "TestSupport.h"
 #include "TestSupportSdl.h"
+#include "render/DevicePixelSnap.h"
 #include "render/ScopedRenderClip.h"
 #include "support/SoftwareCanvas.h"
 
@@ -222,6 +223,44 @@ void TestPartialAndFullFramesClipASurfaceAlikeAtWideGrids() {
   }
 }
 
+
+// openspec clip-discipline D2: one rule turns a logical rect into whole device
+// pixels for clips, fills and damage. Its edges land on device pixels at every
+// scale, snapping twice is snapping once, and an empty rect stays empty -- never
+// one alignment unit, which would damage and clip k x k pixels for a rect of none.
+void TestSnapToDevicePixelsIsWholeIdempotentAndKeepsEmptyEmpty() {
+  using microide::render::SnapToDevicePixels;
+  const auto whole = [](int logical, float scale) {
+    const float device = static_cast<float>(logical) * scale;
+    return std::fabs(device - std::round(device)) < 1e-3f;
+  };
+  const float nan = std::nanf("");
+  for (const float scale : {1.0f, 1.1f, 1.25f, 1.5f, 1.75f, 2.0f, 0.75f, 3.0f}) {
+    const SDL_FPoint s{scale, scale};
+    for (const SDL_FRect rect : {SDL_FRect{10.3f, 7.6f, 33.2f, 18.9f}, SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f},
+                                 SDL_FRect{-5.5f, 3.0f, 12.0f, 0.4f}, SDL_FRect{1437.0f, 59.0f, 6.0f, 339.0f}}) {
+      const SDL_Rect snapped = SnapToDevicePixels(rect, s);
+      const std::string at = " at scale " + std::to_string(scale);
+      Expect(whole(snapped.x, scale) && whole(snapped.y, scale) && whole(snapped.x + snapped.w, scale) &&
+                 whole(snapped.y + snapped.h, scale),
+             "every edge is a whole device pixel" + at);
+      Expect(snapped.x <= rect.x && snapped.y <= rect.y &&
+                 static_cast<float>(snapped.x + snapped.w) >= rect.x + rect.w &&
+                 static_cast<float>(snapped.y + snapped.h) >= rect.y + rect.h,
+             "the snapped rect covers the rect" + at);
+      const SDL_Rect twice = SnapToDevicePixels(
+          SDL_FRect{static_cast<float>(snapped.x), static_cast<float>(snapped.y), static_cast<float>(snapped.w),
+                    static_cast<float>(snapped.h)},
+          s);
+      Expect(SameRect(twice, snapped), "snapping twice is snapping once" + at);
+    }
+    for (const SDL_FRect empty : {SDL_FRect{5.0f, 5.0f, 0.0f, 10.0f}, SDL_FRect{5.0f, 5.0f, 10.0f, -1.0f},
+                                  SDL_FRect{nan, 0.0f, 4.0f, 4.0f}, SDL_FRect{0.0f, 0.0f, nan, 4.0f}}) {
+      Expect(SameRect(SnapToDevicePixels(empty, s), SDL_Rect{0, 0, 0, 0}),
+             "an empty, inverted or NaN rect snaps to nothing at scale " + std::to_string(scale));
+    }
+  }
+}
 }  // namespace
 
 void RegisterScopedRenderClipTests(std::vector<TestCase>& tests) {
@@ -232,6 +271,8 @@ void RegisterScopedRenderClipTests(std::vector<TestCase>& tests) {
           TestPartialAndFullFramesClipASurfaceAlikeAtWideGrids);
   AddTest(tests, "ScopedRenderClip/PartialAndFullFramesClipASurfaceAlikeAt125",
           TestPartialAndFullFramesClipASurfaceAlikeAt125);
+  AddTest(tests, "ScopedRenderClip/SnapToDevicePixelsIsWholeIdempotentAndKeepsEmptyEmpty",
+          TestSnapToDevicePixelsIsWholeIdempotentAndKeepsEmptyEmpty);
 }
 
 }  // namespace microide::tests

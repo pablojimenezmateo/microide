@@ -15,10 +15,14 @@ struct DirtyRegionAnalysis {
   float coverage = 0.0f;
 };
 
+// `device_scale` is the scale the clips are drawn at: each padded damage rect
+// becomes its clip through render::SnapToDevicePixels, the rule every clip, fill
+// and damage unit shares (openspec clip-discipline D2).
 DirtyRegionAnalysis AnalyzeDirtyRegions(const std::vector<SDL_FRect>& dirty_rects,
                                         const render::TextClipPadding& padding,
                                         int width,
-                                        int height);
+                                        int height,
+                                        SDL_FPoint device_scale = SDL_FPoint{1.0f, 1.0f});
 
 bool ShouldPromotePartialFrameToFull(const DirtyRegionAnalysis& analysis);
 

@@ -1,5 +1,7 @@
 #include "app/DirtyRegionPolicy.h"
 
+#include "render/DevicePixelSnap.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -17,7 +19,8 @@ constexpr float kPromoteWideCoverageThreshold = 0.45f;
 std::optional<SDL_Rect> ToClipRect(const SDL_FRect& rect,
                                    const render::TextClipPadding& padding,
                                    int width,
-                                   int height) {
+                                   int height,
+                                   SDL_FPoint device_scale) {
   // Reject non-finite or non-positive-size input BEFORE any arithmetic or float->int
   // cast: NaN/inf flow through floor/ceil and the subsequent static_cast<int> is UB
   // ([conv.fpint]). A negative/zero-size dirty rect is not a valid partial invalidation
@@ -27,20 +30,22 @@ std::optional<SDL_Rect> ToClipRect(const SDL_FRect& rect,
     return std::nullopt;
   }
 
-  // Compute padded edges and clamp to the surface bounds IN FLOAT space, so a huge
-  // finite coordinate saturates to [0, width]/[0, height] rather than overflowing int
-  // during the narrowing cast. width/height fit in int, so the clamped values do too.
+  // The padded rect, clamped to the surface IN FLOAT space first, so a huge finite
+  // coordinate saturates rather than overflowing int in the snap's cast; then the
+  // shared device-pixel snap -- the same computation the frame's clip and a fill of
+  // this rect go through (clip-discipline D2) -- and the surface bounds again.
   const float fw = static_cast<float>(width);
   const float fh = static_cast<float>(height);
-  const float fx0 = std::clamp(std::floor(rect.x - padding.left), 0.0f, fw);
-  const float fy0 = std::clamp(std::floor(rect.y - padding.top), 0.0f, fh);
-  const float fx1 = std::clamp(std::ceil(rect.x + rect.w + padding.right), 0.0f, fw);
-  const float fy1 = std::clamp(std::ceil(rect.y + rect.h + padding.bottom), 0.0f, fh);
-
-  const int x0 = static_cast<int>(fx0);
-  const int y0 = static_cast<int>(fy0);
-  const int x1 = static_cast<int>(fx1);
-  const int y1 = static_cast<int>(fy1);
+  const float fx0 = std::clamp(rect.x - padding.left, 0.0f, fw);
+  const float fy0 = std::clamp(rect.y - padding.top, 0.0f, fh);
+  const float fx1 = std::clamp(rect.x + rect.w + padding.right, 0.0f, fw);
+  const float fy1 = std::clamp(rect.y + rect.h + padding.bottom, 0.0f, fh);
+  const SDL_Rect snapped =
+      render::SnapToDevicePixels(SDL_FRect{fx0, fy0, fx1 - fx0, fy1 - fy0}, device_scale);
+  const int x0 = std::max(snapped.x, 0);
+  const int y0 = std::max(snapped.y, 0);
+  const int x1 = std::min(snapped.x + snapped.w, width);
+  const int y1 = std::min(snapped.y + snapped.h, height);
   if (x1 <= x0 || y1 <= y0) {
     return std::nullopt;
   }
@@ -88,14 +93,15 @@ SDL_Rect UnionRects(const SDL_Rect& a, const SDL_Rect& b) {
 DirtyRegionAnalysis AnalyzeDirtyRegions(const std::vector<SDL_FRect>& dirty_rects,
                                         const render::TextClipPadding& padding,
                                         int width,
-                                        int height) {
+                                        int height,
+                                        SDL_FPoint device_scale) {
   DirtyRegionAnalysis analysis;
   if (width <= 0 || height <= 0) {
     return analysis;
   }
 
   for (const SDL_FRect& dirty_rect : dirty_rects) {
-    const auto clip_rect = ToClipRect(dirty_rect, padding, width, height);
+    const auto clip_rect = ToClipRect(dirty_rect, padding, width, height, device_scale);
     if (clip_rect.has_value()) {
       analysis.merged_clip_rects.push_back(*clip_rect);
     }

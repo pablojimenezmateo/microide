@@ -939,7 +939,9 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
       workspace_shell_.PartialRedrawClipPadding(), presentation ? presentation->scale_x : 1.0f,
       presentation ? presentation->scale_y : 1.0f);
   const DirtyRegionAnalysis dirty_region_analysis =
-      AnalyzeDirtyRegions(dirty_rects, clip_padding, width, height);
+      AnalyzeDirtyRegions(dirty_rects, clip_padding, width, height,
+                          SDL_FPoint{presentation ? presentation->scale_x : 1.0f,
+                                     presentation ? presentation->scale_y : 1.0f});
   const std::size_t merged_clip_count = dirty_region_analysis.merged_clip_rects.size();
   const float dirty_coverage = dirty_region_analysis.coverage;
   const bool promote_partial_to_full =
