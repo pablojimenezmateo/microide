@@ -487,6 +487,51 @@ void TestReviewCheckpointShowsWhatChangedSinceItWasMarked() {
          "the repository's own index is as it was: untracked files are still untracked\n" + status);
 }
 
+// A save writes its bytes to a temporary beside the file and renames it into
+// place. A checkpoint marked in that window must not take the temporary in: the
+// review then listed it as deleted since, opened a compare tab under the
+// temporary's name, and a save from that tab wrote a file of that name into the
+// project (soak 5f05c7931622). Abandoned temporaries of a crashed save are the
+// app's own too, nested or at the root, in a repository with or without a commit.
+void TestReviewCheckpointLeavesSaveTemporariesOut() {
+  for (const bool born : {true, false}) {
+    TemporaryDirectory temp_dir;
+    const auto repo_path = temp_dir.path() / "repo";
+    WriteFile(repo_path / "mixed.txt", "m1\n");
+    InitializeGitRepo(repo_path);
+    if (born) {
+      CommitAll(repo_path, "base", "base commit");
+    }
+    const auto root_temporary = repo_path / ".mixed.txt.microide-staging.2947925.11";
+    const auto nested_temporary = repo_path / "sub" / ".notes.md.microide-staging.17.3";
+    WriteFile(root_temporary, "m2\n");
+    WriteFile(nested_temporary, "n\n");
+    WriteFile(repo_path / "sub" / "kept.txt", "k\n");
+
+    const auto& launcher = microide::platform::LocalProcessLauncher();
+    const auto marked = microide::project::MarkGitReviewCheckpoint(repo_path, launcher);
+    Expect(marked.ok(), std::string("the checkpoint is marked: ") + marked.error);
+    const std::string tree = microide::project::GitRepository(repo_path, launcher)
+                                 .Execute({"ls-tree", "-r", "--name-only", marked.commit})
+                                 .output;
+    Expect(tree.find("microide-staging") == std::string::npos && tree.find("sub/kept.txt") != std::string::npos &&
+               tree.find("mixed.txt") != std::string::npos,
+           std::string(born ? "" : "unborn: ") + "the snapshot has the files and not the temporaries:\n" + tree);
+
+    // The save lands: the temporaries are gone, the file has its new bytes.
+    std::filesystem::remove(root_temporary);
+    std::filesystem::remove(nested_temporary);
+    WorkspaceShell shell;
+    TestAccess::SetProjectRoot(shell, repo_path);
+    Expect(TestAccess::ExecuteCommandLine(shell, "review-checkpoint"), "the review is accepted");
+    TestAccess::FlushPendingFileReads(shell);
+    Expect(!HasCompareTabFor(shell, root_temporary) && !HasCompareTabFor(shell, nested_temporary) &&
+               CountTabsOfKind(shell, TabEntry::Kind::Compare) == 0,
+           std::string(born ? "" : "unborn: ") +
+               "the review opens no tab for a temporary: " + TestAccess::CommandFeedbackText(shell));
+  }
+}
+
 // What a review found goes back to the agent that wrote the code: the notes of
 // the review the active tab belongs to -- every file's, not just this tab's --
 // are copied as `path:line: note` lines, or typed into the running terminal.
@@ -585,6 +630,7 @@ void RegisterReviewSessionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ReviewSession/NotesAreHandedOverAsReferences", TestReviewNotesAreHandedOverAsReferences);
   AddTest(tests, "ReviewSession/CheckpointShowsWhatChangedSinceItWasMarked",
           TestReviewCheckpointShowsWhatChangedSinceItWasMarked);
+  AddTest(tests, "ReviewSession/CheckpointLeavesSaveTemporariesOut", TestReviewCheckpointLeavesSaveTemporariesOut);
   AddTest(tests, "ReviewSession/WorktreePickListsTheTreesAndOpensTheChosenOne",
           TestWorktreePickListsTheTreesAndOpensTheChosenOne);
   AddTest(tests, "ReviewSession/ReviewRunsItsGitOffTheShellThread",

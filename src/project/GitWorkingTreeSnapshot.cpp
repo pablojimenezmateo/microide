@@ -1,10 +1,13 @@
 #include "project/GitWorkingTreeSnapshot.h"
 
+#include <string_view>
 #include <utility>
+#include <vector>
 
 #include "platform/Subprocess.h"
 #include "project/GitCommandUtil.h"
 #include "project/GitRepository.h"
+#include "util/DurableFile.h"
 #include "util/StringUtil.h"
 
 namespace microide::project {
@@ -16,6 +19,42 @@ std::string FirstLine(const std::string& output) {
 
 GitSnapshotResult Failed(std::string why) {
   return GitSnapshotResult{.commit = {}, .error = std::move(why)};
+}
+
+// A save writes its bytes to a temporary beside the file and renames it into
+// place (util/DurableFile), and a crashed save leaves its temporary behind until a
+// scan sweeps it. Neither is the user's file: `add --all` in that window takes it
+// in, and a review against the snapshot then names a file the app made and
+// removed (soak 5f05c7931622). Every git call runs with --literal-pathspecs, so
+// the temporaries cannot be excluded on the `add`; they are taken back out of the
+// snapshot's index here. Only files added since HEAD can be one -- the diff of the
+// index against HEAD reads no working tree -- and with no HEAD yet, the index.
+[[nodiscard]] bool DropSaveTemporaries(const GitRepository& repo,
+                                       const std::vector<platform::SubprocessEnvironmentOverride>& snapshot_index,
+                                       bool has_head) {
+  const auto added =
+      has_head ? repo.ExecuteWithEnvironment({"diff", "--cached", "--name-only", "-z", "--no-renames",
+                                              "--diff-filter=A", "HEAD", "--"},
+                                             snapshot_index, internal::kGitWriteTimeoutMs)
+               : repo.ExecuteWithEnvironment({"ls-files", "-z", "--cached"}, snapshot_index,
+                                             internal::kGitWriteTimeoutMs);
+  if (!added.success()) {
+    return false;
+  }
+  std::vector<std::string> remove = {"rm", "--cached", "--quiet", "--ignore-unmatch", "--"};
+  const std::size_t first_path = remove.size();
+  std::string_view rest(added.output);
+  while (!rest.empty()) {
+    const std::size_t end = rest.find('\0');
+    const std::string_view path = rest.substr(0, end);
+    const std::size_t slash = path.rfind('/');
+    if (util::IsTemporaryStagingFilename(slash == std::string_view::npos ? path : path.substr(slash + 1))) {
+      remove.emplace_back(path);
+    }
+    rest.remove_prefix(end == std::string_view::npos ? rest.size() : end + 1);
+  }
+  return remove.size() == first_path ||
+         repo.ExecuteWithEnvironment(remove, snapshot_index, internal::kGitWriteTimeoutMs).success();
 }
 
 }  // namespace
@@ -58,6 +97,10 @@ GitSnapshotResult SnapshotGitWorkingTree(const std::filesystem::path& repository
   if (!added.success() && (added.exit_code != 1 || added.timed_out)) {
     return Failed("git could not read the working tree");
   }
+  const bool has_head = repo.ExecuteSucceeds({"rev-parse", "--verify", "--quiet", "HEAD^{commit}"});
+  if (!DropSaveTemporaries(repo, snapshot_index, has_head)) {
+    return Failed("git could not leave the app's save temporaries out of the snapshot");
+  }
   const auto tree = repo.ExecuteWithEnvironment({"write-tree"}, snapshot_index, internal::kGitWriteTimeoutMs);
   const std::string tree_id = tree.success() ? FirstLine(tree.output) : std::string();
   if (tree_id.empty()) {
@@ -67,7 +110,7 @@ GitSnapshotResult SnapshotGitWorkingTree(const std::filesystem::path& repository
   // one, and the snapshot is nobody's commit. HEAD as parent when there is one.
   std::vector<std::string> commit = {"-c", "user.name=microide", "-c", "user.email=microide@localhost",
                                      "commit-tree", tree_id, "-m", "microide working tree snapshot"};
-  if (repo.ExecuteSucceeds({"rev-parse", "--verify", "--quiet", "HEAD^{commit}"})) {
+  if (has_head) {
     commit.insert(commit.end(), {"-p", "HEAD"});
   }
   const auto committed = repo.Execute(commit);
