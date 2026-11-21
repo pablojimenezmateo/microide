@@ -276,8 +276,13 @@ void FoldingModel::SyncLineIndentCache(std::size_t line_count, std::size_t tab_s
   // are the same lines, so those two suffixes must be the same length. If they
   // are not, an edit reached the document without being reported and nothing
   // cached can be trusted -- rebuild rather than splice onto a lie.
+  // Both ends at or past the begin: each is clamped to its own side's length, so
+  // a span the document contradicts (it has fewer lines than the span starts at)
+  // resolved its current end below the begin, and `current_end - begin` below
+  // wrapped to ~2^64 lines to insert (soak e041d436ae59: std::length_error).
   const bool splice_is_sound = !tab_size_changed && !edit_span.empty() &&
-                               begin <= cached_end && begin <= line_indent_.size() &&
+                               begin <= cached_end && begin <= current_end &&
+                               begin <= line_indent_.size() &&
                                line_indent_.size() - cached_end == line_count - current_end;
 
   if (edit_span.empty() && !tab_size_changed && line_indent_.size() == line_count) {
@@ -547,8 +552,9 @@ void FoldingModel::SyncBlocks(std::size_t line_count, const LineEditSpan& edit_s
   const std::size_t begin = edit_span.begin();
   const std::size_t cached_end = edit_span.ResolvedCachedEnd(document_line_count_);
   const std::size_t current_end = edit_span.ResolvedCurrentEnd(line_count);
-  if (begin > cached_end || begin > document_line_count_ || cached_end > document_line_count_ ||
-      current_end > line_count ||
+  // A span the document contradicts (see SyncLineIndentCache): repartition.
+  if (begin > cached_end || begin > current_end || begin > document_line_count_ ||
+      cached_end > document_line_count_ || current_end > line_count ||
       document_line_count_ - cached_end != line_count - current_end) {
     RepartitionAll(line_count);
     return;

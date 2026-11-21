@@ -124,6 +124,35 @@ void TestFoldStaleWithoutMarkDirtyAfterSameLineCountEdit() {
          "after the rescan the inner fold reflects structure B (opens at 2, closes at 4)");
 }
 
+// Soak e041d436ae59 (terminate: std::length_error in vector::_M_fill_append, from
+// FoldingModel::SyncLineIndentCache at frame prep): an edit span that no longer
+// fits the document -- here "lines 6.. replaced by one line" against a document
+// that now has 5 lines -- resolved its current end (clamped to the document)
+// BELOW its begin, and `current_end - begin` wrapped to ~2^64 lines to insert. A
+// span the document contradicts is the case the cache already rebuilds for; the
+// check missed this side of it.
+void TestAnEditSpanTheDocumentContradictsRebuildsTheIndentCache() {
+  std::vector<std::string> lines;
+  for (int i = 0; i < 10; ++i) {
+    lines.push_back(i % 3 == 0 ? "block {" : "  item;");
+  }
+  FoldingModel model;
+  const FoldingModel::ComputeOptions options;
+  Expect(model.Compute(lines, options), "the first resolve finishes");
+
+  lines.resize(5);  // the document shrank without that being what the span says
+  LineEditSpan span;
+  span.NoteSplice(/*start=*/6, /*removed=*/4, /*inserted=*/1);
+  Expect(model.Refresh(lines, options, 0, FoldingModel::kAllLines, /*max_lines=*/0, span),
+         "a span the document contradicts is a rebuild, not a crash");
+  model.MarkDirty();
+  FoldingModel fresh;
+  Expect(fresh.Compute(lines, options) && model.Compute(lines, options),
+         "both resolve the shrunk document");
+  Expect(model.resolved_ranges().size() == fresh.resolved_ranges().size(),
+         "and the rebuilt model agrees with a fresh one");
+}
+
 void TestBracketFoldEmitsOpenerAndCloser() {
   const std::vector<std::string> lines = {
       "void f() {",
@@ -1149,6 +1178,8 @@ void RegisterFoldingModelTests(std::vector<TestCase>& tests) {
           TestLayoutRevisionOnlyTracksTheCollapsedSet);
   AddTest(tests, "EditorFolding/StaleWithoutMarkDirtyAfterSameLineCountEdit",
           TestFoldStaleWithoutMarkDirtyAfterSameLineCountEdit);
+  AddTest(tests, "EditorFolding/AnEditSpanTheDocumentContradictsRebuildsTheIndentCache",
+          TestAnEditSpanTheDocumentContradictsRebuildsTheIndentCache);
 }
 
 }  // namespace microide::tests
