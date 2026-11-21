@@ -33,6 +33,23 @@
 
 namespace microide::workspace {
 
+// Bottom-panel paint elements kept in fixed-capacity lists (util::InlineVector
+// needs them default-constructible, which a nested struct with member
+// initializers is not until its enclosing class is complete).
+struct PanelScrollbarPaint {
+  SDL_FRect track{};
+  SDL_FRect thumb{};
+  bool active = false;  // being dragged
+};
+struct TerminalHintPaint {
+  SDL_FRect rect{};
+  std::string_view text;  // empty: no hint
+};
+struct TerminalDividerPaint {
+  SDL_FRect rect{};
+  bool active = false;  // being dragged
+};
+
 struct PreparedFrameState {
   // ---- decided once per prepared frame ---------------------------------
   // The caret blink phase. Paint sites read this, never the clock.
@@ -380,19 +397,31 @@ struct PreparedFrameState {
     const editor::HighlightedLine* highlighted = nullptr;  // the channel's memo
     std::uint64_t highlight_path = 0;  // a hash of the path `highlighted` is for
   };
-  struct OutputScrollbarPaint {
-    SDL_FRect track{};
-    SDL_FRect thumb{};
-    bool active = false;  // being dragged
-  };
+  using PanelScrollbarPaint = workspace::PanelScrollbarPaint;
   struct OutputBodyPaint {
     bool visible = false;
     std::vector<OutputRowPaint> rows;
     SDL_FRect hint_rect{};
     std::string_view hint;  // the empty channel's hint, wrapped in `hint_rect`
-    std::optional<OutputScrollbarPaint> scrollbar;
+    std::optional<PanelScrollbarPaint> scrollbar;
   };
   OutputBodyPaint output_body;
+
+  // ---- the terminal's chrome (derived-damage 3.1, clip-discipline stage 3) ----
+  // Around the grid, whose rows keep their own damage (the pane snapshot's
+  // generation): each pane's empty hint and scrollbar, the dividers between panes,
+  // and the hint over a panel with no session. Settled at prep
+  // (PrepareTerminalChromeFrame); paint reads only this.
+  using TerminalHintPaint = workspace::TerminalHintPaint;
+  using TerminalDividerPaint = workspace::TerminalDividerPaint;
+  struct TerminalChromePaint {
+    bool visible = false;
+    TerminalHintPaint no_session;  // the panel shows Terminal with no live session
+    util::InlineVector<TerminalHintPaint, kMaxTerminalPanes> hints;  // one per pane
+    util::InlineVector<std::optional<PanelScrollbarPaint>, kMaxTerminalPanes> scrollbars;  // one per pane
+    util::InlineVector<TerminalDividerPaint, kMaxTerminalPanes> dividers;
+  };
+  TerminalChromePaint terminal_chrome;
 };
 
 // The fingerprint of everything a status-bar segment paints. The structured
@@ -454,7 +483,17 @@ inline std::uint64_t FingerprintOf(const PreparedFrameState::OutputRowPaint& row
       .value();
 }
 
-inline std::uint64_t FingerprintOf(const PreparedFrameState::OutputScrollbarPaint& scrollbar, std::uint64_t style) {
+inline std::uint64_t FingerprintOf(const PreparedFrameState::TerminalHintPaint& hint, std::uint64_t style) {
+  const auto& [rect, text] = hint;
+  return PaintFingerprint().Add(rect).Add(text).Add(style).value();
+}
+
+inline std::uint64_t FingerprintOf(const PreparedFrameState::TerminalDividerPaint& divider, std::uint64_t style) {
+  const auto& [rect, active] = divider;
+  return PaintFingerprint().Add(rect).Add(active).Add(style).value();
+}
+
+inline std::uint64_t FingerprintOf(const PreparedFrameState::PanelScrollbarPaint& scrollbar, std::uint64_t style) {
   const auto& [track, thumb, active] = scrollbar;
   return PaintFingerprint().Add(track).Add(thumb).Add(active).Add(style).value();
 }

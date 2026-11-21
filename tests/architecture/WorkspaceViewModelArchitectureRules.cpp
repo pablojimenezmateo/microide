@@ -752,6 +752,9 @@ RuleResult CheckDerivedSurfacePaintReadsOnlyItsSnapshot(const std::filesystem::p
       {"src/workspace/render/WorkspaceShellRenderStatusBar.cpp", "void WorkspaceShell::RenderStatusBar("},
       {"src/workspace/render/WorkspaceShellRenderBottomPanel.cpp", "void PaintBottomPanelHeader("},
       {"src/workspace/render/WorkspaceShellRenderBottomPanel.cpp", "void PaintBottomPanelOutputBody("},
+      {"src/workspace/render/WorkspaceShellRenderBottomPanel.cpp", "void PaintTerminalNoSessionHint("},
+      {"src/workspace/render/WorkspaceShellRenderBottomPanel.cpp", "void PaintTerminalPaneHint("},
+      {"src/workspace/render/WorkspaceShellRenderBottomPanel.cpp", "void PaintTerminalChrome("},
   };
   const std::regex forbidden(
       R"(\bcontext_\b|\b[a-z_]+_service_\b|\bPointerOver\s*\(|\bRenderViewModelBuilder\b|)"

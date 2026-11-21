@@ -514,9 +514,14 @@ std::optional<SDL_FRect> DragTargetHighlightRect(const WorkspaceLayout& layout, 
       return surface(BottomPanelResizeCursorRect(layout));
     case DragTarget::SidebarScrollbar:
       return surface(layout.sidebar);
+    // The Output and terminal scrollbars are derived-damage units that carry
+    // their drag highlight; the plugin preview's is not yet, so this stays.
     case DragTarget::BottomPanelScrollbar:
-    case DragTarget::TerminalPaneDivider:
       return surface(layout.bottom_panel);
+    // A terminal pane divider is a derived-damage unit (the terminal chrome):
+    // prep repaints it when its drag highlight changes, whoever changed it.
+    case DragTarget::TerminalPaneDivider:
+      return std::nullopt;
     case DragTarget::DebugPaneScrollbar:
       return surface(layout.right_pane);
     case DragTarget::CompareDivider:

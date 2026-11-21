@@ -3,6 +3,7 @@
 #include "workspace/OpenDocumentWatch.h"
 #include "workspace/render/BottomPanelHeaderPaint.h"
 #include "workspace/render/BottomPanelOutputPaint.h"
+#include "workspace/render/BottomPanelTerminalChromePaint.h"
 #include "workspace/render/HoverCardLimits.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
@@ -1670,6 +1671,53 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       inputs.empty_label = panel.empty_label;
     }
     PrepareBottomPanelOutputFrame(frame_state_, inputs);
+  }
+  {
+    // The terminal's chrome, the same way: each pane's hint and scrollbar and the
+    // dividers are units, so a drag lights its thumb or divider whoever set it.
+    // The grid's rows keep their own damage (the pane snapshot's generation).
+    const BottomPanelSurfaceViewModel& panel = *prepare_cached_bottom_panel_vm_;
+    TerminalChromeInputs inputs{
+        .renderer = renderer,
+        .visible = panel.content == PanelContentKind::Terminal && layout.bottom_panel.h > 0.0f,
+        .theme = &theme_,
+        .text_metrics = text_renderer_.MetricsGeneration(),
+        .empty_label = panel.empty_label,
+        .damage = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); },
+    };
+    const TerminalTabState* tab = panel.terminal_tab;
+    const DragTarget drag = context_.interaction_state.drag_target;
+    if (inputs.visible && (tab == nullptr || tab->panes.empty())) {
+      const LogSurfaceLayout empty = ComputeBottomPanelLogLayout(layout, 0);
+      inputs.no_session_box = MakeRect(empty.text_x, empty.text_y, empty.text_width,
+                                       std::max(0.0f, empty.content_rect.y + empty.content_rect.h - empty.text_y));
+    } else if (inputs.visible) {
+      const TerminalPaneRectsLayout& rects = panel.terminal_panes;
+      for (std::size_t index = 0; index < tab->panes.size() && index < rects.panes.size(); ++index) {
+        const TerminalPaneState* pane = tab->panes[index].get();
+        TerminalPaneChromeInputs& chrome = inputs.panes.emplace_back();
+        if (pane == nullptr) {
+          continue;
+        }
+        const bool active = index == tab->active_pane;
+        const SDL_FRect& body = rects.panes[index];
+        const LogSurfaceLayout log =
+            ComputeTerminalPaneLogLayout(body, layout.bottom_panel.h, *pane, pane->frame_line_count);
+        chrome.text_box = MakeRect(log.text_x, log.text_y, log.text_width,
+                                   std::max(0.0f, body.y + body.h - log.text_y));
+        chrome.shows_hint = active && pane->frame_line_count == 0;
+        chrome.scrollbar = log.scroll.vertical_scrollbar;
+        chrome.scrollbar_active = active && drag == DragTarget::BottomPanelScrollbar;
+      }
+      for (const TerminalPaneDividerRect& divider : rects.dividers) {
+        inputs.dividers.push_back(PreparedFrameState::TerminalDividerPaint{
+            .rect = divider.rect,
+            .active = drag == DragTarget::TerminalPaneDivider &&
+                      divider.boundary == context_.interaction_state.drag_terminal_pane_boundary,
+        });
+      }
+    }
+    PrepareTerminalChromeFrame(frame_state_, inputs);
   }
   // Before any hover is resolved against the blame overlay or its card's damage is
   // decided: an overlay the active buffer has moved away from is this frame's

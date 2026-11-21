@@ -2677,6 +2677,44 @@ void TestAnAppendToAHiddenOutputChannelRepaintsNothingInThePanel() {
   fixture.ExpectFresh(nothing_announced, "a line into the shown channel");
 }
 
+// derived-damage 3.1 / clip-discipline stage 3: the terminal's chrome -- each
+// pane's scrollbar and hint, the dividers between panes -- is a derived surface.
+// A drag lights its divider or thumb whoever set the drag: here it is set with no
+// damage request, and the partial frame shows the highlight as a full one does.
+void TestTheTerminalChromeRepaintsWhatChangedWithNoDamageRequest() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("notes.txt", "one\ntwo\n");
+  TestAccess::EnsureTerminalTab(fixture.shell);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "term-split"), "term-split should split the terminal");
+  Expect(TestAccess::TerminalPaneCount(fixture.shell) == 2, "the terminal should have two panes");
+  const std::size_t active = TestAccess::ActiveTerminalPaneIndex(fixture.shell);
+  auto& session = TestAccess::TerminalPaneSession(fixture.shell, active);
+  TerminalSessionTestAccess::Reset(session, 8, 40);
+  std::string scrollback;
+  for (int i = 0; i < 120; ++i) {
+    scrollback += "line " + std::to_string(i) + "\r\n";
+  }
+  TerminalSessionTestAccess::AppendOutput(session, scrollback);
+  Expect(session.LineCount() > 100, "the active pane has scrollback, so it shows a scrollbar (the case under test)");
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  fixture.PinCaret();
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+
+  auto& interaction = TestAccess::InteractionState_(fixture.shell);
+  workspace::RenderInvalidation nothing_announced;
+  nothing_announced.rects.push_back(SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f});
+  interaction.drag_target = workspace::DragTarget::TerminalPaneDivider;
+  interaction.drag_terminal_pane_boundary = 0;
+  fixture.ExpectFresh(nothing_announced, "a pane divider's drag set with no damage request");
+  interaction.drag_target = workspace::DragTarget::BottomPanelScrollbar;
+  fixture.ExpectFresh(nothing_announced, "the active pane's thumb drag set with no damage request");
+  interaction.drag_target = workspace::DragTarget::None;
+  fixture.ExpectFresh(nothing_announced, "the drag ended with no damage request");
+}
+
 // Soak 0cee9c7fa46e: Return in the merge result adds a row to every pane's
 // shared extent, so the vertical thumb at the surface's right edge shrinks.
 // Frame prep saw the thumb move but repainted only the overview lane beside
@@ -6087,6 +6125,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestTheOutputRowsRepaintWhatChangedWithNoDamageRequest);
   AddTest(tests, "QaFlowRegression/AnAppendToAHiddenOutputChannelRepaintsNothingInThePanel",
           TestAnAppendToAHiddenOutputChannelRepaintsNothingInThePanel);
+  AddTest(tests, "QaFlowRegression/TheTerminalChromeRepaintsWhatChangedWithNoDamageRequest",
+          TestTheTerminalChromeRepaintsWhatChangedWithNoDamageRequest);
   AddTest(tests, "QaFlowRegression/ANewLineInTheMergeResultRepaintsTheVerticalThumb",
           TestANewLineInTheMergeResultRepaintsTheVerticalThumb);
   AddTest(tests, "QaFlowRegression/MovingOntoATabsCloseButtonLightsIt", TestMovingOntoATabsCloseButtonLightsIt);

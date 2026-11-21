@@ -26,6 +26,7 @@
 #include "workspace/WorkspaceTextSearch.h"
 #include "workspace/render/BottomPanelHeaderPaint.h"
 #include "workspace/render/BottomPanelOutputPaint.h"
+#include "workspace/render/BottomPanelTerminalChromePaint.h"
 #include "workspace/render/TerminalRowPaint.h"
 
 namespace microide::workspace {
@@ -311,18 +312,18 @@ void PrepareBottomPanelOutputFrame(PreparedFrameState& frame, const BottomPanelO
                                           .fingerprint = FingerprintOf(painted, row_style)});
     }
     // The empty channel's hint, word-wrapped because the panel narrows with the
-    // sidebar and the right pane: up to DrawWrappedPlaceholder's three lines.
+    // sidebar and the right pane; its box runs to the body's bottom, as the lines
+    // wrap in the UI face, not at the rows' pitch.
     if (count == 0 && !inputs.empty_label.empty()) {
       body.hint = inputs.empty_label;
-      const float bottom = inputs.content.y + inputs.content.h;
       body.hint_rect = MakeRect(inputs.text_x, inputs.text_y, inputs.text_width,
-                                std::clamp(bottom - inputs.text_y, 0.0f, 3.0f * inputs.line_height));
+                                std::max(0.0f, inputs.content.y + inputs.content.h - inputs.text_y));
     }
     units.push_back(DerivedDamage::Unit{
         .rect = UnitRect(inputs.renderer, body.hint_rect),
         .fingerprint = PaintFingerprint().Add(body.hint_rect).Add(body.hint).Add(row_style).value()});
     if (inputs.scrollbar.has_value()) {
-      body.scrollbar = PreparedFrameState::OutputScrollbarPaint{
+      body.scrollbar = PreparedFrameState::PanelScrollbarPaint{
           .track = inputs.scrollbar->track, .thumb = inputs.scrollbar->thumb, .active = inputs.scrollbar_active};
       const std::uint64_t bar_style =
           PaintFingerprint().Add(theme.surface_raised).Add(theme.text_muted).Add(theme.accent).value();
@@ -388,6 +389,94 @@ void PaintBottomPanelOutputBody(SDL_Renderer* renderer, const PreparedFrameState
   if (body.scrollbar.has_value()) {
     const render::PaintElement element(renderer, body.scrollbar->track, "output-scrollbar");
     DrawScrollbar(renderer, theme, body.scrollbar->track, body.scrollbar->thumb, body.scrollbar->active);
+  }
+}
+
+void PrepareTerminalChromeFrame(PreparedFrameState& frame, const TerminalChromeInputs& inputs) {
+  PreparedFrameState::TerminalChromePaint& chrome = frame.terminal_chrome;
+  chrome = PreparedFrameState::TerminalChromePaint{};
+  std::vector<DerivedDamage::Unit>& units = frame.derived_damage.Begin(DerivedSurface::BottomPanelTerminalChrome);
+  if (inputs.visible) {
+    chrome.visible = true;
+    const render::Theme& theme = *inputs.theme;
+    const std::uint64_t style = PaintFingerprint()
+                                    .Add(theme.text_muted)
+                                    .Add(theme.surface_background)
+                                    .Add(theme.surface_raised)
+                                    .Add(theme.accent)
+                                    .Add(theme.border)
+                                    .Add(inputs.text_metrics)
+                                    .value();
+    const auto unit = [&](const SDL_FRect& rect, std::uint64_t fingerprint) {
+      units.push_back(DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, rect), .fingerprint = fingerprint});
+    };
+    if (inputs.no_session_box.has_value() && !inputs.empty_label.empty()) {
+      chrome.no_session = {.rect = *inputs.no_session_box, .text = inputs.empty_label};
+    }
+    unit(chrome.no_session.rect, FingerprintOf(chrome.no_session, style));
+    for (const TerminalPaneChromeInputs& pane : inputs.panes) {
+      PreparedFrameState::TerminalHintPaint& hint = chrome.hints.emplace_back();
+      if (pane.shows_hint && !inputs.empty_label.empty()) {
+        hint = {.rect = pane.text_box, .text = inputs.empty_label};
+      }
+      unit(hint.rect, FingerprintOf(hint, style));
+      std::optional<PreparedFrameState::PanelScrollbarPaint>& bar = chrome.scrollbars.emplace_back();
+      if (pane.scrollbar.has_value()) {
+        bar = PreparedFrameState::PanelScrollbarPaint{
+            .track = pane.scrollbar->track, .thumb = pane.scrollbar->thumb, .active = pane.scrollbar_active};
+        unit(bar->track, FingerprintOf(*bar, style));
+      } else {
+        unit(SDL_FRect{}, 0);
+      }
+    }
+    for (const PreparedFrameState::TerminalDividerPaint& divider : inputs.dividers) {
+      chrome.dividers.push_back(divider);
+      unit(divider.rect, FingerprintOf(divider, style));
+    }
+  }
+  frame.derived_damage.Commit(DerivedSurface::BottomPanelTerminalChrome, inputs.damage);
+}
+
+namespace {
+
+void PaintTerminalHint(SDL_Renderer* renderer, const PreparedFrameState::TerminalHintPaint& hint,
+                       const render::Theme& theme, const render::TextRenderer& text_renderer) {
+  if (hint.text.empty()) {
+    return;
+  }
+  const render::PaintElement element(renderer, hint.rect, "terminal-hint");
+  DrawWrappedPlaceholder(text_renderer, renderer, hint.rect.x, hint.rect.y, hint.rect.w, theme.text_muted,
+                         theme.surface_background, hint.text);
+}
+
+}  // namespace
+
+void PaintTerminalNoSessionHint(SDL_Renderer* renderer, const PreparedFrameState& frame, const render::Theme& theme,
+                                const render::TextRenderer& text_renderer) {
+  PaintTerminalHint(renderer, frame.terminal_chrome.no_session, theme, text_renderer);
+}
+
+void PaintTerminalPaneHint(SDL_Renderer* renderer, const PreparedFrameState& frame, std::size_t pane,
+                           const render::Theme& theme, const render::TextRenderer& text_renderer) {
+  if (pane < frame.terminal_chrome.hints.size()) {
+    PaintTerminalHint(renderer, frame.terminal_chrome.hints[pane], theme, text_renderer);
+  }
+}
+
+void PaintTerminalChrome(SDL_Renderer* renderer, const PreparedFrameState& frame, const render::Theme& theme) {
+  const PreparedFrameState::TerminalChromePaint& chrome = frame.terminal_chrome;
+  if (!chrome.visible) {
+    return;
+  }
+  for (const std::optional<PreparedFrameState::PanelScrollbarPaint>& bar : chrome.scrollbars) {
+    if (bar.has_value()) {
+      const render::PaintElement element(renderer, bar->track, "terminal-scrollbar");
+      DrawScrollbar(renderer, theme, bar->track, bar->thumb, bar->active);
+    }
+  }
+  for (const PreparedFrameState::TerminalDividerPaint& divider : chrome.dividers) {
+    const render::PaintElement element(renderer, divider.rect, "terminal-divider");
+    FillRect(renderer, divider.rect, divider.active ? theme.accent : theme.border);
   }
 }
 
@@ -540,12 +629,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     TerminalTabState* tab = panel_vm.terminal_tab;
     if (tab == nullptr || tab->panes.empty()) {
       // A Terminal panel with no live session: the builder's hint over an empty body.
-      const LogSurfaceLayout empty_layout = ComputeBottomPanelLogLayout(layout, 0);
-      if (!panel_vm.empty_label.empty()) {
-        DrawWrappedPlaceholder(text_renderer_, renderer, empty_layout.text_x, empty_layout.text_y,
-                               empty_layout.text_width, theme_.text_muted, theme_.surface_background,
-                               panel_vm.empty_label);
-      }
+      PaintTerminalNoSessionHint(renderer, frame_state_, theme_, text_renderer_);
       return;
     }
     // Every pane was sampled once for this frame (PrepareTerminalPanesForFrame):
@@ -655,11 +739,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
         }
       }
 
-      if (line_count == 0 && is_active && !panel_vm.empty_label.empty()) {
-        DrawWrappedPlaceholder(text_renderer_, renderer, pane_layout.text_x, pane_layout.text_y,
-                               pane_layout.text_width, theme_.text_muted, theme_.surface_background,
-                               panel_vm.empty_label);
-      }
+      PaintTerminalPaneHint(renderer, frame_state_, pane_index, theme_, text_renderer_);
 
       const terminal::TerminalCursorSnapshot& cursor = pane->frame_cursor;
       // Same rect the blink invalidation asks for (TerminalCaretRectIn), so the
@@ -700,21 +780,9 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
           }
         }
       }
-
-      if (pane_layout.scroll.vertical_scrollbar.has_value()) {
-        DrawScrollbar(renderer, theme_, pane_layout.scroll.vertical_scrollbar->track,
-                      pane_layout.scroll.vertical_scrollbar->thumb,
-                      is_active &&
-                          context_.interaction_state.drag_target == DragTarget::BottomPanelScrollbar);
-      }
     }
-
-    for (const TerminalPaneDividerRect& divider : rects.dividers) {
-      const bool divider_active =
-          context_.interaction_state.drag_target == DragTarget::TerminalPaneDivider &&
-          divider.boundary == context_.interaction_state.drag_terminal_pane_boundary;
-      DrawFilledRect(renderer, divider.rect, divider_active ? theme_.accent : theme_.border);
-    }
+    // Each pane's scrollbar and the dividers, over every pane (prep's snapshot).
+    PaintTerminalChrome(renderer, frame_state_, theme_);
   };
 
   if (terminal_panel) {
