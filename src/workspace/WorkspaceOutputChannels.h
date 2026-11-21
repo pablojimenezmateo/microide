@@ -65,6 +65,11 @@ class WorkspaceOutputChannels {
   // moved, since the producers -- a debug adapter's output, an LSP log, a plugin
   // -- append from callbacks that know nothing about the panel.
   std::uint64_t ContentRevision() const { return content_revision_; }
+  // Entry `index` of a channel is serial FirstEntrySerial(id) + index. An entry's
+  // text never changes once appended and a serial is never reused within a
+  // channel (trimming advances the base, clearing restarts it past every serial
+  // issued), so paint can name a row's text by its serial without hashing it.
+  std::uint64_t FirstEntrySerial(std::string_view id) const;
   // Drop a channel entirely (entries + parsed cache). No-op if the id is unknown.
   // Used when a debug session is pruned so its console does not linger (Phase 10).
   void RemoveChannel(std::string_view id);
@@ -85,6 +90,7 @@ class WorkspaceOutputChannels {
     std::vector<ParsedEntry> parsed_entries;
     std::size_t retained_bytes = 0;
     std::optional<std::filesystem::path> current_reference_path;
+    std::uint64_t first_serial = 0;  // entries[0]'s serial (FirstEntrySerial)
     // Monotonic last-touch stamp (bumped on EnsureChannel/AppendLine) driving LRU
     // eviction when the global channel count cap is crossed.
     std::uint64_t last_touch = 0;
@@ -98,6 +104,7 @@ class WorkspaceOutputChannels {
 
   std::map<std::string, Channel, std::less<>> channels_;
   std::uint64_t touch_counter_ = 0;
+  std::uint64_t next_entry_serial_ = 1;  // above every serial issued, in any channel
   std::uint64_t content_revision_ = 0;
   std::size_t evicted_channel_count_ = 0;
   mutable bool channel_infos_dirty_ = true;

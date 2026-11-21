@@ -2634,6 +2634,49 @@ void TestThePanelHeaderRepaintsWhatChangedWithNoDamageRequest() {
   fixture.ExpectFresh(nothing_announced, "a bell marked on a background terminal tab with no damage request");
 }
 
+// derived-damage 3.1 / clip-discipline stage 3: the Output channel's rows are a
+// derived surface. Whatever scrolls them -- here the channel's scroll row set with
+// no damage request, as a control command or a producer's follow-tail does -- the
+// next partial frame shows the rows a full one does. Paint used to settle the
+// scroll itself, mid-frame, and nothing compared it with what was painted.
+void TestTheOutputRowsRepaintWhatChangedWithNoDamageRequest() {
+  FlowFixture fixture("notes.txt", "one\ntwo\n");
+  TestAccess::ShowOutputChannelWithLines(fixture.shell, "qa.rows", 60);
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  TestAccess::CurrentProjectState(fixture.shell).panel.output.scroll_row = 7;
+  workspace::RenderInvalidation nothing_announced;
+  nothing_announced.rects.push_back(SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f});
+  fixture.ExpectFresh(nothing_announced, "the Output rows scrolled with no damage request");
+  Expect(TestAccess::OutputPanelScrollRow(fixture.shell) == 7, "the rows stay where they were scrolled");
+}
+
+// The other half of the same derivation: a line into a channel the panel does not
+// show changes nothing on screen, so it repaints nothing there. Prep used to
+// repaint the whole panel on any channel's content revision -- a chatty LSP log
+// in the background repainted the build output on every line.
+void TestAnAppendToAHiddenOutputChannelRepaintsNothingInThePanel() {
+  FlowFixture fixture("notes.txt", "one\ntwo\n");
+  TestAccess::ShowOutputChannelWithLines(fixture.shell, "qa.shown", 5);
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  TestAccess::AppendOutputLine(fixture.shell, "qa.hidden", "Hidden", "a line nobody shows");
+  (void)fixture.shell.PrepareFrameOnce(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  const workspace::RenderInvalidation prepared = fixture.shell.ConsumePendingRenderInvalidation();
+  const SDL_FRect body = workspace::BottomPanelContentRect(TestAccess::CurrentLayout(fixture.shell));
+  Expect(!prepared.full, "a hidden channel's line does not repaint the window");
+  for (const SDL_FRect& rect : prepared.rects) {
+    Expect(!SDL_HasRectIntersectionFloat(&rect, &body),
+           "a hidden channel's line repaints nothing in the Output body (damaged " + std::to_string(rect.x) + "," +
+               std::to_string(rect.y) + " " + std::to_string(rect.w) + "x" + std::to_string(rect.h) + ")");
+  }
+  // And the shown channel's next line is repainted (the half above).
+  TestAccess::AppendOutputLine(fixture.shell, "qa.shown", "Test Output", "a sixth line");
+  workspace::RenderInvalidation nothing_announced;
+  nothing_announced.rects.push_back(SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f});
+  fixture.ExpectFresh(nothing_announced, "a line into the shown channel");
+}
+
 // Soak 0cee9c7fa46e: Return in the merge result adds a row to every pane's
 // shared extent, so the vertical thumb at the surface's right edge shrinks.
 // Frame prep saw the thumb move but repainted only the overview lane beside
@@ -6040,6 +6083,10 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestTheStatusBarRepaintsWhatChangedWithNoDamageRequest);
   AddTest(tests, "QaFlowRegression/ThePanelHeaderRepaintsWhatChangedWithNoDamageRequest",
           TestThePanelHeaderRepaintsWhatChangedWithNoDamageRequest);
+  AddTest(tests, "QaFlowRegression/TheOutputRowsRepaintWhatChangedWithNoDamageRequest",
+          TestTheOutputRowsRepaintWhatChangedWithNoDamageRequest);
+  AddTest(tests, "QaFlowRegression/AnAppendToAHiddenOutputChannelRepaintsNothingInThePanel",
+          TestAnAppendToAHiddenOutputChannelRepaintsNothingInThePanel);
   AddTest(tests, "QaFlowRegression/ANewLineInTheMergeResultRepaintsTheVerticalThumb",
           TestANewLineInTheMergeResultRepaintsTheVerticalThumb);
   AddTest(tests, "QaFlowRegression/MovingOntoATabsCloseButtonLightsIt", TestMovingOntoATabsCloseButtonLightsIt);

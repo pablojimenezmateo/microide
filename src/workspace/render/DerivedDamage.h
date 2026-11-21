@@ -34,6 +34,7 @@ namespace microide::workspace {
 enum class DerivedSurface : std::uint8_t {
   StatusBar,
   BottomPanelHeader,
+  BottomPanelOutput,
   Count,
 };
 

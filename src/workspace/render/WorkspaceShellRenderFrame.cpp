@@ -2,6 +2,7 @@
 
 #include "workspace/OpenDocumentWatch.h"
 #include "workspace/render/BottomPanelHeaderPaint.h"
+#include "workspace/render/BottomPanelOutputPaint.h"
 #include "workspace/render/HoverCardLimits.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
@@ -1339,18 +1340,6 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     frame_state_.painted_compare_presentation_revision = compare->presentation_revision;
     frame_state_.painted_compare_shape = shape;
   }
-  // The output panel's lines (see PreparedFrameState::painted_output_revision).
-  {
-    const bool shows_output =
-        panel_vm.content == PanelContentKind::Output && layout.bottom_panel.h > 0.0f;
-    const std::uint64_t revision = shows_output ? output_channels_.ContentRevision() + 1 : 0;
-    if (revision != frame_state_.painted_output_revision) {
-      if (shows_output) {
-        RequestBottomPanelContentRedraw();
-      }
-      frame_state_.painted_output_revision = revision;
-    }
-  }
   // The debug toolbar's run state (see PreparedFrameState::painted_debug_toolbar).
   {
     PreparedFrameState::DebugToolbar toolbar;
@@ -1646,6 +1635,41 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
             .pointer_over = [this](const SDL_FRect& rect) { return PointerOver(rect); },
             .damage = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); },
         });
+  }
+  {
+    // The Output body, the same way: each visible row is a unit named by its
+    // entry's serial, so a line into the shown channel repaints the rows it moved
+    // and a line into a hidden one repaints nothing. This replaced the whole-panel
+    // repaint on any channel's content revision (painted_output_revision), and
+    // settles the scroll here rather than in paint.
+    const BottomPanelSurfaceViewModel& panel = *prepare_cached_bottom_panel_vm_;
+    BottomPanelOutputInputs inputs{
+        .renderer = renderer,
+        .visible = panel.content == PanelContentKind::Output && layout.bottom_panel.h > 0.0f,
+        .channels = &output_channels_,
+        .channel_id = panel.output_channel_id,
+        .project_root = panel.project_root,
+        .theme = &theme_,
+        .text_metrics = text_renderer_.MetricsGeneration(),
+        .damage = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); },
+    };
+    if (inputs.visible) {
+      const std::vector<std::string>* entries = OutputChannelEntries(panel.output_channel_id);
+      const std::size_t count = entries != nullptr ? entries->size() : 0;
+      const LogSurfaceLayout log = ComputeBottomPanelLogLayout(layout, count);
+      SetBottomPanelScrollRow(log.scroll.vertical_scroll, count, log.scroll.visible_rows);
+      inputs.content = log.content_rect;
+      inputs.text_x = log.text_x;
+      inputs.text_y = log.text_y;
+      inputs.text_width = log.text_width;
+      inputs.line_height = log.line_height;
+      inputs.first_row = log.scroll.vertical_scroll;
+      inputs.visible_rows = log.scroll.visible_rows;
+      inputs.scrollbar = log.scroll.vertical_scrollbar;
+      inputs.scrollbar_active = context_.interaction_state.drag_target == DragTarget::BottomPanelScrollbar;
+      inputs.empty_label = panel.empty_label;
+    }
+    PrepareBottomPanelOutputFrame(frame_state_, inputs);
   }
   // Before any hover is resolved against the blame overlay or its card's damage is
   // decided: an overlay the active buffer has moved away from is this frame's

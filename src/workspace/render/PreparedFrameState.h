@@ -280,9 +280,6 @@ struct PreparedFrameState {
     }
   };
   DebugToolbar painted_debug_toolbar{};
-  // The output channels' content revision the output panel was painted at
-  // (WorkspaceOutputChannels::ContentRevision); 0 while it shows something else.
-  std::uint64_t painted_output_revision = 0;
   // The active merge tab's status as painted (result state, conflicts left, the
   // selected one): a git refresh or the file watcher marks a merge result stale
   // or saved asynchronously, and the header kept reading the old state.
@@ -364,6 +361,38 @@ struct PreparedFrameState {
     float drag_grab_offset_x = 0.0f;
   };
   PanelHeaderPaint panel_header;
+
+  // ---- the Output channel's body (derived-damage 3.1, clip-discipline stage 3) ----
+  // Its rows, empty hint and scrollbar as this frame paints them, settled at prep
+  // (PrepareBottomPanelOutputFrame) and drawn by PaintBottomPanelOutputBody alone.
+  struct OutputRowPaint {
+    SDL_FRect rect{};  // the body's width, one line tall; the text sits at its top
+    float text_x = 0.0f;
+    float text_width = 0.0f;
+    // The entry's serial (WorkspaceOutputChannels::FirstEntrySerial + index). Its
+    // text never changes under it, so the serial stands for `text`, `prefix`,
+    // `code` and `highlighted` in the fingerprint: a line can be 1 MiB.
+    std::uint64_t serial = 0;
+    std::string_view text;
+    bool snippet = false;  // a context snippet: `prefix`, then `code` syntax-coloured
+    std::string_view prefix;
+    std::string_view code;
+    const editor::HighlightedLine* highlighted = nullptr;  // the channel's memo
+    std::uint64_t highlight_path = 0;  // a hash of the path `highlighted` is for
+  };
+  struct OutputScrollbarPaint {
+    SDL_FRect track{};
+    SDL_FRect thumb{};
+    bool active = false;  // being dragged
+  };
+  struct OutputBodyPaint {
+    bool visible = false;
+    std::vector<OutputRowPaint> rows;
+    SDL_FRect hint_rect{};
+    std::string_view hint;  // the empty channel's hint, wrapped in `hint_rect`
+    std::optional<OutputScrollbarPaint> scrollbar;
+  };
+  OutputBodyPaint output_body;
 };
 
 // The fingerprint of everything a status-bar segment paints. The structured
@@ -403,6 +432,31 @@ inline std::uint64_t FingerprintOf(const PreparedFrameState::PanelTabPaint& tab,
 inline std::uint64_t FingerprintOf(const PreparedFrameState::PanelButtonPaint& button, std::uint64_t palette) {
   const auto& [rect, hovered, hidden] = button;
   return PaintFingerprint().Add(rect).Add(hovered).Add(hidden).Add(palette).value();
+}
+
+// An Output row: its geometry, the entry's serial for its text (see
+// OutputRowPaint::serial; the views' sizes are folded in as a check on that), how
+// it was highlighted, and the colours and face it paints with (`style`).
+inline std::uint64_t FingerprintOf(const PreparedFrameState::OutputRowPaint& row, std::uint64_t style) {
+  const auto& [rect, text_x, text_width, serial, text, snippet, prefix, code, highlighted, highlight_path] = row;
+  return PaintFingerprint()
+      .Add(rect)
+      .Add(text_x)
+      .Add(text_width)
+      .Add(serial)
+      .Add(text.size())
+      .Add(snippet)
+      .Add(prefix.size())
+      .Add(code.size())
+      .Add(highlighted != nullptr)
+      .Add(highlight_path)
+      .Add(style)
+      .value();
+}
+
+inline std::uint64_t FingerprintOf(const PreparedFrameState::OutputScrollbarPaint& scrollbar, std::uint64_t style) {
+  const auto& [track, thumb, active] = scrollbar;
+  return PaintFingerprint().Add(track).Add(thumb).Add(active).Add(style).value();
 }
 
 }  // namespace microide::workspace

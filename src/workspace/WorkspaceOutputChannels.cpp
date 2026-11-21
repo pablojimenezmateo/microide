@@ -1,5 +1,6 @@
 #include "workspace/WorkspaceOutputChannels.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <string_view>
 #include <utility>
@@ -187,8 +188,12 @@ void WorkspaceOutputChannels::AppendLine(std::string_view id, std::string_view l
   ParsedEntry parsed = BuildParsedEntry(line, &channel.current_reference_path);
   // Charge both the raw line and the parsed entry's owned duplicate text.
   channel.retained_bytes += line.size() + ParsedEntryOwnedBytes(parsed);
+  if (channel.entries.empty()) {
+    channel.first_serial = next_entry_serial_;
+  }
   channel.parsed_entries.push_back(std::move(parsed));
   channel.entries.push_back(std::move(line));
+  next_entry_serial_ = std::max(next_entry_serial_, channel.first_serial + channel.entries.size());
 
   // Bound retained history: a chatty or hostile LSP / debug adapter / plugin can
   // stream output forever, and each entry retains a heap string plus a parsed
@@ -221,6 +226,7 @@ void WorkspaceOutputChannels::AppendLine(std::string_view id, std::string_view l
                           channel.entries.begin() + static_cast<std::ptrdiff_t>(drop));
     channel.parsed_entries.erase(channel.parsed_entries.begin(),
                                  channel.parsed_entries.begin() + static_cast<std::ptrdiff_t>(drop));
+    channel.first_serial += drop;
   }
 }
 
@@ -244,6 +250,11 @@ const std::vector<WorkspaceOutputChannels::ChannelInfo>& WorkspaceOutputChannels
 const std::vector<std::string>* WorkspaceOutputChannels::Entries(std::string_view id) const {
   const auto it = channels_.find(id);
   return it == channels_.end() ? nullptr : &it->second.entries;
+}
+
+std::uint64_t WorkspaceOutputChannels::FirstEntrySerial(std::string_view id) const {
+  const auto it = channels_.find(id);
+  return it == channels_.end() ? 0 : it->second.first_serial;
 }
 
 std::size_t WorkspaceOutputChannels::RetainedBytes(std::string_view id) const {

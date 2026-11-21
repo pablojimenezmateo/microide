@@ -339,6 +339,36 @@ void TestOutputChannelBudgetCountsParsedSnippetBytes() {
   Expect(retained > raw, "parsed-entry owned bytes are charged to the channel budget");
 }
 
+// The Output body names a row's text by its entry serial (derived-damage 3.1), so
+// a serial must keep naming the same text: it follows its entry through the trim
+// that drops the oldest lines, and a cleared channel never hands an old serial to
+// a new line.
+void TestOutputEntrySerialsFollowTheirEntriesAndAreNeverReused() {
+  workspace::WorkspaceOutputChannels channels;
+  const std::string id = "log";
+  for (int i = 0; i < 3; ++i) {
+    channels.AppendLine(id, id, "line " + std::to_string(i));
+  }
+  channels.AppendLine("other", "other", "elsewhere");
+  const std::uint64_t first = channels.FirstEntrySerial(id);
+  channels.AppendLine(id, id, "line 3");
+  Expect(channels.FirstEntrySerial(id) == first, "an append keeps the existing entries' serials");
+  // Past the entry cap's high watermark the oldest lines are dropped; every kept
+  // line keeps its serial, so the base moves by exactly what was dropped.
+  const std::size_t before = channels.Entries(id)->size();
+  std::size_t appended = 0;
+  while (channels.Entries(id)->size() >= before + appended) {
+    channels.AppendLine(id, id, "x");
+    ++appended;
+  }
+  const std::size_t dropped = before + appended - channels.Entries(id)->size();
+  Expect(channels.FirstEntrySerial(id) == first + dropped, "a trim advances the base by the lines it dropped");
+  const std::uint64_t last_issued = channels.FirstEntrySerial(id) + channels.Entries(id)->size() - 1;
+  channels.Clear(id);
+  channels.AppendLine(id, id, "after the clear");
+  Expect(channels.FirstEntrySerial(id) > last_issued, "a cleared channel's new lines take serials never issued");
+}
+
 void TestExcludeGlobsNormalInputIsNotFlaggedTruncated() {
   bool truncated = true;
   const std::vector<std::string> globs =
@@ -380,6 +410,8 @@ void RegisterBoundedResourceCapsTests(std::vector<TestCase>& tests) {
           TestBufferSearchSmallResultIsNotTruncated);
   AddTest(tests, "BoundedResourceCaps/OutputChannelCountIsCappedWithLru",
           TestOutputChannelCountIsCappedWithLru);
+  AddTest(tests, "BoundedResourceCaps/OutputEntrySerialsFollowTheirEntriesAndAreNeverReused",
+          TestOutputEntrySerialsFollowTheirEntriesAndAreNeverReused);
 }
 
 }  // namespace microide::tests

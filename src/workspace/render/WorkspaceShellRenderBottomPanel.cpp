@@ -25,6 +25,7 @@
 #include "workspace/PluginSurfacePreview.h"
 #include "workspace/WorkspaceTextSearch.h"
 #include "workspace/render/BottomPanelHeaderPaint.h"
+#include "workspace/render/BottomPanelOutputPaint.h"
 #include "workspace/render/TerminalRowPaint.h"
 
 namespace microide::workspace {
@@ -259,8 +260,136 @@ void PaintBottomPanelHeader(SDL_Renderer* renderer, const PreparedFrameState& fr
   }
 }
 
-namespace {
-}  // namespace
+void PrepareBottomPanelOutputFrame(PreparedFrameState& frame, const BottomPanelOutputInputs& inputs) {
+  PreparedFrameState::OutputBodyPaint& body = frame.output_body;
+  body.visible = false;
+  body.rows.clear();
+  body.hint = {};
+  body.scrollbar.reset();
+  std::vector<DerivedDamage::Unit>& units = frame.derived_damage.Begin(DerivedSurface::BottomPanelOutput);
+  const std::vector<std::string>* entries =
+      inputs.visible ? inputs.channels->Entries(inputs.channel_id) : nullptr;
+  if (inputs.visible) {
+    body.visible = true;
+    const render::Theme& theme = *inputs.theme;
+    PaintFingerprint style;
+    style.Add(theme.text_secondary).Add(theme.text_muted).Add(theme.surface_background).Add(inputs.text_metrics);
+    for (int kind = 0; kind <= static_cast<int>(editor::SyntaxTokenKind::Operator); ++kind) {
+      style.Add(editor::SyntaxTokenColor(theme, static_cast<editor::SyntaxTokenKind>(kind), theme.text_secondary));
+    }
+    const std::uint64_t row_style = style.value();
+    const std::size_t count = entries != nullptr ? entries->size() : 0;
+    const std::uint64_t first_serial = inputs.channels->FirstEntrySerial(inputs.channel_id);
+    for (int row = 0; row < inputs.visible_rows; ++row) {
+      const int index = inputs.first_row + row;
+      if (index < 0 || static_cast<std::size_t>(index) >= count) {
+        break;
+      }
+      const auto entry = static_cast<std::size_t>(index);
+      PreparedFrameState::OutputRowPaint& painted = body.rows.emplace_back(PreparedFrameState::OutputRowPaint{
+          .rect = MakeRect(inputs.content.x, inputs.text_y + static_cast<float>(row) * inputs.line_height,
+                           inputs.content.w, inputs.line_height),
+          .text_x = inputs.text_x,
+          .text_width = inputs.text_width,
+          .serial = first_serial + entry,
+          .text = (*entries)[entry],
+      });
+      const auto* parsed = inputs.channels->ParsedEntryAt(inputs.channel_id, entry);
+      if (parsed != nullptr && parsed->kind == WorkspaceOutputChannels::ParsedEntry::Kind::ContextSnippet) {
+        // Highlighted for the path the snippet resolves to: the channel memoizes
+        // both per entry, so a steady panel re-resolves nothing (TD-2026-07-17A-017).
+        static const std::filesystem::path kNoRoot;
+        const std::filesystem::path& resolved = inputs.channels->ResolvedReferencePath(
+            inputs.channel_id, entry, inputs.project_root != nullptr ? *inputs.project_root : kNoRoot);
+        painted.snippet = true;
+        painted.prefix = parsed->prefix;
+        painted.code = parsed->code;
+        painted.highlighted = inputs.channels->HighlightedContextSnippet(inputs.channel_id, entry, resolved);
+        painted.highlight_path = std::hash<std::string_view>{}(resolved.native()) | 1u;
+      }
+      units.push_back(DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, painted.rect),
+                                          .fingerprint = FingerprintOf(painted, row_style)});
+    }
+    // The empty channel's hint, word-wrapped because the panel narrows with the
+    // sidebar and the right pane: up to DrawWrappedPlaceholder's three lines.
+    if (count == 0 && !inputs.empty_label.empty()) {
+      body.hint = inputs.empty_label;
+      const float bottom = inputs.content.y + inputs.content.h;
+      body.hint_rect = MakeRect(inputs.text_x, inputs.text_y, inputs.text_width,
+                                std::clamp(bottom - inputs.text_y, 0.0f, 3.0f * inputs.line_height));
+    }
+    units.push_back(DerivedDamage::Unit{
+        .rect = UnitRect(inputs.renderer, body.hint_rect),
+        .fingerprint = PaintFingerprint().Add(body.hint_rect).Add(body.hint).Add(row_style).value()});
+    if (inputs.scrollbar.has_value()) {
+      body.scrollbar = PreparedFrameState::OutputScrollbarPaint{
+          .track = inputs.scrollbar->track, .thumb = inputs.scrollbar->thumb, .active = inputs.scrollbar_active};
+      const std::uint64_t bar_style =
+          PaintFingerprint().Add(theme.surface_raised).Add(theme.text_muted).Add(theme.accent).value();
+      units.push_back(DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, body.scrollbar->track),
+                                          .fingerprint = FingerprintOf(*body.scrollbar, bar_style)});
+    }
+  }
+  frame.derived_damage.Commit(DerivedSurface::BottomPanelOutput, inputs.damage);
+}
+
+void PaintBottomPanelOutputBody(SDL_Renderer* renderer, const PreparedFrameState& frame, const render::Theme& theme,
+                                const render::TextRenderer& text_renderer) {
+  const PreparedFrameState::OutputBodyPaint& body = frame.output_body;
+  if (!body.visible) {
+    return;
+  }
+  for (const PreparedFrameState::OutputRowPaint& row : body.rows) {
+    const render::PaintElement element(renderer, row.rect, "output-row");
+    const float y = row.rect.y;
+    if (!row.snippet) {
+      DrawTextOn(text_renderer, renderer, row.text_x, y, theme.text_secondary, theme.surface_background,
+                 text_renderer.TruncateToWidthEphemeralView(row.text, row.text_width));
+      continue;
+    }
+    // A context snippet: its `path:line:` prefix, then the code coloured as the
+    // file it quotes, when the whole prefix fits.
+    const std::string_view visible_prefix = text_renderer.TruncateToWidthEphemeralView(row.prefix, row.text_width);
+    DrawTextOn(text_renderer, renderer, row.text_x, y, theme.text_secondary, theme.surface_background,
+               visible_prefix);
+    if (visible_prefix.size() != row.prefix.size()) {
+      continue;
+    }
+    const float prefix_width = text_renderer.MeasureWidth(row.prefix);
+    const float remaining_width = row.text_width - prefix_width;
+    if (remaining_width <= 0.0f || row.code.empty()) {
+      continue;
+    }
+    const std::string_view visible_code = text_renderer.TruncateToWidthEphemeralView(row.code, remaining_width);
+    if (row.highlighted == nullptr || row.highlighted->tokens.size() < visible_code.size()) {
+      DrawTextOn(text_renderer, renderer, row.text_x + prefix_width, y, theme.text_secondary,
+                 theme.surface_background, visible_code);
+      continue;
+    }
+    float run_x = row.text_x + prefix_width;
+    for (std::size_t start = 0; start < visible_code.size();) {
+      const editor::SyntaxTokenKind kind = row.highlighted->tokens[start];
+      std::size_t end = start + 1;
+      while (end < visible_code.size() && row.highlighted->tokens[end] == kind) {
+        ++end;
+      }
+      const std::string_view segment(visible_code.data() + start, end - start);
+      text_renderer.DrawString(renderer, run_x, y,
+                               editor::SyntaxTokenColor(theme, kind, theme.text_secondary), segment);
+      run_x += text_renderer.MeasureWidth(segment);
+      start = end;
+    }
+  }
+  if (!body.hint.empty()) {
+    const render::PaintElement element(renderer, body.hint_rect, "output-hint");
+    DrawWrappedPlaceholder(text_renderer, renderer, body.hint_rect.x, body.hint_rect.y, body.hint_rect.w,
+                           theme.text_muted, theme.surface_background, body.hint);
+  }
+  if (body.scrollbar.has_value()) {
+    const render::PaintElement element(renderer, body.scrollbar->track, "output-scrollbar");
+    DrawScrollbar(renderer, theme, body.scrollbar->track, body.scrollbar->thumb, body.scrollbar->active);
+  }
+}
 
 void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                                               const WorkspaceLayout& layout) {
@@ -271,7 +400,6 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
 
   util::PerformanceTrace::Scope bottom_panel_scope("WorkspaceShell::RenderBottomPanel");
   const bool terminal_panel = panel_vm.content == PanelContentKind::Terminal;
-  const bool output_panel = panel_vm.content == PanelContentKind::Output;
 
   // Each pane sets its DECSCNM flag and selection strength before its rows paint;
   // TerminalRowPaint resolves every cell against this once per row.
@@ -602,100 +730,8 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     return;
   }
 
-  const std::vector<std::string>* output_entries =
-      output_panel ? OutputChannelEntries(panel_vm.output_channel_id) : nullptr;
-  std::optional<std::filesystem::path> current_reference_path;
-  const std::size_t panel_line_count =
-      output_panel ? (output_entries != nullptr ? output_entries->size() : 0) : 0;
-
-  const LogSurfaceLayout panel_layout =
-      ComputeBottomPanelLogLayout(layout, panel_line_count);
-  SetBottomPanelScrollRow(panel_layout.scroll.vertical_scroll, panel_line_count,
-                          panel_layout.scroll.visible_rows);
-
-  for (int row = 0; row < panel_layout.scroll.visible_rows; ++row) {
-    const int index = panel_layout.scroll.vertical_scroll + row;
-    if (index >= static_cast<int>(panel_line_count)) {
-      break;
-    }
-    const float line_y = panel_layout.text_y + static_cast<float>(row) * panel_layout.line_height;
-    if (output_panel && output_entries != nullptr) {
-      const std::size_t output_index = static_cast<std::size_t>(index);
-      const std::string& output_line = (*output_entries)[output_index];
-      if (const auto* parsed = output_channels_.ParsedEntryAt(
-              panel_vm.output_channel_id, output_index);
-          parsed != nullptr) {
-        if (parsed->kind == WorkspaceOutputChannels::ParsedEntry::Kind::ReferencePath) {
-          // Resolved+normalized path is memoized per entry in the output channel layer
-          // (keyed by project root), so this is a cache hit per paint (TD-2026-07-17A-017).
-          current_reference_path = output_channels_.ResolvedReferencePath(
-              panel_vm.output_channel_id, output_index, *panel_vm.project_root);
-        } else if (parsed->kind == WorkspaceOutputChannels::ParsedEntry::Kind::ContextSnippet) {
-          current_reference_path = output_channels_.ResolvedReferencePath(
-              panel_vm.output_channel_id, output_index, *panel_vm.project_root);
-
-          const std::string_view visible_prefix =
-              text_renderer_.TruncateToWidthEphemeralView(parsed->prefix, panel_layout.text_width);
-          DrawTextOn(text_renderer_, renderer, panel_layout.text_x, line_y, theme_.text_secondary,
-                     theme_.surface_background, visible_prefix);
-
-          if (visible_prefix.size() == parsed->prefix.size()) {
-            const float prefix_width = text_renderer_.MeasureWidth(parsed->prefix);
-            const float remaining_width = panel_layout.text_width - prefix_width;
-            if (remaining_width > 0.0f && !parsed->code.empty()) {
-              const std::string_view visible_code =
-                  text_renderer_.TruncateToWidthEphemeralView(parsed->code, remaining_width);
-              const editor::HighlightedLine* highlighted =
-                  output_channels_.HighlightedContextSnippet(
-                      panel_vm.output_channel_id, output_index,
-                      current_reference_path.value_or(std::filesystem::path{}));
-              if (highlighted != nullptr && highlighted->tokens.size() >= visible_code.size()) {
-                float run_x = panel_layout.text_x + prefix_width;
-                for (std::size_t start = 0; start < visible_code.size();) {
-                  const editor::SyntaxTokenKind kind = highlighted->tokens[start];
-                  std::size_t end = start + 1;
-                  while (end < visible_code.size() && highlighted->tokens[end] == kind) {
-                    ++end;
-                  }
-                  const std::string_view segment(visible_code.data() + start, end - start);
-                  const SDL_Color color =
-                      editor::SyntaxTokenColor(theme_, kind, theme_.text_secondary);
-                  text_renderer_.DrawString(renderer, run_x, line_y, color, segment);
-                  run_x += text_renderer_.MeasureWidth(segment);
-                  start = end;
-                }
-              } else {
-                DrawTextOn(text_renderer_, renderer, panel_layout.text_x + prefix_width, line_y,
-                           theme_.text_secondary, theme_.surface_background, visible_code);
-              }
-            }
-          }
-          continue;
-        } else if (output_line.empty()) {
-          current_reference_path.reset();
-        }
-      }
-      DrawTextOn(text_renderer_, renderer, panel_layout.text_x, line_y, theme_.text_secondary,
-                 theme_.surface_background,
-                 text_renderer_.TruncateToWidthEphemeralView(output_line, panel_layout.text_width));
-      continue;
-    }
-  }
-
-  // Empty-state hint, matching the debug pane and the sidebar modes. The text is
-  // resolved by the builder; this only decides that there is nothing to draw over.
-  // Word-wrapped because the panel narrows with the sidebar and the right pane.
-  if (panel_line_count == 0 && !panel_vm.empty_label.empty()) {
-    DrawWrappedPlaceholder(text_renderer_, renderer, panel_layout.text_x, panel_layout.text_y,
-                           panel_layout.text_width, theme_.text_muted, theme_.surface_background,
-                           panel_vm.empty_label);
-  }
-
-  if (panel_layout.scroll.vertical_scrollbar.has_value()) {
-    DrawScrollbar(renderer, theme_, panel_layout.scroll.vertical_scrollbar->track,
-                  panel_layout.scroll.vertical_scrollbar->thumb,
-                  context_.interaction_state.drag_target == DragTarget::BottomPanelScrollbar);
-  }
+  // The Output body -- rows, hint, scrollbar -- as prep settled it.
+  PaintBottomPanelOutputBody(renderer, frame_state_, theme_, text_renderer_);
   if (panel_vm.focus == FocusTarget::Panel) {
     DrawSurfaceFocusRing(renderer, layout.bottom_panel);
   }

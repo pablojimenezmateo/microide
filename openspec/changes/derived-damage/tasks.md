@@ -25,7 +25,8 @@
 ## 3. Bottom panel and right pane
 
 - [ ] 3.1 Debug-pane rows, panel tab row, output panel and terminal chrome as derived units. Verify: redraw tests per surface; QA lane green.
-  - Bottom panel header (tab row, chevrons, label, new-terminal and maximize buttons): done with clip-discipline stage 3 (the header commit); `painted_bottom_panel_tabs` retired with it. Output rows and terminal chrome next; debug pane after.
+  - Bottom panel header (tab row, chevrons, label, new-terminal and maximize buttons): done with clip-discipline stage 3 (the header commit); `painted_bottom_panel_tabs` retired with it.
+  - Output body (rows, empty hint, scrollbar): done. A row is named by its entry's serial (`WorkspaceOutputChannels::FirstEntrySerial` + index; entries are immutable), not by hashing its text, which can be 1 MiB; the scroll settles in prep, no longer in paint; `painted_output_revision` retired (a line into a hidden channel now repaints nothing). Terminal chrome next; debug pane after.
 - [ ] 3.2 Perf A/B for stage 3. Verify: within budget.
 
 ## 4. Tab strips and sidebar
