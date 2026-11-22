@@ -431,6 +431,14 @@ class ScenarioContext {
   // A line into output channel `id`, as a debug adapter, a language server's log
   // or a plugin appends one: nothing asks for a repaint.
   void AppendOutputLine(std::string_view id, std::string line);
+  // The debugger on and the debug pane showing Variables: one Locals scope of
+  // `count` values, as a stopped session's first variables response gives them.
+  void ShowDebugVariables(std::size_t count);
+  // Every value rewritten for step `step`, as the variables response after a
+  // step gives them: nothing asks for a repaint.
+  void StepDebugVariables(std::size_t count, int step);
+  // The pane's surface: Variables when `variables`, else the Call Stack.
+  void ShowDebugPaneVariables(bool variables);
   // Close every terminal tab. The driver is shared across a scenario's iterations,
   // so a scenario that opens terminals must close them or each iteration inherits
   // every earlier one.

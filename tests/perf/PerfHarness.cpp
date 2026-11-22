@@ -25,6 +25,8 @@
 #endif
 
 #include "app/DirtyRegionPolicy.h"
+#include "workspace/debug/DapProtocol.h"
+#include "workspace/debug/DebugVariablesModel.h"
 #include "platform/Subprocess.h"
 #include "perf/AllocationCounter.h"
 #include "perf/PerfHarnessIsolation.h"
@@ -875,6 +877,41 @@ void ScenarioContext::ShowOutputChannel(std::string_view id) {
 
 void ScenarioContext::AppendOutputLine(std::string_view id, std::string line) {
   workspace::WorkspaceShell::TestAccess::AppendOutputLine(shell_, id, "Perf Output", std::move(line));
+}
+
+void ScenarioContext::ShowDebugVariables(std::size_t count) {
+  using TA = workspace::WorkspaceShell::TestAccess;
+  if (!TA::SetSettingValueTransient(shell_, "debug.enabled", "true")) {
+    throw std::runtime_error("ShowDebugVariables: debug.enabled did not take");
+  }
+  TA::SetDebugPaneVisible(shell_, true);
+  TA::SetDebugPaneMode(shell_, workspace::DebugPaneMode::Variables);
+  auto& variables = TA::DebugVariables(shell_);
+  variables.BeginFrame(1);
+  workspace::dap_protocol::DapScope locals;
+  locals.name = "Locals";
+  locals.variables_reference = 1000;
+  variables.ApplyScopes({locals});
+  StepDebugVariables(count, 0);
+}
+
+void ScenarioContext::StepDebugVariables(std::size_t count, int step) {
+  std::vector<workspace::dap_protocol::DapVariable> values;
+  values.reserve(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    workspace::dap_protocol::DapVariable variable;
+    variable.name = "local_" + std::to_string(i);
+    // A loop's step moves a few values, not all of them.
+    variable.value = std::to_string(i % 8 == 0 ? static_cast<int>(i) * 1000 + step : static_cast<int>(i));
+    variable.type = "int";
+    values.push_back(std::move(variable));
+  }
+  workspace::WorkspaceShell::TestAccess::DebugVariables(shell_).ApplyVariables(1000, values, 0);
+}
+
+void ScenarioContext::ShowDebugPaneVariables(bool variables) {
+  workspace::WorkspaceShell::TestAccess::SetDebugPaneMode(
+      shell_, variables ? workspace::DebugPaneMode::Variables : workspace::DebugPaneMode::CallStack);
 }
 
 void ScenarioContext::FeedTerminalOutput(std::string_view bytes) {

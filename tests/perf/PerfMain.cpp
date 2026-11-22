@@ -1042,6 +1042,41 @@ void RegisterBuiltInScenarios() {
             context.Measure("output.stream_hidden", [&]() { stream("perf.hidden"); });
           },
   });
+  // The debug pane while a session steps: each step's variables response rewrites
+  // the values (a loop moves one in eight) and a partial frame is painted, as the
+  // adapter's responses arrive with no damage request. Then the same steps with
+  // the Call Stack up, which should repaint nothing in the pane. Each frame carries
+  // only a 1x1 damage rect -- what made it run -- so the pane's repaint is
+  // whatever prep derives (derived-damage 3.1).
+  //
+  // Advisory until a baseline is recorded on the reference runner.
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "debug_pane_step_paint",
+      .smoke = false,
+      .baseline_gated = false,
+      .warmup_iterations = 1,
+      .run =
+          [](ScenarioContext& context) {
+            constexpr std::size_t kValues = 40;
+            (void)context.Open("tests/perf/fixtures/small_project");
+            context.ShowDebugVariables(kValues);
+            context.PumpFrames(2);
+            const workspace::WorkspaceShell::RenderInvalidation frame_trigger{
+                .full = false, .rects = {SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f}}};
+            const auto step = [&]() {
+              for (int i = 1; i <= 40; ++i) {
+                context.StepDebugVariables(kValues, i);
+                context.PumpPartialFrame(frame_trigger);
+              }
+            };
+            context.ShowDebugPaneVariables(true);
+            context.PumpFrames(1);
+            context.Measure("debug.step_shown", step);
+            context.ShowDebugPaneVariables(false);
+            context.PumpFrames(1);
+            context.Measure("debug.step_hidden", step);
+          },
+  });
   // Pointer travel over a program that owns the mouse (Claude Code's fullscreen
   // TUI: alternate screen, DECSET 1003 + SGR): every move resolves the cursor --
   // which asks the session whether the program lit the cell under it
