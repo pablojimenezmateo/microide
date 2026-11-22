@@ -31,8 +31,8 @@
   - Panel divider: a unit of the header, drawn last; it had been painted over by the header's fill since the base commit. Its drag-press damage retired.
   - Notification toasts: done (`NotificationToastPaint.cpp`; the view model is built once at prep, not in paint). Hover damage narrowed from the window to the toast stack. `Notify`'s full redraw stays: a derived surface needs a frame to run in, and a present-only request does not prepare one -- a "frame, no damage" request would let it go (open question).
   - Bottom-panel half: done, its perf A/B within budget (notes.md, 2026-11-22).
-  - Debug pane: done (mode tabs, rows as band + text runs with the inline value editor in its own slot, hint, scrollbar; the scroll settles in prep; row text sits on its band). `DragTargetHighlightRect`'s DebugPaneScrollbar damage retired. Its perf A/B is 3.2's remaining part.
-- [ ] 3.2 Perf A/B for stage 3. Verify: within budget.
+  - Debug pane: done (mode tabs, rows as band + text runs with the inline value editor in its own slot, hint, scrollbar; the scroll settles in prep; row text sits on its band). `DragTargetHighlightRect`'s DebugPaneScrollbar damage retired. Its perf A/B: within budget (notes.md, "Stage 3 perf A/B, the debug pane").
+- [x] 3.2 Perf A/B for stage 3. Verify: within budget.
   - Bottom panel: done (notes.md, "Stage 3 perf A/B, the bottom panel"); the debug pane's to follow.
 
 ## 4. Tab strips and sidebar

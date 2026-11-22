@@ -121,3 +121,31 @@ Per phase now: shown 650, hidden 642, against base 726 / 722 measured with the b
 fresh-per-frame analysis. Its own two clip-list allocations a frame (80 a phase) would go too,
 putting the base at ~646 / 642: the head is at base (+4 in the shown phase, the kept list's
 first growth). terminal_mouse_owner_hover's +1.5% is under the 5% limit; noted, not chased.
+
+## Stage 3 perf A/B, the debug pane (3.2's remaining part, 2026-11-22)
+
+Base 59eeafaff (deec55932, before the debug pane, + the debug_pane_step_paint scenario and its
+input fix); head cbd33b716 (the debug pane + DerivedDamage::Commit's coalescing). Soak paused, 3
+rounds x 10 iterations, order flipped per round. `debug_pane_step_paint` (advisory): Variables with
+40 values, 40 steps, each rewriting one value in eight and painting a partial frame whose only
+damage is the 1x1 rect that made it run; then the same steps with the Call Stack up.
+
+```
+phase                 base p50   head p50   alloc b  alloc h
+debug.step_shown         1.419      7.089      1645     1645
+debug.step_hidden        0.420      0.513      1640     1640
+debug_pane_hittest_geometry (scenario p50): 9.444 -> 9.771 (+3.5%), allocations 2 / 2
+```
+
+Read with care: the base paints NOTHING in the pane on these steps -- the values stayed stale on
+screen, the bug the migration fixes -- so its 1.4 ms is not a budget. What the head's 7.1 ms buys is
+measured against the alternative: a full-window repaint per step costs 42.8 ms here (a local run with
+a full trigger), and the head before Commit's coalescing cost the same, 42.7 ms -- five scattered
+changed rows plus the trigger made six merged clips, which DirtyRegionPolicy promotes to a full
+frame. A surface-local union of the changed rows (never landed) measured 10.1 ms; cbd33b716's
+coalescing (two separate rects per surface, then their bounding rect) 7.1 ms. Allocations are equal
+to base. The hidden phase prices the per-frame prep: +0.09 ms over 40 frames, ~2 us a frame.
+debug_pane_hittest_geometry's +3.5% is consistent across rounds but runs no frames and none of this
+code (hit-testing geometry only): binary layout, not a regression.
+
+Verdict: within budget.
