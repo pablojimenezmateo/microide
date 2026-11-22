@@ -567,7 +567,7 @@ void TestWorkspaceShellMenuEventsReturnPartialChromeInvalidation() {
          "menu hover redraws should stay scoped to chrome");
 }
 
-void TestWorkspaceShellPopupRowHoverReturnsPopupOnlyInvalidation() {
+void TestWorkspaceShellPopupRowHoverOwesAFrame() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
@@ -601,14 +601,11 @@ void TestWorkspaceShellPopupRowHoverReturnsPopupOnlyInvalidation() {
   motion_event.motion.y = second_item->y + second_item->h * 0.5f;
   const auto hover_result = shell.HandleEvent(motion_event);
   Expect(hover_result.handled, "hovering a popup row should be handled");
-  Expect(!hover_result.redraw.full && !hover_result.redraw.rects.empty(),
-         "popup row hover should stay on a partial redraw path");
-  Expect(hover_result.redraw.rects.size() <= 2,
-         "popup row hover should only dirty the affected popup rows");
-  Expect(AnyRectCovers(hover_result.redraw.rects, *first_item),
-         "popup row hover should redraw the previously highlighted row");
-  Expect(AnyRectCovers(hover_result.redraw.rects, *second_item),
-         "popup row hover should redraw the newly highlighted row");
+  // The rows are derived units keyed on whether they are lit: the hover owes a
+  // frame and names no rect, and frame prep repaints the row left and the row
+  // taken (QaFlowRegression/AnOpenMenusRowsRepaintWhatChanged measures that).
+  Expect(!hover_result.redraw.full && hover_result.redraw.frame && hover_result.redraw.rects.empty(),
+         "popup row hover should owe a frame and name no rect of its own");
 }
 
 void TestWorkspaceShellTreeSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
@@ -6846,8 +6843,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMenuBarHoverSwitchesActiveMenu);
   AddTest(tests, "WorkspaceShell/MenuEventsReturnPartialChromeInvalidation",
           TestWorkspaceShellMenuEventsReturnPartialChromeInvalidation);
-  AddTest(tests, "WorkspaceShell/PopupRowHoverReturnsPopupOnlyInvalidation",
-          TestWorkspaceShellPopupRowHoverReturnsPopupOnlyInvalidation);
+  AddTest(tests, "WorkspaceShell/PopupRowHoverOwesAFrame",
+          TestWorkspaceShellPopupRowHoverOwesAFrame);
   AddTest(tests, "WorkspaceShell/TreeSidebarHeaderHoverReturnsButtonOnlyInvalidation",
           TestWorkspaceShellTreeSidebarHeaderHoverReturnsButtonOnlyInvalidation);
   AddTest(tests, "WorkspaceShell/SearchSidebarHeaderHoverReturnsButtonOnlyInvalidation",

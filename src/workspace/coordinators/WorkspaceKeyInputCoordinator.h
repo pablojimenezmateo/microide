@@ -27,7 +27,6 @@ class KeyInputCoordinator {
     // The shell's damage generation (WorkspaceShell::MarkDamage).
     std::function<DamageMark()> damage_generation;
     std::function<void()> request_prompt_redraw;
-    std::function<void()> request_chrome_redraw;
     std::function<void()> request_window_redraw;
     std::function<void()> request_overlay_redraw;
     std::function<void()> request_sidebar_redraw;

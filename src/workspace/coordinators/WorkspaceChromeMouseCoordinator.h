@@ -21,6 +21,9 @@ class ChromeMouseCoordinator {
     std::function<SidebarModeRowLayout(const SDL_FRect&)> sidebar_mode_row;
     std::function<void(std::string_view)> activate_sidebar_view;
     std::function<void()> request_chrome_redraw;
+    // A frame is owed and frame prep derives what it repaints: for state a
+    // derived surface keys its units on (an open menu's lit rows).
+    std::function<void()> request_frame;
     std::function<void(const SDL_FRect&)> request_redraw_rect;
     // Heap-free returns: these three run ~10 times per pointer-motion event over
     // the menu bar, and returning std::vector made that 32 of the 50 allocations
@@ -51,9 +54,6 @@ class ChromeMouseCoordinator {
     std::function<std::optional<WorkspaceShell::PopupRowGeometry>(
         std::span<const MenuItemSpec>, const SDL_FRect&, float, float)>
         hit_test_popup_row;
-    std::function<std::optional<SDL_FRect>(std::span<const MenuItemSpec>, const SDL_FRect&,
-                                           std::size_t)>
-        popup_row_rect_by_index;
     std::function<bool(const MenuItemSpec&)> is_menu_item_enabled;
     std::function<bool(MenuId, std::size_t)> execute_menu_item;
     std::function<std::optional<SDL_FRect>(const SDL_FRect&, MenuId)> compute_popup_menu_rect;
@@ -115,11 +115,7 @@ class ChromeMouseCoordinator {
   };
   PopupRowHover HoveredPopupRow(std::span<const MenuItemSpec> items, const SDL_FRect& popup_rect,
                                 float x, float y) const;
-  void RedrawChangedPopupRows(std::span<const MenuItemSpec> items,
-                              const SDL_FRect& popup_rect,
-                              PopupRowPair previous,
-                              PopupRowPair current,
-                              const SDL_FRect& hovered_rect);
+  void RequestFrameIfPopupRowsChanged(PopupRowPair previous, PopupRowPair current);
   // Tracks the hovered overflow row into `overflow_popup_active_index` so the
   // render path highlights from state rather than from the live pointer, and
   // the keyboard and the mouse cannot select two different rows.

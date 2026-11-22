@@ -84,11 +84,16 @@ bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
     return handled;
   }
   // The three menu surfaces dispatch identically: hand the key to the surface
-  // that is up, coalesce one chrome redraw when it took it, and answer with what
-  // it decided. Each arm used to spell that out for itself.
+  // that is up, owe a frame when it took it, and answer with what it decided.
+  // A frame, not the chrome's rect: a key that stays in the menu moves its
+  // active row, and each row is a derived unit keyed on that (MenuPopupPaint.h),
+  // so frame prep repaints the row left and the row taken -- and nothing for a
+  // key the menu swallowed. What a key changes outside the rows (another menu
+  // opened, this one closed: the bar's open item, which no unit keys) is
+  // requested where it happens, by MenuCoordinator.
   const auto menu_surface_key = [&](bool handled) {
     if (handled) {
-      EnsureRedraw([this]() { operations_.request_chrome_redraw(); });
+      EnsureRedraw([this]() { operations_.request_frame(); });
     }
     return handled;
   };
@@ -537,7 +542,6 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
       KeyInputCoordinator::Operations{
           .damage_generation = [this]() { return MarkDamage(); },
           .request_prompt_redraw = [this]() { RequestPromptRedraw(); },
-          .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },
           .request_overlay_redraw = [this]() { RequestOverlayRedraw(); },
           .request_sidebar_redraw = [this]() { RequestSidebarRedraw(); },

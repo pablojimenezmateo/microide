@@ -8510,9 +8510,28 @@ void TestAnOpenMenusRowsRepaintWhatChanged() {
              " frame=" + std::to_string(within.frame) + " rects=" + std::to_string(within.rects.size()) + ")");
   // Off the menu, onto the editor: the row it left is lit by nothing.
   fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(700.0f, 500.0f)}), "the pointer off the menu");
-  // The keyboard's active row.
+  // The keyboard's active row: the key owes a frame, which repaints the row left
+  // and the row taken -- not the menu bar and the popup, as its chrome rect did.
   fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN)}), "Down moves the active row");
   fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN)}), "and again");
+  const float key = popup_share(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN)}));
+  Expect(key > 0.0f && key < 0.5f,
+         "a key in the menu repaints the rows it moved between, not the popup: " + std::to_string(key) + " of it");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_END)}), "End takes the last row");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_HOME)}), "Home takes the first");
+  // A key the menu swallows changes nothing: its frame repaints nothing.
+  {
+    const workspace::RenderInvalidation swallowed = DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_F9)});
+    fixture.PinCaret();
+    const workspace::RenderInvalidation damage =
+        FrameDamage(fixture.shell, fixture.canvas, fixture.width, fixture.height, swallowed);
+    Expect(!damage.full && damage.rects.empty(),
+           "a key the open menu swallows repaints nothing (full=" + std::to_string(damage.full) + " rects=" +
+               std::to_string(damage.rects.size()) + ")");
+    fixture.PinCaret();
+    fixture.shell.Render(fixture.canvas.renderer(), fixture.width, fixture.height);
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+  }
 
   // The state behind a dimmed row changes under the open menu, with no damage
   // request: an edit gives Revert File something to revert.
@@ -8597,6 +8616,47 @@ void TestAnOpenMenusRowsRepaintAtFractionalScales() {
   }
 }
 
+// The compact layout's overflow popup, whose rows light by its active index: the
+// pointer along them, the keyboard, and Escape, each against a full repaint.
+void TestTheMenuOverflowPopupsRowsRepaintRowByRow() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("notes.txt", "one\ntwo\n", 640, 480);
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "the file in a 640-px window");
+  const std::optional<SDL_FRect> chevron = TestAccess::MenuOverflowChevronRect(fixture.shell);
+  Expect(chevron.has_value(), "a 640-px window folds menus into the chevron");
+  if (!chevron.has_value()) {
+    return;
+  }
+  fixture.ExpectFresh(fixture.Click(*chevron), "the overflow popup opened");
+  Expect(TestAccess::MenuOverflowPopupOpen(fixture.shell), "the chevron opens the overflow popup");
+  const std::vector<MenuRowProbe> rows = OpenMenuRows(fixture, "more");
+  Expect(rows.size() >= 2 &&
+             TestAccess::DerivedUnitCount(fixture.shell, workspace::DerivedSurface::MenuOverflowPopup) == rows.size() + 1,
+         "the overflow popup lays out its card and a unit per row");
+  if (rows.size() < 2) {
+    return;
+  }
+  for (const MenuRowProbe& row : rows) {
+    fixture.ExpectFresh(
+        DispatchEvents(fixture.shell, {MouseMotionEvent(row.rect.x + 12.0f, row.rect.y + row.rect.h * 0.5f)}),
+        "the pointer onto " + row.name);
+  }
+  const workspace::RenderInvalidation within = DispatchEvents(
+      fixture.shell, {MouseMotionEvent(rows.back().rect.x + 30.0f, rows.back().rect.y + rows.back().rect.h * 0.5f)});
+  Expect(!within.full && !within.frame && within.rects.empty(),
+         "the pointer moving within its overflow row asks for no frame");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_UP)}), "Up in the overflow popup");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_HOME)}), "Home in the overflow popup");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(500.0f, 400.0f)}),
+                      "the pointer off the overflow popup");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)}), "Escape closed the overflow popup");
+  Expect(TestAccess::DerivedUnitCount(fixture.shell, workspace::DerivedSurface::MenuOverflowPopup) == 0,
+         "closed: no units");
+}
+
 // A submenu opening beside its popup, the pointer along its rows, and the context
 // menu, which shares the popup's rows: each against a full repaint.
 void TestASubmenuAndAContextMenuRepaintRowByRow() {
@@ -8656,6 +8716,21 @@ void TestASubmenuAndAContextMenuRepaintRowByRow() {
                           "the pointer along the context menu");
     }
   }
+  if (context.has_value()) {
+    // A motion that moves the active row nowhere owes nothing: within its row,
+    // and outside the menu once it has left. Every motion under an open context
+    // menu used to repaint the menu bar and the menu.
+    const auto owes_nothing = [&](float x, float y, const std::string& what) {
+      const workspace::RenderInvalidation redraw = DispatchEvents(fixture.shell, {MouseMotionEvent(x, y)});
+      Expect(!redraw.full && !redraw.frame && redraw.rects.empty(),
+             what + " asks for no frame (full=" + std::to_string(redraw.full) + " frame=" +
+                 std::to_string(redraw.frame) + " rects=" + std::to_string(redraw.rects.size()) + ")");
+    };
+    owes_nothing(context->x + 40.0f, context->y + 58.0f, "the pointer moving within its context menu row");
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(700.0f, 500.0f)}),
+                        "the pointer off the context menu");
+    owes_nothing(710.0f, 505.0f, "the pointer moving beside an open context menu");
+  }
   fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN)}), "Down in the context menu");
   fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)}), "Escape closed the context menu");
   Expect(TestAccess::DerivedUnitCount(fixture.shell, workspace::DerivedSurface::ContextMenu) == 0,
@@ -8687,6 +8762,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/AnOpenMenusRowsRepaintWhatChanged", TestAnOpenMenusRowsRepaintWhatChanged);
   AddTest(tests, "QaFlowRegression/AnOpenMenusRowsRepaintAtFractionalScales",
           TestAnOpenMenusRowsRepaintAtFractionalScales);
+  AddTest(tests, "QaFlowRegression/TheMenuOverflowPopupsRowsRepaintRowByRow",
+          TestTheMenuOverflowPopupsRowsRepaintRowByRow);
   AddTest(tests, "QaFlowRegression/ASubmenuAndAContextMenuRepaintRowByRow",
           TestASubmenuAndAContextMenuRepaintRowByRow);
   AddTest(tests, "QaFlowRegression/TheSidebarsModeRowRepaintsWhatChangedWithNoDamageRequest",
