@@ -4391,6 +4391,76 @@ void TestAGitRowClickLandsOnThePaintedRowAfterTheListShrinks() {
          "a click on c.txt's painted row selects c.txt, wherever the refresh moved it");
 }
 
+// The git list's clicks hit-test the painted list, but its wheel stays on the live
+// one: it steps from the live scroll and clamps to the live list's end. Clamped
+// to the painted layout instead, a list a refresh has grown since that frame
+// could not be wheeled past where it used to end; and every notch counts, before
+// any repaint.
+void TestTheGitListWheelScrollsTheLiveList() {
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  constexpr int kFiles = 120;
+  for (int i = 0; i < kFiles; ++i) {
+    WriteFile(root / ("f" + std::to_string(100 + i) + ".txt"), "one\n");
+  }
+  InitializeGitRepo(root);
+  CommitAll(root, "Add the wheel fixture", "git wheel fixture");
+  for (int i = 0; i < kFiles; ++i) {
+    WriteFile(root / ("f" + std::to_string(100 + i) + ".txt"), "two\n");
+  }
+
+  constexpr int kWidth = 1280;
+  constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the fixture should open");
+  TestAccess::SetWindowSize(shell, kWidth, kHeight);
+  TestAccess::OnFramePresented(shell);
+  TestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, kFiles), "the git view lists every changed file");
+  SoftwareCanvas canvas(kWidth, kHeight);
+  const auto repaint = [&]() {
+    shell.Render(canvas.renderer(), kWidth, kHeight);
+    (void)shell.ConsumePendingRenderInvalidation();
+  };
+  repaint();
+  const SDL_FRect row = TestAccess::GitSidebarEntryRowRect(shell, 0);
+  Expect(row.w > 0.0f, "the first file has a row");
+  TestAccess::SetSidebarScrollRow(shell, 0);
+  repaint();
+  const auto notch = [&]() {
+    (void)DispatchEvents(shell, {MouseWheelEvent(row.x + 30.0f, row.y + 4.0f, -1.0f)});
+  };
+
+  notch();
+  const int one_step = TestAccess::SidebarScrollRow(shell);
+  Expect(one_step > 0, "a notch down scrolls the list");
+  TestAccess::SetSidebarScrollRow(shell, 0);
+  repaint();
+
+  notch();
+  notch();  // before any repaint
+  Expect(TestAccess::SidebarScrollRow(shell) == 2 * one_step,
+         "two notches before a repaint scroll two steps, not one: the wheel reads the live scroll");
+
+  // Scrolled to the end, painted; then a refresh grows the list, unpainted.
+  TestAccess::SetSidebarScrollRow(shell, 1 << 20);
+  repaint();
+  const int painted_end = TestAccess::SidebarScrollRow(shell);
+  Expect(painted_end > 0 && painted_end < (1 << 20), "the painted list settled at its end");
+  auto& git = TestAccess::CurrentProjectState(shell).sidebar.git;
+  const auto grown = git.entries;
+  for (auto entry : grown) {
+    entry.relative_path = "more/" + entry.relative_path;
+    entry.path = (root / entry.relative_path).generic_string();
+    git.entries.push_back(entry);
+  }
+  ++git.snapshot_generation;
+  notch();
+  Expect(TestAccess::SidebarScrollRow(shell) > painted_end,
+         "a notch scrolls on into the rows a refresh added since the frame: the wheel clamps to the live list");
+}
+
 // edit-transforms: saving a new file in a repository repainted the tree's rows but
 // not the git badges the following async status refresh gave them. The refresh
 // returned early whenever the git view's selected entry survived it, and that
@@ -6914,6 +6984,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestTheGitPanelHeadRepaintsWhatChangedWithNoDamageRequest);
   AddTest(tests, "QaFlowRegression/AGitRowClickLandsOnThePaintedRowAfterTheListShrinks",
           TestAGitRowClickLandsOnThePaintedRowAfterTheListShrinks);
+  AddTest(tests, "QaFlowRegression/TheGitListWheelScrollsTheLiveList",
+          TestTheGitListWheelScrollsTheLiveList);
   AddTest(tests, "QaFlowRegression/TreeGitBadgesRepaintWhenTheGitSelectionSurvives",
           TestTreeGitBadgesRepaintWhenTheGitSelectionSurvives);
   AddTest(tests, "QaFlowRegression/MarkingAnOutgoingFileReviewedMarksItsRow",
