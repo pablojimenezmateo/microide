@@ -375,16 +375,9 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   // Go Back / Go Forward history sees them -- one place instead of a hook in each
   // of the dozens of ways the caret can move.
   MakeEditorTabService().ObserveNavigationLocation();
-  // A compare's or merge's panes share one scroll that most of its movers damage
-  // one pane for; a frame that finds it moved repaints the whole surface.
-  if (MergeTabState* merge_tab = ActiveMergeTab();
-      merge_tab != nullptr && merge_tab->prepared_scroll.Note(merge_tab->scroll_row, merge_tab->horizontal_scroll)) {
-    RequestEditorSurfaceRedraw();
-  } else if (CompareTabState* compare_tab = ActiveCompareTab();
-             compare_tab != nullptr &&
-             compare_tab->prepared_scroll.Note(compare_tab->scroll_row, compare_tab->horizontal_scroll)) {
-    RequestEditorSurfaceRedraw();
-  }
+  // (A compare's or merge's shared scroll is in its rows' surface key, folded
+  // after the scroll is synced and clamped below: a frame that finds it moved
+  // repaints that surface's units, whatever moved it.)
   text_renderer_.EnsureInitialized(renderer, presentation_scale_x_, presentation_scale_y_);
   editor_text_renderer_.EnsureInitialized(renderer, presentation_scale_x_, presentation_scale_y_);
   // The terminal renderer is only needed (and only pays for its glyph atlas) once a

@@ -188,7 +188,11 @@ void DiffTabCoordinator::ActivateCompareTab(std::size_t index, bool dismiss_over
   } else {
     state_.surface.focus = FocusTarget::Editor;
   }
-  operations_.request_active_tab_redraw(false);
+  // The pane's content and its breadcrumb are derived (the tab in front is in
+  // their keys): a frame. The strip is not yet -- its unit keys the tabs' titles
+  // and dirty marks, not which one is in front -- so it keeps its rect.
+  operations_.request_tab_strip_redraw();
+  operations_.request_frame();
 }
 
 void DiffTabCoordinator::ActivateMergeTab(std::size_t index) {
@@ -196,7 +200,9 @@ void DiffTabCoordinator::ActivateMergeTab(std::size_t index) {
   operations_.reveal_active_merge_selection();
   operations_.ensure_active_tab_visible();
   state_.surface.focus = FocusTarget::Editor;
-  operations_.request_active_tab_redraw(false);
+  // As ActivateCompareTab: the strip keeps its rect, the rest is a frame.
+  operations_.request_tab_strip_redraw();
+  operations_.request_frame();
 }
 
 void DiffTabCoordinator::RefreshExistingCompareTab(std::size_t index,
@@ -456,7 +462,8 @@ void DiffTabCoordinator::RefreshCompareTabsForPath(const std::filesystem::path& 
         if (group_index == state_.focused_group_index) {
           operations_.reveal_active_compare_selection();
         }
-        operations_.request_editor_surface_redraw();
+        // The rebuilt diff's rows and header are its pane's units: a frame.
+        operations_.request_frame();
       }
     }
   }
@@ -517,7 +524,8 @@ bool DiffTabCoordinator::ApplyCompareTabRefresh(const std::uint64_t id, const bo
         if (group_index == state_.focused_group_index) {
           operations_.reveal_active_compare_selection();
         }
-        operations_.request_editor_surface_redraw();
+        // The rebuilt diff's rows and header are its pane's units: a frame.
+        operations_.request_frame();
       }
       return true;
     }
@@ -586,7 +594,7 @@ void DiffTabCoordinator::ApplyCompareTabLoad(const std::uint64_t id, const bool 
           }
           operations_.report_compare_load_failure(std::move(message));
         }
-        operations_.request_active_tab_redraw(false);
+        operations_.request_frame();  // the stand-in stays; whatever it shows is its units'
         return;
       }
       compare.left_content = std::move(result.left);
@@ -609,7 +617,9 @@ void DiffTabCoordinator::ApplyCompareTabLoad(const std::uint64_t id, const bool 
       }
       SelectFirstChangeOnOpen(tab);
       NotifyBufferOpenForEditableTab(tab, operations_);
-      operations_.request_active_tab_redraw(false);
+      // The loaded diff's rows, header and breadcrumb are derived; its tab keeps
+      // its title and place in the strip. A frame.
+      operations_.request_frame();
       return;
     }
   }

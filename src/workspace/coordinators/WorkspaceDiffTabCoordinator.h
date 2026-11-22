@@ -22,7 +22,11 @@ class DiffTabCoordinator {
     std::function<void()> reveal_active_merge_selection;
     std::function<void()> ensure_active_tab_visible;
     std::function<void(bool)> dismiss_overlay;
-    std::function<void(bool)> request_active_tab_redraw;
+    // The tab strip's own rect: which tab is in front is not in its unit yet.
+    std::function<void()> request_tab_strip_redraw;
+    // A frame owed: a diff's rows, header and breadcrumb derive their damage
+    // (RequestPreparedFrame); a request names no rect.
+    std::function<void()> request_frame;
     std::function<std::optional<TabEntry>(const std::filesystem::path&,
                                           const project::GitCommitEntry&,
                                           std::size_t)>
@@ -81,7 +85,6 @@ class DiffTabCoordinator {
     // Drop an off-thread read whose answer is no longer wanted (its completion
     // still arrives, cancelled).
     std::function<void(std::uint64_t)> cancel_file_read;
-    std::function<void()> request_editor_surface_redraw;
   };
 
   // A working-tree compare at least this large opens as a stand-in and loads off

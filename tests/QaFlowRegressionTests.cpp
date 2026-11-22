@@ -7682,7 +7682,215 @@ void TestAMergeResultRepaintsTheFarBracketOfItsPair() {
 
 }  // namespace
 
+
+// ---- derived-damage: a diff's actions ask for a frame, and repaint their rows ----
+namespace {
+
+// The part of `redraw` (and of what preparing its frame derives) inside group
+// `group`'s pane, as a share of the pane; rects are summed, so overlaps count twice.
+struct PaneDamage {
+  bool full = false;
+  float share = 0.0f;
+};
+PaneDamage DamageInPane(FlowFixture& fixture, const workspace::RenderInvalidation& redraw, std::size_t group = 0) {
+  const SDL_FRect pane = TestAccess::GroupEditorSurfaceRect(fixture.shell, group);
+  const workspace::RenderInvalidation damage =
+      FrameDamage(fixture.shell, fixture.canvas, FlowFixture::kWidth, FlowFixture::kHeight, redraw);
+  PaneDamage out{.full = damage.full};
+  for (const SDL_FRect& rect : damage.rects) {
+    SDL_FRect inside{};
+    if (SDL_GetRectIntersectionFloat(&rect, &pane, &inside)) {
+      out.share += inside.w * inside.h / (pane.w * pane.h);
+    }
+  }
+  // FrameDamage prepared the frame without painting it: paint the state whole, so
+  // the next step starts from what is on the canvas.
+  fixture.PinCaret();
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  return out;
+}
+
+void OpenTwoFileCompare(FlowFixture& fixture, int lines) {
+  std::string right;
+  for (int i = 1; i <= lines; ++i) {
+    right += (i % 7 == 0 ? "long value" : "int value") + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  const std::filesystem::path right_path = fixture.root / "right.cpp";
+  WriteFile(right_path, right);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell,
+                                        "compare-files " + fixture.file.string() + " " + right_path.string()),
+         "compare-files should open a diff");
+  TestAccess::SetFocusEditor(fixture.shell);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  fixture.PinCaret();
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+}
+
+std::string CompareLeftText(int lines) {
+  std::string left;
+  for (int i = 1; i <= lines; ++i) {
+    left += "int value" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  return left;
+}
+
+// What a user does in a compare tab repaints the rows it changes. Its actions
+// asked for the whole editor surface -- every pane of a split -- and so did frame
+// prep, twice over: whenever the diff's scroll had moved, and whenever the syntax
+// walk advanced, which is every keystroke (an edit restarts it). The rows are
+// derived units now: an action asks for a frame.
+void TestACompareTabsActionsRepaintTheirRows() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("left.cpp", CompareLeftText(60));
+  OpenTwoFileCompare(fixture, 60);
+  auto& compare = TestAccess::ActiveCompare(fixture.shell);
+  const SDL_FRect pane = TestAccess::GroupEditorSurfaceRect(fixture.shell, 0);
+
+  // A selection step, the working side inactive: the row left and the row taken.
+  compare.right_view_active = false;
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the diff with its working side inactive");
+  const std::size_t selected = compare.selected_row;
+  workspace::RenderInvalidation step = DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN)});
+  Expect(compare.selected_row != selected, "Down moves the diff's selection");
+  Expect(step.frame && !step.full && step.rects.empty(), "a selection step asks for a frame and names no rect");
+  PaneDamage damage = DamageInPane(fixture, step);
+  Expect(!damage.full && damage.share > 0.0f && damage.share < 0.15f,
+         "a selection step repaints the two rows it moved between: " + std::to_string(damage.share) + " of the pane");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN)}), "another selection step");
+
+  // A click into the working side activates it (the whole surface: every row
+  // shows which side has the keyboard); a second click there moves the caret.
+  // (Its damage is not bounded here: the shell's mouse-button handlers still ask
+  // for the editor surface on every press and release.)
+  const auto click = [&](float y) {
+    const float x = pane.x + pane.w * 0.75f;
+    return DispatchEvents(fixture.shell, {MouseMotionEvent(x, y), MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
+                                          MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)});
+  };
+  fixture.ExpectFresh(click(pane.y + 200.0f), "a click into the working side");
+  Expect(compare.right_view_active, "the click activated the working side");
+  fixture.ExpectFresh(click(pane.y + 290.0f), "a second click there, moving its caret");
+
+  // Typing: the first keystroke dirties the buffer (once); every one after it
+  // repaints its row. The syntax walk restarting used to repaint the surface.
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("x")}), "the first keystroke");
+  workspace::RenderInvalidation typed = DispatchEvents(fixture.shell, {TextInputEvent("y")});
+  Expect(!typed.full, "a keystroke in the working side asks for no full repaint");
+  damage = DamageInPane(fixture, typed);
+  Expect(!damage.full && damage.share > 0.0f && damage.share < 0.12f,
+         "a keystroke in the working side repaints its row: " + std::to_string(damage.share) + " of the pane");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("z")}), "a third keystroke");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RETURN)}), "Return in the working side");
+
+  // The toggles rebuild or restyle every row: a frame, no rect of their own.
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "diff-show-whitespace"), "diff-show-whitespace should run");
+  workspace::RenderInvalidation toggled = fixture.shell.ConsumePendingRenderInvalidation();
+  Expect(toggled.frame && !toggled.full && toggled.rects.empty(), "show-whitespace asks for a frame and names no rect");
+  fixture.ExpectFresh(toggled, "whitespace shown");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "diff-ignore-whitespace"), "diff-ignore-whitespace should run");
+  toggled = fixture.shell.ConsumePendingRenderInvalidation();
+  Expect(!toggled.full && toggled.rects.empty(), "ignore-whitespace names no rect");
+  fixture.ExpectFresh(toggled, "whitespace ignored");
+}
+
+// A diff in one pane of a split, an editor in the other: scrolling the diff
+// repaints the diff. Frame prep asked for the whole editor surface whenever the
+// focused diff's scroll had moved, so every scroll step repainted the editor
+// beside it too.
+void TestScrollingADiffLeavesThePaneBesideItAlone() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("left.cpp", CompareLeftText(120));
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right left.cpp"), "split-right should open a second pane");
+  OpenTwoFileCompare(fixture, 120);
+  auto& compare = TestAccess::ActiveCompare(fixture.shell);
+  const std::size_t diff_group = TestAccess::CurrentProjectState(fixture.shell).clamped_focused_group_index();
+  const std::size_t other_group = diff_group == 0 ? 1 : 0;
+  const SDL_FRect other = TestAccess::GroupEditorSurfaceRect(fixture.shell, other_group);
+  const SDL_FRect diff = TestAccess::GroupEditorSurfaceRect(fixture.shell, diff_group);
+  for (const int row : {5, 20, 8}) {
+    compare.scroll_row = row;
+    const workspace::RenderInvalidation damage =
+        FrameDamage(fixture.shell, fixture.canvas, FlowFixture::kWidth, FlowFixture::kHeight, NothingAnnounced());
+    Expect(!damage.full, "a diff's scroll does not repaint the window");
+    bool in_diff = false;
+    for (const SDL_FRect& rect : damage.rects) {
+      const SDL_FRect inner{other.x + 2.0f, other.y, other.w - 4.0f, other.h};
+      Expect(!SDL_HasRectIntersectionFloat(&rect, &inner),
+             "a diff's scroll repaints nothing in the pane beside it (damaged " + std::to_string(rect.x) + "," +
+                 std::to_string(rect.y) + " " + std::to_string(rect.w) + "x" + std::to_string(rect.h) + ")");
+      in_diff = in_diff || SDL_HasRectIntersectionFloat(&rect, &diff);
+    }
+    Expect(in_diff, "the scroll repaints the diff");
+    fixture.PinCaret();
+    fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+    compare.scroll_row = row + 1;
+    fixture.ExpectFresh(NothingAnnounced(), "the diff scrolled one more row");
+  }
+}
+
+// A merge's actions: each asks for a frame and the frame is fresh -- moving
+// between conflicts in view, accepting a side, the status line of Mark Resolved,
+// the base pane, the result scrolled sideways. A steady keystroke in the result
+// repaints its row.
+void TestAMergeTabsActionsRepaintWhatTheyChange() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("notes.txt", "notes\n");
+  std::string side;
+  for (int i = 1; i <= 6; ++i) {
+    side += "int line" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  WriteFile(fixture.root / "base.txt", side);
+  WriteFile(fixture.root / "incoming.txt", "int head = 1;\n" + side + "int tail = 9;\n");
+  WriteFile(fixture.root / "current.txt", "int head = 2;\n" + side + "int tail = 8;\n");
+  WriteFile(fixture.root / "result.txt", "<<<<<<< HEAD\nint head = 2;\n=======\nint head = 1;\n>>>>>>> in\n" + side +
+                                             "<<<<<<< HEAD\nint tail = 8;\n=======\nint tail = 9;\n>>>>>>> in\n");
+  Expect(TestAccess::OpenMergeEditor(fixture.shell, fixture.root / "base.txt", fixture.root / "incoming.txt",
+                                     fixture.root / "current.txt", fixture.root / "result.txt"),
+         "the merge editor opens");
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the merge editor");
+  auto& merge = TestAccess::ActiveMerge(fixture.shell);
+  Expect(merge.conflicts.size() == 2, "the result holds two conflicts, both in view");
+  const auto frame_of = [&](const std::string& what) {
+    const workspace::RenderInvalidation redraw = fixture.shell.ConsumePendingRenderInvalidation();
+    Expect(redraw.frame && !redraw.full && redraw.rects.empty(), what + " asks for a frame and names no rect");
+    return redraw;
+  };
+  TestAccess::MoveMergeSelection(fixture.shell, 1);
+  fixture.ExpectFresh(frame_of("the next conflict"), "the next conflict selected");
+  TestAccess::MoveMergeSelection(fixture.shell, -1);
+  fixture.ExpectFresh(frame_of("the previous conflict"), "the previous conflict selected");
+  TestAccess::MarkMergeResolved(fixture.shell);
+  fixture.ExpectFresh(frame_of("Mark Resolved with conflicts left"), "Mark Resolved said how many are left");
+  TestAccess::ApplyMergeChoice(fixture.shell, compare::MergeChoice::Incoming);
+  fixture.ExpectFresh(frame_of("accepting a side"), "a side accepted");
+  TestAccess::ToggleMergeBasePane(fixture.shell);
+  fixture.ExpectFresh(frame_of("the base pane"), "the base pane toggled");
+  TestAccess::ToggleMergeBasePane(fixture.shell);
+  fixture.ExpectFresh(frame_of("the base pane"), "the base pane toggled back");
+  // Typing in the result: the first keystroke may re-track its conflict; the
+  // next one is one row of the result.
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("x")}), "the first keystroke in the result");
+  const PaneDamage damage = DamageInPane(fixture, DispatchEvents(fixture.shell, {TextInputEvent("y")}));
+  Expect(!damage.full && damage.share > 0.0f && damage.share < 0.1f,
+         "a keystroke in the result repaints its row: " + std::to_string(damage.share) + " of the pane");
+}
+
+}  // namespace
+
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "QaFlowRegression/ACompareTabsActionsRepaintTheirRows", TestACompareTabsActionsRepaintTheirRows);
+  AddTest(tests, "QaFlowRegression/ScrollingADiffLeavesThePaneBesideItAlone",
+          TestScrollingADiffLeavesThePaneBesideItAlone);
+  AddTest(tests, "QaFlowRegression/AMergeTabsActionsRepaintWhatTheyChange", TestAMergeTabsActionsRepaintWhatTheyChange);
   AddTest(tests, "QaFlowRegression/ACompareWorkingSideRepaintsItsDiagnosticsAndDecorations",
           TestACompareWorkingSideRepaintsItsDiagnosticsAndDecorations);
   AddTest(tests, "QaFlowRegression/AMergeResultRepaintsTheFarBracketOfItsPair",

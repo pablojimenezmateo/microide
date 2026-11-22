@@ -34,7 +34,6 @@ class CompareInteractionCoordinator {
     std::function<void(CompareTabState&)> sync_compare_viewport_scroll;
     std::function<void(CompareTabState&, int)> scroll_compare_rows;
     std::function<void(CompareTabState&, int)> scroll_compare_columns;
-    std::function<void()> request_editor_surface_redraw;
     std::function<void()> reveal_active_merge_selection;
     std::function<void(MergeTabState&, int)> scroll_merge_columns;
     std::function<void(MergeTabState&, const std::vector<std::string>&)>

@@ -481,7 +481,7 @@ CompareMouseCoordinator& WorkspaceShell::MakeCompareMouseCoordinator() {
                 const bool expanded =
                     ExpandCompareCollapsedContext(compare_tab, presentation_row, action);
                 if (expanded) {
-                  RequestEditorSurfaceRedraw();
+                  RequestPreparedFrame();  // the expanded rows are the surface's units
                 }
                 return expanded;
               },

@@ -501,8 +501,6 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
   constexpr std::size_t kCompareSyntaxRowsPerFrame = 256;
   const SurfaceTokenWindow::WalkBudget walk_budget{
       kCompareSyntaxRowsPerFrame, std::chrono::steady_clock::now() + kSyntaxWalkTimePerFrame};
-  const std::size_t left_before = compare_tab.left_token_window.frontier();
-  const std::size_t right_before = compare_tab.right_token_window.frontier();
   compare_tab.left_token_window.EnsureWindow(
       window_start, window_end, compare_tab.path, walk_budget,
       [&](std::size_t row) -> std::string_view {
@@ -519,11 +517,9 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
       // -- an unchanged row identical on both sides. Left is ensured first, so its
       // states are current when this asks.
       [&](std::size_t row) { return !CompareRowRightTokensAliasLeft(compare_tab, row); });
-  // Rows this step reached are painted in this frame.
-  if (compare_tab.left_token_window.frontier() != left_before ||
-      compare_tab.right_token_window.frontier() != right_before) {
-    RequestRedrawRect(rect);
-  }
+  // (Rows this step reached repaint in this frame through their own units: each
+  // row keys on its tokens, CompareRowUnits. This asked for the whole surface
+  // whenever the walk advanced -- on every keystroke, since an edit restarts it.)
   // Capped per frame: if it has not yet reached the deepest visible model row (after
   // scrolling past a giant collapsed run), the next frame takes the next step
   // (PreparedFrameState::syntax_catch_up_rect). Against each window's own row

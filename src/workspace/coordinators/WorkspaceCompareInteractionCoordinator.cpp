@@ -523,7 +523,9 @@ void CompareInteractionCoordinator::ToggleCompareIgnoreWhitespace() {
   compare_tab->build_options.ignore_whitespace = !compare_tab->build_options.ignore_whitespace;
   operations_.refresh_compare_tab_derived_state(*compare_tab);
   operations_.reveal_active_compare_selection();
-  operations_.request_editor_surface_redraw();
+  // The rebuilt rows are the surface's units (CompareRowUnits): a frame repaints
+  // the ones whose diff changed.
+  operations_.request_frame();
 }
 
 void CompareInteractionCoordinator::ToggleCompareShowWhitespace() {
@@ -533,7 +535,7 @@ void CompareInteractionCoordinator::ToggleCompareShowWhitespace() {
   }
   compare_tab->show_whitespace = !compare_tab->show_whitespace;
   RefreshCompareTabPresentation(*compare_tab);
-  operations_.request_editor_surface_redraw();
+  operations_.request_frame();
 }
 
 void CompareInteractionCoordinator::ScrollCompareRows(int delta) {
@@ -542,7 +544,7 @@ void CompareInteractionCoordinator::ScrollCompareRows(int delta) {
     return;
   }
   operations_.scroll_compare_rows(*compare_tab, delta);
-  operations_.request_editor_surface_redraw();
+  operations_.request_frame();  // the scroll is in the rows' surface key
 }
 
 void CompareInteractionCoordinator::ScrollCompareColumns(int delta) {
@@ -551,7 +553,7 @@ void CompareInteractionCoordinator::ScrollCompareColumns(int delta) {
     return;
   }
   operations_.scroll_compare_columns(*compare_tab, delta);
-  operations_.request_editor_surface_redraw();
+  operations_.request_frame();
 }
 
 void CompareInteractionCoordinator::MoveMergeSelection(int delta) {
@@ -573,7 +575,7 @@ void CompareInteractionCoordinator::ScrollMergeColumns(int delta) {
     return;
   }
   operations_.scroll_merge_columns(*merge_tab, delta);
-  operations_.request_editor_surface_redraw();
+  operations_.request_frame();
 }
 
 void CompareInteractionCoordinator::ApplyMergeChoice(compare::MergeChoice choice) {
@@ -686,7 +688,7 @@ void CompareInteractionCoordinator::ToggleMergeBasePane() {
     return;
   }
   merge_tab->base_pane_visible = !merge_tab->base_pane_visible;
-  operations_.request_editor_surface_redraw();
+  operations_.request_frame();
 }
 
 void CompareInteractionCoordinator::CopyMergeSideSnippet(bool incoming) {
@@ -716,7 +718,8 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
   }
   if (!merge_tab->file_conflict.text_hunks_available) {
     merge_tab->status_message = merge_tab->file_conflict.summary;
-    operations_.request_editor_surface_redraw();
+    // The status line is the merge header's unit, here and below: a frame repaints it.
+    operations_.request_frame();
     return;
   }
 
@@ -736,7 +739,7 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
     if (merge_tab->conflicts[std::min(merge_tab->selected_hunk, merge_tab->conflicts.size() - 1)].resolved) {
       JumpNextUnresolvedMergeConflict();
     }
-    operations_.request_editor_surface_redraw();
+    operations_.request_frame();
     return;
   }
   merge_tab->unresolved_override_prompt_pending = false;
@@ -788,14 +791,14 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
       merge_tab->status_message = delete_validation.message;
       merge_tab->index_stale =
           delete_validation.issue == MergeValidationIssue::StaleIndexGeneration;
-      operations_.request_editor_surface_redraw();
+      operations_.request_frame();
       return;
     }
     if (!operations_.stage_merge_result_path ||
         !operations_.stage_merge_result_path(merge_tab->output_path)) {
       restore_working_file();
       merge_tab->status_message = "Git could not mark the file resolved.";
-      operations_.request_editor_surface_redraw();
+      operations_.request_frame();
       return;
     }
     merge_tab->marked_resolved = true;
@@ -806,13 +809,13 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
       operations_.refresh_git_sidebar();
     }
     operations_.request_tab_strip_redraw();
-    operations_.request_editor_surface_redraw();
+    operations_.request_frame();
     return;
   }
 
   if (operations_.save_active_merge_tab && !operations_.save_active_merge_tab()) {
     merge_tab->status_message = "Could not save merge result.";
-    operations_.request_editor_surface_redraw();
+    operations_.request_frame();
     return;
   }
   // The save above just rewrote output_path — TextViewport::Save always does an
@@ -851,7 +854,7 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
       if (validation.marker_line.has_value()) {
         merge_tab->result_viewport.JumpCursorTo(*validation.marker_line, 0);
       }
-      operations_.request_editor_surface_redraw();
+      operations_.request_frame();
       return;
     }
   }
@@ -863,14 +866,14 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
       merge_tab->external_result_stale =
           validation.issue == MergeValidationIssue::ExternalModification;
     }
-    operations_.request_editor_surface_redraw();
+    operations_.request_frame();
     return;
   }
 
   if (!operations_.stage_merge_result_path ||
       !operations_.stage_merge_result_path(merge_tab->output_path)) {
     merge_tab->status_message = "Git could not mark the file resolved.";
-    operations_.request_editor_surface_redraw();
+    operations_.request_frame();
     return;
   }
 
@@ -882,7 +885,7 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
     operations_.refresh_git_sidebar();
   }
   operations_.request_tab_strip_redraw();
-  operations_.request_editor_surface_redraw();
+  operations_.request_frame();
 }
 
 void CompareInteractionCoordinator::StageCompareHunk() {

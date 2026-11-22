@@ -28,8 +28,8 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
           .reveal_active_merge_selection = [this]() { RevealActiveMergeSelection(); },
           .ensure_active_tab_visible = [this]() { tab_strip_chrome_.EnsureActiveTabVisible(); },
           .dismiss_overlay = [this](bool restore_focus) { DismissOverlay(restore_focus); },
-          .request_active_tab_redraw =
-              [this](bool include_layout) { RequestActiveTabRedraw(include_layout); },
+          .request_tab_strip_redraw = [this]() { RequestTabStripRedraw(); },
+          .request_frame = [this]() { RequestPreparedFrame(); },
           .build_compare_tab_entry =
               [this](const std::filesystem::path& path,
                      const project::GitCommitEntry& commit,
@@ -232,7 +232,6 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
                 });
               },
           .cancel_file_read = [this](std::uint64_t id) { file_read_service_.Cancel(id); },
-          .request_editor_surface_redraw = [this]() { RequestEditorSurfaceRedraw(); },
       });
 }
 
@@ -307,7 +306,6 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
                   SyncCompareViewportScroll(compare_tab);
                 }
               },
-          .request_editor_surface_redraw = [this]() { RequestEditorSurfaceRedraw(); },
           .reveal_active_merge_selection = [this]() { RevealActiveMergeSelection(); },
           .scroll_merge_columns =
               [this](MergeTabState& merge_tab, int delta) {
@@ -694,7 +692,9 @@ void WorkspaceShell::SetActiveBranchFileReviewed(bool reviewed) {
   }
   ApplyBranchReviewPresentationMarkers(*compare_tab, review);
   PersistBranchReviewState();
-  RequestActiveTabRedraw(true);
+  // The diff's review marks and summary line are its rows' and header's keys: a
+  // frame. The sidebar's row for the file is not derived yet: its rect.
+  RequestPreparedFrame();
   RequestSidebarRedraw();
 }
 
@@ -711,7 +711,7 @@ void WorkspaceShell::SetActiveBranchHunkReviewed(bool reviewed) {
   review.SetHunkReviewed(compare_tab->branch_target, compare_tab->path, compare_tab->model, hunk_index, reviewed);
   ApplyBranchReviewPresentationMarkers(*compare_tab, review);
   PersistBranchReviewState();
-  RequestActiveTabRedraw(true);
+  RequestPreparedFrame();  // the hunk's mark is in its rows' keys
   RequestSidebarRedraw();  // the file's row marker follows its hunks
 }
 
@@ -720,7 +720,7 @@ void WorkspaceShell::ClearActiveBranchReviewState() {
   if (compare_tab != nullptr && CompareTabTakesReviewMarks(*compare_tab)) {
     context_.current_project_state.branch_review.ClearTarget(compare_tab->branch_target);
     ApplyBranchReviewPresentationMarkers(*compare_tab, context_.current_project_state.branch_review);
-    RequestActiveTabRedraw(true);
+    RequestPreparedFrame();  // the cleared marks are in the rows' and the header's keys
   } else if (const std::optional<compare::BranchReviewTargetIdentity> target =
                  OutgoingBranchReviewTarget(context_.current_project_state.sidebar.git,
                                             context_.current_project_state.root);
@@ -753,7 +753,8 @@ void WorkspaceShell::EditActiveBranchReviewNote(const std::string& note_text) {
   }
   ApplyBranchReviewPresentationMarkers(*compare_tab, context_.current_project_state.branch_review);
   PersistBranchReviewState();
-  RequestActiveTabRedraw(true);
+  RequestPreparedFrame();  // the note's mark is in its row's key
+  RequestSidebarRedraw();  // as before: the sidebar's row for the file is not derived yet
 }
 
 }  // namespace microide::workspace

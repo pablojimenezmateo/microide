@@ -289,8 +289,22 @@ void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uin
     units.push_back({SDL_FRect{inputs.pane_rect.x, top, inputs.pane_rect.w, std::max(0.0f, height)}, row_keys[row]});
   }
   const float tail_top = metrics.first_line_y + static_cast<float>(row_keys.size()) * metrics.line_height;
+  // The empty stretch below the last row. What a surface draws on a line past the
+  // document's end is drawn here: a merge result's conflict that resolves to no
+  // lines at the very end sits as an empty box under the last line, and selecting
+  // it lights a box no row holds (344 stale px). Those extra keys fold into the
+  // tail while the document's last row is in view.
+  std::uint64_t tail = Mix(inputs.pane_key, 0x7A11);
+  if (scroll + row_keys.size() >= visual_count) {
+    const std::size_t past_last = rows.empty() ? 0 : rows.back().line + 1;
+    for (const auto& [line, hash] : inputs.extra_line_keys) {
+      if (line >= past_last) {
+        tail = Mix(Mix(Mix(tail, 0xE0), line), hash);
+      }
+    }
+  }
   units.push_back({SDL_FRect{inputs.pane_rect.x, tail_top, inputs.pane_rect.w, std::max(0.0f, pane_bottom - tail_top)},
-                   Mix(inputs.pane_key, 0x7A11)});
+                   tail});
 }
 
 }  // namespace microide::workspace

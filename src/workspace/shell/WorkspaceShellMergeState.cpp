@@ -546,19 +546,14 @@ void WorkspaceShell::PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab
   constexpr std::size_t kMergeSyntaxRowsPerFrame = 256;
   const SurfaceTokenWindow::WalkBudget walk_budget{
       kMergeSyntaxRowsPerFrame, std::chrono::steady_clock::now() + kSyntaxWalkTimePerFrame};
-  const std::size_t incoming_before = merge_tab.incoming_token_window.frontier();
-  const std::size_t current_before = merge_tab.current_token_window.frontier();
   merge_tab.incoming_token_window.EnsureWindow(
       visible_start_row, visible_end_row, merge_tab.output_path, walk_budget,
       [&](std::size_t row) -> std::string_view { return merge_tab.model.incoming_lines[row]; });
   merge_tab.current_token_window.EnsureWindow(
       visible_start_row, visible_end_row, merge_tab.output_path, walk_budget,
       [&](std::size_t row) -> std::string_view { return merge_tab.model.current_lines[row]; });
-  // Rows this step reached are painted in this frame.
-  if (merge_tab.incoming_token_window.frontier() != incoming_before ||
-      merge_tab.current_token_window.frontier() != current_before) {
-    RequestRedrawRect(rect);
-  }
+  // (Rows this step reached repaint in this frame through their own units: each
+  // source row keys on its tokens, CompareRowUnits.)
   // Capped per frame, so a window deep in a long file takes several: the next frame
   // takes the next step (PreparedFrameState::syntax_catch_up_rect). The merge
   // surface had no catch-up at all, so rows past the cap stayed plain until
