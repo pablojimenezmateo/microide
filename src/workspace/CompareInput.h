@@ -23,16 +23,10 @@ namespace microide::workspace {
 struct DiffSurfacePaint;
 
 struct CompareRenderProjectInputs {
-  const std::filesystem::path* project_root = nullptr;
-  const editor::DiagnosticsStore* diagnostics_store = nullptr;
-  // Plugin decorations for the EDITABLE right pane only. The left pane is a
-  // different revision of the file, so a decoration published against the
-  // working-tree line numbers would land on the wrong line there.
-  const editor::FileDecorations* right_plugin_decorations = nullptr;
-  // The focused group's diff. Only it shows the caret's inline blame: two diffs
-  // in a split would otherwise trade the one blame request every frame.
-  bool focused = true;
-  // The surface's paint inputs frame prep built (settings, drags, pointer, blame).
+  // The surface's paint inputs frame prep built: settings, drags, the pointer, the
+  // blame, and the working side's diagnostics and decorations. Nothing here reaches
+  // a store: what the surface draws is what its row units compared
+  // (CheckDerivedSurfacePaintReadsOnlyItsSnapshot).
   const DiffSurfacePaint* paint = nullptr;
 };
 

@@ -132,7 +132,12 @@ struct DiffSurfacePaint {
   bool right_divider_dragged = false;  // merge
   std::optional<SDL_FPoint> pointer;   // inside the surface, else none
   std::optional<editor::EditorBlameOverlay> blame;
-  std::span<const editor::PublishedDiagnostic> diagnostics;  // the editable side's, while clean
+  // The editable side's diagnostics and (a compare's working side) its plugin and
+  // language-server decorations, while the buffer is clean: resolved at prep, so
+  // paint asks no store, and folded into the rows that draw them (CompareRowUnits,
+  // EditorRowUnits) -- a publish changes them with no edit and no rect.
+  std::span<const editor::PublishedDiagnostic> diagnostics;
+  const editor::FileDecorations* decorations = nullptr;
 };
 
 struct PreparedFrameState {

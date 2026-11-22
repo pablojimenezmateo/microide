@@ -7318,7 +7318,148 @@ void TestAWrappedLinesRowsKeyOnEveryByteOfIt() {
 }  // namespace
 
 
+// ---- derived-damage 2b: a diff surface's working side keys what it draws -------
+namespace {
+
+// The canvas after a full repaint of the current state (the caller frees it).
+SDL_Surface* FullFrame(FlowFixture& fixture) {
+  fixture.PinCaret();
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  SDL_FlushRenderer(fixture.canvas.renderer());
+  return SDL_DuplicateSurface(fixture.canvas.surface());
+}
+
+// A compare tab's working side draws its file's diagnostics (squiggles, gutter
+// marks) and its plugin and language-server decorations (text styles, gutter
+// marks) while its buffer is clean. Its paint read both from the live stores and
+// its row keys folded neither, so a publish reached the screen only where the
+// publisher also asked for the whole editor surface. Prep resolves them now and
+// each row keys on its own: published, republished and hidden by the first
+// keystroke, with no damage request.
+void TestACompareWorkingSideRepaintsItsDiagnosticsAndDecorations() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  std::string left;
+  std::string right;
+  for (int i = 1; i <= 40; ++i) {
+    left += "int value" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+    right += (i % 7 == 0 ? "long value" : "int value") + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  FlowFixture fixture("left.cpp", left);
+  const std::filesystem::path right_path = fixture.root / "right.cpp";
+  WriteFile(right_path, right);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell,
+                                        "compare-files " + fixture.file.string() + " " + right_path.string()),
+         "compare-files should open a diff");
+  auto& compare = TestAccess::ActiveCompare(fixture.shell);
+  compare.right_view_active = true;
+  compare.right_viewport.MoveCursorTo(0, 0);
+  TestAccess::SetFocusEditor(fixture.shell);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  Expect(compare.right_editable && !compare.right_viewport.dirty(), "the working side is editable and clean");
+  auto& state = TestAccess::CurrentProjectState(fixture.shell);
+  const auto diagnostics = [&](std::initializer_list<std::size_t> lines, editor::DiagnosticSeverity severity) {
+    std::vector<editor::Diagnostic> squiggles;
+    for (const std::size_t line : lines) {
+      squiggles.push_back(editor::Diagnostic{
+          .range = editor::SelectionRange{.start = {.line = line, .column = 0}, .end = {.line = line, .column = 6}},
+          .severity = severity,
+          .message = "diff"});
+    }
+    (void)state.diagnostics_store.ReplaceForOwnerFile("diff-test", compare.right_viewport.path(), std::move(squiggles));
+  };
+  const auto decorations = [&](SDL_Color colour, editor::GutterIconShape shape) {
+    editor::PluginDecorationData data;
+    data.text_styles.push_back(
+        editor::TextStyleDecoration{.line = 5, .start_column = 0, .end_column = 3, .foreground = colour});
+    data.gutter_marks.push_back(editor::GutterMarkDecoration{.line = 11, .shape = shape, .color = colour});
+    Expect(state.EnsurePluginPresentation().decorations.ReplaceForOwnerFile("diff-test", compare.right_viewport.path(),
+                                                                          std::move(data)),
+           "publishing the decorations should change the store");
+  };
+  SDL_Surface* plain = FullFrame(fixture);
+  // Not a vacuous check: each of the two is drawn on this surface.
+  diagnostics({3, 9}, editor::DiagnosticSeverity::Error);
+  SDL_Surface* with_diagnostics = FullFrame(fixture);
+  Expect(DiffSurfaces(plain, with_diagnostics).count > 0, "the working side draws its diagnostics");
+  decorations(SDL_Color{230, 60, 90, 255}, editor::GutterIconShape::Dot);
+  SDL_Surface* with_decorations = FullFrame(fixture);
+  Expect(DiffSurfaces(with_diagnostics, with_decorations).count > 0, "the working side draws its decorations");
+  SDL_DestroySurface(plain);
+  SDL_DestroySurface(with_diagnostics);
+  SDL_DestroySurface(with_decorations);
+
+  diagnostics({3, 15}, editor::DiagnosticSeverity::Error);
+  fixture.ExpectFresh(NothingAnnounced(), "a diagnostic moved to another line of the working side");
+  diagnostics({3, 15}, editor::DiagnosticSeverity::Warning);
+  fixture.ExpectFresh(NothingAnnounced(), "the diagnostics republished at another severity");
+  decorations(SDL_Color{60, 200, 120, 255}, editor::GutterIconShape::Dot);
+  fixture.ExpectFresh(NothingAnnounced(), "a text style and a gutter mark republished in another colour");
+  decorations(SDL_Color{60, 200, 120, 255}, editor::GutterIconShape::Diamond);
+  fixture.ExpectFresh(NothingAnnounced(), "the gutter mark republished in another shape");
+  // The first keystroke dirties the buffer, which hides both on every row; what the
+  // keystroke asked for is dropped, so only the rows' own keys repaint them.
+  (void)DispatchEvents(fixture.shell, {TextInputEvent("x")});
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  Expect(compare.right_viewport.dirty(), "the keystroke dirtied the working side");
+  fixture.ExpectFresh(NothingAnnounced(), "the first keystroke hid the diagnostics and decorations");
+}
+
+// A merge's result pane draws the bracket pair at its caret (the editor renderer
+// matches it itself), and the far bracket is on another row than the caret's: its
+// row keyed on nothing that moved.
+void TestAMergeResultRepaintsTheFarBracketOfItsPair() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("notes.txt", "notes\n");
+  std::string side = "int a = 1;\nint b = 2;\nint c = 3;\nvoid run() {\n";
+  for (int i = 1; i <= 8; ++i) {
+    side += "  int line" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  side += "}\nint d = 4;\n";
+  WriteFile(fixture.root / "base.txt", side);
+  WriteFile(fixture.root / "incoming.txt", "int head = 1;\n" + side);
+  WriteFile(fixture.root / "current.txt", "int head = 2;\n" + side);
+  WriteFile(fixture.root / "result.txt", "<<<<<<< HEAD\nint head = 2;\n=======\nint head = 1;\n>>>>>>> in\n" + side);
+  Expect(TestAccess::OpenMergeEditor(fixture.shell, fixture.root / "base.txt", fixture.root / "incoming.txt",
+                                     fixture.root / "current.txt", fixture.root / "result.txt"),
+         "the merge editor opens");
+  auto& merge = TestAccess::ActiveMerge(fixture.shell);
+  editor::TextViewport& result = merge.result_viewport;
+  // The block's opener in the result: the five conflict lines, then three plain ones.
+  std::size_t opener = 0;
+  while (opener < result.line_count() && result.lines().LineView(opener) != "void run() {") {
+    ++opener;
+  }
+  Expect(opener < result.line_count(), "the result holds the block's opener");
+  result.MoveCursorTo(opener + 3, 2);
+  SDL_Surface* away = FullFrame(fixture);
+  result.MoveCursorTo(opener, 11);  // just past the opening brace
+  SDL_Surface* on_bracket = FullFrame(fixture);
+  const render::PixelDiffResult lit = DiffSurfaces(away, on_bracket);
+  SDL_DestroySurface(away);
+  SDL_DestroySurface(on_bracket);
+  // Not a vacuous check: the pair lights rows nine lines apart.
+  Expect(lit.box_height > 100, "the caret on the opening brace lights its pair, rows apart (changed box " +
+                                   std::to_string(lit.box_height) + " px high)");
+  result.MoveCursorTo(opener + 3, 2);
+  fixture.ExpectFresh(NothingAnnounced(), "the caret left the bracket");
+  result.MoveCursorTo(opener, 11);
+  fixture.ExpectFresh(NothingAnnounced(), "the caret on the opening brace");
+  result.MoveCursorTo(opener + 9, 1);  // just past the closing brace
+  fixture.ExpectFresh(NothingAnnounced(), "the caret on the closing brace");
+}
+
+}  // namespace
+
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "QaFlowRegression/ACompareWorkingSideRepaintsItsDiagnosticsAndDecorations",
+          TestACompareWorkingSideRepaintsItsDiagnosticsAndDecorations);
+  AddTest(tests, "QaFlowRegression/AMergeResultRepaintsTheFarBracketOfItsPair",
+          TestAMergeResultRepaintsTheFarBracketOfItsPair);
   AddTest(tests, "QaFlowRegression/TheStickyBandFollowsTheCaretOffItsLine", TestTheStickyBandFollowsTheCaretOffItsLine);
   AddTest(tests, "QaFlowRegression/SplitPanesKeepTheirOwnStickyLines", TestSplitPanesKeepTheirOwnStickyLines);
   AddTest(tests, "QaFlowRegression/TypingBesideAPluginPresentationRepaintsTheEditedLine",

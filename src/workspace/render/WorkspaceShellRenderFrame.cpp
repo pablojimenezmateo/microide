@@ -1001,6 +1001,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
                           : std::nullopt;
       paint.blame.reset();
       paint.diagnostics = {};
+      paint.decorations = nullptr;
       return paint;
     };
     for (const EditorPaneLayout& pane : panes) {
@@ -1090,6 +1091,19 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
           units.push_back({SDL_FRect{area.x, area.y, area.w, std::max(0.0f, compare_surface.rows_y - 1.0f - area.y)},
                            header.value()});
         }
+        // The working side's diagnostics and decorations, shown while its buffer is
+        // clean (a decoration published against the saved file's lines would land
+        // on the wrong ones in an edited buffer, TD-2026-08-13-206; the left side
+        // is another revision and shows none). Resolved here: paint asks no store.
+        if (compare.right_editable && !compare.right_viewport.path().empty() && !compare.right_viewport.dirty()) {
+          if (const auto* published =
+                  project_state.diagnostics_store.FindByPathKey(compare.right_viewport.path_key())) {
+            diff_paint.diagnostics = *published;
+          }
+          if (const auto* presentation = project_state.plugin_presentation_if_present()) {
+            diff_paint.decorations = presentation->decorations.FindByPathKey(compare.right_viewport.path_key());
+          }
+        }
         AppendCompareRowUnits(
             compare,
             CompareRowGeometry{.surface = area,
@@ -1097,10 +1111,15 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
                                .line_height = compare_surface.line_height,
                                .content_width = std::max(0.0f, area.w - right_reserved),
                                .visible_rows = compare_surface.visible_rows},
-            surface_key.value(),
-            CompareBracketMatch(compare, setting("editor.brackets.match_highlight.enabled", true)),
-            diff_paint.blame.has_value() ? &*diff_paint.blame : nullptr,
-            focused && compare.right_view_active && prepared_frame_draw_editor_caret_, units);
+            CompareRowKeyInputs{
+                .surface_key = surface_key.value(),
+                .bracket_pair = CompareBracketMatch(compare, setting("editor.brackets.match_highlight.enabled", true)),
+                .blame = diff_paint.blame.has_value() ? &*diff_paint.blame : nullptr,
+                .caret_drawn = focused && compare.right_view_active && prepared_frame_draw_editor_caret_,
+                .diagnostics = diff_paint.diagnostics,
+                .decorations = diff_paint.decorations,
+            },
+            units);
         frame_state_.derived_damage.Commit(surface, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
         continue;
       }
@@ -1236,6 +1255,13 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
                                                 .pane_key = surface_key.value(),
                                                 .caret_drawn = focused && prepared_frame_draw_editor_caret_,
                                                 .diagnostics = result_diagnostics,
+                                                // The pair at the result's caret, which its
+                                                // paint matches and lights whichever pane
+                                                // has the keyboard: the far bracket sits on
+                                                // a row the caret never touches.
+                                                .bracket_pair = diff_paint.bracket_match
+                                                                    ? editor_view_renderer_.BracketMatch(merge.result_viewport)
+                                                                    : std::nullopt,
                                                 .blame = diff_paint.blame.has_value() ? &*diff_paint.blame : nullptr,
                                                 .extra_line_keys = conflict_lines},
                              frame_state_.editor_row_keys, units);
@@ -2382,28 +2408,10 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       CompareTabState& compare_tab = *tab->compare;
       const bool draw_compare_caret =
           focused && compare_tab.right_view_active && prepared_frame_draw_editor_caret_;
-      // Plugin decorations for the EDITABLE right pane only, and resolved here
-      // because the compare render TU may not read project state itself. The left
-      // pane is a different revision of the file, so a decoration published against
-      // the working-tree line numbers would land on the wrong line there
-      // (TD-2026-08-13-206).
-      const editor::FileDecorations* compare_right_decorations = nullptr;
-      if (compare_tab.right_editable && !compare_tab.right_viewport.path().empty() &&
-          !compare_tab.right_viewport.dirty()) {
-        const auto* presentation = project_state.plugin_presentation_if_present();
-        compare_right_decorations =
-            presentation != nullptr
-                ? presentation->decorations.FindByPathKey(compare_tab.right_viewport.path_key())
-                : nullptr;
-      }
+      // Its working side's diagnostics and decorations are in the prepared paint
+      // inputs (DiffSurfacePaint), resolved at frame prep.
       RenderCompareSurface(renderer, area, compare_tab, draw_compare_caret,
-                           CompareRenderProjectInputs{
-                               .project_root = &project_state.root,
-                               .diagnostics_store = &project_state.diagnostics_store,
-                               .right_plugin_decorations = compare_right_decorations,
-                               .focused = focused,
-                               .paint = &frame_state_.diff_surface_paint[gi],
-                           });
+                           CompareRenderProjectInputs{.paint = &frame_state_.diff_surface_paint[gi]});
       RenderCompareScrollbars(renderer, area, compare_tab, frame_state_.diff_surface_paint[gi]);
     } else {
       MergeTabState& merge_tab = *tab->merge;

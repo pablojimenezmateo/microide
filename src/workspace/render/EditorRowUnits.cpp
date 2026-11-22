@@ -15,33 +15,10 @@ struct RowRef {
   std::size_t row = 0;
 };
 
-// One value into the key: one multiply, not FNV's one per byte (eight per value).
-// A pane's rows fold every caret, mark and decoration of every visible line on
-// every prepared frame -- blink and hover frames included -- and a language
-// server's semantic tokens are a dozen styles a line.
-std::uint64_t Mix(std::uint64_t hash, std::uint64_t value) {
-  constexpr std::uint64_t kMultiplier = 0x9E3779B97F4A7C15ull;
-  hash = (hash ^ value) * kMultiplier;
-  return hash ^ (hash >> 32);
-}
-
-// `size` bytes, eight to a multiply. The length goes in first, so a short tail
-// (zero-padded to a word) cannot stand for a longer run that ends in zero bytes.
+// The shared fold (EditorRowUnits.h), under the names this file uses.
+std::uint64_t Mix(std::uint64_t hash, std::uint64_t value) { return MixRowKey(hash, value); }
 std::uint64_t MixBytes(std::uint64_t hash, const char* data, std::size_t size) {
-  hash = Mix(hash, size);
-  while (size >= 8) {
-    std::uint64_t word = 0;
-    std::memcpy(&word, data, 8);
-    hash = Mix(hash, word);
-    data += 8;
-    size -= 8;
-  }
-  if (size > 0) {
-    std::uint64_t word = 0;
-    std::memcpy(&word, data, size);
-    hash = Mix(hash, word);
-  }
-  return hash;
+  return MixRowKeyBytes(hash, data, size);
 }
 
 std::uint64_t ColorBits(SDL_Color color) {

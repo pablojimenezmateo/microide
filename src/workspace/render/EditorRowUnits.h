@@ -17,6 +17,7 @@
 #include <SDL3/SDL.h>
 
 #include <cstdint>
+#include <cstring>
 #include <optional>
 #include <span>
 #include <utility>
@@ -75,6 +76,34 @@ struct EditorRowKeyInputs {
 // instead of their bytes: a minified megabyte line is not hashed every frame,
 // and its rows repaint whenever the document changes.
 inline constexpr std::size_t kEditorRowKeyMaxHashedBytes = 16 * 1024;
+
+// One value into a row key: one multiply, not FNV's one per byte. The editor's and
+// the diff surfaces' rows fold every caret, mark and decoration of every visible
+// line on every prepared frame, so both use this one step.
+inline std::uint64_t MixRowKey(std::uint64_t hash, std::uint64_t value) {
+  constexpr std::uint64_t kMultiplier = 0x9E3779B97F4A7C15ull;
+  hash = (hash ^ value) * kMultiplier;
+  return hash ^ (hash >> 32);
+}
+
+// `size` bytes, eight to a multiply. The length goes in first, so a short tail
+// (zero-padded to a word) cannot stand for a longer run that ends in zero bytes.
+inline std::uint64_t MixRowKeyBytes(std::uint64_t hash, const char* data, std::size_t size) {
+  hash = MixRowKey(hash, size);
+  while (size >= 8) {
+    std::uint64_t word = 0;
+    std::memcpy(&word, data, 8);
+    hash = MixRowKey(hash, word);
+    data += 8;
+    size -= 8;
+  }
+  if (size > 0) {
+    std::uint64_t word = 0;
+    std::memcpy(&word, data, size);
+    hash = MixRowKey(hash, word);
+  }
+  return hash;
+}
 
 // Folds into `key` what plugins and language servers decorate `line` with: its
 // text styles (semantic tokens), inline texts (inlay hints), gutter mark and code

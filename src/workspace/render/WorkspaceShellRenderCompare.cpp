@@ -157,9 +157,6 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                                           CompareTabState& compare_tab_state,
                                           bool draw_compare_caret,
                                           const CompareRenderProjectInputs& project_inputs) {
-  const editor::DiagnosticsStore& diagnostics_store = *project_inputs.diagnostics_store;
-  const editor::FileDecorations* const right_plugin_decorations =
-      project_inputs.right_plugin_decorations;
   CompareTabState* compare_tab = &compare_tab_state;
   if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
@@ -228,11 +225,10 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
   // surface's other paint inputs (DiffSurfacePaint).
   const DiffSurfacePaint& paint = *project_inputs.paint;
   const std::optional<editor::EditorBlameOverlay>& blame_overlay = paint.blame;
-  const auto* right_diagnostics =
-      compare_tab->right_editable && !compare_tab->right_viewport.path().empty() &&
-              !compare_tab->right_viewport.dirty()
-          ? diagnostics_store.FindByPathKey(compare_tab->right_viewport.path_key())
-          : nullptr;
+  // The working side's diagnostics and decorations, as prep resolved them (none
+  // while its buffer is dirty) and as its rows' units folded them.
+  const std::span<const editor::PublishedDiagnostic> right_diagnostics = paint.diagnostics;
+  const editor::FileDecorations* const right_plugin_decorations = paint.decorations;
   const float bottom_reserved =
       surface.show_horizontal ? kWorkspaceDiffScrollbarReserve : 0.0f;
   const float right_reserved =
@@ -775,9 +771,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
         right_input.text_styles = right_plugin_decorations->TextStylesForLine(
             static_cast<std::uint32_t>(right_line_index));
       }
-      if (right_diagnostics != nullptr) {
-        right_input.diagnostics =
-            std::span<const editor::PublishedDiagnostic>(*right_diagnostics);
+      if (!right_diagnostics.empty()) {
+        right_input.diagnostics = right_diagnostics;
         right_input.diagnostic_line_index = right_line_index;
         right_input.diagnostic_horizontal_scroll = right_row_start;
         right_input.diagnostic_visible_columns =
@@ -789,9 +784,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       editor::DecoratedTextRow& right_row = compare_right_scratch_row_;
       editor::BuildDecoratedRow(right_row, right_input);
       kDecoratedRowRenderer.RenderRow(renderer, editor_text_renderer_, right_row);
-      if (right_diagnostics != nullptr && wrap_row.first) {
-        if (const auto severity = editor::HighestDiagnosticSeverityForLine(
-                std::span<const editor::PublishedDiagnostic>(*right_diagnostics), right_line_index);
+      if (!right_diagnostics.empty() && wrap_row.first) {
+        if (const auto severity = editor::HighestDiagnosticSeverityForLine(right_diagnostics, right_line_index);
             severity.has_value()) {
           editor::DrawDiagnosticGutterMarker(renderer, theme_, surface.right_x, y,
                                              surface.gutter_width, surface.line_height,
