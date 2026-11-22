@@ -8222,12 +8222,60 @@ void TestTheFileTreeFollowsItsScrollAndARefresh() {
   fixture.ExpectFresh(NothingAnnounced(), "a file appeared and the tree refreshed");
 }
 
+// The Source Control view's rows, head and scrollbar are derived units
+// (DerivedSurface::GitPanel), so its selection and scroll repaint the rows they
+// change. The Chrome unit over the WHOLE sidebar, keyed on the selection and the
+// scroll, still covered the git view too: a selection step repainted the sidebar.
+void TestTheGitViewsSelectionAndScrollRepaintTheirRows() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  TreeFixture fixture(/*files_per_folder=*/0);
+  for (int i = 0; i < 60; ++i) {
+    WriteFile(fixture.root / ("f" + std::to_string(i) + ".txt"), "base\n");
+  }
+  InitializeGitRepo(fixture.root);
+  CommitAll(fixture.root, "base", "base");
+  for (int i = 0; i < 60; ++i) {
+    WriteFile(fixture.root / ("f" + std::to_string(i) + ".txt"), "changed\n");
+  }
+  TestAccess::ShowGitSidebar(fixture.shell);
+  Expect(WaitForGitSidebarEntryCount(fixture.shell, 60), "the git view lists the sixty changed files");
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  fixture.Paint();
+  auto& sidebar = TestAccess::CurrentProjectState(fixture.shell).sidebar;
+
+  sidebar.git.selected_index = 3;
+  fixture.ExpectFresh(NothingAnnounced(), "the git view's selection moved");
+  sidebar.git.selected_index = 4;
+  bool full = false;
+  const float moved = fixture.SidebarShare(NothingAnnounced(), &full);
+  Expect(!full && moved > 0.0f && moved < 0.15f,
+         "a selection step repaints the row it left and the row it took: " + std::to_string(moved) +
+             " of the sidebar");
+
+  sidebar.scroll_row = 1;
+  fixture.ExpectFresh(NothingAnnounced(), "the git view scrolled a row");
+  sidebar.scroll_row = 5;
+  fixture.ExpectFresh(NothingAnnounced(), "the git view scrolled four more");
+  sidebar.scroll_row = 0;
+  fixture.ExpectFresh(NothingAnnounced(), "the git view scrolled back to its top");
+
+  // Another view and back: the git view's rows go and come with the sidebar.
+  TestAccess::ShowTreeSidebar(fixture.shell);
+  fixture.ExpectFresh(NothingAnnounced(), "the sidebar switched to the tree");
+  TestAccess::ShowGitSidebar(fixture.shell);
+  fixture.ExpectFresh(NothingAnnounced(), "the sidebar switched back to Source Control");
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TheFileTreesRowsRepaintWhatChangedWithNoDamageRequest",
           TestTheFileTreesRowsRepaintWhatChangedWithNoDamageRequest);
   AddTest(tests, "QaFlowRegression/TheFileTreeFollowsItsScrollAndARefresh", TestTheFileTreeFollowsItsScrollAndARefresh);
+  AddTest(tests, "QaFlowRegression/TheGitViewsSelectionAndScrollRepaintTheirRows",
+          TestTheGitViewsSelectionAndScrollRepaintTheirRows);
   AddTest(tests, "QaFlowRegression/APromptCaretBlinkAtScaleThreeLeavesNoColumn",
           TestAPromptCaretBlinkAtScaleThreeLeavesNoColumn);
   AddTest(tests, "QaFlowRegression/ACompareTabsActionsRepaintTheirRows", TestACompareTabsActionsRepaintTheirRows);

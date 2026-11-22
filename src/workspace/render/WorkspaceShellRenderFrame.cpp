@@ -1760,15 +1760,15 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   // repaints the sidebar here -- and so does a scroll or a rebuilt tree (a watcher
   // batch, an expansion) that landed between frames: the command fuzzer caught a
   // frame repainting only the menu bar over a tree that had moved under it.
-  // (The file tree is not one of them: its rows, buttons and scrollbar are derived
-  // units of their own -- DerivedSurface::SidebarTree -- so a selection, a scroll or
-  // a rebuilt tree repaints the rows it changed, not the sidebar. The unit keeps its
-  // place with no rect, and a switch to or from the tree repaints the sidebar.)
-  if (sidebar_vm.visible && ActiveSidebarMode() != SidebarMode::Tree) {
+  // (The file tree and Source Control are not among them: their rows, buttons and
+  // scrollbars are derived units of their own -- DerivedSurface::SidebarTree and
+  // DerivedSurface::GitPanel -- so a selection, a scroll or a rebuilt list repaints
+  // the rows it changed, not the sidebar. The unit keeps its place with no rect,
+  // and a switch to or from either view repaints the sidebar.)
+  if (sidebar_vm.visible && ActiveSidebarMode() != SidebarMode::Tree && ActiveSidebarMode() != SidebarMode::Git) {
     const SidebarState& sidebar = project_state.sidebar;
     std::size_t selected = 0;
     switch (ActiveSidebarMode()) {
-      case SidebarMode::Git: selected = sidebar.git.selected_index; break;
       case SidebarMode::Problems: selected = sidebar.problems.selected_index; break;
       case SidebarMode::Tests: selected = sidebar.tests.selected_index; break;
       case SidebarMode::Search: selected = project_state.overlay.workflow.project_search.selected_index; break;
