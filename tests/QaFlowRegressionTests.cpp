@@ -6487,7 +6487,7 @@ void TestTabInANarrowDirtyPromptRepaintsEveryButton() {
 // it whatever made the change. A middle-click paste into the Welcome page turned it
 // into an untitled buffer and damaged the editor alone: the band kept "Welcome"
 // (soak 7d8ebd1d38c6, 4 actions, scale 1.25). Frame prep compares each pane's
-// label with the one it painted (PreparedFrameState::painted_breadcrumb_labels).
+// label with the one it painted (a breadcrumb band's Chrome unit).
 void TestABreadcrumbLabelChangeRepaintsTheBand() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -6507,7 +6507,7 @@ void TestABreadcrumbLabelChangeRepaintsTheBand() {
 // editor menu opened on a C++ file and closed by opening a text file -- fewer
 // rows -- left its lower rows painted over the bottom panel (soak e4353c8cb483).
 // Frame prep compares the menu's rect with the one it painted
-// (PreparedFrameState::painted_context_menu_rect).
+// (the context menu's Chrome unit).
 void TestAContextMenuClosesOverTheRowsItPainted() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;

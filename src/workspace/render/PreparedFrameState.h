@@ -127,7 +127,6 @@ struct PreparedFrameState {
   // Whether the focused terminal owns the blinking caret (not its find bar, not a
   // modal): only then does its caret blink; otherwise it shows a steady outline.
   bool terminal_owns_caret = false;
-  bool painted_terminal_owns_caret = false;  // outline vs blinking block, as painted
   // The floating or modal surface the pointer is over, if any: PointerOver lights
   // up only rects inside it (an empty rect: the pointer is outside a modal, and
   // nothing hovers).
@@ -143,23 +142,10 @@ struct PreparedFrameState {
   std::array<bool, kMaxEditorGroups> pane_metrics_valid{};
 
   // ---- what the last prepared frame painted ----------------------------
-  std::optional<SDL_FRect> painted_caret_rect;
+  // (The regions, the caret and the terminal caret's style are Chrome units now.)
   // The element painted hovered and the tooltip card painted, under the pointer.
   std::optional<SDL_FRect> painted_hover_rect;
   std::optional<SDL_FRect> painted_tooltip_rect;
-  // The open menu-bar popup and submenu as painted: which menus, and each row's
-  // enabled and checked flags, folded into one value (0: no menu open). A row's
-  // flags follow app state -- a terminal started, a language server ready -- and
-  // that state changes under an open menu with nothing repainting it.
-  std::uint64_t painted_menu_rows_signature = 0;
-  // The open menu-bar popup's and submenu's rects as prep laid them out (nullopt:
-  // none open). Paint draws them from here. Their height follows rows that come and
-  // go with the language server's readiness, which another thread moves: prep and
-  // paint laid them out separately and could disagree, and a popup that shrank was
-  // repainted at its new size only, its old lower rows left on screen (soak
-  // e4353c8cb483: an editor's context menu over a file that lost its server).
-  std::optional<SDL_FRect> painted_menu_popup_rect;
-  std::optional<SDL_FRect> painted_submenu_rect;
   // The same flags per item index (bit 0 enabled, bit 1 checked), for the open
   // popup and its submenu: paint draws them from here, not from live state. A
   // flag read twice in one frame could differ -- a terminal's exit lands on its
@@ -180,43 +166,14 @@ struct PreparedFrameState {
   // card it had hidden brought the card back in a full render while the partial
   // frame's clips -- the menu's -- never reached it (QA monkey, tooling seed 7).
   std::optional<SDL_FRect> painted_signature_help_rect;
-  // The context menu's rect as painted (nullopt: none open). Its rows depend on
-  // what it was opened over, and that can change under it; closing it damaged the
-  // rect recomputed from the new rows, so a list that got shorter left its lower
-  // rows on screen (soak e4353c8cb483). Prep repaints old and new when they differ.
-  std::optional<SDL_FRect> painted_context_menu_rect;
   std::size_t painted_signature_help_hash = 0;
-  // (An editor pane's content, scroll, fold markers, decorations, horizontal
-  // scrollbar, bracket pair, language and occurrence lines were compared here with
-  // what was painted; its rows and bars are derived units now -- EditorRowUnits,
-  // derived-damage 2.4 -- keyed on all of them.)
-  // The breakpoint stores' revisions as painted (gutter dots, Breakpoints pane).
-  std::uint64_t painted_breakpoints = 0;
-  // The window's regions as painted (sidebar, bottom panel, editor surface, right
-  // pane, status bar, tab strip), so one that moves repaints old and new.
-  static constexpr std::size_t kTrackedRegions = 6;
-  std::array<SDL_FRect, kTrackedRegions> painted_regions{};
-  bool painted_regions_valid = false;
-  // The surface that painted the focus ring (nullopt: no frame yet). Focus moves
-  // from many places -- a key, a click, a control-channel command, a plugin --
-  // and only HandleEvent repainted the two surfaces, so moving a tab from the
-  // command line drew the editor's ring in a full frame and not in a partial one
-  // (QA monkey, editor profile, seeds 3 and 6).
-  std::optional<FocusTarget> painted_focus;
-  // The plugin status items as painted in the breadcrumb row (a hash of each
-  // item's id, text, icon, tone, progress and alignment): an item a reloaded
-  // plugin re-added, or one a plugin updated from its thread, changed the row's
-  // text in a frame that did not repaint it (QA plugins-reload, Wayland lane).
-  std::uint64_t painted_status_items = 0;
-  // Each pane's breadcrumb label as painted (a hash; 0 = never painted). The band
-  // names the active document, and a change to what it names repaints it whoever
-  // made the change: a paste into the Welcome page made it an untitled buffer and
-  // damaged the editor alone, and the band kept "Welcome" (soak 7d8ebd1d38c6).
-  std::array<std::size_t, kMaxEditorGroups> painted_breadcrumb_labels{};
-  // The editor group that was focused when the strips were painted: each strip
-  // draws its group's active tab as focused or not, and a click in a group's
-  // empty strip moved the focus with no strip repainted (QA monkey, seed 9).
-  std::optional<std::size_t> painted_focused_group;
+  // The plugin status items' hash, which the breadcrumb bands' units key on.
+  std::uint64_t status_items_hash = 0;
+  // This frame's menu-bar popup, submenu and context menu rects (none: closed),
+  // laid out once at prep for paint and their Chrome units.
+  std::optional<SDL_FRect> menu_popup_rect;
+  std::optional<SDL_FRect> menu_submenu_rect;
+  std::optional<SDL_FRect> context_menu_rect;
   // The editor viewport that had the keyboard last frame (null: none did), for
   // the on_focus_change auto-save.
   const void* focused_editor = nullptr;
@@ -227,22 +184,6 @@ struct PreparedFrameState {
   // page, a restored tab, the start page again -- and that saved the unsaved
   // buffers the crash recovery had just brought back (soak 0afa15c55c0f).
   bool focus_autosave_armed = false;
-  // The tab strips painted mid-slide (kind None: none). A new drag can take a
-  // strip's animation slot while it still glides, and that strip's tabs then
-  // snap back with no frame of their own.
-  struct SlideStrip {
-    TabDragKind kind = TabDragKind::None;
-    std::size_t group_index = 0;
-  };
-  std::array<SlideStrip, kMaxAnimatingTabStrips> painted_slide_strips{};
-  // Which translucent modal backdrops were painted (a bit per surface). Each dims
-  // everything under it, so a modal opening over another changes the whole
-  // window, not just the new dialog.
-  std::uint8_t painted_backdrops = 0;
-  // Whether the focused pane painted the find widget's matches: they show only
-  // while the widget is the overlay, and another overlay replacing it (a
-  // completion request) took them off the editor without repainting it.
-  bool painted_find_matches = false;
   // (A compare tab's scroll, active side and diff shape are in its rows' keys:
   // CompareRowUnits, derived-damage 2.5.)
   // The focused compare or merge tab's scrollbars as painted (no track: hidden).
@@ -264,7 +205,6 @@ struct PreparedFrameState {
     SDL_FRect vertical_thumb{};
     std::uint64_t vertical_markers = 0;
   };
-  DiffSurfaceBars painted_diff_surface_bars{};
   // A compare or merge surface whose syntax tokenizer is still behind its visible
   // window after this frame's capped step: OnFramePresented requests it, so the
   // NEXT frame takes the next step. Damage requested during prep belongs to the
@@ -272,21 +212,6 @@ struct PreparedFrameState {
   // catch-up stalled after one step, and the rows it then reached on some later
   // frame were never repainted highlighted (QA monkey, commands profile, seed 61).
   std::optional<SDL_FRect> syntax_catch_up_rect;
-  // Where the editor split's dividers were painted (a hash of their rects). A
-  // divider that moved -- the split's shares changed -- moves every pane beside
-  // it; the change is repainted whatever damage the next frame carries.
-  std::uint64_t painted_split_dividers = 0;
-  // The project strip as painted: its source version (WorkspaceTabStripChrome)
-  // folded with its scroll position, active project and width.
-  std::uint64_t painted_project_strip_version = 0;
-  // Which editor tabs painted a dirty marker (a hash of (group, tab) per dirty
-  // tab). Many paths change a buffer's dirty state -- typing, but also Replace
-  // All, a banner Reload, an undo back to the saved text, a save -- and each used
-  // to have to remember to repaint the tab strip; the ones that forgot left the
-  // tab's close button where its dirty dot belonged. Each tab's title is in the
-  // hash too: a title re-derived on activation (a split's untitled tab) changed
-  // on a frame that damaged no strip.
-  std::uint64_t painted_editor_tab_labels = 0;
   // The focused pane's frame inputs its rows key on (EditorRowUnits): its
   // bracket-match pair and its occurrence highlights, one (line, hash of that
   // line's ranges) per line, sorted.
@@ -300,11 +225,6 @@ struct PreparedFrameState {
   // title bar draws it, and the platform window is retitled when it changes.
   std::uint64_t window_title_inputs = 0;
   std::string window_title = "microide";
-  // Where the overlay card was painted. An overlay that shrinks or moves while it
-  // is up -- the completion list narrowing as the user types, a picker whose
-  // result count changed -- repainted only its new rect, leaving the strip it no
-  // longer covers on screen. A moved rect repaints old and new.
-  std::optional<SDL_FRect> painted_overlay_rect;
   // The floating debug toolbar as painted: whether it shows, its rect, and the
   // run state its Continue/Pause button and step buttons draw. A session that
   // stopped or resumed repainted the debug pane and the menu bar but not the
@@ -318,10 +238,6 @@ struct PreparedFrameState {
              rect.y == o.rect.y && rect.w == o.rect.w && rect.h == o.rect.h;
     }
   };
-  DebugToolbar painted_debug_toolbar{};
-  // The sidebar list selection painted (view and row): the tree follows the
-  // active editor's file, and that selection change damaged nothing.
-  std::uint64_t painted_sidebar_selection = 0;
 
   // ---- derived damage (openspec derived-damage) -------------------------
   // Each migrated surface's units as last painted; prep compares and damages.

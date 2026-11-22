@@ -49,10 +49,10 @@ void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer,
             return;
           }
           const auto items = MenuItems(menu_id);
-          // As prep laid them out (PreparedFrameState::painted_menu_popup_rect).
+          // As prep laid them out (PreparedFrameState::menu_popup_rect).
           const std::optional<SDL_FRect>& popup_rect = anchor_rect.has_value()
-                                                           ? frame_state_.painted_submenu_rect
-                                                           : frame_state_.painted_menu_popup_rect;
+                                                           ? frame_state_.menu_submenu_rect
+                                                           : frame_state_.menu_popup_rect;
           if (!popup_rect.has_value()) {
             return;
           }
@@ -99,7 +99,7 @@ void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer,
   // from a cache keyed on the language server's readiness, which another thread
   // moves, so a paint that laid it out again could draw rows past the rect prep
   // repainted and the close later damaged (soak e4353c8cb483).
-  const std::optional<SDL_FRect>& popup_rect = frame_state_.painted_context_menu_rect;
+  const std::optional<SDL_FRect>& popup_rect = frame_state_.context_menu_rect;
   if (items.empty() || !popup_rect.has_value()) {
     return;
   }

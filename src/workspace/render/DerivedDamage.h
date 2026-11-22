@@ -42,6 +42,10 @@ enum class DerivedSurface : std::uint8_t {
   EditorPane0,
   EditorPane7 = EditorPane0 + 7,
   GitPanelHead,
+  // The window's chrome a frame decides as a whole: its regions, the caret, the
+  // floating cards and popups (each a unit at a fixed position; an absent one
+  // keeps its position with an empty rect).
+  Chrome,
   Count,
 };
 
@@ -109,8 +113,14 @@ class DerivedDamage {
   // save repainting the rows between them.
   static constexpr std::size_t kSeparateRectsPerSurface = 2;
 
+  // Rects that change apart, for a surface whose units are unrelated pieces of
+  // the window (DerivedSurface::Chrome: the caret, a popup, the title bar): their
+  // bounding rect would be most of the window. DirtyRegionPolicy still merges or
+  // promotes the frame's clips as a whole.
+  enum class Coalesce { Bounding, Apart };
+
   template <typename Damage>
-  void Commit(DerivedSurface surface, Damage&& damage) {
+  void Commit(DerivedSurface surface, Damage&& damage, Coalesce coalesce = Coalesce::Bounding) {
     Surface& table = Table(surface);
     util::AddPerformanceCounter(util::PerfCounterId::WorkspaceDerivedDamageUnits, table.current.size());
     if (table.painted_once) {
@@ -124,12 +134,19 @@ class DerivedDamage {
           continue;
         }
         util::AddPerformanceCounter(util::PerfCounterId::WorkspaceDerivedDamageChanged, 1);
+        const auto add = [&](const SDL_FRect& rect) {
+          if (coalesce == Coalesce::Apart) {
+            damage(rect);
+          } else {
+            collected.Add(rect);
+          }
+        };
         if (was != nullptr && was->rect.w > 0.0f && was->rect.h > 0.0f) {
-          collected.Add(was->rect);
+          add(was->rect);
         }
         if (now != nullptr && now->rect.w > 0.0f && now->rect.h > 0.0f &&
             (was == nullptr || !SameRect(now->rect, was->rect))) {
-          collected.Add(now->rect);
+          add(now->rect);
         }
       }
       collected.EmitTo(damage);

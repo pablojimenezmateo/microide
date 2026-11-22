@@ -542,19 +542,15 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   // repaints where it was and where it is, whatever moved it: a plugin clearing
   // its panel surface hid the bottom panel and asked only for the editor, and
   // the sidebar's newly exposed bottom kept the panel's pixels (QA plugins-ui).
-  {
-    const std::array<SDL_FRect, PreparedFrameState::kTrackedRegions> regions = {
-        layout.sidebar,     layout.bottom_panel, layout.editor_surface,
-        layout.right_pane,  layout.status_bar,   layout.tab_strip};
-    for (std::size_t i = 0; i < regions.size(); ++i) {
-      SDL_FRect& painted = frame_state_.painted_regions[i];
-      if (frame_state_.painted_regions_valid && !RectsEqual(painted, regions[i])) {
-        RequestRedrawRect(painted);
-        RequestRedrawRect(regions[i]);
-      }
-      painted = regions[i];
-    }
-    frame_state_.painted_regions_valid = true;
+  // The chrome units (DerivedSurface::Chrome): pushed in a fixed order through
+  // this function, committed at its end.
+  std::vector<DerivedDamage::Unit>& chrome = frame_state_.derived_damage.Begin(DerivedSurface::Chrome);
+  const auto chrome_unit = [&chrome](const std::optional<SDL_FRect>& rect, std::uint64_t key) {
+    chrome.push_back({rect.value_or(SDL_FRect{}), key});
+  };
+  for (const SDL_FRect& region : {layout.sidebar, layout.bottom_panel, layout.editor_surface, layout.right_pane,
+                                  layout.status_bar, layout.tab_strip}) {
+    chrome_unit(region, 0);  // a region that appears, vanishes or moves: rect-only
   }
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::RefreshStatusBar");
@@ -717,37 +713,21 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       if (dialog_window_ != nullptr) {
         SDL_SetWindowTitle(dialog_window_, frame_state_.window_title.c_str());
       }
-      RequestRedrawRect(layout.menu_bar);
     }
+    chrome_unit(layout.menu_bar, inputs);  // the custom title bar draws the title
   }
   frame_state_.caret_visible = CaretVisibleNow();
   frame_state_.terminal_owns_caret = project_state.surface.focus == FocusTarget::Panel &&
                                      context_.text_input.active_surface == TextInputSurface::Terminal;
   // Ownership changes the terminal caret's style (steady outline vs blinking block)
   // at the same place, which the caret-region comparison below cannot see.
-  if (frame_state_.terminal_owns_caret != frame_state_.painted_terminal_owns_caret) {
-    if (const auto caret = ActiveTerminalCaretRect(layout); caret.has_value()) {
-      RequestRedrawRect(*caret);
-    }
-    frame_state_.painted_terminal_owns_caret = frame_state_.terminal_owns_caret;
-  }
+  chrome_unit(ActiveTerminalCaretRect(layout), frame_state_.terminal_owns_caret ? 1u : 2u);
   // Whatever moves the caret away -- focus to another surface, a menu or prompt
   // that suspends the blink, the blink's own phase -- this frame repaints both the
   // caret region the last frame painted and the one it paints now. Each such
   // transition used to need its own damage request, and several had none: a menu
   // opened over a focused terminal left its caret on screen (QA redraw verifier).
-  if (const std::optional<SDL_FRect> caret_rect =
-          frame_state_.caret_visible ? CurrentCaretDirtyRect() : std::nullopt;
-      caret_rect.has_value() != frame_state_.painted_caret_rect.has_value() ||
-      (caret_rect.has_value() && !RectsEqual(*caret_rect, *frame_state_.painted_caret_rect))) {
-    if (frame_state_.painted_caret_rect.has_value()) {
-      RequestRedrawRect(*frame_state_.painted_caret_rect);
-    }
-    if (caret_rect.has_value()) {
-      RequestRedrawRect(*caret_rect);
-    }
-    frame_state_.painted_caret_rect = caret_rect;
-  }
+  chrome_unit(frame_state_.caret_visible ? CurrentCaretDirtyRect() : std::nullopt, 0);
   // Each editor pane's metrics and viewport size, and the active pane's inline
   // blame overlay -- here, before anything below (or between frames) resolves a
   // point against the pane. A size change can clamp a pane's scroll, which the
@@ -1409,11 +1389,10 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     const std::uint64_t breakpoints =
         (project_state.breakpoint_store.revision() * 0x9E3779B97F4A7C15ull) ^
         project_state.function_breakpoint_store.revision();
-    if (breakpoints != frame_state_.painted_breakpoints) {
-      frame_state_.painted_breakpoints = breakpoints;
-      // The editor's gutter dots are in its panes' keys (EditorRowUnits).
-      RequestDebugPaneRedraw();
-    }
+    // The editor's gutter dots are in its panes' keys (EditorRowUnits); the
+    // Breakpoints pane's rows are the debug pane, while it shows.
+    chrome_unit(project_state.debug_pane.visible ? std::optional<SDL_FRect>(layout.right_pane) : std::nullopt,
+                breakpoints);
   }
   // The modal backdrop stack: a prompt opening over the command palette (or the
   // unsaved-changes prompt over a prompt) dims the whole window once more, and the
@@ -1426,18 +1405,9 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     const std::uint8_t backdrops = static_cast<std::uint8_t>(
         (overlay_backdrop ? 1u : 0u) | (settings_overlay_service_.Visible() ? 2u : 0u) |
         (context_.prompts.surface_visible ? 4u : 0u) | (context_.prompts.dirty_visible ? 8u : 0u));
-    if (backdrops != frame_state_.painted_backdrops) {
-      RequestWindowRedraw();
-      frame_state_.painted_backdrops = backdrops;
-    }
-    // The editor paints find matches on the overlay's MODE (see the pane loop in
-    // RenderActiveWorkspaceSurface), so this follows exactly that.
-    const bool find_matches = overlay.mode == OverlayMode::BufferSearch ||
-                              overlay.mode == OverlayMode::BufferReplace;
-    if (find_matches != frame_state_.painted_find_matches) {
-      RequestFocusedEditorRedraw();
-      frame_state_.painted_find_matches = find_matches;
-    }
+    // Each backdrop dims the whole window.
+    chrome_unit(CurrentWindowRect(), backdrops);
+    // (Whether the focused pane paints the find widget's matches is in its pane key.)
   }
   // (A compare tab's scroll is in its rows' surface key: CompareRowUnits.)
   {
@@ -1480,37 +1450,22 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
              return merge->scrollbar_marker_cache;
            });
     }
-    PreparedFrameState::DiffSurfaceBars& painted = frame_state_.painted_diff_surface_bars;
-    // Another tab in front repaints the surface on its own (a tab switch).
-    if (bars.tab != nullptr && painted.tab == bars.tab) {
-      const auto same_rect = [](const SDL_FRect& a, const SDL_FRect& b) {
-        return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
-      };
-      const auto diff_bar = [&](const std::optional<SDL_FRect>& was, const SDL_FRect& was_thumb,
-                                const std::optional<SDL_FRect>& now, const SDL_FRect& now_thumb) {
-        if (was.has_value() != now.has_value()) {
-          RequestEditorSurfaceRedraw();
-        } else if (now.has_value() && (!same_rect(*was, *now) || !same_rect(was_thumb, now_thumb))) {
-          RequestRedrawRect(*was);
-          RequestRedrawRect(*now);
-        }
-      };
-      diff_bar(painted.horizontal_track, painted.horizontal_thumb, bars.horizontal_track,
-               bars.horizontal_thumb);
-      diff_bar(painted.vertical_lane, painted.vertical_thumb, bars.vertical_lane, bars.vertical_thumb);
-      // The vertical thumb lives in the track, right of the overview lane: a
-      // moved thumb repaints the track too, not only the lane (soak 0cee9c7fa46e).
-      const auto vertical_track = [](const PreparedFrameState::DiffSurfaceBars& b) {
-        return b.vertical_lane.has_value() ? std::optional<SDL_FRect>(b.vertical_track) : std::nullopt;
-      };
-      diff_bar(vertical_track(painted), painted.vertical_thumb, vertical_track(bars), bars.vertical_thumb);
-      if (bars.vertical_lane.has_value() && painted.vertical_lane.has_value() &&
-          same_rect(*bars.vertical_lane, *painted.vertical_lane) &&
-          bars.vertical_markers != painted.vertical_markers) {
-        RequestRedrawRect(*bars.vertical_lane);
-      }
+    // The focused diff's bars as units: the horizontal track (its thumb), and the
+    // vertical lane with its track (the thumb and the lane's markers). A bar that
+    // shows or hides moves the surface's own layout, which its rows key on.
+    PaintFingerprint horizontal;
+    horizontal.Add(reinterpret_cast<std::uintptr_t>(bars.tab)).Add(bars.horizontal_thumb);
+    chrome_unit(bars.horizontal_track, horizontal.value());
+    std::optional<SDL_FRect> vertical;
+    if (bars.vertical_lane.has_value()) {
+      const float left = std::min(bars.vertical_lane->x, bars.vertical_track.x);
+      const float right = std::max(bars.vertical_lane->x + bars.vertical_lane->w,
+                                   bars.vertical_track.x + bars.vertical_track.w);
+      vertical = SDL_FRect{left, bars.vertical_track.y, right - left, bars.vertical_track.h};
     }
-    painted = bars;
+    PaintFingerprint vertical_key;
+    vertical_key.Add(reinterpret_cast<std::uintptr_t>(bars.tab)).Add(bars.vertical_thumb).Add(bars.vertical_markers);
+    chrome_unit(vertical, vertical_key.value());
   }
   {
     std::uint64_t dividers = 0;
@@ -1519,13 +1474,11 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         dividers = dividers * 0x100000001B3ull ^ static_cast<std::uint64_t>(std::lround(edge * 4.0f));
       }
     }
-    if (dividers != frame_state_.painted_split_dividers) {
-      // The whole column: each pane's tab strip sits above `editor_area`.
-      const float top = layout.tab_strip.h > 0.0f ? layout.tab_strip.y : layout.editor_area.y;
-      RequestRedrawRect(MakeRect(layout.editor_area.x, top, layout.editor_area.w,
-                                 layout.editor_area.y + layout.editor_area.h - top));
-      frame_state_.painted_split_dividers = dividers;
-    }
+    // The whole column: each pane's tab strip sits above `editor_area`.
+    const float top = layout.tab_strip.h > 0.0f ? layout.tab_strip.y : layout.editor_area.y;
+    chrome_unit(MakeRect(layout.editor_area.x, top, layout.editor_area.w,
+                         layout.editor_area.y + layout.editor_area.h - top),
+                dividers);
   }
   // A project tab's label follows state no input touches -- its dirty marker is
   // "any editor tab in that project is dirty" -- so typing into or saving a file
@@ -1534,7 +1487,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   // active one and how wide it is: an overflow arrow scrolled it and damaged the
   // arrow alone, and the strip kept the projects it had painted (soak
   // b3797205c752, 713b09d7b62e, aa044991c495).
-  if (layout.project_tab_strip.h > 0.0f) {
+  {
     const ProjectCatalogState& catalog = context_.project_catalog;
     std::uint64_t version = tab_strip_chrome_.ProjectStripSourceVersion();
     for (const std::uint64_t part : {static_cast<std::uint64_t>(catalog.active_index),
@@ -1542,33 +1495,15 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
                                      static_cast<std::uint64_t>(std::lround(layout.project_tab_strip.w * 4.0f))}) {
       version = (version ^ part) * 0x100000001B3ull;
     }
-    if (version != frame_state_.painted_project_strip_version) {
-      RequestRedrawRect(layout.project_tab_strip);
-      frame_state_.painted_project_strip_version = version;
-    }
+    chrome_unit(layout.project_tab_strip.h > 0.0f ? std::optional<SDL_FRect>(layout.project_tab_strip) : std::nullopt,
+                version);
   }
-  // The overlay card's extent (see PreparedFrameState::painted_overlay_rect).
-  {
-    std::optional<SDL_FRect> overlay_rect;
-    if (project_state.overlay.visible) {
-      overlay_rect = ComputeOverlayRect(layout.overlay_anchor);
-    }
-    const auto& painted = frame_state_.painted_overlay_rect;
-    const auto same = [](const SDL_FRect& a, const SDL_FRect& b) {
-      return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
-    };
-    if (painted.has_value() != overlay_rect.has_value() ||
-        (painted.has_value() && !same(*painted, *overlay_rect))) {
-      if (painted.has_value()) {
-        RequestRedrawRect(*painted);
-      }
-      if (overlay_rect.has_value()) {
-        RequestRedrawRect(*overlay_rect);
-      }
-      frame_state_.painted_overlay_rect = overlay_rect;
-    }
-  }
-  // The open menu's rows (see PreparedFrameState::painted_menu_rows_signature):
+  // The overlay card's extent: one that opens, closes, grows or shrinks repaints
+  // where it was and where it is.
+  chrome_unit(project_state.overlay.visible ? std::optional<SDL_FRect>(ComputeOverlayRect(layout.overlay_anchor))
+                                            : std::nullopt,
+              0);
+  // The open menu's rows:
   // greyed rows stayed greyed after the state that enables them changed under the
   // open menu (soak 8bafbfa78cae: Relaunch Terminal, a terminal's shell exited).
   {
@@ -1605,39 +1540,17 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       }
       signature |= 1;  // never 0 while a menu is open
     }
-    if (signature != frame_state_.painted_menu_rows_signature) {
-      // Opening, switching and closing menus repaint the popups themselves; this
-      // is for the rows changing under one that stays open.
-      if (signature != 0 && frame_state_.painted_menu_rows_signature != 0) {
-        if (popup_rect.has_value()) {
-          RequestRedrawRect(*popup_rect);
-        }
-        if (submenu_rect.has_value()) {
-          RequestRedrawRect(*submenu_rect);
-        }
-      }
-      frame_state_.painted_menu_rows_signature = signature;
-    }
-    // A popup that moved or changed size -- a row came or went -- repaints where it
-    // was as well as where it is (PreparedFrameState::painted_menu_popup_rect).
-    const auto track = [this](std::optional<SDL_FRect>& painted, const std::optional<SDL_FRect>& now) {
-      if (painted.has_value() == now.has_value() && (!now.has_value() || RectsEqual(*painted, *now))) {
-        return;
-      }
-      for (const std::optional<SDL_FRect>& rect : {painted, now}) {
-        if (rect.has_value() && rect->w > 0.0f && rect->h > 0.0f) {
-          RequestRedrawRect(*rect);
-        }
-      }
-      painted = now;
-    };
-    track(frame_state_.painted_menu_popup_rect, popup_rect);
-    track(frame_state_.painted_submenu_rect, submenu_rect);
+    // The popup and submenu: one that opens, closes, moves or changes size, or
+    // whose rows' enabled and checked states change under it, repaints.
+    frame_state_.menu_popup_rect = popup_rect;
+    frame_state_.menu_submenu_rect = submenu_rect;
+    chrome_unit(popup_rect, signature);
+    chrome_unit(submenu_rect, signature);
   }
   // (The merge header's status and the compare header's summary are header units
   // of their surfaces: see the diff branches of the editor-pane units above.)
   // (The diff's shape -- its presentation rows -- is in its rows' keys: CompareRowUnits.)
-  // The debug toolbar's run state (see PreparedFrameState::painted_debug_toolbar).
+  // The debug toolbar: where it is and its run state.
   {
     PreparedFrameState::DebugToolbar toolbar;
     if (DebugToolbarVisible()) {
@@ -1647,16 +1560,9 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
                                                DebugSupportsReverse())
                          .widget;
     }
-    if (!(toolbar == frame_state_.painted_debug_toolbar)) {
-      for (const auto* painted : {&frame_state_.painted_debug_toolbar, &toolbar}) {
-        if (painted->visible && painted->rect.w > 0.0f && painted->rect.h > 0.0f) {
-          RequestRedrawRect(painted->rect);
-        }
-      }
-      frame_state_.painted_debug_toolbar = toolbar;
-    }
+    chrome_unit(toolbar.visible ? std::optional<SDL_FRect>(toolbar.rect) : std::nullopt, toolbar.stopped ? 1u : 2u);
   }
-  // Plugin status items (see PreparedFrameState::painted_status_items).
+  // Plugin status items, drawn in the breadcrumb bands.
   {
     std::uint64_t items_hash = 0xCBF29CE484222325ull;
     const auto mix = [&items_hash](std::string_view text) {
@@ -1675,107 +1581,43 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       items_hash = (items_hash ^ static_cast<std::uint64_t>(std::lround(item.progress * 1000.0f) + 1000)) *
                    0x100000001B3ull;
     }
-    if (items_hash != frame_state_.painted_status_items) {
-      if (frame_state_.painted_status_items != 0) {
-        RequestBreadcrumbRedraw();
-      }
-      frame_state_.painted_status_items = items_hash;
-    }
+    frame_state_.status_items_hash = items_hash;  // the breadcrumb bands draw them: their units key on it
   }
-  // The context menu (see PreparedFrameState::painted_context_menu_rect).
-  if (const std::optional<SDL_FRect> menu = ComputeTreeContextMenuRect();
-      menu.has_value() != frame_state_.painted_context_menu_rect.has_value() ||
-      (menu.has_value() && !RectsEqual(*menu, *frame_state_.painted_context_menu_rect))) {
-    for (const std::optional<SDL_FRect>& rect : {frame_state_.painted_context_menu_rect, menu}) {
-      if (rect.has_value() && rect->w > 0.0f && rect->h > 0.0f) {
-        RequestRedrawRect(*rect);
-      }
-    }
-    frame_state_.painted_context_menu_rect = menu;
-  }
-  // Each pane's breadcrumb label (see PreparedFrameState::painted_breadcrumb_labels).
+  // The context menu: one that opens, closes, moves or resizes.
+  frame_state_.context_menu_rect = ComputeTreeContextMenuRect();
+  chrome_unit(frame_state_.context_menu_rect, 0);
+  // Each editor group's tab strip and breadcrumb band. A strip draws its tabs'
+  // titles and dirty marks and whether its group has the focus; a band draws its
+  // pane's breadcrumb label, the plugin status items and the focus. (The focused
+  // pane's own rows key on the focus too: EditorRowUnits.)
   {
-    const std::size_t groups = std::min(project_state.editor_groups.size(), kMaxEditorGroups);
-    std::optional<EditorGroupRectsLayout> group_rects;
+    const EditorGroupRectsLayout group_rects = ComputeEditorGroupRectsForState(layout);
+    const std::size_t focused = project_state.clamped_focused_group_index();
     for (std::size_t gi = 0; gi < kMaxEditorGroups; ++gi) {
-      const std::size_t label = gi < groups ? std::hash<std::string>{}(BreadcrumbLabel(gi)) | 1u : 0;
-      std::size_t& painted = frame_state_.painted_breadcrumb_labels[gi];
-      if (label == painted) {
-        continue;
-      }
-      if (painted != 0 && label != 0) {
-        if (!group_rects.has_value()) {
-          group_rects = ComputeEditorGroupRectsForState(layout);
+      const bool present = gi < group_rects.groups.size() && gi < project_state.editor_groups.size();
+      PaintFingerprint strip;
+      PaintFingerprint band;
+      if (present) {
+        strip.Add(gi == focused);
+        for (const TabEntry& tab : project_state.editor_groups[gi].open_tabs) {
+          strip.Add(TabEntryIsDirty(tab)).Add(std::string_view(tab.title));
         }
-        const SDL_FRect band = gi < group_rects->groups.size() ? group_rects->groups[gi].breadcrumb : SDL_FRect{};
-        if (band.w > 0.0f && band.h > 0.0f) {
-          RequestRedrawRect(band);
-        } else {
-          RequestBreadcrumbRedraw();
-        }
+        band.Add(gi == focused).Add(std::string_view(BreadcrumbLabel(gi))).Add(frame_state_.status_items_hash);
       }
-      painted = label;
+      chrome_unit(present ? std::optional<SDL_FRect>(group_rects.groups[gi].tab_strip) : std::nullopt, strip.value());
+      chrome_unit(present ? std::optional<SDL_FRect>(group_rects.groups[gi].breadcrumb) : std::nullopt, band.value());
     }
-  }
-  // The focused editor group: every group's strip and breadcrumb (see
-  // PreparedFrameState::painted_focused_group), and the surfaces of the group that
-  // lost the focus and the one that took it. Only the focused pane draws its caret,
-  // current line, occurrence and bracket highlights, and the per-pane diffs below
-  // read the focused pane alone: a click from one split pane into another left the
-  // first one's selection highlight painted (QA monkey, seed 60 at 600 steps).
-  if (const std::size_t group = project_state.clamped_focused_group_index();
-      frame_state_.painted_focused_group != group) {
-    if (frame_state_.painted_focused_group.has_value()) {
-      const EditorGroupRectsLayout group_rects = ComputeEditorGroupRectsForState(layout);
-      for (std::size_t gi = 0; gi < group_rects.groups.size(); ++gi) {
-        const EditorGroupRects& rects = group_rects.groups[gi];
-        const bool focus_moved_here = gi == group || gi == *frame_state_.painted_focused_group;
-        for (const SDL_FRect& rect : {rects.tab_strip, rects.breadcrumb,
-                                      focus_moved_here ? rects.editor_surface : SDL_FRect{}}) {
-          if (rect.w > 0.0f && rect.h > 0.0f) {
-            RequestRedrawRect(rect);
-          }
-        }
-      }
-    }
-    frame_state_.painted_focused_group = group;
   }
   // The focus ring: the surface that lost it and the one that took it repaint
-  // (see PreparedFrameState::painted_focus).
+  // (a Chrome unit at the focused surface's rect).
   // The ring this frame paints is the one its view models were built with, so a
   // focus move between building them and here is a ring painted nowhere.
   assert((!prepare_cached_bottom_panel_vm_.has_value() ||
           prepare_cached_bottom_panel_vm_->focus == project_state.surface.focus) &&
          "frame prep moved the keyboard after the surface view models were built");
-  if (const FocusTarget focus = project_state.surface.focus; frame_state_.painted_focus != focus) {
-    for (const FocusTarget target : {frame_state_.painted_focus.value_or(focus), focus}) {
-      if (const auto rect = FocusSurfaceRect(layout, target); rect.has_value()) {
-        RequestRedrawRect(*rect);
-      }
-    }
-    frame_state_.painted_focus = focus;
-  }
-  // The editor tabs' dirty markers and titles: repaint the strips when either
-  // moved, whatever path moved it (see PreparedFrameState).
-  {
-    std::uint64_t labels = 0xCBF29CE484222325ull;
-    for (std::size_t g = 0; g < project_state.editor_groups.size(); ++g) {
-      const auto& tabs = project_state.editor_groups[g].open_tabs;
-      for (std::size_t i = 0; i < tabs.size(); ++i) {
-        if (TabEntryIsDirty(tabs[i])) {
-          labels = (labels ^ ((static_cast<std::uint64_t>(g) << 32) | (i + 1))) * 0x100000001B3ull;
-        }
-        for (const char c : tabs[i].title) {
-          labels = (labels ^ static_cast<unsigned char>(c)) * 0x100000001B3ull;
-        }
-        labels = (labels ^ 0xFFu) * 0x100000001B3ull;  // ends the title: "ab","c" != "a","bc"
-      }
-    }
-    if (labels != frame_state_.painted_editor_tab_labels) {
-      RequestTabStripRedraw();
-      frame_state_.painted_editor_tab_labels = labels;
-    }
-  }
+  chrome_unit(FocusSurfaceRect(layout, project_state.surface.focus),
+              static_cast<std::uint64_t>(project_state.surface.focus));
+  // (The tabs' titles and dirty marks are in their strips' units above.)
   // The sidebar's selected row: activating a tab selects its file in the tree (as
   // VS Code's explorer follows the active editor) without repainting the tree
   // (QA monkey, seed 5). Any selection that moved with no repaint of its own
@@ -1809,31 +1651,22 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     if (key == 0) {
       key = 1;
     }
-    if (key != frame_state_.painted_sidebar_selection && frame_state_.painted_sidebar_selection != 0) {
-      RequestRedrawRect(layout.sidebar);
-    }
-    frame_state_.painted_sidebar_selection = key;
+    chrome_unit(layout.sidebar, key);
   } else {
-    frame_state_.painted_sidebar_selection = 0;
+    chrome_unit(std::nullopt, 0);
   }
-  // A tab strip painted mid-slide that is no longer animating repaints at rest.
+  // A tab strip mid-slide, one unit per animation slot: one that comes to rest
+  // repaints its strip at rest.
   {
     const TabSlideState& slide = context_.interaction_state.tab_slide;
-    for (const PreparedFrameState::SlideStrip& painted : frame_state_.painted_slide_strips) {
-      if (painted.kind == TabDragKind::None ||
-          !slide.OffsetsFor(painted.kind, painted.group_index).empty()) {
-        continue;
+    for (std::size_t i = 0; i < kMaxAnimatingTabStrips; ++i) {
+      std::optional<SDL_FRect> strip;
+      std::uint64_t key = 0;
+      if (i < slide.strips.size() && !slide.strips[i].idle()) {
+        strip = TabStripRectForKind(slide.strips[i].kind, slide.strips[i].group_index);
+        key = (static_cast<std::uint64_t>(slide.strips[i].kind) << 32) | slide.strips[i].group_index;
       }
-      if (const auto strip = TabStripRectForKind(painted.kind, painted.group_index); strip.has_value()) {
-        RequestRedrawRect(*strip);
-      }
-    }
-    for (std::size_t i = 0; i < slide.strips.size(); ++i) {
-      frame_state_.painted_slide_strips[i] = slide.strips[i].idle()
-                                                 ? PreparedFrameState::SlideStrip{}
-                                                 : PreparedFrameState::SlideStrip{
-                                                       .kind = slide.strips[i].kind,
-                                                       .group_index = slide.strips[i].group_index};
+      chrome_unit(strip, key);
     }
   }
   frame_state_.pointer_occluder.reset();
@@ -2209,6 +2042,8 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       project_state.surface.focus == FocusTarget::Editor &&
       context_.text_input.active_surface == TextInputSurface::Editor &&
       context_.text_input.composition.text.empty();
+  frame_state_.derived_damage.Commit(
+      DerivedSurface::Chrome, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); }, DerivedDamage::Coalesce::Apart);
   FrameToken::VisibleLineRange visible_line_range{};
   if (auto* viewport = ActiveEditorViewport(); viewport != nullptr && !viewport->is_placeholder()) {
     visible_line_range.viewport = viewport;
