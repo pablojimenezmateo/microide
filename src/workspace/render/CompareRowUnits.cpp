@@ -4,6 +4,7 @@
 #include <string_view>
 
 #include "util/Fnv1a.h"
+#include "workspace/MergeWrapRows.h"
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/render/EditorRowUnits.h"
 
@@ -166,6 +167,57 @@ void AppendCompareRowUnits(const CompareTabState& compare, const CompareRowGeome
   const float tail_top = geometry.rows_y + static_cast<float>(painted_rows) * geometry.line_height - 1.0f;
   units.push_back({SDL_FRect{geometry.surface.x, tail_top, geometry.content_width, std::max(0.0f, bottom - tail_top)},
                    Mix(surface_key, 0x7A11)});
+}
+
+void AppendMergeSideRowUnits(const MergeTabState& merge, const CompareRowGeometry& geometry,
+                             std::uint64_t surface_key, std::vector<DerivedDamage::Unit>& units) {
+  const std::size_t visual_count = MergeSourceVisualRowCount(merge);
+  const std::uint64_t long_line_stand_in = merge.result_viewport.content_revision();
+  const std::size_t selected =
+      merge.conflicts.empty() ? 0 : std::min(merge.selected_hunk, merge.conflicts.size() - 1);
+  int painted_rows = 0;
+  for (int row = 0; row < geometry.visible_rows; ++row) {
+    const std::size_t visual = static_cast<std::size_t>(std::max(0, merge.scroll_row + row));
+    if (visual >= visual_count) {
+      break;
+    }
+    const DiffWrapRow wrap = merge.wrap_layout.RowAt(visual);
+    const std::size_t line = wrap.unit;
+    std::uint64_t key = Mix(surface_key, line);
+    for (const std::uint64_t part : {std::uint64_t{wrap.left_start}, std::uint64_t{wrap.left_end},
+                                     std::uint64_t{wrap.left_indent}, std::uint64_t{wrap.right_start},
+                                     std::uint64_t{wrap.right_end}, std::uint64_t{wrap.right_indent},
+                                     std::uint64_t{wrap.first}, std::uint64_t{wrap.left_present},
+                                     std::uint64_t{wrap.right_present}}) {
+      key = Mix(key, part);
+    }
+    if (line < merge.model.incoming_lines.size()) {
+      key = MixText(Mix(key, 0x11), merge.model.incoming_lines[line], long_line_stand_in);
+      key = MixTokens(key, merge.incoming_token_window.Tokens(line));
+    }
+    if (line < merge.model.current_lines.size()) {
+      key = MixText(Mix(key, 0x22), merge.model.current_lines[line], long_line_stand_in);
+      key = MixTokens(key, merge.current_token_window.Tokens(line));
+    }
+    // The conflicts this source line sits in, on either side, and how they show.
+    for (std::size_t i = 0; i < merge.conflicts.size(); ++i) {
+      const MergeTrackedConflict& conflict = merge.conflicts[i];
+      const bool incoming = line >= conflict.incoming_start_line && line < conflict.incoming_end_line;
+      const bool current = line >= conflict.current_start_line && line < conflict.current_end_line;
+      if (incoming || current) {
+        key = Mix(Mix(Mix(key, i), (incoming ? 1u : 0u) | (current ? 2u : 0u)),
+                  (conflict.valid ? 1u : 0u) | (conflict.resolved ? 2u : 0u) | (i == selected ? 4u : 0u));
+      }
+    }
+    units.push_back({SDL_FRect{geometry.surface.x, geometry.rows_y + static_cast<float>(row) * geometry.line_height - 1.0f,
+                               geometry.content_width, geometry.line_height},
+                     key});
+    ++painted_rows;
+  }
+  const float bottom = geometry.surface.y + geometry.surface.h;
+  const float tail_top = geometry.rows_y + static_cast<float>(painted_rows) * geometry.line_height - 1.0f;
+  units.push_back({SDL_FRect{geometry.surface.x, tail_top, geometry.content_width, std::max(0.0f, bottom - tail_top)},
+                   Mix(surface_key, 0x7A12)});
 }
 
 }  // namespace microide::workspace

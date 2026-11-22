@@ -925,6 +925,17 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
             .Add(compare_surface.show_vertical)
             .Add(compare_surface.show_horizontal);
         const float right_reserved = compare_surface.show_vertical ? kWorkspaceDiffScrollbarReserve : 0.0f;
+        // The header above the rows: the review summary line and the two sides' labels.
+        {
+          PaintFingerprint header;
+          header.Add(surface_key.value())
+              .Add(std::string_view(compare.review_header.summary_line))
+              .Add(std::string_view(compare.left_label))
+              .Add(std::string_view(compare.right_label));
+          // The whole width: the header runs above the scrollbar's reserve too.
+          units.push_back({SDL_FRect{area.x, area.y, area.w, std::max(0.0f, compare_surface.rows_y - 1.0f - area.y)},
+                           header.value()});
+        }
         AppendCompareRowUnits(
             compare,
             CompareRowGeometry{.surface = area,
@@ -934,6 +945,108 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
                                .visible_rows = compare_surface.visible_rows},
             surface_key.value(),
             CompareBracketMatch(compare, setting("editor.brackets.match_highlight.enabled", true)), units);
+        frame_state_.derived_damage.Commit(surface, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
+        continue;
+      }
+      // A merge tab in front: its two source columns' rows and its result pane's
+      // rows (an editor viewport: the editor's row units) are the group's units.
+      // The scroll is synced and clamped and the result viewport sized here, as its
+      // paint does, so the keys read what paint draws (paint repeats it, unchanged).
+      if (diff_in_front && group.active_tab().merge.has_value()) {
+        MergeTabState& merge = *group.active_tab().merge;
+        const SDL_FRect area = ComputeEditorGroupRectsForState(layout).groups[gi].editor_surface;
+        const MergeSurfaceLayout merge_surface = ComputeMergeSurfaceLayout(area, merge);
+        merge.result_viewport.SetScrollLine(static_cast<std::size_t>(std::max(0, merge.scroll_row)));
+        merge.result_viewport.SetHorizontalScroll(merge.horizontal_scroll);
+        merge.scroll_row = static_cast<int>(merge.result_viewport.scroll_line());
+        merge.horizontal_scroll = merge.result_viewport.horizontal_scroll();
+        ClampMergeScrollRow(merge, merge_surface.visible_rows);
+        ClampMergeHorizontalScroll(merge, merge_surface.visible_columns);
+        merge.result_viewport.SetScrollLine(static_cast<std::size_t>(std::max(0, merge.scroll_row)));
+        merge.result_viewport.SetHorizontalScroll(merge.horizontal_scroll);
+        const MergeInteractionLayout interaction = BuildMergeInteractionLayout(area, merge_surface, merge);
+        merge.scroll_row = static_cast<int>(merge.result_viewport.scroll_line());
+        merge.horizontal_scroll = merge.result_viewport.horizontal_scroll();
+        const bool focused = gi == focused_group;
+        PaintFingerprint surface_key;
+        surface_key.Add(reinterpret_cast<std::uintptr_t>(&merge))
+            .Add(settings.value())
+            .Add(area)
+            .Add(focused)
+            .Add(merge.scroll_row)
+            .Add(merge.horizontal_scroll)
+            .Add(merge.base_pane_visible)
+            .Add(merge.wrap_layout.active())
+            .Add(merge.selected_hunk)
+            .Add(merge.conflicts.size())
+            .Add(merge_surface.line_height)
+            .Add(merge_surface.left_x)
+            .Add(merge_surface.center_x)
+            .Add(merge_surface.right_x)
+            .Add(merge_surface.rows_y)
+            .Add(merge_surface.visible_rows)
+            .Add(merge_surface.show_vertical)
+            .Add(merge_surface.show_horizontal);
+        // The conflicts' boxes, accept buttons and previews are drawn from their
+        // ranges, choices and the hover; a change in any of them repaints the surface.
+        for (const MergeTrackedConflict& conflict : merge.conflicts) {
+          surface_key.Add(conflict.incoming_start_line)
+              .Add(conflict.incoming_end_line)
+              .Add(conflict.current_start_line)
+              .Add(conflict.current_end_line)
+              .Add(conflict.start_line)
+              .Add(conflict.end_line)
+              .Add(conflict.last_choice)
+              .Add(conflict.valid)
+              .Add(conflict.resolved);
+        }
+        if (merge.hover_state.has_value()) {
+          surface_key.Add(merge.hover_state->kind)
+              .Add(merge.hover_state->conflict_index)
+              .Add(merge.hover_state->preview_choice);
+        }
+        const float right_reserved = merge_surface.show_vertical ? kWorkspaceDiffScrollbarReserve : 0.0f;
+        // The toolbar, status line, base band and pane labels above the rows.
+        {
+          PaintFingerprint header;
+          header.Add(surface_key.value())
+              .Add(std::string_view(merge.incoming_label))
+              .Add(std::string_view(merge.result_label))
+              .Add(std::string_view(merge.current_label))
+              .Add(std::string_view(merge.base_label))
+              .Add(std::string_view(merge.status_message))
+              .Add(merge.marked_resolved)
+              .Add(merge.remaining_conflicted_files)
+              .Add(merge.result_viewport.dirty())
+              .Add(static_cast<int>(ComputeMergeResultState(merge, merge.file_conflict)));
+          if (merge.base_pane_visible) {
+            for (std::size_t row = 0; row < merge.model.base_lines.size() && row < 4; ++row) {
+              header.Add(std::string_view(merge.model.base_lines[row]));
+            }
+          }
+          // The whole width: the header runs above the scrollbar's reserve too.
+          units.push_back({SDL_FRect{area.x, area.y, area.w, std::max(0.0f, merge_surface.rows_y - 1.0f - area.y)},
+                           header.value()});
+        }
+        AppendMergeSideRowUnits(merge,
+                                CompareRowGeometry{.surface = area,
+                                                   .rows_y = merge_surface.rows_y,
+                                                   .line_height = merge_surface.line_height,
+                                                   .content_width = std::max(0.0f, area.w - right_reserved),
+                                                   .visible_rows = merge_surface.visible_rows},
+                                surface_key.value(), units);
+        std::span<const editor::PublishedDiagnostic> result_diagnostics;
+        if (!merge.result_viewport.path().empty() && !merge.result_viewport.dirty()) {
+          if (const auto* published = project_state.diagnostics_store.FindByPathKey(merge.result_viewport.path_key())) {
+            result_diagnostics = *published;
+          }
+        }
+        AppendEditorRowUnits(EditorRowKeyInputs{.viewport = &merge.result_viewport,
+                                                .pane_rect = interaction.result.rect,
+                                                .metrics = interaction.result.metrics,
+                                                .pane_key = surface_key.value(),
+                                                .diagnostics = result_diagnostics},
+                             frame_state_.editor_row_keys, units);
         frame_state_.derived_damage.Commit(surface, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
         continue;
       }
@@ -1317,36 +1430,8 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     track(frame_state_.painted_menu_popup_rect, popup_rect);
     track(frame_state_.painted_submenu_rect, submenu_rect);
   }
-  // The merge header's status (see PreparedFrameState::painted_merge_status).
-  {
-    std::uint64_t status = 0;
-    if (const MergeTabState* merge = ActiveMergeTab(); merge != nullptr) {
-      status = (reinterpret_cast<std::uintptr_t>(merge) * 0x9E3779B97F4A7C15ull) ^
-               (static_cast<std::uint64_t>(ComputeMergeResultState(*merge, merge->file_conflict)) + 1);
-      status = status * 0x100000001B3ull ^ CountRemainingMergeConflicts(merge->conflicts);
-      status = status * 0x100000001B3ull ^ (merge->selected_hunk + 1);
-    }
-    if (status != frame_state_.painted_merge_status) {
-      if (status != 0) {
-        RequestEditorSurfaceRedraw();
-      }
-      frame_state_.painted_merge_status = status;
-    }
-  }
-  // The compare header (see PreparedFrameState::painted_compare_header).
-  {
-    std::uint64_t header = 0;
-    if (const CompareTabState* compare = ActiveCompareTab(); compare != nullptr) {
-      header = (reinterpret_cast<std::uintptr_t>(compare) * 0x9E3779B97F4A7C15ull) ^
-               std::hash<std::string_view>{}(compare->review_header.summary_line);
-    }
-    if (header != frame_state_.painted_compare_header) {
-      if (header != 0) {
-        RequestEditorSurfaceRedraw();
-      }
-      frame_state_.painted_compare_header = header;
-    }
-  }
+  // (The merge header's status and the compare header's summary are header units
+  // of their surfaces: see the diff branches of the editor-pane units above.)
   // (The diff's shape -- its presentation rows -- is in its rows' keys: CompareRowUnits.)
   // The debug toolbar's run state (see PreparedFrameState::painted_debug_toolbar).
   {

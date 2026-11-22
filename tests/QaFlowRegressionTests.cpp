@@ -2801,6 +2801,90 @@ void TestCompareRowDamageFollowsEveryStateTransition() {
   }
 }
 
+// derived-damage 2.5, the merge surface's differential property test: random
+// transitions on a three-way merge -- typing, Return, deleting and moving in the
+// result through the real key paths, scrolling, the selected conflict, the hover
+// over a conflict, the base pane -- with every damage they requested dropped,
+// each partial frame painted from frame prep's damage alone and compared with a
+// full repaint.
+void TestMergeRowDamageFollowsEveryStateTransition() {
+  FlowFixture fixture("notes.txt", "notes\n");
+  std::string side;
+  for (int i = 1; i <= 50; ++i) {
+    side += "int line" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  WriteFile(fixture.root / "base.txt", side);
+  WriteFile(fixture.root / "incoming.txt", "int head = 1;\n" + side + "int tail = 9;\n");
+  WriteFile(fixture.root / "current.txt", "int head = 2;\n" + side + "int tail = 8;\n");
+  WriteFile(fixture.root / "result.txt", "<<<<<<< HEAD\nint head = 2;\n=======\nint head = 1;\n>>>>>>> in\n" + side +
+                                             "<<<<<<< HEAD\nint tail = 8;\n=======\nint tail = 9;\n>>>>>>> in\n");
+  Expect(TestAccess::OpenMergeEditor(fixture.shell, fixture.root / "base.txt", fixture.root / "incoming.txt",
+                                     fixture.root / "current.txt", fixture.root / "result.txt"),
+         "the merge editor opens");
+  fixture.PinCaret();
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  std::mt19937 rng(5);
+  for (int step = 0; step < 60; ++step) {
+    auto& merge = TestAccess::ActiveMerge(fixture.shell);
+    std::string op;
+    switch (rng() % 8) {
+      case 0: {
+        const char* const kInserts[] = {"x", "/*", "*/", " ", "line"};
+        const char* insert = kInserts[rng() % std::size(kInserts)];
+        (void)DispatchEvents(fixture.shell, {TextInputEvent(insert)});
+        op = std::string("type '") + insert + "'";
+        break;
+      }
+      case 1:
+        (void)DispatchEvents(fixture.shell, {KeyDownEvent(rng() % 2 == 0 ? SDLK_RETURN : SDLK_BACKSPACE)});
+        op = "return or backspace";
+        break;
+      case 2: {
+        const SDL_Keycode keys[] = {SDLK_DOWN, SDLK_UP, SDLK_RIGHT, SDLK_LEFT, SDLK_END, SDLK_HOME, SDLK_PAGEDOWN};
+        const bool extend = rng() % 3 == 0;
+        (void)DispatchEvents(fixture.shell,
+                             {KeyDownEvent(keys[rng() % std::size(keys)], extend ? SDL_KMOD_SHIFT : SDL_KMOD_NONE)});
+        op = extend ? "extend selection" : "move caret";
+        break;
+      }
+      case 3:
+        merge.scroll_row = static_cast<int>(rng() % 30);
+        op = "scroll to " + std::to_string(merge.scroll_row);
+        break;
+      case 4:
+        merge.selected_hunk = merge.conflicts.empty() ? 0 : rng() % merge.conflicts.size();
+        op = "select conflict " + std::to_string(merge.selected_hunk);
+        break;
+      case 5:
+        if (merge.conflicts.empty() || rng() % 3 == 0) {
+          merge.hover_state.reset();
+          op = "hover off";
+        } else {
+          const workspace::MergeHoverState::Kind kinds[] = {
+              workspace::MergeHoverState::Kind::IncomingConflict, workspace::MergeHoverState::Kind::CurrentConflict,
+              workspace::MergeHoverState::Kind::IncomingAccept, workspace::MergeHoverState::Kind::ResultConflict};
+          merge.hover_state = workspace::MergeHoverState{.kind = kinds[rng() % std::size(kinds)],
+                                                         .conflict_index = rng() % merge.conflicts.size()};
+          op = "hover a conflict";
+        }
+        break;
+      case 6:
+        merge.horizontal_scroll = rng() % 5;
+        op = "horizontal scroll";
+        break;
+      default:
+        merge.base_pane_visible = !merge.base_pane_visible;
+        op = merge.base_pane_visible ? "base pane shown" : "base pane hidden";
+        break;
+    }
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+    workspace::RenderInvalidation nothing;
+    nothing.rects.push_back(SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f});
+    fixture.ExpectFresh(nothing, "step " + std::to_string(step) + " (" + op + ")");
+  }
+}
+
 // derived-damage 2.2, the differential property test: random editor state
 // transitions applied straight to the viewport and the stores -- so no event
 // path asks for any damage -- and each partial frame painted from ONLY what frame
@@ -6551,6 +6635,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/EditorRowsRepaintTheirIndentGuides", TestEditorRowsRepaintTheirIndentGuides);
   AddTest(tests, "QaFlowRegression/CompareRowDamageFollowsEveryStateTransition",
           TestCompareRowDamageFollowsEveryStateTransition);
+  AddTest(tests, "QaFlowRegression/MergeRowDamageFollowsEveryStateTransition",
+          TestMergeRowDamageFollowsEveryStateTransition);
   AddTest(tests, "QaFlowRegression/EditorRowDamageFollowsEveryStateTransition",
           TestEditorRowDamageFollowsEveryStateTransition);
   AddTest(tests, "QaFlowRegression/EditorRowsRepaintWhatChangedWithNoDamageRequest",
