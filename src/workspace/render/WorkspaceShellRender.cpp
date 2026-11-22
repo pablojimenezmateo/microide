@@ -171,8 +171,7 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
     {
       util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::EditorSurface");
       RenderActiveWorkspaceSurface(renderer, layout, frame_token, prepared_frame_draw_editor_caret_,
-                                   &active_editor_pane_rect, *clip_cached_frame_vm_,
-                                   *clip_cached_overlay_vm_);
+                                   &active_editor_pane_rect, *clip_cached_frame_vm_);
     }
     RenderEditorHoverPopup(renderer);
     RenderSignatureHelpPopup(renderer);

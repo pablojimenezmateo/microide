@@ -257,10 +257,9 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         const std::size_t cursor_before_line = merge_tab->result_viewport.cursor_line();
         merge_tab->result_viewport.InsertText(*text);
         operations_.update_merge_tracking_after_viewport_edit(*merge_tab);
-        operations_.request_active_editable_last_change_redraw();
+        operations_.note_active_editable_edit();
         if (merge_tab->result_viewport.dirty() != was_dirty) {
-          operations_.request_active_editable_blame_neighborhood_redraw(
-              cursor_before_line, merge_tab->result_viewport.cursor_line());
+          operations_.request_frame();
         }
       }
       return true;
@@ -270,10 +269,9 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     selection_granularity::ApplyClick(interaction_state_, merge_tab->result_viewport,
                                       event.button.clicks);
     if (merge_tab->selected_hunk != previous_selected_hunk) {
-      operations_.request_merge_conflict_redraw(previous_selected_hunk);
-      operations_.request_merge_conflict_redraw(merge_tab->selected_hunk);
+      operations_.request_frame();
     } else {
-      operations_.request_focused_editor_redraw();
+      operations_.request_frame();
     }
     interaction_state_.mouse_selecting = true;
     return true;
@@ -310,8 +308,7 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     }
   }
   if (merge_tab->selected_hunk != previous_selected_hunk) {
-    operations_.request_merge_conflict_redraw(previous_selected_hunk);
-    operations_.request_merge_conflict_redraw(merge_tab->selected_hunk);
+    operations_.request_frame();
   }
   state_.surface.focus = FocusTarget::Editor;
   return true;
@@ -451,10 +448,10 @@ bool MergeMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
     return false;
   }
   if (previous_hover.has_value()) {
-    operations_.request_merge_conflict_redraw(previous_hover->conflict_index);
+    operations_.request_frame();
   }
   if (merge_tab->hover_state.has_value()) {
-    operations_.request_merge_conflict_redraw(merge_tab->hover_state->conflict_index);
+    operations_.request_frame();
   }
   return true;
 }
@@ -512,10 +509,9 @@ bool MergeMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
   merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
   operations_.reset_caret_blink();
   if (merge_tab->selected_hunk != previous_selected_hunk) {
-    operations_.request_merge_conflict_redraw(previous_selected_hunk);
-    operations_.request_merge_conflict_redraw(merge_tab->selected_hunk);
+    operations_.request_frame();
   } else {
-    operations_.request_focused_editor_redraw();
+    operations_.request_frame();
   }
   state_.surface.focus = FocusTarget::Editor;
   return true;
@@ -601,15 +597,9 @@ MergeMouseCoordinator& WorkspaceShell::MakeMergeMouseCoordinator() {
               [this](MergeTabState& merge_tab) {
                 UpdateMergeTrackingAfterViewportEdit(merge_tab);
               },
-          .request_active_editable_last_change_redraw =
-              [this]() { RequestActiveEditableLastChangeRedraw(); },
-          .request_active_editable_blame_neighborhood_redraw =
-              [this](std::size_t before_line, std::size_t after_line) {
-                RequestActiveEditableBlameNeighborhoodRedraw(before_line, after_line);
-              },
-          .request_merge_conflict_redraw =
-              [this](std::size_t conflict_index) { RequestMergeConflictRedraw(conflict_index); },
-          .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
+          .note_active_editable_edit =
+              [this]() { NoteActiveEditableEdit(); },
+          .request_frame = [this]() { RequestPreparedFrame(); },
           .clear_drag_state = [this]() { ClearDragState(); },
           .find_merge_tracked_conflict_at_source_line =
               [this](const MergeTabState& merge_tab, std::size_t line, bool incoming) {

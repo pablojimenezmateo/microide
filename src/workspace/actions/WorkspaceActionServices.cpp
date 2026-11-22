@@ -1516,7 +1516,7 @@ bool WorkspaceActionContext::ExecuteLineNavigation(const LineNavigationRequest& 
   }
   viewport->JumpCursorTo(line, byte_column);
   state_.surface.focus = FocusTarget::Editor;
-  operations_.request_focused_editor_redraw();
+  operations_.request_frame();
   return true;
 }
 
@@ -1584,7 +1584,7 @@ void WorkspaceActionContext::SelectAll() {
   if (auto* viewport = operations_.active_navigable_viewport(); viewport != nullptr) {
     viewport->SelectAll();
     operations_.reset_caret_blink();
-    operations_.request_focused_editor_redraw();
+    operations_.request_frame();
     state_.surface.focus = FocusTarget::Editor;
     return;
   }
@@ -1641,12 +1641,11 @@ void WorkspaceActionContext::ApplyUndoRedo(bool redo) {
   }
   operations_.reset_caret_blink();
   operations_.request_active_tab_redraw(false);
-  operations_.request_focused_editor_redraw();
-  operations_.request_active_editable_last_change_redraw();
+  operations_.request_frame();
+  operations_.note_active_editable_edit();
   if (viewport->dirty() != was_dirty) {
     util::PerformanceTrace::Scope scope("WorkspaceActionContext::UndoRedo::DirtyStateSideEffects");
-    operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
-                                                                  viewport->cursor_line());
+    operations_.request_frame();
   }
 }
 
@@ -2114,11 +2113,10 @@ void WorkspaceActionContext::FinishClipboardEdit(const editor::TextViewport& vie
   RetrackActiveMergeAfterViewportEdit();
   operations_.reset_caret_blink();
   operations_.request_active_tab_redraw(false);
-  operations_.request_focused_editor_redraw();
-  operations_.request_active_editable_last_change_redraw();
+  operations_.request_frame();
+  operations_.note_active_editable_edit();
   if (viewport.dirty() != was_dirty) {
-    operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
-                                                                  viewport.cursor_line());
+    operations_.request_frame();
   }
 }
 
@@ -2160,9 +2158,9 @@ void WorkspaceActionContext::NotifyEditorViewportChanged(bool last_change) {
   }
   operations_.reset_caret_blink();
   operations_.request_active_tab_redraw(false);
-  operations_.request_focused_editor_redraw();
+  operations_.request_frame();
   if (last_change) {
-    operations_.request_active_editable_last_change_redraw();
+    operations_.note_active_editable_edit();
   }
 }
 
@@ -2170,7 +2168,7 @@ void WorkspaceActionContext::NotifyEditorCaretMoved() {
   assist().snippets().NotifyCaretMoved();
   operations_.reset_caret_blink();
   operations_.request_active_tab_redraw(false);
-  operations_.request_focused_editor_redraw();
+  operations_.request_frame();
 }
 
 std::optional<std::string> WorkspaceActionContext::GetSettingValue(std::string_view id) const {

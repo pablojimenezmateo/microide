@@ -50,9 +50,10 @@ class AssistHost {
     std::function<void(bool)> dismiss_overlay;
     std::function<void()> request_overlay_redraw;
     std::function<void()> reset_caret_blink;
-    std::function<void()> request_focused_editor_redraw;
-    std::function<void()> request_active_editable_last_change_redraw;
-    std::function<void(std::size_t, std::size_t)> request_active_editable_blame_neighborhood_redraw;
+    // A frame owed: the editor, compare and merge surfaces derive their damage
+    // (RequestPreparedFrame); a request names no rect.
+    std::function<void()> request_frame;
+    std::function<void()> note_active_editable_edit;
     std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;
     std::function<void(CompareTabState&, bool)> sync_compare_selection_from_viewport;
     std::function<void(MergeTabState&)> update_merge_tracking_after_viewport_edit;

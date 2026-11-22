@@ -981,14 +981,6 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       paint.diagnostics = {};
       return paint;
     };
-    const auto fold_blame = [](PaintFingerprint& key, const std::optional<editor::EditorBlameOverlay>& blame) {
-      key.Add(blame.has_value() && blame->visible);
-      if (blame.has_value()) {
-        for (const editor::EditorBlameLine& line : blame->lines) {
-          key.Add(line.line_index).Add(line.rect).Add(std::string_view(line.text));
-        }
-      }
-    };
     for (const EditorPaneLayout& pane : panes) {
       const std::size_t gi = pane.group_index;
       if (gi >= kMaxEditorGroups || gi >= project_state.editor_groups.size() || !frame_state_.pane_metrics_valid[gi]) {
@@ -1064,7 +1056,6 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
             .Add(compare_surface.visible_rows)
             .Add(compare_surface.show_vertical)
             .Add(compare_surface.show_horizontal);
-        fold_blame(surface_key, diff_paint.blame);
         const float right_reserved = compare_surface.show_vertical ? kWorkspaceDiffScrollbarReserve : 0.0f;
         // The header above the rows: the review summary line and the two sides' labels.
         {
@@ -1085,7 +1076,8 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
                                .content_width = std::max(0.0f, area.w - right_reserved),
                                .visible_rows = compare_surface.visible_rows},
             surface_key.value(),
-            CompareBracketMatch(compare, setting("editor.brackets.match_highlight.enabled", true)), units);
+            CompareBracketMatch(compare, setting("editor.brackets.match_highlight.enabled", true)),
+            diff_paint.blame.has_value() ? &*diff_paint.blame : nullptr, units);
         frame_state_.derived_damage.Commit(surface, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
         continue;
       }
@@ -1131,7 +1123,6 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
             .Add(merge.horizontal_scroll)
             .Add(merge.base_pane_visible)
             .Add(merge.wrap_layout.active())
-            .Add(merge.selected_hunk)
             .Add(merge.conflicts.size())
             .Add(merge_surface.line_height)
             .Add(merge_surface.left_x)
@@ -1141,26 +1132,28 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
             .Add(merge_surface.visible_rows)
             .Add(merge_surface.show_vertical)
             .Add(merge_surface.show_horizontal);
-        // The conflicts' boxes, accept buttons and previews are drawn from their
-        // ranges, choices and the hover; a change in any of them repaints the surface.
+        // Where the conflicts are: their boxes span rows, so a range that moves
+        // repaints the surface. What each one shows -- its choice, whether it is
+        // resolved, selected or hovered -- is in the rows it covers (the source
+        // columns' keys, and the result rows' extra line keys below).
         for (const MergeTrackedConflict& conflict : merge.conflicts) {
           surface_key.Add(conflict.incoming_start_line)
               .Add(conflict.incoming_end_line)
               .Add(conflict.current_start_line)
               .Add(conflict.current_end_line)
               .Add(conflict.start_line)
-              .Add(conflict.end_line)
-              .Add(conflict.last_choice)
-              .Add(conflict.valid)
-              .Add(conflict.resolved);
+              .Add(conflict.end_line);
         }
-        fold_blame(surface_key, diff_paint.blame);
         surface_key.Add(diff_paint.left_divider_dragged).Add(diff_paint.right_divider_dragged);
+        // The hover: a conflict's accept buttons and its preview stay in view,
+        // pinned to the pane's edge when the conflict is scrolled out -- over any
+        // row -- so a hover that comes, goes or moves repaints the surface.
         if (merge.hover_state.has_value()) {
           surface_key.Add(merge.hover_state->kind)
               .Add(merge.hover_state->conflict_index)
               .Add(merge.hover_state->preview_choice);
         }
+
         const float right_reserved = merge_surface.show_vertical ? kWorkspaceDiffScrollbarReserve : 0.0f;
         // The toolbar, status line, base band and pane labels above the rows.
         {
@@ -1174,7 +1167,9 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
               .Add(merge.marked_resolved)
               .Add(merge.remaining_conflicted_files)
               .Add(merge.result_viewport.dirty())
-              .Add(static_cast<int>(ComputeMergeResultState(merge, merge.file_conflict)));
+              .Add(static_cast<int>(ComputeMergeResultState(merge, merge.file_conflict)))
+              .Add(merge.selected_hunk)  // the status names the selected conflict
+              .Add(CountRemainingMergeConflicts(merge.conflicts));
           // The toolbar's buttons light under the pointer: where it is in the band.
           if (diff_paint.pointer.has_value() && diff_paint.pointer->y < merge_surface.rows_y) {
             header.Add(diff_paint.pointer->x).Add(diff_paint.pointer->y);
@@ -1196,11 +1191,29 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
                                                    .visible_rows = merge_surface.visible_rows},
                                 surface_key.value(), units);
         const std::span<const editor::PublishedDiagnostic> result_diagnostics = diff_paint.diagnostics;
+        // Each result line inside a conflict: which conflict, its choice and state,
+        // and whether it is the selected one.
+        thread_local std::vector<std::pair<std::size_t, std::uint64_t>> conflict_lines;
+        conflict_lines.clear();
+        const std::size_t selected =
+            merge.conflicts.empty() ? 0 : std::min(merge.selected_hunk, merge.conflicts.size() - 1);
+        for (std::size_t i = 0; i < merge.conflicts.size(); ++i) {
+          const MergeTrackedConflict& conflict = merge.conflicts[i];
+          PaintFingerprint state;
+          state.Add(i).Add(conflict.last_choice).Add(conflict.valid).Add(conflict.resolved).Add(i == selected);
+          for (std::size_t line = conflict.start_line; line < std::max(conflict.end_line, conflict.start_line + 1);
+               ++line) {
+            conflict_lines.emplace_back(line, state.value());
+          }
+        }
+        std::sort(conflict_lines.begin(), conflict_lines.end());
         AppendEditorRowUnits(EditorRowKeyInputs{.viewport = &merge.result_viewport,
                                                 .pane_rect = interaction.result.rect,
                                                 .metrics = interaction.result.metrics,
                                                 .pane_key = surface_key.value(),
-                                                .diagnostics = result_diagnostics},
+                                                .diagnostics = result_diagnostics,
+                                                .blame = diff_paint.blame.has_value() ? &*diff_paint.blame : nullptr,
+                                                .extra_line_keys = conflict_lines},
                              frame_state_.editor_row_keys, units);
         frame_state_.derived_damage.Commit(surface, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
         continue;
@@ -1974,41 +1987,21 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
                               tooltip->rect.h + 2.0f);
       tooltip_text_hash = std::hash<std::string_view>{}(tooltip->text);
     }
-    // A card at the same place can say something else (a click reordered the tab
-    // under a still pointer): QA monkey, seed 5.
-    if (tooltip_text_hash != frame_state_.painted_tooltip_text_hash && tooltip_rect.has_value()) {
-      RequestRedrawRect(*tooltip_rect);
-    }
-    frame_state_.painted_tooltip_text_hash = tooltip_text_hash;
-    const auto repaint_if_moved = [this](std::optional<SDL_FRect>& painted,
-                                         const std::optional<SDL_FRect>& now) {
-      if (painted.has_value() == now.has_value() &&
-          (!now.has_value() || RectsEqual(*painted, *now))) {
-        return;
-      }
-      if (painted.has_value()) {
-        RequestRedrawRect(*painted);
-      }
-      if (now.has_value()) {
-        RequestRedrawRect(*now);
-      }
-      painted = now;
-    };
-    repaint_if_moved(frame_state_.painted_hover_rect, hover_rect);
-    repaint_if_moved(frame_state_.painted_tooltip_rect, tooltip_rect);
+    // The hovered element's fill and the tooltip card (a card at the same place can
+    // say something else: a click reordered the tab under a still pointer, QA
+    // monkey, seed 5).
+    chrome_unit(hover_rect, 0);
+    chrome_unit(tooltip_rect, tooltip_text_hash);
     // The editor hover card goes when its target does -- the pointer leaving for
     // the tab strip cleared the blame card's target and repainted only the strip
-    // (QA monkey, seed 7).
-    const auto card_rect = [](const std::optional<EditorHoverPopupLayout>& popup) -> std::optional<SDL_FRect> {
-      if (!popup.has_value()) {
-        return std::nullopt;
-      }
-      return MakeRect(popup->rect.x - 2.0f, popup->rect.y - 2.0f, popup->rect.w + 4.0f, popup->rect.h + 4.0f);
-    };
-    std::optional<EditorHoverPopupLayout> hover_popup = ActiveEditorHoverPopupLayout();
-    std::optional<SDL_FRect> painted_hover_popup_rect = card_rect(frame_state_.painted_hover_popup);
-    repaint_if_moved(painted_hover_popup_rect, card_rect(hover_popup));
-    frame_state_.painted_hover_popup = std::move(hover_popup);
+    // (QA monkey, seed 7). Laid out once here; its paint reads this layout.
+    frame_state_.hover_popup = ActiveEditorHoverPopupLayout();
+    std::optional<SDL_FRect> card;
+    if (frame_state_.hover_popup.has_value()) {
+      const SDL_FRect& popup = frame_state_.hover_popup->rect;
+      card = MakeRect(popup.x - 2.0f, popup.y - 2.0f, popup.w + 4.0f, popup.h + 4.0f);
+    }
+    chrome_unit(card, 0);
     // The signature-help card: shown while a request's answer is up and the caret
     // has not moved, hidden while a menu holds the pointer -- so a menu opening
     // and closing over it is a card going and coming back with no edit.
@@ -2024,13 +2017,8 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
                          std::hash<std::string_view>{}(active_signature_help_->documentation);
       }
     }
-    std::optional<SDL_FRect> painted_signature_rect = frame_state_.painted_signature_help_rect;
-    if (signature_hash != frame_state_.painted_signature_help_hash && signature_rect.has_value()) {
-      RequestRedrawRect(*signature_rect);  // the same card saying something else
-    }
-    repaint_if_moved(painted_signature_rect, signature_rect);
-    frame_state_.painted_signature_help_rect = signature_rect;
-    frame_state_.painted_signature_help_hash = signature_hash;
+    frame_state_.signature_help_rect = signature_rect;
+    chrome_unit(signature_rect, signature_hash);  // the same card saying something else repaints too
   }
   // The editor (and the compare/merge editable panes) paint the caret only while
   // the editor OWNS the blinking caret -- the condition under which the blink
@@ -2257,8 +2245,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     const FrameToken& frame_token,
     bool draw_editor_caret,
     std::optional<SDL_FRect>* active_editor_pane_rect,
-    const FrameSurfaceViewModel& frame_vm,
-    const OverlaySurfaceViewModel& overlay_vm) {
+    const FrameSurfaceViewModel& frame_vm) {
   (void)frame_token;
   ProjectWorkspaceState& project_state = *frame_vm.project_state;
   // Every pane paints the tab in front of its own group, inside its own rect: an
@@ -2332,7 +2319,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       RenderCompareScrollbars(renderer, area, compare_tab, frame_state_.diff_surface_paint[gi]);
     } else {
       MergeTabState& merge_tab = *tab->merge;
-      RenderMergeSurface(renderer, area, merge_tab, project_state.root, focused, frame_state_.diff_surface_paint[gi]);
+      RenderMergeSurface(renderer, area, merge_tab, focused, frame_state_.diff_surface_paint[gi]);
       RenderMergeScrollbars(renderer, area, merge_tab, frame_state_.diff_surface_paint[gi]);
     }
   }

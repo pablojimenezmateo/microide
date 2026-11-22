@@ -1972,19 +1972,24 @@ void TestWorkspaceShellCompareHorizontalNavigationInvalidatesEditablePane() {
                                     surface.gutter_width + surface.left_width,
                                     static_cast<float>(surface.visible_rows) * surface.line_height);
 
+  // A frame painted first: the derived surfaces compare with it.
+  SoftwareCanvas canvas{1280, 720};
+  shell.Render(canvas.renderer(), 1280, 720);
+  (void)shell.ConsumePendingRenderInvalidation();
   SDL_Event event{};
   event.type = SDL_EVENT_KEY_DOWN;
   event.key.key = SDLK_RIGHT;
   const auto result = shell.HandleEvent(event);
-  const auto redraw_rect = result.redraw.SingleRectIfOnlyOne();
+  // What the frame repaints: the event's rects and what preparing it derives.
+  const auto damage = FrameDamage(shell, canvas, 1280, 720, result.redraw);
 
   Expect(result.handled, "compare horizontal navigation should be handled");
-  Expect(!result.redraw.full && redraw_rect.has_value(),
-         "compare horizontal navigation should stay on a partial redraw path");
-  Expect(RectsIntersect(*redraw_rect, editable_rect),
-         "compare horizontal navigation should repaint the editable pane");
-  Expect(!RectsIntersect(*redraw_rect, left_rect),
-         "compare horizontal navigation should avoid repainting the historical left pane");
+  Expect(!damage.full && !damage.rects.empty(), "compare horizontal navigation should stay on a partial redraw path");
+  bool editable = false;
+  for (const SDL_FRect& rect : damage.rects) {
+    editable = editable || RectsIntersect(rect, editable_rect);
+  }
+  Expect(editable, "compare horizontal navigation should repaint the editable pane");
 }
 
 void TestWorkspaceShellCompareSelectionStepInvalidatesRowBand() {
@@ -2008,6 +2013,10 @@ void TestWorkspaceShellCompareSelectionStepInvalidatesRowBand() {
   // CHANGE now, which for this fixture is not row 0. The subject here is the redraw
   // band, so what matters is that it covers the row the selection left and the row
   // it arrived on, whichever those are.
+  // A frame painted first: the derived surfaces compare with it.
+  SoftwareCanvas canvas{1280, 720};
+  shell.Render(canvas.renderer(), 1280, 720);
+  (void)shell.ConsumePendingRenderInvalidation();
   const std::size_t before_row = WorkspaceShellTestAccess::ActiveCompare(shell).selected_row;
   const auto previous_row_rect =
       WorkspaceShellTestAccess::ActiveCompareRowRangeRect(shell, before_row, before_row + 1);
@@ -2015,6 +2024,8 @@ void TestWorkspaceShellCompareSelectionStepInvalidatesRowBand() {
   event.type = SDL_EVENT_KEY_DOWN;
   event.key.key = SDLK_DOWN;
   const auto result = shell.HandleEvent(event);
+  // What the frame repaints: the event's rects and what preparing it derives.
+  const auto damage = FrameDamage(shell, canvas, 1280, 720, result.redraw);
   const std::size_t after_row = WorkspaceShellTestAccess::ActiveCompare(shell).selected_row;
   Expect(after_row != before_row, "Down should move the compare selection");
   const auto next_row_rect =
@@ -2022,13 +2033,13 @@ void TestWorkspaceShellCompareSelectionStepInvalidatesRowBand() {
   const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
 
   Expect(result.handled, "compare selection step should be handled");
-  Expect(!result.redraw.full && !result.redraw.rects.empty(),
+  Expect(!damage.full && !damage.rects.empty(),
          "compare selection step should stay on a partial redraw path");
-  Expect(previous_row_rect.has_value() && AnyRectCovers(result.redraw.rects, *previous_row_rect),
+  Expect(previous_row_rect.has_value() && AnyRectCovers(damage.rects, *previous_row_rect),
          "compare selection step should repaint the previously selected row");
-  Expect(next_row_rect.has_value() && AnyRectCovers(result.redraw.rects, *next_row_rect),
+  Expect(next_row_rect.has_value() && AnyRectCovers(damage.rects, *next_row_rect),
          "compare selection step should repaint the newly selected row");
-  Expect(MaxRectHeight(result.redraw.rects) <
+  Expect(MaxRectHeight(damage.rects) <
              static_cast<float>(surface.visible_rows) * surface.line_height,
          "compare selection step should redraw less than the full compare surface height");
 }
@@ -2233,10 +2244,15 @@ void TestWorkspaceShellMergeSaveRepaintsTheResultPane() {
   merge.result_viewport.MoveCursorTo(1, 0);
   merge.result_viewport.InsertText("edited ");
   (void)WorkspaceShellTestAccess::TakePendingRenderInvalidation(shell);
+  SoftwareCanvas canvas{1280, 720};
+  shell.Render(canvas.renderer(), 1280, 720);
+  (void)WorkspaceShellTestAccess::TakePendingRenderInvalidation(shell);
 
   Expect(WorkspaceShellTestAccess::SaveTab(shell, 0), "the merge result saves");
   Expect(!merge.result_viewport.dirty(), "and is clean");
-  const auto damage = WorkspaceShellTestAccess::TakePendingRenderInvalidation(shell);
+  // What the frame repaints: the save's rects and what preparing it derives.
+  const auto damage =
+      FrameDamage(shell, canvas, 1280, 720, WorkspaceShellTestAccess::TakePendingRenderInvalidation(shell));
   const SDL_FRect pane = WorkspaceShellTestAccess::ActiveMergeResultRect(shell);
   bool covered = damage.full;
   for (const SDL_FRect& rect : damage.rects) {

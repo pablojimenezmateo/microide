@@ -579,18 +579,24 @@ void TestWorkspaceShellEditorDirtyTransitionRedrawsBlameNeighborhood() {
          "clean tracked editor should expose the caret blame line before editing");
   (void)shell.ConsumePendingRenderInvalidation();
 
+  // A frame painted first: the derived surfaces compare with it.
+  SoftwareCanvas canvas{1280, 720};
+  shell.Render(canvas.renderer(), 1280, 720);
+  (void)shell.ConsumePendingRenderInvalidation();
   SDL_Event event{};
   event.type = SDL_EVENT_TEXT_INPUT;
   const std::string text = "x";
   event.text.text = text.c_str();
   const auto result = shell.HandleEvent(event);
+  // What the frame repaints: the event's rects and what preparing it derives.
+  const auto damage = FrameDamage(shell, canvas, 1280, 720, result.redraw);
 
   Expect(result.handled, "editor typing should be handled for blame redraw checks");
-  Expect(!result.redraw.full && !result.redraw.rects.empty(),
+  Expect(!damage.full && !damage.rects.empty(),
          "editor typing should stay on the partial redraw path");
   Expect(!WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell).has_value(),
          "dirty editor buffers should suppress blame immediately after typing");
-  Expect(AnyRectCovers(result.redraw.rects, overlay->lines.front().rect),
+  Expect(AnyRectCovers(damage.rects, overlay->lines.front().rect),
          "dirty-state redraw should include the caret blame line it just erased");
 }
 

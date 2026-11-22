@@ -359,8 +359,7 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
               [shell](Uint32 type) { return shell->project_search_runtime_.HandlesEvent(type); },
           .consume_project_search_updates =
               [shell]() { shell->ConsumeProjectSearchUpdates(); },
-          .request_focused_editor_redraw =
-              [shell]() { shell->RequestFocusedEditorRedraw(); },
+          .request_frame = [shell]() { shell->RequestPreparedFrame(); },
           .consume_git_sidebar_refresh =
               [shell]() { shell->ConsumeGitSidebarRefresh(); },
           .apply_git_blame_results =
@@ -578,7 +577,7 @@ void WorkspaceShell::Bootstrapper::WireQuickPick() const {
                 }
                 viewport->JumpCursorTo(line, std::min(column, viewport->lines().LineLength(line)));
                 viewport->CenterLine(line);
-                shell->RequestFocusedEditorRedraw();
+                shell->RequestPreparedFrame();
               },
           .restore_view =
               [shell](const QuickPickState::View& view) {
@@ -587,7 +586,7 @@ void WorkspaceShell::Bootstrapper::WireQuickPick() const {
                   return;
                 }
                 viewport->ApplyRestoredViewState(view.line, view.column, view.scroll, viewport->horizontal_scroll());
-                shell->RequestFocusedEditorRedraw();
+                shell->RequestPreparedFrame();
               },
           .requery =
               [shell](QuickPickKind kind, const std::string& query) {
@@ -900,20 +899,10 @@ void WorkspaceShell::Bootstrapper::WireWorkspaceEdits() const {
       WorkspaceEditService::Operations{
           .active_editable_viewport = [shell]() { return shell->ActiveEditableViewport(); },
           .reset_caret_blink = [shell]() { shell->ResetCaretBlink(); },
-          .request_active_editable_last_change_redraw =
-              [shell]() { shell->RequestActiveEditableLastChangeRedraw(); },
+          .note_active_editable_edit =
+              [shell]() { shell->NoteActiveEditableEdit(); },
           .request_chrome_redraw = [shell]() { shell->RequestChromeRedraw(); },
-          .request_focused_editor_redraw = [shell]() { shell->RequestFocusedEditorRedraw(); },
-          .request_active_editable_line_range_redraw =
-              [shell](std::size_t start_line, std::size_t end_line) {
-                if (shell->ActiveTabIsCompare()) {
-                  shell->RequestCompareRightLineRangeRedraw(start_line, end_line);
-                } else if (shell->ActiveTabIsMerge()) {
-                  shell->RequestMergeResultLineRangeRedraw(start_line, end_line);
-                } else {
-                  shell->RequestEditorLineRangeRedraw(start_line, end_line);
-                }
-              },
+          .request_frame = [shell]() { shell->RequestPreparedFrame(); },
           .request_active_tab_redraw =
               [shell](bool include_tree_sidebar) { shell->RequestActiveTabRedraw(include_tree_sidebar); },
           .confirm_rename_save =
@@ -951,7 +940,7 @@ void WorkspaceShell::Bootstrapper::WireWorkspaceEdits() const {
           .follow_applied_edit =
               [shell](const editor::TextViewport& viewport) {
                 if (shell->debug_service_.ShiftBreakpointsForViewportEdit(viewport)) {
-                  shell->RequestFocusedEditorRedraw();
+                  shell->RequestPreparedFrame();
                 }
               },
           .reconcile_tabs_after_resource_delete =
@@ -1012,13 +1001,9 @@ void WorkspaceShell::Bootstrapper::WireAssist() const {
           .dismiss_overlay = [shell](bool focus_editor) { shell->DismissOverlay(focus_editor); },
           .request_overlay_redraw = [shell]() { shell->RequestOverlayRedraw(); },
           .reset_caret_blink = [shell]() { shell->ResetCaretBlink(); },
-          .request_focused_editor_redraw = [shell]() { shell->RequestFocusedEditorRedraw(); },
-          .request_active_editable_last_change_redraw =
-              [shell]() { shell->RequestActiveEditableLastChangeRedraw(); },
-          .request_active_editable_blame_neighborhood_redraw =
-              [shell](std::size_t before_line, std::size_t after_line) {
-                shell->RequestActiveEditableBlameNeighborhoodRedraw(before_line, after_line);
-              },
+          .request_frame = [shell]() { shell->RequestPreparedFrame(); },
+          .note_active_editable_edit =
+              [shell]() { shell->NoteActiveEditableEdit(); },
           .refresh_compare_tab_derived_state =
               [shell](CompareTabState& tab) { shell->RefreshCompareTabDerivedState(tab); },
           .sync_compare_selection_from_viewport =

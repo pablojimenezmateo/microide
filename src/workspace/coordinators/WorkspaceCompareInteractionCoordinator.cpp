@@ -338,8 +338,7 @@ void CompareInteractionCoordinator::MoveCompareSelection(int delta) {
     return;
   }
   operations_.reveal_active_compare_selection();
-  operations_.request_compare_row_range_redraw(previous_selected_row, previous_selected_row + 1);
-  operations_.request_compare_row_range_redraw(compare_tab->selected_row, compare_tab->selected_row + 1);
+  operations_.request_frame();
 }
 
 void CompareInteractionCoordinator::JumpCompareHunk(int delta) {
@@ -399,8 +398,7 @@ void CompareInteractionCoordinator::JumpCompareHunk(int delta) {
   // tab is line 0.
   SyncCompareCaretToSelectedRow(*compare_tab);
   operations_.reveal_active_compare_selection();
-  operations_.request_compare_row_range_redraw(previous_selected_row, previous_selected_row + 1);
-  operations_.request_compare_row_range_redraw(compare_tab->selected_row, compare_tab->selected_row + 1);
+  operations_.request_frame();
 }
 
 void CompareInteractionCoordinator::JumpCompareReviewFile(int delta) {
@@ -569,8 +567,7 @@ void CompareInteractionCoordinator::MoveMergeSelection(int delta) {
     return;
   }
   operations_.reveal_active_merge_selection();
-  operations_.request_merge_conflict_redraw(previous_selected_hunk);
-  operations_.request_merge_conflict_redraw(merge_tab->selected_hunk);
+  operations_.request_frame();
 }
 
 void CompareInteractionCoordinator::ScrollMergeColumns(int delta) {
@@ -645,10 +642,9 @@ void CompareInteractionCoordinator::ApplyMergeChoice(compare::MergeChoice choice
   merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
   merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
   operations_.reveal_active_merge_selection();
-  operations_.request_merge_result_line_to_bottom_redraw(conflict.start_line);
+  operations_.request_frame();
   if (merge_tab->result_viewport.dirty() != was_dirty) {
-    operations_.request_active_editable_blame_neighborhood_redraw(
-        cursor_before_line, merge_tab->result_viewport.cursor_line());
+    operations_.request_frame();
   }
 }
 
@@ -683,8 +679,7 @@ void CompareInteractionCoordinator::JumpNextUnresolvedMergeConflict() {
     if (merge_tab->conflicts[index].valid && !merge_tab->conflicts[index].resolved) {
       merge_tab->selected_hunk = index;
       operations_.reveal_active_merge_selection();
-      operations_.request_merge_conflict_redraw(previous_selected_hunk);
-      operations_.request_merge_conflict_redraw(index);
+      operations_.request_frame();
       return;
     }
   }

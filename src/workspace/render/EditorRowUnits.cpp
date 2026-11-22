@@ -129,6 +129,9 @@ void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uin
   for (const auto& [line, hash] : inputs.occurrence_lines) {
     ForRowsOfLine(by_line, line, [&](std::size_t row) { fold_into(row, 0x0C, hash, 0); });
   }
+  for (const auto& [line, hash] : inputs.extra_line_keys) {
+    ForRowsOfLine(by_line, line, [&](std::size_t row) { fold_into(row, 0xE0, hash, 0); });
+  }
   if (inputs.bracket_pair.has_value()) {
     const editor::BracketMatchPair& pair = *inputs.bracket_pair;
     ForRowsOfLine(by_line, pair.open_line, [&](std::size_t row) { fold_into(row, 0xB0, pair.open_column, 0); });

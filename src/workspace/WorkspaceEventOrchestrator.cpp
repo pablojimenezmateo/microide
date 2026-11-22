@@ -116,7 +116,7 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
     // whenever the worker wrote it -- which could be between two clips of one
     // partial frame (TD-2026-10-16-345).
     if (operations_.apply_git_blame_results()) {
-      operations_.request_focused_editor_redraw();
+      operations_.request_frame();
     }
     return finish(true);
   }
@@ -134,7 +134,7 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
       event.type == runtime_.highlight_prefetch_event_type) {
     util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::HighlightPrefetchEvent");
     operations_.consume_highlight_prefetch_results();
-    operations_.request_focused_editor_redraw();
+    operations_.request_frame();
     return finish(true);
   }
 

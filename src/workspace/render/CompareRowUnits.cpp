@@ -76,6 +76,15 @@ std::uint64_t MixRightMarks(std::uint64_t hash, const CompareTabState& compare,
   return hash;
 }
 
+// The band a row paints, as its damage: the surface's whole width (the selected
+// change's markers sit at its outer edges) and the line's height, with a pixel of
+// halo all round -- a row's fill starts a pixel above its text top, and glyphs
+// reach its last pixel row (DirtyRectWithHalo, which the row damage used before).
+SDL_FRect RowBand(const CompareRowGeometry& geometry, int row) {
+  return SDL_FRect{geometry.surface.x - 1.0f, geometry.rows_y + static_cast<float>(row) * geometry.line_height - 2.0f,
+                   geometry.surface.w + 2.0f, geometry.line_height + 3.0f};
+}
+
 }  // namespace
 
 std::optional<editor::BracketMatchPair> CompareBracketMatch(CompareTabState& compare, bool enabled) {
@@ -100,7 +109,7 @@ std::optional<editor::BracketMatchPair> CompareBracketMatch(CompareTabState& com
 
 void AppendCompareRowUnits(const CompareTabState& compare, const CompareRowGeometry& geometry,
                            std::uint64_t surface_key, const std::optional<editor::BracketMatchPair>& bracket_pair,
-                           std::vector<DerivedDamage::Unit>& units) {
+                           const editor::EditorBlameOverlay* blame, std::vector<DerivedDamage::Unit>& units) {
   const std::size_t visual_count = CompareTabVisualRowCount(compare);
   const std::uint64_t long_line_stand_in = compare.right_viewport.content_revision();
   int painted_rows = 0;
@@ -155,12 +164,16 @@ void AppendCompareRowUnits(const CompareTabState& compare, const CompareRowGeome
       key = MixTokens(key, compare.right_token_window.Tokens(model_index));
       if (model.right_line > 0) {
         key = MixRightMarks(key, compare, bracket_pair, static_cast<std::size_t>(model.right_line - 1));
+        if (blame != nullptr && blame->visible) {
+          for (const editor::EditorBlameLine& line : blame->lines) {
+            if (line.line_index == static_cast<std::size_t>(model.right_line - 1)) {
+              key = MixText(Mix(Mix(key, 0xB7), static_cast<std::uint64_t>(line.rect.x)), line.text, 0);
+            }
+          }
+        }
       }
     }
-    // The row band a summary or model row paints: from a pixel above its text top.
-    units.push_back({SDL_FRect{geometry.surface.x, geometry.rows_y + static_cast<float>(row) * geometry.line_height - 1.0f,
-                               geometry.content_width, geometry.line_height},
-                     key});
+    units.push_back({RowBand(geometry, row), key});
     ++painted_rows;
   }
   const float bottom = geometry.surface.y + geometry.surface.h;
@@ -207,11 +220,11 @@ void AppendMergeSideRowUnits(const MergeTabState& merge, const CompareRowGeometr
       if (incoming || current) {
         key = Mix(Mix(Mix(key, i), (incoming ? 1u : 0u) | (current ? 2u : 0u)),
                   (conflict.valid ? 1u : 0u) | (conflict.resolved ? 2u : 0u) | (i == selected ? 4u : 0u));
+        key = Mix(key, static_cast<std::uint64_t>(conflict.last_choice));
+
       }
     }
-    units.push_back({SDL_FRect{geometry.surface.x, geometry.rows_y + static_cast<float>(row) * geometry.line_height - 1.0f,
-                               geometry.content_width, geometry.line_height},
-                     key});
+    units.push_back({RowBand(geometry, row), key});
     ++painted_rows;
   }
   const float bottom = geometry.surface.y + geometry.surface.h;

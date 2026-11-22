@@ -41,7 +41,9 @@ class WorkspaceEventDispatcher {
     std::function<bool(bool)> reload_project_if_files_changed;
     std::function<bool(Uint32)> project_search_handles_event;
     std::function<void()> consume_project_search_updates;
-    std::function<void()> request_focused_editor_redraw;
+    // A frame owed: the editor, compare and merge surfaces derive their damage
+    // (RequestPreparedFrame); a request names no rect.
+    std::function<void()> request_frame;
     std::function<void()> consume_git_sidebar_refresh;
     // Makes finished blame visible; true when what the overlay reads changed.
     std::function<bool()> apply_git_blame_results;

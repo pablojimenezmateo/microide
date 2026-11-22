@@ -494,8 +494,8 @@ void WorkspaceShell::DrawTwoBlockHoverCard(SDL_Renderer* renderer,
 
 void WorkspaceShell::RenderEditorHoverPopup(SDL_Renderer* renderer) const {
   // The card frame prep laid out and accounted the damage for, never one laid
-  // out again here (PreparedFrameState::painted_hover_popup).
-  const std::optional<EditorHoverPopupLayout>& popup = frame_state_.painted_hover_popup;
+  // out again here (PreparedFrameState::hover_popup).
+  const std::optional<EditorHoverPopupLayout>& popup = frame_state_.hover_popup;
   if (!popup.has_value()) {
     return;
   }
@@ -745,7 +745,7 @@ void WorkspaceShell::KickOffPluginHover(const std::filesystem::path& path, std::
           plugin_hover_cache_.result = std::move(result);
           // Re-resolve at the current mouse position on the next frame -> cache hit.
           QueueEditorHoverRefresh();
-          RequestFocusedEditorRedraw();
+          RequestPreparedFrame();
           return;
         }
         // No plugin hover for this cell: fall back to the language server. The cell
@@ -763,7 +763,7 @@ void WorkspaceShell::KickOffLspHover(const std::filesystem::path& path, std::siz
     plugin_hover_cache_.state = PluginHoverCache::State::Failed;
     plugin_hover_cache_.failed_at_ms = SDL_GetTicks();
     QueueEditorHoverRefresh();
-    RequestFocusedEditorRedraw();
+    RequestPreparedFrame();
   };
   const auto get_setting = [this](std::string_view id) { return GetSettingValue(id); };
   if (!LspFeatureEnabled(get_setting, "lsp.hover.enabled")) {
@@ -813,7 +813,7 @@ void WorkspaceShell::KickOffLspHover(const std::filesystem::path& path, std::siz
           plugin_hover_cache_.state = PluginHoverCache::State::Resolved;
         }
         QueueEditorHoverRefresh();
-        RequestFocusedEditorRedraw();
+        RequestPreparedFrame();
       });
 }
 
@@ -872,14 +872,14 @@ void WorkspaceShell::MaybeExpireSignatureHelp() {
 
 void WorkspaceShell::RenderSignatureHelpPopup(SDL_Renderer* renderer) const {
   // The card frame prep laid out and accounted the damage for
-  // (PreparedFrameState::painted_signature_help_rect), never one laid out again
+  // (PreparedFrameState::signature_help_rect), never one laid out again
   // here: paint laid it out from live state, and a menu closing over a card it
   // had hidden brought the card back with nothing repainting its rect.
-  if (!frame_state_.painted_signature_help_rect.has_value() || !active_signature_help_.has_value()) {
+  if (!frame_state_.signature_help_rect.has_value() || !active_signature_help_.has_value()) {
     return;
   }
   const SignatureHelpPopup& popup = *active_signature_help_;
-  const SDL_FRect card_rect = *frame_state_.painted_signature_help_rect;
+  const SDL_FRect card_rect = *frame_state_.signature_help_rect;
   DrawCardFrame(renderer, theme_, card_rect, CardStyle::Overlay);
 
   const float text_x = card_rect.x + kEditorHoverPopupPadding;

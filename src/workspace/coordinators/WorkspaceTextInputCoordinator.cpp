@@ -107,7 +107,7 @@ void TextInputCoordinator::RequestSurfaceRedraw(TextInputSurface surface) {
       operations_.request_overlay_redraw();
       break;
     case TextInputSurface::Editor:
-      operations_.request_focused_editor_redraw();
+      operations_.request_frame();
       break;
     case TextInputSurface::TerminalFind:
       operations_.request_bottom_panel_content_redraw();
@@ -421,10 +421,9 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input,
           operations_.update_merge_tracking_after_viewport_edit(*merge_tab);
         }
         operations_.reset_caret_blink();
-        operations_.request_active_editable_last_change_redraw();
+        operations_.note_active_editable_edit();
         if (viewport->dirty() != was_dirty) {
-          operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
-                                                                        viewport->cursor_line());
+          operations_.request_frame();
         }
         follow_completion();
         return true;

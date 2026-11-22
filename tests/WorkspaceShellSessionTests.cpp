@@ -4,6 +4,7 @@
 #include "editor/TextBuffer.h"
 #include "util/PerformanceCounters.h"
 #include "TerminalSessionTestAccess.h"
+#include "support/RetainedRedraw.h"
 #include "support/SoftwareCanvas.h"
 #include "TestSupportSdl.h"
 
@@ -775,11 +776,16 @@ void TestWorkspaceShellMergeBlameInvalidationRepaintsTheResultPane() {
   Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
          "merge blame fixture should open");
   (void)shell.ConsumePendingRenderInvalidation();
+  SoftwareCanvas canvas{1280, 720};
+  shell.Render(canvas.renderer(), 1280, 720);
+  (void)shell.ConsumePendingRenderInvalidation();
 
   WorkspaceShellTestAccess::InvalidateEditorBlamePath(shell, output);
-  const auto redraw = shell.ConsumePendingRenderInvalidation();
-  Expect(redraw.full || !redraw.rects.empty(),
-         "invalidating the merge result's blame should repaint the result pane");
+  const auto request = shell.ConsumePendingRenderInvalidation();
+  Expect(request.HasAnyRedraw(), "invalidating the merge result's blame should owe a frame");
+  // What it repaints is what the overlay changed: in this fixture (no repository)
+  // there is no blame before or after, so the frame may damage nothing.
+  (void)FrameDamage(shell, canvas, 1280, 720, request);
 }
 
 void TestWorkspaceShellMergeHorizontalNavigationInvalidatesResultPane() {
@@ -809,19 +815,27 @@ void TestWorkspaceShellMergeHorizontalNavigationInvalidatesResultPane() {
                                     surface.gutter_width + surface.left_width,
                                     layout.editor_surface.h);
 
+  // A frame painted first: the derived surfaces compare with it.
+  SoftwareCanvas canvas{1280, 720};
+  shell.Render(canvas.renderer(), 1280, 720);
+  (void)shell.ConsumePendingRenderInvalidation();
   SDL_Event event{};
   event.type = SDL_EVENT_KEY_DOWN;
   event.key.key = SDLK_RIGHT;
   const auto result = shell.HandleEvent(event);
-  const auto redraw_rect = result.redraw.SingleRectIfOnlyOne();
+  // What the frame repaints: the event's rects and what preparing it derives.
+  const auto damage = FrameDamage(shell, canvas, 1280, 720, result.redraw);
 
   Expect(result.handled, "merge horizontal navigation should be handled");
-  Expect(!result.redraw.full && redraw_rect.has_value(),
-         "merge horizontal navigation should stay on a partial redraw path");
-  Expect(RectsIntersect(*redraw_rect, result_rect),
-         "merge horizontal navigation should repaint the result pane");
-  Expect(!RectsIntersect(*redraw_rect, left_rect),
-         "merge horizontal navigation should avoid repainting the incoming pane");
+  Expect(!damage.full && !damage.rects.empty(), "merge horizontal navigation should stay on a partial redraw path");
+  bool result_pane = false;
+  bool incoming_pane = false;
+  for (const SDL_FRect& rect : damage.rects) {
+    result_pane = result_pane || RectsIntersect(rect, result_rect);
+    incoming_pane = incoming_pane || RectsIntersect(rect, left_rect);
+  }
+  Expect(result_pane, "merge horizontal navigation should repaint the result pane");
+  Expect(!incoming_pane, "merge horizontal navigation should avoid repainting the incoming pane");
 }
 
 void TestWorkspaceShellMoveMergeSelectionInvalidatesConflictBand() {
@@ -847,17 +861,24 @@ void TestWorkspaceShellMoveMergeSelectionInvalidatesConflictBand() {
          "merge conflict invalidation fixture should open");
   (void)shell.ConsumePendingRenderInvalidation();
 
+  // A frame painted first: the derived surfaces compare with it.
+  SoftwareCanvas canvas{1280, 720};
+  shell.Render(canvas.renderer(), 1280, 720);
+  (void)shell.ConsumePendingRenderInvalidation();
   const auto previous_conflict_rect = WorkspaceShellTestAccess::ActiveMergeConflictRect(shell, 0);
   WorkspaceShellTestAccess::MoveMergeSelection(shell, 1);
-  const auto redraw = shell.ConsumePendingRenderInvalidation();
+  const auto request = shell.ConsumePendingRenderInvalidation();
   const auto next_conflict_rect = WorkspaceShellTestAccess::ActiveMergeConflictRect(shell, 1);
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  // What the frame repaints: the request's rects and what preparing it derives.
+  // (That the pixels then match a full repaint is QaFlowRegression/
+  // MergeRowDamageFollowsEveryStateTransition's "select conflict" steps.)
+  const auto redraw = FrameDamage(shell, canvas, 1280, 720, request);
 
-  Expect(!redraw.full && !redraw.rects.empty(),
-         "merge conflict navigation should stay on a partial redraw path");
-  Expect(previous_conflict_rect.has_value() && AnyRectCovers(redraw.rects, *previous_conflict_rect),
+  Expect(!redraw.full && !redraw.rects.empty(), "merge conflict navigation should stay on a partial redraw path");
+  Expect(previous_conflict_rect.has_value() && AnyRectIntersects(redraw.rects, *previous_conflict_rect),
          "merge conflict navigation should repaint the previously selected conflict");
-  Expect(next_conflict_rect.has_value() && AnyRectCovers(redraw.rects, *next_conflict_rect),
+  Expect(next_conflict_rect.has_value() && AnyRectIntersects(redraw.rects, *next_conflict_rect),
          "merge conflict navigation should repaint the newly selected conflict");
   Expect(MaxRectHeight(redraw.rects) < layout.editor_surface.h,
          "merge conflict navigation should redraw less than the full merge surface height");

@@ -184,7 +184,9 @@ class WorkspaceActionContext {
     // Move tab `from_index` of group `from_group` into group `to_group` at
     // `to_slot` (EditorTabService::MoveTabToGroup).
     std::function<bool(std::size_t, std::size_t, std::size_t, std::size_t)> move_tab_to_group;
-    std::function<void()> request_focused_editor_redraw;
+    // A frame owed: the editor, compare and merge surfaces derive their damage
+    // (RequestPreparedFrame); a request names no rect.
+    std::function<void()> request_frame;
     std::function<editor::TextViewport*()> active_editable_viewport;
     std::function<CompareTabState*()> active_compare_tab;
     std::function<void()> mark_branch_file_reviewed;
@@ -202,10 +204,9 @@ class WorkspaceActionContext {
     std::function<MergeTabState*()> active_merge_tab;
     std::function<void(MergeTabState&)> update_merge_tracking_after_viewport_edit;
     std::function<void(bool)> request_active_tab_redraw;
-    std::function<void()> request_active_editable_last_change_redraw;
+    std::function<void()> note_active_editable_edit;
     std::function<void(const std::vector<std::string>&, const std::vector<std::string>&)>
         request_active_editable_change_redraw;
-    std::function<void(std::size_t, std::size_t)> request_active_editable_blame_neighborhood_redraw;
     std::function<std::optional<std::string>()> selection_text_with_context;
     // A key press (down then up) delivered through the window's event path, as
     // the keyboard would: shortcuts, the focused surface, the terminal's encoder.

@@ -171,7 +171,6 @@ void WorkspaceShell::RenderMergeScrollbars(SDL_Renderer* renderer,
 void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                                         const SDL_FRect& rect,
                                         MergeTabState& merge_tab_state,
-                                        const std::filesystem::path& project_root,
                                         bool focused,
                                         const DiffSurfacePaint& paint) {
   MergeTabState* merge_tab = &merge_tab_state;

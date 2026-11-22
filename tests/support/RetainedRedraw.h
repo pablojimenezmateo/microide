@@ -130,6 +130,21 @@ inline void PaintInvalidation(workspace::WorkspaceShell& shell,
          "a retained redraw should clear its clip rect");
 }
 
+// What the app repaints for `redraw`: its own rects plus the damage preparing the
+// frame derives (the derived surfaces name none: RenderInvalidation::frame). The
+// shell must have painted a frame before, so the derived units have one to
+// compare with.
+inline workspace::RenderInvalidation FrameDamage(workspace::WorkspaceShell& shell,
+                                                 SoftwareCanvas& canvas,
+                                                 int width,
+                                                 int height,
+                                                 const workspace::RenderInvalidation& redraw) {
+  workspace::RenderInvalidation all = redraw;
+  (void)shell.PrepareFrameOnce(canvas.renderer(), width, height);
+  all.Merge(shell.ConsumePendingRenderInvalidation());
+  return all;
+}
+
 // The app loop's handling of a run of events: each event's own redraw folded with
 // whatever the shell queued while handling it. A test that keeps only `handled`
 // paints nothing, which is how a click-path test once passed vacuously.

@@ -330,7 +330,7 @@ DebugPaneMouseCoordinator& WorkspaceShell::MakeDebugPaneMouseCoordinator() {
                   // Re-send the file's breakpoints (a disabled one drops off the
                   // adapter) and rebuild the panel + gutter.
                   debug_service_.ResendBreakpointsForFile(path);
-                  RequestFocusedEditorRedraw();
+                  RequestPreparedFrame();
                 }
               },
           .toggle_debug_function_breakpoint_enabled =

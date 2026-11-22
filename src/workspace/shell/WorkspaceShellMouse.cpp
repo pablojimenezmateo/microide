@@ -541,7 +541,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     EnsureRedraw(mark, [this, retargeted_cursor]() {
       RequestChromeRedraw();
       if (retargeted_cursor) {
-        RequestFocusedEditorRedraw();
+        RequestPreparedFrame();
       }
     });
     return true;

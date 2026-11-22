@@ -45,12 +45,11 @@ class WorkspaceEditService {
   struct Operations {
     std::function<editor::TextViewport*()> active_editable_viewport;
     std::function<void()> reset_caret_blink;
-    std::function<void()> request_active_editable_last_change_redraw;
+    std::function<void()> note_active_editable_edit;
     std::function<void()> request_chrome_redraw;
-    std::function<void()> request_focused_editor_redraw;
-    // Damage [start_line, end_line) of the active editable surface (an editor,
-    // a compare tab's right side, a merge result).
-    std::function<void(std::size_t, std::size_t)> request_active_editable_line_range_redraw;
+    // A frame owed: the editor, compare and merge surfaces derive their damage
+    // (RequestPreparedFrame); a request names no rect.
+    std::function<void()> request_frame;
     std::function<void(bool include_tree_sidebar)> request_active_tab_redraw;
     // Ask the user to confirm the pending rename; `detail` says what it changes.
     std::function<void(std::string detail)> confirm_rename_save;

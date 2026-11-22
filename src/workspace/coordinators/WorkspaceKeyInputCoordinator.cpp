@@ -233,21 +233,21 @@ bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
   if (state_.surface.focus == FocusTarget::Editor && active_compare_tab) {
     const bool handled = HandleCompareKeyDown(event, modifiers);
     if (handled) {
-      EnsureRedraw([this]() { operations_.request_focused_editor_redraw(); });
+      EnsureRedraw([this]() { operations_.request_frame(); });
     }
     return handled;
   }
   if (state_.surface.focus == FocusTarget::Editor && active_merge_tab) {
     const bool handled = HandleMergeKeyDown(event, modifiers);
     if (handled) {
-      EnsureRedraw([this]() { operations_.request_focused_editor_redraw(); });
+      EnsureRedraw([this]() { operations_.request_frame(); });
     }
     return handled;
   }
 
   const bool handled = HandleDefaultEditorKeyDown(event, modifiers);
   if (handled) {
-    EnsureRedraw([this]() { operations_.request_focused_editor_redraw(); });
+    EnsureRedraw([this]() { operations_.request_frame(); });
   }
   return handled;
 }
@@ -561,7 +561,7 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
                 const auto layout = CurrentWorkspaceLayout();
                 return layout.has_value() ? BottomPanelVisibleRows(layout->bottom_panel.h) : 0;
               },
-          .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
+          .request_frame = [this]() { RequestPreparedFrame(); },
           .text_input_composition_consumes_key =
               [this](SDL_Keycode key, SDL_Keymod modifiers) {
                 return MakeTextInputCoordinator().CompositionConsumesKey(key, modifiers);
@@ -849,20 +849,12 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
                   editor_tab->folding_model->MarkDirty();
                 }
               },
-          .request_active_editable_last_change_redraw =
-              [this]() { RequestActiveEditableLastChangeRedraw(); },
+          .note_active_editable_edit =
+              [this]() { NoteActiveEditableEdit(); },
           .request_active_editable_change_redraw =
               [this](const std::vector<std::string>& before_lines,
                      const std::vector<std::string>& after_lines) {
                 RequestActiveEditableChangeRedraw(before_lines, after_lines);
-              },
-          .request_active_editable_blame_neighborhood_redraw =
-              [this](std::size_t first_line, std::size_t last_line) {
-                RequestActiveEditableBlameNeighborhoodRedraw(first_line, last_line);
-              },
-          .request_compare_row_range_redraw =
-              [this](std::size_t first_row, std::size_t last_row) {
-                RequestCompareRowRangeRedraw(first_row, last_row);
               },
           .request_close_active_tab =
               [this]() { RequestCloseTab(context_.current_project_state.focused_group().active_tab_index); },

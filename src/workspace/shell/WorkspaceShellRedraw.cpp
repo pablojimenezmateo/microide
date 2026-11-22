@@ -197,6 +197,11 @@ WorkspaceShell::RenderInvalidation WorkspaceShell::ConsumePendingRenderInvalidat
   pending_render_invalidation_.full = false;
   pending_render_invalidation_.rects.clear();
   pending_render_invalidation_.present = false;
+  // A moved-from struct keeps its bools: an owed frame that stayed set was owed
+  // for good -- every later event reported a redraw, and the idle wait never
+  // waited while it was set (the idle-wake loop the qa monkey found after
+  // be0181bfa).
+  pending_render_invalidation_.frame = false;
   return result;
 }
 
@@ -247,13 +252,13 @@ void WorkspaceShell::Notify(NotificationService::Tone tone, std::string message)
   // The toasts are a derived surface (NotificationToastPaint): a frame repaints
   // the toasts that moved, appeared or went, and nothing else. The shell
   // schedules a single wake at the toast's expiry (see NextAnimationDelayMs).
-  pending_render_invalidation_.frame = true;
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::Notify(NotificationService::Request request) {
   // A keyed row reposted unchanged (a state publisher's every tick) paints nothing.
   if (notification_service_.Show(std::move(request), SDL_GetTicks())) {
-    pending_render_invalidation_.frame = true;  // see the overload above
+    RequestPreparedFrame();  // see the overload above
   }
 }
 
@@ -289,6 +294,11 @@ void WorkspaceShell::RequestCursorPresent() {
   // frame so it re-latches the hardware cursor plane and an event-time cursor
   // change actually shows. The app loop re-presents the retained scene for it.
   pending_render_invalidation_.present = true;
+}
+
+void WorkspaceShell::RequestPreparedFrame() {
+  // A frame whose damage frame prep derives (RenderInvalidation::frame).
+  pending_render_invalidation_.frame = true;
 }
 
 void WorkspaceShell::RequestChromeRedraw() {
@@ -412,6 +422,9 @@ void WorkspaceShell::RequestTabStripRedraw() {
   }
 }
 
+// The whole editor surface, for what is drawn over the editor panes and is not
+// a derived surface (the change banner, the debug toolbar's buttons, a card's
+// hover). The panes' own content needs no rect: RequestPreparedFrame.
 void WorkspaceShell::RequestEditorSurfaceRedraw() {
   if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
     RequestRedrawRect(layout->editor_surface);
@@ -420,76 +433,18 @@ void WorkspaceShell::RequestEditorSurfaceRedraw() {
   RequestWindowRedraw();
 }
 
-void WorkspaceShell::RequestActiveTabRedraw(bool include_tree_sidebar) {
-  RequestBreadcrumbRedraw();
-  RequestTabStripRedraw();
-  RequestEditorSurfaceRedraw();
-  if (include_tree_sidebar && context_.current_project_state.sidebar.visible && ActiveSidebarMode() == SidebarMode::Tree) {
-    RequestSidebarRedraw();
-  }
-}
-
-void WorkspaceShell::RequestFocusedEditorRedraw() {
-  if (const auto rect = CurrentFocusedEditorRedrawRect(); rect.has_value()) {
-    // A focused pane with no rows (a split the panel squeezed, the editor area
-    // left only its strips) still edits and moves its caret, and the status bar
-    // shows that -- but it is derived at frame prep, and a dropped request
-    // prepares no frame: the bar kept the old Ln/Col for good (soak 5a2cb8ba7f6b).
-    // Then the bar is the damage, as the window title is for a strip of no area.
-    RequestRedrawRect(rect->w > 0.0f && rect->h > 0.0f ? *rect : CurrentWorkspaceLayout()->status_bar);
-    return;
-  }
-  RequestEditorSurfaceRedraw();
-}
-
-void WorkspaceShell::RequestEditorLineRangeRedraw(std::size_t start_line, std::size_t end_line) {
-  if (const auto rect = CurrentEditorLineRangeRect(start_line, end_line); rect.has_value()) {
-    RequestRedrawRect(*rect);
-    return;
-  }
-  RequestFocusedEditorRedraw();
-}
-
-void WorkspaceShell::RequestActiveEditableChangeRedraw(const std::vector<std::string>& before_lines,
-                                                       const std::vector<std::string>& after_lines) {
-  SyncLspForActiveEditableChange(before_lines, after_lines);
-  const auto changed_span = ComputeChangedLineSpan(before_lines, after_lines);
-  if (!changed_span.has_value()) {
-    RequestFocusedEditorRedraw();
-    return;
-  }
-
-  const std::size_t start_line = changed_span->old_start;
-  if (before_lines.size() != after_lines.size()) {
-    RequestFocusedEditorRedraw();
-    return;
-  }
-
-  if (ActiveTabIsCompare()) {
-    RequestCompareRightLineRangeRedraw(start_line, std::max(changed_span->new_end, start_line + 1));
-    return;
-  }
-
-  if (ActiveTabIsMerge()) {
-    RequestMergeResultLineRangeRedraw(start_line, std::max(changed_span->new_end, start_line + 1));
-    return;
-  }
-
-  RequestEditorLineRangeRedraw(start_line, std::max(changed_span->new_end, start_line + 1));
-}
-
-void WorkspaceShell::RequestActiveEditableLastChangeRedraw() {
-  util::PerformanceTrace::Scope perf_scope(
-      "WorkspaceShell::RequestActiveEditableLastChangeRedraw");
+// An edit was applied to the active editable surface (an editor, a diff's
+// working side, a merge result): everything that holds coordinates into its text
+// follows it, and a frame repaints what the edit changed (the surfaces are derived).
+void WorkspaceShell::NoteActiveEditableEdit() {
+  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::NoteActiveEditableEdit");
+  RequestPreparedFrame();
   editor::TextViewport* viewport = ActiveEditableViewport();
   if (viewport == nullptr) {
-    RequestFocusedEditorRedraw();
     return;
   }
-
   {
-    util::PerformanceTrace::Scope scope(
-        "WorkspaceShell::RequestActiveEditableLastChangeRedraw::SyncLsp");
+    util::PerformanceTrace::Scope scope("WorkspaceShell::NoteActiveEditableEdit::SyncLsp");
     SyncLspForActiveEditableLastChange();
   }
   // The find widget's match set is coordinates into THIS buffer, so an edit under
@@ -502,217 +457,34 @@ void WorkspaceShell::RequestActiveEditableLastChangeRedraw() {
   // should not pay for a list nobody is looking at (frame prep catches the active
   // buffer up when the view comes back).
   (void)MakeSidebarService().CatchUpSearchResults(*viewport);
-
   // A snippet session's placeholders are LINE:COLUMN ranges that only the snippet
   // engine's own ops keep in step with the text. Any other edit -- move-line,
   // sort, paste, format, an LSP workspace edit -- moves the text under them, and
   // Tab would then jump to whatever inherited their coordinates. Ends the session
   // in that case; the engine's own edits stamp the revision and are ignored here.
   assist_service_.snippets().NotifyBufferChanged();
-
-  const auto& applied_edit = viewport->last_applied_edit();
   // Slide stored line breakpoints through this edit so a line inserted/removed
   // above a breakpoint keeps it on its statement (VSCode-style). Cheap no-op for
-  // files without breakpoints; requests a gutter repaint only when a disc moved.
-  if (debug_service_.ShiftBreakpointsForViewportEdit(*viewport)) {
-    RequestFocusedEditorRedraw();
-  }
-  if (!applied_edit.has_value()) {
-    util::PerformanceTrace::Scope scope(
-        "WorkspaceShell::RequestActiveEditableLastChangeRedraw::FallbackFullRedraw");
-    RequestFocusedEditorRedraw();
-    return;
-  }
-
-  if (viewport->soft_wrap()) {
-    util::PerformanceTrace::Scope redraw_scope(
-        "WorkspaceShell::RequestActiveEditableLastChangeRedraw::SoftWrapFocusedPane");
-    RequestFocusedEditorRedraw();
-    return;
-  }
-
-  std::size_t start_line = 0;
-  std::size_t removed_lines = 0;
-  std::size_t inserted_lines = 0;
-  {
-    util::PerformanceTrace::Scope scope(
-        "WorkspaceShell::RequestActiveEditableLastChangeRedraw::ComputeChangedSpan");
-    start_line = applied_edit->range_before.start.line;
-    removed_lines =
-        applied_edit->range_before.end.line >= applied_edit->range_before.start.line
-            ? applied_edit->range_before.end.line - applied_edit->range_before.start.line
-            : 0;
-    inserted_lines = static_cast<std::size_t>(
-        std::count(applied_edit->replacement_text.begin(), applied_edit->replacement_text.end(), '\n'));
-  }
-  if (removed_lines != inserted_lines) {
-    util::PerformanceTrace::Scope redraw_scope(
-        "WorkspaceShell::RequestActiveEditableLastChangeRedraw::FallbackLineCountMismatch");
-    RequestFocusedEditorRedraw();
-    return;
-  }
-
-  // An edit that changes the syntax state its last line carries out restyles
-  // every line below it, on screen in the same frame: an opened string or block
-  // comment recolours the rest of the file. Its own range repainted line 1 and
-  // left the rest in their old colours (soak 9f2abbdf4b9c).
-  const std::size_t end_line = viewport->LastEditChangedCarriedSyntaxState(start_line + inserted_lines)
-                                   ? std::max(viewport->lines().size(), start_line + inserted_lines + 1)
-                                   : start_line + inserted_lines + 1;
-  if (ActiveTabIsCompare()) {
-    util::PerformanceTrace::Scope redraw_scope(
-        "WorkspaceShell::RequestActiveEditableLastChangeRedraw::ComparePartialRedraw");
-    RequestCompareRightLineRangeRedraw(start_line, end_line);
-    return;
-  }
-  if (ActiveTabIsMerge()) {
-    util::PerformanceTrace::Scope redraw_scope(
-        "WorkspaceShell::RequestActiveEditableLastChangeRedraw::MergePartialRedraw");
-    RequestMergeResultLineRangeRedraw(start_line, end_line);
-    return;
-  }
-  util::PerformanceTrace::Scope redraw_scope(
-      "WorkspaceShell::RequestActiveEditableLastChangeRedraw::EditorPartialRedraw");
-  RequestEditorLineRangeRedraw(start_line, end_line);
-  // An editor pane's horizontal scrollbar is diffed at frame prep against the bar
-  // as painted (its derived bar unit, EditorRowUnits), whatever moved it.
-  // The edits below are a diff's working side and a merge result, whose surfaces
-  // prep does not diff.
-  if (!ActiveTabIsCompare() && !ActiveTabIsMerge()) {
-    return;
-  }
-  // A line edit can move the horizontal scrollbar, which is not on the edited
-  // line: past the view's width it resizes the thumb, and crossing it shows or
-  // hides the bar -- which also takes a row from the text area and shortens the
-  // vertical bar. A paste of a long line left the bar unpainted (QA diff-commands).
-  // Lines that stay inside the view, the usual edit, add nothing.
-  const std::size_t visible_columns = viewport->visible_columns();
-  if (visible_columns == 0 || start_line >= viewport->lines().size()) {
-    return;
-  }
-  const std::string_view edited = viewport->lines().LineView(start_line);
-  const std::size_t width_now =
-      editor::TextLayout::VisualColumnForTextColumn(edited, edited.size(), viewport->tab_size());
-  // Generous: the edit's removed text added back, its inserted text not taken off.
-  const std::size_t removed_columns =
-      applied_edit->range_before.end.line == applied_edit->range_before.start.line &&
-              applied_edit->range_before.end.column >= applied_edit->range_before.start.column
-          ? applied_edit->range_before.end.column - applied_edit->range_before.start.column
-          : visible_columns;
-  const std::size_t width_before_at_most = width_now + removed_columns;
-  if (width_now <= visible_columns && width_before_at_most <= visible_columns) {
-    return;
-  }
-  const std::size_t widest = MaxVisualColumns(*viewport);
-  const bool bar_now = widest > visible_columns;
-  // How wide the edited line was at least before a one-line edit: its width now
-  // less the inserted text's, with a tab stop of slack for tabs after it.
-  std::size_t width_before_at_least = 0;
-  const std::size_t insert_column = applied_edit->range_before.start.column;
-  const std::size_t inserted_bytes = applied_edit->replacement_text.size();
-  if (removed_lines == 0 && inserted_lines == 0 && insert_column + inserted_bytes <= edited.size()) {
-    const std::size_t inserted_columns =
-        editor::TextLayout::VisualColumnForTextColumn(edited, insert_column + inserted_bytes,
-                                                      viewport->tab_size()) -
-        editor::TextLayout::VisualColumnForTextColumn(edited, insert_column, viewport->tab_size()) +
-        viewport->tab_size();
-    width_before_at_least = width_now > inserted_columns ? width_now - inserted_columns : 0;
-  }
-  // The bar was up before (another line keeps it up, or the edited line was
-  // already past the view) and still is: only the thumb moves. Typing at the end
-  // of the widest line repainted the whole pane every keystroke without the
-  // second half (editor_typing_paint).
-  const bool bar_was_and_is =
-      bar_now && (width_now < widest || width_before_at_least > visible_columns);
-  if (!bar_was_and_is) {
-    RequestFocusedEditorRedraw();
-    return;
-  }
-  if (const auto pane = CurrentFocusedEditorRedrawRect(); pane.has_value()) {
-    const float band = kWorkspaceScrollbarThickness + 2.0f * kWorkspaceScrollbarInset;
-    RequestRedrawRect(MakeRect(pane->x, pane->y + std::max(0.0f, pane->h - band), pane->w, std::min(band, pane->h)));
-  }
+  // files without breakpoints; the gutter's dots are in the rows' keys.
+  (void)debug_service_.ShiftBreakpointsForViewportEdit(*viewport);
 }
 
-void WorkspaceShell::RequestActiveEditableBlameNeighborhoodRedraw(std::size_t before_line,
-                                                                  std::size_t after_line) {
-  util::PerformanceTrace::Scope perf_scope(
-      "WorkspaceShell::RequestActiveEditableBlameNeighborhoodRedraw");
-  const std::size_t min_line = std::min(before_line, after_line);
-  const std::size_t max_line = std::max(before_line, after_line);
-  const std::size_t start_line =
-      min_line > kBlameNeighborhoodRadius ? min_line - kBlameNeighborhoodRadius : 0;
-  const std::size_t end_line = max_line + kBlameNeighborhoodRadius + 1;
-
-  if (ActiveTabIsCompare()) {
-    util::PerformanceTrace::Scope redraw_scope(
-        "WorkspaceShell::RequestActiveEditableBlameNeighborhoodRedraw::Compare");
-    RequestCompareRightLineRangeRedraw(start_line, end_line);
-    return;
-  }
-  if (ActiveTabIsMerge()) {
-    util::PerformanceTrace::Scope redraw_scope(
-        "WorkspaceShell::RequestActiveEditableBlameNeighborhoodRedraw::Merge");
-    RequestMergeResultLineRangeRedraw(start_line, end_line);
-    return;
-  }
-  util::PerformanceTrace::Scope redraw_scope(
-      "WorkspaceShell::RequestActiveEditableBlameNeighborhoodRedraw::Editor");
-  RequestEditorLineRangeRedraw(start_line, end_line);
-}
-
-void WorkspaceShell::RequestCompareRowRangeRedraw(std::size_t start_row, std::size_t end_row) {
-  if (const auto rect = CurrentCompareRowRangeRect(start_row, end_row); rect.has_value()) {
-    RequestRedrawRect(*rect);
-    return;
-  }
+void WorkspaceShell::RequestActiveTabRedraw(bool include_tree_sidebar) {
+  RequestBreadcrumbRedraw();
+  RequestTabStripRedraw();
   RequestEditorSurfaceRedraw();
+  if (include_tree_sidebar && context_.current_project_state.sidebar.visible && ActiveSidebarMode() == SidebarMode::Tree) {
+    RequestSidebarRedraw();
+  }
 }
 
-void WorkspaceShell::RequestCompareRightLineRangeRedraw(std::size_t start_line,
-                                                        std::size_t end_line) {
-  CompareTabState* compare_tab = ActiveCompareTab();
-  if (compare_tab == nullptr) {
-    RequestFocusedEditorRedraw();
-    return;
-  }
-  const std::size_t start_model_row = CompareRowIndexForRightLine(*compare_tab, start_line);
-  const std::size_t end_lookup_line =
-      end_line > start_line ? end_line - 1 : start_line;
-  const std::size_t end_model_row = CompareRowIndexForRightLine(*compare_tab, end_lookup_line) + 1;
-  const std::size_t start_row =
-      compare::ComparePresentationModelRowIndex(compare_tab->presentation, start_model_row)
-          .value_or(start_model_row);
-  const std::size_t end_row =
-      compare::ComparePresentationModelRowIndex(compare_tab->presentation, end_model_row - 1)
-          .value_or(end_model_row - 1) +
-      1;
-  RequestCompareRowRangeRedraw(start_row, std::max(start_row + 1, end_row));
-}
-
-void WorkspaceShell::RequestMergeResultLineRangeRedraw(std::size_t start_line,
-                                                       std::size_t end_line) {
-  if (const auto rect = CurrentMergeResultLineRangeRect(start_line, end_line); rect.has_value()) {
-    RequestRedrawRect(*rect);
-    return;
-  }
-  RequestFocusedEditorRedraw();
-}
-
-void WorkspaceShell::RequestMergeResultLineToBottomRedraw(std::size_t start_line) {
-  if (const auto rect = CurrentMergeResultLineToBottomRect(start_line); rect.has_value()) {
-    RequestRedrawRect(*rect);
-    return;
-  }
-  RequestEditorSurfaceRedraw();
-}
-
-void WorkspaceShell::RequestMergeConflictRedraw(std::size_t conflict_index) {
-  if (const auto rect = CurrentMergeConflictRect(conflict_index); rect.has_value()) {
-    RequestRedrawRect(*rect);
-    return;
-  }
-  RequestEditorSurfaceRedraw();
+void WorkspaceShell::RequestActiveEditableChangeRedraw(const std::vector<std::string>& before_lines,
+                                                       const std::vector<std::string>& after_lines) {
+  SyncLspForActiveEditableChange(before_lines, after_lines);
+  // The editor, compare and merge surfaces are derived (EditorRowUnits,
+  // CompareRowUnits): a frame repaints what changed in them, so the request
+  // names no rect (derived-damage 2.4).
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::RequestBottomPanelRedraw() {

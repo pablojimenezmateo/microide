@@ -145,7 +145,7 @@ void NavigationAssist::NavigateToLspLocation(const LspClient::Location& location
           target_line,
           LspPositionToByteColumn(*active, target_line, location.range.start.character, encoding));
       host_.ops().reset_caret_blink();
-      host_.ops().request_focused_editor_redraw();
+      host_.ops().request_frame();
     }
   });
 }
@@ -549,7 +549,7 @@ void NavigationAssist::NavigateToPluginLocation(const plugin::PluginHost::Locati
       active->JumpCursorTo(location.line > 0 ? location.line - 1 : 0,
                            location.column > 0 ? location.column - 1 : 0);
       host_.ops().reset_caret_blink();
-      host_.ops().request_focused_editor_redraw();
+      host_.ops().request_frame();
     }
   });
 }

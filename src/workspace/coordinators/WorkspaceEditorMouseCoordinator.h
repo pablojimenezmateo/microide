@@ -25,10 +25,11 @@ class EditorMouseCoordinator {
         compute_editor_scroll_layout;
     std::function<std::optional<std::string>()> read_primary_selection_text;
     std::function<void()> reset_caret_blink;
-    std::function<void()> request_active_editable_last_change_redraw;
-    std::function<void(std::size_t, std::size_t)> request_active_editable_blame_neighborhood_redraw;
+    std::function<void()> note_active_editable_edit;
+    // A frame owed: the editor, compare and merge surfaces derive their damage
+    // (RequestPreparedFrame); a request names no rect.
+    std::function<void()> request_frame;
     std::function<void()> request_tab_strip_redraw;
-    std::function<void()> request_focused_editor_redraw;
     std::function<void()> clear_drag_state;
     std::function<std::optional<std::string>(std::string_view id)> get_setting_value;
     std::function<editor::FoldingModel*()> ensure_active_folding_model_fresh;

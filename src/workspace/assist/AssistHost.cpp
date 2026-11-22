@@ -115,17 +115,16 @@ void AssistHost::ApplyEditSideEffects(editor::TextViewport& viewport,
     operations_.update_merge_tracking_after_viewport_edit(*merge_tab);
   }
   operations_.reset_caret_blink();
-  operations_.request_active_editable_last_change_redraw();
+  operations_.note_active_editable_edit();
   if (viewport.dirty() != snapshot.was_dirty) {
-    operations_.request_active_editable_blame_neighborhood_redraw(snapshot.cursor_before_line,
-                                                                  viewport.cursor_line());
+    operations_.request_frame();
   }
 }
 
 void AssistHost::RedrawAfterCaretChange() const {
   operations_.reset_caret_blink();
-  operations_.request_active_editable_last_change_redraw();
-  operations_.request_focused_editor_redraw();
+  operations_.note_active_editable_edit();
+  operations_.request_frame();
 }
 
 namespace assist {

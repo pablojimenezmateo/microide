@@ -49,6 +49,10 @@ struct EditorRowKeyInputs {
   const editor::FoldingModel* folds = nullptr;
   std::optional<editor::SelectionRange> active_search_match;
   const editor::EditorBlameOverlay* blame = nullptr;
+  // Whatever else a surface draws on a line of this viewport, one (line, hash) per
+  // line, sorted by line: a merge result's conflict boxes, their selection and
+  // hover. Folded into the rows of that line.
+  std::span<const std::pair<std::size_t, std::uint64_t>> extra_line_keys;
 };
 
 // Lines longer than this fold their length and the document's content revision

@@ -1040,7 +1040,6 @@
   void RenderMergeSurface(SDL_Renderer* renderer,
                           const SDL_FRect& rect,
                           MergeTabState& merge_tab,
-                          const std::filesystem::path& project_root,
                           bool focused,  // the caret
                           const DiffSurfacePaint& paint);
   void ShowTreeSidebar(const std::filesystem::path& root = {});
@@ -1568,8 +1567,7 @@
                                     const FrameToken& frame_token,
                                     bool draw_editor_caret,
                                     std::optional<SDL_FRect>* active_editor_pane_rect,
-                                    const FrameSurfaceViewModel& frame_vm,
-                                    const OverlaySurfaceViewModel& overlay_vm);
+                                    const FrameSurfaceViewModel& frame_vm);
   void RenderWindowChrome(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RenderHoverTooltip(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RenderSidebarSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout);
@@ -1794,6 +1792,9 @@
   const WindowChromeState& CurrentWindowChromeState() const;
   void NoteLayoutInputsChanged();
   void RequestFullRedraw();
+  void RequestPreparedFrame();
+  void NoteActiveEditableEdit();
+  void RequestEditorSurfaceRedraw();
   // Post a transient notification toast and schedule a full redraw so it paints.
   // The single host-owned entry point for toasts (plugins + built-in callers).
   void Notify(NotificationService::Tone tone, std::string message);
@@ -1818,20 +1819,9 @@
   void RequestSidebarLayoutChangeRedraw(const WorkspaceLayout& previous_layout);
   void RequestBreadcrumbRedraw();
   void RequestTabStripRedraw();
-  void RequestActiveEditableLastChangeRedraw();
-  void RequestEditorSurfaceRedraw();
   void RequestActiveTabRedraw(bool include_tree_sidebar = false);
-  void RequestFocusedEditorRedraw();
-  void RequestEditorLineRangeRedraw(std::size_t start_line, std::size_t end_line);
   void RequestActiveEditableChangeRedraw(const std::vector<std::string>& before_lines,
                                          const std::vector<std::string>& after_lines);
-  void RequestActiveEditableBlameNeighborhoodRedraw(std::size_t before_line,
-                                                    std::size_t after_line);
-  void RequestCompareRowRangeRedraw(std::size_t start_row, std::size_t end_row);
-  void RequestCompareRightLineRangeRedraw(std::size_t start_line, std::size_t end_line);
-  void RequestMergeResultLineRangeRedraw(std::size_t start_line, std::size_t end_line);
-  void RequestMergeResultLineToBottomRedraw(std::size_t start_line);
-  void RequestMergeConflictRedraw(std::size_t conflict_index);
   void RequestBottomPanelRedraw();
   void RequestDebugPaneRedraw();
   void RequestBottomPanelLayoutChangeRedraw(const WorkspaceLayout& previous_layout);

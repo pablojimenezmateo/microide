@@ -298,7 +298,7 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       if (band_row < sticky_lines.size()) {
         const std::size_t opener_line = sticky_lines[band_row];
         viewport->SetScrollLine(viewport->VisualRowForLine(opener_line));
-        operations_.request_focused_editor_redraw();
+        operations_.request_frame();
         state_.surface.focus = FocusTarget::Editor;
         return true;
       }
@@ -329,7 +329,7 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
                   : nullptr;
           if (fold_model != nullptr && fold_model->FoldStartingAt(opener_line).has_value()) {
             fold_model->ToggleFold(opener_line);
-            operations_.request_focused_editor_redraw();
+            operations_.request_frame();
             state_.surface.focus = FocusTarget::Editor;
             return true;
           }
@@ -364,7 +364,7 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
             if (operations_.on_breakpoint_toggled) {
               operations_.on_breakpoint_toggled(path);
             }
-            operations_.request_focused_editor_redraw();
+            operations_.request_frame();
             state_.surface.focus = FocusTarget::Editor;
             return true;
           }
@@ -485,7 +485,7 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     // asynchronously (and may stay in this file): repaint now, or the caret and
     // its highlights stay where they were until the answer -- or for good when
     // there is none (QA flow lsp-navigation).
-    operations_.request_focused_editor_redraw();
+    operations_.request_frame();
     operations_.go_to_definition();
     return true;
   }
@@ -496,15 +496,14 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       const std::size_t cursor_before_line = viewport->cursor_line();
       viewport->InsertText(*text);
       operations_.reset_caret_blink();
-      operations_.request_active_editable_last_change_redraw();
+      operations_.note_active_editable_edit();
       if (viewport->dirty() != was_dirty) {
-        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
-                                                                      viewport->cursor_line());
+        operations_.request_frame();
       }
     }
     return true;
   }
-  operations_.request_focused_editor_redraw();
+  operations_.request_frame();
   // A plain Alt+click just drops a caret and does not drag-select. A Shift+Alt box
   // gesture keeps selecting on drag, so it falls through to arm mouse_selecting.
   if (alt_left_click && !shift_alt_box) {
@@ -637,7 +636,7 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
     interaction_state_.text_drag_drop_column = hit.column;
     interaction_state_.text_drag_has_drop = true;
     operations_.reset_caret_blink();
-    operations_.request_focused_editor_redraw();
+    operations_.request_frame();
     state_.surface.focus = FocusTarget::Editor;
     return true;
   }
@@ -658,7 +657,7 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
     viewport->MoveCursorToVisualHit(visual_row, hit_column, true);
   }
   operations_.reset_caret_blink();
-  operations_.request_focused_editor_redraw();
+  operations_.request_frame();
   state_.surface.focus = FocusTarget::Editor;
   return true;
 }
@@ -693,7 +692,7 @@ bool EditorMouseCoordinator::FinishTextDrag(bool copy) {
     viewport->JumpCursorTo(interaction_state_.text_drag_press_line,
                            interaction_state_.text_drag_press_column);
     operations_.reset_caret_blink();
-    operations_.request_focused_editor_redraw();
+    operations_.request_frame();
     return true;
   }
 
@@ -707,7 +706,7 @@ bool EditorMouseCoordinator::FinishTextDrag(bool copy) {
   // them the text.
   if (interaction_state_.text_drag_viewport != static_cast<const void*>(viewport) ||
       interaction_state_.text_drag_content_revision != viewport->content_revision()) {
-    operations_.request_focused_editor_redraw();
+    operations_.request_frame();
     return true;
   }
   const editor::TextPosition drop{interaction_state_.text_drag_drop_line,
@@ -717,7 +716,7 @@ bool EditorMouseCoordinator::FinishTextDrag(bool copy) {
   const auto moved = editor::text_drag_drop::Apply(*viewport, source, drop, copy);
   if (!moved.has_value()) {
     // Dropped onto itself: leave the selection exactly as it was, as VS Code does.
-    operations_.request_focused_editor_redraw();
+    operations_.request_frame();
     return true;
   }
   // The moved text stays selected, so the gesture can be repeated or undone
@@ -726,12 +725,11 @@ bool EditorMouseCoordinator::FinishTextDrag(bool copy) {
   viewport->MoveCursorTo(moved->end.line, moved->end.column, /*extend_selection=*/true);
 
   operations_.reset_caret_blink();
-  operations_.request_active_editable_last_change_redraw();
+  operations_.note_active_editable_edit();
   if (viewport->dirty() != was_dirty) {
-    operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
-                                                                  viewport->cursor_line());
+    operations_.request_frame();
   }
-  operations_.request_focused_editor_redraw();
+  operations_.request_frame();
   return true;
 }
 
@@ -801,14 +799,10 @@ EditorMouseCoordinator& WorkspaceShell::MakeEditorMouseCoordinator() {
               },
           .read_primary_selection_text = [this]() { return ReadPrimarySelectionText(); },
           .reset_caret_blink = [this]() { ResetCaretBlink(); },
-          .request_active_editable_last_change_redraw =
-              [this]() { RequestActiveEditableLastChangeRedraw(); },
-          .request_active_editable_blame_neighborhood_redraw =
-              [this](std::size_t before_line, std::size_t after_line) {
-                RequestActiveEditableBlameNeighborhoodRedraw(before_line, after_line);
-              },
+          .note_active_editable_edit =
+              [this]() { NoteActiveEditableEdit(); },
+          .request_frame = [this]() { RequestPreparedFrame(); },
           .request_tab_strip_redraw = [this]() { RequestTabStripRedraw(); },
-          .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
           .clear_drag_state = [this]() { ClearDragState(); },
           .get_setting_value =
               [this](std::string_view id) { return GetSettingValue(id); },

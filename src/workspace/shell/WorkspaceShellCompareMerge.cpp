@@ -274,10 +274,7 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
           .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
           .reveal_active_compare_selection = [this]() { RevealActiveCompareSelection(); },
-          .request_compare_row_range_redraw =
-              [this](std::size_t start, std::size_t end) {
-                RequestCompareRowRangeRedraw(start, end);
-              },
+          .request_frame = [this]() { RequestPreparedFrame(); },
           .sync_compare_viewport_scroll =
               [this](CompareTabState& compare_tab) { SyncCompareViewportScroll(compare_tab); },
           .scroll_compare_rows =
@@ -312,8 +309,6 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
               },
           .request_editor_surface_redraw = [this]() { RequestEditorSurfaceRedraw(); },
           .reveal_active_merge_selection = [this]() { RevealActiveMergeSelection(); },
-          .request_merge_conflict_redraw =
-              [this](std::size_t conflict_index) { RequestMergeConflictRedraw(conflict_index); },
           .scroll_merge_columns =
               [this](MergeTabState& merge_tab, int delta) {
                 if (const auto layout_state = CurrentWorkspaceLayout(); layout_state.has_value()) {
@@ -335,12 +330,6 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
           .update_merge_max_visual_columns =
               [this](MergeTabState& merge_tab, const std::vector<std::string>& replacement_lines) {
                 UpdateMergeMaxVisualColumns(merge_tab, replacement_lines);
-              },
-          .request_merge_result_line_to_bottom_redraw =
-              [this](std::size_t start_line) { RequestMergeResultLineToBottomRedraw(start_line); },
-          .request_active_editable_blame_neighborhood_redraw =
-              [this](std::size_t before, std::size_t after) {
-                RequestActiveEditableBlameNeighborhoodRedraw(before, after);
               },
           .request_tab_strip_redraw = [this]() { RequestTabStripRedraw(); },
           .write_clipboard_text =

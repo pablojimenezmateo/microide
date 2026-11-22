@@ -141,32 +141,17 @@ struct PreparedFrameState {
   std::array<editor::EditorViewMetrics, kMaxEditorGroups> pane_metrics{};
   std::array<bool, kMaxEditorGroups> pane_metrics_valid{};
 
-  // ---- what the last prepared frame painted ----------------------------
-  // (The regions, the caret and the terminal caret's style are Chrome units now.)
-  // The element painted hovered and the tooltip card painted, under the pointer.
-  std::optional<SDL_FRect> painted_hover_rect;
-  std::optional<SDL_FRect> painted_tooltip_rect;
   // The same flags per item index (bit 0 enabled, bit 1 checked), for the open
   // popup and its submenu: paint draws them from here, not from live state. A
   // flag read twice in one frame could differ -- a terminal's exit lands on its
   // reader thread -- and the partial frame and a full render of it disagreed.
   std::vector<std::uint8_t> menu_popup_row_flags;
   std::vector<std::uint8_t> menu_submenu_row_flags;
-  std::size_t painted_tooltip_text_hash = 0;  // the same card can name another tab
-  // The editor hover card (hover docs, diagnostics, the blame card), laid out at
-  // prep: what this frame paints -- every render of it, partial clips and the
-  // verifier's full one alike -- and what the next prep compares with. Paint laid
-  // the card out again itself, so a card prep had damaged nothing for could be
-  // painted, or one it had kept dropped, and its pixels outside the frame's clips
-  // stayed on screen (TD-2026-10-22-377: a blame card left on a split's divider).
-  std::optional<EditorHoverPopupLayout> painted_hover_popup;
-  // The signature-help card the same way: its rect as this frame paints it
-  // (none while a menu holds the pointer, or with no caret on screen) and a hash
-  // of its text. Paint laid it out from live state, so a menu closing over a
-  // card it had hidden brought the card back in a full render while the partial
-  // frame's clips -- the menu's -- never reached it (QA monkey, tooling seed 7).
-  std::optional<SDL_FRect> painted_signature_help_rect;
-  std::size_t painted_signature_help_hash = 0;
+  // This frame's editor hover card layout (none: no card), laid out at prep;
+  // its paint reads it and its Chrome unit keys on its rect.
+  std::optional<EditorHoverPopupLayout> hover_popup;
+  // This frame's signature-help card rect (none: hidden), laid out at prep.
+  std::optional<SDL_FRect> signature_help_rect;
   // The plugin status items' hash, which the breadcrumb bands' units key on.
   std::uint64_t status_items_hash = 0;
   // This frame's menu-bar popup, submenu and context menu rects (none: closed),

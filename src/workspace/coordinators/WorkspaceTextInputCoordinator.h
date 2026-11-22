@@ -23,7 +23,9 @@ class TextInputCoordinator {
     std::function<void()> request_prompt_redraw;
     std::function<void()> request_sidebar_redraw;
     std::function<void()> request_overlay_redraw;
-    std::function<void()> request_focused_editor_redraw;
+    // A frame owed: the editor, compare and merge surfaces derive their damage
+    // (RequestPreparedFrame); a request names no rect.
+    std::function<void()> request_frame;
     std::function<void()> request_window_redraw;
     std::function<void()> refresh_compare_picker;
     std::function<void()> refresh_quick_pick;
@@ -47,10 +49,9 @@ class TextInputCoordinator {
     std::function<void(MergeTabState&)> update_merge_tracking_after_viewport_edit;
     std::function<void()> reset_caret_blink;
     std::function<void()> mark_active_editor_folding_dirty;
-    std::function<void()> request_active_editable_last_change_redraw;
+    std::function<void()> note_active_editable_edit;
     std::function<void(const std::vector<std::string>&, const std::vector<std::string>&)>
         request_active_editable_change_redraw;
-    std::function<void(std::size_t, std::size_t)> request_active_editable_blame_neighborhood_redraw;
     std::function<TerminalPaneState*()> active_terminal_pane;
     std::function<void()> clear_terminal_selection;
     std::function<void(std::string_view)> append_terminal_pending_input;

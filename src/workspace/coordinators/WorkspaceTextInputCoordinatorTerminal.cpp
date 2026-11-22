@@ -346,7 +346,7 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
           .request_prompt_redraw = [this]() { RequestPromptRedraw(); },
           .request_sidebar_redraw = [this]() { RequestSidebarRedraw(); },
           .request_overlay_redraw = [this]() { RequestOverlayRedraw(); },
-          .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
+          .request_frame = [this]() { RequestPreparedFrame(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },
           .refresh_compare_picker = [this]() { RefreshComparePicker(); },
           .refresh_quick_pick = [this]() { quick_pick_service_.Refilter(); },
@@ -416,16 +416,12 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
                   editor_tab->folding_model->MarkDirty();
                 }
               },
-          .request_active_editable_last_change_redraw =
-              [this]() { RequestActiveEditableLastChangeRedraw(); },
+          .note_active_editable_edit =
+              [this]() { NoteActiveEditableEdit(); },
           .request_active_editable_change_redraw =
               [this](const std::vector<std::string>& before_lines,
                      const std::vector<std::string>& after_lines) {
                 RequestActiveEditableChangeRedraw(before_lines, after_lines);
-              },
-          .request_active_editable_blame_neighborhood_redraw =
-              [this](std::size_t first_line, std::size_t last_line) {
-                RequestActiveEditableBlameNeighborhoodRedraw(first_line, last_line);
               },
           .active_terminal_pane = [this]() { return ActiveTerminalPane(); },
           .clear_terminal_selection = [this]() { ClearTerminalSelection(); },

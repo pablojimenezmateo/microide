@@ -106,7 +106,7 @@ class DerivedDamage {
   // first frame paints the window whole.
   //
   // A surface damages at most kSeparateRectsPerSurface rects; past that, the
-  // bounding rect of all of them. Scattered changes (a debugger step rewriting
+  // nearest ones merge (RectCollector). Scattered changes (a debugger step rewriting
   // rows apart, occurrence marks across the editor) otherwise add a clip each,
   // and the frame reaches the merged-clip count at which DirtyRegionPolicy
   // promotes it to a full-window repaint -- a full repaint of everything to
@@ -169,35 +169,47 @@ class DerivedDamage {
   // past it. Fixed storage: a frame's commit allocates nothing.
   class RectCollector {
    public:
+    // Keeps at most kSeparateRectsPerSurface rects: one more joins the pair whose
+    // union adds the least area, so nearby changes merge and far ones stay apart
+    // (a header and two bands: the header joins the nearer band).
     void Add(const SDL_FRect& rect) {
-      if (count_ < kSeparateRectsPerSurface) {
-        separate_[count_] = rect;
-      }
-      ++count_;
-      if (count_ == 1) {
-        bounds_ = rect;
+      rects_[count_++] = rect;
+      if (count_ <= kSeparateRectsPerSurface) {
         return;
       }
-      const float left = std::min(bounds_.x, rect.x);
-      const float top = std::min(bounds_.y, rect.y);
-      const float right = std::max(bounds_.x + bounds_.w, rect.x + rect.w);
-      const float bottom = std::max(bounds_.y + bounds_.h, rect.y + rect.h);
-      bounds_ = SDL_FRect{left, top, right - left, bottom - top};
+      std::size_t best_a = 0;
+      std::size_t best_b = 1;
+      float best_growth = 0.0f;
+      for (std::size_t a = 0; a < count_; ++a) {
+        for (std::size_t b = a + 1; b < count_; ++b) {
+          const float growth = Area(Union(rects_[a], rects_[b])) - Area(rects_[a]) - Area(rects_[b]);
+          if ((a == 0 && b == 1) || growth < best_growth) {
+            best_growth = growth;
+            best_a = a;
+            best_b = b;
+          }
+        }
+      }
+      rects_[best_a] = Union(rects_[best_a], rects_[best_b]);
+      rects_[best_b] = rects_[--count_];
     }
     template <typename Damage>
     void EmitTo(Damage& damage) const {
-      if (count_ > kSeparateRectsPerSurface) {
-        damage(bounds_);
-        return;
-      }
       for (std::size_t i = 0; i < count_; ++i) {
-        damage(separate_[i]);
+        damage(rects_[i]);
       }
     }
 
    private:
-    std::array<SDL_FRect, kSeparateRectsPerSurface> separate_{};
-    SDL_FRect bounds_{};
+    static float Area(const SDL_FRect& r) { return r.w * r.h; }
+    static SDL_FRect Union(const SDL_FRect& a, const SDL_FRect& b) {
+      const float left = std::min(a.x, b.x);
+      const float top = std::min(a.y, b.y);
+      const float right = std::max(a.x + a.w, b.x + b.w);
+      const float bottom = std::max(a.y + a.h, b.y + b.h);
+      return SDL_FRect{left, top, right - left, bottom - top};
+    }
+    std::array<SDL_FRect, kSeparateRectsPerSurface + 1> rects_{};
     std::size_t count_ = 0;
   };
 

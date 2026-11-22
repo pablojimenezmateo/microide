@@ -731,7 +731,7 @@ void WorkspaceShell::CommitBreakpointModifierPrompt() {
   }
   MakePromptSurfaceService().DismissPromptSurface(true);
   debug_service_.ResendBreakpointsForFile(path);
-  RequestFocusedEditorRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::RemoveBreakpointFromMenu() {
@@ -742,7 +742,7 @@ void WorkspaceShell::RemoveBreakpointFromMenu() {
   }
   context_.current_project_state.breakpoint_store.Remove(path, line);
   debug_service_.ResendBreakpointsForFile(path);
-  RequestFocusedEditorRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::BreakpointQuickActionFromMenu(ActionId id) {
@@ -764,7 +764,7 @@ void WorkspaceShell::BreakpointQuickActionFromMenu(ActionId id) {
       return;
   }
   debug_service_.ResendBreakpointsForFile(path);
-  RequestFocusedEditorRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::OpenWatchExpressionPrompt(std::optional<std::size_t> index) {

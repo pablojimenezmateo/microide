@@ -101,7 +101,7 @@ bool KeyInputCoordinator::HandleSharedBufferSearchKey(const SDL_KeyboardEvent& e
     if (operations_.reset_caret_blink) {
       operations_.reset_caret_blink();
     }
-    operations_.request_focused_editor_redraw();
+    operations_.request_frame();
     return true;
   }
   // Alt+C / Alt+W / Alt+R / Alt+L toggle match case, whole word, regex and Find
@@ -314,7 +314,7 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
       handled = HandleDefaultEditorKeyDown(event, modifiers);
     }
     if (handled) {
-      operations_.request_focused_editor_redraw();
+      operations_.request_frame();
       operations_.follow_completion_caret();
     }
     return handled;

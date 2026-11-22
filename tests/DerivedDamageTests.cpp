@@ -53,8 +53,8 @@ void TestDerivedDamageRepaintsWhatChanged() {
   Expect(Commit(damage, {{a, 9}}).empty(), "after a reset the next frame paints whole again");
 }
 
-// Scattered changes in one surface damage their bounding rect, not one rect
-// each: five rows spaced apart plus the frame's other damage reached the clip
+// Scattered changes in one surface damage at most two rects (the nearest merged),
+// not one rect each: five rows spaced apart plus the frame's other damage reached the clip
 // count at which the frame is promoted to a full repaint, so every debugger step
 // repainted the window (debug_pane_step_paint, 42.7 ms against 10.1). Up to
 // kSeparateRectsPerSurface rects stay apart (a moved unit's old and new place).
@@ -78,9 +78,18 @@ void TestDerivedDamageCoalescesScatteredChangesInASurface() {
   for (const int i : {0, 2, 4, 6, 9}) {
     five[i].fingerprint = 3;
   }
+  // Rows 0,2,4,6 and 9 changed: at most two rects, the nearest merged, together
+  // covering every changed row.
   auto merged = Commit(damage, five);
-  Expect(merged.size() == 1 && Same(merged[0], SDL_FRect{0, 0, 100, 200}),
-         "five scattered rows damage one rect around them: " + std::to_string(merged.size()));
+  Expect(merged.size() == 2, "five scattered rows damage two rects: " + std::to_string(merged.size()));
+  for (const int i : {0, 2, 4, 6, 9}) {
+    const SDL_FRect& row = five[i].rect;
+    bool covered = false;
+    for (const SDL_FRect& rect : merged) {
+      covered = covered || (rect.y <= row.y && rect.y + rect.h >= row.y + row.h);
+    }
+    Expect(covered, "changed row " + std::to_string(i) + " is covered");
+  }
 }
 
 // Every kind of value a unit folds in moves its fingerprint.

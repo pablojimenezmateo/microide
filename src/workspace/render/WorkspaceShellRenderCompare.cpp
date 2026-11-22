@@ -157,7 +157,6 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                                           CompareTabState& compare_tab_state,
                                           bool draw_compare_caret,
                                           const CompareRenderProjectInputs& project_inputs) {
-  const std::filesystem::path& project_root = *project_inputs.project_root;
   const editor::DiagnosticsStore& diagnostics_store = *project_inputs.diagnostics_store;
   const editor::FileDecorations* const right_plugin_decorations =
       project_inputs.right_plugin_decorations;

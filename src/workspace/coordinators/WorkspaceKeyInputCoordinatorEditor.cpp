@@ -187,7 +187,7 @@ bool ApplyDefaultEditorEdit(KeyInputCoordinator::Operations& operations,
   {
     util::PerformanceTrace::Scope scope(
         "KeyInputCoordinator::HandleDefaultEditorKeyDown::RequestLastChangeRedraw");
-    operations.request_active_editable_last_change_redraw();
+    operations.note_active_editable_edit();
   }
   // The edit's damage names the lines it changed; the caret's current-line
   // highlight is on the line the caret was on. An edit that leaves the caret on
@@ -196,13 +196,12 @@ bool ApplyDefaultEditorEdit(KeyInputCoordinator::Operations& operations,
   // monkey, qa-asan seed 4). Edits that change the line count -- Enter, the
   // common case -- repaint the pane already.
   if (viewport.cursor_line() != cursor_before_line) {
-    operations.request_focused_editor_redraw();
+    operations.request_frame();
   }
   if (viewport.dirty() != was_dirty) {
     util::PerformanceTrace::Scope scope(
         "KeyInputCoordinator::HandleDefaultEditorKeyDown::DirtyStateSideEffects");
-    operations.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
-                                                                 viewport.cursor_line());
+    operations.request_frame();
   }
   return true;
 }
@@ -224,10 +223,9 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
       operations_.refresh_compare_tab_derived_state(*compare_tab);
       operations_.sync_compare_selection_from_viewport(*compare_tab, true);
       operations_.reset_caret_blink();
-      operations_.request_active_editable_last_change_redraw();
+      operations_.note_active_editable_edit();
       if (viewport.dirty() != was_dirty) {
-        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
-                                                                      viewport.cursor_line());
+        operations_.request_frame();
       }
       return true;
     };
@@ -235,11 +233,9 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
       operations_.sync_compare_selection_from_viewport(*compare_tab, true);
       operations_.reset_caret_blink();
       if (compare_tab->selected_row != previous_selected_row) {
-        operations_.request_compare_row_range_redraw(previous_selected_row, previous_selected_row + 1);
-        operations_.request_compare_row_range_redraw(compare_tab->selected_row,
-                                                     compare_tab->selected_row + 1);
+        operations_.request_frame();
       } else {
-        operations_.request_focused_editor_redraw();
+        operations_.request_frame();
       }
       return true;
     };
@@ -309,9 +305,7 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
         const std::size_t previous_selected_row = active_compare_tab->selected_row;
         active_compare_tab->selected_row = 0;
         operations_.reveal_active_compare_selection();
-        operations_.request_compare_row_range_redraw(previous_selected_row, previous_selected_row + 1);
-        operations_.request_compare_row_range_redraw(active_compare_tab->selected_row,
-                                                     active_compare_tab->selected_row + 1);
+        operations_.request_frame();
       }
       return true;
     case SDLK_END:
@@ -320,9 +314,7 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
         const std::size_t previous_selected_row = active_compare_tab->selected_row;
         active_compare_tab->selected_row = active_compare_tab->model.rows.size() - 1;
         operations_.reveal_active_compare_selection();
-        operations_.request_compare_row_range_redraw(previous_selected_row, previous_selected_row + 1);
-        operations_.request_compare_row_range_redraw(active_compare_tab->selected_row,
-                                                     active_compare_tab->selected_row + 1);
+        operations_.request_frame();
       }
       return true;
     case SDLK_LEFTBRACKET:
@@ -400,10 +392,9 @@ bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
     edit();
     operations_.update_merge_tracking_after_viewport_edit(*merge_tab);
     operations_.reset_caret_blink();
-    operations_.request_active_editable_last_change_redraw();
+    operations_.note_active_editable_edit();
     if (viewport.dirty() != was_dirty) {
-      operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
-                                                                    viewport.cursor_line());
+      operations_.request_frame();
     }
     return true;
   };
@@ -411,7 +402,7 @@ bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
     merge_tab->scroll_row = static_cast<int>(viewport.scroll_line());
     merge_tab->horizontal_scroll = viewport.horizontal_scroll();
     operations_.reset_caret_blink();
-    operations_.request_focused_editor_redraw();
+    operations_.request_frame();
     return true;
   };
 
@@ -578,7 +569,7 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
     if (viewport->has_multiple_carets()) {
       viewport->ClearSecondaryCarets();
       operations_.reset_caret_blink();
-      operations_.request_focused_editor_redraw();
+      operations_.request_frame();
       return true;
     }
     // A single caret with a selection: Esc collapses it to the caret (VS Code's
@@ -587,7 +578,7 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
     if (viewport->has_selection()) {
       viewport->ClearSelection();
       operations_.reset_caret_blink();
-      operations_.request_focused_editor_redraw();
+      operations_.request_frame();
       return true;
     }
     return false;

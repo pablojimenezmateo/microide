@@ -28,18 +28,17 @@ class CompareInteractionCoordinator {
     std::function<void(const std::filesystem::path&)> open_file;
     std::function<editor::TextViewport*()> active_editor_viewport;
     std::function<void()> reveal_active_compare_selection;
-    std::function<void(std::size_t, std::size_t)> request_compare_row_range_redraw;
+    // A frame owed: the editor, compare and merge surfaces derive their damage
+    // (RequestPreparedFrame); a request names no rect.
+    std::function<void()> request_frame;
     std::function<void(CompareTabState&)> sync_compare_viewport_scroll;
     std::function<void(CompareTabState&, int)> scroll_compare_rows;
     std::function<void(CompareTabState&, int)> scroll_compare_columns;
     std::function<void()> request_editor_surface_redraw;
     std::function<void()> reveal_active_merge_selection;
-    std::function<void(std::size_t)> request_merge_conflict_redraw;
     std::function<void(MergeTabState&, int)> scroll_merge_columns;
     std::function<void(MergeTabState&, const std::vector<std::string>&)>
         update_merge_max_visual_columns;
-    std::function<void(std::size_t)> request_merge_result_line_to_bottom_redraw;
-    std::function<void(std::size_t, std::size_t)> request_active_editable_blame_neighborhood_redraw;
     std::function<void()> request_tab_strip_redraw;
     std::function<bool(std::string_view)> write_clipboard_text;
     std::function<bool(const std::filesystem::path&, const std::string&, const std::string&)>

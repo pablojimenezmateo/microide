@@ -911,23 +911,29 @@ void TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation() {
   WorkspaceShellTestAccess::OpenFile(shell, source);
   (void)shell.ConsumePendingRenderInvalidation();
 
+  // A frame painted first: the derived surfaces compare with it.
+  SoftwareCanvas canvas{1280, 720};
+  shell.Render(canvas.renderer(), 1280, 720);
+  (void)shell.ConsumePendingRenderInvalidation();
   SDL_Event event{};
   event.type = SDL_EVENT_TEXT_INPUT;
   const std::string text = "x";
   event.text.text = text.c_str();
   const auto result = shell.HandleEvent(event);
+  // What the frame repaints: the event's rects and what preparing it derives.
+  const auto damage = FrameDamage(shell, canvas, 1280, 720, result.redraw);
   const SDL_FRect active_pane = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
   const auto edited_line_rect = WorkspaceShellTestAccess::ActiveEditorLineRangeRect(shell, 0, 1);
 
   Expect(result.handled, "editor typing should be handled");
-  Expect(!result.redraw.full && !result.redraw.rects.empty(),
+  Expect(!damage.full && !damage.rects.empty(),
          "editor typing should request a partial redraw");
-  Expect(AnyRectIntersects(result.redraw.rects, active_pane),
+  Expect(AnyRectIntersects(damage.rects, active_pane),
          "editor typing redraws should include the active editor pane");
-  Expect(edited_line_rect.has_value() && AnyRectIntersects(result.redraw.rects, *edited_line_rect),
+  Expect(edited_line_rect.has_value() && AnyRectIntersects(damage.rects, *edited_line_rect),
          "editor typing redraws should include the edited line band");
   std::string rects;
-  for (const SDL_FRect& r : result.redraw.rects) {
+  for (const SDL_FRect& r : damage.rects) {
     rects += " [" + std::to_string(static_cast<int>(r.x)) + "," + std::to_string(static_cast<int>(r.y)) +
              " " + std::to_string(static_cast<int>(r.w)) + "x" + std::to_string(static_cast<int>(r.h)) + "]";
   }
@@ -935,7 +941,7 @@ void TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation() {
   // land during the keystroke and repaint the sidebar, which is window-tall -- the
   // one-in-ten failure of TD-2026-10-22-378 was that damage counted against the
   // editor.
-  Expect(InPaneDamageHeight(result.redraw.rects, active_pane) < active_pane.h,
+  Expect(InPaneDamageHeight(damage.rects, active_pane) < active_pane.h,
          "single-line editor typing should redraw less than the full active pane;" + rects);
 }
 
@@ -1004,20 +1010,30 @@ void TestWorkspaceShellWrappedTypingReturnsFocusedPaneInvalidation() {
   viewport.MoveCursorTo(0, viewport.lines().front().size());
   (void)shell.ConsumePendingRenderInvalidation();
 
+  // A frame painted first: the derived surfaces compare with it.
+  SoftwareCanvas canvas{700, 720};
+  shell.Render(canvas.renderer(), 700, 720);
+  (void)shell.ConsumePendingRenderInvalidation();
   SDL_Event event{};
   event.type = SDL_EVENT_TEXT_INPUT;
   const std::string text = "!";
   event.text.text = text.c_str();
   const auto result = shell.HandleEvent(event);
+  // What the frame repaints: the event's rects and what preparing it derives.
+  const auto damage = FrameDamage(shell, canvas, 700, 720, result.redraw);
   const SDL_FRect active_pane = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
 
   Expect(result.handled, "wrapped typing should be handled");
-  Expect(!result.redraw.full && !result.redraw.rects.empty(),
+  Expect(!damage.full && !damage.rects.empty(),
          "wrapped typing should stay on the partial redraw path");
-  Expect(AnyRectIntersects(result.redraw.rects, active_pane),
+  Expect(AnyRectIntersects(damage.rects, active_pane),
          "wrapped typing redraws should include the active editor pane");
-  Expect(MaxRectHeight(result.redraw.rects) >= active_pane.h,
-         "wrapped typing should invalidate the full focused pane so wrapped-row reflow repaints correctly");
+  // The rows a reflow moved repaint by their keys (EditorRowUnits: each row's
+  // wrap-layout place is in its key); the randomized transitions of
+  // QaFlowRegression/EditorRowDamageFollowsEveryStateTransition check the pixels.
+  const auto edited_row = WorkspaceShellTestAccess::ActiveEditorLineRangeRect(shell, 0, 1);
+  Expect(edited_row.has_value() && AnyRectIntersects(damage.rects, *edited_row),
+         "wrapped typing should repaint the edited line's rows");
 }
 
 void TestWorkspaceShellCommandTextInputReturnsPartialCommandInvalidation() {
@@ -4303,6 +4319,9 @@ void TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation() {
 
   WorkspaceShell cut_shell;
   configure_shell(cut_shell);
+  SoftwareCanvas cut_shell_canvas{1280, 720};
+  cut_shell.Render(cut_shell_canvas.renderer(), 1280, 720);
+  (void)cut_shell.ConsumePendingRenderInvalidation();
 
   std::string clipboard_text;
   WorkspaceShellTestAccess::SetClipboardTextWriter(
@@ -4318,19 +4337,21 @@ void TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation() {
       WorkspaceShellTestAccess::ActiveEditor(cut_shell).lines().Snapshot();
 
   const auto select_all = handle_shortcut(cut_shell, SDLK_A);
+  const auto select_all_damage = FrameDamage(cut_shell, cut_shell_canvas, 1280, 720, select_all.redraw);
   Expect(select_all.handled, "Ctrl+A should be handled by the editor");
-  Expect(!select_all.redraw.full && !select_all.redraw.rects.empty(),
+  Expect(!select_all_damage.full && !select_all_damage.rects.empty(),
          "Ctrl+A should request a partial editor redraw");
-  Expect(AnyRectIntersects(select_all.redraw.rects, cut_editor_surface),
+  Expect(AnyRectIntersects(select_all_damage.rects, cut_editor_surface),
          "Ctrl+A redraws should include the editor surface");
   Expect(WorkspaceShellTestAccess::ActiveEditorHasSelection(cut_shell),
          "Ctrl+A should select the active editor contents");
 
   const auto cut = handle_shortcut(cut_shell, SDLK_X);
+  const auto cut_damage = FrameDamage(cut_shell, cut_shell_canvas, 1280, 720, cut.redraw);
   Expect(cut.handled, "Ctrl+X should be handled by the editor");
-  Expect(!cut.redraw.full && !cut.redraw.rects.empty(),
+  Expect(!cut_damage.full && !cut_damage.rects.empty(),
          "Ctrl+X should request a partial editor redraw");
-  Expect(AnyRectIntersects(cut.redraw.rects, cut_editor_surface),
+  Expect(AnyRectIntersects(cut_damage.rects, cut_editor_surface),
          "Ctrl+X redraws should include the editor surface");
   Expect(!clipboard_text.empty(),
          "Ctrl+X should write the selected editor text to the clipboard");
@@ -4343,6 +4364,9 @@ void TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation() {
   WriteFile(line_source, "alpha\nbeta\ngamma");
 
   configure_shell(copy_line_shell);
+  SoftwareCanvas copy_line_shell_canvas{1280, 720};
+  copy_line_shell.Render(copy_line_shell_canvas.renderer(), 1280, 720);
+  (void)copy_line_shell.ConsumePendingRenderInvalidation();
   WorkspaceShellTestAccess::OpenFile(copy_line_shell, line_source);
   (void)copy_line_shell.ConsumePendingRenderInvalidation();
   WorkspaceShellTestAccess::ActiveEditor(copy_line_shell).MoveCursorTo(1, 2);
@@ -4355,11 +4379,15 @@ void TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation() {
   WorkspaceShellTestAccess::SetPrimarySelectionTextWriter(copy_line_shell,
                                                           [](std::string_view) { return true; });
   const auto copy_line = handle_shortcut(copy_line_shell, SDLK_C);
+  const auto copy_line_damage = FrameDamage(copy_line_shell, copy_line_shell_canvas, 1280, 720, copy_line.redraw);
   Expect(copy_line.handled, "Ctrl+C without a selection should still be handled by the editor");
   Expect(clipboard_text == "beta\n",
          "Ctrl+C without a selection should copy the full active line");
 
   configure_shell(cut_line_shell);
+  SoftwareCanvas cut_line_shell_canvas{1280, 720};
+  cut_line_shell.Render(cut_line_shell_canvas.renderer(), 1280, 720);
+  (void)cut_line_shell.ConsumePendingRenderInvalidation();
   WorkspaceShellTestAccess::OpenFile(cut_line_shell, line_source);
   (void)cut_line_shell.ConsumePendingRenderInvalidation();
   WorkspaceShellTestAccess::ActiveEditor(cut_line_shell).MoveCursorTo(1, 2);
@@ -4372,6 +4400,7 @@ void TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation() {
   WorkspaceShellTestAccess::SetPrimarySelectionTextWriter(cut_line_shell,
                                                           [](std::string_view) { return true; });
   const auto cut_line = handle_shortcut(cut_line_shell, SDLK_X);
+  const auto cut_line_damage = FrameDamage(cut_line_shell, cut_line_shell_canvas, 1280, 720, cut_line.redraw);
   Expect(cut_line.handled, "Ctrl+X without a selection should still be handled by the editor");
   Expect(clipboard_text == "beta\n",
          "Ctrl+X without a selection should copy the full active line");
@@ -4381,6 +4410,9 @@ void TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation() {
 
   WorkspaceShell undo_shell;
   configure_shell(undo_shell);
+  SoftwareCanvas undo_shell_canvas{1280, 720};
+  undo_shell.Render(undo_shell_canvas.renderer(), 1280, 720);
+  (void)undo_shell.ConsumePendingRenderInvalidation();
 
   SDL_Event text_event{};
   text_event.type = SDL_EVENT_TEXT_INPUT;
@@ -4390,10 +4422,11 @@ void TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation() {
   Expect(typed.handled, "undo invalidation fixture should type into the editor first");
   const SDL_FRect undo_editor_surface = WorkspaceShellTestAccess::CurrentLayout(undo_shell).editor_surface;
   const auto undo = handle_shortcut(undo_shell, SDLK_Z);
+  const auto undo_damage = FrameDamage(undo_shell, undo_shell_canvas, 1280, 720, undo.redraw);
   Expect(undo.handled, "Ctrl+Z should be handled by the editor");
-  Expect(!undo.redraw.full && !undo.redraw.rects.empty(),
+  Expect(!undo_damage.full && !undo_damage.rects.empty(),
          "Ctrl+Z should request a partial editor redraw");
-  Expect(AnyRectIntersects(undo.redraw.rects, undo_editor_surface),
+  Expect(AnyRectIntersects(undo_damage.rects, undo_editor_surface),
          "Ctrl+Z redraws should include the editor surface");
   Expect(WorkspaceShellTestAccess::ActiveEditor(undo_shell).lines().Snapshot() == original_lines,
          "Ctrl+Z should restore the editor buffer after typing");
@@ -5038,6 +5071,10 @@ void TestWorkspaceShellNewlineInsertionRequestsEditorPartialRedraw() {
   WorkspaceShellTestAccess::OpenFile(shell, source);
   (void)shell.ConsumePendingRenderInvalidation();
 
+  // A frame painted first: the derived surfaces compare with it.
+  SoftwareCanvas canvas{1280, 720};
+  shell.Render(canvas.renderer(), 1280, 720);
+  (void)shell.ConsumePendingRenderInvalidation();
   const SDL_FRect editor_surface = WorkspaceShellTestAccess::CurrentLayout(shell).editor_surface;
   const std::size_t before_line_count =
       WorkspaceShellTestAccess::ActiveEditor(shell).line_count();
@@ -5045,11 +5082,13 @@ void TestWorkspaceShellNewlineInsertionRequestsEditorPartialRedraw() {
   event.type = SDL_EVENT_KEY_DOWN;
   event.key.key = SDLK_RETURN;
   const auto result = shell.HandleEvent(event);
+  // What the frame repaints: the event's rects and what preparing it derives.
+  const auto damage = FrameDamage(shell, canvas, 1280, 720, result.redraw);
   Expect(result.handled,
          "newline redraw regression fixture should insert a newline into the editor");
-  Expect(!result.redraw.full && !result.redraw.rects.empty(),
+  Expect(!damage.full && !damage.rects.empty(),
          "newline insertion should request a partial editor redraw after changing the editor line count");
-  Expect(AnyRectIntersects(result.redraw.rects, editor_surface),
+  Expect(AnyRectIntersects(damage.rects, editor_surface),
          "newline insertion redraws should include the editor surface");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).line_count() == before_line_count + 1,
          "newline insertion should split the current line in the active editor");

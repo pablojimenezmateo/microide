@@ -61,7 +61,7 @@ void WorkspaceShell::InvalidateEditorBlamePath(const std::filesystem::path& path
   // the viewport's normal path cost an allocation per component per open.
   if (const editor::TextViewport* viewport = ActiveEditableViewport();
       viewport != nullptr && util::SameAsNormalizedPath(viewport->path(), normalized)) {
-    RequestFocusedEditorRedraw();
+    RequestPreparedFrame();
   }
 }
 
@@ -69,7 +69,7 @@ void WorkspaceShell::ClearEditorBlame() {
   editor_blame_overlay_service_.ClearVisibleOverlay();
   active_editor_hover_target_.reset();
   git_blame_service_.Clear();
-  RequestFocusedEditorRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::SetStartupOptions(WorkspaceStartupOptions options) {

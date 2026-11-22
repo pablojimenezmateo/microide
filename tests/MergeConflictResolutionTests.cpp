@@ -741,8 +741,7 @@ void TestAcceptingASideReportsTheAcceptedLines() {
   ops.request_editor_surface_redraw = []() {};
   ops.request_tab_strip_redraw = []() {};
   ops.reveal_active_merge_selection = []() {};
-  ops.request_merge_result_line_to_bottom_redraw = [](std::size_t) {};
-  ops.request_active_editable_blame_neighborhood_redraw = [](std::size_t, std::size_t) {};
+  ops.request_frame = []() {};
   ops.update_merge_max_visual_columns = [&](MergeTabState&,
                                             const std::vector<std::string>& lines) {
     reported.push_back(lines);

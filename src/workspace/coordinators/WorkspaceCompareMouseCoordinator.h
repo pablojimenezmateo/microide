@@ -25,10 +25,10 @@ class CompareMouseCoordinator {
     std::function<void()> reset_caret_blink;
     std::function<std::optional<std::string>()> read_primary_selection_text;
     std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;
-    std::function<void()> request_active_editable_last_change_redraw;
-    std::function<void(std::size_t, std::size_t)> request_active_editable_blame_neighborhood_redraw;
-    std::function<void(std::size_t, std::size_t)> request_compare_row_range_redraw;
-    std::function<void()> request_focused_editor_redraw;
+    std::function<void()> note_active_editable_edit;
+    // A frame owed: the editor, compare and merge surfaces derive their damage
+    // (RequestPreparedFrame); a request names no rect.
+    std::function<void()> request_frame;
     std::function<CollapsedContextActionRects(const SDL_FRect&, const compare::ComparePresentationRow&)>
         build_compare_collapsed_context_action_rects;
     std::function<bool(CompareTabState&, std::size_t, CompareCollapsedContextAction)>

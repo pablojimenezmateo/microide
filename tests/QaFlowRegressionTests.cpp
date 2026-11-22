@@ -3164,6 +3164,8 @@ void TestAToastAsksForAFrameNotAFullRepaint() {
   const workspace::RenderInvalidation posted = fixture.shell.ConsumePendingRenderInvalidation();
   Expect(posted.frame && !posted.full && posted.rects.empty(),
          "posting a toast asks for a frame, naming no damage");
+  Expect(!fixture.shell.ConsumePendingRenderInvalidation().HasAnyRedraw(),
+         "the frame is owed once: taking it leaves nothing owed (or the idle loop never waits)");
   fixture.ExpectFresh(posted, "the frame a posted toast asked for");
   Expect(TestAccess::ExpireNotificationsAt(fixture.shell, ~std::uint64_t{0} / 2), "the toast expires");
   workspace::RenderInvalidation expired;

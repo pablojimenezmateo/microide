@@ -36,10 +36,10 @@ class MergeMouseCoordinator {
     std::function<void(compare::MergeChoice)> apply_merge_choice;
     std::function<std::optional<std::string>()> read_primary_selection_text;
     std::function<void(MergeTabState&)> update_merge_tracking_after_viewport_edit;
-    std::function<void()> request_active_editable_last_change_redraw;
-    std::function<void(std::size_t, std::size_t)> request_active_editable_blame_neighborhood_redraw;
-    std::function<void(std::size_t)> request_merge_conflict_redraw;
-    std::function<void()> request_focused_editor_redraw;
+    std::function<void()> note_active_editable_edit;
+    // A frame owed: the editor, compare and merge surfaces derive their damage
+    // (RequestPreparedFrame); a request names no rect.
+    std::function<void()> request_frame;
     std::function<void()> clear_drag_state;
     std::function<std::optional<std::size_t>(const MergeTabState&, std::size_t, bool)>
         find_merge_tracked_conflict_at_source_line;

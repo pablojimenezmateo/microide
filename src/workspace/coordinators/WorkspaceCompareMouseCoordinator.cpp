@@ -123,8 +123,7 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   const auto deactivate_right_side = [&]() {
     if (compare_tab->right_view_active) {
       compare_tab->right_view_active = false;
-      operations_.request_compare_row_range_redraw(compare_tab->selected_row,
-                                                   compare_tab->selected_row + 1);
+      operations_.request_frame();
     }
   };
   const float row_offset_px = static_cast<float>(event.button.y) - surface_layout.rows_y;
@@ -173,9 +172,7 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       }
     }
     compare_tab->right_view_active = false;
-    operations_.request_compare_row_range_redraw(previous_selected_row, previous_selected_row + 1);
-    operations_.request_compare_row_range_redraw(compare_tab->selected_row,
-                                                 compare_tab->selected_row + 1);
+    operations_.request_frame();
     state_.surface.focus = FocusTarget::Editor;
     return true;
   }
@@ -201,10 +198,9 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         compare_tab->right_viewport.InsertText(*text);
         operations_.refresh_compare_tab_derived_state(*compare_tab);
         operations_.sync_compare_selection_from_viewport(*compare_tab, true);
-        operations_.request_active_editable_last_change_redraw();
+        operations_.note_active_editable_edit();
         if (compare_tab->right_viewport.dirty() != was_dirty) {
-          operations_.request_active_editable_blame_neighborhood_redraw(
-              cursor_before_line, compare_tab->right_viewport.cursor_line());
+          operations_.request_frame();
         }
       }
       state_.surface.focus = FocusTarget::Editor;
@@ -221,12 +217,9 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     compare_tab->right_view_active = false;
   }
   if (compare_tab->selected_row != previous_selected_row) {
-    operations_.request_compare_row_range_redraw(previous_selected_row, previous_selected_row + 1);
-    operations_.request_compare_row_range_redraw(compare_tab->selected_row,
-                                                 compare_tab->selected_row + 1);
+    operations_.request_frame();
   } else if (compare_tab->right_view_active != previous_right_view_active) {
-    operations_.request_compare_row_range_redraw(compare_tab->selected_row,
-                                                 compare_tab->selected_row + 1);
+    operations_.request_frame();
   }
   state_.surface.focus = FocusTarget::Editor;
   return true;
@@ -307,8 +300,7 @@ bool CompareMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
     return false;
   }
   if (compare_tab->hover_state.has_value()) {
-    operations_.request_compare_row_range_redraw(compare_tab->hover_state->presentation_row,
-                                                 compare_tab->hover_state->presentation_row + 1);
+    operations_.request_frame();
     compare_tab->hover_state.reset();
   }
 
@@ -356,11 +348,9 @@ bool CompareMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
   operations_.sync_compare_selection_from_viewport(*compare_tab, false);
   operations_.reset_caret_blink();
   if (compare_tab->selected_row != previous_selected_row) {
-    operations_.request_compare_row_range_redraw(previous_selected_row, previous_selected_row + 1);
-    operations_.request_compare_row_range_redraw(compare_tab->selected_row,
-                                                 compare_tab->selected_row + 1);
+    operations_.request_frame();
   } else {
-    operations_.request_focused_editor_redraw();
+    operations_.request_frame();
   }
   state_.surface.focus = FocusTarget::Editor;
   return true;
@@ -420,12 +410,10 @@ bool CompareMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
     return false;
   }
   if (previous_hover.has_value()) {
-    operations_.request_compare_row_range_redraw(previous_hover->presentation_row,
-                                                 previous_hover->presentation_row + 1);
+    operations_.request_frame();
   }
   if (compare_tab->hover_state.has_value()) {
-    operations_.request_compare_row_range_redraw(compare_tab->hover_state->presentation_row,
-                                                 compare_tab->hover_state->presentation_row + 1);
+    operations_.request_frame();
   }
   return true;
 }
@@ -487,17 +475,9 @@ CompareMouseCoordinator& WorkspaceShell::MakeCompareMouseCoordinator() {
           .read_primary_selection_text = [this]() { return ReadPrimarySelectionText(); },
           .refresh_compare_tab_derived_state =
               [this](CompareTabState& compare_tab) { RefreshCompareTabDerivedState(compare_tab); },
-          .request_active_editable_last_change_redraw =
-              [this]() { RequestActiveEditableLastChangeRedraw(); },
-          .request_active_editable_blame_neighborhood_redraw =
-              [this](std::size_t before_line, std::size_t after_line) {
-                RequestActiveEditableBlameNeighborhoodRedraw(before_line, after_line);
-              },
-          .request_compare_row_range_redraw =
-              [this](std::size_t start_row, std::size_t end_row) {
-                RequestCompareRowRangeRedraw(start_row, end_row);
-              },
-          .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
+          .note_active_editable_edit =
+              [this]() { NoteActiveEditableEdit(); },
+          .request_frame = [this]() { RequestPreparedFrame(); },
           .build_compare_collapsed_context_action_rects =
               [this](const SDL_FRect& row_rect, const compare::ComparePresentationRow& row) {
                 return BuildCollapsedContextActionRects(

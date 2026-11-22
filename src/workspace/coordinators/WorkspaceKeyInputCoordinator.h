@@ -42,7 +42,9 @@ class KeyInputCoordinator {
     // Rows the bottom panel shows at once; a terminal Shift+PageUp/PageDown pages
     // by this rather than the list widgets' fixed eight-row step.
     std::function<int()> bottom_panel_visible_rows;
-    std::function<void()> request_focused_editor_redraw;
+    // A frame owed: the editor, compare and merge surfaces derive their damage
+    // (RequestPreparedFrame); a request names no rect.
+    std::function<void()> request_frame;
     std::function<bool(SDL_Keycode, SDL_Keymod)> text_input_composition_consumes_key;
     std::function<TextInputSurface()> current_text_input_surface;
     std::function<bool(const SDL_KeyboardEvent&, SDL_Keymod)> text_input_handle_single_line_key_down;
@@ -195,11 +197,9 @@ class KeyInputCoordinator {
     std::function<void(CompareTabState&, bool)> sync_compare_selection_from_viewport;
     std::function<void()> reset_caret_blink;
     std::function<void()> mark_active_editor_folding_dirty;
-    std::function<void()> request_active_editable_last_change_redraw;
+    std::function<void()> note_active_editable_edit;
     std::function<void(const std::vector<std::string>&, const std::vector<std::string>&)>
         request_active_editable_change_redraw;
-    std::function<void(std::size_t, std::size_t)> request_active_editable_blame_neighborhood_redraw;
-    std::function<void(std::size_t, std::size_t)> request_compare_row_range_redraw;
     std::function<void()> request_close_active_tab;
     std::function<void()> reveal_active_compare_selection;
     std::function<bool()> accept_inline_completion;

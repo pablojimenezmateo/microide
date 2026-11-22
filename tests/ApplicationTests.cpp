@@ -58,6 +58,18 @@ struct ApplicationTestAccess {
                                const char* reason) {
     application.Render(std::move(dirty_rects), reason);
   }
+  // The frame the loop paints for `redraw`: its rects, or -- when it names none but
+  // owes a frame (a derived surface's change) -- what preparing the frame damages.
+  static void RenderInvalidation(app::Application& application, const workspace::RenderInvalidation& redraw,
+                                 const char* reason) {
+    if (redraw.full || !redraw.rects.empty()) {
+      application.Render(redraw.full ? std::vector<SDL_FRect>{}
+                                     : std::vector<SDL_FRect>(redraw.rects.begin(), redraw.rects.end()),
+                         reason);
+    } else if (redraw.frame) {
+      application.Render({}, reason, /*prepared_only=*/true);
+    }
+  }
   static workspace::WorkspaceShell& Shell(app::Application& application) {
     return application.workspace_shell_;
   }
@@ -539,11 +551,9 @@ void TestPrepareTimeDamageIsPaintedInItsFrame() {
     event.type = SDL_EVENT_KEY_DOWN;
     event.key.key = key;
     const auto result = ApplicationTestAccess::HandleEvent(application, event);
-    Expect(result.redraw.HasDamage() && !result.redraw.full,
-           "a caret move should ask for a partial repaint");
-    ApplicationTestAccess::RenderWithReason(
-        application, std::vector<SDL_FRect>(result.redraw.rects.begin(), result.redraw.rects.end()),
-        "caret-move");
+    Expect(result.redraw.HasAnyRedraw() && !result.redraw.full,
+           "a caret move should ask for a partial repaint (a frame, which prep damages)");
+    ApplicationTestAccess::RenderInvalidation(application, result.redraw, "caret-move");
   }
   Expect(verifier.verified_frame_count() == 3, "every caret move should be a verified partial frame");
   Expect(verifier.stale_frame_count() == 0,

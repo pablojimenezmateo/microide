@@ -691,7 +691,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 return MakeEditorTabService().MoveTabToGroup(from_group, from_index, to_group,
                                                              to_slot);
               },
-          .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
+          .request_frame = [this]() { RequestPreparedFrame(); },
           .active_editable_viewport = [this]() { return ActiveEditableViewport(); },
           .active_compare_tab = [this]() { return ActiveCompareTab(); },
           .mark_branch_file_reviewed = [this]() { SetActiveBranchFileReviewed(true); },
@@ -800,16 +800,12 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               },
           .request_active_tab_redraw =
               [this](bool include_tree_sidebar) { RequestActiveTabRedraw(include_tree_sidebar); },
-          .request_active_editable_last_change_redraw =
-              [this]() { RequestActiveEditableLastChangeRedraw(); },
+          .note_active_editable_edit =
+              [this]() { NoteActiveEditableEdit(); },
           .request_active_editable_change_redraw =
               [this](const std::vector<std::string>& before_lines,
                      const std::vector<std::string>& after_lines) {
                 RequestActiveEditableChangeRedraw(before_lines, after_lines);
-              },
-          .request_active_editable_blame_neighborhood_redraw =
-              [this](std::size_t before_line, std::size_t after_line) {
-                RequestActiveEditableBlameNeighborhoodRedraw(before_line, after_line);
               },
           .selection_text_with_context = [this]() { return SelectionTextWithContext(); },
           .press_key =

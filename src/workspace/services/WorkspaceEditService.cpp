@@ -140,7 +140,7 @@ bool WorkspaceEditService::ApplyPluginEdit(const plugin::PluginHost::WorkspaceEd
   }
 
   operations_.reset_caret_blink();
-  operations_.request_active_editable_last_change_redraw();
+  operations_.note_active_editable_edit();
   operations_.request_chrome_redraw();
   return true;
 }
@@ -294,18 +294,16 @@ bool WorkspaceEditService::ApplyOpenBufferEdits(const std::vector<CodeActionEdit
     // Repaint only the touched line span of the visible buffer. A net line-count
     // change reflows everything below, so it repaints the whole editor.
     if (bucket.before_line_count != bucket.viewport->line_count()) {
-      operations_.request_focused_editor_redraw();
+      operations_.request_frame();
     } else {
-      operations_.request_active_editable_line_range_redraw(
-          bucket.first_changed_line,
-          std::max(bucket.last_changed_line + 1, bucket.first_changed_line + 1));
+      operations_.request_frame();
     }
     active_synced = true;
   }
   if (!active_synced) {
     // The edit did not touch the active buffer; still refresh its last-change
     // derived state so the caret/redraw bookkeeping stays consistent.
-    operations_.request_active_editable_last_change_redraw();
+    operations_.note_active_editable_edit();
   }
   // Repaint the tab strip so the dirty indicator appears immediately; the edit
   // just flipped the buffer to dirty and a chrome redraw only damages the
