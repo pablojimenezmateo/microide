@@ -516,7 +516,8 @@ bool PanelMouseCoordinator::HandleMotion(const SDL_Event& event) {
           .line_height = panel_layout.line_height,
           .visible_rows = static_cast<std::size_t>(std::max(0, panel_layout.scroll.visible_rows)),
       };
-      selection_autoscroll::Arm(interaction_state_, band, event.motion.x, event.motion.y);
+      selection_autoscroll::Arm(interaction_state_, InteractionState::SelectionAutoscrollOwner::Terminal, band,
+                                event.motion.x, event.motion.y);
       interaction_state_.selection_pointer_x = event.motion.x;
       interaction_state_.selection_pointer_y = event.motion.y;
       const SDL_FPoint pointer =

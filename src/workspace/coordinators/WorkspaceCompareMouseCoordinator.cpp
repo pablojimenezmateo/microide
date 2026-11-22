@@ -320,7 +320,7 @@ bool CompareMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
   // pointer is held past the edge: no further motion arrives, so nothing extends
   // it. Arming from the REAL pointer lets the idle wake keep walking the clamped
   // edge through the document, exactly as on the editor surface.
-  selection_autoscroll::Arm(interaction_state_,
+  selection_autoscroll::Arm(interaction_state_, InteractionState::SelectionAutoscrollOwner::Text,
                             selection_autoscroll::BandFor(right_interaction),
                             static_cast<float>(event.motion.x),
                             static_cast<float>(event.motion.y));

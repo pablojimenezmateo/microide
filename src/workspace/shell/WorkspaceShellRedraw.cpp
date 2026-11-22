@@ -1292,12 +1292,19 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
   // A lambda rather than a member: the shell's declaration budget is a hard
   // invariant, and nothing outside this wake needs to step an autoscroll.
   const auto step_selection_autoscroll = [this]() -> bool {
-    // The bottom panel's terminal is checked first: its selection drag is
-    // independent of which editor tab is active, so keying off the tab kind
-    // (as the other three arms do) would never reach it (TD-2026-08-13-205).
-    if (TerminalPaneState* terminal_tab = ActiveTerminalPane();
-        terminal_tab != nullptr && terminal_tab->mouse_selecting && BottomPanelVisible() &&
-        BottomPanelShowsTerminal()) {
+    // Only the surface whose drag armed it, and only while that drag lasts: a drag
+    // that ended with no release must not hand its velocity to whatever surface
+    // is in front (InteractionState::selection_autoscroll_owner).
+    using Owner = InteractionState::SelectionAutoscrollOwner;
+    if (context_.interaction_state.selection_autoscroll_owner == Owner::Terminal) {
+      // The bottom panel's terminal: its selection drag is independent of which
+      // editor tab is active, so it is keyed off its own pane (TD-2026-08-13-205).
+      TerminalPaneState* terminal_tab = ActiveTerminalPane();
+      if (terminal_tab == nullptr || !terminal_tab->mouse_selecting || !BottomPanelVisible() ||
+          !BottomPanelShowsTerminal()) {
+        selection_autoscroll::Disarm(context_.interaction_state);
+        return false;
+      }
       const std::optional<selection_autoscroll::StepDelta> delta =
           selection_autoscroll::BeginStep(context_.interaction_state);
       if (!delta.has_value()) {
@@ -1319,6 +1326,10 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
                               panel_layout.scroll.visible_rows);
       return selection_autoscroll::FinishStep(context_.interaction_state,
                                               terminal_tab->scroll_row != before_row);
+    }
+    if (!context_.interaction_state.mouse_selecting) {
+      selection_autoscroll::Disarm(context_.interaction_state);
+      return false;
     }
     if (ActiveTabIsCompare()) {
       CompareTabState* compare_tab = ActiveCompareTab();
@@ -1378,9 +1389,8 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
       synthetic.motion.x = context_.interaction_state.selection_pointer_x;
       synthetic.motion.y = context_.interaction_state.selection_pointer_y;
       synthetic.motion.state = SDL_BUTTON_LMASK;
-      const TerminalPaneState* terminal_tab = ActiveTerminalPane();
-      if (terminal_tab != nullptr && terminal_tab->mouse_selecting && BottomPanelVisible() &&
-          BottomPanelShowsTerminal()) {
+      if (context_.interaction_state.selection_autoscroll_owner ==
+          InteractionState::SelectionAutoscrollOwner::Terminal) {
         (void)MakePanelMouseCoordinator().HandleMotion(synthetic);
       } else if (ActiveTabIsCompare()) {
         (void)MakeCompareMouseCoordinator().HandleSelectionMotion(synthetic, ActiveTabSurface(*layout));

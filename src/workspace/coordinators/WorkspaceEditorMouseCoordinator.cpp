@@ -609,7 +609,7 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
   // is. Stored rather than applied here because the wake, not this handler, is
   // what repeats it: a pointer held still outside the band produces no further
   // motion events, and that is precisely the case that has to keep scrolling.
-  selection_autoscroll::Arm(interaction_state_,
+  selection_autoscroll::Arm(interaction_state_, InteractionState::SelectionAutoscrollOwner::Text,
                             selection_autoscroll::BandFor(editor_rect, metrics),
                             static_cast<float>(event.motion.x),
                             static_cast<float>(event.motion.y));

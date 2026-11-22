@@ -336,13 +336,18 @@ struct InteractionState {
   // wake). Cleared on button-up alongside `mouse_selecting`.
   int selection_autoscroll_rows = 0;
   int selection_autoscroll_columns = 0;
-  // Which gesture armed the deltas above. `mouse_selecting` cannot answer this:
-  // the terminal panel tracks its drag on its own tab state (a shell-level
-  // mouse_selecting there would also extend the active editor's selection on
-  // every motion event), so an autoscroll keyed on it could never reach the
-  // terminal (TD-2026-08-13-205). selection_autoscroll::Arm/Disarm own this
-  // flag, and every button-up, focus loss and project switch disarms.
-  bool selection_autoscroll_armed = false;
+  // Which drag armed the deltas above, and so the only surface the wake may
+  // scroll: an editor, compare or merge drag (`mouse_selecting`), or the
+  // terminal's (its pane's own `mouse_selecting`: a shell-level flag there would
+  // also extend the active editor's selection on every motion event,
+  // TD-2026-08-13-205). The wake steps the owner while its drag lasts and
+  // disarms once it is over. Stepping whichever surface it found first instead,
+  // a terminal drag ended with no release (Select All mid-drag) fell through to
+  // the active editor and scrolled it to the end, a tick every 40 ms (QA lane,
+  // seed 1). selection_autoscroll::Arm/Disarm own this, and every button-up,
+  // focus loss and project switch disarms.
+  enum class SelectionAutoscrollOwner : std::uint8_t { None, Text, Terminal };
+  SelectionAutoscrollOwner selection_autoscroll_owner = SelectionAutoscrollOwner::None;
   float selection_pointer_x = 0.0f;
   float selection_pointer_y = 0.0f;
   // Granularity of the in-flight selection drag. A double-click that then drags
@@ -362,7 +367,7 @@ struct InteractionState {
   std::size_t selection_seed_end_line = 0;
   std::size_t selection_seed_end_column = 0;
   bool selection_autoscroll_active() const {
-    return selection_autoscroll_armed &&
+    return selection_autoscroll_owner != SelectionAutoscrollOwner::None &&
            (selection_autoscroll_rows != 0 || selection_autoscroll_columns != 0);
   }
 };

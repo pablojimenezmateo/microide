@@ -52,7 +52,9 @@ Band BandFor(const TextGridInteractionLayout& interaction);
 // band. Proportional so a small overshoot creeps and a large one moves quickly,
 // capped so a pointer flung to the edge of a large display cannot page the
 // document per tick. Zero (disarmed) whenever the pointer is inside the band.
+// `owner` is the drag arming it: the only surface the wake will scroll.
 void Arm(InteractionState& interaction_state,
+         InteractionState::SelectionAutoscrollOwner owner,
          const Band& band,
          float pointer_x,
          float pointer_y);

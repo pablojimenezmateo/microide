@@ -3970,7 +3970,8 @@ void TestWorkspaceShellEditorScrollbarUsesVisualRows() {
     // Re-armed each tick, as a pointer held past the bottom edge does: the ramp is
     // recomputed from the live pointer on every motion, and a held pointer sends
     // none, which is why the wake repeats the step.
-    autoscroll::Arm(interaction, band, pane.x + 10.0f, pane.y + pane.h + 200.0f);
+    autoscroll::Arm(interaction, workspace::InteractionState::SelectionAutoscrollOwner::Text, band, pane.x + 10.0f,
+                    pane.y + pane.h + 200.0f);
     autoscroll::Step(interaction, *viewport);
   }
   Expect(viewport->scroll_line() > viewport->line_count(),

@@ -485,7 +485,7 @@ bool MergeMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
   // See the compare surface: the clamp keeps the selection pointed at the edge
   // cell, the autoscroll is what walks that edge through the document while the
   // pointer sits still outside the pane.
-  selection_autoscroll::Arm(interaction_state_,
+  selection_autoscroll::Arm(interaction_state_, InteractionState::SelectionAutoscrollOwner::Text,
                             selection_autoscroll::BandFor(interaction.result.text),
                             static_cast<float>(event.motion.x),
                             static_cast<float>(event.motion.y));

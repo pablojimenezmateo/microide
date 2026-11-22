@@ -56,6 +56,7 @@ SDL_FPoint ClampPointerToBand(const Band& band, float x, float y) {
 }
 
 void Arm(InteractionState& interaction_state,
+         InteractionState::SelectionAutoscrollOwner owner,
          const Band& band,
          float pointer_x,
          float pointer_y) {
@@ -76,15 +77,16 @@ void Arm(InteractionState& interaction_state,
       StepFor(pointer_x - (band.rect.x + band.rect.w), line_height, kMaxColumnsPerTick);
   interaction_state.selection_pointer_x = pointer_x;
   interaction_state.selection_pointer_y = pointer_y;
-  interaction_state.selection_autoscroll_armed =
-      interaction_state.selection_autoscroll_rows != 0 ||
-      interaction_state.selection_autoscroll_columns != 0;
+  interaction_state.selection_autoscroll_owner =
+      interaction_state.selection_autoscroll_rows != 0 || interaction_state.selection_autoscroll_columns != 0
+          ? owner
+          : InteractionState::SelectionAutoscrollOwner::None;
 }
 
 void Disarm(InteractionState& interaction_state) {
   interaction_state.selection_autoscroll_rows = 0;
   interaction_state.selection_autoscroll_columns = 0;
-  interaction_state.selection_autoscroll_armed = false;
+  interaction_state.selection_autoscroll_owner = InteractionState::SelectionAutoscrollOwner::None;
 }
 
 std::optional<Uint32> NextDelayMs(const InteractionState& interaction_state) {

@@ -1542,6 +1542,55 @@ void TestWorkspaceShellTerminalDragAutoscrollsPastTheEdge() {
          "releasing the button disarms the autoscroll");
 }
 
+// An autoscroll belongs to the drag that armed it. The wake stepped whichever
+// surface it found first: once the terminal's drag ended without a release --
+// Select All mid-drag ends it -- the terminal arm no longer matched, the wake fell
+// through to the active editor and scrolled IT, a tick every 40 ms, to the end of
+// the document, with no button down and the monkey waiting for idle (QA lane,
+// seed 1: 267 editor frames back to back).
+void TestWorkspaceShellTerminalAutoscrollNeverScrollsTheEditor() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path file = temp_dir.path() / "project" / "long.txt";
+  std::string text;
+  for (int i = 0; i < 400; ++i) {
+    text += "editor line " + std::to_string(i) + "\n";
+  }
+  WriteFile(file, "\n");
+  WorkspaceShellTestAccess::SetProjectRoot(shell, file.parent_path());
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText(text);
+  WorkspaceShellTestAccess::ActiveEditor(shell).SetViewportSize(20, 80);
+  WorkspaceShellTestAccess::ActiveEditor(shell).SetScrollLine(0);
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  for (int i = 0; i < 300; ++i) {
+    TerminalSessionTestAccess::AppendOutput(session, "line " + std::to_string(i) + "\r\n");
+  }
+  WorkspaceShellTestAccess::SetActiveTerminalFollowTail(shell, false);
+  WorkspaceShellTestAccess::SetActiveTerminalScrollRow(shell, 0);
+
+  const SDL_FPoint start = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 0);
+  const SDL_FRect panel_rect = WorkspaceShellTestAccess::BottomPanelContentRect(shell);
+  Expect(SendMouseDown(shell, start.x, start.y, SDL_BUTTON_LEFT), "a press in the terminal starts a selection");
+  Expect(SendMouseMotion(shell, start.x, panel_rect.y + panel_rect.h + 200.0f, SDL_BUTTON_LMASK),
+         "a drag below the terminal arms its autoscroll");
+  Expect(WorkspaceShellTestAccess::HandleScheduledWake(shell).handled,
+         "the terminal's autoscroll steps (the case under test)");
+
+  Expect(SendKeyDown(shell, SDLK_A, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT)),
+         "Ctrl+Shift+A selects the whole transcript, ending the drag");
+  const std::size_t editor_scroll = WorkspaceShellTestAccess::ActiveEditor(shell).scroll_line();
+  for (int tick = 0; tick < 5; ++tick) {
+    (void)WorkspaceShellTestAccess::HandleScheduledWake(shell);
+  }
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).scroll_line() == editor_scroll,
+         "the terminal's autoscroll scrolls the editor (from " + std::to_string(editor_scroll) + " to " +
+             std::to_string(WorkspaceShellTestAccess::ActiveEditor(shell).scroll_line()) + ")");
+}
+
 // Double-click selects the word under the pointer and triple-click the whole row, the
 // same gestures the editor surface answers. The terminal used to offer drag-select
 // only, so the two text surfaces in one window disagreed about what a click means.
@@ -3698,6 +3747,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellBottomPanelWheelScrollsTranscript);
   AddTest(tests, "WorkspaceShell/TerminalDragAutoscrollsPastTheEdge",
           TestWorkspaceShellTerminalDragAutoscrollsPastTheEdge);
+  AddTest(tests, "WorkspaceShell/TerminalAutoscrollNeverScrollsTheEditor",
+          TestWorkspaceShellTerminalAutoscrollNeverScrollsTheEditor);
   AddTest(tests, "WorkspaceShell/TerminalCtrlShiftCNeverInterrupts",
           TestWorkspaceShellTerminalCtrlShiftCNeverInterrupts);
   AddTest(tests, "WorkspaceShell/TerminalOwnsGlobalControlChords",
