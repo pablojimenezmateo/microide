@@ -263,7 +263,11 @@ workspace::RenderInvalidation NothingAnnounced() {
 }
 
 void ExpectFreshPane(WorkspaceShell& shell, SoftwareCanvas& canvas, const std::string& what) {
-  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWindowWidth, kWindowHeight, NothingAnnounced());
+  // Both paints at one caret blink phase: on a loaded machine they straddled a
+  // blink, and the editor's caret differed between them (a 1x18 column).
+  const auto pin = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+  const auto diff =
+      PaintAndDiffWithFullRepaint(shell, canvas, kWindowWidth, kWindowHeight, NothingAnnounced(), pin);
   Expect(diff.identical(), what + " should paint what a full repaint paints; " + DescribePixelDiff(diff));
 }
 
