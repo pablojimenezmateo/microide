@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "app/DirtyRegionPolicy.h"
+#include "workspace/debug/DapProtocol.h"
 #include "workspace/shell/WorkspaceShell.h"
 #include "workspace/WorkspaceVirtualDocument.h"
 
@@ -434,9 +435,13 @@ class ScenarioContext {
   // The debugger on and the debug pane showing Variables: one Locals scope of
   // `count` values, as a stopped session's first variables response gives them.
   void ShowDebugVariables(std::size_t count);
-  // Every value rewritten for step `step`, as the variables response after a
-  // step gives them: nothing asks for a repaint.
-  void StepDebugVariables(std::size_t count, int step);
+  // One variables response: the values a step gives the Locals scope.
+  using DebugValues = std::vector<workspace::dap_protocol::DapVariable>;
+  // `steps` responses of `count` values each, built ahead of a measured window:
+  // each step moves one value in eight, as a loop's step does.
+  static std::vector<DebugValues> DebugVariableSteps(std::size_t count, int steps);
+  // Applies a response as the adapter's arrives: nothing asks for a repaint.
+  void ApplyDebugVariables(const DebugValues& values);
   // The pane's surface: Variables when `variables`, else the Call Stack.
   void ShowDebugPaneVariables(bool variables);
   // Close every terminal tab. The driver is shared across a scenario's iterations,

@@ -892,20 +892,27 @@ void ScenarioContext::ShowDebugVariables(std::size_t count) {
   locals.name = "Locals";
   locals.variables_reference = 1000;
   variables.ApplyScopes({locals});
-  StepDebugVariables(count, 0);
+  ApplyDebugVariables(DebugVariableSteps(count, 1).front());
 }
 
-void ScenarioContext::StepDebugVariables(std::size_t count, int step) {
-  std::vector<workspace::dap_protocol::DapVariable> values;
-  values.reserve(count);
-  for (std::size_t i = 0; i < count; ++i) {
-    workspace::dap_protocol::DapVariable variable;
-    variable.name = "local_" + std::to_string(i);
-    // A loop's step moves a few values, not all of them.
-    variable.value = std::to_string(i % 8 == 0 ? static_cast<int>(i) * 1000 + step : static_cast<int>(i));
-    variable.type = "int";
-    values.push_back(std::move(variable));
+std::vector<ScenarioContext::DebugValues> ScenarioContext::DebugVariableSteps(std::size_t count, int steps) {
+  std::vector<DebugValues> built;
+  for (int step = 1; step <= steps; ++step) {
+    DebugValues& values = built.emplace_back();
+    values.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
+      workspace::dap_protocol::DapVariable variable;
+      variable.name = "local_" + std::to_string(i);
+      // A loop's step moves a few values, not all of them.
+      variable.value = std::to_string(i % 8 == 0 ? static_cast<int>(i) * 1000 + step : static_cast<int>(i));
+      variable.type = "int";
+      values.push_back(std::move(variable));
+    }
   }
+  return built;
+}
+
+void ScenarioContext::ApplyDebugVariables(const DebugValues& values) {
   workspace::WorkspaceShell::TestAccess::DebugVariables(shell_).ApplyVariables(1000, values, 0);
 }
 

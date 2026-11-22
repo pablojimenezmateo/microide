@@ -1029,17 +1029,28 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(2);
             const workspace::WorkspaceShell::RenderInvalidation frame_trigger{
                 .full = false, .rects = {SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f}}};
-            const auto stream = [&](std::string_view channel) {
-              for (int burst = 0; burst < 40; ++burst) {
-                for (int line = 0; line < 8; ++line) {
-                  context.AppendOutputLine(channel, "perf-output-line " + std::to_string(burst * 8 + line) +
-                                                        " src/main.cpp:12:5: note: streamed by the scenario");
+            // The lines are built before the window opens: it measures the panel
+            // taking them, not the scenario's own string building.
+            const auto lines = [] {
+              std::vector<std::string> built;
+              for (int line = 0; line < 40 * 8; ++line) {
+                built.push_back("perf-output-line " + std::to_string(line) +
+                                " src/main.cpp:12:5: note: streamed by the scenario");
+              }
+              return built;
+            };
+            std::vector<std::string> shown = lines();
+            std::vector<std::string> hidden = lines();
+            const auto stream = [&](std::string_view channel, std::vector<std::string>& batch) {
+              for (std::size_t burst = 0; burst < 40; ++burst) {
+                for (std::size_t line = 0; line < 8; ++line) {
+                  context.AppendOutputLine(channel, std::move(batch[burst * 8 + line]));
                 }
                 context.PumpPartialFrame(frame_trigger);
               }
             };
-            context.Measure("output.stream_shown", [&]() { stream("perf.output"); });
-            context.Measure("output.stream_hidden", [&]() { stream("perf.hidden"); });
+            context.Measure("output.stream_shown", [&]() { stream("perf.output", shown); });
+            context.Measure("output.stream_hidden", [&]() { stream("perf.hidden", hidden); });
           },
   });
   // The debug pane while a session steps: each step's variables response rewrites
@@ -1063,18 +1074,21 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(2);
             const workspace::WorkspaceShell::RenderInvalidation frame_trigger{
                 .full = false, .rects = {SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f}}};
+            // Each step's response is built before the window opens: it measures the
+            // pane taking the values, not the scenario building them.
+            const std::vector<ScenarioContext::DebugValues> steps = ScenarioContext::DebugVariableSteps(kValues, 40);
             const auto step = [&]() {
-              for (int i = 1; i <= 40; ++i) {
-                context.StepDebugVariables(kValues, i);
+              for (const ScenarioContext::DebugValues& values : steps) {
+                context.ApplyDebugVariables(values);
                 context.PumpPartialFrame(frame_trigger);
               }
             };
             context.ShowDebugPaneVariables(true);
             context.PumpFrames(1);
-            context.Measure("debug.step_shown", step);
+            context.Measure("debug.step_shown", [&]() { step(); });
             context.ShowDebugPaneVariables(false);
             context.PumpFrames(1);
-            context.Measure("debug.step_hidden", step);
+            context.Measure("debug.step_hidden", [&]() { step(); });
           },
   });
   // Pointer travel over a program that owns the mouse (Claude Code's fullscreen
