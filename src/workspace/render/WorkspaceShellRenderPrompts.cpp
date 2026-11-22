@@ -36,10 +36,9 @@ void WorkspaceShell::RenderPromptSurface(
       6.0f;
   const float room = std::max(line_height, content_bottom - message_rect.y -
                                                (detail.empty() ? 0.0f : line_height + 4.0f));
-  const std::size_t message_lines = DrawWrappedPlaceholder(
-      text_renderer_, renderer, message_rect.x, message_rect.y, message_rect.w, theme_.text_muted,
-      theme_.overlay_background, PromptSurfaceMessage(),
-      std::max<std::size_t>(1, static_cast<std::size_t>(room / line_height)));
+  const std::size_t message_lines = DrawWrappedPlaceholderIn(
+      text_renderer_, renderer, MakeRect(message_rect.x, message_rect.y, message_rect.w, room),
+      theme_.text_muted, theme_.overlay_background, PromptSurfaceMessage(), kWrapAsTheBoxHolds);
   if (!detail.empty()) {
     const float detail_y = message_rect.y +
                            static_cast<float>(std::max<std::size_t>(1, message_lines)) * line_height + 4.0f;
@@ -99,10 +98,9 @@ void WorkspaceShell::RenderDirtyPromptSurface(SDL_Renderer* renderer,
   const float line_height = text_renderer_.LineHeight();
   const float room =
       std::max(line_height, buttons.front().y - 6.0f - message_rect.y - (line_height + 4.0f));
-  const std::size_t message_lines = DrawWrappedPlaceholder(
-      text_renderer_, renderer, message_rect.x, message_rect.y, message_rect.w,
-      theme_.text_secondary, theme_.overlay_background, DirtyPromptMessage(),
-      std::max<std::size_t>(1, static_cast<std::size_t>(room / line_height)));
+  const std::size_t message_lines = DrawWrappedPlaceholderIn(
+      text_renderer_, renderer, MakeRect(message_rect.x, message_rect.y, message_rect.w, room),
+      theme_.text_secondary, theme_.overlay_background, DirtyPromptMessage(), kWrapAsTheBoxHolds);
   const float hint_y =
       message_rect.y + static_cast<float>(std::max<std::size_t>(1, message_lines)) * line_height + 4.0f;
   // Constant hint line: spelled out rather than re-joined per frame. The joiner

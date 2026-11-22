@@ -422,8 +422,8 @@ void PaintDebugPaneBody(SDL_Renderer* renderer, const PreparedFrameState& frame,
   }
   if (!body.hint.text.empty()) {
     const render::PaintElement element(renderer, body.hint.rect, "debug-hint");
-    DrawWrappedPlaceholder(text_renderer, renderer, body.hint.rect.x, body.hint.rect.y, body.hint.rect.w,
-                           theme.text_muted, theme.surface_background, body.hint.text);
+    DrawWrappedPlaceholderIn(text_renderer, renderer, body.hint.rect, theme.text_muted, theme.surface_background,
+                             body.hint.text);
   }
   if (body.scrollbar.has_value()) {
     const render::PaintElement element(renderer, body.scrollbar->track, "debug-scrollbar");

@@ -865,26 +865,13 @@ inline std::size_t ForEachWrappedLabelLine(const render::TextRenderer& text_rend
   return emitted;
 }
 
-inline std::size_t DrawWrappedPlaceholder(const render::TextRenderer& text_renderer,
-                                          SDL_Renderer* renderer,
-                                          float x,
-                                          float y,
-                                          float max_width,
-                                          SDL_Color foreground,
-                                          SDL_Color background,
-                                          std::string_view text,
-                                          std::size_t max_lines = 3) {
-  const float line_height = text_renderer.LineHeight();
-  return ForEachWrappedLabelLine(
-      text_renderer, text, max_width, max_lines,
-      [&](std::size_t index, std::string_view line) {
-        text_renderer.DrawStringOn(renderer, x, y + static_cast<float>(index) * line_height,
-                                   foreground, background, line);
-      });
-}
+// A wrapped placeholder (a hint, an empty list's note, a prompt's message) is an
+// element: it draws inside `box` and nothing else, so it spends only the lines the
+// box holds whole -- at most `max_lines`, the last one ellipsized. There is no
+// unboxed form: a wrap told only its top and width drew its later lines past a
+// short box (soak 3cf85812902b, the Output panel's hint at scale 2.75).
+inline constexpr std::size_t kWrapAsTheBoxHolds = static_cast<std::size_t>(-1);
 
-// The wrapped placeholder as an element: it draws inside `box` and nothing else,
-// so it spends only the lines the box holds whole.
 inline std::size_t DrawWrappedPlaceholderIn(const render::TextRenderer& text_renderer,
                                             SDL_Renderer* renderer,
                                             const SDL_FRect& box,
@@ -900,8 +887,12 @@ inline std::size_t DrawWrappedPlaceholderIn(const render::TextRenderer& text_ren
   // to the same device pixels (render::kSnapEdgeNoise).
   const float whole_lines = std::floor((box.h + render::kSnapEdgeNoise) / line_height);
   const std::size_t fit = whole_lines <= 0.0f ? 0 : static_cast<std::size_t>(whole_lines);
-  return DrawWrappedPlaceholder(text_renderer, renderer, box.x, box.y, box.w, foreground, background, text,
-                                std::min(max_lines, fit));
+  return ForEachWrappedLabelLine(
+      text_renderer, text, box.w, std::min(max_lines, fit),
+      [&](std::size_t index, std::string_view line) {
+        text_renderer.DrawStringOn(renderer, box.x, box.y + static_cast<float>(index) * line_height,
+                                   foreground, background, line);
+      });
 }
 
 inline void DrawVCenteredTextOn(const render::TextRenderer& text_renderer,

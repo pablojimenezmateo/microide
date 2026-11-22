@@ -87,7 +87,9 @@ Guarded by `WorkspaceShell/BreadcrumbIsPerPane`.
 ### Text that does not fit is truncated or wrapped, never sheared
 Toasts scale their width with the window and ellipsize through
 `TruncateToWidthEphemeralView`; narrow-rail empty states word-wrap through
-`DrawWrappedPlaceholder` / `ForEachWrappedLabelLine`.
+`DrawWrappedPlaceholderIn` / `ForEachWrappedLabelLine`. A wrap is given its box,
+never just a top and a width, and spends only the lines the box holds whole
+(soak 3cf85812902b). Guarded by `RenderViewModelBuilder/AWrappedHintDrawsNothingOutsideItsBox`.
 
 ## Carets
 

@@ -134,6 +134,13 @@ void RenderCommitBodyField(const render::TextRenderer& tr, const render::Theme& 
   }
 }
 
+// An empty list's note: under the list's first row, down to the list's bottom.
+SDL_FRect SidebarPlaceholderBox(const SDL_FRect& sidebar, const ScrollableListLayout& list) {
+  const float top = list.row_y + 4.0f;
+  return MakeRect(sidebar.x + kSidebarInset, top, sidebar.w - kSidebarInset * 2.0f,
+                  std::max(0.0f, list.list_rect.y + list.list_rect.h - top));
+}
+
 }  // namespace
 
 void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout) {
@@ -400,9 +407,8 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     // plugin sidebar's placeholder and this panel's own status line. Composing it
     // here cost two heap allocations on every repaint of a searching panel.
     if (line_map.empty() && !sidebar_vm.project_search_empty_text.empty()) {
-      DrawWrappedPlaceholder(
-          text_renderer_, renderer, layout.sidebar.x + kSidebarInset, list_layout.row_y + 4.0f,
-          layout.sidebar.w - kSidebarInset * 2.0f,
+      DrawWrappedPlaceholderIn(
+          text_renderer_, renderer, SidebarPlaceholderBox(layout.sidebar, list_layout),
           sidebar_vm.project_search_empty_is_error ? theme_.diff_deleted : theme_.text_muted,
           theme_.surface_background, sidebar_vm.project_search_empty_text);
     }
@@ -892,10 +898,8 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       placeholder_is_error = plugin.placeholder_is_error;
     }
     if (!placeholder.empty()) {
-      DrawWrappedPlaceholder(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
-                             list_layout.row_y + 4.0f,
-                             layout.sidebar.w - kSidebarInset * 2.0f,
-                             placeholder_is_error ? theme_.diff_deleted : theme_.text_muted,
+      DrawWrappedPlaceholderIn(text_renderer_, renderer, SidebarPlaceholderBox(layout.sidebar, list_layout),
+                               placeholder_is_error ? theme_.diff_deleted : theme_.text_muted,
                              theme_.surface_background, placeholder);
     }
 
