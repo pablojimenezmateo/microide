@@ -38,6 +38,9 @@ enum class DerivedSurface : std::uint8_t {
   BottomPanelTerminalChrome,
   NotificationToasts,
   DebugPane,
+  // One per editor group (kMaxEditorGroups): each pane's visible rows.
+  EditorPane0,
+  EditorPane7 = EditorPane0 + 7,
   Count,
 };
 

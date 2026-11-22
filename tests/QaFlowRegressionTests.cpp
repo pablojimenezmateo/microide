@@ -2615,6 +2615,41 @@ void TestTheStatusBarRepaintsWhatChangedWithNoDamageRequest() {
   fixture.ExpectFresh(nothing_announced, "a status-bar segment set with no damage request");
 }
 
+// derived-damage 2.2: an editor pane's rows are derived units. What a row shows
+// changes through paths that ask to repaint nothing -- here the viewport's own
+// API and the diagnostics store, called directly, as a plugin, an LSP answer or a
+// control command reaches them -- and the next partial frame shows each change as
+// a full one does: a selection, an edit on a line far from the caret, a squiggle.
+void TestEditorRowsRepaintWhatChangedWithNoDamageRequest() {
+  FlowFixture fixture("rows.txt", "alpha one\nbravo two\ncharlie three\ndelta four\necho five\n");
+  editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
+  const auto settle = [&] {
+    fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+  };
+  const auto nothing_announced = [] {
+    workspace::RenderInvalidation nothing;
+    nothing.rects.push_back(SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f});
+    return nothing;
+  };
+  settle();
+  viewport.MoveCursorTo(1, 0);
+  viewport.MoveCursorTo(3, 5, /*extend_selection=*/true);
+  fixture.ExpectFresh(nothing_announced(), "a selection made with no damage request");
+  settle();
+  viewport.MoveCursorTo(4, 0);
+  viewport.InsertText("XYZ ");
+  fixture.ExpectFresh(nothing_announced(), "an edit with no damage request");
+  settle();
+  std::vector<editor::Diagnostic> squiggles{editor::Diagnostic{
+      .range = editor::SelectionRange{.start = {.line = 0, .column = 0}, .end = {.line = 0, .column = 5}},
+      .severity = editor::DiagnosticSeverity::Error,
+      .message = "bad alpha"}};
+  (void)TestAccess::CurrentProjectState(fixture.shell)
+      .diagnostics_store.ReplaceForOwnerFile("qa", viewport.path(), std::move(squiggles));
+  fixture.ExpectFresh(nothing_announced(), "a diagnostic published with no damage request");
+}
+
 // derived-damage 3.1 / clip-discipline stage 3: the bottom panel's header is a
 // derived surface. A bell in a background terminal marks its tab whoever set it
 // -- here state changed with no damage request at all -- and the next partial
@@ -6167,6 +6202,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestADeeplyIndentedTreeRowKeepsItsLabelInsideTheRow);
   AddTest(tests, "QaFlowRegression/ACaretMoveThatScrollsTheMergePanesRepaintsThemAll",
           TestACaretMoveThatScrollsTheMergePanesRepaintsThemAll);
+  AddTest(tests, "QaFlowRegression/EditorRowsRepaintWhatChangedWithNoDamageRequest",
+          TestEditorRowsRepaintWhatChangedWithNoDamageRequest);
   AddTest(tests, "QaFlowRegression/TheStatusBarRepaintsWhatChangedWithNoDamageRequest",
           TestTheStatusBarRepaintsWhatChangedWithNoDamageRequest);
   AddTest(tests, "QaFlowRegression/ThePanelHeaderRepaintsWhatChangedWithNoDamageRequest",

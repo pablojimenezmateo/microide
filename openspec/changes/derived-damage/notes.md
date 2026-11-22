@@ -149,3 +149,31 @@ debug_pane_hittest_geometry's +3.5% is consistent across rounds but runs no fram
 code (hit-testing geometry only): binary layout, not a regression.
 
 Verdict: within budget.
+
+## Stage 2.2, step 1: editor rows as derived units, in addition to the hand-written damage (2026-11-22)
+
+`EditorRowUnits` folds a key per visible row at frame prep -- the row's place in the wrapped
+layout, its line's bytes (lines over 16 KiB fold length and content revision instead), the
+carets and selections on it, diagnostics, occurrence and bracket marks, the active find match,
+the fold mark and the blame line -- plus a pane key for what moves every row (scroll, size,
+language, settings, breakpoints, the find query). Units are one band per row, the sticky band and
+the empty tail; with inline insets possible the pane is one unit. Syntax colours are NOT keyed
+yet, so the units add to the hand-written damage rather than replace it (step 2). The fold
+model's revision is deliberately not in the pane key: every edit recomputes the folds, and it
+repainted the pane per keystroke (QaFlowRegression/TypingRepaintsOnlyTheLinesWhoseOccurrencesChanged
+caught it).
+
+A/B, base 9a053706a vs head (working tree on it), soak paused, 3 rounds x 10 iterations, order
+flipped per round, median of the rounds' p50 wall:
+
+```
+scenario                         base p50  head p50    d%  alloc b  alloc h
+editor_typing_paint               174.547   175.783   0.7     1159     1159
+typing_small_file                   2.685     2.661  -0.9     98.5     98.5
+typing_large_file                   3.293     3.301   0.2    103.5    103.5
+scroll_large_file                  61.503    62.070   0.9      129      129
+editor_indent_guides_paint        112.752   114.352   1.4    425.5    425.5
+editor_render_whitespace_paint    128.499   129.886   1.1    526.5    526.5
+```
+
+Verdict: within budget (no p50 > +5%, allocations identical).

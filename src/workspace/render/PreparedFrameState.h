@@ -335,6 +335,9 @@ struct PreparedFrameState {
   // ---- derived damage (openspec derived-damage) -------------------------
   // Each migrated surface's units as last painted; prep compares and damages.
   DerivedDamage derived_damage;
+  // Per-row keys of the editor pane being prepared (EditorRowUnits): scratch,
+  // cleared per pane, capacity kept across frames.
+  std::vector<std::uint64_t> editor_row_keys;
   // The status bar this frame paints, settled at prep: its view model, and per
   // segment the row, text, colour and hover it is drawn with. Paint draws these
   // and nothing else, so the fingerprint of each is everything that segment

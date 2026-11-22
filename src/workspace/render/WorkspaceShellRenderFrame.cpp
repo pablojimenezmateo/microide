@@ -6,6 +6,7 @@
 #include "workspace/render/BottomPanelTerminalChromePaint.h"
 #include "workspace/render/NotificationToastPaint.h"
 #include "workspace/render/DebugPanePaint.h"
+#include "workspace/render/EditorRowUnits.h"
 #include "workspace/render/HoverCardLimits.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
@@ -1044,6 +1045,138 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     }
     frame_state_.painted_occurrence_viewport = viewport;
     std::swap(frame_state_.painted_occurrence_lines, lines);
+  }
+  // Each editor pane's rows as derived units (derived-damage 2.2): a row whose
+  // keys moved repaints, whatever moved them. Added to the editor's hand-written
+  // damage for now -- syntax colours are not in the keys yet (EditorRowUnits.h).
+  {
+    static_assert(static_cast<std::size_t>(DerivedSurface::EditorPane7) -
+                          static_cast<std::size_t>(DerivedSurface::EditorPane0) + 1 ==
+                      kMaxEditorGroups,
+                  "one derived surface per editor group");
+    const EditorPaneLayouts panes = EditorPaneLayoutsFromGroupRects(ComputeEditorGroupRectsForState(layout));
+    const std::size_t focused_group = project_state.clamped_focused_group_index();
+    const auto setting = [this](std::string_view id, bool default_value) {
+      return SettingFlagEnabled(GetSettingValue(id), default_value);
+    };
+    PaintFingerprint settings;
+    settings.Add(setting("editor.brackets.match_highlight.enabled", true))
+        .Add(setting("editor.view.indent_guides.enabled", true))
+        .Add(setting("editor.view.render_whitespace", false))
+        .Add(setting("editor.line_numbers", true))
+        .Add(setting("editor.fold.enabled", true))
+        .Add(setting("editor.fold.sticky_scroll.enabled", true))
+        .Add(setting("editor.occurrences.enabled", true))
+        .Add(std::string_view(GetSettingValue("diagnostics.min_severity").value_or("hint")));
+    const bool debug_enabled = DebugEnabled();
+    const bool insets_possible = project_state.plugin_presentation_if_present() != nullptr;
+    const BufferSearchState& buffer_search = project_state.overlay.workflow.buffer_search;
+    const bool find_shown = project_state.overlay.visible &&
+                            (project_state.overlay.mode == OverlayMode::BufferSearch ||
+                             project_state.overlay.mode == OverlayMode::BufferReplace);
+    std::array<bool, kMaxEditorGroups> committed{};
+    for (const EditorPaneLayout& pane : panes) {
+      const std::size_t gi = pane.group_index;
+      if (gi >= kMaxEditorGroups || gi >= project_state.editor_groups.size() || !frame_state_.pane_metrics_valid[gi]) {
+        continue;
+      }
+      EditorGroup& group = project_state.editor_groups[gi];
+      const bool diff_in_front = group.has_active_tab() && (group.active_tab().kind == TabEntry::Kind::Compare ||
+                                                            group.active_tab().kind == TabEntry::Kind::Merge);
+      const editor::TextViewport* viewport = GroupActiveViewport(group);
+      const auto surface = static_cast<DerivedSurface>(static_cast<std::size_t>(DerivedSurface::EditorPane0) + gi);
+      std::vector<DerivedDamage::Unit>& units = frame_state_.derived_damage.Begin(surface);
+      committed[gi] = true;
+      if (diff_in_front || viewport == nullptr || viewport->is_placeholder()) {
+        frame_state_.derived_damage.Commit(surface, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
+        continue;
+      }
+      const bool focused = gi == focused_group;
+      const editor::EditorViewMetrics& metrics = frame_state_.pane_metrics[gi];
+      const editor::FoldingModel* folds =
+          setting("editor.fold.enabled", true) ? GroupFoldingModelPtr(group) : nullptr;
+      const editor::FileDecorations* decorations =
+          !viewport->dirty() && !viewport->path().empty() && insets_possible
+              ? project_state.plugin_presentation_if_present()->decorations.FindByPathKey(viewport->path_key())
+              : nullptr;
+      PaintFingerprint pane_key;
+      pane_key.Add(reinterpret_cast<std::uintptr_t>(viewport))
+          .Add(reinterpret_cast<std::uintptr_t>(viewport->document_identity()))
+          .Add(settings.value())
+          .Add(pane.rect)
+          .Add(focused)
+          .Add(viewport->scroll_line())
+          .Add(viewport->horizontal_scroll())
+          .Add(viewport->soft_wrap())
+          .Add(viewport->layout_shape_revision())
+          .Add(viewport->syntax_revision())
+          .Add(std::string_view(viewport->language_id()))
+          // Not the fold model's revision: an edit recomputes the folds and moves
+          // it, which would repaint every row per keystroke. Each row folds its
+          // own fold mark, and a collapse moves the rows' lines.
+          .Add(metrics.gutter_width)
+          .Add(metrics.text_x)
+          .Add(metrics.first_line_y)
+          .Add(metrics.line_height)
+          .Add(metrics.sticky_scroll_rows)
+          .Add(metrics.visible_rows)
+          .Add(metrics.visible_columns)
+          .Add(reinterpret_cast<std::uintptr_t>(decorations));
+      if (debug_enabled) {
+        pane_key.Add(project_state.breakpoint_store.revision())
+            .Add(project_state.function_breakpoint_store.revision())
+            .Add(project_state.debug_execution.stopped)
+            .Add(project_state.debug_execution.focused_frame_index);
+        const auto& frames = project_state.debug_execution.frames;
+        if (project_state.debug_execution.focused_frame_index < frames.size()) {
+          const auto& frame = frames[project_state.debug_execution.focused_frame_index];
+          pane_key.Add(frame.line).Add(std::string_view(frame.source_path_normalized));
+        }
+      }
+      if (focused && find_shown) {
+        pane_key.Add(std::string_view(buffer_search.query.text()))
+            .Add(buffer_search.matches_revision)
+            .Add(buffer_search.regex)
+            .Add(buffer_search.scope.has_value());
+      }
+      std::span<const editor::PublishedDiagnostic> diagnostics;
+      if (!viewport->path().empty()) {
+        if (const auto* published = project_state.diagnostics_store.FindByPathKey(viewport->path_key())) {
+          diagnostics = *published;
+        }
+      }
+      const std::optional<editor::EditorBlameOverlay> no_blame;
+      const std::optional<editor::EditorBlameOverlay>& blame =
+          pane.active ? editor_blame_overlay_service_.VisibleOverlay() : no_blame;
+      const EditorRowKeyInputs inputs{
+          .viewport = viewport,
+          .pane_rect = pane.rect,
+          .metrics = metrics,
+          .pane_key = pane_key.value(),
+          .rows_have_gaps = insets_possible,
+          .diagnostics = diagnostics,
+          .occurrence_lines = focused && frame_state_.painted_occurrence_viewport == viewport
+                                  ? std::span<const std::pair<std::size_t, std::uint64_t>>(
+                                        frame_state_.painted_occurrence_lines)
+                                  : std::span<const std::pair<std::size_t, std::uint64_t>>{},
+          .bracket_pair = focused && frame_state_.painted_bracket_viewport == viewport
+                              ? frame_state_.painted_bracket_pair
+                              : std::nullopt,
+          .folds = folds,
+          .active_search_match = focused ? ActiveBufferSearchMatch() : std::nullopt,
+          .blame = blame.has_value() ? &*blame : nullptr,
+      };
+      AppendEditorRowUnits(inputs, frame_state_.editor_row_keys, units);
+      frame_state_.derived_damage.Commit(surface, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
+    }
+    // A pane that went away repaints where its rows were.
+    for (std::size_t gi = 0; gi < kMaxEditorGroups; ++gi) {
+      if (!committed[gi]) {
+        const auto surface = static_cast<DerivedSurface>(static_cast<std::size_t>(DerivedSurface::EditorPane0) + gi);
+        frame_state_.derived_damage.Begin(surface);
+        frame_state_.derived_damage.Commit(surface, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
+      }
+    }
   }
   // Breakpoints: the gutter dots in every pane and the Breakpoints pane's rows.
   // They change through the gutter, F9, the pane's own keys and menus, the control
