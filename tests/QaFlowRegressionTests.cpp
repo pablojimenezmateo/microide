@@ -42,6 +42,7 @@
 #include "workspace/git/BranchReviewStateBridge.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/lsp/WorkspaceLspClient.h"
+#include "workspace/render/CompareRowUnits.h"
 #include "workspace/render/EditorRowUnits.h"
 #include "workspace/render/SidebarModeRowPaint.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
@@ -7765,6 +7766,90 @@ void TestACompareWorkingSideRepaintsItsDiagnosticsAndDecorations() {
   fixture.ExpectFresh(NothingAnnounced(), "the first keystroke hid the diagnostics and decorations");
 }
 
+// Soak 185e45a464f9, 47359511506b, 832463f2425b, b3d25c24c346 (a starved machine,
+// a compare tab, typing in its working side): the rows under the edited one kept
+// their syntax colours where a full repaint drew them plain. An unchanged row
+// identical on both sides draws the LEFT window's tokens while both panes resume
+// it from the same syntax state, and the right window's otherwise -- and after a
+// rebuild the two walks share one frame's time, so the right one can be behind
+// the left: its state at the row is then not the left's, and the row draws the
+// right window's tokens, none yet. Neither window's tokens for the row moved, so
+// its key did not. The state needs the walk's clock to run out between the two
+// panes; it is built here as that leaves it, and the rows' keys are asked.
+void TestACompareRowKeysOnWhichWindowItsWorkingSideReads() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  std::string left;
+  std::string right;
+  for (int i = 1; i <= 14; ++i) {
+    left += "int value" + std::to_string(i) + " = " + std::to_string(i) + ";  // note\n";
+    right += (i == 7 ? "long value" : "int value") + std::to_string(i) + " = " + std::to_string(i) + ";  // note\n";
+  }
+  FlowFixture fixture("left.cpp", left);
+  const std::filesystem::path right_path = fixture.root / "right.cpp";
+  WriteFile(right_path, right);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell,
+                                        "compare-files " + fixture.file.string() + " " + right_path.string()),
+         "compare-files should open a diff");
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  fixture.PinCaret();
+  fixture.shell.Render(fixture.canvas.renderer(), fixture.width, fixture.height);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  auto& compare = TestAccess::ActiveCompare(fixture.shell);
+  const auto surface = TestAccess::ActiveCompareSurfaceLayout(fixture.shell);
+  const workspace::CompareRowGeometry geometry{.surface = TestAccess::GroupEditorSurfaceRect(fixture.shell, 0),
+                                               .rows_y = surface.rows_y,
+                                               .line_height = surface.line_height,
+                                               .content_width = 600.0f,
+                                               .visible_rows = surface.visible_rows};
+  const auto keys = [&]() {
+    std::vector<workspace::DerivedDamage::Unit> units;
+    workspace::AppendCompareRowUnits(compare, geometry, workspace::CompareRowKeyInputs{}, units);
+    return units;
+  };
+  const std::size_t rows = compare.model.rows.size();
+  std::vector<bool> aliased(rows);
+  std::size_t aliased_count = 0;
+  for (std::size_t row = 0; row < rows; ++row) {
+    aliased[row] = workspace::CompareRowRightTokensAliasLeft(compare, row) &&
+                   !compare.left_token_window.Tokens(row).empty();
+    aliased_count += aliased[row] ? 1 : 0;
+  }
+  Expect(aliased_count >= 10, "the unchanged rows read the left window's tokens (" + std::to_string(aliased_count) +
+                                  " of " + std::to_string(rows) + ")");
+  const std::vector<workspace::DerivedDamage::Unit> caught_up = keys();
+
+  // The right pane's walk as a frame whose time ran out leaves it: restarted, one
+  // step in. The left pane's is whole, its tokens what they were.
+  const editor::SyntaxState initial = compare.right_token_window.StateBefore(0);
+  compare.right_token_window.Reset(rows, initial);
+  compare.right_token_window.EnsureWindow(
+      0, rows, compare.path, workspace::SurfaceTokenWindow::WalkBudget{1},
+      [&](std::size_t row) -> std::string_view {
+        const compare::CompareRow& model = compare.model.rows[row];
+        return model.right_line > 0 ? std::string_view(model.right_text) : std::string_view{};
+      },
+      [&](std::size_t row) { return !workspace::CompareRowRightTokensAliasLeft(compare, row); });
+  std::size_t flipped = 0;
+  for (std::size_t row = 0; row < rows; ++row) {
+    if (aliased[row] && !workspace::CompareRowRightTokensAliasLeft(compare, row)) {
+      Expect(compare.right_token_window.Tokens(row).empty() && !compare.left_token_window.Tokens(row).empty(),
+             "a row the right walk has not reached: its own tokens are none, the left's are what they were");
+      ++flipped;
+    }
+  }
+  Expect(flipped >= 10, "behind the left walk, those rows read the right window (" + std::to_string(flipped) + ")");
+  const std::vector<workspace::DerivedDamage::Unit> behind = keys();
+  Expect(behind.size() == caught_up.size(), "the same rows are laid out");
+  std::size_t rekeyed = 0;
+  for (std::size_t i = 0; i < behind.size() && i < caught_up.size(); ++i) {
+    rekeyed += behind[i].fingerprint != caught_up[i].fingerprint ? 1 : 0;
+  }
+  Expect(rekeyed >= flipped, "every row whose working side reads another window is rekeyed: " +
+                                 std::to_string(rekeyed) + " of " + std::to_string(flipped));
+}
+
 // A merge's result pane draws the bracket pair at its caret (the editor renderer
 // matches it itself), and the far bracket is on another row than the caret's: its
 // row keyed on nothing that moved.
@@ -8813,6 +8898,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestAnOpenMenusRowsRepaintAtFractionalScales);
   AddTest(tests, "QaFlowRegression/ATrackedLspRequestRepaintsItsStatusSegmentNotTheWindow",
           TestATrackedLspRequestRepaintsItsStatusSegmentNotTheWindow);
+  AddTest(tests, "QaFlowRegression/ACompareRowKeysOnWhichWindowItsWorkingSideReads",
+          TestACompareRowKeysOnWhichWindowItsWorkingSideReads);
   AddTest(tests, "QaFlowRegression/TheMenuOverflowPopupsRowsRepaintRowByRow",
           TestTheMenuOverflowPopupsRowsRepaintRowByRow);
   AddTest(tests, "QaFlowRegression/ASubmenuAndAContextMenuRepaintRowByRow",
