@@ -3,6 +3,7 @@
 #include "workspace/render/DerivedDamage.h"
 #include "workspace/render/PreparedFrameState.h"
 
+#include <string>
 #include <vector>
 
 namespace microide::tests {
@@ -50,6 +51,36 @@ void TestDerivedDamageRepaintsWhatChanged() {
 
   damage.Reset();
   Expect(Commit(damage, {{a, 9}}).empty(), "after a reset the next frame paints whole again");
+}
+
+// Scattered changes in one surface damage their bounding rect, not one rect
+// each: five rows spaced apart plus the frame's other damage reached the clip
+// count at which the frame is promoted to a full repaint, so every debugger step
+// repainted the window (debug_pane_step_paint, 42.7 ms against 10.1). Up to
+// kSeparateRectsPerSurface rects stay apart (a moved unit's old and new place).
+void TestDerivedDamageCoalescesScatteredChangesInASurface() {
+  DerivedDamage damage;
+  std::vector<DerivedDamage::Unit> rows;
+  for (int i = 0; i < 10; ++i) {
+    rows.push_back({SDL_FRect{0, static_cast<float>(i * 20), 100, 20}, 1});
+  }
+  Expect(Commit(damage, rows).empty(), "the first frame paints whole");
+
+  auto two = rows;
+  two[1].fingerprint = 2;
+  two[8].fingerprint = 2;
+  auto apart = Commit(damage, two);
+  Expect(apart.size() == 2 && Same(apart[0], two[1].rect) &&
+             Same(apart[1], two[8].rect),
+         "two changed rows damage their own rects: " + std::to_string(apart.size()));
+
+  auto five = two;
+  for (const int i : {0, 2, 4, 6, 9}) {
+    five[i].fingerprint = 3;
+  }
+  auto merged = Commit(damage, five);
+  Expect(merged.size() == 1 && Same(merged[0], SDL_FRect{0, 0, 100, 200}),
+         "five scattered rows damage one rect around them: " + std::to_string(merged.size()));
 }
 
 // Every kind of value a unit folds in moves its fingerprint.
@@ -102,6 +133,8 @@ void TestAStatusBarSegmentsFingerprintCoversWhatItPaints() {
 
 void RegisterDerivedDamageTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DerivedDamage/RepaintsWhatChanged", TestDerivedDamageRepaintsWhatChanged);
+  AddTest(tests, "DerivedDamage/CoalescesScatteredChangesInASurface",
+          TestDerivedDamageCoalescesScatteredChangesInASurface);
   AddTest(tests, "DerivedDamage/PaintFingerprintFoldsEveryValue", TestPaintFingerprintFoldsEveryValue);
   AddTest(tests, "DerivedDamage/AStatusBarSegmentsFingerprintCoversWhatItPaints",
           TestAStatusBarSegmentsFingerprintCoversWhatItPaints);

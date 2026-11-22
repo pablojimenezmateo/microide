@@ -96,11 +96,21 @@ class DerivedDamage {
   // unit that differs from the frame that last painted, and records this frame's
   // units as painted. Before any frame was painted, nothing is damaged: the
   // first frame paints the window whole.
+  //
+  // A surface damages at most kSeparateRectsPerSurface rects; past that, the
+  // bounding rect of all of them. Scattered changes (a debugger step rewriting
+  // rows apart, occurrence marks across the editor) otherwise add a clip each,
+  // and the frame reaches the merged-clip count at which DirtyRegionPolicy
+  // promotes it to a full-window repaint -- a full repaint of everything to
+  // save repainting the rows between them.
+  static constexpr std::size_t kSeparateRectsPerSurface = 2;
+
   template <typename Damage>
   void Commit(DerivedSurface surface, Damage&& damage) {
     Surface& table = Table(surface);
     util::AddPerformanceCounter(util::PerfCounterId::WorkspaceDerivedDamageUnits, table.current.size());
     if (table.painted_once) {
+      RectCollector collected;
       const std::size_t count = std::max(table.current.size(), table.painted.size());
       for (std::size_t i = 0; i < count; ++i) {
         const Unit* now = i < table.current.size() ? &table.current[i] : nullptr;
@@ -111,13 +121,14 @@ class DerivedDamage {
         }
         util::AddPerformanceCounter(util::PerfCounterId::WorkspaceDerivedDamageChanged, 1);
         if (was != nullptr && was->rect.w > 0.0f && was->rect.h > 0.0f) {
-          damage(was->rect);
+          collected.Add(was->rect);
         }
         if (now != nullptr && now->rect.w > 0.0f && now->rect.h > 0.0f &&
             (was == nullptr || !SameRect(now->rect, was->rect))) {
-          damage(now->rect);
+          collected.Add(now->rect);
         }
       }
+      collected.EmitTo(damage);
     }
     table.painted.swap(table.current);
     table.painted_once = true;
@@ -133,6 +144,42 @@ class DerivedDamage {
   }
 
  private:
+  // The rects one Commit damages: kept apart up to the cap, their bounding rect
+  // past it. Fixed storage: a frame's commit allocates nothing.
+  class RectCollector {
+   public:
+    void Add(const SDL_FRect& rect) {
+      if (count_ < kSeparateRectsPerSurface) {
+        separate_[count_] = rect;
+      }
+      ++count_;
+      if (count_ == 1) {
+        bounds_ = rect;
+        return;
+      }
+      const float left = std::min(bounds_.x, rect.x);
+      const float top = std::min(bounds_.y, rect.y);
+      const float right = std::max(bounds_.x + bounds_.w, rect.x + rect.w);
+      const float bottom = std::max(bounds_.y + bounds_.h, rect.y + rect.h);
+      bounds_ = SDL_FRect{left, top, right - left, bottom - top};
+    }
+    template <typename Damage>
+    void EmitTo(Damage& damage) const {
+      if (count_ > kSeparateRectsPerSurface) {
+        damage(bounds_);
+        return;
+      }
+      for (std::size_t i = 0; i < count_; ++i) {
+        damage(separate_[i]);
+      }
+    }
+
+   private:
+    std::array<SDL_FRect, kSeparateRectsPerSurface> separate_{};
+    SDL_FRect bounds_{};
+    std::size_t count_ = 0;
+  };
+
   struct Surface {
     std::vector<Unit> current;
     std::vector<Unit> painted;
