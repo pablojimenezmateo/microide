@@ -1548,13 +1548,23 @@ void TestAShortStripTabDrawsNothingOutsideItself() {
                   "]";
     }
   };
+  // The close rect as the strip lays it out for its full 30 px; the tab cut from
+  // the top, as a group squeezed under the strip cuts it (soak eb7ec08fed8e's
+  // second shape: a 1 px tab still drew its close glyph).
+  const SDL_FRect close_rect{20.0f + 200.0f - 12.0f - 16.0f, 10.0f + 7.0f, 16.0f, 16.0f};
   for (float height = 1.0f; height <= 40.0f; height += 1.0f) {
-    const SDL_FRect rect{20.0f, 10.0f, 200.0f, height};
-    {
-      const render::PaintElement tab(canvas.renderer(), rect, "tab");
-      DrawStripTab(text_renderer, canvas.renderer(), theme, rect, "notes.txt", "M", SDL_Color{200, 120, 40, 255}, true,
-                   true, style, palette, false,
-                   StripTabRemoteMark{.secondary_label = "host", .state = editor::WelcomeStageState::Done});
+    const SDL_FRect rect{20.0f, 10.0f + std::max(0.0f, 30.0f - height), 200.0f, height};
+    for (const bool hovered : {false, true}) {
+      for (const bool active : {false, true}) {
+        const render::PaintElement tab(canvas.renderer(), rect, "tab");
+        DrawStripTab(text_renderer, canvas.renderer(), theme, rect, "notes.txt", "M", SDL_Color{200, 120, 40, 255},
+                     true, active, style, palette, hovered,
+                     StripTabRemoteMark{.secondary_label = "host", .state = editor::WelcomeStageState::Done});
+        DrawStripTabCloseGlyph(canvas.renderer(), rect, close_rect, hovered, theme.text_secondary, theme.text_primary);
+        for (const bool bell : {false, true}) {
+          DrawStripTabActivityMark(canvas.renderer(), rect, close_rect, bell, theme.accent);
+        }
+      }
     }
     note("tab", height);
     DrawTabStripOverflowButton(text_renderer, canvas.renderer(), theme, SDL_FRect{240.0f, 10.0f, 32.0f, height},

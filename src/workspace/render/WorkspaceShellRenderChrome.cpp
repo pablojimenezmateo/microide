@@ -21,9 +21,9 @@ using namespace detail;
 void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                                         const WorkspaceLayout& layout) const {
   // `strip_still`: no slide animating the tab's strip (see tab_hovered).
-  const auto draw_tab_close_button = [&](const SDL_FRect& rect, SDL_Color color,
+  const auto draw_tab_close_button = [&](const SDL_FRect& tab_rect, const SDL_FRect& rect, SDL_Color color,
                                          SDL_Color hover_color, bool strip_still) {
-    DrawHoverableCloseGlyph(renderer, rect,
+    DrawStripTabCloseGlyph(renderer, tab_rect, rect,
                             strip_still && !context_.interaction_state.tab_drag.dragging &&
                                 PointerOver(rect),
                             color, hover_color);
@@ -171,7 +171,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                        .accent_edge = StripAccentEdge::Top,
                    },
                    chrome_tab_palette, tab_hovered(rect, project_strip_still), RemoteMarkOf(tab));
-      draw_tab_close_button(close_rect,
+      draw_tab_close_button(rect, close_rect,
                             tab.active ? chrome_tab_palette.active_glyph
                                        : chrome_tab_palette.inactive_glyph,
                             tab.active ? chrome_tab_palette.active_text
@@ -312,7 +312,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                          .accent_edge = StripAccentEdge::Top,
                      },
                      group_tab_palette, tab_hovered(rect, group_strip_still));
-        draw_tab_close_button(close_rect,
+        draw_tab_close_button(rect, close_rect,
                               tab.active ? group_tab_palette.active_glyph
                                          : group_tab_palette.inactive_glyph,
                               tab.active ? group_tab_palette.active_text

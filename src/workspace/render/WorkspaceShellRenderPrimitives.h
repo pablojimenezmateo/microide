@@ -717,12 +717,44 @@ inline void DrawEllipsisGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL
   DrawGlyphDot(renderer, cx + 4.0f, cy, color);
 }
 
+// A strip tab's close glyph, only where its 7x7 box fits inside the tab. The close
+// rect is laid out for the strip's full height, so a tab a squeezed group cut
+// short -- down to 1 px -- still drew the glyph centred on the full strip, outside
+// the tab (soak eb7ec08fed8e, seen again after the label was fitted).
+inline bool StripTabCloseGlyphFits(const SDL_FRect& tab, const SDL_FRect& close) {
+  if (close.w <= 0.0f || close.h <= 0.0f) {
+    return false;
+  }
+  const float cx = std::floor(close.x + close.w * 0.5f);
+  const float cy = std::floor(close.y + close.h * 0.5f);
+  return cx - 3.0f >= tab.x && cx + 4.0f <= tab.x + tab.w && cy - 3.0f >= tab.y && cy + 4.0f <= tab.y + tab.h;
+}
+
 inline void DrawHoverableCloseGlyph(SDL_Renderer* renderer,
                                     const SDL_FRect& rect,
                                     bool hovered,
                                     SDL_Color color,
                                     SDL_Color hover_color) {
   DrawCloseGlyph(renderer, rect, hovered ? hover_color : color);
+}
+
+// A strip tab's close glyph (hovered or not), drawn only where it fits the tab.
+inline void DrawStripTabCloseGlyph(SDL_Renderer* renderer, const SDL_FRect& tab, const SDL_FRect& close,
+                                   bool hovered, SDL_Color color, SDL_Color hover_color) {
+  if (StripTabCloseGlyphFits(tab, close)) {
+    DrawHoverableCloseGlyph(renderer, close, hovered, color, hover_color);
+  }
+}
+
+// A panel tab's unseen-output square (or the larger bell mark) left of its close
+// glyph, drawn only where it fits the tab.
+inline void DrawStripTabActivityMark(SDL_Renderer* renderer, const SDL_FRect& tab, const SDL_FRect& close, bool bell,
+                                     SDL_Color color) {
+  const float dot = bell ? 8.0f : 6.0f;
+  const SDL_FRect mark = MakeRect(close.x - dot - 6.0f, std::floor(tab.y + (tab.h - dot) * 0.5f), dot, dot);
+  if (mark.x >= tab.x && mark.x + mark.w <= tab.x + tab.w && mark.y >= tab.y && mark.y + mark.h <= tab.y + tab.h) {
+    FillRect(renderer, mark, color);
+  }
 }
 
 inline void DrawWindowControlGlyph(SDL_Renderer* renderer,

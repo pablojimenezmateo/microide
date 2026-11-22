@@ -208,17 +208,14 @@ void PaintBottomPanelHeader(SDL_Renderer* renderer, const PreparedFrameState& fr
                  tab.show_badge, tab.active, kPanelTabStyle, palette, tab.hovered,
                  StripTabRemoteMark{
                      .secondary_label = tab.secondary_title, .state = tab.remote_state, .dimmed = tab.dimmed});
-    DrawHoverableCloseGlyph(renderer, tab.close_rect, tab.close_hovered,
-                            tab.active ? palette.active_glyph : palette.inactive_glyph, palette.active_text);
+    DrawStripTabCloseGlyph(renderer, tab.rect, tab.close_rect, tab.close_hovered,
+                           tab.active ? palette.active_glyph : palette.inactive_glyph, palette.active_text);
     if (tab.activity_dot || tab.bell_mark) {
       // Unseen output in a background terminal: a small accent square just left of
       // the close glyph, where the eye already goes for tab state. A bell is the
       // same place, larger and in the warning colour.
-      const float dot = tab.bell_mark ? 8.0f : 6.0f;
-      FillRect(renderer,
-               MakeRect(tab.close_rect.x - dot - 6.0f, std::floor(tab.rect.y + (tab.rect.h - dot) * 0.5f), dot,
-                        dot),
-               tab.bell_mark ? theme.diagnostic_warning : theme.accent);
+      DrawStripTabActivityMark(renderer, tab.rect, tab.close_rect, tab.bell_mark,
+                               tab.bell_mark ? theme.diagnostic_warning : theme.accent);
     }
   }
   if (!header.label.empty()) {
