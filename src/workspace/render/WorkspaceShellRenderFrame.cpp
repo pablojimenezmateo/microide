@@ -1683,6 +1683,28 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     }
   }
   frame_state_.pointer_occluder.reset();
+  const NotificationsViewModel toasts =
+      notification_service_.Empty()
+          ? NotificationsViewModel{}
+          : RenderViewModelBuilder(context_).BuildNotifications(notification_service_, layout.status_bar,
+                                                                text_renderer_);
+  // A toast paints over everything, and motion over one stops there
+  // (HandleMouseMotion), so the pointer on a toast hovers nothing beneath it --
+  // not even a modal's rows, nor an open menu's. Taking the menu lit the row a
+  // toast covered, beside the toast, with only the toasts repainted (soak, seed 1
+  // at ui.scale 0.75). As in the motion handler: not during a drag, which crosses
+  // a toast, nor under the unsaved-changes prompt, which takes the pointer first.
+  std::optional<SDL_FRect> toast_under_pointer;
+  if (last_mouse_position_valid_ && !context_.prompts.dirty_visible &&
+      context_.interaction_state.drag_target == DragTarget::None) {
+    if (const auto hit = NotificationHitAt(toasts, last_mouse_x_, last_mouse_y_); hit.has_value()) {
+      for (const NotificationEntryViewModel& entry : toasts.entries) {
+        if (entry.index == hit->index) {
+          toast_under_pointer = entry.layout.rect;
+        }
+      }
+    }
+  }
   // A modal owns the pointer: inside it, only its own rects hover; outside it,
   // nothing does (an empty occluder contains no rect). The TOPMOST one, in paint
   // order: a prompt opened over Settings (Go to Line from the menu) owns it, and
@@ -1695,7 +1717,9 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   } else if (settings_overlay_service_.Visible()) {
     modal = layout.editor_area;
   }
-  if (IsDividerDrag(context_.interaction_state.drag_target)) {
+  if (toast_under_pointer.has_value()) {
+    frame_state_.pointer_occluder = toast_under_pointer;
+  } else if (IsDividerDrag(context_.interaction_state.drag_target)) {
     // A divider drag owns the pointer: the rows and buttons it crosses must not
     // light up. Nothing invalidated them as it passed -- the drag repaints the
     // layout it changes, not what lies under the pointer -- so a sidebar wide
@@ -1864,13 +1888,8 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   }
   // The notification toasts, the same way: each toast is a unit, so a row a
   // publisher updates -- its progress, its text -- repaints whoever updated it.
-  PrepareNotificationToastsFrame(
-      frame_state_, renderer,
-      notification_service_.Empty()
-          ? NotificationsViewModel{}
-          : RenderViewModelBuilder(context_).BuildNotifications(notification_service_, layout.status_bar,
-                                                                text_renderer_),
-      theme_, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
+  PrepareNotificationToastsFrame(frame_state_, renderer, toasts, theme_,
+                                 [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
   {
     // The debug pane, the same way: its mode tabs, rows, hint and scrollbar are
     // units laid out here, so a row the adapter rewrites -- a value after a step,

@@ -6726,6 +6726,50 @@ void TestAContextMenuClosesOverTheRowsItPainted() {
                       "Escape closes the menu whose list got shorter");
 }
 
+// A toast is the topmost thing on screen, for paint and for input alike: a pointer
+// on it hovers nothing beneath. Motion over a toast stops at the toast and repaints
+// only the toasts, but paint lit the context-menu row the toast covered there -- the
+// pointer occluder was the menu, never the toast -- so a full frame showed the
+// row's hover beside the toast and the partial one did not (soak, seed 1 at
+// ui.scale 0.75: "Delete…" under "Debugging is disabled").
+void TestAPointerOnAToastHoversNoMenuRowBeneathIt() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("notes.txt", "one\ntwo\n", 640, 240);
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the file in its tab");
+  TestAccess::OpenTreeContextMenuForPath(fixture.shell, workspace::TreeContextTargetKind::File, fixture.file);
+  TestAccess::ShowNotification(fixture.shell, workspace::NotificationService::Tone::Warning,
+                               "Debugging is disabled (enable it in Settings, Debugger) and this toast wraps "
+                               "onto a few lines so that it reaches up over the menu");
+  fixture.ExpectFresh(full, "the file's context menu, a toast over its lower right");
+
+  // A point on the toast that lies on a menu row the toast covers.
+  const SDL_FRect toast = TestAccess::NotificationToastRect(fixture.shell, 0);
+  std::optional<SDL_FPoint> point;
+  for (const auto& item : TestAccess::TreeContextMenuVisibleItems(fixture.shell)) {
+    if (item.separator) {
+      continue;
+    }
+    const float left = std::max(item.rect.x, toast.x) + 2.0f;
+    const float right = std::min(item.rect.x + item.rect.w, toast.x + toast.w) - 2.0f;
+    const float top = std::max(item.rect.y, toast.y) + 2.0f;
+    const float bottom = std::min(item.rect.y + item.rect.h, toast.y + toast.h) - 2.0f;
+    if (left < right && top < bottom) {
+      point = SDL_FPoint{left, (top + bottom) * 0.5f};
+      break;
+    }
+  }
+  Expect(point.has_value(), "the toast covers a menu row (the case under test)");
+  if (!point.has_value()) {
+    return;
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(point->x, point->y)}),
+                      "the pointer moved onto the toast where it covers a menu row");
+}
+
 // The project strip shows the projects from its scroll position on, and frame
 // prep repainted it only when a project's label changed. A click on its overflow
 // arrow scrolled it and damaged the arrow alone: the strip kept the projects it
@@ -6753,6 +6797,8 @@ void TestScrollingTheProjectStripRepaintsIt() {
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/ScrollingTheProjectStripRepaintsIt", TestScrollingTheProjectStripRepaintsIt);
   AddTest(tests, "QaFlowRegression/AContextMenuClosesOverTheRowsItPainted", TestAContextMenuClosesOverTheRowsItPainted);
+  AddTest(tests, "QaFlowRegression/APointerOnAToastHoversNoMenuRowBeneathIt",
+          TestAPointerOnAToastHoversNoMenuRowBeneathIt);
   AddTest(tests, "QaFlowRegression/ABreadcrumbLabelChangeRepaintsTheBand", TestABreadcrumbLabelChangeRepaintsTheBand);
   AddTest(tests, "QaFlowRegression/TabInANarrowDirtyPromptRepaintsEveryButton",
           TestTabInANarrowDirtyPromptRepaintsEveryButton);
