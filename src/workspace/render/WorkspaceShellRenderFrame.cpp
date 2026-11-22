@@ -23,6 +23,8 @@
 #include <span>
 #include <vector>
 
+#include "editor/PluginDecorationStore.h"
+#include "editor/PluginSurfaceStore.h"
 #include "editor/TextLayout.h"
 #include "util/Fnv1a.h"
 #include "util/PerformanceCounters.h"
@@ -1313,6 +1315,29 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         for (const editor::RowGap& gap : vm.row_gaps) {
           pane_key.Add(gap.visual_row).Add(gap.height).Add(static_cast<int>(gap.placement));
         }
+        // And what each gap shows (soak f454f0b1d9b2): a code lens republished at
+        // the same height -- "greet (0)" becoming "greet (1)" -- or a surface or the
+        // ghost-text block that changed in place moves no gap.
+        for (const editor::RowGapContent& content : vm.row_gap_contents) {
+          if (content.code_lens != nullptr) {
+            pane_key.Add(std::string_view(content.code_lens->text));
+          }
+          if (content.surface != nullptr) {
+            const editor::SurfaceContent& surface = *content.surface;
+            pane_key.Add(surface.body.index()).Add(std::string_view(surface.title));
+            pane_key.Add(surface.intrinsic_width).Add(surface.intrinsic_height);
+            if (const auto* list = std::get_if<render::PluginDisplayList>(&surface.body)) {
+              pane_key.Add(list->content_hash);
+            } else if (const auto* raster = std::get_if<editor::RasterHandle>(&surface.body)) {
+              pane_key.Add(raster->content_hash);
+            }
+          }
+          if (content.ghost_text != nullptr) {
+            for (const std::string& line : content.ghost_text->below_lines) {
+              pane_key.Add(std::string_view(line));
+            }
+          }
+        }
         if (vm.ghost_text_tail.has_value()) {
           pane_key.Add(vm.ghost_text_tail->visual_row).Add(vm.ghost_text_tail->text);
         }
@@ -1337,6 +1362,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
           .pane_rect = pane.rect,
           .metrics = metrics,
           .pane_key = pane_key.value(),
+          .decorations = decorations,
           // Gaps this frame lays out, not gaps a plugin might one day publish: any
           // plugin presentation at all (a panel surface, the language server's
           // semantic tokens or inlay hints) made the pane one unit, and a keystroke

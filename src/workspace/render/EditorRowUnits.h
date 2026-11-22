@@ -30,6 +30,10 @@
 #include "editor/TextViewport.h"
 #include "workspace/render/DerivedDamage.h"
 
+namespace microide::editor {
+struct FileDecorations;
+}  // namespace microide::editor
+
 namespace microide::workspace {
 
 struct EditorRowKeyInputs {
@@ -39,6 +43,9 @@ struct EditorRowKeyInputs {
   // Everything that changes every row at once (scroll, size, language, the
   // settings the pane paints with, ...), folded by the caller.
   std::uint64_t pane_key = 0;
+  // The file's plugin and language-server decorations, or null: each line keys on
+  // its own (text styles, inline texts, gutter mark, code lenses).
+  const editor::FileDecorations* decorations = nullptr;
   // Rows do not sit on a fixed pitch (inline insets open gaps between them): the
   // pane is then one unit keyed by every row.
   bool rows_have_gaps = false;

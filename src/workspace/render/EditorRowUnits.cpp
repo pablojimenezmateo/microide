@@ -4,6 +4,7 @@
 #include <cstring>
 #include <string_view>
 
+#include "editor/PluginDecorationStore.h"
 #include "util/Fnv1a.h"
 
 namespace microide::workspace {
@@ -40,17 +41,52 @@ std::uint64_t MixBytes(std::uint64_t hash, const char* data, std::size_t size) {
   return hash;
 }
 
+std::uint64_t MixColor(std::uint64_t hash, SDL_Color color) {
+  return Mix(hash, static_cast<std::uint64_t>(color.r) | static_cast<std::uint64_t>(color.g) << 8 |
+                       static_cast<std::uint64_t>(color.b) << 16 | static_cast<std::uint64_t>(color.a) << 24);
+}
+
+std::uint64_t MixText(std::uint64_t hash, std::string_view text) {
+  return MixBytes(Mix(hash, text.size()), text.data(), text.size());
+}
+
+// What plugins and language servers decorate a line with: its text styles
+// (semantic tokens), inline texts (inlay hints), gutter mark and code lenses. A
+// republish rewrites them in place under the same FileDecorations, so the line
+// keys on them, not the pane on the store's address.
+std::uint64_t LineDecorationKey(std::uint64_t key, const editor::FileDecorations& decorations, std::size_t line) {
+  const auto at = static_cast<std::uint32_t>(line);
+  for (const editor::TextStyleDecoration& style : decorations.TextStylesForLine(at)) {
+    key = Mix(Mix(Mix(key, 0x5701), style.start_column), style.end_column);
+    key = MixColor(MixColor(MixColor(key, style.foreground), style.background), style.line_color);
+    key = Mix(key, style.flags);
+  }
+  for (const editor::InlineTextDecoration& text : decorations.InlineTextsForLine(at)) {
+    key = MixText(Mix(Mix(key, 0x1A11), text.anchor_column), text.text);
+    key = MixColor(MixColor(key, text.color), text.background);
+  }
+  for (const editor::GutterMarkDecoration& mark : decorations.GutterMarksForLine(at)) {
+    key = MixColor(Mix(Mix(Mix(key, 0x6A11), static_cast<std::uint64_t>(mark.shape)), mark.priority), mark.color);
+  }
+  for (const editor::CodeLensDecoration& lens : decorations.CodeLensesForLine(at)) {
+    key = MixText(Mix(key, 0xC0DE), lens.text);
+  }
+  return key;
+}
+
 // What a line shows whichever of its rows draws it: its bytes (a line too long to
-// hash every frame folds its length and the document's content revision) and its
-// syntax tokens. A line whose tokens are not current is tokenized here, which the
-// row's repaint would do anyway.
-std::uint64_t LineContentKey(const editor::TextViewport& viewport, std::size_t line) {
+// hash every frame folds its length and the document's content revision), its
+// syntax tokens, and its decorations. A line whose tokens are not current is
+// tokenized here, which the row's repaint would do anyway.
+std::uint64_t LineContentKey(const editor::TextViewport& viewport, const editor::FileDecorations* decorations,
+                             std::size_t line) {
   const std::string_view text = viewport.lines().LineView(line);
   std::uint64_t key = util::kFnv1aOffsetBasis;
   key = text.size() <= kEditorRowKeyMaxHashedBytes ? MixBytes(key, text.data(), text.size())
                                                    : Mix(Mix(key, text.size()), viewport.content_revision());
   const std::vector<editor::SyntaxTokenKind>& tokens = viewport.HighlightedLineTokens(line);
-  return MixBytes(key, reinterpret_cast<const char*>(tokens.data()), tokens.size() * sizeof(editor::SyntaxTokenKind));
+  key = MixBytes(key, reinterpret_cast<const char*>(tokens.data()), tokens.size() * sizeof(editor::SyntaxTokenKind));
+  return decorations != nullptr ? LineDecorationKey(key, *decorations, line) : key;
 }
 
 // Folds `value` into every row showing `line`. `rows` is sorted by line.
@@ -124,7 +160,7 @@ void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uin
     // line spans (they follow one another): a 15 KiB line wrapped over the pane
     // was hashed whole once per row, 1.5 ms of every prepared frame.
     if (!line_key_valid || meta.line_index != line_key_line) {
-      line_key = LineContentKey(viewport, meta.line_index);
+      line_key = LineContentKey(viewport, inputs.decorations, meta.line_index);
       line_key_line = meta.line_index;
       line_key_valid = true;
     }
@@ -227,7 +263,7 @@ void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uin
       }
       first_sticky = std::min(first_sticky, line);
       last_sticky = std::max(last_sticky, line);
-      band = Mix(Mix(band, line), LineContentKey(viewport, line));
+      band = Mix(Mix(band, line), LineContentKey(viewport, inputs.decorations, line));
       band = Mix(band, line == viewport.cursor_line() ? 1u : 2u);
       if (inputs.folds != nullptr && inputs.folds->FoldStartingAt(line).has_value()) {
         band = Mix(band, inputs.folds->IsCollapsedAtOpener(line) ? 3u : 2u);

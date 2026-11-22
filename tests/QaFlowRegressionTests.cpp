@@ -4118,6 +4118,51 @@ void TestTheDebugToolbarCoversNoOtherControl() {
   Expect(covered("a merge in the focused pane") > 0, "the toolbar still shows over the merge");
 }
 
+// Soak f454f0b1d9b2: a plugin republished its code lens on line 1, "greet (0)"
+// becoming "greet (1)", at the same height. The pane's key folded each gap's row,
+// height and placement but not what it shows, so no unit changed and the lens kept
+// its old count. Here the lens is republished with no damage request.
+void TestARepublishedCodeLensRepaintsWhatItSays() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("main.c", "int main() { return 0; }\nint x;\n");
+  auto& decorations = TestAccess::CurrentProjectState(fixture.shell).EnsurePluginPresentation().decorations;
+  const auto publish = [&](const char* text) {
+    editor::PluginDecorationData lenses;
+    lenses.code_lenses.push_back(editor::CodeLensDecoration{.line = 0, .text = text, .command = "refs.show"});
+    Expect(decorations.ReplaceForOwnerFile("lens-test", fixture.file, std::move(lenses)),
+           "publishing the lens should change the store");
+  };
+  publish("greet (0)");
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  publish("greet (1)");
+  workspace::RenderInvalidation frame;
+  frame.frame = true;
+  fixture.ExpectFresh(frame, "the lens republished with a new count");
+  // An inlay hint republished in place (a language server's inline text).
+  const auto hint = [&](const char* text) {
+    editor::PluginDecorationData data;
+    data.inline_texts.push_back(
+        editor::InlineTextDecoration{.line = 1, .anchor_column = 5, .text = text, .color = SDL_Color{120, 160, 200, 255}});
+    Expect(decorations.ReplaceForOwnerFile("hint-test", fixture.file, std::move(data)),
+           "publishing the hint should change the store");
+  };
+  hint(": int");
+  fixture.ExpectFresh(frame, "an inlay hint appears");
+  hint(": long");
+  fixture.ExpectFresh(frame, "the inlay hint republished with new text");
+  // The lens above its line, in a gap of its own (the soak's layout).
+  Expect(TestAccess::SetSettingValueTransient(fixture.shell, "plugins.code_lens_above", "true"),
+         "lenses go above their lines");
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the lens moved above its line");
+  publish("greet (2)");
+  fixture.ExpectFresh(frame, "the lens above its line republished with a new count");
+}
+
 // Soak ce3279c5ceda, ae8ba5055314 (the overlap oracle): with the panel maximized
 // the editor pane is shorter than a line, and the code lens on its first line was
 // reported -- and laid out for the hit-test -- past the pane, over the panel's
@@ -7361,6 +7406,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestAnAppendToAHiddenOutputChannelRepaintsNothingInThePanel);
   AddTest(tests, "QaFlowRegression/PartialFramesStayFreshAfterFullFramesAtANewSize",
           TestPartialFramesStayFreshAfterFullFramesAtANewSize);
+  AddTest(tests, "QaFlowRegression/ARepublishedCodeLensRepaintsWhatItSays",
+          TestARepublishedCodeLensRepaintsWhatItSays);
   AddTest(tests, "QaFlowRegression/AGutterThatWidensRepaintsThePaneAboveTheFirstRow",
           TestAGutterThatWidensRepaintsThePaneAboveTheFirstRow);
   AddTest(tests, "QaFlowRegression/SwitchingThePanelFromAPluginSurfaceToOutputRepaintsTheBody",
