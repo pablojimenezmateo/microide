@@ -98,7 +98,10 @@ inline void PaintInvalidation(workspace::WorkspaceShell& shell,
     shell.Render(canvas.renderer(), width, height);
     return;
   }
-  if (redraw.rects.empty()) {
+  // A frame owed with no damage named (RenderInvalidation::frame) paints what
+  // preparing it damages, as Application::Render does; with nothing named and no
+  // frame owed, nothing is drawn.
+  if (redraw.rects.empty() && !redraw.frame) {
     return;
   }
   const workspace::WorkspaceShell::FrameToken token =

@@ -213,6 +213,10 @@ int Application::Run() {
   // RenderInvalidation::present). Any render presents too, so it only drives a
   // frame of its own when nothing else is owed.
   bool present_pending = false;
+  // A frame owed whose damage frame prep derives (RenderInvalidation::frame). Any
+  // render prepares a frame too, so it only drives one of its own when nothing
+  // else is owed.
+  bool frame_pending = false;
   bool window_shown = false;
   std::vector<SDL_FRect> dirty_rects;
   const char* redraw_reason = "startup";
@@ -226,6 +230,7 @@ int Application::Run() {
       return;
     }
     present_pending = present_pending || scheduled.redraw.present;
+    frame_pending = frame_pending || scheduled.redraw.frame;
     if (scheduled.redraw.full) {
       // A full-redraw repaints the whole scene, so any cursor surface may have
       // moved underneath a stationary pointer (tree refresh, plugin/outline
@@ -249,6 +254,7 @@ int Application::Run() {
       const bool was_first_frame = !first_render_complete_;
       Render(full_redraw_pending ? std::vector<SDL_FRect>{} : dirty_rects, redraw_reason);
       present_pending = false;
+      frame_pending = false;
 
       // Map the window exactly once, as soon as a real frame has been painted.
       // The window was created hidden, so this is its first and only map: it
@@ -299,6 +305,11 @@ int Application::Run() {
       // around the (possibly newly scrolled) editor viewport so later frames
       // hit the highlight cache instead of tokenizing on the render path.
       workspace_shell_.RequestActiveHighlightPrefetch();
+    } else if (frame_pending) {
+      frame_pending = false;
+      // Presents when it paints, so a re-present owed alongside is paid by it --
+      // or, when prep damaged nothing, by the branch below on the next turn.
+      Render({}, "prepared", /*prepared_only=*/true);
     } else if (present_pending) {
       present_pending = false;
       if (scene_texture_.valid()) {
@@ -310,7 +321,7 @@ int Application::Run() {
 
     if (owed_wake_deadline.has_value() && SDL_GetTicks() >= *owed_wake_deadline) {
       apply_scheduled_wake();
-      if (full_redraw_pending || !dirty_rects.empty()) {
+      if (full_redraw_pending || !dirty_rects.empty() || frame_pending) {
         continue;
       }
     }
@@ -390,6 +401,7 @@ int Application::Run() {
       const auto result = HandleEvent(event);
       if (result.handled) {
         present_pending = present_pending || result.redraw.present;
+        frame_pending = frame_pending || result.redraw.frame;
         if (result.redraw.full) {
           // See the scheduled-wake path above: a full redraw can reshuffle cursor
           // surfaces under a still pointer, and the EventResult literals that drive
@@ -409,7 +421,7 @@ int Application::Run() {
       // sustained event flood cannot starve the frame. Remaining queued events are
       // handled on the next iteration (after a render).
       ++events_processed;
-      if (ShouldYieldEventDrain(events_processed, full_redraw_pending || !dirty_rects.empty())) {
+      if (ShouldYieldEventDrain(events_processed, full_redraw_pending || !dirty_rects.empty() || frame_pending)) {
         break;
       }
     } while (SDL_PollEvent(&event));
@@ -865,13 +877,13 @@ void Application::PresentRetainedScene() {
   SDL_RenderPresent(renderer_);
 }
 
-void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason) {
+void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason, bool prepared_only) {
   if (renderer_ == nullptr) {
     return;
   }
   ++frame_index_;
 
-  const bool full_redraw_requested = dirty_rects.empty() || !scene_texture_.valid();
+  bool full_redraw_requested = (dirty_rects.empty() && !prepared_only) || !scene_texture_.valid();
   SDL_FRect dirty_bounds{};
   if (redraw_trace_.verbose() && !dirty_rects.empty()) {
     dirty_bounds = dirty_rects.front();
@@ -924,7 +936,17 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
   // it already.
   if (const workspace::RenderInvalidation prepared =
           workspace_shell_.ConsumePendingRenderInvalidation();
-      !dirty_rects.empty()) {
+      prepared_only && scene_texture_ready && scene_texture_.valid()) {
+    // A frame owed with no damage named: what prep damaged is the frame, and when
+    // it damaged nothing there is nothing to paint or present.
+    if (!prepared.full && prepared.rects.empty()) {
+      return;
+    }
+    full_redraw_requested = prepared.full;
+    dirty_rects.assign(prepared.rects.begin(), prepared.rects.end());
+  } else if (prepared_only) {
+    dirty_rects.clear();  // no retained scene to paint over: a full frame
+  } else if (!dirty_rects.empty()) {
     if (prepared.full) {
       dirty_rects.clear();
     } else {

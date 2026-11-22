@@ -653,6 +653,10 @@
   static bool ExpireNotificationsAt(WorkspaceShell& shell, std::uint64_t now_ms) {
     return shell.notification_service_.ExpireDue(now_ms);
   }
+  // The shell's own Notify, with the redraw request it makes (a frame).
+  static void Notify(WorkspaceShell& shell, NotificationService::Tone tone, std::string message) {
+    shell.Notify(tone, std::move(message));
+  }
   static void ShowNotification(WorkspaceShell& shell,
                                NotificationService::Tone tone,
                                std::string message) {

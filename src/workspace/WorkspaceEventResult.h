@@ -34,11 +34,17 @@ struct RenderInvalidation {
   // pixel for the surface: a tree click that also changed the cursor expanded the
   // directory and repainted one pixel of it.
   bool present = false;
+  // A frame is owed whose damage frame prep derives (openspec derived-damage): the
+  // state changed on a surface that compares what it shows with what it painted
+  // -- a toast posted or expired -- and the caller names no rect, because the
+  // surface knows its own. The app prepares the frame and paints exactly what prep
+  // damaged, or nothing; it is NOT a full repaint.
+  bool frame = false;
 
   // Something on screen changed: a render pass is owed.
   [[nodiscard]] bool HasDamage() const { return full || !rects.empty(); }
-  // A render pass or a bare re-present is owed.
-  [[nodiscard]] bool HasAnyRedraw() const { return HasDamage() || present; }
+  // A render pass, a prepared frame or a bare re-present is owed.
+  [[nodiscard]] bool HasAnyRedraw() const { return HasDamage() || frame || present; }
 
   // Queue `rect`, unless a queued rect already covers it; queued rects it covers
   // go. Several handlers damage the same surface for one event (a menu switch
@@ -67,6 +73,7 @@ struct RenderInvalidation {
   // Fold `other` in: full absorbs every rect, and a present is owed if either owes one.
   void Merge(const RenderInvalidation& other) {
     present = present || other.present;
+    frame = frame || other.frame;
     if (full) {
       return;
     }

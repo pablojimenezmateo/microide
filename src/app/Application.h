@@ -40,8 +40,12 @@ class Application {
   bool Initialize();
   void Shutdown();
   workspace::WorkspaceShell::EventResult HandleEvent(const SDL_Event& event);
+  // `prepared_only`: a frame owed with no damage named (RenderInvalidation::frame):
+  // paint exactly what preparing it damages, and nothing -- no paint, no present --
+  // when it damages nothing.
   void Render(std::vector<SDL_FRect> dirty_rects = {},
-              const char* reason = "full");
+              const char* reason = "full",
+              bool prepared_only = false);
   // Blit the retained scene to the window and present it, rendering nothing. The
   // render target must be the window and the scene texture valid.
   void PresentRetainedScene();

@@ -2931,6 +2931,23 @@ void TestTheNotificationToastsRepaintWhatChangedWithNoDamageRequest() {
   fixture.ExpectFresh(nothing_announced, "a progress toast updated with no damage request");
 }
 
+// derived-damage: a toast posted or expired asks for a FRAME, not a full repaint
+// (RenderInvalidation::frame): the toasts are a derived surface, so preparing the
+// frame damages the toasts that appeared or went and nothing else. Painting only
+// that matches a full repaint, both ways.
+void TestAToastAsksForAFrameNotAFullRepaint() {
+  FlowFixture fixture("notes.txt", "one\ntwo\n");
+  TestAccess::Notify(fixture.shell, workspace::NotificationService::Tone::Info, "Saved notes.txt");
+  const workspace::RenderInvalidation posted = fixture.shell.ConsumePendingRenderInvalidation();
+  Expect(posted.frame && !posted.full && posted.rects.empty(),
+         "posting a toast asks for a frame, naming no damage");
+  fixture.ExpectFresh(posted, "the frame a posted toast asked for");
+  Expect(TestAccess::ExpireNotificationsAt(fixture.shell, ~std::uint64_t{0} / 2), "the toast expires");
+  workspace::RenderInvalidation expired;
+  expired.frame = true;
+  fixture.ExpectFresh(expired, "the frame an expired toast asked for");
+}
+
 // Soak 0cee9c7fa46e: Return in the merge result adds a row to every pane's
 // shared extent, so the vertical thumb at the surface's right edge shrinks.
 // Frame prep saw the thumb move but repainted only the overview lane beside
@@ -6408,6 +6425,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestTheTerminalChromeRepaintsWhatChangedWithNoDamageRequest);
   AddTest(tests, "QaFlowRegression/ThePanelDividerShowsAndLightsWhileDragged",
           TestThePanelDividerShowsAndLightsWhileDragged);
+  AddTest(tests, "QaFlowRegression/AToastAsksForAFrameNotAFullRepaint", TestAToastAsksForAFrameNotAFullRepaint);
   AddTest(tests, "QaFlowRegression/TheNotificationToastsRepaintWhatChangedWithNoDamageRequest",
           TestTheNotificationToastsRepaintWhatChangedWithNoDamageRequest);
   AddTest(tests, "QaFlowRegression/ANewLineInTheMergeResultRepaintsTheVerticalThumb",

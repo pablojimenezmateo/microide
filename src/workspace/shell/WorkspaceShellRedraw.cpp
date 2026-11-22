@@ -244,16 +244,16 @@ void WorkspaceShell::RequestFullRedraw() {
 
 void WorkspaceShell::Notify(NotificationService::Tone tone, std::string message) {
   notification_service_.Show(tone, std::move(message), SDL_GetTicks());
-  // Notifications are infrequent, event-driven posts (never per-frame polling),
-  // so a full redraw here never spins the CPU. The shell schedules a single wake
-  // at the toast's expiry (see NextAnimationDelayMs) to retire it.
-  RequestFullRedraw();
+  // The toasts are a derived surface (NotificationToastPaint): a frame repaints
+  // the toasts that moved, appeared or went, and nothing else. The shell
+  // schedules a single wake at the toast's expiry (see NextAnimationDelayMs).
+  pending_render_invalidation_.frame = true;
 }
 
 void WorkspaceShell::Notify(NotificationService::Request request) {
   // A keyed row reposted unchanged (a state publisher's every tick) paints nothing.
   if (notification_service_.Show(std::move(request), SDL_GetTicks())) {
-    RequestFullRedraw();
+    pending_render_invalidation_.frame = true;  // see the overload above
   }
 }
 
@@ -1403,13 +1403,9 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWake() {
 WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::HandleScheduledWake");
   if (notification_service_.ExpireDue(SDL_GetTicks())) {
-    return EventResult{
-        .handled = true,
-        .redraw = RenderInvalidation{
-            .full = true,
-            .rects = {},
-        },
-    };
+    // An expired toast is repainted by the toasts' derived units: a frame, not
+    // a full repaint.
+    return EventResult{.handled = true, .redraw = RenderInvalidation{.frame = true}};
   }
   // Drain results marshalled back from the plugin worker thread. Gated on a
   // lockless atomic so a project with no plugin work pays a single load here.
