@@ -4167,6 +4167,29 @@ void TestTheDebugToolbarCoversNoOtherControl() {
   Expect(covered("a merge in the focused pane") > 0, "the toolbar still shows over the merge");
 }
 
+// derived-damage 4.1: an editor group's tab strip is a unit keyed on what it
+// paints -- which tab is in front, the hovered tab, the chevrons and the strip's
+// scroll -- so a tab activated by any path repaints the strip with no request of
+// its own. Before, the strip keyed only each tab's title and dirty mark, and
+// every activation site asked for the strip by hand.
+void TestATabActivatedWithNoRequestRepaintsItsStrip() {
+  FlowFixture fixture("first.txt", "one\n");
+  WriteFile(fixture.root / "second.txt", "two\n");
+  TestAccess::OpenFile(fixture.shell, fixture.root / "second.txt");
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  auto& group = TestAccess::CurrentProjectState(fixture.shell).editor_groups[0];
+  Expect(group.open_tabs.size() == 2 && group.active_tab_index == 1, "two tabs, the second in front");
+  group.active_tab_index = 0;
+  workspace::RenderInvalidation frame;
+  frame.frame = true;
+  fixture.ExpectFresh(frame, "the first tab brought to the front with no request");
+  // And the pointer resting on the other tab: its hover fill, with no request.
+  const SDL_FRect second = TestAccess::EditorTabRect(fixture.shell, 1);
+  TestAccess::SetMousePositionForTest(fixture.shell, second.x + second.w * 0.5f, second.y + second.h * 0.5f);
+  fixture.ExpectFresh(frame, "the pointer resting on the second tab");
+}
+
 // derived-damage 5.1: the editor's own changes ask for a frame, and the frame
 // repaints the rows they changed -- not the pane, which every one of them used to
 // repaint through RequestEditorSurfaceRedraw / RequestActiveTabRedraw. A click, an
@@ -8085,6 +8108,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestPartialFramesStayFreshAfterFullFramesAtANewSize);
   AddTest(tests, "QaFlowRegression/RepublishedTextStylesAndGutterMarksRepaint",
           TestRepublishedTextStylesAndGutterMarksRepaint);
+  AddTest(tests, "QaFlowRegression/ATabActivatedWithNoRequestRepaintsItsStrip",
+          TestATabActivatedWithNoRequestRepaintsItsStrip);
   AddTest(tests, "QaFlowRegression/EditorChangesRepaintTheirRowsNotThePane",
           TestEditorChangesRepaintTheirRowsNotThePane);
   AddTest(tests, "QaFlowRegression/AHoveredTerminalContextMenuRowRepaintsWhole",

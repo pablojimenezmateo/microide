@@ -1706,9 +1706,36 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       PaintFingerprint strip;
       PaintFingerprint band;
       if (present) {
-        strip.Add(gi == focused);
+        strip.Add(gi == focused).Add(group_rects.groups.size());
         for (const TabEntry& tab : project_state.editor_groups[gi].open_tabs) {
           strip.Add(TabEntryIsDirty(tab)).Add(std::string_view(tab.title));
+        }
+        // What the strip paints of its tabs (RenderWindowChrome): which are shown and
+        // where -- the active one, the strip's scroll -- their labels and badges, the
+        // hovered tab and close glyph, the overflow chevrons, the slide and the drag.
+        // The strip is one unit; a tab activated or scrolled into view repaints it
+        // whoever asked (derived-damage 4.1).
+        const SDL_FRect& strip_rect = group_rects.groups[gi].tab_strip;
+        if (strip_rect.h > 0.0f && HasActiveProjectCatalogEntry()) {
+          const TabDragState& drag = context_.interaction_state.tab_drag;
+          const std::span<const float> slide = context_.interaction_state.tab_slide.OffsetsFor(TabDragKind::Editor, gi);
+          const bool still = slide.empty() && !drag.dragging;
+          const std::vector<VisibleStripTab>& visible = tab_strip_chrome_.ComputeVisibleTabsForGroup(gi, strip_rect);
+          for (const VisibleStripTab& tab : visible) {
+            strip.Add(tab.index).Add(tab.rect).Add(tab.active).Add(std::string_view(tab.display_title));
+            strip.Add(std::string_view(tab.badge_text)).Add(tab.badge_color).Add(tab.show_badge);
+            strip.Add(still && PointerOver(tab.rect)).Add(still && PointerOver(tab.close_rect));
+          }
+          for (const float offset : slide) {
+            strip.Add(offset);
+          }
+          const auto overflow = tab_strip_chrome_.ComputeTabOverflowControlsForGroup(gi, strip_rect, visible);
+          strip.Add(overflow.hidden_left).Add(overflow.hidden_right).Add(overflow.left_button).Add(overflow.right_button);
+          strip.Add(PointerOver(overflow.left_button)).Add(PointerOver(overflow.right_button));
+          if (drag.dragging && drag.kind == TabDragKind::Editor) {
+            strip.Add(drag.source_group_index).Add(drag.source_index).Add(drag.target_group_index);
+            strip.Add(drag.pointer_x).Add(drag.grab_offset_x);
+          }
         }
         band.Add(gi == focused).Add(std::string_view(BreadcrumbLabel(gi))).Add(frame_state_.status_items_hash);
       }
