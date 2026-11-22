@@ -41,6 +41,45 @@ Plugins may request contributions, but they do not own frame composition, paint 
 - Reuse host render primitives so the shell does not drift into many one-off drawing conventions.
 - Protect typing, scrolling, and resize responsiveness when adding new UI behavior.
 
+## Derived damage
+
+What a partial frame repaints is derived from what changed, not requested by the
+code that changed it (openspec `derived-damage`). A hand-written request was one
+more thing to forget at every site that changes state, and each one forgotten was
+stale pixels; a request that named too much (the whole editor surface, the window)
+was paint no one saw.
+
+- A **derived surface** (`DerivedSurface` in `render/DerivedDamage.h`) is prepared
+  once per frame by its `Prepare*Frame`: it settles what it will paint into a
+  snapshot on `PreparedFrameState`, and lays out **units**, each a rect and a
+  fingerprint of everything drawn inside it. `DerivedDamage::Commit` compares them
+  with the units last committed and damages the old and new rect of each that
+  differs. Paint reads only the snapshot (`CheckDerivedSurfacePaintReadsOnlyItsSnapshot`
+  checks the function bodies and the types they are handed).
+- **Key everything paint draws.** A value paint reads that no key folds is a stale
+  pixel the day it changes on its own (a language server's hover reply growing in
+  the same card; a code lens republished at the same height; a tab brought to the
+  front by a path that asked for nothing). Pointer state counts: hover is keyed on
+  the same `PointerOver` paint asks.
+- **Ask for a frame, not a rect.** A change to a derived surface calls
+  `RequestPreparedFrame()` (a coordinator's `request_frame` operation). It counts as
+  a request for `EnsureRedraw` fallbacks. Keep a rect only for what is not derived
+  yet, and say why at the call site.
+- **Every surface commits every frame**, with no units while it is hidden. A
+  surface that skipped `Commit` while hidden would keep units it no longer paints
+  and damage nothing when it came back.
+- **Units are cheap but not free.** Fold with `MixRowKey` / `MixRowKeyBytes` (one
+  multiply a word), hash a line once for all its wrapped rows, view strings the
+  model owns rather than copying them, and keep the snapshot's vectors' capacity:
+  a steady frame allocates nothing (`tools/run-checks.sh perf-tests`).
+- **Coalescing:** a surface damages at most `kSeparateRectsPerSurface` rects; past
+  that the nearest pair merges. The window chrome commits `Coalesce::Apart`.
+- **Testing:** a QA finding is a failing-first `QaFlowRegression` test that changes
+  state with no request (`frame.frame = true`) and compares the partial frame with
+  a full one (`ExpectFresh`); bound the damaged area where the point is that less
+  repaints. The redraw verifier in `tools/run-checks.sh qa` and the soak catch the
+  keys nobody thought of.
+
 ## Editor text surface: decorated-row layer order
 
 The normal-editor path builds `editor::EditorViewModel` in
