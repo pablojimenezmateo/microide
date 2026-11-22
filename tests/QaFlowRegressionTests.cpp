@@ -6954,6 +6954,81 @@ void TestAPointerOnAToastHoversNoMenuRowBeneathIt() {
                       "the pointer moved onto the toast where it covers a menu row");
 }
 
+// The other way onto a toast: the pointer lit a dimmed menu row the toast does
+// not cover, then moved onto the toast. A dimmed row is never the menu's active
+// one -- it lights from the pointer alone -- and motion over a toast stops at the
+// toast and repainted only the toasts, so the row it left stayed lit; the menu's
+// own motion path, which repaints the row the pointer leaves, never ran (soak
+// 4bdda529a3d3: "Switch Branch…" in the Git menu with no repository, the pointer
+// onto "No completions available").
+void TestAPointerMovingOntoAToastUnlightsTheMenuRowItLeft() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("notes.txt", "one\ntwo\n", 840, 600);
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the file in its tab");
+  const auto git = fixture.ElementRect("menu:Git");
+  Expect(git.has_value(), "the menu bar shows Git");
+  if (!git) {
+    return;
+  }
+  (void)fixture.Click(*git);
+  TestAccess::ShowNotification(fixture.shell, workspace::NotificationService::Tone::Warning,
+                               "No completions available");
+  fixture.ExpectFresh(full, "the Git menu open, a toast at the bottom right");
+  const SDL_FRect toast = TestAccess::NotificationToastRect(fixture.shell, 0);
+
+  std::optional<SDL_FPoint> dimmed_row;
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    if (!entry["name"].AsString().starts_with("menu-item:Git/") || entry["enabled"].AsBool()) {
+      continue;
+    }
+    const auto rect = fixture.ElementRect(entry["name"].AsString());
+    if (rect && !workspace::Contains(toast, rect->x + 8.0f, rect->y + rect->h * 0.5f)) {
+      dimmed_row = SDL_FPoint{rect->x + 8.0f, rect->y + rect->h * 0.5f};
+      break;
+    }
+  }
+  Expect(dimmed_row.has_value(), "a dimmed Git row the toast leaves uncovered (the case under test)");
+  if (!dimmed_row) {
+    return;
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(dimmed_row->x, dimmed_row->y)}),
+                      "the pointer lit a dimmed menu row");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(toast.x + toast.w - 4.0f,
+                                                                      toast.y + toast.h * 0.5f)}),
+                      "the pointer left the row for the toast");
+}
+
+// The same with no menu open, a guard: a hovered tab lights from the pointer, and
+// the motion onto a toast stops before the motion path's hover probe; frame prep's
+// hover unit is what repaints the tab it left.
+void TestAPointerMovingOntoAToastUnlightsTheTabItLeft() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("notes.txt", "one\ntwo\n", 840, 600);
+  TestAccess::ShowNotification(fixture.shell, workspace::NotificationService::Tone::Warning,
+                               "No completions available");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the file in its tab, a toast at the bottom right");
+  const auto tab = fixture.ElementRect("tab:0/notes.txt");
+  Expect(tab.has_value(), "the strip shows notes.txt");
+  if (!tab) {
+    return;
+  }
+  const SDL_FRect toast = TestAccess::NotificationToastRect(fixture.shell, 0);
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(tab->x + 6.0f, tab->y + tab->h * 0.5f)}),
+                      "the pointer lit the tab");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(toast.x + toast.w - 4.0f,
+                                                                      toast.y + toast.h * 0.5f)}),
+                      "the pointer left the tab for the toast");
+}
+
 // The project strip shows the projects from its scroll position on, and frame
 // prep repainted it only when a project's label changed. A click on its overflow
 // arrow scrolled it and damaged the arrow alone: the strip kept the projects it
@@ -7511,6 +7586,10 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/AContextMenuClosesOverTheRowsItPainted", TestAContextMenuClosesOverTheRowsItPainted);
   AddTest(tests, "QaFlowRegression/APointerOnAToastHoversNoMenuRowBeneathIt",
           TestAPointerOnAToastHoversNoMenuRowBeneathIt);
+  AddTest(tests, "QaFlowRegression/APointerMovingOntoAToastUnlightsTheMenuRowItLeft",
+          TestAPointerMovingOntoAToastUnlightsTheMenuRowItLeft);
+  AddTest(tests, "QaFlowRegression/APointerMovingOntoAToastUnlightsTheTabItLeft",
+          TestAPointerMovingOntoAToastUnlightsTheTabItLeft);
   AddTest(tests, "QaFlowRegression/ABreadcrumbLabelChangeRepaintsTheBand", TestABreadcrumbLabelChangeRepaintsTheBand);
   AddTest(tests, "QaFlowRegression/TabInANarrowDirtyPromptRepaintsEveryButton",
           TestTabInANarrowDirtyPromptRepaintsEveryButton);
