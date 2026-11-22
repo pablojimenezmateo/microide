@@ -387,7 +387,13 @@ void ScenarioContext::PumpPartialFrame(
   partial_dirty_rects_.assign(event_damage.rects.begin(), event_damage.rects.end());
   partial_dirty_rects_.insert(partial_dirty_rects_.end(), pending.rects.begin(),
                               pending.rects.end());
-  bool requested_full = event_damage.full || pending.full || partial_dirty_rects_.empty();
+  // A frame owed with no damage named (RenderInvalidation::frame) is Application's
+  // `prepared_only` frame: what prep derives is the frame. Treating it as "no
+  // rects, so full" painted the whole window for every keystroke once the editor's
+  // own requests became frames, and editor_typing_paint read 25% slower than the
+  // app is (the stage-2 A/B, 2026-11-22).
+  const bool frame_owed = event_damage.frame || pending.frame;
+  bool requested_full = event_damage.full || pending.full || (partial_dirty_rects_.empty() && !frame_owed);
   const workspace::WorkspaceShell::FrameToken frame_token =
       shell_.PrepareFrameOnce(renderer_, 1920, 1080);
   // Damage requested while PREPARING the frame belongs to it, as in
@@ -402,6 +408,11 @@ void ScenarioContext::PumpPartialFrame(
     } else {
       partial_dirty_rects_.insert(partial_dirty_rects_.end(), prepared.rects.begin(), prepared.rects.end());
     }
+  }
+  // An owed frame whose prep derived nothing paints and presents nothing, as the
+  // app returns before presenting.
+  if (!requested_full && partial_dirty_rects_.empty()) {
+    return;
   }
   // Kept across frames, as Application keeps its own: a steady frame allocates nothing here.
   app::AnalyzeDirtyRegions(partial_dirty_rects_, shell_.PartialRedrawClipPadding(), 1920, 1080, SDL_FPoint{1.0f, 1.0f},
