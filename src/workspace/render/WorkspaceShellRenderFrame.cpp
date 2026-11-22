@@ -1422,6 +1422,26 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     chrome_unit(CurrentWindowRect(), backdrops);
     // (Whether the focused pane paints the find widget's matches is in its pane key.)
   }
+  // The prompts' dialogs, keyed on what they say: the unsaved-changes prompt names
+  // the tab it closes, looked up when it paints, so a focus that moved under it
+  // renamed it with nothing damaged, and the message kept the old name outside
+  // whatever else was repainted (soak 6d33d9fa57bc).
+  {
+    const std::hash<std::string_view> text_hash;
+    chrome_unit(context_.prompts.dirty_visible ? std::optional<SDL_FRect>(ComputeDirtyPromptRect(layout.full))
+                                               : std::nullopt,
+                context_.prompts.dirty_visible
+                    ? text_hash(DirtyPromptMessage()) ^
+                          static_cast<std::uint64_t>(context_.prompts.dirty.selected_action)
+                    : 0);
+    chrome_unit(context_.prompts.surface_visible
+                    ? std::optional<SDL_FRect>(ComputePromptSurfaceRect(layout.full))
+                    : std::nullopt,
+                context_.prompts.surface_visible
+                    ? (text_hash(PromptSurfaceMessage()) * 0x9E3779B97F4A7C15ull) ^ text_hash(PromptSurfaceDetail()) ^
+                          static_cast<std::uint64_t>(context_.prompts.surface.selected_button)
+                    : 0);
+  }
   // (A compare tab's scroll is in its rows' surface key: CompareRowUnits.)
   {
     PreparedFrameState::DiffSurfaceBars bars;

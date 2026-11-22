@@ -3570,6 +3570,33 @@ void TestATabTooltipNamesTheTabUnderThePointerInASplit() {
          "hovering the right group's tab names right-file.txt, not \"" + label + "\"");
 }
 
+// Soak 6d33d9fa57bc (crash cell, 640x480): the unsaved-changes prompt names the
+// tab it closes, and a control command that moved the focus to the other group
+// while it was up changed that name ("Save changes to latin1.b" became "this
+// tab": the label is looked up in the focused group). Nothing damaged the
+// dialog for it, so the part of the message outside the repainted editor kept
+// the old name. The dialog is a chrome unit keyed on what it shows.
+void TestTheUnsavedChangesPromptRepaintsWhenItsMessageChanges() {
+  // The monkey's window: the dialog reaches across the sidebar and its divider.
+  FlowFixture fixture("left-file.txt", "left\n", 640, 480);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "split-right should run");
+  WriteFile(fixture.root / "right-file.txt", "right\n");
+  TestAccess::OpenFile(fixture.shell, fixture.root / "right-file.txt");  // into the focused right group
+  TestAccess::ActiveEditor(fixture.shell).InsertText("x");
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "two groups, the right one dirty");
+
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_W, SDL_KMOD_CTRL)}),
+                      "Ctrl+W on the dirty tab");
+  Expect(TestAccess::DirtyPromptVisible(fixture.shell), "closing the dirty tab asks first");
+  const std::string before = TestAccess::DirtyPromptMessage(fixture.shell);
+
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "focus-other-group"), "focus-other-group should run");
+  Expect(TestAccess::DirtyPromptMessage(fixture.shell) != before,
+         "the prompt's message changes with the focus (the case under test): \"" + before + "\"");
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(),
+                      "the prompt after the focus moved under it");
+}
+
 // The QA monkey (CI seed 4; minimized 185 -> 69 actions): frame prep sizes each
 // pane twice -- without the sticky band, then with it -- and the first sizing,
 // one row taller, clamped the scroll to the end of the document as if there were
@@ -7051,6 +7078,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestTabOverASelectionEndingOnTheLastLineRepaintsTheLineTheCaretLeft);
   AddTest(tests, "QaFlowRegression/ATabTooltipNamesTheTabUnderThePointerInASplit",
           TestATabTooltipNamesTheTabUnderThePointerInASplit);
+  AddTest(tests, "QaFlowRegression/TheUnsavedChangesPromptRepaintsWhenItsMessageChanges",
+          TestTheUnsavedChangesPromptRepaintsWhenItsMessageChanges);
   AddTest(tests, "QaFlowRegression/ClickingAnUnfocusedGroupsOverflowChipRepaintsItsStrip",
           TestClickingAnUnfocusedGroupsOverflowChipRepaintsItsStrip);
   AddTest(tests, "QaFlowRegression/AFoldChordRightAfterAClickFoldsTheClickedBlock",
