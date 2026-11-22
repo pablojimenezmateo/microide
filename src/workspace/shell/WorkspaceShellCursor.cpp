@@ -1,3 +1,4 @@
+#include "workspace/render/GitSidebarPaint.h"
 #include "workspace/render/DiffDividerGeometry.h"
 #include "workspace/shell/WorkspaceShell.h"
 
@@ -558,8 +559,11 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
           return CursorKind::Pointer;
         }
       }
-      const auto& lines = BuildGitSidebarLines();
-      const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
+      // The rows the user sees: the list as the last frame laid it out.
+      const PaintedGitSidebarList painted = PaintedGitSidebarListOf(frame_state_);
+      const auto& lines = painted.lines != nullptr ? *painted.lines : BuildGitSidebarLines();
+      const auto list_layout =
+          painted.lines != nullptr ? *painted.layout : ComputeGitSidebarListLayout(layout.sidebar, lines.size());
       const auto line_index = ScrollableListItemAt(list_layout, x, y, lines.size());
       if (!line_index.has_value()) {
         return CursorKind::Default;
@@ -1339,6 +1343,10 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
     };
     switch (ActiveSidebarMode()) {
       case SidebarMode::Git: {
+        const PaintedGitSidebarList painted = PaintedGitSidebarListOf(frame_state_);
+        if (painted.lines != nullptr) {
+          return row_band(*painted.layout, painted.lines->size());
+        }
         const auto& lines = BuildGitSidebarLines();
         return row_band(ComputeGitSidebarListLayout(layout.sidebar, lines.size()), lines.size());
       }

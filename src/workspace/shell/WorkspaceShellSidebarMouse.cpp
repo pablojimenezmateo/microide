@@ -1,5 +1,6 @@
 #include <memory>
 
+#include "workspace/render/GitSidebarPaint.h"
 #include "workspace/shell/WorkspaceShell.h"
 #include "workspace/services/TerminalPanelService.h"
 
@@ -70,6 +71,25 @@ SidebarMouseCoordinator& WorkspaceShell::MakeSidebarMouseCoordinator() {
           .compute_git_sidebar_list_layout =
               [this](const SDL_FRect& rect, std::size_t count) {
                 return ComputeGitSidebarListLayout(rect, count);
+              },
+          .painted_git_sidebar_list =
+              [this]() {
+                SidebarMouseCoordinator::Operations::PaintedGitList painted;
+                const PaintedGitSidebarList list = PaintedGitSidebarListOf(frame_state_);
+                if (list.lines != nullptr) {
+                  painted.lines = list.lines;
+                  painted.layout = *list.layout;
+                  for (const GitPanelRowPaint& row : frame_state_.git_panel.rows) {
+                    if (row.base_button.w > 0.0f) {
+                      painted.outgoing_base_button = row.base_button;
+                    }
+                  }
+                }
+                return painted;
+              },
+          .resolve_git_sidebar_entry =
+              [this](const GitSidebarLine& line) {
+                return ResolvePaintedGitEntry(frame_state_, line, context_.current_project_state.sidebar.git);
               },
           .toggle_git_sidebar_directory_collapsed =
               [this](const std::string& tree_node_key) {

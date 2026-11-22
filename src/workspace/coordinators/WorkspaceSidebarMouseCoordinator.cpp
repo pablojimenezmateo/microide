@@ -245,6 +245,8 @@ bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
   if (!is_left && !is_right) {
     return true;
   }
+  const Operations::PaintedGitList painted =
+      operations_.painted_git_sidebar_list ? operations_.painted_git_sidebar_list() : Operations::PaintedGitList{};
   // Header chrome (stage-all / discard-all / refresh / commit / outgoing base)
   // responds to left-click only.
   if (is_left) {
@@ -283,18 +285,24 @@ bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
         Contains(workflow.commit_button_rect, event.button.x, event.button.y)) {
       return operations_.confirm_commit_workflow();
     }
-    if (const auto button_rect = operations_.git_sidebar_outgoing_base_button_rect(layout.sidebar);
-        button_rect.has_value() && Contains(*button_rect, event.button.x, event.button.y)) {
+    const std::optional<SDL_FRect> button_rect =
+        painted.lines != nullptr ? painted.outgoing_base_button
+                                 : operations_.git_sidebar_outgoing_base_button_rect(layout.sidebar);
+    if (button_rect.has_value() && Contains(*button_rect, event.button.x, event.button.y)) {
       operations_.open_anchored_menu(MenuId::GitOutgoingBase, *button_rect);
       return true;
     }
   }
-  if (event.button.y < operations_.git_sidebar_list_top(layout.sidebar) || local_y < 0.0f) {
+  const float list_top =
+      painted.lines != nullptr ? painted.layout.list_rect.y : operations_.git_sidebar_list_top(layout.sidebar);
+  if (event.button.y < list_top || local_y < 0.0f) {
     return true;
   }
 
-  const auto& lines = operations_.build_git_sidebar_lines();
-  const auto list_layout = operations_.compute_git_sidebar_list_layout(layout.sidebar, lines.size());
+  const auto& lines = painted.lines != nullptr ? *painted.lines : operations_.build_git_sidebar_lines();
+  const auto list_layout = painted.lines != nullptr
+                               ? painted.layout
+                               : operations_.compute_git_sidebar_list_layout(layout.sidebar, lines.size());
   const auto line_index =
       ScrollableListItemAtY(list_layout, static_cast<float>(event.button.y), lines.size());
   if (!line_index.has_value()) {
@@ -316,7 +324,19 @@ bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
   // Both buttons select the entry. Left-click opens its diff (DefaultView);
   // right-click opens the entry context menu (Stage/Unstage, Discard, …). The
   // menu acts on the selected entry, so selecting first keeps them in sync.
-  state_.sidebar.git.selected_index = static_cast<std::size_t>(line.entry_index);
+  // The row was painted from a list a refresh may since have reordered or
+  // shrunk: its entry is found again by path, and a row whose file is gone does
+  // nothing rather than act on whatever now sits at its index.
+  const std::optional<std::size_t> entry =
+      operations_.resolve_git_sidebar_entry
+          ? operations_.resolve_git_sidebar_entry(line)
+          : (static_cast<std::size_t>(line.entry_index) < state_.sidebar.git.entries.size()
+                 ? std::optional<std::size_t>(static_cast<std::size_t>(line.entry_index))
+                 : std::nullopt);
+  if (!entry.has_value()) {
+    return true;
+  }
+  state_.sidebar.git.selected_index = *entry;
   if (is_right) {
     operations_.open_tree_context_menu(
         TreeContextTargetKind::GitEntry,

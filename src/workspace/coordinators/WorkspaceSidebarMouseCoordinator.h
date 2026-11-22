@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -50,6 +51,19 @@ class SidebarMouseCoordinator {
     // the same thread); mouse hit-testing reads it without copying the tree.
     std::function<const std::vector<GitSidebarLine>&()> build_git_sidebar_lines;
     std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)> compute_git_sidebar_list_layout;
+    // The git list as the last prepared frame laid it out -- its lines, layout and
+    // the Outgoing header's base button -- so a click lands on the row the user saw,
+    // not on whatever a refresh or a collapse has put there since. `lines` is null
+    // when that frame showed no git list; the click then reads the live one.
+    struct PaintedGitList {
+      const std::vector<GitSidebarLine>* lines = nullptr;
+      ScrollableListLayout layout;
+      std::optional<SDL_FRect> outgoing_base_button;
+    };
+    std::function<PaintedGitList()> painted_git_sidebar_list;
+    // The live entry a painted line shows (by path and section), or nullopt when it
+    // has gone since that frame.
+    std::function<std::optional<std::size_t>(const GitSidebarLine&)> resolve_git_sidebar_entry;
     std::function<bool(const std::string&)> toggle_git_sidebar_directory_collapsed;
     std::function<bool(GitSidebarActionId, std::size_t)> dispatch_git_sidebar_action;
     std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)>

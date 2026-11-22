@@ -4258,10 +4258,10 @@ void TestAnAutomaticGitRefreshInsideTheIntervalIsKept() {
          "and once it has landed, the git view is settled");
 }
 
-// derived-damage 4.1 / clip-discipline 4.1: the Source Control panel's head is a
-// derived surface. A refresh's banner, and a commit draft's status and pre-check
-// lines, are written by background results that ask for no repaint; the next
-// partial frame shows the head as a full one does.
+// derived-damage 4.1 / clip-discipline 4.1: the Source Control panel is a derived
+// surface. A refresh's banner, the list's selection, and a commit draft's status
+// and pre-check lines are written by background results and control commands that
+// ask for no repaint; the next partial frame shows the panel as a full one does.
 void TestTheGitPanelHeadRepaintsWhatChangedWithNoDamageRequest() {
   EnsureDummySdlVideoInitialized();
   TemporaryDirectory temp_dir;
@@ -4298,6 +4298,16 @@ void TestTheGitPanelHeadRepaintsWhatChangedWithNoDamageRequest() {
   expect_fresh("a refresh error's banner set with no damage request");
   git.refresh_error.clear();
   expect_fresh("a refresh error's banner cleared with no damage request");
+  // The list's rows too: a control command or a refresh moves the selection.
+  Expect(!git.entries.empty(), "the fixture lists a changed file");
+  git.selected_index = git.entries.size();
+  expect_fresh("the git selection cleared with no damage request");
+  git.selected_index = 0;
+  expect_fresh("the git selection set with no damage request");
+  // A refresh's snapshot rewrites a file's status: only its row's badge changes.
+  git.entries[0].status = project::GitFileStatus::Added;
+  ++git.snapshot_generation;
+  expect_fresh("a file's status rewritten by a refresh with no damage request");
 
   // The commit draft, open: a commit's run reports into it from the background.
   auto& workflow = git.commit_workflow;
@@ -4313,6 +4323,72 @@ void TestTheGitPanelHeadRepaintsWhatChangedWithNoDamageRequest() {
   expect_fresh("a pre-check added with no damage request");
   workflow.staged_summary_line = "1 file staged";
   expect_fresh("the staged summary rewritten with no damage request");
+}
+
+// derived-damage 4.1: a click on the git list lands on the row the user saw. The
+// list is hit-tested as the last frame laid it out, and a row's entry is found
+// again by path, since a refresh since that frame may have shrunk the list: the
+// painted index then points past it, or at another file. A row whose file is
+// gone does nothing.
+void TestAGitRowClickLandsOnThePaintedRowAfterTheListShrinks() {
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  for (const char* name : {"a.txt", "b.txt", "c.txt"}) {
+    WriteFile(root / name, "one\n");
+  }
+  InitializeGitRepo(root);
+  CommitAll(root, "Add the click fixture", "git click fixture");
+  for (const char* name : {"a.txt", "b.txt", "c.txt"}) {
+    WriteFile(root / name, "two\n");
+  }
+
+  constexpr int kWidth = 1280;
+  constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the fixture should open");
+  TestAccess::SetWindowSize(shell, kWidth, kHeight);
+  TestAccess::OnFramePresented(shell);
+  TestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 3), "the git view lists the three changed files");
+  const auto index_of = [&](std::string_view name) -> std::optional<std::size_t> {
+    const auto& entries = TestAccess::GitSidebarEntries(shell);
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+      if (entries[i].relative_path == name) {
+        return i;
+      }
+    }
+    return std::nullopt;
+  };
+  const SDL_FRect a_row = TestAccess::GitSidebarEntryRowRect(shell, index_of("a.txt").value_or(99));
+  const SDL_FRect c_row = TestAccess::GitSidebarEntryRowRect(shell, index_of("c.txt").value_or(99));
+  Expect(a_row.w > 0.0f && c_row.w > 0.0f && a_row.y < c_row.y, "a.txt and c.txt have rows, a.txt's above");
+  SoftwareCanvas canvas(kWidth, kHeight);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  // A refresh lands after that frame: a.txt and b.txt are committed elsewhere, and
+  // the list shrinks to c.txt alone, at index 0. Nothing repaints yet.
+  auto& git = TestAccess::CurrentProjectState(shell).sidebar.git;
+  std::erase_if(git.entries, [](const auto& entry) { return entry.relative_path != "c.txt"; });
+  Expect(git.entries.size() == 1, "the list shrank to c.txt");
+  git.selected_index = git.entries.size();  // nothing selected
+
+  // a.txt's row, as painted: its file is gone, so the click selects nothing.
+  (void)DispatchEvents(shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, a_row.x + 30.0f, a_row.y + 4.0f),
+                               MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, a_row.x + 30.0f, a_row.y + 4.0f)});
+  Expect(TestAccess::GitSidebarSelectedIndex(shell) >= git.entries.size(),
+         "a click on a row whose file has gone selects nothing (not whatever sits there now)");
+
+  // c.txt's row, as painted, right-clicked: c.txt, now at index 0, is selected.
+  SDL_Event down = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, c_row.x + 30.0f, c_row.y + 4.0f);
+  SDL_Event up = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, c_row.x + 30.0f, c_row.y + 4.0f);
+  down.button.button = SDL_BUTTON_RIGHT;
+  up.button.button = SDL_BUTTON_RIGHT;
+  (void)DispatchEvents(shell, {down, up});
+  const std::size_t selected = TestAccess::GitSidebarSelectedIndex(shell);
+  Expect(selected < git.entries.size() && git.entries[selected].relative_path == "c.txt",
+         "a click on c.txt's painted row selects c.txt, wherever the refresh moved it");
 }
 
 // edit-transforms: saving a new file in a repository repainted the tree's rows but
@@ -6836,6 +6912,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestAnAutomaticGitRefreshInsideTheIntervalIsKept);
   AddTest(tests, "QaFlowRegression/TheGitPanelHeadRepaintsWhatChangedWithNoDamageRequest",
           TestTheGitPanelHeadRepaintsWhatChangedWithNoDamageRequest);
+  AddTest(tests, "QaFlowRegression/AGitRowClickLandsOnThePaintedRowAfterTheListShrinks",
+          TestAGitRowClickLandsOnThePaintedRowAfterTheListShrinks);
   AddTest(tests, "QaFlowRegression/TreeGitBadgesRepaintWhenTheGitSelectionSurvives",
           TestTreeGitBadgesRepaintWhenTheGitSelectionSurvives);
   AddTest(tests, "QaFlowRegression/MarkingAnOutgoingFileReviewedMarksItsRow",

@@ -69,7 +69,7 @@ struct DebugModeTabPaint {
 
 // The Source Control panel's head (derived-damage 4.1): its buttons, text lines
 // and the commit draft's two fields. Text views point into the frame's git
-// presentation (GitPanelHeadPaint::presentation) or the commit draft, alive for
+// presentation (GitPanelPaint::presentation) or the commit draft, alive for
 // the frame.
 enum class GitPanelInk : std::uint8_t { Muted, Secondary, Primary, Error };
 enum class GitPanelTone : std::uint8_t { Neutral, Accent, Destructive };
@@ -90,6 +90,21 @@ struct GitPanelFieldLine {
   float y = 0.0f;
   std::string_view text;
   SDL_FRect selection{};  // empty: no selection on this line
+};
+// A row of the git list: a section header, a folder, a file or the empty
+// section's note. `label` views the frame's presentation.
+struct GitPanelRowPaint {
+  SDL_FRect rect{};
+  GitSidebarLine::Kind kind = GitSidebarLine::Kind::Empty;
+  std::string_view label;
+  float indent = 0.0f;  // the tree depth, in pixels
+  bool expanded = false;
+  project::GitFileStatus status = project::GitFileStatus::Clean;
+  bool selected = false;
+  bool hovered = false;
+  SDL_FRect base_button{};  // the Outgoing header's base picker; empty on every other row
+  bool base_button_hovered = false;
+  bool base_menu_open = false;
 };
 struct GitPanelFieldPaint {
   SDL_FRect frame{};  // empty: the sidebar has no room for the field
@@ -412,8 +427,8 @@ struct PreparedFrameState {
   DebugPaneBodyPaint debug_pane;
 
   // ---- the Source Control panel's head (derived-damage 4.1, clip-discipline 4.1) ----
-  // Laid out by PrepareGitPanelHeadFrame; PaintGitPanelHead draws only this.
-  struct GitPanelHeadPaint {
+  // Laid out by PrepareGitPanelFrame; PaintGitPanel draws only this.
+  struct GitPanelPaint {
     bool visible = false;
     // The presentation the frame paints, held so its labels outlive a mid-frame
     // rebuild of the memo (soak eab90dac1acf), and so whatever hit-tests the panel
@@ -430,8 +445,15 @@ struct PreparedFrameState {
     // empty when a control has no room or the draft is closed.
     SDL_FRect commit_button{};
     int body_visible_rows = 0;
+    // The list under the head: its layout, the visible rows and its scrollbar.
+    // Mouse hit-testing reads the layout and `presentation->lines` from here, so a
+    // click lands on the row the user saw (PaintedGitSidebarList).
+    ScrollableListLayout list;
+    std::vector<GitPanelRowPaint> rows;
+    std::optional<PanelScrollbarPaint> scrollbar;
+    std::vector<const GitSidebarRowViewModel*> row_by_entry;  // prep's scratch, kept for its capacity
   };
-  GitPanelHeadPaint git_panel;
+  GitPanelPaint git_panel;
 
   // ---- the notification toasts (derived-damage 3.1, clip-discipline stage 3) ----
   // The builder's view model, composed once at prep (PrepareNotificationToastsFrame)
@@ -538,7 +560,7 @@ inline std::uint64_t FingerprintOf(const PreparedFrameState::PanelScrollbarPaint
   return PaintFingerprint().Add(track).Add(thumb).Add(active).Add(style).value();
 }
 
-// The Source Control panel's head: a button, a text line, a field. Structured
+// The Source Control panel: a button, a text line, a field, a list row. Structured
 // bindings name every field, as above.
 inline std::uint64_t FingerprintOf(const GitPanelButtonPaint& button, std::uint64_t style) {
   const auto& [rect, label, tone, enabled, hovered, ellipsize] = button;
@@ -556,6 +578,25 @@ inline std::uint64_t FingerprintOf(const GitPanelButtonPaint& button, std::uint6
 inline std::uint64_t FingerprintOf(const GitPanelTextPaint& line, std::uint64_t style) {
   const auto& [rect, text, ink] = line;
   return PaintFingerprint().Add(rect).Add(text).Add(ink).Add(style).value();
+}
+
+inline std::uint64_t FingerprintOf(const GitPanelRowPaint& row, std::uint64_t style) {
+  const auto& [rect, kind, label, indent, expanded, status, selected, hovered, base_button, base_button_hovered,
+               base_menu_open] = row;
+  return PaintFingerprint()
+      .Add(rect)
+      .Add(kind)
+      .Add(label)
+      .Add(indent)
+      .Add(expanded)
+      .Add(status)
+      .Add(selected)
+      .Add(hovered)
+      .Add(base_button)
+      .Add(base_button_hovered)
+      .Add(base_menu_open)
+      .Add(style)
+      .value();
 }
 
 inline std::uint64_t FingerprintOf(const GitPanelFieldPaint& field, std::uint64_t style) {

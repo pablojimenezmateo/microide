@@ -13,7 +13,7 @@
 #include "workspace/render/SingleLineViewMetrics.h"
 
 // The Source Control panel's head. Prep lays it out into the frame's snapshot
-// (PrepareGitPanelHeadFrame) and derives its damage from it (openspec
+// (PrepareGitPanelFrame) and derives its damage from it (openspec
 // derived-damage 4.1); paint draws the snapshot only, each element in its own
 // PaintElement (clip-discipline 4.1). The commit draft's control rects and caret
 // are laid out here, in prep, and published to its hit-testing by the caller:
@@ -52,7 +52,7 @@ SDL_Color InkColor(const render::Theme& theme, GitPanelInk ink) {
 // fields, the confirm button and the pre-check and status lines the sidebar has
 // room for. A control with no room is left out, its rect empty, so no click,
 // cursor or control-channel query finds it (soak c8c7389e178d).
-void LayOutCommitDraft(PreparedFrameState::GitPanelHeadPaint& head, const GitPanelHeadInputs& inputs, float top) {
+void LayOutCommitDraft(PreparedFrameState::GitPanelPaint& head, const GitPanelInputs& inputs, float top) {
   const CommitWorkflowState& workflow = *inputs.workflow;
   const render::TextRenderer& tr = *inputs.text_renderer;
   const float field_x = inputs.sidebar.x + kInset;
@@ -210,10 +210,154 @@ void PaintField(SDL_Renderer* renderer, const GitPanelFieldPaint& field, const r
   }
 }
 
+// The list's visible rows, from the frame's presentation alone: the lines, and
+// each file's status from its row view model (no live entry is read).
+void LayOutGitList(PreparedFrameState::GitPanelPaint& head, const GitPanelInputs& inputs) {
+  const GitSidebarPresentation& presentation = *head.presentation;
+  const std::vector<GitSidebarLine>& lines = presentation.lines;
+  head.list = inputs.list;
+  std::vector<const GitSidebarRowViewModel*>& row_by_entry = head.row_by_entry;
+  row_by_entry.clear();
+  for (const GitSidebarSectionViewModel& section : presentation.view_model.sections) {
+    for (const GitSidebarRowViewModel& row : section.rows) {
+      if (row.entry_index < 0) {
+        continue;
+      }
+      const auto index = static_cast<std::size_t>(row.entry_index);
+      if (index >= row_by_entry.size()) {
+        row_by_entry.resize(index + 1, nullptr);
+      }
+      row_by_entry[index] = &row;
+    }
+  }
+  const ScrollableListLayout& list = head.list;
+  for (int visible = 0; visible < list.visible_rows; ++visible) {
+    const int index = list.scroll_row + visible;
+    if (index < 0 || static_cast<std::size_t>(index) >= lines.size()) {
+      break;
+    }
+    const GitSidebarLine& line = lines[static_cast<std::size_t>(index)];
+    GitPanelRowPaint row{.rect = ScrollableListRowRect(list, visible),
+                         .kind = line.kind,
+                         .label = line.label,
+                         .indent = static_cast<float>(line.depth) * kWorkspaceSidebarTreeIndentWidth,
+                         .expanded = line.expanded};
+    switch (line.kind) {
+      case GitSidebarLine::Kind::Header:
+        if (line.section == GitSidebarEntry::Section::Outgoing && inputs.outgoing_base_button.has_value()) {
+          row.base_button = *inputs.outgoing_base_button;
+          row.base_button_hovered = inputs.pointer_over(row.base_button);
+          row.base_menu_open = inputs.outgoing_base_menu_open;
+        }
+        break;
+      case GitSidebarLine::Kind::Directory:
+        row.hovered = inputs.pointer_over(row.rect);
+        break;
+      case GitSidebarLine::Kind::Entry: {
+        const GitSidebarRowViewModel* row_vm =
+            line.entry_index >= 0 && static_cast<std::size_t>(line.entry_index) < row_by_entry.size()
+                ? row_by_entry[static_cast<std::size_t>(line.entry_index)]
+                : nullptr;
+        if (row_vm == nullptr) {
+          row.kind = GitSidebarLine::Kind::Empty;  // an entry the presentation does not list
+          row.label = {};
+          break;
+        }
+        row.label = line.display_label;
+        row.status = row_vm->status;
+        row.selected = static_cast<std::size_t>(line.entry_index) == inputs.selected_entry;
+        row.hovered = inputs.pointer_over(row.rect);
+        break;
+      }
+      case GitSidebarLine::Kind::Empty:
+        break;
+    }
+    head.rows.push_back(row);
+  }
+  if (const auto geometry =
+          MakeVerticalScrollbarGeometry(list.list_rect, static_cast<float>(lines.size()), list.visible_units,
+                                        static_cast<float>(list.scroll_row), false);
+      geometry.has_value()) {
+    head.scrollbar =
+        PanelScrollbarPaint{.track = geometry->track, .thumb = geometry->thumb, .active = inputs.scrollbar_active};
+  }
+}
+
+void PaintGitRow(SDL_Renderer* renderer, const GitPanelRowPaint& row, const render::Theme& theme,
+                 const render::TextRenderer& tr) {
+  const SDL_FRect& rect = row.rect;
+  const float tree_x = rect.x + 6.0f + row.indent;
+  const float label_x = tree_x + kWorkspaceSidebarTreeChevronSlotWidth + 4.0f;
+  const float right = rect.x + rect.w;
+  switch (row.kind) {
+    case GitSidebarLine::Kind::Header: {
+      // A raised band with a hairline on top, so the sections read as blocks.
+      FillRect(renderer, rect, theme.surface_raised);
+      FillRect(renderer, MakeRect(rect.x, rect.y, rect.w, 1.0f), theme.border);
+      float label_width = rect.w - 8.0f;
+      if (row.base_button.w > 0.0f) {
+        const SDL_FRect& button = row.base_button;
+        const bool lit = row.base_menu_open || row.base_button_hovered;
+        FillRect(renderer, button, lit ? theme.row_highlight : theme.surface_background);
+        OutlineRect(renderer, button,
+                    row.base_menu_open        ? theme.accent
+                    : row.base_button_hovered ? theme.text_secondary
+                                              : theme.border);
+        DrawChevron(renderer, std::floor(button.x + (button.w - 8.0f) * 0.5f), std::floor(button.y + button.h * 0.5f),
+                    true, lit ? theme.text_primary : theme.text_muted);
+        label_width = std::max(0.0f, button.x - rect.x - 8.0f);
+      }
+      DrawVCenteredTextOn(tr, renderer, rect, 8.0f, theme.text_secondary, theme.surface_raised,
+                          tr.TruncateToWidthEphemeralView(row.label, label_width));
+      return;
+    }
+    case GitSidebarLine::Kind::Directory: {
+      DrawSelectableRowBackground(renderer, theme, rect, theme.surface_background, row.hovered, false);
+      // Nothing of a folder indented past its row is drawn: past it, the row's own
+      // repaint never reaches (soak 538a455016ef).
+      if (label_x > right) {
+        return;
+      }
+      DrawChevron(renderer, tree_x, rect.y + rect.h * 0.5f, row.expanded, theme.text_muted);
+      const float label_width = std::max(0.0f, right - label_x - 8.0f);
+      DrawVCenteredTextOn(tr, renderer, MakeRect(label_x, rect.y, label_width, rect.h), 0.0f, theme.text_primary,
+                          row.hovered ? theme.row_highlight : theme.surface_background,
+                          tr.TruncateToWidthEphemeralView(row.label, label_width));
+      return;
+    }
+    case GitSidebarLine::Kind::Entry: {
+      const bool emphasized = row.selected || row.hovered;
+      const SDL_Color background = emphasized ? theme.row_highlight : theme.surface_background;
+      DrawSelectableRowBackground(renderer, theme, rect, theme.surface_background, emphasized, row.selected);
+      // The status badge in a fixed slot before the name, as in the file tree.
+      constexpr float kBadgeSlot = 18.0f;
+      float name_x = label_x;
+      const char marker = GitMarker(row.status);
+      if (marker != ' ') {
+        if (label_x + kBadgeSlot <= right) {
+          DrawCenteredTextOn(tr, renderer, MakeRect(label_x, rect.y, kBadgeSlot, rect.h),
+                             row.selected ? theme.text_primary : GitMarkerColor(theme, row.status), background,
+                             std::string_view(&marker, 1));
+        }
+        name_x += kBadgeSlot;
+      }
+      DrawPrimarySecondaryRowText(tr, renderer, rect, name_x, right - 8.0f,
+                                  emphasized ? theme.text_primary : theme.text_secondary,
+                                  emphasized ? theme.text_secondary : theme.text_muted, background, row.label, {},
+                                  1.0f);
+      return;
+    }
+    case GitSidebarLine::Kind::Empty:
+      DrawVCenteredTextOn(tr, renderer, rect, 4.0f, theme.text_disabled, theme.surface_background,
+                          tr.TruncateToWidthEphemeralView(row.label, rect.w - 8.0f));
+      return;
+  }
+}
+
 }  // namespace
 
-void PrepareGitPanelHeadFrame(PreparedFrameState& frame, const GitPanelHeadInputs& inputs) {
-  PreparedFrameState::GitPanelHeadPaint& head = frame.git_panel;
+void PrepareGitPanelFrame(PreparedFrameState& frame, const GitPanelInputs& inputs) {
+  PreparedFrameState::GitPanelPaint& head = frame.git_panel;
   head.visible = false;
   head.presentation.reset();
   head.buttons.clear();
@@ -224,7 +368,10 @@ void PrepareGitPanelHeadFrame(PreparedFrameState& frame, const GitPanelHeadInput
   head.caret_on = false;
   head.commit_button = SDL_FRect{};
   head.body_visible_rows = 0;
-  std::vector<DerivedDamage::Unit>& units = frame.derived_damage.Begin(DerivedSurface::GitPanelHead);
+  head.list = ScrollableListLayout{};
+  head.rows.clear();
+  head.scrollbar.reset();
+  std::vector<DerivedDamage::Unit>& units = frame.derived_damage.Begin(DerivedSurface::GitPanel);
   if (inputs.visible && inputs.presentation != nullptr) {
     head.visible = true;
     head.presentation = inputs.presentation;
@@ -332,18 +479,20 @@ void PrepareGitPanelHeadFrame(PreparedFrameState& frame, const GitPanelHeadInput
     unit(head.subject.frame, FingerprintOf(head.subject, style));
     unit(head.body.frame, FingerprintOf(head.body, style));
     unit(head.caret, PaintFingerprint().Add(head.caret).Add(head.caret_on).Add(style).value());
-    unit(inputs.list_rect, PaintFingerprint()
-                               .Add(inputs.list_rect)
-                               .Add(inputs.list_scroll_row)
-                               .Add(inputs.list_line_count)
-                               .value());
+    LayOutGitList(head, inputs);
+    for (const GitPanelRowPaint& row : head.rows) {
+      unit(row.rect, FingerprintOf(row, style));
+    }
+    if (head.scrollbar.has_value()) {
+      unit(head.scrollbar->track, FingerprintOf(*head.scrollbar, style));
+    }
   }
-  frame.derived_damage.Commit(DerivedSurface::GitPanelHead, inputs.damage);
+  frame.derived_damage.Commit(DerivedSurface::GitPanel, inputs.damage);
 }
 
-void PaintGitPanelHead(SDL_Renderer* renderer, const PreparedFrameState& frame, const render::Theme& theme,
-                       const render::TextRenderer& text_renderer) {
-  const PreparedFrameState::GitPanelHeadPaint& head = frame.git_panel;
+void PaintGitPanel(SDL_Renderer* renderer, const PreparedFrameState& frame, const render::Theme& theme,
+                   const render::TextRenderer& text_renderer) {
+  const PreparedFrameState::GitPanelPaint& head = frame.git_panel;
   if (!head.visible) {
     return;
   }
@@ -375,6 +524,58 @@ void PaintGitPanelHead(SDL_Renderer* renderer, const PreparedFrameState& frame, 
     const render::PaintElement element(renderer, head.caret, "git-caret");
     FillRect(renderer, head.caret, theme.text_primary);
   }
+  for (const GitPanelRowPaint& row : head.rows) {
+    const render::PaintElement element(renderer, row.rect, "git-row");
+    PaintGitRow(renderer, row, theme, text_renderer);
+  }
+  if (head.scrollbar.has_value()) {
+    const render::PaintElement element(renderer, head.scrollbar->track, "git-scrollbar");
+    DrawScrollbar(renderer, theme, head.scrollbar->track, head.scrollbar->thumb, head.scrollbar->active);
+  }
+}
+
+PaintedGitSidebarList PaintedGitSidebarListOf(const PreparedFrameState& frame) {
+  const PreparedFrameState::GitPanelPaint& panel = frame.git_panel;
+  if (!panel.visible || panel.presentation == nullptr) {
+    return {};
+  }
+  return PaintedGitSidebarList{.lines = &panel.presentation->lines, .layout = &panel.list};
+}
+
+std::optional<std::size_t> ResolvePaintedGitEntry(const PreparedFrameState& frame, const GitSidebarLine& line,
+                                                  const GitSidebarState& git) {
+  if (line.kind != GitSidebarLine::Kind::Entry || line.entry_index < 0) {
+    return std::nullopt;
+  }
+  const auto painted_index = static_cast<std::size_t>(line.entry_index);
+  const PreparedFrameState::GitPanelPaint& panel = frame.git_panel;
+  // The painted row's identity, from the presentation that laid it out.
+  std::string_view relative_path;
+  if (panel.presentation != nullptr) {
+    for (const GitSidebarSectionViewModel& section : panel.presentation->view_model.sections) {
+      for (const GitSidebarRowViewModel& row : section.rows) {
+        if (row.entry_index == line.entry_index) {
+          relative_path = row.relative_path;
+        }
+      }
+    }
+  }
+  if (relative_path.empty()) {
+    // Not a painted line: it indexes the live entries, which it was built from.
+    return painted_index < git.entries.size() ? std::optional<std::size_t>(painted_index) : std::nullopt;
+  }
+  const auto same = [&](const GitSidebarEntry& entry) {
+    return entry.section == line.section && entry.relative_path == relative_path;
+  };
+  if (painted_index < git.entries.size() && same(git.entries[painted_index])) {
+    return painted_index;  // nothing moved since that frame
+  }
+  for (std::size_t i = 0; i < git.entries.size(); ++i) {
+    if (same(git.entries[i])) {
+      return i;
+    }
+  }
+  return std::nullopt;  // gone since that frame
 }
 
 }  // namespace microide::workspace

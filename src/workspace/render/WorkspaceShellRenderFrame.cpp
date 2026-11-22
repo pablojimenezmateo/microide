@@ -1915,7 +1915,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     ProjectWorkspaceState& project_state = *sidebar_vm.project_state;
     CommitWorkflowState& workflow = project_state.sidebar.git.commit_workflow;
     const bool draft_open = git_visible && workflow.open;
-    GitPanelHeadInputs inputs{
+    GitPanelInputs inputs{
         .renderer = renderer,
         .visible = git_visible,
         .sidebar = layout.sidebar,
@@ -1932,15 +1932,18 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         .damage = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); },
     };
     if (git_visible && sidebar_vm.git_sidebar_lines != nullptr) {
-      inputs.list_line_count = sidebar_vm.git_sidebar_lines->size();
-      const ScrollableListLayout list = ComputeGitSidebarListLayout(layout.sidebar, inputs.list_line_count);
-      inputs.list_rect = list.list_rect;
-      inputs.list_scroll_row = list.scroll_row;
-      project_state.sidebar.scroll_row = list.scroll_row;
+      inputs.list = ComputeGitSidebarListLayout(layout.sidebar, sidebar_vm.git_sidebar_lines->size());
+      project_state.sidebar.scroll_row = inputs.list.scroll_row;
+      inputs.selected_entry = project_state.sidebar.git.selected_index;
+      inputs.outgoing_base_button = GitSidebarOutgoingBaseButtonRect(layout.sidebar);
+      inputs.outgoing_base_menu_open = context_.menu_state.menu_bar_open &&
+                                       context_.menu_state.active_menu_id == MenuId::GitOutgoingBase &&
+                                       context_.menu_state.active_menu_anchor_rect.has_value();
+      inputs.scrollbar_active = context_.interaction_state.drag_target == DragTarget::SidebarScrollbar;
     }
-    PrepareGitPanelHeadFrame(frame_state_, inputs);
+    PrepareGitPanelFrame(frame_state_, inputs);
     if (draft_open) {
-      const PreparedFrameState::GitPanelHeadPaint& head = frame_state_.git_panel;
+      const PreparedFrameState::GitPanelPaint& head = frame_state_.git_panel;
       workflow.subject_field_rect = head.subject.frame;
       workflow.body_field_rect = head.body.frame;
       workflow.commit_button_rect = head.commit_button;

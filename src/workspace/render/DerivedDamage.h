@@ -41,7 +41,7 @@ enum class DerivedSurface : std::uint8_t {
   // One per editor group (kMaxEditorGroups): each pane's visible rows.
   EditorPane0,
   EditorPane7 = EditorPane0 + 7,
-  GitPanelHead,
+  GitPanel,
   // The window's chrome a frame decides as a whole: its regions, the caret, the
   // floating cards and popups (each a unit at a fixed position; an absent one
   // keeps its position with an empty rect).
