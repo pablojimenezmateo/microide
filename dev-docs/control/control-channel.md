@@ -253,7 +253,7 @@ binding runs, as the `ui` action receipt names it), `chord` spelled as the menus
 `skipsTerminal`.
 
 **What is on screen (`ui`).** The locator surface for automation (`tools/qa`):
-`{window:{width,height,scale}, focus, modal, sidebar:{visible,view,temporary},
+`{window:{width,height,scale,focused}, focus, modal, sidebar:{visible,view,temporary},
 overlay:{visible,mode}, menu:{open,menu,activeItem,submenu,contextMenu,overflow,rowsRun,lastRun},
 panel:{visible,content,maximized}, surfaces:{menuBar,projectTabStrip,tabStrip,
 breadcrumb,editorSurface,sidebar,rightPane,bottomPanel,statusBar}, elements:[...]}`.

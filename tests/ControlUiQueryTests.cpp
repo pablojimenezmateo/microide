@@ -157,6 +157,21 @@ void TestUiQueryIsRegistered() {
   Expect(found, "`ui` should be a control query verb");
 }
 
+// Whether the window has the desktop's focus, as the app last heard it: a driver
+// that takes the focus away waits on this before it acts on "unfocused" (QA
+// terminal-alert-unfocused raced a fixed sleep against it under load).
+void TestUiQueryReportsWhetherTheWindowHasTheFocus() {
+  UiFixture fixture;
+  Expect(TestAccess::ControlUi(fixture.shell)["window"]["focused"].AsBool(), "a fresh window has the focus");
+  SDL_Event event{};
+  event.type = SDL_EVENT_WINDOW_FOCUS_LOST;
+  (void)fixture.shell.HandleEvent(event);
+  Expect(!TestAccess::ControlUi(fixture.shell)["window"]["focused"].AsBool(), "after losing it, not");
+  event.type = SDL_EVENT_WINDOW_FOCUS_GAINED;
+  (void)fixture.shell.HandleEvent(event);
+  Expect(TestAccess::ControlUi(fixture.shell)["window"]["focused"].AsBool(), "and it comes back");
+}
+
 void TestUiQueryNamesTheWorkspaceChrome() {
   UiFixture fixture;
   const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
@@ -1181,6 +1196,7 @@ void TestPointerCommandClicksWhatTheUiNames() {
 void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/NamesToasts", TestUiQueryNamesToasts);
   AddTest(tests, "ControlUiQuery/IsRegistered", TestUiQueryIsRegistered);
+  AddTest(tests, "ControlUiQuery/ReportsWhetherTheWindowHasTheFocus", TestUiQueryReportsWhetherTheWindowHasTheFocus);
   AddTest(tests, "ControlUiQuery/ClipsCompareContextButtonsToTheSurface",
           TestUiQueryClipsCompareContextButtonsToTheSurface);
   AddTest(tests, "ControlUiQuery/ReportsTheWindowScale", TestUiQueryReportsTheWindowScale);

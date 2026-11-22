@@ -119,6 +119,9 @@ util::JsonValue ControlUiQuery::Build(const WorkspaceContext& context, const Ope
   scale.emplace_back(static_cast<double>(per_unit.x));
   scale.emplace_back(static_cast<double>(per_unit.y));
   window["scale"] = util::JsonValue(std::move(scale));
+  // Whether the window has the desktop's input focus, as the app last heard: a
+  // driver that takes it away waits on this before acting on "unfocused".
+  window["focused"] = util::JsonValue(context.interaction_state.window_has_input_focus);
   object["window"] = util::JsonValue(std::move(window));
   object["focus"] = util::JsonValue(std::string(ControlUiFocusName(state.surface.focus)));
 

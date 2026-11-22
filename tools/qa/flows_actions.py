@@ -200,8 +200,16 @@ def flow_terminal_alert_unfocused(app: q.App) -> None:
     step(app, "notification while focused", 0.5)
     app.expect(not _notified(app), f"a focused window posts nothing to the desktop ({_notified(app)})")
 
-    app.type("sleep 1; printf '\\033]9;qa needs <input>\\007'\n")
+    # The program alerts once the driver says so, after the app has seen its
+    # window lose the focus: a fixed `sleep 1` lost that race under load, and the
+    # alert, landing while the window was still focused, rightly posted nothing.
+    go = app.work / "alert-go"
+    app.type(f"while [ ! -e {go} ]; do sleep 0.05; done; printf '\\033]9;qa needs <input>\\007'\n")
     app.focus_out()
+    if not app.wait_until(lambda: app.query("ui").get("window", {}).get("focused") is False, 5.0,
+                          "the window to hear it lost the focus"):
+        return
+    go.touch()
     app.wait_until(lambda: any("qa needs" in line for line in _notified(app)), 5.0,
                    "the desktop notification of an unfocused window")
     posted = _notified(app)
