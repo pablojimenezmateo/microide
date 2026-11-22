@@ -213,7 +213,7 @@ class PointerInputBarrierTests(unittest.TestCase):
             app._expect_pointer_input(buttons=2, at=(100, 200))
             log.write_bytes(b"microide input: button=1 down=1 clicks=1 x=100 y=200 focus=editor->editor handled=1\n")
             with patch.object(q, "SLOW_FACTOR", 1), \
-                 patch.object(q.time, "monotonic", side_effect=(0, 0, 5, 5)), \
+                 patch.object(q.time, "monotonic", side_effect=(0, 0, 5, 5, 5)), \
                  patch.object(q.time, "sleep"), \
                  contextlib.redirect_stdout(io.StringIO()):
                 app._await_typed_input()
@@ -233,6 +233,32 @@ class PointerInputBarrierTests(unittest.TestCase):
             self.assertEqual(app.actions, [], "a motion within a pixel of the target counts")
             self.assertEqual(app._pointer_at, (40, 61))
 
+
+    def test_a_press_near_a_multi_click_waits_from_when_the_app_took_it(self):
+        """SDL folds presses into one multi-click by the times it stamped them, which
+        on a loaded machine is when it took them, not when they were sent: a
+        triple-click taken late, then a drag pressed 613 ms after the triple was
+        SENT, became its fourth click -- a line selected instead of the dragged
+        word (QA edit-selection-clipboard at load 20). The window is waited out
+        from when the app took the last press."""
+        with tempfile.TemporaryDirectory() as scratch:
+            log = Path(scratch) / "microide.log"
+            log.write_bytes(b"")
+            app = self._app(log)
+            app._expect_pointer_input(buttons=6, at=(100, 100))  # a triple-click
+            app._last_click = (10.0, 100.0, 100.0)  # sent at t=10
+            press = b"microide input: button=1 down=1 clicks=1 x=100 y=100 focus=editor->editor handled=1\n"
+            release = b"microide input: button=1 down=0 clicks=1 x=100 y=100 focus=editor->editor handled=1\n"
+            log.write_bytes((press + release) * 3)  # taken late, all six at once
+            clock = [10.6]  # the app took it just now, 0.6 s after it was sent
+            slept: list[float] = []
+            with patch.object(q, "SLOW_FACTOR", 1), \
+                 patch.object(q.time, "monotonic", side_effect=lambda: clock[0]), \
+                 patch.object(q.time, "sleep", side_effect=slept.append):
+                app._await_click_gap(104.0, 98.0)
+            self.assertEqual(app._buttons_pending, 0, "the press waits for the app to take the triple-click")
+            self.assertGreaterEqual(sum(slept), q.DOUBLE_CLICK_SECONDS - 0.01,
+                                    "and then the whole double-click window, from that moment")
 
     def test_a_press_the_window_manager_takes_expects_nothing(self):
         """A press on a resize edge or the title bar's drag area, or past the

@@ -1879,7 +1879,16 @@ class App:
         SDL measures from where the button went down, not where it came up, so a
         drag records its start -- recording its end let a double-click drag that
         began where the previous one had become its third click, a line selection
-        (QA word-and-line-drags, on CI)."""
+        (QA word-and-line-drags, on CI).
+
+        And from when the app TOOK that press, not when it was sent: SDL stamps a
+        press as it takes it, which on a loaded machine is long after. Measured from
+        the send, a triple-click taken late and a drag pressed 613 ms after it was
+        sent became its fourth click, a line selection (QA edit-selection-clipboard
+        at load 20). So the presses still on their way are awaited first, and
+        _await_typed_input restarts the window when it sees them taken."""
+        if self._buttons_pending:
+            self._await_typed_input()
         last_time, last_x, last_y = self._last_click
         if time.monotonic() - last_time < DOUBLE_CLICK_SECONDS and \
                 abs(x - last_x) < DOUBLE_CLICK_RADIUS and abs(y - last_y) < DOUBLE_CLICK_RADIUS:
@@ -2216,6 +2225,10 @@ class App:
                     + ("" if moved else f", no motion to {self._motion_pending}"))
             self._record({"note": note})
             print(f"        note: {note}", flush=True)
+        if self._buttons_pending:
+            # The last press is stamped by the app as late as now: the double-click
+            # window runs from here (_await_click_gap).
+            self._last_click = (time.monotonic(), self._last_click[1], self._last_click[2])
         self._typed_pending = ""
         self._keys_pending = 0
         self._buttons_pending = 0
