@@ -193,15 +193,10 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     if (event.button.button == SDL_BUTTON_MIDDLE && compare_tab->right_editable) {
       if (const std::optional<std::string> text = operations_.read_primary_selection_text();
           text.has_value()) {
-        const bool was_dirty = compare_tab->right_viewport.dirty();
-        const std::size_t cursor_before_line = compare_tab->right_viewport.cursor_line();
         compare_tab->right_viewport.InsertText(*text);
         operations_.refresh_compare_tab_derived_state(*compare_tab);
         operations_.sync_compare_selection_from_viewport(*compare_tab, true);
-        operations_.note_active_editable_edit();
-        if (compare_tab->right_viewport.dirty() != was_dirty) {
-          operations_.request_frame();
-        }
+        operations_.note_active_editable_edit();  // asks for the frame too
       }
       state_.surface.focus = FocusTarget::Editor;
       return true;
@@ -332,7 +327,6 @@ bool CompareMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
   const CompareRightPaneHit hit =
       CompareRightPaneHitAt(*compare_tab, row, TextGridVisualColumnAtX(right_interaction, pointer_x));
   const std::size_t line = hit.line;
-  const std::size_t previous_selected_row = compare_tab->selected_row;
   const std::size_t visual_column = hit.visual_column;
   if (selection_granularity::DragIsGranular(interaction_state_)) {
     // Resolve the pointer to a logical position first: ExtendToPointer works in
@@ -347,11 +341,7 @@ bool CompareMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
   }
   operations_.sync_compare_selection_from_viewport(*compare_tab, false);
   operations_.reset_caret_blink();
-  if (compare_tab->selected_row != previous_selected_row) {
-    operations_.request_frame();
-  } else {
-    operations_.request_frame();
-  }
+  operations_.request_frame();
   state_.surface.focus = FocusTarget::Editor;
   return true;
 }

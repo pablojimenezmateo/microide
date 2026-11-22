@@ -291,13 +291,8 @@ bool WorkspaceEditService::ApplyOpenBufferEdits(const std::vector<CodeActionEdit
     if (bucket.viewport != active_viewport) {
       continue;
     }
-    // Repaint only the touched line span of the visible buffer. A net line-count
-    // change reflows everything below, so it repaints the whole editor.
-    if (bucket.before_line_count != bucket.viewport->line_count()) {
-      operations_.request_frame();
-    } else {
-      operations_.request_frame();
-    }
+    // A frame: the pane's rows derive what the edit changed.
+    operations_.request_frame();
     active_synced = true;
   }
   if (!active_synced) {

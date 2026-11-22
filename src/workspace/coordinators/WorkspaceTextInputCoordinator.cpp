@@ -396,8 +396,6 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input,
           follow_completion();
           return true;
         }
-        const bool was_dirty = viewport->dirty();
-        const std::size_t cursor_before_line = viewport->cursor_line();
         // A paste spreads a matching multi-line payload over the carets; every
         // other insert goes whole to each. This branch used to call InsertText
         // for both, so the spread rule (which lives in PasteText) was only ever
@@ -421,10 +419,7 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input,
           operations_.update_merge_tracking_after_viewport_edit(*merge_tab);
         }
         operations_.reset_caret_blink();
-        operations_.note_active_editable_edit();
-        if (viewport->dirty() != was_dirty) {
-          operations_.request_frame();
-        }
+        operations_.note_active_editable_edit();  // asks for the frame too
         follow_completion();
         return true;
       }

@@ -1604,7 +1604,6 @@ void WorkspaceActionContext::ApplyUndoRedo(bool redo) {
   }
 
   const bool was_dirty = viewport->dirty();
-  const std::size_t cursor_before_line = viewport->cursor_line();
   auto* merge_tab = operations_.active_merge_tab();
   const bool viewport_is_merge_result =
       merge_tab != nullptr && viewport == &merge_tab->result_viewport;
@@ -1757,7 +1756,6 @@ void WorkspaceActionContext::CutSelection() {
     return;
   }
   if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
-    const bool was_dirty = viewport->dirty();
     // VSCode multi-caret cut: aggregate every caret's selection for the clipboard
     // and delete them all in one undo step. Falls back to primary selection / line.
     const std::optional<std::string> multi_text =
@@ -1794,7 +1792,6 @@ void WorkspaceActionContext::CutSelection() {
       // A cut with nothing selected takes the whole line, and pasting it back
       // elsewhere puts it on its own line (see PasteClipboard).
       RememberLineClipboardCopy(text, !multi_text.has_value() && !has_selection);
-      const std::size_t cursor_before_line = viewport->cursor_line();
       if (multi_text.has_value()) {
         viewport->DeleteMultiCaretSelections();
       } else if (has_selection) {
@@ -1802,7 +1799,7 @@ void WorkspaceActionContext::CutSelection() {
       } else {
         viewport->DeleteCurrentLine();
       }
-      FinishClipboardEdit(*viewport, was_dirty, cursor_before_line);
+      FinishClipboardEdit();
     }
   }
 }
@@ -1884,14 +1881,12 @@ void WorkspaceActionContext::InsertTextIntoActiveSurface(std::string text,
     return;
   }
   if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
-    const bool was_dirty = viewport->dirty();
-    const std::size_t cursor_before_line = viewport->cursor_line();
     if (distribute_across_carets) {
       viewport->PasteText(text);
     } else {
       viewport->InsertText(text);
     }
-    FinishClipboardEdit(*viewport, was_dirty, cursor_before_line);
+    FinishClipboardEdit();
   }
 }
 
@@ -2107,17 +2102,12 @@ void WorkspaceActionContext::RefreshActiveCompareAfterViewportEdit() {
   operations_.sync_compare_selection_from_viewport(*compare_tab, /*reveal_selection=*/true);
 }
 
-void WorkspaceActionContext::FinishClipboardEdit(const editor::TextViewport& viewport,
-                                                 bool was_dirty, std::size_t cursor_before_line) {
+void WorkspaceActionContext::FinishClipboardEdit() {
   RefreshActiveCompareAfterViewportEdit();
   RetrackActiveMergeAfterViewportEdit();
   operations_.reset_caret_blink();
   operations_.request_active_tab_redraw(false);
-  operations_.request_frame();
-  operations_.note_active_editable_edit();
-  if (viewport.dirty() != was_dirty) {
-    operations_.request_frame();
-  }
+  operations_.note_active_editable_edit();  // asks for the frame too
 }
 
 void WorkspaceActionContext::RetrackActiveMergeAfterViewportEdit() {

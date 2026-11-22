@@ -217,26 +217,17 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
       if (!compare_tab->right_editable) {
         return true;
       }
-      const bool was_dirty = viewport.dirty();
-      const std::size_t cursor_before_line = viewport.cursor_line();
       edit();
       operations_.refresh_compare_tab_derived_state(*compare_tab);
       operations_.sync_compare_selection_from_viewport(*compare_tab, true);
       operations_.reset_caret_blink();
-      operations_.note_active_editable_edit();
-      if (viewport.dirty() != was_dirty) {
-        operations_.request_frame();
-      }
+      operations_.note_active_editable_edit();  // asks for the frame too
       return true;
     };
-    const auto sync_compare_navigation = [&](std::size_t previous_selected_row) {
+    const auto sync_compare_navigation = [&]() {
       operations_.sync_compare_selection_from_viewport(*compare_tab, true);
       operations_.reset_caret_blink();
-      if (compare_tab->selected_row != previous_selected_row) {
-        operations_.request_frame();
-      } else {
-        operations_.request_frame();
-      }
+      operations_.request_frame();
       return true;
     };
 
@@ -264,11 +255,10 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
       return true;
     }
 
-    const std::size_t selected_row_before_key = compare_tab->selected_row;
     bool handled_by_shared_switch = false;
     const bool result = HandleEditablePaneKey(
         operations_, viewport, event, modifiers, apply_compare_edit,
-        [&]() { return sync_compare_navigation(selected_row_before_key); },
+        [&]() { return sync_compare_navigation(); },
         &handled_by_shared_switch);
     if (handled_by_shared_switch) {
       return result;
@@ -302,7 +292,6 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
       return true;
     case SDLK_HOME:
       if (auto* active_compare_tab = operations_.active_compare_tab(); active_compare_tab != nullptr) {
-        const std::size_t previous_selected_row = active_compare_tab->selected_row;
         active_compare_tab->selected_row = 0;
         operations_.reveal_active_compare_selection();
         operations_.request_frame();
@@ -311,7 +300,6 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
     case SDLK_END:
       if (auto* active_compare_tab = operations_.active_compare_tab();
           active_compare_tab != nullptr && !active_compare_tab->model.rows.empty()) {
-        const std::size_t previous_selected_row = active_compare_tab->selected_row;
         active_compare_tab->selected_row = active_compare_tab->model.rows.size() - 1;
         operations_.reveal_active_compare_selection();
         operations_.request_frame();
@@ -387,15 +375,10 @@ bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
 
   auto& viewport = merge_tab->result_viewport;
   const auto apply_merge_edit = [&](auto&& edit) {
-    const bool was_dirty = viewport.dirty();
-    const std::size_t cursor_before_line = viewport.cursor_line();
     edit();
     operations_.update_merge_tracking_after_viewport_edit(*merge_tab);
     operations_.reset_caret_blink();
-    operations_.note_active_editable_edit();
-    if (viewport.dirty() != was_dirty) {
-      operations_.request_frame();
-    }
+    operations_.note_active_editable_edit();  // asks for the frame too
     return true;
   };
   const auto sync_merge_navigation = [&]() {

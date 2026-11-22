@@ -41,8 +41,6 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr std::size_t kBlameNeighborhoodRadius = 1;
-
 bool TraceProjectEventsEnabled() {
   static const bool enabled =
       util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_PROJECT_EVENTS");

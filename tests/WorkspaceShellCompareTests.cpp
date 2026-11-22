@@ -1965,12 +1965,7 @@ void TestWorkspaceShellCompareHorizontalNavigationInvalidatesEditablePane() {
          "compare invalidation fixture should open");
   (void)shell.ConsumePendingRenderInvalidation();
 
-  const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
   const SDL_FRect editable_rect = WorkspaceShellTestAccess::ActiveCompareEditableRect(shell);
-  const SDL_FRect left_rect =
-      microide::workspace::MakeRect(surface.left_x, surface.rows_y,
-                                    surface.gutter_width + surface.left_width,
-                                    static_cast<float>(surface.visible_rows) * surface.line_height);
 
   // A frame painted first: the derived surfaces compare with it.
   SoftwareCanvas canvas{1280, 720};

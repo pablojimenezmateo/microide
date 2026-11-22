@@ -492,14 +492,9 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   if (event.button.button == SDL_BUTTON_MIDDLE) {
     if (const std::optional<std::string> text = operations_.read_primary_selection_text();
         text.has_value()) {
-      const bool was_dirty = viewport->dirty();
-      const std::size_t cursor_before_line = viewport->cursor_line();
       viewport->InsertText(*text);
       operations_.reset_caret_blink();
-      operations_.note_active_editable_edit();
-      if (viewport->dirty() != was_dirty) {
-        operations_.request_frame();
-      }
+      operations_.note_active_editable_edit();  // asks for the frame too
     }
     return true;
   }
@@ -711,8 +706,6 @@ bool EditorMouseCoordinator::FinishTextDrag(bool copy) {
   }
   const editor::TextPosition drop{interaction_state_.text_drag_drop_line,
                                   interaction_state_.text_drag_drop_column};
-  const bool was_dirty = viewport->dirty();
-  const std::size_t cursor_before_line = viewport->cursor_line();
   const auto moved = editor::text_drag_drop::Apply(*viewport, source, drop, copy);
   if (!moved.has_value()) {
     // Dropped onto itself: leave the selection exactly as it was, as VS Code does.
@@ -725,11 +718,7 @@ bool EditorMouseCoordinator::FinishTextDrag(bool copy) {
   viewport->MoveCursorTo(moved->end.line, moved->end.column, /*extend_selection=*/true);
 
   operations_.reset_caret_blink();
-  operations_.note_active_editable_edit();
-  if (viewport->dirty() != was_dirty) {
-    operations_.request_frame();
-  }
-  operations_.request_frame();
+  operations_.note_active_editable_edit();  // asks for the frame too
   return true;
 }
 

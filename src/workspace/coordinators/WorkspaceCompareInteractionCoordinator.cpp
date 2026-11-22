@@ -332,7 +332,6 @@ void CompareInteractionCoordinator::MoveCompareSelection(int delta) {
     return;
   }
 
-  const std::size_t previous_selected_row = compare_tab->selected_row;
   if (!MoveSelectionIndex(CompareTabPresentationRowCount(*compare_tab), &compare_tab->selected_row,
                           delta)) {
     return;
@@ -380,7 +379,6 @@ void CompareInteractionCoordinator::JumpCompareHunk(int delta) {
       }
     }
   }
-  const std::size_t previous_selected_row = compare_tab->selected_row;
   const int hunk_index = compare_tab->model.hunks[static_cast<std::size_t>(target_hunk)].index;
   if (const auto presentation_row = CompareTabPresentationRowForHunk(*compare_tab, hunk_index);
       presentation_row.has_value()) {
@@ -562,7 +560,6 @@ void CompareInteractionCoordinator::MoveMergeSelection(int delta) {
     return;
   }
 
-  const std::size_t previous_selected_hunk = merge_tab->selected_hunk;
   if (!MoveSelectionIndex(merge_tab->conflicts.size(), &merge_tab->selected_hunk, delta)) {
     return;
   }
@@ -587,7 +584,6 @@ void CompareInteractionCoordinator::ApplyMergeChoice(compare::MergeChoice choice
   }
 
   const bool was_dirty = merge_tab->result_viewport.dirty();
-  const std::size_t cursor_before_line = merge_tab->result_viewport.cursor_line();
   const std::size_t selected_hunk =
       std::min(merge_tab->selected_hunk, merge_tab->conflicts.size() - 1);
   auto& conflict = merge_tab->conflicts[selected_hunk];
@@ -672,7 +668,6 @@ void CompareInteractionCoordinator::JumpNextUnresolvedMergeConflict() {
   if (merge_tab == nullptr || merge_tab->conflicts.empty()) {
     return;
   }
-  const std::size_t previous_selected_hunk = merge_tab->selected_hunk;
   const std::size_t start = merge_tab->selected_hunk;
   for (std::size_t offset = 1; offset <= merge_tab->conflicts.size(); ++offset) {
     const std::size_t index = (start + offset) % merge_tab->conflicts.size();

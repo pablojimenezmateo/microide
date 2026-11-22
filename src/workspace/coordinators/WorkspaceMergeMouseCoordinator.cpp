@@ -236,7 +236,6 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   }
 
   if (Contains(interaction.result.rect, event.button.x, event.button.y)) {
-    const std::size_t previous_selected_hunk = merge_tab->selected_hunk;
     const std::size_t row = ClampTextGridLineAtY(interaction.result.text, event.button.y);
     const std::size_t visual_column = TextGridVisualColumnAtX(interaction.result.text, event.button.x);
     MoveMergeResultCursorToHit(merge_tab->result_viewport, row, visual_column,
@@ -253,14 +252,9 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     if (event.button.button == SDL_BUTTON_MIDDLE) {
       if (const std::optional<std::string> text = operations_.read_primary_selection_text();
           text.has_value()) {
-        const bool was_dirty = merge_tab->result_viewport.dirty();
-        const std::size_t cursor_before_line = merge_tab->result_viewport.cursor_line();
         merge_tab->result_viewport.InsertText(*text);
         operations_.update_merge_tracking_after_viewport_edit(*merge_tab);
-        operations_.note_active_editable_edit();
-        if (merge_tab->result_viewport.dirty() != was_dirty) {
-          operations_.request_frame();
-        }
+        operations_.note_active_editable_edit();  // asks for the frame too
       }
       return true;
     }
@@ -268,11 +262,7 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     // follows keeps that granularity -- as on the editor and compare surfaces.
     selection_granularity::ApplyClick(interaction_state_, merge_tab->result_viewport,
                                       event.button.clicks);
-    if (merge_tab->selected_hunk != previous_selected_hunk) {
-      operations_.request_frame();
-    } else {
-      operations_.request_frame();
-    }
+    operations_.request_frame();
     interaction_state_.mouse_selecting = true;
     return true;
   }
@@ -490,7 +480,6 @@ bool MergeMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
                             static_cast<float>(event.motion.x),
                             static_cast<float>(event.motion.y));
   const std::size_t row = ClampTextGridLineAtY(interaction.result.text, event.motion.y);
-  const std::size_t previous_selected_hunk = merge_tab->selected_hunk;
   const std::size_t visual_column = TextGridVisualColumnAtX(interaction.result.text, pointer_x);
   if (selection_granularity::DragIsGranular(interaction_state_)) {
     MoveMergeResultCursorToHit(merge_tab->result_viewport, row, visual_column, false);
@@ -508,11 +497,7 @@ bool MergeMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
   merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
   merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
   operations_.reset_caret_blink();
-  if (merge_tab->selected_hunk != previous_selected_hunk) {
-    operations_.request_frame();
-  } else {
-    operations_.request_frame();
-  }
+  operations_.request_frame();
   state_.surface.focus = FocusTarget::Editor;
   return true;
 }
