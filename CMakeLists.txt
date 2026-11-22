@@ -861,6 +861,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/render/DebugPaneRender.cpp
   src/workspace/render/GitSidebarPaint.cpp
   src/workspace/render/TreeSidebarPaint.cpp
+  src/workspace/render/SidebarModeRowPaint.cpp
   src/workspace/render/DiffDividerGeometry.cpp
   src/workspace/debug/DebugPaneService.cpp
   src/workspace/debug/DebugPaneMouseCoordinator.cpp

@@ -22,8 +22,6 @@ class DiffTabCoordinator {
     std::function<void()> reveal_active_merge_selection;
     std::function<void()> ensure_active_tab_visible;
     std::function<void(bool)> dismiss_overlay;
-    // The tab strip's own rect: which tab is in front is not in its unit yet.
-    std::function<void()> request_tab_strip_redraw;
     // A frame owed: a diff's rows, header and breadcrumb derive their damage
     // (RequestPreparedFrame); a request names no rect.
     std::function<void()> request_frame;

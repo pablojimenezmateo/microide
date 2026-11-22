@@ -10,6 +10,7 @@
 #include "workspace/render/CompareRowUnits.h"
 #include "workspace/render/EditorRowUnits.h"
 #include "workspace/render/GitSidebarPaint.h"
+#include "workspace/render/SidebarModeRowPaint.h"
 #include "workspace/render/TreeSidebarPaint.h"
 #include "workspace/render/HoverCardLimits.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
@@ -2094,6 +2095,24 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       workflow.body_visible_rows = head.body_visible_rows;
     }
   }
+  // The sidebar's mode tab row, the same way, whichever view is up: each tab and
+  // the overflow button is a unit, so the tab of the view on screen, a hovered tab
+  // and the overflow button lit under its open menu repaint whoever changed them.
+  PrepareSidebarModeRowFrame(
+      frame_state_,
+      SidebarModeRowInputs{
+          .renderer = renderer,
+          .visible = sidebar_vm.visible,
+          .row = sidebar_vm.visible ? SidebarModeRow(layout.sidebar) : SidebarModeRowLayout{},
+          .active_view_id = sidebar_vm.project_state->sidebar.view_id,
+          .overflow_menu_open = context_.menu_state.menu_bar_open &&
+                                context_.menu_state.active_menu_id == MenuId::SidebarMode &&
+                                context_.menu_state.active_menu_anchor_rect.has_value(),
+          .theme = &theme_,
+          .text_renderer = &text_renderer_,
+          .pointer_over = [this](const SDL_FRect& rect) { return PointerOver(rect); },
+          .damage = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); },
+      });
   // The file tree, the same way: its Collapse and Refresh buttons, each visible row
   // and its scrollbar are units laid out here from the tree's entries, so a row
   // repaints whoever changed what it shows -- a watcher's batch, a git status

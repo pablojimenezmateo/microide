@@ -14,6 +14,7 @@
 #include "workspace/git/CommitWorkflowState.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/render/GitSidebarPaint.h"
+#include "workspace/render/SidebarModeRowPaint.h"
 #include "workspace/render/TreeSidebarPaint.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/git/WorkspaceGitSidebarPresentation.h"
@@ -102,51 +103,9 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       DrawScrollbar(renderer, theme_, geometry->track, geometry->thumb, active);
     }
   };
-  // Mode-switch tab row (Project / Search / Source Control + optional overflow), replacing the
-  // old dropdown. Single-click switches view; the row collapses to icon-only when narrow.
-  const std::string_view active_view_id = project_state.sidebar.view_id;
-  const SidebarModeRowLayout mode_row = SidebarModeRow(layout.sidebar);
-  const bool sidebar_mode_open =
-      context_.menu_state.menu_bar_open && context_.menu_state.active_menu_id == MenuId::SidebarMode &&
-      context_.menu_state.active_menu_anchor_rect.has_value();
-  const auto draw_mode_glyph = [&](SidebarMode mode, const SDL_FRect& icon_rect, SDL_Color color) {
-    switch (mode) {
-      case SidebarMode::Tree: DrawFolderGlyph(renderer, icon_rect, color); break;
-      case SidebarMode::Search: DrawSearchGlyph(renderer, icon_rect, color); break;
-      case SidebarMode::Git: DrawBranchGlyph(renderer, icon_rect, color); break;
-      default: break;
-    }
-  };
-  for (int i = 0; i < mode_row.tab_count; ++i) {
-    const SidebarModeTab& tab = mode_row.tabs[static_cast<std::size_t>(i)];
-    const SidebarViewSpec* spec = FindBuiltinSidebarView(tab.mode);
-    const std::string_view tab_label =
-        mode_row.icon_only || spec == nullptr ? std::string_view{} : spec->label;
-    DrawModeTab(text_renderer_, renderer, theme_, tab.rect,
-                PointerOver(tab.rect),
-                tab.id == active_view_id, tab_label,
-                [&](const SDL_FRect& icon_rect, SDL_Color color) {
-                  draw_mode_glyph(tab.mode, icon_rect, color);
-                });
-  }
-  if (mode_row.has_overflow) {
-    const bool hovered =
-        PointerOver(mode_row.overflow_rect);
-    // Lit whenever the current view lives behind the overflow rather than in a tab
-    // (Problems / Tests / Outline / any plugin view), so the rail always shows where
-    // you are. Testing "is it a builtin view" instead of "is it one of the drawn
-    // tabs" left the row completely unlit in the three builtin overflow views.
-    const bool active_view_has_tab =
-        std::any_of(mode_row.tabs.begin(), mode_row.tabs.begin() + mode_row.tab_count,
-                    [&](const SidebarModeTab& tab) { return tab.id == active_view_id; });
-    const bool active = sidebar_mode_open || !active_view_has_tab;
-    const ButtonColors colors = ResolveButtonColors(
-        theme_, ButtonTone::Neutral,
-        ButtonVisualState{.enabled = true, .hovered = hovered, .active = active});
-    DrawFilledRect(renderer, mode_row.overflow_rect, colors.fill);
-    DrawRect(renderer, mode_row.overflow_rect, colors.border);
-    DrawEllipsisGlyph(renderer, mode_row.overflow_rect, colors.text);
-  }
+  // The mode tab row (Project / Search / Source Control and the overflow button),
+  // as frame prep laid it out (PrepareSidebarModeRowFrame).
+  PaintSidebarModeRow(renderer, frame_state_, theme_, text_renderer_);
 
   const SidebarMode sidebar_mode = sidebar_vm.mode;
   if (sidebar_mode == SidebarMode::Search) {

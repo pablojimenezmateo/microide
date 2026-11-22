@@ -917,6 +917,7 @@ RuleResult CheckDerivedSurfacePaintReadsOnlyItsSnapshot(const std::filesystem::p
       {"src/workspace/render/DebugPaneRender.cpp", "void PaintDebugPaneBody("},
       {"src/workspace/render/GitSidebarPaint.cpp", "void PaintGitPanel("},
       {"src/workspace/render/TreeSidebarPaint.cpp", "void PaintTreeSidebar("},
+      {"src/workspace/render/SidebarModeRowPaint.cpp", "void PaintSidebarModeRow("},
       {"src/workspace/render/WorkspaceShellRenderFrame.cpp", "void WorkspaceShell::PaintEditorPane("},
       {"src/workspace/render/WorkspaceShellRenderCompare.cpp", "void WorkspaceShell::RenderCompareSurface("},
       {"src/workspace/render/WorkspaceShellRenderCompare.cpp", "void WorkspaceShell::RenderCompareScrollbars("},

@@ -661,8 +661,12 @@ void TestWorkspaceShellTreeWheelRepaintsSidebarWhenCursorChanges() {
 
   Expect(WorkspaceShellTestAccess::SidebarScrollRow(shell) > scroll_before,
          "the wheel scrolled the tree");
-  Expect(result.handled && (result.redraw.full || AnyRectCovers(result.redraw.rects, sidebar)),
-         "scrolling the tree repaints the whole sidebar, cursor change or not");
+  // The tree's rows are derived units: its scroll owes a frame, which repaints the
+  // rows and the thumb (QaFlowRegression/TheFileTreeFollowsItsScrollAndARefresh
+  // checks the pixels). What must not happen is the cursor's re-present standing
+  // in for it.
+  Expect(result.handled && (result.redraw.full || result.redraw.frame || AnyRectCovers(result.redraw.rects, sidebar)),
+         "scrolling the tree asks for its frame, cursor change or not");
 }
 
 // The fallback redraw answers to what the HANDLER requested, not to whatever is
@@ -700,16 +704,17 @@ void TestWorkspaceShellTreeRepaintsWhenUnrelatedDamageIsQueued() {
     const WorkspaceShell::EventResult result = shell.HandleEvent(event);
     Expect(WorkspaceShellTestAccess::SidebarScrollRow(shell) > scroll_before,
            "the wheel scrolled the tree");
-    Expect(result.handled && (result.redraw.full || AnyRectCovers(result.redraw.rects, sidebar)),
-           "a wheel over the tree repaints the sidebar though other damage was queued");
+    // A frame, for the tree's derived rows (or its rect, for a view that is not).
+    Expect(result.handled && (result.redraw.full || result.redraw.frame || AnyRectCovers(result.redraw.rects, sidebar)),
+           "a wheel over the tree asks for its repaint though other damage was queued");
   }
   {
     WorkspaceShellTestAccess::SetFocusSidebar(shell);
     (void)WorkspaceShellTestAccess::ConsumePendingRedraw(shell);
     WorkspaceShellTestAccess::QueueUnrelatedDamage(shell, unrelated);
     const WorkspaceShell::EventResult result = SendKeyDownResult(shell, SDLK_DOWN, SDL_KMOD_NONE);
-    Expect(result.handled && (result.redraw.full || AnyRectCovers(result.redraw.rects, sidebar)),
-           "a key the tree handles repaints the sidebar though other damage was queued");
+    Expect(result.handled && (result.redraw.full || result.redraw.frame || AnyRectCovers(result.redraw.rects, sidebar)),
+           "a key the tree handles asks for its repaint though other damage was queued");
   }
 }
 

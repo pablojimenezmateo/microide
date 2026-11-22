@@ -188,10 +188,8 @@ void DiffTabCoordinator::ActivateCompareTab(std::size_t index, bool dismiss_over
   } else {
     state_.surface.focus = FocusTarget::Editor;
   }
-  // The pane's content and its breadcrumb are derived (the tab in front is in
-  // their keys): a frame. The strip is not yet -- its unit keys the tabs' titles
-  // and dirty marks, not which one is in front -- so it keeps its rect.
-  operations_.request_tab_strip_redraw();
+  // The pane's content, its breadcrumb and its tab strip are derived (the tab in
+  // front is in each one's key): a frame.
   operations_.request_frame();
 }
 
@@ -200,9 +198,7 @@ void DiffTabCoordinator::ActivateMergeTab(std::size_t index) {
   operations_.reveal_active_merge_selection();
   operations_.ensure_active_tab_visible();
   state_.surface.focus = FocusTarget::Editor;
-  // As ActivateCompareTab: the strip keeps its rect, the rest is a frame.
-  operations_.request_tab_strip_redraw();
-  operations_.request_frame();
+  operations_.request_frame();  // as ActivateCompareTab
 }
 
 void DiffTabCoordinator::RefreshExistingCompareTab(std::size_t index,

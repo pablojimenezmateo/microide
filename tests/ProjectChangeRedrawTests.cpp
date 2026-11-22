@@ -54,6 +54,9 @@ struct Fixture {
   // Every rect the change asked for, across the wake and the frames it led to.
   std::vector<SDL_FRect> painted;
   bool painted_full = false;
+  // A frame owed with no rect named: a derived surface (the file tree) repaints
+  // what changed in it when the frame is prepared.
+  bool painted_frame = false;
 
   explicit Fixture(bool sidebar_visible) {
     EnsureDummySdlVideoInitialized();
@@ -81,6 +84,7 @@ struct Fixture {
     Settle();
     painted.clear();
     painted_full = false;
+    painted_frame = false;
   }
 
   // A blinking caret would make two paints of one state differ by when they ran.
@@ -89,6 +93,7 @@ struct Fixture {
   void Paint(const RenderInvalidation& redraw) {
     PinCaret();
     painted_full = painted_full || redraw.full;
+    painted_frame = painted_frame || redraw.frame;
     painted.insert(painted.end(), redraw.rects.begin(), redraw.rects.end());
     PaintInvalidation(shell, retained, kWidth, kHeight, redraw);
   }
@@ -198,7 +203,10 @@ void TestAWriteToAnUnopenedFileRepaintsTheSidebarNotTheEditor() {
 
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(fixture.shell);
   Expect(!fixture.painted_full, "a write to a file nobody has open must not repaint the window");
-  Expect(fixture.PaintedAny(layout.sidebar), "the tree lists files, so the sidebar repaints");
+  // The tree's rows are derived units: the batch owes them a frame (or names the
+  // sidebar, for a view that is not derived).
+  Expect(fixture.painted_frame || fixture.PaintedAny(layout.sidebar),
+         "the tree lists files, so the sidebar gets its repaint");
   Expect(!AnyRectIntersects(fixture.painted, layout.editor_surface),
          "the editor shows none of what changed, so it does not re-rasterize");
   fixture.ExpectRetainedMatchesFull(
@@ -457,7 +465,9 @@ void TestATreeShapeChangeRepaintsTheEditorColumnNotTheWindow() {
 
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(fixture.shell);
   Expect(!fixture.painted_full, "a tree rescan must not repaint the window");
-  Expect(fixture.PaintedAny(layout.sidebar) && fixture.PaintedAny(layout.editor_surface),
+  // The tree's rows are derived units, so the rescan owes them a frame (or names the
+  // sidebar, for a view that is not derived); the editor column is named.
+  Expect((fixture.painted_frame || fixture.PaintedAny(layout.sidebar)) && fixture.PaintedAny(layout.editor_surface),
          "a rescan repaints the tree and the editor column, where any buffer may have reloaded");
   fixture.ExpectRetainedMatchesFull(
       "a rescan's rects should leave the window identical to a full repaint");

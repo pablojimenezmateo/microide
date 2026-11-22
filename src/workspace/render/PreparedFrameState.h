@@ -106,6 +106,15 @@ struct GitPanelRowPaint {
   bool base_button_hovered = false;
   bool base_menu_open = false;
 };
+// A tab of the sidebar's mode row. `label` is the view's static name, empty when
+// the row shows icons only.
+struct SidebarModeTabPaint {
+  SDL_FRect rect{};
+  SidebarMode mode = SidebarMode::None;
+  std::string_view label;
+  bool hovered = false;
+  bool active = false;
+};
 // The file tree's header buttons and rows, as PrepareTreeSidebarFrame lays them out.
 struct TreeSidebarButtonPaint {
   SDL_FRect rect{};
@@ -462,6 +471,18 @@ struct PreparedFrameState {
   };
   DebugPaneBodyPaint debug_pane;
 
+  // ---- the sidebar's mode tab row (derived-damage 4.1) ----
+  // Laid out by PrepareSidebarModeRowFrame; PaintSidebarModeRow draws only this.
+  struct SidebarModeRowPaint {
+    bool visible = false;
+    std::array<SidebarModeTabPaint, 3> tabs{};
+    int tab_count = 0;
+    bool has_overflow = false;
+    SDL_FRect overflow_rect{};
+    bool overflow_hovered = false;
+    bool overflow_active = false;  // its menu is open, or the view up has no tab
+  };
+  SidebarModeRowPaint sidebar_mode_row;
   // ---- the sidebar's file tree (derived-damage 4.1) ----
   // Laid out by PrepareTreeSidebarFrame; PaintTreeSidebar draws only this.
   struct TreeSidebarPaint {

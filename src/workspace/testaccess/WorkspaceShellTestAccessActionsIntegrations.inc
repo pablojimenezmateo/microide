@@ -542,6 +542,10 @@
     shell.ShowSearchSidebar(std::move(query), temporary);
   }
   static void ShowTreeSidebar(WorkspaceShell& shell) { shell.ShowTreeSidebar(); }
+  // How many units with a rect a derived surface laid out for the last prepared frame.
+  static std::size_t DerivedUnitCount(const WorkspaceShell& shell, DerivedSurface surface) {
+    return shell.frame_state_.derived_damage.LaidOutUnitCount(surface);
+  }
   static void ShowProblemsSidebar(WorkspaceShell& shell) { shell.ShowProblemsSidebar(); }
   static void ShowTestsSidebar(WorkspaceShell& shell) { shell.ShowTestsSidebar(); }
   static void ShowGitSidebar(WorkspaceShell& shell) { shell.ShowGitSidebar(); }

@@ -43,6 +43,7 @@
 #include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/lsp/WorkspaceLspClient.h"
 #include "workspace/render/EditorRowUnits.h"
+#include "workspace/render/SidebarModeRowPaint.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 namespace microide::tests {
@@ -8270,7 +8271,115 @@ void TestTheGitViewsSelectionAndScrollRepaintTheirRows() {
 
 }  // namespace
 
+// ---- derived-damage 4.1: the sidebar's mode row, and "the sidebar changed" -------
+namespace {
+
+// The sidebar's mode tab row is derived units: the tab of the view on screen, a
+// hovered tab, and the overflow button, which lights while its menu is open --
+// something nothing compared before; it was repainted by whoever asked for the
+// whole sidebar.
+void TestTheSidebarsModeRowRepaintsWhatChangedWithNoDamageRequest() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  TreeFixture fixture;
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  Expect(TestAccess::DerivedUnitCount(fixture.shell, workspace::DerivedSurface::SidebarModeRow) >= 3,
+         "the mode row lays its tabs out as units");
+  // The view changed with no damage request (a control command's path): the old
+  // view's tab dims, the new one's lights, and the view below repaints.
+  TestAccess::ShowSearchSidebar(fixture.shell, "", false);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  fixture.ExpectFresh(NothingAnnounced(), "the sidebar switched to Search");
+  TestAccess::ShowTreeSidebar(fixture.shell);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  fixture.ExpectFresh(NothingAnnounced(), "the sidebar switched back to the tree");
+  // The pointer onto a tab and off it, through the real motion path.
+  const SDL_FRect sidebar = TestAccess::CurrentLayout(fixture.shell).sidebar;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(sidebar.x + 30.0f, sidebar.y + 12.0f)}),
+                      "the pointer onto a mode tab");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(900.0f, 400.0f)}), "the pointer off the mode row");
+  // A view with no tab of its own (Problems lives behind the overflow): the
+  // overflow button lights instead of a tab.
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "sidebar-show problems"), "the Problems view should show");
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  fixture.ExpectFresh(NothingAnnounced(), "the sidebar switched to a view behind the overflow");
+  TestAccess::ShowTreeSidebar(fixture.shell);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  fixture.ExpectFresh(NothingAnnounced(), "and back to the tree");
+}
+
+// "The sidebar changed" owes a frame, not the sidebar's rect, while the view on
+// screen derives all it shows (SidebarViewIsDerived): prep repaints the rows that
+// changed. A view named there must lay units out on its surface -- the predicate
+// cannot claim a view that is not derived -- and a view that is not named keeps
+// its rect.
+void TestADerivedSidebarViewCommitsItsSurfacesUnits() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  using workspace::SidebarMode;
+  for (const SidebarMode mode : {SidebarMode::Tree, SidebarMode::Search, SidebarMode::Problems, SidebarMode::Git,
+                                 SidebarMode::Tests, SidebarMode::Plugin, SidebarMode::Outline}) {
+    if (!workspace::SidebarViewIsDerived(mode)) {
+      Expect(workspace::SidebarViewSurface(mode) == workspace::DerivedSurface::Count,
+             "a view that is not derived names no surface");
+      continue;
+    }
+    TreeFixture fixture;
+    // Show the view: every derived view must be one this test knows how to show.
+    switch (mode) {
+      case SidebarMode::Tree:
+        TestAccess::ShowTreeSidebar(fixture.shell);
+        break;
+      case SidebarMode::Git:
+        TestAccess::ShowGitSidebar(fixture.shell);
+        break;
+      default:
+        Expect(false, "SidebarViewIsDerived names a view this test cannot show: teach it how");
+        continue;
+    }
+    fixture.Paint();
+    Expect(TestAccess::DerivedUnitCount(fixture.shell, workspace::SidebarViewSurface(mode)) > 0,
+           "a sidebar view said to be derived lays units out on its surface");
+    Expect(TestAccess::DerivedUnitCount(fixture.shell, workspace::DerivedSurface::SidebarModeRow) > 0,
+           "and its mode row does");
+  }
+
+  // The tree: a key that moves its selection asks for a frame and names no rect in
+  // the sidebar, and the frame repaints two rows.
+  TreeFixture fixture;
+  TestAccess::SetFocusSidebar(fixture.shell);
+  fixture.Paint();
+  const SDL_FRect sidebar = TestAccess::CurrentLayout(fixture.shell).sidebar;
+  const workspace::RenderInvalidation step = DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN)});
+  Expect(!step.full && step.frame, "a tree key asks for a frame");
+  for (const SDL_FRect& rect : step.rects) {
+    Expect(!(rect.w >= sidebar.w - 1.0f && rect.h >= sidebar.h - 1.0f),
+           "a tree key names no rect the size of the sidebar");
+  }
+  bool full = false;
+  const float moved = fixture.SidebarShare(step, &full);
+  Expect(!full && moved > 0.0f && moved < 0.15f,
+         "a tree key repaints the rows its selection moved between: " + std::to_string(moved) + " of the sidebar");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN)}), "another tree key");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RIGHT)}), "a tree key opening a folder");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_LEFT)}), "a tree key closing it");
+
+  // A view that is not derived keeps its rect: Search.
+  TestAccess::ShowSearchSidebar(fixture.shell, "", false);
+  fixture.Paint();
+  const workspace::RenderInvalidation in_search = DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN)});
+  fixture.ExpectFresh(in_search, "a key in the Search view");
+}
+
+}  // namespace
+
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "QaFlowRegression/TheSidebarsModeRowRepaintsWhatChangedWithNoDamageRequest",
+          TestTheSidebarsModeRowRepaintsWhatChangedWithNoDamageRequest);
+  AddTest(tests, "QaFlowRegression/ADerivedSidebarViewCommitsItsSurfacesUnits",
+          TestADerivedSidebarViewCommitsItsSurfacesUnits);
   AddTest(tests, "QaFlowRegression/TheFileTreesRowsRepaintWhatChangedWithNoDamageRequest",
           TestTheFileTreesRowsRepaintWhatChangedWithNoDamageRequest);
   AddTest(tests, "QaFlowRegression/TheFileTreeFollowsItsScrollAndARefresh", TestTheFileTreeFollowsItsScrollAndARefresh);

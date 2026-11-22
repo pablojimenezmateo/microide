@@ -44,6 +44,8 @@ enum class DerivedSurface : std::uint8_t {
   GitPanel,
   // The sidebar's file tree: its header buttons, visible rows and scrollbar.
   SidebarTree,
+  // The sidebar's mode tab row, shared by every sidebar view.
+  SidebarModeRow,
   // The window's chrome a frame decides as a whole: its regions, the caret, the
   // floating cards and popups (each a unit at a fixed position; an absent one
   // keeps its position with an empty rect).
@@ -127,6 +129,14 @@ class DerivedDamage {
   // bounding rect would be most of the window. DirtyRegionPolicy still merges or
   // promotes the frame's clips as a whole.
   enum class Coalesce { Bounding, Apart };
+
+  // How many units with a rect a surface laid out for the frame last prepared:
+  // for tests that a surface said to be derived is.
+  std::size_t LaidOutUnitCount(DerivedSurface surface) const {
+    const std::vector<Unit>& painted = surfaces_[static_cast<std::size_t>(surface)].painted;
+    return static_cast<std::size_t>(
+        std::count_if(painted.begin(), painted.end(), [](const Unit& unit) { return unit.rect.w > 0.0f && unit.rect.h > 0.0f; }));
+  }
 
   template <typename Damage>
   void Commit(DerivedSurface surface, Damage&& damage, Coalesce coalesce = Coalesce::Bounding) {

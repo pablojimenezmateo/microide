@@ -1,3 +1,4 @@
+#include "workspace/render/SidebarModeRowPaint.h"
 #include "workspace/ProjectRootPresence.h"
 #include "workspace/shell/WorkspaceShell.h"
 
@@ -317,6 +318,13 @@ void WorkspaceShell::RequestSidebarRedraw() {
     return;
   }
   if (context_.current_project_state.sidebar.visible) {
+    // A view whose every piece derives its damage (SidebarViewIsDerived: its mode
+    // row and its own surface) owes a frame: prep repaints the rows, buttons and
+    // tabs that changed, where the rect repainted the sidebar for any of them.
+    if (SidebarViewIsDerived(ActiveSidebarMode())) {
+      RequestPreparedFrame();
+      return;
+    }
     RequestRedrawRect(layout->sidebar);
     return;
   }
@@ -474,9 +482,10 @@ void WorkspaceShell::RequestActiveTabRedraw(bool include_tree_sidebar) {
   RequestBreadcrumbRedraw();
   RequestTabStripRedraw();
   RequestEditorSurfaceRedraw();
-  if (include_tree_sidebar && context_.current_project_state.sidebar.visible && ActiveSidebarMode() == SidebarMode::Tree) {
-    RequestSidebarRedraw();
-  }
+  // The tree's row for the activated tab's file is a derived unit: selecting it
+  // repaints it with the frame these requests already owe. (The parameter asked
+  // for the sidebar's rect; it is unused and goes with its callers' arguments.)
+  (void)include_tree_sidebar;
 }
 
 void WorkspaceShell::RequestActiveEditableChangeRedraw(const std::vector<std::string>& before_lines,

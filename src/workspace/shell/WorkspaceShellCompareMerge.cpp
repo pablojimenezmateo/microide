@@ -28,7 +28,6 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
           .reveal_active_merge_selection = [this]() { RevealActiveMergeSelection(); },
           .ensure_active_tab_visible = [this]() { tab_strip_chrome_.EnsureActiveTabVisible(); },
           .dismiss_overlay = [this](bool restore_focus) { DismissOverlay(restore_focus); },
-          .request_tab_strip_redraw = [this]() { RequestTabStripRedraw(); },
           .request_frame = [this]() { RequestPreparedFrame(); },
           .build_compare_tab_entry =
               [this](const std::filesystem::path& path,
