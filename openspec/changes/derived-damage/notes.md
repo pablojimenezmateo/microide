@@ -203,3 +203,23 @@ menu_hover_paint                       89.042    89.284   0.3      172      172
 
 Verdict: within budget (no p50 > +5%, allocations identical). Still to come in 4.1's
 sidebar part: the git list's rows, then the file tree's rows.
+
+## Stage 2.2, step 2: syntax colours in the row key (2026-11-22)
+
+Each row folds its line's tokens; `TextViewport::SettleHighlightAfterLastEdit` (frame prep) makes
+the lines below an edit current again when the edit kept the line count and its carried syntax
+state, so the rows below keep their keys and nothing is retokenized for them. A/B base 9a053706a
+vs head (both steps), same method:
+
+```
+scenario                         base p50  head p50    d%  alloc b  alloc h
+editor_typing_paint               175.224   174.598  -0.4     1159     1159
+typing_small_file                   2.692     2.691  -0.0     98.5     98.5
+typing_large_file                   3.304     3.302  -0.1    103.5    103.5
+scroll_large_file                  61.559    61.555  -0.0      129      129
+editor_indent_guides_paint        114.441   115.079   0.6    425.5    425.5
+editor_render_whitespace_paint    128.396   129.073   0.5    526.5    526.5
+```
+
+Verdict: within budget. Next (2.2 remainder / 2.4): the differential property test with damage
+taken from the row keys alone, then retire the editor's hand-written row damage.

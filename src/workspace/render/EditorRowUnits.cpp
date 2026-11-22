@@ -63,6 +63,10 @@ void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uin
   const std::size_t visual_count = viewport.visual_line_count();
   const std::size_t line_count = viewport.line_count();
   const editor::TextBuffer& lines = viewport.lines();
+  // An edit that left its carried syntax state alone leaves the lines below it
+  // highlighting as before: settled, their tokens are current, and the rows
+  // below the edit keep their keys.
+  viewport.SettleHighlightAfterLastEdit();
   for (std::size_t row = 0; row < metrics.visible_rows; ++row) {
     const std::size_t visual = scroll + row;
     if (visual >= visual_count) {
@@ -80,6 +84,13 @@ void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uin
     key = Mix(key, text.size());
     key = text.size() <= kEditorRowKeyMaxHashedBytes ? util::Fnv1aBytes(key, text)
                                                      : Mix(key, viewport.content_revision());
+    // The row's syntax colours. A line whose tokens are not current is tokenized
+    // here, which the row's repaint would do anyway; a settled edit leaves that
+    // to its own lines.
+    const std::vector<editor::SyntaxTokenKind>& tokens = viewport.HighlightedLineTokens(meta.line_index);
+    key = Mix(key, tokens.size());
+    key = util::Fnv1aBytes(key, std::string_view(reinterpret_cast<const char*>(tokens.data()),
+                                                 tokens.size() * sizeof(editor::SyntaxTokenKind)));
     // Line numbers right-align to the widest one: a row's gutter text moves when
     // the document gains a digit, which the gutter width (in the pane key) tracks.
     if (meta.visual_start == 0 && inputs.folds != nullptr) {

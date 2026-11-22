@@ -1404,7 +1404,12 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
     if (last < line_highlight_states_valid_through_ && last < line_highlight_states_.size() &&
         highlight_state_content_revision_ + 1 == document_->content_revision &&
         highlight_state_syntax_revision_ == document_->syntax_revision) {
-      edit_carry_before_ = EditCarry{.line = last, .before = line_highlight_states_[last]};
+      edit_carry_before_ = EditCarry{.first_line = safe_start,
+                                     .line = last,
+                                     .before = line_highlight_states_[last],
+                                     .states_valid_through_before = line_highlight_states_valid_through_,
+                                     .checkpoints_valid_through_before = highlight_checkpoints_valid_through_,
+                                     .content_revision = document_->content_revision};
     }
   }
   util::AddPerformanceCounter(util::PerfCounterId::EditorInvalidateDerivedCachesCalls);

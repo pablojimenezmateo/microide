@@ -2650,6 +2650,22 @@ void TestEditorRowsRepaintWhatChangedWithNoDamageRequest() {
   fixture.ExpectFresh(nothing_announced(), "a diagnostic published with no damage request");
 }
 
+// derived-damage 2.2: a row's syntax colours are in its key. A block comment
+// opened above rows recolours every row below it, with no damage request and no
+// change to their text; the next partial frame shows the new colours, and a
+// later edit that keeps the carried state repaints its own row only.
+void TestEditorRowsRecolourWhenACommentOpensAboveThem() {
+  FlowFixture fixture("rows.cpp", "int a = 1;\nint b = 2;\nint c = 3;\nint d = 4;\nint e = 5;\n");
+  editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  viewport.MoveCursorTo(1, 0);
+  viewport.InsertText("/*");
+  workspace::RenderInvalidation nothing;
+  nothing.rects.push_back(SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f});
+  fixture.ExpectFresh(nothing, "a block comment opened with no damage request");
+}
+
 // derived-damage 3.1 / clip-discipline stage 3: the bottom panel's header is a
 // derived surface. A bell in a background terminal marks its tab whoever set it
 // -- here state changed with no damage request at all -- and the next partial
@@ -6259,6 +6275,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestADeeplyIndentedTreeRowKeepsItsLabelInsideTheRow);
   AddTest(tests, "QaFlowRegression/ACaretMoveThatScrollsTheMergePanesRepaintsThemAll",
           TestACaretMoveThatScrollsTheMergePanesRepaintsThemAll);
+  AddTest(tests, "QaFlowRegression/EditorRowsRecolourWhenACommentOpensAboveThem",
+          TestEditorRowsRecolourWhenACommentOpensAboveThem);
   AddTest(tests, "QaFlowRegression/EditorRowsRepaintWhatChangedWithNoDamageRequest",
           TestEditorRowsRepaintWhatChangedWithNoDamageRequest);
   AddTest(tests, "QaFlowRegression/TheStatusBarRepaintsWhatChangedWithNoDamageRequest",

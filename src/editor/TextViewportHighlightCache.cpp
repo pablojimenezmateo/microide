@@ -78,9 +78,70 @@ void TextViewport::StaleHighlightTokensFrom(std::size_t start_line) const {
   // `highlight_cache_order_` must stay 1:1 with the map -- eviction pops its
   // front and erases that key -- which is the reason the entries are not removed
   // from either container here.
+  // An entry current before the edit is marked as staled BY it (the current
+  // generation with kStaleByLastEdit set), so SettleHighlightAfterLastEdit can
+  // tell it from one stale for longer; either is a miss.
   for (auto& [line, entry] : highlight_cache_) {
     if (line >= start_line) {
-      entry.generation = 0;
+      entry.generation = entry.generation == highlight_cache_generation_
+                             ? (highlight_cache_generation_ | kStaleByLastEdit)
+                             : 0;
+    }
+  }
+}
+
+std::optional<std::span<const SyntaxTokenKind>> TextViewport::CurrentHighlightedLineTokens(
+    std::size_t line_index) const {
+  if (document_ == nullptr || line_index >= document_->lines.size()) {
+    return std::nullopt;
+  }
+  if (!syntax_highlighting_enabled()) {
+    return std::span<const SyntaxTokenKind>{};
+  }
+  const HighlightCacheEntry* entry = CurrentHighlightCacheEntry(line_index);
+  if (entry == nullptr) {
+    return std::nullopt;
+  }
+  return std::span<const SyntaxTokenKind>(entry->tokens.data(), entry->tokens.size());
+}
+
+void TextViewport::SettleHighlightAfterLastEdit() const {
+  if (!edit_carry_before_.has_value() || edit_carry_before_->settled || document_ == nullptr) {
+    return;
+  }
+  EditCarry& carry = *edit_carry_before_;
+  carry.settled = true;
+  if (carry.content_revision != document_->content_revision ||
+      highlight_state_syntax_revision_ != document_->syntax_revision) {
+    return;  // edited again, or restyled: the snapshot describes nothing current
+  }
+  if (LastEditChangedCarriedSyntaxState(carry.line)) {
+    return;
+  }
+  // The carry is unchanged and stored, so the frontier reached the edit's last
+  // line: every state past it is the one it was before the edit.
+  const std::size_t states_before = std::min(carry.states_valid_through_before, line_highlight_states_.size());
+  if (line_highlight_states_valid_through_ == carry.line + 1 && states_before > line_highlight_states_valid_through_) {
+    line_highlight_states_valid_through_ = states_before;
+  }
+  // Checkpoint i is the state before line i * interval, the end state of the line
+  // above it: unchanged unless that line is one of the edit's own lines above its
+  // last (whose carry the check above found unchanged). Restored only when no
+  // checkpoint falls inside the edit -- a one-line edit, nearly always.
+  const std::size_t interval = detail::kHighlightCheckpointInterval;
+  const std::size_t first_inside = carry.first_line / interval + 1;  // smallest i with i*interval > first_line
+  const bool checkpoint_inside_edit = first_inside * interval <= carry.line;
+  const std::size_t checkpoints_before =
+      std::min(carry.checkpoints_valid_through_before, highlight_checkpoints_.size());
+  // Every checkpoint below `first_inside` precedes the edit, and none at or past
+  // it is inside it: the whole chain as it was before is current.
+  if (!checkpoint_inside_edit && checkpoints_before > highlight_checkpoints_valid_through_) {
+    highlight_checkpoints_valid_through_ = checkpoints_before;
+  }
+  const std::uint64_t staled_by_edit = highlight_cache_generation_ | kStaleByLastEdit;
+  for (auto& [line, entry] : highlight_cache_) {
+    if (line > carry.line && entry.generation == staled_by_edit) {
+      entry.generation = highlight_cache_generation_;
     }
   }
 }

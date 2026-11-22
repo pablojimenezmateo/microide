@@ -4,14 +4,15 @@
 // fallback): each visible row is a unit whose fingerprint is folded at frame
 // prep from cheap per-row keys -- the line's bytes, the row's place in the
 // wrapped layout, the caret and selections on it, the find, occurrence, bracket
-// and diagnostic marks on it, its fold mark and blame line -- with no
-// tokenizing and no allocation in steady state. The row itself is built only
+// and diagnostic marks on it, its fold mark and blame line, its syntax tokens --
+// with no allocation in steady state, tokenizing only lines whose tokens are
+// stale (which their repaint would do anyway). The row itself is built only
 // when it is damaged, as before.
 //
-// Syntax colours are NOT in the key yet: they depend on the text above a row
-// (a comment opened three lines up recolours this one), and the edit path's own
-// damage still covers them. Until that lands, these units add to the editor's
-// hand-written damage rather than replace it.
+// Syntax colours are in the key: each row folds its line's tokens, read from
+// the viewport's token cache after an edit that kept its carried state has been
+// settled (TextViewport::SettleHighlightAfterLastEdit), so a comment opened above
+// a row recolours -- and repaints -- exactly the rows it recoloured.
 
 #include <SDL3/SDL.h>
 

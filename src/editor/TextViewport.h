@@ -724,6 +724,18 @@ class TextViewport {
   // ranges (e.g. the folding bracket scanner) use this to avoid thrashing the
   // LRU on lines that may be far outside the visible region.
   std::span<const SyntaxTokenKind> HighlightedLineTokensIfCached(std::size_t line_index) const;
+  // The line's tokens when the cache holds them for the current content, else
+  // nothing; never tokenizes. Unlike HighlightedLineTokensIfCached, tells a line
+  // with no tokens from one not cached (a disabled highlighter has none, current).
+  std::optional<std::span<const SyntaxTokenKind>> CurrentHighlightedLineTokens(std::size_t line_index) const;
+  // After a content edit that kept the line count: when the state its last line
+  // carries out is what it was, every line below highlights as before, so their
+  // token entries and stored states -- staled by the edit -- are current again.
+  // Tokenizes the edit's last line (which the repaint does next anyway). Does
+  // nothing once settled, after another edit, or when the carry changed: then
+  // the lines below are retokenized as they are painted. Frame prep calls it, so
+  // a frame's rows read settled tokens.
+  void SettleHighlightAfterLastEdit() const;
   // Appends, sorted, the line indices whose highlight tokens are currently
   // cached (at most kHighlightCacheLimit of them). The fold bracket scan uses
   // this to apply string/comment suppression by walking a cursor through the
@@ -1617,6 +1629,9 @@ class TextViewport {
   // Starts at 1 so a default-constructed entry (generation 0) can never read as
   // current. Bumped by DropHighlightTokenCache; never reset.
   mutable std::uint64_t highlight_cache_generation_ = 1;
+  // Set on an entry's generation by StaleHighlightTokensFrom when the entry was
+  // current: staled by the last edit, and current again if that edit settles.
+  static constexpr std::uint64_t kStaleByLastEdit = std::uint64_t{1} << 63;
   mutable std::deque<std::size_t> highlight_cache_order_;
   mutable std::optional<SyntaxState> initial_highlight_state_;
   mutable std::vector<SyntaxState> line_highlight_states_;
@@ -1636,10 +1651,18 @@ class TextViewport {
   // snapshotted by InvalidateDerivedCaches while it is still in storage (only for
   // an edit that keeps the line count, whose lines keep their indices).
   struct EditCarry {
-    std::size_t line = 0;
+    std::size_t first_line = 0;  // the edit's first line
+    std::size_t line = 0;        // its last
     SyntaxState before;
+    // What SettleHighlightAfterLastEdit restores when the carried state is
+    // unchanged: the validity cursors as they were before the edit dropped them,
+    // for the content revision the edit made.
+    std::size_t states_valid_through_before = 0;
+    std::size_t checkpoints_valid_through_before = 0;
+    std::uint64_t content_revision = 0;
+    bool settled = false;
   };
-  std::optional<EditCarry> edit_carry_before_;
+  mutable std::optional<EditCarry> edit_carry_before_;  // mutable: SettleHighlightAfterLastEdit marks it settled
   // The one writer of line_highlight_states_: stores at or below the frontier,
   // advances it on a contiguous write, drops a write above it.
   void StoreLineHighlightState(std::size_t line, const SyntaxState& state) const;

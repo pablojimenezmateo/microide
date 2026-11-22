@@ -213,6 +213,43 @@ void TestTextViewportStaleSiblingIsReconciledByEveryVerb() {
   }
 }
 
+// derived-damage 2.2: an edit that leaves the syntax state its line carries out
+// unchanged leaves every line below highlighting as before, so settling it makes
+// their token entries current again without retokenizing them -- and an edit
+// that changes the carry (an opened block comment) does not. Settled tokens must
+// equal a fresh tokenization of the same text; that is the whole risk.
+void TestTextViewportSettledEditKeepsTheLinesBelowCurrent() {
+  std::string text;
+  for (int i = 0; i < 80; ++i) {
+    text += "int v" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  TextViewport viewport;
+  viewport.LoadContent(text, "/tmp/settle.cpp");
+  for (std::size_t line = 0; line < 80; ++line) {
+    (void)viewport.HighlightedLineTokens(line);
+  }
+  viewport.MoveCursorTo(40, 4);
+  viewport.InsertText("x");  // same line count, same carry
+  Expect(!viewport.CurrentHighlightedLineTokens(60).has_value(), "the edit stales the lines below it");
+  viewport.SettleHighlightAfterLastEdit();
+  for (const std::size_t line : {41u, 60u, 79u}) {
+    const auto settled = viewport.CurrentHighlightedLineTokens(line);
+    Expect(settled.has_value(), "line " + std::to_string(line) + " is current after settling");
+    TextViewport fresh;
+    fresh.LoadContent(viewport.SerializeText(), "/tmp/settle.cpp");
+    const std::vector<SyntaxTokenKind>& expected = fresh.HighlightedLineTokens(line);
+    Expect(settled.has_value() && std::vector<SyntaxTokenKind>(settled->begin(), settled->end()) == expected,
+           "line " + std::to_string(line) + " settles to what a fresh tokenization gives");
+  }
+  Expect(viewport.CurrentHighlightedLineTokens(40).has_value(), "the edited line itself was tokenized");
+
+  viewport.MoveCursorTo(50, 0);
+  viewport.InsertText("/*");  // the carry changes: the rest of the file is a comment
+  viewport.SettleHighlightAfterLastEdit();
+  Expect(!viewport.CurrentHighlightedLineTokens(60).has_value(),
+         "a changed carry leaves the lines below stale, to be retokenized");
+}
+
 // The per-line token cache stopped ERASING invalidated entries -- it stamps them
 // with a generation and retokenizes into the buffer they already hold, so typing
 // no longer frees and reallocates a screenful of token vectors per keystroke.
@@ -7051,6 +7088,8 @@ AddTest(tests, "TextViewport/UndoThenRedoIsTheIdentityOverRandomHistories",
           TestTextViewportCacheStatsTrackWarmLayoutAndHighlightHits);
   AddTest(tests, "TextViewport/CaretMovementKeepsVisibleLineLayoutCached",
           TestTextViewportCaretMovementKeepsVisibleLineLayoutCached);
+  AddTest(tests, "TextViewport/SettledEditKeepsTheLinesBelowCurrent",
+          TestTextViewportSettledEditKeepsTheLinesBelowCurrent);
   AddTest(tests, "TextViewport/HighlightCheckpointsBoundFarReplay",
           TestTextViewportHighlightCheckpointsBoundFarReplay);
   AddTest(tests, "TextViewport/HighlightCheckpointsPreserveMultilineState",
