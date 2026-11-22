@@ -20,7 +20,7 @@
 - [ ] 2.3 Switch editor paint to draw rows from the records; remove input gathering from `EditorViewRenderer::Render`. Verify: redraw tests and the QA lane green; editor paint tests unchanged.
 - [ ] 2.4 Derive editor-row damage from row fingerprints (caret kept as its own unit); delete the editor `painted_*` comparisons subsumed (occurrences, bracket pair, fold markers, language, decorations, pane content/scroll where covered). Verify: a test changing each former input with no damage request stays fresh; soak editorSurface `outside` sightings tracked for a week drop.
 - [ ] 2.5 Same for compare and merge panes. Verify: compare/merge redraw tests green; `painted_compare_*` fields removed where covered.
-- [ ] 2.6 Perf A/B for stage 2. Verify: within budget, numbers in `notes.md`.
+- [x] 2.6 Perf A/B for stage 2. Verify: within budget, numbers in `notes.md`. (2026-11-23: within budget after a harness fix and a long-line key fix; typing paint -70.8%.)
 
 ## 3. Bottom panel and right pane
 

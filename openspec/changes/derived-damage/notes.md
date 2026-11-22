@@ -223,3 +223,36 @@ editor_render_whitespace_paint    128.396   129.073   0.5    526.5    526.5
 
 Verdict: within budget. Next (2.2 remainder / 2.4): the differential property test with damage
 taken from the row keys alone, then retire the editor's hand-written row damage.
+
+## Stage 2 perf A/B, and what it found (2026-11-23, 2.6)
+
+Base 9a053706a vs head 6edafb798 (stages 2-4 so far: editor, compare and merge rows; frames for
+the editor's own changes; tab strip; file tree; git view; menus), median of 3 interleaved rounds of
+p50 wall, 23 scenarios. 21 within -1.8%..+2.7% with equal or fewer allocations. Two over budget:
+
+- `editor_typing_paint` +25.6%: the perf HARNESS, not the app. `PumpPartialFrame` ignored
+  `RenderInvalidation::frame`, so a keystroke that owes a frame and names no rect painted the
+  whole window (480 full frames at head, 483 partial at base). Fixed in the harness (d8337f66b) to
+  mirror `Application::Render`'s prepared_only path.
+- `editor_soft_wrap_long_line_typing` +62 allocations: real. The row key viewed a >16 KiB line
+  before checking the cap and copied it out of the piece tree once a keystroke. Fixed (b2f4bc46a).
+
+After both, base vs fix, median of 3 interleaved rounds under PAUSE:
+
+```
+scenario                                 base ms    fix ms    wall    alloc b  alloc f
+compare_type_in_wrapped_diff              235.95    230.09   -2.5%     82103    82103
+editor_multi_caret_edit_burst              26.84     26.92   +0.3%     21086    21086
+editor_soft_wrap_long_line_scroll         367.00    369.37   +0.6%       288      288
+editor_soft_wrap_long_line_typing          94.19     94.53   +0.4%       374      374
+editor_split_grid_workout                  67.06     66.93   -0.2%      3731     3256
+editor_typing_paint                       173.45     50.70  -70.8%      1159     1158
+merge_edit_result_then_scroll             209.64    214.49   +2.3%      2488     2488
+scroll_large_file                          61.60     62.39   +1.3%       129      129
+typing_large_file                           3.30      3.35   +1.7%       104      104
+typing_small_file                           2.67      2.70   +1.1%        98       98
+```
+
+The 6edafb798 run's other scenarios (git sidebar, menu hover, compare and merge scrolls, indent
+guides, whitespace, tab drag) were within budget before the harness fix; the fix can only lower a
+frame-only scenario's cost. Verdict: stage 2 within budget; typing paints a row, 71% faster.
