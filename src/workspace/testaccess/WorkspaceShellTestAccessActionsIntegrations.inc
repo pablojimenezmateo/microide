@@ -256,6 +256,10 @@
   static void ClearPaintedPopupRowsForTest(WorkspaceShell& shell) {
     shell.menu_popup_rows_scratch_.clear();
   }
+  // A language-server request going out and its reply landing, as the status
+  // bar's "LSP: Working…" segment sees them.
+  static void BeginTrackedLspRequest(WorkspaceShell& shell) { shell.lsp_service_.BeginTrackedLspRequest(); }
+  static void FinishTrackedLspRequest(WorkspaceShell& shell) { shell.lsp_service_.FinishTrackedLspRequest(); }
   static void OpenTreeContextMenuForPath(WorkspaceShell& shell,
                                          TreeContextTargetKind target,
                                          const std::filesystem::path& path) {

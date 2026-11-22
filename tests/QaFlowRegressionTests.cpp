@@ -8756,12 +8756,63 @@ void TestASubmenuAndAContextMenuRepaintRowByRow() {
   fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)}), "Escape closed the git entry menu");
 }
 
+// A language-server request going out and its reply landing change one thing on
+// screen, the status bar's "LSP: Working…" segment. Each asked for the chrome's
+// rect and the bottom panel's, and the bottom panel's rect while the panel is
+// hidden is the whole window: every completion, hover and signature request
+// repainted the window twice.
+void TestATrackedLspRequestRepaintsItsStatusSegmentNotTheWindow() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("notes.cpp", "int a = 1;\nint b = 2;\n");
+  if (TestAccess::BottomPanelVisible(fixture.shell)) {
+    TestAccess::HideBottomPanel(fixture.shell);
+  }
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "the file in its tab, the bottom panel hidden");
+  const float window = static_cast<float>(fixture.width) * static_cast<float>(fixture.height);
+  const auto step = [&](const std::string& what) {
+    const workspace::RenderInvalidation asked = fixture.shell.ConsumePendingRenderInvalidation();
+    Expect(!asked.full, what + " asks for no full repaint");
+    fixture.PinCaret();
+    const workspace::RenderInvalidation damage =
+        FrameDamage(fixture.shell, fixture.canvas, fixture.width, fixture.height, asked);
+    float covered = damage.full ? window : 0.0f;
+    for (const SDL_FRect& rect : damage.rects) {
+      covered += rect.w * rect.h;
+    }
+    Expect(covered < window * 0.05f,
+           what + " repaints its status segment, not the window: " + std::to_string(covered / window) + " of it");
+    fixture.PinCaret();
+    fixture.shell.Render(fixture.canvas.renderer(), fixture.width, fixture.height);
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+  };
+  SDL_Surface* idle = FullFrame(fixture);
+  TestAccess::BeginTrackedLspRequest(fixture.shell);
+  step("a language-server request going out");
+  SDL_Surface* working = FullFrame(fixture);
+  // Not a vacuous check: the request shows on screen.
+  Expect(DiffSurfaces(idle, working).count > 0, "a request in flight shows in the status bar");
+  SDL_DestroySurface(idle);
+  SDL_DestroySurface(working);
+  TestAccess::FinishTrackedLspRequest(fixture.shell);
+  step("its reply landing");
+  // And each against a full repaint.
+  TestAccess::BeginTrackedLspRequest(fixture.shell);
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "a second request going out");
+  TestAccess::FinishTrackedLspRequest(fixture.shell);
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "its reply landing");
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/AnOpenMenusRowsRepaintWhatChanged", TestAnOpenMenusRowsRepaintWhatChanged);
   AddTest(tests, "QaFlowRegression/AnOpenMenusRowsRepaintAtFractionalScales",
           TestAnOpenMenusRowsRepaintAtFractionalScales);
+  AddTest(tests, "QaFlowRegression/ATrackedLspRequestRepaintsItsStatusSegmentNotTheWindow",
+          TestATrackedLspRequestRepaintsItsStatusSegmentNotTheWindow);
   AddTest(tests, "QaFlowRegression/TheMenuOverflowPopupsRowsRepaintRowByRow",
           TestTheMenuOverflowPopupsRowsRepaintRowByRow);
   AddTest(tests, "QaFlowRegression/ASubmenuAndAContextMenuRepaintRowByRow",

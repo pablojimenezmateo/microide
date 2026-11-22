@@ -441,8 +441,12 @@ void LspService::BeginTrackedLspRequest() {
   // passes for the most recent one.
   lsp.request_started_ticks = SDL_GetTicks();
   lsp.request_timeout_ticks = lsp.request_started_ticks + kLspRequestTimeoutMs;
-  operations_.request_chrome_redraw();
-  operations_.request_bottom_panel_redraw();
+  // The in-flight count shows in one place, the status bar's "LSP: Working…"
+  // segment, and the bar is a derived surface: a frame repaints the segment.
+  // (This asked for the chrome's rect and the bottom panel's -- which, with the
+  // panel hidden, is the whole window: two full repaints for each completion,
+  // hover or signature request.)
+  operations_.request_frame();
 }
 
 void LspService::FinishTrackedLspRequest() {
@@ -455,8 +459,7 @@ void LspService::FinishTrackedLspRequest() {
     lsp.request_started_ticks = 0;
     lsp.request_timeout_ticks = 0;
   }
-  operations_.request_chrome_redraw();
-  operations_.request_bottom_panel_redraw();
+  operations_.request_frame();
 }
 
 void LspService::ExpireTrackedLspRequestIfNeeded() {
@@ -471,8 +474,7 @@ void LspService::ExpireTrackedLspRequestIfNeeded() {
   lsp.request_in_flight_count = 0;
   lsp.request_started_ticks = 0;
   lsp.request_timeout_ticks = 0;
-  operations_.request_chrome_redraw();
-  operations_.request_bottom_panel_redraw();
+  operations_.request_frame();
 }
 
 LspManager& LspService::EnsureProjectLspManager(ProjectWorkspaceState& state) {

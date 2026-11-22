@@ -689,8 +689,6 @@ void WorkspaceShell::Bootstrapper::WireLsp() const {
           .active_editable_viewport = [shell]() { return shell->ActiveEditableViewport(); },
           .refresh_problems_sidebar = [shell]() { shell->RefreshProblemsSidebar(); },
           .request_frame = [shell]() { shell->RequestPreparedFrame(); },
-          .request_chrome_redraw = [shell]() { shell->RequestChromeRedraw(); },
-          .request_bottom_panel_redraw = [shell]() { shell->RequestBottomPanelRedraw(); },
           .apply_server_workspace_edit =
               [shell](const LspClient& client, LspClient::WorkspaceEdit edit) {
                 return shell->workspace_edit_service_.ApplyServerEdit(client, std::move(edit));

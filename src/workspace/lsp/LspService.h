@@ -41,8 +41,6 @@ class LspService {
     // A frame: what a publish changes -- diagnostics, decorations, occurrence
     // highlights -- the editor and diff rows key on, so they repaint what moved.
     std::function<void()> request_frame;
-    std::function<void()> request_chrome_redraw;
-    std::function<void()> request_bottom_panel_redraw;
     // Apply a server-initiated workspace/applyEdit (WorkspaceEditService::
     // ApplyServerEdit); returns whether it was accepted. Null: refused.
     std::function<bool(const LspClient&, LspClient::WorkspaceEdit)> apply_server_workspace_edit;
