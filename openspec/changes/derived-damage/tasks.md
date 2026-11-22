@@ -30,8 +30,9 @@
   - Terminal chrome (each pane's hint and scrollbar, the pane dividers, the no-session hint): done; the grid keeps its row damage (D3). The pane divider's drag-press damage (`DragTargetHighlightRect`) retired; the panel scrollbar's stays for the plugin preview.
   - Panel divider: a unit of the header, drawn last; it had been painted over by the header's fill since the base commit. Its drag-press damage retired.
   - Notification toasts: done (`NotificationToastPaint.cpp`; the view model is built once at prep, not in paint). Hover damage narrowed from the window to the toast stack. `Notify`'s full redraw stays: a derived surface needs a frame to run in, and a present-only request does not prepare one -- a "frame, no damage" request would let it go (open question).
-  - Bottom-panel half: done but for the perf A/B (3.2). Debug pane next.
+  - Bottom-panel half: done, its perf A/B within budget (notes.md, 2026-11-22). Debug pane next.
 - [ ] 3.2 Perf A/B for stage 3. Verify: within budget.
+  - Bottom panel: done (notes.md, "Stage 3 perf A/B, the bottom panel"); the debug pane's to follow.
 
 ## 4. Tab strips and sidebar
 

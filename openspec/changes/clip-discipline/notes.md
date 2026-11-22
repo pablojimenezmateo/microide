@@ -104,3 +104,35 @@ allocation gate (146 vs 129) on BOTH binaries: pre-existing, not this change.
 
 Verdict: within budget -- no p50 beyond noise, no allocation added (the recorder
 and the per-tab clips cost nothing measurable with recording off).
+
+## Stage 3 perf A/B, the bottom panel (shared with derived-damage 3.1) (2026-11-22)
+
+Base c2be9bcd3 (before the panel work) + the harness fix and the output scenario cherry-picked
+(a33cf7ec0); head f17c01069 (header, Output body, terminal chrome, panel divider, toasts). Both
+`microide-perf` builds under `build/`, soak paused, 3 rounds x 10 iterations, order flipped per
+round; median of the rounds' p50. `output_channel_stream_paint` is the new advisory scenario
+(f17c01069): 40 bursts of 8 lines into the shown channel, a partial frame each, then the same into
+a hidden channel.
+
+```
+scenario                            base p50  head p50     d%  alloc b  alloc h
+output_channel_stream_paint            7.372     4.883  -33.8     1477     1517
+terminal_alt_screen_toggle             5.188     5.200    0.2     2511     2511
+terminal_mouse_owner_hover           246.579   250.387    1.5     1151     1151
+terminal_paint_colored_selection      20.963    21.041    0.4      875      875
+terminal_scroll_long_output            5.941     5.993    0.9     4347     4347
+terminal_stream_chunked_output         7.428     7.414   -0.2     3579     3579
+```
+
+Per-round p50: output_channel_stream_paint base [7.372, 7.282, 7.415] head [4.938, 4.832, 4.883];
+terminal_mouse_owner_hover base [246.47, 246.58, 248.09] head [248.55, 250.39, 250.85].
+
+The Output stream paints a third less: a line into the shown channel repaints the rows it moved,
+and a line into a hidden one nothing, where every line repainted the whole panel. Its +40
+allocations per iteration (~0.5 per frame) are the per-row damage rects growing the frame's
+pending-damage vector, which is handed off by value each frame; small, and noted for the stage
+that adds the "frame, no damage" request. terminal_mouse_owner_hover is +1.5% and consistent
+across rounds (per-frame chrome prep: a log layout and three units per pane); within the 5%
+budget. Every terminal scenario allocates exactly as before.
+
+Verdict: within budget.

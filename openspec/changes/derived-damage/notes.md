@@ -49,3 +49,60 @@ row is built only when it is damaged (as today). Because the keys are an enumera
 the guard is a **differential property test**: random editor state transitions (typing, undo,
 selection, find, folds, diagnostics, decorations, scroll, theme) with damage taken ONLY from the
 row fingerprints, each partial frame compared with a full render; a key left out fails it.
+
+## The A/B harness: PumpPartialFrame folds prep's damage in (2026-11-22, 780771bbc)
+
+`ScenarioContext::PumpPartialFrame` decided full/partial before `PrepareFrameOnce` and left the
+damage prep requested for the next frame; `Application::Render` paints it in the frame that
+requested it. 780771bbc makes the harness do the same. **The A/B base is now 1cbcd3f19** (64b4f5e61
+with 780771bbc cherry-picked, `build/wt-harness-base`): `build/perf-base-derived-damage/microide_perf`;
+the old-harness binary of 64b4f5e61 is kept beside it as `microide_perf.old-harness`, so every A/B
+from here compares the app and not the harness.
+
+Old vs new harness on the SAME app commit (64b4f5e61), soak paused, 3 rounds x 10 iterations,
+order flipped per round; median of the rounds' p50:
+
+```
+scenario                 old p50   new p50     d%  alloc old  alloc new
+editor_typing_paint      170.867   172.225    0.8       1644       1646
+menu_hover_paint          88.717    88.559   -0.2        327        808
+```
+
+Wall is unchanged. `menu_hover_paint`'s allocations go 327 -> 808 over its 160 hover frames (~3
+per frame): each frame now also paints the damage its own prep requested (the status bar's and the
+hover's derived rects), which the app always paid and the old harness pushed into the next frame or
+skipped. That shift is the harness, not any app change; both gated runs of 64b4f5e61 are past their
+committed editor_typing_paint wall baseline on this machine under either harness (174 vs 60 ms,
+pre-existing).
+
+## Stage 3 perf A/B, the bottom panel (2026-11-22)
+
+Base c2be9bcd3 (before the panel work) + the harness fix and the output scenario cherry-picked
+(a33cf7ec0); head f17c01069 (header, Output body, terminal chrome, panel divider, toasts). Both
+`microide-perf` builds under `build/`, soak paused, 3 rounds x 10 iterations, order flipped per
+round; median of the rounds' p50. `output_channel_stream_paint` is the new advisory scenario
+(f17c01069): 40 bursts of 8 lines into the shown channel, a partial frame each, then the same into
+a hidden channel.
+
+```
+scenario                            base p50  head p50     d%  alloc b  alloc h
+output_channel_stream_paint            7.372     4.883  -33.8     1477     1517
+terminal_alt_screen_toggle             5.188     5.200    0.2     2511     2511
+terminal_mouse_owner_hover           246.579   250.387    1.5     1151     1151
+terminal_paint_colored_selection      20.963    21.041    0.4      875      875
+terminal_scroll_long_output            5.941     5.993    0.9     4347     4347
+terminal_stream_chunked_output         7.428     7.414   -0.2     3579     3579
+```
+
+Per-round p50: output_channel_stream_paint base [7.372, 7.282, 7.415] head [4.938, 4.832, 4.883];
+terminal_mouse_owner_hover base [246.47, 246.58, 248.09] head [248.55, 250.39, 250.85].
+
+The Output stream paints a third less: a line into the shown channel repaints the rows it moved,
+and a line into a hidden one nothing, where every line repainted the whole panel. Its +40
+allocations per iteration (~0.5 per frame) are the per-row damage rects growing the frame's
+pending-damage vector, which is handed off by value each frame; small, and noted for the stage
+that adds the "frame, no damage" request. terminal_mouse_owner_hover is +1.5% and consistent
+across rounds (per-frame chrome prep: a log layout and three units per pane); within the 5%
+budget. Every terminal scenario allocates exactly as before.
+
+Verdict: within budget.
