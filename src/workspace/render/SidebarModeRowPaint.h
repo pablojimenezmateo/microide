@@ -23,11 +23,13 @@ namespace microide::workspace {
 // here and to SidebarViewSurface; QaFlowRegression/
 // ADerivedSidebarViewCommitsItsSurfacesUnits fails a view named here whose
 // surface lays out no units.
-constexpr bool SidebarViewIsDerived(SidebarMode mode) { return mode == SidebarMode::Tree; }
+constexpr bool SidebarViewIsDerived(SidebarMode mode) { return mode == SidebarMode::Tree || mode == SidebarMode::Git; }
 
 // The surface a derived view's own content is laid out on.
 constexpr DerivedSurface SidebarViewSurface(SidebarMode mode) {
-  return mode == SidebarMode::Tree ? DerivedSurface::SidebarTree : DerivedSurface::Count;
+  return mode == SidebarMode::Tree  ? DerivedSurface::SidebarTree
+         : mode == SidebarMode::Git ? DerivedSurface::GitPanel
+                                    : DerivedSurface::Count;
 }
 
 struct SidebarModeRowInputs {

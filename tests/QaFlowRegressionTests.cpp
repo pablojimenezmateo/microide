@@ -8262,6 +8262,24 @@ void TestTheGitViewsSelectionAndScrollRepaintTheirRows() {
   sidebar.scroll_row = 0;
   fixture.ExpectFresh(NothingAnnounced(), "the git view scrolled back to its top");
 
+  // Through the paths that ask for the sidebar (RequestSidebarRedraw), which for a
+  // derived view owe a frame and no rect: what the panel shows must come from its
+  // own units. The keyboard in the list, a refresh landing off the shell thread,
+  // and the commit form opening and taking a subject.
+  TestAccess::SetFocusSidebar(fixture.shell);
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the sidebar focused");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN), KeyDownEvent(SDLK_DOWN)}),
+                      "Down twice in the git list");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_END)}), "End in the git list");
+  WriteFile(fixture.root / "added.txt", "new\n");
+  RequireGitCommandSuccess(fixture.root, {"add", "f0.txt"}, "git add f0.txt");
+  TestAccess::RefreshGitSidebar(fixture.shell);
+  Expect(WaitForGitSidebarEntryCount(fixture.shell, 61), "the refresh lists the new file, and f0.txt staged");
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "a refresh landed with one more file");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "git-commit"), "the commit form opens");
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the commit form opened");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("subject")}), "a subject typed");
+
   // Another view and back: the git view's rows go and come with the sidebar.
   TestAccess::ShowTreeSidebar(fixture.shell);
   fixture.ExpectFresh(NothingAnnounced(), "the sidebar switched to the tree");
