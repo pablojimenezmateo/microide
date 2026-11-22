@@ -1523,6 +1523,48 @@ void TestAStripTabNeverDrawsOutsideItself() {
   Expect(failures.empty(), "a strip tab drew outside itself:" + failures);
 }
 
+// Soak eb7ec08fed8e (x419) and c257fce655f3: a group squeezed below its tab
+// strip's height cuts its tabs short, and a tab shorter than a line of text still
+// drew its label's whole line box -- past the tab, into whatever is below. The
+// overflow chevron's hidden-tab count did the same in a short button. Every
+// height, with a badge and a remote mark: nothing draws outside the element.
+void TestAShortStripTabDrawsNothingOutsideItself() {
+  using namespace microide::workspace::detail;
+  EnsureDummySdlVideoInitialized();
+  SoftwareCanvas canvas(400, 80);
+  TextRenderer text_renderer;  // no-backend: deterministic metrics
+  const render::Theme theme{};
+  const StripTabPalette palette{};
+  const bool was = render::PaintOverrunRecordingEnabled();
+  render::SetPaintOverrunRecording(true);
+  (void)render::TakePaintOverruns();
+  const StripTabStyle style{.text_left_padding = 10.0f, .badge_size = 14.0f, .badge_gap = 4.0f,
+                            .close_right_reserve = 46.0f, .accent_edge = StripAccentEdge::Top};
+  std::string failures;
+  const auto note = [&](const char* what, float height) {
+    if (const auto overruns = render::TakePaintOverruns(); !overruns.empty() && failures.size() < 400) {
+      failures += std::string(" [") + what + " height " + std::to_string(static_cast<int>(height)) + ": drew " +
+                  std::to_string(overruns.front().draw_rect.y) + "+" + std::to_string(overruns.front().draw_rect.h) +
+                  "]";
+    }
+  };
+  for (float height = 1.0f; height <= 40.0f; height += 1.0f) {
+    const SDL_FRect rect{20.0f, 10.0f, 200.0f, height};
+    {
+      const render::PaintElement tab(canvas.renderer(), rect, "tab");
+      DrawStripTab(text_renderer, canvas.renderer(), theme, rect, "notes.txt", "M", SDL_Color{200, 120, 40, 255}, true,
+                   true, style, palette, false,
+                   StripTabRemoteMark{.secondary_label = "host", .state = editor::WelcomeStageState::Done});
+    }
+    note("tab", height);
+    DrawTabStripOverflowButton(text_renderer, canvas.renderer(), theme, SDL_FRect{240.0f, 10.0f, 32.0f, height},
+                               /*point_right=*/true, 12, false);
+    note("overflow", height);
+  }
+  render::SetPaintOverrunRecording(was);
+  Expect(failures.empty(), "a short strip tab drew outside itself:" + failures);
+}
+
 // TD-2026-07-17A-007: the render TU consumes precomputed control fields — the
 // truncated/placeholder value string and the caret offset — instead of building
 // "(default)" and truncating/measuring per paint.
@@ -1907,6 +1949,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayFontPickerStaysInsideAShortOverlay",
           TestSettingsOverlayFontPickerStaysInsideAShortOverlay);
   AddTest(tests, "RenderViewModelBuilder/AStripTabNeverDrawsOutsideItself", TestAStripTabNeverDrawsOutsideItself);
+  AddTest(tests, "RenderViewModelBuilder/AShortStripTabDrawsNothingOutsideItself",
+          TestAShortStripTabDrawsNothingOutsideItself);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayFooterReportsCountsAndKeys",
           TestSettingsOverlayFooterReportsCountsAndKeys);
   AddTest(tests, "RenderViewModelBuilder/HelpAboutLabelColumnOnANarrowCardStaysWithinItsCap",

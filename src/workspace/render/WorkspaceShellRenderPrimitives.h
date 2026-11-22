@@ -988,14 +988,20 @@ inline void DrawStripTab(const render::TextRenderer& text_renderer,
   constexpr float kAccentThickness = 2.0f;
   const bool accent_on_top = active && style.accent_edge == StripAccentEdge::Top;
   if (active) {
+    const float thickness = std::min(kAccentThickness, rect.h);  // a tab cut thinner than its accent
     const SDL_FRect accent =
-        accent_on_top ? SDL_FRect{rect.x, rect.y, rect.w, kAccentThickness}
-                      : SDL_FRect{rect.x, rect.y + rect.h - kAccentThickness, rect.w, kAccentThickness};
+        accent_on_top ? SDL_FRect{rect.x, rect.y, rect.w, thickness}
+                      : SDL_FRect{rect.x, rect.y + rect.h - thickness, rect.w, thickness};
     FillRect(renderer, accent,
              palette.active_accent.a != 0 ? palette.active_accent : theme.accent);
   }
   float text_left_padding = style.text_left_padding;
-  if (show_badge && style.badge_size > 0.0f && !badge_text.empty()) {
+  // A tab shorter than a line of text -- its group squeezed below the strip's
+  // height -- shows no text and no badge: centred in it, the line's box drew past
+  // the tab into whatever is below, and a label cut to a sliver reads as damage
+  // anyway (soak eb7ec08fed8e). Fitted before drawing, as the width is.
+  const bool text_fits = rect.h >= text_renderer.LineHeight();
+  if (text_fits && show_badge && style.badge_size > 0.0f && style.badge_size <= rect.h && !badge_text.empty()) {
     const float badge_y =
         rect.y + std::floor(std::max(0.0f, rect.h - style.badge_size) * 0.5f);
     const SDL_FRect badge_rect{rect.x + style.text_left_padding, badge_y, style.badge_size,
@@ -1023,7 +1029,8 @@ inline void DrawStripTab(const render::TextRenderer& text_renderer,
   // placeholder, reserve 0, by the whole 10 px -- into the next tab or the gap
   // beside it, which a partial frame clipped to the tab did not repaint (soak
   // 053365e38e57, clip-discipline 1.3).
-  const float label_width = std::max(0.0f, rect.w - text_left_padding - style.close_right_reserve);
+  const float label_width =
+      text_fits ? std::max(0.0f, rect.w - text_left_padding - style.close_right_reserve) : 0.0f;
   const std::string_view title = text_renderer.TruncateToWidthEphemeralView(label, label_width);
   DrawVCenteredTextOn(text_renderer, renderer, rect, text_left_padding,
                       remote.dimmed ? theme.chrome_text_secondary
@@ -1041,7 +1048,8 @@ inline void DrawStripTab(const render::TextRenderer& text_renderer,
                           text_renderer.TruncateToWidthEphemeralView(remote.secondary_label, room));
     }
   }
-  if (remote.state.has_value()) {
+  if (remote.state.has_value() &&
+      rect.h >= 8.0f + (accent_on_top ? kAccentThickness : 0.0f) && rect.w >= 8.0f) {
     // Hung from the tab's top edge: the active tab's top accent when it has one --
     // the flag starts just under it, so the two meet instead of overlapping -- and
     // the tab's own top otherwise, so an inactive tab shows no gap above the flag.
@@ -1081,7 +1089,13 @@ inline void DrawTabStripOverflowButton(const render::TextRenderer& text_renderer
   const float cy = rect.y + rect.h * 0.5f;
   const float arm = std::max(3.0f, rect.h * 0.22f);
   render::SetDrawColor(renderer, foreground);
-  if (point_right) {
+  // Each part only where it fits: a strip cut short by a squeezed group cuts its
+  // buttons too, and the glyph and the count's line box drew past them (soak
+  // c257fce655f3).
+  // A line's end pixel is drawn too, so the glyph needs a pixel past its arms.
+  if (2.0f * arm + 2.0f > rect.h || cx + arm + 1.0f > rect.x + rect.w) {
+    // No room for the chevron, nor the count beside it.
+  } else if (point_right) {
     render::RenderClipStableLine(renderer, cx - arm * 0.5f, cy - arm, cx + arm * 0.5f, cy);
     render::RenderClipStableLine(renderer, cx + arm * 0.5f, cy, cx - arm * 0.5f, cy + arm);
   } else {
@@ -1089,7 +1103,7 @@ inline void DrawTabStripOverflowButton(const render::TextRenderer& text_renderer
     render::RenderClipStableLine(renderer, cx - arm * 0.5f, cy, cx + arm * 0.5f, cy + arm);
   }
 
-  if (hidden_count > 0) {
+  if (hidden_count > 0 && rect.h >= text_renderer.LineHeight()) {
     std::array<char, 24> count_buffer{};
     const auto conv = std::to_chars(count_buffer.data(),
                                     count_buffer.data() + count_buffer.size(), hidden_count);
@@ -1101,7 +1115,7 @@ inline void DrawTabStripOverflowButton(const render::TextRenderer& text_renderer
                                std::max(0.0f, rect.x + rect.w - count_x - count_right_padding),
                                rect.h};
     DrawVCenteredTextOn(text_renderer, renderer, count_rect, 0.0f, foreground, background,
-                        count_text);
+                        text_renderer.TruncateToWidthEphemeralView(count_text, count_rect.w));
   }
 }
 
