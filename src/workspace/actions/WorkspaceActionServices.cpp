@@ -1603,7 +1603,6 @@ void WorkspaceActionContext::ApplyUndoRedo(bool redo) {
     return;
   }
 
-  const bool was_dirty = viewport->dirty();
   auto* merge_tab = operations_.active_merge_tab();
   const bool viewport_is_merge_result =
       merge_tab != nullptr && viewport == &merge_tab->result_viewport;
@@ -1639,13 +1638,7 @@ void WorkspaceActionContext::ApplyUndoRedo(bool redo) {
     operations_.update_merge_tracking_after_viewport_edit(*merge_tab);
   }
   operations_.reset_caret_blink();
-  operations_.request_active_tab_redraw(false);
-  operations_.request_frame();
-  operations_.note_active_editable_edit();
-  if (viewport->dirty() != was_dirty) {
-    util::PerformanceTrace::Scope scope("WorkspaceActionContext::UndoRedo::DirtyStateSideEffects");
-    operations_.request_frame();
-  }
+  operations_.note_active_editable_edit();  // asks for the frame too
 }
 
 void WorkspaceActionContext::Undo() { ApplyUndoRedo(/*redo=*/false); }
@@ -2067,10 +2060,9 @@ void WorkspaceActionContext::SetSoftWrap(bool enabled) {
     operations_.apply_editor_preferences_to_all_tabs();
     services_.persistence.SaveConfigState();
   }
-  // Wrap toggling reflows every visual row in the active editor; the partial
-  // redraw scope from a menu/shortcut close otherwise leaves stale pixels for
-  // rows that did not change geometry. Force a full editor-surface redraw.
-  operations_.request_active_tab_redraw(false);
+  // Wrap toggling reflows every visual row: the pane key folds the wrap, so the
+  // frame repaints them all.
+  operations_.request_frame();
 }
 
 editor::TextViewport* WorkspaceActionContext::ActiveEditableViewport() {
@@ -2106,7 +2098,6 @@ void WorkspaceActionContext::FinishClipboardEdit() {
   RefreshActiveCompareAfterViewportEdit();
   RetrackActiveMergeAfterViewportEdit();
   operations_.reset_caret_blink();
-  operations_.request_active_tab_redraw(false);
   operations_.note_active_editable_edit();  // asks for the frame too
 }
 
@@ -2147,7 +2138,6 @@ void WorkspaceActionContext::NotifyEditorViewportChanged(bool last_change) {
     RetrackActiveMergeAfterViewportEdit();
   }
   operations_.reset_caret_blink();
-  operations_.request_active_tab_redraw(false);
   operations_.request_frame();
   if (last_change) {
     operations_.note_active_editable_edit();
@@ -2157,7 +2147,7 @@ void WorkspaceActionContext::NotifyEditorViewportChanged(bool last_change) {
 void WorkspaceActionContext::NotifyEditorCaretMoved() {
   assist().snippets().NotifyCaretMoved();
   operations_.reset_caret_blink();
-  operations_.request_active_tab_redraw(false);
+  operations_.request_frame();
   operations_.request_frame();
 }
 
@@ -2196,7 +2186,8 @@ void WorkspaceActionContext::ToggleEditorEssentialsCapability(ActionId id) {
   if (!operations_.set_setting_value(key, next_enabled ? "true" : "false")) {
     return;
   }
-  operations_.request_active_tab_redraw(false);
+  // The settings a pane paints with are in its key (the rest change no pixel).
+  operations_.request_frame();
 }
 
 bool WorkspaceActionContext::Focus(FocusRequestTarget target) {

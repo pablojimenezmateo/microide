@@ -161,7 +161,7 @@ void LspService::ReconcileFeatureSettings() {
       changed = ClearAllLspOverlays(state) || changed;
       if (changed) {
         operations_.refresh_problems_sidebar();
-        operations_.request_editor_surface_redraw();
+        operations_.request_frame();
       }
     }
     return;
@@ -185,7 +185,7 @@ void LspService::ReconcileFeatureSettings() {
   if (!diagnostics && prev.diagnostics) {
     if (state.diagnostics_store.ClearOwner("lsp")) {
       operations_.refresh_problems_sidebar();
-      operations_.request_editor_surface_redraw();
+      operations_.request_frame();
     }
   }
 
@@ -196,7 +196,7 @@ void LspService::ReconcileFeatureSettings() {
     if (state.plugin_presentation != nullptr &&
         state.plugin_presentation->decorations.ClearOwner("lsp:semantic")) {
       state.MaybeReleasePluginPresentation();
-      operations_.request_editor_surface_redraw();
+      operations_.request_frame();
     }
   } else if (semantic && !prev.semantic && !master_turned_on && has_active) {
     std::string language_id;
@@ -213,7 +213,7 @@ void LspService::ReconcileFeatureSettings() {
     if (state.plugin_presentation != nullptr &&
         state.plugin_presentation->decorations.ClearOwner("lsp:inlay")) {
       state.MaybeReleasePluginPresentation();
-      operations_.request_editor_surface_redraw();
+      operations_.request_frame();
     }
     inlay_hint_generation_.clear();
   } else if (inlay && !prev.inlay && !master_turned_on && has_active) {
@@ -228,7 +228,7 @@ void LspService::ReconcileFeatureSettings() {
     if (state.plugin_presentation != nullptr &&
         state.plugin_presentation->decorations.ClearOwner("lsp:codelens")) {
       state.MaybeReleasePluginPresentation();
-      operations_.request_editor_surface_redraw();
+      operations_.request_frame();
     }
     code_lens_generation_.clear();
     code_lens_commands_.clear();
@@ -245,7 +245,7 @@ void LspService::ReconcileFeatureSettings() {
   // stored set so the textual word scan takes back over immediately.
   if (!document_highlight && prev.document_highlight && !state.semantic_occurrences.empty()) {
     state.semantic_occurrences.Clear();
-    operations_.request_editor_surface_redraw();
+    operations_.request_frame();
   }
 }
 
@@ -274,7 +274,7 @@ bool LspService::ClearAllLspOverlays(ProjectWorkspaceState& state) {
     }
   }
   if (changed) {
-    operations_.request_editor_surface_redraw();
+    operations_.request_frame();
   }
   return changed;
 }
@@ -663,7 +663,7 @@ void LspService::PublishLspDiagnostics(ProjectWorkspaceState& state, std::string
       !LspFeatureEnabled(operations_.get_setting_value, "lsp.diagnostics.enabled")) {
     if (state.diagnostics_store.ClearOwnerFile("lsp", *path)) {
       operations_.refresh_problems_sidebar();
-      operations_.request_editor_surface_redraw();
+      operations_.request_frame();
     }
     return;
   }
@@ -684,7 +684,7 @@ void LspService::PublishLspDiagnostics(ProjectWorkspaceState& state, std::string
 
   if (state.diagnostics_store.ReplaceForOwnerFile("lsp", *path, std::move(converted))) {
     operations_.refresh_problems_sidebar();
-    operations_.request_editor_surface_redraw();
+    operations_.request_frame();
   }
 }
 
@@ -741,7 +741,7 @@ void LspService::PublishGuardedOverlay(ProjectWorkspaceState& state, std::string
   editor::PluginDecorationData data = build(file_viewport, encoding, items);
   if (state.EnsurePluginPresentation().decorations.ReplaceForOwnerFile(owner_key, *path,
                                                                        std::move(data))) {
-    operations_.request_editor_surface_redraw();
+    operations_.request_frame();
   }
 }
 
@@ -803,7 +803,7 @@ void LspService::ClearLspSemanticTokensForFile(const editor::TextViewport& viewp
   }
   if (presentation->decorations.ClearOwnerFile("lsp:semantic", viewport.path())) {
     state.MaybeReleasePluginPresentation();
-    operations_.request_editor_surface_redraw();
+    operations_.request_frame();
   }
 }
 
@@ -1156,7 +1156,7 @@ void LspService::PublishLspDocumentHighlights(
     // move back onto a real symbol is not mistaken for a still-valid empty set.
     store.Clear();
   }
-  operations_.request_editor_surface_redraw();
+  operations_.request_frame();
 }
 
 void LspService::ClearLspEditOverlaysForFile(const editor::TextViewport& viewport) {
@@ -1194,7 +1194,7 @@ void LspService::ClearLspEditOverlaysForFile(const editor::TextViewport& viewpor
       presentation->decorations.ClearOwnerFile("lsp:codelens", viewport.path());
   if (cleared_inlay || cleared_lens) {
     state.MaybeReleasePluginPresentation();
-    operations_.request_editor_surface_redraw();
+    operations_.request_frame();
   }
 }
 

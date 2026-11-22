@@ -798,8 +798,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this](MergeTabState& merge_tab) {
                 UpdateMergeTrackingAfterViewportEdit(merge_tab);
               },
-          .request_active_tab_redraw =
-              [this](bool include_tree_sidebar) { RequestActiveTabRedraw(include_tree_sidebar); },
           .note_active_editable_edit =
               [this]() { NoteActiveEditableEdit(); },
           .request_active_editable_change_redraw =

@@ -747,7 +747,7 @@ void WorkspaceShell::NotifyLspBufferClose(const std::filesystem::path& path) {
   if (auto* pres = state.plugin_presentation.get(); pres != nullptr) {
     if (pres->decorations.ClearOwnerFile("lsp:semantic", normalized_path)) {
       state.MaybeReleasePluginPresentation();
-      RequestEditorSurfaceRedraw();
+      RequestPreparedFrame();  // rows and gaps key on it
     }
   }
   // Percent-encoded to match the open URI (FileUriForPath); a raw "file://" +
@@ -760,7 +760,7 @@ void WorkspaceShell::NotifyLspBufferClose(const std::filesystem::path& path) {
   }
   state.diagnostics_store.ClearOwnerFile("lsp", normalized_path);
   RefreshProblemsSidebar();
-  RequestEditorSurfaceRedraw();
+  RequestPreparedFrame();  // rows and gaps key on it
 }
 
 void WorkspaceShell::ActivatePluginSurfacePreview(std::string_view owner,
@@ -874,7 +874,7 @@ void WorkspaceShell::PublishPluginGhostText(
     ghost.lines.emplace_back(request.text.substr(start, nl - start));
     start = nl + 1;
   }
-  RequestEditorSurfaceRedraw();
+  RequestPreparedFrame();  // rows and gaps key on it
 }
 
 void WorkspaceShell::ClearPluginGhostText(std::string_view owner) {
@@ -884,7 +884,7 @@ void WorkspaceShell::ClearPluginGhostText(std::string_view owner) {
     return;
   }
   ResetGhostText(state);
-  RequestEditorSurfaceRedraw();
+  RequestPreparedFrame();  // rows and gaps key on it
 }
 
 bool WorkspaceShell::AcceptGhostText() {
@@ -910,7 +910,7 @@ bool WorkspaceShell::AcceptGhostText() {
   viewport->InsertText(text, /*record_undo=*/true);
   viewport->EndUndoGroup();
   ResetCaretBlink();
-  RequestEditorSurfaceRedraw();
+  NoteActiveEditableEdit();  // an edit: LSP sync, search, breakpoints, the frame
   RequestChromeRedraw();
   return true;
 }
@@ -921,7 +921,7 @@ void WorkspaceShell::DismissGhostText() {
     return;
   }
   ResetGhostText(state);
-  RequestEditorSurfaceRedraw();
+  RequestPreparedFrame();  // rows and gaps key on it
 }
 
 void WorkspaceShell::InvalidateGhostTextIfStale() {
@@ -932,7 +932,7 @@ void WorkspaceShell::InvalidateGhostTextIfStale() {
   }
   if (GhostTextStale(ActiveEditableViewport(), *ghost)) {
     ResetGhostText(state);
-    RequestEditorSurfaceRedraw();
+    RequestPreparedFrame();  // rows and gaps key on it
   }
 }
 

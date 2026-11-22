@@ -203,7 +203,6 @@ class WorkspaceActionContext {
     std::function<void(CompareTabState&, bool)> sync_compare_selection_from_viewport;
     std::function<MergeTabState*()> active_merge_tab;
     std::function<void(MergeTabState&)> update_merge_tracking_after_viewport_edit;
-    std::function<void(bool)> request_active_tab_redraw;
     std::function<void()> note_active_editable_edit;
     std::function<void(const std::vector<std::string>&, const std::vector<std::string>&)>
         request_active_editable_change_redraw;

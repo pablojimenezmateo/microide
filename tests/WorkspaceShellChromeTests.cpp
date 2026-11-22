@@ -4423,6 +4423,10 @@ void TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation() {
   text_event.text.text = typed_text.c_str();
   const auto typed = undo_shell.HandleEvent(text_event);
   Expect(typed.handled, "undo invalidation fixture should type into the editor first");
+  // The typed text's frame, as the app paints it before the next key: the editor's
+  // damage is derived from what was last prepared, and an undo of a keystroke no
+  // frame ever showed changes nothing on screen.
+  (void)FrameDamage(undo_shell, undo_shell_canvas, 1280, 720, typed.redraw);
   const SDL_FRect undo_editor_surface = WorkspaceShellTestAccess::CurrentLayout(undo_shell).editor_surface;
   const auto undo = handle_shortcut(undo_shell, SDLK_Z);
   const auto undo_damage = FrameDamage(undo_shell, undo_shell_canvas, 1280, 720, undo.redraw);

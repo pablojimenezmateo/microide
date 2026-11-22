@@ -116,7 +116,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       return true;
     }
     context_.current_project_state.surface.focus = FocusTarget::Editor;
-    EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });  // a derived surface
     return true;
   }
   UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y));
@@ -351,7 +351,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     if (editor_blame_overlay_service_.LineAtPosition(static_cast<float>(event.button.x),
                                                      static_cast<float>(event.button.y)) != nullptr) {
       context_.current_project_state.surface.focus = FocusTarget::Editor;
-      EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });  // a derived surface
       return true;
     }
   }
@@ -576,7 +576,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   if (ActiveTabIsCompare() && in_view_surface) {
     const bool handled = MakeCompareMouseCoordinator().HandleButtonDown(event, view_surface);
     if (handled) {
-      EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });  // a derived surface
     }
     return handled;
   }
@@ -584,7 +584,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   if (ActiveTabIsMerge() && in_view_surface) {
     const bool handled = MakeMergeMouseCoordinator().HandleButtonDown(event, view_surface);
     if (handled) {
-      EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });  // a derived surface
     }
     return handled;
   }
@@ -666,7 +666,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   util::PerformanceTrace::Scope editor_scope("WorkspaceShell::HandleMouseButtonDown::Editor");
   const bool handled = MakeEditorMouseCoordinator().HandleButtonDown(event, layout);
   if (handled) {
-    EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });  // a derived surface
   }
   return handled;
 }
@@ -847,7 +847,7 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   selection_autoscroll::Disarm(context_.interaction_state);
   if (was_selecting) {
     SyncPrimarySelectionWithActiveEditor();
-    EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });  // a derived surface
   }
   return was_selecting || finished_text_drag;
 }

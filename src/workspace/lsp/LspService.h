@@ -38,7 +38,9 @@ class LspService {
   struct Operations {
     std::function<editor::TextViewport*()> active_editable_viewport;
     std::function<void()> refresh_problems_sidebar;
-    std::function<void()> request_editor_surface_redraw;
+    // A frame: what a publish changes -- diagnostics, decorations, occurrence
+    // highlights -- the editor and diff rows key on, so they repaint what moved.
+    std::function<void()> request_frame;
     std::function<void()> request_chrome_redraw;
     std::function<void()> request_bottom_panel_redraw;
     // Apply a server-initiated workspace/applyEdit (WorkspaceEditService::

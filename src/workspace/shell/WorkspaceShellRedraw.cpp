@@ -295,8 +295,11 @@ void WorkspaceShell::RequestCursorPresent() {
 }
 
 void WorkspaceShell::RequestPreparedFrame() {
-  // A frame whose damage frame prep derives (RenderInvalidation::frame).
+  // A frame whose damage frame prep derives (RenderInvalidation::frame). It is a
+  // request like any rect: an EnsureRedraw fallback after it must not fire, or a
+  // click the editor answered with a frame repainted the whole editor surface.
   pending_render_invalidation_.frame = true;
+  ++damage_generation_;
 }
 
 void WorkspaceShell::RequestChromeRedraw() {

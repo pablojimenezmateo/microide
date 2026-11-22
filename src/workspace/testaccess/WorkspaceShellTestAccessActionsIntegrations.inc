@@ -6,6 +6,13 @@
     return *shell.context_.project_catalog.entries.at(index);
   }
   static void ConsumeLspCallbacks(WorkspaceShell& shell) { shell.ConsumeLspCallbacks(); }
+  // A language server's textDocument/publishDiagnostics for `path`, as the client
+  // delivers it (UTF-16 positions), without a server process.
+  static void PublishLspDiagnostics(WorkspaceShell& shell, const std::filesystem::path& path,
+                                    std::vector<LspClient::Diagnostic> diagnostics) {
+    shell.lsp_service_.PublishLspDiagnostics(shell.context_.current_project_state, FileUriForPath(path),
+                                             lsp_encoding::PositionEncoding::Utf16, std::move(diagnostics));
+  }
   // TD-2026-07-17A-033: tab activation must SCHEDULE LSP hydration, not run it
   // inline. True between the activation and the post-present drain
   // (OnFramePresented -> LspService::ConsumeDeferredBufferOpen).

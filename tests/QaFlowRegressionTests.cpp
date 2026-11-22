@@ -41,6 +41,7 @@
 #include "workspace/ProjectSearchPanelLayout.h"
 #include "workspace/git/BranchReviewStateBridge.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
+#include "workspace/lsp/WorkspaceLspClient.h"
 #include "workspace/render/EditorRowUnits.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
@@ -4166,6 +4167,73 @@ void TestTheDebugToolbarCoversNoOtherControl() {
   Expect(covered("a merge in the focused pane") > 0, "the toolbar still shows over the merge");
 }
 
+// derived-damage 5.1: the editor's own changes ask for a frame, and the frame
+// repaints the rows they changed -- not the pane, which every one of them used to
+// repaint through RequestEditorSurfaceRedraw / RequestActiveTabRedraw. A click, an
+// undo, a paste and a language server's diagnostics each repaint a few rows and
+// match a full repaint.
+void TestEditorChangesRepaintTheirRowsNotThePane() {
+  // Each line its own word: a shared one ("line 1", "line 2") is an occurrence
+  // highlight on every row, and an edit beside it rightly repaints them all.
+  std::string text;
+  for (int i = 1; i <= 80; ++i) {
+    text += "entry_" + std::to_string(i) + " = " + std::to_string(i * 7) + "\n";
+  }
+  FlowFixture fixture("rows.txt", text);
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  const SDL_FRect pane = TestAccess::ActiveEditorPaneRect(fixture.shell);
+  const auto rows_only = [&](const workspace::RenderInvalidation& redraw, const char* what) {
+    Expect(!redraw.full, std::string(what) + ": not a full repaint");
+    // The area damaged inside the pane (rects may overlap: an upper bound). The
+    // scrollbar's overview lane is a tall strip that a first edit's dirty mark
+    // repaints; what must not happen is the pane's whole width going with it.
+    float area = 0.0f;
+    for (const SDL_FRect& rect : redraw.rects) {
+      SDL_FRect overlap{};
+      if (SDL_GetRectIntersectionFloat(&rect, &pane, &overlap)) {
+        area += overlap.w * overlap.h;
+      }
+    }
+    Expect(area < pane.w * pane.h * 0.2f, std::string(what) + ": repaints rows, not the pane (damaged " +
+                                             std::to_string(area) + " of " + std::to_string(pane.w * pane.h) +
+                                             " px)");
+    fixture.ExpectFresh(redraw, what);
+  };
+  const auto frame_of = [&](const workspace::RenderInvalidation& redraw) {
+    return FrameDamage(fixture.shell, fixture.canvas, fixture.width, fixture.height, redraw);
+  };
+  // A click on line 5.
+  const auto line5 = TestAccess::ActiveEditorLineRangeRect(fixture.shell, 4, 4);
+  Expect(line5.has_value(), "line 5 is on screen");
+  if (!line5.has_value()) {
+    return;
+  }
+  // In the text, past the gutter: a click on the line number selects the line,
+  // and the next keystroke would replace it and move every row below.
+  const float click_x = pane.x + pane.w * 0.15f;
+  const float click_y = line5->y + line5->h * 0.5f;
+  rows_only(frame_of(DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, click_x, click_y),
+                                                    MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, click_x, click_y)})),
+            "a click on line 5");
+  // Typing, then undoing it.
+  rows_only(frame_of(DispatchEvents(fixture.shell, {TextInputEvent("x")})), "typing on line 5");
+  rows_only(frame_of(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_Z, SDL_KMOD_CTRL)})), "undo");
+  // A paste of one word.
+  TestAccess::SetClipboardTextReader(fixture.shell, []() { return std::optional<std::string>("pasted"); });
+  rows_only(frame_of(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_V, SDL_KMOD_CTRL)})), "a paste");
+  // A language server's diagnostics on line 12, then cleared.
+  std::vector<workspace::LspClient::Diagnostic> diagnostics;
+  diagnostics.push_back(workspace::LspClient::Diagnostic{
+      .range = {.start = {.line = 11, .character = 0}, .end = {.line = 11, .character = 4}},
+      .message = "from the server",
+      .severity = 1});
+  TestAccess::PublishLspDiagnostics(fixture.shell, fixture.file, std::move(diagnostics));
+  rows_only(frame_of(fixture.shell.ConsumePendingRenderInvalidation()), "a diagnostics publish");
+  TestAccess::PublishLspDiagnostics(fixture.shell, fixture.file, {});
+  rows_only(frame_of(fixture.shell.ConsumePendingRenderInvalidation()), "the diagnostics cleared");
+}
+
 // Soak e2a3e053696a: the terminal's context menu, opened by a right-click near
 // the window's right edge, and the pointer moved onto one of its rows. The hovered
 // row's fill reached 2 px past what the frame repainted, so its right end kept the
@@ -7743,6 +7811,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestPartialFramesStayFreshAfterFullFramesAtANewSize);
   AddTest(tests, "QaFlowRegression/RepublishedTextStylesAndGutterMarksRepaint",
           TestRepublishedTextStylesAndGutterMarksRepaint);
+  AddTest(tests, "QaFlowRegression/EditorChangesRepaintTheirRowsNotThePane",
+          TestEditorChangesRepaintTheirRowsNotThePane);
   AddTest(tests, "QaFlowRegression/AHoveredTerminalContextMenuRowRepaintsWhole",
           TestAHoveredTerminalContextMenuRowRepaintsWhole);
   AddTest(tests, "QaFlowRegression/ARepublishedCodeLensRepaintsWhatItSays",
