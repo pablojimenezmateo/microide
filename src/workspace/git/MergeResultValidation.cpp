@@ -59,11 +59,18 @@ MergeResultState ComputeMergeResultState(const MergeTabState& merge_tab,
   if (!metadata.text_hunks_available) {
     return MergeResultState::Invalid;
   }
-  // Scan the live buffer directly for conflict markers (no Snapshot/serialize).
-  if (util::ScanConflictMarkers(merge_tab.result_viewport.lines()).complete) {
-    return MergeResultState::Invalid;
+  // Scan the live buffer directly for conflict markers (no Snapshot/serialize),
+  // once per content revision: the merge header's key and its paint both ask on
+  // every frame the tab is in front, and the scan is the whole result.
+  const editor::TextViewport& result = merge_tab.result_viewport;
+  if (!merge_tab.marker_scan_valid || merge_tab.marker_scan_document != result.document_identity() ||
+      merge_tab.marker_scan_revision != result.content_revision()) {
+    merge_tab.marker_scan_complete = util::ScanConflictMarkers(result.lines()).complete;
+    merge_tab.marker_scan_document = result.document_identity();
+    merge_tab.marker_scan_revision = result.content_revision();
+    merge_tab.marker_scan_valid = true;
   }
-  return MergeResultState::Saved;
+  return merge_tab.marker_scan_complete ? MergeResultState::Invalid : MergeResultState::Saved;
 }
 
 bool MergeResultChangedOnDisk(const MergeTabState& merge_tab) {

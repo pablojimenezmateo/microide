@@ -355,6 +355,15 @@ struct MergeTabState {
   mutable std::vector<MergeTrackedConflict> visual_conflicts;
   mutable std::uint64_t visual_conflicts_key = 0;
   mutable bool visual_conflicts_valid = false;
+  // Whether the result holds a complete set of conflict markers, which
+  // ComputeMergeResultState asks while the result is clean and unresolved. The
+  // scan reads the whole buffer, and the merge header asks on every prepared
+  // frame (its key, then its paint): memoized on the result's document and its
+  // content revision, so a frame that did not edit the result scans nothing.
+  mutable const void* marker_scan_document = nullptr;
+  mutable std::uint64_t marker_scan_revision = 0;
+  mutable bool marker_scan_valid = false;
+  mutable bool marker_scan_complete = false;
   std::optional<MergeHoverState> hover_state;
   std::size_t selected_hunk = 0;
   int scroll_row = 0;

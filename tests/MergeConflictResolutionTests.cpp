@@ -759,6 +759,44 @@ void TestAcceptingASideReportsTheAcceptedLines() {
   Expect(saw_wide, "the reported lines must include the wide line that was accepted");
 }
 
+// The result's state is asked on every frame a merge is in front (the header's
+// key at prep, then its paint), and for a clean, unresolved result the answer
+// needs the whole buffer scanned for conflict markers. The scan is memoized on
+// the result's document and content revision: the state must still follow every
+// way the content changes -- an edit, an undo, a reload into the same viewport.
+void TestMergeResultStateFollowsTheResultsContent() {
+  using microide::workspace::ComputeMergeResultState;
+  using microide::workspace::MergeResultState;
+  const std::string conflicted = "one\n<<<<<<< ours\nmine\n=======\ntheirs\n>>>>>>> in\ntwo\n";
+  MergeTabState merge_tab;
+  merge_tab.file_conflict.text_hunks_available = true;
+  merge_tab.result_viewport.LoadContent(conflicted, {}, merge_tab.result_line_ending);
+  const auto state = [&] {
+    merge_tab.result_viewport.SetDirty(false);  // a dirty result answers Dirty before it is scanned
+    return ComputeMergeResultState(merge_tab, merge_tab.file_conflict);
+  };
+  Expect(state() == MergeResultState::Invalid, "a result holding conflict markers is invalid");
+  Expect(state() == MergeResultState::Invalid, "and still is when asked again");
+  // The markers edited away, in place.
+  Expect(merge_tab.result_viewport.ReplaceLines(1, 6, {"mine"}), "the conflict is replaced by one side");
+  Expect(state() == MergeResultState::Saved, "a result edited free of markers is saved");
+  Expect(merge_tab.result_viewport.Undo(), "the edit undoes");
+  Expect(state() == MergeResultState::Invalid, "the markers back, the result is invalid again");
+  Expect(merge_tab.result_viewport.Redo(), "the edit redoes");
+  Expect(state() == MergeResultState::Saved, "and saved again");
+  // Other content loaded into the same viewport.
+  merge_tab.result_viewport.LoadContent(conflicted, {}, merge_tab.result_line_ending);
+  Expect(state() == MergeResultState::Invalid, "a reloaded result is scanned afresh");
+  merge_tab.result_viewport.LoadContent("one\ntwo\n", {}, merge_tab.result_line_ending);
+  Expect(state() == MergeResultState::Saved, "and again when the reload has no markers");
+  // The states that outrank the scan are unaffected by what it remembered.
+  merge_tab.marked_resolved = true;
+  Expect(state() == MergeResultState::Resolved, "a result marked resolved is resolved");
+  merge_tab.marked_resolved = false;
+  merge_tab.index_stale = true;
+  Expect(state() == MergeResultState::Stale, "a stale index outranks the rest");
+}
+
 void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MergeConflict/IdenticalRewriteDoesNotBlockMarkResolved",
           TestIdenticalRewriteDoesNotBlockMarkResolved);
@@ -797,6 +835,7 @@ void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests) {
           TestValidationBlocksConflictMarkers);
   AddTest(tests, "MergeConflict/ScanConflictMarkersMatchesLegacyBehavior",
           TestScanConflictMarkersMatchesLegacyBehavior);
+  AddTest(tests, "MergeConflict/ResultStateFollowsTheResultsContent", TestMergeResultStateFollowsTheResultsContent);
   AddTest(tests, "MergeConflict/RemainingConflictCount", TestRemainingConflictCount);
   AddTest(tests, "MergeConflict/ConflictMarkerDetection", TestConflictMarkerDetection);
   AddTest(tests, "MergeConflict/CrlfHeavyClassification", TestCrlfHeavyClassification);
