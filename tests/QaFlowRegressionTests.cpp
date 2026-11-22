@@ -4191,6 +4191,28 @@ void TestATabActivatedWithNoRequestRepaintsItsStrip() {
   fixture.ExpectFresh(frame, "the pointer resting on the second tab");
 }
 
+// qa lsp-more: a language server's hover card grew from its first answer to its
+// full one ("provides Scheduler" -> "provides Scheduler, Task, add, run") in a card
+// the same size, and once the reply's request stopped naming the editor surface
+// nothing repainted the card: its unit keyed only where it is. It keys on what it
+// says now.
+void TestAHoverCardThatSaysSomethingElseRepaints() {
+  FlowFixture fixture("notes.txt", "alpha beta gamma\nsecond line\n");
+  const auto line1 = TestAccess::ActiveEditorLineRangeRect(fixture.shell, 0, 0);
+  Expect(line1.has_value(), "line 1 is on screen");
+  if (!line1.has_value()) {
+    return;
+  }
+  const SDL_FRect anchor{line1->x + 60.0f, line1->y, 40.0f, line1->h};
+  TestAccess::SetPluginHoverTargetForTest(fixture.shell, anchor, "Scheduler", "provides Scheduler           ");
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  TestAccess::SetPluginHoverTargetForTest(fixture.shell, anchor, "Scheduler", "provides Scheduler, Task, run");
+  workspace::RenderInvalidation frame;
+  frame.frame = true;
+  fixture.ExpectFresh(frame, "the hover card's fuller answer, the same size");
+}
+
 // derived-damage 5.1: the editor's own changes ask for a frame, and the frame
 // repaints the rows they changed -- not the pane, which every one of them used to
 // repaint through RequestEditorSurfaceRedraw / RequestActiveTabRedraw. A click, an
@@ -8814,6 +8836,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestRepublishedTextStylesAndGutterMarksRepaint);
   AddTest(tests, "QaFlowRegression/ATabActivatedWithNoRequestRepaintsItsStrip",
           TestATabActivatedWithNoRequestRepaintsItsStrip);
+  AddTest(tests, "QaFlowRegression/AHoverCardThatSaysSomethingElseRepaints",
+          TestAHoverCardThatSaysSomethingElseRepaints);
   AddTest(tests, "QaFlowRegression/EditorChangesRepaintTheirRowsNotThePane",
           TestEditorChangesRepaintTheirRowsNotThePane);
   AddTest(tests, "QaFlowRegression/AHoveredTerminalContextMenuRowRepaintsWhole",

@@ -2265,11 +2265,34 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     // (QA monkey, seed 7). Laid out once here; its paint reads this layout.
     frame_state_.hover_popup = ActiveEditorHoverPopupLayout();
     std::optional<SDL_FRect> card;
+    // And what the card says: a language server's hover reply that grew from its
+    // first to its full answer in the same card ("provides Scheduler" to "provides
+    // Scheduler, Task, add, run") repainted nothing once its request stopped
+    // naming the editor surface (qa lsp-more).
+    PaintFingerprint card_content;
     if (frame_state_.hover_popup.has_value()) {
-      const SDL_FRect& popup = frame_state_.hover_popup->rect;
+      const EditorHoverPopupLayout& hover = *frame_state_.hover_popup;
+      const SDL_FRect& popup = hover.rect;
       card = MakeRect(popup.x - 2.0f, popup.y - 2.0f, popup.w + 4.0f, popup.h + 4.0f);
+      card_content.Add(static_cast<int>(hover.kind)).Add(hover.blame_line_index);
+      if (hover.diagnostic.has_value()) {
+        card_content.Add(std::string_view(hover.diagnostic->message))
+            .Add(static_cast<int>(hover.diagnostic->severity));
+      }
+      if (hover.plugin_hover.has_value()) {
+        card_content.Add(std::string_view(hover.plugin_hover->title))
+            .Add(std::string_view(hover.plugin_hover->content));
+      }
+      if (hover.debug_value.has_value()) {
+        card_content.Add(std::string_view(hover.debug_value->value)).Add(std::string_view(hover.debug_value->type));
+      }
+      if (hover.primary_action_rect.has_value()) {
+        card_content.Add(*hover.primary_action_rect)
+            .Add(last_mouse_position_valid_ &&
+                 EditorHoverPopupPrimaryActionHovered(last_mouse_x_, last_mouse_y_));
+      }
     }
-    chrome_unit(card, 0);
+    chrome_unit(card, card_content.value());
     // The signature-help card: shown while a request's answer is up and the caret
     // has not moved, hidden while a menu holds the pointer -- so a menu opening
     // and closing over it is a card going and coming back with no edit.

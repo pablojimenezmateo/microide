@@ -481,6 +481,16 @@
   static void ClearEditorHoverTargetForTest(WorkspaceShell& shell) {
     shell.active_editor_hover_target_.reset();
   }
+  // A provider's hover card over `anchor`, as a resolved hover leaves it: what a
+  // language server's reply (or its fuller second reply) shows.
+  static void SetPluginHoverTargetForTest(WorkspaceShell& shell, const SDL_FRect& anchor, std::string title,
+                                          std::string content) {
+    EditorHoverTarget target;
+    target.kind = EditorHoverTarget::Kind::Plugin;
+    target.anchor_rect = anchor;
+    target.plugin_hover = plugin::PluginHost::HoverResult{.title = std::move(title), .content = std::move(content)};
+    shell.active_editor_hover_target_ = std::move(target);
+  }
   static std::optional<SDL_FRect> ActiveEditorBlamePopupCopyShaRect(WorkspaceShell& shell) {
     const auto popup = shell.ActiveEditorBlamePopupLayout();
     return popup.has_value() ? std::make_optional(popup->copy_sha_rect) : std::nullopt;
