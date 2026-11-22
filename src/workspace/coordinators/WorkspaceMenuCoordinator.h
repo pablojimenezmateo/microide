@@ -15,10 +15,11 @@ namespace microide::workspace {
 class MenuCoordinator {
  public:
   struct Operations {
-    std::function<void()> request_chrome_redraw;
-    // One rect's worth of damage: what a closing popup covered, requested
-    // BEFORE the close, since the chrome redraw is computed from the state
-    // after it and no longer knows the popup.
+    // A frame is owed and frame prep derives what it repaints: the popups' cards
+    // and rows and the bar's items are units keyed on this coordinator's state.
+    std::function<void()> request_frame;
+    // One rect's worth of damage: the button an anchored menu hangs from, and
+    // what a closing overflow popup covered.
     std::function<void(const SDL_FRect&)> request_redraw_rect;
     std::function<std::span<const MenuItemSpec>(MenuId)> menu_items;
     std::function<bool(const MenuItemSpec&)> is_menu_item_enabled;
@@ -66,6 +67,7 @@ class MenuCoordinator {
   int NextEnabledTreeContextMenuItemIndex(int current_index, int delta) const;
 
  private:
+  void OweMenuFrame();
   // Opens `id` (None closes the bar), anchored under `anchor_rect` when given,
   // otherwise under its menu-bar item.
   void OpenMenu(MenuId id, std::optional<SDL_FRect> anchor_rect);

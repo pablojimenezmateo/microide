@@ -654,7 +654,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   // keeps the entry mark: the floating-widget cards it covers queued their own.
   const DamageMark dispatch_mark = MarkDamage();
   if (MakeChromeMouseCoordinator().HandleMotion(event, layout)) {
-    EnsureRedraw(dispatch_mark, [this]() { RequestChromeRedraw(); });
+    EnsureRedraw(dispatch_mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
@@ -695,7 +695,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
   }
 
   if (MenuSurfaceCapturingMouse()) {
-    EnsureRedraw(mark, [this]() { RequestChromeRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 

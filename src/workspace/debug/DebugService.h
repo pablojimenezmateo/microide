@@ -66,7 +66,10 @@ class DebugService {
     // view (file/line/frames populated).
     std::function<void(const std::string& reason, int thread_id)> notify_stop_began;
     std::function<void()> notify_stop_resolved;
-    std::function<void()> request_chrome_redraw;
+    // A frame owed for what a session's state shows outside the debug dock: the
+    // toolbar (a chrome unit keyed on where it is and whether the session is
+    // stopped) and the status bar, both derived at frame prep.
+    std::function<void()> request_frame;
     // Repaint the right-side debug dock (Call Stack / Variables / Watch /
     // Breakpoints). DAP responses arrive asynchronously, so every handler that
     // mutates a debug model must invalidate the dock it paints into.

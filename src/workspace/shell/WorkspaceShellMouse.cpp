@@ -57,10 +57,10 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y), false);
     mark = MarkDamage();
     if (MakeChromeMouseCoordinator().HandleButtonDown(event, layout)) {
-      EnsureRedraw(mark, [this]() { RequestChromeRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       return true;
     }
-    EnsureRedraw(mark, [this]() { RequestChromeRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
@@ -237,7 +237,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     // bar, there being no room below (the remote segment's Remote menu).
     if (hit != nullptr && hit->menu != MenuId::None) {
       MakeMenuCoordinator().OpenAnchoredMenu(hit->menu, hit_rect);
-      EnsureRedraw(mark, [this]() { RequestChromeRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       return true;
     }
     const std::string_view command = hit != nullptr ? hit->command : std::string_view();
@@ -266,7 +266,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     if (MenuSurfaceCapturingMouse()) {
       // The fallback first: the hover cards the opened menu now hides are not
       // the handler's damage and must not stand in for it.
-      EnsureRedraw(mark, [this]() { RequestChromeRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       if (blocked_tooltip.has_value()) {
         RequestRedrawRect(blocked_tooltip->rect);
       }
@@ -287,7 +287,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
           Contains(status_item.rect, event.button.x, event.button.y)) {
         std::string error_message;
         ExecuteCommandName(status_item.item.command, {}, ActionSource::Command, &error_message);
-        EnsureRedraw(mark, [this]() { RequestChromeRedraw(); });
+        EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
         return true;
       }
     }
@@ -463,7 +463,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       Contains(layout.editor_surface, event.button.x, event.button.y)) {
     SyncActiveEditorTab();
     if (MakeEditorMouseCoordinator().HandleGutterContextMenu(event, layout)) {
-      EnsureRedraw(mark, [this]() { RequestChromeRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       return true;
     }
   }
@@ -538,12 +538,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       ResetCaretBlink();
     }
     context_.current_project_state.surface.focus = FocusTarget::Editor;
-    EnsureRedraw(mark, [this, retargeted_cursor]() {
-      RequestChromeRedraw();
-      if (retargeted_cursor) {
-        RequestPreparedFrame();
-      }
-    });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 

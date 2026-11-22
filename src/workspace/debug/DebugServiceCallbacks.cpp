@@ -143,8 +143,8 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
     }
     // A state change moves a session row's label (running/paused/terminated).
     SyncSessionsPanel();
-    if (operations_.request_chrome_redraw) {
-      operations_.request_chrome_redraw();
+    if (operations_.request_frame) {
+      operations_.request_frame();
     }
     if (operations_.request_debug_pane_redraw) {
       operations_.request_debug_pane_redraw();
@@ -154,8 +154,8 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
     // A late `capabilities` event can flip supportsStepBack on (gdb under rr/record),
     // which adds the Reverse Continue / Step Back buttons to the floating debug
     // toolbar (chrome). Repaint so they appear without waiting for the next input.
-    if (operations_.request_chrome_redraw) {
-      operations_.request_chrome_redraw();
+    if (operations_.request_frame) {
+      operations_.request_frame();
     }
     if (operations_.request_debug_pane_redraw) {
       operations_.request_debug_pane_redraw();

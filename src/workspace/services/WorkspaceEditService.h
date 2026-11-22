@@ -46,7 +46,6 @@ class WorkspaceEditService {
     std::function<editor::TextViewport*()> active_editable_viewport;
     std::function<void()> reset_caret_blink;
     std::function<void()> note_active_editable_edit;
-    std::function<void()> request_chrome_redraw;
     // A frame owed: the editor, compare and merge surfaces derive their damage
     // (RequestPreparedFrame); a request names no rect.
     std::function<void()> request_frame;

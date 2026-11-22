@@ -393,9 +393,10 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
               }
               // Every project's tab wears its connection's state, a background one
               // too. It is pushed here, so nothing polls; and only a change of that
-              // state repaints the strip, not every sync count.
+              // state repaints the strip, not every sync count. A frame: the strip's
+              // unit keys on its sources' version, which folds each tab's stage.
               if (editor::WorstRemoteStage(status) != shown) {
-                RequestChromeRedraw();
+                RequestPreparedFrame();
               }
             }
           },

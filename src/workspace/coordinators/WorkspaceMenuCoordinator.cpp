@@ -59,6 +59,23 @@ int MenuCoordinator::NextEnabledMenuItemIndex(MenuId id, int current_index, int 
                           operations_.is_menu_item_enabled);
 }
 
+// What a menu that opens, switches or closes changes on screen is derived: its
+// popups' cards and rows (MenuPopupPaint) and the bar's items (the chrome units)
+// are keyed on the state this coordinator writes, so it owes a frame and names no
+// rect -- it named the chrome's: the bar and every open popup. One thing is not
+// known to be keyed: the button a menu hangs from paints pressed while its menu
+// is open (a tab strip's overflow chip, the panel's "+", a status segment), so
+// that button's rect is still named. Called before and after a change, as the
+// chrome's rect was: the anchor before is not the anchor after.
+void MenuCoordinator::OweMenuFrame() {
+  operations_.request_frame();
+  if (menu_state_.menu_bar_open && menu_state_.active_menu_anchor_rect.has_value() &&
+      operations_.request_redraw_rect) {
+    const SDL_FRect& anchor = *menu_state_.active_menu_anchor_rect;
+    operations_.request_redraw_rect(SDL_FRect{anchor.x - 1.0f, anchor.y - 1.0f, anchor.w + 2.0f, anchor.h + 2.0f});
+  }
+}
+
 void MenuCoordinator::OpenMenuBarMenu(MenuId id) { OpenMenu(id, std::nullopt); }
 
 void MenuCoordinator::OpenAnchoredMenu(MenuId id, const SDL_FRect& anchor_rect) {
@@ -66,7 +83,7 @@ void MenuCoordinator::OpenAnchoredMenu(MenuId id, const SDL_FRect& anchor_rect) 
 }
 
 void MenuCoordinator::OpenMenu(MenuId id, std::optional<SDL_FRect> anchor_rect) {
-  operations_.request_chrome_redraw();
+  OweMenuFrame();
   if (id == MenuId::None) {
     CloseMenuBar();
     return;
@@ -78,7 +95,7 @@ void MenuCoordinator::OpenMenu(MenuId id, std::optional<SDL_FRect> anchor_rect) 
   menu_state_.hovered_popup_row_index = -1;
   menu_state_.active_menu_anchor_rect = anchor_rect;
   CloseSubmenu();
-  operations_.request_chrome_redraw();
+  OweMenuFrame();
 }
 
 std::size_t MenuCoordinator::MenuOverflowItemCount() const {
@@ -99,42 +116,41 @@ bool MenuCoordinator::OpenMenuOverflowItem(std::size_t index) {
 }
 
 void MenuCoordinator::CloseMenuOverflowPopup() {
-  if (menu_state_.overflow_popup_open && operations_.request_redraw_rect) {
-    if (const std::optional<SDL_FRect> chevron = operations_.menu_overflow_chevron_rect(); chevron.has_value()) {
-      operations_.request_redraw_rect(
-          ComputeMenuOverflowPopupRect(*chevron, operations_.overflow_menu_bar_items().size()));
-    }
+  // The popup's card and rows are derived units: closed, the frame this owes
+  // repaints where it was.
+  if (menu_state_.overflow_popup_open) {
+    operations_.request_frame();
   }
   workspace::CloseMenuOverflowPopup(menu_state_);
 }
 
 void MenuCoordinator::OpenSubmenu(MenuId id, const SDL_FRect& anchor_rect) {
-  operations_.request_chrome_redraw();
+  OweMenuFrame();
   menu_state_.active_submenu_id = id;
   menu_state_.active_submenu_item_index = FirstEnabledMenuItemIndex(id);
   menu_state_.hovered_submenu_row_index = -1;
   menu_state_.active_submenu_anchor_rect = anchor_rect;
-  operations_.request_chrome_redraw();
+  OweMenuFrame();
 }
 
 void MenuCoordinator::CloseSubmenu() {
-  operations_.request_chrome_redraw();
+  OweMenuFrame();
   menu_state_.active_submenu_id = MenuId::None;
   menu_state_.active_submenu_item_index = -1;
   menu_state_.hovered_submenu_row_index = -1;
   menu_state_.active_submenu_anchor_rect.reset();
-  operations_.request_chrome_redraw();
+  OweMenuFrame();
 }
 
 void MenuCoordinator::CloseMenuBar() {
-  operations_.request_chrome_redraw();
+  OweMenuFrame();
   menu_state_.menu_bar_open = false;
   menu_state_.active_menu_id = MenuId::None;
   menu_state_.active_menu_item_index = -1;
   menu_state_.hovered_popup_row_index = -1;
   menu_state_.active_menu_anchor_rect.reset();
   CloseSubmenu();
-  operations_.request_chrome_redraw();
+  OweMenuFrame();
 }
 
 bool MenuCoordinator::ExecuteMenuItem(MenuId menu_id, std::size_t item_index) {
@@ -227,7 +243,7 @@ void MenuCoordinator::OpenTreeContextMenu(TreeContextTargetKind target,
                                           const std::filesystem::path& path,
                                           const SDL_FRect& anchor_rect,
                                           std::size_t line) {
-  operations_.request_chrome_redraw();
+  OweMenuFrame();
   CloseMenuBar();
   menu_state_.tree_context_menu.open = true;
   menu_state_.tree_context_menu.target = target;
@@ -235,7 +251,7 @@ void MenuCoordinator::OpenTreeContextMenu(TreeContextTargetKind target,
   menu_state_.tree_context_menu.line = line;
   menu_state_.tree_context_menu.anchor_rect = anchor_rect;
   menu_state_.tree_context_menu.active_item_index = FirstEnabledTreeContextMenuItemIndex();
-  operations_.request_chrome_redraw();
+  OweMenuFrame();
 }
 
 void MenuCoordinator::CloseTreeContextMenu() {
@@ -244,9 +260,9 @@ void MenuCoordinator::CloseTreeContextMenu() {
   if (!menu_state_.tree_context_menu.open) {
     return;
   }
-  operations_.request_chrome_redraw();
+  OweMenuFrame();
   menu_state_.tree_context_menu = TreeContextMenuState{};
-  operations_.request_chrome_redraw();
+  OweMenuFrame();
 }
 
 bool MenuCoordinator::ExecuteTreeContextMenuItem(std::size_t item_index) {
@@ -287,7 +303,7 @@ MenuCoordinator& WorkspaceShell::MakeMenuCoordinator() {
   glue_->menu_coordinator = std::make_unique<MenuCoordinator>(
       context_.menu_state,
       MenuCoordinator::Operations{
-          .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
+          .request_frame = [this]() { RequestPreparedFrame(); },
           .request_redraw_rect = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); },
           .menu_items = [this](MenuId id) { return MenuItems(id); },
           .is_menu_item_enabled =

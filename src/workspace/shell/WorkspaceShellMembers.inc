@@ -1810,7 +1810,6 @@
   // desync note). Not a visual repaint — just a commit so an idle compositor shows
   // the new shape.
   void RequestCursorPresent();
-  void RequestChromeRedraw();
   void RequestSidebarRedraw();
   // Repaint after a divider drag changed the outer geometry. Both the sidebar and
   // the bottom panel need the same rule — mark layout dirty, and if either of the
@@ -1848,7 +1847,6 @@
     if (damage_generation_ == since) request_redraw();
   }
   void QueueEditorHoverRefresh();
-  std::optional<SDL_FRect> CurrentChromeRedrawRect() const;
   util::InlineVector<SDL_FRect, 5> CurrentChromeRects() const;
   std::optional<SDL_FRect> CurrentFocusedEditorRedrawRect() const;
   std::optional<SDL_FRect> CurrentEditorLineRangeRect(std::size_t start_line,

@@ -140,8 +140,7 @@ bool WorkspaceEditService::ApplyPluginEdit(const plugin::PluginHost::WorkspaceEd
   }
 
   operations_.reset_caret_blink();
-  operations_.note_active_editable_edit();
-  operations_.request_chrome_redraw();
+  operations_.note_active_editable_edit();  // owes the frame
   return true;
 }
 
@@ -300,9 +299,8 @@ bool WorkspaceEditService::ApplyOpenBufferEdits(const std::vector<CodeActionEdit
     // derived state so the caret/redraw bookkeeping stays consistent.
     operations_.note_active_editable_edit();
   }
-  // Repaint the tab strip so the dirty indicator appears immediately; the edit
-  // just flipped the buffer to dirty and a chrome redraw only damages the
-  // menu-bar region, leaving the tab dot stale until the next full repaint.
+  // Repaint the tab strip so the dirty indicator appears immediately: the edit
+  // just flipped the buffer to dirty.
   operations_.request_active_tab_redraw(/*include_tree_sidebar=*/false);
   return true;
 }

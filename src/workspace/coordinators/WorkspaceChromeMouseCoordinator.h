@@ -20,11 +20,10 @@ class ChromeMouseCoordinator {
     std::function<void(MenuId, const SDL_FRect&)> open_anchored_menu;
     std::function<SidebarModeRowLayout(const SDL_FRect&)> sidebar_mode_row;
     std::function<void(std::string_view)> activate_sidebar_view;
-    std::function<void()> request_chrome_redraw;
-    // A frame is owed and frame prep derives what it repaints: for state a
-    // derived surface keys its units on (an open menu's lit rows).
+    // A frame is owed and frame prep derives what it repaints: everything this
+    // coordinator changes on screen is a derived unit keyed on the state it
+    // writes (an open menu's lit rows, the bar's items and chevron).
     std::function<void()> request_frame;
-    std::function<void(const SDL_FRect&)> request_redraw_rect;
     // Heap-free returns: these three run ~10 times per pointer-motion event over
     // the menu bar, and returning std::vector made that 32 of the 50 allocations
     // an event (TD-2026-08-06-149).
@@ -120,7 +119,7 @@ class ChromeMouseCoordinator {
   // render path highlights from state rather than from the live pointer, and
   // the keyboard and the mouse cannot select two different rows.
   bool HandleMenuOverflowPopupMotion(const SDL_Event& event, const WorkspaceLayout& layout);
-  void CloseOverflowPopupWithRedraw(const WorkspaceLayout& layout);
+  void CloseOverflowPopupWithRedraw();
   bool HandleOverlayButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleTreeContextMenuButtonDown(const SDL_Event& event);
   bool HandleTreeContextMenuMotion(const SDL_Event& event);

@@ -562,7 +562,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                         DismissPromptSurface(true);
                         context_.current_project_state.panel.feedback.text =
                             "You cannot rename this element";
-                        RequestChromeRedraw();
+                        RequestPreparedFrame();
                         return;
                       }
                       if (!placeholder.empty() && placeholder != original_seed &&

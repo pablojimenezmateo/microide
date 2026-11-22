@@ -63,7 +63,7 @@ bool ChromeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       if (Contains(tab.rect, event.button.x, event.button.y)) {
         operations_.activate_sidebar_view(tab.id);
         state_.surface.focus = FocusTarget::Sidebar;
-        operations_.request_chrome_redraw();
+        operations_.request_frame();
         return true;
       }
     }
@@ -72,7 +72,7 @@ bool ChromeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     if (mode_row.has_overflow && Contains(mode_row.overflow_rect, event.button.x, event.button.y)) {
       operations_.open_anchored_menu(MenuId::SidebarMode, mode_row.overflow_rect);
       state_.surface.focus = FocusTarget::Sidebar;
-      operations_.request_chrome_redraw();
+      operations_.request_frame();
       return true;
     }
   }
@@ -97,7 +97,7 @@ bool ChromeMouseCoordinator::HandleMotion(const SDL_Event& event, const Workspac
       const bool hovered = Contains(*chevron, event.motion.x, event.motion.y);
       if (hovered != menu_state_.chevron_hovered) {
         menu_state_.chevron_hovered = hovered;
-        operations_.request_redraw_rect(*chevron);
+        operations_.request_frame();  // the chevron is a chrome unit keyed on its hover
       }
     } else {
       menu_state_.chevron_hovered = false;
@@ -110,15 +110,12 @@ bool ChromeMouseCoordinator::HandleMotion(const SDL_Event& event, const Workspac
   return HandleMenuMotion(event, layout);
 }
 
-// Closes the overflow popup and repaints what it covered. The generic chrome
-// redraw is computed from the state AFTER the close, when the popup is no
-// longer chrome, so a close that relied on it left the popup's pixels behind
-// (found by the QA menu-clicks sweep in the compact layout).
-void ChromeMouseCoordinator::CloseOverflowPopupWithRedraw(const WorkspaceLayout& layout) {
-  if (const auto chevron = operations_.menu_overflow_chevron_rect(layout.menu_bar);
-      menu_state_.overflow_popup_open && chevron.has_value()) {
-    const auto overflow_specs = operations_.compute_overflow_menu_bar_items(layout.menu_bar);
-    operations_.request_redraw_rect(ComputeMenuOverflowPopupRect(*chevron, overflow_specs.size()));
+// Closes the overflow popup. Its card and rows are derived units, so the frame
+// this owes repaints where it was (its rect was named here, before the close: the
+// chrome's rect is computed from the state after it and no longer knew the popup).
+void ChromeMouseCoordinator::CloseOverflowPopupWithRedraw() {
+  if (menu_state_.overflow_popup_open) {
+    operations_.request_frame();
   }
   CloseMenuOverflowPopup(menu_state_);
 }
@@ -187,7 +184,7 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
         operations_.request_quit();
         break;
     }
-    operations_.request_chrome_redraw();
+    operations_.request_frame();
     return true;
   }
 
@@ -195,12 +192,12 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
       chevron_rect.has_value() &&
       Contains(*chevron_rect, event.button.x, event.button.y)) {
     if (menu_state_.overflow_popup_open) {
-      CloseOverflowPopupWithRedraw(layout);
+      CloseOverflowPopupWithRedraw();
     } else {
       operations_.close_menu_bar();
       OpenMenuOverflowPopup(menu_state_);
     }
-    operations_.request_chrome_redraw();
+    operations_.request_frame();
     return true;
   }
 
@@ -214,16 +211,16 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
           row.has_value()) {
         const MenuId picked = overflow_specs[*row];
         const SDL_FRect row_rect = MenuOverflowPopupRowRect(popup, *row);
-        CloseOverflowPopupWithRedraw(layout);
+        CloseOverflowPopupWithRedraw();
         operations_.open_anchored_menu(picked, row_rect);
-        operations_.request_chrome_redraw();
+        operations_.request_frame();
       }
       return true;
     }
     // A press outside the popup closes it and stops there, like a menu's; one on
     // the menu bar goes on to open what it landed on.
-    CloseOverflowPopupWithRedraw(layout);
-    operations_.request_chrome_redraw();
+    CloseOverflowPopupWithRedraw();
+    operations_.request_frame();
     if (!Contains(layout.menu_bar, event.button.x, event.button.y)) {
       return true;
     }
@@ -239,7 +236,7 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
       } else {
         operations_.open_menu_bar_menu(item.id);
       }
-      operations_.request_chrome_redraw();
+      operations_.request_frame();
       return true;
     }
 
@@ -256,7 +253,7 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
           operations_.execute_menu_item(menu_state_.active_submenu_id, row->index);
         }
       }
-      operations_.request_chrome_redraw();
+      operations_.request_frame();
       return true;
     }
 
@@ -274,12 +271,12 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
           operations_.execute_menu_item(menu_state_.active_menu_id, row->index);
         }
       }
-      operations_.request_chrome_redraw();
+      operations_.request_frame();
       return true;
     }
 
     operations_.close_menu_bar();
-    operations_.request_chrome_redraw();
+    operations_.request_frame();
     return true;
   }
 
@@ -290,7 +287,7 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
   for (const auto& item : menu_bar_items) {
     if (Contains(item.rect, event.button.x, event.button.y)) {
       operations_.open_menu_bar_menu(item.id);
-      operations_.request_chrome_redraw();
+      operations_.request_frame();
       return true;
     }
   }
@@ -300,8 +297,8 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
   // pointer_handle_button_common / ProcessHitTest). There is therefore no
   // app-visible click to time, so double-click-to-maximize cannot be detected
   // this way on Wayland (or X11) with our custom client-side title bar. Use the
-  // window-control Maximize button instead. Just consume any stray click.
-  operations_.request_chrome_redraw();
+  // window-control Maximize button instead. Just consume any stray click: it
+  // changes nothing, and asks for nothing.
   return true;
 }
 
@@ -372,7 +369,7 @@ bool ChromeMouseCoordinator::HandleMenuMotion(const SDL_Event& event,
     }
     if (item.id != menu_state_.active_menu_id) {
       operations_.open_menu_bar_menu(item.id);
-      operations_.request_chrome_redraw();
+      operations_.request_frame();
     }
     return true;
   }
@@ -572,12 +569,12 @@ bool ChromeMouseCoordinator::HandleTreeContextMenuButtonDown(const SDL_Event& ev
         operations_.execute_tree_context_menu_item(row->index);
       }
     }
-    operations_.request_chrome_redraw();
+    operations_.request_frame();
     return true;
   }
 
   operations_.close_tree_context_menu();
-  operations_.request_chrome_redraw();
+  operations_.request_frame();
   return false;
 }
 
@@ -626,9 +623,7 @@ ChromeMouseCoordinator& WorkspaceShell::MakeChromeMouseCoordinator() {
                 ActionCoordinator(MakeActionContext())
                     .Execute(ActionId::SidebarShow, {std::string(id)}, ActionSource::Menu);
               },
-          .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
           .request_frame = [this]() { RequestPreparedFrame(); },
-          .request_redraw_rect = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); },
           .compute_visible_menu_bar_items =
               [this](const SDL_FRect& rect) { return ComputeVisibleMenuBarItems(rect); },
           .compute_overflow_menu_bar_items =

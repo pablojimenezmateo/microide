@@ -729,7 +729,7 @@ void WorkspaceShell::Bootstrapper::WireDebug() const {
               },
           .remove_debug_console = [shell](int session_id) { shell->RemoveDebugConsole(session_id); },
           .notify_session_state_changed =
-              [shell](DebugSession::State /*state*/) { shell->RequestChromeRedraw(); },
+              [shell](DebugSession::State /*state*/) { shell->RequestPreparedFrame(); },
           // A terminal end (clean exit OR a crash/kill/launch-rejection) mirrors to
           // the control channel here, so an observer is never stranded waiting on a
           // `terminated` that a non-clean death never sent.
@@ -752,7 +752,7 @@ void WorkspaceShell::Bootstrapper::WireDebug() const {
               },
           .notify_stop_resolved =
               [shell]() { shell->control_channel_service_.OnDebugStopped(); },
-          .request_chrome_redraw = [shell]() { shell->RequestChromeRedraw(); },
+          .request_frame = [shell]() { shell->RequestPreparedFrame(); },
           .request_debug_pane_redraw = [shell]() { shell->RequestDebugPaneRedraw(); },
           .request_editor_redraw = [shell]() { shell->RequestEditorSurfaceRedraw(); },
           .queue_editor_hover_refresh = [shell]() { shell->QueueEditorHoverRefresh(); },
@@ -885,7 +885,6 @@ void WorkspaceShell::Bootstrapper::WireWorkspaceEdits() const {
           .reset_caret_blink = [shell]() { shell->ResetCaretBlink(); },
           .note_active_editable_edit =
               [shell]() { shell->NoteActiveEditableEdit(); },
-          .request_chrome_redraw = [shell]() { shell->RequestChromeRedraw(); },
           .request_frame = [shell]() { shell->RequestPreparedFrame(); },
           .request_active_tab_redraw =
               [shell](bool include_tree_sidebar) { shell->RequestActiveTabRedraw(include_tree_sidebar); },
@@ -895,7 +894,9 @@ void WorkspaceShell::Bootstrapper::WireWorkspaceEdits() const {
                                   PromptSurfaceState::Kind::Confirm, std::filesystem::path{},
                                   std::string{});
                 shell->context_.prompts.surface.detail = std::move(detail);
-                shell->RequestChromeRedraw();
+                // The prompt as it is now, with its detail (the open's own request
+                // was made before it had one). This named the menu bar.
+                shell->RequestPromptRedraw();
               },
           .notify_error =
               [shell](std::string message) {
@@ -1271,8 +1272,8 @@ void WorkspaceShell::Bootstrapper::WirePluginRuntime() const {
           [shell]() {
             return shell->settings_store_.Revision();
           },
-      // Plugin status items are drawn in the breadcrumb row, not the menu bar the
-      // chrome redraw covers (QA plugins-ui: an updated item kept its old text).
+      // Plugin status items are drawn in the breadcrumb row (QA plugins-ui: an
+      // updated item kept its old text while only the menu bar was repainted).
       .request_status_redraw =
           [shell]() {
             shell->RequestBreadcrumbRedraw();

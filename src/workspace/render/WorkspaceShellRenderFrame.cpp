@@ -712,7 +712,10 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         SDL_SetWindowTitle(dialog_window_, frame_state_.window_title.c_str());
       }
     }
-    chrome_unit(layout.menu_bar, inputs);  // the custom title bar draws the title
+    // The custom title bar draws the title; the bar's items, chevron and window
+    // buttons are units of their own, below.
+    inputs = util::Fnv1aByte(inputs, CurrentWindowChromeState().custom_enabled ? 1u : 0u);
+    chrome_unit(layout.menu_bar, inputs);
   }
   frame_state_.caret_visible = CaretVisibleNow();
   // The editor (and the compare/merge editable panes) paint the caret only while
@@ -2239,6 +2242,38 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::RefreshHover");
     UpdateEditorHover(last_mouse_x_, last_mouse_y_);
     editor_hover_refresh_pending_ = false;
+  }
+  // The menu bar's items, its overflow chevron and the window buttons, each as
+  // its paint decides it (RenderChrome): an item is active while its menu is open
+  // and lit under the pointer otherwise, the chevron and a button light under the
+  // pointer, and the maximize button draws the window's state. So a menu that
+  // opens, switches or closes repaints the items it moved between, whoever moved
+  // it; the bar's own unit above keyed none of this, and each of those paths
+  // named the chrome's rect. In fixed slots: the units are compared by position.
+  {
+    const VisibleMenuBarItems bar_items = ComputeVisibleMenuBarItems(layout.menu_bar);
+    for (std::size_t slot = 0; slot < kMaxMenuBarItems; ++slot) {
+      if (slot >= bar_items.size()) {
+        chrome_unit(std::nullopt, 0);
+        continue;
+      }
+      const VisibleMenuBarItem& item = bar_items[slot];
+      const bool lit = !item.active && PointerOver(item.rect);
+      chrome_unit(item.rect, (static_cast<std::uint64_t>(item.id) << 8) | (item.active ? 2u : 0u) | (lit ? 4u : 0u) | 1u);
+    }
+    const std::optional<SDL_FRect> chevron = MenuOverflowChevronRect(layout.menu_bar);
+    chrome_unit(chevron, chevron.has_value() && PointerOver(*chevron) ? 3u : 1u);
+    const VisibleWindowControlButtons window_buttons = ComputeVisibleWindowControlButtons(layout.menu_bar);
+    const bool expanded = CurrentWindowChromeState().Expanded();
+    for (std::size_t slot = 0; slot < kWindowControlButtonCount; ++slot) {
+      if (slot >= window_buttons.size()) {
+        chrome_unit(std::nullopt, 0);
+        continue;
+      }
+      const VisibleWindowControlButton& button = window_buttons[slot];
+      chrome_unit(button.rect, (static_cast<std::uint64_t>(button.id) << 8) | (PointerOver(button.rect) ? 2u : 0u) |
+                                   (expanded ? 4u : 0u) | 1u);
+    }
   }
   // The element painted hovered and the tooltip card, as this frame paints them.
   // Pointer motion damages its own hover changes; this catches the ones nothing

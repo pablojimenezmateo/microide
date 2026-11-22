@@ -303,14 +303,6 @@ void WorkspaceShell::RequestPreparedFrame() {
   ++damage_generation_;
 }
 
-void WorkspaceShell::RequestChromeRedraw() {
-  if (const auto rect = CurrentChromeRedrawRect(); rect.has_value()) {
-    RequestRedrawRect(*rect);
-  } else {
-    RequestWindowRedraw();
-  }
-}
-
 void WorkspaceShell::RequestSidebarRedraw() {
   const auto layout = CurrentWorkspaceLayout();
   if (!layout.has_value()) {
@@ -591,24 +583,6 @@ util::InlineVector<SDL_FRect, 5> WorkspaceShell::CurrentChromeRects() const {
     }
   }
   return rects;
-}
-
-// One rect covering all of it, for REQUESTING a chrome repaint (a superset is
-// only extra pixels). Never for deciding what a dirty rect may skip; that is
-// CurrentChromeRects, shape by shape.
-std::optional<SDL_FRect> WorkspaceShell::CurrentChromeRedrawRect() const {
-  std::optional<SDL_FRect> rect;
-  for (const SDL_FRect& piece : CurrentChromeRects()) {
-    rect = UnionOptionalRects(rect, piece);
-  }
-  // A menu anchored on a button paints the button pressed while it is open, so
-  // opening, switching and closing it repaint the button too.
-  if (context_.menu_state.menu_bar_open && context_.menu_state.active_menu_anchor_rect.has_value()) {
-    const SDL_FRect& anchor = *context_.menu_state.active_menu_anchor_rect;
-    rect = UnionOptionalRects(rect, MakeRect(anchor.x - 1.0f, anchor.y - 1.0f, anchor.w + 2.0f,
-                                             anchor.h + 2.0f));
-  }
-  return rect;
 }
 
 std::optional<SDL_FRect> WorkspaceShell::CurrentFocusedEditorRedrawRect() const {

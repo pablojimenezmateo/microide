@@ -8759,6 +8759,197 @@ void TestAnOpenMenusRowsRepaintAtFractionalScales() {
   }
 }
 
+// The menu bar's items are chrome units keyed on what each draws: active while
+// its menu is open, lit under the pointer otherwise. So a menu that opens,
+// switches or closes -- by a click, the pointer, a key -- owes a frame, and frame
+// prep repaints the items it moved between and the popups (units of their own).
+// Each of those paths named the chrome's rect: the bar and every open popup.
+void TestAMenuOpeningSwitchingAndClosingRepaintsItsBarItems() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("notes.txt", "one\ntwo\n", 840, 600);
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "the file in its tab");
+  const auto file = fixture.ElementRect("menu:File");
+  const auto edit = fixture.ElementRect("menu:Edit");
+  const auto view = fixture.ElementRect("menu:View");
+  Expect(file.has_value() && edit.has_value() && view.has_value(), "the menu bar shows File, Edit and View");
+  if (!file || !edit || !view) {
+    return;
+  }
+  const SDL_FRect bar = TestAccess::CurrentLayout(fixture.shell).menu_bar;
+  // What a step repaints of the menu bar (the canvas is left painted whole).
+  const auto bar_share = [&](const workspace::RenderInvalidation& redraw) {
+    fixture.PinCaret();
+    const workspace::RenderInvalidation damage =
+        FrameDamage(fixture.shell, fixture.canvas, fixture.width, fixture.height, redraw);
+    float covered = damage.full ? bar.w * bar.h : 0.0f;
+    for (const SDL_FRect& rect : damage.rects) {
+      SDL_FRect inside{};
+      if (SDL_GetRectIntersectionFloat(&rect, &bar, &inside)) {
+        covered += inside.w * inside.h;
+      }
+    }
+    fixture.PinCaret();
+    fixture.shell.Render(fixture.canvas.renderer(), fixture.width, fixture.height);
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+    return covered / (bar.w * bar.h);
+  };
+  const auto onto = [](const SDL_FRect& rect) { return MouseMotionEvent(rect.x + rect.w * 0.5f, rect.y + rect.h * 0.5f); };
+
+  // Each step against a full repaint.
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {onto(*view)}), "the pointer onto View, no menu open");
+  fixture.ExpectFresh(fixture.Click(*file), "a click opened File");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {onto(*edit)}), "the pointer switched to Edit");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RIGHT)}), "Right switched to the next menu");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_LEFT)}), "Left switched back");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)}), "Escape closed the menu");
+  fixture.ExpectFresh(fixture.Click(*file), "a click opened File again");
+  fixture.ExpectFresh(fixture.Click(*file), "a click on its item closed it");
+  fixture.ExpectFresh(fixture.Click(*file), "a click opened File once more");
+  // (Outside File's popup, which is short: Edit's reaches down the window.)
+  fixture.ExpectFresh(fixture.Click(SDL_FRect{700.0f, 520.0f, 2.0f, 2.0f}), "a press outside closed it");
+  Expect(!TestAccess::MenuBarOpen(fixture.shell), "the press outside closed the menu");
+  // The editor's context menu, which hangs from the pointer.
+  const auto metrics = TestAccess::ActiveEditorMetrics(fixture.shell);
+  const float text_x = metrics.text_x + TestAccess::TextCharWidth(fixture.shell) * 2.0f;
+  const float text_y = metrics.first_line_y + metrics.line_height * 0.5f;
+  SDL_Event right_down = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, text_x, text_y);
+  SDL_Event right_up = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, text_x, text_y);
+  right_down.button.button = SDL_BUTTON_RIGHT;
+  right_up.button.button = SDL_BUTTON_RIGHT;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(text_x, text_y), right_down}),
+                      "a right press opened the editor's menu");
+  Expect(TestAccess::EditorContextMenuOpen(fixture.shell), "the editor's menu is open");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {right_up}), "the right button released");
+  Expect(TestAccess::EditorContextMenuOpen(fixture.shell) &&
+             TestAccess::DerivedUnitCount(fixture.shell, workspace::DerivedSurface::MenuPopup) > 1,
+         "the editor's menu stays open, its card and rows laid out");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)}), "Escape closed it");
+
+  // And what they repaint of the bar: the items they moved between, not the bar.
+  const float opened = bar_share(fixture.Click(*file));
+  Expect(opened > 0.0f && opened < 0.3f,
+         "a menu opening repaints its bar item, not the bar: " + std::to_string(opened) + " of it");
+  const float switched = bar_share(DispatchEvents(fixture.shell, {onto(*edit)}));
+  Expect(switched > 0.0f && switched < 0.3f,
+         "a menu switching repaints the two items: " + std::to_string(switched) + " of the bar");
+  const float closed = bar_share(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)}));
+  Expect(closed > 0.0f && closed < 0.3f,
+         "a menu closing repaints its bar item: " + std::to_string(closed) + " of the bar");
+}
+
+// The floating debug toolbar is a chrome unit keyed on where it is and on whether
+// the session is stopped, which is all its paint reads besides the pointer. So a
+// late `capabilities` event that adds the reverse buttons (the card grows), the
+// session resuming and stopping, and the session ending repaint it from a frame
+// alone: the debug callbacks named the chrome's rect, which never held it.
+void TestTheDebugToolbarFollowsItsSessionFromAFrame() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("main.c", "int main() { return 0; }\n");
+  const std::filesystem::path adapter = fixture.temp_dir.path() / "adapter.py";
+  WriteFile(adapter, MockAdapterSource());
+  TestAccess::RegisterDebugAdapterForTest(fixture.shell, "mock", MockAdapterCommand(adapter, "reverse_late"));
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting debug.enabled true"),
+         "debug.enabled should turn on");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-run --type mock /bin/true"),
+         "debug-run should start the mock session");
+  const auto pump = [&]() { TestAccess::ConsumeDapCallbacks(fixture.shell); };
+  Expect(WaitUntil([&]() { return TestAccess::DebugSessionStopped(fixture.shell); }, std::chrono::seconds(10),
+                   std::chrono::milliseconds(5), pump),
+         "the mock adapter should stop on configurationDone");
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "the first stop");
+  const auto toolbar_buttons = [&]() {
+    std::size_t count = 0;
+    const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+    for (const util::JsonValue& element : ui["elements"].AsArray()) {
+      count += element["name"].AsString().starts_with("button:debug-toolbar/") ? 1 : 0;
+    }
+    return count;
+  };
+  const std::size_t buttons = toolbar_buttons();
+  Expect(buttons >= 5 && !fixture.ElementRect("button:debug-toolbar/step-back").has_value(),
+         "the toolbar shows, without the reverse buttons");
+  // What the session's callbacks asked for, as the app paints it: no rect of
+  // theirs is the toolbar's.
+  const auto asked = [&]() {
+    workspace::RenderInvalidation redraw = fixture.shell.ConsumePendingRenderInvalidation();
+    Expect(!redraw.full, "a debug callback asks for no full repaint");
+    return redraw;
+  };
+
+  // Recording starts: the adapter announces reverse execution after the fact.
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-repl"), "debug-repl should open its prompt");
+  (void)DispatchEvents(fixture.shell, {TextInputEvent("record"), KeyDownEvent(SDLK_RETURN)});
+  fixture.ExpectFresh(full, "the evaluate sent");
+  Expect(WaitUntil([&]() { return toolbar_buttons() > buttons; }, std::chrono::seconds(10),
+                   std::chrono::milliseconds(5), pump),
+         "the late capabilities event adds the reverse buttons");
+  fixture.ExpectFresh(asked(), "the toolbar grew by its reverse buttons");
+
+  // The session resumes (the step buttons dim) and stops again.
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-continue"), "debug-continue should run");
+  fixture.ExpectFresh(asked(), "the session resumed");
+  Expect(WaitUntil([&]() { return TestAccess::DebugSessionStopped(fixture.shell); }, std::chrono::seconds(10),
+                   std::chrono::milliseconds(5), pump),
+         "the mock adapter stops again");
+  fixture.ExpectFresh(asked(), "the session stopped again");
+
+  // The session ends: the toolbar goes.
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-stop"), "debug-stop should run");
+  Expect(WaitUntil([&]() { return !TestAccess::DebugSessionActive(fixture.shell); }, std::chrono::seconds(10),
+                   std::chrono::milliseconds(5), pump),
+         "the session ends");
+  fixture.ExpectFresh(asked(), "the toolbar left with its session");
+  Expect(toolbar_buttons() == 0, "no toolbar without a session");
+}
+
+// A remote project's tab wears its connection's state in its corner. The strip's
+// unit keys on its sources' version, which folds each tab's worst stage, so a
+// stage change repaints the strip from a frame: the status callback named the
+// chrome's rect (the menu bar), which never held the strip.
+void TestARemoteProjectsStageRepaintsItsTabFromAFrame() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("a.txt", "a\n");
+  const std::filesystem::path other = fixture.temp_dir.path() / "app";
+  WriteFile(other / "b.txt", "b\n");
+  Expect(TestAccess::OpenProjectTab(fixture.shell, other, false, false), "a second project opens");
+  auto& remote = TestAccess::CurrentProjectState(fixture.shell);
+  remote.id = project::ProjectId::ForRemote("worky", "/srv/app");
+  using Stage = editor::WelcomeStageState;
+  remote.remote_status.stages = {{.text = "not connected", .state = Stage::Failed}};
+  ++remote.remote_status_revision;
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "two projects, the remote one offline");
+  const SDL_FRect strip = TestAccess::CurrentLayout(fixture.shell).project_tab_strip;
+  Expect(strip.h > 0.0f, "two projects show the project strip");
+  SDL_Surface* offline = FullFrame(fixture);
+
+  // The connection comes up. What its status callback asks for while this is the
+  // project in front: the editor surface (the welcome page lists the stages) and
+  // a frame.
+  remote.remote_status.stages = {{.text = "connected", .state = Stage::Done}};
+  ++remote.remote_status_revision;
+  workspace::RenderInvalidation redraw;
+  redraw.frame = true;
+  redraw.rects.push_back(TestAccess::CurrentLayout(fixture.shell).editor_surface);
+  fixture.ExpectFresh(redraw, "the remote project connected");
+  SDL_Surface* online = FullFrame(fixture);
+  const render::PixelDiffResult changed = DiffSurfaces(offline, online);
+  SDL_DestroySurface(offline);
+  SDL_DestroySurface(online);
+  // Not a vacuous check: the tab's corner is on the strip, above the editor surface.
+  Expect(changed.count > 0 && static_cast<float>(changed.min_y) < strip.y + strip.h,
+         "the stage shows on the project strip (changed from y=" + std::to_string(changed.min_y) + ")");
+}
+
 // The compact layout's overflow popup, whose rows light by its active index: the
 // pointer along them, the keyboard, and Escape, each against a full repaint.
 void TestTheMenuOverflowPopupsRowsRepaintRowByRow() {
@@ -8958,6 +9149,12 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestATrackedLspRequestRepaintsItsStatusSegmentNotTheWindow);
   AddTest(tests, "QaFlowRegression/ACompareRowKeysOnWhichWindowItsWorkingSideReads",
           TestACompareRowKeysOnWhichWindowItsWorkingSideReads);
+  AddTest(tests, "QaFlowRegression/AMenuOpeningSwitchingAndClosingRepaintsItsBarItems",
+          TestAMenuOpeningSwitchingAndClosingRepaintsItsBarItems);
+  AddTest(tests, "QaFlowRegression/TheDebugToolbarFollowsItsSessionFromAFrame",
+          TestTheDebugToolbarFollowsItsSessionFromAFrame);
+  AddTest(tests, "QaFlowRegression/ARemoteProjectsStageRepaintsItsTabFromAFrame",
+          TestARemoteProjectsStageRepaintsItsTabFromAFrame);
   AddTest(tests, "QaFlowRegression/TheMenuOverflowPopupsRowsRepaintRowByRow",
           TestTheMenuOverflowPopupsRowsRepaintRowByRow);
   AddTest(tests, "QaFlowRegression/ASubmenuAndAContextMenuRepaintRowByRow",

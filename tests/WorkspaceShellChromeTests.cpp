@@ -229,10 +229,11 @@ void TestWorkspaceShellCompactMenuOverflowButtonIsInteractive() {
 
   const auto popup = WorkspaceShellTestAccess::MenuOverflowPopupRect(shell);
   Expect(popup.has_value(), "open overflow menu should expose a popup rect");
-  Expect(!result.redraw.full && !result.redraw.rects.empty(),
-         "opening the compact menu should stay on the partial redraw path");
-  Expect(AnyRectIntersects(result.redraw.rects, *popup),
-         "compact menu redraw must include the popup area, not just the title bar");
+  // The popup's card and rows are derived units: opening it owes a frame, and
+  // frame prep repaints where it is (CompactMenuOverflowPaintsWhatAFullRepaintPaints
+  // holds each such frame against a full repaint).
+  Expect(!result.redraw.full && result.redraw.frame,
+         "opening the compact menu should owe a frame, not a full repaint");
 }
 
 // The compact layout's chevron and its popup, frame by frame against a full
@@ -533,7 +534,7 @@ void TestWorkspaceShellMenuBarHoverSwitchesActiveMenu() {
          "hovering the Edit menu should switch the active popup");
 }
 
-void TestWorkspaceShellMenuEventsReturnPartialChromeInvalidation() {
+void TestWorkspaceShellMenuEventsOweAFrame() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
@@ -548,12 +549,13 @@ void TestWorkspaceShellMenuEventsReturnPartialChromeInvalidation() {
   click_event.button.x = file_rect->x + file_rect->w * 0.5f;
   click_event.button.y = file_rect->y + file_rect->h * 0.5f;
   const auto open_result = shell.HandleEvent(click_event);
-  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  // A menu's popup and the bar's items are derived units: opening one, and the
+  // pointer switching to another, owe a frame and name no rect of the chrome
+  // (QaFlowRegression/AMenuOpeningSwitchingAndClosingRepaintsItsBarItems holds
+  // the frames against a full repaint and measures them).
   Expect(open_result.handled, "opening a menu should be handled");
-  Expect(!open_result.redraw.full && !open_result.redraw.rects.empty(),
-         "opening a menu should request a partial redraw");
-  Expect(AnyRectIntersects(open_result.redraw.rects, layout.menu_bar),
-         "menu redraws should include the chrome menu bar");
+  Expect(!open_result.redraw.full && open_result.redraw.frame && open_result.redraw.rects.empty(),
+         "opening a menu should owe a frame and name no rect");
 
   SDL_Event motion_event{};
   motion_event.type = SDL_EVENT_MOUSE_MOTION;
@@ -561,10 +563,8 @@ void TestWorkspaceShellMenuEventsReturnPartialChromeInvalidation() {
   motion_event.motion.y = edit_rect->y + edit_rect->h * 0.5f;
   const auto hover_result = shell.HandleEvent(motion_event);
   Expect(hover_result.handled, "switching menu hover should be handled");
-  Expect(!hover_result.redraw.full && !hover_result.redraw.rects.empty(),
-         "switching menu hover should stay on a partial redraw path");
-  Expect(AnyRectIntersects(hover_result.redraw.rects, layout.menu_bar),
-         "menu hover redraws should stay scoped to chrome");
+  Expect(!hover_result.redraw.full && hover_result.redraw.frame && hover_result.redraw.rects.empty(),
+         "switching menu hover should owe a frame and name no rect");
 }
 
 void TestWorkspaceShellPopupRowHoverOwesAFrame() {
@@ -6841,8 +6841,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompactMenuOverflowMotionTracksHoveredRow);
   AddTest(tests, "WorkspaceShell/MenuBarHoverSwitchesActiveMenu",
           TestWorkspaceShellMenuBarHoverSwitchesActiveMenu);
-  AddTest(tests, "WorkspaceShell/MenuEventsReturnPartialChromeInvalidation",
-          TestWorkspaceShellMenuEventsReturnPartialChromeInvalidation);
+  AddTest(tests, "WorkspaceShell/MenuEventsOweAFrame",
+          TestWorkspaceShellMenuEventsOweAFrame);
   AddTest(tests, "WorkspaceShell/PopupRowHoverOwesAFrame",
           TestWorkspaceShellPopupRowHoverOwesAFrame);
   AddTest(tests, "WorkspaceShell/TreeSidebarHeaderHoverReturnsButtonOnlyInvalidation",

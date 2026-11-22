@@ -345,8 +345,10 @@ void WorkspaceShell::RebuildPresentationRegistries() {
   const std::string& active = context_.current_project_state.active_colorscheme_name;
   if (theme_registry_.Contains(active)) {
     coordinator.ApplyColorscheme(active, /*persist=*/false, /*log_feedback=*/false);
-    RequestEditorSurfaceRedraw();
-    RequestChromeRedraw();
+    // The theme's colours may have changed, and not every pixel is a derived
+    // unit keyed on them (the chrome bands' fills are not): the window. This
+    // named the editor surface and the menu bar.
+    RequestWindowRedraw();
   }
 }
 
@@ -484,12 +486,9 @@ void WorkspaceShell::ConsumeReloadResult(PluginReloadRequest request, bool clean
       NotifyLspBufferOpen(active->path());
     }
   }
-  {
-    util::StartupTrace::Scope chrome_redraw_scope("RequestChromeRedraw");
-    util::PerformanceTrace::Scope perf_chrome_redraw_scope(
-        "WorkspaceShell::ReloadPluginsForCurrentProject::RequestChromeRedraw");
-    RequestChromeRedraw();
-  }
+  // What a reload changes on screen outside the editor -- status items, the
+  // sidebar's views, the menus' rows -- is derived at frame prep.
+  RequestPreparedFrame();
   {
     util::StartupTrace::Scope editor_redraw_scope("RequestEditorSurfaceRedraw");
     util::PerformanceTrace::Scope perf_editor_redraw_scope(
@@ -532,7 +531,7 @@ void WorkspaceShell::RefreshPluginSurfacesForReactivation() {
   if (ActiveSidebarMode() == SidebarMode::Git) {
     RefreshGitSidebar();
   }
-  RequestChromeRedraw();
+  RequestPreparedFrame();
   RequestEditorSurfaceRedraw();
 }
 
@@ -911,7 +910,6 @@ bool WorkspaceShell::AcceptGhostText() {
   viewport->EndUndoGroup();
   ResetCaretBlink();
   NoteActiveEditableEdit();  // an edit: LSP sync, search, breakpoints, the frame
-  RequestChromeRedraw();
   return true;
 }
 

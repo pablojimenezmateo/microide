@@ -374,7 +374,7 @@ with a DAP **`capabilities` event** carrying a *partial* body
 that event: `DapClient::ApplyCapabilitiesUpdate` merges it under the same lock that
 guards `Capabilities()` via `dap_protocol::MergeCapabilities` (a presence-checked
 overlay — reusing `ParseCapabilities` would reset every absent flag to false), then the
-new `on_capabilities_changed` callback requests a chrome redraw so the reverse buttons
+new `on_capabilities_changed` callback requests a frame (the toolbar is a chrome unit keyed on its rect, which grows by the two buttons) so the reverse buttons
 (which read the capability live each frame) appear immediately instead of after the next
 input. Covered by `DapProtocol/MergesPartialCapabilities` (partial merge preserves
 unrelated flags) and `DebugService/SessionReverseEnabledByLateCapabilitiesEvent` (an

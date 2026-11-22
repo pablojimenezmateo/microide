@@ -969,8 +969,7 @@ void WorkspaceShell::FocusEditorGroup(std::size_t group_index) {
   }
   state.focused_group_index = group_index;
   state.surface.focus = FocusTarget::Editor;
-  RequestChromeRedraw();
-  RequestEditorSurfaceRedraw();
+  RequestEditorSurfaceRedraw();  // (the window title follows the group: the bar's unit keys on it)
 }
 
 bool WorkspaceShell::CloseEditorGroup() {
