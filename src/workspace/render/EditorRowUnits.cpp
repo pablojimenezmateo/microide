@@ -1,6 +1,7 @@
 #include "workspace/render/EditorRowUnits.h"
 
 #include <algorithm>
+#include <cstring>
 #include <string_view>
 
 #include "util/Fnv1a.h"
@@ -14,6 +15,43 @@ struct RowRef {
 };
 
 std::uint64_t Mix(std::uint64_t hash, std::uint64_t value) { return util::Fnv1aValue(hash, value); }
+
+// `size` bytes, eight to a multiply: a pane's rows are hashed on every prepared
+// frame, and FNV's multiply per byte was the whole cost of doing so. The length
+// goes in first, so a short tail (zero-padded to a word) cannot stand for a
+// longer run that ends in zero bytes.
+std::uint64_t MixBytes(std::uint64_t hash, const char* data, std::size_t size) {
+  constexpr std::uint64_t kMultiplier = 0x9E3779B97F4A7C15ull;
+  hash = Mix(hash, size);
+  while (size >= 8) {
+    std::uint64_t word = 0;
+    std::memcpy(&word, data, 8);
+    hash = (hash ^ word) * kMultiplier;
+    hash ^= hash >> 32;
+    data += 8;
+    size -= 8;
+  }
+  if (size > 0) {
+    std::uint64_t word = 0;
+    std::memcpy(&word, data, size);
+    hash = (hash ^ word) * kMultiplier;
+    hash ^= hash >> 32;
+  }
+  return hash;
+}
+
+// What a line shows whichever of its rows draws it: its bytes (a line too long to
+// hash every frame folds its length and the document's content revision) and its
+// syntax tokens. A line whose tokens are not current is tokenized here, which the
+// row's repaint would do anyway.
+std::uint64_t LineContentKey(const editor::TextViewport& viewport, std::size_t line) {
+  const std::string_view text = viewport.lines().LineView(line);
+  std::uint64_t key = util::kFnv1aOffsetBasis;
+  key = text.size() <= kEditorRowKeyMaxHashedBytes ? MixBytes(key, text.data(), text.size())
+                                                   : Mix(Mix(key, text.size()), viewport.content_revision());
+  const std::vector<editor::SyntaxTokenKind>& tokens = viewport.HighlightedLineTokens(line);
+  return MixBytes(key, reinterpret_cast<const char*>(tokens.data()), tokens.size() * sizeof(editor::SyntaxTokenKind));
+}
 
 // Folds `value` into every row showing `line`. `rows` is sorted by line.
 template <typename Fold>
@@ -62,11 +100,13 @@ void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uin
   const std::size_t scroll = viewport.scroll_line();
   const std::size_t visual_count = viewport.visual_line_count();
   const std::size_t line_count = viewport.line_count();
-  const editor::TextBuffer& lines = viewport.lines();
   // An edit that left its carried syntax state alone leaves the lines below it
   // highlighting as before: settled, their tokens are current, and the rows
   // below the edit keep their keys.
   viewport.SettleHighlightAfterLastEdit();
+  std::uint64_t line_key = 0;
+  std::size_t line_key_line = 0;
+  bool line_key_valid = false;
   for (std::size_t row = 0; row < metrics.visible_rows; ++row) {
     const std::size_t visual = scroll + row;
     if (visual >= visual_count) {
@@ -80,17 +120,15 @@ void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uin
     key = Mix(key, meta.visual_start);
     key = Mix(key, meta.visual_end);
     key = Mix(key, meta.indent);
-    const std::string_view text = lines.LineView(meta.line_index);
-    key = Mix(key, text.size());
-    key = text.size() <= kEditorRowKeyMaxHashedBytes ? util::Fnv1aBytes(key, text)
-                                                     : Mix(key, viewport.content_revision());
-    // The row's syntax colours. A line whose tokens are not current is tokenized
-    // here, which the row's repaint would do anyway; a settled edit leaves that
-    // to its own lines.
-    const std::vector<editor::SyntaxTokenKind>& tokens = viewport.HighlightedLineTokens(meta.line_index);
-    key = Mix(key, tokens.size());
-    key = util::Fnv1aBytes(key, std::string_view(reinterpret_cast<const char*>(tokens.data()),
-                                                 tokens.size() * sizeof(editor::SyntaxTokenKind)));
+    // The line's bytes and syntax colours, hashed once for all the rows a wrapped
+    // line spans (they follow one another): a 15 KiB line wrapped over the pane
+    // was hashed whole once per row, 1.5 ms of every prepared frame.
+    if (!line_key_valid || meta.line_index != line_key_line) {
+      line_key = LineContentKey(viewport, meta.line_index);
+      line_key_line = meta.line_index;
+      line_key_valid = true;
+    }
+    key = Mix(key, line_key);
     // Line numbers right-align to the widest one: a row's gutter text moves when
     // the document gains a digit, which the gutter width (in the pane key) tracks.
     if (meta.visual_start == 0 && inputs.folds != nullptr) {
@@ -162,8 +200,41 @@ void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uin
                      Mix(inputs.pane_key, 0x4EAD)});
   }
   if (sticky_band) {
-    units.push_back({SDL_FRect{inputs.pane_rect.x, metrics.sticky_band_top_y, inputs.pane_rect.w, band_height},
-                     Mix(inputs.pane_key, 0x57)});
+    // The band draws each of its lines as a row: the line's text and colours, the
+    // caret's highlight when the caret is on that line (scrolled out of sight
+    // below the band), its diagnostics and its fold mark. None of them is a
+    // visible row's, so none was in any key: Go to Line from a block's opener to
+    // a row in view left the band lit.
+    std::uint64_t band = Mix(inputs.pane_key, 0x57);
+    std::size_t first_sticky = ~std::size_t{0};
+    std::size_t last_sticky = 0;
+    for (const std::size_t line : inputs.sticky_lines) {
+      if (line >= line_count) {
+        continue;
+      }
+      first_sticky = std::min(first_sticky, line);
+      last_sticky = std::max(last_sticky, line);
+      band = Mix(Mix(band, line), LineContentKey(viewport, line));
+      band = Mix(band, line == viewport.cursor_line() ? 1u : 2u);
+      if (inputs.folds != nullptr && inputs.folds->FoldStartingAt(line).has_value()) {
+        band = Mix(band, inputs.folds->IsCollapsedAtOpener(line) ? 3u : 2u);
+      }
+    }
+    // The file's diagnostics, one pass: nearly all miss the band's few lines on
+    // the two comparisons.
+    for (const editor::PublishedDiagnostic& diagnostic : inputs.diagnostics) {
+      if (diagnostic.range.end.line < first_sticky || diagnostic.range.start.line > last_sticky) {
+        continue;
+      }
+      for (const std::size_t line : inputs.sticky_lines) {
+        if (diagnostic.range.start.line <= line && line <= diagnostic.range.end.line) {
+          band = Mix(Mix(Mix(Mix(band, line), 0xD0 + static_cast<std::uint64_t>(diagnostic.severity)),
+                         diagnostic.range.start.line == line ? diagnostic.range.start.column : 0),
+                     diagnostic.range.end.line == line ? diagnostic.range.end.column : ~std::uint64_t{0});
+        }
+      }
+    }
+    units.push_back({SDL_FRect{inputs.pane_rect.x, metrics.sticky_band_top_y, inputs.pane_rect.w, band_height}, band});
   }
   if (inputs.rows_have_gaps) {
     std::uint64_t all = Mix(inputs.pane_key, row_keys.size());

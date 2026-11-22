@@ -258,6 +258,14 @@ struct PreparedFrameState {
     bool active = false;
     editor::EditorViewMetrics metrics{};
     editor::EditorViewModel view_model;
+    // What `view_model`'s sticky lines and inset gaps view. The builder hands them
+    // out as views into ONE thread-local cache, good until its next build; frame
+    // prep builds every pane's model before any pane paints, so a pane keeps its
+    // own copy (capacity reused) -- in a split, the first pane's band drew the
+    // second pane's sticky lines.
+    std::vector<std::size_t> sticky_lines_storage;
+    std::vector<editor::RowGap> row_gaps_storage;
+    std::vector<editor::RowGapContent> row_gap_contents_storage;
     const editor::WelcomeViewModel* welcome = nullptr;  // a placeholder viewport's home surface
     std::vector<editor::PublishedDiagnostic> filtered_diagnostics;
     std::span<const editor::PublishedDiagnostic> diagnostics;

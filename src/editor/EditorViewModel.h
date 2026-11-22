@@ -68,10 +68,14 @@ struct EditorViewModel {
   std::vector<FoldGutterMark> fold_gutter_marks;
   // Breakpoint dots for visible rows (empty unless the debugger is enabled).
   std::vector<BreakpointGutterMark> breakpoint_gutter_marks;
-  // `occurrence_ranges` and `sticky_lines` are views into thread_local builder caches owned by
-  // `RenderViewModelBuilder`. They stay valid until the next BuildEditorViewModelInto on the
-  // same thread, which matches the render-frame lifetime of this view model. The view-into-cache
-  // form avoids the per-frame element copy that the previous owning vectors required.
+  // `occurrence_ranges`, `sticky_lines`, `row_gaps` and `row_gap_contents` are views into
+  // thread_local builder caches owned by `RenderViewModelBuilder`, ONE of each. They stay valid
+  // until the next BuildEditorViewModelInto on the same thread -- NOT for the frame: frame prep
+  // builds a model per pane before any pane paints, so whoever keeps a model past the next build
+  // keeps its own copy of what these view (PreparedFrameState::EditorPanePaint does; a split's
+  // first pane drew the last pane's sticky lines before it did).
+  // TODO(derived-damage): have the builder fill storage the caller owns, so no caller can hold
+  // a view the next build rewrites.
   std::span<const OccurrenceRange> occurrence_ranges;
   // Logical opener line indices from outer enclosing fold to inner, pinned in the sticky band
   // (top row = outer scope). Empty when sticky scroll is disabled or no enclosing folds apply.

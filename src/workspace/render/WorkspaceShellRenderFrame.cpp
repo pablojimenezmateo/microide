@@ -928,6 +928,15 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
           fold_enabled && sticky_enabled && paint.folding != nullptr, sticky_depth, paint.render_whitespace, debug_on,
           debug_on ? &project_state.breakpoint_store : nullptr, debug_on ? &project_state.debug_execution : nullptr,
           inset_flags, paint.metrics.line_height);
+      // The model's views into the builder's one cache, kept per pane (see
+      // EditorPanePaint): the next pane's build rewrites what they view.
+      paint.sticky_lines_storage.assign(paint.view_model.sticky_lines.begin(), paint.view_model.sticky_lines.end());
+      paint.view_model.sticky_lines = paint.sticky_lines_storage;
+      paint.row_gaps_storage.assign(paint.view_model.row_gaps.begin(), paint.view_model.row_gaps.end());
+      paint.view_model.row_gaps = paint.row_gaps_storage;
+      paint.row_gap_contents_storage.assign(paint.view_model.row_gap_contents.begin(),
+                                            paint.view_model.row_gap_contents.end());
+      paint.view_model.row_gap_contents = paint.row_gap_contents_storage;
       paint.diagnostics = {};
       if (!viewport.path().empty()) {
         if (const auto* published = project_state.diagnostics_store.FindByPathKey(viewport.path_key())) {
@@ -1251,6 +1260,8 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
           .Add(viewport->scroll_line())
           .Add(viewport->horizontal_scroll())
           .Add(viewport->soft_wrap())
+          .Add(viewport->tab_size())
+          .Add(viewport->indent_width())  // the indent guides' pitch
           .Add(viewport->layout_shape_revision())
           .Add(viewport->syntax_revision())
           .Add(std::string_view(viewport->language_id()))
@@ -1313,7 +1324,12 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
           .pane_rect = pane.rect,
           .metrics = metrics,
           .pane_key = pane_key.value(),
-          .rows_have_gaps = insets_possible,
+          // Gaps this frame lays out, not gaps a plugin might one day publish: any
+          // plugin presentation at all (a panel surface, the language server's
+          // semantic tokens or inlay hints) made the pane one unit, and a keystroke
+          // repainted all of it.
+          .rows_have_gaps = !paint.view_model.row_gaps.empty(),
+          .sticky_lines = paint.view_model.sticky_lines,
           .diagnostics = diagnostics,
           .occurrence_lines = focused && frame_state_.occurrence_viewport == viewport
                                   ? std::span<const std::pair<std::size_t, std::uint64_t>>(

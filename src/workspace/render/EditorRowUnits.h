@@ -42,6 +42,10 @@ struct EditorRowKeyInputs {
   // Rows do not sit on a fixed pitch (inline insets open gaps between them): the
   // pane is then one unit keyed by every row.
   bool rows_have_gaps = false;
+  // The lines the sticky band shows, top to bottom (the view model's): the band
+  // draws each as a row -- its text and syntax colours, the caret's highlight when
+  // the caret is on it, its diagnostics and fold mark -- so its unit keys on them.
+  std::span<const std::size_t> sticky_lines;
   std::span<const editor::PublishedDiagnostic> diagnostics;
   // The focused pane's occurrence highlights, one (line, hash) per line, sorted.
   std::span<const std::pair<std::size_t, std::uint64_t>> occurrence_lines;

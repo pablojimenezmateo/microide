@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <functional>
 #include <thread>
@@ -40,6 +41,7 @@
 #include "workspace/ProjectSearchPanelLayout.h"
 #include "workspace/git/BranchReviewStateBridge.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
+#include "workspace/render/EditorRowUnits.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 namespace microide::tests {
@@ -6895,7 +6897,260 @@ void TestScrollingTheProjectStripRepaintsIt() {
   fixture.ExpectFresh(arrow_only, "the strip scrolled back to its first project");
 }
 
+
+// ---- derived-damage review: what the editor's row units left out --------------
+namespace {
+
+workspace::RenderInvalidation NothingAnnounced() {
+  workspace::RenderInvalidation none;
+  none.rects.push_back(SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f});
+  return none;
+}
+
+// One block `body_lines` long, its opener `lines_above` lines down the file.
+std::string OneBlockFile(int body_lines, int lines_above = 0) {
+  std::string text;
+  for (int i = 0; i < lines_above; ++i) {
+    text += "int above" + std::to_string(i) + ";\n";
+  }
+  text += "void run() {\n";
+  for (int i = 0; i < body_lines; ++i) {
+    text += "    int value" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  text += "}\n";
+  return text;
+}
+
+// The sticky band draws its lines as rows: the caret's highlight while the caret
+// is on one (scrolled out of sight under the band), their diagnostics, their
+// colours. Its unit keyed on none of that -- only on the pane -- so a caret that
+// left the band's line for a row in view without scrolling left the band lit: Go
+// to Line asks for a frame and names no rect (17,408 stale pixels). A click hid
+// it, because a click still repaints the pane.
+void TestTheStickyBandFollowsTheCaretOffItsLine() {
+  FlowFixture fixture("sticky.cpp", OneBlockFile(120));
+  editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
+  viewport.MoveCursorTo(0, 0);
+  viewport.SetScrollLine(54);
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  Expect(viewport.cursor_line() == 0 && viewport.scroll_line() == 54,
+         "the caret stays on the block's opener, scrolled out of sight");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "goto 66"), "goto should run");
+  Expect(viewport.scroll_line() == 54, "the target row is in view: nothing scrolls");
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(),
+                      "Go to Line moved the caret off the sticky band's line");
+  // And a diagnostic on the band's line, published with no damage request: its
+  // gutter mark and squiggle are drawn in the band.
+  std::vector<editor::Diagnostic> squiggles;
+  squiggles.push_back(editor::Diagnostic{
+      .range = editor::SelectionRange{.start = {.line = 0, .column = 0}, .end = {.line = 0, .column = 4}},
+      .severity = editor::DiagnosticSeverity::Error,
+      .message = "sticky"});
+  (void)TestAccess::CurrentProjectState(fixture.shell)
+      .diagnostics_store.ReplaceForOwnerFile("sticky", viewport.path(), std::move(squiggles));
+  fixture.ExpectFresh(NothingAnnounced(), "a diagnostic on the sticky band's line");
+}
+
+// Two panes side by side, each scrolled into a block. A pane's view model viewed
+// its sticky lines in the builder's ONE cache, and frame prep builds every pane's
+// model before any pane paints: the left pane's band drew the right pane's sticky
+// line indices -- a line of its own body where its block's opener belongs. A
+// partial frame and a full one agree on that, so no redraw comparison sees it;
+// this compares the left pane with itself after only the right pane's document
+// changed.
+void TestSplitPanesKeepTheirOwnStickyLines() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("a.cpp", OneBlockFile(120));
+  WriteFile(fixture.root / "b.cpp", OneBlockFile(120, /*lines_above=*/3));
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right b.cpp"), "split-right should open b.cpp beside a.cpp");
+  editor::TextViewport* right = &TestAccess::ActiveEditor(fixture.shell);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "focus-group-left"), "focus-group-left should run");
+  editor::TextViewport* left = &TestAccess::ActiveEditor(fixture.shell);
+  Expect(left != right, "two panes show two viewports");
+  const auto render = [&] {
+    for (int pass = 0; pass < 2; ++pass) {  // the first sizes the panes, the second paints them settled
+      fixture.PinCaret();
+      fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+      (void)fixture.shell.ConsumePendingRenderInvalidation();
+    }
+    SDL_FlushRenderer(fixture.canvas.renderer());
+    return SDL_DuplicateSurface(fixture.canvas.surface());
+  };
+  SDL_DestroySurface(render());
+  left->MoveCursorTo(50, 0);
+  left->SetScrollLine(40);
+  right->SetScrollLine(40);
+  SDL_Surface* before = render();
+  // Only the right pane's document changes: one more line above its block, so its
+  // sticky line is one further down.
+  right->MoveCursorTo(0, 0);
+  right->InsertText("int pre;\n");
+  right->SetScrollLine(41);
+  SDL_Surface* after = render();
+  Expect(before != nullptr && after != nullptr, "the two frames should be readable");
+  const SDL_FRect pane = TestAccess::GroupEditorSurfaceRect(fixture.shell, 0);
+  std::size_t differing = 0;
+  for (int y = static_cast<int>(pane.y) + 2; y < static_cast<int>(pane.y + pane.h) - 2; ++y) {
+    const auto* row_before = static_cast<const std::uint8_t*>(before->pixels) + y * before->pitch;
+    const auto* row_after = static_cast<const std::uint8_t*>(after->pixels) + y * after->pitch;
+    for (int x = static_cast<int>(pane.x) + 2; x < static_cast<int>(pane.x + pane.w) - 2; ++x) {
+      differing += std::memcmp(row_before + x * 4, row_after + x * 4, 4) != 0 ? 1 : 0;
+    }
+  }
+  SDL_DestroySurface(before);
+  SDL_DestroySurface(after);
+  Expect(differing == 0, "the left pane changed when only the right pane's document did: " +
+                             std::to_string(differing) + " pixels (its sticky band drew the right pane's lines)");
+}
+
+// Any plugin presentation -- a plugin's panel surface, the language server's
+// semantic tokens, inlay hints or code lenses -- made an editor pane ONE derived
+// unit ("its rows may have gaps"), so each keystroke repainted the pane: 446,256
+// px against the edited line's 20,126. Rows are one unit only while the frame
+// lays gaps out between them.
+void TestTypingBesideAPluginPresentationRepaintsTheEditedLine() {
+  FlowFixture fixture("typing.cpp", OneBlockFile(120));
+  auto& state = TestAccess::CurrentProjectState(fixture.shell);
+  editor::SurfaceContent chart;
+  render::PluginDisplayList list;
+  list.content_width = 10.0f;
+  list.content_height = 10.0f;
+  chart.body = std::move(list);
+  state.EnsurePluginPresentation().surfaces.ReplaceForOwnerSurface("plug", "chart", std::move(chart));
+  TestAccess::ActiveEditor(fixture.shell).MoveCursorTo(10, 4);
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  // The first keystroke also flips the dirty mark; the second is the steady one.
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("a")}), "the first keystroke");
+  const SDL_FRect pane = TestAccess::GroupEditorSurfaceRect(fixture.shell, 0);
+  const workspace::RenderInvalidation damage =
+      FrameDamage(fixture.shell, fixture.canvas, FlowFixture::kWidth, FlowFixture::kHeight,
+                  DispatchEvents(fixture.shell, {TextInputEvent("b")}));
+  float covered = 0.0f;
+  for (const SDL_FRect& rect : damage.rects) {
+    SDL_FRect inside{};
+    if (SDL_GetRectIntersectionFloat(&rect, &pane, &inside)) {
+      covered += inside.w * inside.h;
+    }
+  }
+  Expect(!damage.full && covered < pane.w * pane.h * 0.2f,
+         "a keystroke beside a plugin presentation repaints the edited line, not the pane: " +
+             std::to_string(covered) + " of " + std::to_string(pane.w * pane.h) + " px");
+}
+
+// The other side of the same rule: the frame a gap opens between rows and the
+// frame it closes move every row below it, with nothing asking for paint. The
+// pane goes from row units to one unit and back; both ways the old and the new
+// extent repaint.
+void TestAnInsetGapThatOpensOrClosesRepaintsTheRowsItMoves() {
+  FlowFixture fixture("lensed.cpp", "int greet();\nint second();\nint third();\nint fourth();\n");
+  Expect(TestAccess::SetSettingValueTransient(fixture.shell, "plugins.code_lens_above", "true"),
+         "lenses should draw above their lines");
+  auto& state = TestAccess::CurrentProjectState(fixture.shell);
+  // A presentation with nothing in this file: the rows sit on their plain pitch.
+  editor::SurfaceContent chart;
+  render::PluginDisplayList list;
+  list.content_width = 10.0f;
+  list.content_height = 10.0f;
+  chart.body = std::move(list);
+  state.EnsurePluginPresentation().surfaces.ReplaceForOwnerSurface("plug", "chart", std::move(chart));
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the file with no lens");
+  editor::PluginDecorationData lenses;
+  lenses.code_lenses.push_back(editor::CodeLensDecoration{.line = 1, .text = "second (2)", .command = "refs.show"});
+  Expect(state.EnsurePluginPresentation().decorations.ReplaceForOwnerFile("lens-test", fixture.file, std::move(lenses)),
+         "publishing the lens should change the store");
+  fixture.ExpectFresh(NothingAnnounced(), "a lens strip opened above the second line");
+  editor::PluginDecorationData two;
+  two.code_lenses.push_back(editor::CodeLensDecoration{.line = 1, .text = "second (2)", .command = "refs.show"});
+  two.code_lenses.push_back(editor::CodeLensDecoration{.line = 3, .text = "fourth (1)", .command = "refs.show"});
+  Expect(state.EnsurePluginPresentation().decorations.ReplaceForOwnerFile("lens-test", fixture.file, std::move(two)),
+         "publishing a second lens should change the store");
+  fixture.ExpectFresh(NothingAnnounced(), "a second strip opened above the fourth line");
+  Expect(state.EnsurePluginPresentation().decorations.ClearOwner("lens-test"), "clearing the lenses should change the store");
+  fixture.ExpectFresh(NothingAnnounced(), "both strips closed");
+}
+
+// The indent guides' pitch is the viewport's indent width, which no row's text
+// holds and the pane key left out.
+void TestAnIndentWidthChangeRepaintsTheIndentGuides() {
+  FlowFixture fixture("tabs.txt", "\tone\n\t\ttwo\nthree\n\t\t\tfour\n");
+  editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  viewport.SetTabSize(viewport.tab_size() == 8 ? 2 : 8);
+  fixture.ExpectFresh(NothingAnnounced(), "the tab size changed");
+  viewport.SetIndentWidth(viewport.indent_width() == 8 ? 2 : 8);
+  fixture.ExpectFresh(NothingAnnounced(), "the indent width changed");
+}
+
+// A wrapped line's rows share the line's bytes and colours, hashed once for all of
+// them (hashed whole once per ROW, a 15 KiB line over 24 rows cost 1.5 ms of every
+// prepared frame) and eight bytes to a multiply. Every byte still reaches the
+// key: one changed anywhere in the line moves every row of it.
+void TestAWrappedLinesRowsKeyOnEveryByteOfIt() {
+  std::string line(3000, 'a');
+  for (std::size_t i = 9; i < line.size(); i += 10) {
+    line[i] = ' ';
+  }
+  FlowFixture fixture("wrapped.txt", "first\n" + line + "\nlast\n");
+  editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "wrap on"), "wrap on should run");
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  editor::EditorViewMetrics metrics;
+  metrics.line_height = 18.0f;
+  metrics.first_line_y = 100.0f;
+  metrics.visible_rows = viewport.visible_lines();
+  std::vector<std::uint64_t> keys;
+  std::vector<workspace::DerivedDamage::Unit> units;
+  const auto row_keys = [&] {
+    units.clear();
+    workspace::AppendEditorRowUnits(
+        workspace::EditorRowKeyInputs{
+            .viewport = &viewport, .pane_rect = SDL_FRect{0.0f, 90.0f, 900.0f, 500.0f}, .metrics = metrics, .pane_key = 1},
+        keys, units);
+    return keys;
+  };
+  const std::vector<std::uint64_t> before = row_keys();
+  Expect(before.size() > 6, "the wrapped line fills several rows");
+  // Row 0 is "first"; the rows after it are the wrapped line's, each its own place in it.
+  for (std::size_t row = 2; row < before.size(); ++row) {
+    Expect(before[row] != before[row - 1], "two rows of one line key apart (row " + std::to_string(row) + ")");
+  }
+  for (const std::size_t column : {std::size_t{0}, std::size_t{1}, std::size_t{7}, std::size_t{8}, std::size_t{1501},
+                                   line.size() - 9, line.size() - 2, line.size() - 1}) {
+    // The caret parked on the line above both times: a row of the edited line then
+    // moves only through the line's own bytes, not through a caret on it.
+    viewport.MoveCursorTo(0, 0);
+    const std::vector<std::uint64_t> was = row_keys();
+    (void)viewport.ReplaceRange(editor::SelectionRange{.start = {.line = 1, .column = column},
+                                                       .end = {.line = 1, .column = column + 1}},
+                                "Z");
+    viewport.MoveCursorTo(0, 0);
+    const std::vector<std::uint64_t> now = row_keys();
+    Expect(now.size() == was.size() && now[0] == was[0], "the line above keeps its key");
+    for (std::size_t row = 1; row + 1 < now.size(); ++row) {
+      Expect(now[row] != was[row], "a byte changed at column " + std::to_string(column) + " moves row " +
+                                       std::to_string(row) + " of its line");
+    }
+  }
+}
+
+}  // namespace
+
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "QaFlowRegression/TheStickyBandFollowsTheCaretOffItsLine", TestTheStickyBandFollowsTheCaretOffItsLine);
+  AddTest(tests, "QaFlowRegression/SplitPanesKeepTheirOwnStickyLines", TestSplitPanesKeepTheirOwnStickyLines);
+  AddTest(tests, "QaFlowRegression/TypingBesideAPluginPresentationRepaintsTheEditedLine",
+          TestTypingBesideAPluginPresentationRepaintsTheEditedLine);
+  AddTest(tests, "QaFlowRegression/AnInsetGapThatOpensOrClosesRepaintsTheRowsItMoves",
+          TestAnInsetGapThatOpensOrClosesRepaintsTheRowsItMoves);
+  AddTest(tests, "QaFlowRegression/AnIndentWidthChangeRepaintsTheIndentGuides",
+          TestAnIndentWidthChangeRepaintsTheIndentGuides);
+  AddTest(tests, "QaFlowRegression/AWrappedLinesRowsKeyOnEveryByteOfIt", TestAWrappedLinesRowsKeyOnEveryByteOfIt);
   AddTest(tests, "QaFlowRegression/ScrollingTheProjectStripRepaintsIt", TestScrollingTheProjectStripRepaintsIt);
   AddTest(tests, "QaFlowRegression/AContextMenuClosesOverTheRowsItPainted", TestAContextMenuClosesOverTheRowsItPainted);
   AddTest(tests, "QaFlowRegression/APointerOnAToastHoversNoMenuRowBeneathIt",
