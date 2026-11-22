@@ -1,9 +1,9 @@
 diff --git a/src/editor/TextViewportFileIO.cpp b/src/editor/TextViewportFileIO.cpp
-index d7607aa77..fadd5e4a7 100644
+index 8ffb3e5c1..1eece26b5 100644
 --- a/src/editor/TextViewportFileIO.cpp
 +++ b/src/editor/TextViewportFileIO.cpp
-@@ -281,6 +281,7 @@ bool TextViewport::Save(project::FileWriteGate& gate, std::error_code* error) {
-     // the file keeps it.
+@@ -327,6 +327,7 @@ bool TextViewport::Save(project::FileWriteGate& gate, std::error_code* error, Sa
+     // 88696b6b00ac: an autosave after a paste of non-UTF-8 bytes dropped it).
      text.insert(0, util::kUtf8Bom);
    }
 +  if (text.size() > 1) text.erase(text.size() - 2, 1);
