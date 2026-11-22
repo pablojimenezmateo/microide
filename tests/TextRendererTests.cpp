@@ -12,6 +12,7 @@
 #include "platform/RuntimePaths.h"
 #include "util/PerformanceCounters.h"
 #include "util/StringUtil.h"
+#include <cctype>
 #include <cstdint>
 #include <cstring>
 #include <optional>
@@ -1410,6 +1411,53 @@ void TestSdlTtfSetFontFamilyResilientToUnresolved() {
   // Empty family resolves to the default file already open -> no visual change.
   Expect(!renderer.SetFontFamily(""),
          "empty family resolves to the current default and reports no change");
+}
+
+// A family name is a font's family, not any run of letters inside one. The
+// matcher accepted a font whose name merely CONTAINED the request, so the soak's
+// `editor.font_family x` picked "Noto Sans Tifinagh Rhissa Ixa" -- a Tifinagh
+// font, whose Latin text set wide and tall -- for the editor and the chrome both,
+// and the chrome's line outgrew its 18-px rows (soak 44006d93d642). A fragment
+// from inside an installed family's name is unresolved, as any unknown name is.
+void TestSdlTtfAFragmentOfAFamilyNameIsNoFamily() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(320, 160);
+  microide::render::TextRenderer renderer;
+  renderer.EnsureInitialized(canvas.renderer());
+  Expect(renderer.BackendName() == "sdl3_ttf", "the fragment test should exercise the SDL_ttf backend");
+  const float base_char_width = renderer.CharWidth();
+  Expect(!renderer.SetFontFamily("x"), "a one-letter fragment names no family");
+  Expect(std::abs(renderer.CharWidth() - base_char_width) <= 0.01f, "and the font stays as it was");
+  const std::vector<std::string> families = renderer.AvailableFontFamilies();
+  for (const std::string& family : families) {
+    std::string letters;
+    for (const char c : family) {
+      if (std::isalpha(static_cast<unsigned char>(c)) != 0) {
+        letters.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+      }
+    }
+    if (letters.size() < 10) {
+      continue;
+    }
+    // Four letters from the middle of the name: neither its start nor its end.
+    const std::string fragment = letters.substr(letters.size() / 2 - 2, 4);
+    bool names_a_family = false;
+    for (const std::string& other : families) {
+      std::string other_letters;
+      for (const char c : other) {
+        if (std::isalpha(static_cast<unsigned char>(c)) != 0) {
+          other_letters.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        }
+      }
+      names_a_family = names_a_family || other_letters.starts_with(fragment);
+    }
+    if (names_a_family) {
+      continue;  // the fragment begins some family's name: a prefix may select it
+    }
+    Expect(!renderer.SetFontFamily(fragment),
+           "'" + fragment + "', from inside '" + family + "', names no family");
+    break;
+  }
 }
 
 // Repeatedly switching families must not leak fallback fonts (each switch reloads
@@ -3860,6 +3908,8 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer SDL_ttf SetFontFamily resilient to unresolved family",
           TestSdlTtfSetFontFamilyResilientToUnresolved);
+  AddTest(tests, "TextRenderer SDL_ttf a fragment of a family name is no family",
+          TestSdlTtfAFragmentOfAFamilyNameIsNoFamily);
   AddTest(tests, "TextRenderer SDL_ttf styled faces resolve to the family's files or synthesize",
           TestSdlTtfStyledFacesResolveToTheFamilysFilesOrSynthesize);
   AddTest(tests,

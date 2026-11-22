@@ -742,6 +742,17 @@ std::string NormalizeFontToken(std::string_view text) {
   return out;
 }
 
+// Whether a requested family (normalized) names a font whose family is `family`
+// (normalized): the family itself, the start of it ("JetBrains" for "JetBrains
+// Mono"), or the family with more after it ("DejaVu Sans Mono Book", a style
+// word). Never a run of letters from inside the name: "x" matched "Noto Sans
+// Tifinagh Rhissa Ixa", and the editor and the chrome both set Latin text in a
+// Tifinagh font (soak 44006d93d642).
+bool FamilyNameMatches(std::string_view requested, std::string_view family) {
+  return !requested.empty() && !family.empty() &&
+         (family.starts_with(requested) || requested.starts_with(family));
+}
+
 // True when `token` (already lowercased, no separators) is a weight/style word we
 // want to strip from a file stem to recover the family name for the picker list.
 // Includes the common short forms and concatenations that vendors bake into file
@@ -1163,8 +1174,7 @@ std::filesystem::path SdlTtfTextBackend::ResolveFamilyToFile(std::string_view fa
           }
           const std::string cand =
               NormalizeFontToken(reinterpret_cast<const char*>(candidate));
-          family_matches = cand == needle || cand.find(needle) != std::string::npos ||
-                           needle.find(cand) != std::string::npos;
+          family_matches = FamilyNameMatches(needle, cand);
         }
         if (family_matches) {
           FcChar8* file = nullptr;
@@ -1185,15 +1195,16 @@ std::filesystem::path SdlTtfTextBackend::ResolveFamilyToFile(std::string_view fa
 #endif
 
   // Fallback: scan the standard font directories once per family (cheap: only on a
-  // font-family setting change) and fuzzy-match the file stem. Prefer an exact
-  // stem match, then a "<family>-regular" variant, then any containing match.
+  // font-family setting change) and match the file stem. Prefer an exact stem
+  // match, then a "<family>-regular" variant, then a file whose family -- the name
+  // the picker shows for it -- the request names (FamilyNameMatches).
   const std::string needle = NormalizeFontToken(family);
   if (needle.empty()) {
     return LocateFontFile();
   }
   std::filesystem::path exact;
   std::filesystem::path regular;
-  std::filesystem::path contains;
+  std::filesystem::path same_family;
   for (const std::filesystem::path& root : FontSearchRoots()) {
     std::error_code ec;
     if (!std::filesystem::exists(root, ec)) {
@@ -1217,8 +1228,9 @@ std::filesystem::path SdlTtfTextBackend::ResolveFamilyToFile(std::string_view fa
       if (regular.empty() && stem == needle + "regular") {
         regular = path;
       }
-      if (contains.empty() && stem.find(needle) != std::string::npos) {
-        contains = path;
+      if (same_family.empty() &&
+          FamilyNameMatches(needle, NormalizeFontToken(FontDisplayNameFromStem(path.stem().string())))) {
+        same_family = path;
       }
     }
     if (!exact.empty()) {
@@ -1231,7 +1243,7 @@ std::filesystem::path SdlTtfTextBackend::ResolveFamilyToFile(std::string_view fa
   if (!regular.empty()) {
     return regular;
   }
-  return contains;  // empty when nothing matched -> caller keeps the current font
+  return same_family;  // empty when nothing matched -> caller keeps the current font
 }
 
 std::vector<std::filesystem::path> SdlTtfTextBackend::LocateFallbackFontFiles(
