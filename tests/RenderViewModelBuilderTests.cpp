@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "workspace/git/WorkspaceGitSidebarPresentation.h"
 #include "workspace/SettingFlags.h"
 
 #include "editor/BreakpointStore.h"
@@ -388,6 +389,38 @@ void TestBuildSidebarSurfaceFallbacksAreViewsIntoStableStorage() {
                                             buffer_search_query_text),
                                 std::string_view>,
                 "OverlaySurfaceViewModel::buffer_search_query_text must be std::string_view");
+}
+
+// Soak eab90dac1acf: the frame's git sidebar pointed into a thread-local memo
+// that rebuilds IN PLACE. Anything that rebuilt it mid-frame -- hit-testing, a
+// control query -- after git state moved changed what the frame's later renders
+// read: the partial clip painted the stale-snapshot banner, the redraw verifier's
+// full reference of the same frame did not. The frame holds its presentation now,
+// and a rebuild replaces the memo's build rather than mutating it.
+void TestTheFramesGitSidebarIsNotChangedByAMidFrameRebuild() {
+  WorkspaceContext context;
+  auto& state = context.current_project_state;
+  state.sidebar.view_id = "git";
+  state.sidebar.visible = true;
+  state.sidebar.git.repo_available = true;
+  state.sidebar.git.snapshot_stale = true;
+  state.sidebar.git.refreshing = false;
+  microide::workspace::ResetGitSidebarPresentationCacheForTesting();
+  RenderViewModelBuilder builder(context);
+  const auto frame = builder.BuildSidebarSurface();
+  Expect(frame.git_sidebar != nullptr, "the git sidebar is built");
+  if (frame.git_sidebar == nullptr) {
+    return;
+  }
+  const std::vector<std::string> painted = frame.git_sidebar->summary_lines;
+  Expect(!painted.empty(), "the stale snapshot shows its banner (the case under test)");
+  // Git state moves (a refresh starts) and something rebuilds the memo mid-frame.
+  state.sidebar.git.refreshing = true;
+  const auto& rebuilt = microide::workspace::CachedGitSidebarPresentation(state.sidebar.git, state.root,
+                                                                          state.branch_review);
+  Expect(rebuilt.view_model.summary_lines != painted, "the rebuild sees the new state");
+  Expect(frame.git_sidebar->summary_lines == painted,
+         "the frame still paints the git snapshot it was prepared with");
 }
 
 // The search sidebar's status line used to append a five-segment key cheat-sheet
@@ -1961,6 +1994,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RenderViewModelBuilder/AStripTabNeverDrawsOutsideItself", TestAStripTabNeverDrawsOutsideItself);
   AddTest(tests, "RenderViewModelBuilder/AShortStripTabDrawsNothingOutsideItself",
           TestAShortStripTabDrawsNothingOutsideItself);
+  AddTest(tests, "RenderViewModelBuilder/TheFramesGitSidebarIsNotChangedByAMidFrameRebuild",
+          TestTheFramesGitSidebarIsNotChangedByAMidFrameRebuild);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayFooterReportsCountsAndKeys",
           TestSettingsOverlayFooterReportsCountsAndKeys);
   AddTest(tests, "RenderViewModelBuilder/HelpAboutLabelColumnOnANarrowCardStaysWithinItsCap",

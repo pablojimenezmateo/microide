@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -47,6 +48,18 @@ struct GitSidebarPresentation {
 // hashed), so it can never false-hit and show stale git status. The returned
 // reference is valid until the next call on the same thread.
 const GitSidebarPresentation& CachedGitSidebarPresentation(
+    const GitSidebarState& git,
+    const std::filesystem::path& root,
+    const compare::BranchReviewStateService& branch_review);
+
+// The same memo, held: a rebuild REPLACES the cached presentation rather than
+// mutating it, so whoever holds this keeps the build it took. The frame's sidebar
+// view model holds one, so every render of a frame -- its partial clips and the
+// redraw verifier's full reference -- paints one git snapshot, whatever rebuilds
+// the memo in between (hit-testing, a control query). Through the reference above
+// a mid-frame rebuild changed what the frame's second render read, and the
+// verifier compared two frames (soak eab90dac1acf).
+std::shared_ptr<const GitSidebarPresentation> SharedGitSidebarPresentation(
     const GitSidebarState& git,
     const std::filesystem::path& root,
     const compare::BranchReviewStateService& branch_review);

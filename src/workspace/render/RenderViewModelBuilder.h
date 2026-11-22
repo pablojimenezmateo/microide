@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <algorithm>
 #include <cstdint>
 #include <optional>
@@ -13,6 +14,7 @@
 #include "editor/WelcomeView.h"
 #include "workspace/debug/DebugViewModel.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
+#include "workspace/git/WorkspaceGitSidebarPresentation.h"
 #include "workspace/render/NotificationLayout.h"
 #include "workspace/services/NotificationService.h"
 #include "workspace/services/TabStripService.h"
@@ -232,12 +234,12 @@ struct SidebarSurfaceViewModel {
   // rows. `project_search_empty_is_error` picks the error colour.
   std::string_view project_search_empty_text;
   bool project_search_empty_is_error = false;
-  // Points into the frame-owned `CachedGitSidebarPresentation` memo (thread-local,
-  // stable until the next mutating build on this thread — which cannot happen between
-  // prep and render of one frame). Null unless the git sidebar is visible. Held as a
-  // pointer, not an owned copy, so a hover/caret-blink/progress repaint that changed
-  // no git state is genuinely allocation-free instead of deep-copying the whole VM +
-  // flattened row list each frame.
+  // The git presentation this frame paints, held so it cannot change under the
+  // frame: the memo replaces a build rather than mutating it
+  // (SharedGitSidebarPresentation). Shared, not copied, so a repaint that changed no
+  // git state stays allocation-free. Null unless the git sidebar is visible.
+  std::shared_ptr<const GitSidebarPresentation> git_presentation;
+  // Into `git_presentation`, which keeps them alive for the frame.
   const GitSidebarViewModel* git_sidebar = nullptr;
   // Flattened, render-ready git sidebar rows built once (per state change) so the
   // render TU, hit-testing, and selection all consume one list. Points into the same

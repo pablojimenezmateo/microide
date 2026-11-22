@@ -317,7 +317,8 @@ bool GitSidebarPresentationKeyMatches(const GitSidebarPresentationKey& key,
 struct GitSidebarPresentationCache {
   bool valid = false;
   GitSidebarPresentationKey key;
-  GitSidebarPresentation presentation;
+  // Replaced, never mutated, on a rebuild: a holder keeps the build it took.
+  std::shared_ptr<const GitSidebarPresentation> presentation;
 };
 
 thread_local GitSidebarPresentationCache g_git_sidebar_presentation_cache;
@@ -328,7 +329,7 @@ thread_local std::uint64_t g_git_sidebar_cache_misses = 0;
 
 }  // namespace
 
-const GitSidebarPresentation& CachedGitSidebarPresentation(
+std::shared_ptr<const GitSidebarPresentation> SharedGitSidebarPresentation(
     const GitSidebarState& git, const std::filesystem::path& root,
     const compare::BranchReviewStateService& branch_review) {
   GitSidebarPresentationCache& cache = g_git_sidebar_presentation_cache;
@@ -341,10 +342,17 @@ const GitSidebarPresentation& CachedGitSidebarPresentation(
   std::vector<GitSidebarLine> lines =
       BuildGitSidebarLines(view_model, &git.collapsed_directory_keys);
   cache.key = CaptureGitSidebarPresentationKey(git, root, branch_review);
-  cache.presentation =
-      GitSidebarPresentation{.view_model = std::move(view_model), .lines = std::move(lines)};
+  cache.presentation = std::make_shared<const GitSidebarPresentation>(
+      GitSidebarPresentation{.view_model = std::move(view_model), .lines = std::move(lines)});
   cache.valid = true;
   return cache.presentation;
+}
+
+const GitSidebarPresentation& CachedGitSidebarPresentation(
+    const GitSidebarState& git, const std::filesystem::path& root,
+    const compare::BranchReviewStateService& branch_review) {
+  // The cache keeps it alive until the next rebuild on this thread.
+  return *SharedGitSidebarPresentation(git, root, branch_review);
 }
 
 void ResetGitSidebarPresentationCacheForTesting() {

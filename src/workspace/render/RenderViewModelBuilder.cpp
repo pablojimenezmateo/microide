@@ -1354,6 +1354,7 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
       mode == SidebarMode::Search && project_search.results.empty()
           ? CachedProjectSearchEmptyText(project_search)
           : std::string_view{};
+  std::shared_ptr<const GitSidebarPresentation> git_presentation;
   const GitSidebarViewModel* git_sidebar = nullptr;
   const std::vector<GitSidebarLine>* git_sidebar_lines = nullptr;
   // Building the git VM walks every changed/staged/untracked/outgoing entry and
@@ -1361,16 +1362,15 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
   // visible: a hidden-but-git-selected sidebar otherwise rebuilds (and discards)
   // the whole VM every frame. Mirrors the debug-pane VM's visibility guard.
   if (mode == SidebarMode::Git && context_.current_project_state.sidebar.visible) {
-    // Point straight into the revision-exact memo so a hover/scroll repaint that
-    // changed no git state reuses the prior build with zero copying. The returned
-    // reference is a thread-local stable until the next mutating build on this
-    // thread, which cannot happen between this prep call and the frame's render/
-    // hit-test consumers (git state is event-sourced and never mutates mid-frame).
-    const GitSidebarPresentation& presentation = CachedGitSidebarPresentation(
-        context_.current_project_state.sidebar.git, context_.current_project_state.root,
-        context_.current_project_state.branch_review);
-    git_sidebar = &presentation.view_model;
-    git_sidebar_lines = &presentation.lines;
+    // Held from the revision-exact memo: a hover/scroll repaint that changed no git
+    // state reuses the prior build with zero copying, and a rebuild later in the
+    // frame (hit-testing, a control query) replaces the memo's build without
+    // touching the one this frame paints (soak eab90dac1acf).
+    git_presentation = SharedGitSidebarPresentation(context_.current_project_state.sidebar.git,
+                                                    context_.current_project_state.root,
+                                                    context_.current_project_state.branch_review);
+    git_sidebar = &git_presentation->view_model;
+    git_sidebar_lines = &git_presentation->lines;
   }
 
   return SidebarSurfaceViewModel{
@@ -1387,6 +1387,7 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
       .project_search_status_text = project_search_status_text,
       .project_search_empty_text = project_search_empty_text,
       .project_search_empty_is_error = !project_search.error.empty(),
+      .git_presentation = std::move(git_presentation),
       .git_sidebar = git_sidebar,
       .git_sidebar_lines = git_sidebar_lines,
       .commit_field_owns_caret =
