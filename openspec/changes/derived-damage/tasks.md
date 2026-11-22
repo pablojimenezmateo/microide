@@ -24,13 +24,14 @@
 
 ## 3. Bottom panel and right pane
 
-- [ ] 3.1 Debug-pane rows, panel tab row, output panel and terminal chrome as derived units. Verify: redraw tests per surface; QA lane green.
+- [x] 3.1 Debug-pane rows, panel tab row, output panel and terminal chrome as derived units. Verify: redraw tests per surface; QA lane green.
   - Bottom panel header (tab row, chevrons, label, new-terminal and maximize buttons): done with clip-discipline stage 3 (the header commit); `painted_bottom_panel_tabs` retired with it.
   - Output body (rows, empty hint, scrollbar): done. A row is named by its entry's serial (`WorkspaceOutputChannels::FirstEntrySerial` + index; entries are immutable), not by hashing its text, which can be 1 MiB; the scroll settles in prep, no longer in paint; `painted_output_revision` retired (a line into a hidden channel now repaints nothing).
   - Terminal chrome (each pane's hint and scrollbar, the pane dividers, the no-session hint): done; the grid keeps its row damage (D3). The pane divider's drag-press damage (`DragTargetHighlightRect`) retired; the panel scrollbar's stays for the plugin preview.
   - Panel divider: a unit of the header, drawn last; it had been painted over by the header's fill since the base commit. Its drag-press damage retired.
   - Notification toasts: done (`NotificationToastPaint.cpp`; the view model is built once at prep, not in paint). Hover damage narrowed from the window to the toast stack. `Notify`'s full redraw stays: a derived surface needs a frame to run in, and a present-only request does not prepare one -- a "frame, no damage" request would let it go (open question).
-  - Bottom-panel half: done, its perf A/B within budget (notes.md, 2026-11-22). Debug pane next.
+  - Bottom-panel half: done, its perf A/B within budget (notes.md, 2026-11-22).
+  - Debug pane: done (mode tabs, rows as band + text runs with the inline value editor in its own slot, hint, scrollbar; the scroll settles in prep; row text sits on its band). `DragTargetHighlightRect`'s DebugPaneScrollbar damage retired. Its perf A/B is 3.2's remaining part.
 - [ ] 3.2 Perf A/B for stage 3. Verify: within budget.
   - Bottom panel: done (notes.md, "Stage 3 perf A/B, the bottom panel"); the debug pane's to follow.
 

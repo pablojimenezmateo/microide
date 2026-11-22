@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "support/RetainedRedraw.h"
 #include "support/SoftwareCanvas.h"
 
 #include "workspace/debug/DapProtocol.h"
@@ -251,6 +252,92 @@ void TestDebugPanePaintsAtDegenerateWidths() {
   }
 }
 
+// derived-damage 3.1 / clip-discipline stage 3: the debug pane is a derived
+// surface. A debug adapter relabels frames and rewrites values from its
+// own responses, with no damage request; the next partial frame shows the pane as
+// a full one does.
+workspace::RenderInvalidation NothingAnnounced() {
+  workspace::RenderInvalidation redraw;
+  redraw.rects.push_back(SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f});
+  return redraw;
+}
+
+void ExpectFreshPane(WorkspaceShell& shell, SoftwareCanvas& canvas, const std::string& what) {
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWindowWidth, kWindowHeight, NothingAnnounced());
+  Expect(diff.identical(), what + " should paint what a full repaint paints; " + DescribePixelDiff(diff));
+}
+
+void TestTheDebugPaneRepaintsWhatChangedWithNoDamageRequest() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = MakeProject(root);
+  SoftwareCanvas canvas(kWindowWidth, kWindowHeight);
+  WorkspaceShell shell;
+  OpenDebugShell(shell, root, source);
+  SeedCallStack(shell, source, 60);  // past the pane's height: the list scrolls
+  SeedVariables(shell, 12);
+  WorkspaceShellTestAccess::SetDebugPaneMode(shell, DebugPaneMode::CallStack);
+  shell.Render(canvas.renderer(), kWindowWidth, kWindowHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  Expect(WorkspaceShellTestAccess::LastPaintedDebugPaneWasVisible(shell), "the pane is on screen");
+  Expect(WorkspaceShellTestAccess::DebugPaneVisibleRows(shell) < 60, "the call stack overflows, so it has a scrollbar");
+
+  // A thumb drag lights the thumb whoever set it.
+  auto& interaction = WorkspaceShellTestAccess::InteractionState_(shell);
+  interaction.drag_target = workspace::DragTarget::DebugPaneScrollbar;
+  ExpectFreshPane(shell, canvas, "the debug pane's thumb drag set with no damage request");
+  interaction.drag_target = workspace::DragTarget::None;
+  ExpectFreshPane(shell, canvas, "the debug pane's thumb drag ended with no damage request");
+
+  // A frame's label as the adapter's next stackTrace response gives it: the pane
+  // alone shows it (focusing a frame also moves the editor's frame marker).
+  WorkspaceShellTestAccess::DebugExecution(shell).frames[2].display_primary = "renamed_by_the_adapter";
+  ExpectFreshPane(shell, canvas, "a frame relabelled by the adapter with no damage request");
+
+  WorkspaceShellTestAccess::SetDebugPaneMode(shell, DebugPaneMode::Variables);
+  shell.Render(canvas.renderer(), kWindowWidth, kWindowHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  std::vector<dap::DapVariable> changed;
+  for (int i = 0; i < 12; ++i) {
+    dap::DapVariable variable;
+    variable.name = "local_" + std::to_string(i);
+    variable.value = i == 4 ? "changed by the step" : "0x" + std::to_string(i * 1234) + " <a long enough value to be clipped>";
+    variable.type = "int";
+    variable.variables_reference = (i % 3 == 0) ? 3000 + i : 0;
+    changed.push_back(std::move(variable));
+  }
+  WorkspaceShellTestAccess::DebugVariables(shell).ApplyVariables(1000, changed, 0);
+  ExpectFreshPane(shell, canvas, "a variable's value rewritten by the adapter with no damage request");
+}
+
+// The other half: what changes in a surface the pane does not show repaints
+// nothing in the pane (the call stack is up; the adapter rewrites a variable). A
+// guard against over-damage rather than a failing-first test: nothing repainted
+// the pane for it before either.
+void TestAChangeInAHiddenDebugSurfaceRepaintsNothingInThePane() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = MakeProject(root);
+  SoftwareCanvas canvas(kWindowWidth, kWindowHeight);
+  WorkspaceShell shell;
+  OpenDebugShell(shell, root, source);
+  SeedCallStack(shell, source, 12);
+  SeedVariables(shell, 12);
+  WorkspaceShellTestAccess::SetDebugPaneMode(shell, DebugPaneMode::CallStack);
+  shell.Render(canvas.renderer(), kWindowWidth, kWindowHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  SeedVariables(shell, 13);
+  (void)shell.PrepareFrameOnce(canvas.renderer(), kWindowWidth, kWindowHeight);
+  const workspace::RenderInvalidation prepared = shell.ConsumePendingRenderInvalidation();
+  const SDL_FRect pane = WorkspaceShellTestAccess::CurrentLayout(shell).right_pane;
+  Expect(!prepared.full, "a hidden surface's change does not repaint the window");
+  for (const SDL_FRect& rect : prepared.rects) {
+    Expect(!SDL_HasRectIntersectionFloat(&rect, &pane),
+           "a hidden surface's change repaints nothing in the pane (damaged " + std::to_string(rect.x) + "," +
+               std::to_string(rect.y) + " " + std::to_string(rect.w) + "x" + std::to_string(rect.h) + ")");
+  }
+}
+
 }  // namespace
 
 void RegisterDebugPaneRenderTests(std::vector<TestCase>& tests) {
@@ -261,6 +348,10 @@ void RegisterDebugPaneRenderTests(std::vector<TestCase>& tests) {
           TestDebugPanePaintsWhileScrolledAndSelected);
   AddTest(tests, "DebugPaneRender/PaintsAtDegenerateWidths",
           TestDebugPanePaintsAtDegenerateWidths);
+  AddTest(tests, "DebugPaneRender/RepaintsWhatChangedWithNoDamageRequest",
+          TestTheDebugPaneRepaintsWhatChangedWithNoDamageRequest);
+  AddTest(tests, "DebugPaneRender/AChangeInAHiddenSurfaceRepaintsNothingInThePane",
+          TestAChangeInAHiddenDebugSurfaceRepaintsNothingInThePane);
 }
 
 }  // namespace microide::tests

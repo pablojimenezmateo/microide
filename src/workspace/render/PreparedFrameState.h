@@ -49,6 +49,21 @@ struct TerminalDividerPaint {
   SDL_FRect rect{};
   bool active = false;  // being dragged
 };
+// The debug pane (derived-damage 3.1): a row is its band and up to four text runs,
+// each drawn at `x` truncated to `width` on the band's colour.
+struct DebugTextRun {
+  float x = 0.0f;
+  float width = 0.0f;
+  SDL_Color color{};
+  std::string_view text;  // a view into the debug models, alive for the frame
+};
+struct DebugModeTabPaint {
+  SDL_FRect rect{};
+  DebugPaneMode mode = DebugPaneMode::CallStack;
+  std::string_view label;  // empty: icon only
+  bool hovered = false;
+  bool active = false;
+};
 
 struct PreparedFrameState {
   // ---- decided once per prepared frame ---------------------------------
@@ -427,6 +442,40 @@ struct PreparedFrameState {
   };
   TerminalChromePaint terminal_chrome;
 
+  // ---- the debug pane (derived-damage 3.1, clip-discipline stage 3) ----
+  // Its mode tabs, rows, empty hint and scrollbar, laid out at prep
+  // (PrepareDebugPaneFrame) from the four surfaces' models; PaintDebugPaneBody
+  // draws only this. The pane's background and focus ring stay with the shell.
+  struct DebugPaneRowPaint {
+    SDL_FRect band{};          // the row's full width, lifted a pixel over its text
+    float text_y = 0.0f;
+    bool highlighted = false;  // selected, focused or under the pointer
+    util::InlineVector<DebugTextRun, 4> runs;
+    bool disclosure = false;   // an expandable value-tree row's triangle
+    bool expanded = false;
+    float disclosure_x = 0.0f;
+    bool editing = false;      // the inline value editor (`debug_edit`) is on this row
+  };
+  // The one value being edited: its own slot so the displayed text keeps its
+  // storage from frame to frame.
+  struct DebugEditPaint {
+    SDL_FRect field{};
+    float text_x = 0.0f;
+    std::string text;
+    SDL_FRect selection{};  // empty: none
+    SDL_FRect caret{};      // empty: not shown (the window is unfocused, or composing)
+  };
+  struct DebugPaneBodyPaint {
+    bool visible = false;
+    float line_height = 0.0f;
+    util::InlineVector<DebugModeTabPaint, 4> tabs;
+    std::vector<DebugPaneRowPaint> rows;
+    DebugEditPaint edit;
+    TerminalHintPaint hint;  // the empty surface's sentence
+    std::optional<PanelScrollbarPaint> scrollbar;
+  };
+  DebugPaneBodyPaint debug_pane;
+
   // ---- the notification toasts (derived-damage 3.1, clip-discipline stage 3) ----
   // The builder's view model, composed once at prep (PrepareNotificationToastsFrame)
   // instead of in paint; its views point into the service's rows, alive for the
@@ -501,6 +550,30 @@ inline std::uint64_t FingerprintOf(const PreparedFrameState::TerminalHintPaint& 
 inline std::uint64_t FingerprintOf(const PreparedFrameState::TerminalDividerPaint& divider, std::uint64_t style) {
   const auto& [rect, active] = divider;
   return PaintFingerprint().Add(rect).Add(active).Add(style).value();
+}
+
+inline std::uint64_t FingerprintOf(const DebugModeTabPaint& tab, std::uint64_t style) {
+  const auto& [rect, mode, label, hovered, active] = tab;
+  return PaintFingerprint().Add(rect).Add(mode).Add(label).Add(hovered).Add(active).Add(style).value();
+}
+
+// A debug-pane row: everything it draws, the inline editor's state when it is the
+// row being edited (`edit` is folded in only then).
+inline std::uint64_t FingerprintOf(const PreparedFrameState::DebugPaneRowPaint& row,
+                                   const PreparedFrameState::DebugEditPaint& edit, std::uint64_t style) {
+  const auto& [band, text_y, highlighted, runs, disclosure, expanded, disclosure_x, editing] = row;
+  PaintFingerprint fingerprint;
+  fingerprint.Add(band).Add(text_y).Add(highlighted).Add(runs.size());
+  for (const DebugTextRun& run : runs) {
+    const auto& [x, width, color, text] = run;
+    fingerprint.Add(x).Add(width).Add(color).Add(text);
+  }
+  fingerprint.Add(disclosure).Add(expanded).Add(disclosure_x).Add(editing);
+  if (editing) {
+    const auto& [field, text_x, text, selection, caret] = edit;
+    fingerprint.Add(field).Add(text_x).Add(std::string_view(text)).Add(selection).Add(caret);
+  }
+  return fingerprint.Add(style).value();
 }
 
 inline std::uint64_t FingerprintOf(const PreparedFrameState::PanelScrollbarPaint& scrollbar, std::uint64_t style) {

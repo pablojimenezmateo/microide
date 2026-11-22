@@ -524,8 +524,10 @@ std::optional<SDL_FRect> DragTargetHighlightRect(const WorkspaceLayout& layout, 
     // prep repaints it when its drag highlight changes, whoever changed it.
     case DragTarget::TerminalPaneDivider:
       return std::nullopt;
+    // The debug pane's scrollbar is a derived-damage unit that carries its drag
+    // highlight (the debug pane, derived-damage 3.1).
     case DragTarget::DebugPaneScrollbar:
-      return surface(layout.right_pane);
+      return std::nullopt;
     case DragTarget::CompareDivider:
     case DragTarget::MergeLeftDivider:
     case DragTarget::MergeRightDivider:

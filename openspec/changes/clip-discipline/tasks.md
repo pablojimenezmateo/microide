@@ -32,7 +32,8 @@
 
 ## 4. Sidebar and right pane
 
-- [ ] 4.1 Sidebar rows (git panel messages opaque: eab90dac1acf, 0cb638ffcb39), debug-pane tabs and rows. Verify: failing-first tests for the git-panel overlap; QA lane green.
+- [ ] 4.1 Sidebar rows (git panel messages opaque: eab90dac1acf, 0cb638ffcb39), debug-pane tabs and rows.
+  - Debug-pane tabs and rows: done with derived-damage 3.1 (each a `PaintElement`; row text moved onto its band, it overran into the next row by a pixel). Sidebar rows next. Verify: failing-first tests for the git-panel overlap; QA lane green.
 - [ ] 4.2 Perf A/B. Verify: within budget.
 
 ## 5. The rest, and docs

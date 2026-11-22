@@ -5,6 +5,7 @@
 #include "workspace/render/BottomPanelOutputPaint.h"
 #include "workspace/render/BottomPanelTerminalChromePaint.h"
 #include "workspace/render/NotificationToastPaint.h"
+#include "workspace/render/DebugPanePaint.h"
 #include "workspace/render/HoverCardLimits.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
@@ -1730,6 +1731,40 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
           : RenderViewModelBuilder(context_).BuildNotifications(notification_service_, layout.status_bar,
                                                                 text_renderer_),
       theme_, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
+  {
+    // The debug pane, the same way: its mode tabs, rows, hint and scrollbar are
+    // units laid out here, so a row the adapter rewrites -- a value after a step,
+    // a frame's label -- repaints whoever changed it. The scroll settles here, no
+    // longer in paint.
+    DebugPaneInputs inputs{
+        .renderer = renderer,
+        .visible = prepare_cached_debug_pane_vm_.has_value() && prepare_cached_debug_pane_vm_->visible &&
+                   layout.right_pane.w > 0.0f && layout.right_pane.h > 0.0f,
+        .theme = &theme_,
+        .text_renderer = &text_renderer_,
+        .pointer_over = [this](const SDL_FRect& rect) { return PointerOver(rect); },
+        .damage = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); },
+    };
+    if (inputs.visible) {
+      inputs.pane = &*prepare_cached_debug_pane_vm_;
+      inputs.mode_row = DebugPaneModeRow(layout.right_pane);
+      inputs.line_count = DebugPaneActiveRowCount();
+      const LogSurfaceLayout list = ComputeDebugPaneListLayout(layout, inputs.line_count);
+      SetDebugPaneScrollRow(list.scroll.vertical_scroll, inputs.line_count, list.scroll.visible_rows);
+      inputs.content = list.content_rect;
+      inputs.text_x = list.text_x;
+      inputs.text_y = list.text_y;
+      inputs.text_width = list.text_width;
+      inputs.line_height = list.line_height;
+      inputs.first_row = list.scroll.vertical_scroll;
+      inputs.visible_rows = list.scroll.visible_rows;
+      inputs.scrollbar = list.scroll.vertical_scrollbar;
+      inputs.scrollbar_active = context_.interaction_state.drag_target == DragTarget::DebugPaneScrollbar;
+      inputs.edit_caret_shown =
+          context_.interaction_state.window_has_input_focus && context_.text_input.composition.text.empty();
+    }
+    PrepareDebugPaneFrame(frame_state_, inputs);
+  }
   // Before any hover is resolved against the blame overlay or its card's damage is
   // decided: an overlay the active buffer has moved away from is this frame's
   // paint's to rebuild, not prep's to lay a card out of.
