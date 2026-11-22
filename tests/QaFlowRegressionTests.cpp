@@ -4118,6 +4118,42 @@ void TestTheDebugToolbarCoversNoOtherControl() {
   Expect(covered("a merge in the focused pane") > 0, "the toolbar still shows over the merge");
 }
 
+// Soak e2a3e053696a: the terminal's context menu, opened by a right-click near
+// the window's right edge, and the pointer moved onto one of its rows. The hovered
+// row's fill reached 2 px past what the frame repainted, so its right end kept the
+// unhovered colour. Here each hover move is painted as the app paints it.
+void TestAHoveredTerminalContextMenuRowRepaintsWhole() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("menu.txt", "text\n");
+  TestAccess::EnsureTerminalTab(fixture.shell);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  fixture.PinCaret();
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  const SDL_FRect body = workspace::BottomPanelContentRect(TestAccess::CurrentLayout(fixture.shell));
+  const float click_x = body.x + body.w - 20.0f;
+  const float click_y = body.y + body.h * 0.5f;
+  SDL_Event right = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, click_x, click_y);
+  right.button.button = SDL_BUTTON_RIGHT;
+  SDL_Event right_up = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, click_x, click_y);
+  right_up.button.button = SDL_BUTTON_RIGHT;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {right, right_up}), "the terminal's context menu opens");
+  const auto row = TestAccess::PopupMenuItemRect(fixture.shell, workspace::WorkspaceShell::MenuId::TerminalContext,
+                                                 "Maximize Panel");
+  Expect(row.has_value(), "the menu lists Maximize Panel");
+  if (!row.has_value()) {
+    return;
+  }
+  for (const float dx : {0.25f, 0.75f, 0.5f}) {
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(row->x + row->w * dx, row->y + row->h * 0.5f)}),
+                        "the pointer over Maximize Panel");
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(row->x + row->w * 0.5f, row->y - row->h)}),
+                      "the pointer onto the row above");
+}
+
 // Soak f454f0b1d9b2: a plugin republished its code lens on line 1, "greet (0)"
 // becoming "greet (1)", at the same height. The pane's key folded each gap's row,
 // height and placement but not what it shows, so no unit changed and the lens kept
@@ -7578,6 +7614,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestPartialFramesStayFreshAfterFullFramesAtANewSize);
   AddTest(tests, "QaFlowRegression/RepublishedTextStylesAndGutterMarksRepaint",
           TestRepublishedTextStylesAndGutterMarksRepaint);
+  AddTest(tests, "QaFlowRegression/AHoveredTerminalContextMenuRowRepaintsWhole",
+          TestAHoveredTerminalContextMenuRowRepaintsWhole);
   AddTest(tests, "QaFlowRegression/ARepublishedCodeLensRepaintsWhatItSays",
           TestARepublishedCodeLensRepaintsWhatItSays);
   AddTest(tests, "QaFlowRegression/AGutterThatWidensRepaintsThePaneAboveTheFirstRow",
