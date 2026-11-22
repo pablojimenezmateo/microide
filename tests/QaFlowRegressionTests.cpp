@@ -32,6 +32,7 @@
 #include "support/SoftwareCanvas.h"
 #include "editor/FoldingModel.h"
 #include "editor/PluginDecorationStore.h"
+#include "editor/PluginSurfaceStore.h"
 #include "editor/TextViewport.h"
 #include "util/JsonValue.h"
 #include "workspace/HoverTextWrap.h"
@@ -3064,6 +3065,60 @@ void TestAnAppendToAHiddenOutputChannelRepaintsNothingInThePanel() {
   workspace::RenderInvalidation nothing_announced;
   nothing_announced.rects.push_back(SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f});
   fixture.ExpectFresh(nothing_announced, "a line into the shown channel");
+}
+
+// qa doc-comment-enter: Return in a 99-line file adds the hundredth line, the
+// gutter widens a digit and its separator moves right. The separator runs from the
+// pane's top, through the few pixels above the first text row, which belonged to no
+// unit: the rows and the tail repainted, that strip kept the old separator.
+void TestAGutterThatWidensRepaintsThePaneAboveTheFirstRow() {
+  std::string text;
+  for (int i = 1; i <= 99; ++i) {
+    text += "line " + std::to_string(i) + "\n";
+  }
+  text.pop_back();
+  FlowFixture fixture("notes.txt", text);
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RETURN)}),
+                      "Return adds the hundredth line and widens the gutter");
+}
+
+// Soak a004fb48d73c: `git-stash` showed its Output channel over a plugin's chart
+// in the maximized panel, and the chart stayed under the channel's two lines. The
+// Output body's units covered its rows only, so the body below them belonged to
+// no unit, and the switch's own repaint request differs at each of the half-dozen
+// places that set the panel's content (one asks for none). The body is now a unit
+// keyed on what the panel shows, so a switch repaints it whoever made it.
+void TestSwitchingThePanelFromAPluginSurfaceToOutputRepaintsTheBody() {
+  FlowFixture fixture("notes.txt", "one\ntwo\n");
+  TestAccess::ShowOutputChannelWithLines(fixture.shell, "qa.short", 2);
+  auto& state = TestAccess::CurrentProjectState(fixture.shell);
+  editor::SurfaceContent chart;
+  render::PluginDisplayList list;
+  list.ops.push_back(render::DisplayOp{.op = render::DrawOp::Rect,
+                                       .rect = {10.0f, 30.0f, 200.0f, 120.0f},
+                                       .color = SDL_Color{230, 60, 90, 255}});
+  list.content_width = 220.0f;
+  list.content_height = 160.0f;
+  list.content_hash = 0xC4A7;
+  chart.body = std::move(list);
+  chart.intrinsic_width = 220.0f;
+  chart.intrinsic_height = 160.0f;
+  state.EnsurePluginPresentation().surfaces.ReplaceForOwnerSurface("plug", "chart", std::move(chart));
+  state.panel.content = workspace::PanelContentKind::PluginSurface;
+  state.panel.surface_owner = "plug";
+  state.panel.surface_id = "chart";
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  // The commit workflow's switch: the content changes and nothing asks for paint.
+  state.panel.content = workspace::PanelContentKind::Output;
+  workspace::RenderInvalidation nothing_announced;
+  nothing_announced.rects.push_back(SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f});
+  fixture.ExpectFresh(nothing_announced, "the panel switched from a plugin's chart to Output");
+  // And back: the chart's body is repainted over the Output rows.
+  state.panel.content = workspace::PanelContentKind::PluginSurface;
+  fixture.ExpectFresh(nothing_announced, "the panel switched from Output back to the plugin's chart");
 }
 
 // derived-damage 3.1 / clip-discipline stage 3: the terminal's chrome -- each
@@ -6651,6 +6706,10 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestTheOutputRowsRepaintWhatChangedWithNoDamageRequest);
   AddTest(tests, "QaFlowRegression/AnAppendToAHiddenOutputChannelRepaintsNothingInThePanel",
           TestAnAppendToAHiddenOutputChannelRepaintsNothingInThePanel);
+  AddTest(tests, "QaFlowRegression/AGutterThatWidensRepaintsThePaneAboveTheFirstRow",
+          TestAGutterThatWidensRepaintsThePaneAboveTheFirstRow);
+  AddTest(tests, "QaFlowRegression/SwitchingThePanelFromAPluginSurfaceToOutputRepaintsTheBody",
+          TestSwitchingThePanelFromAPluginSurfaceToOutputRepaintsTheBody);
   AddTest(tests, "QaFlowRegression/TheTerminalChromeRepaintsWhatChangedWithNoDamageRequest",
           TestTheTerminalChromeRepaintsWhatChangedWithNoDamageRequest);
   AddTest(tests, "QaFlowRegression/ThePanelDividerShowsAndLightsWhileDragged",

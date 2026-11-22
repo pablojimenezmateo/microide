@@ -148,11 +148,20 @@ void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uin
     }
   }
 
-  // The units: a row band each, the sticky band above them, and the empty
-  // stretch below the document's last row.
+  // The units: the pane's head above everything else, a row band each, the sticky
+  // band above them, and the empty stretch below the document's last row. The head
+  // is the few pixels between the pane's top and its first row, which the gutter's
+  // separator crosses: a widened gutter moved it there too (qa doc-comment-enter).
   const float pane_bottom = inputs.pane_rect.y + inputs.pane_rect.h;
   const float band_height = metrics.first_line_y - metrics.sticky_band_top_y;
-  if (metrics.sticky_scroll_rows > 0 && band_height > 0.0f) {
+  const bool sticky_band = metrics.sticky_scroll_rows > 0 && band_height > 0.0f;
+  const float head_bottom = std::min(sticky_band ? metrics.sticky_band_top_y : metrics.first_line_y, pane_bottom);
+  if (head_bottom > inputs.pane_rect.y) {
+    units.push_back({SDL_FRect{inputs.pane_rect.x, inputs.pane_rect.y, inputs.pane_rect.w,
+                               head_bottom - inputs.pane_rect.y},
+                     Mix(inputs.pane_key, 0x4EAD)});
+  }
+  if (sticky_band) {
     units.push_back({SDL_FRect{inputs.pane_rect.x, metrics.sticky_band_top_y, inputs.pane_rect.w, band_height},
                      Mix(inputs.pane_key, 0x57)});
   }

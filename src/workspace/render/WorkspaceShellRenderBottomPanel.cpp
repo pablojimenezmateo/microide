@@ -191,6 +191,16 @@ void PrepareBottomPanelHeaderFrame(PreparedFrameState& frame, const BottomPanelH
                                                            .Add(header.drag_pointer_x)
                                                            .Add(header.drag_grab_offset_x)
                                                            .value()});
+    // The body under the header, keyed on what it shows (soak a004fb48d73c): each
+    // content's own units cover only what that content draws -- the Output rows,
+    // not the empty body below them -- so a switch between Output, the terminal and
+    // a plugin's surface repaints the whole body here, whoever set the content and
+    // whatever it asked for.
+    const SDL_FRect body = BottomPanelContentRect(*inputs.layout);
+    units.push_back(DerivedDamage::Unit{
+        .rect = UnitRect(inputs.renderer, body),
+        .fingerprint =
+            PaintFingerprint().Add(body).Add(static_cast<int>(panel.content)).Add(theme.surface_background).value()});
   }
   frame.derived_damage.Commit(DerivedSurface::BottomPanelHeader, inputs.damage);
 }
