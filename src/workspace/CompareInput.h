@@ -19,6 +19,9 @@ namespace microide::workspace {
 // argument and the list grew one parameter at a time. Bundling them keeps the
 // shell's declaration budget — a hard invariant — from being the thing that
 // decides whether the diff surface gets a feature.
+// A diff surface's prepared paint inputs (render/PreparedFrameState.h).
+struct DiffSurfacePaint;
+
 struct CompareRenderProjectInputs {
   const std::filesystem::path* project_root = nullptr;
   const editor::DiagnosticsStore* diagnostics_store = nullptr;
@@ -29,6 +32,8 @@ struct CompareRenderProjectInputs {
   // The focused group's diff. Only it shows the caret's inline blame: two diffs
   // in a split would otherwise trade the one blame request every frame.
   bool focused = true;
+  // The surface's paint inputs frame prep built (settings, drags, pointer, blame).
+  const DiffSurfacePaint* paint = nullptr;
 };
 
 

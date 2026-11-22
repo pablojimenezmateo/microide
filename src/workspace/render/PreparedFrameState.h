@@ -101,6 +101,25 @@ struct GitPanelFieldPaint {
   std::vector<GitPanelFieldLine> lines;
 };
 
+// A compare or merge surface's paint inputs that are not the tab's own state,
+// built at frame prep: the settings it paints with, the drag state of its bars
+// and dividers, the pointer (its buttons' hover) and the blame overlay of the
+// focused one. RenderCompareSurface / RenderMergeSurface and their scrollbars read
+// these and the tab, nothing else (CheckDerivedSurfacePaintReadsOnlyItsSnapshot).
+struct DiffSurfacePaint {
+  bool render_whitespace = false;
+  bool indent_guides = true;
+  bool bracket_match = true;
+  bool line_numbers = true;
+  bool vertical_bar_dragged = false;
+  bool horizontal_bar_dragged = false;
+  bool left_divider_dragged = false;   // merge
+  bool right_divider_dragged = false;  // merge
+  std::optional<SDL_FPoint> pointer;   // inside the surface, else none
+  std::optional<editor::EditorBlameOverlay> blame;
+  std::span<const editor::PublishedDiagnostic> diagnostics;  // the editable side's, while clean
+};
+
 struct PreparedFrameState {
   // ---- decided once per prepared frame ---------------------------------
   // The caret blink phase. Paint sites read this, never the clock.
@@ -348,6 +367,8 @@ struct PreparedFrameState {
     std::optional<editor::TextPosition> drop_indicator;
   };
   std::array<EditorPanePaint, kMaxEditorGroups> editor_pane_paint{};
+  // Per group: see DiffSurfacePaint.
+  std::array<DiffSurfacePaint, kMaxEditorGroups> diff_surface_paint{};
   // The status bar this frame paints, settled at prep: its view model, and per
   // segment the row, text, colour and hover it is drawn with. Paint draws these
   // and nothing else, so the fingerprint of each is everything that segment

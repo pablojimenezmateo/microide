@@ -1041,8 +1041,8 @@
                           const SDL_FRect& rect,
                           MergeTabState& merge_tab,
                           const std::filesystem::path& project_root,
-                          bool focused,  // the caret, and a divider drag's highlight
-                          const editor::DiagnosticsStore& diagnostics_store);
+                          bool focused,  // the caret
+                          const DiffSurfacePaint& paint);
   void ShowTreeSidebar(const std::filesystem::path& root = {});
   void ShowSearchSidebar(std::string query = {}, bool temporary = false);
   void ShowProblemsSidebar();
@@ -1917,9 +1917,9 @@
   std::optional<TextInputVisual> BuildMergeTextInputVisual(const SDL_FRect& editor_surface) const;
   // `focused`: the pane whose scrollbar a drag in flight belongs to.
   void RenderCompareScrollbars(SDL_Renderer* renderer, const SDL_FRect& editor_surface,
-                               CompareTabState& compare_tab, bool focused);
+                               CompareTabState& compare_tab, const DiffSurfacePaint& paint);
   void RenderMergeScrollbars(SDL_Renderer* renderer, const SDL_FRect& editor_surface,
-                             MergeTabState& merge_tab, bool focused);
+                             MergeTabState& merge_tab, const DiffSurfacePaint& paint);
   CursorKind CursorKindForPosition(float x, float y) const;
   SDL_Cursor* CursorHandle(CursorKind kind);
   void ClearMouseHoverState();

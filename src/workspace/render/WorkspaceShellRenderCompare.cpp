@@ -24,6 +24,7 @@
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/render/DiffOverviewMarkers.h"
 #include "workspace/render/CompareRowUnits.h"
+#include "workspace/render/PreparedFrameState.h"
 #include "workspace/render/OverviewRuler.h"
 #include "workspace/render/CompareVisibleLayoutCache.h"
 #include "workspace/WorkspaceLayout.h"
@@ -172,9 +173,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
 
   DrawFilledRect(renderer, rect, theme_.editor_background);
 
+  // The scroll was clamped to this layout at frame prep (paint changes no state).
   const CompareSurfaceLayout surface = ComputeCompareSurfaceLayout(rect, *compare_tab);
-  ClampCompareScrollRow(*compare_tab, surface.visible_rows);
-  ClampCompareHorizontalScroll(*compare_tab, surface.visible_columns);
   const std::size_t visible_start_row = static_cast<std::size_t>(std::max(0, compare_tab->scroll_row));
   // The visible window's syntax tokens were produced in frame prep
   // (PopulateCompareSyntaxTokensForWindow): paint only reads them, so every paint
@@ -225,41 +225,15 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
     return right_secondaries.subspan(static_cast<std::size_t>(lower - right_secondaries.begin()),
                                      static_cast<std::size_t>(upper - lower));
   };
-  const std::optional<editor::EditorBlameOverlay> blame_overlay =
-      project_inputs.focused && compare_tab->right_editable && compare_tab->right_view_active
-          ? editor_blame_overlay_service_.BuildCompareOverlay(
-                project_root, editor_text_renderer_, git_blame_service_, *compare_tab,
-                EditorBlameOverlayService::CompareOverlayLayout{
-                    .pane_rect = MakeRect(
-                        surface.right_x, rect.y, surface.gutter_width + surface.right_width,
-                        std::max(0.0f, rect.h - (surface.show_horizontal ? 12.0f : 0.0f))),
-                    .right_x = surface.right_x,
-                    .gutter_width = surface.gutter_width,
-                    .right_width = surface.right_width,
-                    .rows_y = surface.rows_y,
-                    .line_height = surface.line_height,
-                    .visible_rows = surface.visible_rows,
-                    .visible_columns = surface.visible_columns,
-                },
-                [compare_tab](std::size_t line_index, std::size_t line_visual_columns)
-                    -> std::optional<EditorBlameOverlayService::CompareBlameAnchor> {
-                  const CompareRightLineAnchor anchor = CompareRightLineBlameAnchor(
-                      *compare_tab, line_index, line_visual_columns);
-                  if (!anchor.valid) {
-                    return std::nullopt;
-                  }
-                  return EditorBlameOverlayService::CompareBlameAnchor{
-                      .visual_row = anchor.visual_row,
-                      .end_column = anchor.end_column,
-                  };
-                })
-          : std::nullopt;
+  // Built at frame prep (the focused diff's, from the blame service), with the
+  // surface's other paint inputs (DiffSurfacePaint).
+  const DiffSurfacePaint& paint = *project_inputs.paint;
+  const std::optional<editor::EditorBlameOverlay>& blame_overlay = paint.blame;
   const auto* right_diagnostics =
       compare_tab->right_editable && !compare_tab->right_viewport.path().empty() &&
               !compare_tab->right_viewport.dirty()
           ? diagnostics_store.FindByPathKey(compare_tab->right_viewport.path_key())
           : nullptr;
-  editor_blame_overlay_service_.SetVisibleOverlay(blame_overlay);
   const float bottom_reserved =
       surface.show_horizontal ? kWorkspaceDiffScrollbarReserve : 0.0f;
   const float right_reserved =
@@ -304,10 +278,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
   const bool wrapped = compare_tab->wrap_layout.active();
   const float char_width_px = editor_text_renderer_.CharWidth();
   // Read once per frame, not per row: the lookup is string-keyed.
-  const bool render_whitespace_enabled =
-      SettingFlagEnabled(GetSettingValue("editor.view.render_whitespace"), false);
-  const bool indent_guides_enabled =
-      SettingFlagEnabled(GetSettingValue("editor.view.indent_guides.enabled"), true);
+  const bool render_whitespace_enabled = paint.render_whitespace;
+  const bool indent_guides_enabled = paint.indent_guides;
 
   // Bracket-match highlight for the editable pane. FindBracketMatch is O(file),
   // which is why the editor renderer caches it per frame; the compare surface
@@ -315,8 +287,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
   // same key the editor uses — (content revision, caret line, caret column) —
   // held on the tab, one entry per caret (TD-2026-08-13-206).
   // Frame prep asked first (CompareRowUnits keys the rows on it); this hits the memo.
-  const std::optional<editor::BracketMatchPair> bracket_match_pair = CompareBracketMatch(
-      *compare_tab, SettingFlagEnabled(GetSettingValue("editor.brackets.match_highlight.enabled"), true));
+  const std::optional<editor::BracketMatchPair> bracket_match_pair = CompareBracketMatch(*compare_tab, paint.bracket_match);
 
   // Indent guides for both panes (TD-2026-08-13-206). The entry filed this as
   // blocked on the row->line mapping, because a diff's visible rows are not
@@ -950,7 +921,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
 void WorkspaceShell::RenderCompareScrollbars(SDL_Renderer* renderer,
                                              const SDL_FRect& editor_surface,
                                              CompareTabState& compare_tab_state,
-                                             bool focused) {
+                                             const DiffSurfacePaint& paint) {
   CompareTabState* compare_tab = &compare_tab_state;
   if (renderer == nullptr) {
     return;
@@ -960,8 +931,7 @@ void WorkspaceShell::RenderCompareScrollbars(SDL_Renderer* renderer,
       ComputeCompareSurfaceLayout(editor_surface, *compare_tab);
   const auto scroll_layout =
       ComputeCompareScrollLayout(editor_surface, surface_layout, *compare_tab);
-  compare_tab->scroll_row = scroll_layout.vertical_scroll;
-  compare_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
+  // The scroll this lays out against was clamped at frame prep: paint changes no state.
 
   if (scroll_layout.vertical_scrollbar.has_value()) {
     const SDL_FRect track = scroll_layout.vertical_scrollbar->track;
@@ -972,13 +942,13 @@ void WorkspaceShell::RenderCompareScrollbars(SDL_Renderer* renderer,
     overview::DrawLane(renderer, theme_, lane, compare_tab->scrollbar_marker_cache);
     detail::DrawScrollbarTrack(renderer, theme_, track);
     detail::DrawScrollbarThumb(renderer, theme_, scroll_layout.vertical_scrollbar->thumb,
-                       focused && context_.interaction_state.drag_target == DragTarget::CompareVerticalScrollbar);
+                       paint.vertical_bar_dragged);
   }
 
   if (scroll_layout.horizontal_scrollbar.has_value()) {
     detail::DrawScrollbar(renderer, theme_, scroll_layout.horizontal_scrollbar->track,
                   scroll_layout.horizontal_scrollbar->thumb,
-                  focused && context_.interaction_state.drag_target == DragTarget::CompareHorizontalScrollbar);
+                  paint.horizontal_bar_dragged);
   }
 }
 

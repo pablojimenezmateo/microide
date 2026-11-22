@@ -21,6 +21,7 @@
 #include "workspace/git/MergeResolverContext.h"
 #include "workspace/render/DiffOverviewMarkers.h"
 #include "workspace/render/OverviewRuler.h"
+#include "workspace/render/PreparedFrameState.h"
 #include "workspace/MergeWrapRows.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceLayout.h"
@@ -135,7 +136,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildMergeTextInp
 void WorkspaceShell::RenderMergeScrollbars(SDL_Renderer* renderer,
                                            const SDL_FRect& editor_surface,
                                            MergeTabState& merge_tab_state,
-                                           bool focused) {
+                                           const DiffSurfacePaint& paint) {
   MergeTabState* merge_tab = &merge_tab_state;
   if (renderer == nullptr) {
     return;
@@ -145,8 +146,7 @@ void WorkspaceShell::RenderMergeScrollbars(SDL_Renderer* renderer,
       ComputeMergeSurfaceLayout(editor_surface, *merge_tab);
   const auto scroll_layout =
       ComputeMergeScrollLayout(editor_surface, surface_layout, *merge_tab);
-  merge_tab->scroll_row = scroll_layout.vertical_scroll;
-  merge_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
+  // The scroll this lays out against was settled at frame prep: paint changes no state.
 
   if (scroll_layout.vertical_scrollbar.has_value()) {
     const std::size_t line_count = MergeTotalVisualRowCount(*merge_tab);
@@ -158,13 +158,13 @@ void WorkspaceShell::RenderMergeScrollbars(SDL_Renderer* renderer,
     overview::DrawLane(renderer, theme_, lane, merge_tab->scrollbar_marker_cache);
     detail::DrawScrollbarTrack(renderer, theme_, track);
     detail::DrawScrollbarThumb(renderer, theme_, scroll_layout.vertical_scrollbar->thumb,
-                       focused && context_.interaction_state.drag_target == DragTarget::CompareVerticalScrollbar);
+                       paint.vertical_bar_dragged);
   }
 
   if (scroll_layout.horizontal_scrollbar.has_value()) {
     detail::DrawScrollbar(renderer, theme_, scroll_layout.horizontal_scrollbar->track,
                   scroll_layout.horizontal_scrollbar->thumb,
-                  focused && context_.interaction_state.drag_target == DragTarget::CompareHorizontalScrollbar);
+                  paint.horizontal_bar_dragged);
   }
 }
 
@@ -173,7 +173,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                                         MergeTabState& merge_tab_state,
                                         const std::filesystem::path& project_root,
                                         bool focused,
-                                        const editor::DiagnosticsStore& diagnostics_store) {
+                                        const DiffSurfacePaint& paint) {
   MergeTabState* merge_tab = &merge_tab_state;
   if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
@@ -185,15 +185,9 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
 
   DrawFilledRect(renderer, rect, theme_.editor_background);
 
+  // The panes' shared scroll was synced and clamped, and the result viewport
+  // sized, at frame prep: paint changes no state.
   const MergeSurfaceLayout surface = ComputeMergeSurfaceLayout(rect, *merge_tab);
-  merge_tab->result_viewport.SetScrollLine(static_cast<std::size_t>(std::max(0, merge_tab->scroll_row)));
-  merge_tab->result_viewport.SetHorizontalScroll(merge_tab->horizontal_scroll);
-  merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
-  merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
-  ClampMergeScrollRow(*merge_tab, surface.visible_rows);
-  ClampMergeHorizontalScroll(*merge_tab, surface.visible_columns);
-  merge_tab->result_viewport.SetScrollLine(static_cast<std::size_t>(std::max(0, merge_tab->scroll_row)));
-  merge_tab->result_viewport.SetHorizontalScroll(merge_tab->horizontal_scroll);
   const float bottom_reserved =
       surface.show_horizontal ? kWorkspaceDiffScrollbarReserve : 0.0f;
   const float right_reserved =
@@ -201,13 +195,9 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   const float content_width = std::max(0.0f, rect.w - right_reserved);
   const float content_height = std::max(0.0f, rect.h - bottom_reserved);
   // Syntax tokens were produced in frame prep (PopulateMergeSyntaxTokensForWindow).
+  // Sizes the result viewport as prep did (unchanged): every column reads the row
+  // prep settled (soak 4c6d45903600).
   const MergeInteractionLayout interaction = BuildMergeInteractionLayout(rect, surface, *merge_tab);
-  // Sizing the result viewport to its pane re-clamps its scroll against the pane's
-  // own rows, which can be fewer than the surface's: every column reads the row
-  // from here, or the sources paint at the surface's clamp and the result at its
-  // own, and the next paint of the same frame disagrees (soak 4c6d45903600).
-  merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
-  merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
   const std::size_t selected_hunk =
       merge_tab->conflicts.empty() ? 0 : std::min(merge_tab->selected_hunk, merge_tab->conflicts.size() - 1);
 
@@ -228,7 +218,8 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                                detail::ButtonTone::Neutral,
                                detail::ButtonVisualState{
                                    .enabled = primary,
-                                   .hovered = PointerOver(button_rect),
+                                   .hovered = paint.pointer.has_value() && Contains(button_rect, paint.pointer->x,
+                                                                                    paint.pointer->y),
                                    .active = selected,
                                });
   };
@@ -336,12 +327,10 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                  theme_.border);
   DrawFilledRect(renderer,
                  MakeRect(surface.center_x - surface.divider_width * 0.5f, rect.y, 1.0f, content_height),
-                 focused && context_.interaction_state.drag_target == DragTarget::MergeLeftDivider ? theme_.accent
-                                                                                : theme_.border);
+                 paint.left_divider_dragged ? theme_.accent : theme_.border);
   DrawFilledRect(renderer,
                  MakeRect(surface.right_x - surface.divider_width * 0.5f, rect.y, 1.0f, content_height),
-                 focused && context_.interaction_state.drag_target == DragTarget::MergeRightDivider ? theme_.accent
-                                                                                 : theme_.border);
+                 paint.right_divider_dragged ? theme_.accent : theme_.border);
 
   }
   editor_text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, surface.header_y,
@@ -480,31 +469,13 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   }
   }
 
-  // The focused merge only: the visible overlay is the one the blame hover card
-  // reads, and a merge in another pane of a split would replace it.
-  const std::optional<editor::EditorBlameOverlay> merge_blame_overlay =
-      focused ? editor_blame_overlay_service_.EditorOverlayForFrame(
-                    prepared_frame_id_, project_root, editor_text_renderer_, git_blame_service_,
-                    merge_tab->result_viewport, interaction.result.rect, 280.0f, 0,
-                    LineNumbersEnabled())
-              : std::nullopt;
-  if (focused) {
-    editor_blame_overlay_service_.SetVisibleOverlay(merge_blame_overlay);
-  }
-  const auto* merge_diagnostics =
-      !merge_tab->result_viewport.path().empty() && !merge_tab->result_viewport.dirty()
-          ? diagnostics_store.FindByPathKey(merge_tab->result_viewport.path_key())
-          : nullptr;
-  const auto merge_setting_enabled = [this](std::string_view id, bool default_value) {
-    return SettingFlagEnabled(GetSettingValue(id), default_value);
-  };
-  const bool bracket_match_highlight_enabled =
-      merge_setting_enabled("editor.brackets.match_highlight.enabled", true);
-  const bool indent_guides_enabled =
-      merge_setting_enabled("editor.view.indent_guides.enabled", true);
-  const bool render_whitespace_enabled =
-      merge_setting_enabled("editor.view.render_whitespace", false);
-  const bool line_numbers_enabled = merge_setting_enabled("editor.line_numbers", true);
+  // The blame overlay (the focused merge's), diagnostics and settings were
+  // resolved at frame prep (DiffSurfacePaint).
+  const std::optional<editor::EditorBlameOverlay>& merge_blame_overlay = paint.blame;
+  const bool bracket_match_highlight_enabled = paint.bracket_match;
+  const bool indent_guides_enabled = paint.indent_guides;
+  const bool render_whitespace_enabled = paint.render_whitespace;
+  const bool line_numbers_enabled = paint.line_numbers;
   {
   // The result pane paints inside itself, as an editor pane does: the editor view
   // lays out at least 8 columns, so in a column narrower than that (a large font,
@@ -515,9 +486,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                                interaction.result.rect,
                                focused && prepared_frame_draw_editor_caret_, "", std::nullopt,
                                merge_blame_overlay,
-                               merge_diagnostics != nullptr
-                                   ? std::span<const editor::PublishedDiagnostic>(*merge_diagnostics)
-                                   : std::span<const editor::PublishedDiagnostic>{},
+                               paint.diagnostics,
                                nullptr,
                                bracket_match_highlight_enabled,
                                indent_guides_enabled, render_whitespace_enabled,
@@ -526,8 +495,6 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                                /*plugin_decorations=*/nullptr,
                                line_numbers_enabled);
   }
-  merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
-  merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
 
   for (std::size_t i = 0; i < visual_conflicts.size(); ++i) {
     const auto& conflict = visual_conflicts[i];

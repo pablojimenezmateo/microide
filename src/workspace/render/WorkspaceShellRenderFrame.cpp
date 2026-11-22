@@ -6,6 +6,7 @@
 #include "workspace/render/BottomPanelTerminalChromePaint.h"
 #include "workspace/render/NotificationToastPaint.h"
 #include "workspace/render/DebugPanePaint.h"
+#include "workspace/git/CompareTabReview.h"
 #include "workspace/render/CompareRowUnits.h"
 #include "workspace/render/EditorRowUnits.h"
 #include "workspace/render/GitSidebarPaint.h"
@@ -979,6 +980,35 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       paint.ruler_search = find_here ? &buffer_search : nullptr;
       (void)focused;
     };
+    // A diff surface's paint inputs beyond its tab (DiffSurfacePaint), and the hash
+    // its surface key folds of them.
+    const auto fill_diff_paint = [&](std::size_t gi, const SDL_FRect& area, bool focused, DragTarget vertical,
+                                     DragTarget horizontal) -> DiffSurfacePaint& {
+      DiffSurfacePaint& paint = frame_state_.diff_surface_paint[gi];
+      paint.render_whitespace = setting("editor.view.render_whitespace", false);
+      paint.indent_guides = setting("editor.view.indent_guides.enabled", true);
+      paint.bracket_match = setting("editor.brackets.match_highlight.enabled", true);
+      paint.line_numbers = setting("editor.line_numbers", true);
+      const DragTarget drag = context_.interaction_state.drag_target;
+      paint.vertical_bar_dragged = focused && drag == vertical;
+      paint.horizontal_bar_dragged = focused && drag == horizontal;
+      paint.left_divider_dragged = focused && drag == DragTarget::MergeLeftDivider;
+      paint.right_divider_dragged = focused && drag == DragTarget::MergeRightDivider;
+      paint.pointer = Contains(area, last_mouse_x_, last_mouse_y_)
+                          ? std::optional<SDL_FPoint>(SDL_FPoint{last_mouse_x_, last_mouse_y_})
+                          : std::nullopt;
+      paint.blame.reset();
+      paint.diagnostics = {};
+      return paint;
+    };
+    const auto fold_blame = [](PaintFingerprint& key, const std::optional<editor::EditorBlameOverlay>& blame) {
+      key.Add(blame.has_value() && blame->visible);
+      if (blame.has_value()) {
+        for (const editor::EditorBlameLine& line : blame->lines) {
+          key.Add(line.line_index).Add(line.rect).Add(std::string_view(line.text));
+        }
+      }
+    };
     for (const EditorPaneLayout& pane : panes) {
       const std::size_t gi = pane.group_index;
       if (gi >= kMaxEditorGroups || gi >= project_state.editor_groups.size() || !frame_state_.pane_metrics_valid[gi]) {
@@ -1001,6 +1031,38 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         ClampCompareScrollRow(compare, compare_surface.visible_rows);
         ClampCompareHorizontalScroll(compare, compare_surface.visible_columns);
         const bool focused = gi == focused_group;
+        DiffSurfacePaint& diff_paint = fill_diff_paint(gi, area, focused, DragTarget::CompareVerticalScrollbar,
+                                                       DragTarget::CompareHorizontalScrollbar);
+        // The focused diff's inline blame on its working side, built here once: the
+        // hover card and Copy SHA resolve against the same overlay.
+        if (focused) {
+          if (compare.right_editable && compare.right_view_active) {
+            diff_paint.blame = editor_blame_overlay_service_.BuildCompareOverlay(
+                project_state.root, editor_text_renderer_, git_blame_service_, compare,
+                EditorBlameOverlayService::CompareOverlayLayout{
+                    .pane_rect = MakeRect(compare_surface.right_x, area.y,
+                                          compare_surface.gutter_width + compare_surface.right_width,
+                                          std::max(0.0f, area.h - (compare_surface.show_horizontal ? 12.0f : 0.0f))),
+                    .right_x = compare_surface.right_x,
+                    .gutter_width = compare_surface.gutter_width,
+                    .right_width = compare_surface.right_width,
+                    .rows_y = compare_surface.rows_y,
+                    .line_height = compare_surface.line_height,
+                    .visible_rows = compare_surface.visible_rows,
+                    .visible_columns = compare_surface.visible_columns,
+                },
+                [&compare](std::size_t line_index, std::size_t line_visual_columns)
+                    -> std::optional<EditorBlameOverlayService::CompareBlameAnchor> {
+                  const CompareRightLineAnchor anchor = CompareRightLineBlameAnchor(compare, line_index, line_visual_columns);
+                  if (!anchor.valid) {
+                    return std::nullopt;
+                  }
+                  return EditorBlameOverlayService::CompareBlameAnchor{.visual_row = anchor.visual_row,
+                                                                       .end_column = anchor.end_column};
+                });
+          }
+          editor_blame_overlay_service_.SetVisibleOverlay(diff_paint.blame);
+        }
         PaintFingerprint surface_key;
         surface_key.Add(reinterpret_cast<std::uintptr_t>(&compare))
             .Add(settings.value())
@@ -1022,6 +1084,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
             .Add(compare_surface.visible_rows)
             .Add(compare_surface.show_vertical)
             .Add(compare_surface.show_horizontal);
+        fold_blame(surface_key, diff_paint.blame);
         const float right_reserved = compare_surface.show_vertical ? kWorkspaceDiffScrollbarReserve : 0.0f;
         // The header above the rows: the review summary line and the two sides' labels.
         {
@@ -1066,6 +1129,19 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         merge.scroll_row = static_cast<int>(merge.result_viewport.scroll_line());
         merge.horizontal_scroll = merge.result_viewport.horizontal_scroll();
         const bool focused = gi == focused_group;
+        DiffSurfacePaint& diff_paint = fill_diff_paint(gi, area, focused, DragTarget::CompareVerticalScrollbar,
+                                                       DragTarget::CompareHorizontalScrollbar);
+        if (focused) {
+          diff_paint.blame = editor_blame_overlay_service_.EditorOverlayForFrame(
+              prepared_frame_id_, project_state.root, editor_text_renderer_, git_blame_service_, merge.result_viewport,
+              interaction.result.rect, 280.0f, 0, LineNumbersEnabled());
+          editor_blame_overlay_service_.SetVisibleOverlay(diff_paint.blame);
+        }
+        if (!merge.result_viewport.path().empty() && !merge.result_viewport.dirty()) {
+          if (const auto* published = project_state.diagnostics_store.FindByPathKey(merge.result_viewport.path_key())) {
+            diff_paint.diagnostics = *published;
+          }
+        }
         PaintFingerprint surface_key;
         surface_key.Add(reinterpret_cast<std::uintptr_t>(&merge))
             .Add(settings.value())
@@ -1098,6 +1174,8 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
               .Add(conflict.valid)
               .Add(conflict.resolved);
         }
+        fold_blame(surface_key, diff_paint.blame);
+        surface_key.Add(diff_paint.left_divider_dragged).Add(diff_paint.right_divider_dragged);
         if (merge.hover_state.has_value()) {
           surface_key.Add(merge.hover_state->kind)
               .Add(merge.hover_state->conflict_index)
@@ -1117,6 +1195,10 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
               .Add(merge.remaining_conflicted_files)
               .Add(merge.result_viewport.dirty())
               .Add(static_cast<int>(ComputeMergeResultState(merge, merge.file_conflict)));
+          // The toolbar's buttons light under the pointer: where it is in the band.
+          if (diff_paint.pointer.has_value() && diff_paint.pointer->y < merge_surface.rows_y) {
+            header.Add(diff_paint.pointer->x).Add(diff_paint.pointer->y);
+          }
           if (merge.base_pane_visible) {
             for (std::size_t row = 0; row < merge.model.base_lines.size() && row < 4; ++row) {
               header.Add(std::string_view(merge.model.base_lines[row]));
@@ -1133,12 +1215,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
                                                    .content_width = std::max(0.0f, area.w - right_reserved),
                                                    .visible_rows = merge_surface.visible_rows},
                                 surface_key.value(), units);
-        std::span<const editor::PublishedDiagnostic> result_diagnostics;
-        if (!merge.result_viewport.path().empty() && !merge.result_viewport.dirty()) {
-          if (const auto* published = project_state.diagnostics_store.FindByPathKey(merge.result_viewport.path_key())) {
-            result_diagnostics = *published;
-          }
-        }
+        const std::span<const editor::PublishedDiagnostic> result_diagnostics = diff_paint.diagnostics;
         AppendEditorRowUnits(EditorRowKeyInputs{.viewport = &merge.result_viewport,
                                                 .pane_rect = interaction.result.rect,
                                                 .metrics = interaction.result.metrics,
@@ -2415,13 +2492,13 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                                .diagnostics_store = &project_state.diagnostics_store,
                                .right_plugin_decorations = compare_right_decorations,
                                .focused = focused,
+                               .paint = &frame_state_.diff_surface_paint[gi],
                            });
-      RenderCompareScrollbars(renderer, area, compare_tab, focused);
+      RenderCompareScrollbars(renderer, area, compare_tab, frame_state_.diff_surface_paint[gi]);
     } else {
       MergeTabState& merge_tab = *tab->merge;
-      RenderMergeSurface(renderer, area, merge_tab, project_state.root, focused,
-                         project_state.diagnostics_store);
-      RenderMergeScrollbars(renderer, area, merge_tab, focused);
+      RenderMergeSurface(renderer, area, merge_tab, project_state.root, focused, frame_state_.diff_surface_paint[gi]);
+      RenderMergeScrollbars(renderer, area, merge_tab, frame_state_.diff_surface_paint[gi]);
     }
   }
   {
