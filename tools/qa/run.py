@@ -393,7 +393,7 @@ def cmd_monkey(args: argparse.Namespace) -> int:
 
 
 def replay_record(record: dict, binary: Path, out: Path, actions: list | None = None,
-                  check: bool = True, paced: bool | None = None):
+                  check: bool = True, paced: bool | None = None, stop=None):
     """Re-runs a replay record (the monkey's replay.json) on a fresh fixture and
     returns the App's findings, its findings' signatures and whether it ran to the
     end. The minimiser (tools/soak/minimize.py) calls this per candidate."""
@@ -428,7 +428,7 @@ def replay_record(record: dict, binary: Path, out: Path, actions: list | None = 
         q.replay(app, actions, churn=monkey.replay_churn,
                  external=monkey.replay_external, check=check, oracle=monkey.replay_oracle,
                  paced=bool(record.get("paced", False)) if paced is None else paced,
-                 root=q.recorded_root({**record, "actions": actions}), follow=follow)
+                 root=q.recorded_root({**record, "actions": actions}), follow=follow, stop=stop)
         app.replay_completed = True
         if not check:
             app.check("end of replay")

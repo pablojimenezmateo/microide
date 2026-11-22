@@ -98,6 +98,8 @@ DRIVERS = SOAK / "driver"
 DRIVER_PATHS = ("tools/qa", "tools/capture-media", "tools/soak", "plugins",
                 "tests/lsan.supp", "tests/tsan.supp")
 PAUSE = SOAK / "PAUSE"
+# A check's minimize: its wall-clock budget, counted from its start.
+MINIMIZE_BUDGET_S = 3600
 STATE = SOAK / "state.json"
 RUNS = SOAK / "runs"
 FINDINGS = SOAK / "findings"
@@ -1705,12 +1707,25 @@ def check_finding(sig: str, state: dict[str, Any], log) -> None:
         if shutil.which("notify-send"):
             subprocess.run(["notify-send", "microide soak: new deterministic finding",
                             json.loads(meta_path.read_text())["finding"]["label"]], capture_output=True)
-        result = subprocess.run(["nice", "-n", "19", *minimize, "--jobs", "4"], capture_output=True,
-                                text=True, env=env, timeout=7200)
+        # Bounded, and preempted by a pause: a minimize ran for hours (its budget
+        # started after its first replays) and `pause` waited for it, so lanes and
+        # timing slots waited too. Stopped, it keeps the smallest replay it found.
+        result = subprocess.run(["nice", "-n", "19", *minimize, "--jobs", "4",
+                                 "--time-budget", str(MINIMIZE_BUDGET_S), "--stop-file", str(PAUSE)],
+                                capture_output=True, text=True, env=env, timeout=MINIMIZE_BUDGET_S + 900)
         for line in result.stdout.splitlines():
-            if line.startswith("{") and json.loads(line).get("reproduced"):
-                ledger().append(sig, "minimized", actions=json.loads(line)["actions"])
-                log(f"  minimized {sig}: {json.loads(line)['actions']} actions")
+            if not line.startswith("{"):
+                continue
+            with contextlib.suppress(ValueError):
+                outcome = json.loads(line)
+                stopped = outcome.get("stopped")
+                if outcome.get("reproduced"):
+                    ledger().append(sig, "minimized", actions=outcome["actions"],
+                                    **({"stopped": stopped} if stopped else {}))
+                    log(f"  minimized {sig}: {outcome['actions']} actions"
+                        + (f" (minimize: {stopped})" if stopped else ""))
+                elif stopped:
+                    log(f"  minimize of {sig}: {stopped} before its first replay")
     write_finding_md(bundle)
 
 

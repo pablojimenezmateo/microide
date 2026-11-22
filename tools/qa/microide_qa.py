@@ -365,6 +365,12 @@ class QaFailure(AssertionError):
     pass
 
 
+class ReplayStopped(Exception):
+    """A replay's `stop` asked it to end before its next action (the soak's
+    minimizer, on its budget or a pause). Not a QaFailure: nothing went wrong
+    with the app, and the replay says nothing about the finding."""
+
+
 class AppGone(QaFailure):
     """The request failed because the app is dead or dying -- not a refusal, not
     a stall. The crash oracle (App.check) reports the death with its status and
@@ -3213,7 +3219,8 @@ def replay(app: App, actions: list[dict[str, Any]], pause: float = 0.12,
            oracle: Callable[[dict[str, Any]], None] | None = None,
            paced: bool = False,
            root: str | None = None,
-           follow: Callable[[int, dict[str, Any]], None] | None = None) -> None:
+           follow: Callable[[int, dict[str, Any]], None] | None = None,
+           stop: Callable[[], bool] | None = None) -> None:
     """Re-runs a recorded action list (what the monkey saves on a finding).
 
     `root` is the project root the actions were recorded against
@@ -3237,7 +3244,11 @@ def replay(app: App, actions: list[dict[str, Any]], pause: float = 0.12,
 
     `paced`: each action waits until at least its recorded gap after the one
     before (up to MAX_PACED_GAP) -- the run's own timing, under the load it ran
-    in, which a race needs and the default settle-and-go does not keep."""
+    in, which a race needs and the default settle-and-go does not keep.
+
+    `stop`, asked before each action, ends the replay there (ReplayStopped): a
+    replay at the slow factor of a starved run takes many minutes, and a pause
+    waiting for one waited all of them."""
     previous_recorded: float | None = None
     previous_sent = time.monotonic()
     new_root = str(app.replay_root) if getattr(app, "replay_root", None) is not None else None
@@ -3257,6 +3268,8 @@ def replay(app: App, actions: list[dict[str, Any]], pause: float = 0.12,
             follow(index, action)
 
     for index, action in enumerate(actions):
+        if stop is not None and stop():
+            raise ReplayStopped(f"stopped before action {index} of {len(actions)}")
         if "check" in action or "note" in action or "type-via-control" in action:
             observe(index, action)
             continue

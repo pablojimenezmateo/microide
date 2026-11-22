@@ -3,13 +3,19 @@
 reproduces a finding (safety-plan W1.5).
 
     tools/soak/minimize.py REPLAY.json --signature SIG [--binary PATH] [--jobs N]
-                           [--out DIR] [--max-tests N] [--time-budget S]
+                           [--out DIR] [--max-tests N] [--time-budget S] [--stop-file PATH]
 
 `REPLAY.json` is the monkey's replay record (the actions up to the finding). A
 candidate reproduces when replaying it on a fresh fixture shows a finding with
 signature SIG (findings.signature). Zeller's ddmin, with the complements of one
 granularity tested in parallel on separate displays; then a last pass drops
 single actions. Writes `minimal.json` (a replay record) and prints its length.
+
+It stops when `--time-budget` seconds have passed since it started, or when
+`--stop-file` exists (the soak passes its PAUSE: a pause preempts a minimize
+rather than waiting hours for it). `minimal.json` is rewritten each time the
+list shrinks, so a stop -- or a kill -- keeps the smallest replay found so far;
+the printed result names why it stopped (`stopped`).
 
 Also `--check-only`: replays the record `--runs` times and prints the
 reproduction rate, which is how the soak runner decides deterministic vs flaky.
@@ -30,6 +36,41 @@ sys.path.insert(0, str(QA))
 import microide_qa as q  # noqa: E402
 import run as qa_run  # noqa: E402
 
+class Budget:
+    """When a minimize stops: `seconds` after it started -- its first full
+    replay and the skip-checks probe included; the budget used to start after
+    them, and with the check's replays before it a check held the machine for
+    hours -- or as soon as `stop_file` exists.
+
+    >>> Budget(0).spent()
+    'budget spent'
+    >>> Budget(3600).spent() is None
+    True
+    >>> import tempfile, pathlib
+    >>> with tempfile.TemporaryDirectory() as d:
+    ...     stop = pathlib.Path(d) / "PAUSE"
+    ...     before = Budget(3600, stop).spent()
+    ...     _ = stop.write_text("lanes")
+    ...     (before, Budget(3600, stop).spent())
+    (None, 'stopped: PAUSE exists')
+    """
+
+    def __init__(self, seconds: float, stop_file: Path | None = None):
+        self.deadline = time.monotonic() + seconds
+        self.stop_file = stop_file
+        # The first stop a caller was told of: what cut the work short, which a
+        # later look (a PAUSE taken just after a minimize converged) is not.
+        self.reason: str | None = None
+
+    def spent(self) -> str | None:
+        if self.reason is None:
+            if self.stop_file is not None and self.stop_file.exists():
+                self.reason = f"stopped: {self.stop_file.name} exists"
+            elif time.monotonic() >= self.deadline:
+                self.reason = "budget spent"
+        return self.reason
+
+
 # Rows that are not actions of their own: replay skips them anyway.
 _PASSIVE = ("check", "note", "type-via-control", "corpus")
 
@@ -39,8 +80,10 @@ def actions_of(record: dict) -> list[dict]:
 
 
 class Tester:
-    def __init__(self, record: dict, signature: str, binary: Path, scratch: Path, jobs: int):
+    def __init__(self, record: dict, signature: str, binary: Path, scratch: Path, jobs: int,
+                 budget: Budget | None = None):
         self.record = record
+        self.budget = budget
         self.signature = signature
         self.binary = binary
         self.scratch = scratch
@@ -68,12 +111,18 @@ class Tester:
         if self.kind not in ("log", "crash", "data"):
             return
         self.check_each = False
-        if not self._run(actions):
+        reproduced = self._run(actions)
+        if reproduced is None:
+            return  # stopped: nothing learned, and nothing runs after it
+        if not reproduced:
             self.check_each = True
             print("  the finding needs the per-action checks' timing; keeping them", flush=True)
 
-    def _run(self, actions: list[dict]) -> bool:
+    def _run(self, actions: list[dict]) -> bool | None:
         return self.run_detailed(actions)["hit"]
+
+    def _stopping(self) -> bool:
+        return self.budget is not None and self.budget.spent() is not None
 
     def run_detailed(self, actions: list[dict]) -> dict:
         """One replay of `actions`: whether it showed the signature (`hit`),
@@ -83,7 +132,7 @@ class Tester:
         out = Path(tempfile.mkdtemp(prefix="t-", dir=self.scratch))
         try:
             app, signatures = qa_run.replay_record(self.record, self.binary, out, actions=actions,
-                                                   check=self.check_each)
+                                                   check=self.check_each, stop=self._stopping)
             if not self.kind:
                 self.learn_kind(signatures)
             return {"hit": any(entry.get("signature") == self.signature for entry in signatures),
@@ -91,6 +140,10 @@ class Tester:
                     "path": app.divergence.summary() if getattr(app, "divergence", None) is not None else {},
                     "others": sorted({f"{entry.get('signature')} {entry.get('label', '')[:80]}"
                                       for entry in signatures if entry.get("signature") != self.signature})}
+        except q.ReplayStopped:
+            # Ended between actions by the budget: unknown, as a candidate the
+            # stop kept from starting is (test_many).
+            return {"hit": None, "ran": False, "path": {}, "others": []}
         except Exception as error:  # noqa: BLE001 - a candidate that breaks the driver does not reproduce
             print(f"    candidate failed to run: {type(error).__name__}: {error}", flush=True)
             return {"hit": False, "ran": False, "error": f"{type(error).__name__}: {error}"[:300],
@@ -99,15 +152,27 @@ class Tester:
             import shutil
             shutil.rmtree(out, ignore_errors=True)
 
-    def test_many(self, candidates: list[list[int]], indices_to_actions) -> list[bool]:
+    def test_many(self, candidates: list[list[int]], indices_to_actions) -> list[bool | None]:
+        """Whether each candidate reproduces; None for one the budget stopped
+        before it started (unknown: falsy for the callers, and not cached)."""
+        def run(candidate: list[int]) -> bool | None:
+            # Checked as each replay starts, not per batch: a stop waits for the
+            # replays in flight only.
+            if self.budget is not None and self.budget.spent():
+                return None
+            return self._run(indices_to_actions(candidate))
+
         todo = [c for c in candidates if tuple(c) not in self.cache]
+        ran: dict[tuple[int, ...], bool | None] = {}
         if todo:
             with concurrent.futures.ThreadPoolExecutor(max_workers=self.jobs) as pool:
-                results = list(pool.map(lambda c: self._run(indices_to_actions(c)), todo))
+                results = list(pool.map(run, todo))
             for candidate, result in zip(todo, results):
-                self.cache[tuple(candidate)] = result
-            self.tests += len(todo)
-        return [self.cache[tuple(c)] for c in candidates]
+                ran[tuple(candidate)] = result
+                if result is not None:
+                    self.cache[tuple(candidate)] = result
+                    self.tests += 1
+        return [self.cache.get(tuple(c), ran.get(tuple(c))) for c in candidates]
 
 
 _META = ("t", "s", "b")
@@ -166,7 +231,7 @@ def kind_groups(actions: list[dict], current: list[int],
 
 
 def reduce_by_kind(tester: Tester, actions: list[dict], current: list[int], max_tests: int,
-                   deadline: float, width: int = 24) -> list[int]:
+                   budget: Budget, width: int = 24, progress=None) -> list[int]:
     """Drop whole kinds of action -- every pointer move, every wheel notch, every
     `set-setting` of one key, every kill -- before ddmin cuts by position.
 
@@ -183,7 +248,7 @@ def reduce_by_kind(tester: Tester, actions: list[dict], current: list[int], max_
     whose drop lost the finding is not tried again -- it was needed in a larger
     list, and a smaller one rarely needs it less."""
     needed: set[str] = set()
-    while tester.tests < max_tests and time.monotonic() < deadline:
+    while tester.tests < max_tests and not budget.spent():
         groups = kind_groups(actions, current, frozenset(needed))[:min(width, max_tests - tester.tests)]
         if not groups:
             break
@@ -191,7 +256,7 @@ def reduce_by_kind(tester: Tester, actions: list[dict], current: list[int], max_
         results = tester.test_many(candidates, lambda idx: [actions[i] for i in idx])
         held = [(kind, candidate) for (kind, _), candidate, ok in zip(groups, candidates, results)
                 if ok and candidate]
-        needed.update(kind for (kind, _), ok in zip(groups, results) if not ok)
+        needed.update(kind for (kind, _), ok in zip(groups, results) if ok is False)
         if not held:
             break
         best = min((candidate for _, candidate in held), key=len)
@@ -202,17 +267,19 @@ def reduce_by_kind(tester: Tester, actions: list[dict], current: list[int], max_
                 best = union
         current = best
         print(f"  by kind: {len(current)} actions ({tester.tests} tests)", flush=True)
+        if progress is not None:
+            progress(current)
     return current
 
 
-def ddmin(tester: Tester, actions: list[dict], max_tests: int, deadline: float,
-          start: list[int] | None = None) -> list[int]:
+def ddmin(tester: Tester, actions: list[dict], max_tests: int, budget: Budget,
+          start: list[int] | None = None, progress=None) -> list[int]:
     def to_actions(indices: list[int]) -> list[dict]:
         return [actions[i] for i in indices]
 
     current = list(range(len(actions))) if start is None else list(start)
     n = 2
-    while len(current) >= 2 and tester.tests < max_tests and time.monotonic() < deadline:
+    while len(current) >= 2 and tester.tests < max_tests and not budget.spent():
         size = len(current)
         chunk = max(1, size // n)
         subsets = [current[i:i + chunk] for i in range(0, size, chunk)]
@@ -224,6 +291,8 @@ def ddmin(tester: Tester, actions: list[dict], max_tests: int, deadline: float,
             current = reduced
             n = max(n - 1, 2)
             print(f"  ddmin: {len(current)} actions ({tester.tests} tests)", flush=True)
+            if progress is not None:
+                progress(current)
             continue
         if n < size:
             results = tester.test_many(subsets, to_actions)
@@ -232,13 +301,15 @@ def ddmin(tester: Tester, actions: list[dict], max_tests: int, deadline: float,
                 current = reduced
                 n = 2
                 print(f"  ddmin: {len(current)} actions ({tester.tests} tests)", flush=True)
+                if progress is not None:
+                    progress(current)
                 continue
-        if n >= size:
-            break
+        if n >= size or budget.spent():
+            break  # (a stop mid-round left candidates untested: not a verdict on this granularity)
         n = min(size, n * 2)
     # One-minimality: try dropping each remaining action alone.
     changed = True
-    while changed and len(current) > 1 and tester.tests < max_tests and time.monotonic() < deadline:
+    while changed and len(current) > 1 and tester.tests < max_tests and not budget.spent():
         changed = False
         candidates = [[i for i in current if i != drop] for drop in current]
         results = tester.test_many(candidates, to_actions)
@@ -247,6 +318,8 @@ def ddmin(tester: Tester, actions: list[dict], max_tests: int, deadline: float,
                 current = candidate
                 changed = True
                 print(f"  one-minimal pass: {len(current)} actions", flush=True)
+                if progress is not None:
+                    progress(current)
                 break
     return current
 
@@ -350,13 +423,17 @@ def main() -> int:
     parser.add_argument("--jobs", type=int, default=6)
     parser.add_argument("--out", type=Path, help="directory for minimal.json (default: beside the replay)")
     parser.add_argument("--max-tests", type=int, default=150)
-    parser.add_argument("--time-budget", type=float, default=3600)
+    parser.add_argument("--time-budget", type=float, default=3600,
+                        help="seconds from the start, the first full replay included")
+    parser.add_argument("--stop-file", type=Path,
+                        help="stop (keeping the smallest replay so far) as soon as this file exists")
     parser.add_argument("--check-only", action="store_true", help="print the reproduction rate and exit")
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--paced", action="store_true",
                         help="replay every candidate at the run's recorded pace (what --check-only "
                              "reports a race needs)")
     args = parser.parse_args()
+    budget = Budget(args.time_budget, args.stop_file)
     record = json.loads(args.replay.read_text())
     out = args.out or args.replay.parent
     out.mkdir(parents=True, exist_ok=True)
@@ -380,21 +457,34 @@ def main() -> int:
             return 0
         if args.paced:
             record = {**record, "paced": True}
-        tester = Tester(record, args.signature, args.binary, scratch, args.jobs)
-        if not tester.test_many([list(range(len(actions)))], lambda idx: [actions[i] for i in idx])[0]:
+        tester = Tester(record, args.signature, args.binary, scratch, args.jobs, budget)
+        reproduced = tester.test_many([list(range(len(actions)))], lambda idx: [actions[i] for i in idx])[0]
+        if reproduced is None:
+            print(json.dumps({"reproduced": None, "actions": len(actions), "stopped": budget.spent()}))
+            return 3
+        if not reproduced:
             print(json.dumps({"reproduced": False, "actions": len(actions)}))
             return 2
         tester.try_skipping_checks(actions)
-        deadline = time.monotonic() + args.time_budget
-        # A third of the budget at most: ddmin and the one-minimal pass need the rest.
+
+        def save(kept: list[int], stopped: str | None = None) -> None:
+            # Every list passed here reproduced, so a stop or a kill after it
+            # leaves a replay that does.
+            minimal = {k: v for k, v in record.items() if k != "actions"}
+            minimal["actions"] = [actions[i] for i in kept]
+            minimal["minimized_from"] = len(actions)
+            if stopped:
+                minimal["minimize_stopped"] = stopped
+            (out / "minimal.json").write_text(json.dumps(minimal, indent=1))
+
+        # A third of the tests at most: ddmin and the one-minimal pass need the rest.
         by_kind = reduce_by_kind(tester, actions, list(range(len(actions))),
-                                 tester.tests + max(1, args.max_tests // 3), deadline)
-        kept = ddmin(tester, actions, args.max_tests, deadline, start=by_kind)
-        minimal = {k: v for k, v in record.items() if k != "actions"}
-        minimal["actions"] = [actions[i] for i in kept]
-        minimal["minimized_from"] = len(actions)
-        (out / "minimal.json").write_text(json.dumps(minimal, indent=1))
-        print(json.dumps({"reproduced": True, "actions": len(kept), "from": len(actions), "tests": tester.tests}))
+                                 tester.tests + max(1, args.max_tests // 3), budget, progress=save)
+        kept = ddmin(tester, actions, args.max_tests, budget, start=by_kind, progress=save)
+        stopped = budget.reason
+        save(kept, stopped)
+        print(json.dumps({"reproduced": True, "actions": len(kept), "from": len(actions), "tests": tester.tests,
+                          "stopped": stopped}))
         return 0
     finally:
         import shutil

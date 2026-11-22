@@ -15,7 +15,9 @@ only, a failing-first test for every fix, one commit per fix, and a TD entry in
 
 0. **Take the machine.** The soak and the fixing agent take turns, each with
    every core: `tools/soak/soak.py pause "fixing" --wait 3600` stops new jobs and
-   builds and returns once the running ones have ended. Replays, `rr` recordings
+   builds and returns once the running ones have ended (a check's minimize stops
+   at its next replay on seeing `PAUSE`, keeping the smallest replay it found, so
+   it no longer holds the pause for hours). Replays, `rr` recordings
    and lanes then have the machine to themselves -- under a full soak the
    remote lanes time out and a replay's timing is not the user's. When the
    phase's fixes are pushed (or handed over), `soak.py resume` gives the
