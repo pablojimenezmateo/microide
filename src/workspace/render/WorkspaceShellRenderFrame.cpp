@@ -10,6 +10,7 @@
 #include "workspace/render/CompareRowUnits.h"
 #include "workspace/render/EditorRowUnits.h"
 #include "workspace/render/GitSidebarPaint.h"
+#include "workspace/render/MenuPopupPaint.h"
 #include "workspace/render/SidebarModeRowPaint.h"
 #include "workspace/render/TreeSidebarPaint.h"
 #include "workspace/render/HoverCardLimits.h"
@@ -1613,49 +1614,22 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   chrome_unit(project_state.overlay.visible ? std::optional<SDL_FRect>(ComputeOverlayRect(layout.overlay_anchor))
                                             : std::nullopt,
               0);
-  // The open menu's rows:
-  // greyed rows stayed greyed after the state that enables them changed under the
-  // open menu (soak 8bafbfa78cae: Relaunch Terminal, a terminal's shell exited).
+  // The open menu's popup and submenu rects, laid out here for the pointer
+  // occluder below and for hit-testing. Their rows -- and the context menu's and
+  // the overflow popup's -- are resolved further down, once the occluder says what
+  // the pointer is over, as derived units of their own (MenuPopupPaint.h): the
+  // popup was one Chrome unit keyed on its rows' enabled and checked flags.
   {
-    std::uint64_t signature = 0;
     std::optional<SDL_FRect> popup_rect;
     std::optional<SDL_FRect> submenu_rect;
     if (context_.menu_state.menu_bar_open) {
-      signature = 1469598103934665603ULL;  // FNV-1a
-      const auto fold = [&signature](std::uint64_t value) {
-        signature ^= value;
-        signature *= 1099511628211ULL;
-      };
-      const auto fold_popup = [&](MenuId id, const std::optional<SDL_FRect>& rect,
-                                  std::vector<std::uint8_t>& flags) {
-        fold(static_cast<std::uint64_t>(id) + 1);
-        const auto items = MenuItems(id);
-        flags.assign(items.size(), 0);
-        if (!rect.has_value()) {
-          return;
-        }
-        ComputeVisiblePopupMenuItemsInto(items, -1, *rect, menu_popup_rows_scratch_);
-        for (const VisiblePopupMenuItem& row : menu_popup_rows_scratch_) {
-          const std::uint8_t row_flags = (row.enabled ? 1u : 0u) | (row.checked ? 2u : 0u);
-          flags[row.index] = row_flags;
-          fold(row_flags);
-        }
-      };
       popup_rect = ComputePopupMenuRect(layout.menu_bar, context_.menu_state.active_menu_id);
-      fold_popup(context_.menu_state.active_menu_id, popup_rect, frame_state_.menu_popup_row_flags);
-      frame_state_.menu_submenu_row_flags.clear();
       if (context_.menu_state.active_submenu_id != MenuId::None) {
         submenu_rect = ActiveSubmenuRect(layout.menu_bar);
-        fold_popup(context_.menu_state.active_submenu_id, submenu_rect, frame_state_.menu_submenu_row_flags);
       }
-      signature |= 1;  // never 0 while a menu is open
     }
-    // The popup and submenu: one that opens, closes, moves or changes size, or
-    // whose rows' enabled and checked states change under it, repaints.
     frame_state_.menu_popup_rect = popup_rect;
     frame_state_.menu_submenu_rect = submenu_rect;
-    chrome_unit(popup_rect, signature);
-    chrome_unit(submenu_rect, signature);
   }
   // (The merge header's status and the compare header's summary are header units
   // of their surfaces: see the diff branches of the editor-pane units above.)
@@ -1693,9 +1667,8 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     }
     frame_state_.status_items_hash = items_hash;  // the breadcrumb bands draw them: their units key on it
   }
-  // The context menu: one that opens, closes, moves or resizes.
+  // The context menu's rect (its card and rows are derived units: MenuPopupPaint.h).
   frame_state_.context_menu_rect = ComputeTreeContextMenuRect();
-  chrome_unit(frame_state_.context_menu_rect, 0);
   // Each editor group's tab strip and breadcrumb band. A strip draws its tabs'
   // titles and dirty marks and whether its group has the focus; a band draws its
   // pane's breadcrumb label, the plugin status items and the focus. (The focused
@@ -1891,6 +1864,84 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   // Derived-damage surfaces settle here: after the pointer occluder, which their
   // hover reads (openspec derived-damage).
   PrepareStatusBarFrame(layout);
+  // The open menus: each one's card and visible rows, resolved once -- a row's
+  // label, whether it is enabled and checked (the state behind them can move
+  // between two paints of one frame: a terminal's exit lands on its reader
+  // thread), and whether it is lit, by the menu's active row or by the pointer.
+  {
+    for (MenuPopupPaint& popup : frame_state_.menu_popups) {
+      popup.Clear();
+    }
+    const auto popup_at = [this](MenuPopupSlot slot) -> MenuPopupPaint& {
+      return frame_state_.menu_popups[static_cast<std::size_t>(slot)];
+    };
+    const auto lay_out = [this](MenuPopupPaint& popup, std::span<const MenuItemSpec> items, int active_item_index,
+                                const SDL_FRect& rect) {
+      popup.visible = true;
+      popup.follows_pointer = true;
+      popup.rect = rect;
+      ComputeVisiblePopupMenuItemsInto(items, active_item_index, rect, menu_popup_rows_scratch_);
+      for (const VisiblePopupMenuItem& item : menu_popup_rows_scratch_) {
+        MenuRowPaint row{.rect = item.rect, .enabled = item.enabled, .checked = item.checked, .separator = item.separator};
+        if (!item.separator) {
+          const MenuItemSpec& spec = items[item.index];
+          if (PointerOver(item.rect)) {
+            popup.pointer_row = static_cast<int>(popup.rows.size());
+          }
+          row.hovered = item.hovered || popup.pointer_row == static_cast<int>(popup.rows.size());
+          // Each label is copied before the next is resolved: a composed one
+          // lives in a buffer the next reuses (MenuItemLabel).
+          popup.SetLabel(row, MenuItemLabel(spec));
+          popup.SetAccelerator(row, MenuItemAccelerator(spec));
+        }
+        popup.rows.push_back(row);
+      }
+    };
+    if (context_.menu_state.menu_bar_open) {
+      if (frame_state_.menu_popup_rect.has_value() && FindMenuSpec(context_.menu_state.active_menu_id) != nullptr) {
+        lay_out(popup_at(MenuPopupSlot::Popup), MenuItems(context_.menu_state.active_menu_id),
+                context_.menu_state.active_menu_item_index, *frame_state_.menu_popup_rect);
+      }
+      if (context_.menu_state.active_submenu_id != MenuId::None && frame_state_.menu_submenu_rect.has_value() &&
+          FindMenuSpec(context_.menu_state.active_submenu_id) != nullptr) {
+        lay_out(popup_at(MenuPopupSlot::Submenu), MenuItems(context_.menu_state.active_submenu_id),
+                context_.menu_state.active_submenu_item_index, *frame_state_.menu_submenu_rect);
+      }
+    }
+    // The compact layout's overflow popup: one row per top-level menu that does
+    // not fit the bar, lit by the active index alone, which the motion path and
+    // the keyboard both write (TD-2026-09-19-296).
+    if (const auto chevron = MenuOverflowChevronRect(layout.menu_bar);
+        context_.menu_state.overflow_popup_open && chevron.has_value()) {
+      const auto overflow = ComputeOverflowMenuBarItems(layout.menu_bar);
+      if (!overflow.empty()) {
+        MenuPopupPaint& popup = popup_at(MenuPopupSlot::Overflow);
+        popup.visible = true;
+        popup.rect = ComputeMenuOverflowPopupRect(*chevron, overflow.size());
+        for (std::size_t i = 0; i < overflow.size(); ++i) {
+          const MenuSpec* spec = FindMenuSpec(overflow[i]);
+          MenuRowPaint row{.rect = MenuOverflowPopupRowRect(popup.rect, i),
+                           .enabled = true,
+                           .hovered = context_.menu_state.overflow_popup_active_index == static_cast<int>(i)};
+          popup.SetLabel(row, spec != nullptr ? std::string_view(spec->label) : std::string_view{});
+          popup.SetAccelerator(row, {});
+          popup.rows.push_back(row);
+        }
+      }
+    }
+    // The context menu (the tree's, a tab's, the terminal's), in the rect laid out
+    // above: its height comes from a cache keyed on the language server's
+    // readiness, which another thread moves (soak e4353c8cb483).
+    if (context_.menu_state.tree_context_menu.open && frame_state_.context_menu_rect.has_value()) {
+      const auto items = TreeContextMenuItems(context_.menu_state.tree_context_menu.target);
+      if (!items.empty()) {
+        lay_out(popup_at(MenuPopupSlot::Context), items, context_.menu_state.tree_context_menu.active_item_index,
+                *frame_state_.context_menu_rect);
+      }
+    }
+    CommitMenuPopupUnits(frame_state_, renderer, theme_, text_renderer_.MetricsGeneration(),
+                         [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
+  }
   {
     // The bottom panel's header, the same way (derived-damage 3.1): its label is
     // "Terminal", "Output", or the shown output channel's name when it has no tabs.

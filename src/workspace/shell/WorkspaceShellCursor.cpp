@@ -1075,33 +1075,12 @@ bool WorkspaceShell::PointerOver(const SDL_FRect& rect) const {
 
 std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceLayout& layout,
                                                                float x, float y) const {
-  // An open menu's rows, first: its popups paint over the overlay card and
-  // everything else, and a row lights while the pointer is on it
-  // (RenderMenuPopups), not only while the menu state names it. A dimmed row is
-  // never the menu's active one, so the pointer alone lights it, and only the
-  // menu's motion path repainted it: a pointer that left it for a toast -- motion
-  // over a toast stops there -- left it lit beside the toast (soak 4bdda529a3d3).
-  // Probed here, frame prep's hover unit repaints it whatever took the pointer.
-  if (context_.menu_state.menu_bar_open) {
-    const auto row_at = [&](const std::optional<SDL_FRect>& popup, MenuId id) -> std::optional<std::optional<SDL_FRect>> {
-      if (!popup.has_value() || !Contains(*popup, x, y)) {
-        return std::nullopt;
-      }
-      const auto hit = HitTestPopupRow(MenuItems(id), *popup, x, y);
-      return hit.has_value() && !hit->separator ? std::optional<SDL_FRect>(hit->rect) : std::nullopt;
-    };
-    // The submenu paints over its popup. Inside either, the row or nothing.
-    if (auto row = row_at(ActiveSubmenuRect(layout.menu_bar), context_.menu_state.active_submenu_id)) {
-      return *row;
-    }
-    if (auto row = row_at(ComputePopupMenuRect(layout.menu_bar, context_.menu_state.active_menu_id),
-                          context_.menu_state.active_menu_id)) {
-      return *row;
-    }
-  }
-
+  // (An open menu's rows are not probed here: each is a derived unit keyed on
+  // whether it is lit -- MenuPopupPaint.h -- so the row the pointer leaves repaints
+  // whatever took the pointer.)
+  //
   // Overlay list rows (command palette / pickers / completion / code actions),
-  // FIRST among the rest: the card floats over everything below, and inside it nothing beneath
+  // FIRST: the card floats over everything below, and inside it nothing beneath
   // is hovered. Probed after the chrome, a pointer onto a palette row that lay
   // over a lower pane's tab strip took that hidden tab as the hover, and the row
   // it lit was never damaged (QA monkey, seed 39 at 600 steps).

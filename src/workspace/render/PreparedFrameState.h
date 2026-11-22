@@ -106,6 +106,62 @@ struct GitPanelRowPaint {
   bool base_button_hovered = false;
   bool base_menu_open = false;
 };
+// A row of an open menu, as frame prep resolved it. Its label and accelerator are
+// spans of the popup's own text: a menu label can be composed (a language-server
+// action's "(LSP: Starting...)" form, a dimmed row's reason) in a buffer the next
+// row's label reuses, so the snapshot cannot view it.
+struct MenuRowPaint {
+  SDL_FRect rect{};
+  std::uint32_t label_at = 0;
+  std::uint32_t label_size = 0;
+  std::uint32_t accelerator_at = 0;
+  std::uint32_t accelerator_size = 0;
+  bool enabled = false;
+  bool checked = false;
+  bool hovered = false;  // lit: the menu's active row, or the one under the pointer
+  bool separator = false;
+};
+// An open menu: its card and its visible rows. `text` holds the rows' labels and
+// accelerators end to end and keeps its capacity across frames.
+struct MenuPopupPaint {
+  bool visible = false;
+  // Whether a row lights under the pointer (the overflow popup's rows light by
+  // its active index alone), and the row the pointer lit in this frame, -1 for
+  // none: what the motion path holds the pointer's next position against.
+  bool follows_pointer = false;
+  int pointer_row = -1;
+  SDL_FRect rect{};
+  std::string text;
+  std::vector<MenuRowPaint> rows;
+
+  void Clear() {
+    visible = false;
+    follows_pointer = false;
+    pointer_row = -1;
+    rect = SDL_FRect{};
+    text.clear();
+    rows.clear();
+  }
+  void SetLabel(MenuRowPaint& row, std::string_view label) {
+    row.label_at = static_cast<std::uint32_t>(text.size());
+    row.label_size = static_cast<std::uint32_t>(label.size());
+    text.append(label);
+  }
+  void SetAccelerator(MenuRowPaint& row, std::string_view accelerator) {
+    row.accelerator_at = static_cast<std::uint32_t>(text.size());
+    row.accelerator_size = static_cast<std::uint32_t>(accelerator.size());
+    text.append(accelerator);
+  }
+  std::string_view Label(const MenuRowPaint& row) const {
+    return std::string_view(text).substr(row.label_at, row.label_size);
+  }
+  std::string_view Accelerator(const MenuRowPaint& row) const {
+    return std::string_view(text).substr(row.accelerator_at, row.accelerator_size);
+  }
+};
+// The open menus, in paint order (a submenu over its popup, the context menu last).
+enum class MenuPopupSlot : std::uint8_t { Popup, Submenu, Overflow, Context, Count };
+
 // A tab of the sidebar's mode row. `label` is the view's static name, empty when
 // the row shows icons only.
 struct SidebarModeTabPaint {
@@ -193,12 +249,11 @@ struct PreparedFrameState {
   std::array<editor::EditorViewMetrics, kMaxEditorGroups> pane_metrics{};
   std::array<bool, kMaxEditorGroups> pane_metrics_valid{};
 
-  // The same flags per item index (bit 0 enabled, bit 1 checked), for the open
-  // popup and its submenu: paint draws them from here, not from live state. A
-  // flag read twice in one frame could differ -- a terminal's exit lands on its
-  // reader thread -- and the partial frame and a full render of it disagreed.
-  std::vector<std::uint8_t> menu_popup_row_flags;
-  std::vector<std::uint8_t> menu_submenu_row_flags;
+  // The open menus as this frame paints them (MenuPopupPaint.h), indexed by
+  // MenuPopupSlot: each one's card and rows, resolved once at prep -- a row's
+  // enabled flag read twice in one frame could differ (a terminal's exit lands on
+  // its reader thread), and the partial frame and a full render of it disagreed.
+  std::array<MenuPopupPaint, static_cast<std::size_t>(MenuPopupSlot::Count)> menu_popups{};
   // This frame's editor hover card layout (none: no card), laid out at prep;
   // its paint reads it and its Chrome unit keys on its rect.
   std::optional<EditorHoverPopupLayout> hover_popup;

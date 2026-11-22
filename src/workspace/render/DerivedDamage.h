@@ -50,6 +50,13 @@ enum class DerivedSurface : std::uint8_t {
   // floating cards and popups (each a unit at a fixed position; an absent one
   // keeps its position with an empty rect).
   Chrome,
+  // The open menus, one surface each (MenuPopupPaint.h): the menu bar's popup, its
+  // submenu, the compact layout's overflow popup and the context menu. A popup's
+  // card is its first unit, then a unit per row.
+  MenuPopup,
+  MenuSubmenu,
+  MenuOverflowPopup,
+  ContextMenu,
   Count,
 };
 

@@ -8393,7 +8393,280 @@ void TestADerivedSidebarViewCommitsItsSurfacesUnits() {
 
 }  // namespace
 
+// ---- derived-damage: the open menus, row by row -----------------------------------
+namespace {
+
+struct MenuRowProbe {
+  std::string name;
+  SDL_FRect rect{};
+  bool enabled = false;
+};
+
+// The open menu's rows as the ui query names them ("menu-item:<Menu>/<Label>").
+std::vector<MenuRowProbe> OpenMenuRows(FlowFixture& fixture, std::string_view menu) {
+  std::vector<MenuRowProbe> rows;
+  const std::string prefix = "menu-item:" + std::string(menu) + "/";
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    const std::string name = entry["name"].AsString();
+    if (!name.starts_with(prefix)) {
+      continue;
+    }
+    const auto& r = entry["rect"].AsArray();
+    rows.push_back(MenuRowProbe{.name = name,
+                                .rect = SDL_FRect{static_cast<float>(r[0].AsInt()), static_cast<float>(r[1].AsInt()),
+                                                  static_cast<float>(r[2].AsInt()), static_cast<float>(r[3].AsInt())},
+                                .enabled = entry["enabled"].AsBool()});
+  }
+  return rows;
+}
+
+// An open menu is derived units: its card, then a unit per row keyed on what the
+// row draws -- its label and accelerator, whether it is enabled, checked and lit.
+// So a row repaints whoever changed it: the pointer along the rows, the keyboard,
+// the state behind a dimmed row changing under the open menu. The popup was one
+// unit keyed on its rows' enabled and checked flags (any change repainted all of
+// it), and a lit row was repainted by the menu's motion path and by a probe in
+// the window's hover unit.
+void TestAnOpenMenusRowsRepaintWhatChanged() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("notes.txt", "one\ntwo\n", 840, 600);
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "the file in its tab");
+  Expect(TestAccess::DerivedUnitCount(fixture.shell, workspace::DerivedSurface::MenuPopup) == 0,
+         "no menu open: the popup lays out no units");
+  const auto file = fixture.ElementRect("menu:File");
+  Expect(file.has_value(), "the menu bar shows File");
+  if (!file) {
+    return;
+  }
+  fixture.ExpectFresh(fixture.Click(*file), "the File menu opened");
+  std::vector<MenuRowProbe> rows = OpenMenuRows(fixture, "File");
+  Expect(rows.size() >= 4, "the File menu lists its rows");
+  if (rows.size() < 4) {
+    return;
+  }
+  Expect(TestAccess::DerivedUnitCount(fixture.shell, workspace::DerivedSurface::MenuPopup) > rows.size(),
+         "the open popup lays out its card and a unit per row");
+
+  // The pointer along the rows, through the real motion path: each step repaints
+  // the row left and the row taken.
+  const SDL_FRect popup = SDL_FRect{rows.front().rect.x, rows.front().rect.y, rows.front().rect.w,
+                                    rows.back().rect.y + rows.back().rect.h - rows.front().rect.y};
+  const auto onto = [&](const MenuRowProbe& row) {
+    return DispatchEvents(fixture.shell, {MouseMotionEvent(row.rect.x + 12.0f, row.rect.y + row.rect.h * 0.5f)});
+  };
+  fixture.ExpectFresh(onto(rows[0]), "the pointer onto the first row");
+  fixture.ExpectFresh(onto(rows[1]), "the pointer onto the second row");
+  // What a step repaints of the popup (the canvas is left painted whole).
+  const auto popup_share = [&](const workspace::RenderInvalidation& redraw) {
+    fixture.PinCaret();
+    const workspace::RenderInvalidation damage =
+        FrameDamage(fixture.shell, fixture.canvas, fixture.width, fixture.height, redraw);
+    float covered = damage.full ? popup.w * popup.h : 0.0f;
+    for (const SDL_FRect& rect : damage.rects) {
+      SDL_FRect inside{};
+      if (SDL_GetRectIntersectionFloat(&rect, &popup, &inside)) {
+        covered += inside.w * inside.h;
+      }
+    }
+    fixture.PinCaret();
+    fixture.shell.Render(fixture.canvas.renderer(), fixture.width, fixture.height);
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+    return covered / (popup.w * popup.h);
+  };
+  const float step = popup_share(onto(rows[2]));
+  Expect(step > 0.0f && step < 0.5f,
+         "a pointer step repaints the rows it moved between, not the popup: " + std::to_string(step) + " of it");
+  // The pointer moving within its row changes nothing drawn: no frame is owed.
+  const workspace::RenderInvalidation within =
+      DispatchEvents(fixture.shell, {MouseMotionEvent(rows[2].rect.x + 40.0f, rows[2].rect.y + rows[2].rect.h * 0.5f)});
+  Expect(!within.full && !within.frame && within.rects.empty(),
+         "the pointer moving within its menu row asks for no frame (full=" + std::to_string(within.full) +
+             " frame=" + std::to_string(within.frame) + " rects=" + std::to_string(within.rects.size()) + ")");
+  // Off the menu, onto the editor: the row it left is lit by nothing.
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(700.0f, 500.0f)}), "the pointer off the menu");
+  // The keyboard's active row.
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN)}), "Down moves the active row");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN)}), "and again");
+
+  // The state behind a dimmed row changes under the open menu, with no damage
+  // request: an edit gives Revert File something to revert.
+  const auto revert_row = [&rows]() {
+    return std::find_if(rows.begin(), rows.end(), [](const MenuRowProbe& row) {
+      return row.name.find("Revert File") != std::string::npos;
+    });
+  };
+  Expect(revert_row() != rows.end() && !revert_row()->enabled, "Revert File is dimmed while the file is clean");
+  TestAccess::ActiveEditor(fixture.shell).InsertText("x");
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  fixture.ExpectFresh(NothingAnnounced(), "an edit under the open menu enabled Revert File");
+  rows = OpenMenuRows(fixture, "File");
+  Expect(revert_row() != rows.end() && revert_row()->enabled, "Revert File is enabled now");
+  // And dimmed again, as a save landing would dim it: its row repaints, not the popup.
+  TestAccess::ActiveEditor(fixture.shell).SetDirty(false);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  const float dimmed = popup_share(NothingAnnounced());
+  Expect(dimmed > 0.0f && dimmed < 0.5f,
+         "the row that changed repaints, not the popup: " + std::to_string(dimmed) + " of it");
+
+  // Escape closes the menu: where it was repaints.
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)}), "Escape closed the menu");
+  Expect(TestAccess::DerivedUnitCount(fixture.shell, workspace::DerivedSurface::MenuPopup) == 0,
+         "closed again: no units");
+
+  // A row lit by the pointer alone: the menu opens by the keyboard under a still
+  // pointer, so its state names no hovered row, and the pointer then leaves the
+  // popup. Nothing but the row's own unit repaints it unlit.
+  const auto edit = fixture.ElementRect("menu:Edit");
+  Expect(edit.has_value(), "the menu bar shows Edit");
+  if (!edit) {
+    return;
+  }
+  fixture.ExpectFresh(fixture.Click(*edit), "the Edit menu opened");
+  fixture.ExpectFresh(onto(rows[3]), "the pointer at rest where File's fourth row will open");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_LEFT, SDL_KMOD_ALT)}),
+                      "Alt+Left opening File under the still pointer");
+  Expect(!OpenMenuRows(fixture, "File").empty(), "Alt+Left opened the File menu");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(700.0f, 500.0f)}),
+                      "the pointer left the row it alone had lit");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)}), "Escape closed the File menu");
+}
+
+// The same rows at fractional scales, where a row's edges fall between device
+// pixels: the pointer down the File menu's rows and off it, the keyboard's active
+// row, each against a full repaint (soak 2f484d8f3963 was a menu row at 2.25).
+void TestAnOpenMenusRowsRepaintAtFractionalScales() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  for (const std::string scale : {"1.25", "1.6", "2.25"}) {
+    FlowFixture fixture("notes.txt", "one\ntwo\n", 1600, 1000);
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting ui.scale " + scale),
+           "set-setting ui.scale should run");
+    const workspace::RenderInvalidation full{.full = true};
+    fixture.ExpectFresh(full, "the file in its tab at scale " + scale);
+    const auto file = fixture.ElementRect("menu:File");
+    Expect(file.has_value(), "the menu bar shows File at scale " + scale);
+    if (!file) {
+      return;
+    }
+    fixture.ExpectFresh(fixture.Click(*file), "the File menu opened at scale " + scale);
+    const std::vector<MenuRowProbe> rows = OpenMenuRows(fixture, "File");
+    Expect(rows.size() >= 4, "the File menu lists its rows at scale " + scale);
+    for (const MenuRowProbe& row : rows) {
+      fixture.ExpectFresh(
+          DispatchEvents(fixture.shell, {MouseMotionEvent(row.rect.x + 12.0f, row.rect.y + row.rect.h * 0.5f)}),
+          "the pointer onto " + row.name + " at scale " + scale);
+    }
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(1200.0f, 800.0f)}),
+                        "the pointer off the menu at scale " + scale);
+    for (int key = 0; key < 3; ++key) {
+      fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN)}),
+                          "Down in the menu at scale " + scale);
+    }
+    TestAccess::ActiveEditor(fixture.shell).InsertText("x");
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+    fixture.ExpectFresh(NothingAnnounced(), "an edit enabled Revert File at scale " + scale);
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)}),
+                        "Escape closed the menu at scale " + scale);
+  }
+}
+
+// A submenu opening beside its popup, the pointer along its rows, and the context
+// menu, which shares the popup's rows: each against a full repaint.
+void TestASubmenuAndAContextMenuRepaintRowByRow() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("notes.txt", "one\ntwo\n", 840, 600);
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "the file in its tab");
+  // No shipped row opens a submenu, so one is opened beside a row of the Edit
+  // menu as a contributed row would open it, with no damage request.
+  const auto edit = fixture.ElementRect("menu:Edit");
+  Expect(edit.has_value(), "the menu bar shows Edit");
+  if (!edit) {
+    return;
+  }
+  fixture.ExpectFresh(fixture.Click(*edit), "the Edit menu opened");
+  const std::vector<MenuRowProbe> rows = OpenMenuRows(fixture, "Edit");
+  Expect(rows.size() >= 4, "the Edit menu lists its rows");
+  if (rows.size() < 4) {
+    return;
+  }
+  TestAccess::OpenSubmenuForTest(fixture.shell, workspace::MenuId::Help, rows[2].rect);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  fixture.ExpectFresh(NothingAnnounced(), "a submenu opened beside its row");
+  Expect(TestAccess::DerivedUnitCount(fixture.shell, workspace::DerivedSurface::MenuSubmenu) > 1,
+         "the open submenu lays out its card and rows");
+  const std::vector<MenuRowProbe> sub_rows = OpenMenuRows(fixture, "Help");
+  Expect(sub_rows.size() >= 2, "the submenu lists its rows");
+  for (const MenuRowProbe& row : sub_rows) {
+    fixture.ExpectFresh(
+        DispatchEvents(fixture.shell, {MouseMotionEvent(row.rect.x + 12.0f, row.rect.y + row.rect.h * 0.5f)}),
+        "the pointer onto the submenu's " + row.name);
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN)}), "Down in the submenu");
+  fixture.ExpectFresh(
+      DispatchEvents(fixture.shell, {MouseMotionEvent(rows[1].rect.x + 12.0f, rows[1].rect.y + rows[1].rect.h * 0.5f)}),
+      "the pointer back onto the popup");
+  for (int i = 0; i < 2 && TestAccess::DerivedUnitCount(fixture.shell, workspace::DerivedSurface::MenuPopup) > 0; ++i) {
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)}), "Escape in the open menu");
+  }
+  Expect(TestAccess::DerivedUnitCount(fixture.shell, workspace::DerivedSurface::MenuPopup) == 0 &&
+             TestAccess::DerivedUnitCount(fixture.shell, workspace::DerivedSurface::MenuSubmenu) == 0,
+         "the menu and its submenu are closed: no units");
+
+  // The context menu on the file in the tree, opened with no damage request.
+  TestAccess::OpenTreeContextMenuForPath(fixture.shell, workspace::TreeContextTargetKind::File, fixture.file);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  fixture.ExpectFresh(NothingAnnounced(), "the context menu opened");
+  Expect(TestAccess::DerivedUnitCount(fixture.shell, workspace::DerivedSurface::ContextMenu) > 1,
+         "the context menu lays out its card and rows");
+  const std::optional<SDL_FRect> context = TestAccess::TreeContextMenuRect(fixture.shell);
+  Expect(context.has_value(), "the context menu has a rect");
+  if (context.has_value()) {
+    for (const float y : {14.0f, 36.0f, 58.0f}) {
+      fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(context->x + 12.0f, context->y + y)}),
+                          "the pointer along the context menu");
+    }
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN)}), "Down in the context menu");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)}), "Escape closed the context menu");
+  Expect(TestAccess::DerivedUnitCount(fixture.shell, workspace::DerivedSurface::ContextMenu) == 0,
+         "closed: no units");
+
+  // A row whose label alone changes under the open menu: the git entry menu's
+  // Stage row turns to Unstage when its entry is staged (a stage landing from
+  // another view while the menu is up).
+  auto& git = TestAccess::CurrentProjectState(fixture.shell).sidebar.git;
+  git.entries.assign(1, workspace::GitSidebarEntry{});
+  git.selected_index = 0;
+  TestAccess::OpenTreeContextMenuForPath(fixture.shell, workspace::TreeContextTargetKind::GitEntry, fixture.file);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  fixture.ExpectFresh(NothingAnnounced(), "the git entry menu opened");
+  const std::size_t units = TestAccess::DerivedUnitCount(fixture.shell, workspace::DerivedSurface::ContextMenu);
+  const std::optional<SDL_FRect> card = TestAccess::TreeContextMenuRect(fixture.shell);
+  git.entries[0].staged = true;
+  fixture.ExpectFresh(NothingAnnounced(), "the git entry menu's Stage row turned to Unstage");
+  const std::optional<SDL_FRect> card_now = TestAccess::TreeContextMenuRect(fixture.shell);
+  Expect(units > 1 && TestAccess::DerivedUnitCount(fixture.shell, workspace::DerivedSurface::ContextMenu) == units &&
+             card.has_value() && card_now.has_value() && card->w == card_now->w && card->h == card_now->h,
+         "the menu kept its card and rows: a label changed");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)}), "Escape closed the git entry menu");
+}
+
+}  // namespace
+
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "QaFlowRegression/AnOpenMenusRowsRepaintWhatChanged", TestAnOpenMenusRowsRepaintWhatChanged);
+  AddTest(tests, "QaFlowRegression/AnOpenMenusRowsRepaintAtFractionalScales",
+          TestAnOpenMenusRowsRepaintAtFractionalScales);
+  AddTest(tests, "QaFlowRegression/ASubmenuAndAContextMenuRepaintRowByRow",
+          TestASubmenuAndAContextMenuRepaintRowByRow);
   AddTest(tests, "QaFlowRegression/TheSidebarsModeRowRepaintsWhatChangedWithNoDamageRequest",
           TestTheSidebarsModeRowRepaintsWhatChangedWithNoDamageRequest);
   AddTest(tests, "QaFlowRegression/ADerivedSidebarViewCommitsItsSurfacesUnits",

@@ -1,110 +1,13 @@
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
+#include "workspace/render/MenuPopupPaint.h"
+
 namespace microide::workspace {
 
-using namespace detail;
-
-void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer,
-                                      const WorkspaceLayout& layout) const {
-  // One popup body for the menu-bar popups, their submenu and the tree context
-  // menu -- the three used to carry byte-similar copies of this loop. Rows land in
-  // a reused scratch vector: popups paint one at a time, so the buffer is free
-  // between them, and the value-returning overload allocated one per popup per frame.
-  // `prepared_flags`: the rows' enabled/checked flags as frame prep read them
-  // (PreparedFrameState::menu_popup_row_flags), for the menu-bar popups -- the
-  // state behind them can change between two paints of one frame.
-  const auto draw_popup_body = [&](std::span<const MenuItemSpec> items, int active_item_index,
-                                   const SDL_FRect& popup_rect,
-                                   std::span<const std::uint8_t> prepared_flags = {}) {
-    DrawCardFrame(renderer, theme_, popup_rect, CardStyle::Overlay);
-    ComputeVisiblePopupMenuItemsInto(items, active_item_index, popup_rect,
-                                     menu_popup_rows_scratch_);
-    if (prepared_flags.size() == items.size()) {
-      for (VisiblePopupMenuItem& row : menu_popup_rows_scratch_) {
-        row.enabled = (prepared_flags[row.index] & 1u) != 0;
-        row.checked = (prepared_flags[row.index] & 2u) != 0;
-      }
-    }
-    for (const VisiblePopupMenuItem& item : menu_popup_rows_scratch_) {
-      if (item.separator) {
-        DrawFilledRect(renderer,
-                       MakeRect(item.rect.x + 8.0f, item.rect.y + item.rect.h * 0.5f,
-                                std::max(0.0f, item.rect.w - 16.0f), 1.0f),
-                       theme_.border);
-        continue;
-      }
-
-      const MenuItemSpec& spec = items[item.index];
-      const bool hovered = item.hovered || (PointerOver(item.rect));
-      DrawMenuRow(text_renderer_, renderer, theme_, item.rect, MenuItemLabel(spec),
-                  MenuItemAccelerator(spec), item.enabled, hovered, item.checked);
-    }
-  };
-
-  if (context_.menu_state.menu_bar_open) {
-    const auto draw_popup_menu =
-        [&](MenuId menu_id, int active_item_index, const std::optional<SDL_FRect>& anchor_rect) {
-          const MenuSpec* menu = FindMenuSpec(menu_id);
-          if (menu == nullptr) {
-            return;
-          }
-          const auto items = MenuItems(menu_id);
-          // As prep laid them out (PreparedFrameState::menu_popup_rect).
-          const std::optional<SDL_FRect>& popup_rect = anchor_rect.has_value()
-                                                           ? frame_state_.menu_submenu_rect
-                                                           : frame_state_.menu_popup_rect;
-          if (!popup_rect.has_value()) {
-            return;
-          }
-          draw_popup_body(items, active_item_index, *popup_rect,
-                          menu_id == context_.menu_state.active_menu_id
-                              ? frame_state_.menu_popup_row_flags
-                              : frame_state_.menu_submenu_row_flags);
-        };
-    draw_popup_menu(context_.menu_state.active_menu_id, context_.menu_state.active_menu_item_index, std::nullopt);
-    if (context_.menu_state.active_submenu_id != MenuId::None) {
-      draw_popup_menu(context_.menu_state.active_submenu_id, context_.menu_state.active_submenu_item_index,
-                      context_.menu_state.active_submenu_anchor_rect);
-    }
-  }
-
-  const auto overflow_chevron = MenuOverflowChevronRect(layout.menu_bar);
-  if (context_.menu_state.overflow_popup_open && overflow_chevron.has_value()) {
-    const auto overflow = ComputeOverflowMenuBarItems(layout.menu_bar);
-    if (!overflow.empty()) {
-      const SDL_FRect popup = ComputeMenuOverflowPopupRect(*overflow_chevron, overflow.size());
-      DrawCardFrame(renderer, theme_, popup, CardStyle::Overlay);
-      // Hover comes from the active index, which the motion path and the keyboard
-      // both write, rather than from the live pointer: this popup used to be the
-      // one in the app the keyboard could not reach (TD-2026-09-19-296).
-      const int active_index = context_.menu_state.overflow_popup_active_index;
-      for (std::size_t i = 0; i < overflow.size(); ++i) {
-        const MenuSpec* spec = FindMenuSpec(overflow[i]);
-        const SDL_FRect row = MenuOverflowPopupRowRect(popup, i);
-        const bool hovered = active_index == static_cast<int>(i);
-        // DrawMenuRow takes std::string_view; pass directly without materializing a per-row string.
-        DrawMenuRow(text_renderer_, renderer, theme_, row,
-                    spec ? std::string_view(spec->label) : std::string_view{},
-                    {}, /*enabled=*/true, hovered, /*checked=*/false);
-      }
-    }
-  }
-
-  if (!context_.menu_state.tree_context_menu.open) {
-    return;
-  }
-
-  const auto items = TreeContextMenuItems(context_.menu_state.tree_context_menu.target);
-  // The rect frame prep laid out and damaged for, not a fresh one: its height comes
-  // from a cache keyed on the language server's readiness, which another thread
-  // moves, so a paint that laid it out again could draw rows past the rect prep
-  // repainted and the close later damaged (soak e4353c8cb483).
-  const std::optional<SDL_FRect>& popup_rect = frame_state_.context_menu_rect;
-  if (items.empty() || !popup_rect.has_value()) {
-    return;
-  }
-
-  draw_popup_body(items, context_.menu_state.tree_context_menu.active_item_index, *popup_rect);
+void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer, const WorkspaceLayout& /*layout*/) const {
+  // The open menus as frame prep resolved them (PreparedFrameState::menu_popups):
+  // each one's card and rows, drawn from that and nothing else.
+  PaintMenuPopups(renderer, frame_state_, theme_, text_renderer_);
 }
 
 }  // namespace microide::workspace
