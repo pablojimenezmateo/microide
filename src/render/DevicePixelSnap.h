@@ -113,6 +113,22 @@ inline SDL_Rect SnapToDevicePixels(const SDL_FRect& rect, SDL_FPoint scale) {
   return SDL_Rect{x.start, y.start, x.length, y.length};
 }
 
+// A logical coordinate moved onto the device pixel nearest it at `scale`. For a
+// thin fill placed at a MEASURED position -- a caret after a run of glyph
+// advances, each a device width over the scale -- which carries float noise. A
+// hair under a whole logical pixel, the fill starts a device column to the left
+// of that pixel, while SnapToDevicePixels takes the same noise for the whole
+// pixel (kSnapEdgeNoise) and starts the damage rect meant to cover it AT the
+// pixel: at 3x a caret at 175.9997 painted device column 527 under a clip that
+// began at 528, and every blink left that column lit (soak c47614ab72b7). Placed
+// on a device pixel, the fill and its damage agree.
+inline float SnapToDevicePixel(float value, float scale) {
+  if (!(scale > 0.0f) || !std::isfinite(value)) {
+    return value;
+  }
+  return std::round(value * scale) / scale;
+}
+
 // The same at the renderer's current device scale.
 inline SDL_Rect SnapToDevicePixels(SDL_Renderer* renderer, const SDL_FRect& rect) {
   return SnapToDevicePixels(rect, device_pixel_snap_detail::DeviceScale(renderer));

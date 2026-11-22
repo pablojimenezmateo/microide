@@ -6343,6 +6343,91 @@ void TestPartialFramesAtAFractionalScaleMatchFullOnesAcrossASplit() {
   }
 }
 
+// Soak c47614ab72b7 (34cf8a28261e, 52d7bebe5683, 1a54ece0fa20), 640x480 at
+// ui.scale 3: the Go to Line prompt's caret blinked off and left a device column
+// lit. Its x is the measured width of what was typed -- glyph advances in thirds
+// of a logical pixel -- and came out a hair under a whole pixel: the fill started
+// a device column left of it, the blink's damage rect at it. Painted here as
+// Application::Render does at that scale -- each damage rect through
+// AnalyzeDirtyRegions and AlignClipToDevicePixels, with its device hint -- for
+// every length of input up to two dozen digits, both blink directions (it first
+// shows at fifteen: 52 device pixels of one column).
+void TestAPromptCaretBlinkAtScaleThreeLeavesNoColumn() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  // The soak's cell: a 640x480 window at 3x is 213x160 logical pixels.
+  constexpr int kWidth = 213;
+  constexpr int kHeight = 160;
+  constexpr float kScale = 3.0f;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::string body;
+  for (int i = 0; i < 40; ++i) {
+    body += "line " + std::to_string(i) + "\n";
+  }
+  WriteFile(root / "notes.txt", body);
+  WorkspaceShell shell;
+  Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the project should open");
+  TestAccess::SetWindowSize(shell, kWidth, kHeight);
+  TestAccess::OpenSingleEditorTab(shell, root / "notes.txt");
+  TestAccess::SetFocusEditor(shell);
+  SoftwareCanvas canvas{static_cast<int>(kWidth * kScale), static_cast<int>(kHeight * kScale)};
+  Expect(SDL_SetRenderLogicalPresentation(canvas.renderer(), kWidth, kHeight, SDL_LOGICAL_PRESENTATION_STRETCH),
+         "the canvas should take a 3x presentation");
+  shell.SetWindowPresentationState(WorkspaceShell::WindowPresentationState{
+      .logical_width = kWidth, .logical_height = kHeight, .scale_x = kScale, .scale_y = kScale});
+  (void)DispatchEvents(shell, {KeyDownEvent(SDLK_G, SDL_KMOD_CTRL)});
+  Expect(TestAccess::CurrentTextInputSurface(shell) == workspace::TextInputSurface::PromptInput,
+         "Ctrl+G should open the Go to Line prompt");
+  const Uint64 interval = TestAccess::CaretBlinkIntervalMs(shell);
+  const auto phase = [&](bool lit) {
+    TestAccess::SetCaretBlinkEpochMs(shell, lit ? SDL_GetTicks() : SDL_GetTicks() - interval - 50);
+  };
+  const render::TextClipPadding padding =
+      app::PadClipForPresentationScale(shell.PartialRedrawClipPadding(), kScale, kScale);
+  app::DirtyRegionAnalysis analysis;
+  for (int digits = 0; digits <= 24; ++digits) {
+    if (digits > 0) {
+      (void)DispatchEvents(shell, {TextInputEvent(digits % 3 == 0 ? "7" : digits % 3 == 1 ? "1" : "4")});
+    }
+    for (const bool to_lit : {false, true}) {
+      phase(!to_lit);
+      shell.Render(canvas.renderer(), kWidth, kHeight);
+      (void)shell.ConsumePendingRenderInvalidation();
+      phase(to_lit);
+      const workspace::RenderInvalidation wake = TestAccess::HandleScheduledWake(shell).redraw;
+      Expect(!wake.full && !wake.rects.empty(), "the prompt's blink names its caret's rect");
+      const workspace::WorkspaceShell::FrameToken token = shell.PrepareFrameOnce(canvas.renderer(), kWidth, kHeight);
+      const workspace::RenderInvalidation prepared = shell.ConsumePendingRenderInvalidation();
+      Expect(!prepared.full, "a blink does not repaint the window");
+      std::vector<SDL_FRect> rects(wake.rects.begin(), wake.rects.end());
+      rects.insert(rects.end(), prepared.rects.begin(), prepared.rects.end());
+      app::AnalyzeDirtyRegions(rects, padding, kWidth, kHeight, SDL_FPoint{kScale, kScale}, analysis);
+      for (const SDL_Rect& merged : analysis.merged_clip_rects) {
+        const SDL_Rect clip = render::AlignClipToDevicePixels(canvas.renderer(), merged);
+        SDL_SetRenderClipRect(canvas.renderer(), &clip);
+        shell.RenderClip(token, canvas.renderer(), kWidth, kHeight, app::DeviceClipHint(clip, kScale, kScale));
+      }
+      SDL_SetRenderClipRect(canvas.renderer(), nullptr);
+      SDL_FlushRenderer(canvas.renderer());
+      SDL_Surface* retained = SDL_DuplicateSurface(canvas.surface());
+      phase(to_lit);
+      shell.Render(canvas.renderer(), kWidth, kHeight);
+      (void)shell.ConsumePendingRenderInvalidation();
+      SDL_FlushRenderer(canvas.renderer());
+      const render::PixelDiffResult diff = DiffSurfaces(retained, canvas.surface());
+      SDL_DestroySurface(retained);
+      Expect(diff.identical(), std::string("a prompt caret blinking ") + (to_lit ? "on" : "off") + " after " +
+                                   std::to_string(digits) + " digits should paint what a full frame paints; " +
+                                   DescribePixelDiff(diff) + " (device pixels)");
+      if (!diff.identical()) {
+        return;
+      }
+    }
+  }
+}
+
 // Hovering a merge toolbar button lights it, and the frame shows it: the buttons
 // read the pointer at paint time, but merge hover tracking knew only conflict
 // regions, so moving onto Save requested no repaint of it and the next partial
@@ -7974,6 +8059,8 @@ void TestAMergeTabsActionsRepaintWhatTheyChange() {
 
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "QaFlowRegression/APromptCaretBlinkAtScaleThreeLeavesNoColumn",
+          TestAPromptCaretBlinkAtScaleThreeLeavesNoColumn);
   AddTest(tests, "QaFlowRegression/ACompareTabsActionsRepaintTheirRows", TestACompareTabsActionsRepaintTheirRows);
   AddTest(tests, "QaFlowRegression/ANewChangeInADiffRepaintsItsRowsNotTheChangesBelow",
           TestANewChangeInADiffRepaintsItsRowsNotTheChangesBelow);

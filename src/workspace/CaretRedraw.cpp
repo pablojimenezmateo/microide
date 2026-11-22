@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 
+#include "render/DevicePixelSnap.h"
 #include "util/Parse.h"
 #include "workspace/SettingFlags.h"
 
@@ -175,10 +176,12 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentCaretDirtyRect() const {
       surface != TextInputSurface::None && surface != TextInputSurface::Editor &&
       surface != TextInputSurface::Terminal) {
     const auto visual = BuildActiveTextInputVisual(*layout, std::nullopt);
+    // From the device pixel the caret is painted on (RenderActiveTextInputCaret).
     return visual.has_value()
-               ? std::optional<SDL_FRect>(MakeRect(visual->cursor_x, visual->text_y - 1.0f,
-                                                   std::max(1.0f, text_renderer_.CharWidth()),
-                                                   text_renderer_.LineHeight()))
+               ? std::optional<SDL_FRect>(
+                     MakeRect(render::SnapToDevicePixel(visual->cursor_x, presentation_scale_x_),
+                              visual->text_y - 1.0f, std::max(1.0f, text_renderer_.CharWidth()),
+                              text_renderer_.LineHeight()))
                : std::nullopt;
   }
 

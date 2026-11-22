@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "editor/DiagnosticsRender.h"
+#include "render/DevicePixelSnap.h"
 #include "util/StringUtil.h"
 #include "workspace/WorkspaceTextSearch.h"
 
@@ -441,8 +442,11 @@ void WorkspaceShell::RenderActiveTextInputCaret(
     return;
   }
 
+  // On a device pixel, where CurrentCaretDirtyRect puts the blink's damage: the
+  // measured x carries float noise (render::SnapToDevicePixel).
   DrawFilledRect(renderer,
-                 MakeRect(visual->cursor_x, (visual->cursor_y != 0.0f ? visual->cursor_y : visual->text_y) - 1.0f, 1.5f,
+                 MakeRect(render::SnapToDevicePixel(visual->cursor_x, presentation_scale_x_),
+                          (visual->cursor_y != 0.0f ? visual->cursor_y : visual->text_y) - 1.0f, 1.5f,
                           text_renderer_.LineHeight()),
                  theme_.cursor);
 }
