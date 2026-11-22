@@ -13,6 +13,7 @@
 #include "workspace/git/CommitWorkflowService.h"
 #include "workspace/git/CommitWorkflowState.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
+#include "workspace/render/GitSidebarPaint.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/git/WorkspaceGitSidebarPresentation.h"
 #include "workspace/registries/WorkspaceSidebarRegistry.h"
@@ -61,77 +62,6 @@ std::string_view BuildProjectSearchResultLabel(std::size_t line,
   label += "  ";
   label += snippet;
   return label;
-}
-
-// Renders the multi-line commit body edit area (visible lines, selection, caret). The
-// viewport sizing + caret-keep-visible scroll clamp happen in frame prep
-// (PrepareCommitBodyViewportForFrame), so this is a pure draw of already-prepared
-// state (TD-2026-07-17-083 residual). Writes the focused field's caret rect to
-// `caret_rect_out` so the caret-redraw path can target a tight dirty region.
-void RenderCommitBodyField(const render::TextRenderer& tr, const render::Theme& theme,
-                           SDL_Renderer* renderer, const editor::TextViewport& body,
-                           const SDL_FRect& field, int visible_rows, bool focused,
-                           bool caret_visible, SDL_FRect* caret_rect_out) {
-  const float line_height = tr.LineHeight();
-  const float text_x = field.x + 6.0f;
-  const float top_y = field.y + 3.0f;
-  const float avail_w = std::max(1.0f, field.w - 12.0f);
-
-  // Draw only the visible rows via zero-copy LineView. TextBuffer::Snapshot() is a
-  // whole-document materialization documented for cold paths; a large pasted commit
-  // body must not pay an O(body) copy every paint. (TD-2026-07-17-083.)
-  const editor::TextBuffer& body_lines = body.lines();
-  const std::size_t line_count = body_lines.size();
-  const std::size_t scroll = body.scroll_line();
-  const std::optional<editor::SelectionRange> selection = body.selection_range();
-  const std::size_t caret_line = body.cursor_line();
-  const std::size_t caret_col = body.cursor_column();
-
-  if (line_count == 1 && body_lines.LineView(0).empty() && !focused) {
-    DrawTextOn(tr, renderer, text_x, top_y, theme.text_muted, theme.surface_background, "<optional>");
-    return;
-  }
-
-  for (int row = 0; row < visible_rows; ++row) {
-    const std::size_t line_index = scroll + static_cast<std::size_t>(row);
-    if (line_index >= line_count) {
-      break;
-    }
-    const std::string_view text = body_lines.LineView(line_index);
-    const float row_y = top_y + static_cast<float>(row) * line_height;
-
-    if (selection.has_value() && line_index >= selection->start.line &&
-        line_index <= selection->end.line) {
-      const std::size_t sel_start_col =
-          line_index == selection->start.line ? selection->start.column : 0;
-      const std::size_t sel_end_col =
-          line_index == selection->end.line ? std::min(selection->end.column, text.size())
-                                            : text.size();
-      if (sel_start_col < sel_end_col && sel_start_col <= text.size()) {
-        const float sx = text_x + tr.MeasureWidth(text.substr(0, sel_start_col));
-        const float sw = tr.MeasureWidth(text.substr(sel_start_col, sel_end_col - sel_start_col));
-        if (sw > 0.0f) {
-          FillRect(renderer, MakeRect(sx, row_y - 1.0f, sw, line_height), theme.selection_fill);
-        }
-      }
-    }
-
-    DrawTextOn(tr, renderer, text_x, row_y, theme.text_primary, theme.surface_background,
-               tr.TruncateToWidthEphemeralView(text, avail_w));
-
-    if (focused && line_index == caret_line) {
-      const std::size_t clamped_col = std::min(caret_col, text.size());
-      const float caret_x = std::min(text_x + tr.MeasureWidth(text.substr(0, clamped_col)),
-                                     field.x + field.w - 2.0f);
-      const SDL_FRect caret = MakeRect(caret_x, row_y - 1.0f, 1.0f, line_height);
-      if (caret_rect_out != nullptr) {
-        *caret_rect_out = caret;
-      }
-      if (caret_visible) {
-        FillRect(renderer, caret, theme.text_primary);
-      }
-    }
-  }
 }
 
 // An empty list's note: under the list's first row, down to the list's bottom.
@@ -421,229 +351,10 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
         context_.menu_state.menu_bar_open &&
         context_.menu_state.active_menu_id == MenuId::GitOutgoingBase &&
         context_.menu_state.active_menu_anchor_rect.has_value();
-    draw_action_button(git_sidebar_header::StageAllButtonRect(layout.sidebar), "Stage All",
-                       CanStageAllGitSidebarEntries(), ButtonTone::Neutral);
-    draw_action_button(git_sidebar_header::DiscardAllButtonRect(layout.sidebar), "Discard All",
-                       CanDiscardAllGitSidebarEntries(), ButtonTone::Destructive);
-    DrawButtonCentered(
-        text_renderer_, renderer, theme_, git_sidebar_header::RefreshButtonRect(layout.sidebar), "Refresh",
-        ButtonTone::Neutral,
-        ButtonVisualState{
-            .enabled = true,
-            .hovered = PointerOver(git_sidebar_header::RefreshButtonRect(layout.sidebar)),
-            .active = false,
-        });
-
-    // Branch row: the current branch (opens the switch picker) plus Sync, which
-    // carries the ahead/behind counts. Both labels are precomposed in the git
-    // sidebar view model — this TU must not build strings.
-    if (sidebar_vm.git_sidebar != nullptr) {
-      const SDL_FRect branch_rect = git_sidebar_header::BranchButtonRect(layout.sidebar);
-      const SDL_FRect sync_rect = git_sidebar_header::SyncButtonRect(layout.sidebar);
-      DrawButtonCentered(
-          text_renderer_, renderer, theme_, branch_rect,
-          TruncateLabelView(sidebar_vm.git_sidebar->branch_button_label,
-                            std::max(0.0f, branch_rect.w - 8.0f)),
-          ButtonTone::Neutral,
-          ButtonVisualState{
-              .enabled = true,
-              .hovered = PointerOver(branch_rect),
-              .active = false,
-          });
-      DrawButtonCentered(
-          text_renderer_, renderer, theme_, sync_rect,
-          TruncateLabelView(sidebar_vm.git_sidebar->sync_button_label,
-                            std::max(0.0f, sync_rect.w - 8.0f)),
-          ButtonTone::Neutral,
-          ButtonVisualState{
-              .enabled = true,
-              .hovered =
-                  PointerOver(sync_rect),
-              .active = false,
-          });
-    }
-
-    const SDL_FRect branch_row = git_sidebar_header::ActionRowRect(layout.sidebar, 1);
-    float summary_y = branch_row.y + branch_row.h + 10.0f;
-    if (sidebar_vm.git_sidebar != nullptr) {
-      const GitSidebarViewModel& git_vm = *sidebar_vm.git_sidebar;
-      const float text_width = layout.sidebar.w - kSidebarInset * 2.0f;
-      // Must match the constants in WorkspaceShellSidebar.cpp so the file list starts
-      // exactly below the rendered summary block.
-      constexpr float kSummaryLineHeight = 17.0f;
-      constexpr float kCommitButtonHeight = 22.0f;
-      constexpr float kCommitButtonGap = 8.0f;
-      float detail_y = summary_y;
-      // The commit-readiness line is replaced by a Commit button (the discoverable way
-      // to open the inline commit draft). While the draft is open we instead show the
-      // commit hint. The redundant staged/unstaged/outgoing counts are gone — they are
-      // already on each section header.
-      if (git_vm.show_commit_button) {
-        const SDL_FRect commit_rect = git_sidebar_header::CommitButtonRect(layout.sidebar);
-        draw_action_button(commit_rect, "Commit", git_vm.commit_ready, ButtonTone::Accent);
-        if (!git_vm.commit_ready && !git_vm.commit_blocked_reason.empty()) {
-          const float reason_x = commit_rect.x + commit_rect.w + 8.0f;
-          // Truncated to the room right of the button, not the sidebar's whole
-          // width: a narrow sidebar painted "nothing staged" across its own edge
-          // into the editor (QA monkey, seed 4).
-          const float reason_width =
-              std::max(0.0f, layout.sidebar.x + layout.sidebar.w - kSidebarInset - reason_x);
-          DrawVCenteredTextOn(text_renderer_, renderer,
-                              MakeRect(reason_x, commit_rect.y, reason_width, commit_rect.h), 0.0f,
-                              theme_.text_muted, theme_.surface_background,
-                              TruncateLabelView(git_vm.commit_blocked_reason, reason_width));
-        }
-        detail_y += kCommitButtonHeight + kCommitButtonGap;
-      } else if (!git_vm.commit_summary_line.empty()) {
-        DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, detail_y,
-                   theme_.text_muted, theme_.surface_background,
-                   TruncateLabelView(git_vm.commit_summary_line, text_width));
-        detail_y += kSummaryLineHeight;
-      }
-      // summary_lines now carries only banners (stale snapshot / refresh error); the
-      // branch line lives in the status bar.
-      for (const std::string& summary : git_vm.summary_lines) {
-        const SDL_Color color = summary == git_vm.error_banner ? theme_.diff_deleted
-                                                               : theme_.text_secondary;
-        DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, detail_y, color,
-                   theme_.surface_background, TruncateLabelView(summary, text_width));
-        detail_y += kSummaryLineHeight;
-      }
-      summary_y = detail_y;
-    } else {
-      for (const std::string& summary : GitSidebarSummaryLines()) {
-        DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, summary_y,
-                   theme_.text_muted, theme_.surface_background,
-                   TruncateLabelView(summary, layout.sidebar.w - kSidebarInset * 2.0f));
-        summary_y += 14.0f;
-      }
-    }
-    if (project_state.sidebar.git.commit_workflow.open) {
-      auto& workflow = project_state.sidebar.git.commit_workflow;
-      const float field_x = layout.sidebar.x + kSidebarInset;
-      const float field_w = layout.sidebar.w - kSidebarInset * 2.0f;
-      const float line_height = text_renderer_.LineHeight();
-      const bool panel_focused =
-          project_state.surface.focus == FocusTarget::Sidebar && sidebar_mode == SidebarMode::Git;
-      const bool subject_focused =
-          panel_focused && workflow.focus_field == CommitWorkflowFocusField::Subject;
-      const bool body_focused =
-          panel_focused && workflow.focus_field == CommitWorkflowFocusField::Body;
-      // The blink phase applies only while a commit field owns the caret (QA
-      // monkey, seed 607: under the Go to Line prompt the body kept a caret).
-      const bool caret_on = frame_state_.caret_visible && sidebar_vm.commit_field_owns_caret;
-      workflow.caret_rect = SDL_FRect{};
-      // As many rows as keep the Commit button inside the sidebar (the same fit
-      // GitSidebarCommitWorkflowHeight and PrepareCommitBodyViewportForFrame make).
-      const int body_rows = FitCommitWorkflowBodyRows(
-          summary_y + 4.0f, layout.sidebar.y + layout.sidebar.h, line_height,
-          workflow.checks.size(), !workflow.status_message.empty());
-      // Single source of truth for the panel geometry; GitSidebarCommitWorkflowHeight reserves
-      // exactly CommitWorkflowLayout::total_height so the file list starts flush below.
-      const CommitWorkflowLayout panel = ComputeCommitWorkflowLayout(
-          summary_y + 4.0f, field_x, field_w, line_height, body_rows, workflow.checks.size(),
-          !workflow.status_message.empty());
-
-      // A control the sidebar has no room for is not drawn, and its rect stays
-      // empty so no click, cursor or control-channel query finds it: below the
-      // sidebar it sat under the bottom panel's tab row, where a click on it
-      // landed on a terminal tab (soak c8c7389e178d). The body gives up rows first
-      // (FitCommitWorkflowBodyRows), so this only happens when even one row and
-      // the button cannot fit, e.g. zoomed far in or in a very short window.
-      const float sidebar_bottom = layout.sidebar.y + layout.sidebar.h;
-      const auto fits = [sidebar_bottom](const SDL_FRect& rect) {
-        return rect.y + rect.h <= sidebar_bottom;
-      };
-      workflow.subject_field_rect = SDL_FRect{};
-      workflow.body_field_rect = SDL_FRect{};
-      workflow.commit_button_rect = SDL_FRect{};
-
-      if (panel.staged_summary_y + line_height <= sidebar_bottom) {
-        DrawTextOn(text_renderer_, renderer, field_x, panel.staged_summary_y, theme_.text_primary,
-                   theme_.surface_background,
-                   TruncateLabelView(workflow.staged_summary_line, field_w));
-      }
-
-      // --- Subject: a framed single-line input. ComputeSingleLineViewMetrics gives the
-      //     in-field horizontal scroll, caret x, and visible selection slice. ---
-      const SDL_FRect subject_field = panel.subject_field;
-      if (fits(subject_field)) {
-        DrawTextOn(text_renderer_, renderer, field_x, panel.subject_label_y, theme_.text_muted,
-                   theme_.surface_background, "Subject:");
-        workflow.subject_field_rect = subject_field;
-        DrawTextFieldFrame(renderer, theme_, subject_field, subject_focused);
-        const float subject_text_x = subject_field.x + 6.0f;
-        const float subject_text_y = subject_field.y + std::floor((subject_field.h - line_height) * 0.5f);
-        const float subject_avail = std::max(1.0f, subject_field.w - 12.0f);
-        if (workflow.subject.text().empty() && !subject_focused) {
-          DrawTextOn(text_renderer_, renderer, subject_text_x, subject_text_y, theme_.text_muted,
-                     theme_.surface_background, "<required>");
-        } else {
-          const auto subject_vm = ComputeSingleLineViewMetrics(workflow.subject, "", subject_avail);
-          if (subject_vm.selection_bytes.has_value()) {
-            const auto [sb, se] = *subject_vm.selection_bytes;
-            const std::string_view shown = subject_vm.displayed_text;
-            if (se <= shown.size() && sb < se) {
-              const float sx = subject_text_x + text_renderer_.MeasureWidth(shown.substr(0, sb));
-              const float sw = text_renderer_.MeasureWidth(shown.substr(sb, se - sb));
-              DrawFilledRect(renderer, MakeRect(sx, subject_field.y + 2.0f, sw, subject_field.h - 4.0f),
-                             theme_.selection_fill);
-            }
-          }
-          DrawTextOn(text_renderer_, renderer, subject_text_x, subject_text_y, theme_.text_primary,
-                     theme_.surface_background, subject_vm.displayed_text);
-          if (subject_focused) {
-            const SDL_FRect caret = MakeRect(subject_text_x + subject_vm.cursor_x,
-                                             subject_field.y + 2.0f, 1.0f, subject_field.h - 4.0f);
-            workflow.caret_rect = caret;
-            if (caret_on) {
-              DrawFilledRect(renderer, caret, theme_.text_primary);
-            }
-          }
-        }
-      }
-
-      // --- Body: a framed multi-line edit area with its own caret/selection + scroll. ---
-      const SDL_FRect body_field = panel.body_field;
-      workflow.body_visible_rows = body_rows;
-      if (fits(body_field)) {
-        DrawTextOn(text_renderer_, renderer, field_x, panel.body_label_y, theme_.text_muted,
-                   theme_.surface_background, "Body:");
-        workflow.body_field_rect = body_field;
-        DrawTextFieldFrame(renderer, theme_, body_field, body_focused);
-        RenderCommitBodyField(text_renderer_, theme_, renderer, workflow.body, body_field, body_rows,
-                              body_focused, caret_on, &workflow.caret_rect);
-      }
-
-      // Confirm button: the discoverable way to commit the staged changes (mirrors the
-      // Ctrl+Enter shortcut). Enabled only when the draft can actually be committed.
-      if (fits(panel.commit_button)) {
-        workflow.commit_button_rect = panel.commit_button;
-        draw_action_button(panel.commit_button, "Commit",
-                           commit_workflow_service_.CanExecuteCommit(workflow), ButtonTone::Accent);
-      }
-
-      // The pre-check and status lines sit below the button, and only those the
-      // sidebar has room for are drawn.
-      float check_y = panel.checks_y;
-      for (const project::CommitPreCheck& check : workflow.checks) {
-        if (check_y + kCommitWorkflowCheckLineHeight > sidebar_bottom) {
-          break;
-        }
-        const SDL_Color color = check.severity == project::CommitPreCheckSeverity::Blocking
-                                    ? theme_.text_primary
-                                    : theme_.text_muted;
-        DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, check_y, color,
-                   theme_.surface_background,
-                   TruncateLabelView(check.message, layout.sidebar.w - kSidebarInset * 2.0f));
-        check_y += kCommitWorkflowCheckLineHeight;
-      }
-      if (!workflow.status_message.empty() && panel.status_y + kCommitWorkflowCheckLineHeight <= sidebar_bottom) {
-        DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, panel.status_y,
-                   theme_.text_muted, theme_.surface_background,
-                   TruncateLabelView(workflow.status_message, layout.sidebar.w - kSidebarInset * 2.0f));
-      }
-    }
+    // The head -- the action and branch rows, the Commit button or line, the
+    // banners and the open commit draft -- as frame prep laid it out
+    // (PrepareGitPanelHeadFrame), each element inside its own PaintElement.
+    PaintGitPanelHead(renderer, frame_state_, theme_, text_renderer_);
 
     // Reuse the rows already flattened during PrepareFrameOnce instead of
     // rebuilding the git view model + line specs a second time this frame.
@@ -652,8 +363,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                                                    ? *sidebar_vm.git_sidebar_lines
                                                    : kEmptyGitSidebarLines;
     const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
-    const int scroll_row = list_layout.scroll_row;
-    project_state.sidebar.scroll_row = scroll_row;
+    const int scroll_row = list_layout.scroll_row;  // published to the sidebar's state at prep
 
     // Resolve each git entry's row view model once into an entry_index-keyed
     // table (O(total_git_rows)), replacing the previous O(visible x total_rows)

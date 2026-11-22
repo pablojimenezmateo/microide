@@ -41,6 +41,7 @@ enum class DerivedSurface : std::uint8_t {
   // One per editor group (kMaxEditorGroups): each pane's visible rows.
   EditorPane0,
   EditorPane7 = EditorPane0 + 7,
+  GitPanelHead,
   Count,
 };
 

@@ -7,6 +7,7 @@
 #include "workspace/render/NotificationToastPaint.h"
 #include "workspace/render/DebugPanePaint.h"
 #include "workspace/render/EditorRowUnits.h"
+#include "workspace/render/GitSidebarPaint.h"
 #include "workspace/render/HoverCardLimits.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
@@ -1897,6 +1898,49 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
           context_.interaction_state.window_has_input_focus && context_.text_input.composition.text.empty();
     }
     PrepareDebugPaneFrame(frame_state_, inputs);
+  }
+  // The Source Control panel's head, the same way: its buttons, banners and the
+  // commit draft are units laid out here, from the presentation the sidebar view
+  // model holds, so a banner a refresh rewrites repaints whoever changed it. The
+  // draft's control rects and caret, and the file list's scroll, settle here for
+  // hit-testing and the caret's own redraw -- no longer as paint's side effects.
+  {
+    const bool git_visible = sidebar_vm.visible && sidebar_vm.mode == SidebarMode::Git;
+    ProjectWorkspaceState& project_state = *sidebar_vm.project_state;
+    CommitWorkflowState& workflow = project_state.sidebar.git.commit_workflow;
+    const bool draft_open = git_visible && workflow.open;
+    GitPanelHeadInputs inputs{
+        .renderer = renderer,
+        .visible = git_visible,
+        .sidebar = layout.sidebar,
+        .presentation = git_visible ? sidebar_vm.git_presentation : nullptr,
+        .workflow = draft_open ? &workflow : nullptr,
+        .stage_all_enabled = git_visible && CanStageAllGitSidebarEntries(),
+        .discard_all_enabled = git_visible && CanDiscardAllGitSidebarEntries(),
+        .commit_can_execute = draft_open && commit_workflow_service_.CanExecuteCommit(workflow),
+        .panel_focused = project_state.surface.focus == FocusTarget::Sidebar && git_visible,
+        .caret_on = frame_state_.caret_visible && sidebar_vm.commit_field_owns_caret,
+        .theme = &theme_,
+        .text_renderer = &text_renderer_,
+        .pointer_over = [this](const SDL_FRect& rect) { return PointerOver(rect); },
+        .damage = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); },
+    };
+    if (git_visible && sidebar_vm.git_sidebar_lines != nullptr) {
+      inputs.list_line_count = sidebar_vm.git_sidebar_lines->size();
+      const ScrollableListLayout list = ComputeGitSidebarListLayout(layout.sidebar, inputs.list_line_count);
+      inputs.list_rect = list.list_rect;
+      inputs.list_scroll_row = list.scroll_row;
+      project_state.sidebar.scroll_row = list.scroll_row;
+    }
+    PrepareGitPanelHeadFrame(frame_state_, inputs);
+    if (draft_open) {
+      const PreparedFrameState::GitPanelHeadPaint& head = frame_state_.git_panel;
+      workflow.subject_field_rect = head.subject.frame;
+      workflow.body_field_rect = head.body.frame;
+      workflow.commit_button_rect = head.commit_button;
+      workflow.caret_rect = head.caret;
+      workflow.body_visible_rows = head.body_visible_rows;
+    }
   }
   // Before any hover is resolved against the blame overlay or its card's damage is
   // decided: an overlay the active buffer has moved away from is this frame's

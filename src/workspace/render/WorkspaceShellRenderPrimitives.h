@@ -161,16 +161,21 @@ inline void DrawButtonCentered(const render::TextRenderer& text_renderer,
   const ButtonColors colors = ResolveButtonColors(theme, tone, state);
   FillRect(renderer, rect, colors.fill);
   OutlineRect(renderer, rect, colors.border);
-  const float text_width = text_renderer.MeasureWidth(label);
+  // A label wider than its button is cut to it with an ellipsis, and one taller
+  // than it is left out: drawn past its edge it lay over the next control, where
+  // the button's own repaint (a hover) left it (QA monkey seed 4: the search
+  // view's Hidden toggle at the narrowest sidebar). Clipped there instead, it
+  // still drew outside its element (clip-discipline: the git panel's Discard All
+  // at a narrow sidebar), and showed half a glyph.
+  const float line_height = text_renderer.LineHeight();
+  if (rect.h + render::kSnapEdgeNoise < line_height) {
+    return;
+  }
+  const std::string_view fitted = text_renderer.TruncateToWidthEphemeralView(label, rect.w);
+  const float text_width = text_renderer.MeasureWidth(fitted);
   const float x = rect.x + std::floor(std::max(0.0f, rect.w - text_width) * 0.5f);
-  const float y = rect.y + std::floor(std::max(0.0f, rect.h - text_renderer.LineHeight()) * 0.5f);
-  // A label wider than its button stays inside it: drawn past its edge it lay
-  // over the next control, where the button's own repaint (a hover) left it
-  // (QA monkey seed 4: the search view's Hidden toggle at the narrowest sidebar).
-  const render::ScopedRenderClip clip(
-      renderer, SDL_Rect{static_cast<int>(std::floor(rect.x)), static_cast<int>(std::floor(rect.y)),
-                         static_cast<int>(std::ceil(rect.w)), static_cast<int>(std::ceil(rect.h))});
-  text_renderer.DrawString(renderer, x, y, colors.text, label);
+  const float y = rect.y + std::floor(std::max(0.0f, rect.h - line_height) * 0.5f);
+  text_renderer.DrawString(renderer, x, y, colors.text, fitted);
 }
 
 inline void DrawSelectableRowBackground(SDL_Renderer* renderer,

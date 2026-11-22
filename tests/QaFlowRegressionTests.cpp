@@ -3830,6 +3830,63 @@ void TestAnAutomaticGitRefreshInsideTheIntervalIsKept() {
          "and once it has landed, the git view is settled");
 }
 
+// derived-damage 4.1 / clip-discipline 4.1: the Source Control panel's head is a
+// derived surface. A refresh's banner, and a commit draft's status and pre-check
+// lines, are written by background results that ask for no repaint; the next
+// partial frame shows the head as a full one does.
+void TestTheGitPanelHeadRepaintsWhatChangedWithNoDamageRequest() {
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "a.txt", "a\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add the head fixture", "git panel head fixture");
+  WriteFile(root / "a.txt", "a changed\n");
+
+  constexpr int kWidth = 1280;
+  constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the fixture should open");
+  TestAccess::SetWindowSize(shell, kWidth, kHeight);
+  TestAccess::OnFramePresented(shell);
+  TestAccess::ShowGitSidebar(shell);
+  Expect(SettleGitSidebarRefresh(shell), "the git view's first refresh lands");
+  SoftwareCanvas canvas(kWidth, kHeight);
+  const auto pin = [&]() { TestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+  workspace::RenderInvalidation full;
+  full.full = true;
+  (void)PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, full, pin);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  // One pixel in the corner: a frame that something asked for, but not this.
+  const auto expect_fresh = [&](const std::string& what) {
+    workspace::RenderInvalidation nothing_announced;
+    nothing_announced.rects.push_back(SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f});
+    const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, nothing_announced, pin);
+    Expect(diff.count == 0, what + " should paint what a full repaint paints; " + DescribePixelDiff(diff));
+  };
+  auto& git = TestAccess::CurrentProjectState(shell).sidebar.git;
+  git.refresh_error = "fetch failed: the remote hung up";
+  expect_fresh("a refresh error's banner set with no damage request");
+  git.refresh_error.clear();
+  expect_fresh("a refresh error's banner cleared with no damage request");
+
+  // The commit draft, open: a commit's run reports into it from the background.
+  auto& workflow = git.commit_workflow;
+  workflow.open = true;
+  (void)PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, full, pin);
+  (void)shell.ConsumePendingRenderInvalidation();
+  workflow.status_message = "Committing 1 file…";
+  expect_fresh("the draft's status line set with no damage request");
+  workflow.checks.push_back(project::CommitPreCheck{.kind = project::CommitPreCheckKind::EmptySubject,
+                                                    .severity = project::CommitPreCheckSeverity::Blocking,
+                                                    .id = "subject",
+                                                    .message = "The subject is empty."});
+  expect_fresh("a pre-check added with no damage request");
+  workflow.staged_summary_line = "1 file staged";
+  expect_fresh("the staged summary rewritten with no damage request");
+}
+
 // edit-transforms: saving a new file in a repository repainted the tree's rows but
 // not the git badges the following async status refresh gave them. The refresh
 // returned early whenever the git view's selected entry survived it, and that
@@ -6335,6 +6392,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestPaletteAsksForTheArgumentsACommandNeeds);
   AddTest(tests, "QaFlowRegression/AnAutomaticGitRefreshInsideTheIntervalIsKept",
           TestAnAutomaticGitRefreshInsideTheIntervalIsKept);
+  AddTest(tests, "QaFlowRegression/TheGitPanelHeadRepaintsWhatChangedWithNoDamageRequest",
+          TestTheGitPanelHeadRepaintsWhatChangedWithNoDamageRequest);
   AddTest(tests, "QaFlowRegression/TreeGitBadgesRepaintWhenTheGitSelectionSurvives",
           TestTreeGitBadgesRepaintWhenTheGitSelectionSurvives);
   AddTest(tests, "QaFlowRegression/MarkingAnOutgoingFileReviewedMarksItsRow",
