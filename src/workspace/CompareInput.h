@@ -4,24 +4,17 @@
 #include <optional>
 #include <string>
 
-namespace microide::editor {
-class DiagnosticsStore;
-struct FileDecorations;
-}  // namespace microide::editor
-
 namespace microide::workspace {
 
-// Everything the compare render surface reads out of project state, injected as
-// one parameter by the frame caller.
-//
-// The compare render translation unit may not touch `context_.current_project_state`
-// (`CheckCompareRenderStructuralGate`), so each of these arrived as its own
-// argument and the list grew one parameter at a time. Bundling them keeps the
-// shell's declaration budget — a hard invariant — from being the thing that
-// decides whether the diff surface gets a feature.
 // A diff surface's prepared paint inputs (render/PreparedFrameState.h).
 struct DiffSurfacePaint;
 
+// What the compare render surface is handed besides its tab. It used to carry
+// what the surface read out of project state -- the diagnostics store, the
+// working side's decorations -- because the compare render TU may not touch
+// `context_.current_project_state` (`CheckCompareRenderStructuralGate`). Frame
+// prep resolves all of that now, so this is the prepared inputs alone; it stays a
+// struct so the shell's declaration of the surface does not change with them.
 struct CompareRenderProjectInputs {
   // The surface's paint inputs frame prep built: settings, drags, the pointer, the
   // blame, and the working side's diagnostics and decorations. Nothing here reaches

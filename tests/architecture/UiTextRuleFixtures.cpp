@@ -74,6 +74,35 @@ void RunDerivedSurfacePaintRuleFixtures() {
   Expect(!flags("  const PreparedFrameState& frame = frame_state_;  // not context_ here\n"
                 "  DrawFilledRect(r, frame.status_bar.rect, theme_.chrome_background);"),
          "the derived-paint rule must pass a paint that reads only the prepared frame");
+  // What the function is HANDED: a parameter that is a live source, and one
+  // reached through the fields of a prepared-inputs struct, however deep.
+  const std::filesystem::path header = root / "src/workspace/render/ProbeInputs.h";
+  const auto handed = [&](const std::string& parameters, const std::string& header_text) {
+    WriteFile(header, header_text);
+    WriteFile(file, "void WorkspaceShell::RenderStatusBar(" + parameters + ") const {\n  Draw(r);\n}\n");
+    return !CheckDerivedSurfacePaintReadsOnlyItsSnapshot(root).violations.empty();
+  };
+  Expect(handed("SDL_Renderer* r, const editor::DiagnosticsStore& diagnostics", ""),
+         "the derived-paint rule must flag a store passed as a parameter");
+  Expect(handed("SDL_Renderer* r, EditorTabService* tabs", ""),
+         "the derived-paint rule must flag a service passed as a parameter");
+  Expect(handed("SDL_Renderer* r, const ProbeInputs& inputs",
+                "struct ProbeInputs {\n  const editor::DiagnosticsStore* diagnostics_store = nullptr;\n};\n"),
+         "the derived-paint rule must flag a store reached through an inputs struct");
+  Expect(handed("SDL_Renderer* r, const ProbeInputs& inputs",
+                "struct ProbeInputs {\n  const ProbePaint* paint = nullptr;\n};\n"
+                "struct ProbePaint {\n  bool focused = false;\n  GitBlameService* blame = nullptr;\n};\n"),
+         "the derived-paint rule must flag a service two structs down");
+  Expect(handed("SDL_Renderer* r, const GhostInputs& inputs", "struct ProbeInputs {};\n"),
+         "the derived-paint rule must report an inputs struct it cannot find");
+  Expect(!handed("SDL_Renderer* r, const ProbeInputs& inputs, const render::Theme& theme, std::size_t pane",
+                 "struct ProbeInputs {\n  // no DiagnosticsStore here: prep resolved the file's\n"
+                 "  const ProbePaint* paint = nullptr;\n};\n"
+                 "struct ProbePaint {\n  std::span<const editor::PublishedDiagnostic> diagnostics;\n"
+                 "  const editor::FileDecorations* decorations = nullptr;\n"
+                 "  std::string_view note = \"not a WorkspaceContext\";\n};\n"),
+         "the derived-paint rule must pass prepared inputs that hold resolved data only");
+  std::filesystem::remove(header);
   WriteFile(file, "void WorkspaceShell::RenderSomethingElse() {}\n");
   Expect(!CheckDerivedSurfacePaintReadsOnlyItsSnapshot(root).violations.empty(),
          "the derived-paint rule must report a migrated function it cannot find");

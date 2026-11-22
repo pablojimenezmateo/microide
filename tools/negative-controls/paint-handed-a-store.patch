@@ -1,0 +1,23 @@
+diff --git a/src/workspace/CompareInput.h b/src/workspace/CompareInput.h
+index 9efa31e2c..06588ee1b 100644
+--- a/src/workspace/CompareInput.h
++++ b/src/workspace/CompareInput.h
+@@ -4,6 +4,10 @@
+ #include <optional>
+ #include <string>
+ 
++namespace microide::editor {
++class DiagnosticsStore;
++}  // namespace microide::editor
++
+ namespace microide::workspace {
+ 
+ // A diff surface's prepared paint inputs (render/PreparedFrameState.h).
+@@ -21,6 +25,7 @@ struct CompareRenderProjectInputs {
+   // a store: what the surface draws is what its row units compared
+   // (CheckDerivedSurfacePaintReadsOnlyItsSnapshot).
+   const DiffSurfacePaint* paint = nullptr;
++  const editor::DiagnosticsStore* diagnostics_store = nullptr;
+ };
+ 
+ 

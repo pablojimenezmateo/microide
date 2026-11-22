@@ -2,6 +2,7 @@
 
 #include "architecture/ArchitectureFileScanner.h"
 
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <fstream>
@@ -740,6 +741,163 @@ RuleResult CheckViewportFiletypeGoesThroughTheViewportMemo(const std::filesystem
 // pointer, the clock or a freshly built view model. A function the rule cannot
 // find is a violation, not a pass: a rename would otherwise leave it scanning
 // nothing.
+namespace {
+
+// The identifiers in `text[begin, end)` that are code (not comments or strings),
+// each with its offset, namespaces dropped (editor::DiagnosticsStore -> DiagnosticsStore).
+std::vector<std::pair<std::string, std::size_t>> CodeIdentifiers(const std::string& text,
+                                                                 const std::vector<bool>& mask, std::size_t begin,
+                                                                 std::size_t end) {
+  std::vector<std::pair<std::string, std::size_t>> found;
+  static const std::regex identifier(R"([A-Za-z_][A-Za-z0-9_]*)");
+  const auto first = text.begin() + static_cast<std::ptrdiff_t>(begin);
+  const auto last = text.begin() + static_cast<std::ptrdiff_t>(std::min(end, text.size()));
+  for (std::sregex_iterator it(first, last, identifier), none; it != none; ++it) {
+    const std::size_t at = begin + static_cast<std::size_t>(it->position());
+    if (at < mask.size() && !mask[at]) {
+      continue;
+    }
+    // A qualifier, not the type: `NotificationService::Kind` is an enum the
+    // service declares, `editor::DiagnosticsStore` is the store.
+    const std::size_t after = at + static_cast<std::size_t>(it->length());
+    if (text.compare(after, 2, "::") == 0) {
+      continue;
+    }
+    found.emplace_back(it->str(), at);
+  }
+  return found;
+}
+
+// A type a paint function could ASK: a store, a service, a coordinator, a
+// registry, the shell or the project's state. Reaching one from paint means paint
+// can read something frame prep neither resolved nor fingerprinted.
+bool IsLiveSourceType(const std::string& name) {
+  static const std::regex live(
+      R"(^(\w+Store|\w+Service|\w+Coordinator|\w+Registry|WorkspaceContext|WorkspaceShell|ProjectWorkspaceState|PluginRuntime\w*)$)");
+  return std::regex_match(name, live);
+}
+
+// A struct of prepared paint inputs, which the rule looks inside: what a migrated
+// paint function is handed must not smuggle a live source in a field.
+bool IsPreparedInputsType(const std::string& name) {
+  static const std::regex prepared(R"(^(\w+Inputs|\w+Paint|\w+ViewModel|PreparedFrameState)$)");
+  return std::regex_match(name, prepared);
+}
+
+// Every header under src, read once per run of the rule: (path, text, code mask).
+struct HeaderText {
+  std::filesystem::path path;
+  std::string text;
+  std::vector<bool> mask;
+};
+const std::vector<HeaderText>& SourceHeaders(const std::filesystem::path& repo_root,
+                                             std::vector<HeaderText>& cache, bool& loaded) {
+  if (!loaded) {
+    loaded = true;
+    static constexpr std::array<std::string_view, 1> kHeaders = {".h"};
+    for (const std::filesystem::path& path : SourceFilesUnder(repo_root / "src", kHeaders)) {
+      std::string text = ReadText(path);
+      std::vector<bool> mask = BuildCodeMask(text);
+      cache.push_back(HeaderText{.path = path, .text = std::move(text), .mask = std::move(mask)});
+    }
+  }
+  return cache;
+}
+
+// Where `struct name {` (or class) is defined under src: the header and the
+// offset of its opening brace, or null when it is defined in none.
+struct TypeDefinition {
+  const HeaderText* header = nullptr;
+  std::size_t open = 0;
+};
+TypeDefinition FindTypeDefinition(const std::vector<HeaderText>& headers, const std::string& name) {
+  const std::regex definition("\\b(struct|class)\\s+" + name + R"(\b[^;{()]*\{)");
+  for (const HeaderText& header : headers) {
+    if (header.text.find(name) == std::string::npos) {
+      continue;
+    }
+    for (std::sregex_iterator it(header.text.begin(), header.text.end(), definition), none; it != none; ++it) {
+      const std::size_t at = static_cast<std::size_t>(it->position());
+      if (at < header.mask.size() && !header.mask[at]) {
+        continue;
+      }
+      return TypeDefinition{.header = &header, .open = at + static_cast<std::size_t>(it->length()) - 1};
+    }
+  }
+  return {};
+}
+
+std::size_t MatchingBrace(const std::string& text, std::size_t open) {
+  std::size_t depth = 1;
+  std::size_t cursor = open + 1;
+  while (cursor < text.size() && depth > 0) {
+    depth += text[cursor] == '{' ? 1 : text[cursor] == '}' ? -1 : 0;
+    ++cursor;
+  }
+  return cursor;
+}
+
+// The other half of the snapshot rule: what a migrated paint function is HANDED.
+// Its body may not name the shell's context or a service (the caller's check), but
+// a parameter can carry one in: RenderCompareSurface took a DiagnosticsStore
+// through CompareRenderProjectInputs and asked it for the file's diagnostics at
+// paint, which its row units never folded. A parameter's type, and every field of
+// the prepared-inputs structs reachable from it, must not be a live source.
+void CheckPaintParametersReachNoLiveSource(RuleResult& result, const std::vector<HeaderText>& headers,
+                                           const std::filesystem::path& path, const std::string& text,
+                                           const std::vector<bool>& mask, const char* function, std::size_t start) {
+  const std::size_t params_open = text.find('(', start);
+  if (params_open == std::string::npos) {
+    return;
+  }
+  std::size_t depth = 1;
+  std::size_t params_close = params_open + 1;
+  while (params_close < text.size() && depth > 0) {
+    depth += text[params_close] == '(' ? 1 : text[params_close] == ')' ? -1 : 0;
+    ++params_close;
+  }
+  const std::size_t line = LineNumberAt(text, start);
+  std::set<std::string> visited;
+  // (type to look inside, how it was reached)
+  std::vector<std::pair<std::string, std::string>> pending;
+  const auto consider = [&](const std::string& name, const std::string& via) {
+    if (IsLiveSourceType(name)) {
+      result.violations.push_back(Violation{
+          .path = path,
+          .line = line,
+          .message = std::string(function) + " is handed " + name + (via.empty() ? "" : " (through " + via + ")") +
+                     " -- a derived-damage surface paints from inputs frame prep resolved and fingerprinted, "
+                     "never from a store or service it can ask"});
+    } else if (IsPreparedInputsType(name) && visited.insert(name).second) {
+      pending.emplace_back(name, via.empty() ? name : via + " -> " + name);
+    }
+  };
+  for (const auto& [name, at] : CodeIdentifiers(text, mask, params_open + 1, params_close)) {
+    consider(name, "");
+  }
+  while (!pending.empty()) {
+    const auto [name, via] = pending.back();
+    pending.pop_back();
+    const TypeDefinition definition = FindTypeDefinition(headers, name);
+    if (definition.header == nullptr) {
+      result.violations.push_back(Violation{
+          .path = path,
+          .line = line,
+          .message = std::string(function) + " is handed " + name +
+                     ", whose definition the rule cannot find under src -- update "
+                     "CheckDerivedSurfacePaintReadsOnlyItsSnapshot"});
+      continue;
+    }
+    const HeaderText& header = *definition.header;
+    for (const auto& [field_type, at] : CodeIdentifiers(header.text, header.mask, definition.open + 1,
+                                                        MatchingBrace(header.text, definition.open))) {
+      consider(field_type, via);
+    }
+  }
+}
+
+}  // namespace
+
 RuleResult CheckDerivedSurfacePaintReadsOnlyItsSnapshot(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "derived-damage surface paint reads only its snapshot";
@@ -764,6 +922,8 @@ RuleResult CheckDerivedSurfacePaintReadsOnlyItsSnapshot(const std::filesystem::p
       {"src/workspace/render/WorkspaceShellRenderMerge.cpp", "void WorkspaceShell::RenderMergeSurface("},
       {"src/workspace/render/WorkspaceShellRenderMerge.cpp", "void WorkspaceShell::RenderMergeScrollbars("},
   };
+  std::vector<HeaderText> headers;
+  bool headers_loaded = false;
   const std::regex forbidden(
       R"(\bcontext_\b|\b[a-z_]+_service_\b|\bPointerOver\s*\(|\bRenderViewModelBuilder\b|)"
       R"(\bMake[A-Z][A-Za-z]*Service\s*\(|\bSDL_GetTicks|\blast_mouse_[a-z_]*)");
@@ -790,6 +950,8 @@ RuleResult CheckDerivedSurfacePaintReadsOnlyItsSnapshot(const std::filesystem::p
       ++cursor;
     }
     const std::vector<bool> mask = BuildCodeMask(text);
+    CheckPaintParametersReachNoLiveSource(result, SourceHeaders(repo_root, headers, headers_loaded), path, text, mask,
+                                          migrated.function, start);
     const std::string body = text.substr(open, cursor - open);
     for (std::sregex_iterator it(body.begin(), body.end(), forbidden), end; it != end; ++it) {
       const std::size_t at = open + static_cast<std::size_t>(it->position());
