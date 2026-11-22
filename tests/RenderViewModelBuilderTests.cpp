@@ -1608,6 +1608,45 @@ void TestAShortStripTabDrawsNothingOutsideItself() {
   Expect(failures.empty(), "a short strip tab drew outside itself:" + failures);
 }
 
+// Soak 3cf85812902b: the Output panel's empty hint is wrapped into a box that runs
+// to the body's bottom, and a body one line tall (16 px at scale 2.75, the line
+// 15.27) still drew the hint's second line below it. The Terminal's hint is the
+// same element. Every box height at fractional scales: the hint draws only the
+// lines its box holds.
+void TestAWrappedHintDrawsNothingOutsideItsBox() {
+  using namespace microide::workspace::detail;
+  EnsureDummySdlVideoInitialized();
+  SoftwareCanvas canvas(600, 200);
+  TextRenderer text_renderer;  // no-backend: deterministic metrics
+  const render::Theme theme{};
+  const bool was = render::PaintOverrunRecordingEnabled();
+  render::SetPaintOverrunRecording(true);
+  (void)render::TakePaintOverruns();
+  std::string failures;
+  for (const float scale : {1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.75f}) {
+    Expect(SDL_SetRenderScale(canvas.renderer(), scale, scale), "the hint test should set the scale");
+    for (float height = 1.0f; height <= 60.0f; height += 1.0f) {
+      for (const float top : {3.0f, 3.273f}) {
+        const SDL_FRect box{4.0f, top, 120.0f, height};
+        {
+          const render::PaintElement element(canvas.renderer(), box, "hint");
+          DrawWrappedPlaceholderIn(text_renderer, canvas.renderer(), box, theme.text_muted,
+                                   theme.surface_background,
+                                   "No output yet. Run a task or a build to see its output here.");
+        }
+        if (const auto overruns = render::TakePaintOverruns(); !overruns.empty() && failures.size() < 400) {
+          failures += " [scale " + std::to_string(scale) + " height " + std::to_string(static_cast<int>(height)) +
+                      ": drew " + std::to_string(overruns.front().draw_rect.y) + "+" +
+                      std::to_string(overruns.front().draw_rect.h) + "]";
+        }
+      }
+    }
+  }
+  (void)SDL_SetRenderScale(canvas.renderer(), 1.0f, 1.0f);
+  render::SetPaintOverrunRecording(was);
+  Expect(failures.empty(), "a wrapped hint drew outside its box:" + failures);
+}
+
 // TD-2026-07-17A-007: the render TU consumes precomputed control fields — the
 // truncated/placeholder value string and the caret offset — instead of building
 // "(default)" and truncating/measuring per paint.
@@ -1994,6 +2033,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RenderViewModelBuilder/AStripTabNeverDrawsOutsideItself", TestAStripTabNeverDrawsOutsideItself);
   AddTest(tests, "RenderViewModelBuilder/AShortStripTabDrawsNothingOutsideItself",
           TestAShortStripTabDrawsNothingOutsideItself);
+  AddTest(tests, "RenderViewModelBuilder/AWrappedHintDrawsNothingOutsideItsBox",
+          TestAWrappedHintDrawsNothingOutsideItsBox);
   AddTest(tests, "RenderViewModelBuilder/TheFramesGitSidebarIsNotChangedByAMidFrameRebuild",
           TestTheFramesGitSidebarIsNotChangedByAMidFrameRebuild);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayFooterReportsCountsAndKeys",

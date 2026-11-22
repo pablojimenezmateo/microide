@@ -1,5 +1,6 @@
 #pragma once
 
+#include "render/DevicePixelSnap.h"
 #include "render/PaintElement.h"
 #include "render/ClipStableLine.h"
 #include "render/ScopedRenderClip.h"
@@ -880,6 +881,27 @@ inline std::size_t DrawWrappedPlaceholder(const render::TextRenderer& text_rende
         text_renderer.DrawStringOn(renderer, x, y + static_cast<float>(index) * line_height,
                                    foreground, background, line);
       });
+}
+
+// The wrapped placeholder as an element: it draws inside `box` and nothing else,
+// so it spends only the lines the box holds whole.
+inline std::size_t DrawWrappedPlaceholderIn(const render::TextRenderer& text_renderer,
+                                            SDL_Renderer* renderer,
+                                            const SDL_FRect& box,
+                                            SDL_Color foreground,
+                                            SDL_Color background,
+                                            std::string_view text,
+                                            std::size_t max_lines = 3) {
+  const float line_height = text_renderer.LineHeight();
+  if (line_height <= 0.0f) {
+    return 0;
+  }
+  // A box a snap's noise short of a whole line still holds it: its edges round
+  // to the same device pixels (render::kSnapEdgeNoise).
+  const float whole_lines = std::floor((box.h + render::kSnapEdgeNoise) / line_height);
+  const std::size_t fit = whole_lines <= 0.0f ? 0 : static_cast<std::size_t>(whole_lines);
+  return DrawWrappedPlaceholder(text_renderer, renderer, box.x, box.y, box.w, foreground, background, text,
+                                std::min(max_lines, fit));
 }
 
 inline void DrawVCenteredTextOn(const render::TextRenderer& text_renderer,

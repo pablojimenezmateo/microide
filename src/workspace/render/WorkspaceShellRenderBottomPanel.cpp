@@ -391,8 +391,8 @@ void PaintBottomPanelOutputBody(SDL_Renderer* renderer, const PreparedFrameState
   }
   if (!body.hint.empty()) {
     const render::PaintElement element(renderer, body.hint_rect, "output-hint");
-    DrawWrappedPlaceholder(text_renderer, renderer, body.hint_rect.x, body.hint_rect.y, body.hint_rect.w,
-                           theme.text_muted, theme.surface_background, body.hint);
+    DrawWrappedPlaceholderIn(text_renderer, renderer, body.hint_rect, theme.text_muted, theme.surface_background,
+                             body.hint);
   }
   if (body.scrollbar.has_value()) {
     const render::PaintElement element(renderer, body.scrollbar->track, "output-scrollbar");
@@ -453,8 +453,8 @@ void PaintTerminalHint(SDL_Renderer* renderer, const PreparedFrameState::Termina
     return;
   }
   const render::PaintElement element(renderer, hint.rect, "terminal-hint");
-  DrawWrappedPlaceholder(text_renderer, renderer, hint.rect.x, hint.rect.y, hint.rect.w, theme.text_muted,
-                         theme.surface_background, hint.text);
+  DrawWrappedPlaceholderIn(text_renderer, renderer, hint.rect, theme.text_muted, theme.surface_background,
+                           hint.text);
 }
 
 }  // namespace
