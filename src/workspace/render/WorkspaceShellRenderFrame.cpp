@@ -1168,6 +1168,61 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
           .blame = blame.has_value() ? &*blame : nullptr,
       };
       AppendEditorRowUnits(inputs, frame_state_.editor_row_keys, units);
+      // The scrollbars, and the overview ruler in the vertical one's track: what
+      // they draw is the pane's extent and scroll, and the ruler's marks -- every
+      // diagnostic and find match in the file, and the caret's line -- none of
+      // which a row shows (QaFlowRegression/EditorRowDamageFollowsEveryStateTransition:
+      // a diagnostic far off screen marked the ruler).
+      {
+        const ScrollSurfaceLayout scroll = ComputeEditorScrollLayout(pane.rect, *viewport, metrics);
+        if (scroll.vertical_scrollbar.has_value()) {
+          const SDL_FRect& track = scroll.vertical_scrollbar->track;
+          const SDL_FRect lane = overview::LaneRect(track, pane.rect.x);
+          const float left = std::min(track.x, lane.x);
+          const float right = std::max(track.x + track.w, lane.x + lane.w);
+          // The track and the lane's marks: keyed on what moves a mark or the thumb,
+          // not on the caret (below) or the buffer's dirty flag (diagnostics stay
+          // shown while it is dirty). A tall strip repaints every row it crosses, so
+          // this must not move per keystroke
+          // (QaFlowRegression/TypingRepaintsOnlyTheLinesWhoseOccurrencesChanged).
+          const bool ruler = setting("editor.view.overview_ruler.enabled", true);
+          PaintFingerprint bar;
+          bar.Add(pane_key.value())
+              .Add(track)
+              .Add(scroll.vertical_scrollbar->thumb)
+              .Add(pane.active && context_.interaction_state.drag_target == DragTarget::EditorVerticalScrollbar)
+              .Add(ruler)
+              .Add(project_state.diagnostics_store.revision())
+              .Add(viewport->visual_line_count())
+              .Add(overview::ThemeMarkerToken(theme_));
+          if (focused && find_shown) {
+            bar.Add(buffer_search.matches_revision).Add(buffer_search.selected_index).Add(buffer_search.matches.size());
+          }
+          units.push_back({SDL_FRect{left, track.y, right - left, track.h}, bar.value()});
+          // The caret's mark on the lane, a unit of its own: a caret move repaints the
+          // mark it left and the one it made.
+          overview::Marker caret_mark;
+          const int caret_row = static_cast<int>(viewport->cursor_visual_row());
+          if (ruler && overview::BuildMarker(overview::LaneInnerRect(lane), viewport->visual_line_count(),
+                                             overview::MarkerInput{.start_row = caret_row,
+                                                                   .end_row = caret_row + 1,
+                                                                   .color = theme_.cursor,
+                                                                   .priority = 0},
+                                             caret_mark)) {
+            units.push_back({caret_mark.rect, bar.value()});
+          } else {
+            units.push_back({SDL_FRect{}, bar.value()});  // keeps the units after it at their indices
+          }
+        }
+        if (scroll.horizontal_scrollbar.has_value()) {
+          PaintFingerprint bar;
+          bar.Add(pane_key.value())
+              .Add(scroll.horizontal_scrollbar->track)
+              .Add(scroll.horizontal_scrollbar->thumb)
+              .Add(pane.active && context_.interaction_state.drag_target == DragTarget::EditorHorizontalScrollbar);
+          units.push_back({scroll.horizontal_scrollbar->track, bar.value()});
+        }
+      }
       frame_state_.derived_damage.Commit(surface, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
     }
     // A pane that went away repaints where its rows were.

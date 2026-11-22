@@ -17,6 +17,7 @@
 #include <functional>
 #include <thread>
 #include <optional>
+#include <random>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -2664,6 +2665,120 @@ void TestEditorRowsRecolourWhenACommentOpensAboveThem() {
   workspace::RenderInvalidation nothing;
   nothing.rects.push_back(SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f});
   fixture.ExpectFresh(nothing, "a block comment opened with no damage request");
+}
+
+// derived-damage 2.2, the differential property test: random editor state
+// transitions applied straight to the viewport and the stores -- so no event
+// path asks for any damage -- and each partial frame painted from ONLY what frame
+// prep derives, then compared with a full repaint. A per-row key left out of the
+// editor's row units (EditorRowUnits) fails it on the first transition that moves
+// that input alone. Seeds are fixed, so a failure names a reproducible step.
+void TestEditorRowDamageFollowsEveryStateTransition() {
+  std::string text;
+  const char* const kLines[] = {"#include <vector>", "", "int count = 0;  // a counter", "struct Box {",
+                                "  int width = 4;", "  int height = 8;", "};", "const char* name = \"box\";",
+                                "for (int i = 0; i < 10; ++i) {", "  count += i;", "}", "/* trailing note */"};
+  for (int i = 0; i < 4; ++i) {
+    for (const char* line : kLines) {
+      text += line;
+      text += '\n';
+    }
+  }
+  const std::string kInserts[] = {"x", "/*", "*/", "\"", "count", " ", "\t", "{", "}", "\n", "// c"};
+  for (const std::uint32_t seed : {1u, 7u, 42u}) {
+    FlowFixture fixture("prop.cpp", text);
+    editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
+    std::mt19937 rng(seed);
+    const auto pick = [&](std::size_t n) { return static_cast<std::size_t>(rng() % std::max<std::size_t>(n, 1)); };
+    const auto random_position = [&] {
+      const std::size_t line = pick(viewport.line_count());
+      return editor::TextPosition{.line = line, .column = pick(viewport.lines().LineLength(line) + 1)};
+    };
+    for (int step = 0; step < 60; ++step) {
+      std::string op;
+      switch (rng() % 11) {
+        case 0: {
+          const auto at = random_position();
+          viewport.MoveCursorTo(at.line, at.column);
+          const std::string& insert = kInserts[pick(std::size(kInserts))];
+          viewport.InsertText(insert);
+          op = "insert '" + insert + "'";
+          break;
+        }
+        case 1: {
+          const auto from = random_position();
+          auto to = from;
+          to.column = std::min(viewport.lines().LineLength(from.line), from.column + 1 + pick(4));
+          (void)viewport.ReplaceRange(editor::SelectionRange{.start = from, .end = to}, "");
+          op = "delete on line " + std::to_string(from.line);
+          break;
+        }
+        case 2:
+          op = viewport.Undo() ? "undo" : "undo (nothing)";
+          break;
+        case 3:
+          op = viewport.Redo() ? "redo" : "redo (nothing)";
+          break;
+        case 4: {
+          const auto at = random_position();
+          viewport.MoveCursorTo(at.line, at.column, /*extend_selection=*/rng() % 2 == 0);
+          op = "caret/selection to line " + std::to_string(at.line);
+          break;
+        }
+        case 5: {
+          const auto at = random_position();
+          viewport.AddSecondaryCaret(at.line, at.column);
+          op = "secondary caret on line " + std::to_string(at.line);
+          break;
+        }
+        case 6: {
+          viewport.SetScrollLine(pick(viewport.line_count()));
+          op = "scroll";
+          break;
+        }
+        case 7: {
+          std::vector<editor::Diagnostic> squiggles;
+          for (std::size_t n = pick(3); n > 0; --n) {
+            const auto at = random_position();
+            squiggles.push_back(editor::Diagnostic{
+                .range = editor::SelectionRange{.start = at, .end = {.line = at.line, .column = at.column + 3}},
+                .severity = rng() % 2 == 0 ? editor::DiagnosticSeverity::Error : editor::DiagnosticSeverity::Warning,
+                .message = "prop"});
+          }
+          (void)TestAccess::CurrentProjectState(fixture.shell)
+              .diagnostics_store.ReplaceForOwnerFile("prop", viewport.path(), std::move(squiggles));
+          op = "diagnostics";
+          break;
+        }
+        case 8:
+          viewport.ClearSecondaryCarets();
+          op = "clear secondary carets";
+          break;
+        case 9: {
+          // A fold toggled at a block opener (or nowhere, on a line that opens none):
+          // rows below it move up or down, and its gutter mark flips.
+          const std::size_t line = pick(viewport.line_count());
+          viewport.MoveCursorTo(line, 0);
+          (void)TestAccess::ExecuteCommandLine(fixture.shell, "toggle-fold");
+          op = "toggle fold at line " + std::to_string(line);
+          break;
+        }
+        default: {
+          const bool wrap = rng() % 2 == 0;
+          (void)TestAccess::ExecuteCommandLine(fixture.shell, wrap ? "wrap on" : "wrap off");
+          op = wrap ? "wrap on" : "wrap off";
+          break;
+        }
+      }
+      // Whatever the transition queued (nothing, from these paths) is dropped: only
+      // frame prep's own damage paints the next frame.
+      (void)fixture.shell.ConsumePendingRenderInvalidation();
+      workspace::RenderInvalidation nothing;
+      nothing.rects.push_back(SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f});
+      // The first stale frame fails the test and names its seed, step and transition.
+      fixture.ExpectFresh(nothing, "seed " + std::to_string(seed) + " step " + std::to_string(step) + " (" + op + ")");
+    }
+  }
 }
 
 // derived-damage 3.1 / clip-discipline stage 3: the bottom panel's header is a
@@ -6277,6 +6392,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestACaretMoveThatScrollsTheMergePanesRepaintsThemAll);
   AddTest(tests, "QaFlowRegression/EditorRowsRecolourWhenACommentOpensAboveThem",
           TestEditorRowsRecolourWhenACommentOpensAboveThem);
+  AddTest(tests, "QaFlowRegression/EditorRowDamageFollowsEveryStateTransition",
+          TestEditorRowDamageFollowsEveryStateTransition);
   AddTest(tests, "QaFlowRegression/EditorRowsRepaintWhatChangedWithNoDamageRequest",
           TestEditorRowsRepaintWhatChangedWithNoDamageRequest);
   AddTest(tests, "QaFlowRegression/TheStatusBarRepaintsWhatChangedWithNoDamageRequest",
