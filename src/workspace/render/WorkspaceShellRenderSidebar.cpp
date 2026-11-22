@@ -14,6 +14,7 @@
 #include "workspace/git/CommitWorkflowState.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/render/GitSidebarPaint.h"
+#include "workspace/render/TreeSidebarPaint.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/git/WorkspaceGitSidebarPresentation.h"
 #include "workspace/registries/WorkspaceSidebarRegistry.h"
@@ -101,19 +102,6 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       DrawScrollbar(renderer, theme_, geometry->track, geometry->thumb, active);
     }
   };
-  const auto draw_action_button = [&](const SDL_FRect& button_rect,
-                                      std::string_view label,
-                                      bool enabled,
-                                      ButtonTone tone = ButtonTone::Neutral) {
-    DrawButtonCentered(
-        text_renderer_, renderer, theme_, button_rect, label, tone,
-        ButtonVisualState{
-            .enabled = enabled,
-            .hovered = enabled && PointerOver(button_rect),
-            .active = false,
-        });
-  };
-
   // Mode-switch tab row (Project / Search / Source Control + optional overflow), replacing the
   // old dropdown. Single-click switches view; the row collapses to icon-only when narrow.
   const std::string_view active_view_id = project_state.sidebar.view_id;
@@ -447,126 +435,10 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                             list_layout.visible_units, static_cast<float>(scroll_row),
                             context_.interaction_state.drag_target == DragTarget::SidebarScrollbar);
   } else {
-    const SDL_FRect collapse_rect = TreeSidebarCollapseButtonRect(layout.sidebar);
-    const SDL_FRect refresh_rect = TreeSidebarRefreshButtonRect(layout.sidebar);
-    const bool compact_tree_header = collapse_rect.w <= 24.0f || refresh_rect.w <= 24.0f;
-    draw_action_button(collapse_rect, compact_tree_header ? "C" : "Collapse",
-                       project_state.directory_tree.CanCollapseAll());
-    draw_action_button(refresh_rect, compact_tree_header ? "R" : "Refresh", true);
-
-    // The project name no longer renders here — the mode tab row owns the header, and the
-    // project name is already shown on the editor tab.
-
-    const auto& entries = project_state.directory_tree.entries();
-    const auto list_layout = ComputeTreeSidebarListLayout(layout.sidebar, entries.size());
-    const int scroll_row = list_layout.scroll_row;
-
-    // File icons are opt-in. They render only when a plugin contributed an icon
-    // theme, or when the user explicitly enabled the built-in defaults via
-    // `sidebar.file_icons`. With no plugin and the setting off (the default) the
-    // entire icon path is skipped — no Resolve(), no cache allocation, no per-row
-    // draw — so the file tree is byte-for-byte identical to a host without this
-    // feature. The flag is read once per sidebar render (cheap inline check).
-    auto& icon_cache = project_state.file_icon_cache;
-    const bool file_icons_enabled =
-        file_icon_registry_.has_entries() ||
-        SettingFlagEnabled(GetSettingValue("sidebar.file_icons"));
-    if (!file_icons_enabled) {
-      // Drop any cache left over from a previous opt-in so the feature has zero
-      // footprint while off.
-      if (!icon_cache.icons.empty()) {
-        icon_cache.Reset();
-      }
-    } else {
-      // Resolve file icons once per tree mutation / icon-theme reload, not per row
-      // per frame. The per-row loop below then just indexes the cache, keeping the
-      // hot render path allocation- and lookup-free.
-      const std::uint64_t tree_revision = project_state.directory_tree.entries_revision();
-      const std::uint32_t icon_revision = file_icon_registry_.revision();
-      if (icon_cache.tree_revision != tree_revision || icon_cache.icon_revision != icon_revision) {
-        icon_cache.icons.assign(entries.size(), std::nullopt);
-        for (std::size_t i = 0; i < entries.size(); ++i) {
-          if (!entries[i].is_directory) {
-            icon_cache.icons[i] = file_icon_registry_.Resolve(entries[i].label);
-          }
-        }
-        icon_cache.tree_revision = tree_revision;
-        icon_cache.icon_revision = icon_revision;
-      }
-    }
-
-    for (int row = 0; row < list_layout.visible_rows; ++row) {
-      const int entry_index = scroll_row + row;
-      if (entry_index >= static_cast<int>(entries.size())) {
-        break;
-      }
-
-      const auto& entry = entries[entry_index];
-      SDL_FRect row_rect = ScrollableListRowRect(list_layout, row);
-      const bool selected =
-          static_cast<std::size_t>(entry_index) == project_state.directory_tree.selected_index();
-      // Hover lifts only the row background (the accent strip and the brighter text
-      // stay reserved for the actual selection), so the tree reads as "this is what
-      // I'd click" without masquerading as selected.
-      const bool emphasized = selected || PointerOver(row_rect);
-      const SDL_Color row_background =
-          emphasized ? theme_.row_highlight : theme_.surface_background;
-      DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, emphasized,
-                                  selected);
-
-      const float depth_offset = static_cast<float>(entry.depth) * kTreeIndentWidth;
-      const float tree_x = row_rect.x + 6.0f + depth_offset;
-      const float chevron_x = tree_x;
-      const float label_x = tree_x + kTreeChevronSlotWidth + 4.0f;
-      const float chevron_center_y = row_rect.y + row_rect.h * 0.5f;
-      const char git_marker = GitMarker(entry.git_status);
-      const bool has_git_marker = git_marker != ' ';
-      // Hold as a single-char view into the local `git_marker` storage; allocation-free per row.
-      const std::string_view git_marker_text =
-          has_git_marker ? std::string_view(&git_marker, 1) : std::string_view{};
-      const float marker_width =
-          has_git_marker ? text_renderer_.MeasureWidth(git_marker_text) : 0.0f;
-      // The file tree keeps the status marker at the RIGHT edge: a leading badge would
-      // shove directory names out of alignment with their chevrons, which reads badly.
-      // Source Control (a flat per-file list) uses the leading badge instead.
-      const float marker_x = row_rect.x + row_rect.w - marker_width - 8.0f;
-      const float label_width =
-          has_git_marker ? std::max(0.0f, marker_x - label_x - 8.0f)
-                         : std::max(0.0f, row_rect.x + row_rect.w - label_x - 8.0f);
-
-      if (entry.is_directory) {
-        DrawChevron(renderer, chevron_x, chevron_center_y, entry.expanded,
-                    selected ? theme_.text_primary : theme_.text_muted);
-      } else if (file_icons_enabled && icon_cache.icons[entry_index]) {
-        const auto& icon = icon_cache.icons[entry_index];
-        // Files have no chevron, so the chevron slot holds the type icon. Selected
-        // rows tint it to the foreground so it stays legible on the highlight.
-        const SDL_Color icon_color = selected ? theme_.text_primary : icon->color;
-        editor::GutterIconRegistry::Draw(renderer, icon->shape, icon_color, chevron_x, row_rect.y,
-                                         kTreeChevronSlotWidth, row_rect.h);
-      }
-
-      DrawVCenteredTextOn(
-          text_renderer_, renderer,
-          MakeRect(label_x, row_rect.y, label_width, row_rect.h), 0.0f,
-          selected
-              ? theme_.text_primary
-              : (entry.ignored || entry.pending ? theme_.text_muted
-                               : (entry.is_directory ? theme_.text_primary : theme_.text_secondary)),
-          row_background,
-          TruncateLabelView(entry.label, label_width));
-      if (has_git_marker) {
-        DrawVCenteredTextOn(
-            text_renderer_, renderer,
-            MakeRect(marker_x, row_rect.y, marker_width, row_rect.h), 0.0f,
-            selected ? theme_.text_primary : GitMarkerColor(theme_, entry.git_status),
-            row_background, git_marker_text);
-      }
-    }
-
-    draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(entries.size()),
-                            list_layout.visible_units, static_cast<float>(scroll_row),
-                            context_.interaction_state.drag_target == DragTarget::SidebarScrollbar);
+    // The file tree -- its Collapse and Refresh buttons, its rows and its scrollbar
+    // -- as frame prep laid it out (PrepareTreeSidebarFrame), each element in its
+    // own PaintElement.
+    PaintTreeSidebar(renderer, frame_state_, theme_, text_renderer_);
   }
 
   if (project_state.surface.focus == FocusTarget::Sidebar) {

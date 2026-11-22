@@ -10,6 +10,7 @@
 #include "workspace/render/CompareRowUnits.h"
 #include "workspace/render/EditorRowUnits.h"
 #include "workspace/render/GitSidebarPaint.h"
+#include "workspace/render/TreeSidebarPaint.h"
 #include "workspace/render/HoverCardLimits.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
@@ -1759,9 +1760,13 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   // repaints the sidebar here -- and so does a scroll or a rebuilt tree (a watcher
   // batch, an expansion) that landed between frames: the command fuzzer caught a
   // frame repainting only the menu bar over a tree that had moved under it.
-  if (sidebar_vm.visible) {
+  // (The file tree is not one of them: its rows, buttons and scrollbar are derived
+  // units of their own -- DerivedSurface::SidebarTree -- so a selection, a scroll or
+  // a rebuilt tree repaints the rows it changed, not the sidebar. The unit keeps its
+  // place with no rect, and a switch to or from the tree repaints the sidebar.)
+  if (sidebar_vm.visible && ActiveSidebarMode() != SidebarMode::Tree) {
     const SidebarState& sidebar = project_state.sidebar;
-    std::size_t selected = project_state.directory_tree.selected_index();
+    std::size_t selected = 0;
     switch (ActiveSidebarMode()) {
       case SidebarMode::Git: selected = sidebar.git.selected_index; break;
       case SidebarMode::Problems: selected = sidebar.problems.selected_index; break;
@@ -1776,9 +1781,6 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     std::uint64_t key = (std::hash<std::string>{}(sidebar.view_id) * 0x9E3779B97F4A7C15ull) ^
                         (static_cast<std::uint64_t>(selected) + 1);
     key = key * 0x100000001B3ull ^ static_cast<std::uint64_t>(static_cast<std::uint32_t>(sidebar.scroll_row));
-    if (ActiveSidebarMode() == SidebarMode::Tree) {
-      key = key * 0x100000001B3ull ^ project_state.directory_tree.entries_revision();
-    }
     // Never 0 (0 means "nothing painted yet") -- without touching bit 0: `key |= 1`
     // erased any change that lived only there in the last term mixed in, which
     // made a tree revision going from even to odd, or a one-row scroll from an
@@ -2091,6 +2093,58 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       workflow.caret_rect = head.caret;
       workflow.body_visible_rows = head.body_visible_rows;
     }
+  }
+  // The file tree, the same way: its Collapse and Refresh buttons, each visible row
+  // and its scrollbar are units laid out here from the tree's entries, so a row
+  // repaints whoever changed what it shows -- a watcher's batch, a git status
+  // refresh, a tab activated in the editor selecting its file here.
+  {
+    const bool tree_visible = sidebar_vm.visible && sidebar_vm.mode == SidebarMode::Tree;
+    ProjectWorkspaceState& project_state = *sidebar_vm.project_state;
+    TreeSidebarInputs inputs{
+        .renderer = renderer,
+        .visible = tree_visible,
+        .theme = &theme_,
+        .text_renderer = &text_renderer_,
+        .pointer_over = [this](const SDL_FRect& rect) { return PointerOver(rect); },
+        .damage = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); },
+    };
+    if (tree_visible) {
+      const auto& entries = project_state.directory_tree.entries();
+      inputs.entries = entries;
+      inputs.selected_index = project_state.directory_tree.selected_index();
+      inputs.list = ComputeTreeSidebarListLayout(layout.sidebar, entries.size());
+      inputs.collapse_button = TreeSidebarCollapseButtonRect(layout.sidebar);
+      inputs.refresh_button = TreeSidebarRefreshButtonRect(layout.sidebar);
+      inputs.can_collapse_all = project_state.directory_tree.CanCollapseAll();
+      inputs.scrollbar_active = context_.interaction_state.drag_target == DragTarget::SidebarScrollbar;
+      // File icons are opt-in: only when a plugin contributed an icon theme, or the
+      // user enabled the built-in defaults (`sidebar.file_icons`). Off (the default),
+      // the whole path is skipped and any cache from an earlier opt-in is dropped.
+      // On, the icons are resolved once per tree mutation or icon-theme reload --
+      // here, where paint used to do it -- and the rows read the cache.
+      auto& icon_cache = project_state.file_icon_cache;
+      if (!file_icon_registry_.has_entries() && !SettingFlagEnabled(GetSettingValue("sidebar.file_icons"))) {
+        if (!icon_cache.icons.empty()) {
+          icon_cache.Reset();
+        }
+      } else {
+        const std::uint64_t tree_revision = project_state.directory_tree.entries_revision();
+        const std::uint32_t icon_revision = file_icon_registry_.revision();
+        if (icon_cache.tree_revision != tree_revision || icon_cache.icon_revision != icon_revision) {
+          icon_cache.icons.assign(entries.size(), std::nullopt);
+          for (std::size_t i = 0; i < entries.size(); ++i) {
+            if (!entries[i].is_directory) {
+              icon_cache.icons[i] = file_icon_registry_.Resolve(entries[i].label);
+            }
+          }
+          icon_cache.tree_revision = tree_revision;
+          icon_cache.icon_revision = icon_revision;
+        }
+        inputs.icons = &icon_cache.icons;
+      }
+    }
+    PrepareTreeSidebarFrame(frame_state_, inputs);
   }
   // Before any hover is resolved against the blame overlay or its card's damage is
   // decided: an overlay the active buffer has moved away from is this frame's

@@ -8058,7 +8058,176 @@ void TestAMergeTabsActionsRepaintWhatTheyChange() {
 }  // namespace
 
 
+// ---- derived-damage 4.1: the sidebar's file tree --------------------------------
+namespace {
+
+// A project with folders and files enough to fill the tree, opened on notes.txt.
+struct TreeFixture {
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  TemporaryDirectory temp_dir;
+  std::filesystem::path root;
+  WorkspaceShell shell;
+  SoftwareCanvas canvas{kWidth, kHeight};
+
+  explicit TreeFixture(int files_per_folder = 6) {
+    EnsureDummySdlVideoInitialized();
+    root = temp_dir.path() / "project";
+    WriteFile(root / "notes.txt", "notes\n");
+    for (const char* folder : {"alpha", "beta", "gamma"}) {
+      for (int i = 0; i < files_per_folder; ++i) {
+        WriteFile(root / folder / ("file" + std::to_string(i) + ".cpp"), "int x;\n");
+      }
+    }
+    Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the tree fixture should open its project");
+    TestAccess::SetWindowSize(shell, kWidth, kHeight);
+    TestAccess::OpenSingleEditorTab(shell, root / "notes.txt");
+    TestAccess::ShowTreeSidebar(shell);
+    TestAccess::SetFocusEditor(shell);
+    TestAccess::NoteLayoutInputsChanged(shell);
+    Paint();
+  }
+
+  project::DirectoryTree& tree() { return TestAccess::CurrentProjectState(shell).directory_tree; }
+
+  void Paint() {
+    TestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks());
+    shell.Render(canvas.renderer(), kWidth, kHeight);
+    (void)shell.ConsumePendingRenderInvalidation();
+  }
+
+  void ExpectFresh(const workspace::RenderInvalidation& redraw, const std::string& what) {
+    const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, redraw, [this]() {
+      TestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks());
+    });
+    Expect(diff.identical(), what + " should paint what a full repaint paints; " + DescribePixelDiff(diff));
+  }
+
+  // The share of the sidebar that `redraw` and what its frame derives repaint
+  // (rects are summed); the canvas is left painted whole.
+  float SidebarShare(const workspace::RenderInvalidation& redraw, bool* full = nullptr) {
+    const SDL_FRect sidebar = TestAccess::CurrentLayout(shell).sidebar;
+    TestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks());
+    const workspace::RenderInvalidation damage = FrameDamage(shell, canvas, kWidth, kHeight, redraw);
+    if (full != nullptr) {
+      *full = damage.full;
+    }
+    float share = 0.0f;
+    for (const SDL_FRect& rect : damage.rects) {
+      SDL_FRect inside{};
+      if (SDL_GetRectIntersectionFloat(&rect, &sidebar, &inside)) {
+        share += inside.w * inside.h / (sidebar.w * sidebar.h);
+      }
+    }
+    Paint();
+    return share;
+  }
+};
+
+// The file tree's rows are derived units: what a row shows -- its label and depth,
+// whether its folder is open, the selection, its git badge -- is its key, so a row
+// repaints whoever changed it, with no damage request, and the rows it did not
+// change stay as they are. The sidebar's stand-in was one unit over the whole
+// sidebar, keyed on the selection, the scroll and the tree's revision.
+void TestTheFileTreesRowsRepaintWhatChangedWithNoDamageRequest() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  TreeFixture fixture;
+  project::DirectoryTree& tree = fixture.tree();
+  Expect(tree.entries().size() >= 4, "the tree shows the project's folders and file");
+
+  // The selection, set as a tab activation or a control command sets it.
+  tree.SetSelectedIndex(1);
+  fixture.ExpectFresh(NothingAnnounced(), "the tree's selection moved");
+  tree.SetSelectedIndex(2);
+  bool full = false;
+  const float moved = fixture.SidebarShare(NothingAnnounced(), &full);
+  Expect(!full && moved > 0.0f && moved < 0.15f,
+         "a selection that moves repaints the row it left and the row it took: " + std::to_string(moved) +
+             " of the sidebar");
+
+  // A folder opened: its chevron turns, its files appear, the rows below move down.
+  Expect(tree.SelectPath(fixture.root / "alpha"), "the first folder is in the tree");
+  fixture.Paint();
+  const std::size_t closed_count = tree.entries().size();
+  tree.ExpandSelection();
+  Expect(tree.entries().size() >= closed_count + 6, "the opened folder lists its files");
+  fixture.ExpectFresh(NothingAnnounced(), "a folder opened");
+  tree.CollapseSelection();
+  fixture.ExpectFresh(NothingAnnounced(), "the folder closed");
+  tree.ExpandSelection();
+  fixture.Paint();
+
+  // A git status landing (its refresh runs off the shell thread): one file's badge.
+  auto statuses = std::make_shared<project::GitTreeStatusMap>();
+  (*statuses)["alpha/file2.cpp"] = project::GitFileStatus::Modified;
+  (*statuses)["alpha"] = project::GitFileStatus::Modified;
+  Expect(tree.ApplyGitStatuses(statuses), "the statuses change a badge");
+  full = false;
+  const float badged = fixture.SidebarShare(NothingAnnounced(), &full);
+  Expect(!full && badged > 0.0f && badged < 0.15f,
+         "a git badge repaints its file's row and its folder's: " + std::to_string(badged) + " of the sidebar");
+  auto more = std::make_shared<project::GitTreeStatusMap>(*statuses);
+  (*more)["alpha/file4.cpp"] = project::GitFileStatus::Untracked;
+  Expect(tree.ApplyGitStatuses(more), "a second badge");
+  fixture.ExpectFresh(NothingAnnounced(), "a second git badge");
+  Expect(tree.ApplyGitStatuses(nullptr), "the badges clear");
+  fixture.ExpectFresh(NothingAnnounced(), "the git badges cleared");
+
+  // Collapse All's button dims when nothing is left open.
+  tree.CollapseAll();
+  fixture.ExpectFresh(NothingAnnounced(), "every folder closed (the Collapse button dims)");
+
+  // The pointer over a row, through the real motion path, and off it again.
+  const std::optional<SDL_FRect> row = TestAccess::TreeSidebarRowRect(fixture.shell, 2);
+  Expect(row.has_value(), "the third row is on screen");
+  if (row.has_value()) {
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(row->x + row->w / 2.0f, row->y + row->h / 2.0f)}),
+                        "the pointer onto a tree row");
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(900.0f, 400.0f)}),
+                        "the pointer off the tree");
+  }
+
+  // Another view and back: the tree's rows go and come with the sidebar. (No
+  // query: a search would land its results between the two paints compared.)
+  TestAccess::ShowSearchSidebar(fixture.shell, "", false);
+  fixture.ExpectFresh(NothingAnnounced(), "the sidebar switched to Search");
+  TestAccess::ShowTreeSidebar(fixture.shell);
+  fixture.ExpectFresh(NothingAnnounced(), "the sidebar switched back to the tree");
+}
+
+// A tree taller than the sidebar: its scroll, set with no damage request, repaints
+// the rows and the thumb; a file appearing on disk and the tree refreshed repaints
+// from its row down.
+void TestTheFileTreeFollowsItsScrollAndARefresh() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  TreeFixture fixture(/*files_per_folder=*/30);
+  project::DirectoryTree& tree = fixture.tree();
+  Expect(tree.SelectPath(fixture.root / "alpha"), "the first folder is in the tree");
+  tree.ExpandSelection();
+  fixture.Paint();
+  Expect(tree.entries().size() > 30, "the opened folder overflows the sidebar");
+  auto& sidebar = TestAccess::CurrentProjectState(fixture.shell).sidebar;
+  sidebar.scroll_row = 5;
+  fixture.ExpectFresh(NothingAnnounced(), "the tree scrolled five rows");
+  sidebar.scroll_row = 6;
+  fixture.ExpectFresh(NothingAnnounced(), "the tree scrolled one more row");
+  sidebar.scroll_row = 0;
+  fixture.ExpectFresh(NothingAnnounced(), "the tree scrolled back to its top");
+  WriteFile(fixture.root / "alpha" / "added.cpp", "int y;\n");
+  tree.Refresh();
+  fixture.ExpectFresh(NothingAnnounced(), "a file appeared and the tree refreshed");
+}
+
+}  // namespace
+
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "QaFlowRegression/TheFileTreesRowsRepaintWhatChangedWithNoDamageRequest",
+          TestTheFileTreesRowsRepaintWhatChangedWithNoDamageRequest);
+  AddTest(tests, "QaFlowRegression/TheFileTreeFollowsItsScrollAndARefresh", TestTheFileTreeFollowsItsScrollAndARefresh);
   AddTest(tests, "QaFlowRegression/APromptCaretBlinkAtScaleThreeLeavesNoColumn",
           TestAPromptCaretBlinkAtScaleThreeLeavesNoColumn);
   AddTest(tests, "QaFlowRegression/ACompareTabsActionsRepaintTheirRows", TestACompareTabsActionsRepaintTheirRows);

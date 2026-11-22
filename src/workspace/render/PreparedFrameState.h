@@ -106,6 +106,29 @@ struct GitPanelRowPaint {
   bool base_button_hovered = false;
   bool base_menu_open = false;
 };
+// The file tree's header buttons and rows, as PrepareTreeSidebarFrame lays them out.
+struct TreeSidebarButtonPaint {
+  SDL_FRect rect{};
+  std::string_view label;
+  bool enabled = false;
+  bool hovered = false;
+};
+// A row of the file tree. `label` views its tree entry.
+struct TreeSidebarRowPaint {
+  SDL_FRect rect{};
+  std::string_view label;
+  float indent = 0.0f;  // the tree depth, in pixels
+  bool is_directory = false;
+  bool expanded = false;
+  bool selected = false;
+  bool hovered = false;
+  bool muted = false;  // ignored by git, or listed but not on disk yet
+  project::GitFileStatus git_status = project::GitFileStatus::Clean;
+  SDL_Color git_color{};  // the status marker's, at the row's right edge
+  bool has_icon = false;  // a file's type icon, in the chevron's slot
+  editor::GutterIconShape icon_shape = editor::GutterIconShape::Dot;
+  SDL_Color icon_color{};
+};
 struct GitPanelFieldPaint {
   SDL_FRect frame{};  // empty: the sidebar has no room for the field
   bool focused = false;
@@ -439,6 +462,15 @@ struct PreparedFrameState {
   };
   DebugPaneBodyPaint debug_pane;
 
+  // ---- the sidebar's file tree (derived-damage 4.1) ----
+  // Laid out by PrepareTreeSidebarFrame; PaintTreeSidebar draws only this.
+  struct TreeSidebarPaint {
+    bool visible = false;
+    std::array<TreeSidebarButtonPaint, 2> buttons{};  // Collapse, Refresh
+    std::vector<TreeSidebarRowPaint> rows;
+    std::optional<PanelScrollbarPaint> scrollbar;
+  };
+  TreeSidebarPaint tree_sidebar;
   // ---- the Source Control panel's head (derived-damage 4.1, clip-discipline 4.1) ----
   // Laid out by PrepareGitPanelFrame; PaintGitPanel draws only this.
   struct GitPanelPaint {

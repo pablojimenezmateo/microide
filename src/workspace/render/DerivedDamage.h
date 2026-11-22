@@ -42,6 +42,8 @@ enum class DerivedSurface : std::uint8_t {
   EditorPane0,
   EditorPane7 = EditorPane0 + 7,
   GitPanel,
+  // The sidebar's file tree: its header buttons, visible rows and scrollbar.
+  SidebarTree,
   // The window's chrome a frame decides as a whole: its regions, the caret, the
   // floating cards and popups (each a unit at a fixed position; an absent one
   // keeps its position with an empty rect).
