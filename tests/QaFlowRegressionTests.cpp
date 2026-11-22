@@ -1214,6 +1214,54 @@ void TestATabDraggedAcrossStackedPanesPaintsItsGhostInTheTargetStrip() {
                       "dropping it in the bottom strip");
 }
 
+// Soak 86cbec1c3c41 (1440x900 at ui.scale 1.25): a tab dragged from a wide pane's
+// strip over a narrower one kept its own width, wider than the strip, and the
+// clamp that keeps a ghost inside its strip could only pin its left edge: its
+// right edge and outline ran into the gap past the strip, which the drag's damage
+// (the strip, and no more) never covered, so it stayed on screen beside the strip.
+void TestATabGhostOverANarrowerStripStaysInsideIt() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("a-rather-long-file-name-for-the-ghost.txt", "first\n", 640, 300);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "split-right should run");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "split-right again, halving the right pane");
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "a wide pane and two narrow ones");
+  std::vector<SDL_FRect> tabs;
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    if (entry["kind"].AsString() != "tab") {
+      continue;
+    }
+    const auto& r = entry["rect"].AsArray();
+    tabs.push_back(SDL_FRect{static_cast<float>(r[0].AsInt()), static_cast<float>(r[1].AsInt()),
+                             static_cast<float>(r[2].AsInt()), static_cast<float>(r[3].AsInt())});
+  }
+  std::sort(tabs.begin(), tabs.end(), [](const SDL_FRect& a, const SDL_FRect& b) { return a.x < b.x; });
+  Expect(tabs.size() == 3, "one tab in each of the three panes");
+  if (tabs.size() != 3) {
+    return;
+  }
+  const SDL_FRect source = tabs[0];
+  const SDL_FRect middle = tabs[1];
+  Expect(source.w > tabs[2].x - middle.x, "the left pane's tab is wider than the middle strip (the case under test)");
+  const float x0 = source.x + source.w / 2.0f;
+  const float y0 = source.y + source.h / 2.0f;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x0, y0),
+                                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x0, y0)}),
+                      "pressing the left pane's tab");
+  const float x1 = middle.x + 10.0f;
+  for (int step = 1; step <= 6; ++step) {
+    const float x = x0 + (x1 - x0) * static_cast<float>(step) / 6.0f;
+    SDL_Event motion = MouseMotionEvent(x, y0);
+    motion.motion.state = SDL_BUTTON_LMASK;  // the button is held: a drag
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {motion}),
+                        "dragging the tab over the middle strip, step " + std::to_string(step));
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x1, y0)}),
+                      "dropping it in the middle strip");
+}
+
 // Soak b6cc343b6ee1 (reproduced by d9ec05f4132a's replay): a panel hidden while
 // maximized comes back maximized, over the sidebar and the editor. A Git command
 // that showed its output brought it back with the keyboard on the sidebar, and
@@ -7586,6 +7634,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/AContextMenuClosesOverTheRowsItPainted", TestAContextMenuClosesOverTheRowsItPainted);
   AddTest(tests, "QaFlowRegression/APointerOnAToastHoversNoMenuRowBeneathIt",
           TestAPointerOnAToastHoversNoMenuRowBeneathIt);
+  AddTest(tests, "QaFlowRegression/ATabGhostOverANarrowerStripStaysInsideIt",
+          TestATabGhostOverANarrowerStripStaysInsideIt);
   AddTest(tests, "QaFlowRegression/APointerMovingOntoAToastUnlightsTheMenuRowItLeft",
           TestAPointerMovingOntoAToastUnlightsTheMenuRowItLeft);
   AddTest(tests, "QaFlowRegression/APointerMovingOntoAToastUnlightsTheTabItLeft",

@@ -1203,13 +1203,19 @@ inline void DrawTabDragFeedback(const render::TextRenderer& text_renderer,
   if (ghost == nullptr) {
     return;
   }
-  const float ghost_x =
-      ClampedGhostX(strip.x, strip.w, ghost->rect.w, pointer_x, grab_offset_x);
+  // No wider than the strip it paints over: a tab dragged from a wider pane's strip
+  // kept its own width, and the clamp could only pin its left edge, so its right
+  // edge and outline ran past the strip into the gap beside it, which the drag's
+  // damage never covers (soak 86cbec1c3c41). Its x is the same either way: a ghost
+  // as wide as the strip or wider sits at the strip's left edge, where the drop
+  // math (ClampedGhostX on the tab's own width) puts it too.
+  const float ghost_w = std::min(ghost->rect.w, std::max(0.0f, strip.w));
+  const float ghost_x = ClampedGhostX(strip.x, strip.w, ghost_w, pointer_x, grab_offset_x);
   // In the strip it paints over, at the tab's place within its own: with the
   // panes stacked, the source tab's y put the ghost in the row above, over a strip
   // no damage covered (soak d9ec05f4132a).
   const SDL_FRect ghost_rect =
-      MakeRect(ghost_x, strip.y + (ghost->rect.y - tabs_strip.y), ghost->rect.w, ghost->rect.h);
+      MakeRect(ghost_x, strip.y + (ghost->rect.y - tabs_strip.y), ghost_w, ghost->rect.h);
   // The drop shadow stays inside the strip: a drag damages the strip and no more,
   // so shadow drawn below it was never painted over (soak 0c1b56e84217).
   const SDL_FRect shadow = MakeRect(ghost_rect.x + 1.0f, ghost_rect.y + 2.0f, ghost_rect.w, ghost_rect.h);
