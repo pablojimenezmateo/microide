@@ -24,6 +24,18 @@ DirtyRegionAnalysis AnalyzeDirtyRegions(const std::vector<SDL_FRect>& dirty_rect
                                         int height,
                                         SDL_FPoint device_scale = SDL_FPoint{1.0f, 1.0f});
 
+// The same, into `out`, reusing its storage: the frame loop keeps one analysis
+// across frames, so a steady frame allocates nothing here. A fresh vector per
+// frame grew by push_back to the frame's rect count, about log2(n) allocations a
+// frame, and per-row derived damage made n the visible rows (the Output body's
+// stream, derived-damage 3.1).
+void AnalyzeDirtyRegions(const std::vector<SDL_FRect>& dirty_rects,
+                         const render::TextClipPadding& padding,
+                         int width,
+                         int height,
+                         SDL_FPoint device_scale,
+                         DirtyRegionAnalysis& out);
+
 bool ShouldPromotePartialFrameToFull(const DirtyRegionAnalysis& analysis);
 
 // The clips are logical rects, and SDL scales one to device pixels as

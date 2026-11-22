@@ -96,8 +96,21 @@ DirtyRegionAnalysis AnalyzeDirtyRegions(const std::vector<SDL_FRect>& dirty_rect
                                         int height,
                                         SDL_FPoint device_scale) {
   DirtyRegionAnalysis analysis;
+  AnalyzeDirtyRegions(dirty_rects, padding, width, height, device_scale, analysis);
+  return analysis;
+}
+
+void AnalyzeDirtyRegions(const std::vector<SDL_FRect>& dirty_rects,
+                         const render::TextClipPadding& padding,
+                         int width,
+                         int height,
+                         SDL_FPoint device_scale,
+                         DirtyRegionAnalysis& analysis) {
+  analysis.merged_clip_rects.clear();  // keeps its capacity
+  analysis.clipped_rect_count = 0;
+  analysis.coverage = 0.0f;
   if (width <= 0 || height <= 0) {
-    return analysis;
+    return;
   }
 
   for (const SDL_FRect& dirty_rect : dirty_rects) {
@@ -109,7 +122,7 @@ DirtyRegionAnalysis AnalyzeDirtyRegions(const std::vector<SDL_FRect>& dirty_rect
 
   analysis.clipped_rect_count = analysis.merged_clip_rects.size();
   if (analysis.merged_clip_rects.empty()) {
-    return analysis;
+    return;
   }
 
   // Iterative merge: O(n²) worst case but n is always small in practice (< 20).
@@ -162,8 +175,6 @@ DirtyRegionAnalysis AnalyzeDirtyRegions(const std::vector<SDL_FRect>& dirty_rect
     merged_area = std::min(merged_area, scene_area);
     analysis.coverage = static_cast<float>(merged_area) / static_cast<float>(scene_area);
   }
-
-  return analysis;
 }
 
 render::TextClipPadding PadClipForPresentationScale(render::TextClipPadding padding,

@@ -401,8 +401,10 @@ void ScenarioContext::PumpPartialFrame(
       partial_dirty_rects_.insert(partial_dirty_rects_.end(), prepared.rects.begin(), prepared.rects.end());
     }
   }
-  const app::DirtyRegionAnalysis analysis = app::AnalyzeDirtyRegions(
-      partial_dirty_rects_, shell_.PartialRedrawClipPadding(), 1920, 1080);
+  // Kept across frames, as Application keeps its own: a steady frame allocates nothing here.
+  app::AnalyzeDirtyRegions(partial_dirty_rects_, shell_.PartialRedrawClipPadding(), 1920, 1080, SDL_FPoint{1.0f, 1.0f},
+                           partial_analysis_);
+  const app::DirtyRegionAnalysis& analysis = partial_analysis_;
   const bool promoted = !requested_full && app::ShouldPromotePartialFrameToFull(analysis);
   const bool full_frame = requested_full || analysis.merged_clip_rects.empty() || promoted;
   if (full_frame) {

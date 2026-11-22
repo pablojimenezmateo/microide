@@ -16,6 +16,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "app/DirtyRegionPolicy.h"
 #include "workspace/shell/WorkspaceShell.h"
 #include "workspace/WorkspaceVirtualDocument.h"
 
@@ -501,6 +502,7 @@ class ScenarioContext {
   // zero allocations once its capacity is warm (the analysis itself still
   // allocates its merged list per frame, exactly as the app does).
   std::vector<SDL_FRect> partial_dirty_rects_;
+  app::DirtyRegionAnalysis partial_analysis_;
   // (path, size before this iteration's first append) for every fixture file
   // SimulateExternalFileChange touched. See RestoreExternalFileChanges.
   std::vector<std::pair<std::filesystem::path, std::uintmax_t>> external_file_restores_;

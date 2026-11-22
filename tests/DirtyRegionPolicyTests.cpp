@@ -276,6 +276,32 @@ void TestTheDirtyHintIsTheClipsDeviceExtent() {
 // openspec clip-discipline D2: a damage rect and the clip it becomes are one
 // computation -- the shared device-pixel snap of the padded rect -- so the clip
 // covers what a fill of the same rect touches, at every scale.
+// The frame loop analyses into one kept analysis: the same clips, coverage and
+// count as the by-value form, its clip list's storage reused from frame to frame
+// (a fresh list grew to each frame's rect count, ~log2(n) allocations a frame),
+// and nothing from a busier frame left over in a quieter one.
+void TestAnalyzingIntoAKeptAnalysisReusesItsStorage() {
+  using microide::app::AnalyzeDirtyRegions;
+  using microide::app::DirtyRegionAnalysis;
+  const microide::render::TextClipPadding padding{};
+  std::vector<SDL_FRect> rows;
+  for (int i = 0; i < 12; ++i) {
+    rows.push_back(SDL_FRect{.x = 0.0f, .y = 40.0f * static_cast<float>(i), .w = 30.0f, .h = 10.0f});
+  }
+  DirtyRegionAnalysis kept;
+  AnalyzeDirtyRegions(rows, padding, 800, 600, SDL_FPoint{1.0f, 1.0f}, kept);
+  const DirtyRegionAnalysis fresh = AnalyzeDirtyRegions(rows, padding, 800, 600);
+  Expect(kept.merged_clip_rects.size() == fresh.merged_clip_rects.size() &&
+             kept.clipped_rect_count == fresh.clipped_rect_count && kept.coverage == fresh.coverage,
+         "a kept analysis matches the by-value one");
+  const SDL_Rect* storage = kept.merged_clip_rects.data();
+  AnalyzeDirtyRegions(rows, padding, 800, 600, SDL_FPoint{1.0f, 1.0f}, kept);
+  Expect(kept.merged_clip_rects.data() == storage, "the next frame reuses the clip list's storage");
+  AnalyzeDirtyRegions({}, padding, 800, 600, SDL_FPoint{1.0f, 1.0f}, kept);
+  Expect(kept.merged_clip_rects.empty() && kept.clipped_rect_count == 0 && kept.coverage == 0.0f,
+         "a frame with no damage keeps nothing from the one before");
+}
+
 void TestADamageClipIsTheSharedSnapOfItsRect() {
   const microide::render::TextClipPadding padding{};
   for (const float scale : {1.25f, 1.5f, 1.75f}) {
@@ -312,6 +338,8 @@ void RegisterDirtyRegionPolicyTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DirtyRegionPolicy/MergeCoversEveryDamagedPixel",
           TestDirtyRegionMergeCoversEveryDamagedPixel);
   AddTest(tests, "DirtyRegionPolicy/ADamageClipIsTheSharedSnapOfItsRect", TestADamageClipIsTheSharedSnapOfItsRect);
+  AddTest(tests, "DirtyRegionPolicy/AnalyzingIntoAKeptAnalysisReusesItsStorage",
+          TestAnalyzingIntoAKeptAnalysisReusesItsStorage);
 }
 
 }  // namespace microide::tests

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "app/AppStartupOptions.h"
+#include "app/DirtyRegionPolicy.h"
 #include "app/RedrawTraceAccumulator.h"
 #include "app/RedrawVerifier.h"
 #include "app/SceneTexturePresenter.h"
@@ -86,6 +87,8 @@ class Application {
   RedrawVerifier redraw_verifier_;
   // Counts Render() calls; names frames in the redraw trace and QA-STALE lines.
   std::uint64_t frame_index_ = 0;
+  // Each frame's damage analysis, kept so its clip list reuses its storage.
+  DirtyRegionAnalysis dirty_region_analysis_;
 
   AppStartupOptions startup_options_;
   workspace::WorkspaceShell workspace_shell_;

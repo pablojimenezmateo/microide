@@ -106,3 +106,18 @@ across rounds (per-frame chrome prep: a log layout and three units per pane); wi
 budget. Every terminal scenario allocates exactly as before.
 
 Verdict: within budget.
+
+### Addendum: the Output stream's allocations back to base (2026-11-22)
+
+The +40 allocations per iteration were not the damage queue (its inline storage holds the
+frame's ~3 rects; no spills). Per phase, head vs base: shown 804 vs 724 (+2 a frame), hidden 680
+vs 720 (-1 a frame). `AnalyzeDirtyRegions` returned a fresh clip list each frame and grew it by
+push_back to the frame's rect count -- ~log2(n) allocations a frame, in the app and in the
+harness alike -- and per-row damage made n the rows that moved (the trigger plus the panel was
+n = 2 before). Fix: the analysis fills a kept `DirtyRegionAnalysis` whose list keeps its capacity
+(Application and the harness each keep one), so a steady frame allocates nothing there.
+
+Per phase now: shown 650, hidden 642, against base 726 / 722 measured with the base binary's
+fresh-per-frame analysis. Its own two clip-list allocations a frame (80 a phase) would go too,
+putting the base at ~646 / 642: the head is at base (+4 in the shown phase, the kept list's
+first growth). terminal_mouse_owner_hover's +1.5% is under the 5% limit; noted, not chased.
