@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <cmath>
 
 // One rule for turning a logical rect into whole device pixels, shared by every
@@ -87,15 +88,24 @@ inline Span SnapOutward(int start, int length, int k) {
 // outward to the scale's alignment k. Idempotent. An empty, inverted or NaN rect is
 // {0,0,0,0} -- never one alignment unit, which would damage and clip k x k pixels
 // for a rect of none.
+// How far from a whole logical pixel an edge may sit and still snap as that pixel.
+// Layout arithmetic leaves float noise on edges meant to coincide: a terminal
+// scrollbar's thumb laid out to end where its track ends summed to
+// 882.857178 + 53.1428566 = 936.0000x (soak 0ab3769c6866, from its rr trace),
+// which ceiled to 937 and then aligned out a whole step -- 4 px at 1.25x -- past
+// the track it shares that edge with. Its element reported it drawing outside,
+// and the clips and damage of two rects meeting there disagreed.
+inline constexpr float kSnapEdgeNoise = 1.0f / 256.0f;
+
 inline SDL_Rect SnapToDevicePixels(const SDL_FRect& rect, SDL_FPoint scale) {
   // `!(w > 0)` is also true for NaN.
   if (!(rect.w > 0.0f) || !(rect.h > 0.0f) || std::isnan(rect.x) || std::isnan(rect.y)) {
     return SDL_Rect{0, 0, 0, 0};
   }
-  const int left = static_cast<int>(std::floor(rect.x));
-  const int top = static_cast<int>(std::floor(rect.y));
-  const int right = static_cast<int>(std::ceil(rect.x + rect.w));
-  const int bottom = static_cast<int>(std::ceil(rect.y + rect.h));
+  const int left = static_cast<int>(std::floor(rect.x + kSnapEdgeNoise));
+  const int top = static_cast<int>(std::floor(rect.y + kSnapEdgeNoise));
+  const int right = std::max(left + 1, static_cast<int>(std::ceil(rect.x + rect.w - kSnapEdgeNoise)));
+  const int bottom = std::max(top + 1, static_cast<int>(std::ceil(rect.y + rect.h - kSnapEdgeNoise)));
   const auto x = device_pixel_snap_detail::SnapOutward(
       left, right - left, device_pixel_snap_detail::DevicePixelAlignment(scale.x));
   const auto y = device_pixel_snap_detail::SnapOutward(

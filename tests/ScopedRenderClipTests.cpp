@@ -262,6 +262,16 @@ void TestSnapToDevicePixelsIsWholeIdempotentAndKeepsEmptyEmpty() {
              "an empty, inverted or NaN rect snaps to nothing at scale " + std::to_string(scale));
     }
   }
+  // Soak 0ab3769c6866, the values from its rr trace: a terminal scrollbar's thumb
+  // laid out to end where its track ends, at 882.857178 + 53.1428566 -- 936 plus
+  // float noise. Its far edge ceiled to 937 and aligned out a whole 4 px step at
+  // 1.25x, so the thumb snapped past the track it sits in.
+  const SDL_FPoint s{1.25f, 1.25f};
+  const SDL_Rect track = SnapToDevicePixels(SDL_FRect{1695.0f, 812.0f, 10.0f, 124.0f}, s);
+  const SDL_Rect thumb = SnapToDevicePixels(SDL_FRect{1695.0f, 882.857178f, 10.0f, 53.1428566f}, s);
+  Expect(thumb.y + thumb.h <= track.y + track.h,
+         "a rect ending on another's edge plus float noise snaps to that edge (thumb ends " +
+             std::to_string(thumb.y + thumb.h) + ", track " + std::to_string(track.y + track.h) + ")");
 }
 
 // openspec clip-discipline D1/D5: an element paints inside its own scope. A draw
