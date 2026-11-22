@@ -8979,6 +8979,60 @@ void TestARemoteProjectsStageRepaintsItsTabFromAFrame() {
          "the stage shows on the project strip (changed from y=" + std::to_string(changed.min_y) + ")");
 }
 
+// A menu hanging from a status segment (the remote segment's Remote menu, which
+// flips above the bar) opens and closes from a frame alone: its popup is derived
+// units, the bar's Remote item is a chrome unit keyed on "its menu is open", and
+// the segment itself draws nothing from the menu. The menu's coordinator named
+// the segment's rect, for the buttons that do draw pressed while their menu is
+// open; those two key it (the sidebar's view overflow:
+// TheSidebarsModeRowRepaintsWhatChangedWithNoDamageRequest; the git view's
+// outgoing-base button: its header row's key).
+void TestAMenuHangingFromAStatusSegmentOpensAndClosesFromAFrame() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("notes.txt", "one\ntwo\n");
+  workspace::StatusBarSegmentValue remote;
+  remote.text = "worky";
+  remote.tooltip = "Remote menu";
+  remote.menu = workspace::MenuId::Remote;
+  remote.visible = true;
+  TestAccess::SetStatusBarSegment(fixture.shell, workspace::StatusBarSegmentId::Remote, remote);
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "a status bar with the remote segment");
+  const auto segment = fixture.ElementRect("status:remote");
+  Expect(segment.has_value(), "the status bar shows the remote segment");
+  if (!segment) {
+    return;
+  }
+  const auto owes_a_frame = [](const workspace::RenderInvalidation& redraw, const std::string& what) {
+    Expect(!redraw.full && redraw.frame && redraw.rects.empty(), what + " owes a frame and names no rect (rects=" +
+                                                                    std::to_string(redraw.rects.size()) + ")");
+    return redraw;
+  };
+  const float x = segment->x + segment->w * 0.5f;
+  const float y = segment->y + segment->h * 0.5f;
+  // The pointer first (its hover names its own rects), then the press alone.
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x, y)}), "the pointer onto the segment");
+  const workspace::RenderInvalidation opened =
+      DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
+                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)});
+  Expect(TestAccess::MenuBarOpen(fixture.shell), "a click on the segment opens its menu");
+  fixture.ExpectFresh(owes_a_frame(opened, "the segment's menu opening"), "the Remote menu opened over the bar");
+  const std::vector<MenuRowProbe> rows = OpenMenuRows(fixture, "Remote");
+  Expect(!rows.empty(), "the Remote menu lists its rows");
+  if (!rows.empty()) {
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(rows.front().rect.x + 12.0f,
+                                                                        rows.front().rect.y + rows.front().rect.h * 0.5f)}),
+                        "the pointer onto its first row");
+  }
+  const workspace::RenderInvalidation closed = DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)});
+  fixture.ExpectFresh(owes_a_frame(closed, "the segment's menu closing"), "Escape closed it");
+  fixture.ExpectFresh(fixture.Click(*segment), "the segment opened it again");
+  fixture.ExpectFresh(fixture.Click(SDL_FRect{700.0f, 300.0f, 2.0f, 2.0f}), "a press outside closed it");
+  Expect(!TestAccess::MenuBarOpen(fixture.shell), "the press outside closed the menu");
+}
+
 // The compact layout's overflow popup, whose rows light by its active index: the
 // pointer along them, the keyboard, and Escape, each against a full repaint.
 void TestTheMenuOverflowPopupsRowsRepaintRowByRow() {
@@ -9184,6 +9238,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestTheDebugToolbarFollowsItsSessionFromAFrame);
   AddTest(tests, "QaFlowRegression/ARemoteProjectsStageRepaintsItsTabFromAFrame",
           TestARemoteProjectsStageRepaintsItsTabFromAFrame);
+  AddTest(tests, "QaFlowRegression/AMenuHangingFromAStatusSegmentOpensAndClosesFromAFrame",
+          TestAMenuHangingFromAStatusSegmentOpensAndClosesFromAFrame);
   AddTest(tests, "QaFlowRegression/TheMenuOverflowPopupsRowsRepaintRowByRow",
           TestTheMenuOverflowPopupsRowsRepaintRowByRow);
   AddTest(tests, "QaFlowRegression/ASubmenuAndAContextMenuRepaintRowByRow",

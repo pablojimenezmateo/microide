@@ -18,9 +18,6 @@ class MenuCoordinator {
     // A frame is owed and frame prep derives what it repaints: the popups' cards
     // and rows and the bar's items are units keyed on this coordinator's state.
     std::function<void()> request_frame;
-    // One rect's worth of damage: the button an anchored menu hangs from, and
-    // what a closing overflow popup covered.
-    std::function<void(const SDL_FRect&)> request_redraw_rect;
     std::function<std::span<const MenuItemSpec>(MenuId)> menu_items;
     std::function<bool(const MenuItemSpec&)> is_menu_item_enabled;
     // The menu-bar items that did not fit, in order. Depends on the live

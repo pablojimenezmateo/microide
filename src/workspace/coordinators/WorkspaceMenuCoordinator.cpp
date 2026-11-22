@@ -62,19 +62,13 @@ int MenuCoordinator::NextEnabledMenuItemIndex(MenuId id, int current_index, int 
 // What a menu that opens, switches or closes changes on screen is derived: its
 // popups' cards and rows (MenuPopupPaint) and the bar's items (the chrome units)
 // are keyed on the state this coordinator writes, so it owes a frame and names no
-// rect -- it named the chrome's: the bar and every open popup. One thing is not
-// known to be keyed: the button a menu hangs from paints pressed while its menu
-// is open (a tab strip's overflow chip, the panel's "+", a status segment), so
-// that button's rect is still named. Called before and after a change, as the
-// chrome's rect was: the anchor before is not the anchor after.
-void MenuCoordinator::OweMenuFrame() {
-  operations_.request_frame();
-  if (menu_state_.menu_bar_open && menu_state_.active_menu_anchor_rect.has_value() &&
-      operations_.request_redraw_rect) {
-    const SDL_FRect& anchor = *menu_state_.active_menu_anchor_rect;
-    operations_.request_redraw_rect(SDL_FRect{anchor.x - 1.0f, anchor.y - 1.0f, anchor.w + 2.0f, anchor.h + 2.0f});
-  }
-}
+// rect -- it named the chrome's: the bar and every open popup, and the button an
+// anchored menu hangs from. Of those buttons, the two that draw differently
+// while their menu is open key it (the sidebar's view overflow and the git
+// view's outgoing-base button: SidebarModeRowInputs::overflow_menu_open,
+// GitPanelInputs::outgoing_base_menu_open); the rest draw nothing from it -- a
+// status segment, and the context menus, which hang from the pointer.
+void MenuCoordinator::OweMenuFrame() { operations_.request_frame(); }
 
 void MenuCoordinator::OpenMenuBarMenu(MenuId id) { OpenMenu(id, std::nullopt); }
 
@@ -304,7 +298,6 @@ MenuCoordinator& WorkspaceShell::MakeMenuCoordinator() {
       context_.menu_state,
       MenuCoordinator::Operations{
           .request_frame = [this]() { RequestPreparedFrame(); },
-          .request_redraw_rect = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); },
           .menu_items = [this](MenuId id) { return MenuItems(id); },
           .is_menu_item_enabled =
               [this](const MenuItemSpec& item) { return IsMenuItemEnabled(item); },
