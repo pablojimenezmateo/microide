@@ -166,17 +166,10 @@ struct PreparedFrameState {
   // rows on screen (soak e4353c8cb483). Prep repaints old and new when they differ.
   std::optional<SDL_FRect> painted_context_menu_rect;
   std::size_t painted_signature_help_hash = 0;
-  // Per editor pane, the (viewport, content revision) painted.
-  std::array<std::uint64_t, kMaxEditorGroups> painted_pane_content{};
-  // Per editor pane, the (viewport, content, scroll position) painted.
-  std::array<std::uint64_t, kMaxEditorGroups> painted_pane_scroll{};
-  // Per editor pane, the fold markers painted (FoldMarkerFingerprint) and the
-  // (content, fold model revision) they were hashed at.
-  std::array<std::uint64_t, kMaxEditorGroups> painted_fold_revision{};
-  std::array<std::uint64_t, kMaxEditorGroups> painted_fold_markers{};
-  // Per editor pane, whether it painted its file's plugin decorations (they show
-  // only while the buffer is clean).
-  std::array<bool, kMaxEditorGroups> painted_decorations{};
+  // (An editor pane's content, scroll, fold markers, decorations, horizontal
+  // scrollbar, bracket pair, language and occurrence lines were compared here with
+  // what was painted; its rows and bars are derived units now -- EditorRowUnits,
+  // derived-damage 2.4 -- keyed on all of them.)
   // The breakpoint stores' revisions as painted (gutter dots, Breakpoints pane).
   std::uint64_t painted_breakpoints = 0;
   // The window's regions as painted (sidebar, bottom panel, editor surface, right
@@ -247,8 +240,8 @@ struct PreparedFrameState {
   // The focused compare or merge tab's scrollbars as painted (no track: hidden).
   // An edit that widens a line or adds one moves a thumb that sits on none of the
   // rows the edit damages -- typing into a compare tab's long line left the
-  // horizontal thumb at its old width (QA monkey, seed 17). As painted_horizontal_bars
-  // does for an editor pane: a bar shown or hidden repaints the surface, a moved one
+  // horizontal thumb at its old width (QA monkey, seed 17). As an editor pane's
+  // bar units do (EditorRowUnits): a bar shown or hidden repaints the surface, a moved one
   // its strip. The lane's markers (a hash) likewise: a merge result edit that
   // wrapped a line onto one more row moved the conflicts below it, and the lane
   // kept their old markers (soak e97cacbc359f).
@@ -286,41 +279,12 @@ struct PreparedFrameState {
   // hash too: a title re-derived on activation (a split's untitled tab) changed
   // on a frame that damaged no strip.
   std::uint64_t painted_editor_tab_labels = 0;
-  // The focused pane's occurrence highlights as painted: its viewport and, per
-  // highlighted line, a hash of that line's ranges, by line. The highlight follows
-  // the word at the caret, so a keystroke or a click changes it on lines nothing
-  // else damages -- and repainting the whole pane for it made every keystroke a
-  // full-pane paint (editor_typing_paint, 4.6x). Prep repaints the lines whose
-  // highlight changed, no more. `occurrence_lines` is the frame's scratch.
-  // Per editor pane, its horizontal scrollbar as painted (no track: hidden). An
-  // edit, a paste, a resize or a font change moves it, and it is not on the rows
-  // they damage; one that appears or goes also moves the text area. Diffed here
-  // rather than guessed at each edit, which repainted the pane on every keystroke
-  // into an already-wide line (editor_typing_paint).
-  struct HorizontalBar {
-    const void* viewport = nullptr;
-    std::optional<SDL_FRect> track;
-    SDL_FRect thumb{};
-  };
-  std::array<HorizontalBar, kMaxEditorGroups> painted_horizontal_bars{};
-  // The focused pane's bracket-match pair as painted. An edit can make or break the
-  // pair on a line it does not damage -- commenting out the closer left the opener
-  // lit (QA monkey, seed 40 at 600 steps) -- so prep repaints the lines a pair
-  // left or reached.
-  const void* painted_bracket_viewport = nullptr;
-  std::optional<editor::BracketMatchPair> painted_bracket_pair;
-  // Per editor pane, its active viewport and the language its rows were
-  // highlighted as. An edit can change the language of the whole buffer --
-  // typing before a shebang turns a shell script into plain text -- while it
-  // damages only its own line, and every other row kept the old colours (QA
-  // monkey, seed 60 at 600 steps). Prep repaints the pane when it changes.
-  struct PaintedLanguage {
-    const void* viewport = nullptr;
-    std::string language;
-  };
-  std::array<PaintedLanguage, kMaxEditorGroups> painted_languages{};
-  const void* painted_occurrence_viewport = nullptr;
-  std::vector<std::pair<std::size_t, std::uint64_t>> painted_occurrence_lines;
+  // The focused pane's frame inputs its rows key on (EditorRowUnits): its
+  // bracket-match pair and its occurrence highlights, one (line, hash of that
+  // line's ranges) per line, sorted.
+  const void* bracket_viewport = nullptr;
+  std::optional<editor::BracketMatchPair> bracket_pair;
+  const void* occurrence_viewport = nullptr;
   std::vector<std::pair<std::size_t, std::uint64_t>> occurrence_lines;
   // The window title (WorkspaceUiText ComposeWindowTitle) and a hash of what it
   // was composed from. It names the focused group's active tab, its dirty mark and

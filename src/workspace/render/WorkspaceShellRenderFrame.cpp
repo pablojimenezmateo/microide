@@ -256,21 +256,6 @@ std::span<const editor::SelectionRange> BufferSearchHighlightFragments(
   return cache.fragments;
 }
 
-// What the gutter's fold markers show: every resolved fold opener and every
-// collapsed one. Position-sensitive, so a fold that moved also differs.
-std::uint64_t FoldMarkerFingerprint(const editor::FoldingModel& folds) {
-  std::uint64_t hash = 0xcbf29ce484222325ull;
-  const auto mix = [&hash](std::uint64_t value) { hash = (hash ^ value) * 0x100000001b3ull; };
-  for (const editor::FoldRange& range : folds.resolved_ranges()) {
-    mix(range.opener_line);
-  }
-  mix(~0ull);
-  for (const editor::FoldRange& range : folds.collapsed_ranges()) {
-    mix(range.opener_line);
-  }
-  return hash;
-}
-
 }  // namespace
 
 void WorkspaceShell::ResizeTerminalToPanel(const WorkspaceLayout& layout) {
@@ -792,7 +777,6 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         continue;
       }
       const editor::FoldingModel* folds = fold_enabled ? GroupFoldingModelPtr(group) : nullptr;
-      const std::size_t scroll_before_sizing = viewport->scroll_line();
       const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::SizeViewportWithStickyBand(
           editor_text_renderer_, *viewport, pane.rect, line_numbers, [&](const editor::TextViewport& view) {
             return RenderViewModelBuilder::StickyScrollLines(view, folds, sticky_enabled && folds != nullptr,
@@ -800,14 +784,9 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
                 .size();
           });
       const std::size_t sticky_rows = metrics.sticky_scroll_rows;
-      // A scroll the input left that has no consistent sizing (see
-      // SizeViewportWithStickyBand) settled elsewhere, and the input's damage
-      // named rows at the old one: at the end of a short document under a band,
-      // every keystroke repainted the row above the typed one (QA monkey, CI
-      // seed 4). The content moved under that damage, so the pane repaints.
-      if (viewport->scroll_line() != scroll_before_sizing) {
-        RequestRedrawRect(pane.rect);
-      }
+      // A scroll the sizing settled elsewhere than the input left it (see
+      // SizeViewportWithStickyBand) repaints the pane through its row units: the
+      // scroll is in the pane key (derived-damage 2.4).
       frame_state_.pane_metrics[pane.group_index] = metrics;
       frame_state_.pane_metrics_valid[pane.group_index] = true;
       // The overlay the active pane paints, its hover card resolves against and a
@@ -824,118 +803,8 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       }
     }
   }
-  // A document shown in more than one pane is edited through one of them, and the
-  // edit's damage names lines of the FOCUSED pane. Any other pane whose document
-  // changed since it was painted repaints here, whatever made the change (typing,
-  // undo, a plugin or LSP edit, a reload): typing in one half of a split left the
-  // other half showing the old line (found by the QA redraw verifier).
-  {
-    const EditorGroupRectsLayout pane_rects = ComputeEditorGroupRectsForState(layout);
-    const std::size_t focused_group = project_state.clamped_focused_group_index();
-    for (std::size_t gi = 0; gi < project_state.editor_groups.size() && gi < kMaxEditorGroups; ++gi) {
-      const editor::TextViewport* viewport = GroupActiveViewport(project_state.editor_groups[gi]);
-      const std::uint64_t content =
-          viewport == nullptr ? 0
-                              : (reinterpret_cast<std::uintptr_t>(viewport) * 0x9E3779B97F4A7C15ull) ^
-                                    viewport->content_revision();
-      if (content != frame_state_.painted_pane_content[gi] && gi != focused_group && gi < pane_rects.groups.size() &&
-          frame_state_.painted_pane_content[gi] != 0) {
-        RequestRedrawRect(pane_rects.groups[gi].editor_surface);
-      }
-      frame_state_.painted_pane_content[gi] = content;
-      // Where the pane is scrolled to, focused one included: a path that moves
-      // the view without damaging the pane left it a page away from a full
-      // repaint (QA monkey, editor profile, seeds 3 and 6: a tab move scrolled the
-      // pane and repainted only the strips). A scroll that did damage it costs a
-      // rect already in the frame.
-      // Keyed on the viewport and its document, not the content revision: an edit
-      // is not a scroll, and with the revision in the key every keystroke repainted
-      // the whole pane (editor_typing_paint). An edit that does shift the view's
-      // lines damages the pane itself (RequestActiveEditableLastChangeRedraw).
-      const std::uint64_t scroll =
-          viewport == nullptr
-              ? 0
-              : ((reinterpret_cast<std::uintptr_t>(viewport) * 0x9E3779B97F4A7C15ull) ^
-                 reinterpret_cast<std::uintptr_t>(viewport->document_identity())) *
-                        0x100000001B3ull ^
-                    (viewport->scroll_line() << 20) ^ viewport->horizontal_scroll();
-      if (scroll != frame_state_.painted_pane_scroll[gi] && gi < pane_rects.groups.size() &&
-          frame_state_.painted_pane_scroll[gi] != 0) {
-        RequestRedrawRect(pane_rects.groups[gi].editor_surface);
-      }
-      frame_state_.painted_pane_scroll[gi] = scroll;
-      // The gutter's fold markers: an edit can make or unmake a fold opener on a
-      // line it did not touch (lines indented under a closing brace make that
-      // brace's line an indentation fold), and its damage named only the edited
-      // lines. Hashed only when the model's revision moved, so a settled frame
-      // pays two compares.
-      const editor::FoldingModel* folds =
-          viewport == nullptr ? nullptr : GroupFoldingModelPtr(project_state.editor_groups[gi]);
-      const std::uint64_t fold_revision =
-          folds == nullptr ? 0 : (content * 31u) ^ static_cast<std::uint64_t>(folds->revision());
-      // Plugin decorations are drawn only while the buffer is clean (they were
-      // computed for the saved text): the keystroke that dirties it hides every
-      // annotation in the file, and an undo or a save back to clean shows them,
-      // while the edit's damage names only its own rows (QA plugins-ui).
-      const bool decorated_clean =
-          viewport != nullptr && !viewport->dirty() && !viewport->path().empty() &&
-          project_state.plugin_presentation_if_present() != nullptr &&
-          project_state.plugin_presentation_if_present()->decorations.FindByPathKey(
-              viewport->path_key()) != nullptr;
-      if (decorated_clean != frame_state_.painted_decorations[gi] && gi < pane_rects.groups.size()) {
-        RequestRedrawRect(pane_rects.groups[gi].editor_surface);
-      }
-      frame_state_.painted_decorations[gi] = decorated_clean;
-      if (fold_revision != frame_state_.painted_fold_revision[gi]) {
-        frame_state_.painted_fold_revision[gi] = fold_revision;
-        const std::uint64_t markers = folds == nullptr ? 0 : FoldMarkerFingerprint(*folds);
-        if (markers != frame_state_.painted_fold_markers[gi] && gi < pane_rects.groups.size()) {
-          RequestRedrawRect(pane_rects.groups[gi].editor_surface);
-        }
-        frame_state_.painted_fold_markers[gi] = markers;
-      }
-    }
-  }
-  // Each editor pane's horizontal scrollbar: shown or hidden repaints the pane (the
-  // text area changes height), a moved thumb repaints the bar's strip.
-  {
-    const EditorPaneLayouts panes = EditorPaneLayoutsFromGroupRects(ComputeEditorGroupRectsForState(layout));
-    for (const EditorPaneLayout& pane : panes) {
-      if (pane.group_index >= project_state.editor_groups.size() || pane.group_index >= kMaxEditorGroups) {
-        continue;
-      }
-      const editor::TextViewport* viewport = GroupActiveViewport(project_state.editor_groups[pane.group_index]);
-      PreparedFrameState::HorizontalBar bar{.viewport = viewport};
-      if (viewport != nullptr && !viewport->is_placeholder()) {
-        editor::EditorViewMetrics metrics;
-        metrics.visible_rows = viewport->visible_lines();
-        metrics.visible_columns = viewport->visible_columns();
-        if (const ScrollSurfaceLayout scroll = ComputeEditorScrollLayout(pane.rect, *viewport, metrics);
-            scroll.horizontal_scrollbar.has_value()) {
-          bar.track = scroll.horizontal_scrollbar->track;
-          bar.thumb = scroll.horizontal_scrollbar->thumb;
-        }
-      }
-      PreparedFrameState::HorizontalBar& painted = frame_state_.painted_horizontal_bars[pane.group_index];
-      const auto same_rect = [](const SDL_FRect& a, const SDL_FRect& b) {
-        return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
-      };
-      // Another viewport in front repaints the pane on its own (a tab switch).
-      if (painted.viewport == viewport) {
-        if (painted.track.has_value() != bar.track.has_value()) {
-          RequestRedrawRect(pane.rect);
-        } else if (bar.track.has_value() &&
-                   (!same_rect(*painted.track, *bar.track) || !same_rect(painted.thumb, bar.thumb))) {
-          RequestRedrawRect(*bar.track);
-          RequestRedrawRect(*painted.track);
-        }
-      }
-      painted = bar;
-    }
-  }
-  // The focused pane's bracket-match pair (see PreparedFrameState): the lines it
-  // left and the lines it reached. Asked through the renderer's cache, which the
-  // pane's paint then hits.
+  // The focused pane's bracket-match pair, which its rows key on (EditorRowUnits).
+  // Asked through the renderer's cache, which the pane's paint then hits.
   {
     const editor::TextViewport* viewport =
         GroupActiveViewport(project_state.editor_groups[project_state.clamped_focused_group_index()]);
@@ -944,48 +813,12 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         SettingFlagEnabled(GetSettingValue("editor.brackets.match_highlight.enabled"), true)) {
       pair = editor_view_renderer_.BracketMatch(*viewport);
     }
-    const auto same_pair = [](const std::optional<editor::BracketMatchPair>& a,
-                              const std::optional<editor::BracketMatchPair>& b) {
-      return a.has_value() == b.has_value() &&
-             (!a.has_value() || (a->open_line == b->open_line && a->open_column == b->open_column &&
-                                 a->close_line == b->close_line && a->close_column == b->close_column));
-    };
-    // Another viewport in front repaints the pane on its own (a tab switch).
-    if (viewport == frame_state_.painted_bracket_viewport &&
-        !same_pair(pair, frame_state_.painted_bracket_pair)) {
-      for (const std::optional<editor::BracketMatchPair>* each : {&frame_state_.painted_bracket_pair, &pair}) {
-        if (each->has_value()) {
-          RequestEditorLineRangeRedraw((*each)->open_line, (*each)->open_line + 1);
-          RequestEditorLineRangeRedraw((*each)->close_line, (*each)->close_line + 1);
-        }
-      }
-    }
-    frame_state_.painted_bracket_viewport = viewport;
-    frame_state_.painted_bracket_pair = pair;
+    frame_state_.bracket_viewport = viewport;
+    frame_state_.bracket_pair = pair;
   }
-  // Every pane's language as painted (see PreparedFrameState::painted_languages).
-  {
-    const EditorGroupRectsLayout group_rects = ComputeEditorGroupRectsForState(layout);
-    for (std::size_t gi = 0; gi < project_state.editor_groups.size() && gi < kMaxEditorGroups; ++gi) {
-      const editor::TextViewport* viewport = GroupActiveViewport(project_state.editor_groups[gi]);
-      auto& painted = frame_state_.painted_languages[gi];
-      if (viewport == nullptr || viewport->is_placeholder()) {
-        painted = {};
-        continue;
-      }
-      const std::string& language = viewport->language_id();
-      if (painted.viewport == viewport && painted.language != language && gi < group_rects.groups.size()) {
-        RequestRedrawRect(group_rects.groups[gi].editor_surface);  // another tab in front repaints on its own
-      }
-      if (painted.viewport != viewport || painted.language != language) {
-        painted.viewport = viewport;
-        painted.language = language;
-      }
-    }
-  }
-  // The focused pane's occurrence highlights: the lines whose highlight changed
-  // since the last frame, whatever changed it (an edit, a caret move, a semantic
-  // answer). Asked here first; the view-model build reads the same caches.
+  // The focused pane's occurrence highlights, one (line, hash) per line, which its
+  // rows key on (EditorRowUnits). Asked here first; the view-model build reads the
+  // same caches.
   {
     const editor::TextViewport* viewport =
         GroupActiveViewport(project_state.editor_groups[project_state.clamped_focused_group_index()]);
@@ -1016,36 +849,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       }
       lines.resize(kept);
     }
-    const auto& painted = frame_state_.painted_occurrence_lines;
-    // Another viewport in front repaints the pane on its own (a tab switch).
-    if (viewport == frame_state_.painted_occurrence_viewport && painted != lines) {
-      constexpr std::size_t kMaxLineRepaints = 32;
-      std::size_t repaints = 0;
-      const auto repaint = [&](std::size_t line) {
-        if (++repaints <= kMaxLineRepaints) {
-          RequestEditorLineRangeRedraw(line, line + 1);
-        } else if (repaints == kMaxLineRepaints + 1) {
-          RequestFocusedEditorRedraw();
-        }
-      };
-      std::size_t a = 0;
-      std::size_t b = 0;
-      while (a < painted.size() || b < lines.size()) {
-        if (b == lines.size() || (a < painted.size() && painted[a].first < lines[b].first)) {
-          repaint(painted[a++].first);
-        } else if (a == painted.size() || lines[b].first < painted[a].first) {
-          repaint(lines[b++].first);
-        } else {
-          if (painted[a].second != lines[b].second) {
-            repaint(lines[b].first);
-          }
-          ++a;
-          ++b;
-        }
-      }
-    }
-    frame_state_.painted_occurrence_viewport = viewport;
-    std::swap(frame_state_.painted_occurrence_lines, lines);
+    frame_state_.occurrence_viewport = viewport;
   }
   // Each editor pane's rows as derived units (derived-damage 2.2): a row whose
   // keys moved repaints, whatever moved them. Added to the editor's hand-written
@@ -1156,12 +960,12 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
           .pane_key = pane_key.value(),
           .rows_have_gaps = insets_possible,
           .diagnostics = diagnostics,
-          .occurrence_lines = focused && frame_state_.painted_occurrence_viewport == viewport
+          .occurrence_lines = focused && frame_state_.occurrence_viewport == viewport
                                   ? std::span<const std::pair<std::size_t, std::uint64_t>>(
-                                        frame_state_.painted_occurrence_lines)
+                                        frame_state_.occurrence_lines)
                                   : std::span<const std::pair<std::size_t, std::uint64_t>>{},
-          .bracket_pair = focused && frame_state_.painted_bracket_viewport == viewport
-                              ? frame_state_.painted_bracket_pair
+          .bracket_pair = focused && frame_state_.bracket_viewport == viewport
+                              ? frame_state_.bracket_pair
                               : std::nullopt,
           .folds = folds,
           .active_search_match = focused ? ActiveBufferSearchMatch() : std::nullopt,
@@ -1245,7 +1049,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         project_state.function_breakpoint_store.revision();
     if (breakpoints != frame_state_.painted_breakpoints) {
       frame_state_.painted_breakpoints = breakpoints;
-      RequestEditorSurfaceRedraw();
+      // The editor's gutter dots are in its panes' keys (EditorRowUnits).
       RequestDebugPaneRedraw();
     }
   }

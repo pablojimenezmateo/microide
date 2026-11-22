@@ -575,7 +575,7 @@ void WorkspaceShell::RequestActiveEditableLastChangeRedraw() {
       "WorkspaceShell::RequestActiveEditableLastChangeRedraw::EditorPartialRedraw");
   RequestEditorLineRangeRedraw(start_line, end_line);
   // An editor pane's horizontal scrollbar is diffed at frame prep against the bar
-  // as painted (PreparedFrameState::painted_horizontal_bars), whatever moved it.
+  // as painted (its derived bar unit, EditorRowUnits), whatever moved it.
   // The edits below are a diff's working side and a merge result, whose surfaces
   // prep does not diff.
   if (!ActiveTabIsCompare() && !ActiveTabIsMerge()) {
