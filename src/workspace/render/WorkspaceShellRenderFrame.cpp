@@ -1331,7 +1331,16 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         const editor::EditorViewModel& vm = paint.view_model;
         pane_key.Add(vm.sticky_lines.size());
         for (const std::size_t line : vm.sticky_lines) {
-          pane_key.Add(line).Add(viewport->lines().LineView(std::min(line, viewport->line_count() - 1)));
+          // Its text, viewed only under the row keys' cap (EditorRowUnits): a longer
+          // line would be copied out of the piece tree whole on every frame.
+          const std::size_t shown = std::min(line, viewport->line_count() - 1);
+          const std::size_t length = viewport->lines().LineLength(shown);
+          pane_key.Add(line).Add(length);
+          if (length <= kEditorRowKeyMaxHashedBytes) {
+            pane_key.Add(viewport->lines().LineView(shown));
+          } else {
+            pane_key.Add(viewport->content_revision());
+          }
         }
         pane_key.Add(vm.row_gaps.size()).Add(vm.row_gap_contents.size()).Add(vm.code_lens_above);
         for (const editor::RowGap& gap : vm.row_gaps) {

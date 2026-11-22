@@ -68,10 +68,17 @@ namespace {
 // tokenized here, which the row's repaint would do anyway.
 std::uint64_t LineContentKey(const editor::TextViewport& viewport, const editor::FileDecorations* decorations,
                              std::size_t line) {
-  const std::string_view text = viewport.lines().LineView(line);
+  // The length first: a line past the cap folds its length and the revision, and
+  // viewing it would copy it out of the piece tree whole -- once a keystroke on a
+  // wrapped 100 KB line, every frame (editor_soft_wrap_long_line_typing).
+  const std::size_t length = viewport.lines().LineLength(line);
   std::uint64_t key = util::kFnv1aOffsetBasis;
-  key = text.size() <= kEditorRowKeyMaxHashedBytes ? MixBytes(key, text.data(), text.size())
-                                                   : Mix(Mix(key, text.size()), viewport.content_revision());
+  if (length <= kEditorRowKeyMaxHashedBytes) {
+    const std::string_view text = viewport.lines().LineView(line);
+    key = MixBytes(key, text.data(), text.size());
+  } else {
+    key = Mix(Mix(key, length), viewport.content_revision());
+  }
   const std::vector<editor::SyntaxTokenKind>& tokens = viewport.HighlightedLineTokens(line);
   key = MixBytes(key, reinterpret_cast<const char*>(tokens.data()), tokens.size() * sizeof(editor::SyntaxTokenKind));
   return decorations != nullptr ? LineDecorationKey(key, *decorations, line) : key;
