@@ -116,6 +116,33 @@ void TestMeasureSumsSubtreesAndTakesDeltas() {
          "each process counted once");
 }
 
+// The state letter of `pid` in /proc ('R', 'S', 'D', ...), or 0 when it is gone.
+char ProcessState(pid_t pid) {
+  std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
+  std::string line;
+  std::getline(stat, line);
+  // After the command, which is in parentheses and may hold spaces or ')'.
+  const std::size_t close = line.rfind(')');
+  return close != std::string::npos && close + 2 < line.size() ? line[close + 2] : '\0';
+}
+
+// `pid` and every child of it asleep. A child's comm turns to its program's at
+// exec, while the dynamic loader is still faulting its libraries in: its resident
+// size grows until it blocks in its program's own sleep.
+bool TreeAtRest(pid_t pid) {
+  const std::string task = "/proc/" + std::to_string(pid) + "/task/" + std::to_string(pid);
+  std::ifstream children(task + "/children");
+  if (ProcessState(pid) != 'S') {
+    return false;
+  }
+  for (pid_t child = 0; children >> child;) {
+    if (ProcessState(child) != 'S') {
+      return false;
+    }
+  }
+  return true;
+}
+
 // The comms of `pid`'s children, sorted.
 std::vector<std::string> ChildCommands(pid_t pid) {
   const std::string task = "/proc/" + std::to_string(pid) + "/task/" + std::to_string(pid);
@@ -154,10 +181,14 @@ void TestSampleSeesARealChildTree() {
   // The tree is measured once it is whole: both children forked AND exec'd. A
   // child between fork and exec is a copy of the shell, so "the tree holds more
   // than the shell" was true with one sleep, and the two reads below then saw
-  // different trees (9.7 MB vs 17.5 MB on ubsan).
-  Expect(WaitUntil([&] { return ChildCommands(tree) == std::vector<std::string>{"sleep", "sleep"}; },
+  // different trees (9.7 MB vs 17.5 MB on ubsan). And at rest: a sleep named
+  // "sleep" may still be loading its libraries, and under load the full walk read
+  // one 836 KB short of the sample after it (16723968 vs 17580032, tests lane).
+  Expect(WaitUntil([&] {
+                     return ChildCommands(tree) == std::vector<std::string>{"sleep", "sleep"} && TreeAtRest(tree);
+                   },
                    std::chrono::seconds(10), std::chrono::milliseconds(20)),
-         "the shell has started both sleeps");
+         "the shell has started both sleeps, and all three are asleep");
   const std::vector<ProcessActivity::Figures> first = activity.Sample(roots);
   Expect(first[0].rss_bytes > first[1].rss_bytes && first[1].rss_bytes > 0,
          "the shell's tree holds more than the shell");
