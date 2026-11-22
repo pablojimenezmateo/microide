@@ -2667,6 +2667,140 @@ void TestEditorRowsRecolourWhenACommentOpensAboveThem() {
   fixture.ExpectFresh(nothing, "a block comment opened with no damage request");
 }
 
+// derived-damage 2.2: indent guides are not a row's own text. A blank row's
+// guides come from the lines around it, and the active guide follows the caret's
+// block; a caret move into a block and a re-indent next to blank rows, with no
+// damage request, show in the next partial frame as in a full one.
+void TestEditorRowsRepaintTheirIndentGuides() {
+  FlowFixture fixture("guides.cpp",
+                      "int a;\nvoid run() {\n    if (a) {\n\n        a = 0;\n\n    }\n\n}\nint b;\n");
+  editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
+  const auto nothing = [] {
+    workspace::RenderInvalidation none;
+    none.rects.push_back(SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f});
+    return none;
+  };
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  viewport.MoveCursorTo(4, 8);
+  fixture.ExpectFresh(nothing(), "the caret moved into the inner block");
+  viewport.MoveCursorTo(9, 0);
+  fixture.ExpectFresh(nothing(), "the caret moved out of every block");
+  viewport.MoveCursorTo(4, 0);
+  viewport.InsertText("        ");
+  fixture.ExpectFresh(nothing(), "a line beside blank rows indented deeper");
+  // Its indent removed: the blank rows beside it lose the guides they took from it.
+  (void)viewport.ReplaceRange(editor::SelectionRange{.start = {.line = 4, .column = 0}, .end = {.line = 4, .column = 16}},
+                              "");
+  fixture.ExpectFresh(nothing(), "a line beside blank rows dedented to column 0");
+  // The inner block's closing brace emptied: the block's guide runs on over the
+  // blank rows below it, whose own text did not change.
+  (void)viewport.ReplaceRange(editor::SelectionRange{.start = {.line = 6, .column = 0}, .end = {.line = 6, .column = 5}},
+                              "");
+  fixture.ExpectFresh(nothing(), "a block's closing brace removed");
+}
+
+// derived-damage 2.5, the compare surface's differential property test: random
+// transitions on a diff -- typing, deleting and moving in its working side through
+// the real key paths (so the diff model rebuilds as it does for a user), scrolling
+// both ways, the selected row, the hover, the active side -- with every damage they
+// requested dropped, each partial frame painted from frame prep's damage alone and
+// compared with a full repaint.
+void TestCompareRowDamageFollowsEveryStateTransition() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  std::string left;
+  std::string right;
+  for (int i = 1; i <= 60; ++i) {
+    left += "int value" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+    right += (i % 7 == 0 ? "long value" : "int value") + std::to_string(i) + " = " + std::to_string(i * (i % 5 == 0 ? 2 : 1)) +
+             ";\n";
+    if (i % 11 == 0) {
+      right += "// inserted after " + std::to_string(i) + "\n";
+    }
+  }
+  for (const std::uint32_t seed : {3u, 11u}) {
+    FlowFixture fixture("left.cpp", left);
+    const std::filesystem::path right_path = fixture.root / "right.cpp";
+    WriteFile(right_path, right);
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell,
+                                          "compare-files " + fixture.file.string() + " " + right_path.string()),
+           "compare-files should open a diff");
+    auto& compare = TestAccess::ActiveCompare(fixture.shell);
+    compare.right_view_active = true;
+    compare.right_viewport.MoveCursorTo(0, 0);
+    TestAccess::SetFocusEditor(fixture.shell);
+    TestAccess::NoteLayoutInputsChanged(fixture.shell);
+    fixture.PinCaret();
+    fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+    std::mt19937 rng(seed);
+    const std::string kInserts[] = {"x", "/*", "*/", "\"", " ", "\n", "value"};
+    std::string last_op = "opening it";
+    for (int step = 0; step < 50; ++step) {
+      auto* tab_ptr = TestAccess::ActiveCompareOrNull(fixture.shell);
+      Expect(tab_ptr != nullptr, "seed " + std::to_string(seed) + ": the diff is still in front after " + last_op);
+      auto& tab = *tab_ptr;
+      std::string op;
+      // Keys reach the working side only while it is active; with it inactive they
+      // act on the diff (Enter opens the selected row's file), which is not under test.
+      const unsigned pick = rng() % 8;
+      if (!tab.right_view_active && (pick <= 2 || pick == 7)) {
+        tab.right_view_active = true;
+        op = "working side active";
+      }
+      switch (op.empty() ? pick : 99u) {
+        case 99u:
+          break;
+        case 0: {
+          const std::string& insert = kInserts[rng() % std::size(kInserts)];
+          (void)DispatchEvents(fixture.shell, {insert == "\n" ? KeyDownEvent(SDLK_RETURN) : TextInputEvent(insert.c_str())});
+          op = insert == "\n" ? std::string("Return") : "type '" + insert + "'";
+          break;
+        }
+        case 1:
+          (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_BACKSPACE)});
+          op = "backspace";
+          break;
+        case 2: {
+          const SDL_Keycode keys[] = {SDLK_DOWN, SDLK_UP, SDLK_RIGHT, SDLK_LEFT, SDLK_END, SDLK_HOME};
+          const bool extend = rng() % 3 == 0;
+          (void)DispatchEvents(fixture.shell,
+                               {KeyDownEvent(keys[rng() % std::size(keys)], extend ? SDL_KMOD_SHIFT : SDL_KMOD_NONE)});
+          op = extend ? "extend selection" : "move caret";
+          break;
+        }
+        case 3:
+          tab.scroll_row = static_cast<int>(rng() % 40);
+          op = "scroll to " + std::to_string(tab.scroll_row);
+          break;
+        case 4:
+          tab.horizontal_scroll = rng() % 6;
+          op = "horizontal scroll";
+          break;
+        case 5:
+          tab.selected_row = rng() % std::max<std::size_t>(1, TestAccess::ActiveComparePresentationRowCount(fixture.shell));
+          op = "select row " + std::to_string(tab.selected_row);
+          break;
+        case 6:
+          tab.right_view_active = !tab.right_view_active;
+          op = tab.right_view_active ? "working side active" : "working side inactive";
+          break;
+        default:
+          (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_PAGEDOWN)});
+          op = "page down";
+          break;
+      }
+      (void)fixture.shell.ConsumePendingRenderInvalidation();
+      workspace::RenderInvalidation nothing;
+      nothing.rects.push_back(SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f});
+      last_op = "step " + std::to_string(step) + " (" + op + ")";
+      fixture.ExpectFresh(nothing, "seed " + std::to_string(seed) + " " + last_op);
+    }
+  }
+}
+
 // derived-damage 2.2, the differential property test: random editor state
 // transitions applied straight to the viewport and the stores -- so no event
 // path asks for any damage -- and each partial frame painted from ONLY what frame
@@ -2677,7 +2811,12 @@ void TestEditorRowDamageFollowsEveryStateTransition() {
   std::string text;
   const char* const kLines[] = {"#include <vector>", "", "int count = 0;  // a counter", "struct Box {",
                                 "  int width = 4;", "  int height = 8;", "};", "const char* name = \"box\";",
-                                "for (int i = 0; i < 10; ++i) {", "  count += i;", "}", "/* trailing note */"};
+                                "for (int i = 0; i < 10; ++i) {", "  count += i;", "}", "/* trailing note */",
+                                // Nested blocks with blank lines inside: a blank row's indent
+                                // guides come from its neighbours, and the active guide follows
+                                // the caret's block -- neither is the row's own text.
+                                "void run() {", "    if (count) {", "", "        count = 0;", "",
+                                "    }", "", "}"};
   for (int i = 0; i < 4; ++i) {
     for (const char* line : kLines) {
       text += line;
@@ -6409,6 +6548,9 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestACaretMoveThatScrollsTheMergePanesRepaintsThemAll);
   AddTest(tests, "QaFlowRegression/EditorRowsRecolourWhenACommentOpensAboveThem",
           TestEditorRowsRecolourWhenACommentOpensAboveThem);
+  AddTest(tests, "QaFlowRegression/EditorRowsRepaintTheirIndentGuides", TestEditorRowsRepaintTheirIndentGuides);
+  AddTest(tests, "QaFlowRegression/CompareRowDamageFollowsEveryStateTransition",
+          TestCompareRowDamageFollowsEveryStateTransition);
   AddTest(tests, "QaFlowRegression/EditorRowDamageFollowsEveryStateTransition",
           TestEditorRowDamageFollowsEveryStateTransition);
   AddTest(tests, "QaFlowRegression/EditorRowsRepaintWhatChangedWithNoDamageRequest",

@@ -23,6 +23,7 @@
 #include "workspace/render/CompareMergeRender.h"
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/render/DiffOverviewMarkers.h"
+#include "workspace/render/CompareRowUnits.h"
 #include "workspace/render/OverviewRuler.h"
 #include "workspace/render/CompareVisibleLayoutCache.h"
 #include "workspace/WorkspaceLayout.h"
@@ -313,27 +314,9 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
   // paints through its own loop and had no such cache, so this memoizes on the
   // same key the editor uses — (content revision, caret line, caret column) —
   // held on the tab, one entry per caret (TD-2026-08-13-206).
-  std::optional<editor::BracketMatchPair> bracket_match_pair;
-  if (SettingFlagEnabled(GetSettingValue("editor.brackets.match_highlight.enabled"), true) &&
-      compare_tab->right_view_active) {
-    const editor::TextViewport& right_viewport = compare_tab->right_viewport;
-    const std::uint64_t content_revision = right_viewport.content_revision();
-    const std::size_t caret_line = right_viewport.cursor_line();
-    const std::size_t caret_column = right_viewport.cursor_column();
-    if (compare_tab->bracket_match_valid &&
-        compare_tab->bracket_match_content_revision == content_revision &&
-        compare_tab->bracket_match_caret_line == caret_line &&
-        compare_tab->bracket_match_caret_column == caret_column) {
-      bracket_match_pair = compare_tab->bracket_match_pair;
-    } else {
-      bracket_match_pair = editor::FindBracketMatch(right_viewport, caret_line, caret_column);
-      compare_tab->bracket_match_content_revision = content_revision;
-      compare_tab->bracket_match_caret_line = caret_line;
-      compare_tab->bracket_match_caret_column = caret_column;
-      compare_tab->bracket_match_pair = bracket_match_pair;
-      compare_tab->bracket_match_valid = true;
-    }
-  }
+  // Frame prep asked first (CompareRowUnits keys the rows on it); this hits the memo.
+  const std::optional<editor::BracketMatchPair> bracket_match_pair = CompareBracketMatch(
+      *compare_tab, SettingFlagEnabled(GetSettingValue("editor.brackets.match_highlight.enabled"), true));
 
   // Indent guides for both panes (TD-2026-08-13-206). The entry filed this as
   // blocked on the row->line mapping, because a diff's visible rows are not

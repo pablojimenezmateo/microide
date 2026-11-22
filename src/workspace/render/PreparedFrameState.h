@@ -223,20 +223,8 @@ struct PreparedFrameState {
   // while the widget is the overlay, and another overlay replacing it (a
   // completion request) took them off the editor without repainting it.
   bool painted_find_matches = false;
-  // The active compare tab's scroll position as painted. Typing past a pane's
-  // edge scrolls BOTH panes sideways to keep the caret in view while the edit
-  // damages only its row, so a moved position repaints the surface.
-  struct CompareScroll {
-    const void* tab = nullptr;
-    int row = 0;
-    std::size_t column = 0;
-    // Whether the working side is the active one: its caret, selection and
-    // inline blame are drawn only then, and a click below the last row cleared
-    // it with no repaint (QA monkey, seed 18).
-    bool right_active = false;
-    bool operator==(const CompareScroll&) const = default;
-  };
-  CompareScroll painted_compare_scroll{};
+  // (A compare tab's scroll, active side and diff shape are in its rows' keys:
+  // CompareRowUnits, derived-damage 2.5.)
   // The focused compare or merge tab's scrollbars as painted (no track: hidden).
   // An edit that widens a line or adds one moves a thumb that sits on none of the
   // rows the edit damages -- typing into a compare tab's long line left the
@@ -319,14 +307,6 @@ struct PreparedFrameState {
   // edit in the working side that adds or removes a hunk changes the line's hunk
   // count while damaging only the edited row.
   std::uint64_t painted_compare_header = 0;
-  // The active diff's shape as painted -- each presentation row's kind, model row,
-  // hunk and collapsed count -- recomputed only when its presentation revision
-  // moves. An edit on the working side can regroup the whole diff (a hunk grows,
-  // a collapsed block moves) while its damage names the edited line (QA monkey,
-  // seed 2).
-  const void* painted_compare_tab = nullptr;
-  std::uint64_t painted_compare_presentation_revision = 0;
-  std::uint64_t painted_compare_shape = 0;
   // The sidebar list selection painted (view and row): the tree follows the
   // active editor's file, and that selection change damaged nothing.
   std::uint64_t painted_sidebar_selection = 0;

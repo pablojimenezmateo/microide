@@ -696,6 +696,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/shell/WorkspaceShellRedraw.cpp
   src/workspace/render/WorkspaceShellRenderFrame.cpp
   src/workspace/render/EditorRowUnits.cpp
+  src/workspace/render/CompareRowUnits.cpp
   src/workspace/render/WorkspaceShellRenderSidebar.cpp
   src/workspace/render/WorkspaceShellRenderOverlay.cpp
   src/workspace/render/WorkspaceShellRenderBottomPanel.cpp

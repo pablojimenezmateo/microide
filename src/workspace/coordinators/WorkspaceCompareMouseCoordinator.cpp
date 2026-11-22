@@ -117,8 +117,8 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   // hit on row 0.
   // A click off the rows makes the working side inactive, and its caret,
   // selection and inline blame are drawn only while it is active: the change is
-  // damage (frame prep then repaints the surface, see
-  // PreparedFrameState::CompareScroll), or a click below the last row left all
+  // damage (frame prep repaints the rows: the active side is
+  // in their keys, CompareRowUnits), or a click below the last row left all
   // three on screen (QA monkey, seed 18).
   const auto deactivate_right_side = [&]() {
     if (compare_tab->right_view_active) {

@@ -6,6 +6,7 @@
 #include "workspace/render/BottomPanelTerminalChromePaint.h"
 #include "workspace/render/NotificationToastPaint.h"
 #include "workspace/render/DebugPanePaint.h"
+#include "workspace/render/CompareRowUnits.h"
 #include "workspace/render/EditorRowUnits.h"
 #include "workspace/render/GitSidebarPaint.h"
 #include "workspace/render/HoverCardLimits.h"
@@ -892,6 +893,50 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       const auto surface = static_cast<DerivedSurface>(static_cast<std::size_t>(DerivedSurface::EditorPane0) + gi);
       std::vector<DerivedDamage::Unit>& units = frame_state_.derived_damage.Begin(surface);
       committed[gi] = true;
+      // A compare tab in front: its rows are the group's units instead (derived-
+      // damage 2.5). Laid out as its paint lays it out -- in the group's surface,
+      // with the scroll clamped here first, so the keys read what paint draws.
+      if (diff_in_front && group.active_tab().compare.has_value()) {
+        CompareTabState& compare = *group.active_tab().compare;
+        const SDL_FRect area = ComputeEditorGroupRectsForState(layout).groups[gi].editor_surface;
+        const CompareSurfaceLayout compare_surface = ComputeCompareSurfaceLayout(area, compare);
+        ClampCompareScrollRow(compare, compare_surface.visible_rows);
+        ClampCompareHorizontalScroll(compare, compare_surface.visible_columns);
+        const bool focused = gi == focused_group;
+        PaintFingerprint surface_key;
+        surface_key.Add(reinterpret_cast<std::uintptr_t>(&compare))
+            .Add(settings.value())
+            .Add(area)
+            .Add(focused)
+            .Add(compare.scroll_row)
+            .Add(compare.horizontal_scroll)
+            .Add(compare.right_view_active)
+            .Add(compare.wrap_layout.active())
+            .Add(compare.show_whitespace)
+            .Add(compare.syntax_highlighting_enabled)
+            .Add(compare_surface.line_height)
+            .Add(compare_surface.gutter_width)
+            .Add(compare_surface.divider_width)
+            .Add(compare_surface.left_x)
+            .Add(compare_surface.center_x)
+            .Add(compare_surface.right_x)
+            .Add(compare_surface.rows_y)
+            .Add(compare_surface.visible_rows)
+            .Add(compare_surface.show_vertical)
+            .Add(compare_surface.show_horizontal);
+        const float right_reserved = compare_surface.show_vertical ? kWorkspaceDiffScrollbarReserve : 0.0f;
+        AppendCompareRowUnits(
+            compare,
+            CompareRowGeometry{.surface = area,
+                               .rows_y = compare_surface.rows_y,
+                               .line_height = compare_surface.line_height,
+                               .content_width = std::max(0.0f, area.w - right_reserved),
+                               .visible_rows = compare_surface.visible_rows},
+            surface_key.value(),
+            CompareBracketMatch(compare, setting("editor.brackets.match_highlight.enabled", true)), units);
+        frame_state_.derived_damage.Commit(surface, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
+        continue;
+      }
       if (diff_in_front || viewport == nullptr || viewport->is_placeholder()) {
         frame_state_.derived_damage.Commit(surface, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
         continue;
@@ -1077,21 +1122,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       frame_state_.painted_find_matches = find_matches;
     }
   }
-  {
-    PreparedFrameState::CompareScroll compare_scroll;
-    if (EditorGroup& group = project_state.focused_group();
-        group.has_active_tab() && group.active_tab().compare.has_value()) {
-      const CompareTabState& compare = *group.active_tab().compare;
-      compare_scroll = {.tab = &compare, .row = compare.scroll_row,
-                        .column = compare.horizontal_scroll, .right_active = compare.right_view_active};
-    }
-    if (compare_scroll != frame_state_.painted_compare_scroll) {
-      if (compare_scroll.tab != nullptr) {
-        RequestEditorSurfaceRedraw();
-      }
-      frame_state_.painted_compare_scroll = compare_scroll;
-    }
-  }
+  // (A compare tab's scroll is in its rows' surface key: CompareRowUnits.)
   {
     PreparedFrameState::DiffSurfaceBars bars;
     // The lane's markers are built here, against the lane this frame paints, so
@@ -1316,26 +1347,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       frame_state_.painted_compare_header = header;
     }
   }
-  // The diff's shape (see PreparedFrameState::painted_compare_shape).
-  if (const CompareTabState* compare = ActiveCompareTab(); compare == nullptr) {
-    frame_state_.painted_compare_tab = nullptr;
-  } else if (compare != frame_state_.painted_compare_tab ||
-             compare->presentation_revision != frame_state_.painted_compare_presentation_revision) {
-    std::uint64_t shape = 0xCBF29CE484222325ull ^ compare->presentation.rows.size();
-    for (const compare::ComparePresentationRow& row : compare->presentation.rows) {
-      shape = (shape ^ static_cast<std::uint64_t>(row.kind)) * 0x100000001B3ull;
-      shape = (shape ^ row.model_row_index) * 0x100000001B3ull;
-      shape = (shape ^ static_cast<std::uint64_t>(static_cast<std::int64_t>(row.hunk_index))) * 0x100000001B3ull;
-      shape = (shape ^ static_cast<std::uint64_t>(static_cast<std::int64_t>(row.collapsed_line_count))) *
-              0x100000001B3ull;
-    }
-    if (compare == frame_state_.painted_compare_tab && shape != frame_state_.painted_compare_shape) {
-      RequestEditorSurfaceRedraw();
-    }
-    frame_state_.painted_compare_tab = compare;
-    frame_state_.painted_compare_presentation_revision = compare->presentation_revision;
-    frame_state_.painted_compare_shape = shape;
-  }
+  // (The diff's shape -- its presentation rows -- is in its rows' keys: CompareRowUnits.)
   // The debug toolbar's run state (see PreparedFrameState::painted_debug_toolbar).
   {
     PreparedFrameState::DebugToolbar toolbar;
