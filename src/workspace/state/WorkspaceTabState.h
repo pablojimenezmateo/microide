@@ -297,13 +297,25 @@ struct CompareTabState {
 // ONE definition, called from the tokenizer and from the render site, because
 // the two must agree exactly: if the render reads left's buffer for a row the
 // tokenizer did fill on the right, or vice versa, the pane paints unstyled.
+//
+// A row the right pane's walk has not reached yet reads the left window too. Its
+// state there is not known, and it has no tokens of its own to draw: the walks
+// restart on every rebuild of the diff -- each keystroke in the working side --
+// and share one frame's time, so when that ran out during the left pane's walk
+// every unchanged row past the right frontier dropped its colours for a frame
+// (soak 185e45a464f9). The left pane's tokens stand in until the right walk has
+// the row; if its state there then differs, the tokenizer fills the row (it asks
+// only about rows its frontier has passed) and the row repaints from its own.
 inline bool CompareRowRightTokensAliasLeft(const CompareTabState& tab, std::size_t row) {
   if (row >= tab.model.rows.size()) {
     return false;
   }
   const compare::CompareRow& compare_row = tab.model.rows[row];
-  return compare_row.kind == compare::CompareRowKind::Unchanged && compare_row.left_line > 0 &&
-         compare_row.right_line > 0 && compare_row.left_text == compare_row.right_text &&
+  if (compare_row.kind != compare::CompareRowKind::Unchanged || compare_row.left_line <= 0 ||
+      compare_row.right_line <= 0 || compare_row.left_text != compare_row.right_text) {
+    return false;
+  }
+  return row >= tab.right_token_window.frontier() ||
          tab.left_token_window.StateBefore(row) == tab.right_token_window.StateBefore(row);
 }
 

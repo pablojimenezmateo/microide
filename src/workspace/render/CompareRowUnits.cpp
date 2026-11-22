@@ -175,15 +175,10 @@ void AppendCompareRowUnits(const CompareTabState& compare, const CompareRowGeome
         content = MixSpans(content, model.left_changed_spans);
         content = MixSpans(content, model.right_changed_spans);
         content = MixTokens(content, compare.left_token_window.Tokens(model_index));
-        // WHICH window the working side reads, too: an unchanged row identical on
-        // both sides draws the left window's tokens while both panes resume it
-        // from the same syntax state, and its own otherwise
-        // (CompareRowRightTokensAliasLeft). That choice moves with neither window's
-        // tokens for the row moving: after a rebuild the two walks share one
-        // frame's time, and until the right one has reached the row its state
-        // there is not the left's, so the row draws the right window's tokens --
-        // none yet -- over the colours it had (soak 185e45a464f9, 47359511506b,
-        // 832463f2425b, b3d25c24c346: a starved machine, the rows under an edit).
+        // WHICH window the working side reads, too (CompareRowRightTokensAliasLeft):
+        // it is paint's input as the tokens are, and it follows the two panes'
+        // syntax states, which can move with neither window's tokens for the row
+        // moving (soak 185e45a464f9, 47359511506b, 832463f2425b, b3d25c24c346).
         content = Mix(content, CompareRowRightTokensAliasLeft(compare, model_index) ? 1u : 2u);
         content = MixTokens(content, compare.right_token_window.Tokens(model_index));
         // The working side's plugin and language-server decorations on its line
