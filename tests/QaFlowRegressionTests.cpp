@@ -6997,6 +6997,35 @@ void TestTheStickyBandFollowsTheCaretOffItsLine() {
   fixture.ExpectFresh(NothingAnnounced(), "a diagnostic on the sticky band's line");
 }
 
+// The rest of a line's decorations, each republished in place with no damage
+// request: a token recoloured at the same columns (a language server's semantic
+// tokens), on a row and on the sticky band's line, and a gutter mark whose shape
+// and colour change. Each line keys on its own (LineContentKey), the band too.
+void TestRepublishedTextStylesAndGutterMarksRepaint() {
+  FlowFixture fixture("sticky.cpp", OneBlockFile(120));
+  editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
+  viewport.MoveCursorTo(60, 0);
+  viewport.SetScrollLine(54);  // the block's opener (line 0) is in the sticky band
+  auto& decorations = TestAccess::CurrentProjectState(fixture.shell).EnsurePluginPresentation().decorations;
+  const auto publish = [&](SDL_Color token, editor::GutterIconShape shape, SDL_Color mark) {
+    editor::PluginDecorationData data;
+    for (const std::uint32_t line : {0u, 60u}) {  // the band's opener, and a row in view
+      data.text_styles.push_back(editor::TextStyleDecoration{
+          .line = line, .start_column = 0, .end_column = 4, .foreground = token});
+    }
+    data.gutter_marks.push_back(editor::GutterMarkDecoration{.line = 62, .shape = shape, .color = mark});
+    Expect(decorations.ReplaceForOwnerFile("tokens", viewport.path(), std::move(data)),
+           "publishing should change the store");
+  };
+  publish(SDL_Color{200, 80, 80, 255}, editor::GutterIconShape::Dot, SDL_Color{80, 200, 80, 255});
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  publish(SDL_Color{80, 80, 220, 255}, editor::GutterIconShape::Dot, SDL_Color{80, 200, 80, 255});
+  fixture.ExpectFresh(NothingAnnounced(), "tokens recoloured at the same columns, in a row and in the band");
+  publish(SDL_Color{80, 80, 220, 255}, editor::GutterIconShape::Diamond, SDL_Color{220, 160, 40, 255});
+  fixture.ExpectFresh(NothingAnnounced(), "a gutter mark that changed shape and colour");
+}
+
 // Two panes side by side, each scrolled into a block. A pane's view model viewed
 // its sticky lines in the builder's ONE cache, and frame prep builds every pane's
 // model before any pane paints: the left pane's band drew the right pane's sticky
@@ -7406,6 +7435,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestAnAppendToAHiddenOutputChannelRepaintsNothingInThePanel);
   AddTest(tests, "QaFlowRegression/PartialFramesStayFreshAfterFullFramesAtANewSize",
           TestPartialFramesStayFreshAfterFullFramesAtANewSize);
+  AddTest(tests, "QaFlowRegression/RepublishedTextStylesAndGutterMarksRepaint",
+          TestRepublishedTextStylesAndGutterMarksRepaint);
   AddTest(tests, "QaFlowRegression/ARepublishedCodeLensRepaintsWhatItSays",
           TestARepublishedCodeLensRepaintsWhatItSays);
   AddTest(tests, "QaFlowRegression/AGutterThatWidensRepaintsThePaneAboveTheFirstRow",

@@ -15,40 +15,47 @@ struct RowRef {
   std::size_t row = 0;
 };
 
-std::uint64_t Mix(std::uint64_t hash, std::uint64_t value) { return util::Fnv1aValue(hash, value); }
-
-// `size` bytes, eight to a multiply: a pane's rows are hashed on every prepared
-// frame, and FNV's multiply per byte was the whole cost of doing so. The length
-// goes in first, so a short tail (zero-padded to a word) cannot stand for a
-// longer run that ends in zero bytes.
-std::uint64_t MixBytes(std::uint64_t hash, const char* data, std::size_t size) {
+// One value into the key: one multiply, not FNV's one per byte (eight per value).
+// A pane's rows fold every caret, mark and decoration of every visible line on
+// every prepared frame -- blink and hover frames included -- and a language
+// server's semantic tokens are a dozen styles a line.
+std::uint64_t Mix(std::uint64_t hash, std::uint64_t value) {
   constexpr std::uint64_t kMultiplier = 0x9E3779B97F4A7C15ull;
+  hash = (hash ^ value) * kMultiplier;
+  return hash ^ (hash >> 32);
+}
+
+// `size` bytes, eight to a multiply. The length goes in first, so a short tail
+// (zero-padded to a word) cannot stand for a longer run that ends in zero bytes.
+std::uint64_t MixBytes(std::uint64_t hash, const char* data, std::size_t size) {
   hash = Mix(hash, size);
   while (size >= 8) {
     std::uint64_t word = 0;
     std::memcpy(&word, data, 8);
-    hash = (hash ^ word) * kMultiplier;
-    hash ^= hash >> 32;
+    hash = Mix(hash, word);
     data += 8;
     size -= 8;
   }
   if (size > 0) {
     std::uint64_t word = 0;
     std::memcpy(&word, data, size);
-    hash = (hash ^ word) * kMultiplier;
-    hash ^= hash >> 32;
+    hash = Mix(hash, word);
   }
   return hash;
 }
 
-std::uint64_t MixColor(std::uint64_t hash, SDL_Color color) {
-  return Mix(hash, static_cast<std::uint64_t>(color.r) | static_cast<std::uint64_t>(color.g) << 8 |
-                       static_cast<std::uint64_t>(color.b) << 16 | static_cast<std::uint64_t>(color.a) << 24);
+std::uint64_t ColorBits(SDL_Color color) {
+  return static_cast<std::uint64_t>(color.r) | static_cast<std::uint64_t>(color.g) << 8 |
+         static_cast<std::uint64_t>(color.b) << 16 | static_cast<std::uint64_t>(color.a) << 24;
 }
+
+std::uint64_t MixColor(std::uint64_t hash, SDL_Color color) { return Mix(hash, ColorBits(color)); }
 
 std::uint64_t MixText(std::uint64_t hash, std::string_view text) {
   return MixBytes(Mix(hash, text.size()), text.data(), text.size());
 }
+
+}  // namespace
 
 // What plugins and language servers decorate a line with: its text styles
 // (semantic tokens), inline texts (inlay hints), gutter mark and code lenses. A
@@ -56,10 +63,12 @@ std::uint64_t MixText(std::uint64_t hash, std::string_view text) {
 // keys on them, not the pane on the store's address.
 std::uint64_t LineDecorationKey(std::uint64_t key, const editor::FileDecorations& decorations, std::size_t line) {
   const auto at = static_cast<std::uint32_t>(line);
+  // A style is three words, packed: the most numerous decoration, a dozen a line.
+  key = Mix(key, 0x5701);
   for (const editor::TextStyleDecoration& style : decorations.TextStylesForLine(at)) {
-    key = Mix(Mix(Mix(key, 0x5701), style.start_column), style.end_column);
-    key = MixColor(MixColor(MixColor(key, style.foreground), style.background), style.line_color);
-    key = Mix(key, style.flags);
+    key = Mix(key, static_cast<std::uint64_t>(style.start_column) << 32 | style.end_column);
+    key = Mix(key, ColorBits(style.foreground) << 32 | ColorBits(style.background));
+    key = Mix(key, ColorBits(style.line_color) << 8 | style.flags);
   }
   for (const editor::InlineTextDecoration& text : decorations.InlineTextsForLine(at)) {
     key = MixText(Mix(Mix(key, 0x1A11), text.anchor_column), text.text);
@@ -73,6 +82,8 @@ std::uint64_t LineDecorationKey(std::uint64_t key, const editor::FileDecorations
   }
   return key;
 }
+
+namespace {
 
 // What a line shows whichever of its rows draws it: its bytes (a line too long to
 // hash every frame folds its length and the document's content revision), its

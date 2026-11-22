@@ -76,6 +76,12 @@ struct EditorRowKeyInputs {
 // and its rows repaint whenever the document changes.
 inline constexpr std::size_t kEditorRowKeyMaxHashedBytes = 16 * 1024;
 
+// Folds into `key` what plugins and language servers decorate `line` with: its
+// text styles (semantic tokens), inline texts (inlay hints), gutter mark and code
+// lenses. A republish rewrites them in place under the same FileDecorations, so a
+// row keys on them, not on the store's address. Shared with the diff surfaces.
+std::uint64_t LineDecorationKey(std::uint64_t key, const editor::FileDecorations& decorations, std::size_t line);
+
 // Appends the pane's units to `units`. `row_keys` is scratch kept by the caller
 // across frames (cleared here, capacity kept).
 void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uint64_t>& row_keys,
