@@ -7764,8 +7764,6 @@ void TestACompareTabsActionsRepaintTheirRows() {
 
   // A click into the working side activates it (the whole surface: every row
   // shows which side has the keyboard); a second click there moves the caret.
-  // (Its damage is not bounded here: the shell's mouse-button handlers still ask
-  // for the editor surface on every press and release.)
   const auto click = [&](float y) {
     const float x = pane.x + pane.w * 0.75f;
     return DispatchEvents(fixture.shell, {MouseMotionEvent(x, y), MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
@@ -7773,7 +7771,11 @@ void TestACompareTabsActionsRepaintTheirRows() {
   };
   fixture.ExpectFresh(click(pane.y + 200.0f), "a click into the working side");
   Expect(compare.right_view_active, "the click activated the working side");
-  fixture.ExpectFresh(click(pane.y + 290.0f), "a second click there, moving its caret");
+  damage = DamageInPane(fixture, click(pane.y + 290.0f));
+  Expect(!damage.full && damage.share > 0.0f && damage.share < 0.25f,
+         "a click in the active working side repaints the rows its caret left and took: " +
+             std::to_string(damage.share) + " of the pane");
+  fixture.ExpectFresh(click(pane.y + 326.0f), "a third click there");
 
   // Typing: the first keystroke dirties the buffer (once); every one after it
   // repaints its row. The syntax walk restarting used to repaint the surface.
@@ -7784,6 +7786,23 @@ void TestACompareTabsActionsRepaintTheirRows() {
   Expect(!damage.full && damage.share > 0.0f && damage.share < 0.12f,
          "a keystroke in the working side repaints its row: " + std::to_string(damage.share) + " of the pane");
   fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("z")}), "a third keystroke");
+  // Undo, redo and paste are edits like any other. Undoing the typing takes this
+  // line's change away and redoing brings it back -- the header's count, the
+  // change's rows and the scrollbar's mark, as when it was made -- and a paste
+  // into the change is its row.
+  const auto edit_repaints = [&](const std::string& what, float most, const workspace::RenderInvalidation& redraw) {
+    Expect(!redraw.full, what + " asks for no full repaint");
+    const PaneDamage edit = DamageInPane(fixture, redraw);
+    Expect(!edit.full && edit.share > 0.0f && edit.share < most,
+           what + " in the working side repaints what it changed: " + std::to_string(edit.share) + " of the pane");
+  };
+  edit_repaints("undo", 0.4f, DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_Z, SDL_KMOD_CTRL)}));
+  edit_repaints("redo", 0.4f, DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_Y, SDL_KMOD_CTRL)}));
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_Z, SDL_KMOD_CTRL)}), "undo, against a full repaint");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_Y, SDL_KMOD_CTRL)}), "redo, against a full repaint");
+  SDL_SetClipboardText("pasted");
+  edit_repaints("paste", 0.12f, DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_V, SDL_KMOD_CTRL)}));
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_V, SDL_KMOD_CTRL)}), "paste, against a full repaint");
   fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RETURN)}), "Return in the working side");
 
   // The toggles rebuild or restyle every row: a frame, no rect of their own.
@@ -7795,6 +7814,35 @@ void TestACompareTabsActionsRepaintTheirRows() {
   toggled = fixture.shell.ConsumePendingRenderInvalidation();
   Expect(!toggled.full && toggled.rects.empty(), "ignore-whitespace names no rect");
   fixture.ExpectFresh(toggled, "whitespace ignored");
+}
+
+// Typing on a line the two sides agreed on makes a new change, and every change
+// below it gets a new number. The rows keyed on those numbers, which nothing
+// draws, so that keystroke repainted every row from the edit down (64% of the
+// pane). A row keys on what is drawn of a change: that it is in one, and is its
+// first row. The header's count, the change's own rows and the scrollbar's new
+// mark repaint.
+void TestANewChangeInADiffRepaintsItsRowsNotTheChangesBelow() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("left.cpp", CompareLeftText(60));
+  OpenTwoFileCompare(fixture, 60);
+  auto& compare = TestAccess::ActiveCompare(fixture.shell);
+  compare.right_view_active = true;
+  compare.right_viewport.MoveCursorTo(8, 4);  // "int value9 = 9;" on both sides
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the caret on a line both sides agree on");
+  PaneDamage damage = DamageInPane(fixture, DispatchEvents(fixture.shell, {TextInputEvent("q")}));
+  Expect(!damage.full && damage.share > 0.0f && damage.share < 0.4f,
+         "a keystroke that makes a new change repaints that change, not the rows below it: " +
+             std::to_string(damage.share) + " of the pane");
+  damage = DamageInPane(fixture, DispatchEvents(fixture.shell, {TextInputEvent("r")}));
+  Expect(!damage.full && damage.share > 0.0f && damage.share < 0.12f,
+         "the next keystroke there repaints its row: " + std::to_string(damage.share) + " of the pane");
+  // And each is the frame a full repaint paints.
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN), KeyDownEvent(SDLK_DOWN)}), "two rows down");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("s")}), "a second new change");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_Z, SDL_KMOD_CTRL)}), "the change undone");
 }
 
 // A diff in one pane of a split, an editor in the other: scrolling the diff
@@ -7879,15 +7927,33 @@ void TestAMergeTabsActionsRepaintWhatTheyChange() {
   // Typing in the result: the first keystroke may re-track its conflict; the
   // next one is one row of the result.
   fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("x")}), "the first keystroke in the result");
-  const PaneDamage damage = DamageInPane(fixture, DispatchEvents(fixture.shell, {TextInputEvent("y")}));
+  PaneDamage damage = DamageInPane(fixture, DispatchEvents(fixture.shell, {TextInputEvent("y")}));
   Expect(!damage.full && damage.share > 0.0f && damage.share < 0.1f,
          "a keystroke in the result repaints its row: " + std::to_string(damage.share) + " of the pane");
+  // Undo and redo cross the dirty flag, which the header's status shows: the
+  // header and the row. A paste is a row.
+  damage = DamageInPane(fixture, DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_Z, SDL_KMOD_CTRL)}));
+  Expect(!damage.full && damage.share > 0.0f && damage.share < 0.35f,
+         "undo in the result repaints its row and the header: " + std::to_string(damage.share) + " of the pane");
+  damage = DamageInPane(fixture, DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_Y, SDL_KMOD_CTRL)}));
+  Expect(!damage.full && damage.share > 0.0f && damage.share < 0.35f,
+         "redo in the result repaints its row and the header: " + std::to_string(damage.share) + " of the pane");
+  SDL_SetClipboardText("pasted");
+  damage = DamageInPane(fixture, DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_V, SDL_KMOD_CTRL)}));
+  Expect(!damage.full && damage.share > 0.0f && damage.share < 0.1f,
+         "a paste in the result repaints its row: " + std::to_string(damage.share) + " of the pane");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_Z, SDL_KMOD_CTRL)}), "undo, against a full repaint");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_Y, SDL_KMOD_CTRL)}), "redo, against a full repaint");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_V, SDL_KMOD_CTRL)}), "paste, against a full repaint");
 }
 
 }  // namespace
 
+
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/ACompareTabsActionsRepaintTheirRows", TestACompareTabsActionsRepaintTheirRows);
+  AddTest(tests, "QaFlowRegression/ANewChangeInADiffRepaintsItsRowsNotTheChangesBelow",
+          TestANewChangeInADiffRepaintsItsRowsNotTheChangesBelow);
   AddTest(tests, "QaFlowRegression/ScrollingADiffLeavesThePaneBesideItAlone",
           TestScrollingADiffLeavesThePaneBesideItAlone);
   AddTest(tests, "QaFlowRegression/AMergeTabsActionsRepaintWhatTheyChange", TestAMergeTabsActionsRepaintWhatTheyChange);

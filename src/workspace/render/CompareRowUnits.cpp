@@ -146,11 +146,16 @@ void AppendCompareRowUnits(const CompareTabState& compare, const CompareRowGeome
       content = Mix(content, presentation->model_row_index);
       content = MixText(content, presentation->display_summary_text, long_line_stand_in);
       content = MixText(content, presentation->review_marker_label, long_line_stand_in);
+      // A change's NUMBER is not drawn: an edit on an unchanged line makes a new
+      // change and renumbers every one below it, and keyed on the numbers each of
+      // their rows repainted. What is drawn of them is whether a collapsed run has
+      // a change before and after it (its buttons), and below, whether a row is in
+      // a change and is the first row of it (the review mark's place).
       for (const std::int64_t part :
-           {std::int64_t{presentation->hunk_index}, std::int64_t{presentation->collapsed_line_count},
+           {std::int64_t{presentation->collapsed_line_count},
             static_cast<std::int64_t>(presentation->collapsed_run_start_model_row),
             static_cast<std::int64_t>(presentation->collapsed_run_length), std::int64_t{presentation->context_above},
-            std::int64_t{presentation->previous_hunk_index}, std::int64_t{presentation->next_hunk_index},
+            std::int64_t{presentation->previous_hunk_index >= 0}, std::int64_t{presentation->next_hunk_index >= 0},
             std::int64_t{presentation->has_review_note}}) {
         content = Mix(content, static_cast<std::uint64_t>(part));
       }
@@ -160,7 +165,10 @@ void AppendCompareRowUnits(const CompareTabState& compare, const CompareRowGeome
         content = Mix(content, static_cast<std::uint64_t>(model.kind));
         content = Mix(content, static_cast<std::uint64_t>(static_cast<std::int64_t>(model.left_line)));
         content = Mix(content, static_cast<std::uint64_t>(static_cast<std::int64_t>(model.right_line)));
-        content = Mix(content, static_cast<std::uint64_t>(static_cast<std::int64_t>(model.hunk)));
+        const bool in_change = model.hunk >= 0;
+        const bool first_of_change =
+            in_change && (model_index == 0 || compare.model.rows[model_index - 1].hunk != model.hunk);
+        content = Mix(content, (in_change ? 1u : 0u) | (first_of_change ? 2u : 0u));
         content = Mix(Mix(content, model.left_moved ? 1u : 2u), model.right_moved ? 1u : 2u);
         content = MixText(content, model.left_text, long_line_stand_in);
         content = MixText(content, model.right_text, long_line_stand_in);
