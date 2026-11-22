@@ -119,7 +119,25 @@ std::vector<std::size_t> DirtyPromptCoordinator::ResolveFocusedTabIndices(
   return indices;
 }
 
+void DirtyPromptCoordinator::FocusTargetGroup(std::uint64_t tab_id) {
+  if (tab_id == 0) {
+    return;
+  }
+  const ProjectWorkspaceState& state = context_.current_project_state;
+  for (std::size_t group = 0; group < state.editor_groups.size(); ++group) {
+    for (const TabEntry& tab : state.editor_groups[group].open_tabs) {
+      if (tab.stable_id == tab_id) {
+        if (group != state.clamped_focused_group_index()) {
+          (void)editor_tabs_.FocusEditorGroupAt(group);
+        }
+        return;
+      }
+    }
+  }
+}
+
 void DirtyPromptCoordinator::ConfirmCloseTab(const DirtyPromptState& prompt) {
+  FocusTargetGroup(prompt.tab_id);
   // Resolve the stored stable id to the CURRENT focused-group index: a tab that
   // closed/reordered while the modal prompt was up must never be mis-saved/closed
   // (TD-2026-07-17-024). Fall back to the stored index only for an id-less prompt.
@@ -153,6 +171,7 @@ void DirtyPromptCoordinator::ConfirmCloseTab(const DirtyPromptState& prompt) {
 }
 
 void DirtyPromptCoordinator::ConfirmCloseTabs(const DirtyPromptState& prompt) {
+  FocusTargetGroup(prompt.tab_id);  // every target was taken from one group's strip
   const bool saving = prompt.selected_action == 0;
   // Every dirty target is saved-then-closed, each closing when its OWN write
   // lands. Closing several dirty buffers used to run every formatter inline and

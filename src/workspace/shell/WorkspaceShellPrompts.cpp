@@ -160,18 +160,21 @@ std::string WorkspaceShell::DirtyPromptMessage() const {
   }
 
   // Resolve the tab's stable id (TD-2026-07-17-024) so the label stays correct even
-  // if tabs shifted while the prompt was up; fall back to the stored index.
-  const auto& close_tabs = context_.current_project_state.focused_group().open_tabs;
+  // if tabs shifted while the prompt was up -- in whatever group holds it, not the
+  // focused one: the focus can move under the prompt (soak 6d33d9fa57bc). Fall back
+  // to the stored index only for an id-less prompt.
   std::string label = "this tab";
   const std::uint64_t tab_id = context_.prompts.dirty.tab_id;
   if (tab_id != 0) {
-    for (const auto& tab : close_tabs) {
-      if (tab.stable_id == tab_id) {
-        label = tab.title;
-        break;
+    for (const EditorGroup& group : context_.current_project_state.editor_groups) {
+      for (const auto& tab : group.open_tabs) {
+        if (tab.stable_id == tab_id) {
+          label = tab.title;
+        }
       }
     }
-  } else if (context_.prompts.dirty.tab_index < close_tabs.size()) {
+  } else if (const auto& close_tabs = context_.current_project_state.focused_group().open_tabs;
+             context_.prompts.dirty.tab_index < close_tabs.size()) {
     label = close_tabs[context_.prompts.dirty.tab_index].title;
   }
   return "Save changes to " + label + " before closing it?";

@@ -3573,10 +3573,12 @@ void TestATabTooltipNamesTheTabUnderThePointerInASplit() {
 // Soak 6d33d9fa57bc (crash cell, 640x480): the unsaved-changes prompt names the
 // tab it closes, and a control command that moved the focus to the other group
 // while it was up changed that name ("Save changes to latin1.b" became "this
-// tab": the label is looked up in the focused group). Nothing damaged the
+// tab": the label was looked up in the focused group). Nothing damaged the
 // dialog for it, so the part of the message outside the repainted editor kept
-// the old name. The dialog is a chrome unit keyed on what it shows.
-void TestTheUnsavedChangesPromptRepaintsWhenItsMessageChanges() {
+// the old name. The name no longer moves with the focus (the next test); the
+// dialog is also a chrome unit keyed on what it shows, so whatever changes it
+// -- here its selected button, set with no damage asked for -- repaints it.
+void TestTheUnsavedChangesPromptRepaintsWhenWhatItShowsChanges() {
   // The monkey's window: the dialog reaches across the sidebar and its divider.
   FlowFixture fixture("left-file.txt", "left\n", 640, 480);
   Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "split-right should run");
@@ -3591,10 +3593,48 @@ void TestTheUnsavedChangesPromptRepaintsWhenItsMessageChanges() {
   const std::string before = TestAccess::DirtyPromptMessage(fixture.shell);
 
   Expect(TestAccess::ExecuteCommandLine(fixture.shell, "focus-other-group"), "focus-other-group should run");
-  Expect(TestAccess::DirtyPromptMessage(fixture.shell) != before,
-         "the prompt's message changes with the focus (the case under test): \"" + before + "\"");
+  Expect(TestAccess::DirtyPromptMessage(fixture.shell) == before,
+         "the prompt's message stays with its tab: \"" + TestAccess::DirtyPromptMessage(fixture.shell) + "\"");
   fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(),
                       "the prompt after the focus moved under it");
+
+  // Changed with no damage asked for, in a frame owed for something else.
+  TestAccess::SetDirtyPromptSelectedAction(fixture.shell, 2);
+  fixture.ExpectFresh(workspace::RenderInvalidation{.frame = true}, "the prompt's selected button moved");
+}
+
+// The same run, its behaviour half: the prompt's tab was looked up in whichever
+// group had the focus, for its message and for its decision alike -- so with the
+// focus moved under it, it said "this tab", and Discard found no tab, dismissed
+// itself and closed nothing. The prompt owns its target: the tab, by its stable
+// id, in whatever group holds it.
+void TestTheUnsavedChangesPromptActsOnItsTabWhereverTheFocusMoved() {
+  FlowFixture fixture("left-file.txt", "left\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "split-right should run");
+  WriteFile(fixture.root / "right-file.txt", "right\n");
+  TestAccess::OpenFile(fixture.shell, fixture.root / "right-file.txt");  // into the focused right group
+  TestAccess::ActiveEditor(fixture.shell).InsertText("x");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_W, SDL_KMOD_CTRL)});
+  Expect(TestAccess::DirtyPromptVisible(fixture.shell), "closing the dirty tab asks first");
+
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "focus-other-group"), "focus-other-group should run");
+  const std::string message = TestAccess::DirtyPromptMessage(fixture.shell);
+  Expect(message.find("right-file.txt") != std::string::npos,
+         "the prompt still names the tab it closes, not \"" + message + "\"");
+
+  TestAccess::SetDirtyPromptSelectedAction(fixture.shell, 1);  // Discard
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RETURN, SDL_KMOD_NONE)});
+  Expect(!TestAccess::DirtyPromptVisible(fixture.shell), "the decision dismisses the prompt");
+  bool right_open = false;
+  bool left_open = false;
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    const std::string& name = entry["name"].AsString();
+    right_open = right_open || (name.starts_with("tab:") && name.ends_with("/right-file.txt"));
+    left_open = left_open || (name.starts_with("tab:") && name.ends_with("/left-file.txt"));
+  }
+  Expect(!right_open, "Discard closes the tab the prompt was for");
+  Expect(left_open, "and nothing else");
 }
 
 // The QA monkey (CI seed 4; minimized 185 -> 69 actions): frame prep sizes each
@@ -7078,8 +7118,10 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestTabOverASelectionEndingOnTheLastLineRepaintsTheLineTheCaretLeft);
   AddTest(tests, "QaFlowRegression/ATabTooltipNamesTheTabUnderThePointerInASplit",
           TestATabTooltipNamesTheTabUnderThePointerInASplit);
-  AddTest(tests, "QaFlowRegression/TheUnsavedChangesPromptRepaintsWhenItsMessageChanges",
-          TestTheUnsavedChangesPromptRepaintsWhenItsMessageChanges);
+  AddTest(tests, "QaFlowRegression/TheUnsavedChangesPromptRepaintsWhenWhatItShowsChanges",
+          TestTheUnsavedChangesPromptRepaintsWhenWhatItShowsChanges);
+  AddTest(tests, "QaFlowRegression/TheUnsavedChangesPromptActsOnItsTabWhereverTheFocusMoved",
+          TestTheUnsavedChangesPromptActsOnItsTabWhereverTheFocusMoved);
   AddTest(tests, "QaFlowRegression/ClickingAnUnfocusedGroupsOverflowChipRepaintsItsStrip",
           TestClickingAnUnfocusedGroupsOverflowChipRepaintsItsStrip);
   AddTest(tests, "QaFlowRegression/AFoldChordRightAfterAClickFoldsTheClickedBlock",

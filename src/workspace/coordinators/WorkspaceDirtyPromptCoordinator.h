@@ -71,6 +71,11 @@ class DirtyPromptCoordinator {
   // Resolve a stable focused-group tab id (TD-2026-07-17-024) to its current index;
   // nullopt if the tab has since closed. Keeps CloseTab/CloseTabs from acting on a
   // stale index after a close/reorder while the modal prompt was up.
+  // The prompt's targets are tabs by stable id (unique across groups), and its
+  // decision acts in the group that holds them -- whichever group has the focus
+  // now: a control command, a plugin or focus-follows-mouse can move it under the
+  // modal (soak 6d33d9fa57bc). The index resolvers below then resolve there.
+  void FocusTargetGroup(std::uint64_t tab_id);
   std::optional<std::size_t> ResolveFocusedTabIndexById(std::uint64_t id) const;
   // Resolve a list of ids to current indices (dropping closed tabs). Falls back to
   // `fallback_indices` only when no ids were captured (id-less legacy prompt).
